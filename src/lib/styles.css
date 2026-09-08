@@ -129,6 +129,14 @@ section[id] {
   text-decoration: none;
   line-height: 1.45;
   text-align: center;
+  transition:
+    background-color 180ms ease,
+    border-color 180ms ease,
+    color 180ms ease,
+    transform 180ms ease;
+}
+.button:active {
+  transform: scale(0.97);
 }
 .button.small {
   min-height: 48px;
@@ -160,6 +168,8 @@ section[id] {
   background: transparent;
 }
 .header {
+  position: relative;
+  z-index: 20;
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -197,6 +207,9 @@ section[id] {
 .menu-button {
   display: none;
 }
+.menu-scrim {
+  display: none;
+}
 .skip {
   position: absolute;
   inset-block-start: 8px;
@@ -219,6 +232,7 @@ section[id] {
 .hero-copy {
   position: relative;
   z-index: 1;
+  animation: enter-up 650ms cubic-bezier(0.22, 1, 0.36, 1) both;
 }
 .hero h1 span {
   color: var(--color-muted);
@@ -234,6 +248,7 @@ section[id] {
 .hero-art {
   position: relative;
   margin-inline-start: -12px;
+  animation: enter-art 850ms 100ms cubic-bezier(0.22, 1, 0.36, 1) both;
 }
 .hero-art > img {
   width: 100%;
@@ -272,6 +287,13 @@ section[id] {
   display: flex;
   gap: 16px;
   position: relative;
+  animation: enter-up 550ms cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+.journey-item:nth-child(2) {
+  animation-delay: 80ms;
+}
+.journey-item:nth-child(3) {
+  animation-delay: 160ms;
 }
 .journey-number {
   flex-shrink: 0;
@@ -479,6 +501,7 @@ figcaption .text-button {
   font-weight: 400;
   font-size: 1.6rem;
   line-height: 1;
+  transition: transform 200ms ease;
 }
 .faq-list details[open] .faq-plus {
   transform: rotate(45deg);
@@ -768,6 +791,26 @@ body:has(dialog[open]) {
   width: 1920px;
   max-width: none;
 }
+@keyframes enter-up {
+  from {
+    opacity: 0;
+    transform: translateY(18px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+@keyframes enter-art {
+  from {
+    opacity: 0;
+    transform: translateX(20px) scale(0.97);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0) scale(1);
+  }
+}
 .sr-only {
   position: absolute;
   width: 1px;
@@ -867,7 +910,6 @@ body:has(dialog[open]) {
   }
   .header {
     min-height: 80px;
-    flex-wrap: wrap;
     gap: 0;
   }
   .brand {
@@ -876,30 +918,97 @@ body:has(dialog[open]) {
   .menu-button {
     display: flex;
     align-items: center;
-    gap: 12px;
-    min-height: 44px;
+    position: relative;
+    z-index: 22;
+    gap: 10px;
+    min-width: 102px;
+    min-height: 46px;
     border: 1px solid var(--color-muted);
     border-radius: 999px;
     padding: 8px 16px;
     background: transparent;
     color: var(--color-ink);
     font-size: 0.85rem;
+    justify-content: center;
+    transition:
+      background-color 180ms ease,
+      color 180ms ease,
+      border-color 180ms ease;
+  }
+  .menu-button[aria-expanded='true'] {
+    background: var(--color-ink);
+    border-color: var(--color-ink);
+    color: var(--color-paper);
+  }
+  .menu-icon {
+    position: relative;
+    width: 18px;
+    height: 14px;
+  }
+  .menu-icon i {
+    position: absolute;
+    inset-inline: 0;
+    top: 4px;
+    height: 2px;
+    border-radius: 2px;
+    background: currentColor;
+    transition: transform 220ms ease;
+  }
+  .menu-icon i:last-child {
+    top: 10px;
+  }
+  .menu-button[aria-expanded='true'] .menu-icon i:first-child {
+    transform: translateY(3px) rotate(45deg);
+  }
+  .menu-button[aria-expanded='true'] .menu-icon i:last-child {
+    transform: translateY(-3px) rotate(-45deg);
+  }
+  .menu-scrim {
+    display: block;
+    position: fixed;
+    z-index: 20;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    border: 0;
+    padding: 0;
+    background: rgb(10 30 24 / 42%);
+    backdrop-filter: blur(3px);
+    animation: fade-in 180ms ease both;
   }
   .header nav {
+    position: absolute;
+    z-index: 21;
+    top: calc(100% - 2px);
+    inset-inline: 0;
     width: 100%;
     flex-direction: column;
     align-items: stretch;
-    gap: 8px;
-    padding-block: 16px 24px;
+    gap: 4px;
+    padding: 14px;
+    border: 1px solid var(--color-line);
+    border-radius: 20px;
+    background: var(--color-paper);
+    box-shadow: 0 24px 64px rgb(10 30 24 / 22%);
   }
   .header nav.enhanced {
     display: none;
   }
   .header nav.menu-open {
     display: flex;
+    animation: menu-in 240ms cubic-bezier(0.22, 1, 0.36, 1) both;
   }
   .header nav > a:not(.button) {
-    padding-inline: 12px;
+    min-height: 50px;
+    padding-inline: 14px;
+    border-radius: 12px;
+  }
+  .header nav .button {
+    margin-top: 6px;
+    width: 100%;
+  }
+  body.menu-visible {
+    overflow: hidden;
   }
   .hero {
     padding-block: 40px 48px;
@@ -1098,6 +1207,17 @@ body:has(dialog[open]) {
   }
   .privacy-page {
     padding-bottom: 64px;
+  }
+}
+@keyframes fade-in {
+  from {
+    opacity: 0;
+  }
+}
+@keyframes menu-in {
+  from {
+    opacity: 0;
+    transform: translateY(-10px) scale(0.98);
   }
 }
 @media (prefers-reduced-motion: reduce) {
