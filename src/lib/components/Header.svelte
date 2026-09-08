@@ -6,6 +6,11 @@
   onMount(() => {
     ready = true;
   });
+  $effect(() => {
+    if (!ready) return;
+    document.body.classList.toggle('menu-visible', open);
+    return () => document.body.classList.remove('menu-visible');
+  });
   function escape(event: KeyboardEvent) {
     if (event.key === 'Escape' && open) {
       open = false;
@@ -27,9 +32,16 @@
       class="menu-button"
       aria-expanded={open}
       aria-controls="navigation"
+      aria-label={open ? 'Fechar menu' : 'Menu'}
       onclick={() => (open = !open)}
-      >{open ? 'Fechar' : 'Menu'} <span aria-hidden="true">{open ? '×' : '☰'}</span></button
-    >{/if}
+      ><span class="menu-label" aria-hidden="true">{open ? 'Fechar' : 'Menu'}</span>
+      <span class="menu-icon" aria-hidden="true"><i></i><i></i></span></button
+    >{#if open}<button
+        class="menu-scrim"
+        aria-label="Fechar menu"
+        tabindex="-1"
+        onclick={() => (open = false)}
+      ></button>{/if}{/if}
   <nav id="navigation" aria-label="Principal" class:menu-open={open} class:enhanced={ready}>
     <a href="/#solucoes" onclick={() => (open = false)}>Soluções</a><a
       href="/#projeto"
