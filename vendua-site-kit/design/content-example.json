@@ -1,0 +1,15 @@
+{
+  "brand": "Venduá",
+  "tagline": "Seu negócio, pronto para vender.",
+  "publicDomain": null,
+  "instagramUrl": "https://www.instagram.com/vendua.digital/",
+  "contactMode": "instagram",
+  "analyticsEnabled": false,
+  "project": {
+    "name": "Quero Pudim Gourmet",
+    "slug": "quero-pudim-gourmet",
+    "publicUrl": null,
+    "storefrontImage": "/assets/projetos/storefront-web.webp",
+    "adminImage": "/assets/projetos/admin-web.webp"
+  }
+}

@@ -1,0 +1,13 @@
+:root {
+  --color-ink:#123c32; --color-lime:#d9f875; --color-paper:#f7f4ea;
+  --color-text:#202923; --color-muted:#53635a; --color-line:#cdd6cb;
+  --font-sans:"Manrope",Arial,sans-serif;
+  --space-1:4px; --space-2:8px; --space-3:12px; --space-4:16px;
+  --space-6:24px; --space-8:32px; --space-12:48px; --space-16:64px; --space-24:96px;
+  --radius-control:12px; --radius-media:24px; --radius-pill:999px;
+  --container:1200px; --motion-fast:180ms;
+  --shadow-media:0 16px 48px rgb(18 60 50 / 10%);
+}
+/* Proposta de tokens: não substitui estilos completos dos componentes. */
+:focus-visible {outline:3px solid currentColor;outline-offset:4px;}
+@media (prefers-reduced-motion:reduce){*,*::before,*::after{animation:none!important;transition:none!important;scroll-behavior:auto!important;}}
