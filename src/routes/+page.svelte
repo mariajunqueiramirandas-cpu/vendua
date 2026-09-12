@@ -337,7 +337,8 @@
         </p>
         <div class="hero-cta">
           <a class="button" href={site.instagramDmUrl} target="_blank" rel="noreferrer"
-            >Pedir acesso <span aria-hidden="true">↗</span><span class="sr-only">(nova aba)</span></a
+            >Pedir acesso <span aria-hidden="true">↗</span><span class="sr-only">(nova aba)</span
+            ></a
           >
           <p class="fine">
             <span>Lista do lançamento</span><span>convites apenas pelo direct</span><span
