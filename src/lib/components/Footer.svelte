@@ -27,5 +27,5 @@
       >Acesso</a
     ><a href="/privacidade/">Privacidade</a>
   </div>
-  <p class="fine">Venduá — vitrines que se constroem sozinhas.</p>
+  <p class="fine">Venduá — em desenvolvimento · vitrines que se constroem sozinhas.</p>
 </footer>

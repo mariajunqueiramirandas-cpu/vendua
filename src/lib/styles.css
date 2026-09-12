@@ -276,6 +276,20 @@ html[data-theme='dark'] .brand .mark-dark {
     color: var(--color-accent-ink);
   }
 }
+.dev-status {
+  display: inline-flex;
+  align-items: center;
+  min-height: 44px;
+  padding: 6px 14px;
+  border: 1px solid var(--color-line);
+  border-radius: var(--radius-pill);
+  font-family: var(--font-mono);
+  font-size: 0.68rem;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--color-muted);
+  white-space: nowrap;
+}
 .skip {
   position: absolute;
   inset-block-start: 8px;
@@ -1277,6 +1291,9 @@ body::after {
     justify-content: center;
   }
   .theme-toggle .tt-label {
+    display: none;
+  }
+  .dev-status {
     display: none;
   }
   .hero h1 {

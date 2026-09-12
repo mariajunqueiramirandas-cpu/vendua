@@ -288,8 +288,8 @@
 </script>
 
 <Seo
-  title="Venduá — em breve"
-  description="A próxima loja não será construída. Será gerada. Peça acesso pelo direct."
+  title="Venduá — em desenvolvimento"
+  description="A próxima loja não será construída. Será gerada. A Venduá segue em desenvolvimento — o acesso antecipado é pelo direct."
 />
 <div bind:this={root}>
   <div class="scroll-progress" aria-hidden="true"></div>
@@ -297,12 +297,14 @@
     <HeroShader />
     <div class="hero-inner container">
       <div class="hero-top">
-        <p class="eyebrow"><span class="signal-dot"></span>Sinal 01 · Em breve</p>
+        <p class="eyebrow">
+          <span class="signal-dot"></span>Sinal 01 · Em desenvolvimento · Lançamento em breve
+        </p>
         <p class="hero-meta">
           VND//GEN —
           <a
             class="hero-coords"
-            href="https://www.google.com/maps?q=-22.936731,-42.492717"
+            href="https://www.google.com/maps/place/Par%C3%B3quia+Nossa+Senhora+de+Nazareth/@-22.9368365,-42.4931146,19.25z/data=!4m12!1m5!3m4!2zMjLCsDU2JzEyLjIiUyA0MsKwMjknMzMuOCJX!8m2!3d-22.936731!4d-42.492717!3m5!1s0x975f36efe0ca53:0x79108549f256b0db!8m2!3d-22.9368695!4d-42.4926159!16s%2Fg%2F11f5tfffbv"
             target="_blank"
             rel="noopener noreferrer"
             aria-label="Ver localização no Google Maps">22°56'12.23"S 42°29'33.78"W</a
@@ -316,12 +318,12 @@
       </h1>
       <div class="hero-bottom">
         <p class="intro">
-          A Venduá está trocando o feito à mão por algo que ainda não tem nome público. Os detalhes
-          ficam com quem entrar primeiro.
+          A Venduá está trocando o feito à mão por algo que ainda não tem nome público — e que segue
+          em desenvolvimento. O lançamento vem depois; os detalhes ficam com quem entrar primeiro.
         </p>
         <div class="hero-cta">
           <a class="button" href="/contato/">Pedir acesso <span aria-hidden="true">↗</span></a>
-          <p class="fine">Convites apenas pelo direct · @vendua.digital</p>
+          <p class="fine">Lista do lançamento · convites apenas pelo direct · @vendua.digital</p>
         </div>
       </div>
     </div>

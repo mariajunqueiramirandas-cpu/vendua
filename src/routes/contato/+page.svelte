@@ -26,21 +26,24 @@
 </script>
 
 <Seo
-  title="Acesso | Venduá"
-  description="O acesso à Venduá é por convite. O único canal é o direct."
+  title="Acesso antecipado | Venduá"
+  description="A Venduá está em desenvolvimento. O acesso antecipado é por convite — o único canal é o direct."
   path="/contato/"
 />
 <section class="gate-stage" aria-labelledby="gate-title">
   <GateShader open={gateOpen} />
   <div class="gate-inner container">
-    <p class="eyebrow gate-eyebrow"><span class="signal-dot"></span>Acesso · por convite</p>
+    <p class="eyebrow gate-eyebrow">
+      <span class="signal-dot"></span>Em desenvolvimento · acesso antecipado por convite
+    </p>
     <h1 class="gate-title" id="gate-title">
       <span class="line-mask"><span>Não há formulário.</span></span>
       <span class="line-mask"><span>Só uma <em class="serif">porta.</em></span></span>
     </h1>
     <p class="intro gate-intro">
-      Peça acesso pelo direct e apresente seu negócio na primeira mensagem. Cada pedido é lido por
-      uma pessoa.
+      A Venduá ainda está em desenvolvimento — quem entra agora garante lugar na lista do
+      lançamento. Peça acesso pelo direct e apresente seu negócio na primeira mensagem. Cada pedido
+      é lido por uma pessoa.
     </p>
     <div class="actions gate-actions">
       <a
@@ -61,6 +64,6 @@
   </div>
   <div class="gate-meta container" aria-hidden="true">
     <span>VND//GEN — Portal</span>
-    <span>Canal: direct · Fila: curta · Leitura: humana</span>
+    <span>Status: em desenvolvimento · Canal: direct · Leitura: humana</span>
   </div>
 </section>

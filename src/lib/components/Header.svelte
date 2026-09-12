@@ -41,6 +41,7 @@
       />venduá<span class="brand-dot">.</span></a
     >
     <nav id="navigation" aria-label="Principal">
+      <span class="dev-status"><span class="signal-dot"></span>Em desenvolvimento</span>
       <button
         class="theme-toggle"
         type="button"

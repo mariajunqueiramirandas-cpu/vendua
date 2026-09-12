@@ -57,11 +57,11 @@ export const transmissions = [
 export const ritual = [
   ['Você pede.', 'Um direct basta. Diga o que vende.'],
   ['A gente lê.', 'Cada pedido passa por uma pessoa.'],
-  ['A porta abre.', 'Para quem entra primeiro.'],
+  ['A porta abre.', 'No lançamento — primeiro para quem já está dentro.'],
 ];
 export const teaserFaqs = [
-  ['Quando lança?', 'Quando estiver pronto. Quem está dentro sabe antes.'],
+  ['Quando lança?', 'Ainda em desenvolvimento. A data sai primeiro para quem está dentro.'],
   ['Quanto custa?', 'Ainda não é público. Os primeiros terão condições próprias.'],
-  ['Posso ver funcionando?', 'Quem entra, vê.'],
+  ['Posso ver funcionando?', 'Ainda não está no ar. Quem entra, vê antes do lançamento.'],
   ['É para o meu tipo de negócio?', 'Se você vende algo, provavelmente.'],
 ];
