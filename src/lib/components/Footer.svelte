@@ -15,7 +15,7 @@
         viewBox="0 0 24 24"
         fill="none"
         stroke="currentColor"
-        stroke-width="1.7"
+        stroke-width="1.5"
         aria-hidden="true"
         ><rect x="2.75" y="2.75" width="18.5" height="18.5" rx="5.5" /><circle
           cx="12"

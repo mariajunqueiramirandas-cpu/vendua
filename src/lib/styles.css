@@ -200,7 +200,7 @@ section[id] {
   justify-content: center;
   gap: 20px;
   min-height: 52px;
-  padding: 12px 24px;
+  padding: 12px 22px 12px 24px;
   border: 1px solid var(--color-strong);
   border-radius: var(--radius-pill);
   background: var(--color-strong);
@@ -210,10 +210,18 @@ section[id] {
   text-decoration: none;
   line-height: 1.45;
   text-align: center;
+  transition:
+    background-color var(--motion-fast) ease,
+    border-color var(--motion-fast) ease,
+    color var(--motion-fast) ease,
+    scale 150ms ease-out;
+}
+.button:active {
+  scale: 0.96;
 }
 .button.small {
   min-height: 48px;
-  padding: 10px 22px;
+  padding: 10px 20px 10px 22px;
 }
 .button.outline {
   background: transparent;
@@ -285,8 +293,12 @@ html[data-theme='dark'] .brand .mark-dark {
   letter-spacing: 0.16em;
   text-transform: uppercase;
   transition:
-    border-color 200ms ease,
-    color 200ms ease;
+    border-color var(--motion-fast) ease,
+    color var(--motion-fast) ease,
+    scale 150ms ease-out;
+}
+.theme-toggle:active {
+  scale: 0.96;
 }
 .theme-toggle::before {
   content: '';
@@ -399,8 +411,8 @@ html[data-theme='dark'] .brand .mark-dark {
   text-decoration: none;
   border-bottom: 1px dashed color-mix(in srgb, var(--color-muted) 45%, transparent);
   transition:
-    color 200ms ease,
-    border-color 200ms ease;
+    color var(--motion-fast) ease,
+    border-color var(--motion-fast) ease;
 }
 @media (hover: hover) {
   .hero-coords:hover {
@@ -707,7 +719,7 @@ html.js:not(.seen) .intro-veil {
 .tx-open-hint {
   color: var(--color-accent-ink);
   opacity: 0.55;
-  transition: opacity 200ms ease;
+  transition: opacity var(--motion-fast) ease;
 }
 @media (hover: hover) {
   .tx-card:hover {
@@ -718,7 +730,12 @@ html.js:not(.seen) .intro-veil {
   }
 }
 .tx-card {
-  transition: border-color 200ms ease;
+  transition:
+    border-color var(--motion-fast) ease,
+    scale 150ms ease-out;
+}
+.tx-card:has(.tx-hit:active) {
+  scale: 0.96;
 }
 .tx-hit:focus-visible {
   outline-offset: 6px;
@@ -771,11 +788,15 @@ html.js:not(.seen) .intro-veil {
   font-size: 0.75rem;
   letter-spacing: 0.12em;
   text-transform: uppercase;
-  padding: 8px 14px;
+  padding: 8px 12px 8px 14px;
   cursor: pointer;
   transition:
-    border-color 200ms ease,
-    color 200ms ease;
+    border-color var(--motion-fast) ease,
+    color var(--motion-fast) ease,
+    scale 150ms ease-out;
+}
+.tx-modal-close:active {
+  scale: 0.96;
 }
 @media (hover: hover) {
   .tx-modal-close:hover {
@@ -945,10 +966,15 @@ html.js:not(.seen) .intro-veil {
   font-size: 1.2rem;
   line-height: 1;
   color: var(--color-accent-ink);
-  transition: transform 300ms ease;
+  transition:
+    transform 300ms ease,
+    scale 150ms ease-out;
 }
 .teaser-faq details[open] .faq-plus {
   transform: rotate(45deg);
+}
+.teaser-faq summary:active .faq-plus {
+  scale: 0.96;
 }
 .faq-body {
   overflow: hidden;
@@ -1341,7 +1367,7 @@ body::after {
     gap: 12px;
   }
   .header .button.small {
-    padding-inline: 16px;
+    padding-inline: 16px 14px;
   }
   .theme-toggle {
     width: 36px;

@@ -27,9 +27,17 @@
       { opacity: 1, y: 0, scale: 1, duration: 0.55, ease: 'power3.out' },
     );
     gsap.fromTo(
-      '.tx-modal-head, .tx-modal-title, .tx-modal-detail, .tx-specs div, .tx-modal-close',
-      { opacity: 0, y: 14 },
-      { opacity: 1, y: 0, duration: 0.5, stagger: 0.05, ease: 'power2.out', delay: 0.08 },
+      '.tx-modal-head, .tx-modal-title, .tx-modal-detail, .tx-specs div, .tx-modal-foot',
+      { opacity: 0, y: 12, filter: 'blur(4px)' },
+      {
+        opacity: 1,
+        y: 0,
+        filter: 'blur(0px)',
+        duration: 0.5,
+        stagger: 0.1,
+        ease: 'power2.out',
+        delay: 0.08,
+      },
     );
   };
 
@@ -47,15 +55,21 @@
     }
     gsap.to(d, {
       opacity: 0,
-      y: 18,
-      scale: 0.97,
-      duration: 0.3,
-      ease: 'power2.in',
+      y: -12,
+      filter: 'blur(4px)',
+      duration: 0.15,
+      ease: 'power2.out',
+      overwrite: true,
       onComplete: () => {
         d.close();
         gsap.set(d, { clearProps: 'all' });
       },
     });
+  };
+
+  const onCancel = (e: Event) => {
+    e.preventDefault();
+    closeTx();
   };
 
   const onModalBackdrop = (e: MouseEvent) => {
@@ -254,7 +268,7 @@
           height: 0,
           opacity: 0,
           duration: 0.4,
-          ease: 'power2.inOut',
+          ease: 'power2.out',
           overwrite: true,
           onComplete: () => {
             details.open = false;
@@ -410,6 +424,7 @@
     class="tx-modal"
     bind:this={dialogEl}
     onclose={onClosed}
+    oncancel={onCancel}
     onclick={onModalBackdrop}
     aria-labelledby="tx-modal-title"
   >

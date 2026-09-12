@@ -10,6 +10,9 @@
   const toggleTheme = () => {
     dark = !dark;
     const h = document.documentElement;
+    const freeze = document.createElement('style');
+    freeze.append(document.createTextNode('*,*::before,*::after{transition:none !important}'));
+    document.head.append(freeze);
     if (dark) h.dataset.theme = 'dark';
     else delete h.dataset.theme;
     try {
@@ -19,6 +22,10 @@
       .querySelector('meta[name="theme-color"]')
       ?.setAttribute('content', dark ? '#0a100d' : '#f7f4ea');
     window.dispatchEvent(new Event('vnd:theme'));
+    void document.body.offsetHeight;
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => freeze.remove());
+    });
   };
 </script>
 
