@@ -3,6 +3,9 @@ import AxeBuilder from '@axe-core/playwright';
 import { gzipSync } from 'node:zlib';
 import { writeFileSync } from 'node:fs';
 const routes = ['/', '/contato/', '/privacidade/', '/nao-existe/'];
+test.beforeEach(async ({ page }) => {
+  await page.addInitScript(() => sessionStorage.setItem('vnd-intro', '1'));
+});
 async function ready(page: Page) {
   await expect(page.locator('h1')).toHaveCount(1);
 }

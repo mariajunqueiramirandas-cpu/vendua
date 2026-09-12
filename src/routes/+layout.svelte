@@ -4,9 +4,11 @@
   import '$lib/styles.css';
   import Header from '$lib/components/Header.svelte';
   import Footer from '$lib/components/Footer.svelte';
+  import IntroVeil from '$lib/components/IntroVeil.svelte';
   let { children } = $props();
 </script>
 
+<IntroVeil />
 <Header />
 <main id="conteudo" tabindex="-1">{@render children()}</main>
 <Footer />

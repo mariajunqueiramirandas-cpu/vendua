@@ -9,8 +9,10 @@
 
   onMount(() => {
     if (matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+    const veil = document.querySelector<HTMLElement>('.intro-veil');
+    const introDelay = veil && getComputedStyle(veil).display !== 'none' ? 1.5 : 0;
     gsap
-      .timeline({ defaults: { ease: 'power3.out' } })
+      .timeline({ defaults: { ease: 'power3.out' }, delay: introDelay })
       .from('.gate-gl', { opacity: 0, scale: 1.07, duration: 1.8, ease: 'power2.out' }, 0)
       .from('.gate-eyebrow', { opacity: 0, y: -12, duration: 0.6 }, 0.25)
       .from('.gate-title .line-mask > span', { yPercent: 115, duration: 1.1, stagger: 0.12 }, 0.35)

@@ -6,6 +6,12 @@
     <link rel="apple-touch-icon" href="/assets/brand/apple-touch-icon.png" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <meta name="theme-color" content="#0a100d" />
+    <script>
+      try {
+        document.documentElement.className =
+          'js' + (sessionStorage.getItem('vnd-intro') ? ' seen' : '');
+      } catch {}
+    </script>
     %sveltekit.head%
   </head>
   <body data-sveltekit-preload-data="hover">

@@ -81,8 +81,11 @@
         toggleClass: { targets: '.header-bar', className: 'scrolled' },
       });
 
+      const veil = document.querySelector<HTMLElement>('.intro-veil');
+      const introDelay = veil && getComputedStyle(veil).display !== 'none' ? 1.5 : 0;
+
       gsap
-        .timeline({ defaults: { ease: 'power3.out' } })
+        .timeline({ defaults: { ease: 'power3.out' }, delay: introDelay })
         .from('.hero-gl', { opacity: 0, scale: 1.08, duration: 1.8, ease: 'power2.out' }, 0)
         .from('.hero-top > *', { opacity: 0, y: -14, duration: 0.7, stagger: 0.08 }, 0.15)
         .from('.line-mask > span', { yPercent: 115, duration: 1.1, stagger: 0.11 }, 0.3)

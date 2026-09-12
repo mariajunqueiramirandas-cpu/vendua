@@ -390,6 +390,69 @@ section[id] {
   transform-origin: left;
   z-index: 30;
 }
+.intro-veil {
+  display: none;
+}
+html.js:not(.seen) .intro-veil {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  animation: veil-guard 0s 3.6s forwards;
+}
+@keyframes veil-guard {
+  to {
+    visibility: hidden;
+  }
+}
+.veil-half {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 50.5%;
+  background: var(--color-bg);
+}
+.veil-left {
+  left: 0;
+}
+.veil-right {
+  right: 0;
+}
+.veil-slit {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 2px;
+  height: 46vh;
+  transform: translate(-50%, -50%);
+  transform-origin: center;
+  background: var(--color-accent);
+  box-shadow:
+    0 0 24px 6px rgb(217 248 117 / 55%),
+    0 0 80px 30px rgb(217 248 117 / 18%);
+}
+.veil-word {
+  position: relative;
+  font-size: 2.1rem;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  color: var(--color-text);
+}
+.veil-word span {
+  color: var(--color-accent);
+}
+.veil-count {
+  position: absolute;
+  bottom: 9vh;
+  left: 50%;
+  transform: translateX(-50%);
+  font-family: var(--font-mono);
+  font-size: 0.75rem;
+  letter-spacing: 0.3em;
+  color: var(--color-muted);
+}
 .header-bar {
   position: sticky;
   top: 0;
@@ -1235,6 +1298,9 @@ body::after {
   *::after {
     transition: none !important;
     animation: none !important;
+  }
+  html.js:not(.seen) .intro-veil {
+    display: none;
   }
   .tx-stage {
     height: auto;
