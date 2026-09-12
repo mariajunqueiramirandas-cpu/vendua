@@ -6,7 +6,7 @@
   import Closing from '$lib/components/Closing.svelte';
   import HeroShader from '$lib/components/HeroShader.svelte';
   import TxShader from '$lib/components/TxShader.svelte';
-  import { signals, manifesto, transmissions, ritual, teaserFaqs } from '$lib/content/site';
+  import { site, signals, manifesto, transmissions, ritual, teaserFaqs } from '$lib/content/site';
 
   let root = $state<HTMLElement>();
   let dialogEl = $state<HTMLDialogElement>();
@@ -336,7 +336,10 @@
           em desenvolvimento. O lançamento vem depois; os detalhes ficam com quem entrar primeiro.
         </p>
         <div class="hero-cta">
-          <a class="button" href="/contato/">Pedir acesso <span aria-hidden="true">↗</span></a>
+          <a class="button" href={site.instagramDmUrl} target="_blank" rel="noreferrer"
+            >Pedir acesso <span aria-hidden="true">↗</span><span class="sr-only">(nova aba)</span
+            ></a
+          >
           <p class="fine">
             <span>Lista do lançamento</span><span>convites apenas pelo direct</span><span
               >@vendua.digital</span

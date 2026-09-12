@@ -43,11 +43,12 @@ test('a porta de entrada é o acesso pelo direct', async ({ page }) => {
   await expect(page).toHaveURL(/\/contato\/$/);
   await expect(page.locator('h1')).toContainText('Só uma porta');
   const cta = page.getByRole('link', { name: /Abrir @vendua.digital/ });
-  await expect(cta).toHaveAttribute('href', 'https://www.instagram.com/vendua.digital/');
+  await expect(cta).toHaveAttribute('href', 'https://ig.me/m/vendua.digital');
   await expect(cta).toHaveAttribute('target', '_blank');
   await page.goto('/');
-  await page.getByRole('link', { name: 'Pedir acesso' }).first().click();
-  await expect(page).toHaveURL(/\/contato\/$/);
+  const primaryCta = page.getByRole('link', { name: 'Pedir acesso' }).first();
+  await expect(primaryCta).toHaveAttribute('href', 'https://ig.me/m/vendua.digital');
+  await expect(primaryCta).toHaveAttribute('target', '_blank');
 });
 test('tema claro por padrão, alternável e persistente', async ({ page }) => {
   await page.emulateMedia({ reducedMotion: 'reduce' });
@@ -96,7 +97,7 @@ test('conteúdo do teaser sem JavaScript', async ({ browser }) => {
   await page.goto('http://127.0.0.1:4173/contato/');
   await expect(page.getByRole('link', { name: /Abrir @vendua.digital/ })).toHaveAttribute(
     'href',
-    'https://www.instagram.com/vendua.digital/',
+    'https://ig.me/m/vendua.digital',
   );
   await page.goto('http://127.0.0.1:4173/nao-existe/');
   await expect(page.getByRole('heading', { level: 1 })).toContainText('Esse caminho');

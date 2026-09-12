@@ -2,6 +2,7 @@ export const site = {
   brandName: 'Venduá',
   tagline: 'Vitrines com sistema por trás.',
   instagramUrl: 'https://www.instagram.com/vendua.digital/',
+  instagramDmUrl: 'https://ig.me/m/vendua.digital',
   emails: ['vinicius.junquira@vendua.com.br', 'jorge.andre@vendua.com.br'],
   publicDomain: '',
   publicCaseUrl: '',
