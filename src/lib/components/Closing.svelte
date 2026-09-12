@@ -1,3 +1,7 @@
+<script lang="ts">
+  import { site } from '$lib/content/site';
+</script>
+
 <section class="closing">
   <div class="container closing-inner">
     <p class="eyebrow">Em desenvolvimento · acesso antecipado</p>
@@ -6,7 +10,9 @@
       A Venduá ainda está sendo construída — a porta abre no lançamento, primeiro para quem está na
       lista. Diga o que você vende; cada pedido é lido por uma pessoa.
     </p>
-    <a class="button" href="/contato/">Pedir acesso <span aria-hidden="true">↗</span></a>
+    <a class="button" href={site.instagramDmUrl} target="_blank" rel="noreferrer"
+      >Pedir acesso <span aria-hidden="true">↗</span><span class="sr-only">(nova aba)</span></a
+    >
   </div>
   <div class="marquee" aria-hidden="true">
     <div class="marquee-track">

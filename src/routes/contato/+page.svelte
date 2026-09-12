@@ -48,7 +48,7 @@
     <div class="actions gate-actions">
       <a
         class="button"
-        href={site.instagramUrl}
+        href={site.instagramDmUrl}
         target="_blank"
         rel="noreferrer"
         onpointerenter={() => (gateOpen = true)}
