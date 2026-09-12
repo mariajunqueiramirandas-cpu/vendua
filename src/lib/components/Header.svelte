@@ -1,12 +1,54 @@
+<script lang="ts">
+  import { onMount } from 'svelte';
+
+  let dark = $state(false);
+
+  onMount(() => {
+    dark = document.documentElement.dataset.theme === 'dark';
+  });
+
+  const toggleTheme = () => {
+    dark = !dark;
+    const h = document.documentElement;
+    if (dark) h.dataset.theme = 'dark';
+    else delete h.dataset.theme;
+    try {
+      localStorage.setItem('vnd-theme', dark ? 'dark' : 'light');
+    } catch {}
+    document
+      .querySelector('meta[name="theme-color"]')
+      ?.setAttribute('content', dark ? '#0a100d' : '#f7f4ea');
+    window.dispatchEvent(new Event('vnd:theme'));
+  };
+</script>
+
 <a class="skip" href="#conteudo">Pular para o conteúdo</a>
 <div class="header-bar">
   <header class="header container">
     <a class="brand" href="/" aria-label="Venduá — início"
-      ><img src="/assets/brand/mark-lime.svg" width="36" height="36" alt="" />venduá<span
-        class="brand-dot">.</span
-      ></a
+      ><img
+        class="mark mark-light"
+        src="/assets/brand/mark-green.svg"
+        width="36"
+        height="36"
+        alt=""
+      /><img
+        class="mark mark-dark"
+        src="/assets/brand/mark-lime.svg"
+        width="36"
+        height="36"
+        alt=""
+      />venduá<span class="brand-dot">.</span></a
     >
     <nav id="navigation" aria-label="Principal">
+      <button
+        class="theme-toggle"
+        type="button"
+        onclick={toggleTheme}
+        aria-pressed={dark}
+        aria-label="Alternar entre tema claro e escuro"
+        ><span class="tt-label">{dark ? 'Claro' : 'Escuro'}</span></button
+      >
       <a class="button small" href="/contato/">Acesso <span aria-hidden="true">↗</span></a>
     </nav>
   </header>

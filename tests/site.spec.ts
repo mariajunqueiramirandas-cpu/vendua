@@ -49,6 +49,34 @@ test('a porta de entrada é o acesso pelo direct', async ({ page }) => {
   await page.getByRole('link', { name: 'Pedir acesso' }).first().click();
   await expect(page).toHaveURL(/\/contato\/$/);
 });
+test('tema claro por padrão, alternável e persistente', async ({ page }) => {
+  await page.emulateMedia({ reducedMotion: 'reduce' });
+  await page.goto('/');
+  const html = page.locator('html');
+  const body = page.locator('body');
+  await expect(html).not.toHaveAttribute('data-theme', 'dark');
+  await expect(body).toHaveCSS('background-color', 'rgb(247, 244, 234)');
+  const toggle = page.getByRole('button', { name: /tema/i });
+  await expect(toggle).toHaveAttribute('aria-pressed', 'false');
+  await toggle.click();
+  await expect(html).toHaveAttribute('data-theme', 'dark');
+  await expect(toggle).toHaveAttribute('aria-pressed', 'true');
+  await expect(body).toHaveCSS('background-color', 'rgb(10, 16, 13)');
+  await page.reload();
+  await ready(page);
+  await expect(html).toHaveAttribute('data-theme', 'dark');
+  await expect(toggle).toHaveAttribute('aria-pressed', 'true');
+  expect(
+    (
+      await new AxeBuilder({ page })
+        .withTags(['wcag2a', 'wcag2aa', 'wcag21aa', 'wcag22aa'])
+        .analyze()
+    ).violations,
+  ).toEqual([]);
+  await toggle.click();
+  await expect(html).not.toHaveAttribute('data-theme', 'dark');
+  await expect(body).toHaveCSS('background-color', 'rgb(247, 244, 234)');
+});
 test('conteúdo do teaser sem JavaScript', async ({ browser }) => {
   const context = await browser.newContext({
     javaScriptEnabled: false,

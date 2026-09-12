@@ -1,10 +1,20 @@
 :root {
-  --color-bg: #0a100d;
-  --color-surface: #101915;
-  --color-text: #f7f4ea;
-  --color-muted: #9dafa4;
-  --color-line: rgb(247 244 234 / 12%);
+  color-scheme: light;
+  --color-bg: #f7f4ea;
+  --color-surface: #efe9d8;
+  --color-text: #123c32;
+  --color-muted: #4f6a5e;
+  --color-line: rgb(18 60 50 / 16%);
   --color-accent: #d9f875;
+  --color-on-accent: #123c32;
+  --color-strong: #123c32;
+  --color-on-strong: #f7f4ea;
+  --color-accent-ink: #123c32;
+  --color-strong-hover: #1a4f43;
+  --glow-faint: rgb(217 248 117 / 14%);
+  --glow-strong: rgb(217 248 117 / 20%);
+  --glow-frame: rgb(217 248 117 / 12%);
+  --tx-frame-bg: #ece7d5;
   --font-sans: 'Space Grotesk Variable', 'Manrope', Arial, sans-serif;
   --font-serif: 'Instrument Serif', Georgia, serif;
   --font-mono: ui-monospace, 'Cascadia Mono', Consolas, monospace;
@@ -12,6 +22,23 @@
   --radius-media: 24px;
   --radius-pill: 999px;
   --motion-fast: 180ms;
+}
+html[data-theme='dark'] {
+  color-scheme: dark;
+  --color-bg: #0a100d;
+  --color-surface: #101915;
+  --color-text: #f7f4ea;
+  --color-muted: #9dafa4;
+  --color-line: rgb(247 244 234 / 12%);
+  --color-on-accent: #0a100d;
+  --color-strong: #d9f875;
+  --color-on-strong: #0a100d;
+  --color-accent-ink: #d9f875;
+  --color-strong-hover: #e7ff9c;
+  --glow-faint: rgb(217 248 117 / 6%);
+  --glow-strong: rgb(217 248 117 / 12%);
+  --glow-frame: rgb(217 248 117 / 7%);
+  --tx-frame-bg: #0c1410;
 }
 * {
   box-sizing: border-box;
@@ -93,7 +120,7 @@ h3 {
   font-weight: 400;
   text-transform: none;
   letter-spacing: 0;
-  color: var(--color-accent);
+  color: var(--color-accent-ink);
 }
 .stroke {
   font-style: normal;
@@ -151,10 +178,10 @@ section[id] {
   gap: 20px;
   min-height: 52px;
   padding: 12px 24px;
-  border: 1px solid var(--color-accent);
+  border: 1px solid var(--color-strong);
   border-radius: var(--radius-pill);
-  background: var(--color-accent);
-  color: var(--color-bg);
+  background: var(--color-strong);
+  color: var(--color-on-strong);
   font-weight: 600;
   font-size: 0.875rem;
   text-decoration: none;
@@ -201,12 +228,52 @@ section[id] {
 }
 .brand-dot {
   margin-inline-start: -9px;
-  color: var(--color-accent);
+  color: var(--color-accent-ink);
+}
+.brand .mark-dark {
+  display: none;
+}
+html[data-theme='dark'] .brand .mark-light {
+  display: none;
+}
+html[data-theme='dark'] .brand .mark-dark {
+  display: block;
 }
 .header nav {
   display: flex;
   align-items: center;
   gap: 30px;
+}
+.theme-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 44px;
+  padding: 6px 14px;
+  border: 1px solid var(--color-line);
+  border-radius: var(--radius-pill);
+  background: transparent;
+  color: var(--color-text);
+  font-family: var(--font-mono);
+  font-size: 0.68rem;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  transition:
+    border-color 200ms ease,
+    color 200ms ease;
+}
+.theme-toggle::before {
+  content: '';
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--color-accent-ink);
+}
+@media (hover: hover) {
+  .theme-toggle:hover {
+    border-color: var(--color-accent-ink);
+    color: var(--color-accent-ink);
+  }
 }
 .skip {
   position: absolute;
@@ -214,8 +281,8 @@ section[id] {
   inset-inline-start: 20px;
   transform: translateY(-150%);
   z-index: 70;
-  background: var(--color-accent);
-  color: var(--color-bg);
+  background: var(--color-strong);
+  color: var(--color-on-strong);
   padding: 12px;
 }
 .skip:focus {
@@ -248,13 +315,13 @@ section[id] {
   background:
     linear-gradient(
       90deg,
-      rgb(10 16 13 / 82%) 0%,
-      rgb(10 16 13 / 42%) 52%,
-      rgb(10 16 13 / 18%) 100%
+      color-mix(in srgb, var(--color-bg) 82%, transparent) 0%,
+      color-mix(in srgb, var(--color-bg) 42%, transparent) 52%,
+      color-mix(in srgb, var(--color-bg) 18%, transparent) 100%
     ),
     linear-gradient(
       180deg,
-      rgb(10 16 13 / 55%) 0%,
+      color-mix(in srgb, var(--color-bg) 55%, transparent) 0%,
       transparent 24%,
       transparent 58%,
       var(--color-bg) 100%
@@ -334,7 +401,7 @@ section[id] {
   content: '';
   width: 1px;
   height: 64px;
-  background: linear-gradient(var(--color-accent), transparent);
+  background: linear-gradient(var(--color-accent-ink), transparent);
   animation: cue 2.2s ease-in-out infinite;
 }
 @keyframes cue {
@@ -365,7 +432,7 @@ section[id] {
   display: inline-block;
   width: 8px;
   height: 8px;
-  background: var(--color-accent);
+  background: var(--color-accent-ink);
   border-radius: 50%;
   margin-inline-end: 10px;
   animation: pulse 2.4s ease-in-out infinite;
@@ -373,10 +440,10 @@ section[id] {
 @keyframes pulse {
   0%,
   100% {
-    box-shadow: 0 0 0 0 rgb(217 248 117 / 45%);
+    box-shadow: 0 0 0 0 color-mix(in srgb, var(--color-accent-ink) 45%, transparent);
   }
   50% {
-    box-shadow: 0 0 0 9px rgb(217 248 117 / 0%);
+    box-shadow: 0 0 0 9px transparent;
   }
 }
 .scroll-progress {
@@ -385,7 +452,7 @@ section[id] {
   left: 0;
   right: 0;
   height: 2px;
-  background: var(--color-accent);
+  background: var(--color-accent-ink);
   transform: scaleX(0);
   transform-origin: left;
   z-index: 30;
@@ -441,7 +508,7 @@ html.js:not(.seen) .intro-veil {
   color: var(--color-text);
 }
 .veil-word span {
-  color: var(--color-accent);
+  color: var(--color-accent-ink);
 }
 .veil-count {
   position: absolute;
@@ -463,7 +530,7 @@ html.js:not(.seen) .intro-veil {
     border-color 240ms ease;
 }
 .header-bar.scrolled {
-  background: rgb(10 16 13 / 88%);
+  background: color-mix(in srgb, var(--color-bg) 88%, transparent);
   -webkit-backdrop-filter: blur(12px);
   backdrop-filter: blur(12px);
   border-bottom-color: var(--color-line);
@@ -473,7 +540,7 @@ html.js:not(.seen) .intro-veil {
   align-items: center;
   min-height: 100vh;
   padding-block: 96px;
-  background: radial-gradient(720px 480px at 20% 40%, rgb(217 248 117 / 6%), transparent 70%);
+  background: radial-gradient(720px 480px at 20% 40%, var(--glow-faint), transparent 70%);
 }
 .manifesto-inner {
   width: min(1200px, calc(100% - 80px));
@@ -493,7 +560,7 @@ html.js:not(.seen) .intro-veil {
   letter-spacing: 0.08em;
 }
 .mword.accent {
-  color: var(--color-accent);
+  color: var(--color-accent-ink);
 }
 .transmissions {
   overflow: clip;
@@ -535,7 +602,7 @@ html.js:not(.seen) .intro-veil {
   line-height: 1;
   letter-spacing: -0.04em;
   color: transparent;
-  -webkit-text-stroke: 1px rgb(247 244 234 / 14%);
+  -webkit-text-stroke: 1px color-mix(in srgb, var(--color-text) 16%, transparent);
   user-select: none;
 }
 .tx-card {
@@ -559,7 +626,7 @@ html.js:not(.seen) .intro-veil {
   overflow: clip;
   aspect-ratio: 3 / 2;
   background:
-    radial-gradient(420px 240px at 70% 60%, rgb(217 248 117 / 7%), transparent 70%), #0c1410;
+    radial-gradient(420px 240px at 70% 60%, var(--glow-frame), transparent 70%), var(--tx-frame-bg);
 }
 .tx-gl {
   position: absolute;
@@ -579,13 +646,13 @@ html.js:not(.seen) .intro-veil {
   cursor: pointer;
 }
 .tx-open-hint {
-  color: var(--color-accent);
+  color: var(--color-accent-ink);
   opacity: 0.55;
   transition: opacity 200ms ease;
 }
 @media (hover: hover) {
   .tx-card:hover {
-    border-color: rgb(217 248 117 / 45%);
+    border-color: color-mix(in srgb, var(--color-accent-ink) 45%, transparent);
   }
   .tx-card:hover .tx-open-hint {
     opacity: 1;
@@ -605,7 +672,7 @@ html.js:not(.seen) .intro-veil {
   max-height: calc(100vh - 96px);
   padding: 0;
   border: 1px solid var(--color-line);
-  border-top-color: rgb(217 248 117 / 45%);
+  border-top-color: color-mix(in srgb, var(--color-accent-ink) 45%, transparent);
   background: var(--color-surface);
   color: var(--color-text);
   overflow-y: auto;
@@ -648,8 +715,8 @@ html.js:not(.seen) .intro-veil {
 }
 @media (hover: hover) {
   .tx-modal-close:hover {
-    border-color: var(--color-accent);
-    color: var(--color-accent);
+    border-color: var(--color-accent-ink);
+    color: var(--color-accent-ink);
   }
 }
 .tx-modal-title {
@@ -681,7 +748,7 @@ html.js:not(.seen) .intro-veil {
   font-size: 0.72rem;
   letter-spacing: 0.14em;
   text-transform: uppercase;
-  color: var(--color-accent);
+  color: var(--color-accent-ink);
 }
 .tx-specs dd {
   margin: 0;
@@ -705,7 +772,7 @@ html.js:not(.seen) .intro-veil {
   font-family: var(--font-mono);
   font-size: 0.78rem;
   letter-spacing: 0.12em;
-  color: var(--color-accent);
+  color: var(--color-accent-ink);
 }
 .tx-title {
   font-weight: 700;
@@ -769,7 +836,7 @@ html.js:not(.seen) .intro-veil {
   font-family: var(--font-mono);
   font-size: 0.85rem;
   letter-spacing: 0.12em;
-  color: var(--color-accent);
+  color: var(--color-accent-ink);
 }
 .ritual-row h3 {
   font-size: 1.6rem;
@@ -813,7 +880,7 @@ html.js:not(.seen) .intro-veil {
   font-weight: 400;
   font-size: 1.2rem;
   line-height: 1;
-  color: var(--color-accent);
+  color: var(--color-accent-ink);
   transition: transform 300ms ease;
 }
 .teaser-faq details[open] .faq-plus {
@@ -839,7 +906,7 @@ body::after {
 }
 ::selection {
   background: var(--color-accent);
-  color: var(--color-bg);
+  color: var(--color-on-accent);
 }
 .signals {
   padding-block: 64px 88px;
@@ -864,7 +931,7 @@ body::after {
   font-family: var(--font-mono);
   font-size: 0.78rem;
   letter-spacing: 0.12em;
-  color: var(--color-accent);
+  color: var(--color-accent-ink);
 }
 .signal-item h2 {
   font-size: 1.35rem;
@@ -880,7 +947,7 @@ body::after {
   position: relative;
   color: var(--color-text);
   border-top: 1px solid var(--color-line);
-  background: radial-gradient(720px 340px at 50% 100%, rgb(217 248 117 / 12%), transparent 72%);
+  background: radial-gradient(720px 340px at 50% 100%, var(--glow-strong), transparent 72%);
 }
 .marquee {
   overflow: clip;
@@ -930,7 +997,7 @@ body::after {
   color: var(--color-muted);
 }
 .closing .eyebrow {
-  color: var(--color-accent);
+  color: var(--color-accent-ink);
   margin-bottom: 28px;
 }
 .footer {
@@ -981,7 +1048,7 @@ body::after {
   overflow: clip;
   border-bottom: 1px solid var(--color-line);
   background:
-    radial-gradient(560px 82% at 50% 42%, rgb(217 248 117 / 6%), transparent 72%), var(--color-bg);
+    radial-gradient(560px 82% at 50% 42%, var(--glow-faint), transparent 72%), var(--color-bg);
 }
 .gate-gl {
   position: absolute;
@@ -1004,7 +1071,7 @@ body::after {
   padding-top: 96px;
 }
 .gate-eyebrow {
-  color: var(--color-accent);
+  color: var(--color-accent-ink);
   margin-bottom: 34px;
 }
 .gate-title {
@@ -1074,18 +1141,18 @@ body::after {
   border: 0;
 }
 :focus-visible {
-  outline: 3px solid var(--color-accent);
+  outline: 3px solid var(--color-accent-ink);
   outline-offset: 4px;
 }
 @media (hover: hover) {
   .button:hover {
-    background: #e7ff9c;
-    border-color: #e7ff9c;
+    background: var(--color-strong-hover);
+    border-color: var(--color-strong-hover);
   }
   .button.outline:hover {
-    background: rgb(217 248 117 / 8%);
-    border-color: var(--color-accent);
-    color: var(--color-accent);
+    background: color-mix(in srgb, var(--color-accent-ink) 8%, transparent);
+    border-color: var(--color-accent-ink);
+    color: var(--color-accent-ink);
   }
   .text-link:hover,
   .header nav > a:not(.button):hover {
@@ -1178,6 +1245,27 @@ body::after {
   }
   .brand {
     font-size: 2rem;
+  }
+  .header {
+    gap: 12px;
+  }
+  .brand .mark {
+    width: 30px;
+    height: 30px;
+  }
+  .header nav {
+    gap: 10px;
+  }
+  .header .button.small {
+    padding-inline: 16px;
+  }
+  .theme-toggle {
+    width: 36px;
+    padding-inline: 0;
+    justify-content: center;
+  }
+  .theme-toggle .tt-label {
+    display: none;
   }
   .hero h1 {
     font-size: clamp(2.3rem, 11.5vw, 3.4rem);

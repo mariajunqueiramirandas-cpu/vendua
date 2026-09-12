@@ -41,7 +41,7 @@ As páginas são pré-renderizadas em HTML via [adapter-static do SvelteKit](htt
 - `src/lib/content/site.ts`: configuração e conteúdo do teaser (sinais, manifesto, transmissões, ritual, perguntas).
 - `src/lib/components/`: header fixo, footer, encerramento, SEO e 404.
 - `src/routes/`: páginas públicas.
-- `src/lib/styles.css`: tema escuro com acento lima, seções e estados responsivos.
+- `src/lib/styles.css`: temas claro (padrão) e escuro via `data-theme` e tokens semânticos, seções e estados responsivos.
 - `static/assets/`: marca, cartão social e imagens geradas (`images/`).
 - `scripts/`: validação do conteúdo, pós-build e servidor de prévia local.
 - `tests/`: navegação, acessibilidade, ausência de JS, orçamento e links.

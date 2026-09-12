@@ -5,11 +5,16 @@
     <link rel="icon" href="/assets/brand/favicon.svg" type="image/svg+xml" />
     <link rel="apple-touch-icon" href="/assets/brand/apple-touch-icon.png" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <meta name="theme-color" content="#0a100d" />
+    <meta name="theme-color" content="#f7f4ea" />
     <script>
       try {
-        document.documentElement.className =
-          'js' + (sessionStorage.getItem('vnd-intro') ? ' seen' : '');
+        var h = document.documentElement;
+        h.className = 'js' + (sessionStorage.getItem('vnd-intro') ? ' seen' : '');
+        if (localStorage.getItem('vnd-theme') === 'dark') {
+          h.dataset.theme = 'dark';
+          var m = document.querySelector('meta[name="theme-color"]');
+          if (m) m.content = '#0a100d';
+        }
       } catch {}
     </script>
     %sveltekit.head%

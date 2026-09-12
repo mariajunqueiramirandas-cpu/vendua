@@ -129,7 +129,11 @@ export function mountShaderCanvas(options: {
     still();
     const ro = new ResizeObserver(still);
     ro.observe(cv);
-    return () => ro.disconnect();
+    window.addEventListener('vnd:theme', still);
+    return () => {
+      ro.disconnect();
+      window.removeEventListener('vnd:theme', still);
+    };
   }
 
   const io = new IntersectionObserver((entries) => {
