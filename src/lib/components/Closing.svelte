@@ -1,15 +1,19 @@
 <section class="closing">
   <div class="container closing-inner">
-    <div>
-      <p class="eyebrow">Vamos conectar as coisas?</p>
-      <h2>Como os pedidos chegam até você hoje?</h2>
-      <p>
-        Conte sua rotina. Vamos conversar sobre uma solução que faça sentido para o seu negócio.
-      </p>
-      <a class="button lime" href="/contato/"
-        >Começar a conversa <span aria-hidden="true">↗</span></a
-      >
+    <p class="eyebrow">Acesso limitado</p>
+    <h2>A porta é <em class="serif">o direct.</em></h2>
+    <p class="closing-text">
+      Cada pedido é lido por uma pessoa. Diga o que você vende — os primeiros entram primeiro.
+    </p>
+    <a class="button" href="/contato/">Pedir acesso <span aria-hidden="true">↗</span></a>
+  </div>
+  <div class="marquee" aria-hidden="true">
+    <div class="marquee-track">
+      {#each [0, 1] as half}<span
+          >Acesso limitado — Convites pelo direct — Acesso limitado — Convites pelo direct — Acesso
+          limitado — Convites pelo direct — Acesso limitado — Convites pelo direct — Acesso limitado
+          — Convites pelo direct —
+        </span>{/each}
     </div>
-    <img src="/assets/brand/mark-lime.svg" alt="" width="240" height="240" loading="lazy" />
   </div>
 </section>

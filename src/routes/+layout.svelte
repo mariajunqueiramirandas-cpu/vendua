@@ -1,4 +1,6 @@
 <script lang="ts">
+  import '@fontsource-variable/space-grotesk/wght.css';
+  import '@fontsource/instrument-serif/latin-400-italic.css';
   import '$lib/styles.css';
   import Header from '$lib/components/Header.svelte';
   import Footer from '$lib/components/Footer.svelte';

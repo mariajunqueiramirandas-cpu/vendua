@@ -1,6 +1,6 @@
 export const site = {
   brandName: 'Venduá',
-  tagline: 'Seu negócio, pronto para vender.',
+  tagline: 'Vitrines que se constroem sozinhas.',
   instagramUrl: 'https://www.instagram.com/vendua.digital/',
   publicDomain: '',
   publicCaseUrl: '',
@@ -8,48 +8,59 @@ export const site = {
   analyticsEnabled: false,
   contactMode: 'instagram',
 };
-export const solutions = [
+export const signals = [
+  ['Descrever.', 'Uma frase sobre o negócio basta.'],
+  ['Gerar.', 'A vitrine nasce pronta.'],
+  ['Estar no ar.', 'Sem obra, sem espera.'],
+];
+export const manifesto =
+  'O feito à mão não escala. O automático não tinha alma. O que vem a seguir não pede licença.';
+export const transmissions = [
   {
-    title: 'Loja online',
-    icon: 'store',
-    description:
-      'Seu catálogo em uma experiência feita para a sua marca. Produtos, escolhas e pedidos organizados em um site personalizado.',
+    id: 'T-01',
+    title: 'A vitrine',
+    text: 'A superfície que o cliente toca.',
+    detail:
+      'Uma frase vira uma loja. A frase descreve o negócio; o sistema decide o resto — estrutura, ritmo, peso. Nenhum template. Nenhum editor. Nenhuma peça solta.',
+    specs: [
+      ['Entrada', 'uma frase'],
+      ['Saída', 'vitrine no ar'],
+      ['Editor', 'não existe'],
+    ],
   },
   {
-    title: 'Atendimento conectado',
-    icon: 'chat',
-    description:
-      'Automações no WhatsApp para apoiar dúvidas e etapas do atendimento, conforme as necessidades e integrações do projeto.',
+    id: 'T-02',
+    title: 'A montagem',
+    text: 'O sistema por baixo, sem parafusos à vista.',
+    detail:
+      'Os módulos se encaixam onde ninguém olha. Ordem, hierarquia e espaçamento são decididos em silêncio — iguais todas as vezes, diferentes todas as vezes.',
+    specs: [
+      ['Módulos', 'sob demanda'],
+      ['Decisões', 'automáticas'],
+      ['Retrabalho', 'zero'],
+    ],
   },
   {
-    title: 'Gestão da rotina',
-    icon: 'order',
-    description:
-      'Recursos para acompanhar pedidos e disponibilidade, considerando como seu negócio trabalha.',
+    id: 'T-03',
+    title: 'A operação',
+    text: 'O que acontece depois que a porta abre.',
+    detail:
+      'Depois que a porta abre, o motor continua girando. Pedido, rotina, resposta — o que era trabalho vira corrente. A loja não dorme.',
+    specs: [
+      ['Turno', 'contínuo'],
+      ['Intervenção', 'mínima'],
+      ['Visibilidade', 'só para dentro'],
+    ],
   },
 ];
-export const process = [
-  ['Conversa', 'Você conta o que vende e como atende hoje.'],
-  ['Proposta', 'Definimos o escopo, o investimento e o prazo.'],
-  ['Criação', 'Desenvolvemos, configuramos e testamos a solução.'],
-  ['Lançamento', 'Colocamos o projeto em operação e alinhamos o acompanhamento contratado.'],
+export const ritual = [
+  ['Você pede.', 'Um direct basta. Diga o que vende.'],
+  ['A gente lê.', 'Cada pedido passa por uma pessoa.'],
+  ['A porta abre.', 'Para quem entra primeiro.'],
 ];
-export const faqs = [
-  [
-    'O site pode ter a identidade da minha marca?',
-    'Sim. O visual é personalizado para o seu negócio e faz parte do escopo de criação.',
-  ],
-  [
-    'Vou conseguir gerenciar produtos e pedidos?',
-    'Os recursos de gestão são definidos no projeto. Na demonstração, mostramos como funciona a rotina do lojista.',
-  ],
-  [
-    'Preciso contratar todas as funcionalidades?',
-    'Não. A proposta considera suas necessidades e a compatibilidade entre os recursos escolhidos.',
-  ],
-  [
-    'Quanto custa e quanto tempo leva?',
-    'Investimento e prazo dependem do escopo. A conversa inicial ajuda a definir uma proposta adequada ao projeto.',
-  ],
-  ['Posso ver funcionando?', 'Sim. Peça uma demonstração pelo direct da Venduá.'],
+export const teaserFaqs = [
+  ['Quando lança?', 'Quando estiver pronto. Quem está dentro sabe antes.'],
+  ['Quanto custa?', 'Ainda não é público. Os primeiros terão condições próprias.'],
+  ['Posso ver funcionando?', 'Quem entra, vê.'],
+  ['É para o meu tipo de negócio?', 'Se você vende algo, provavelmente.'],
 ];

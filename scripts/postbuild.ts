@@ -1,7 +1,7 @@
 import { copyFileSync, writeFileSync } from 'node:fs';
 import { site } from '../src/lib/content/site';
 copyFileSync('build/404/index.html', 'build/404.html');
-const routes = ['/', '/contato/', '/projetos/quero-pudim-gourmet/'];
+const routes = ['/', '/contato/'];
 if (site.publicDomain) {
   const domain = new URL(site.publicDomain);
   if (domain.protocol !== 'https:') throw new Error('O domínio público deve usar HTTPS.');
