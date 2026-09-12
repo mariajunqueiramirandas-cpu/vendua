@@ -298,7 +298,16 @@
     <div class="hero-inner container">
       <div class="hero-top">
         <p class="eyebrow"><span class="signal-dot"></span>Sinal 01 · Em breve</p>
-        <p class="hero-meta" aria-hidden="true">VND//GEN — 22°56'12.23"S 42°29'33.78"W</p>
+        <p class="hero-meta">
+          VND//GEN —
+          <a
+            class="hero-coords"
+            href="https://www.google.com/maps?q=-22.936731,-42.492717"
+            target="_blank"
+            rel="noopener noreferrer"
+            aria-label="Ver localização no Google Maps">22°56'12.23"S 42°29'33.78"W</a
+          >
+        </p>
       </div>
       <h1>
         <span class="line-mask"><span>A próxima loja</span></span>
