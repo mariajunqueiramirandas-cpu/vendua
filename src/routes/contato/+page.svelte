@@ -63,7 +63,7 @@
     <p class="fine gate-fine">O Instagram pode solicitar login.</p>
   </div>
   <div class="gate-meta container" aria-hidden="true">
-    <span>VND//GEN — Portal</span>
+    <span>VND//WORK — Portal</span>
     <span>Status: em desenvolvimento · Canal: direct · Leitura: humana</span>
   </div>
 </section>

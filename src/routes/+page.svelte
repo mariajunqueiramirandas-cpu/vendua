@@ -303,7 +303,7 @@
 
 <Seo
   title="Venduá — em desenvolvimento"
-  description="A próxima loja não será construída. Será gerada. A Venduá segue em desenvolvimento — o acesso antecipado é pelo direct."
+  description="A próxima loja não vem de prateleira. É projetada para o seu negócio. A Venduá segue em desenvolvimento — o acesso antecipado é pelo direct."
 />
 <div bind:this={root}>
   <div class="scroll-progress" aria-hidden="true"></div>
@@ -315,7 +315,7 @@
           <span class="signal-dot"></span>Sinal 01 · Em desenvolvimento · Lançamento em breve
         </p>
         <p class="hero-meta">
-          VND//GEN —
+          VND//WORK —
           <a
             class="hero-coords"
             href="https://www.google.com/maps/place/Par%C3%B3quia+Nossa+Senhora+de+Nazareth/@-22.9368365,-42.4931146,19.25z/data=!4m12!1m5!3m4!2zMjLCsDU2JzEyLjIiUyA0MsKwMjknMzMuOCJX!8m2!3d-22.936731!4d-42.492717!3m5!1s0x975f36efe0ca53:0x79108549f256b0db!8m2!3d-22.9368695!4d-42.4926159!16s%2Fg%2F11f5tfffbv"
@@ -327,8 +327,8 @@
       </div>
       <h1>
         <span class="line-mask"><span>A próxima loja</span></span>
-        <span class="line-mask"><span>não será <em class="stroke">construída.</em></span></span>
-        <span class="line-mask"><span class="serif">Será gerada.</span></span>
+        <span class="line-mask"><span>não vem de <em class="stroke">prateleira.</em></span></span>
+        <span class="line-mask"><span class="serif">É projetada para você.</span></span>
       </h1>
       <div class="hero-bottom">
         <p class="intro">
@@ -369,7 +369,7 @@
   <section class="transmissions" aria-labelledby="tx-title">
     <div class="tx-head container">
       <p class="eyebrow" id="tx-title">Interceptado · Fragmentos</p>
-      <h2>Sinais do que está<br />sendo montado.</h2>
+      <h2>Sinais do sistema<br />em desenvolvimento.</h2>
     </div>
     <div class="tx-stage">
       <div class="tx-track">
@@ -434,7 +434,7 @@
   >
     {#if activeTx}
       <div class="tx-modal-head">
-        <span>{activeTx.id} · Transmissão</span><span aria-hidden="true">VND//GEN</span>
+        <span>{activeTx.id} · Transmissão</span><span aria-hidden="true">VND//WORK</span>
         <button class="tx-modal-close" type="button" onclick={closeTx}
           >Fechar <span aria-hidden="true">✕</span></button
         >

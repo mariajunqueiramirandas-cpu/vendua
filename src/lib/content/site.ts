@@ -1,6 +1,6 @@
 export const site = {
   brandName: 'Venduá',
-  tagline: 'Vitrines que se constroem sozinhas.',
+  tagline: 'Vitrines com sistema por trás.',
   instagramUrl: 'https://www.instagram.com/vendua.digital/',
   emails: ['vinicius.junquira@vendua.com.br', 'jorge.andre@vendua.com.br'],
   publicDomain: '',
@@ -10,23 +10,23 @@ export const site = {
   contactMode: 'instagram',
 };
 export const signals = [
-  ['Descrever.', 'Uma frase sobre o negócio basta.'],
-  ['Gerar.', 'A vitrine nasce pronta.'],
-  ['Estar no ar.', 'Sem obra, sem espera.'],
+  ['Mapear.', 'Você conta o que vende e como trabalha.'],
+  ['Arquitetar.', 'A Venduá transforma sua operação em uma vitrine própria.'],
+  ['Publicar.', 'Um sistema pronto para vender.'],
 ];
 export const manifesto =
-  'O feito à mão não escala. O automático não tinha alma. O que vem a seguir não pede licença.';
+  'O feito à mão não escala. O automático não tinha alma. O próximo passo é tecnologia com direção.';
 export const transmissions = [
   {
     id: 'T-01',
     title: 'A vitrine',
     text: 'A superfície que o cliente toca.',
     detail:
-      'Uma frase vira uma loja. A frase descreve o negócio; o sistema decide o resto — estrutura, ritmo, peso. Nenhum template. Nenhum editor. Nenhuma peça solta.',
+      'Cada loja começa pela identidade e pela operação do negócio. A Venduá define arquitetura, ritmo e peso para criar uma experiência própria — sem template, sem editor, sem peça solta.',
     specs: [
-      ['Entrada', 'uma frase'],
-      ['Saída', 'vitrine no ar'],
-      ['Editor', 'não existe'],
+      ['Entrada', 'uma conversa'],
+      ['Entrega', 'vitrine no ar'],
+      ['Arquitetura', 'Venduá'],
     ],
   },
   {
