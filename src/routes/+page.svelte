@@ -342,7 +342,7 @@
     </div>
   </section>
   <section class="manifesto" aria-labelledby="manifesto-title">
-    <div class="manifesto-inner">
+    <div class="manifesto-inner container">
       <p class="eyebrow" id="manifesto-title">Manifesto</p>
       <p class="manifesto-text">{manifesto}</p>
       <p class="fine">Venduá · próximo capítulo</p>

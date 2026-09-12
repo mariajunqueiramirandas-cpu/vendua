@@ -1,47 +1,22 @@
 {
   "viewport": 390,
-  "payloadGzipBytes": 141018,
-  "javascriptGzipBytes": 86387,
+  "payloadGzipBytes": 141265,
+  "javascriptGzipBytes": 86384,
   "files": [
     {
       "url": "http://127.0.0.1:4173/",
-      "bytes": 3893,
+      "bytes": 3887,
       "script": false
     },
     {
-      "url": "http://127.0.0.1:4173/_app/immutable/entry/start.D6AVTa8N.js",
+      "url": "http://127.0.0.1:4173/_app/immutable/entry/start.CiRCenn0.js",
       "bytes": 89,
       "script": true
     },
     {
-      "url": "http://127.0.0.1:4173/_app/immutable/assets/0.Dw0fGvRR.css",
-      "bytes": 5990,
+      "url": "http://127.0.0.1:4173/_app/immutable/assets/0.MTnek0DB.css",
+      "bytes": 6246,
       "script": false
-    },
-    {
-      "url": "http://127.0.0.1:4173/_app/immutable/chunks/Cf-xrFGW.js",
-      "bytes": 10203,
-      "script": true
-    },
-    {
-      "url": "http://127.0.0.1:4173/_app/immutable/entry/app.CPA21aQV.js",
-      "bytes": 2032,
-      "script": true
-    },
-    {
-      "url": "http://127.0.0.1:4173/_app/immutable/chunks/xihTtKlq.js",
-      "bytes": 80,
-      "script": true
-    },
-    {
-      "url": "http://127.0.0.1:4173/_app/immutable/nodes/0.B_QcXw1l.js",
-      "bytes": 2203,
-      "script": true
-    },
-    {
-      "url": "http://127.0.0.1:4173/_app/immutable/chunks/BRrduxLE.js",
-      "bytes": 58,
-      "script": true
     },
     {
       "url": "http://127.0.0.1:4173/assets/brand/mark-green.svg",
@@ -54,8 +29,23 @@
       "script": false
     },
     {
-      "url": "http://127.0.0.1:4173/_app/immutable/chunks/LevYIGw-.js",
-      "bytes": 16850,
+      "url": "http://127.0.0.1:4173/_app/immutable/chunks/uVAFkELE.js",
+      "bytes": 10204,
+      "script": true
+    },
+    {
+      "url": "http://127.0.0.1:4173/_app/immutable/chunks/BRrduxLE.js",
+      "bytes": 58,
+      "script": true
+    },
+    {
+      "url": "http://127.0.0.1:4173/_app/immutable/entry/app.DPUp7Jrc.js",
+      "bytes": 2030,
+      "script": true
+    },
+    {
+      "url": "http://127.0.0.1:4173/_app/immutable/chunks/xihTtKlq.js",
+      "bytes": 80,
       "script": true
     },
     {
@@ -64,13 +54,8 @@
       "script": true
     },
     {
-      "url": "http://127.0.0.1:4173/_app/immutable/nodes/2.BJ0UWwcD.js",
-      "bytes": 23875,
-      "script": true
-    },
-    {
-      "url": "http://127.0.0.1:4173/_app/immutable/chunks/CvDoa17S.js",
-      "bytes": 27051,
+      "url": "http://127.0.0.1:4173/_app/immutable/nodes/0.CEYDomkf.js",
+      "bytes": 2203,
       "script": true
     },
     {
@@ -79,12 +64,27 @@
       "script": true
     },
     {
+      "url": "http://127.0.0.1:4173/_app/immutable/nodes/2.B-ruu3sn.js",
+      "bytes": 23873,
+      "script": true
+    },
+    {
       "url": "http://127.0.0.1:4173/_app/immutable/chunks/_HnXn_q3.js",
       "bytes": 1330,
       "script": true
     },
     {
-      "url": "http://127.0.0.1:4173/_app/immutable/nodes/1.B-can9vg.js",
+      "url": "http://127.0.0.1:4173/_app/immutable/chunks/LevYIGw-.js",
+      "bytes": 16850,
+      "script": true
+    },
+    {
+      "url": "http://127.0.0.1:4173/_app/immutable/chunks/CvDoa17S.js",
+      "bytes": 27051,
+      "script": true
+    },
+    {
+      "url": "http://127.0.0.1:4173/_app/immutable/nodes/1.BPeBEPTh.js",
       "bytes": 468,
       "script": true
     },
