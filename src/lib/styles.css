@@ -212,8 +212,9 @@ section[id] {
   display: flex;
   align-items: center;
   justify-content: space-between;
+  flex-wrap: wrap;
   min-height: 96px;
-  gap: 24px;
+  gap: 8px 24px;
 }
 .brand {
   display: inline-flex;
@@ -243,7 +244,9 @@ html[data-theme='dark'] .brand .mark-dark {
 .header nav {
   display: flex;
   align-items: center;
-  gap: 30px;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: 8px 30px;
 }
 .theme-toggle {
   display: inline-flex;
