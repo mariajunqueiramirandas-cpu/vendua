@@ -1305,8 +1305,14 @@ body::after {
   .hero h1 .stroke {
     -webkit-text-stroke-width: 1px;
   }
+  .hero-top {
+    flex-wrap: wrap;
+    row-gap: 10px;
+  }
   .hero-meta {
-    display: none;
+    margin-inline-start: auto;
+    font-size: 0.64rem;
+    letter-spacing: 0.1em;
   }
   .hero .eyebrow {
     font-size: 0.8125rem;
