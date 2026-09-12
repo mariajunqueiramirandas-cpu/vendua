@@ -137,9 +137,9 @@
             scrollTrigger: {
               trigger: '.manifesto',
               start: 'top top',
-              end: '+=160%',
+              end: '+=105%',
               pin: true,
-              scrub: 0.5,
+              scrub: 0.4,
               anticipatePin: 1,
             },
           })
@@ -154,7 +154,7 @@
           scrollTrigger: {
             trigger: '.tx-stage',
             start: 'top top',
-            end: () => `+=${distance() + innerHeight * 0.55}`,
+            end: () => `+=${distance() + innerHeight * 0.38}`,
             pin: true,
             scrub: 0.5,
             anticipatePin: 1,
