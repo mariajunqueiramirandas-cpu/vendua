@@ -814,11 +814,7 @@ html.js:not(.seen) .intro-veil {
     margin-top: -34vh;
   }
 }
-@media (max-width: 960px) and (prefers-reduced-motion: no-preference) {
-  .transmissions {
-    margin-top: -18vh;
-  }
-}
+
 .ritual-head {
   margin-bottom: 56px;
 }
@@ -1192,7 +1188,8 @@ body::after {
     gap: 32px;
   }
   .manifesto {
-    min-height: 88vh;
+    min-height: 0;
+    padding-block: 72px;
   }
   .tx-stage {
     height: auto;
@@ -1294,8 +1291,7 @@ body::after {
     padding-block: 48px 56px;
   }
   .manifesto {
-    padding-block: 64px;
-    min-height: 80vh;
+    padding-block: 56px 64px;
   }
   .manifesto-text {
     font-size: clamp(1.9rem, 8.4vw, 2.6rem);
