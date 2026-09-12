@@ -298,7 +298,7 @@
     <div class="hero-inner container">
       <div class="hero-top">
         <p class="eyebrow"><span class="signal-dot"></span>Sinal 01 · Em breve</p>
-        <p class="hero-meta" aria-hidden="true">VND//GEN — 23.55°S 46.63°W</p>
+        <p class="hero-meta" aria-hidden="true">VND//GEN — 22°56'12.23"S 42°29'33.78"W</p>
       </div>
       <h1>
         <span class="line-mask"><span>A próxima loja</span></span>
