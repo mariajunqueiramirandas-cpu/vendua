@@ -75,12 +75,6 @@
         ease: 'none',
         scrollTrigger: { trigger: root, start: 'top top', end: 'bottom bottom', scrub: 0.3 },
       });
-      ScrollTrigger.create({
-        start: 80,
-        end: 'max',
-        toggleClass: { targets: '.header-bar', className: 'scrolled' },
-      });
-
       const veil = document.querySelector<HTMLElement>('.intro-veil');
       const introDelay = veil && getComputedStyle(veil).display !== 'none' ? 1.5 : 0;
 
