@@ -446,6 +446,9 @@ html[data-theme='dark'] .brand .mark-dark {
   font-size: 0.75rem;
   letter-spacing: 0.08em;
 }
+.hero-cta .fine span + span::before {
+  content: '\00a0\00b7\0020';
+}
 .scroll-cue {
   position: absolute;
   z-index: 1;
@@ -1392,7 +1395,9 @@ body::after {
   }
   .hero-meta {
     margin-inline-start: auto;
-    letter-spacing: 0.1em;
+    font-size: 0.68rem;
+    letter-spacing: 0.05em;
+    white-space: nowrap;
   }
   .hero .eyebrow {
     font-size: 0.8125rem;
@@ -1406,6 +1411,12 @@ body::after {
   }
   .hero-cta .button {
     width: 100%;
+  }
+  .hero-cta .fine span {
+    display: block;
+  }
+  .hero-cta .fine span + span::before {
+    content: none;
   }
   .signals {
     padding-block: 48px 56px;

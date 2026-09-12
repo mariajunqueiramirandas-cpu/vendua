@@ -337,7 +337,11 @@
         </p>
         <div class="hero-cta">
           <a class="button" href="/contato/">Pedir acesso <span aria-hidden="true">↗</span></a>
-          <p class="fine">Lista do lançamento · convites apenas pelo direct · @vendua.digital</p>
+          <p class="fine">
+            <span>Lista do lançamento</span><span>convites apenas pelo direct</span><span
+              >@vendua.digital</span
+            >
+          </p>
         </div>
       </div>
     </div>
