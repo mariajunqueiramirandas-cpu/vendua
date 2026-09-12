@@ -23,7 +23,9 @@
           r="4.25"
         /><circle cx="17.4" cy="6.6" r="1.3" fill="currentColor" stroke="none" /></svg
       >Instagram · @vendua.digital ↗</a
-    ><a href="/contato/">Acesso</a><a href="/privacidade/">Privacidade</a>
+    >{#each site.emails as email}<a href="mailto:{email}">{email}</a>{/each}<a href="/contato/"
+      >Acesso</a
+    ><a href="/privacidade/">Privacidade</a>
   </div>
   <p class="fine">Venduá — vitrines que se constroem sozinhas.</p>
 </footer>

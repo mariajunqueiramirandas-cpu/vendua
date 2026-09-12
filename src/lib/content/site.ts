@@ -2,6 +2,7 @@ export const site = {
   brandName: 'Venduá',
   tagline: 'Vitrines que se constroem sozinhas.',
   instagramUrl: 'https://www.instagram.com/vendua.digital/',
+  emails: ['vinicius.junquira@vendua.com.br', 'jorge.andre@vendua.com.br'],
   publicDomain: '',
   publicCaseUrl: '',
   whatsappNumber: '',
