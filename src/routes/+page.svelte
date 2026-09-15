@@ -303,7 +303,7 @@
 
 <Seo
   title="Venduá — em desenvolvimento"
-  description="A próxima loja não vem de prateleira. É projetada para o seu negócio. A Venduá segue em desenvolvimento — o acesso antecipado é pelo direct."
+  description="A próxima loja não vem de prateleira — é desenhada para o seu negócio. A Venduá segue em desenvolvimento; o acesso antecipado é pelo direct."
 />
 <div bind:this={root}>
   <div class="scroll-progress" aria-hidden="true"></div>
@@ -332,8 +332,7 @@
       </h1>
       <div class="hero-bottom">
         <p class="intro">
-          A Venduá está trocando o feito à mão por algo que ainda não tem nome público — e que segue
-          em desenvolvimento. O lançamento vem depois; os detalhes ficam com quem entrar primeiro.
+          A Venduá segue em desenvolvimento — os detalhes ficam com quem entra primeiro.
         </p>
         <div class="hero-cta">
           <a class="button" href={site.instagramDmUrl} target="_blank" rel="noreferrer"
@@ -372,13 +371,13 @@
   <section class="transmissions" aria-labelledby="tx-title">
     <div class="tx-head container">
       <p class="eyebrow" id="tx-title">Interceptado · Fragmentos</p>
-      <h2>Sinais do sistema<br />em desenvolvimento.</h2>
+      <h2>O sistema, em<br />três peças.</h2>
     </div>
     <div class="tx-stage">
       <div class="tx-track">
         <article class="tx-panel tx-intro">
           <p class="eyebrow">Três fragmentos</p>
-          <h3>A peça inteira<br />só existe para<br />quem entra.</h3>
+          <h3>A peça inteira<br />só abre para<br />quem entra.</h3>
         </article>
         {#each transmissions as t, i}<figure class="tx-panel">
             <span class="tx-ghost" aria-hidden="true">0{i + 1}</span>

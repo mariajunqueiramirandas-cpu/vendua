@@ -41,9 +41,8 @@
       <span class="line-mask"><span>Só uma <em class="serif">porta.</em></span></span>
     </h1>
     <p class="intro gate-intro">
-      A Venduá ainda está em desenvolvimento — quem entra agora garante lugar na lista do
-      lançamento. Peça acesso pelo direct e apresente seu negócio na primeira mensagem. Cada pedido
-      é lido por uma pessoa.
+      Quem entra agora garante lugar na lista do lançamento. Peça acesso pelo direct e diga o que
+      vende já na primeira mensagem — cada pedido é lido por uma pessoa.
     </p>
     <div class="actions gate-actions">
       <a
