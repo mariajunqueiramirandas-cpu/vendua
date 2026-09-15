@@ -332,8 +332,7 @@
       </h1>
       <div class="hero-bottom">
         <p class="intro">
-          A Venduá está trocando a loja feita à mão por algo que ainda não tem nome público. Segue
-          em desenvolvimento — e os detalhes só saem para quem entra primeiro.
+          A Venduá segue em desenvolvimento — os detalhes ficam com quem entra primeiro.
         </p>
         <div class="hero-cta">
           <a class="button" href={site.instagramDmUrl} target="_blank" rel="noreferrer"
@@ -372,7 +371,7 @@
   <section class="transmissions" aria-labelledby="tx-title">
     <div class="tx-head container">
       <p class="eyebrow" id="tx-title">Interceptado · Fragmentos</p>
-      <h2>O sistema, em três<br />peças soltas.</h2>
+      <h2>O sistema, em<br />três peças.</h2>
     </div>
     <div class="tx-stage">
       <div class="tx-track">
