@@ -145,20 +145,31 @@
           )
           .join(' ');
         const mwords = root.querySelectorAll('.mword');
-        gsap.set(mwords, { opacity: 0.16 });
-        gsap
-          .timeline({
-            scrollTrigger: {
-              trigger: '.manifesto',
-              start: 'top top',
-              end: '+=105%',
-              pin: true,
-              scrub: 0.4,
-              anticipatePin: 1,
-            },
-          })
-          .to(mwords, { opacity: 1, stagger: 0.05, ease: 'none' })
-          .from('.manifesto .fine', { opacity: 0, y: 16, ease: 'none' }, '>-0.15');
+        if (desktop) {
+          gsap.set(mwords, { opacity: 0.16 });
+          gsap
+            .timeline({
+              scrollTrigger: {
+                trigger: '.manifesto',
+                start: 'top top',
+                end: '+=105%',
+                pin: true,
+                scrub: 0.4,
+                anticipatePin: 1,
+              },
+            })
+            .to(mwords, { opacity: 1, stagger: 0.05, ease: 'none' })
+            .from('.manifesto .fine', { opacity: 0, y: 16, ease: 'none' }, '>-0.15');
+        } else {
+          gsap.from(mwords, {
+            opacity: 0,
+            y: 14,
+            stagger: 0.04,
+            duration: 0.5,
+            ease: 'power2.out',
+            scrollTrigger: { trigger: '.manifesto', start: 'top 75%' },
+          });
+        }
       }
 
       const track = root.querySelector<HTMLElement>('.tx-track');
@@ -312,7 +323,7 @@
     <div class="hero-inner container">
       <div class="hero-top">
         <p class="eyebrow">
-          <span class="signal-dot"></span>Sinal 01 · Em desenvolvimento · Lançamento em breve
+          <span class="signal-dot"></span>Sinal 01 · Lançamento em breve
         </p>
         <p class="hero-meta">
           VND//WORK —
