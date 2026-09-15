@@ -11,9 +11,9 @@ export const site = {
   contactMode: 'instagram',
 };
 export const signals = [
-  ['Mapear.', 'Você conta o que vende e como trabalha.'],
-  ['Arquitetar.', 'A Venduá transforma sua operação em uma vitrine própria.'],
-  ['Publicar.', 'Um sistema pronto para vender.'],
+  ['Mapear.', 'Uma conversa curta: o que você vende, para quem, como entrega.'],
+  ['Arquitetar.', 'A sua operação vira uma vitrine desenhada para ela — não para um modelo.'],
+  ['Publicar.', 'A loja entra no ar pronta para vender, não para configurar.'],
 ];
 export const manifesto =
   'O feito à mão não escala. O automático não tinha alma. O próximo passo é tecnologia com direção.';
@@ -23,7 +23,7 @@ export const transmissions = [
     title: 'A vitrine',
     text: 'A superfície que o cliente toca.',
     detail:
-      'Cada loja começa pela identidade e pela operação do negócio. A Venduá define arquitetura, ritmo e peso para criar uma experiência própria — sem template, sem editor, sem peça solta.',
+      'Cada loja começa pelo que o negócio já é — o produto, o jeito de vender, o cliente. Em cima disso, a Venduá decide estrutura, ritmo e peso: uma vitrine com cara própria, sem template, sem editor, sem peça solta.',
     specs: [
       ['Entrada', 'uma conversa'],
       ['Entrega', 'vitrine no ar'],
@@ -35,7 +35,7 @@ export const transmissions = [
     title: 'A montagem',
     text: 'O sistema por baixo, sem parafusos à vista.',
     detail:
-      'Os módulos se encaixam onde ninguém olha. Ordem, hierarquia e espaçamento são decididos em silêncio — iguais todas as vezes, diferentes todas as vezes.',
+      'Catálogo, pedido, entrega — os módulos se encaixam onde ninguém olha. Ordem e espaçamento são decididos em silêncio: iguais na engenharia, diferentes no resultado.',
     specs: [
       ['Módulos', 'sob demanda'],
       ['Decisões', 'automáticas'],
@@ -47,7 +47,7 @@ export const transmissions = [
     title: 'A operação',
     text: 'O que acontece depois que a porta abre.',
     detail:
-      'Depois que a porta abre, o motor continua girando. Pedido, rotina, resposta — o que era trabalho vira corrente. A loja não dorme.',
+      'Pedido entra, rotina gira, resposta sai — o que era trabalho vira corrente. A loja não dorme; você não precisa ficar acordado com ela.',
     specs: [
       ['Turno', 'contínuo'],
       ['Intervenção', 'mínima'],
@@ -57,12 +57,18 @@ export const transmissions = [
 ];
 export const ritual = [
   ['Você pede.', 'Um direct basta. Diga o que vende.'],
-  ['A gente lê.', 'Cada pedido passa por uma pessoa.'],
+  ['A gente lê.', 'Nenhum pedido cai em fila de robô — uma pessoa lê cada um.'],
   ['A porta abre.', 'No lançamento — primeiro para quem já está dentro.'],
 ];
 export const teaserFaqs = [
-  ['Quando lança?', 'Ainda em desenvolvimento. A data sai primeiro para quem está dentro.'],
-  ['Quanto custa?', 'Ainda não é público. Os primeiros terão condições próprias.'],
-  ['Posso ver funcionando?', 'Ainda não está no ar. Quem entra, vê antes do lançamento.'],
-  ['É para o meu tipo de negócio?', 'Se você vende algo, provavelmente.'],
+  [
+    'Quando lança?',
+    'Quando estiver pronta — não antes. A data chega primeiro a quem está na lista.',
+  ],
+  ['Quanto custa?', 'Fechado até o lançamento. Os primeiros terão condições que não se repetem.'],
+  ['Posso ver funcionando?', 'Ainda não está no ar. Quem está na lista vê antes de todo mundo.'],
+  [
+    'É para o meu tipo de negócio?',
+    'Se você vende algo e quer uma vitrine à altura, provavelmente.',
+  ],
 ];

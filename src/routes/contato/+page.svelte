@@ -42,8 +42,8 @@
     </h1>
     <p class="intro gate-intro">
       A Venduá ainda está em desenvolvimento — quem entra agora garante lugar na lista do
-      lançamento. Peça acesso pelo direct e apresente seu negócio na primeira mensagem. Cada pedido
-      é lido por uma pessoa.
+      lançamento. Peça acesso pelo direct e já diga o que você vende na primeira mensagem: é ela que
+      abre a porta. Uma pessoa lê cada pedido.
     </p>
     <div class="actions gate-actions">
       <a

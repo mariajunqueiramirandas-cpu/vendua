@@ -4,7 +4,7 @@
 </script>
 
 {#if page.status === 404}<NotFound />{:else}<section class="container error-page">
-    <h1>Não foi possível abrir esta página.</h1>
-    <p>Tente novamente ou volte ao início.</p>
+    <h1>Algo falhou deste lado.</h1>
+    <p>Tente de novo — se continuar, volte ao início e entre pelo direct.</p>
     <a href="/" class="button">Voltar ao início</a>
   </section>{/if}
