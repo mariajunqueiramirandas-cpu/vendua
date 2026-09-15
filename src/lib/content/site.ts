@@ -23,7 +23,7 @@ export const transmissions = [
     title: 'A vitrine',
     text: 'A superfície que o cliente toca.',
     detail:
-      'Sua identidade e sua operação, desenhadas como vitrine própria — sem template, sem editor, sem peça solta.',
+      'Sua identidade e sua operação, desenhadas como vitrine própria. Sem template, sem editor, sem peça solta.',
     specs: [
       ['Entrada', 'uma conversa'],
       ['Entrega', 'vitrine no ar'],
@@ -35,7 +35,7 @@ export const transmissions = [
     title: 'A montagem',
     text: 'O sistema por baixo, sem parafusos à vista.',
     detail:
-      'Catálogo, pedido, entrega — encaixados onde ninguém olha. Iguais na engenharia, diferentes no resultado.',
+      'Catálogo, pedido, entrega: encaixados onde ninguém olha. Iguais na engenharia, diferentes no resultado.',
     specs: [
       ['Módulos', 'sob demanda'],
       ['Decisões', 'automáticas'],
@@ -46,7 +46,7 @@ export const transmissions = [
     id: 'T-03',
     title: 'A operação',
     text: 'O que acontece depois que a porta abre.',
-    detail: 'Pedido entra, resposta sai — o que era trabalho vira corrente. A loja não dorme.',
+    detail: 'Pedido entra, resposta sai. O que era trabalho vira corrente. A loja não dorme.',
     specs: [
       ['Turno', 'contínuo'],
       ['Intervenção', 'mínima'],

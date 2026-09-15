@@ -27,7 +27,7 @@
 
 <Seo
   title="Acesso antecipado | Venduá"
-  description="A Venduá está em desenvolvimento. O acesso antecipado é por convite — o único canal é o direct."
+  description="A Venduá está em desenvolvimento. O acesso antecipado é por convite; o único canal é o direct."
   path="/contato/"
 />
 <section class="gate-stage" aria-labelledby="gate-title">
@@ -42,7 +42,7 @@
     </h1>
     <p class="intro gate-intro">
       Quem entra agora garante lugar na lista do lançamento. Peça acesso pelo direct e diga o que
-      vende já na primeira mensagem — cada pedido é lido por uma pessoa.
+      vende já na primeira mensagem. Cada pedido é lido por uma pessoa.
     </p>
     <div class="actions gate-actions">
       <a
@@ -62,7 +62,7 @@
     <p class="fine gate-fine">O Instagram pode solicitar login.</p>
   </div>
   <div class="gate-meta container" aria-hidden="true">
-    <span>VND//WORK — Portal</span>
+    <span>VND//WORK · Portal</span>
     <span>Status: em desenvolvimento · Canal: direct · Leitura: humana</span>
   </div>
 </section>

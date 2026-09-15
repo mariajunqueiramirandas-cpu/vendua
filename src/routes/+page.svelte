@@ -313,8 +313,8 @@
 </script>
 
 <Seo
-  title="Venduá — em desenvolvimento"
-  description="A próxima loja não vem de prateleira — é desenhada para o seu negócio. A Venduá segue em desenvolvimento; o acesso antecipado é pelo direct."
+  title="Venduá · em desenvolvimento"
+  description="A próxima loja não vem de prateleira. É desenhada para o seu negócio. A Venduá segue em desenvolvimento; o acesso antecipado é pelo direct."
 />
 <div bind:this={root}>
   <div class="scroll-progress" aria-hidden="true"></div>
@@ -326,7 +326,7 @@
           <span class="signal-dot"></span>Sinal 01 · Lançamento em breve
         </p>
         <p class="hero-meta">
-          VND//WORK —
+          VND//WORK
           <a
             class="hero-coords"
             href="https://www.google.com/maps/place/Par%C3%B3quia+Nossa+Senhora+de+Nazareth/@-22.9368365,-42.4931146,19.25z/data=!4m12!1m5!3m4!2zMjLCsDU2JzEyLjIiUyA0MsKwMjknMzMuOCJX!8m2!3d-22.936731!4d-42.492717!3m5!1s0x975f36efe0ca53:0x79108549f256b0db!8m2!3d-22.9368695!4d-42.4926159!16s%2Fg%2F11f5tfffbv"
@@ -343,7 +343,7 @@
       </h1>
       <div class="hero-bottom">
         <p class="intro">
-          A Venduá segue em desenvolvimento — os detalhes ficam com quem entra primeiro.
+          A Venduá segue em desenvolvimento. Os detalhes ficam com quem entra primeiro.
         </p>
         <div class="hero-cta">
           <a class="button" href={site.instagramDmUrl} target="_blank" rel="noreferrer"
@@ -401,7 +401,7 @@
                 class="tx-hit"
                 type="button"
                 onclick={() => openTx(i)}
-                aria-label={`${t.title} — como funciona`}><span class="sr-only">Abrir</span></button
+                aria-label={`${t.title} · como funciona`}><span class="sr-only">Abrir</span></button
               >
             </div>
             <figcaption>

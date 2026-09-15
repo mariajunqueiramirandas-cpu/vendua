@@ -10,9 +10,7 @@
 
   onMount(() => {
     const onScroll = () => {
-      document
-        .querySelector('.header-bar')
-        ?.classList.toggle('scrolled', scrollY > 80);
+      document.querySelector('.header-bar')?.classList.toggle('scrolled', scrollY > 80);
     };
     onScroll();
     window.addEventListener('scroll', onScroll, { passive: true });

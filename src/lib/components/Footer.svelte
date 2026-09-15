@@ -27,5 +27,5 @@
       >Acesso</a
     ><a href="/privacidade/">Privacidade</a>
   </div>
-  <p class="fine">Venduá — em desenvolvimento · vitrines com sistema por trás.</p>
+  <p class="fine">Venduá · em desenvolvimento · vitrines com sistema por trás.</p>
 </footer>

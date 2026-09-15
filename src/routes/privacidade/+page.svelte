@@ -13,13 +13,13 @@
   <header class="page-opening">
     <p class="eyebrow">Informações desta versão</p>
     <h1>Privacidade.</h1>
-    <p class="intro">Nada aqui sai do seu navegador — porque nada é pedido.</p>
+    <p class="intro">Nada aqui sai do seu navegador, porque nada é pedido.</p>
   </header>
   <h2>Sem coleta</h2>
   <p>
     Esta versão não tem formulários, cadastro, analytics ou pixels de publicidade. O site não usa
     cookies; o armazenamento local do navegador guarda apenas a preferência de tema (claro ou
-    escuro) e a marcação de introdução já vista — nenhum dado sai do dispositivo.
+    escuro) e a marcação de introdução já vista; nenhum dado sai do dispositivo.
   </p>
   <h2>O contato é no Instagram</h2>
   <p>

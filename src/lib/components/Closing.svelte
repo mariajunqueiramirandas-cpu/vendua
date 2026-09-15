@@ -14,9 +14,9 @@
   <div class="marquee" aria-hidden="true">
     <div class="marquee-track">
       {#each [0, 1] as half}<span
-          >Em desenvolvimento — Lançamento em breve — Convites pelo direct — Em desenvolvimento —
-          Lançamento em breve — Convites pelo direct — Em desenvolvimento — Lançamento em breve —
-          Convites pelo direct —
+          >Em desenvolvimento · Lançamento em breve · Convites pelo direct · Em desenvolvimento ·
+          Lançamento em breve · Convites pelo direct · Em desenvolvimento · Lançamento em breve ·
+          Convites pelo direct ·
         </span>{/each}
     </div>
   </div>
