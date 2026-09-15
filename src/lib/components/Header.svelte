@@ -32,7 +32,7 @@
 <a class="skip" href="#conteudo">Pular para o conteúdo</a>
 <div class="header-bar">
   <header class="header container">
-    <a class="brand" href="/" aria-label="Venduá — início"
+    <a class="brand" href="/" aria-label="Venduá · início"
       ><img
         class="mark mark-light"
         src="/assets/brand/mark-green.svg"

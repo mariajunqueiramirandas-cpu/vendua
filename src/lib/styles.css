@@ -1319,6 +1319,9 @@ body::after {
   .tx-intro {
     width: 100%;
   }
+  .tx-intro {
+    display: none;
+  }
   .tx-panel:nth-of-type(odd) {
     transform: none;
   }

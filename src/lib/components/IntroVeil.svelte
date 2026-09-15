@@ -39,7 +39,7 @@
           duration: 1.0,
           ease: 'power2.inOut',
           onUpdate: () => {
-            countEl.textContent = 'SINAL — ' + String(Math.round(n.v)).padStart(3, '0');
+            countEl.textContent = 'SINAL · ' + String(Math.round(n.v)).padStart(3, '0');
           },
         },
         0.3,
@@ -60,5 +60,5 @@
   <div class="veil-half veil-right"></div>
   <div class="veil-slit"></div>
   <p class="veil-word">venduá<span aria-hidden="true">.</span></p>
-  <p class="veil-count">SINAL — 000</p>
+  <p class="veil-count">SINAL · 000</p>
 </div>
