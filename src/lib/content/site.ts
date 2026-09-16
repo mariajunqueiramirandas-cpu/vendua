@@ -29,41 +29,41 @@ export const manifesto =
 export const transmissions = [
   {
     id: 'S-01',
-    title: 'Renderização & edge',
-    text: 'A superfície: SSR, ilhas de interação e shaders no cliente.',
+    title: 'Ingestão do negócio',
+    text: 'A operação entra como dado bruto e sai como modelo de domínio.',
     detail:
-      'Front em SvelteKit com SSR e hidratação seletiva: o que é estático chega pronto do edge, o que é interativo hidrata por ilha. Visual em WebGL2 com shaders GLSL compilados em runtime e fallback quando o contexto falha. Rotas com code splitting, fontes variáveis auto-hospedadas e first paint abaixo de um segundo em 4G.',
+      'O cliente descreve o que vende — produtos, cardápio, variações, preços, horários, regras de pedido — e o pipeline estrutura isso num modelo de domínio tipado. Categorias, modificadores, disponibilidade e restrições viram entidades e invariantes, não campos de um formulário. É essa modelagem que decide o que a vitrine pode fazer.',
     specs: [
-      ['Framework', 'SvelteKit · SSR'],
-      ['Gráficos', 'WebGL2 + GLSL'],
-      ['Hydration', 'por ilha'],
+      ['Entrada', 'descrição livre da operação'],
+      ['Saída', 'modelo de domínio tipado'],
+      ['Regras', 'invariantes no domínio'],
       ['Status', 'em build'],
     ],
   },
   {
     id: 'S-02',
-    title: 'Núcleo de operação',
-    text: 'Domínio como código: catálogo, pedido e entrega como módulos.',
+    title: 'Geração da vitrine',
+    text: 'Cada loja é gerada do zero — não é tema aplicado sobre template.',
     detail:
-      'O domínio é modelado em módulos independentes — catálogo, pedido, entrega — comunicando por eventos, com o servidor como fonte autoritativa de estado. Cada loja compõe só os módulos de que precisa; a mesma engenharia gera resultados diferentes. Regras de negócio vivem no domínio, não espalhadas em componentes.',
+      'A partir do modelo, o construtor gera a vitrine inteira: layout, fluxo de pedido, identidade, conteúdo. Não existe um template sendo recolorido — cada negócio recebe um build próprio, composto pelo sistema. Um restaurante e uma ótica saem com estruturas fundamentalmente diferentes, porque o domínio é diferente. É isso que nenhum builder de prateleira faz.',
     specs: [
-      ['Modelo', 'eventos + servidor autoritativo'],
-      ['Módulos', 'catálogo · pedido · entrega'],
-      ['Composição', 'por operação'],
-      ['Status', 'especificação ativa'],
+      ['Geração', 'build único por negócio'],
+      ['Template', 'nenhum'],
+      ['Composição', 'dirigida pelo domínio'],
+      ['Status', 'em build'],
     ],
   },
   {
     id: 'S-03',
-    title: 'Plataforma & deploy',
-    text: 'Edge-first, dados perto do cliente, operação observável.',
+    title: 'Operação viva',
+    text: 'Cardápio que muda com o turno, pedido que flui sem intervenção.',
     detail:
-      'Topologia edge-first: renderização e dados próximos de quem acessa, deploys atômicos e rollback instantâneo. Cada loja roda isolada; observabilidade com tracing ponta a ponta do request ao evento de domínio. Infraestrutura como código — o ambiente inteiro sobe de um repositório.',
+      'Depois do ar, a vitrine continua viva: cardápio respeita horários e disponibilidade, itens esgotados saem do fluxo sozinhos, pedidos seguem a regra do negócio sem ninguém tocar em nada. Atualizar o cardápio é atualizar dado, não republicar site. A loja não dorme — e não precisa de ninguém acordado.',
     specs: [
-      ['Topologia', 'edge-first'],
-      ['Isolamento', 'por loja'],
-      ['Observabilidade', 'tracing E2E'],
-      ['Status', 'em build'],
+      ['Disponibilidade', 'por horário e estoque'],
+      ['Atualização', 'dado, sem redeploy'],
+      ['Pedidos', 'fluxo contínuo'],
+      ['Status', 'especificação ativa'],
     ],
   },
 ];
@@ -96,7 +96,7 @@ export const teaserFaqs = [
   ],
   [
     'O que é a plataforma Venduá?',
-    'Nosso motor próprio de lojas, em desenvolvimento. Clientes de serviço veem de perto — e entram primeiro.',
+    'Um construtor automatizado de vitrines e cardápios sob medida, em desenvolvimento. Clientes de serviço veem de perto — e entram primeiro.',
   ],
   [
     'E depois do lançamento?',

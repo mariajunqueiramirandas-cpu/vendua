@@ -383,19 +383,19 @@
   <section class="transmissions" aria-labelledby="tx-title">
     <div class="tx-head container">
       <p class="eyebrow" id="tx-title">A plataforma · em desenvolvimento</p>
-      <h2>A arquitetura, em<br />três camadas.</h2>
+      <h2>O construtor, em<br />três estágios.</h2>
     </div>
     <div class="tx-stage">
       <div class="tx-track">
         <article class="tx-panel tx-intro">
           <p class="eyebrow">Em build agora</p>
-          <h3>O motor das<br />próximas lojas,<br />aberto por dentro.</h3>
+          <h3>Vitrine gerada<br />pela operação —<br />não por template.</h3>
         </article>
         {#each transmissions as t, i}<figure class="tx-panel">
             <span class="tx-ghost" aria-hidden="true">0{i + 1}</span>
             <div class="tx-card">
               <div class="tx-card-head" aria-hidden="true">
-                <span>{t.id} · Camada</span><span class="tx-open-hint">Abrir ↗</span>
+                <span>{t.id} · Estágio</span><span class="tx-open-hint">Abrir ↗</span>
               </div>
               <div class="tx-frame"><TxShader mode={i} /></div>
               <button
