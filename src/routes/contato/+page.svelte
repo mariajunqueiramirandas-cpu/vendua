@@ -26,23 +26,23 @@
 </script>
 
 <Seo
-  title="Acesso antecipado | Venduá"
-  description="A Venduá está em desenvolvimento. O acesso antecipado é por convite; o único canal é o direct."
+  title="Iniciar um projeto | Venduá"
+  description="A Venduá é uma software house de projetos sob medida. O primeiro passo é uma conversa — pelo direct."
   path="/contato/"
 />
 <section class="gate-stage" aria-labelledby="gate-title">
   <GateShader open={gateOpen} />
   <div class="gate-inner container">
     <p class="eyebrow gate-eyebrow">
-      <span class="signal-dot"></span>Em desenvolvimento · acesso antecipado por convite
+      <span class="signal-dot"></span>Software sob medida · novos projetos
     </p>
     <h1 class="gate-title" id="gate-title">
       <span class="line-mask"><span>Não há formulário.</span></span>
-      <span class="line-mask"><span>Só uma <em class="serif">porta.</em></span></span>
+      <span class="line-mask"><span>Só uma <em class="serif">conversa.</em></span></span>
     </h1>
     <p class="intro gate-intro">
-      Quem entra agora garante lugar na lista do lançamento. Peça acesso pelo direct e diga o que
-      vende já na primeira mensagem. Cada pedido é lido por uma pessoa.
+      Conte o que precisa existir — o problema, o prazo, o que já existe. Respondemos com escopo,
+      arquitetura e proposta. Cada mensagem é lida por uma pessoa.
     </p>
     <div class="actions gate-actions">
       <a
@@ -62,7 +62,7 @@
     <p class="fine gate-fine">O Instagram pode solicitar login.</p>
   </div>
   <div class="gate-meta container" aria-hidden="true">
-    <span>VND//WORK · Portal</span>
-    <span>Status: em desenvolvimento · Canal: direct · Leitura: humana</span>
+    <span>VND//WORK · Contato</span>
+    <span>Canal: direct · Resposta: humana · Escopo: fechado</span>
   </div>
 </section>

@@ -23,14 +23,13 @@
   </p>
   <h2>O contato é no Instagram</h2>
   <p>
-    O único canal é o direct do @vendua.digital, aberto pelo link “Pedir acesso”. Ao conversar por
-    lá, passam a valer as práticas de privacidade do Instagram.
+    O único canal é o direct do @vendua.digital, aberto pelo link “Iniciar um projeto”. Ao conversar
+    por lá, passam a valer as práticas de privacidade do Instagram.
   </p>
-  <h2>Sobre esta versão</h2>
+  <h2>Em projetos</h2>
   <p>
-    A política final ainda depende da identificação do responsável e da definição da hospedagem,
-    incluindo seus logs, provedores e prazos de retenção. Estas informações descrevem a versão atual
-    e não substituem a política final de lançamento.
+    Dados compartilhados durante a descoberta e o build de um projeto são usados apenas para
+    executar o trabalho contratado. Repositório, infraestrutura e contas ficam no nome do cliente.
   </p>
   <a class="button" href={site.instagramUrl}>Falar no Instagram ↗</a>
 </article>
