@@ -24,8 +24,8 @@
         /><circle cx="17.4" cy="6.6" r="1.3" fill="currentColor" stroke="none" /></svg
       >Instagram · @vendua.digital ↗</a
     >{#each site.emails as email}<a href="mailto:{email}">{email}</a>{/each}<a href="/contato/"
-      >Acesso</a
+      >Contato</a
     ><a href="/privacidade/">Privacidade</a>
   </div>
-  <p class="fine">Venduá · em desenvolvimento · vitrines com sistema por trás.</p>
+  <p class="fine">Venduá · software sob medida · plataforma em desenvolvimento.</p>
 </footer>

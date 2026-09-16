@@ -48,7 +48,7 @@
       />venduá<span class="brand-dot">.</span></a
     >
     <nav id="navigation" aria-label="Principal">
-      <span class="dev-status"><span class="signal-dot"></span>Em desenvolvimento</span>
+      <span class="dev-status"><span class="signal-dot"></span>Software house</span>
       <button
         class="theme-toggle"
         type="button"
@@ -57,7 +57,7 @@
         aria-label="Alternar entre tema claro e escuro"
         ><span class="tt-label">{dark ? 'Claro' : 'Escuro'}</span></button
       >
-      <a class="button small" href="/contato/">Acesso <span aria-hidden="true">↗</span></a>
+      <a class="button small" href="/contato/">Contato <span aria-hidden="true">↗</span></a>
     </nav>
   </header>
 </div>

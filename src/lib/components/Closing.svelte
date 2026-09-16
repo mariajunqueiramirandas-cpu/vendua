@@ -4,19 +4,19 @@
 
 <section class="closing">
   <div class="container closing-inner">
-    <p class="eyebrow">Em desenvolvimento · acesso antecipado</p>
-    <h2>A porta é <em class="serif">o direct.</em></h2>
-    <p class="closing-text">A porta abre primeiro para quem está dentro. Diga o que você vende.</p>
+    <p class="eyebrow">Venduá · Software sob medida</p>
+    <h2>Todo projeto começa <em class="serif">numa conversa.</em></h2>
+    <p class="closing-text">Conte o que precisa existir. Escopo, arquitetura e prazo em resposta.</p>
     <a class="button" href={site.instagramDmUrl} target="_blank" rel="noreferrer"
-      >Pedir acesso <span aria-hidden="true">↗</span><span class="sr-only">(nova aba)</span></a
+      >Iniciar um projeto <span aria-hidden="true">↗</span><span class="sr-only">(nova aba)</span></a
     >
   </div>
   <div class="marquee" aria-hidden="true">
     <div class="marquee-track">
       {#each [0, 1] as half}<span
-          >Em desenvolvimento · Lançamento em breve · Convites pelo direct · Em desenvolvimento ·
-          Lançamento em breve · Convites pelo direct · Em desenvolvimento · Lançamento em breve ·
-          Convites pelo direct ·
+          >Software sob medida · Plataforma em desenvolvimento · Projetos pelo direct · Software
+          sob medida · Plataforma em desenvolvimento · Projetos pelo direct · Software sob medida ·
+          Plataforma em desenvolvimento · Projetos pelo direct ·
         </span>{/each}
     </div>
   </div>

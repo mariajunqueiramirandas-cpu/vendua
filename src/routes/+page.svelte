@@ -313,8 +313,8 @@
 </script>
 
 <Seo
-  title="Venduá · em desenvolvimento"
-  description="A próxima loja não vem de prateleira. É desenhada para o seu negócio. A Venduá segue em desenvolvimento; o acesso antecipado é pelo direct."
+  title="Venduá · Software sob medida"
+  description="A Venduá é uma software house: projetamos, construímos e operamos sistemas sob medida. E enquanto isso, construímos nossa própria plataforma — com a arquitetura aberta aqui."
 />
 <div bind:this={root}>
   <div class="scroll-progress" aria-hidden="true"></div>
@@ -323,7 +323,7 @@
     <div class="hero-inner container">
       <div class="hero-top">
         <p class="eyebrow">
-          <span class="signal-dot"></span>Sinal 01 · Lançamento em breve
+          <span class="signal-dot"></span>Venduá · Software sob medida
         </p>
         <p class="hero-meta">
           VND//WORK
@@ -337,21 +337,22 @@
         </p>
       </div>
       <h1>
-        <span class="line-mask"><span>A próxima loja</span></span>
+        <span class="line-mask"><span>Seu software</span></span>
         <span class="line-mask"><span>não vem de <em class="stroke">prateleira.</em></span></span>
-        <span class="line-mask"><span class="serif">É projetada para você.</span></span>
+        <span class="line-mask"><span class="serif">É desenhado sob medida.</span></span>
       </h1>
       <div class="hero-bottom">
         <p class="intro">
-          A Venduá segue em desenvolvimento. Os detalhes ficam com quem entra primeiro.
+          Uma software house: projetamos, construímos e operamos sistemas sob medida — e,
+          abaixo, a arquitetura da plataforma que estamos construindo.
         </p>
         <div class="hero-cta">
           <a class="button" href={site.instagramDmUrl} target="_blank" rel="noreferrer"
-            >Pedir acesso <span aria-hidden="true">↗</span><span class="sr-only">(nova aba)</span
+            >Iniciar um projeto <span aria-hidden="true">↗</span><span class="sr-only">(nova aba)</span
             ></a
           >
           <p class="fine">
-            <span>Lista do lançamento</span><span>convites apenas pelo direct</span><span
+            <span>Escopo fechado</span><span>entregas semanais</span><span
               >@vendua.digital</span
             >
           </p>
@@ -361,7 +362,7 @@
     <p class="scroll-cue" aria-hidden="true"><span>Scroll</span></p>
   </section>
   <section class="signals container" aria-labelledby="signals-title">
-    <p class="eyebrow" id="signals-title">O que já pode ser dito</p>
+    <p class="eyebrow" id="signals-title">O que fazemos</p>
     <div class="signals-grid">
       {#each signals as item, i}<div class="signal-item">
           <span class="signal-number">0{i + 1}</span>
@@ -376,25 +377,25 @@
     <div class="manifesto-inner container">
       <p class="eyebrow" id="manifesto-title">Manifesto</p>
       <p class="manifesto-text">{manifesto}</p>
-      <p class="fine">Venduá · próximo capítulo</p>
+      <p class="fine">Venduá · software sob medida</p>
     </div>
   </section>
   <section class="transmissions" aria-labelledby="tx-title">
     <div class="tx-head container">
-      <p class="eyebrow" id="tx-title">Interceptado · Fragmentos</p>
-      <h2>O sistema, em<br />três peças.</h2>
+      <p class="eyebrow" id="tx-title">A plataforma · em desenvolvimento</p>
+      <h2>A arquitetura, em<br />três camadas.</h2>
     </div>
     <div class="tx-stage">
       <div class="tx-track">
         <article class="tx-panel tx-intro">
-          <p class="eyebrow">Três fragmentos</p>
-          <h3>A peça inteira<br />só abre para<br />quem entra.</h3>
+          <p class="eyebrow">Em build agora</p>
+          <h3>O motor das<br />próximas lojas,<br />aberto por dentro.</h3>
         </article>
         {#each transmissions as t, i}<figure class="tx-panel">
             <span class="tx-ghost" aria-hidden="true">0{i + 1}</span>
             <div class="tx-card">
               <div class="tx-card-head" aria-hidden="true">
-                <span>{t.id} · Fragmento</span><span class="tx-open-hint">Abrir ↗</span>
+                <span>{t.id} · Camada</span><span class="tx-open-hint">Abrir ↗</span>
               </div>
               <div class="tx-frame"><TxShader mode={i} /></div>
               <button
@@ -415,8 +416,8 @@
   </section>
   <section class="ritual container" aria-labelledby="ritual-title">
     <div class="ritual-head">
-      <p class="eyebrow" id="ritual-title">O ritual</p>
-      <h2>Três passos.<br />Nenhum formulário.</h2>
+      <p class="eyebrow" id="ritual-title">Como funciona</p>
+      <h2>Da conversa<br />ao deploy.</h2>
     </div>
     {#each ritual as item, i}<div class="ritual-row">
         <span class="ritual-index">0{i + 1}</span>
@@ -426,8 +427,8 @@
   </section>
   <section class="teaser-faq container" aria-labelledby="faq-title">
     <div>
-      <p class="eyebrow" id="faq-title">Perguntas que aceitamos</p>
-      <h2>Poucas<br />respostas.</h2>
+      <p class="eyebrow" id="faq-title">Perguntas frequentes</p>
+      <h2>Respostas<br />diretas.</h2>
     </div>
     <div>
       {#each teaserFaqs as faq}<details>
@@ -447,7 +448,7 @@
   >
     {#if activeTx}
       <div class="tx-modal-head">
-        <span>{activeTx.id} · Transmissão</span><span aria-hidden="true">VND//WORK</span>
+        <span>{activeTx.id} · Especificação</span><span aria-hidden="true">VND//WORK</span>
         <button class="tx-modal-close" type="button" onclick={closeTx}
           >Fechar <span aria-hidden="true">✕</span></button
         >
@@ -460,7 +461,7 @@
             <dd>{v}</dd>
           </div>{/each}
       </dl>
-      <p class="fine tx-modal-foot">O resto fica com quem entra.</p>
+      <p class="fine tx-modal-foot">Especificação viva — muda junto com o build.</p>
     {/if}
   </dialog>
 </div>

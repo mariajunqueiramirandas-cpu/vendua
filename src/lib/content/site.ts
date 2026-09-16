@@ -1,6 +1,6 @@
 export const site = {
   brandName: 'Venduá',
-  tagline: 'Vitrines com sistema por trás.',
+  tagline: 'Software sob medida.',
   instagramUrl: 'https://www.instagram.com/vendua.digital/',
   instagramDmUrl: 'https://ig.me/m/vendua.digital',
   emails: ['vinicius.junquira@vendua.com.br', 'jorge.andre@vendua.com.br'],
@@ -11,57 +11,95 @@ export const site = {
   contactMode: 'instagram',
 };
 export const signals = [
-  ['Mapear.', 'Você diz o que vende.'],
-  ['Arquitetar.', 'A operação vira vitrine própria.'],
-  ['Publicar.', 'No ar, pronta para vender.'],
+  [
+    'Produtos web.',
+    'Sites, lojas e aplicações com identidade própria — projetados para a sua operação, não para um template.',
+  ],
+  [
+    'Ferramentas internas.',
+    'Automação, painéis e integrações que tiram trabalho manual da sua equipe.',
+  ],
+  [
+    'Arquitetura contínua.',
+    'O sistema evolui junto com o negócio. Entrega incremental, código seu desde o primeiro commit.',
+  ],
 ];
 export const manifesto =
-  'O feito à mão não escala. O automático não tinha alma. O próximo passo é tecnologia com direção.';
+  'Prateleira serve a todos e não resolve ninguém. Software sob medida é quando a operação dita o sistema — e não o contrário.';
 export const transmissions = [
   {
-    id: 'T-01',
-    title: 'A vitrine',
-    text: 'A superfície que o cliente toca.',
+    id: 'S-01',
+    title: 'Renderização & edge',
+    text: 'A superfície: SSR, ilhas de interação e shaders no cliente.',
     detail:
-      'Sua identidade e sua operação, desenhadas como vitrine própria. Sem template, sem editor, sem peça solta.',
+      'Front em SvelteKit com SSR e hidratação seletiva: o que é estático chega pronto do edge, o que é interativo hidrata por ilha. Visual em WebGL2 com shaders GLSL compilados em runtime e fallback quando o contexto falha. Rotas com code splitting, fontes variáveis auto-hospedadas e first paint abaixo de um segundo em 4G.',
     specs: [
-      ['Entrada', 'uma conversa'],
-      ['Entrega', 'vitrine no ar'],
-      ['Arquitetura', 'Venduá'],
+      ['Framework', 'SvelteKit · SSR'],
+      ['Gráficos', 'WebGL2 + GLSL'],
+      ['Hydration', 'por ilha'],
+      ['Status', 'em build'],
     ],
   },
   {
-    id: 'T-02',
-    title: 'A montagem',
-    text: 'O sistema por baixo, sem parafusos à vista.',
+    id: 'S-02',
+    title: 'Núcleo de operação',
+    text: 'Domínio como código: catálogo, pedido e entrega como módulos.',
     detail:
-      'Catálogo, pedido, entrega: encaixados onde ninguém olha. Iguais na engenharia, diferentes no resultado.',
+      'O domínio é modelado em módulos independentes — catálogo, pedido, entrega — comunicando por eventos, com o servidor como fonte autoritativa de estado. Cada loja compõe só os módulos de que precisa; a mesma engenharia gera resultados diferentes. Regras de negócio vivem no domínio, não espalhadas em componentes.',
     specs: [
-      ['Módulos', 'sob demanda'],
-      ['Decisões', 'automáticas'],
-      ['Retrabalho', 'zero'],
+      ['Modelo', 'eventos + servidor autoritativo'],
+      ['Módulos', 'catálogo · pedido · entrega'],
+      ['Composição', 'por operação'],
+      ['Status', 'especificação ativa'],
     ],
   },
   {
-    id: 'T-03',
-    title: 'A operação',
-    text: 'O que acontece depois que a porta abre.',
-    detail: 'Pedido entra, resposta sai. O que era trabalho vira corrente. A loja não dorme.',
+    id: 'S-03',
+    title: 'Plataforma & deploy',
+    text: 'Edge-first, dados perto do cliente, operação observável.',
+    detail:
+      'Topologia edge-first: renderização e dados próximos de quem acessa, deploys atômicos e rollback instantâneo. Cada loja roda isolada; observabilidade com tracing ponta a ponta do request ao evento de domínio. Infraestrutura como código — o ambiente inteiro sobe de um repositório.',
     specs: [
-      ['Turno', 'contínuo'],
-      ['Intervenção', 'mínima'],
-      ['Visibilidade', 'só para dentro'],
+      ['Topologia', 'edge-first'],
+      ['Isolamento', 'por loja'],
+      ['Observabilidade', 'tracing E2E'],
+      ['Status', 'em build'],
     ],
   },
 ];
 export const ritual = [
-  ['Você pede.', 'Um direct basta.'],
-  ['A gente lê.', 'Cada pedido, uma pessoa.'],
-  ['A porta abre.', 'Primeiro para quem já está dentro.'],
+  [
+    'Descoberta.',
+    'Uma conversa técnica sobre a operação: o que você vende, onde dói, o que precisa existir.',
+  ],
+  [
+    'Escopo e protótipo.',
+    'Proposta fechada com arquitetura, prazo e preço — e um protótipo navegável antes de qualquer build.',
+  ],
+  [
+    'Build e handoff.',
+    'Entregas semanais, repositório e infraestrutura na sua conta, documentação incluída.',
+  ],
 ];
 export const teaserFaqs = [
-  ['Quando lança?', 'Quando estiver pronta. A lista sabe primeiro.'],
-  ['Quanto custa?', 'Os primeiros terão condições que não se repetem.'],
-  ['Posso ver funcionando?', 'Quem está na lista vê antes.'],
-  ['É para o meu tipo de negócio?', 'Se você vende algo, provavelmente.'],
+  [
+    'Quanto custa um projeto?',
+    'Escopo fechado por projeto, preço definido antes do build. Sem hora aberta, sem surpresa.',
+  ],
+  [
+    'O código é meu?',
+    'Sim. Repositório, infraestrutura e contas ficam no seu nome desde o primeiro dia.',
+  ],
+  [
+    'Quanto tempo leva?',
+    'Sites e vitrines em semanas. Sistemas maiores vão em fases, cada uma entregue e utilizável.',
+  ],
+  [
+    'O que é a plataforma Venduá?',
+    'Nosso motor próprio de lojas, em desenvolvimento. Clientes de serviço veem de perto — e entram primeiro.',
+  ],
+  [
+    'E depois do lançamento?',
+    'Plano de operação opcional para manter e evoluir. Sem lock-in: o sistema continua seu.',
+  ],
 ];
