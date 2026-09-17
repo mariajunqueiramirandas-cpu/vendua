@@ -756,6 +756,7 @@ html.js:not(.seen) .intro-veil {
   background: var(--color-surface);
   color: var(--color-text);
   overflow-y: auto;
+  overflow-x: clip;
 }
 .tx-modal::backdrop {
   background: rgb(4 8 6 / 74%);
@@ -778,6 +779,15 @@ html.js:not(.seen) .intro-veil {
   letter-spacing: 0.16em;
   text-transform: uppercase;
   color: var(--color-muted);
+}
+.tx-modal-head > span {
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.tx-modal-head > span:first-child {
+  flex-shrink: 0;
 }
 .tx-modal-close {
   display: inline-flex;
