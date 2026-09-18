@@ -4,7 +4,7 @@
 
 **Organizing principle: the fleet is the product.** This roadmap is not "build
 the platform, then learn to operate 1000 stores". Every phase must leave the
-fleet *operable at its current size* — we never ship a capability we can't
+fleet _operable at its current size_ — we never ship a capability we can't
 operate at the N we have, and we never let manual operations survive the stage
 that created them. Manual ops at N=1 become permanent ops at N=100.
 
@@ -20,42 +20,43 @@ generate → scale**. Two consequences versus a naive build order:
 
 ## Fleet stages — the gates that actually matter
 
-Phases build capability; these stages gate *growth*. Do not grow past a stage
+Phases build capability; these stages gate _growth_. Do not grow past a stage
 until its row is true.
 
-| Stage | N | Must be true before growing past it |
-| --- | --- | --- |
-| First store | 1 | Real paid order taken; provision/promote/rollback ran through the Control Plane — zero manual steps |
-| Pilot cohort | ~5 | Conformance + changed-path CI green on every storefront PR; probes live on all hostnames; `_examples/` seeded |
-| Early fleet | ~25 | One boring train shipped; one codemod rehearsal done; runbook covers the top 5 incidents |
-| Growth | ~100 | Agent pipeline is the default intake; Core HA + LKG proven by a real failover drill; train cost measured |
-| Fleet | ~1000 | `fleet-*` shard rehearsed; Kernel publishing path proven; train economics budgeted |
+| Stage        | N     | Must be true before growing past it                                                                           |
+| ------------ | ----- | ------------------------------------------------------------------------------------------------------------- |
+| First store  | 1     | Real paid order taken; provision/promote/rollback ran through the Control Plane — zero manual steps           |
+| Pilot cohort | ~5    | Conformance + changed-path CI green on every storefront PR; probes live on all hostnames; `_examples/` seeded |
+| Early fleet  | ~25   | One boring train shipped; one codemod rehearsal done; runbook covers the top 5 incidents                      |
+| Growth       | ~100  | Agent pipeline is the default intake; Core HA + LKG proven by a real failover drill; train cost measured      |
+| Fleet        | ~1000 | `fleet-*` shard rehearsed; Kernel publishing path proven; train economics budgeted                            |
 
 ## Phase 0 — Fleet-shaped foundations (weeks 0–4)
 
 Goal: stop guessing what the Contract must be — and start inside the real
 layout, not a scratch project.
 
-- [ ] Monorepo skeleton **first**: `packages/`, `storefronts/`, workspace
+- [x] Monorepo skeleton **first**: `packages/`, `storefronts/`, workspace
       wiring. Spike storefronts live at `storefronts/<slug>/` from day one.
-- [ ] Core skeleton: tenancy, catalog, store settings/hours, server-side cart,
+- [x] Core skeleton: tenancy, catalog, store settings/hours, server-side cart,
       checkout stub, orders. **`tenant_id` + RLS on every table from the first
       migration** — tenancy is the one thing that cannot be retrofitted.
-- [ ] Rough Kernel: provider, 3–4 hooks, 3–4 primitives, `<SystemSurfaces />`
+- [x] Rough Kernel: provider, 3–4 hooks, 3–4 primitives, `<SystemSurfaces />`
       with only a generic notice renderer.
 - [ ] Build **3–5 storefronts semi-manually** (agent-assisted, human-steered),
       starting by porting the existing Quero Pudim Gourmet storefront. The
       strongest become `storefronts/_examples/` — the curated read set for
       future agents ([06](architecture/06-monorepo.md#agents-in-the-monorepo)).
-- [ ] Write down every place a store needed to touch behavior that should have
+- [x] Write down every place a store needed to touch behavior that should have
       been central — those become slots/primitives/API fields.
+      → [`phase-0-findings.md`](phase-0-findings.md) + [`contract-v1-draft.md`](contract-v1-draft.md)
 
 Exit: Contract v1 drafted from _observed_ needs; all spike code already lives
 in the monorepo layout it will keep.
 
 ## Phase 1 — The storefront factory (weeks 4–8)
 
-Goal: storefronts are *produced*, not hand-built — and the repo enforces it.
+Goal: storefronts are _produced_, not hand-built — and the repo enforces it.
 
 - [ ] Freeze Contract v1 ([03](architecture/03-storefront-contract.md)):
       `vendua.config.ts`, required mounts, reserved system routes, primitives,
@@ -174,14 +175,14 @@ evidence-backed.
 
 ## Metrics that gate growth
 
-| Metric | Watch for | Source |
-| --- | --- | --- |
-| Agent-minutes per launched storefront | the business-model number | `agent_tasks` |
-| Iterations-to-green | scaffold/spec quality | `agent_tasks` |
-| Codemod failure tail | >20% → fix the codemod, not the queue | train reports |
-| Kernel skew | stores >2 minors behind | Control Plane |
-| Train wall time + gate rejections | train health trend | Control Plane |
-| Probe failure rate per hostname | serving health | `health_checks` |
+| Metric                                | Watch for                             | Source          |
+| ------------------------------------- | ------------------------------------- | --------------- |
+| Agent-minutes per launched storefront | the business-model number             | `agent_tasks`   |
+| Iterations-to-green                   | scaffold/spec quality                 | `agent_tasks`   |
+| Codemod failure tail                  | >20% → fix the codemod, not the queue | train reports   |
+| Kernel skew                           | stores >2 minors behind               | Control Plane   |
+| Train wall time + gate rejections     | train health trend                    | Control Plane   |
+| Probe failure rate per hostname       | serving health                        | `health_checks` |
 
 ## Explicitly deferred
 
