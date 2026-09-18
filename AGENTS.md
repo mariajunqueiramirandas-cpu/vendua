@@ -23,9 +23,10 @@ packages/        platform packages (empty; Phase 0+)
 storefronts/     one package per storefront (empty; Phase 0+)
 tools/           repo-level CI utilities (empty; Phase 1)
 docs/            normative architecture, ADRs, roadmap — read before designing
+.devin/agents/   Devin subagent profiles — auto-load in Devin CLI/Desktop
+.agents/skills/  custom skills — auto-discovered by Devin (omp agents provider)
+.claude/agents/  task-agent mirrors for Claude Code
 .omp/            omp config: RULES.md (sticky rules), agents/ (task agents)
-.agents/skills/  custom skills (omp agents provider + Devin convention)
-.claude/agents/  task-agent mirrors for Claude Code / Devin import
 ```
 
 ## Setup — fresh machine / Devin Cloud
@@ -42,14 +43,27 @@ the site is fully static.
 
 Run from repo root; all delegate to `@vendua/site` via `bun --filter`.
 
-| Command | Proves |
-| --- | --- |
-| `bun run check` | svelte-check — must report 0 errors |
-| `bun run build` | static build → `site/build/` |
-| `bun run test:e2e` | 16 Playwright tests; auto-starts preview |
-| `bun run format:check` | prettier clean (config at repo root) |
+| Command                | Proves                                   |
+| ---------------------- | ---------------------------------------- |
+| `bun run check`        | svelte-check — must report 0 errors      |
+| `bun run build`        | static build → `site/build/`             |
+| `bun run test:e2e`     | 16 Playwright tests; auto-starts preview |
+| `bun run format:check` | prettier clean (config at repo root)     |
 
 `test:e2e` requires a prior `bun run build` — the preview serves `site/build/`.
+
+## Hard rules
+
+- Never commit, push, or open a PR unless the user explicitly asks.
+- Never run destructive commands (rm -rf, git reset --hard, dropping data)
+  without explicit confirmation.
+- Never fabricate: no unverified claims, invented APIs, or "done" without
+  running the check.
+- Never edit generated files, lockfiles, or vendored code by hand.
+- Ask before deleting code you didn't write or expanding scope beyond the
+  request.
+
+Mirrored in `.omp/RULES.md` for omp's sticky-rule enforcement — keep in sync.
 
 ## How to work
 
@@ -78,15 +92,22 @@ Run from repo root; all delegate to `@vendua/site` via `bun --filter`.
 - Bias hard toward delegating. Spawn a subagent for anything that is: a
   separate file/module, an independent investigation, a verification pass,
   or parallelizable with other work.
-- Pick the most specific agent available: explore with a scout-type agent,
-  design with an architect-type, verify with a verifier-type, debug with a
-  debugger-type, implement with a general task agent. In omp these exist as
-  `scout`, `architect`, `verifier`, `debugger`, `task`, `sonic`; in Devin,
-  spawn the equivalent focused subagent.
+- Subagent contracts live in `.devin/agents/`: `architect`, `debugger`,
+  `frontend-designer`, `verifier` — mirrored in `.claude/agents/` and
+  `.omp/agents/` (omp also has `scout`, `task`, `sonic`).
+  - Devin Cloud: read the profile file and pass its body verbatim as the
+    child-session or workflow-agent prompt.
+  - Devin CLI/Desktop: profiles auto-load; invoke by name.
+- Pick the most specific profile available: `architect` for read-only
+  analysis/design, `debugger` for unknown faults, `verifier` for
+  post-implementation checks, `frontend-designer` for UI, a general task
+  agent for implementation.
 - **Any UI/frontend work — pages, components, layouts, styling, design
   systems, landing pages, dashboards — goes to a design-specialist
-  subagent** (omp: `frontend-designer`). It carries the `frontend-design`
+  subagent** (`frontend-designer`). It carries the `frontend-design`
   anti-slop contract; never hand UI to a generic agent.
+- In Devin Cloud, verifying a running app in the browser goes to the
+  testing agent — not a code-reading subagent.
 - Fan out independent slices in one batch; never serialize work that can
   run in parallel.
 - Keep interpretation, decomposition, and taste at the top level. Give each
@@ -137,26 +158,28 @@ have to rediscover it.
 
 **Where to write it:**
 
-| Learning | File |
-| --- | --- |
-| Repo-wide workflow, commands, pitfalls | `AGENTS.md` |
-| Site-specific workflow or pitfall | `site/AGENTS.md` |
-| A hard rule that must always hold | `.omp/RULES.md` (keep it short) |
-| A reusable procedure/playbook | `.agents/skills/<name>/SKILL.md` |
-| Architecture or design decision | `docs/` (ADRs for decisions) |
+| Learning                               | File                                                                  |
+| -------------------------------------- | --------------------------------------------------------------------- |
+| Repo-wide workflow, commands, pitfalls | `AGENTS.md`                                                           |
+| Site-specific workflow or pitfall      | `site/AGENTS.md`                                                      |
+| A hard rule that must always hold      | § Hard rules here + `.omp/RULES.md`                                   |
+| A reusable procedure/playbook          | `.agents/skills/<name>/SKILL.md`                                      |
+| A subagent contract                    | `.devin/agents/<name>.md` + `.claude/agents/`, `.omp/agents/` mirrors |
+| Architecture or design decision        | `docs/` (ADRs for decisions)                                          |
 
 **Rules:**
 
 - Edit the file closest to the knowledge. Terse, concrete, verified —
   same bar as code.
 - No session trivia: "fixed bug X" is git history, not an instruction.
-  Record the *generalizable* lesson.
+  Record the _generalizable_ lesson.
 - Keep it small: these files load into every session's context. Every
   line must earn its tokens.
 - Repo copies are canonical. `~/.omp/agent/AGENTS.md` and `RULES.md` are
   global snapshots — refresh them when the repo versions change.
 - New skills need `name` + `description` frontmatter and live one level
-  under `.agents/skills/` to be discovered.
+  under `.agents/skills/`; new subagents need the same frontmatter and live
+  flat under `.devin/agents/`.
 
 ## Communication
 
