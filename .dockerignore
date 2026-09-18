@@ -1,19 +1,23 @@
-# Keep the build context small: the image only needs manifests, src/, static/,
-# scripts/ and the * config files. Everything below is regenerated or unrelated.
+# Keep the build context small: the image only needs the root manifests and
+# site/. Everything below is regenerated or unrelated.
 .git
 .gitignore
 node_modules
-build
-.svelte-kit
-test-results
-playwright-report
-artifacts
+**/node_modules
+site/build
+site/.svelte-kit
+site/test-results
+site/playwright-report
+site/artifacts
 docs
-vendua-site-kit
-tests
-playwright.config.ts
+packages
+storefronts
+tools
+site/tests
+site/playwright.config.ts
 README.md
-VALIDACAO.md
+site/README.md
+site/VALIDACAO.md
 .env
 .env.*
 !.env.example

@@ -4,6 +4,14 @@
   "workspaces": {
     "": {
       "name": "vendua",
+      "devDependencies": {
+        "prettier": "3.9.6",
+        "prettier-plugin-svelte": "4.1.1",
+      },
+    },
+    "site": {
+      "name": "@vendua/site",
+      "version": "1.0.0",
       "dependencies": {
         "@fontsource-variable/space-grotesk": "5.3.0",
         "@fontsource/instrument-serif": "5.3.0",
@@ -16,8 +24,6 @@
         "@sveltejs/kit": "2.70.3",
         "@sveltejs/vite-plugin-svelte": "7.3.0",
         "@types/bun": "1.4.2",
-        "prettier": "3.9.6",
-        "prettier-plugin-svelte": "4.1.1",
         "svelte": "5.57.0",
         "svelte-check": "4.7.6",
         "typescript": "6.0.3",
@@ -98,7 +104,9 @@
 
     "@types/estree": ["@types/estree@1.0.9", "", {}, "sha512-GhdPgy1el4/ImP05X05Uw4cw2/M93BCUmnEvWZNStlCzEKME4Fkk+YpoA5OiHNQmoS7Cafb8Xa3Pya8m1Qrzeg=="],
 
-    "@types/node": ["@types/node@26.5.0", "", { "dependencies": { "undici-types": "~8.9.0" } }, "sha512-dVSGpriSoCgz8WnDNTuSSuSv1PC/ALXihO4ulRZt7Md8k9mlbdin3lGOcDE8SnWOgf513ByWlXd7BK4azmyg/A=="],
+    "@types/node": ["@types/node@26.6.1", "", { "dependencies": { "undici-types": "~8.9.0" } }, "sha512-VqGJBMCtdhqkBUCcBLvywI0NJ+KLuVzgNnlBUNFOQjqVxzo2lxLUNg1DSey8+u2u6ktswSAxg+s68QLzWHNOuA=="],
+
+    "@vendua/site": ["@vendua/site@workspace:site"],
 
     "acorn": ["acorn@8.18.0", "", { "bin": { "acorn": "bin/acorn" } }, "sha512-lGq+9yr1/GuAWaVYIHRjvvySG5/4VfKIvC8EWxStPdcDh/Ka7FG3twP6v4d5BkravUilhIAsG4Qj83t02LWUPQ=="],
 
