@@ -21,11 +21,10 @@ function withChild(asChild: boolean | undefined, props: PrimitiveProps, children
     const child = children as ReactElement<Record<string, unknown>>;
     const childProps = child.props;
     const merged: Record<string, unknown> = { ...props, ...childProps };
-    // Managed markers always come from the primitive.
+    // `data-vendua` is always the primitive's marker; other aria-*/data-*
+    // pairs are primitive defaults the child may override with its own copy
+    // (e.g. a CartTrigger restating its count in brand voice).
     merged['data-vendua'] = props['data-vendua'];
-    for (const k of Object.keys(props)) {
-      if (k.startsWith('aria-') || k.startsWith('data-')) merged[k] = props[k];
-    }
     if (typeof props.onClick === 'function' || typeof childProps.onClick === 'function') {
       merged.onClick = (e: unknown) => {
         (props.onClick as ((e: unknown) => void) | undefined)?.(e);
@@ -164,13 +163,21 @@ export function CartTrigger({ asChild, children, onOpen }: CartTriggerProps) {
 export function StoreStatusBadge() {
   const { status, resumesAt, store } = useStore();
   const label = status === 'open' ? 'Aberto' : status === 'paused' ? 'Pausado' : 'Fechado';
+  const resumeLabel = resumesAt
+    ? new Intl.DateTimeFormat('pt-BR', {
+        timeZone: store?.hours.timezone,
+        weekday: 'short',
+        hour: '2-digit',
+        minute: '2-digit',
+      }).format(new Date(resumesAt))
+    : undefined;
   return (
     <span
       data-vendua="store-status"
       data-status={status ?? 'loading'}
       role="status"
       aria-live="polite"
-      title={resumesAt ? `retorna ${resumesAt}` : store?.name}
+      title={resumeLabel ? `retorna ${resumeLabel}` : store?.name}
     >
       {status ? label : '…'}
     </span>

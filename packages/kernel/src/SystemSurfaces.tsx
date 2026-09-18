@@ -77,6 +77,13 @@ export function GenericNotice({
   );
 }
 
+/** Props every `system.*` notice override receives — type overrides as
+ *  `ComponentType<NoticeOverrideProps>` instead of hand-narrowing. */
+export interface NoticeOverrideProps {
+  notice: Notice;
+  onDismiss?: () => void;
+}
+
 /** Renders a notice through the slot registry: override → error boundary → generic. */
 function SlotNotice({ notice, onDismiss }: { notice: Notice; onDismiss?: () => void }) {
   const { config } = useKernel();

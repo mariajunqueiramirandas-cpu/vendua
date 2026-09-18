@@ -36,6 +36,14 @@ export interface StoreSettingsRow {
   pickup_enabled: boolean;
   delivery_enabled: boolean;
   promo: { title: string; body?: string } | null;
+  currency: string;
+  vocabulary: {
+    itemSingular?: string;
+    itemPlural?: string;
+    bag?: string;
+    cta?: string;
+    [k: string]: string | undefined;
+  };
 }
 
 export type StoreStatus = 'open' | 'closed' | 'paused';

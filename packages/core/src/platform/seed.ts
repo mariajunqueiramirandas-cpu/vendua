@@ -68,6 +68,8 @@ interface SeedTenant {
     pickup?: boolean;
     delivery?: boolean;
     promo?: { title: string; body?: string };
+    currency?: string;
+    vocabulary?: Record<string, string>;
   };
   zones: SeedZone[];
   categories: SeedCategory[];
@@ -92,6 +94,12 @@ const TENANTS: SeedTenant[] = [
       minOrderCents: 1000,
       prepTimeMinutes: 40,
       promo: { title: 'Semana do pudim', body: '10% off em todos os kits até domingo.' },
+      vocabulary: {
+        itemSingular: 'doce',
+        itemPlural: 'doces',
+        bag: 'sacola',
+        cta: 'Escolher meu doce',
+      },
     },
     zones: [
       {
@@ -481,17 +489,18 @@ for (const t of TENANTS) {
     const s = t.settings;
     await tx`
       insert into store_settings (tenant_id, tagline, description, whatsapp, instagram, city, address,
-        hours, prep_time_minutes, min_order_cents, pickup_enabled, delivery_enabled, promo)
+        hours, prep_time_minutes, min_order_cents, pickup_enabled, delivery_enabled, promo, currency, vocabulary)
       values (${tid}, ${s.tagline ?? null}, ${s.description ?? null}, ${s.whatsapp ?? null}, ${s.instagram ?? null},
         ${s.city ?? null}, ${s.address ?? null}, ${tx.json({ timezone: 'America/Sao_Paulo', windows: s.windows })},
         ${s.prepTimeMinutes ?? 30}, ${s.minOrderCents ?? 0}, ${s.pickup ?? true}, ${s.delivery ?? true},
-        ${s.promo ? tx.json(s.promo) : null})
+        ${s.promo ? tx.json(s.promo) : null}, ${s.currency ?? 'BRL'}, ${tx.json(s.vocabulary ?? {})})
       on conflict (tenant_id) do update set
         tagline = excluded.tagline, description = excluded.description, whatsapp = excluded.whatsapp,
         instagram = excluded.instagram, city = excluded.city, address = excluded.address,
         hours = excluded.hours, prep_time_minutes = excluded.prep_time_minutes,
         min_order_cents = excluded.min_order_cents, pickup_enabled = excluded.pickup_enabled,
-        delivery_enabled = excluded.delivery_enabled, promo = excluded.promo
+        delivery_enabled = excluded.delivery_enabled, promo = excluded.promo,
+        currency = excluded.currency, vocabulary = excluded.vocabulary
     `;
 
     await tx`delete from delivery_zones where tenant_id = ${tid}`;

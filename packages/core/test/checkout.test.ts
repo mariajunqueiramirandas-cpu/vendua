@@ -24,6 +24,8 @@ const settings = {
   pickup_enabled: true,
   delivery_enabled: true,
   promo: null,
+  currency: 'BRL',
+  vocabulary: {},
 } satisfies StoreSettingsRow;
 
 const pickup: CheckoutInput = {

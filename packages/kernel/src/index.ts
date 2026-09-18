@@ -4,7 +4,7 @@
 export { defineStorefront, SLOT_KEYS } from './config.ts';
 export type { ContractMajor, Ring, SlotKey, StorefrontConfig, StorefrontTokens } from './config.ts';
 
-export { VenduaProvider, useKernel } from './provider.tsx';
+export { VenduaProvider, useKernel, invalidateQuery } from './provider.tsx';
 export {
   useStore,
   useCatalog,
@@ -21,9 +21,10 @@ export { AddToCart, QuantityStepper, CartTrigger, StoreStatusBadge } from './pri
 export type { AddToCartProps, QuantityStepperProps, CartTriggerProps } from './primitives.tsx';
 
 export { SystemSurfaces, SurfaceRegion, GenericNotice } from './SystemSurfaces.tsx';
+export type { NoticeOverrideProps } from './SystemSurfaces.tsx';
 export { ErrorBoundary } from './error-boundary.tsx';
 
-export { ApiError, ERROR_CODES } from './api.ts';
+export { ApiError, ERROR_CODES, formatCents, formatBRL } from './api.ts';
 export type {
   ApiErrorBody,
   StoreProfile,

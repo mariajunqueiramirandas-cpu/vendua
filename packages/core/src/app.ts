@@ -109,6 +109,8 @@ export function createApp({ sql, sessionSecret }: AppDeps) {
       minOrderCents: settings?.min_order_cents ?? 0,
       pickupEnabled: settings?.pickup_enabled ?? true,
       deliveryEnabled: settings?.delivery_enabled ?? true,
+      currency: settings?.currency ?? 'BRL',
+      vocabulary: settings?.vocabulary ?? {},
     });
   });
 
@@ -329,6 +331,13 @@ export function createApp({ sql, sessionSecret }: AppDeps) {
       validateCheckoutShape(body);
       const order = await withTenant(sql, tenant.id, async (tx) => {
         const cart = await loadCartView(tx, tenant.id, cartId);
+        // A completed cart must not mint a second order — the forn spike
+        // demonstrated a real duplicate otherwise.
+        if (cart.status !== 'open') {
+          throw new HttpError(409, 'CART_NOT_OPEN', 'cart already checked out', {
+            cartStatus: cart.status,
+          });
+        }
         const settings = await loadSettings(tx, tenant.id);
         const zones = await loadZones(tx, tenant.id);
         const { zone } = validateCheckout(currentStatus(settings), settings, cart, body, zones);

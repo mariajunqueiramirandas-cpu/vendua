@@ -40,6 +40,10 @@ export interface StoreProfile {
   minOrderCents: number;
   pickupEnabled: boolean;
   deliveryEnabled: boolean;
+  /** ISO 4217 — pt-BR storefronts today get 'BRL'. */
+  currency: string;
+  /** Per-tenant copy deck — e.g. { itemSingular: 'doce', bag: 'sacola' }. */
+  vocabulary: Record<string, string>;
 }
 
 export interface CatalogProduct {
@@ -56,6 +60,7 @@ export interface CatalogProduct {
 
 export interface CatalogCategory {
   id: string;
+  slug: string;
   name: string;
   sort: number;
   products: CatalogProduct[];
@@ -317,6 +322,7 @@ export const ERROR_CODES = [
   'TENANT_NOT_FOUND',
   'SESSION_EXPIRED',
   'CART_NOT_FOUND',
+  'CART_NOT_OPEN',
   'PRODUCT_NOT_FOUND',
   'SOLD_OUT',
   'MODIFIER_SOLD_OUT',
@@ -339,3 +345,14 @@ export const ERROR_CODES = [
 export type ErrorCode = (typeof ERROR_CODES)[number];
 
 export type VenduaApi = ReturnType<typeof createApi>;
+
+/**
+ * Money formatting — the one formatter every storefront would otherwise
+ * rewrite (Phase-0 finding #3). Reads the tenant currency from
+ * `useStore().store.currency`.
+ */
+export function formatCents(cents: number, currency = 'BRL', locale = 'pt-BR'): string {
+  return new Intl.NumberFormat(locale, { style: 'currency', currency }).format(cents / 100);
+}
+/** @deprecated kept as a friendly alias — use formatCents. */
+export const formatBRL = (cents: number) => formatCents(cents, 'BRL', 'pt-BR');
