@@ -12,22 +12,24 @@ in `packages/core` and `packages/kernel`.
 
 1. **Tenant vocabulary is Core data, not storefront constants.** The Quero
    Pudim port needs item noun "doce" and bag "sacola" — the reference repo
-   proved per-tenant vocabulary is real (`copy.vocabulary`). v1: `store.vocabulary`
-   (itemSingular/itemPlural/bag) on `GET /storefront/v1/store`.
+   proved per-tenant vocabulary is real (`copy.vocabulary`). Shipped:
+   `store_settings.vocabulary` jsonb → `store.vocabulary` on
+   `GET /storefront/v1/store` (migration 0002).
 2. **Products need a figure/asset field.** `GET /catalog` returns no imagery;
    every storefront will need `product.figure` (asset ref or built-in SVG
    motif id) + an `Img`-style primitive with a graceful fallback.
 3. **Money formatting must be a Kernel util.** Every storefront formats
-   centavos → BRL. Provide `formatBRL(cents)` / `useMoney()` so no store
-   re-implements locale formatting.
+   centavos → BRL. Shipped: `formatCents(cents, currency, locale)` +
+   `formatBRL` alias exported from `@vendua/kernel`.
 4. **Delivery zones need a public read surface.** Storefronts can't render an
-   address/neighborhood picker without knowing serviced neighborhoods. v1:
-   `GET /storefront/v1/zones` (or embed in `/store`): name, neighborhoods,
-   fee, ETA bounds, per-zone min order.
+   address/neighborhood picker without knowing serviced neighborhoods.
+   Shipped: `GET /storefront/v1/zones` + `useDeliveryZones` +
+   `api.quote(neighborhood)`.
 5. **`store.opensAt` (next opening) is missing.** `deriveStatus` computes it
-   internally for notices but `/store` doesn't expose it; `StoreStatusBadge`
-   and `system.StoreClosedNotice` both want it. v1: expose `opensAt` next to
-   `resumesAt`.
+   internally for notices but `/store` didn't expose it. Shipped: `closed`
+   status sets `resumesAt` to the next window boundary (exact minute —
+   `nextOpen` was rewritten from 30-min probes), so `resumesAt` covers both
+   paused-resume and next-open.
 6. **Order confirmation needs a WhatsApp deep link.** Reference storefront
    confirmed orders via WhatsApp. v1: `order.trackingUrl` + canonical
    `https://wa.me/<store.whatsapp>?text=…pedido #n` helper, or a
@@ -47,15 +49,19 @@ in `packages/core` and `packages/kernel`.
 10. **Checkout needs a step surface.** `useCheckout().submit` works but there
     is no `checkout.Layout` default; stores rebuilt address→delivery→payment.
     v1: Kernel-owned checkout surface mounted at `/(vendua)/checkout`.
-11. **`useOrder` polling hook missing** (client has `api.order`; no hook).
+11. **`useOrder` polling hook missing.** Shipped: `useOrder(id)` with manual
+    `refetch` (polling + a `poll` option is Phase 1+; realtime is a feature
+    gap below).
 12. **postgres.js jsonb footgun** (platform-internal, recorded so it isn't
     re-learned): `JSON.stringify(x)` into a jsonb param double-encodes to a
     JSON _string_; always `sql.json(x)`.
 
 ## From storefront spikes (OBSERVATIONS.md)
 
-Two spikes have reported so far: `quero-pudim` (full port of the reference
-storefront, zero feature loss) and `brasa`. Their combined lists:
+All three spikes reported: `quero-pudim` (full port of the reference
+storefront, zero feature loss — the canonical example, now also at
+`storefronts/_examples/quero-pudim`), `brasa`, and `forn`. Their combined
+lists:
 
 ### Fixed in the platform already (spike found → base patched same week)
 
@@ -88,6 +94,25 @@ storefront, zero feature loss) and `brasa`. Their combined lists:
 - **`@vendua/kernel/styles.css` unresolvable** — added to the exports map.
 - **Malformed JSON body → 500** — `bodyJson()` 400s instead.
 - **Closed notice hid `resumesAt` in prose** — now also in `payload.resumesAt`.
+- **Duplicate order on re-submit of a completed cart** (forn proved it live)
+  — `POST /checkout` now 409s `CART_NOT_OPEN` when the cart isn't `open`.
+- **`invalidateQuery` not exported** — storefronts couldn't clear cache after
+  custom flows; now exported.
+- **`useQuery` in-flight race** — a component mounting mid-fetch could miss
+  the resolution and stay `loading`; late subscribers now tick on
+  `entry.inflight`.
+- **Notice override props untyped** — `NoticeOverrideProps`
+  (`{ notice, onDismiss? }`) exported; overrides type as
+  `ComponentType<NoticeOverrideProps>`.
+- **Primitive a11y props clobbered the child** — `withChild` now lets child
+  `aria-*`/`data-*` win (a `CartTrigger` can restate its count in brand
+  voice); `data-vendua` stays primitive-managed.
+- **`StoreStatusBadge` leaked raw ISO** — its `title` now renders a localized
+  `retorna <weekday HH:mm>` in the store timezone.
+- **No currency/vocabulary on `StoreProfile`** — `store_settings.currency`
+  (default `BRL`) + `store_settings.vocabulary` (default `{}`) added in
+  migration 0002 and surfaced on `/store`; quero-pudim seeds
+  `doce/sacola/"Escolher meu doce"`.
 
 ### Feature gaps the reference ships that the platform can't express yet
 

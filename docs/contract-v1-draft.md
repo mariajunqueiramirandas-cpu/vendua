@@ -6,8 +6,8 @@
 > they disagree, this draft records what the spikes proved we need.
 >
 > Sources: `storefronts/quero-pudim/OBSERVATIONS.md`,
-> `storefronts/brasa/OBSERVATIONS.md` — both feature-complete storefronts
-> driven entirely through this contract.
+> `storefronts/brasa/OBSERVATIONS.md`, `storefronts/forn/OBSERVATIONS.md` —
+> three feature-complete storefronts driven entirely through this contract.
 
 Everything in 03 remains normative. This draft adds what building the spike
 storefronts on the skeleton showed was missing. Items marked **(landed)** were
@@ -18,7 +18,7 @@ contract caught up to them; the rest are candidates for the v1 freeze.
 
 | Endpoint                   | Change                                                                                     | Status / why (observed)                                                           |
 | -------------------------- | ------------------------------------------------------------------------------------------ | ---------------------------------------------------------------------------------- |
-| `GET /store`               | `vocabulary: { itemSingular, itemPlural, bag, cta }`, `opensAt`, `pixKey`/`pixBeneficiary`  | Per-tenant copy is real ("doce"/"sacola"); pix details needed for confirmation UX |
+| `GET /store`               | `vocabulary` + `currency` **(landed)**; `resumesAt` on `closed` covers next-open **(landed)**; v1: `pixKey`/`pixBeneficiary` | Per-tenant copy is real ("doce"/"sacola"); pix details needed for confirmation UX |
 | `GET /catalog`             | `figureVariant`, `tags[]`, `imageUrl?`, `stockQuantity?`, `lowStockThreshold?`               | Imagery + stock badges; first two landed, rest are v1 candidates                  |
 | `GET /storefront/v1/zones` | `name, neighborhoods, feeCents, etaMin/Max, minOrderCents`                                 | **(landed)** — zone UX without it was guesswork                                   |
 | `POST /checkout/v1/quote`  | `api.quote(neighborhood)` client                                                           | **(landed)** — non-mutating fee preview                                           |
@@ -28,6 +28,7 @@ contract caught up to them; the rest are candidates for the v1 freeze.
 | `POST /storefront/v1/waitlist` | NEW — `{ productId, phone }`                                                           | Sold-out waitlist is a real conversion flow                                       |
 | `POST /checkout/v1/coupons/validate` | NEW — `discountCents` on cart totals                                               | Coupon field exists in reference checkout                                         |
 | `CheckoutInput`            | + `notes`, + structured `delivery.address` (street/number/complement/cep), + `scheduledFor` | Order notes and real addresses observed; preorder for encomendas                  |
+| `POST /checkout`           | 409 `CART_NOT_OPEN` on a non-open cart **(landed)**                                        | forn produced a real duplicate order before the guard                             |
 | `POST /checkout` response  | `payment.pixQrcodePayload?`, `expiresAt?`                                                  | Pix copy/QR on confirmation                                                       |
 | Combos                     | NEW `combos` entity (slots with per-slot min/max, qtyPerItem)                              | Kits/encomendas UX can't be expressed by flat modifier groups                     |
 | Notices                    | `payload.resumesAt` (landed); `payload.region` for `SurfaceRegion` targeting               | Countdown styling; mid-catalog promo placement                                    |
@@ -41,7 +42,9 @@ contract caught up to them; the rest are candidates for the v1 freeze.
 | `useCheckout` `{pending,error,reset}` | hook state | **(landed)** — `error.details.field` for inline form errors         |
 | `refetch` on all read hooks        | hook      | **(landed)**                                                           |
 | `ERROR_CODES` + `details` schema   | export    | **(landed)** — storefronts map codes to brand copy                     |
-| `formatBRL` / `useMoney()`         | util      | Every store formats centavos; stop rewriting it                        |
+| `formatCents` / `formatBRL`        | util      | **(landed)** — currency-aware, `pt-BR` default                         |
+| `invalidateQuery`                  | export    | **(landed)** — storefronts can clear cache after custom flows          |
+| `NoticeOverrideProps`              | type      | **(landed)** — `{ notice, onDismiss? }` for `system.*` overrides       |
 | `cart.Drawer` + `cart.LineItem`    | defaults  | No-override store currently has no cart UI                             |
 | `ModifierPicker`                   | primitive | Enforces required/min/max client-side, produces `modifierIds`          |
 | `checkout.Layout`                  | slot      | Kernel-owned checkout; storefronts keep rebuilding the 3-step flow     |
@@ -61,7 +64,9 @@ contract caught up to them; the rest are candidates for the v1 freeze.
 - **`useCart` semantics**: `cart: Cart | null`, `loading` resolves without a
   session, `CartTrigger` counts only `status:'open'`.
 - **asChild composition contract**: primitives chain `onClick`, merge
-  `className`, OR `disabled` — child props are never silently discarded.
+  `className`, OR `disabled`, and child `aria-*`/`data-*` win over
+  primitive defaults — child props are never silently discarded.
+  `data-vendua` is always the primitive's marker.
 - **Closed vs paused** is a product decision, not an accident: `closed` allows
   checkout (pre-order for next open), `paused` blocks. Document it.
 
@@ -75,8 +80,9 @@ contract caught up to them; the rest are candidates for the v1 freeze.
 
 ## Open questions for Phase 1 freeze
 
-1. `opensAt` on `/store` vs only in `store_closed` payload — leaning both
-   (field for code, payload for copy).
+1. ~~`opensAt` on `/store` vs only in `store_closed` payload~~ — resolved
+   Phase 0: `closed` sets `resumesAt` to the next window boundary; both the
+   field and the notice payload carry it.
 2. Vocabulary scope: free-form strings or an inflected-forms registry.
    Free-form for v1.
 3. `figure`/`imageUrl` format: asset URL vs built-in motif enum vs both.
