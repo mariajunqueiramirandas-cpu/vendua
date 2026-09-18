@@ -4,65 +4,83 @@
 > Contract v1 written from _observed_ needs (docs/roadmap.md). It refines
 > [03 — The Storefront Contract](architecture/03-storefront-contract.md); where
 > they disagree, this draft records what the spikes proved we need.
+>
+> Sources: `storefronts/quero-pudim/OBSERVATIONS.md`,
+> `storefronts/brasa/OBSERVATIONS.md` — both feature-complete storefronts
+> driven entirely through this contract.
 
-Everything in 03 remains normative. This draft adds what building three
-storefronts on the skeleton showed was missing.
+Everything in 03 remains normative. This draft adds what building the spike
+storefronts on the skeleton showed was missing. Items marked **(landed)** were
+already implemented in `packages/core`/`packages/kernel` during Phase 0 — the
+contract caught up to them; the rest are candidates for the v1 freeze.
 
-## API surface — fields observed missing
+## API surface — observed
 
-| Endpoint                   | Addition                                                                            | Why (observed)                                                                      |
-| -------------------------- | ----------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------- |
-| `GET /store`               | `vocabulary: { itemSingular, itemPlural, bag }`, `opensAt`, `figure` for brand mark | Per-tenant copy is real (quero-pudim "doce"/"sacola"); closed badge needs next-open |
-| `GET /catalog`             | `product.figure`, `product.tags[]` (e.g. `sold_out`, `popular`)                     | Imagery/merchandising — every store needed it                                       |
-| `GET /storefront/v1/zones` | NEW — `name, neighborhoods, feeCents, etaMin/Max, minOrderCents`                    | Address/delivery UX without zone data is guesswork                                  |
-| `POST /checkout` response  | `order.trackingUrl`, `order.whatsappLink`                                           | Order-confirmation page needs both without computing them                           |
-| `GET /orders/:id`          | public by order id + signed access (already: `/checkout/v1/orders/:id`)             | My-orders page needs a stable URL                                                   |
+| Endpoint                   | Change                                                                                     | Status / why (observed)                                                           |
+| -------------------------- | ------------------------------------------------------------------------------------------ | ---------------------------------------------------------------------------------- |
+| `GET /store`               | `vocabulary: { itemSingular, itemPlural, bag, cta }`, `opensAt`, `pixKey`/`pixBeneficiary`  | Per-tenant copy is real ("doce"/"sacola"); pix details needed for confirmation UX |
+| `GET /catalog`             | `figureVariant`, `tags[]`, `imageUrl?`, `stockQuantity?`, `lowStockThreshold?`               | Imagery + stock badges; first two landed, rest are v1 candidates                  |
+| `GET /storefront/v1/zones` | `name, neighborhoods, feeCents, etaMin/Max, minOrderCents`                                 | **(landed)** — zone UX without it was guesswork                                   |
+| `POST /checkout/v1/quote`  | `api.quote(neighborhood)` client                                                           | **(landed)** — non-mutating fee preview                                           |
+| `POST /session`            | Re-attaches open carts, rotates spent tokens                                               | **(landed)** — one-order-then-stuck was the worst spike bug                       |
+| `GET /orders/:id`          | session-auth'd (landed); v1: + `items[]`, `trackingUrl`, `whatsappLink`, `notes`           | My-orders + confirmation pages need items/share without sessionStorage snapshots  |
+| `GET /customer/orders`     | NEW — `?phone=` order history                                                              | "Sem senha" my-orders across devices                                              |
+| `POST /storefront/v1/waitlist` | NEW — `{ productId, phone }`                                                           | Sold-out waitlist is a real conversion flow                                       |
+| `POST /checkout/v1/coupons/validate` | NEW — `discountCents` on cart totals                                               | Coupon field exists in reference checkout                                         |
+| `CheckoutInput`            | + `notes`, + structured `delivery.address` (street/number/complement/cep), + `scheduledFor` | Order notes and real addresses observed; preorder for encomendas                  |
+| `POST /checkout` response  | `payment.pixQrcodePayload?`, `expiresAt?`                                                  | Pix copy/QR on confirmation                                                       |
+| Combos                     | NEW `combos` entity (slots with per-slot min/max, qtyPerItem)                              | Kits/encomendas UX can't be expressed by flat modifier groups                     |
+| Notices                    | `payload.resumesAt` (landed); `payload.region` for `SurfaceRegion` targeting               | Countdown styling; mid-catalog promo placement                                    |
 
 ## Kernel additions observed
 
-| Piece                                    | Slot/primitive                       | Note                                                                             |
-| ---------------------------------------- | ------------------------------------ | -------------------------------------------------------------------------------- |
-| `formatBRL` / `useMoney()`               | util                                 | Every store formats centavos                                                     |
-| `cart.Drawer` + `cart.LineItem` defaults | slots (need defaults in ui-defaults) | No-override store currently has no cart UI                                       |
-| `ModifierPicker`                         | primitive                            | Enforces required/min/max client-side, produces `modifierIds` for `AddToCart`    |
-| `checkout.Layout` default                | slot                                 | Kernel-owned checkout mount at `/(vendua)/checkout`                              |
-| `useOrder(id)`                           | hook                                 | Poll order status page                                                           |
-| Font loading rule                        | contract                             | `font.srcs` in config → Kernel `@font-face`; storefront fonts in `assets/fonts/` |
+| Piece                              | Kind      | Status / note                                                          |
+| ---------------------------------- | --------- | ---------------------------------------------------------------------- |
+| `useOrder(id)`                     | hook      | **(landed)** with `refetch`; poll interval option is the v1 question   |
+| `useDeliveryZones()`               | hook      | **(landed)**                                                           |
+| `useCheckout` `{pending,error,reset}` | hook state | **(landed)** — `error.details.field` for inline form errors         |
+| `refetch` on all read hooks        | hook      | **(landed)**                                                           |
+| `ERROR_CODES` + `details` schema   | export    | **(landed)** — storefronts map codes to brand copy                     |
+| `formatBRL` / `useMoney()`         | util      | Every store formats centavos; stop rewriting it                        |
+| `cart.Drawer` + `cart.LineItem`    | defaults  | No-override store currently has no cart UI                             |
+| `ModifierPicker`                   | primitive | Enforces required/min/max client-side, produces `modifierIds`          |
+| `checkout.Layout`                  | slot      | Kernel-owned checkout; storefronts keep rebuilding the 3-step flow     |
+| `system.PromoNotice`               | slot key  | Kind-camelization already produces it; add to `SLOT_KEYS`              |
+| Realtime order updates             | hook      | `useOrder(id, {poll})` covers Phase 0; SSE wrapper is Phase 1+         |
+| Font loading rule                  | contract  | `font.srcs` in config → Kernel `@font-face`; files in `assets/fonts/`  |
+| `importCart(items)` / `?cart=`     | primitive | Cross-device cart share links                                          |
 
-## Config surface — additions to `vendua.config.ts`
+## Contract rules — corrections from the spikes
 
-```ts
-defineStorefront({
-  contract: 1,
-  ring: 'stable',
-  tokens: {
-    color: { /* as 03 */ },
-    font:  { display, body, mono?, srcs?: { family, file, weight, style }[] },
-    radius: { sm, md, lg },
-    space: { scale },
-    motion:{ duration, easing },
-  },
-  routes: './routes',
-  budgets: 'default',
-  overrides: { /* registry keys only */ },
-});
-```
+- **Reserved route prefixes must be listed**: `/checkout/v1`, `/storefront/v1`,
+  `/v1` are API mounts — page routes can't use them (brasa's checkout lives at
+  `/fechar`). The bare `/checkout` vite proxy key swallows SPA routes on
+  refresh; the contract should mandate `'/checkout/v1'` (narrow form).
+- **Vite proxy must be object-form** — string shorthand normalizes to
+  `changeOrigin:true` and rewrites `Host` → `TENANT_NOT_FOUND`.
+- **`useCart` semantics**: `cart: Cart | null`, `loading` resolves without a
+  session, `CartTrigger` counts only `status:'open'`.
+- **asChild composition contract**: primitives chain `onClick`, merge
+  `className`, OR `disabled` — child props are never silently discarded.
+- **Closed vs paused** is a product decision, not an accident: `closed` allows
+  checkout (pre-order for next open), `paused` blocks. Document it.
 
 ## What Phase 0 did NOT need (recorded so nobody adds it speculatively)
 
-- Coupons, loyalty, scheduled orders — no storefront touched them; defer.
-- Multi-language notice copy — pt-BR only today; `Notice.body` stays server
-  copy. Locale is a tenant field when a second language appears.
+- Multi-language notice copy — pt-BR only; `Notice.body` stays server copy.
 - Storefront-defined pages outside `routes/` — the file layout held.
 - Client-computed prices — never needed; Core's priced cart was sufficient.
+- Loyalty points mechanics beyond display — display came up; the mechanics
+  defer with the program itself.
 
 ## Open questions for Phase 1 freeze
 
-1. Does `opensAt` live on `/store` or only inside the `store_closed` notice
-   payload? (Leaning: both — field for code, payload for copy.)
-2. Vocabulary scope: are `vocabulary` strings free-form pt-BR or a registry of
-   inflected forms? Free-form for v1; grammar handled by copy.
-3. `figure` format: asset-bucket URL vs built-in motif enum vs both.
-4. Checkout as `/(vendua)/checkout` Kernel route vs `checkout.Layout` slot
-   mounted by the storefront — the reserved-route answer in 03 held up; keep
-   it Kernel-mounted.
+1. `opensAt` on `/store` vs only in `store_closed` payload — leaning both
+   (field for code, payload for copy).
+2. Vocabulary scope: free-form strings or an inflected-forms registry.
+   Free-form for v1.
+3. `figure`/`imageUrl` format: asset URL vs built-in motif enum vs both.
+4. Orders-by-phone: privacy check (phone enumeration) before shipping —
+   likely needs a short OTP or rate limit.
+5. Whether `useOrder` poll interval lives in the hook signature or a
+   storefront config budget.

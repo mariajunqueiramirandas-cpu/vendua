@@ -54,4 +54,88 @@ in `packages/core` and `packages/kernel`.
 
 ## From storefront spikes (OBSERVATIONS.md)
 
-<!-- filled in from each storefront's OBSERVATIONS.md when the spikes land -->
+Two spikes have reported so far: `quero-pudim` (full port of the reference
+storefront, zero feature loss) and `brasa`. Their combined lists:
+
+### Fixed in the platform already (spike found → base patched same week)
+
+- **Session death after checkout** — `vst.<cartId>.<hmac>` pinned to a
+  `completed` cart stranded every subsequent `addItem` (CART_NOT_FOUND).
+  Core: `POST /session` now re-attaches open carts and rotates spent tokens;
+  Kernel: `clearSession()` + `ensureSession` self-heals, `useCheckout`
+  invalidates the cart query.
+- **`api.order()` always 401** — no auth header; fixed, and `useOrder(id)`
+  hook added (order tracking + manual refetch).
+- **No zone read surface** — `GET /storefront/v1/zones` shipped +
+  `useDeliveryZones`; `api.quote(neighborhood)` exposes the non-mutating
+  quote (`POST /checkout/v1/quote` existed but was unwired).
+- **Sold-out modifiers accepted** — `validateItemModifiers` now rejects
+  `status:'sold_out'` with `MODIFIER_SOLD_OUT` (409).
+- **asChild clobbered child props** — `withChild` now composes: onClick
+  chains, className merges, `disabled` ORs.
+- **`useCart().loading` stuck true without a session** — `useQuery` tracks a
+  `resolved` flag; `useCart` returns `Cart | null`.
+- **`CartTrigger` counted completed carts** — now open-status only.
+- **No `refetch` on read hooks** — exposed on all of them.
+- **`useCheckout` returned only `submit`** — now `pending`/`error`/`reset`
+  with structured `QueryError` (code + `details.field`).
+- **`resumesAt` 30-min probe rounding** — `nextOpen` computes the exact
+  window boundary.
+- **No field-level error contract** — validation errors carry
+  `details.field` (`customer.phone`, `delivery.address`, …).
+- **Kernel types lagged the wire** — `figureVariant`/`tags`/category `slug`
+  declared; `ERROR_CODES` exported from `@vendua/kernel`.
+- **`@vendua/kernel/styles.css` unresolvable** — added to the exports map.
+- **Malformed JSON body → 500** — `bodyJson()` 400s instead.
+- **Closed notice hid `resumesAt` in prose** — now also in `payload.resumesAt`.
+
+### Feature gaps the reference ships that the platform can't express yet
+
+(From `quero-pudim` — each had an honest storefront fallback; details in its
+OBSERVATIONS.md `## Feature gaps`. Candidates for Contract v1 or Phase 1+.)
+
+- **Combos / kits** — per-slot min/max + qty-per-item picker. Needs a Core
+  `combos` entity; carried by `Kits` products + a `Sabores` modifier group.
+- **Stock quantity + low-stock** — "Restam N" badges and qty caps. Needs
+  `stockQuantity`/`lowStockThreshold` on products.
+- **Preorder / encomendas** — `requiresPreorder`, `scheduledFor`, lead-days,
+  Pix-only constraint.
+- **Product media** — no `imageUrl`/`gallery`; `figureVariant` is the only
+  bridge today (SVG figures).
+- **Waitlist** ("avisar quando voltar") — needs `POST /storefront/v1/waitlist`.
+- **Order items on the order view** — `GET /orders/:id` lacks `items[]`;
+  storefronts snapshot cart items at submit.
+- **Orders-by-phone** — "sem senha, sem cadastro" order history. Needs
+  `GET /customer/orders?phone=` + a `useOrders(phone)` hook.
+- **Pix details on the store/order** — `pixKey`/beneficiary/QR payload on
+  `StoreProfile` or the order's `payment` block.
+- **Coupons** — `POST /checkout/v1/coupons/validate` + `discountCents` in
+  cart totals.
+- **Order notes** — `notes` on `CheckoutInput` → `OrderView`.
+- **Structured address + CEP lookup** — `delivery.address` is one string;
+  reference had street/number/complement/cep + ViaCEP autocomplete and
+  distance-priced fees.
+- **Loyalty card** — points/stamps on my-orders.
+- **Cross-device cart recovery** (`?cart=` links) — needs a cart-import
+  primitive (`POST /cart` accepting items) or `importCart()`.
+- **Realtime order updates** — reference used SSE; contract forbids
+  fetch/EventSource in storefront code. Needs a Kernel-owned wrapper
+  (`useOrder(id, { poll })` shipped now; SSE variant is Phase 1+).
+
+### Doc/setup corrections (recorded so the next spike doesn't rediscover)
+
+- **Reserved route prefixes**: `/checkout` and `/storefront` are API mounts —
+  a checkout page can't live at `/checkout` (brasa used `/fechar`;
+  quero-pudim narrowed its proxy to `/checkout/v1`). Contract must list
+  reserved prefixes and require the object-form vite proxy
+  (`changeOrigin:false`) — string shorthand rewrites `Host` → TENANT_NOT_FOUND.
+- **`system.PromoNotice` should be a named slot key** — kind-camelization
+  produces it but `SLOT_KEYS` doesn't include it, so promo notices land on the
+  generic `system.Notice` override.
+- **`notices[].payload.region`** — `SurfaceRegion` zones get nothing today;
+  a `region` field would let promo/upsell notices land mid-catalog instead
+  of banner-only.
+- **Closed-vs-paused checkout semantics** are undocumented: closed allows
+  checkout (pre-order), paused blocks. A product decision Core should state.
+- **No scaffold** — `vendua.config.ts`, vite proxy, tsconfig chain are all
+  hand-rolled per store. Phase 1's `vendua scaffold` is already planned.
