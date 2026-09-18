@@ -19,8 +19,8 @@ All storefronts live in a single monorepo at `storefronts/<slug>/`, alongside
 codemods. Builds are affected-graph driven (only changed storefronts rebuild;
 a Kernel change rebuilds all). Isolation is enforced mechanically: CODEOWNERS
 plus a CI check that a `storefront:<slug>` PR touches only its own directory.
-Agents get a scoped working directory but can read the Kernel and sibling
-stores as references.
+Agents get a sparse, read-scoped checkout (Kernel source, scaffold, curated
+`storefronts/_examples/`) and a write scope of `storefronts/<slug>/` only.
 
 ## Consequences
 

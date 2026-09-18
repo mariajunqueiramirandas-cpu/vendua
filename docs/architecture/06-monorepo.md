@@ -11,25 +11,28 @@ single highest-leverage structural decision in the fleet story: a codemod across
 
 ```
 vendua/
+  site/                 # @vendua/site — marketing/teaser site (SvelteKit).
+                        # Not a storefront; does not consume the Kernel.
   packages/
-    core/                 # backend modular monolith
-    kernel/               # @vendua/kernel runtime
-    ui-defaults/          # @vendua/ui-defaults
-    cli/                  # @vendua/cli (scaffold, dev, check, build, qa)
-    conformance/          # @vendua/conformance suite + lint rules
-    codemods/             # @vendua/codemods
-    loader/               # v.js source
-    control-plane/        # fleet state, reconciler, fleet ops API
-    admin/                # merchant admin app — own app, shares only the
-                          # API client (not a Kernel consumer)
-    edge/                 # host→tenant resolution, artifact serving, injection
+    core/               # backend modular monolith
+    kernel/             # @vendua/kernel runtime
+    ui-defaults/        # @vendua/ui-defaults
+    cli/                # @vendua/cli (scaffold, dev, check, build, qa)
+    conformance/        # @vendua/conformance suite + lint rules
+    codemods/           # @vendua/codemods
+    loader/             # v.js source
+    control-plane/      # fleet state, reconciler, fleet ops API
+    admin/              # merchant admin app — own app, shares only the
+                        # API client (not a Kernel consumer)
+    edge/               # host→tenant resolution, artifact serving, injection
   storefronts/
-    _template/            # `vendua scaffold` source — always green
+    _template/          # `vendua scaffold` source — always green
+    _examples/          # curated golden storefronts — the only sibling
+                        # read set for agents
     quero-pudim/
     <slug>…
-  tools/                  # repo-level CI utilities, affected-graph scripts
+  tools/                # repo-level CI utilities, affected-graph scripts
   docs/
-```
 
 ## Isolation rules (enforced, not conventional)
 
@@ -39,7 +42,8 @@ vendua/
   contributors — a storefront PR that modifies Kernel or another store cannot
   merge.
 - **CODEOWNERS**: `packages/**` → platform team; `storefronts/**` → fleet
-  automation + on-call owner; `storefronts/_template` → platform team.
+  automation + on-call owner; `storefronts/_template` and
+  `storefronts/_examples` → platform team.
 - Package `exports` maps hide Kernel internals; `vendua check` lints
   cross-boundary imports (no `storefronts/A` importing `storefronts/B`, no
   storefront importing `packages/*` internals).
@@ -70,10 +74,28 @@ references to CDN URLs. Git keeps the manifest, not the media.
 
 ## Agents in the monorepo
 
-The monorepo is _better_ for coding agents, not worse: the agent working on
-`storefronts/<slug>` can read Kernel source, the template, and sibling
-storefronts as reference examples — while the changed-path check guarantees it
-can't stray. The task contract for agents is in
+The monorepo is _better_ for coding agents, not worse — **provided the agent
+never sees the whole repo**. Agent checkouts are sparse and read-scoped:
+
+```bash
+git clone --depth=1 --filter=blob:none --sparse vendua
+git sparse-checkout set \
+  packages/kernel packages/conformance docs \
+  storefronts/_template storefronts/_examples storefronts/<slug>
+```
+
+- **Read set**: Kernel source, the scaffold template, `docs/`, and
+  `storefronts/_examples/` — a small set of golden storefronts maintained by
+  the platform team as canonical references. The rest of the fleet is never
+  materialized: clone size stays flat at N=1000, the agent can't drown in
+  1000 storefronts, and one store's bad pattern can't become the fleet's
+  reference implementation.
+- **Write scope**: `storefronts/<slug>/**` only, enforced by the changed-path
+  CI check — the agent can't stray even within its sparse view.
+- **Codemod runs are the exception**: they are CI batch jobs, not agent
+  sessions, and take a full clone.
+
+The task contract for agents is in
 [14](14-agent-pipeline.md#scaffold-first-generation--the-anti-hallucination-rule).
 
 ## Scaling limits and the sharding trigger

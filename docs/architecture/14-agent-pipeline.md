@@ -63,8 +63,12 @@ was green and only its diff is judged.
 Agent task contract:
 
 ```
+checkout: sparse clone — `packages/kernel`, `packages/conformance`, `docs`,
+          `storefronts/_template`, `storefronts/_examples`,
+          `storefronts/<slug>` (see [06](06-monorepo.md#agents-in-the-monorepo))
 inputs:   storefronts/<slug>/ (scaffolded), DesignSpec, docs/contract summary,
           Kernel docs index
+reads:    Kernel source, _template, _examples — never the rest of the fleet
 allowed:  edits under storefronts/<slug>/** only (CI changed-path check)
 forbidden: packages/**, other storefronts, contract-required files' semantics
 done-when: conformance green + generation QA produced

@@ -10,7 +10,7 @@ Two suites with different jobs:
 - **Generation QA** — applied to agent-produced work. Answers "is this good?"
   Screenshots, visual triage, human approval where required.
 
-The teaser site's existing suite (`tests/site.spec.ts` + `VALIDACAO.md` style)
+The teaser site's existing suite (`site/tests/site.spec.ts` + `site/VALIDACAO.md`
 is the prototype: viewports, axe, no-JS, byte budgets, link checks — that shape
 generalizes directly into Conformance.
 

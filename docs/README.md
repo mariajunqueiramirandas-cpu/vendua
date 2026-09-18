@@ -5,11 +5,15 @@ system that produces and operates bespoke, code-generated storefronts on top of 
 shared backend ("Venduá Core") and a shared frontend runtime ("the Kernel").
 
 **Status of everything in this directory: Proposed.** No platform code exists yet.
-The repository currently contains only the Venduá marketing site (SvelteKit, see
-the root `README.md`), which is unrelated to the storefront framework choice.
+The repository currently contains only the Venduá marketing site (SvelteKit, at
+[`../site/`](../site/)), which is unrelated to the storefront framework choice.
 
 Documentation language is English so it can be consumed directly by coding agents
 and future hires. Customer-facing copy remains pt-BR.
+
+For a quick human read, [`summary/`](summary/) condenses every doc to its
+decisions and mechanisms. **Agents must use the full docs** — the summaries
+are lossy by design and the full set is normative.
 
 ## Reading order
 
