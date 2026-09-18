@@ -77,6 +77,9 @@ export function composeNotices(
         : 'Estamos fechados no momento.',
       dismissible: true,
       priority: 50,
+      // resumesAt rides in payload so specialized slots can restyle the
+      // countdown without parsing the pt-BR body copy.
+      ...(derived.resumesAt ? { payload: { resumesAt: derived.resumesAt } } : {}),
     });
   }
 

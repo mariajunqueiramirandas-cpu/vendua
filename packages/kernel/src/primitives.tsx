@@ -8,12 +8,35 @@ import type { CatalogProduct } from './api.ts';
  * `data-vendua` hook + ARIA semantics regardless of the delegated child.
  */
 
-/** Minimal asChild: merge props onto the single child element. */
+/**
+ * Minimal asChild: compose props onto the single child element without
+ * clobbering it — onClick chains (primitive's first), className concatenates,
+ * disabled ORs, other child props win over the primitive's defaults except the
+ * managed `data-vendua`/ARIA markers.
+ */
 type PrimitiveProps = Record<string, unknown> & { 'data-vendua': string };
 
 function withChild(asChild: boolean | undefined, props: PrimitiveProps, children: ReactNode) {
   if (asChild && isValidElement(children)) {
-    return cloneElement(children as ReactElement<Record<string, unknown>>, props);
+    const child = children as ReactElement<Record<string, unknown>>;
+    const childProps = child.props;
+    const merged: Record<string, unknown> = { ...props, ...childProps };
+    // Managed markers always come from the primitive.
+    merged['data-vendua'] = props['data-vendua'];
+    for (const k of Object.keys(props)) {
+      if (k.startsWith('aria-') || k.startsWith('data-')) merged[k] = props[k];
+    }
+    if (typeof props.onClick === 'function' || typeof childProps.onClick === 'function') {
+      merged.onClick = (e: unknown) => {
+        (props.onClick as ((e: unknown) => void) | undefined)?.(e);
+        (childProps.onClick as ((e: unknown) => void) | undefined)?.(e);
+      };
+    }
+    if (props.className || childProps.className) {
+      merged.className = [props.className, childProps.className].filter(Boolean).join(' ');
+    }
+    if (props.disabled || childProps.disabled) merged.disabled = true;
+    return cloneElement(child, merged);
   }
   return (
     <button type="button" {...props}>
@@ -124,7 +147,8 @@ export interface CartTriggerProps {
 
 export function CartTrigger({ asChild, children, onOpen }: CartTriggerProps) {
   const { cart } = useCart();
-  const count = cart?.totals.itemCount ?? 0;
+  // A completed cart is history, not a bag — count only open carts.
+  const count = cart?.status === 'open' ? cart.totals.itemCount : 0;
   return withChild(
     asChild,
     {

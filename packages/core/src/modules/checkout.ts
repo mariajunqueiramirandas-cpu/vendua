@@ -75,22 +75,28 @@ export function validateCheckoutShape(input: unknown): asserts input is Checkout
   if (!i || typeof i !== 'object')
     throw new HttpError(422, 'BAD_REQUEST', 'body must be an object');
   if (typeof i.customer?.name !== 'string' || i.customer.name.trim().length < 2) {
-    throw new HttpError(422, 'INVALID_CUSTOMER', 'customer.name is required');
+    throw new HttpError(422, 'INVALID_CUSTOMER', 'customer.name is required', {
+      field: 'customer.name',
+    });
   }
   if (typeof i.customer?.phone !== 'string' || i.customer.phone.trim().length < 8) {
-    throw new HttpError(422, 'INVALID_CUSTOMER', 'customer.phone is required');
+    throw new HttpError(422, 'INVALID_CUSTOMER', 'customer.phone is required', {
+      field: 'customer.phone',
+    });
   }
   if (i.delivery?.mode !== 'pickup' && i.delivery?.mode !== 'delivery') {
-    throw new HttpError(422, 'INVALID_DELIVERY', 'delivery.mode must be pickup or delivery');
+    throw new HttpError(422, 'INVALID_DELIVERY', 'delivery.mode must be pickup or delivery', {
+      field: 'delivery.mode',
+    });
   }
   if (i.delivery.mode === 'delivery' && typeof i.delivery.address !== 'string') {
-    throw new HttpError(422, 'INVALID_DELIVERY', 'delivery.address is required for delivery');
+    throw new HttpError(422, 'INVALID_DELIVERY', 'delivery.address is required for delivery', {
+      field: 'delivery.address',
+    });
   }
   if (!['pix', 'card_on_delivery', 'cash'].includes(i.payment?.method)) {
-    throw new HttpError(
-      422,
-      'INVALID_PAYMENT',
-      'payment.method must be pix, card_on_delivery or cash',
-    );
+    throw new HttpError(422, 'INVALID_PAYMENT', 'payment.method must be pix, card_on_delivery or cash', {
+      field: 'payment.method',
+    });
   }
 }

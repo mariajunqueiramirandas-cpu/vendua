@@ -49,6 +49,9 @@ export interface CatalogProduct {
   description: string | null;
   basePriceCents: number;
   status: 'active' | 'sold_out' | 'archived';
+  /** Decorative figure slot — storefronts map variants to artwork. */
+  figureVariant: 'default' | 'alt';
+  tags: string[];
 }
 
 export interface CatalogCategory {
@@ -135,6 +138,25 @@ export interface CheckoutInput {
   payment: { method: 'pix' | 'card_on_delivery' | 'cash' };
 }
 
+export interface DeliveryZone {
+  id: string;
+  name: string;
+  neighborhoods: string[];
+  feeCents: number;
+  minOrderCents: number;
+  etaMin: number;
+  etaMax: number;
+}
+
+export interface QuoteResult {
+  eligible: boolean;
+  reason?: 'OUT_OF_ZONE';
+  zoneId?: string;
+  feeCents?: number;
+  etaMin?: number;
+  etaMax?: number;
+}
+
 export interface Order {
   id: string;
   number: number;
@@ -215,13 +237,38 @@ export function createApi(baseUrl = '') {
       apiFetch<SurfacesEnvelope>(
         sf(`/surfaces${zoneMatched === undefined ? '' : `?zoneMatched=${zoneMatched}`}`),
       ),
-
-    // checkout session
-    async ensureSession(): Promise<{ cart: Cart }> {
-      if (token) return { cart: (await this.cart()).cart };
-      const res = await apiFetch<{ sessionToken: string; cart: Cart }>(co('/session'), {
+    zones: () => apiFetch<{ zones: DeliveryZone[] }>(sf('/zones')),
+    quote: (neighborhood: string) =>
+      apiFetch<QuoteResult>(co('/quote'), {
         method: 'POST',
         headers: { 'idempotency-key': idemKey() },
+        body: JSON.stringify({ neighborhood }),
+      }),
+
+    // checkout session
+    clearSession() {
+      token = null;
+      try {
+        globalThis.sessionStorage?.removeItem(SESSION_KEY);
+      } catch {
+        /* private mode */
+      }
+    },
+    async ensureSession(): Promise<{ cart: Cart }> {
+      // Fast path: an open cart reuses its token. A token pinned to a
+      // completed/abandoned cart rotates through POST /session (the server
+      // re-attaches open carts and mints fresh ones for spent tokens).
+      if (token) {
+        try {
+          const { cart } = await this.cart();
+          if (cart.status === 'open') return { cart };
+        } catch (err) {
+          if (!(err instanceof ApiError) || err.status !== 401) throw err;
+        }
+      }
+      const res = await apiFetch<{ sessionToken: string; cart: Cart }>(co('/session'), {
+        method: 'POST',
+        headers: { ...auth(), 'idempotency-key': idemKey() },
       });
       token = res.sessionToken;
       storeToken(token);
@@ -260,8 +307,35 @@ export function createApi(baseUrl = '') {
         headers: { ...auth(), 'idempotency-key': idemKey() },
         body: JSON.stringify(input),
       }).then((r) => r.order),
-    order: (id: string) => apiFetch<{ order: Order }>(co(`/orders/${id}`)).then((r) => r.order),
+    order: (id: string) =>
+      apiFetch<{ order: Order }>(co(`/orders/${id}`), { headers: auth() }).then((r) => r.order),
   };
 }
+
+/** Error codes emitted by Core — storefronts may switch on these. */
+export const ERROR_CODES = [
+  'TENANT_NOT_FOUND',
+  'SESSION_EXPIRED',
+  'CART_NOT_FOUND',
+  'PRODUCT_NOT_FOUND',
+  'SOLD_OUT',
+  'MODIFIER_SOLD_OUT',
+  'INVALID_MODIFIER',
+  'MODIFIER_REQUIRED',
+  'MODIFIER_MAX',
+  'EMPTY_CART',
+  'STORE_CLOSED',
+  'BELOW_MIN_ORDER',
+  'PICKUP_DISABLED',
+  'DELIVERY_DISABLED',
+  'OUT_OF_ZONE',
+  'INVALID_DELIVERY',
+  'INVALID_CUSTOMER',
+  'INVALID_PAYMENT',
+  'ORDER_NOT_FOUND',
+  'BAD_REQUEST',
+  'INTERNAL',
+] as const;
+export type ErrorCode = (typeof ERROR_CODES)[number];
 
 export type VenduaApi = ReturnType<typeof createApi>;

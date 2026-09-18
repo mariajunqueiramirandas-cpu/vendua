@@ -144,3 +144,17 @@ export async function sessionCartId(c: Context, secret: string): Promise<string>
   if (!cartId) throw new HttpError(401, 'SESSION_REQUIRED', 'a valid session token is required');
   return cartId;
 }
+
+/** `c.req.json()` that 400s on malformed input instead of 500ing. */
+export async function bodyJson(c: Context): Promise<Record<string, unknown>> {
+  try {
+    const body = await c.req.json();
+    if (!body || typeof body !== 'object' || Array.isArray(body)) {
+      throw new HttpError(400, 'BAD_REQUEST', 'body must be a JSON object');
+    }
+    return body as Record<string, unknown>;
+  } catch (err) {
+    if (err instanceof HttpError) throw err;
+    throw new HttpError(400, 'BAD_REQUEST', 'body is not valid JSON');
+  }
+}

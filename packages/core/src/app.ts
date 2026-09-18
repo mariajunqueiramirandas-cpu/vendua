@@ -7,8 +7,10 @@ import {
   errorJson,
   idempotency,
   mintSessionToken,
+  bodyJson,
   sessionCartId,
   tenantMiddleware,
+  verifySessionToken,
 } from './platform/http.ts';
 import { TenantResolver, type Tenant } from './platform/tenancy.ts';
 import { getCatalog, getProduct, getProductById } from './modules/catalog.ts';
@@ -41,6 +43,7 @@ async function loadZones(tx: Sql, tenantId: string) {
       min_order_cents: number;
       eta_min_minutes: number;
       eta_max_minutes: number;
+      active: boolean;
     }[]
   >`
     select id, name, neighborhoods, fee_cents, min_order_cents, eta_min_minutes, eta_max_minutes
@@ -144,6 +147,24 @@ export function createApp({ sql, sessionSecret }: AppDeps) {
     return c.json(envelope);
   });
 
+  // Public delivery-zone catalog — storefronts need it for address/zone UX
+  // (Phase 0 finding: no client could list covered neighborhoods).
+  storefront.get('/zones', async (c) => {
+    const tenant = c.get('tenant');
+    const zones = await withTenant(sql, tenant.id, (tx) => loadZones(tx, tenant.id));
+    return c.json({
+      zones: zones.map((z) => ({
+        id: z.id,
+        name: z.name,
+        neighborhoods: z.neighborhoods,
+        feeCents: z.fee_cents,
+        minOrderCents: z.min_order_cents,
+        etaMin: z.eta_min_minutes,
+        etaMax: z.eta_max_minutes,
+      })),
+    });
+  });
+
   // Tiny loader-facing endpoint — cached snapshot shape per 05-system-surfaces.
   storefront.get('/state', async (c) => {
     const tenant = c.get('tenant');
@@ -165,6 +186,25 @@ export function createApp({ sql, sessionSecret }: AppDeps) {
 
   checkout.post('/session', async (c) => {
     const tenant = c.get('tenant');
+    // Re-attach: a Bearer token whose cart is still open returns that session
+    // unchanged; a completed/abandoned cart mints a fresh one (self-healing —
+    // otherwise a spent token strands the storefront on CART_NOT_FOUND).
+    const bearer = c.req.header('authorization')?.replace(/^bearer\s+/i, '');
+    if (bearer) {
+      const existing = await withTenant(sql, tenant.id, async (tx) => {
+        const cartId = await verifySessionToken(bearer, sessionSecret);
+        if (!cartId) return null;
+        const rows = await tx<{ status: string }[]>`
+          select status from carts where tenant_id = ${tenant.id} and id = ${cartId}
+        `;
+        return rows[0]?.status === 'open' ? cartId : null;
+      });
+      if (existing) {
+        const cart = await withTenant(sql, tenant.id, (tx) => loadCartView(tx, tenant.id, existing));
+        return c.json({ sessionToken: bearer, cart });
+      }
+      // fall through to mint
+    }
     return idempotency(sql, async () => {
       const { cartId, token } = await withTenant(sql, tenant.id, async (tx) => {
         const cartId = crypto.randomUUID();
@@ -190,7 +230,7 @@ export function createApp({ sql, sessionSecret }: AppDeps) {
     const tenant = c.get('tenant');
     return idempotency(sql, async () => {
       const cartId = await sessionCartId(c, sessionSecret);
-      const body = await c.req.json();
+      const body = await bodyJson(c);
       const cart = await withTenant(sql, tenant.id, async (tx) => {
         const open =
           await tx`select id from carts where tenant_id = ${tenant.id} and id = ${cartId} and status = 'open'`;
@@ -209,7 +249,8 @@ export function createApp({ sql, sessionSecret }: AppDeps) {
     const tenant = c.get('tenant');
     return idempotency(sql, async () => {
       const cartId = await sessionCartId(c, sessionSecret);
-      const { qty } = await c.req.json();
+      const body = await bodyJson(c);
+      const qty = Number(body.qty);
       if (!Number.isInteger(qty) || qty < 0 || qty > 99) {
         throw new HttpError(422, 'INVALID_QTY', 'qty must be an integer between 0 and 99');
       }
@@ -242,13 +283,14 @@ export function createApp({ sql, sessionSecret }: AppDeps) {
     const tenant = c.get('tenant');
     return idempotency(sql, async () => {
       const cartId = await sessionCartId(c, sessionSecret);
-      const { mode, neighborhood, address } = await c.req.json();
+      const body = await bodyJson(c);
+      const { mode, neighborhood, address } = body;
       if (mode !== 'pickup' && mode !== 'delivery') {
         throw new HttpError(422, 'INVALID_DELIVERY', 'mode must be pickup or delivery');
       }
       const cart = await withTenant(sql, tenant.id, async (tx) => {
         await tx`
-          update carts set delivery = ${tx.json({ mode, neighborhood: neighborhood ?? null, address: address ?? null })}, updated_at = now()
+          update carts set delivery = ${tx.json({ mode, neighborhood: typeof neighborhood === 'string' ? neighborhood : null, address: typeof address === 'string' ? address : null })}, updated_at = now()
           where tenant_id = ${tenant.id} and id = ${cartId} and status = 'open'
         `;
         return loadCartView(tx, tenant.id, cartId);
@@ -260,9 +302,9 @@ export function createApp({ sql, sessionSecret }: AppDeps) {
   checkout.post('/quote', async (c) => {
     const tenant = c.get('tenant');
     return idempotency(sql, async () => {
-      const { neighborhood } = await c.req.json();
+      const { neighborhood } = await bodyJson(c);
       const zones = await withTenant(sql, tenant.id, (tx) => loadZones(tx, tenant.id));
-      const zone = matchZone(zones, neighborhood);
+      const zone = matchZone(zones, typeof neighborhood === 'string' ? neighborhood : '');
       if (!zone) {
         return { status: 200, body: { eligible: false, reason: 'OUT_OF_ZONE' } };
       }
@@ -283,7 +325,7 @@ export function createApp({ sql, sessionSecret }: AppDeps) {
     const tenant = c.get('tenant');
     return idempotency(sql, async () => {
       const cartId = await sessionCartId(c, sessionSecret);
-      const body = await c.req.json();
+      const body = await bodyJson(c);
       validateCheckoutShape(body);
       const order = await withTenant(sql, tenant.id, async (tx) => {
         const cart = await loadCartView(tx, tenant.id, cartId);

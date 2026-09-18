@@ -121,9 +121,12 @@ interface ApiErrorShape {
   details?: Record<string, unknown>;
 }
 
+// `resolved` is tracked separately from `data`: a fetcher that legitimately
+// resolves `undefined` (e.g. useCart without a session) must not read as
+// still-loading forever.
 const cache = new Map<
   string,
-  { data?: unknown; error?: ApiErrorShape; inflight?: Promise<void> }
+  { resolved?: boolean; data?: unknown; error?: ApiErrorShape; inflight?: Promise<void> }
 >();
 
 export function useQuery<T>(
@@ -142,17 +145,17 @@ export function useQuery<T>(
       const e = cache.get(key) ?? {};
       e.inflight = fetcher()
         .then((data) => {
-          cache.set(key, { data });
+          cache.set(key, { resolved: true, data });
         })
         .catch((error: ApiErrorShape) => {
-          cache.set(key, { error });
+          cache.set(key, { resolved: true, error });
         })
         .finally(() => {
           if (alive) setTick((t) => t + 1);
         });
       cache.set(key, e);
     };
-    if (!entry.inflight && entry.data === undefined && entry.error === undefined) run();
+    if (!entry.inflight && !entry.resolved) run();
     const unsub = subscribe(key, run);
     return () => {
       alive = false;
@@ -164,7 +167,7 @@ export function useQuery<T>(
   return {
     data: entry.data as T | undefined,
     error: entry.error,
-    loading: entry.data === undefined && entry.error === undefined,
+    loading: !entry.resolved && !entry.error,
     refetch: () => {
       cache.delete(key);
       setTick((t) => t + 1);

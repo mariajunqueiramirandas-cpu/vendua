@@ -85,12 +85,17 @@ export function validateItemModifiers(
   modifierIds: string[],
 ): HttpError | null {
   if (product.status !== 'active') return new HttpError(409, 'SOLD_OUT', 'product is sold out');
-  const allModifierIds = new Set(
-    product.modifierGroups.flatMap((g) => g.modifiers.map((m) => m.id)),
+
+  const byId = new Map(
+    product.modifierGroups.flatMap((g) => g.modifiers.map((m) => [m.id, m] as const)),
   );
   for (const id of modifierIds) {
-    if (!allModifierIds.has(id)) {
+    const modifier = byId.get(id);
+    if (!modifier) {
       return new HttpError(422, 'INVALID_MODIFIER', `unknown modifier ${id}`);
+    }
+    if (modifier.status === 'sold_out') {
+      return new HttpError(409, 'MODIFIER_SOLD_OUT', `"${modifier.name}" is sold out`);
     }
   }
   for (const group of product.modifierGroups) {

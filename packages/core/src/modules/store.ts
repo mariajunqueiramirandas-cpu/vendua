@@ -86,31 +86,33 @@ function withinWindow(dayMinutes: number, w: WeeklyWindow, day: number): boolean
   return inOpenPart || inClosePart;
 }
 
-/** Next instant the store opens, scanning ahead up to 8 days in 30-min steps. */
+/**
+ * Next instant the store opens — exact window boundary, not a probe grid.
+ * For each day offset (0–8) and each window, the candidate is that day's local
+ * `open` wall time converted back to an instant; one correction pass absorbs
+ * tz-offset drift between now and the candidate.
+ */
 function nextOpen(hours: StoreHours, now: Date): Date | undefined {
-  if (hours.windows.length === 0) return undefined;
-  // Candidate openings are exact window `open` times on each listed day.
-  // Evaluate in the store's local tz, then convert back to instants.
-  const stepMs = 30 * 60 * 1000;
-  for (let i = 0; i <= 8 * 24 * 2; i++) {
-    const probe = new Date(now.getTime() + i * stepMs);
-    const { day, minutes } = localParts(probe, hours.timezone);
+  const tz = hours.timezone;
+  let best: { t: number; openMin: number } | undefined;
+  for (let d = 0; d <= 8; d++) {
+    const probe = new Date(now.getTime() + d * 86_400_000);
+    const { day, minutes } = localParts(probe, tz);
     for (const w of hours.windows) {
-      const open = hhmmToMinutes(w.open);
-      const close = hhmmToMinutes(w.close);
-      // Only openings still ahead of probe's local time, or a window the probe
-      // is already inside (then it should have been reported open).
-      if (close > open) {
-        if (w.days.includes(day) && minutes >= open && minutes < close) return probe;
-        if (w.days.includes(day) && Math.abs(minutes - open) <= 30 && minutes < open) {
-          // We're within half a step before opening — good enough resolution
-          // for a human-readable "opens at".
-          return probe;
-        }
-      }
+      if (!w.days.includes(day)) continue;
+      const openMin = hhmmToMinutes(w.open);
+      const delta = openMin - minutes;
+      if (delta <= 0) continue; // opening already passed on that local day
+      const t = probe.getTime() + delta * 60_000;
+      if (!best || t < best.t) best = { t, openMin };
     }
+    if (best && d === 0) break; // a same-day open is the earliest possible
   }
-  return undefined;
+  if (!best) return undefined;
+  // Correct once for any offset change between now and the candidate.
+  const at = localParts(new Date(best.t), tz);
+  const drift = best.openMin - at.minutes;
+  return new Date(best.t + drift * 60_000);
 }
 
 export function deriveStatus(
@@ -127,5 +129,7 @@ export function deriveStatus(
   const open = hours.windows.some((w) => withinWindow(minutes, w, day));
   if (open && override !== 'closed') return { status: 'open' };
   const next = nextOpen(hours, now);
-  return next ? { status: 'closed', resumesAt: next.toISOString() } : { status: 'closed' };
+  return next
+    ? { status: 'closed', resumesAt: next.toISOString() }
+    : { status: 'closed' };
 }
