@@ -1,0 +1,262 @@
+/**
+ * Kernel API client — the only supported path from a storefront to Core
+ * (03-storefront-contract.md: no fetch/axios in storefront code). Same-origin
+ * by default; `baseUrl` exists for non-proxied dev setups.
+ *
+ * Mutations on /checkout/v1 always send a fresh Idempotency-Key; the session
+ * token minted by POST /checkout/v1/session rides as Bearer auth.
+ */
+
+export interface ApiErrorBody {
+  error: { code: string; message: string; details?: Record<string, unknown> };
+}
+
+export class ApiError extends Error {
+  constructor(
+    public status: number,
+    public code: string,
+    message: string,
+    public details?: Record<string, unknown>,
+  ) {
+    super(message);
+  }
+}
+
+// ---- storefront reads -----------------------------------------------------
+
+export interface StoreProfile {
+  slug: string;
+  name: string;
+  tagline: string | null;
+  description: string | null;
+  whatsapp: string | null;
+  instagram: string | null;
+  city: string | null;
+  address: string | null;
+  status: 'open' | 'closed' | 'paused';
+  resumesAt?: string;
+  hours: { timezone: string; windows: { days: number[]; open: string; close: string }[] };
+  prepTimeMinutes: number;
+  minOrderCents: number;
+  pickupEnabled: boolean;
+  deliveryEnabled: boolean;
+}
+
+export interface CatalogProduct {
+  id: string;
+  slug: string;
+  name: string;
+  description: string | null;
+  basePriceCents: number;
+  status: 'active' | 'sold_out' | 'archived';
+}
+
+export interface CatalogCategory {
+  id: string;
+  name: string;
+  sort: number;
+  products: CatalogProduct[];
+}
+
+export interface ProductDetail extends CatalogProduct {
+  modifierGroups: {
+    id: string;
+    name: string;
+    required: boolean;
+    minSelect: number;
+    maxSelect: number;
+    modifiers: { id: string; name: string; priceDeltaCents: number; status: string }[];
+  }[];
+}
+
+// ---- surfaces (05-system-surfaces.md, envelope v1) -------------------------
+
+export type NoticeSeverity = 'info' | 'warning' | 'blocking';
+
+export type NoticeAction =
+  | { type: 'link'; label: string; href: string }
+  | { type: 'notify'; label: string; channel: 'whatsapp' | 'push' }
+  | { type: 'dismiss'; label: string }
+  | ({ type: string; label: string } & Record<string, unknown>);
+
+export interface Notice {
+  id: string;
+  kind: string;
+  severity: NoticeSeverity | string;
+  title: string;
+  body?: string;
+  actions?: NoticeAction[];
+  payload?: Record<string, unknown>;
+  dismissible: boolean;
+  priority: number;
+  startsAt?: string;
+  endsAt?: string;
+}
+
+export interface SurfacesEnvelope {
+  version: 1;
+  store: { status: 'open' | 'closed' | 'paused'; resumesAt?: string };
+  notices: Notice[];
+}
+
+// ---- checkout session -----------------------------------------------------
+
+export interface CartItem {
+  id: string;
+  productId: string;
+  slug: string;
+  name: string;
+  qty: number;
+  unitPriceCents: number;
+  modifiers: { id: string; name: string; priceDeltaCents: number }[];
+  lineTotalCents: number;
+}
+
+export interface CartTotals {
+  subtotalCents: number;
+  deliveryFeeCents: number;
+  totalCents: number;
+  itemCount: number;
+  minOrderCents: number;
+  belowMinOrder: boolean;
+}
+
+export interface Cart {
+  id: string;
+  status: 'open' | 'completed' | 'abandoned';
+  items: CartItem[];
+  totals: CartTotals;
+  delivery: { mode: 'pickup' | 'delivery'; neighborhood?: string; zoneId?: string } | null;
+}
+
+export interface CheckoutInput {
+  customer: { name: string; phone: string };
+  delivery: { mode: 'pickup' | 'delivery'; neighborhood?: string; address?: string };
+  payment: { method: 'pix' | 'card_on_delivery' | 'cash' };
+}
+
+export interface Order {
+  id: string;
+  number: number;
+  state: string;
+  customer: { name: string; phone: string };
+  delivery: {
+    mode: 'pickup' | 'delivery';
+    etaMin: number | null;
+    etaMax: number | null;
+    address: unknown;
+    feeCents: number;
+    neighborhood: string | null;
+  };
+  payment: { method: string; status: string; provider: string; instructions: string | null };
+  subtotalCents: number;
+  deliveryFeeCents: number;
+  totalCents: number;
+  placedAt: string;
+  timeline: { at: string; from: string | null; to: string; actor: string; meta: unknown }[];
+}
+
+const SESSION_KEY = 'vendua.session';
+
+function readStoredToken(): string | null {
+  try {
+    return globalThis.sessionStorage?.getItem(SESSION_KEY) ?? null;
+  } catch {
+    return null;
+  }
+}
+
+function storeToken(token: string) {
+  try {
+    globalThis.sessionStorage?.setItem(SESSION_KEY, token);
+  } catch {
+    /* private mode — session lives in memory only */
+  }
+}
+
+async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> {
+  const res = await fetch(path, {
+    ...init,
+    headers: { 'content-type': 'application/json', ...(init?.headers ?? {}) },
+  });
+  const body = (await res.json().catch(() => ({}))) as T & ApiErrorBody;
+  if (!res.ok) {
+    const err = body?.error;
+    throw new ApiError(res.status, err?.code ?? 'INTERNAL', err?.message ?? res.statusText, err?.details);
+  }
+  return body;
+}
+
+function idemKey(): string {
+  return globalThis.crypto?.randomUUID?.() ?? `k-${Date.now()}-${Math.random()}`;
+}
+
+export function createApi(baseUrl = '') {
+  const sf = (path: string) => `${baseUrl}/storefront/v1${path}`;
+  const co = (path: string) => `${baseUrl}/checkout/v1${path}`;
+  let token: string | null = readStoredToken();
+  const auth = () => (token ? { authorization: `Bearer ${token}` } : {});
+
+  return {
+    get sessionToken() {
+      return token;
+    },
+
+    // storefront reads
+    store: () => apiFetch<StoreProfile>(sf('/store')),
+    catalog: () => apiFetch<{ categories: CatalogCategory[] }>(sf('/catalog')),
+    product: (slug: string) => apiFetch<{ product: ProductDetail }>(sf(`/products/${slug}`)),
+    surfaces: (zoneMatched?: boolean) =>
+      apiFetch<SurfacesEnvelope>(
+        sf(`/surfaces${zoneMatched === undefined ? '' : `?zoneMatched=${zoneMatched}`}`),
+      ),
+
+    // checkout session
+    async ensureSession(): Promise<{ cart: Cart }> {
+      if (token) return { cart: (await this.cart()).cart };
+      const res = await apiFetch<{ sessionToken: string; cart: Cart }>(co('/session'), {
+        method: 'POST',
+        headers: { 'idempotency-key': idemKey() },
+      });
+      token = res.sessionToken;
+      storeToken(token);
+      return { cart: res.cart };
+    },
+    cart: () => apiFetch<{ cart: Cart }>(co('/cart'), { headers: auth() }),
+    async addItem(productId: string, qty = 1, modifierIds: string[] = []): Promise<Cart> {
+      await this.ensureSession();
+      const res = await apiFetch<{ cart: Cart }>(co('/cart/items'), {
+        method: 'POST',
+        headers: { ...auth(), 'idempotency-key': idemKey() },
+        body: JSON.stringify({ productId, qty, modifierIds }),
+      });
+      return res.cart;
+    },
+    updateItem: (itemId: string, qty: number) =>
+      apiFetch<{ cart: Cart }>(co(`/cart/items/${itemId}`), {
+        method: 'PATCH',
+        headers: { ...auth(), 'idempotency-key': idemKey() },
+        body: JSON.stringify({ qty }),
+      }).then((r) => r.cart),
+    removeItem: (itemId: string) =>
+      apiFetch<{ cart: Cart }>(co(`/cart/items/${itemId}`), {
+        method: 'DELETE',
+        headers: { ...auth(), 'idempotency-key': idemKey() },
+      }).then((r) => r.cart),
+    setDelivery: (delivery: { mode: 'pickup' | 'delivery'; neighborhood?: string }) =>
+      apiFetch<{ cart: Cart }>(co('/cart/delivery'), {
+        method: 'POST',
+        headers: { ...auth(), 'idempotency-key': idemKey() },
+        body: JSON.stringify(delivery),
+      }).then((r) => r.cart),
+    checkout: (input: CheckoutInput) =>
+      apiFetch<{ order: Order }>(co('/checkout'), {
+        method: 'POST',
+        headers: { ...auth(), 'idempotency-key': idemKey() },
+        body: JSON.stringify(input),
+      }).then((r) => r.order),
+    order: (id: string) => apiFetch<{ order: Order }>(co(`/orders/${id}`)).then((r) => r.order),
+  };
+}
+
+export type VenduaApi = ReturnType<typeof createApi>;

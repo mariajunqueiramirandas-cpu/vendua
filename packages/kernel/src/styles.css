@@ -1,0 +1,152 @@
+/* Kernel default styles — @layer vendua + v- classes, self-contained resets
+ * (02-kernel.md#css-isolation). All colors/type/radii come from --v-* vars the
+ * provider emits on :root from vendua.config.ts tokens. */
+
+@layer vendua {
+  .v-banner-stack,
+  .v-blocking-overlay,
+  .v-surface-region {
+    box-sizing: border-box;
+    font-family: var(--v-font-body, system-ui, sans-serif);
+    line-height: 1.45;
+  }
+
+  .v-banner-stack {
+    position: fixed;
+    inset: 0 0 auto 0;
+    z-index: 9990;
+    display: flex;
+    flex-direction: column;
+    align-items: stretch;
+    pointer-events: none;
+    padding: 8px;
+    gap: 8px;
+  }
+  .v-banner-stack > * {
+    pointer-events: auto;
+  }
+
+  .v-notice {
+    position: relative;
+    display: block;
+    padding: 10px 40px 10px 14px;
+    border-radius: var(--v-radius-md, 10px);
+    background: var(--v-color-surface, #fff);
+    color: var(--v-color-text, #1a1714);
+    border: 1px solid color-mix(in srgb, var(--v-color-text, #1a1714) 12%, transparent);
+    box-shadow: 0 4px 16px rgb(0 0 0 / 0.08);
+    max-width: 640px;
+    margin: 0 auto;
+    width: 100%;
+  }
+  .v-notice-title {
+    display: block;
+    font-family: var(--v-font-display, var(--v-font-body, system-ui));
+    font-weight: 600;
+    font-size: 15px;
+  }
+  .v-notice-body {
+    margin: 4px 0 0;
+    font-size: 14px;
+    color: var(--v-color-muted, #6b6259);
+  }
+  .v-notice-actions {
+    margin: 8px 0 0;
+    display: flex;
+    gap: 12px;
+  }
+  .v-notice-action {
+    color: var(--v-color-accent, #b06010);
+    font-weight: 600;
+    font-size: 14px;
+  }
+  .v-notice-dismiss {
+    position: absolute;
+    top: 8px;
+    right: 10px;
+    border: 0;
+    background: none;
+    font-size: 18px;
+    line-height: 1;
+    cursor: pointer;
+    color: var(--v-color-muted, #6b6259);
+  }
+  .v-notice-warning {
+    border-left: 3px solid var(--v-color-accent, #b06010);
+  }
+  .v-notice-info {
+    border-left: 3px solid var(--v-color-success, #3d7a4f);
+  }
+
+  .v-blocking-overlay {
+    position: fixed;
+    inset: 0;
+    z-index: 9999;
+    display: grid;
+    place-items: center;
+    background: color-mix(in srgb, var(--v-color-bg, #fcfbf8) 82%, transparent);
+    backdrop-filter: blur(6px);
+    padding: 16px;
+  }
+  .v-blocking-overlay .v-notice {
+    border: none;
+    box-shadow: 0 16px 48px rgb(0 0 0 / 0.18);
+    text-align: center;
+    padding: 32px 28px;
+  }
+  .v-blocking-overlay .v-notice-title {
+    font-size: 20px;
+  }
+
+  [data-vendua='add-to-cart'],
+  [data-vendua='cart-trigger'] {
+    font-family: var(--v-font-body, system-ui);
+  }
+  [data-vendua='add-to-cart'][disabled],
+  [data-vendua='cart-trigger'][disabled] {
+    opacity: 0.55;
+    cursor: not-allowed;
+  }
+
+  [data-vendua='qty-stepper'] {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    font-family: var(--v-font-body, system-ui);
+  }
+  [data-vendua='qty-stepper'] button {
+    width: 28px;
+    height: 28px;
+    border-radius: var(--v-radius-sm, 6px);
+    border: 1px solid color-mix(in srgb, var(--v-color-text, #1a1714) 18%, transparent);
+    background: var(--v-color-surface, #fff);
+    color: var(--v-color-text, #1a1714);
+    cursor: pointer;
+    font-size: 15px;
+  }
+
+  [data-vendua='store-status'] {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 13px;
+    font-weight: 600;
+    font-family: var(--v-font-body, system-ui);
+  }
+  [data-vendua='store-status']::before {
+    content: '';
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: var(--v-color-muted, #6b6259);
+  }
+  [data-vendua='store-status'][data-status='open']::before {
+    background: var(--v-color-success, #3d7a4f);
+  }
+  [data-vendua='store-status'][data-status='paused']::before {
+    background: var(--v-color-accent, #b06010);
+  }
+  [data-vendua='store-status'][data-status='closed']::before {
+    background: var(--v-color-danger, #b3372f);
+  }
+}
