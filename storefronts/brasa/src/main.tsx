@@ -2,10 +2,7 @@ import { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
 import { createBrowserRouter, RouterProvider } from 'react-router-dom';
 import { VenduaProvider, SystemSurfaces } from '@vendua/kernel';
-// `@vendua/kernel/src/styles.css` is the documented import, but the package
-// `exports` map only publishes `.` and `./config` — the subpath fails to
-// resolve. Resolved by relative path instead (see OBSERVATIONS.md).
-import '../../../packages/kernel/src/styles.css';
+import '@vendua/kernel/styles.css';
 import '../styles/global.css';
 import config from '../vendua.config';
 import { Shell } from '../routes/_shell';

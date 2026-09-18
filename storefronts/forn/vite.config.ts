@@ -1,4 +1,3 @@
-import { fileURLToPath } from 'node:url';
 import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
 
@@ -8,16 +7,6 @@ import react from '@vitejs/plugin-react';
 const core = { target: 'http://localhost:8787', changeOrigin: false };
 export default defineConfig({
   plugins: [react()],
-  resolve: {
-    alias: {
-      // kernel's exports map only exposes '.' and './config' — the documented
-      // '@vendua/kernel/src/styles.css' specifier isn't reachable (see
-      // OBSERVATIONS.md). Alias keeps the contract import specifier working.
-      '@vendua/kernel/src/styles.css': fileURLToPath(
-        new URL('../../packages/kernel/src/styles.css', import.meta.url),
-      ),
-    },
-  },
   server: {
     port: 5192,
     strictPort: true,

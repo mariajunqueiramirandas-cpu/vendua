@@ -2,7 +2,7 @@ import { StrictMode, useEffect, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import { BrowserRouter, Route, Routes } from 'react-router-dom';
 import { SystemSurfaces, useStore, VenduaProvider } from '@vendua/kernel';
-import '@vendua/kernel/src/styles.css';
+import '@vendua/kernel/styles.css';
 import './styles/global.css';
 import config from './vendua.config.ts';
 import { EpochSync, SessionResetContext } from './components/session.tsx';
