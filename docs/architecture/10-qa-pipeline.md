@@ -11,8 +11,8 @@ Two suites with different jobs:
   Screenshots, visual triage, human approval where required.
 
 The teaser site's existing suite (`site/tests/site.spec.ts` + `site/VALIDACAO.md`
-is the prototype: viewports, axe, no-JS, byte budgets, link checks — that shape
-generalizes directly into Conformance.
+style) is the prototype: viewports, axe, no-JS, byte budgets, link checks —
+that shape generalizes directly into Conformance.
 
 ## Harness mechanics
 

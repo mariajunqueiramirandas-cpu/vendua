@@ -10,8 +10,8 @@
     "preview": "bun scripts/serve.ts",
     "check": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json",
     "test:e2e": "playwright test",
-    "format": "prettier --write src scripts tests *.ts *.js *.json README.md",
-    "format:check": "prettier --check src scripts tests *.ts *.js *.json README.md"
+    "format": "prettier --config ../.prettierrc.json --write src scripts tests *.ts *.js *.json README.md",
+    "format:check": "prettier --config ../.prettierrc.json --check src scripts tests *.ts *.js *.json README.md"
   },
   "devDependencies": {
     "@axe-core/playwright": "4.13.0",

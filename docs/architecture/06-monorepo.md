@@ -33,6 +33,7 @@ vendua/
     <slug>…
   tools/                # repo-level CI utilities, affected-graph scripts
   docs/
+```
 
 ## Isolation rules (enforced, not conventional)
 
