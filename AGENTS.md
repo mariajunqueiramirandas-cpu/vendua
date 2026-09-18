@@ -120,6 +120,44 @@ Before yielding any non-trivial work, run this gate:
 - Design every state, not just the happy path. Verify against the rendered
   surface, not just the code.
 
+## Evolving these instructions
+
+These files are living documents. When you learn something durable about
+this repo, write it down — the next agent (human or machine) should not
+have to rediscover it.
+
+**Record when you learn:**
+
+- A command, flag, or sequence that wasn't obvious (setup, build, deploy,
+  debugging).
+- A pitfall that cost you time: a footgun, a misleading error, a config
+  that must live somewhere unexpected.
+- A convention the codebase follows that isn't written down.
+- A reusable procedure worth repeating — that's a new skill, not a note.
+
+**Where to write it:**
+
+| Learning | File |
+| --- | --- |
+| Repo-wide workflow, commands, pitfalls | `AGENTS.md` |
+| Site-specific workflow or pitfall | `site/AGENTS.md` |
+| A hard rule that must always hold | `.omp/RULES.md` (keep it short) |
+| A reusable procedure/playbook | `.agents/skills/<name>/SKILL.md` |
+| Architecture or design decision | `docs/` (ADRs for decisions) |
+
+**Rules:**
+
+- Edit the file closest to the knowledge. Terse, concrete, verified —
+  same bar as code.
+- No session trivia: "fixed bug X" is git history, not an instruction.
+  Record the *generalizable* lesson.
+- Keep it small: these files load into every session's context. Every
+  line must earn its tokens.
+- Repo copies are canonical. `~/.omp/agent/AGENTS.md` and `RULES.md` are
+  global snapshots — refresh them when the repo versions change.
+- New skills need `name` + `description` frontmatter and live one level
+  under `.agents/skills/` to be discovered.
+
 ## Communication
 
 - Terse and concrete: exact files, symbols, APIs. Facts, decisions, risks —
