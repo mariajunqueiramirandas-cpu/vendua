@@ -60,8 +60,12 @@ bun run check && bun test         # tsc + bun:test
 
 Tenant resolution: `Host`/`x-forwarded-host` → `domains` table. Seeded dev
 hosts: `localhost:5174` quero-pudim, `localhost:5191` brasa,
-`localhost:5192` forn (storefront vite servers proxy `/storefront`,
-`/checkout`, `/v1` to :8787 preserving Host).
+`localhost:5192` forn. Storefront vite servers proxy `/storefront`,
+`/checkout/v1`, `/v1` to :8787 — **object-form proxy entries only** (string
+shorthand forces `changeOrigin:true`, rewrites Host → `TENANT_NOT_FOUND`),
+and never a bare `/checkout` key (swallows the SPA route on reload).
+Reserved API prefixes — no page route may live under `/storefront`, `/v1`,
+or `/checkout/v1`.
 
 postgres.js footgun: never pass `JSON.stringify(x)` into a jsonb param — it
 double-encodes to a JSON string. Use `sql.json(x)`/`tx.json(x)`.
