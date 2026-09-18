@@ -2,8 +2,10 @@ import { createApp } from './app.ts';
 import { createSql, migrate } from './platform/db.ts';
 import { join } from 'node:path';
 
-const databaseUrl = process.env.DATABASE_URL ?? 'postgres://vendua_app:vendua_app@localhost:5433/vendua';
-const migrationUrl = process.env.MIGRATION_DATABASE_URL ?? 'postgres://vendua:vendua@localhost:5433/vendua';
+const databaseUrl =
+  process.env.DATABASE_URL ?? 'postgres://vendua_app:vendua_app@localhost:5433/vendua';
+const migrationUrl =
+  process.env.MIGRATION_DATABASE_URL ?? 'postgres://vendua:vendua@localhost:5433/vendua';
 const port = Number(process.env.PORT ?? 8787);
 const sessionSecret = process.env.SESSION_SECRET ?? 'dev-session-secret';
 

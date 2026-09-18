@@ -17,19 +17,56 @@ import { createSql } from './db.ts';
 const url = process.env.MIGRATION_DATABASE_URL ?? 'postgres://vendua:vendua@localhost:5433/vendua';
 const sql = createSql(url);
 
-interface SeedZone { name: string; neighborhoods: string[]; feeCents: number; minOrderCents?: number; etaMin: number; etaMax: number }
-interface SeedModifier { name: string; deltaCents?: number }
-interface SeedGroup { name: string; required?: boolean; min?: number; max?: number; modifiers: SeedModifier[] }
-interface SeedProduct { slug: string; name: string; description?: string; priceCents: number; status?: 'active' | 'sold_out'; figure?: 'default' | 'alt'; groups?: SeedGroup[] }
-interface SeedCategory { slug: string; name: string; sort: number; products: SeedProduct[] }
+interface SeedZone {
+  name: string;
+  neighborhoods: string[];
+  feeCents: number;
+  minOrderCents?: number;
+  etaMin: number;
+  etaMax: number;
+}
+interface SeedModifier {
+  name: string;
+  deltaCents?: number;
+}
+interface SeedGroup {
+  name: string;
+  required?: boolean;
+  min?: number;
+  max?: number;
+  modifiers: SeedModifier[];
+}
+interface SeedProduct {
+  slug: string;
+  name: string;
+  description?: string;
+  priceCents: number;
+  status?: 'active' | 'sold_out';
+  figure?: 'default' | 'alt';
+  groups?: SeedGroup[];
+}
+interface SeedCategory {
+  slug: string;
+  name: string;
+  sort: number;
+  products: SeedProduct[];
+}
 interface SeedTenant {
   slug: string;
   name: string;
   hosts: string[];
   settings: {
-    tagline?: string; description?: string; whatsapp?: string; instagram?: string;
-    city?: string; address?: string; windows: { days: number[]; open: string; close: string }[];
-    minOrderCents?: number; prepTimeMinutes?: number; pickup?: boolean; delivery?: boolean;
+    tagline?: string;
+    description?: string;
+    whatsapp?: string;
+    instagram?: string;
+    city?: string;
+    address?: string;
+    windows: { days: number[]; open: string; close: string }[];
+    minOrderCents?: number;
+    prepTimeMinutes?: number;
+    pickup?: boolean;
+    delivery?: boolean;
     promo?: { title: string; body?: string };
   };
   zones: SeedZone[];
@@ -45,7 +82,8 @@ const TENANTS: SeedTenant[] = [
     hosts: ['quero-pudim.localhost', 'localhost:5174', '127.0.0.1:5174'],
     settings: {
       tagline: 'Pudins sem furinhos e sacolés cremosos',
-      description: 'Pudins sem furinhos e sacolés bem cremosos, feitos à mão em Saquarema, RJ. Encomende para retirada ou entrega.',
+      description:
+        'Pudins sem furinhos e sacolés bem cremosos, feitos à mão em Saquarema, RJ. Encomende para retirada ou entrega.',
       whatsapp: '5522999999999',
       instagram: '@queropudim_gourmet',
       city: 'Saquarema · RJ',
@@ -56,52 +94,138 @@ const TENANTS: SeedTenant[] = [
       promo: { title: 'Semana do pudim', body: '10% off em todos os kits até domingo.' },
     },
     zones: [
-      { name: 'Centro', neighborhoods: ['Centro', 'Bacaxá'], feeCents: 500, etaMin: 30, etaMax: 50 },
+      {
+        name: 'Centro',
+        neighborhoods: ['Centro', 'Bacaxá'],
+        feeCents: 500,
+        etaMin: 30,
+        etaMax: 50,
+      },
       { name: 'Itaúna', neighborhoods: ['Itaúna'], feeCents: 700, etaMin: 40, etaMax: 60 },
-      { name: 'Vilatur / Gravatá', neighborhoods: ['Vilatur', 'Gravatá'], feeCents: 900, minOrderCents: 2000, etaMin: 50, etaMax: 80 },
+      {
+        name: 'Vilatur / Gravatá',
+        neighborhoods: ['Vilatur', 'Gravatá'],
+        feeCents: 900,
+        minOrderCents: 2000,
+        etaMin: 50,
+        etaMax: 80,
+      },
     ],
     categories: [
       {
-        slug: 'pudins', name: 'Pudins', sort: 1,
+        slug: 'pudins',
+        name: 'Pudins',
+        sort: 1,
         products: [
           {
-            slug: 'pudim-tradicional', name: 'Pudim tradicional', priceCents: 1890,
+            slug: 'pudim-tradicional',
+            name: 'Pudim tradicional',
+            priceCents: 1890,
             description: 'O clássico: lisinho, sem furinho, calda dourada de caramelo.',
             groups: [
-              { name: 'Tamanho', required: true, min: 1, max: 1, modifiers: [
-                { name: 'Individual — 120g' }, { name: 'Médio — 400g', deltaCents: 1600 }, { name: 'Grande — 800g', deltaCents: 3900 },
-              ]},
-              { name: 'Cobertura extra', max: 2, modifiers: [
-                { name: 'Calda extra', deltaCents: 300 }, { name: 'Coco fresco', deltaCents: 400 },
-              ]},
+              {
+                name: 'Tamanho',
+                required: true,
+                min: 1,
+                max: 1,
+                modifiers: [
+                  { name: 'Individual — 120g' },
+                  { name: 'Médio — 400g', deltaCents: 1600 },
+                  { name: 'Grande — 800g', deltaCents: 3900 },
+                ],
+              },
+              {
+                name: 'Cobertura extra',
+                max: 2,
+                modifiers: [
+                  { name: 'Calda extra', deltaCents: 300 },
+                  { name: 'Coco fresco', deltaCents: 400 },
+                ],
+              },
             ],
           },
-          { slug: 'pudim-coco', name: 'Pudim de coco', priceCents: 1990, description: 'Coco de verdade na massa e na cobertura. Textura firme, sabor de festa.' },
-          { slug: 'pudim-doce-de-leite', name: 'Pudim de doce de leite', priceCents: 2190, description: 'Doce de leite caseiro no lugar da calda — mais escuro, mais profundo.' },
-          { slug: 'pudim-maracuja', name: 'Pudim de maracujá', priceCents: 2090, description: 'Azedinho do maracujá cortando o doce do leite condensado.', status: 'sold_out' },
+          {
+            slug: 'pudim-coco',
+            name: 'Pudim de coco',
+            priceCents: 1990,
+            description: 'Coco de verdade na massa e na cobertura. Textura firme, sabor de festa.',
+          },
+          {
+            slug: 'pudim-doce-de-leite',
+            name: 'Pudim de doce de leite',
+            priceCents: 2190,
+            description: 'Doce de leite caseiro no lugar da calda — mais escuro, mais profundo.',
+          },
+          {
+            slug: 'pudim-maracuja',
+            name: 'Pudim de maracujá',
+            priceCents: 2090,
+            description: 'Azedinho do maracujá cortando o doce do leite condensado.',
+            status: 'sold_out',
+          },
         ],
       },
       {
-        slug: 'sacoles', name: 'Sacolés', sort: 2,
-        products: [
-          { slug: 'sacole-coco', name: 'Sacolé de coco', priceCents: 700, figure: 'alt', description: 'Cremoso de verdade — leite de coco fresco.' },
-          { slug: 'sacole-morango', name: 'Sacolé de morango', priceCents: 750, figure: 'alt', description: 'Morango maduro, batido na hora.' },
-          { slug: 'sacole-chocolate', name: 'Sacolé de chocolate', priceCents: 750, figure: 'alt', description: 'Cacau 50%, denso e gelado.' },
-        ],
-      },
-      {
-        slug: 'kits', name: 'Kits', sort: 3,
+        slug: 'sacoles',
+        name: 'Sacolés',
+        sort: 2,
         products: [
           {
-            slug: 'kit-festa', name: 'Kit festa', priceCents: 5990, figure: 'alt',
+            slug: 'sacole-coco',
+            name: 'Sacolé de coco',
+            priceCents: 700,
+            figure: 'alt',
+            description: 'Cremoso de verdade — leite de coco fresco.',
+          },
+          {
+            slug: 'sacole-morango',
+            name: 'Sacolé de morango',
+            priceCents: 750,
+            figure: 'alt',
+            description: 'Morango maduro, batido na hora.',
+          },
+          {
+            slug: 'sacole-chocolate',
+            name: 'Sacolé de chocolate',
+            priceCents: 750,
+            figure: 'alt',
+            description: 'Cacau 50%, denso e gelado.',
+          },
+        ],
+      },
+      {
+        slug: 'kits',
+        name: 'Kits',
+        sort: 3,
+        products: [
+          {
+            slug: 'kit-festa',
+            name: 'Kit festa',
+            priceCents: 5990,
+            figure: 'alt',
             description: '12 doces à sua escolha — para a festa, o presente ou a semana.',
             groups: [
-              { name: 'Sabores dos pudins', required: true, min: 2, max: 4, modifiers: [
-                { name: 'Tradicional' }, { name: 'Coco' }, { name: 'Doce de leite' }, { name: 'Maracujá' },
-              ]},
+              {
+                name: 'Sabores dos pudins',
+                required: true,
+                min: 2,
+                max: 4,
+                modifiers: [
+                  { name: 'Tradicional' },
+                  { name: 'Coco' },
+                  { name: 'Doce de leite' },
+                  { name: 'Maracujá' },
+                ],
+              },
             ],
           },
-          { slug: 'kit-semana', name: 'Kit da semana', priceCents: 4490, figure: 'alt', description: '6 pudins individuais — um para cada dia útil e um de bônus.' },
+          {
+            slug: 'kit-semana',
+            name: 'Kit da semana',
+            priceCents: 4490,
+            figure: 'alt',
+            description: '6 pudins individuais — um para cada dia útil e um de bônus.',
+          },
         ],
       },
     ],
@@ -112,7 +236,8 @@ const TENANTS: SeedTenant[] = [
     hosts: ['brasa.localhost', 'localhost:5191', '127.0.0.1:5191'],
     settings: {
       tagline: 'Smash na chapa. Fogo de verdade.',
-      description: 'Smash burgers prensados na chapa, pão de fermentação natural e batata rústica. Centro, entrega e retirada.',
+      description:
+        'Smash burgers prensados na chapa, pão de fermentação natural e batata rústica. Centro, entrega e retirada.',
       whatsapp: '5521988887777',
       instagram: '@brasa.burger',
       city: 'Rio de Janeiro · RJ',
@@ -122,55 +247,124 @@ const TENANTS: SeedTenant[] = [
       prepTimeMinutes: 25,
     },
     zones: [
-      { name: 'Centro', neighborhoods: ['Centro', 'Gamboa', 'Saúde'], feeCents: 600, etaMin: 25, etaMax: 45 },
-      { name: 'Zona Portuária', neighborhoods: ['Santo Cristo', 'Caju'], feeCents: 900, minOrderCents: 3500, etaMin: 40, etaMax: 65 },
+      {
+        name: 'Centro',
+        neighborhoods: ['Centro', 'Gamboa', 'Saúde'],
+        feeCents: 600,
+        etaMin: 25,
+        etaMax: 45,
+      },
+      {
+        name: 'Zona Portuária',
+        neighborhoods: ['Santo Cristo', 'Caju'],
+        feeCents: 900,
+        minOrderCents: 3500,
+        etaMin: 40,
+        etaMax: 65,
+      },
     ],
     categories: [
       {
-        slug: 'smash', name: 'Smash burgers', sort: 1,
+        slug: 'smash',
+        name: 'Smash burgers',
+        sort: 1,
         products: [
           {
-            slug: 'brasa-simples', name: 'Brasa Simples', priceCents: 2990,
-            description: 'Dois smash de 80g, cheddar, picles e maionese de alho no pão de fermentação natural.',
+            slug: 'brasa-simples',
+            name: 'Brasa Simples',
+            priceCents: 2990,
+            description:
+              'Dois smash de 80g, cheddar, picles e maionese de alho no pão de fermentação natural.',
             groups: [
-              { name: 'Ponto', required: true, min: 1, max: 1, modifiers: [
-                { name: 'Ao ponto' }, { name: 'Bem passado' }, { name: 'Mal passado' },
-              ]},
-              { name: 'Adicionais', max: 6, modifiers: [
-                { name: 'Bacon crocante', deltaCents: 600 }, { name: 'Cheddar extra', deltaCents: 450 },
-                { name: 'Cebola caramelizada', deltaCents: 400 }, { name: 'Jalapeño', deltaCents: 350 },
-                { name: 'Ovo caipira', deltaCents: 400 }, { name: 'Smash extra 80g', deltaCents: 900 },
-              ]},
+              {
+                name: 'Ponto',
+                required: true,
+                min: 1,
+                max: 1,
+                modifiers: [{ name: 'Ao ponto' }, { name: 'Bem passado' }, { name: 'Mal passado' }],
+              },
+              {
+                name: 'Adicionais',
+                max: 6,
+                modifiers: [
+                  { name: 'Bacon crocante', deltaCents: 600 },
+                  { name: 'Cheddar extra', deltaCents: 450 },
+                  { name: 'Cebola caramelizada', deltaCents: 400 },
+                  { name: 'Jalapeño', deltaCents: 350 },
+                  { name: 'Ovo caipira', deltaCents: 400 },
+                  { name: 'Smash extra 80g', deltaCents: 900 },
+                ],
+              },
             ],
           },
           {
-            slug: 'brasa-dupla', name: 'Brasa Dupla', priceCents: 3690,
+            slug: 'brasa-dupla',
+            name: 'Brasa Dupla',
+            priceCents: 3690,
             description: 'Quatro carnes, dobro de cheddar, cebola crispy e o molho da casa.',
             groups: [
-              { name: 'Ponto', required: true, min: 1, max: 1, modifiers: [
-                { name: 'Ao ponto' }, { name: 'Bem passado' }, { name: 'Mal passado' },
-              ]},
-              { name: 'Adicionais', max: 6, modifiers: [
-                { name: 'Bacon crocante', deltaCents: 600 }, { name: 'Cheddar extra', deltaCents: 450 },
-                { name: 'Cebola caramelizada', deltaCents: 400 }, { name: 'Jalapeño', deltaCents: 350 },
-                { name: 'Molho brasa extra', deltaCents: 250 },
-              ]},
+              {
+                name: 'Ponto',
+                required: true,
+                min: 1,
+                max: 1,
+                modifiers: [{ name: 'Ao ponto' }, { name: 'Bem passado' }, { name: 'Mal passado' }],
+              },
+              {
+                name: 'Adicionais',
+                max: 6,
+                modifiers: [
+                  { name: 'Bacon crocante', deltaCents: 600 },
+                  { name: 'Cheddar extra', deltaCents: 450 },
+                  { name: 'Cebola caramelizada', deltaCents: 400 },
+                  { name: 'Jalapeño', deltaCents: 350 },
+                  { name: 'Molho brasa extra', deltaCents: 250 },
+                ],
+              },
             ],
           },
-          { slug: 'brasa-veggie', name: 'Brasa Veggie', priceCents: 3190, description: 'Smash de grão-de-bico e cogumelos, queijo vegetal, rúcula e maionese de ervas.' },
+          {
+            slug: 'brasa-veggie',
+            name: 'Brasa Veggie',
+            priceCents: 3190,
+            description:
+              'Smash de grão-de-bico e cogumelos, queijo vegetal, rúcula e maionese de ervas.',
+          },
         ],
       },
       {
-        slug: 'acompanhamentos', name: 'Acompanhamentos', sort: 2,
+        slug: 'acompanhamentos',
+        name: 'Acompanhamentos',
+        sort: 2,
         products: [
-          { slug: 'batata-rustica', name: 'Batata rústica', priceCents: 1490, figure: 'alt', description: 'Casca, páprica defumada, maionese da casa.' },
-          { slug: 'onion-rings', name: 'Onion rings', priceCents: 1690, figure: 'alt', description: 'Empanados na hora, molho barbecue.' },
+          {
+            slug: 'batata-rustica',
+            name: 'Batata rústica',
+            priceCents: 1490,
+            figure: 'alt',
+            description: 'Casca, páprica defumada, maionese da casa.',
+          },
+          {
+            slug: 'onion-rings',
+            name: 'Onion rings',
+            priceCents: 1690,
+            figure: 'alt',
+            description: 'Empanados na hora, molho barbecue.',
+          },
         ],
       },
       {
-        slug: 'bebidas', name: 'Bebidas', sort: 3,
+        slug: 'bebidas',
+        name: 'Bebidas',
+        sort: 3,
         products: [
-          { slug: 'soda-artesanal', name: 'Soda artesanal', priceCents: 990, figure: 'alt', description: 'Sabores rotativos da casa.' },
+          {
+            slug: 'soda-artesanal',
+            name: 'Soda artesanal',
+            priceCents: 990,
+            figure: 'alt',
+            description: 'Sabores rotativos da casa.',
+          },
           { slug: 'coca-lata', name: 'Coca-Cola lata', priceCents: 700, figure: 'alt' },
         ],
       },
@@ -182,7 +376,8 @@ const TENANTS: SeedTenant[] = [
     hosts: ['forn.localhost', 'localhost:5192', '127.0.0.1:5192'],
     settings: {
       tagline: 'Pão de fermentação natural, todo dia de manhã',
-      description: 'Padoca de bairro: fermentação natural, fornadas da manhã, café coado. Retirada no balcão.',
+      description:
+        'Padoca de bairro: fermentação natural, fornadas da manhã, café coado. Retirada no balcão.',
       whatsapp: '5521977776666',
       instagram: '@forn.dobairro',
       city: 'Petrópolis · RJ',
@@ -194,28 +389,72 @@ const TENANTS: SeedTenant[] = [
       delivery: false,
     },
     zones: [
-      { name: 'Balcão', neighborhoods: ['Valparaíso', 'Centro'], feeCents: 0, etaMin: 10, etaMax: 20 },
+      {
+        name: 'Balcão',
+        neighborhoods: ['Valparaíso', 'Centro'],
+        feeCents: 0,
+        etaMin: 10,
+        etaMax: 20,
+      },
     ],
     categories: [
       {
-        slug: 'paes', name: 'Pães', sort: 1,
+        slug: 'paes',
+        name: 'Pães',
+        sort: 1,
         products: [
-          { slug: 'pao-campanha', name: 'Pão de campanha', priceCents: 2400, description: 'Fermentação natural de 48h, casca grossa, miolo aberto.' },
-          { slug: 'pao-de-milho', name: 'Pão de milho', priceCents: 1800, description: 'Milho verde e fubá — macio por dentro, dourado por fora.' },
-          { slug: 'focaccia', name: 'Focaccia de alecrim', priceCents: 2100, description: 'Azeite, flor de sal e alecrim do quintal.', status: 'sold_out' },
+          {
+            slug: 'pao-campanha',
+            name: 'Pão de campanha',
+            priceCents: 2400,
+            description: 'Fermentação natural de 48h, casca grossa, miolo aberto.',
+          },
+          {
+            slug: 'pao-de-milho',
+            name: 'Pão de milho',
+            priceCents: 1800,
+            description: 'Milho verde e fubá — macio por dentro, dourado por fora.',
+          },
+          {
+            slug: 'focaccia',
+            name: 'Focaccia de alecrim',
+            priceCents: 2100,
+            description: 'Azeite, flor de sal e alecrim do quintal.',
+            status: 'sold_out',
+          },
         ],
       },
       {
-        slug: 'doces', name: 'Doces de padoca', sort: 2,
+        slug: 'doces',
+        name: 'Doces de padoca',
+        sort: 2,
         products: [
-          { slug: 'bomba-de-chocolate', name: 'Bomba de chocolate', priceCents: 890, description: 'Choux recheado na hora.' },
-          { slug: 'sonho-de-creme', name: 'Sonho de creme', priceCents: 690, description: 'Creme de confeiteiro e açúcar de verdade.' },
+          {
+            slug: 'bomba-de-chocolate',
+            name: 'Bomba de chocolate',
+            priceCents: 890,
+            description: 'Choux recheado na hora.',
+          },
+          {
+            slug: 'sonho-de-creme',
+            name: 'Sonho de creme',
+            priceCents: 690,
+            description: 'Creme de confeiteiro e açúcar de verdade.',
+          },
         ],
       },
       {
-        slug: 'cafe', name: 'Café', sort: 3,
+        slug: 'cafe',
+        name: 'Café',
+        sort: 3,
         products: [
-          { slug: 'cafe-coado', name: 'Café coado', priceCents: 600, figure: 'alt', description: 'Grão da serra, passado na hora.' },
+          {
+            slug: 'cafe-coado',
+            name: 'Café coado',
+            priceCents: 600,
+            figure: 'alt',
+            description: 'Grão da serra, passado na hora.',
+          },
           { slug: 'cappuccino', name: 'Cappuccino', priceCents: 1100, figure: 'alt' },
         ],
       },

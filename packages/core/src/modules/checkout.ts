@@ -72,7 +72,8 @@ export function validateCheckout(
 
 export function validateCheckoutShape(input: unknown): asserts input is CheckoutInput {
   const i = input as CheckoutInput;
-  if (!i || typeof i !== 'object') throw new HttpError(422, 'BAD_REQUEST', 'body must be an object');
+  if (!i || typeof i !== 'object')
+    throw new HttpError(422, 'BAD_REQUEST', 'body must be an object');
   if (typeof i.customer?.name !== 'string' || i.customer.name.trim().length < 2) {
     throw new HttpError(422, 'INVALID_CUSTOMER', 'customer.name is required');
   }
@@ -86,6 +87,10 @@ export function validateCheckoutShape(input: unknown): asserts input is Checkout
     throw new HttpError(422, 'INVALID_DELIVERY', 'delivery.address is required for delivery');
   }
   if (!['pix', 'card_on_delivery', 'cash'].includes(i.payment?.method)) {
-    throw new HttpError(422, 'INVALID_PAYMENT', 'payment.method must be pix, card_on_delivery or cash');
+    throw new HttpError(
+      422,
+      'INVALID_PAYMENT',
+      'payment.method must be pix, card_on_delivery or cash',
+    );
   }
 }

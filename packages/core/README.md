@@ -6,12 +6,12 @@ reference: `docs/architecture/01-core.md`.
 
 ## What exists in Phase 0
 
-| Surface | Scope | Endpoints |
-| --- | --- | --- |
-| `/storefront/v1` | public, tenant resolved from `Host` | `GET /store` · `GET /catalog` · `GET /products/:slug` · `GET /surfaces` · `GET /state` |
-| `/checkout/v1` | anonymous session token (`vst.*`), `Idempotency-Key` on every mutation | `POST /session` · `GET /cart` · `POST /cart/items` · `PATCH/DELETE /cart/items/:id` · `POST /cart/delivery` · `POST /quote` · `POST /checkout` · `GET /orders/:id` |
-| `/control/v1` | internal (dev-open) | `GET /state?tenant=<slug>` — the edge-injection payload |
-| `/v1/v.js` | the loader stub | in prod served from CDN; dev-only here |
+| Surface          | Scope                                                                  | Endpoints                                                                                                                                                          |
+| ---------------- | ---------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `/storefront/v1` | public, tenant resolved from `Host`                                    | `GET /store` · `GET /catalog` · `GET /products/:slug` · `GET /surfaces` · `GET /state`                                                                             |
+| `/checkout/v1`   | anonymous session token (`vst.*`), `Idempotency-Key` on every mutation | `POST /session` · `GET /cart` · `POST /cart/items` · `PATCH/DELETE /cart/items/:id` · `POST /cart/delivery` · `POST /quote` · `POST /checkout` · `GET /orders/:id` |
+| `/control/v1`    | internal (dev-open)                                                    | `GET /state?tenant=<slug>` — the edge-injection payload                                                                                                            |
+| `/v1/v.js`       | the loader stub                                                        | in prod served from CDN; dev-only here                                                                                                                             |
 
 Modules under `src/modules/`: `store` (hours → open/closed/paused derivation),
 `catalog`, `cart` (server-side totals — the Kernel holds no pricing),

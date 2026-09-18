@@ -25,7 +25,9 @@ export interface AppDeps {
 }
 
 async function loadSettings(tx: Sql, tenantId: string): Promise<StoreSettingsRow | null> {
-  const rows = await tx<StoreSettingsRow[]>`select * from store_settings where tenant_id = ${tenantId}`;
+  const rows = await tx<
+    StoreSettingsRow[]
+  >`select * from store_settings where tenant_id = ${tenantId}`;
   return rows[0] ?? null;
 }
 
@@ -47,8 +49,12 @@ async function loadZones(tx: Sql, tenantId: string) {
 }
 
 function currentStatus(settings: StoreSettingsRow | null) {
-  return deriveStatus(settings?.hours ?? { timezone: 'America/Sao_Paulo', windows: [] },
-    settings?.status_override ?? null, settings?.resumes_at ?? null, new Date());
+  return deriveStatus(
+    settings?.hours ?? { timezone: 'America/Sao_Paulo', windows: [] },
+    settings?.status_override ?? null,
+    settings?.resumes_at ?? null,
+    new Date(),
+  );
 }
 
 export function createApp({ sql, sessionSecret }: AppDeps) {
@@ -57,7 +63,14 @@ export function createApp({ sql, sessionSecret }: AppDeps) {
 
   app.onError((err, c) => errorJson(err, c));
   // Dev convenience: storefront vite dev servers on localhost:* call us cross-origin.
-  app.use('*', cors({ origin: (o) => o || '*', allowHeaders: ['Content-Type', 'Authorization', 'Idempotency-Key'], credentials: true }));
+  app.use(
+    '*',
+    cors({
+      origin: (o) => o || '*',
+      allowHeaders: ['Content-Type', 'Authorization', 'Idempotency-Key'],
+      credentials: true,
+    }),
+  );
 
   app.get('/healthz', (c) => c.json({ ok: true }));
 
@@ -104,7 +117,9 @@ export function createApp({ sql, sessionSecret }: AppDeps) {
 
   storefront.get('/products/:slug', async (c) => {
     const tenant = c.get('tenant');
-    const product = await withTenant(sql, tenant.id, (tx) => getProduct(tx, tenant.id, c.req.param('slug')));
+    const product = await withTenant(sql, tenant.id, (tx) =>
+      getProduct(tx, tenant.id, c.req.param('slug')),
+    );
     if (!product) throw new HttpError(404, 'PRODUCT_NOT_FOUND', 'product not found');
     return c.json({ product });
   });
@@ -120,7 +135,10 @@ export function createApp({ sql, sessionSecret }: AppDeps) {
     });
     const envelope: SurfacesEnvelope = {
       version: 1,
-      store: { status: status.status, ...(status.resumesAt ? { resumesAt: status.resumesAt } : {}) },
+      store: {
+        status: status.status,
+        ...(status.resumesAt ? { resumesAt: status.resumesAt } : {}),
+      },
       notices,
     };
     return c.json(envelope);
@@ -133,7 +151,10 @@ export function createApp({ sql, sessionSecret }: AppDeps) {
     const status = currentStatus(settings);
     const notices = composeNotices(tenant.slug, settings, status);
     return c.json({
-      store: { status: status.status, ...(status.resumesAt ? { resumesAt: status.resumesAt } : {}) },
+      store: {
+        status: status.status,
+        ...(status.resumesAt ? { resumesAt: status.resumesAt } : {}),
+      },
       notices: notices.filter((n) => n.severity === 'blocking' || n.kind === 'emergency'),
     });
   });
@@ -171,8 +192,10 @@ export function createApp({ sql, sessionSecret }: AppDeps) {
       const cartId = await sessionCartId(c, sessionSecret);
       const body = await c.req.json();
       const cart = await withTenant(sql, tenant.id, async (tx) => {
-        const open = await tx`select id from carts where tenant_id = ${tenant.id} and id = ${cartId} and status = 'open'`;
-        if (!open[0]) throw new HttpError(404, 'CART_NOT_FOUND', 'cart not found or already completed');
+        const open =
+          await tx`select id from carts where tenant_id = ${tenant.id} and id = ${cartId} and status = 'open'`;
+        if (!open[0])
+          throw new HttpError(404, 'CART_NOT_FOUND', 'cart not found or already completed');
         const productId = String(body.productId ?? '');
         const qty = Number(body.qty ?? 1);
         const modifierIds = Array.isArray(body.modifierIds) ? body.modifierIds.map(String) : [];
@@ -245,7 +268,13 @@ export function createApp({ sql, sessionSecret }: AppDeps) {
       }
       return {
         status: 200,
-        body: { eligible: true, zoneId: zone.id, feeCents: zone.fee_cents, etaMin: zone.eta_min_minutes, etaMax: zone.eta_max_minutes },
+        body: {
+          eligible: true,
+          zoneId: zone.id,
+          feeCents: zone.fee_cents,
+          etaMin: zone.eta_min_minutes,
+          etaMax: zone.eta_max_minutes,
+        },
       };
     })(c);
   });
@@ -271,7 +300,9 @@ export function createApp({ sql, sessionSecret }: AppDeps) {
         };
         const deliveryFee = body.delivery.mode === 'delivery' ? (zone?.fee_cents ?? 0) : 0;
         const number = (
-          await tx<{ n: number }[]>`select coalesce(max(number), 0) + 1 as n from orders where tenant_id = ${tenant.id}`
+          await tx<
+            { n: number }[]
+          >`select coalesce(max(number), 0) + 1 as n from orders where tenant_id = ${tenant.id}`
         )[0]!.n;
         const orderId = crypto.randomUUID();
         const payment = {
@@ -307,7 +338,9 @@ export function createApp({ sql, sessionSecret }: AppDeps) {
   checkout.get('/orders/:id', async (c) => {
     const tenant = c.get('tenant');
     await sessionCartId(c, sessionSecret);
-    const order = await withTenant(sql, tenant.id, (tx) => loadOrderView(tx, tenant.id, c.req.param('id')));
+    const order = await withTenant(sql, tenant.id, (tx) =>
+      loadOrderView(tx, tenant.id, c.req.param('id')),
+    );
     return c.json({ order });
   });
 
@@ -323,7 +356,10 @@ export function createApp({ sql, sessionSecret }: AppDeps) {
     const notices = composeNotices(tenant.slug, settings, status);
     return c.json({
       tenant: { id: tenant.id, slug: tenant.slug, name: tenant.name },
-      store: { status: status.status, ...(status.resumesAt ? { resumesAt: status.resumesAt } : {}) },
+      store: {
+        status: status.status,
+        ...(status.resumesAt ? { resumesAt: status.resumesAt } : {}),
+      },
       notices: notices.filter((n) => n.severity === 'blocking'),
     });
   });

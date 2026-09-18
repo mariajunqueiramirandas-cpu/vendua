@@ -64,8 +64,11 @@ export function idempotency(
       throw new HttpError(400, 'IDEMPOTENCY_KEY_REQUIRED', 'Idempotency-Key header is required');
     }
     // Reads/writes go through withTenant so the RLS policy sees the GUC.
-    const existing = await withTenant(sql, tenant.id, (tx) =>
-      tx<{ response: unknown; status_code: number }[]>`
+    const existing = await withTenant(
+      sql,
+      tenant.id,
+      (tx) =>
+        tx<{ response: unknown; status_code: number }[]>`
         select response, status_code from idempotency_keys
         where tenant_id = ${tenant.id} and key = ${key}
       `,
@@ -77,16 +80,21 @@ export function idempotency(
       return c.json(hit.response, hit.status_code as 200, { 'x-idempotent-replay': 'true' });
     }
     try {
-      await withTenant(sql, tenant.id, (tx) =>
-        tx`insert into idempotency_keys (tenant_id, key) values (${tenant.id}, ${key})`,
+      await withTenant(
+        sql,
+        tenant.id,
+        (tx) => tx`insert into idempotency_keys (tenant_id, key) values (${tenant.id}, ${key})`,
       );
     } catch {
       // Concurrent in-flight duplicate — replay check above will catch the next retry.
     }
     const result = await run(c);
     if (result instanceof Response) return result;
-    await withTenant(sql, tenant.id, (tx) =>
-      tx`
+    await withTenant(
+      sql,
+      tenant.id,
+      (tx) =>
+        tx`
         update idempotency_keys set response = ${tx.json(result.body as never)}, status_code = ${result.status}
         where tenant_id = ${tenant.id} and key = ${key}
       `,

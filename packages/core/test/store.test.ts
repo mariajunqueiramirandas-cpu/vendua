@@ -46,7 +46,12 @@ describe('deriveStatus', () => {
   });
 
   test('manual pause override wins over open hours', () => {
-    const s = deriveStatus(daily9to22, 'paused', '2026-09-18T21:00:00Z', at('2026-09-18T15:00:00Z'));
+    const s = deriveStatus(
+      daily9to22,
+      'paused',
+      '2026-09-18T21:00:00Z',
+      at('2026-09-18T15:00:00Z'),
+    );
     expect(s.status).toBe('paused');
     expect(s.resumesAt).toBe('2026-09-18T21:00:00Z');
   });

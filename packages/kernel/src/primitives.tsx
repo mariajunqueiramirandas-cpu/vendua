@@ -1,10 +1,4 @@
-import {
-  cloneElement,
-  isValidElement,
-  useState,
-  type ReactElement,
-  type ReactNode,
-} from 'react';
+import { cloneElement, isValidElement, useState, type ReactElement, type ReactNode } from 'react';
 import { useCart, useStore } from './hooks.ts';
 import type { CatalogProduct } from './api.ts';
 
@@ -21,7 +15,11 @@ function withChild(asChild: boolean | undefined, props: PrimitiveProps, children
   if (asChild && isValidElement(children)) {
     return cloneElement(children as ReactElement<Record<string, unknown>>, props);
   }
-  return <button type="button" {...props}>{children}</button>;
+  return (
+    <button type="button" {...props}>
+      {children}
+    </button>
+  );
 }
 
 export interface AddToCartProps {
@@ -97,11 +95,21 @@ export function QuantityStepper({ itemId, qty, min = 0, max = 99 }: QuantityStep
   };
   return (
     <span data-vendua="qty-stepper" role="group" aria-label="quantidade" data-pending={pending}>
-      <button type="button" aria-label="diminuir" disabled={pending || qty <= min} onClick={() => step(qty - 1)}>
+      <button
+        type="button"
+        aria-label="diminuir"
+        disabled={pending || qty <= min}
+        onClick={() => step(qty - 1)}
+      >
         −
       </button>
       <output aria-live="polite">{qty}</output>
-      <button type="button" aria-label="aumentar" disabled={pending || qty >= max} onClick={() => step(qty + 1)}>
+      <button
+        type="button"
+        aria-label="aumentar"
+        disabled={pending || qty >= max}
+        onClick={() => step(qty + 1)}
+      >
         +
       </button>
     </span>
@@ -131,12 +139,7 @@ export function CartTrigger({ asChild, children, onOpen }: CartTriggerProps) {
 
 export function StoreStatusBadge() {
   const { status, resumesAt, store } = useStore();
-  const label =
-    status === 'open'
-      ? 'Aberto'
-      : status === 'paused'
-        ? 'Pausado'
-        : 'Fechado';
+  const label = status === 'open' ? 'Aberto' : status === 'paused' ? 'Pausado' : 'Fechado';
   return (
     <span
       data-vendua="store-status"

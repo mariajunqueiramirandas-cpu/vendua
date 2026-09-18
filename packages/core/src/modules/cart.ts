@@ -94,9 +94,7 @@ export function validateItemModifiers(
     }
   }
   for (const group of product.modifierGroups) {
-    const selected = modifierIds.filter((id) =>
-      group.modifiers.some((m) => m.id === id),
-    ).length;
+    const selected = modifierIds.filter((id) => group.modifiers.some((m) => m.id === id)).length;
     if (group.required && selected < Math.max(1, group.minSelect)) {
       return new HttpError(
         422,
@@ -147,7 +145,11 @@ async function loadPricedItems(tx: Sql, tenantId: string, cartId: string): Promi
       name: item.name,
       qty: item.qty,
       unitPriceCents: unit,
-      modifiers: chosen.map((m) => ({ id: m.id, name: m.name, priceDeltaCents: m.price_delta_cents })),
+      modifiers: chosen.map((m) => ({
+        id: m.id,
+        name: m.name,
+        priceDeltaCents: m.price_delta_cents,
+      })),
       lineTotalCents: unit * item.qty,
     };
   });
@@ -170,7 +172,9 @@ export function matchZone(zones: ZoneRow[], neighborhood: string | undefined): Z
 }
 
 export async function loadCartView(tx: Sql, tenantId: string, cartId: string): Promise<CartView> {
-  const carts = await tx<{ id: string; status: CartView['status']; delivery: CartView['delivery'] }[]>`
+  const carts = await tx<
+    { id: string; status: CartView['status']; delivery: CartView['delivery'] }[]
+  >`
     select id, status, delivery from carts where tenant_id = ${tenantId} and id = ${cartId}
   `;
   const cart = carts[0];

@@ -12,7 +12,7 @@ import '@vendua/kernel/src/styles.css';
 <VenduaProvider config={config}>
   <SystemSurfaces />
   <App />
-</VenduaProvider>
+</VenduaProvider>;
 ```
 
 ## What's here

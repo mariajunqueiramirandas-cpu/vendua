@@ -37,7 +37,10 @@ export interface SurfacesEnvelope {
 function formatResume(iso: string | undefined, timeZone: string): string {
   if (!iso) return '';
   return new Intl.DateTimeFormat('pt-BR', {
-    timeZone, hour: '2-digit', minute: '2-digit', weekday: 'short',
+    timeZone,
+    hour: '2-digit',
+    minute: '2-digit',
+    weekday: 'short',
   }).format(new Date(iso));
 }
 

@@ -121,9 +121,15 @@ interface ApiErrorShape {
   details?: Record<string, unknown>;
 }
 
-const cache = new Map<string, { data?: unknown; error?: ApiErrorShape; inflight?: Promise<void> }>();
+const cache = new Map<
+  string,
+  { data?: unknown; error?: ApiErrorShape; inflight?: Promise<void> }
+>();
 
-export function useQuery<T>(key: string, fetcher: () => Promise<T>): QueryState<T> & {
+export function useQuery<T>(
+  key: string,
+  fetcher: () => Promise<T>,
+): QueryState<T> & {
   refetch: () => void;
 } {
   const { subscribe } = useKernel();

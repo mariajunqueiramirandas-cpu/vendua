@@ -6,11 +6,11 @@ services:
       POSTGRES_PASSWORD: vendua
       POSTGRES_DB: vendua
     ports:
-      - "5433:5432"
+      - '5433:5432'
     volumes:
       - vendua-core-pg:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U vendua -d vendua"]
+      test: ['CMD-SHELL', 'pg_isready -U vendua -d vendua']
       interval: 2s
       timeout: 3s
       retries: 20

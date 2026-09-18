@@ -40,7 +40,9 @@ export function GenericNotice({
   onDismiss?: (() => void) | undefined;
 }) {
   const severity = severityOf(notice);
-  const links = (notice.actions ?? []).map(actionToLink).filter((x): x is NonNullable<typeof x> => x != null);
+  const links = (notice.actions ?? [])
+    .map(actionToLink)
+    .filter((x): x is NonNullable<typeof x> => x != null);
   return (
     <div
       className={`v-notice v-notice-${severity}`}
@@ -62,7 +64,12 @@ export function GenericNotice({
         </p>
       ) : null}
       {notice.dismissible && onDismiss ? (
-        <button type="button" className="v-notice-dismiss" aria-label="dispensar" onClick={onDismiss}>
+        <button
+          type="button"
+          className="v-notice-dismiss"
+          aria-label="dispensar"
+          onClick={onDismiss}
+        >
           ×
         </button>
       ) : null}
@@ -106,8 +113,7 @@ export function SystemSurfaces({ zoneMatched }: { zoneMatched?: boolean } = {}) 
   const { api } = useKernel();
   // First paint uses edge-injected state when present (zero flicker).
   const injected = (globalThis as Record<string, unknown>).__VENDUA_STATE__ as
-    | SurfacesEnvelope
-    | undefined;
+    SurfacesEnvelope | undefined;
   const q = useQuery('surfaces', () => api.surfaces(zoneMatched));
   const envelope = q.data ?? injected;
 
@@ -115,8 +121,7 @@ export function SystemSurfaces({ zoneMatched }: { zoneMatched?: boolean } = {}) 
   const now = Date.now();
   const visible = envelope.notices.filter(
     (n) =>
-      (!n.startsAt || Date.parse(n.startsAt) <= now) &&
-      (!n.endsAt || Date.parse(n.endsAt) > now),
+      (!n.startsAt || Date.parse(n.startsAt) <= now) && (!n.endsAt || Date.parse(n.endsAt) > now),
   );
   const blocking = visible.filter((n) => severityOf(n) === 'blocking');
   const banners = visible.filter((n) => severityOf(n) !== 'blocking');

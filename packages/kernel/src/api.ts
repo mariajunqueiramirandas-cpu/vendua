@@ -182,7 +182,12 @@ async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> {
   const body = (await res.json().catch(() => ({}))) as T & ApiErrorBody;
   if (!res.ok) {
     const err = body?.error;
-    throw new ApiError(res.status, err?.code ?? 'INTERNAL', err?.message ?? res.statusText, err?.details);
+    throw new ApiError(
+      res.status,
+      err?.code ?? 'INTERNAL',
+      err?.message ?? res.statusText,
+      err?.details,
+    );
   }
   return body;
 }

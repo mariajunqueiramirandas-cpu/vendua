@@ -62,9 +62,7 @@ export function useNotices(zoneMatched?: boolean): {
   const key = `surfaces:${zoneMatched ?? 'any'}`;
   const q = useQuery(key, () => api.surfaces(zoneMatched));
   const notices = q.data?.notices ?? [];
-  const blocking = notices.filter(
-    (n) => n.severity === 'blocking' || n.kind === 'emergency',
-  );
+  const blocking = notices.filter((n) => n.severity === 'blocking' || n.kind === 'emergency');
   return { notices, blocking, store: q.data?.store, loading: q.loading };
 }
 
@@ -97,7 +95,8 @@ export function useCart(): {
 
   const mutations = useMemo<CartMutations>(
     () => ({
-      add: (productId, qty = 1, modifierIds = []) => api.addItem(productId, qty, modifierIds).then(bump),
+      add: (productId, qty = 1, modifierIds = []) =>
+        api.addItem(productId, qty, modifierIds).then(bump),
       updateQty: (itemId, qty) => api.updateItem(itemId, qty).then(bump),
       remove: (itemId) => api.removeItem(itemId).then(bump),
       setDelivery: (d) => api.setDelivery(d).then(bump),

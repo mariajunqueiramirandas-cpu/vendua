@@ -62,7 +62,13 @@ function localParts(instant: Date, tz: string): { day: number; minutes: number }
   }).formatToParts(instant);
   const get = (type: string) => parts.find((p) => p.type === type)?.value ?? '';
   const dayMap: Record<string, number> = {
-    Sun: 0, Mon: 1, Tue: 2, Wed: 3, Thu: 4, Fri: 5, Sat: 6,
+    Sun: 0,
+    Mon: 1,
+    Tue: 2,
+    Wed: 3,
+    Thu: 4,
+    Fri: 5,
+    Sat: 6,
   };
   const day = dayMap[get('weekday')] ?? 0;
   return { day, minutes: Number(get('hour')) * 60 + Number(get('minute')) };
@@ -114,16 +120,12 @@ export function deriveStatus(
   now: Date,
 ): DerivedStatus {
   if (override === 'paused') {
-    return resumesAt
-      ? { status: 'paused', resumesAt }
-      : { status: 'paused' };
+    return resumesAt ? { status: 'paused', resumesAt } : { status: 'paused' };
   }
   const tz = hours.timezone || 'America/Sao_Paulo';
   const { day, minutes } = localParts(now, tz);
   const open = hours.windows.some((w) => withinWindow(minutes, w, day));
   if (open && override !== 'closed') return { status: 'open' };
   const next = nextOpen(hours, now);
-  return next
-    ? { status: 'closed', resumesAt: next.toISOString() }
-    : { status: 'closed' };
+  return next ? { status: 'closed', resumesAt: next.toISOString() } : { status: 'closed' };
 }

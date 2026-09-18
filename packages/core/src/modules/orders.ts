@@ -39,7 +39,14 @@ export interface OrderRow {
   number: number;
   state: OrderState;
   customer: { name: string; phone: string };
-  delivery: { mode: 'pickup' | 'delivery'; neighborhood?: string; address?: string; feeCents?: number; etaMin?: number; etaMax?: number };
+  delivery: {
+    mode: 'pickup' | 'delivery';
+    neighborhood?: string;
+    address?: string;
+    feeCents?: number;
+    etaMin?: number;
+    etaMax?: number;
+  };
   payment: { provider: string; method: string; status: string; instructions?: string };
   subtotal_cents: number;
   delivery_fee_cents: number;
@@ -58,10 +65,20 @@ export interface OrderView {
   deliveryFeeCents: number;
   totalCents: number;
   placedAt: string;
-  timeline: { at: string; from: string | null; to: string; actor: string; meta: Record<string, unknown> }[];
+  timeline: {
+    at: string;
+    from: string | null;
+    to: string;
+    actor: string;
+    meta: Record<string, unknown>;
+  }[];
 }
 
-export async function loadOrderView(tx: Sql, tenantId: string, orderId: string): Promise<OrderView> {
+export async function loadOrderView(
+  tx: Sql,
+  tenantId: string,
+  orderId: string,
+): Promise<OrderView> {
   const rows = await tx<OrderRow[]>`
     select id, number, state, customer, delivery, payment,
            subtotal_cents, delivery_fee_cents, total_cents, placed_at
@@ -69,7 +86,15 @@ export async function loadOrderView(tx: Sql, tenantId: string, orderId: string):
   `;
   const order = rows[0];
   if (!order) throw new HttpError(404, 'ORDER_NOT_FOUND', 'order not found');
-  const events = await tx<{ at: string; from_state: string | null; to_state: string; actor: string; meta: Record<string, unknown> }[]>`
+  const events = await tx<
+    {
+      at: string;
+      from_state: string | null;
+      to_state: string;
+      actor: string;
+      meta: Record<string, unknown>;
+    }[]
+  >`
     select at, from_state, to_state, actor, meta from order_events
     where tenant_id = ${tenantId} and order_id = ${orderId} order by at
   `;
@@ -84,7 +109,13 @@ export async function loadOrderView(tx: Sql, tenantId: string, orderId: string):
     deliveryFeeCents: order.delivery_fee_cents,
     totalCents: order.total_cents,
     placedAt: order.placed_at,
-    timeline: events.map((e) => ({ at: e.at, from: e.from_state, to: e.to_state, actor: e.actor, meta: e.meta })),
+    timeline: events.map((e) => ({
+      at: e.at,
+      from: e.from_state,
+      to: e.to_state,
+      actor: e.actor,
+      meta: e.meta,
+    })),
   };
 }
 

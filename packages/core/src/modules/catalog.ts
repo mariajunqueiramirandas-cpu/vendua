@@ -96,7 +96,11 @@ export async function getCatalog(tx: Sql, tenantId: string): Promise<CategoryWit
   }));
 }
 
-export async function getProduct(tx: Sql, tenantId: string, slug: string): Promise<ProductDetail | null> {
+export async function getProduct(
+  tx: Sql,
+  tenantId: string,
+  slug: string,
+): Promise<ProductDetail | null> {
   const rows = await tx<ProductRow[]>`
     select id, category_id, slug, name, description, base_price_cents, status, figure_variant, tags
     from products where tenant_id = ${tenantId} and slug = ${slug} and status != 'archived'
@@ -105,7 +109,11 @@ export async function getProduct(tx: Sql, tenantId: string, slug: string): Promi
   return attachModifierGroups(tx, tenantId, rows);
 }
 
-export async function getProductById(tx: Sql, tenantId: string, id: string): Promise<ProductDetail | null> {
+export async function getProductById(
+  tx: Sql,
+  tenantId: string,
+  id: string,
+): Promise<ProductDetail | null> {
   const rows = await tx<ProductRow[]>`
     select id, category_id, slug, name, description, base_price_cents, status, figure_variant, tags
     from products where tenant_id = ${tenantId} and id = ${id} and status != 'archived'
@@ -122,13 +130,27 @@ async function attachModifierGroups(
   const product = rows[0];
   if (!product) return null;
   const groups = await tx<
-    { id: string; name: string; required: boolean; min_select: number; max_select: number; sort: number }[]
+    {
+      id: string;
+      name: string;
+      required: boolean;
+      min_select: number;
+      max_select: number;
+      sort: number;
+    }[]
   >`
     select id, name, required, min_select, max_select, sort from modifier_groups
     where tenant_id = ${tenantId} and product_id = ${product.id} order by sort, name
   `;
   const modifiers = await tx<
-    { id: string; group_id: string; name: string; price_delta_cents: number; status: 'active' | 'sold_out'; sort: number }[]
+    {
+      id: string;
+      group_id: string;
+      name: string;
+      price_delta_cents: number;
+      status: 'active' | 'sold_out';
+      sort: number;
+    }[]
   >`
     select m.id, m.group_id, m.name, m.price_delta_cents, m.status, m.sort
     from modifiers m join modifier_groups g on g.id = m.group_id
@@ -145,7 +167,12 @@ async function attachModifierGroups(
       maxSelect: g.max_select,
       modifiers: modifiers
         .filter((m) => m.group_id === g.id)
-        .map((m) => ({ id: m.id, name: m.name, priceDeltaCents: m.price_delta_cents, status: m.status })),
+        .map((m) => ({
+          id: m.id,
+          name: m.name,
+          priceDeltaCents: m.price_delta_cents,
+          status: m.status,
+        })),
     })),
   };
 }

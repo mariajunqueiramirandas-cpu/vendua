@@ -9,11 +9,21 @@ const paused = { status: 'paused' as const, resumesAt: '2026-09-18T21:00:00Z' };
 const closed = { status: 'closed' as const, resumesAt: '2026-09-19T12:00:00Z' };
 
 const settings = {
-  tenant_id: 't', tagline: null, description: null, whatsapp: null, instagram: null,
-  city: null, address: null,
+  tenant_id: 't',
+  tagline: null,
+  description: null,
+  whatsapp: null,
+  instagram: null,
+  city: null,
+  address: null,
   hours: { timezone: 'America/Sao_Paulo', windows: [] },
-  status_override: null, resumes_at: null, prep_time_minutes: 30,
-  min_order_cents: 1000, pickup_enabled: true, delivery_enabled: true, promo: null,
+  status_override: null,
+  resumes_at: null,
+  prep_time_minutes: 30,
+  min_order_cents: 1000,
+  pickup_enabled: true,
+  delivery_enabled: true,
+  promo: null,
 } satisfies StoreSettingsRow;
 
 const pickup: CheckoutInput = {
@@ -29,25 +39,59 @@ const delivery: CheckoutInput = {
 };
 
 const zones = [
-  { id: 'z1', name: 'Centro', neighborhoods: ['Centro'], fee_cents: 500, min_order_cents: 1500, eta_min_minutes: 30, eta_max_minutes: 50 },
+  {
+    id: 'z1',
+    name: 'Centro',
+    neighborhoods: ['Centro'],
+    fee_cents: 500,
+    min_order_cents: 1500,
+    eta_min_minutes: 30,
+    eta_max_minutes: 50,
+  },
 ];
 
 function cart(subtotalCents: number): CartView {
   return {
-    id: 'c', status: 'open',
-    items: [{ id: 'i', productId: 'p', slug: 's', name: 'N', qty: 1, unitPriceCents: subtotalCents, modifiers: [], lineTotalCents: subtotalCents }],
-    totals: { subtotalCents, deliveryFeeCents: 0, totalCents: subtotalCents, itemCount: 1, minOrderCents: 1000, belowMinOrder: subtotalCents < 1000 },
+    id: 'c',
+    status: 'open',
+    items: [
+      {
+        id: 'i',
+        productId: 'p',
+        slug: 's',
+        name: 'N',
+        qty: 1,
+        unitPriceCents: subtotalCents,
+        modifiers: [],
+        lineTotalCents: subtotalCents,
+      },
+    ],
+    totals: {
+      subtotalCents,
+      deliveryFeeCents: 0,
+      totalCents: subtotalCents,
+      itemCount: 1,
+      minOrderCents: 1000,
+      belowMinOrder: subtotalCents < 1000,
+    },
     delivery: null,
   };
 }
 
 const code = (fn: () => unknown) => {
-  try { fn(); return null; } catch (e) { return (e as { code?: string }).code; }
+  try {
+    fn();
+    return null;
+  } catch (e) {
+    return (e as { code?: string }).code;
+  }
 };
 
 describe('validateCheckout', () => {
   test('paused store → STORE_PAUSED', () => {
-    expect(code(() => validateCheckout(paused, settings, cart(2000), pickup, zones))).toBe('STORE_PAUSED');
+    expect(code(() => validateCheckout(paused, settings, cart(2000), pickup, zones))).toBe(
+      'STORE_PAUSED',
+    );
   });
   test('closed store, pickup enabled → proceeds (preorder semantics deferred)', () => {
     // Phase 0: closed blocks only when pickup is disabled entirely.
@@ -62,19 +106,30 @@ describe('validateCheckout', () => {
     expect(code(() => validateCheckout(open, settings, empty, pickup, zones))).toBe('EMPTY_CART');
   });
   test('pickup below min order → ORDER_MIN_NOT_MET', () => {
-    expect(code(() => validateCheckout(open, settings, cart(500), pickup, zones))).toBe('ORDER_MIN_NOT_MET');
+    expect(code(() => validateCheckout(open, settings, cart(500), pickup, zones))).toBe(
+      'ORDER_MIN_NOT_MET',
+    );
   });
   test('delivery outside zones → OUT_OF_ZONE', () => {
-    const out = { ...delivery, delivery: { mode: 'delivery' as const, neighborhood: 'Ipanema', address: 'x' } };
-    expect(code(() => validateCheckout(open, settings, cart(5000), out, zones))).toBe('OUT_OF_ZONE');
+    const out = {
+      ...delivery,
+      delivery: { mode: 'delivery' as const, neighborhood: 'Ipanema', address: 'x' },
+    };
+    expect(code(() => validateCheckout(open, settings, cart(5000), out, zones))).toBe(
+      'OUT_OF_ZONE',
+    );
   });
   test('delivery when disabled → DELIVERY_UNAVAILABLE', () => {
     const s = { ...settings, delivery_enabled: false };
-    expect(code(() => validateCheckout(open, s, cart(5000), delivery, zones))).toBe('DELIVERY_UNAVAILABLE');
+    expect(code(() => validateCheckout(open, s, cart(5000), delivery, zones))).toBe(
+      'DELIVERY_UNAVAILABLE',
+    );
   });
   test('delivery uses max(store, zone) min order', () => {
     // zone min is 1500, subtotal 1200 → fails
-    expect(code(() => validateCheckout(open, settings, cart(1200), delivery, zones))).toBe('ORDER_MIN_NOT_MET');
+    expect(code(() => validateCheckout(open, settings, cart(1200), delivery, zones))).toBe(
+      'ORDER_MIN_NOT_MET',
+    );
     expect(validateCheckout(open, settings, cart(1600), delivery, zones).zone?.id).toBe('z1');
   });
 });
