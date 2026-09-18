@@ -22,7 +22,8 @@ vendua/
   docs/          # normative architecture docs, ADRs, roadmap, summaries
   .omp/          # omp agent config: RULES.md (sticky rules), agents/
   .agents/       # skills/ — custom agent skills (omp + Devin convention)
-  AGENTS.md      # repo instructions for coding agents
+  .claude/       # agents/ — task-agent mirrors for Claude Code / Devin
+  AGENTS.md      # repo instructions for coding agents (site/AGENTS.md nests)
 ```
 
 Rationale and isolation rules:
