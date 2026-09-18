@@ -3,6 +3,7 @@ export const site = {
   tagline: 'Software sob medida.',
   instagramUrl: 'https://www.instagram.com/vendua.digital/',
   instagramDmUrl: 'https://ig.me/m/vendua.digital',
+  instagramHandle: '@vendua.digital',
   emails: ['vinicius.junquira@vendua.com.br', 'jorge.andre@vendua.com.br'],
   publicDomain: '',
   publicCaseUrl: '',

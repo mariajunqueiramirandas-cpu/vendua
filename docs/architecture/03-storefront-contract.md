@@ -5,7 +5,7 @@
 
 **This is the normative contract between Venduá and every storefront.** It is
 what makes arbitrary design freedom operable at fleet scale. The Contract bounds
-every axis *except* visual design — framework, file layout, dependency policy,
+every axis _except_ visual design — framework, file layout, dependency policy,
 required mounts, behavior ownership — and in return guarantees the storefront
 three things:
 
@@ -105,19 +105,19 @@ Every storefront root layout MUST render, exactly once:
 
 ## Rules of engagement
 
-| Area | Rule |
-| --- | --- |
-| Framework | React only, version pinned by the Kernel. No other framework or meta-framework. |
-| Commerce behavior | MUST go through Kernel primitives/hooks. No re-implementing add-to-cart, cart math, checkout entry, status checks. |
-| Network | MUST NOT call `fetch`/axios/Core APIs directly. All data via `@vendua/kernel` hooks. (Lint-enforced.) |
-| Business rules | MUST NOT be expressed in storefront code (min order, availability windows, fees, zone checks). Display Core's answer; disable via primitives. |
-| Server code | None. No API routes, no middleware, no edge functions, no SSR loaders of its own. |
-| Build | Only `@vendua/cli build`. No custom bundler config beyond allow-listed plugins. |
-| Dependencies | Allow-listed only (gsap, framer-motion, three/@react-three/*, lenis, lucide…). Each dep must appear on the allow-list with a size cap. Adding one is a platform PR, not a storefront PR. |
-| Kernel internals | No deep imports (package `exports` + lint). No monkey-patching Kernel modules. |
-| Overlays/modals for commerce | MUST use the corresponding primitive/slot. A storefront MUST NOT build a parallel cart, checkout, or payment UI. |
-| Cookies/storage | Only via Kernel session utilities (LGPD-consent-aware). No ad-hoc localStorage of order/customer data. |
-| Global CSS | Allowed, but MUST NOT target `v-*` classes or `[data-vendua]` hooks. Kernel styles are layered so resets can't break them (tested). |
+| Area                         | Rule                                                                                                                                                                                     |
+| ---------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Framework                    | React only, version pinned by the Kernel. No other framework or meta-framework.                                                                                                          |
+| Commerce behavior            | MUST go through Kernel primitives/hooks. No re-implementing add-to-cart, cart math, checkout entry, status checks.                                                                       |
+| Network                      | MUST NOT call `fetch`/axios/Core APIs directly. All data via `@vendua/kernel` hooks. (Lint-enforced.)                                                                                    |
+| Business rules               | MUST NOT be expressed in storefront code (min order, availability windows, fees, zone checks). Display Core's answer; disable via primitives.                                            |
+| Server code                  | None. No API routes, no middleware, no edge functions, no SSR loaders of its own.                                                                                                        |
+| Build                        | Only `@vendua/cli build`. No custom bundler config beyond allow-listed plugins.                                                                                                          |
+| Dependencies                 | Allow-listed only (gsap, framer-motion, three/@react-three/*, lenis, lucide…). Each dep must appear on the allow-list with a size cap. Adding one is a platform PR, not a storefront PR. |
+| Kernel internals             | No deep imports (package `exports` + lint). No monkey-patching Kernel modules.                                                                                                           |
+| Overlays/modals for commerce | MUST use the corresponding primitive/slot. A storefront MUST NOT build a parallel cart, checkout, or payment UI.                                                                         |
+| Cookies/storage              | Only via Kernel session utilities (LGPD-consent-aware). No ad-hoc localStorage of order/customer data.                                                                                   |
+| Global CSS                   | Allowed, but MUST NOT target `v-*` classes or `[data-vendua]` hooks. Kernel styles are layered so resets can't break them (tested).                                                      |
 
 ## What storefronts freely control
 
@@ -126,15 +126,15 @@ imagery; motion and scroll choreography; WebGL/3D/canvas work; component
 composition; copy; SEO content within brand pages; and the visual layer of every
 primitive (`asChild`) and every overridable slot.
 
-## Budgets (defaults; caps in conformance config)
+## Budgets
 
-| Budget | Default | Hard cap |
-| --- | --- | --- |
-| Initial JS (gzip, route `/`) | ≤ 250 KB | 400 KB |
-| Total initial transfer `/` | ≤ 1.5 MB | 2.5 MB |
-| LCP element | server/edge-rendered text or image | — |
-| Route-level JS for system routes | Kernel-owned | — |
-| Per-dep size | per allow-list entry | — |
+| Budget                           | Default                            | Hard cap |
+| -------------------------------- | ---------------------------------- | -------- |
+| Initial JS (gzip, route `/`)     | ≤ 250 KB                           | 400 KB   |
+| Total initial transfer `/`       | ≤ 1.5 MB                           | 2.5 MB   |
+| LCP element                      | server/edge-rendered text or image | —        |
+| Route-level JS for system routes | Kernel-owned                       | —        |
+| Per-dep size                     | per allow-list entry               | —        |
 
 Budgets are enforced in the Conformance Suite, not at build time — a violation
 fails QA, blocking release.

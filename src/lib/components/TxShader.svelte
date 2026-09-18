@@ -1,38 +1,21 @@
 <script lang="ts">
   import { onMount } from 'svelte';
-  import { mountShaderCanvas } from '$lib/gl';
+  import { FRAG_HEAD, NOISE_GLSL, mountShaderCanvas } from '$lib/gl';
 
   let { mode }: { mode: number } = $props();
   let canvas = $state<HTMLCanvasElement>();
   let failed = $state(false);
 
-  const FRAG = `#version 300 es
-precision highp float;
-uniform vec2 u_res;
-uniform float u_time;
-uniform vec2 u_mouse;
-uniform float u_hover;
-uniform int u_mode;
-uniform float u_dark;
-out vec4 O;
+  const STILL_BASE_S = 7;
+  const STILL_STEP_S = 4.7; // spreads the three panels' frozen frames
 
-float h21(vec2 p){ return fract(sin(dot(p,vec2(127.1,311.7)))*43758.5453123); }
-vec2 h22(vec2 p){
-  p=vec2(dot(p,vec2(127.1,311.7)),dot(p,vec2(269.5,183.3)));
-  return -1.+2.*fract(sin(p)*43758.5453123);
-}
-float n2(vec2 p){
-  vec2 i=floor(p),f=fract(p);
-  vec2 u=f*f*(3.-2.*f);
-  return mix(mix(dot(h22(i),f),dot(h22(i+vec2(1,0)),f-vec2(1,0)),u.x),
-             mix(dot(h22(i+vec2(0,1)),f-vec2(0,1)),dot(h22(i+vec2(1,1)),f-vec2(1,1)),u.x),u.y);
-}
-float fbm(vec2 p){
-  float v=0.,a=.55;
-  for(int i=0;i<4;i++){v+=a*n2(p);p=p*2.02+vec2(1.7,-1.2);a*=.5;}
-  return v;
-}
-vec3 modeCells(vec2 uv,float t){
+  const FRAG =
+    FRAG_HEAD +
+    `uniform float u_hover;
+uniform int u_mode;
+` +
+    NOISE_GLSL +
+    `vec3 modeCells(vec2 uv,float t){
   vec3 BASE=mix(vec3(.925,.906,.835),vec3(.039,.063,.051),u_dark);
   vec3 MID =mix(-vec3(.5,.36,.44),vec3(.055,.235,.19),u_dark);
   vec3 LIME=mix(-vec3(.75,.45,.6),vec3(.851,.973,.459),u_dark);
@@ -72,7 +55,7 @@ vec3 modeFlow(vec2 uv,float t){
   vec3 MID =mix(-vec3(.5,.36,.44),vec3(.055,.235,.19),u_dark);
   vec3 LIME=mix(-vec3(.75,.45,.6),vec3(.851,.973,.459),u_dark);
   vec2 p=uv*2.5+u_mouse*.12;
-  float w=fbm(vec2(p.x*.55-t*.1, p.y*1.3));
+  float w=fbm(vec2(p.x*.55-t*.1, p.y*1.3),4);
   float ly=(p.y+w*.8)*9.;
   float id=floor(ly); float f=fract(ly);
   float line=smoothstep(.1,.0,f)*smoothstep(.62,.18,f);
@@ -98,11 +81,10 @@ void main(){
       canvas: canvas!,
       frag: FRAG,
       resScale: 0.75,
-      stillTime: 7 + mode * 4.7,
+      stillTime: STILL_BASE_S + mode * STILL_STEP_S,
       pointer: 'local',
-      bindUniforms: (gl, u) => {
+      bindStatic: (gl, u) => {
         gl.uniform1i(u('u_mode'), mode);
-        gl.uniform1f(u('u_dark'), document.documentElement.dataset.theme === 'dark' ? 1 : 0);
       },
     });
     if (!cleanup) {

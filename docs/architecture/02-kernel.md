@@ -10,14 +10,14 @@ caches, renders and delegates.
 
 ## Packages
 
-| Package | Contents |
-| --- | --- |
-| `@vendua/kernel` | `VenduaProvider`, API client, query/cache layer, hooks, primitives, `<SystemSurfaces />`, overrides registry, analytics beacon, error boundaries |
-| `@vendua/ui-defaults` | Token-driven default implementations of every system surface and slot |
-| `@vendua/cli` | `scaffold`, `dev`, `check`, `build`, `qa`, `preview` — the only supported build path |
-| `@vendua/conformance` | The shared Playwright suite + lint rules + type tests |
-| `@vendua/codemods` | Contract migration transforms |
-| `@vendua/loader` | Source of `v.js`, built and versioned separately from the Kernel |
+| Package               | Contents                                                                                                                                         |
+| --------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `@vendua/kernel`      | `VenduaProvider`, API client, query/cache layer, hooks, primitives, `<SystemSurfaces />`, overrides registry, analytics beacon, error boundaries |
+| `@vendua/ui-defaults` | Token-driven default implementations of every system surface and slot                                                                            |
+| `@vendua/cli`         | `scaffold`, `dev`, `check`, `build`, `qa`, `preview` — the only supported build path                                                             |
+| `@vendua/conformance` | The shared Playwright suite + lint rules + type tests                                                                                            |
+| `@vendua/codemods`    | Contract migration transforms                                                                                                                    |
+| `@vendua/loader`      | Source of `v.js`, built and versioned separately from the Kernel                                                                                 |
 
 Packages are private workspace dependencies — storefronts live in the same
 monorepo, nothing is published to a registry. Kernel internals are hidden behind
@@ -36,7 +36,7 @@ lint-checked.
 
 `VenduaProvider` resolves tenant context at boot from the injected
 `window.__VENDUA_STATE__` (edge-injected; see
-[07](07-deployment-and-hosting.md#state-injection)) and hydrates the query cache
+[07](07-deployment-and-hosting.md#the-edge)) and hydrates the query cache
 with it — so `useStoreStatus()` is correct on first paint with zero flicker.
 
 ## Hooks (v1 surface)
@@ -44,18 +44,18 @@ with it — so `useStoreStatus()` is correct on first paint with zero flicker.
 Data hooks are thin typed wrappers over Core reads (TanStack Query underneath).
 Mutation hooks hit `/checkout/v1` and return typed errors.
 
-| Hook | Returns |
-| --- | --- |
-| `useStore()` | store profile, hours, status (`open/closed/paused`, `resumesAt`) |
-| `useCatalog()` / `useProduct(id)` | catalog tree / single product incl. variants & modifiers |
-| `useCart()` | server cart: items, totals, session state |
-| `useCartMutations()` | `add`, `updateQty`, `remove`, `applyCoupon`, `clear` |
-| `useDeliveryQuote()` | zone check, fee, ETA for an address |
-| `useCheckout()` | checkout session state machine + `submit()` |
-| `useOrder(id)` | order status + timeline (poll/stream) |
-| `useNotices()` | resolved notices for the current surface context |
-| `useCustomer()` | customer session (phone OTP), addresses |
-| `useAnalytics()` | `track(name, props)` for allow-listed custom events |
+| Hook                              | Returns                                                          |
+| --------------------------------- | ---------------------------------------------------------------- |
+| `useStore()`                      | store profile, hours, status (`open/closed/paused`, `resumesAt`) |
+| `useCatalog()` / `useProduct(id)` | catalog tree / single product incl. variants & modifiers         |
+| `useCart()`                       | server cart: items, totals, session state                        |
+| `useCartMutations()`              | `add`, `updateQty`, `remove`, `applyCoupon`, `clear`             |
+| `useDeliveryQuote()`              | zone check, fee, ETA for an address                              |
+| `useCheckout()`                   | checkout session state machine + `submit()`                      |
+| `useOrder(id)`                    | order status + timeline (poll/stream)                            |
+| `useNotices()`                    | resolved notices for the current surface context                 |
+| `useCustomer()`                   | customer session (phone OTP), addresses                          |
+| `useAnalytics()`                  | `track(name, props)` for allow-listed custom events              |
 
 Rules: hooks never compute prices or eligibility locally; they surface Core's
 answer. Typed error codes (`STORE_PAUSED`, `OUT_OF_ZONE`, `SOLD_OUT`…) map to
@@ -71,16 +71,16 @@ re-implements commerce logic and can never forget a test hook.
 Each primitive MUST stamp its `data-vendua` hook and ARIA semantics regardless
 of the delegated child.
 
-| Primitive | Behavior owned by Kernel | Stamps |
-| --- | --- | --- |
-| `ProductLink` | product route resolution, prefetch, `product_view` event | `data-vendua="product-link"` |
-| `AddToCart` | disabled when closed/paused/sold-out, mutation, optimistic state, `add_to_cart` event | `data-vendua="add-to-cart"` |
-| `QuantityStepper` | min/max, stock cap, debounced mutation | `data-vendua="qty-stepper"` |
-| `CartTrigger` | opens cart drawer/page, badge count | `data-vendua="cart-trigger"` |
-| `CheckoutButton` | starts checkout session, disabled states | `data-vendua="checkout-button"` |
-| `StoreStatusBadge` | live open/closed/paused + countdown | `data-vendua="store-status"` |
-| `NotifyMeButton` | "avise-me" subscription for paused/sold-out | `data-vendua="notify-me"` |
-| `Img` | CDN-backed responsive images, blur-up, budgets | — |
+| Primitive          | Behavior owned by Kernel                                                              | Stamps                          |
+| ------------------ | ------------------------------------------------------------------------------------- | ------------------------------- |
+| `ProductLink`      | product route resolution, prefetch, `product_view` event                              | `data-vendua="product-link"`    |
+| `AddToCart`        | disabled when closed/paused/sold-out, mutation, optimistic state, `add_to_cart` event | `data-vendua="add-to-cart"`     |
+| `QuantityStepper`  | min/max, stock cap, debounced mutation                                                | `data-vendua="qty-stepper"`     |
+| `CartTrigger`      | opens cart drawer/page, badge count                                                   | `data-vendua="cart-trigger"`    |
+| `CheckoutButton`   | starts checkout session, disabled states                                              | `data-vendua="checkout-button"` |
+| `StoreStatusBadge` | live open/closed/paused + countdown                                                   | `data-vendua="store-status"`    |
+| `NotifyMeButton`   | "avise-me" subscription for paused/sold-out                                           | `data-vendua="notify-me"`       |
+| `Img`              | CDN-backed responsive images, blur-up, budgets                                        | —                               |
 
 ```tsx
 // Storefront code — full visual freedom, zero behavioral freedom:
@@ -113,7 +113,7 @@ never to broken.
 `vendua.config.ts → tokens` is compiled to CSS variables on `:root`
 (`--v-color-*`, `--v-font-*`, `--v-radius-*`, `--v-space-*`, `--v-motion-*`).
 All Kernel defaults consume these variables, so a storefront that overrides
-*nothing* still gets surfaces in its own colors, type and radii. Token coverage
+_nothing_ still gets surfaces in its own colors, type and radii. Token coverage
 is what protects the "premium software house" illusion on never-touched stores.
 See [04](04-extensions-and-overrides.md#design-tokens).
 

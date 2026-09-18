@@ -26,7 +26,7 @@
 </script>
 
 <Seo
-  title="Iniciar um projeto | Venduá"
+  title={`Iniciar um projeto | ${site.brandName}`}
   description="A Venduá é uma software house de projetos sob medida. O primeiro passo é uma conversa — pelo direct."
   path="/contato/"
 />
@@ -54,9 +54,8 @@
         onpointerleave={() => (gateOpen = false)}
         onfocus={() => (gateOpen = true)}
         onblur={() => (gateOpen = false)}
-        >Abrir @vendua.digital <span class="sr-only">(nova aba)</span><span aria-hidden="true"
-          >↗</span
-        ></a
+        >Abrir {site.instagramHandle}
+        <span class="sr-only">(nova aba)</span><span aria-hidden="true">↗</span></a
       >
     </div>
     <p class="fine gate-fine">O Instagram pode solicitar login.</p>

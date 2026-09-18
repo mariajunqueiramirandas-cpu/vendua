@@ -8,15 +8,18 @@
   import IntroVeil from '$lib/components/IntroVeil.svelte';
   let { children } = $props();
 
+  let headerBar: Element | null = null;
+  const onScroll = () => {
+    headerBar?.classList.toggle('scrolled', scrollY > 80);
+  };
+
   onMount(() => {
-    const onScroll = () => {
-      document.querySelector('.header-bar')?.classList.toggle('scrolled', scrollY > 80);
-    };
+    headerBar = document.querySelector('.header-bar');
     onScroll();
-    window.addEventListener('scroll', onScroll, { passive: true });
-    return () => window.removeEventListener('scroll', onScroll);
   });
 </script>
+
+<svelte:window onscroll={onScroll} />
 
 <IntroVeil />
 <Header />

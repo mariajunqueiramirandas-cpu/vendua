@@ -20,8 +20,8 @@ vendua/
     codemods/             # @vendua/codemods
     loader/               # v.js source
     control-plane/        # fleet state, reconciler, fleet ops API
-    admin/                # merchant admin app (also a Kernel consumer? no —
-                          # admin is its own app, shares only the API client)
+    admin/                # merchant admin app — own app, shares only the
+                          # API client (not a Kernel consumer)
     edge/                 # host→tenant resolution, artifact serving, injection
   storefronts/
     _template/            # `vendua scaffold` source — always green
@@ -70,11 +70,11 @@ references to CDN URLs. Git keeps the manifest, not the media.
 
 ## Agents in the monorepo
 
-The monorepo is *better* for coding agents, not worse: the agent working on
+The monorepo is _better_ for coding agents, not worse: the agent working on
 `storefronts/<slug>` can read Kernel source, the template, and sibling
 storefronts as reference examples — while the changed-path check guarantees it
 can't stray. The task contract for agents is in
-[14](14-agent-pipeline.md#the-pr-interface).
+[14](14-agent-pipeline.md#scaffold-first-generation--the-anti-hallucination-rule).
 
 ## Scaling limits and the sharding trigger
 

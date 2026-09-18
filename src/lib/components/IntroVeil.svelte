@@ -11,8 +11,20 @@
       getComputedStyle(veil).display === 'none'
     )
       return;
+
     const el = veil;
     document.body.style.overflow = 'hidden';
+
+    // Keep the page under the veil out of the tab order and pointer reach while
+    // the intro plays — otherwise Tab lands on controls hidden behind it.
+    const covered = [...(el.parentElement?.children ?? [])].filter(
+      (child): child is HTMLElement => child !== el && child instanceof HTMLElement,
+    );
+    const previouslyInert = covered.map((child) => child.inert);
+    covered.forEach((child) => (child.inert = true));
+    const release = () =>
+      covered.forEach((child, i) => (child.inert = previouslyInert[i] ?? false));
+
     const slit = el.querySelector('.veil-slit') as HTMLElement;
     const word = el.querySelector('.veil-word') as HTMLElement;
     const countEl = el.querySelector('.veil-count') as HTMLElement;
@@ -26,6 +38,7 @@
         } catch {}
         document.documentElement.classList.add('seen');
         el.remove();
+        release();
         document.body.style.overflow = '';
       },
     });
@@ -50,6 +63,7 @@
       .to(right, { xPercent: 101, duration: 0.95, ease: 'power4.inOut' }, 1.62);
     return () => {
       tl.kill();
+      release();
       document.body.style.overflow = '';
     };
   });

@@ -1,9 +1,23 @@
-import { copyFileSync, writeFileSync } from 'node:fs';
+import { copyFileSync, existsSync, writeFileSync } from 'node:fs';
 import { site } from '../src/lib/content/site';
-copyFileSync('build/404/index.html', 'build/404.html');
+
+// adapter-static pré-renderiza /404/ como rota; a cópia plana é o que o nginx
+// (e o servidor de prévia) usa como error_page.
+const notFound = 'build/404/index.html';
+if (!existsSync(notFound))
+  throw new Error('build/404/index.html não encontrado — rode `vite build` antes do pós-build.');
+copyFileSync(notFound, 'build/404.html');
+
+// Mesma lista de páginas indexáveis descrita em VALIDACAO.md (F05): /privacidade/
+// e /404/ ficam fora do sitemap de propósito.
 const routes = ['/', '/contato/'];
 if (site.publicDomain) {
-  const domain = new URL(site.publicDomain);
+  let domain: URL;
+  try {
+    domain = new URL(site.publicDomain);
+  } catch {
+    throw new Error(`site.publicDomain inválido: "${site.publicDomain}".`);
+  }
   if (domain.protocol !== 'https:') throw new Error('O domínio público deve usar HTTPS.');
   writeFileSync(
     'build/sitemap.xml',

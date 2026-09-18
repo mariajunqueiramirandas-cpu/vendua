@@ -17,8 +17,8 @@ shopper → Kernel-owned checkout → Core /checkout/v1 →
   MP webhook → Core → order state machine → notifications
 ```
 
-- **PIX first** (BR reality), then card via MP Bricks/SDK mounted *inside the
-  Kernel-owned checkout* — card data touches MP's fields, never storefront code
+- **PIX first** (BR reality), then card via MP Bricks/SDK mounted _inside the
+  Kernel-owned checkout_ — card data touches MP's fields, never storefront code
   or Venduá servers. This is why checkout can't be custom storefront code
   ([ADR 0004](../adr/0004-kernel-owned-checkout.md)).
 - `application_fee` is set per-transaction in cents by Core from the tenant's
@@ -40,12 +40,12 @@ shopper → Kernel-owned checkout → Core /checkout/v1 →
 `payments.connectionStatus` is part of tenant state and flows through the
 notices pipeline like everything else:
 
-| Status | Storefront behavior |
-| --- | --- |
-| `connected` | normal |
-| `expiring` | merchant-facing admin notice only; shopper flow unchanged |
-| `disconnected` | checkout degrades to **"pedir pelo WhatsApp"** (order captured as `payment: manual_whatsapp`) — the store never hard-fails; blocking notice explains to the merchant, not the shopper |
-| `restricted` (MP-side KYC holds) | same degradation path, different merchant message |
+| Status                           | Storefront behavior                                                                                                                                                                   |
+| -------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `connected`                      | normal                                                                                                                                                                                |
+| `expiring`                       | merchant-facing admin notice only; shopper flow unchanged                                                                                                                             |
+| `disconnected`                   | checkout degrades to **"pedir pelo WhatsApp"** (order captured as `payment: manual_whatsapp`) — the store never hard-fails; blocking notice explains to the merchant, not the shopper |
+| `restricted` (MP-side KYC holds) | same degradation path, different merchant message                                                                                                                                     |
 
 This is the "degrade, never die" pattern applied to payments: an auth problem
 costs the merchant a payment method, not the store.
@@ -57,7 +57,7 @@ costs the merchant a payment method, not the store.
   processed once.
 - Checkout sessions carry `Idempotency-Key`; a double-submit is one order.
 - Money math happens exactly once, in Core: `totals = items + delivery_fee −
-  discounts`; MP receives the computed amount; `application_fee` is recorded on
+discounts`; MP receives the computed amount; `application_fee` is recorded on
   the payment row for reconciliation.
 - Refunds: merchant-initiated in admin → MP refund API → webhook →
   `order_events` + customer notification. Partial refunds supported.
@@ -66,8 +66,8 @@ costs the merchant a payment method, not the store.
 
 ## Provider interface
 
-Only MP is implemented, behind an interface so Pagar.me/Stripe/appel later are
-adapters, not rewrites:
+Only MP is implemented, behind an interface so future providers (Pagar.me,
+Stripe) are adapters, not rewrites:
 
 ```ts
 interface PaymentProvider {

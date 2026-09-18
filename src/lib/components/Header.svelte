@@ -1,5 +1,6 @@
 <script lang="ts">
   import { onMount } from 'svelte';
+  import { page } from '$app/state';
 
   let dark = $state(false);
 
@@ -32,7 +33,12 @@
 <a class="skip" href="#conteudo">Pular para o conteúdo</a>
 <div class="header-bar">
   <header class="header container">
-    <a class="brand" href="/" aria-label="Venduá · início"
+    <a
+      class="brand"
+      href="/"
+      translate="no"
+      aria-label="Venduá · início"
+      aria-current={page.url.pathname === '/' ? 'page' : undefined}
       ><img
         class="mark mark-light"
         src="/assets/brand/mark-green.svg"
@@ -47,17 +53,25 @@
         alt=""
       />venduá<span class="brand-dot">.</span></a
     >
-    <nav id="navigation" aria-label="Principal">
-      <span class="dev-status"><span class="signal-dot"></span>Software house</span>
+    <div class="header-side">
+      <span class="dev-status"
+        ><span class="signal-dot" aria-hidden="true"></span>Software house</span
+      >
       <button
         class="theme-toggle"
         type="button"
         onclick={toggleTheme}
         aria-pressed={dark}
         aria-label="Alternar entre tema claro e escuro"
-        ><span class="tt-label">{dark ? 'Claro' : 'Escuro'}</span></button
+        ><span class="tt-label" aria-hidden="true"></span></button
       >
-      <a class="button small" href="/contato/">Contato <span aria-hidden="true">↗</span></a>
-    </nav>
+      <nav aria-label="Principal">
+        <a
+          class="button small"
+          href="/contato/"
+          aria-current={page.url.pathname.startsWith('/contato') ? 'page' : undefined}>Contato</a
+        >
+      </nav>
+    </div>
   </header>
 </div>

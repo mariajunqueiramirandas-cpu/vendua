@@ -3,8 +3,8 @@
 > Status: Proposed · Last reviewed: 2026-09-11
 
 Build order. Each phase has explicit exit criteria — do not start the next phase
-until they hold. The ordering is deliberate: every phase exists to *discover or
-de-risk* something the next phase depends on.
+until they hold. The ordering is deliberate: every phase exists to _discover or
+de-risk_ something the next phase depends on.
 
 ## Phase 0 — Contract extraction spikes (weeks 0–4)
 
@@ -19,7 +19,7 @@ Goal: stop guessing what the Contract must be.
 - [ ] Write down every place a store needed to touch behavior that should have
       been central — those become slots/primitives/API fields.
 
-Exit: Contract v1 drafted from *observed* needs, not designed in the abstract.
+Exit: Contract v1 drafted from _observed_ needs, not designed in the abstract.
 
 ## Phase 1 — Contract v1 + Conformance (weeks 4–8)
 
@@ -40,7 +40,7 @@ storefront without any custom code.
 - [ ] Mercado Pago OAuth + `application_fee` + PIX + webhook-driven order state
       machine ([13](architecture/13-payments.md)).
 - [ ] Server-driven notices end-to-end: emit `store_paused` from Core, watch an
-      *unmodified* storefront render it ([05](architecture/05-system-surfaces.md)).
+      _unmodified_ storefront render it ([05](architecture/05-system-surfaces.md)).
 - [ ] Merchant admin MVP (catalog CRUD, hours, orders, MP connect).
 - [ ] `slug.vendua.com.br` auto-provisioning + wildcard TLS
       ([12](architecture/12-domains-and-tls.md)).
@@ -68,7 +68,7 @@ Exit: `vendua-fleet releases promote <storefront> <release>` and
 - [ ] Deliberately ship one server-driven feature (e.g. "delivery estimate"
       notice) and verify it reaches a storefront that was never rebuilt.
 
-Exit: a fleet train is *boring*. If it isn't boring, fix it before Phase 5.
+Exit: a fleet train is _boring_. If it isn't boring, fix it before Phase 5.
 
 ## Phase 5 — Agent generation pipeline (weeks 16–24)
 
@@ -98,7 +98,7 @@ at most one human approval gate.
 - Multi-framework support — never; [ADR 0002](adr/0002-single-storefront-framework-react.md).
 - Per-storefront servers — never; [ADR 0003](adr/0003-storefronts-as-artifacts.md).
 - Multi-tenant SSR host — only if product-page SEO/personalization proves the
-  need; [07](architecture/07-deployment-and-hosting.md#option-b-multi-tenant-ssr-host).
+  need; [07](architecture/07-deployment-and-hosting.md#option-b--multi-tenant-ssr-host-deferred).
 - Repo-per-storefront — [ADR 0001](adr/0001-monorepo-for-storefronts.md).
 - Microservices in Core — [ADR 0013](adr/0013-modular-monolith-core.md).
 - Third-party courier/dispatch integrations — after Phase 6.

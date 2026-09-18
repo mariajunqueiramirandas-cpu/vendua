@@ -15,7 +15,7 @@ COPY . .
 RUN bun run build
 
 ########## runtime ##########
-FROM nginx:1.27-alpine AS production
+FROM nginx:1.28-alpine AS production
 
 COPY --from=build /app/build /usr/share/nginx/html
 

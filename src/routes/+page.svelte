@@ -13,13 +13,16 @@
   let activeTx = $state<(typeof transmissions)[number]>();
   let lastTrigger: HTMLElement | null = null;
 
-  const openTx = async (i: number) => {
-    activeTx = transmissions[i];
-    lastTrigger = document.activeElement as HTMLElement;
+  const openTx = async (t: (typeof transmissions)[number], trigger: HTMLElement) => {
+    activeTx = t;
+    lastTrigger = trigger;
     await tick();
     if (!dialogEl) return;
     dialogEl.showModal();
     document.body.style.overflow = 'hidden';
+    // showModal() does not move focus in Safari — land it explicitly on the
+    // first control so keyboard users are never left on the inert background.
+    dialogEl.querySelector<HTMLElement>('.tx-modal-close')?.focus();
     if (matchMedia('(prefers-reduced-motion: reduce)').matches) return;
     gsap.fromTo(
       dialogEl,
@@ -27,7 +30,9 @@
       { opacity: 1, y: 0, scale: 1, duration: 0.55, ease: 'power3.out' },
     );
     gsap.fromTo(
-      '.tx-modal-head, .tx-modal-title, .tx-modal-detail, .tx-specs div, .tx-modal-foot',
+      dialogEl.querySelectorAll(
+        '.tx-modal-head, .tx-modal-title, .tx-modal-detail, .tx-specs div, .tx-modal-foot',
+      ),
       { opacity: 0, y: 12, filter: 'blur(4px)' },
       {
         opacity: 1,
@@ -43,7 +48,8 @@
 
   const onClosed = () => {
     document.body.style.overflow = '';
-    lastTrigger?.focus();
+    if (lastTrigger?.isConnected) lastTrigger.focus();
+    lastTrigger = null;
   };
 
   const closeTx = () => {
@@ -79,6 +85,14 @@
   onMount(() => {
     gsap.registerPlugin(ScrollTrigger);
     ScrollTrigger.config({ ignoreMobileResize: true });
+    // IntroVeil.svelte starts parting at ~1.6s; the hero timeline leads in slightly
+    // early so the reveal overlaps the veil opening instead of starting behind it.
+    const VEIL_LEAD_S = 1.5;
+    // Pinned tx timeline: durations are relative segment weights (travel vs. exit),
+    // and the tail adds scroll runway after the last panel, in viewport fractions.
+    const TX_TRAVEL = 100;
+    const TX_EXIT = 20;
+    const TX_TAIL_VH = 0.38;
     const mm = gsap.matchMedia(root);
     mm.add({ reduce: '(prefers-reduced-motion: reduce)', desktop: '(min-width: 961px)' }, (ctx) => {
       const { reduce, desktop } = ctx.conditions as { reduce: boolean; desktop: boolean };
@@ -89,8 +103,9 @@
         ease: 'none',
         scrollTrigger: { trigger: root, start: 'top top', end: 'bottom bottom', scrub: 0.3 },
       });
+      // .intro-veil lives in +layout (IntroVeil.svelte), outside `root` — document scope is required.
       const veil = document.querySelector<HTMLElement>('.intro-veil');
-      const introDelay = veil && getComputedStyle(veil).display !== 'none' ? 1.5 : 0;
+      const introDelay = veil && getComputedStyle(veil).display !== 'none' ? VEIL_LEAD_S : 0;
 
       gsap
         .timeline({ defaults: { ease: 'power3.out' }, delay: introDelay })
@@ -136,15 +151,18 @@
         ease: 'power2.out',
         scrollTrigger: { trigger: '.manifesto', start: 'top 70%' },
       });
-      const manifestoText = root.querySelector('.manifesto-text');
+      const manifestoText = root.querySelector<HTMLElement>('.manifesto-text');
       if (manifestoText) {
         const words = (manifestoText.textContent || '').trim().split(/\s+/);
-        manifestoText.innerHTML = words
-          .map(
-            (w, i) => `<span class="mword${i === words.length - 1 ? ' accent' : ''}">${w}</span>`,
-          )
-          .join(' ');
-        const mwords = root.querySelectorAll('.mword');
+        const frag = document.createDocumentFragment();
+        words.forEach((word, i) => {
+          const span = document.createElement('span');
+          span.className = i === words.length - 1 ? 'mword accent' : 'mword';
+          span.textContent = word;
+          frag.append(span, ' ');
+        });
+        manifestoText.replaceChildren(frag);
+        const mwords = manifestoText.querySelectorAll('.mword');
         if (desktop) {
           gsap.set(mwords, { opacity: 0.16 });
           gsap
@@ -179,15 +197,15 @@
           scrollTrigger: {
             trigger: '.tx-stage',
             start: 'top top',
-            end: () => `+=${distance() + innerHeight * 0.38}`,
+            end: () => `+=${distance() + window.innerHeight * TX_TAIL_VH}`,
             pin: true,
             scrub: 0.5,
             anticipatePin: 1,
             invalidateOnRefresh: true,
           },
         });
-        tl.to(track, { x: () => -distance(), ease: 'none', duration: 100 });
-        tl.to(track, { y: -72, opacity: 0, ease: 'power1.in', duration: 20 });
+        tl.to(track, { x: () => -distance(), ease: 'none', duration: TX_TRAVEL });
+        tl.to(track, { y: -72, opacity: 0, ease: 'power1.in', duration: TX_EXIT });
         const hTween = tl.getChildren(false, true, false)[0] as gsap.core.Tween;
         root.querySelectorAll('.tx-frame .tx-gl').forEach((img) => {
           gsap.fromTo(
@@ -273,7 +291,11 @@
       if (matchMedia('(prefers-reduced-motion: reduce)').matches) return;
       e.preventDefault();
       const details = (e.currentTarget as HTMLElement).parentElement as HTMLDetailsElement;
-      const body = details.querySelector('.faq-body') as HTMLElement;
+      const body = details.querySelector<HTMLElement>('.faq-body');
+      if (!body) {
+        details.open = !details.open;
+        return;
+      }
       if (details.open) {
         gsap.to(body, {
           height: 0,
@@ -308,6 +330,10 @@
     return () => {
       mm.revert();
       summaries.forEach((s) => s.removeEventListener('click', onSummary));
+      // Modal tweens live outside the matchMedia context — kill them on unmount
+      // so mid-flight open/close animations and the body scroll-lock don't leak.
+      if (dialogEl) gsap.killTweensOf([dialogEl, ...dialogEl.querySelectorAll('*')]);
+      document.body.style.overflow = '';
     };
   });
 </script>
@@ -323,7 +349,7 @@
     <div class="hero-inner container">
       <div class="hero-top">
         <p class="eyebrow">
-          <span class="signal-dot"></span>Venduá · Software sob medida
+          <span class="signal-dot" aria-hidden="true"></span>Venduá · Software sob medida
         </p>
         <p class="hero-meta">
           VND//WORK
@@ -343,17 +369,18 @@
       </h1>
       <div class="hero-bottom">
         <p class="intro">
-          Uma software house: projetamos, construímos e operamos sistemas sob medida — e,
-          abaixo, a arquitetura da plataforma que estamos construindo.
+          Uma software house: projetamos, construímos e operamos sistemas sob medida — e, abaixo, a
+          arquitetura da plataforma que estamos construindo.
         </p>
         <div class="hero-cta">
           <a class="button" href={site.instagramDmUrl} target="_blank" rel="noreferrer"
-            >Iniciar um projeto <span aria-hidden="true">↗</span><span class="sr-only">(nova aba)</span
+            >Iniciar um projeto <span aria-hidden="true">↗</span><span class="sr-only"
+              >(nova aba)</span
             ></a
           >
           <p class="fine">
             <span>Escopo fechado</span><span>entregas semanais</span><span
-              >@vendua.digital</span
+              >{site.instagramHandle}</span
             >
           </p>
         </div>
@@ -362,28 +389,30 @@
     <p class="scroll-cue" aria-hidden="true"><span>Scroll</span></p>
   </section>
   <section class="signals container" aria-labelledby="signals-title">
-    <p class="eyebrow" id="signals-title">O que fazemos</p>
+    <h2 class="eyebrow" id="signals-title">O que fazemos</h2>
     <div class="signals-grid">
-      {#each signals as item, i}<div class="signal-item">
+      {#each signals as [title, text], i}
+        <div class="signal-item">
           <span class="signal-number">0{i + 1}</span>
           <div>
-            <h2>{item[0]}</h2>
-            <p>{item[1]}</p>
+            <h3>{title}</h3>
+            <p>{text}</p>
           </div>
-        </div>{/each}
+        </div>
+      {/each}
     </div>
   </section>
   <section class="manifesto" aria-labelledby="manifesto-title">
     <div class="manifesto-inner container">
-      <p class="eyebrow" id="manifesto-title">Manifesto</p>
+      <h2 class="eyebrow" id="manifesto-title">Manifesto</h2>
       <p class="manifesto-text">{manifesto}</p>
       <p class="fine">Venduá · software sob medida</p>
     </div>
   </section>
   <section class="transmissions" aria-labelledby="tx-title">
     <div class="tx-head container">
-      <p class="eyebrow" id="tx-title">A plataforma · em desenvolvimento</p>
-      <h2>O construtor, em<br />três estágios.</h2>
+      <p class="eyebrow">A plataforma · em desenvolvimento</p>
+      <h2 id="tx-title">O construtor, em<br />três estágios.</h2>
     </div>
     <div class="tx-stage">
       <div class="tx-track">
@@ -391,7 +420,8 @@
           <p class="eyebrow">Em build agora</p>
           <h3>Vitrine gerada<br />pela operação —<br />não por template.</h3>
         </article>
-        {#each transmissions as t, i}<figure class="tx-panel">
+        {#each transmissions as t, i}
+          <figure class="tx-panel">
             <span class="tx-ghost" aria-hidden="true">0{i + 1}</span>
             <div class="tx-card">
               <div class="tx-card-head" aria-hidden="true">
@@ -401,40 +431,46 @@
               <button
                 class="tx-hit"
                 type="button"
-                onclick={() => openTx(i)}
-                aria-label={`${t.title} · como funciona`}><span class="sr-only">Abrir</span></button
-              >
+                aria-haspopup="dialog"
+                aria-label={`Abrir estágio ${t.id}: ${t.title}`}
+                onclick={(e) => openTx(t, e.currentTarget)}
+              ></button>
             </div>
             <figcaption>
               <span class="tx-id">{t.id}</span>
               <span class="tx-title">{t.title}</span>
               <span class="tx-caption-text">{t.text}</span>
             </figcaption>
-          </figure>{/each}
+          </figure>
+        {/each}
       </div>
     </div>
   </section>
   <section class="ritual container" aria-labelledby="ritual-title">
     <div class="ritual-head">
-      <p class="eyebrow" id="ritual-title">Como funciona</p>
-      <h2>Da conversa<br />ao deploy.</h2>
+      <p class="eyebrow">Como funciona</p>
+      <h2 id="ritual-title">Da conversa<br />ao deploy.</h2>
     </div>
-    {#each ritual as item, i}<div class="ritual-row">
+    {#each ritual as [title, text], i}
+      <div class="ritual-row">
         <span class="ritual-index">0{i + 1}</span>
-        <h3>{item[0]}</h3>
-        <p>{item[1]}</p>
-      </div>{/each}
+        <h3>{title}</h3>
+        <p>{text}</p>
+      </div>
+    {/each}
   </section>
   <section class="teaser-faq container" aria-labelledby="faq-title">
     <div>
-      <p class="eyebrow" id="faq-title">Perguntas frequentes</p>
-      <h2>Respostas<br />diretas.</h2>
+      <p class="eyebrow">Perguntas frequentes</p>
+      <h2 id="faq-title">Respostas<br />diretas.</h2>
     </div>
     <div>
-      {#each teaserFaqs as faq}<details>
-          <summary>{faq[0]}<span class="faq-plus" aria-hidden="true">+</span></summary>
-          <div class="faq-body"><p>{faq[1]}</p></div>
-        </details>{/each}
+      {#each teaserFaqs as [question, answer]}
+        <details>
+          <summary>{question}<span class="faq-plus" aria-hidden="true">+</span></summary>
+          <div class="faq-body"><p>{answer}</p></div>
+        </details>
+      {/each}
     </div>
   </section>
   <Closing />
@@ -444,7 +480,7 @@
     onclose={onClosed}
     oncancel={onCancel}
     onclick={onModalBackdrop}
-    aria-labelledby="tx-modal-title"
+    aria-labelledby={activeTx ? 'tx-modal-title' : undefined}
   >
     {#if activeTx}
       <div class="tx-modal-head">
@@ -456,10 +492,12 @@
       <h3 class="tx-modal-title" id="tx-modal-title">{activeTx.title}</h3>
       <p class="tx-modal-detail">{activeTx.detail}</p>
       <dl class="tx-specs">
-        {#each activeTx.specs as [k, v]}<div>
-            <dt>{k}</dt>
-            <dd>{v}</dd>
-          </div>{/each}
+        {#each activeTx.specs as [label, value]}
+          <div>
+            <dt>{label}</dt>
+            <dd>{value}</dd>
+          </div>
+        {/each}
       </dl>
       <p class="fine tx-modal-foot">Especificação viva — muda junto com o build.</p>
     {/if}
