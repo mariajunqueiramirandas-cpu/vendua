@@ -12,11 +12,7 @@ import {
 } from '../modules/leads.ts';
 import { addActivity, createTask } from '../modules/activities.ts';
 import { composeMessage, composeMessageTx, setThreadAgent, channel } from '../modules/threads.ts';
-import {
-  DEFAULT_GUARDRAILS,
-  getSettingTx,
-  type Guardrails,
-} from '../modules/integrations.ts';
+import { DEFAULT_GUARDRAILS, getSettingTx, type Guardrails } from '../modules/integrations.ts';
 import { checkSendAllowedTx } from './guardrails.ts';
 import { dispatchMessage } from './send.ts';
 
@@ -399,9 +395,7 @@ export async function executeTool(
         const rows = await tx<{ value: { facts?: unknown } }[]>`
           select value from control_settings where key = 'agent_memory' for update
         `;
-        const cur = Array.isArray(rows[0]?.value?.facts)
-          ? (rows[0]!.value.facts as string[])
-          : [];
+        const cur = Array.isArray(rows[0]?.value?.facts) ? (rows[0]!.value.facts as string[]) : [];
         const facts = [...cur.filter((f) => f !== fact), fact].slice(-40);
         await tx`
           update control_settings set value = ${tx.json({ facts } as never)}
@@ -436,5 +430,3 @@ export async function executeTool(
       throw new HttpError(422, 'UNKNOWN_TOOL', `unknown tool: ${name}`);
   }
 }
-
-

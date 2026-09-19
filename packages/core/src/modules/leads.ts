@@ -731,7 +731,12 @@ export function parseLeadsCsv(text: string): {
       // Our own export joins tags with ';' — split back so the round trip
       // preserves them instead of writing one giant tag.
       out[field] =
-        field === 'tags' ? v.split(/[;|]/).map((t) => t.trim()).filter(Boolean) : v.trim();
+        field === 'tags'
+          ? v
+              .split(/[;|]/)
+              .map((t) => t.trim())
+              .filter(Boolean)
+          : v.trim();
     });
     if (!out.name) skipped.push({ line: i + 2, reason: 'sem nome' });
     else rows.push(out);

@@ -241,10 +241,7 @@ export function validateSetting(key: string, value: unknown): void {
     for (const k of ['quietStart', 'quietEnd'] as const) {
       if (v[k] === undefined) continue;
       const t = v[k];
-      if (
-        typeof t !== 'string' ||
-        !/^([01]\d|2[0-3]):[0-5]\d$/.test(t)
-      ) {
+      if (typeof t !== 'string' || !/^([01]\d|2[0-3]):[0-5]\d$/.test(t)) {
         throw bad(k, 'must be HH:MM (00:00–23:59)');
       }
     }
