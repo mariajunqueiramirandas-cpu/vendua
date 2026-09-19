@@ -148,8 +148,10 @@ jobs:
       - name: Postgres + migrate
         run: |
           docker compose -f packages/core/docker-compose.yml up -d postgres
+          # pg_isready on the unix socket is answered by the image's temporary
+          # init server too — check TCP, which only the real server listens on.
           for i in $(seq 1 30); do
-            docker compose -f packages/core/docker-compose.yml exec -T postgres pg_isready -U vendua && break
+            docker compose -f packages/core/docker-compose.yml exec -T postgres pg_isready -h localhost -p 5432 -U vendua && break
             sleep 1
           done
           (cd packages/core && bun run migrate)
