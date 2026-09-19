@@ -1117,16 +1117,31 @@ export function createApp({ sql, sessionSecret, controlSecret }: AppDeps) {
     ] as const) {
       if (v && !UUID_RE.test(v)) throw new HttpError(400, 'BAD_REQUEST', `${field} must be a uuid`);
     }
-    const res = await claimControl(sql, requireIdemKey(c), async (tx) => ({
-      status: 201,
-      body: {
-        runId: await insertRun(tx, {
-          kind: kind as 'triage' | 'reply' | 'outreach' | 'discovery',
-          leadId,
-          threadId,
-          params: (body.params as Record<string, unknown>) ?? {},
-        }),
-      },
+    const res = await claimControl(sql, requireIdemKey(c), async (tx) => {
+      // leadId and threadId aren't independent: a reply run bound to a thread
+      // must belong to that thread's lead, or thread content could be
+      // answered to the wrong lead's channel.
+      if (leadId && threadId) {
+        const th = (
+          await tx<{ lead_id: string }[]>`
+            select lead_id from lead_threads where id = ${threadId}
+          `
+        )[0];
+        if (!th) throw new HttpError(404, 'THREAD_NOT_FOUND', 'thread not found');
+        if (th.lead_id !== leadId) {
+          throw new HttpError(422, 'BAD_REQUEST', 'threadId does not belong to leadId');
+        }
+      }
+      return {
+        status: 201,
+        body: {
+          runId: await insertRun(tx, {
+            kind: kind as 'triage' | 'reply' | 'outreach' | 'discovery',
+            leadId,
+            threadId,
+            params: (body.params as Record<string, unknown>) ?? {},
+          }),
+        },
     }));
     if (res.replayed) c.header('x-idempotent-replay', 'true');
     void drain(sql).catch((e) => console.error('[agent drain]', e));
