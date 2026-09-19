@@ -79,11 +79,33 @@ Verify via `curl -H "Host: <slug-host>" localhost:8787/storefront/v1/store`.
 - Keyboard nav: `d f l i a e t g c` switch views; on /leads `/` focuses
   search, `n` opens the new-lead drawer. Composer: ctrl+enter sends,
   shift+ctrl+enter drafts.
-- Kanban DnD: real mouse drag works, but `.board-col` has no min-height —
-  the drop target ends at the column's content, so drops in the empty space
-  below the cards are ignored. Drop onto the column's header/cards.
+- Kanban DnD: real mouse drag works via the computer tool —
+  `left_mouse_down` takes NO coordinate, so `mouse_move` onto the card
+  first, press, then several stepped `mouse_move`s (Chrome starts the HTML5
+  drag after ~5px), screenshot mid-drag to capture the lime `.over`
+  highlight, then `left_mouse_up`. `.board-col` now has min-height so empty
+  column space is a valid drop target; dropping on the header/cards is
+  still the reliable target.
+- Two-tap `ConfirmBtn` (descadastrar/arquivar) arms for only ~2.6s — batch
+  the arm + confirm clicks in one tool call or the first arm expires.
+- Keyboard: global nav keys are skipped while any input/checkbox is focused
+  — click neutral page space first. `?` opens the shortcuts modal via the
+  `shift+slash` chord (a bare `?` keysym may arrive as `/`).
+- Send guardrails are real: whatsapp dispatch fails with `lead
+  unsubscribed` if `unsubscribed_at` is set and `lead has no whatsapp` if
+  the column is null (seeded leads have no whatsapp) — set one via SQL for
+  a happy-path send; UI shows `falhou` on the bubble.
+- The seeded whatsapp thread (Padaria Trigo Real) has a single draft — to
+  exercise day separators or the 'atrasadas' task bucket, backdate
+  `lead_messages.created_at` / `lead_tasks.due_at` via SQL, e.g.
+  `now() - interval '1 day'`.
 - No `psql` on the box — query via
-  `docker exec core-postgres-1 psql -U vendua -d vendua -c "..."`.
+  `docker exec core-postgres-1 psql -U vendua -d vendua -c "..."`. Pass `-i`
+  or individual `-c` flags; heredoc stdin is silently dropped without `-i`.
+- Coordinate space ≠ CSS px: tool screenshots are 1024×768 but the window
+  is ~1600×1156 (~1.56× scale plus ~75px browser chrome on Y). For precise
+  clicks get rects via `browser_console` (`el.getBoundingClientRect()`) and
+  divide by ~1.56 — or click positions read straight from the screenshot.
 - Agent: `agent_runs` is a durable queue; worker drains on 15s poll, but
   POST /leads and /leads/:id/run drain inline (runs finish ~instantly with
   the `mock` llm driver, which replies "ok" unless params carry `script`).
