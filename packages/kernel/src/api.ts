@@ -128,6 +128,9 @@ export interface CartTotals {
   totalCents: number;
   itemCount: number;
   minOrderCents: number;
+  /** Cents short of the minimum order — Core-computed so storefronts never
+   *  subtract money themselves. 0 once the minimum is met. */
+  remainingMinOrderCents: number;
   belowMinOrder: boolean;
 }
 
@@ -442,6 +445,10 @@ export const ERROR_CODES = [
   'IDEMPOTENCY_KEY_REQUIRED',
   'IDEMPOTENCY_IN_PROGRESS',
   'RATE_LIMITED',
+  // control-plane (staff) API codes — leads module
+  'INVALID_STATE',
+  'INVALID_LEAD',
+  'LEAD_NOT_FOUND',
   'BAD_REQUEST',
   'NOT_FOUND',
   'INTERNAL',

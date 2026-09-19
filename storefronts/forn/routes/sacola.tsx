@@ -92,7 +92,7 @@ export default function SacolaPage() {
           <div className="comanda-foot">
             {cart!.totals.belowMinOrder ? (
               <p className="comanda-hint" style={{ color: 'var(--brick)' }}>
-                Falta {brl(cart!.totals.minOrderCents - cart!.totals.subtotalCents)} pro mínimo de{' '}
+                Falta {brl(cart!.totals.remainingMinOrderCents)} pro mínimo de{' '}
                 {brl(cart!.totals.minOrderCents)}.
               </p>
             ) : null}

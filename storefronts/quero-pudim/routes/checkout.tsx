@@ -685,8 +685,8 @@ export function CheckoutPage() {
 
           {totals?.belowMinOrder ? (
             <p className="inline-alert warn" role="status" style={{ marginTop: 16 }}>
-              Faltam {formatBRL(totals.minOrderCents - totals.subtotalCents)} para o pedido mínimo
-              de {formatBRL(totals.minOrderCents)}.
+              Faltam {formatBRL(totals.remainingMinOrderCents)} para o pedido mínimo de{' '}
+              {formatBRL(totals.minOrderCents)}.
             </p>
           ) : null}
 

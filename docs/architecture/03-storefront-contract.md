@@ -101,11 +101,15 @@ Every storefront root layout MUST render, exactly once:
 </VenduaProvider>
 ```
 
-- `<SystemSurfaces />` MUST be inside the provider and above the router outlet —
-  it owns blocking overlays that must cover brand pages.
-- The reserved system route group `/(vendua)/*` MUST be included. The Kernel
-  fills it with checkout, order tracking, auth and legal routes. Storefront
-  routes MUST NOT collide with it.
+- `<SystemSurfaces />` MUST be inside the provider and rendered BEFORE the
+  router — a sibling of `<Router />` as the sketch shows, not a child of a
+  page or outlet — it owns blocking overlays that must cover brand pages.
+- The reserved system route group `/(vendua)/*` is claimed by the Kernel for
+  checkout, order tracking, auth and legal routes; storefront routes MUST NOT
+  collide with it. In v1 the group is required once the Kernel ships its
+  system routes (ADR 0004 lands them with the Kernel-owned checkout) — until
+  then the storefront owns its checkout/order pages under the commerce rules
+  below and nothing may map that prefix to anything else.
 - The document `<head>` MUST include the loader script tag emitted by the
   scaffold (`<script src="https://cdn.vendua.com.br/v1/v.js" defer>`).
 

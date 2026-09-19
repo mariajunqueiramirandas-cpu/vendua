@@ -15,7 +15,7 @@ export default defineConfig({
     port: 5175,
     strictPort: true,
     proxy: {
-      '/storefront': { target: 'http://localhost:8787' },
+      '/storefront/v1': { target: 'http://localhost:8787' },
       '/checkout/v1': { target: 'http://localhost:8787' },
       '/v1': { target: 'http://localhost:8787' },
     },

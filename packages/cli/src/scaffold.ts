@@ -133,10 +133,26 @@ async function registerTenant(slug: string, port: number): Promise<void> {
       const tid = tenant.id;
 
       for (const host of [`localhost:${port}`, `127.0.0.1:${port}`]) {
-        await tx`
+        // Never silently rebind a host: a scaffold racing another tenant's
+        // port must fail loudly, not steal the domain row mid-transaction.
+        const inserted = await tx`
           insert into domains (host, tenant_id) values (${host}, ${tid})
-          on conflict (host) do update set tenant_id = excluded.tenant_id
+          on conflict (host) do nothing
+          returning host
         `;
+        if (!inserted[0]) {
+          const bound = (
+            await tx<{ slug: string }[]>`
+              select t.slug from domains d join tenants t on t.id = d.tenant_id
+              where d.host = ${host}
+            `
+          )[0];
+          if (bound?.slug !== slug) {
+            throw new Error(
+              `${host} is already bound to tenant '${bound?.slug ?? '?'}' — pick another port (check storefronts/*/vite.config.ts)`,
+            );
+          }
+        }
       }
 
       await tx`

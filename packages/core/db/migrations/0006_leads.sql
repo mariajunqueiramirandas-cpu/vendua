@@ -18,6 +18,10 @@ create table if not exists leads (
   source text,
   state text not null default 'lead' check (state in ('lead', 'contacted', 'invited', 'live')),
   notes jsonb not null default '[]',
+  -- Mutations claim an Idempotency-Key like every other mutating endpoint —
+  -- stored on the row so a retry returns the first write instead of
+  -- duplicating it. Notes dedupe on a `key` inside the notes jsonb.
+  idempotency_key text unique,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
 );

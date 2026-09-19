@@ -15,6 +15,8 @@ export type LeadState = (typeof LEAD_STATES)[number];
 export interface LeadNote {
   at: string;
   body: string;
+  /** Idempotency-Key the note was appended under — retries dedupe on it. */
+  key?: string;
 }
 
 export interface LeadRow {
@@ -28,6 +30,7 @@ export interface LeadRow {
   source: string | null;
   state: LeadState;
   notes: LeadNote[] | null;
+  idempotency_key: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -132,12 +135,21 @@ export async function getLead(sql: Sql, id: string): Promise<LeadRow | null> {
   return rows[0] ?? null;
 }
 
+/** Insert claimed by the caller's Idempotency-Key: a retry lands on
+ *  `on conflict do nothing` and replays the row the first write created. */
 export async function createLead(
   sql: Sql,
   fields: Record<string, string | null>,
-): Promise<LeadRow> {
-  const rows = await sql<LeadRow[]>`insert into leads ${sql(fields)} returning *`;
-  return rows[0]!;
+  idemKey: string,
+): Promise<{ lead: LeadRow; replayed: boolean }> {
+  const rows = await sql<LeadRow[]>`
+    insert into leads ${sql({ ...fields, idempotency_key: idemKey })}
+    on conflict (idempotency_key) do nothing
+    returning *
+  `;
+  if (rows[0]) return { lead: rows[0], replayed: false };
+  const existing = await sql<LeadRow[]>`select * from leads where idempotency_key = ${idemKey}`;
+  return { lead: existing[0]!, replayed: true };
 }
 
 export async function updateLead(
@@ -151,11 +163,29 @@ export async function updateLead(
   return rows[0] ?? null;
 }
 
-export async function appendNote(sql: Sql, id: string, body: string): Promise<LeadRow | null> {
-  const note = { at: new Date().toISOString(), body };
-  const rows = await sql<LeadRow[]>`
-    update leads set notes = notes || ${sql.json([note])}, updated_at = now()
-    where id = ${id} returning *
-  `;
-  return rows[0] ?? null;
+/** Appends under the caller's Idempotency-Key, stored inside the note: a
+ *  retry sees its key already in notes[] and replays instead of appending a
+ *  second copy. `for update` serializes concurrent appends on the row. */
+export async function appendNote(
+  sql: Sql,
+  id: string,
+  body: string,
+  idemKey: string,
+): Promise<{ lead: LeadRow; replayed: boolean } | null> {
+  return sql.begin(async (t) => {
+    const tx = t as unknown as Sql;
+    const cur = (await tx<LeadRow[]>`select * from leads where id = ${id} for update`)[0];
+    if (!cur) return null;
+    if ((cur.notes ?? []).some((n) => n.key === idemKey)) {
+      return { lead: cur, replayed: true };
+    }
+    // Inferred literal (not the LeadNote interface) so the object satisfies
+    // tx.json's JSONValue/index-signature parameter type.
+    const note = { at: new Date().toISOString(), body, key: idemKey };
+    const rows = await tx<LeadRow[]>`
+      update leads set notes = notes || ${tx.json([note])}, updated_at = now()
+      where id = ${id} returning *
+    `;
+    return { lead: rows[0]!, replayed: false };
+  }) as Promise<{ lead: LeadRow; replayed: boolean } | null>;
 }

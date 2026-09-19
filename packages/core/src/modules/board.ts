@@ -4,6 +4,34 @@
  * /control/v1 surface: no separate app, no external assets. It graduates into
  * the Control Plane in Phase 4 — spare and functional is the bar here.
  */
+/** Unauthenticated GET — a one-field form POSTing `key` to /control/v1/board.
+ *  POST (not a URL param) so the shared secret never lands in access logs,
+ *  browser history, or a bookmark. */
+export function boardLoginHtml(): string {
+  return `<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Venduá — Leads</title>
+<style>
+  body { margin: 0; font-family: ui-sans-serif, system-ui, sans-serif; background: #faf7f2; color: #1c1917; display: grid; place-items: center; min-height: 100vh; }
+  form { background: #fff; border: 1px solid #e7e0d8; border-radius: 10px; padding: 24px; display: flex; gap: 8px; align-items: center; }
+  input { padding: 8px 10px; border: 1px solid #d6cec4; border-radius: 8px; font: inherit; font-size: 13px; min-width: 240px; }
+  button { padding: 8px 14px; border: 0; border-radius: 8px; background: #1c1917; color: #fff; font: inherit; font-size: 13px; cursor: pointer; }
+  label { font-size: 13px; font-weight: 600; }
+</style>
+</head>
+<body>
+<form method="post" action="/control/v1/board">
+  <label for="key">Chave</label>
+  <input id="key" name="key" type="password" autocomplete="off" required autofocus>
+  <button type="submit">Entrar</button>
+</form>
+</body>
+</html>`;
+}
+
 export function boardHtml(): string {
   return `<!doctype html>
 <html lang="pt-BR">
@@ -65,11 +93,19 @@ const STATES = [
 ];
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (ch) =>
   ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[ch]);
-const api = (path, opts = {}) =>
+// x-vendua-staff: the CSRF marker the API requires on cookie-authenticated
+// mutations (a custom header can't be sent cross-site without a preflight
+// this API never answers).
+const api = (path, opts = {}, idemKey) =>
   fetch('/control/v1' + path, {
     credentials: 'include',
-    headers: { 'content-type': 'application/json' },
     ...opts,
+    headers: {
+      'content-type': 'application/json',
+      'x-vendua-staff': '1',
+      ...(idemKey ? { 'idempotency-key': idemKey } : {}),
+      ...(opts.headers ?? {}),
+    },
   });
 
 async function load() {
@@ -77,7 +113,7 @@ async function load() {
   if (!res.ok) {
     document.getElementById('err').style.display = 'block';
     document.getElementById('err').textContent =
-      'Acesso negado — abra /control/v1/board?key=<secret> primeiro.';
+      'Acesso negado — recarregue e informe a chave.';
     return;
   }
   const { leads } = await res.json();
@@ -117,6 +153,8 @@ function card(l) {
   if (i < STATES.length - 1) {
     const next = document.createElement('button');
     next.textContent = '→ ' + STATES[i + 1][1];
+    // PATCH converges (setting the same state twice is a no-op), so no
+    // idempotency key — POST creates/appends claim one.
     next.onclick = async () => {
       const res = await api('/leads/' + l.id, {
         method: 'PATCH',
@@ -132,10 +170,11 @@ function card(l) {
   note.onclick = async () => {
     const body = prompt('Nota para ' + (l.businessName || l.name) + ':');
     if (!body || !body.trim()) return;
-    const res = await api('/leads/' + l.id + '/notes', {
-      method: 'POST',
-      body: JSON.stringify({ body: body.trim() }),
-    });
+    const res = await api(
+      '/leads/' + l.id + '/notes',
+      { method: 'POST', body: JSON.stringify({ body: body.trim() }) },
+      crypto.randomUUID(),
+    );
     if (res.ok) load();
   };
   actions.appendChild(note);
@@ -147,7 +186,11 @@ document.getElementById('add').onsubmit = async (e) => {
   const data = Object.fromEntries(new FormData(e.target).entries());
   const body = {};
   for (const [k, v] of Object.entries(data)) if (String(v).trim()) body[k] = String(v).trim();
-  const res = await api('/leads', { method: 'POST', body: JSON.stringify(body) });
+  const res = await api(
+    '/leads',
+    { method: 'POST', body: JSON.stringify(body) },
+    crypto.randomUUID(),
+  );
   if (res.ok) {
     e.target.reset();
     load();

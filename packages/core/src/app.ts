@@ -35,7 +35,7 @@ import {
   listLeads,
   updateLead,
 } from './modules/leads.ts';
-import { boardHtml } from './modules/board.ts';
+import { boardHtml, boardLoginHtml } from './modules/board.ts';
 import { LOADER_JS } from './loader.ts';
 
 export interface AppDeps {
@@ -505,16 +505,32 @@ export function createApp({ sql, sessionSecret }: AppDeps) {
   // network on top of this.
   //
   // The gate: the X-Vendua-Control header is the canonical credential. The
-  // `vendua_control` cookie — minted by GET /control/v1/board?key= — is a
-  // staff convenience so the board page can call this API from the browser:
-  // same secret, no new credential surface. 404 (not 401) keeps the surface
+  // `vendua_control` cookie — minted by POST /control/v1/board — is a staff
+  // convenience so the board page can call this API from the browser: same
+  // secret, no new credential surface. 404 (not 401) keeps the surface
   // invisible to scans.
   const CONTROL_COOKIE = 'vendua_control';
+  const controlAuthed = (c: Context) =>
+    c.req.header('x-vendua-control') === sessionSecret ||
+    getCookie(c, CONTROL_COOKIE) === sessionSecret;
   const controlGate = (c: Context) => {
-    const ok =
-      c.req.header('x-vendua-control') === sessionSecret ||
-      getCookie(c, CONTROL_COOKIE) === sessionSecret;
-    if (!ok) throw new HttpError(404, 'NOT_FOUND', 'not found');
+    if (!controlAuthed(c)) throw new HttpError(404, 'NOT_FOUND', 'not found');
+    // CSRF: a cookie-authenticated mutation must also carry the custom
+    // `x-vendua-staff` marker — browsers can't add a custom header cross-site
+    // without a CORS preflight this API never answers. SameSite=Lax already
+    // strips the cookie on cross-site POSTs; this covers same-site siblings.
+    const viaHeader = c.req.header('x-vendua-control') === sessionSecret;
+    if (!viaHeader && c.req.method !== 'GET' && !c.req.header('x-vendua-staff')) {
+      throw new HttpError(404, 'NOT_FOUND', 'not found');
+    }
+  };
+  const requireIdemKey = (c: Context) => {
+    const key = c.req.header('idempotency-key');
+    if (!key) {
+      throw new HttpError(400, 'IDEMPOTENCY_KEY_REQUIRED', 'Idempotency-Key header is required');
+    }
+    if (key.length > 200) throw new HttpError(400, 'BAD_REQUEST', 'Idempotency-Key too long');
+    return key;
   };
 
   app.get('/control/v1/state', async (c) => {
@@ -546,8 +562,13 @@ export function createApp({ sql, sessionSecret }: AppDeps) {
 
   app.post('/control/v1/leads', async (c) => {
     controlGate(c);
-    const lead = await createLead(sql, leadInsert(await bodyJson(c)));
-    return c.json({ lead: leadJson(lead) }, 201);
+    const { lead, replayed } = await createLead(
+      sql,
+      leadInsert(await bodyJson(c)),
+      requireIdemKey(c),
+    );
+    if (replayed) c.header('x-idempotent-replay', 'true');
+    return c.json({ lead: leadJson(lead) }, replayed ? 200 : 201);
   });
 
   app.get('/control/v1/leads/:id', async (c) => {
@@ -568,27 +589,32 @@ export function createApp({ sql, sessionSecret }: AppDeps) {
     controlGate(c);
     const body = str((await bodyJson(c)).body, 'body', 2000).trim();
     if (!body) throw new HttpError(422, 'BAD_REQUEST', 'body is required', { field: 'body' });
-    const lead = await appendNote(sql, uuidParam(c, 'id'), body);
-    if (!lead) throw new HttpError(404, 'LEAD_NOT_FOUND', 'lead not found');
-    return c.json({ lead: leadJson(lead) });
+    const res = await appendNote(sql, uuidParam(c, 'id'), body, requireIdemKey(c));
+    if (!res) throw new HttpError(404, 'LEAD_NOT_FOUND', 'lead not found');
+    if (res.replayed) c.header('x-idempotent-replay', 'true');
+    return c.json({ lead: leadJson(res.lead) });
   });
 
-  // The staff board itself. ?key=<secret> mints the HttpOnly cookie and
-  // redirects to the clean URL so the secret doesn't sit in browser history
-  // or a bookmark; after that the cookie alone opens this page and its API.
+  // The staff board itself. POST /control/v1/board {key} mints the HttpOnly
+  // cookie and redirects to the clean URL — a POST body keeps the secret out
+  // of access logs and browser history (a ?key= URL would persist both).
+  // After that the cookie alone opens this page and its API.
   app.get('/control/v1/board', (c) => {
-    const key = c.req.query('key');
-    if (key !== undefined) {
-      if (key !== sessionSecret) throw new HttpError(404, 'NOT_FOUND', 'not found');
-      setCookie(c, CONTROL_COOKIE, sessionSecret, {
-        httpOnly: true,
-        sameSite: 'Lax',
-        path: '/control',
-      });
-      return c.redirect('/control/v1/board');
-    }
-    controlGate(c);
+    if (!controlAuthed(c)) return c.html(boardLoginHtml());
     return c.html(boardHtml());
+  });
+  app.post('/control/v1/board', async (c) => {
+    const form = (await c.req.parseBody().catch(() => ({}))) as Record<string, unknown>;
+    if (form.key !== sessionSecret) throw new HttpError(404, 'NOT_FOUND', 'not found');
+    setCookie(c, CONTROL_COOKIE, sessionSecret, {
+      httpOnly: true,
+      sameSite: 'Lax',
+      // Transport-only flag under TLS; dev serves plain http where a Secure
+      // cookie would never be stored.
+      secure: c.req.url.startsWith('https://'),
+      path: '/control',
+    });
+    return c.redirect('/control/v1/board');
   });
 
   app.route('/storefront/v1', storefront);

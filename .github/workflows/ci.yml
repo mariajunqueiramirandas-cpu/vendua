@@ -79,6 +79,8 @@ jobs:
           done
       - name: Core tests
         run: cd packages/core && bun test
+      - name: Isolation tools tests
+        run: bun test tools/
       - name: Builds
         run: |
           # Storefront builds follow the affected graph (tools/affected.mjs)

@@ -90,6 +90,7 @@ describe('leadJson', () => {
     source: 'indicação',
     state: 'contacted',
     notes: [{ at: '2026-09-19T00:00:00.000Z', body: 'primeira conversa' }],
+    idempotency_key: null,
     created_at: '2026-09-18T00:00:00.000Z',
     updated_at: '2026-09-19T00:00:00.000Z',
   };

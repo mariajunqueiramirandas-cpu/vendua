@@ -106,8 +106,8 @@ export function CartPage() {
 
             {totals?.belowMinOrder ? (
               <p className="alert" role="status">
-                Faltam {formatCents(totals.minOrderCents - totals.subtotalCents, store?.currency)}{' '}
-                para o pedido mínimo de {formatCents(totals.minOrderCents, store?.currency)}.
+                Faltam {formatCents(totals.remainingMinOrderCents, store?.currency)} para o pedido
+                mínimo de {formatCents(totals.minOrderCents, store?.currency)}.
               </p>
             ) : null}
 

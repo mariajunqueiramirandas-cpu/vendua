@@ -52,6 +52,9 @@ export interface CartTotals {
   totalCents: number;
   itemCount: number;
   minOrderCents: number;
+  /** Cents short of the minimum order — the display value storefronts render
+   *  instead of subtracting in client code (Core owns money math). */
+  remainingMinOrderCents: number;
   belowMinOrder: boolean;
 }
 
@@ -81,6 +84,7 @@ export function computeTotals(
     totalCents: subtotal + deliveryFeeCents,
     itemCount,
     minOrderCents,
+    remainingMinOrderCents: Math.max(0, minOrderCents - subtotal),
     belowMinOrder: itemCount > 0 && subtotal < minOrderCents,
   };
 }
