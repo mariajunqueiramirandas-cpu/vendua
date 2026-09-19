@@ -32,6 +32,11 @@ export const DEFAULT_SECRET: Record<string, string> = {
   tinyfish: 'TINYFISH_API_KEY',
 };
 
+/** Drivers whose credential lookup is `(env[ref]) ?? env[DEFAULT]` — a
+ *  configured-but-unset ref still authenticates via the default var.
+ *  LLM providers are strict: a set secret_ref that env lacks = missing. */
+const SECRET_FALLBACK: ReadonlySet<string> = new Set(['resend', 'tinyfish']);
+
 export interface IntegrationRow {
   id: string;
   kind: IntegrationKind;
@@ -46,9 +51,16 @@ export interface IntegrationRow {
 /** API view — secret_ref masked to the env var name only (never a value). */
 export function integrationJson(row: IntegrationRow) {
   // The env var the driver will actually read — the row's override or its
-  // built-in default. `secretPresent` tracks that effective name so a
-  // default-env deployment shows "secret ✓" before any save.
+  // built-in default. `secretPresent` mirrors each driver's lookup: strict
+  // for LLM providers, `(ref) ?? default` for resend/tinyfish — so a
+  // configured-but-unset ref still reports present when the default exists.
   const secretName = row.secret_ref ?? DEFAULT_SECRET[row.driver] ?? null;
+  const present =
+    row.secret_ref && SECRET_FALLBACK.has(row.driver)
+      ? !!process.env[row.secret_ref] || !!process.env[DEFAULT_SECRET[row.driver]!]
+      : secretName
+        ? !!process.env[secretName]
+        : null;
   return {
     id: row.id,
     kind: row.kind,
@@ -58,7 +70,7 @@ export function integrationJson(row: IntegrationRow) {
     /** whether process.env actually provides the referenced secret */
     secretRef: row.secret_ref,
     secretName,
-    secretPresent: secretName ? !!process.env[secretName] : null,
+    secretPresent: present,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };

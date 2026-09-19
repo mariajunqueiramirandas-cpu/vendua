@@ -299,13 +299,21 @@ function ProviderCard({
       return;
     }
     let dead = false;
-    void QRCode.toDataURL(wa.qr, { margin: 1, width: 220 }).then((url) => {
-      if (!dead) setQrImg(url);
-    });
+    void QRCode.toDataURL(wa.qr, { margin: 1, width: 220 })
+      .then((url) => {
+        if (!dead) setQrImg(url);
+      })
+      .catch(() => {
+        if (!dead) setQrImg(null);
+      });
     return () => {
       dead = true;
     };
   }, [wa.qr]);
+  useEffect(() => {
+    // A stale code survives logout otherwise — re-pairing must start clean.
+    if (wa.status === 'open') setPairCode(null);
+  }, [wa.status]);
 
   const drv = kind.drivers.find((x) => x.d === driver) ?? kind.drivers[0];
   // The saved row for the SELECTED driver — its secretName/secretPresent
@@ -449,24 +457,24 @@ function ProviderCard({
                 {wa.qr && qrImg && <img className="wa-qr" src={qrImg} alt="QR do whatsapp" />}
                 <div className="wa-paircode">
                   <span className="hint">ou conectar com código:</span>
-                  {pairCode ? (
-                    <code className="wa-code">{pairCode}</code>
-                  ) : (
-                    <span className="wa-pairrow">
-                      <input
-                        placeholder="DDI+DDD+número — 5511…"
-                        value={pairPhone}
-                        onChange={(e) => setPairPhone(e.target.value)}
-                      />
-                      <button
-                        className="btn ghost"
-                        disabled={pairBusy}
-                        onClick={() => void runPair()}
-                      >
-                        {pairBusy ? 'gerando…' : 'gerar código'}
-                      </button>
-                    </span>
-                  )}
+                  {pairCode && <code className="wa-code">{pairCode}</code>}
+                  <span className="wa-pairrow">
+                    <input
+                      placeholder="DDI+DDD+número — 5511…"
+                      value={pairPhone}
+                      onChange={(e) => {
+                        setPairPhone(e.target.value);
+                        setPairCode(null);
+                      }}
+                    />
+                    <button
+                      className="btn ghost"
+                      disabled={pairBusy}
+                      onClick={() => void runPair()}
+                    >
+                      {pairBusy ? 'gerando…' : pairCode ? 'novo código' : 'gerar código'}
+                    </button>
+                  </span>
                   {pairErr && <div className="hint">{pairErr}</div>}
                 </div>
                 <div className="foot">

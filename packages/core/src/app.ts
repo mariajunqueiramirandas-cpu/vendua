@@ -76,6 +76,7 @@ import {
   putSetting,
   upsertIntegration,
   validateSetting,
+  type IntegrationKind,
 } from './modules/integrations.ts';
 import { claimControl, controlTx } from './modules/control.ts';
 import { drain, insertRun } from './agent/runner.ts';
@@ -129,6 +130,96 @@ function currentStatus(settings: StoreSettingsRow | null) {
     settings?.resumes_at ?? null,
     new Date(),
   );
+}
+
+// Every external probe in testIntegration runs inside this bound — a dead
+// provider must not pin the route (or its claim transaction) open.
+const TEST_TIMEOUT_MS = 8_000;
+function timed<T>(p: Promise<T>, what: string): Promise<T> {
+  return Promise.race([
+    p,
+    new Promise<never>((_, reject) =>
+      setTimeout(
+        () => reject(new Error(`${what}: sem resposta em ${TEST_TIMEOUT_MS / 1000}s`)),
+        TEST_TIMEOUT_MS,
+      ),
+    ),
+  ]);
+}
+
+/** One cheap live call against the kind's ACTIVE driver. Never throws —
+ *  failures are the diagnostic result. */
+async function testIntegration(
+  sql: Sql,
+  kind: IntegrationKind,
+): Promise<{ status: number; body: { ok: boolean; detail: string } }> {
+  const integration = await getIntegration(sql, kind);
+  const probe = async (): Promise<{ ok: boolean; detail: string }> => {
+    if (!integration) return { ok: false, detail: 'nenhum driver ativo para este tipo' };
+    if (kind === 'llm') {
+      if (integration.driver === 'mock') {
+        return { ok: true, detail: 'driver mock — respostas roteirizadas' };
+      }
+      const { providerFor } = await import('./agent/llm.ts');
+      const p = providerFor(integration);
+      const r = await timed(
+        p.chat({
+          system: 'Responda apenas com a palavra: ok',
+          messages: [{ role: 'user', content: 'teste' }],
+          tools: [],
+        }),
+        p.name,
+      );
+      return { ok: true, detail: `${p.name} respondeu — ${r.tokensIn + r.tokensOut} tokens` };
+    }
+    if (kind === 'email') {
+      if (integration.driver === 'log') {
+        return { ok: true, detail: 'driver log — imprime no console' };
+      }
+      const key =
+        (integration.secret_ref && process.env[integration.secret_ref]) ??
+        process.env.RESEND_API_KEY;
+      if (!key) {
+        return { ok: false, detail: `env ${integration.secret_ref ?? 'RESEND_API_KEY'} ausente` };
+      }
+      const res = await timed(
+        fetch('https://api.resend.com/domains', {
+          headers: { authorization: `Bearer ${key}` },
+        }),
+        'resend',
+      );
+      return res.ok
+        ? { ok: true, detail: 'resend autenticado' }
+        : { ok: false, detail: `resend respondeu ${res.status}` };
+    }
+    if (kind === 'whatsapp') {
+      if (integration.driver === 'log') {
+        return { ok: true, detail: 'driver log — imprime no console' };
+      }
+      const { ensureSocket, waStatus } = await import('./agent/channels/whatsapp.ts');
+      const s = await timed(ensureSocket(sql, integration), 'socket baileys');
+      if (!s) return { ok: false, detail: 'socket não subiu' };
+      const st = waStatus();
+      if (st === 'open') return { ok: true, detail: 'socket pareado' };
+      if (st === 'qr') return { ok: true, detail: 'aguardando escanear o QR' };
+      return { ok: false, detail: `socket ${st}` };
+    }
+    if (kind === 'discovery') {
+      if (integration.driver === 'mock') {
+        return { ok: true, detail: 'driver mock — prospects enlatados' };
+      }
+      const { discoveryFor } = await import('./agent/channels/discovery.ts');
+      const d = await discoveryFor(sql);
+      const r = await timed(d.search('padaria', 'teste de conectividade'), 'tinyfish');
+      return { ok: true, detail: `tinyfish respondeu — ${r.results.length} resultados` };
+    }
+    return { ok: false, detail: `tipo desconhecido: ${kind}` };
+  };
+  try {
+    return { status: 200, body: await timed(probe(), kind) };
+  } catch (e) {
+    return { status: 200, body: { ok: false, detail: e instanceof Error ? e.message : String(e) } };
+  }
 }
 
 export function createApp({ sql, sessionSecret, controlSecret }: AppDeps) {
@@ -1057,76 +1148,15 @@ export function createApp({ sql, sessionSecret, controlSecret }: AppDeps) {
 
   // Live driver check — exercises the ACTIVE provider for a kind for real
   // (one cheap call), so Config can answer "is this actually working?"
-  // instead of only echoing config back.
+  // instead of only echoing config back. Claimed like every other control
+  // mutation — a retried POST replays the recorded result instead of
+  // spending another provider call.
   app.post('/control/v1/integrations/:kind/test', async (c) => {
     controlGate(c);
     const kind = integrationKind(c.req.param('kind'));
-    const integration = await getIntegration(sql, kind);
-    if (!integration) {
-      return c.json({ ok: false, detail: 'nenhum driver ativo para este tipo' });
-    }
-    try {
-      if (kind === 'llm') {
-        if (integration.driver === 'mock') {
-          return c.json({ ok: true, detail: 'driver mock — respostas roteirizadas' });
-        }
-        const { providerFor } = await import('./agent/llm.ts');
-        const p = providerFor(integration);
-        const r = await p.chat({
-          system: 'Responda apenas com a palavra: ok',
-          messages: [{ role: 'user', content: 'teste' }],
-          tools: [],
-        });
-        return c.json({
-          ok: true,
-          detail: `${p.name} respondeu — ${r.tokensIn + r.tokensOut} tokens`,
-        });
-      }
-      if (kind === 'email') {
-        if (integration.driver === 'log') {
-          return c.json({ ok: true, detail: 'driver log — imprime no console' });
-        }
-        const key =
-          (integration.secret_ref && process.env[integration.secret_ref]) ??
-          process.env.RESEND_API_KEY;
-        if (!key) {
-          return c.json({
-            ok: false,
-            detail: `env ${integration.secret_ref ?? 'RESEND_API_KEY'} ausente`,
-          });
-        }
-        const res = await fetch('https://api.resend.com/domains', {
-          headers: { authorization: `Bearer ${key}` },
-        });
-        return res.ok
-          ? c.json({ ok: true, detail: 'resend autenticado' })
-          : c.json({ ok: false, detail: `resend respondeu ${res.status}` });
-      }
-      if (kind === 'whatsapp') {
-        if (integration.driver === 'log') {
-          return c.json({ ok: true, detail: 'driver log — imprime no console' });
-        }
-        const { ensureSocket, waStatus } = await import('./agent/channels/whatsapp.ts');
-        const s = await ensureSocket(sql, integration);
-        if (!s) return c.json({ ok: false, detail: 'socket não subiu' });
-        const st = waStatus();
-        if (st === 'open') return c.json({ ok: true, detail: 'socket pareado' });
-        if (st === 'qr') return c.json({ ok: true, detail: 'aguardando escanear o QR' });
-        return c.json({ ok: false, detail: `socket ${st}` });
-      }
-      if (kind === 'discovery') {
-        if (integration.driver === 'mock') {
-          return c.json({ ok: true, detail: 'driver mock — prospects enlatados' });
-        }
-        const { discoveryFor } = await import('./agent/channels/discovery.ts');
-        const d = await discoveryFor(sql);
-        const r = await d.search('padaria', 'teste de conectividade');
-        return c.json({ ok: true, detail: `tinyfish respondeu — ${r.results.length} resultados` });
-      }
-      return c.json({ ok: false, detail: `tipo desconhecido: ${kind}` });
-    } catch (e) {
-      return c.json({ ok: false, detail: e instanceof Error ? e.message : String(e) });
-    }
+    const res = await claimControl(sql, requireIdemKey(c), () => testIntegration(sql, kind));
+    if (res.replayed) c.header('x-idempotent-replay', 'true');
+    return c.json(res.body, res.status as 200);
   });
 
   app.get('/control/v1/settings', async (c) => {
@@ -1260,28 +1290,40 @@ export function createApp({ sql, sessionSecret, controlSecret }: AppDeps) {
   app.post('/control/v1/wa/pair-code', async (c) => {
     controlGate(c);
     const body = await bodyJson(c);
-    const { pairCode } = await import('./agent/channels/whatsapp.ts');
-    try {
-      const code = await pairCode(sql, str(body.phone, 'phone', 40));
-      return c.json({ code });
-    } catch (e) {
-      throw new HttpError(422, 'BAD_REQUEST', e instanceof Error ? e.message : String(e));
-    }
+    const phone = str(body.phone, 'phone', 40);
+    // Claimed: a retry must replay the issued code, not ask Baileys twice.
+    // Failures throw inside the tx so the claim rolls back and a retry is
+    // a genuinely fresh attempt.
+    const res = await claimControl(sql, requireIdemKey(c), async () => {
+      const { pairCode } = await import('./agent/channels/whatsapp.ts');
+      try {
+        return { status: 200, body: { code: await pairCode(sql, phone) } };
+      } catch (e) {
+        throw new HttpError(422, 'BAD_REQUEST', e instanceof Error ? e.message : String(e));
+      }
+    });
+    if (res.replayed) c.header('x-idempotent-replay', 'true');
+    return c.json(res.body, res.status as 200);
   });
 
   // Unpair the WhatsApp session (linked-device logout + auth-state wipe) so
   // a different number can pair. Restarts the socket afterwards so a fresh
-  // QR is emitted right away.
+  // QR is emitted right away. Claimed — a retried logout can't race the
+  // replacement pairing.
   app.post('/control/v1/wa/logout', async (c) => {
     controlGate(c);
-    const { logoutWa, ensureSocket } = await import('./agent/channels/whatsapp.ts');
-    const integration = await getIntegration(sql, 'whatsapp');
-    const accountId = (integration?.config.accountId as string) ?? 'default';
-    await logoutWa(sql, accountId);
-    void ensureSocket(sql, integration).catch((e) =>
-      console.error('[whatsapp] post-logout restart failed', e),
-    );
-    return c.json({ ok: true });
+    const res = await claimControl(sql, requireIdemKey(c), async () => {
+      const { logoutWa, ensureSocket } = await import('./agent/channels/whatsapp.ts');
+      const integration = await getIntegration(sql, 'whatsapp');
+      const accountId = (integration?.config.accountId as string) ?? 'default';
+      await logoutWa(sql, accountId);
+      void ensureSocket(sql, integration).catch((e) =>
+        console.error('[whatsapp] post-logout restart failed', e),
+      );
+      return { status: 200, body: { ok: true } };
+    });
+    if (res.replayed) c.header('x-idempotent-replay', 'true');
+    return c.json(res.body, res.status as 200);
   });
 
   // ---- channel webhooks ---------------------------------------------------------
