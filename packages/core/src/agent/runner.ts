@@ -19,10 +19,7 @@ import { dispatchMessage } from './send.ts';
  *  fall back to the default. 0 (or negative) = uncapped — the loop runs until
  *  the model stops calling tools, and this cap is the only runaway bound.
  *  Returns Infinity for the uncapped case so the loop condition stays `i <`. */
-export function resolveMaxSteps(
-  params: Record<string, unknown>,
-  guardrails: Guardrails,
-): number {
+export function resolveMaxSteps(params: Record<string, unknown>, guardrails: Guardrails): number {
   const fromParams = params.maxSteps;
   const n =
     typeof fromParams === 'number' && Number.isFinite(fromParams)
