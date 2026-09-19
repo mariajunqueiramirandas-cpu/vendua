@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState, type ChangeEvent } from 'react';
+import { useCallback, useEffect, useRef, useState, type ChangeEvent } from 'react';
 import QRCode from 'qrcode';
 import { api, type Integration } from '../api.ts';
 import { Page } from '../components.tsx';
@@ -120,11 +120,29 @@ export default function Settings() {
   });
   const [notice, setNotice] = useState<Notice>(null);
   const [loading, setLoading] = useState(true);
+  // Only a SUCCESSFUL integrations fetch may prove whatsapp unconfigured —
+  // a failed load also leaves rows empty, and auto-activating off a failed
+  // read could flip a deliberately-disabled baileys row back on.
+  const [integrationsOk, setIntegrationsOk] = useState(false);
 
   const load = useCallback(() => {
-    void Promise.all([api.integrations(), api.settings()])
-      .then(([i, s]) => {
+    // Independent fetches — a failed settings read must not discard a
+    // successful integrations response (it alone proves whatsapp state).
+    void api
+      .integrations()
+      .then((i) => {
         setIntegrations(i.integrations);
+        setIntegrationsOk(true);
+      })
+      .catch((e: unknown) =>
+        setNotice({
+          kind: 'err',
+          text: `falha ao carregar: ${e instanceof Error ? e.message : e}`,
+        }),
+      );
+    void api
+      .settings()
+      .then((s) => {
         const map: Record<string, unknown> = {};
         for (const row of s.settings) map[row.key] = row.value;
         setSettings(map);
@@ -222,6 +240,7 @@ export default function Settings() {
                 kind={k}
                 rows={integrations.filter((i) => i.kind === k.key)}
                 wa={k.key === 'whatsapp' ? wa : { qr: null, status: 'off' }}
+                ready={integrationsOk}
                 onWaLogout={k.key === 'whatsapp' ? () => void waLogout() : undefined}
                 onSave={(d, enable) => void saveIntegration(k.key, d, enable)}
               />
@@ -259,12 +278,15 @@ function ProviderCard({
   kind,
   rows,
   wa,
+  ready,
   onWaLogout,
   onSave,
 }: {
   kind: { key: string; label: string; sub: string; drivers: Driver[] };
   rows: Integration[];
   wa: { qr: string | null; status: string };
+  /** integrations fetch SUCCEEDED — rows=[] then means "never configured" */
+  ready: boolean;
   onWaLogout: (() => void) | undefined;
   onSave: (
     d: { driver: string; secretRef: string; config: Record<string, string> },
@@ -314,6 +336,39 @@ function ProviderCard({
     // A stale code survives logout otherwise — re-pairing must start clean.
     if (wa.status === 'open') setPairCode(null);
   }, [wa.status]);
+
+  const activateBaileys = () => {
+    const saved = rows.find((r) => r.driver === 'baileys');
+    onSave(
+      {
+        driver: 'baileys',
+        secretRef: saved?.secretRef ?? '',
+        config: Object.fromEntries(
+          Object.entries(saved?.config ?? {}).map(([k, v]) => [k, String(v)]),
+        ),
+      },
+      true,
+    );
+  };
+  // WhatsApp pairing needs a live socket, which only exists once an enabled
+  // baileys row does — and baileys is the card's default selection, so on a
+  // fresh setup it's already highlighted without any click. Auto-activate
+  // only when the load proves whatsapp was NEVER configured (no rows at
+  // all): a disabled row is explicit state that a page visit must not undo.
+  const waAuto = useRef(false);
+  useEffect(() => {
+    if (
+      waAuto.current ||
+      kind.key !== 'whatsapp' ||
+      driver !== 'baileys' ||
+      !ready ||
+      rows.length > 0
+    )
+      return;
+    waAuto.current = true;
+    activateBaileys();
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- one-shot once rows arrive
+  }, [kind.key, driver, rows, ready]);
 
   const drv = kind.drivers.find((x) => x.d === driver) ?? kind.drivers[0];
   // The saved row for the SELECTED driver — its secretName/secretPresent
@@ -394,24 +449,14 @@ function ProviderCard({
                   setSecretRef(dd.secretName ?? '');
                   setConfig({});
                 }
-                // WhatsApp pairing needs a live socket, and the socket only
-                // exists once an enabled baileys row does — persisting the
-                // driver choice is the activation, so save it on select
-                // instead of making staff click salvar before the QR appears.
-                const baileysRow = rows.find((r) => r.driver === 'baileys' && r.enabled);
-                if (kind.key === 'whatsapp' && dd.d === 'baileys' && !baileysRow) {
-                  const saved = rows.find((r) => r.driver === 'baileys');
-                  onSave(
-                    {
-                      driver: 'baileys',
-                      secretRef: saved?.secretRef ?? '',
-                      config: Object.fromEntries(
-                        Object.entries(saved?.config ?? {}).map(([k, v]) => [k, String(v)]),
-                      ),
-                    },
-                    true,
-                  );
-                }
+                // Clicking baileys is also explicit activation intent —
+                // covers re-selects after the one-shot mount effect fired.
+                if (
+                  kind.key === 'whatsapp' &&
+                  dd.d === 'baileys' &&
+                  !rows.some((r) => r.driver === 'baileys' && r.enabled)
+                )
+                  activateBaileys();
               }}
             >
               {dd.label}
@@ -451,7 +496,7 @@ function ProviderCard({
             ))}
           </div>
         )}
-        {kind.key === 'whatsapp' && driver === 'baileys' && current?.enabled && (
+        {kind.key === 'whatsapp' && current?.driver === 'baileys' && current.enabled && (
           <div className="wa-pair">
             {wa.status === 'open' ? (
               <>
