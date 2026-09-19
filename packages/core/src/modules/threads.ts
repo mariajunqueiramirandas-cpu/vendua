@@ -353,6 +353,7 @@ export async function composeMessage(
     author: 'staff' | 'agent';
     status?: 'draft' | 'queued';
     subject?: string;
+    subjectOverride?: string;
     /** the run that produced this message — send_message sets it so a
      *  reclaimed-and-replayed run recognizes its earlier send. */
     agentRunId?: string;
@@ -377,6 +378,9 @@ export async function composeMessageTx(
     author: 'staff' | 'agent';
     status?: 'draft' | 'queued';
     subject?: string;
+    /** Explicit staff/agent override — replaces the thread's subject even when
+     *  one already exists (plain `subject` only fills an empty one). */
+    subjectOverride?: string;
     agentRunId?: string;
   },
 ): Promise<{
@@ -389,6 +393,10 @@ export async function composeMessageTx(
   const thread = await ensureThread(tx, input.leadId, input.channel, {
     subject: input.subject ?? null,
   });
+  if (input.subjectOverride) {
+    await tx`update lead_threads set subject = ${input.subjectOverride} where id = ${thread.id}`;
+    thread.subject = input.subjectOverride;
+  }
   const message = (
     await tx<MessageRow[]>`
       insert into lead_messages (thread_id, direction, author, body, status, agent_run_id)
