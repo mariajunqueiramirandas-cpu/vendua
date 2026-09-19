@@ -1,6 +1,5 @@
-import { useEffect, useState } from 'react';
 import { Link, useLocation, useNavigate, useParams } from 'react-router-dom';
-import { useKernel, useStore } from '@vendua/kernel';
+import { useOrder, useStore } from '@vendua/kernel';
 import type { Order } from '@vendua/kernel';
 import { Shell } from '../components/shell.tsx';
 import { getLastOrder } from '../components/last-order.ts';
@@ -8,40 +7,20 @@ import { useResetSession } from '../components/session.tsx';
 import { brl, ORDER_STATE_LABELS, PAYMENT_LABELS, resumeLabel } from '../components/format.ts';
 
 /**
- * /pedido/:id — the stamped comanda. The order comes from the checkout
- * response via router state; on reload we re-read it through the kernel
- * client (a `useOrder` hook doesn't exist yet — see OBSERVATIONS.md).
+ * /pedido/:id — the stamped comanda. Instant paint comes from router state
+ * or the local order cache; `useOrder` re-reads it from Core so reloads and
+ * status updates stay honest.
  */
 export default function PedidoPage() {
   const { id } = useParams();
   const { state } = useLocation() as { state: { order?: Order } | null };
-  const { api } = useKernel();
   const { store, resumesAt } = useStore();
   const resetSession = useResetSession();
   const navigate = useNavigate();
 
-  const [order, setOrder] = useState<Order | undefined>(state?.order ?? getLastOrder(id));
-  const [phase, setPhase] = useState<'loading' | 'ready' | 'error'>(order ? 'ready' : 'loading');
-
-  useEffect(() => {
-    if (order || !id) return;
-    let alive = true;
-    setPhase('loading');
-    api
-      .order(id)
-      .then((o) => {
-        if (alive) {
-          setOrder(o);
-          setPhase('ready');
-        }
-      })
-      .catch(() => {
-        if (alive) setPhase('error');
-      });
-    return () => {
-      alive = false;
-    };
-  }, [api, id, order]);
+  const { order: fresh, error } = useOrder(id ?? '');
+  const order = fresh ?? state?.order ?? getLastOrder(id);
+  const phase = order ? 'ready' : error ? 'error' : 'loading';
 
   const newBag = () => {
     resetSession();

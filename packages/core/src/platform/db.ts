@@ -37,15 +37,14 @@ export async function migrate(sql: Sql, dir: string): Promise<string[]> {
     )
   `;
   const files = (await readdir(dir)).filter((f) => f.endsWith('.sql')).sort();
-  // Deployment-wide advisory lock on a reserved connection — concurrent
-  // starters serialize instead of racing non-idempotent DDL. Each file's
-  // migration and its bookkeeping row commit atomically so an interrupted
-  // run re-applies cleanly.
-  const reserved = await sql.reserve();
-  try {
-    await reserved`select pg_advisory_lock(hashtext('vendua.migrate'))`;
+  // One transaction for the whole run: a transaction-scoped advisory lock
+  // serializes concurrent starters, each file's DDL + bookkeeping row commit
+  // atomically, and a failure rolls back everything so the next boot
+  // re-applies cleanly. xact-scoped locking can't strand a pooled session.
+  return sql.begin(async (tx) => {
+    await tx`select pg_advisory_xact_lock(hashtext('vendua.migrate'))`;
     const applied = new Set(
-      (await reserved<MigrationRow[]>`select name from schema_migrations`).map((r) => r.name),
+      (await tx<MigrationRow[]>`select name from schema_migrations`).map((r) => r.name),
     );
     const ran: string[] = [];
     for (const file of files) {
@@ -53,15 +52,10 @@ export async function migrate(sql: Sql, dir: string): Promise<string[]> {
       const body = await readFile(join(dir, file), 'utf8');
       // Migration files may create roles/policies that need the owner — run as
       // the connecting (migration) user, which is intentionally NOT vendua_app.
-      await reserved.begin(async (tx) => {
-        await tx.unsafe(body);
-        await tx`insert into schema_migrations (name) values (${file})`;
-      });
+      await tx.unsafe(body);
+      await tx`insert into schema_migrations (name) values (${file})`;
       ran.push(file);
     }
-    await reserved`select pg_advisory_unlock(hashtext('vendua.migrate'))`;
     return ran;
-  } finally {
-    reserved.release();
-  }
+  }) as Promise<string[]>;
 }

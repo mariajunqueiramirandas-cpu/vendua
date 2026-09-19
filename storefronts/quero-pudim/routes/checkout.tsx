@@ -14,14 +14,7 @@ import {
 } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import {
-  ApiError,
-  useCart,
-  useCheckout,
-  useDeliveryZones,
-  useKernel,
-  useStore,
-} from '@vendua/kernel';
+import { ApiError, useCart, useCheckout, useDeliveryZones, useStore } from '@vendua/kernel';
 import { ProductFigure } from './_components/ProductFigure.tsx';
 import { Skeleton } from './_components/Skeleton.tsx';
 import { formatBRL } from './_lib/format.ts';
@@ -69,7 +62,6 @@ export function CheckoutPage() {
   const { zones } = useDeliveryZones();
   const bairros = zones.flatMap((z) => z.neighborhoods);
   const { submit } = useCheckout();
-  const { invalidate } = useKernel();
 
   const [name, setName] = useState(() => loadProfile().name);
   const [phone, setPhone] = useState(() => loadProfile().phone);
@@ -155,9 +147,8 @@ export function CheckoutPage() {
       });
       saveProfile({ name: name.trim(), phone, street, number, neighborhood, complement, cep });
       rememberOrder(order, items, notes.trim() || undefined);
-      // Checkout completes the cart server-side; refresh so the badge reads
-      // the terminal status (CartTrigger counts open carts only).
-      invalidate('cart');
+      // submit() already invalidates 'cart' — the completed cart drops out
+      // of the sacola badge without storefront plumbing.
       navigate(`/pedido/${order.id}`);
     } catch (err) {
       if (err instanceof ApiError) {

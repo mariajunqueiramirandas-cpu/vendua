@@ -204,6 +204,35 @@ Round 3 (third review pass — all landed):
   item-by-item cart-empty loop (Core completes the cart server-side) and
   the datalist now reads neighborhoods from `/zones`.
 
+Round 4 (fourth review pass — all landed):
+
+- **A stale idempotent claim could be stolen while work was in flight** —
+  claims now carry an `owner` uuid; the work transaction holds a per-key
+  `pg_advisory_xact_lock`, re-reads the claim, and only the owning
+  transaction may write the response (`409 IDEMPOTENCY_IN_PROGRESS` on
+  mismatch). Concurrent same-key requests serialize on the lock — a second
+  owner replays the stored response instead of double-committing.
+- **Session tokens weren't bound to a tenant** — the HMAC input is now
+  `tenant.id|cartId`, so a token minted on one storefront host can't replay
+  on another (`SESSION_REQUIRED` cross-host).
+- **`migrate()` could strand its session-level advisory lock** — the whole
+  run is now a single transaction using `pg_advisory_xact_lock`, which
+  auto-releases at commit/rollback — no unlock to forget, no pooled
+  connection left holding a lock.
+- **Catalog edits could strand stored cart modifiers** — `cart_items` keeps
+  the raw `modifier_ids`, and `checkout` re-validates them against the
+  current product definition via `validateItemModifiers` (a modifier
+  deleted or sold out mid-flight → `MODIFIER_SOLD_OUT`/`INVALID_MODIFIER`,
+  priced the order can't silently carry phantom add-ons).
+- **Kernel query caches pinned unmounted providers** — `caches` is a
+  `WeakMap`; module-level `invalidateQuery` fans out via a `liveCaches`
+  registry the provider registers on mount so unmounted caches GC.
+- **Kernel transport failures threw a raw TypeError** — fetch errors now
+  surface as `ApiError(0, 'NETWORK_ERROR')` so storefronts can classify
+  unreachable-backend like any other failure.
+- **Unset `SESSION_SECRET` rotated silently** — boot now logs a loud
+  warning when the random-per-boot secret is in use.
+
 ### Feature gaps the reference ships that the platform can't express yet
 
 (From `quero-pudim` — each had an honest storefront fallback; details in its

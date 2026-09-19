@@ -204,10 +204,17 @@ function storeToken(token: string) {
 }
 
 async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> {
-  const res = await fetch(path, {
-    ...init,
-    headers: { 'content-type': 'application/json', ...(init?.headers ?? {}) },
-  });
+  let res: Response;
+  try {
+    res = await fetch(path, {
+      ...init,
+      headers: { 'content-type': 'application/json', ...(init?.headers ?? {}) },
+    });
+  } catch {
+    // Transport-level failure (DNS/offline/CORS) — wrap so read hooks always
+    // expose a `code`, never a bare TypeError.
+    throw new ApiError(0, 'NETWORK_ERROR', 'could not reach the store backend');
+  }
   const body = (await res.json().catch(() => ({}))) as T & ApiErrorBody;
   if (!res.ok) {
     const err = body?.error;

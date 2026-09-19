@@ -37,6 +37,9 @@ export interface PricedItem {
    *  between carting and checkout; checkout revalidates against it. */
   productStatus: string;
   modifiers: { id: string; name: string; priceDeltaCents: number; status: string }[];
+  /** Stored modifier ids as submitted — includes ids that no longer resolve
+   *  (deleted/retired). Checkout revalidates these against the live product. */
+  modifierIds: string[];
   lineTotalCents: number;
 }
 
@@ -154,6 +157,7 @@ async function loadPricedItems(tx: Sql, tenantId: string, cartId: string): Promi
       qty: item.qty,
       unitPriceCents: unit,
       productStatus: item.product_status,
+      modifierIds: item.modifier_ids,
       modifiers: chosen.map((m) => ({
         id: m.id,
         name: m.name,

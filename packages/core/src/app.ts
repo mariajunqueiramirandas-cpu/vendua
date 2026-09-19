@@ -217,7 +217,7 @@ export function createApp({ sql, sessionSecret }: AppDeps) {
     const bearer = c.req.header('authorization')?.replace(/^bearer\s+/i, '');
     if (bearer) {
       const existing = await withTenant(sql, tenant.id, async (tx) => {
-        const cartId = await verifySessionToken(bearer, sessionSecret);
+        const cartId = await verifySessionToken(bearer, tenant.id, sessionSecret);
         if (!cartId) return null;
         const rows = await tx<{ status: string }[]>`
           select status from carts where tenant_id = ${tenant.id} and id = ${cartId}
@@ -232,7 +232,7 @@ export function createApp({ sql, sessionSecret }: AppDeps) {
     }
     return idempotency(sql, async (c, tx) => {
       const cartId = crypto.randomUUID();
-      const token = await mintSessionToken(cartId, sessionSecret);
+      const token = await mintSessionToken(cartId, tenant.id, sessionSecret);
       const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(token));
       const hash = Buffer.from(digest).toString('hex');
       await tx`insert into carts (id, tenant_id, session_hash) values (${cartId}, ${tenant.id}, ${hash})`;
@@ -356,7 +356,21 @@ export function createApp({ sql, sessionSecret }: AppDeps) {
         }
         const settings = await loadSettings(tx, tenant.id);
         const zones = await loadZones(tx, tenant.id);
-        const { zone } = validateCheckout(currentStatus(settings), settings, cart, body, zones);
+        // Re-validate every line's stored modifier ids against the CURRENT
+        // product definition — a deleted/retired modifier can't quietly drop
+        // out of the price and slip through as an underpriced order.
+        const products = new Map<string, Awaited<ReturnType<typeof getProductById>>>();
+        for (const item of cart.items) {
+          products.set(item.productId, await getProductById(tx, tenant.id, item.productId));
+        }
+        const { zone } = validateCheckout(
+          currentStatus(settings),
+          settings,
+          cart,
+          body,
+          zones,
+          products,
+        );
         const delivery = {
           mode: body.delivery.mode,
           neighborhood: body.delivery.neighborhood ?? null,

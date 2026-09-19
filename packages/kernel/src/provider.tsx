@@ -103,6 +103,16 @@ export function VenduaProvider({
     };
   }, [config]);
 
+  // Track this provider's cache while mounted so module-level invalidateQuery
+  // can fan out to live providers without pinning unmounted ones.
+  useEffect(() => {
+    const cache = cacheFor(apiRef.current!);
+    liveCaches.add(cache);
+    return () => {
+      liveCaches.delete(cache);
+    };
+  }, []);
+
   return <Ctx.Provider value={ctx}>{children}</Ctx.Provider>;
 }
 
@@ -136,7 +146,10 @@ type CacheEntry = {
    *  flight) must not write its stale result over the replacement. */
   runToken?: symbol;
 };
-const caches = new Map<VenduaApi, Map<string, CacheEntry>>();
+// WeakMap so an unmounted provider's cache is GC'd with its api client —
+// a strong Map would retain every remount (e.g. forn's per-order session
+// reset) forever.
+const caches = new WeakMap<VenduaApi, Map<string, CacheEntry>>();
 
 function cacheFor(api: VenduaApi): Map<string, CacheEntry> {
   let c = caches.get(api);
@@ -210,6 +223,11 @@ export function useQuery<T>(
   };
 }
 
+// Live provider caches — maintained by VenduaProvider's mount effect so
+// invalidateQuery clears the key for mounted providers only (unmounted
+// caches are unreachable through the WeakMap and get GC'd).
+const liveCaches = new Set<Map<string, CacheEntry>>();
+
 export function invalidateQuery(key: string) {
-  for (const cache of caches.values()) cache.delete(key);
+  for (const cache of liveCaches) cache.delete(key);
 }

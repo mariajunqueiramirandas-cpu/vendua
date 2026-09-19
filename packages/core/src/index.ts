@@ -9,9 +9,14 @@ const migrationUrl =
 const port = Number(process.env.PORT ?? 8787);
 // SESSION_SECRET is the HMAC key for cart session tokens AND the control
 // gate header — a checked-in default would let anyone forge both. Unset =
-// random per boot (dev carts don't survive a restart; fine — POST /session
-// re-mints). Deployments must set it.
+// random per boot: dev carts re-mint via POST /session, but restarts and
+// replicas disagree — deployments must set it.
 const sessionSecret = process.env.SESSION_SECRET ?? crypto.randomUUID();
+if (!process.env.SESSION_SECRET) {
+  console.warn(
+    '[core] SESSION_SECRET unset — using a random per-boot secret. Sessions do not survive restarts and replicas disagree; set SESSION_SECRET in any shared environment.',
+  );
+}
 
 // Boot: apply migrations as the owner role, then serve as vendua_app (RLS on).
 const migrator = createSql(migrationUrl);

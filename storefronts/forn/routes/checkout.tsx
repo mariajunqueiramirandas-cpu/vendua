@@ -1,6 +1,6 @@
 import { useState, type FormEvent } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import { ApiError, useCart, useCheckout, useKernel, useStore } from '@vendua/kernel';
+import { ApiError, useCart, useCheckout, useStore } from '@vendua/kernel';
 import type { CheckoutInput } from '@vendua/kernel';
 import { Shell } from '../components/shell.tsx';
 import { brl, PAYMENT_LABELS } from '../components/format.ts';
@@ -50,7 +50,6 @@ export default function CheckoutPage() {
   const { cart, mutations } = useCart();
   const { store, status } = useStore();
   const { submit } = useCheckout();
-  const { invalidate } = useKernel();
   const navigate = useNavigate();
 
   const [name, setName] = useState('');
@@ -59,8 +58,8 @@ export default function CheckoutPage() {
   const [pending, setPending] = useState(false);
   const [err, setErr] = useState<{ msg: string; field?: 'name' | 'phone' } | null>(null);
 
-  // Core doesn't refuse a second checkout on a completed cart; the placed
-  // order (in this tab) is the storefront-side guard against resubmission.
+  // Core refuses a second checkout on a completed cart (409 CART_NOT_OPEN);
+  // the placed order in this tab is just the friendlier guard.
   const alreadyOrdered = !!getLastOrder();
   const open = !alreadyOrdered && cart?.status === 'open' && cart.items.length > 0;
 
@@ -85,10 +84,8 @@ export default function CheckoutPage() {
         payment: { method: pay },
       });
       setLastOrder(order);
-      // kernel's submit doesn't invalidate 'cart' — without this the comanda
-      // badge and /sacola keep rendering the now-completed cart (and
-      // /finalizar would let Core mint a duplicate order).
-      invalidate('cart');
+      // submit() invalidates 'cart' itself — the completed cart drops out of
+      // the comanda badge without storefront plumbing.
       navigate(`/pedido/${order.id}`, { state: { order } });
     } catch (e2) {
       setErr(friendlyError(e2));

@@ -1,6 +1,7 @@
 import type { Sql } from '../platform/db.ts';
 import { HttpError } from '../platform/http.ts';
-import { matchZone, type CartView } from './cart.ts';
+import { matchZone, validateItemModifiers, type CartView } from './cart.ts';
+import type { ProductDetail } from './catalog.ts';
 import type { DerivedStatus, StoreSettingsRow } from './store.ts';
 
 /**
@@ -35,6 +36,7 @@ export function validateCheckout(
   cart: CartView,
   input: CheckoutInput,
   zones: ZoneRowLike[],
+  products?: Map<string, ProductDetail | null>,
 ): { zone: ZoneRowLike | null } {
   if (status.status === 'paused') {
     throw new HttpError(423, 'STORE_PAUSED', 'store is paused', {
@@ -48,10 +50,26 @@ export function validateCheckout(
     throw new HttpError(422, 'PICKUP_UNAVAILABLE', 'pickup is not available');
   }
   if (cart.items.length === 0) throw new HttpError(422, 'EMPTY_CART', 'cart is empty');
-  // Re-validate availability at checkout time — a product or modifier can go
-  // sold_out between carting and payment (Review finding).
+  // Re-validate each line against the CURRENT product definition — a product
+  // or modifier can be sold_out, retired, or deleted between carting and
+  // payment, and a dropped modifier id must never quietly reprice the order
+  // (Review finding). Falls back to the cart view when no product map is
+  // passed (tests exercise the pure path either way).
   for (const item of cart.items) {
+    const product = products?.get(item.productId);
+    if (product) {
+      const invalid = validateItemModifiers(product, item.modifierIds);
+      if (invalid) throw invalid;
+      continue;
+    }
     if (item.productStatus !== 'active') {
+      throw new HttpError(409, 'SOLD_OUT', `"${item.name}" is no longer available`, {
+        productId: item.productId,
+      });
+    }
+    if (products?.has(item.productId)) {
+      // Product resolves in the map as null → deleted between carting and now;
+      // its stored modifier ids can't be trusted to have repriced honestly.
       throw new HttpError(409, 'SOLD_OUT', `"${item.name}" is no longer available`, {
         productId: item.productId,
       });

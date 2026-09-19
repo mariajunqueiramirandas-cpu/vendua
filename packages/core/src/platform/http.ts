@@ -73,15 +73,16 @@ export function idempotency(
     if (key.length > 200) {
       throw new HttpError(400, 'BAD_REQUEST', 'Idempotency-Key too long');
     }
-    // Claim the key atomically: exactly one handler owns (tenant, key).
-    // `on conflict` only "steals" a claim whose owner died mid-handler
-    // (pending >30s) — a live owner's row makes the insert return nothing.
-    // The claim commits in its own tx so peers see the pending row; the
-    // expiry sweep keeps the unauthenticated table bounded.
+    // Claim the key atomically under a unique owner token: exactly one
+    // handler owns (tenant, key). `on conflict` only "steals" a claim whose
+    // owner died mid-handler (pending >30s) — a live owner's row makes the
+    // insert return nothing. The claim commits in its own tx so peers see
+    // the pending row; the expiry sweep keeps the table bounded.
+    const owner = crypto.randomUUID();
     const claimed = await withTenant(sql, tenant.id, async (tx) => {
       const rows = await tx<{ key: string }[]>`
-        insert into idempotency_keys (tenant_id, key) values (${tenant.id}, ${key})
-        on conflict (tenant_id, key) do update set created_at = now()
+        insert into idempotency_keys (tenant_id, key, owner) values (${tenant.id}, ${key}, ${owner})
+        on conflict (tenant_id, key) do update set created_at = now(), owner = excluded.owner
           where idempotency_keys.response is null
             and idempotency_keys.created_at < now() - interval '30 seconds'
         returning key
@@ -117,18 +118,55 @@ export function idempotency(
     }
     // The handler's writes and its recorded response commit in one tx — a
     // crash between them can't leave a committed mutation behind a pending
-    // claim that would later rerun it.
-    const result = await withTenant(sql, tenant.id, async (tx) => {
+    // claim that would later rerun it. A per-key advisory lock serializes
+    // owners: a request that stole a stale claim waits for the original's
+    // tx to end, then replays its stored result instead of double-applying.
+    type Outcome =
+      | { kind: 'replay'; response: unknown; status: number }
+      | { kind: 'raw'; response: Response }
+      | { kind: 'result'; status: number; body: unknown };
+    const outcome = await withTenant(sql, tenant.id, async (tx): Promise<Outcome> => {
+      await tx`select pg_advisory_xact_lock(hashtextextended(${`${tenant.id}|${key}`}, 0))`;
+      const cur = (
+        await tx<{ owner: string | null; response: unknown; status_code: number }[]>`
+          select owner, response, status_code from idempotency_keys
+          where tenant_id = ${tenant.id} and key = ${key}
+        `
+      )[0];
+      if (cur?.response != null && cur.status_code != null) {
+        return { kind: 'replay', response: cur.response, status: cur.status_code };
+      }
+      if (cur?.owner !== owner) {
+        // Our claim was itself stolen (>30s between claim and lock) — the
+        // other owner is committing behind the lock; abort, don't double up.
+        throw new HttpError(
+          409,
+          'IDEMPOTENCY_IN_PROGRESS',
+          'a request with this Idempotency-Key is still in flight — retry',
+        );
+      }
       const r = await run(c, tx);
-      if (r instanceof Response) return r;
-      await tx`
+      if (r instanceof Response) return { kind: 'raw', response: r };
+      const stored = await tx`
         update idempotency_keys set response = ${tx.json(r.body as never)}, status_code = ${r.status}
-        where tenant_id = ${tenant.id} and key = ${key}
+        where tenant_id = ${tenant.id} and key = ${key} and owner = ${owner}
       `;
-      return r;
+      if (stored.count === 0) {
+        throw new HttpError(
+          409,
+          'IDEMPOTENCY_IN_PROGRESS',
+          'a request with this Idempotency-Key is still in flight — retry',
+        );
+      }
+      return { kind: 'result', status: r.status, body: r.body };
     });
-    if (result instanceof Response) return result;
-    return c.json(result.body as object, result.status as 200);
+    if (outcome.kind === 'raw') return outcome.response;
+    if (outcome.kind === 'replay') {
+      return c.json(outcome.response as object, outcome.status as 200, {
+        'x-idempotent-replay': 'true',
+      });
+    }
+    return c.json(outcome.body as object, outcome.status as 200);
   };
 }
 
@@ -179,17 +217,27 @@ async function hmac(secret: string, msg: string): Promise<string> {
     .replace(/=+$/, '');
 }
 
-/** `vst.<cartId>.<hmac>` — the anonymous checkout session token. */
-export async function mintSessionToken(cartId: string, secret: string): Promise<string> {
-  return `vst.${cartId}.${await hmac(secret, cartId)}`;
+/** `vst.<cartId>.<hmac>` — the anonymous checkout session token. The HMAC
+ *  input binds the tenant, so a token minted on one host can't be replayed
+ *  against another tenant even if a cart UUID collides. */
+export async function mintSessionToken(
+  cartId: string,
+  tenantId: string,
+  secret: string,
+): Promise<string> {
+  return `vst.${cartId}.${await hmac(secret, `${tenantId}|${cartId}`)}`;
 }
 
-export async function verifySessionToken(token: string, secret: string): Promise<string | null> {
+export async function verifySessionToken(
+  token: string,
+  tenantId: string,
+  secret: string,
+): Promise<string | null> {
   const parts = token.split('.');
   if (parts.length !== 3 || parts[0] !== 'vst') return null;
   const [, cartId, sig] = parts;
   if (!cartId || !sig) return null;
-  const expected = await hmac(secret, cartId);
+  const expected = await hmac(secret, `${tenantId}|${cartId}`);
   if (expected.length !== sig.length) return null;
   let diff = 0;
   for (let i = 0; i < expected.length; i++) diff |= expected.charCodeAt(i) ^ sig.charCodeAt(i);
@@ -197,9 +245,10 @@ export async function verifySessionToken(token: string, secret: string): Promise
 }
 
 export async function sessionCartId(c: Context, secret: string): Promise<string> {
+  const tenant = c.get('tenant') as Tenant;
   const header = c.req.header('authorization') ?? '';
   const token = header.startsWith('Bearer ') ? header.slice(7) : '';
-  const cartId = token ? await verifySessionToken(token, secret) : null;
+  const cartId = token ? await verifySessionToken(token, tenant.id, secret) : null;
   if (!cartId) throw new HttpError(401, 'SESSION_REQUIRED', 'a valid session token is required');
   return cartId;
 }
