@@ -67,19 +67,34 @@ where tenant_id=(select id from tenants where slug='<slug>');
 
 Verify via `curl -H "Host: <slug-host>" localhost:8787/storefront/v1/store`.
 
-## Control board (`/control/v1/board`)
+## Control CRM (`apps/control`, React — replaced the old inline-HTML board)
 
-- Unauth'd `GET` → 200 login form (posts `key` back to same URL); wrong key →
-  404; right key → `vendua_control=<HMAC>` HttpOnly cookie + 302. Header
-  `x-vendua-control: <secret>` also works for API probes.
-- Cookie-auth mutations additionally need `x-vendua-staff: 1` (CSRF) — the
-  board's own `api()` helper sends it.
-- POST/PATCH mutations require `Idempotency-Key` → 400
-  `IDEMPOTENCY_KEY_REQUIRED` without it. Replay → 200 + `x-idempotent-replay`.
-- Board JS: add-lead form and "+ nota" (window.prompt — typeable via
-  computer-use + Enter) send `crypto.randomUUID()`; check that the "→" advance
-  button sends one too — it didn't in the Phase-1 PR (silent no-op).
-- Use an **incognito window** for board auth tests so cookie state is clean.
+- Serve either `cd apps/control && bun run dev` (vite :5195, base `/control/`,
+  proxies `/control/v1` → :8787 preserving Host) or `bun run build` → Core
+  serves `dist/` at `http://localhost:8787/control/`. Routes are hash-based
+  (`/control/#/leads`); deep links work under any prefix.
+- Auth: `POST /control/v1/login {key: $CONTROL_SECRET}` → `vendua_control`
+  cookie (path `/control`). Unauth'd API calls → 404 (existence hidden), wrong
+  key → 404, UI shows "chave incorreta". Mutations need `x-vendua-staff: 1` +
+  `Idempotency-Key` (the SPA's api.ts sends both).
+- Keyboard nav: `d f l i a e t g c` switch views; on /leads `/` focuses
+  search, `n` opens the new-lead drawer. Composer: ctrl+enter sends,
+  shift+ctrl+enter drafts.
+- Kanban DnD: real mouse drag works, but `.board-col` has no min-height —
+  the drop target ends at the column's content, so drops in the empty space
+  below the cards are ignored. Drop onto the column's header/cards.
+- No `psql` on the box — query via
+  `docker exec core-postgres-1 psql -U vendua -d vendua -c "..."`.
+- Agent: `agent_runs` is a durable queue; worker drains on 15s poll, but
+  POST /leads and /leads/:id/run drain inline (runs finish ~instantly with
+  the `mock` llm driver, which replies "ok" unless params carry `script`).
+  Integration drivers live in `control_integrations` (llm/email/whatsapp/
+  discovery); `mock`/`log` need no secrets. `agent_memory` in
+  `control_settings` holds facts saved by the `remember` tool.
+- Guardrails default: quiet 21:00–08:00 America/Sao_Paulo,
+  firstContactDraftOnly → agent first-contact lands in /aprovacoes.
+- Old notes: cookie-auth mutations need `x-vendua-staff: 1` (CSRF);
+  Idempotency-Key required → replay → 200 + `x-idempotent-replay`.
 
 ## Kernel query-cache wedge (known gap)
 
