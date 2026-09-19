@@ -37,7 +37,8 @@ export interface MessageRow {
   direction: 'in' | 'out';
   author: 'staff' | 'agent' | 'lead' | 'system';
   body: string;
-  status: 'draft' | 'queued' | 'sending' | 'sent' | 'delivered' | 'received' | 'failed' | 'rejected';
+  status:
+    'draft' | 'queued' | 'sending' | 'sent' | 'delivered' | 'received' | 'failed' | 'rejected';
   provider_message_id: string | null;
   agent_run_id: string | null;
   approved_by: string | null;

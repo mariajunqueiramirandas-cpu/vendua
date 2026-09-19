@@ -59,7 +59,11 @@ export async function dispatchMessage(
 
     // Re-check suppression at dispatch time — a draft approved after the lead
     // was archived or unsubscribed must not leave the building.
-    const suppressed = lead.archived_at ? 'lead archived' : lead.unsubscribed_at ? 'lead unsubscribed' : null;
+    const suppressed = lead.archived_at
+      ? 'lead archived'
+      : lead.unsubscribed_at
+        ? 'lead unsubscribed'
+        : null;
     if (suppressed) {
       await markMessageFailed(tx, messageId, suppressed);
       return { fail: suppressed };
