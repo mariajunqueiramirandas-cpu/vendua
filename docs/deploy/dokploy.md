@@ -32,11 +32,13 @@ In Dokploy, assign a domain to each web service (port 80):
 
 - `site` → marketing domain (e.g. `vendua.example.com`)
 - `quero-pudim`, `brasa`, `forn` → each storefront's public domain
-- `core` → **internal only** for storefront traffic: storefront nginx
-  proxies `/storefront/v1`, `/checkout/v1`, and `/v1` to it. The CRM lives
-  at `/control/` on the same service — attach a staff-only domain to `core`
-  (port 8787, e.g. `crm.example.com`) to reach it, or keep it undomained
-  and access it over a private network. Log in with `CONTROL_SECRET`.
+- `core` → **internal only**; no domain. Storefront nginx proxies
+  `/storefront/v1`, `/checkout/v1`, and `/v1` to it.
+- `crm` → the staff CRM domain (e.g. `crm.example.com`) — proxies only
+  `/control` to `core`. Log in with `CONTROL_SECRET`. Don't put the domain
+  directly on `core`: that removes one trusted proxy hop and the login
+  rate limiter's client-IP math (`VENDUA_PROXY_HOPS=1` assumes the
+  Traefik→nginx→core chain) collapses every staff IP into one bucket.
 
 Then set `SEED_DOMAINS` to match, e.g.
 `quero-pudim:pudim.example.com,brasa:grill.example.com` — tenant routing is
@@ -57,12 +59,13 @@ Boot order is handled by healthchecks: `db` healthy → `core` migrates
 
 ## Services
 
-| Service                          | Image                                         | Exposed port   |
-| -------------------------------- | --------------------------------------------- | -------------- |
-| `db`                             | postgres:16-alpine                            | internal only  |
-| `core`                           | `packages/core/Dockerfile` (Bun)              | 8787, internal |
-| `quero-pudim` / `brasa` / `forn` | `storefronts/Dockerfile` (vite build → nginx) | 80             |
-| `site`                           | `site/Dockerfile` (SvelteKit static → nginx)  | 80             |
+| Service                          | Image                                           | Exposed port   |
+| -------------------------------- | ----------------------------------------------- | -------------- |
+| `db`                             | postgres:16-alpine                              | internal only  |
+| `core`                           | `packages/core/Dockerfile` (Bun)                | 8787, internal |
+| `quero-pudim` / `brasa` / `forn` | `storefronts/Dockerfile` (vite build → nginx)   | 80             |
+| `crm`                            | `nginx:1.28-alpine` + `apps/control/nginx.conf` | 80             |
+| `site`                           | `site/Dockerfile` (SvelteKit static → nginx)    | 80             |
 
 Adding a storefront later = one more service block using
 `storefronts/Dockerfile` with `STOREFRONT`/`PKG` args, plus its domain row.

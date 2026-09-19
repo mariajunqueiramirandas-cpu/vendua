@@ -96,6 +96,18 @@ services:
         condition: service_healthy
     restart: unless-stopped
 
+  # Staff CRM — thin nginx in front of core serving /control only. Attach
+  # the staff domain here (never directly on core: that shortens the proxy
+  # chain and breaks VENDUA_PROXY_HOPS accounting for the login limiter).
+  crm:
+    image: nginx:1.28-alpine
+    volumes:
+      - ./apps/control/nginx.conf:/etc/nginx/conf.d/default.conf:ro
+    depends_on:
+      core:
+        condition: service_healthy
+    restart: unless-stopped
+
   site:
     build:
       context: .
