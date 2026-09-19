@@ -1,4 +1,4 @@
-import { createHmac } from 'node:crypto';
+import { createHmac, timingSafeEqual } from 'node:crypto';
 import { existsSync, statSync } from 'node:fs';
 import { extname, join, normalize } from 'node:path';
 import { Hono, type Context } from 'hono';
@@ -1012,10 +1012,11 @@ export function createApp({ sql, sessionSecret, controlSecret }: AppDeps) {
   app.put('/control/v1/integrations/:kind', async (c) => {
     controlGate(c);
     const body = await bodyJson(c);
+    const kind = integrationKind(c.req.param('kind'));
     const res = await upsertIntegration(
       sql,
       {
-        kind: integrationKind(c.req.param('kind')),
+        kind,
         driver: str(body.driver, 'driver', 60),
         ...(body.enabled !== undefined ? { enabled: body.enabled === true } : {}),
         ...(body.config !== undefined ? { config: body.config as Record<string, unknown> } : {}),
@@ -1024,6 +1025,18 @@ export function createApp({ sql, sessionSecret, controlSecret }: AppDeps) {
       requireIdemKey(c),
     );
     if (res.replayed) c.header('x-idempotent-replay', 'true');
+    if (kind === 'whatsapp') {
+      // Reconcile the live socket now — a disable/switch must close the old
+      // Baileys session immediately, not whenever the next outbound or
+      // disconnect happens to trigger it.
+      const [{ getIntegration }, { ensureSocket }] = await Promise.all([
+        import('./modules/integrations.ts'),
+        import('./agent/channels/whatsapp.ts'),
+      ]);
+      void getIntegration(sql, 'whatsapp')
+        .then((i) => ensureSocket(sql, i))
+        .catch((e) => console.error('[whatsapp] socket reconcile failed', e));
+    }
     return c.json(res.body);
   });
 
@@ -1139,9 +1152,26 @@ export function createApp({ sql, sessionSecret, controlSecret }: AppDeps) {
   const webhookSecret =
     process.env.VENDUA_WEBHOOK_SECRET ??
     createHmac('sha256', staffSecret).update('vendua.webhook').digest('hex');
+  // Constant-time compare — a leaked timing delta would make the shared
+  // secret byte-by-byte guessable.
+  const webhookSecretBytes = Buffer.from(webhookSecret, 'utf8');
+  const webhookSecretOk = (h: string | undefined) =>
+    h != null &&
+    h.length === webhookSecret.length &&
+    timingSafeEqual(Buffer.from(h, 'utf8'), webhookSecretBytes);
+  // Cap inbound volume — an accepted message writes CRM rows and launches an
+  // LLM run, so a guessed/leaked secret must not buy unbounded spend.
+  let webhookBucket = { count: 0, resetAt: 0 };
   app.post('/control/v1/webhooks/:channel', async (c) => {
-    if (c.req.header('x-vendua-webhook') !== webhookSecret) {
+    if (!webhookSecretOk(c.req.header('x-vendua-webhook'))) {
       throw new HttpError(404, 'NOT_FOUND', 'not found');
+    }
+    const nowMs = Date.now();
+    if (webhookBucket.resetAt <= nowMs) {
+      webhookBucket = { count: 0, resetAt: nowMs + 60_000 };
+    }
+    if (++webhookBucket.count > 240) {
+      throw new HttpError(429, 'RATE_LIMITED', 'webhook rate exceeded — retry in a minute');
     }
     // Only real providers hit this endpoint — 'manual' threads exist so staff
     // can type inbound notes, and no webhook should mint inbound activity

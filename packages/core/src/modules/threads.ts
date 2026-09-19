@@ -1,6 +1,7 @@
 import type { Sql } from '../platform/db.ts';
 import { HttpError, str } from '../platform/http.ts';
 import { claimControl, controlTx, type ClaimResult } from './control.ts';
+import { leadJson, type LeadRow } from './leads.ts';
 
 /**
  * threads module — the unified inbox. One thread per (lead, channel):
@@ -41,6 +42,7 @@ export interface MessageRow {
     'draft' | 'queued' | 'sending' | 'sent' | 'delivered' | 'received' | 'failed' | 'rejected';
   provider_message_id: string | null;
   agent_run_id: string | null;
+  error: string | null;
   approved_by: string | null;
   approved_at: string | null;
   created_at: string;
@@ -69,6 +71,7 @@ export function messageJson(row: MessageRow) {
     status: row.status,
     providerMessageId: row.provider_message_id,
     agentRunId: row.agent_run_id,
+    error: row.error,
     approvedBy: row.approved_by,
     approvedAt: row.approved_at,
     createdAt: row.created_at,
@@ -182,7 +185,7 @@ export async function getThread(
   return controlTx(sql, async (tx) => {
     const t = (await tx<ThreadRow[]>`select * from lead_threads where id = ${id}`)[0];
     if (!t) return null;
-    const lead = (await tx`select * from leads where id = ${t.lead_id}`)[0]!;
+    const lead = leadJson((await tx<LeadRow[]>`select * from leads where id = ${t.lead_id}`)[0]!);
     const messages = await tx<MessageRow[]>`
       select * from lead_messages where thread_id = ${id} order by created_at asc
     `;
@@ -507,9 +510,11 @@ export async function markMessageSent(
 }
 
 export async function markMessageFailed(tx: Sql, messageId: string, reason: string): Promise<void> {
+  // Reason goes to `error`, not provider_message_id — failure text isn't a
+  // provider id and repeated same-reason failures would collide on the unique
+  // index, leaving the second message stuck queued.
   await tx`
-    update lead_messages set status = 'failed', updated_at = now(),
-      provider_message_id = coalesce(provider_message_id, ${`failed:${reason.slice(0, 120)}`})
+    update lead_messages set status = 'failed', error = ${reason.slice(0, 300)}, updated_at = now()
     where id = ${messageId}
   `;
 }

@@ -13,6 +13,8 @@ type Driver = {
   hint: string;
   /** driver needs a secretRef env name */
   secret?: boolean;
+  /** default env-var name the backend falls back to */
+  secretName?: string;
   fields?: { key: string; label: string; placeholder: string }[];
 };
 
@@ -27,6 +29,7 @@ const KINDS: { key: string; label: string; sub: string; drivers: Driver[] }[] = 
         label: 'openrouter',
         hint: 'um endpoint, qualquer modelo — config.model escolhe qual',
         secret: true,
+        secretName: 'OPENROUTER_API_KEY',
         fields: [{ key: 'model', label: 'modelo', placeholder: 'anthropic/claude-sonnet-4.5' }],
       },
       {
@@ -34,6 +37,7 @@ const KINDS: { key: string; label: string; sub: string; drivers: Driver[] }[] = 
         label: 'anthropic',
         hint: 'direto na API da Anthropic',
         secret: true,
+        secretName: 'ANTHROPIC_API_KEY',
         fields: [{ key: 'model', label: 'modelo', placeholder: 'claude-sonnet-4-5' }],
       },
       {
@@ -41,6 +45,7 @@ const KINDS: { key: string; label: string; sub: string; drivers: Driver[] }[] = 
         label: 'openai',
         hint: 'direto na API da OpenAI',
         secret: true,
+        secretName: 'OPENAI_API_KEY',
         fields: [{ key: 'model', label: 'modelo', placeholder: 'gpt-5' }],
       },
       { d: 'mock', label: 'mock', hint: 'respostas roteirizadas — dev e testes' },
@@ -56,6 +61,7 @@ const KINDS: { key: string; label: string; sub: string; drivers: Driver[] }[] = 
         label: 'resend',
         hint: 'envia de verdade + inbound por webhook',
         secret: true,
+        secretName: 'RESEND_API_KEY',
         fields: [{ key: 'from', label: 'remetente', placeholder: 'Venduá <oi@vendua.shop>' }],
       },
       { d: 'log', label: 'log', hint: 'imprime no console — dev' },
@@ -85,6 +91,7 @@ const KINDS: { key: string; label: string; sub: string; drivers: Driver[] }[] = 
         label: 'tinyfish',
         hint: 'Search + Agent APIs (api.tinyfish.ai)',
         secret: true,
+        secretName: 'TINYFISH_API_KEY',
       },
       { d: 'mock', label: 'mock', hint: 'prospects enlatados — dev' },
     ],
@@ -305,7 +312,18 @@ function ProviderCard({
             <button
               key={dd.d}
               className={dd.d === driver ? 'sel' : ''}
-              onClick={() => setDriver(dd.d)}
+              onClick={() => {
+                setDriver(dd.d);
+                // Drivers read different env vars and config keys — switching
+                // must not drag the previous driver's secretRef/model along.
+                if (dd.d === baseline.driver) {
+                  setSecretRef(baseline.secretRef);
+                  setConfig(baseline.config);
+                } else {
+                  setSecretRef(dd.secretName ?? '');
+                  setConfig({});
+                }
+              }}
             >
               {dd.label}
             </button>
@@ -319,9 +337,7 @@ function ProviderCard({
                 <label>secretRef</label>
                 <input
                   value={secretRef}
-                  placeholder={
-                    kind.key === 'llm' ? 'OPENROUTER_API_KEY' : `${kind.key.toUpperCase()}_API_KEY`
-                  }
+                  placeholder={drv.secretName ?? `${kind.key.toUpperCase()}_API_KEY`}
                   onChange={(e) => setSecretRef(e.target.value)}
                 />
               </div>
@@ -354,10 +370,14 @@ function ProviderCard({
         <div className="actions">
           <button
             className="btn primary"
-            disabled={!dirty}
+            disabled={!dirty && !!current?.enabled}
             onClick={() => onSave({ driver, secretRef, config }, true)}
           >
-            {current?.enabled && dirty ? 'trocar driver' : 'salvar + ativar'}
+            {current && !current.enabled && !dirty
+              ? 'ativar'
+              : current?.enabled && dirty
+                ? 'trocar driver'
+                : 'salvar + ativar'}
           </button>
           {dirty && (
             <button
@@ -485,7 +505,13 @@ function GuardrailsCard({
         </div>
       </div>
       <div className="actions">
-        <button className="btn primary" disabled={!dirty} onClick={() => onSave(edit)}>
+        {/* merge over `value` — PUT replaces the whole setting and unknown
+            keys managed via raw JSON would otherwise be silently dropped */}
+        <button
+          className="btn primary"
+          disabled={!dirty}
+          onClick={() => onSave({ ...value, ...edit })}
+        >
           salvar guardrails
         </button>
         {dirty && (
@@ -565,7 +591,11 @@ function PitchCard({
         />
       </div>
       <div className="actions">
-        <button className="btn primary" disabled={!dirty} onClick={() => onSave(edit)}>
+        <button
+          className="btn primary"
+          disabled={!dirty}
+          onClick={() => onSave({ ...value, ...edit })}
+        >
           salvar voz
         </button>
         {dirty && (

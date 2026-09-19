@@ -17,8 +17,16 @@ export default function BoardView() {
   const nav = useNavigate();
 
   const load = useCallback(() => {
-    api.leads({ limit: '200' }).then((r) => {
-      setLeads(r.leads);
+    // Follow the keyset cursor — the board IS the pipeline, so a partial page
+    // would silently hide leads and misreport column totals.
+    const all: LeadListItem[] = [];
+    const page = (cursor?: string): Promise<void> =>
+      api.leads({ limit: '200', ...(cursor ? { cursor } : {}) }).then((r) => {
+        all.push(...r.leads);
+        return r.nextCursor ? page(r.nextCursor) : undefined;
+      });
+    void page().then(() => {
+      setLeads(all);
       setLoading(false);
     });
   }, []);

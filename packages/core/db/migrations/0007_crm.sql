@@ -82,6 +82,9 @@ create table if not exists lead_messages (
   -- run that authored this message — lets a re-executed agent run recognize
   -- its own already-queued send instead of composing a duplicate.
   agent_run_id uuid,
+  -- why a 'failed' send failed — kept out of provider_message_id, which is
+  -- unique and would collide on repeated same-reason failures.
+  error text,
   approved_by text,
   approved_at timestamptz,
   created_at timestamptz not null default now(),

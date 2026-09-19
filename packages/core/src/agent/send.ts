@@ -30,6 +30,15 @@ export async function dispatchMessage(
       >`select id, thread_id, body, status from lead_messages where id = ${messageId} for update`
     )[0];
     if (!msg) return { fail: 'message not found' as const };
+    // Terminal/in-flight states are honest outcomes, not errors — a replayed
+    // approve/compose hits this and must report the real result, not a failure.
+    if (msg.status === 'sent' || msg.status === 'delivered') {
+      return { fail: null, alreadySent: true as const };
+    }
+    if (msg.status === 'sending') return { fail: null, inFlight: true as const };
+    if (msg.status === 'failed') {
+      return { fail: 'previously failed' as const };
+    }
     if (msg.status !== 'queued') return { fail: `status ${msg.status}` as const };
 
     const thread = (
@@ -107,7 +116,9 @@ export async function dispatchMessage(
     };
   });
 
-  if ('fail' in job) return { ok: false, reason: job.fail };
+  if ('alreadySent' in job) return { ok: true, reason: 'already sent' };
+  if ('inFlight' in job) return { ok: true, reason: 'dispatch in flight' };
+  if ('fail' in job && job.fail != null) return { ok: false, reason: job.fail };
   const { send } = job;
 
   // Phase 2: provider call, no transaction held.

@@ -4,6 +4,7 @@ import { getIntegration, getPitch, getSetting } from '../modules/integrations.ts
 import { providerFor, type AgentMessage } from './llm.ts';
 import { buildSystemPrompt } from './prompts.ts';
 import { executeTool, toolsFor, type ToolContext } from './tools.ts';
+import { dispatchMessage } from './send.ts';
 
 /**
  * agent/runner — the Hermes-style agent loop, CRM-sized: claim a queued run
@@ -148,7 +149,9 @@ export async function runOnce(sql: Sql): Promise<boolean> {
   const messages: AgentMessage[] = [];
   let tokensIn = 0;
   let tokensOut = 0;
-  let costCents = 0;
+  // accumulate fractional dollars — rounding to cents per step would zero out
+  // sub-cent calls and skew the run total.
+  let costUsd = 0;
 
   try {
     const integration = await getIntegration(sql, 'llm');
@@ -181,7 +184,7 @@ export async function runOnce(sql: Sql): Promise<boolean> {
       const res = await provider.chat({ system, messages, tools });
       tokensIn += res.tokensIn;
       tokensOut += res.tokensOut;
-      if (res.costUsd != null) costCents += Math.round(res.costUsd * 100);
+      if (res.costUsd != null) costUsd += res.costUsd;
       steps.push({ type: 'model', content: res.text, toolCalls: res.toolCalls.map((t) => t.name) });
 
       if (!res.toolCalls.length) {
@@ -190,7 +193,7 @@ export async function runOnce(sql: Sql): Promise<boolean> {
           steps,
           tokensIn,
           tokensOut,
-          costCents,
+          costCents: Math.round(costUsd * 100),
         });
         return true;
       }
@@ -223,7 +226,7 @@ export async function runOnce(sql: Sql): Promise<boolean> {
       steps,
       tokensIn,
       tokensOut,
-      costCents,
+      costCents: Math.round(costUsd * 100),
       error: 'max steps reached',
     });
     return true;
@@ -233,7 +236,7 @@ export async function runOnce(sql: Sql): Promise<boolean> {
       steps,
       tokensIn,
       tokensOut,
-      costCents,
+      costCents: Math.round(costUsd * 100),
       error: e instanceof Error ? e.message : String(e),
     });
     return true;
@@ -260,11 +263,27 @@ export async function drain(sql: Sql, limit = 20): Promise<number> {
   await controlTx(
     sql,
     (tx) => tx`
-      update lead_messages set status = 'failed', updated_at = now(),
-        provider_message_id = coalesce(provider_message_id, 'failed:dispatch-interrupted')
+      update lead_messages set status = 'failed', error = 'dispatch-interrupted', updated_at = now()
       where status = 'sending' and updated_at < now() - make_interval(mins => ${RUN_LEASE_MIN})
     `,
   );
+  // Queued messages outlive the request that queued them — a crash between
+  // approve/commit and dispatch must not strand one. The 20s grace lets the
+  // inline request-path dispatch win first.
+  const stranded = await controlTx(
+    sql,
+    (tx) =>
+      tx<{ id: string }[]>`
+        select id from lead_messages
+        where status = 'queued' and created_at < now() - interval '20 seconds'
+        order by created_at limit 10
+      `,
+  );
+  for (const m of stranded) {
+    await dispatchMessage(sql, m.id).catch((e) =>
+      console.error('[agent drain] dispatch failed', m.id, e),
+    );
+  }
   let ran = 0;
   while (ran < limit && (await runOnce(sql))) ran++;
   return ran;
@@ -293,6 +312,9 @@ export function startAgentWorker(sql: Sql, intervalMs = 15_000) {
 /** Periodic sweep: leads due for a follow-up get an outreach run. */
 export async function sweepOutreach(sql: Sql): Promise<number> {
   return controlTx(sql, async (tx) => {
+    // for update skip locked — concurrent sweeps on different replicas take
+    // disjoint lead sets instead of both inserting a run for the same due
+    // lead (the not-exists check alone only sees committed runs).
     const due = await tx<{ id: string }[]>`
       select l.id from leads l
       where l.next_action_at is not null and l.next_action_at <= now()
@@ -304,6 +326,7 @@ export async function sweepOutreach(sql: Sql): Promise<number> {
             and r.status in ('queued', 'running')
         )
       limit 20
+      for update skip locked
     `;
     for (const { id } of due) {
       await tx`
