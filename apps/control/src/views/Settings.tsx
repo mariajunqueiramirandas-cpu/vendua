@@ -120,11 +120,16 @@ export default function Settings() {
   });
   const [notice, setNotice] = useState<Notice>(null);
   const [loading, setLoading] = useState(true);
+  // Only a SUCCESSFUL integrations fetch may prove whatsapp unconfigured —
+  // a failed load also leaves rows empty, and auto-activating off a failed
+  // read could flip a deliberately-disabled baileys row back on.
+  const [integrationsOk, setIntegrationsOk] = useState(false);
 
   const load = useCallback(() => {
     void Promise.all([api.integrations(), api.settings()])
       .then(([i, s]) => {
         setIntegrations(i.integrations);
+        setIntegrationsOk(true);
         const map: Record<string, unknown> = {};
         for (const row of s.settings) map[row.key] = row.value;
         setSettings(map);
@@ -222,7 +227,7 @@ export default function Settings() {
                 kind={k}
                 rows={integrations.filter((i) => i.kind === k.key)}
                 wa={k.key === 'whatsapp' ? wa : { qr: null, status: 'off' }}
-                loading={loading}
+                ready={integrationsOk}
                 onWaLogout={k.key === 'whatsapp' ? () => void waLogout() : undefined}
                 onSave={(d, enable) => void saveIntegration(k.key, d, enable)}
               />
@@ -260,15 +265,15 @@ function ProviderCard({
   kind,
   rows,
   wa,
-  loading,
+  ready,
   onWaLogout,
   onSave,
 }: {
   kind: { key: string; label: string; sub: string; drivers: Driver[] };
   rows: Integration[];
   wa: { qr: string | null; status: string };
-  /** parent's integrations fetch settled — rows=[] is "never configured" */
-  loading: boolean;
+  /** integrations fetch SUCCEEDED — rows=[] then means "never configured" */
+  ready: boolean;
   onWaLogout: (() => void) | undefined;
   onSave: (
     d: { driver: string; secretRef: string; config: Record<string, string> },
@@ -343,14 +348,14 @@ function ProviderCard({
       waAuto.current ||
       kind.key !== 'whatsapp' ||
       driver !== 'baileys' ||
-      loading ||
+      !ready ||
       rows.length > 0
     )
       return;
     waAuto.current = true;
     activateBaileys();
     // eslint-disable-next-line react-hooks/exhaustive-deps -- one-shot once rows arrive
-  }, [kind.key, driver, rows, loading]);
+  }, [kind.key, driver, rows, ready]);
 
   const drv = kind.drivers.find((x) => x.d === driver) ?? kind.drivers[0];
   // The saved row for the SELECTED driver — its secretName/secretPresent
