@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { ArrowUpRight } from 'lucide-react';
 import { api, type LeadListItem } from '../api.ts';
@@ -16,7 +16,6 @@ export default function BoardView() {
   const [loading, setLoading] = useState(true);
   const [dragId, setDragId] = useState<string | null>(null);
   const [over, setOver] = useState<string | null>(null);
-  const [movingIds, setMovingIds] = useState<Set<string>>(new Set());
   const nav = useNavigate();
 
   const load = useCallback(() => {
@@ -35,23 +34,35 @@ export default function BoardView() {
   }, []);
   useEffect(load, [load]);
 
+  // Refs, not state: in-flight checks must be synchronous — a move that lands
+  // between the chain ending and a state flush would queue a write nothing
+  // drains, silently diverging the board from the server.
+  const inflightMoves = useRef(new Set<string>());
+  const queuedMoves = useRef(new Map<string, LeadListItem['state']>());
+
   const move = async (lead: LeadListItem, state: LeadListItem['state']) => {
-    // In-flight PATCH for this lead: a second write could land out of order
-    // and leave the server's stage behind the optimistic one.
-    if (lead.state === state || movingIds.has(lead.id)) return;
-    setMovingIds((s) => new Set(s).add(lead.id));
+    if (lead.state === state) return;
     // Optimistic: the column swap is immediate; a failure snaps it back.
     setLeads((ls) => ls.map((l) => (l.id === lead.id ? { ...l, state } : l)));
+    // A PATCH is in flight for this lead — fire-and-forget would let a slow
+    // earlier write overwrite the newer stage. Queue the latest target; the
+    // in-flight chain drains it in order.
+    if (inflightMoves.current.has(lead.id)) {
+      queuedMoves.current.set(lead.id, state);
+      return;
+    }
+    inflightMoves.current.add(lead.id);
     try {
-      await api.patchLead(lead.id, { state });
+      let target: LeadListItem['state'] | undefined = state;
+      while (target !== undefined) {
+        await api.patchLead(lead.id, { state: target });
+        target = queuedMoves.current.get(lead.id);
+        queuedMoves.current.delete(lead.id);
+      }
     } catch {
       load();
     } finally {
-      setMovingIds((s) => {
-        const n = new Set(s);
-        n.delete(lead.id);
-        return n;
-      });
+      inflightMoves.current.delete(lead.id);
     }
   };
 
@@ -141,7 +152,6 @@ export default function BoardView() {
                       value={l.state}
                       title="mover para estágio"
                       aria-label="mover para estágio"
-                      disabled={movingIds.has(l.id)}
                       onClick={(e) => e.stopPropagation()}
                       onChange={(e) => {
                         e.stopPropagation();
