@@ -47,6 +47,10 @@ let starting: Promise<BaileysSocket> | null = null;
  *  running or the session dropped/logged out. The Settings screen renders
  *  this instead of guessing from QR presence. */
 let connState: 'off' | 'connecting' | 'qr' | 'open' = 'off';
+/** While logout() is in flight its own close event clears the globals —
+ *  this flag stops ensureSocket from installing a replacement the logout
+ *  cleanup would then orphan (alive but identity-gated out of events). */
+let loggingOut = false;
 export function waStatus(): string {
   return connState;
 }
@@ -250,6 +254,7 @@ export async function ensureSocket(
     socketFingerprint = null;
   }
   if (!wanted) return null;
+  if (loggingOut) throw new Error('whatsapp logout em andamento');
   if (socket) return socket;
   if (!starting) {
     connState = 'connecting';
@@ -292,16 +297,28 @@ export async function pairCode(sql: Sql, phone: string): Promise<string> {
 export async function logoutWa(sql: Sql, accountId: string): Promise<void> {
   const s = socket;
   // Remote unlink while the socket is still tracked — if logout() rejects,
-  // `socket` stays owned and `wa_auth_state` survives, so a retry can
-  // actually retry the unlink on the same live socket. A logout's own 401
-  // close clears the globals via the handler; we then null them again
-  // (idempotent) before end() so a late close can't schedule a reconnect
-  // under the wiped auth.
-  if (s) await s.logout();
-  socket = null;
+  // `socket` stays owned and `wa_auth_state` survives, so a retry retries
+  // the unlink on the same live socket. `loggingOut` serializes the window:
+  // s's own close event clears globals mid-await, and without the flag a
+  // concurrent ensureSocket could install a replacement this cleanup then
+  // detaches. A socket that wasn't tracked (null) just wipes local state.
+  if (s) {
+    loggingOut = true;
+    try {
+      await s.logout();
+    } finally {
+      loggingOut = false;
+    }
+  }
+  // Clear only what's still owned by s — its close event may already have
+  // done it (idempotent), and nothing else could install a replacement
+  // while the flag was held.
+  if (socket === s) {
+    socket = null;
+    socketFingerprint = null;
+    connState = 'off';
+  }
   starting = null;
-  socketFingerprint = null;
-  connState = 'off';
   try {
     s?.end();
   } catch {
