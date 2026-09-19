@@ -394,6 +394,24 @@ function ProviderCard({
                   setSecretRef(dd.secretName ?? '');
                   setConfig({});
                 }
+                // WhatsApp pairing needs a live socket, and the socket only
+                // exists once an enabled baileys row does — persisting the
+                // driver choice is the activation, so save it on select
+                // instead of making staff click salvar before the QR appears.
+                const baileysRow = rows.find((r) => r.driver === 'baileys' && r.enabled);
+                if (kind.key === 'whatsapp' && dd.d === 'baileys' && !baileysRow) {
+                  const saved = rows.find((r) => r.driver === 'baileys');
+                  onSave(
+                    {
+                      driver: 'baileys',
+                      secretRef: saved?.secretRef ?? '',
+                      config: Object.fromEntries(
+                        Object.entries(saved?.config ?? {}).map(([k, v]) => [k, String(v)]),
+                      ),
+                    },
+                    true,
+                  );
+                }
               }}
             >
               {dd.label}
