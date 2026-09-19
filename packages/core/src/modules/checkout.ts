@@ -41,10 +41,11 @@ export function validateCheckout(
       ...(status.resumesAt ? { resumesAt: status.resumesAt } : {}),
     });
   }
-  if (status.status === 'closed' && !settings?.pickup_enabled) {
-    throw new HttpError(423, 'STORE_CLOSED', 'store is closed', {
-      ...(status.resumesAt ? { resumesAt: status.resumesAt } : {}),
-    });
+  // Closed stores still take orders (preorder for the next window —
+  // documented closed-vs-paused semantics). Fulfillment capability is
+  // validated per requested mode, independent of open state.
+  if (input.delivery.mode === 'pickup' && !(settings?.pickup_enabled ?? true)) {
+    throw new HttpError(422, 'PICKUP_UNAVAILABLE', 'pickup is not available');
   }
   if (cart.items.length === 0) throw new HttpError(422, 'EMPTY_CART', 'cart is empty');
   // Re-validate availability at checkout time — a product or modifier can go
@@ -104,10 +105,12 @@ export function validateCheckoutShape(input: unknown): asserts input is Checkout
       field: 'delivery.mode',
     });
   }
-  if (i.delivery.mode === 'delivery' && typeof i.delivery.address !== 'string') {
-    throw new HttpError(422, 'INVALID_DELIVERY', 'delivery.address is required for delivery', {
-      field: 'delivery.address',
-    });
+  if (i.delivery.mode === 'delivery') {
+    if (typeof i.delivery.address !== 'string' || i.delivery.address.trim().length === 0) {
+      throw new HttpError(422, 'INVALID_DELIVERY', 'delivery.address is required for delivery', {
+        field: 'delivery.address',
+      });
+    }
   }
   if (!['pix', 'card_on_delivery', 'cash'].includes(i.payment?.method)) {
     throw new HttpError(422, 'INVALID_PAYMENT', 'payment.method must be pix, card_on_delivery or cash', {

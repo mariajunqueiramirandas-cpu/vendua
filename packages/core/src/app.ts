@@ -353,6 +353,10 @@ export function createApp({ sql, sessionSecret }: AppDeps) {
       const body = await bodyJson(c);
       validateCheckoutShape(body);
       const order = await withTenant(sql, tenant.id, async (tx) => {
+        // Lock the cart row before reading it — two concurrent checkouts
+        // would otherwise both observe 'open' and mint duplicate orders
+        // (Review finding). The loser rechecks status under the lock.
+        await tx`select id from carts where tenant_id = ${tenant.id} and id = ${cartId} for update`;
         const cart = await loadCartView(tx, tenant.id, cartId);
         // A completed cart must not mint a second order — the forn spike
         // demonstrated a real duplicate otherwise.

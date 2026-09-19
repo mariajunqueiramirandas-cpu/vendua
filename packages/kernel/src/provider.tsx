@@ -132,6 +132,9 @@ type CacheEntry = {
   data?: unknown;
   error?: ApiErrorShape;
   inflight?: Promise<void>;
+  /** Identifies the current fetch — a superseded request (refetch during
+   *  flight) must not write its stale result over the replacement. */
+  runToken?: symbol;
 };
 const caches = new Map<VenduaApi, Map<string, CacheEntry>>();
 
@@ -156,12 +159,24 @@ export function useQuery<T>(
     let alive = true;
     const run = () => {
       const e = cache.get(key) ?? {};
+      // One fetch per key: a second subscriber's run() during flight just
+      // rides the existing promise instead of issuing a duplicate request.
+      if (e.inflight) {
+        e.inflight.finally(() => {
+          if (alive) setTick((t) => t + 1);
+        });
+        return;
+      }
+      const runToken = Symbol(key);
+      e.runToken = runToken;
       e.inflight = fetcher()
         .then((data) => {
-          cache.set(key, { resolved: true, data });
+          const cur = cache.get(key);
+          if (cur?.runToken === runToken) cache.set(key, { resolved: true, data });
         })
         .catch((error: ApiErrorShape) => {
-          cache.set(key, { resolved: true, error });
+          const cur = cache.get(key);
+          if (cur?.runToken === runToken) cache.set(key, { resolved: true, error });
         })
         .finally(() => {
           if (alive) setTick((t) => t + 1);

@@ -243,17 +243,28 @@ export async function addItem(
   }
   const product = await getProductById(tx, tenantId, input.productId);
   if (!product) throw new HttpError(404, 'PRODUCT_NOT_FOUND', 'product not found');
-  const modifierIds = input.modifierIds ?? [];
+  // Dedupe + sort: a repeated id would charge the modifier twice, and
+  // order-independence makes reordered selections merge into the same line.
+  const modifierIds = [...new Set(input.modifierIds ?? [])].sort();
   const invalid = validateItemModifiers(product, modifierIds);
   if (invalid) throw invalid;
 
-  // Same product + same modifier set merges into one line.
-  await tx`
-    insert into cart_items (tenant_id, cart_id, product_id, qty, modifier_ids)
-    values (${tenantId}, ${cartId}, ${input.productId}, ${input.qty}, ${tx.json(modifierIds)})
-    on conflict (cart_id, product_id, modifier_ids)
-    do update set qty = cart_items.qty + excluded.qty
-  `;
+  // Same product + same modifier set merges into one line. The merged qty is
+  // capped by cart_items' CHECK (qty <= 99) — a check_violation surfaces as
+  // INVALID_QTY, identical to the PATCH endpoint's contract.
+  try {
+    await tx`
+      insert into cart_items (tenant_id, cart_id, product_id, qty, modifier_ids)
+      values (${tenantId}, ${cartId}, ${input.productId}, ${input.qty}, ${tx.json(modifierIds)})
+      on conflict (cart_id, product_id, modifier_ids)
+      do update set qty = cart_items.qty + excluded.qty
+    `;
+  } catch (err) {
+    if ((err as { code?: string }).code === '23514') {
+      throw new HttpError(422, 'INVALID_QTY', 'line quantity cannot exceed 99');
+    }
+    throw err;
+  }
   await tx`update carts set updated_at = now() where id = ${cartId}`;
   return loadCartView(tx, tenantId, cartId);
 }

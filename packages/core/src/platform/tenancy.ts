@@ -33,6 +33,7 @@ export class TenantResolver {
       select t.id, t.slug, t.name, t.status
       from domains d join tenants t on t.id = d.tenant_id
       where d.host in (${host}, ${hostname})
+      order by (d.host = ${host}) desc
       limit 1
     `;
     const tenant = rows[0] ?? null;

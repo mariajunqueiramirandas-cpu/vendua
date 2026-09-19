@@ -122,14 +122,16 @@ Mirrored in `.omp/RULES.md` for omp's sticky-rule enforcement — keep in sync.
 - Match the project's existing test conventions; don't add test scaffolding
   where none exists.
 
-## Delegation — default to subagents
+## Delegation — delegate by default
 
-- Bias hard toward delegating. Spawn a subagent for anything that is: a
-  separate file/module, an independent investigation, a verification pass,
-  or parallelizable with other work.
-- Subagent contracts live in `.devin/agents/`: `architect`, `debugger`,
-  `frontend-designer`, `verifier` — mirrored in `.claude/agents/` and
-  `.omp/agents/` (omp also has `scout`, `task`, `sonic`).
+- You are an orchestrator, not an implementer. Spawn a subagent for anything
+  that is: a separate file/module, an independent investigation, a
+  verification pass, a research or search task, an edit touching more than a
+  couple of spots, or anything parallelizable with other work. When in
+  doubt, delegate — the only work that stays in the top-level session is
+  trivial, single-point edits you can verify immediately.
+- Decompose at planning time: turn the task into self-contained,
+  subagent-shaped units with clear acceptance checks, then fan out.
   - Devin Cloud: read the profile file and pass its body verbatim as the
     child-session or workflow-agent prompt.
   - Devin CLI/Desktop: profiles auto-load; invoke by name.

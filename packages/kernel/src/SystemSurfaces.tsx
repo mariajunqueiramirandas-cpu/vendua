@@ -121,8 +121,12 @@ export function SystemSurfaces({ zoneMatched }: { zoneMatched?: boolean } = {}) 
   // First paint uses edge-injected state when present (zero flicker).
   const injected = (globalThis as Record<string, unknown>).__VENDUA_STATE__ as
     SurfacesEnvelope | undefined;
-  const q = useQuery('surfaces', () => api.surfaces(zoneMatched));
-  const envelope = q.data ?? injected;
+  // The key carries zoneMatched: a cached envelope from the previous address
+  // result must not render for the new one (Review finding).
+  const key = `surfaces:${zoneMatched === undefined ? 'any' : zoneMatched}`;
+  const q = useQuery(key, () => api.surfaces(zoneMatched));
+  // Injected state is only a valid first paint for the unscoped query.
+  const envelope = q.data ?? (zoneMatched === undefined ? injected : undefined);
 
   if (!envelope) return null;
   const now = Date.now();

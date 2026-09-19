@@ -96,13 +96,18 @@ describe('validateCheckout', () => {
       'STORE_PAUSED',
     );
   });
-  test('closed store, pickup enabled → proceeds (preorder semantics deferred)', () => {
-    // Phase 0: closed blocks only when pickup is disabled entirely.
+  test('closed store → proceeds (preorder for next window)', () => {
     expect(validateCheckout(closed, settings, cart(2000), pickup, zones).zone).toBeNull();
   });
-  test('closed store, no pickup → STORE_CLOSED', () => {
+  test('pickup when disabled → PICKUP_UNAVAILABLE', () => {
     const s = { ...settings, pickup_enabled: false };
-    expect(code(() => validateCheckout(closed, s, cart(2000), pickup, zones))).toBe('STORE_CLOSED');
+    expect(code(() => validateCheckout(open, s, cart(2000), pickup, zones))).toBe(
+      'PICKUP_UNAVAILABLE',
+    );
+  });
+  test('closed + pickup disabled → delivery preorder still allowed', () => {
+    const s = { ...settings, pickup_enabled: false };
+    expect(validateCheckout(closed, s, cart(1600), delivery, zones).zone?.id).toBe('z1');
   });
   test('empty cart → EMPTY_CART', () => {
     const empty = { ...cart(0), items: [] };
