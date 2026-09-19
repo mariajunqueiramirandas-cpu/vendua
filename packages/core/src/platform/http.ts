@@ -298,6 +298,13 @@ const MAX_BODY_BYTES = 32 * 1024;
 export async function bodyJson(c: Context): Promise<Record<string, unknown>> {
   // Public mutation endpoints take attacker-controlled bodies; cap the raw
   // text before parsing so oversized payloads can't burn parse time/memory.
+  // Content-Length is a free pre-filter — reject before buffering when the
+  // header already overruns the cap (absent/lying headers still hit the
+  // post-read byte check below).
+  const declared = Number(c.req.header('content-length'));
+  if (Number.isFinite(declared) && declared > MAX_BODY_BYTES) {
+    throw new HttpError(413, 'PAYLOAD_TOO_LARGE', `body exceeds ${MAX_BODY_BYTES} bytes`);
+  }
   const raw = await c.req.text();
   // Bytes, not UTF-16 units — multibyte input would otherwise slip past
   // the cap (string.length undercounts).
