@@ -159,9 +159,9 @@ it — deployment and operations are prerequisites for tenant #1.
       rollback as pointer flips; 60 s synthetic probes per live hostname;
       provisioner state machine (tenant row → DNS → promote → invite).
 - [ ] **Founder CRM** — a pipeline view inside the Control Plane for Venduá's
-      own merchant intake (lead → invited → live). The provisioner already
-      models that state machine; this exposes it to the founders so merchant
-      onboarding is tracked in the same tool that operates the fleet.
+      own merchant intake. New `lead` records sit ahead of the provisioner's
+      invite→live states, so onboarding is tracked in the same tool that
+      operates the fleet — not a separate spreadsheet.
 
 Exit: a real merchant takes a real paid order on `*.vendua.com.br` — and their
 storefront was provisioned, promoted, is being probed, and could be rolled
