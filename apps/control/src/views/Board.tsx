@@ -60,6 +60,9 @@ export default function BoardView() {
         queuedMoves.current.delete(lead.id);
       }
     } catch {
+      // drop the pending target — the reload restores server truth and a
+      // stale queue would otherwise leak into the next chain
+      queuedMoves.current.delete(lead.id);
       load();
     } finally {
       inflightMoves.current.delete(lead.id);
