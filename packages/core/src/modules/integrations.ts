@@ -55,8 +55,11 @@ export function integrationJson(row: IntegrationRow) {
   // drivers (resend/tinyfish do `(env[ref]) ?? env[DEFAULT]`) report the
   // name they'd actually read, so a configured-but-missing custom ref never
   // displays as "present"; strict LLM drivers keep naming the custom ref.
+  // `!== undefined`, not truthy — `??` in the drivers falls through only on
+  // absent vars; an EMPTY custom var is what the driver actually reads.
   const secretName =
-    row.secret_ref && (!!process.env[row.secret_ref] || !SECRET_FALLBACK.has(row.driver))
+    row.secret_ref &&
+    (process.env[row.secret_ref] !== undefined || !SECRET_FALLBACK.has(row.driver))
       ? row.secret_ref
       : (DEFAULT_SECRET[row.driver] ?? row.secret_ref ?? null);
   const present = secretName ? !!process.env[secretName] : null;

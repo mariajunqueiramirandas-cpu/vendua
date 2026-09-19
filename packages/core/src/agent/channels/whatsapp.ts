@@ -188,6 +188,9 @@ async function startSocket(sql: Sql, integration: IntegrationRow): Promise<Baile
     }
   });
   sock.ev.on('messages.upsert', ({ type, messages }) => {
+    // A detached socket (replaced or post-logout) must not keep delivering
+    // inbound messages — its creds may already be wiped.
+    if (socket !== sock) return;
     if (type !== 'notify') return;
     for (const m of messages) {
       const key = m.key;
@@ -287,17 +290,18 @@ export async function pairCode(sql: Sql, phone: string): Promise<string> {
  *  the device is gone (its close event is a 401, which the reconnect logic
  *  already leaves dead). */
 export async function logoutWa(sql: Sql, accountId: string): Promise<void> {
-  // Detach the globals first — a synchronous `close` on end() must not see
-  // itself as the live socket and schedule a reconnect under the old auth.
   const s = socket;
+  // Remote unlink while the socket is still tracked — if logout() rejects,
+  // `socket` stays owned and `wa_auth_state` survives, so a retry can
+  // actually retry the unlink on the same live socket. A logout's own 401
+  // close clears the globals via the handler; we then null them again
+  // (idempotent) before end() so a late close can't schedule a reconnect
+  // under the wiped auth.
+  if (s) await s.logout();
   socket = null;
   starting = null;
   socketFingerprint = null;
   connState = 'off';
-  // logout() is the remote unlink — if it fails, auth state must survive
-  // so a retry can still talk to WhatsApp. Only a confirmed unlink (or an
-  // already-dead socket) proceeds to the local wipe.
-  if (s) await s.logout();
   try {
     s?.end();
   } catch {
