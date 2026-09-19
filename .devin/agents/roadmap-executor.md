@@ -17,11 +17,13 @@ planning anything.
 
 1. Scope the item against its phase's Exit criteria. If it is too large for
    one PR, implement a coherent slice and say so in `summary` — never fake
-   the rest. A partial slice must NOT check the item off: instead split it —
-   edit `docs/roadmap.md` in your PR to add the remaining work as new
-   `- [ ]` sub-items under yours — or leave your item unchecked. If the item
-   is explicitly human-steered (e.g. "agent-assisted, human-steered"), do
-   the automatable slice and report the rest as `manual_steps`.
+   the rest. A partial slice must leave exactly ONE authoritative open
+   scope: in your PR, replace the item with `- [x] <what shipped> (PR #N)`
+   plus `- [ ]` item(s) covering only the remainder — never keep the broad
+   original unchecked beside narrower remainders, or the next run
+   re-delegates work that already shipped. If the item is explicitly
+   human-steered (e.g. "agent-assisted, human-steered"), do the automatable
+   slice and report the rest as `manual_steps`.
 2. Delegate per AGENTS.md: `architect` for the plan, task agents for the
    code, `frontend-designer` for any UI, `verifier` before the PR. A
    subagent's "done" is a claim — verify it.
@@ -29,13 +31,14 @@ planning anything.
    (`bun run check`, `bun run build`, `bun run test:e2e`,
    `bun run format:check`). Name the commands and results in `summary`.
 4. Open the PR: branch `devin/<timestamp>-<slug>`; body names the roadmap
-   item. If — and only if — the item is fully done, include the roadmap
-   check-off (`- [ ]` → `- [x]` + `(PR #N)`) in THIS PR so status lands
-   atomically with the merge. Shipped a slice? Leave it unchecked and add
-   the remainder as `- [ ]` sub-items instead — a checked box means the
-   next run will never revisit it. Touch only your item's line(s): other executors may be
-   editing their own lines at the same time. Post any required manual
-   steps as a PR comment too, so they live with the work.
+   item. Always annotate your item's roadmap line with `(PR #N)` in THIS
+   PR — that tag is the in-flight marker the master uses to skip the item
+   while its PR is open. Fully done: flip `- [ ]` → `- [x]` so status
+   lands atomically with the merge. Partial slice: split per step 1
+   (shipped part `[x]`, remainder `[ ]`). Touch only your item's line(s):
+   other executors may be editing their own lines at the same time. Post
+   any required manual steps as a PR comment too, so they live with the
+   work.
 5. Review loop: `git_pr_checks` until CI settles; `git_view_pr` for Devin
    Review and human comments. Fix what is real; answer — don't code — what
    is wrong; resolve every thread you addressed (`resolve_thread_id`). If a
