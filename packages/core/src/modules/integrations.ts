@@ -15,7 +15,7 @@ export type IntegrationKind = (typeof INTEGRATION_KINDS)[number];
 /** Drivers each kind can load. Validation lives here so the API and the
  *  driver registry agree on names. */
 export const DRIVERS: Record<IntegrationKind, readonly string[]> = {
-  llm: ['openrouter', 'anthropic', 'openai', 'mock'],
+  llm: ['gemini', 'openrouter', 'anthropic', 'openai', 'mock'],
   email: ['resend', 'log'],
   whatsapp: ['baileys', 'log'],
   discovery: ['tinyfish', 'mock'],
@@ -25,6 +25,7 @@ export const DRIVERS: Record<IntegrationKind, readonly string[]> = {
  *  secret_ref is null — mirrors the `?? process.env.X` fallback in the
  *  channel/driver code so the UI reports what's actually in effect. */
 export const DEFAULT_SECRET: Record<string, string> = {
+  gemini: 'GEMINI_API_KEY',
   openrouter: 'OPENROUTER_API_KEY',
   anthropic: 'ANTHROPIC_API_KEY',
   openai: 'OPENAI_API_KEY',

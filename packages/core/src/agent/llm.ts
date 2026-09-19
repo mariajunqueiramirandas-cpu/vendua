@@ -3,15 +3,20 @@ import type { IntegrationRow } from '../modules/integrations.ts';
 
 /**
  * agent/llm — the provider-agnostic model layer. `LlmProvider` is a small
- * tool-use chat interface; drivers: `openrouter` (official @openrouter/sdk,
- * the default), `anthropic` and `openai` (raw fetch), and `mock`
- * (deterministic, scriptable — dev and tests).
+ * tool-use chat interface; drivers: `gemini` (AI Studio generateContent —
+ * the default deployment driver), `openrouter` (official @openrouter/sdk),
+ * `anthropic` and `openai` (raw fetch), and `mock` (deterministic,
+ * scriptable — dev and tests).
  */
 
 export interface ToolCall {
   id: string;
   name: string;
   args: Record<string, unknown>;
+  /** Gemini 3 signs model-emitted function calls; the signature must be
+   *  replayed verbatim on the functionCall part in subsequent history or the
+   *  API 400s. Other drivers ignore it. */
+  thoughtSignature?: string;
 }
 
 export interface AgentTool {
@@ -121,6 +126,143 @@ function openrouterProvider(
         tokensIn: res.usage?.promptTokens ?? 0,
         tokensOut: res.usage?.completionTokens ?? 0,
         costUsd: typeof res.usage?.cost === 'number' ? res.usage.cost : null,
+      };
+    },
+  };
+}
+
+// ---------------------------------------------------------------------------
+// gemini — AI Studio generateContent. Gemini turns are (role, parts[]) with
+// roles user/model only: function calls ride in model parts and EVERY
+// functionResponse for a model turn's calls must sit in the single user turn
+// that follows — consecutive `tool` messages therefore merge into one user
+// turn. Gemini 3 also requires each functionCall part's thoughtSignature
+// replayed verbatim (captured on ToolCall.thoughtSignature), and echoes
+// its own call ids — we pass both back through.
+// ---------------------------------------------------------------------------
+
+function geminiProvider(config: Record<string, unknown>, secretRef: string | null): LlmProvider {
+  const apiKey = secretRef ? process.env[secretRef] : process.env.GEMINI_API_KEY;
+  if (!apiKey) throw new Error(`missing API key — set ${secretRef ?? 'GEMINI_API_KEY'}`);
+  const model =
+    typeof config.model === 'string' && config.model ? config.model : 'gemini-3.5-flash-lite';
+  type Part = Record<string, unknown>;
+  return {
+    name: `gemini:${model}`,
+    async chat({ system, messages, tools }) {
+      const contents: { role: string; parts: Part[] }[] = [];
+      for (const m of messages) {
+        if (m.role === 'tool') {
+          // tool result → functionResponse part in the pending user turn (the
+          // previous one when it's all functionResponses, else a fresh one).
+          let turn = contents[contents.length - 1];
+          if (!turn || turn.role !== 'user' || !turn.parts.every((p) => 'functionResponse' in p)) {
+            turn = { role: 'user', parts: [] };
+            contents.push(turn);
+          }
+          // response must be an object — the tool log stores a JSON string,
+          // so parse back and wrap anything that isn't a plain object (tools
+          // like search_leads return arrays) under `result`.
+          let result: unknown = m.content;
+          try {
+            result = JSON.parse(m.content);
+          } catch {
+            /* plain string */
+          }
+          if (typeof result !== 'object' || result === null || Array.isArray(result)) {
+            result = { result };
+          }
+          turn.parts.push({
+            functionResponse: { name: m.name, id: m.toolCallId, response: result },
+          });
+          continue;
+        }
+        if (m.role === 'assistant') {
+          const parts: Part[] = [];
+          if (m.content) parts.push({ text: m.content });
+          for (const t of m.toolCalls ?? [])
+            parts.push({
+              functionCall: { name: t.name, args: t.args, id: t.id },
+              ...(t.thoughtSignature ? { thoughtSignature: t.thoughtSignature } : {}),
+            });
+          if (parts.length) contents.push({ role: 'model', parts });
+          continue;
+        }
+        contents.push({ role: 'user', parts: [{ text: m.content }] });
+      }
+      const res = await fetch(
+        `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`,
+        {
+          method: 'POST',
+          // header auth — a ?key= query param lands in proxy/server logs.
+          headers: { 'content-type': 'application/json', 'x-goog-api-key': apiKey },
+          body: JSON.stringify({
+            systemInstruction: { parts: [{ text: system }] },
+            contents,
+            tools: tools.length
+              ? [
+                  {
+                    functionDeclarations: tools.map((t) => ({
+                      name: t.name,
+                      description: t.description,
+                      parameters: t.parameters,
+                    })),
+                  },
+                ]
+              : undefined,
+          }),
+        },
+      );
+      if (!res.ok) throw new Error(`gemini ${res.status}: ${(await res.text()).slice(0, 300)}`);
+      const data = (await res.json()) as {
+        candidates?: {
+          content?: {
+            parts?: {
+              text?: string;
+              functionCall?: { name?: string; args?: unknown; id?: string };
+              thoughtSignature?: string;
+            }[];
+          };
+          finishReason?: string;
+        }[];
+        promptFeedback?: { blockReason?: string };
+        usageMetadata?: {
+          promptTokenCount?: number;
+          candidatesTokenCount?: number;
+          thoughtsTokenCount?: number;
+        };
+      };
+      const cand = data.candidates?.[0];
+      if (!cand) {
+        throw new Error(
+          `gemini returned no candidate${data.promptFeedback?.blockReason ? ` — blocked: ${data.promptFeedback.blockReason}` : ''}`,
+        );
+      }
+      const parts = cand.content?.parts ?? [];
+      // An empty candidate (e.g. finishReason SAFETY/RECITATION) carries no
+      // text and no call — returning it would make the runner converge on a
+      // silent 'done', so fail visibly with the reason instead.
+      if (!parts.some((p) => p.text || p.functionCall)) {
+        throw new Error(
+          `gemini returned empty candidate${cand.finishReason ? ` — ${cand.finishReason}` : ''}`,
+        );
+      }
+      const text = parts.map((p) => p.text ?? '').join('') || null;
+      const toolCalls = parts
+        .filter((p) => p.functionCall)
+        .map((p, i) => ({
+          id: p.functionCall!.id ?? `gem-${i}`,
+          name: p.functionCall!.name!,
+          args: (p.functionCall!.args ?? {}) as Record<string, unknown>,
+          ...(p.thoughtSignature ? { thoughtSignature: p.thoughtSignature } : {}),
+        }));
+      const u = data.usageMetadata;
+      return {
+        text,
+        toolCalls,
+        tokensIn: u?.promptTokenCount ?? 0,
+        tokensOut: (u?.candidatesTokenCount ?? 0) + (u?.thoughtsTokenCount ?? 0),
+        costUsd: null,
       };
     },
   };
@@ -314,6 +456,8 @@ export function providerFor(
   const config = integration?.config ?? {};
   const secretRef = integration?.secret_ref ?? null;
   switch (driver) {
+    case 'gemini':
+      return geminiProvider(config, secretRef);
     case 'openrouter':
       return openrouterProvider(config, secretRef);
     case 'anthropic':
