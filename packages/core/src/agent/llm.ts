@@ -161,14 +161,17 @@ function geminiProvider(config: Record<string, unknown>, secretRef: string | nul
             contents.push(turn);
           }
           // response must be an object — the tool log stores a JSON string,
-          // so parse back and wrap non-objects under `result`.
+          // so parse back and wrap anything that isn't a plain object (tools
+          // like search_leads return arrays) under `result`.
           let result: unknown = m.content;
           try {
             result = JSON.parse(m.content);
           } catch {
             /* plain string */
           }
-          if (typeof result !== 'object' || result === null) result = { result };
+          if (typeof result !== 'object' || result === null || Array.isArray(result)) {
+            result = { result };
+          }
           turn.parts.push({
             functionResponse: { name: m.name, id: m.toolCallId, response: result },
           });
@@ -236,6 +239,14 @@ function geminiProvider(config: Record<string, unknown>, secretRef: string | nul
         );
       }
       const parts = cand.content?.parts ?? [];
+      // An empty candidate (e.g. finishReason SAFETY/RECITATION) carries no
+      // text and no call — returning it would make the runner converge on a
+      // silent 'done', so fail visibly with the reason instead.
+      if (!parts.some((p) => p.text || p.functionCall)) {
+        throw new Error(
+          `gemini returned empty candidate${cand.finishReason ? ` — ${cand.finishReason}` : ''}`,
+        );
+      }
       const text = parts.map((p) => p.text ?? '').join('') || null;
       const toolCalls = parts
         .filter((p) => p.functionCall)
