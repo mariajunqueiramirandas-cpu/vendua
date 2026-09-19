@@ -126,7 +126,7 @@ unsubscribed` if `unsubscribed_at` is set and `lead has no whatsapp` if
 - Provider-card `testar` chips are per-card useState — cleared on driver
   switch; only the latest result shows per card.
 - whatsapp → baileys: the dark pair panel renders as soon as `baileys` is
-  selected in the seg (the enabled check is against the *current* row, not
+  selected in the seg (the enabled check is against the _current_ row, not
   the pending driver) — preview shows "whatsapp desligado" before save.
 - From this box the baileys socket DOES reach WhatsApp — real QR renders
   (`<img class="wa-qr">`, status 'qr') within ~2s of enabling, and
