@@ -72,6 +72,12 @@ Goal: storefronts are _produced_, not hand-built — and the repo enforces it.
       (`storefront:<slug>` PRs touch only `storefronts/<slug>/**`), affected-
       graph build, cross-boundary import lint. This is the sandbox every later
       agent and contributor works inside.
+- [ ] **Founder CRM v0** — merchant-intake pipeline for Venduá itself: a
+      `leads` table in Core + a staff-only board (lead → contacted → invited →
+      live, notes per merchant). Doesn't wait for the Control Plane — merchant
+      conversations start before the fleet exists, and tracking them in a
+      spreadsheet is exactly the manual-ops debt this roadmap avoids. Phase 4
+      merges it into the Control Plane's provisioner states.
 
 Exit: `vendua scaffold && vendua build && vendua qa` is green on a fresh
 storefront without any custom code — and a storefront PR physically cannot
@@ -158,8 +164,8 @@ it — deployment and operations are prerequisites for tenant #1.
       storefronts / releases / deployments / domains tables; promote and
       rollback as pointer flips; 60 s synthetic probes per live hostname;
       provisioner state machine (tenant row → DNS → promote → invite).
-- [ ] **Founder CRM** — a pipeline view inside the Control Plane for Venduá's
-      own merchant intake. New `lead` records sit ahead of the provisioner's
+- [ ] **Founder CRM → Control Plane** — the Phase-1 intake board folds into
+      the Control Plane: `lead` records graduate into the provisioner's
       invite→live states, so onboarding is tracked in the same tool that
       operates the fleet — not a separate spreadsheet.
 
