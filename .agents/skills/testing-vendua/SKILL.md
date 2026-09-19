@@ -92,7 +92,7 @@ Verify via `curl -H "Host: <slug-host>" localhost:8787/storefront/v1/store`.
   — click neutral page space first. `?` opens the shortcuts modal via the
   `shift+slash` chord (a bare `?` keysym may arrive as `/`).
 - Send guardrails are real: whatsapp dispatch fails with `lead
-  unsubscribed` if `unsubscribed_at` is set and `lead has no whatsapp` if
+unsubscribed` if `unsubscribed_at` is set and `lead has no whatsapp` if
   the column is null (seeded leads have no whatsapp) — set one via SQL for
   a happy-path send; UI shows `falhou` on the bubble.
 - The seeded whatsapp thread (Padaria Trigo Real) has a single draft — to
