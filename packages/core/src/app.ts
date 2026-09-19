@@ -214,7 +214,19 @@ export function createApp({ sql, sessionSecret }: AppDeps) {
   checkout.use('*', tenantMiddleware(resolver, { trustForwardedHost: trustProxy }));
   // Public, unauthenticated mutation surface — bounded so a script can't grow
   // carts/idempotency tables unboundedly (edge replaces this in prod).
-  checkout.use('*', rateLimit({ windowMs: 60_000, max: 240 }, { trustForwardedFor: trustProxy }));
+  // VENDUA_PROXY_HOPS = trusted proxies between client and Core beyond the
+  // one that appended the client's own XFF entry (Dokploy: nginx → 1).
+  const proxyHops = Number(process.env.VENDUA_PROXY_HOPS ?? '0');
+  checkout.use(
+    '*',
+    rateLimit(
+      { windowMs: 60_000, max: 240 },
+      {
+        trustForwardedFor: trustProxy,
+        proxyHops: Number.isInteger(proxyHops) && proxyHops >= 0 ? proxyHops : 0,
+      },
+    ),
+  );
 
   checkout.post('/session', async (c) => {
     const tenant = c.get('tenant');

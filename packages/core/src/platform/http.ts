@@ -198,7 +198,7 @@ export function idempotency(
  */
 export function rateLimit(
   opts: { windowMs: number; max: number },
-  flags: { trustForwardedFor?: boolean } = {},
+  flags: { trustForwardedFor?: boolean; proxyHops?: number } = {},
 ): MiddlewareHandler<{
   Variables: Vars;
 }> {
@@ -211,12 +211,16 @@ export function rateLimit(
     const tenant = c.get('tenant') as Tenant;
     // X-Forwarded-For is client-supplied without a trusted edge — key on it
     // only when VENDUA_TRUST_PROXY=1, else a shared bucket per tenant. When
-    // trusted, take the RIGHTMOST entry: our edge appends the peer IP it
-    // observed, while earlier entries can be attacker-set (rotating the
-    // leftmost value must not dodge the limit).
-    const ip = flags.trustForwardedFor
-      ? (c.req.header('x-forwarded-for')?.split(',').pop()?.trim() ?? 'unknown')
-      : 'local';
+    // trusted, the client is the entry immediately BEFORE the suffix our own
+    // proxies appended: each trusted hop adds its observed peer to the right,
+    // so we skip `proxyHops` entries from the right. e.g. client→Traefik→
+    // nginx→core arrives as [client, traefik], and hops=1 yields the client;
+    // entries left of it stay attacker-settable but unusable for rotation
+    // bypass. A chain shorter than configured fails closed to 'unknown' —
+    // one shared bucket — rather than falling back to a spoofable entry.
+    const xff = c.req.header('x-forwarded-for')?.split(',').map((s) => s.trim());
+    const idx = xff ? xff.length - 1 - (flags.proxyHops ?? 0) : -1;
+    const ip = flags.trustForwardedFor ? (idx >= 0 ? xff![idx]! : 'unknown') : 'local';
     const now = Date.now();
     if (now >= nextSweep) {
       nextSweep = now + opts.windowMs;

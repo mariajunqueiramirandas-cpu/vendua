@@ -35,6 +35,9 @@ services:
       SESSION_SECRET: ${SESSION_SECRET:?set SESSION_SECRET in .env}
       # Traefik fronts everything — X-Forwarded-* carries routing truth.
       VENDUA_TRUST_PROXY: '1'
+      # Chain is client → Traefik → storefront nginx → core: nginx's append
+      # is the one trusted entry after the client IP (skip 1 from the right).
+      VENDUA_PROXY_HOPS: '1'
       # 1 = seed the three demo tenants + catalog on first boot; 0 = empty.
       SEED_DEMO: ${SEED_DEMO:-1}
       # slug:public-host[,slug:host2] — registers each storefront's real

@@ -400,3 +400,13 @@ OBSERVATIONS.md `## Feature gaps`. Candidates for Contract v1 or Phase 1+.)
 - **Strict UUID shape on productId** — the loose `[0-9a-f-]{36}` check let
   36-char non-UUIDs reach Postgres (22P02 → 500). Now `UUID_RE`, verified:
   malformed → 422, well-formed-but-missing → PRODUCT_NOT_FOUND.
+
+## Review round 12b — trusted-suffix client IP
+
+- **Rate limiting resolves the real client behind a proxy chain** — under
+  VENDUA_TRUST_PROXY the limiter now skips `VENDUA_PROXY_HOPS` appended
+  entries from the right of X-Forwarded-For (Dokploy chain
+  client→Traefik→nginx→core sets hops=1 so the client — not Traefik's
+  address — is the bucket key). A shorter chain than configured fails closed
+  to a shared 'unknown' bucket rather than falling back to a spoofable
+  leftmost entry. Compose + .env.example + dokploy.md document the value.
