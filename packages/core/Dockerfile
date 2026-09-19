@@ -18,7 +18,12 @@ COPY storefronts/brasa/package.json storefronts/brasa/package.json
 COPY storefronts/forn/package.json storefronts/forn/package.json
 COPY storefronts/_examples/quero-pudim/package.json storefronts/_examples/quero-pudim/package.json
 COPY site/package.json site/package.json
+COPY apps/control/package.json apps/control/package.json
 RUN bun install --frozen-lockfile
+
+# Control SPA — built in-image so Core can serve apps/control/dist at /control/.
+COPY apps/control apps/control
+RUN cd apps/control && bun run build
 
 COPY packages/core packages/core
 

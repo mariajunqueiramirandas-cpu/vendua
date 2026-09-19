@@ -1,6 +1,8 @@
-import { createHmac } from 'node:crypto';
+import { createHmac, timingSafeEqual } from 'node:crypto';
+import { existsSync, statSync } from 'node:fs';
+import { extname, join, normalize } from 'node:path';
 import { Hono, type Context } from 'hono';
-import { getCookie, setCookie } from 'hono/cookie';
+import { deleteCookie, getCookie, setCookie } from 'hono/cookie';
 import { cors } from 'hono/cors';
 import type { Sql } from './platform/db.ts';
 import { withTenant } from './platform/db.ts';
@@ -26,17 +28,57 @@ import { addItem, assertCartOpen, loadCartView, matchZone } from './modules/cart
 import { validateCheckout, validateCheckoutShape } from './modules/checkout.ts';
 import { loadOrderView } from './modules/orders.ts';
 import {
-  appendNote,
-  createLead,
-  getLead,
+  deleteLead,
+  exportLeadsCsv,
+  findDuplicates,
+  getLeadDetail,
+  importLeads,
+  insertLeadTx,
   leadInsert,
-  leadJson,
   leadPatch,
   leadState,
+  leadStats,
   listLeads,
+  parseLeadsCsv,
   updateLead,
+  type Lead,
+  type LeadState,
 } from './modules/leads.ts';
-import { boardHtml, boardLoginHtml } from './modules/board.ts';
+import {
+  ACTIVITY_KINDS,
+  addActivity,
+  completeTask,
+  createTask,
+  listActivities,
+  listTasks,
+  type ActivityKind,
+} from './modules/activities.ts';
+import {
+  approveMessage,
+  channel,
+  composeMessage,
+  getThread,
+  listDrafts,
+  listThreads,
+  rejectMessage,
+  setThreadAgent,
+  threadsForLead,
+  ensureThread,
+  type Channel,
+} from './modules/threads.ts';
+import {
+  getGuardrails,
+  getPitch,
+  integrationKind,
+  listIntegrations,
+  listSettings,
+  putSetting,
+  upsertIntegration,
+  validateSetting,
+} from './modules/integrations.ts';
+import { claimControl, controlTx } from './modules/control.ts';
+import { drain, insertRun } from './agent/runner.ts';
+import { ingestInbound } from './agent/inbound.ts';
 import { LOADER_JS } from './loader.ts';
 
 export interface AppDeps {
@@ -578,65 +620,15 @@ export function createApp({ sql, sessionSecret, controlSecret }: AppDeps) {
     });
   });
 
-  // Founder CRM v0 (docs/roadmap.md, Phase 1) — Venduá's own intake pipeline.
+  // Venduá CRM — Venduá's own intake pipeline + agentic control surface.
   // Platform data, no tenant context; the gate above is the only boundary.
-  app.get('/control/v1/leads', async (c) => {
-    controlGate(c);
-    const q = c.req.query('state');
-    const rows = await listLeads(sql, q === undefined ? undefined : leadState(q));
-    return c.json({ leads: rows.map(leadJson) });
-  });
+  // All mutations take Idempotency-Key (claimControl — durable claims).
 
-  app.post('/control/v1/leads', async (c) => {
-    controlGate(c);
-    const res = await createLead(sql, leadInsert(await bodyJson(c)), requireIdemKey(c));
-    if (res.replayed) c.header('x-idempotent-replay', 'true');
-    return c.json(res.body, res.status as 200);
-  });
-
-  app.get('/control/v1/leads/:id', async (c) => {
-    controlGate(c);
-    const lead = await getLead(sql, uuidParam(c, 'id'));
-    if (!lead) throw new HttpError(404, 'LEAD_NOT_FOUND', 'lead not found');
-    return c.json({ lead: leadJson(lead) });
-  });
-
-  app.patch('/control/v1/leads/:id', async (c) => {
-    controlGate(c);
-    const res = await updateLead(
-      sql,
-      uuidParam(c, 'id'),
-      leadPatch(await bodyJson(c)),
-      requireIdemKey(c),
-    );
-    if (res.replayed) c.header('x-idempotent-replay', 'true');
-    return c.json(res.body);
-  });
-
-  app.post('/control/v1/leads/:id/notes', async (c) => {
-    controlGate(c);
-    const body = str((await bodyJson(c)).body, 'body', 2000).trim();
-    if (!body) throw new HttpError(422, 'BAD_REQUEST', 'body is required', { field: 'body' });
-    const res = await appendNote(sql, uuidParam(c, 'id'), body, requireIdemKey(c));
-    if (res.replayed) c.header('x-idempotent-replay', 'true');
-    return c.json(res.body);
-  });
-
-  // The staff board itself. POST /control/v1/board {key} mints the HttpOnly
-  // cookie and redirects to the clean URL — a POST body keeps the secret out
-  // of access logs and browser history (a ?key= URL would persist both).
-  // After that the cookie alone opens this page and its API.
-  app.get('/control/v1/board', (c) => {
-    if (!controlAuthed(c)) return c.html(boardLoginHtml());
-    return c.html(boardHtml());
-  });
-  // Board login guesses a shared secret — cap attempts at 10/min/IP so a
-  // reachable deployment isn't an oracle for a weak CONTROL_SECRET. Same
-  // fixed-window shape as the checkout limiter; per-IP, no tenant context.
+  // Fixed-window per-IP login limiter — same shape as the checkout one.
   const loginHits = new Map<string, { count: number; resetAt: number }>();
-  app.post('/control/v1/board', async (c) => {
-    // Same XFF convention as the checkout limiter: client sits left of the
-    // suffix our trusted proxies appended.
+  app.post('/control/v1/login', async (c) => {
+    // Login guesses a shared secret — cap attempts at 10/min/IP so a
+    // reachable deployment isn't an oracle for a weak CONTROL_SECRET.
     const ip = (() => {
       if (!trustProxy) return 'local';
       const xff = c.req
@@ -646,30 +638,642 @@ export function createApp({ sql, sessionSecret, controlSecret }: AppDeps) {
       return xff?.at(-1 - proxyHops) ?? 'unknown';
     })();
     const now = Date.now();
+    // Evict expired buckets — without this, rotating client addresses (each
+    // a new map key) grow the map until the process exhausts memory.
+    for (const [k, v] of loginHits) if (v.resetAt <= now) loginHits.delete(k);
     const bucket = loginHits.get(ip);
     if (!bucket || bucket.resetAt <= now) {
       loginHits.set(ip, { count: 1, resetAt: now + 60_000 });
     } else if (++bucket.count > 10) {
       throw new HttpError(429, 'RATE_LIMITED', 'too many attempts — retry in a minute');
     }
-    const form = (await c.req.parseBody().catch(() => ({}))) as Record<string, unknown>;
-    if (form.key !== staffSecret) throw new HttpError(404, 'NOT_FOUND', 'not found');
+    const body = (await bodyJson(c).catch(() => ({}))) as { key?: unknown };
+    if (body.key !== staffSecret) throw new HttpError(404, 'NOT_FOUND', 'not found');
     setCookie(c, CONTROL_COOKIE, controlToken, {
       httpOnly: true,
       sameSite: 'Lax',
       // Secure whenever the request is TLS — directly, or behind a
       // terminating proxy when VENDUA_TRUST_PROXY marks X-Forwarded-*
-      // trustworthy (a strict c.req.url check would silently issue plaintext
-      // cookies in that deployment).
+      // trustworthy.
       secure:
         c.req.url.startsWith('https://') ||
         (trustProxy && c.req.header('x-forwarded-proto') === 'https'),
-      // Staff sessions expire independently of shopper sessions (12h) — a
-      // captured cookie can't outlive the workday it was minted in.
       maxAge: 60 * 60 * 12,
       path: '/control',
     });
-    return c.redirect('/control/v1/board');
+    return c.json({ ok: true });
+  });
+
+  app.post('/control/v1/logout', (c) => {
+    deleteCookie(c, CONTROL_COOKIE, { path: '/control' });
+    return c.json({ ok: true });
+  });
+
+  // Boot probe for the SPA — 404 when unauthed keeps the surface invisible.
+  app.get('/control/v1/session', (c) => {
+    controlGate(c);
+    return c.json({ ok: true });
+  });
+
+  // ---- leads --------------------------------------------------------------
+  app.get('/control/v1/leads', async (c) => {
+    controlGate(c);
+    const state = c.req.query('state');
+    const tag = c.req.query('tag');
+    const archived = c.req.query('archived');
+    const limit = c.req.query('limit');
+    const q = c.req.query('q');
+    const cursor = c.req.query('cursor');
+    const { leads, nextCursor } = await listLeads(sql, {
+      ...(q ? { q } : {}),
+      ...(state ? { state: leadState(state) } : {}),
+      ...(tag ? { tag: str(tag, 'tag', 60) } : {}),
+      ...(archived === 'only' || archived === 'all' ? { archived } : {}),
+      ...(limit ? { limit: Math.min(Math.max(Number(limit) || 50, 1), 200) } : {}),
+      ...(cursor ? { cursor } : {}),
+    });
+    return c.json({ leads, nextCursor });
+  });
+
+  app.post('/control/v1/leads', async (c) => {
+    controlGate(c);
+    // Lead + its triage run share ONE claim: a retried POST replays the
+    // stored body (lead + runId) instead of creating a second lead.
+    const res = await claimControl<{ lead: Lead; runId?: string }>(
+      sql,
+      requireIdemKey(c),
+      async (tx) => {
+        const created = await insertLeadTx(tx, leadInsert(await bodyJson(c)));
+        if (created.body.lead.agentMode !== 'off') {
+          const runId = await insertRun(tx, {
+            kind: 'triage',
+            leadId: created.body.lead.id,
+          });
+          return { status: created.status, body: { ...created.body, runId } };
+        }
+        return created;
+      },
+    );
+    if (res.replayed) c.header('x-idempotent-replay', 'true');
+    if (res.body.runId) void drain(sql).catch((e) => console.error('[agent drain]', e));
+    return c.json(res.body, res.status as 200);
+  });
+
+  app.get('/control/v1/leads/export', async (c) => {
+    controlGate(c);
+    const csv = await exportLeadsCsv(sql);
+    c.header('content-type', 'text/csv; charset=utf-8');
+    c.header('content-disposition', 'attachment; filename="leads.csv"');
+    return c.body(csv);
+  });
+
+  app.post('/control/v1/leads/import', async (c) => {
+    controlGate(c);
+    // Raw text/csv body — not the JSON cap — so bulk imports aren't capped
+    // at 32KB.
+    if (!(c.req.header('content-type') ?? '').includes('text/csv')) {
+      throw new HttpError(415, 'BAD_REQUEST', 'content-type must be text/csv');
+    }
+    const len = Number(c.req.header('content-length') ?? 0);
+    if (len > 4_000_000) throw new HttpError(413, 'BAD_REQUEST', 'csv too large');
+    const text = await c.req.text();
+    if (text.length > 4_000_000) throw new HttpError(413, 'BAD_REQUEST', 'csv too large');
+    const { rows, skipped } = parseLeadsCsv(text);
+    const res = await importLeads(sql, rows, requireIdemKey(c));
+    if (res.replayed) c.header('x-idempotent-replay', 'true');
+    return c.json({
+      ...res.body,
+      skipped: [...skipped, ...res.body.skipped],
+    });
+  });
+
+  app.get('/control/v1/leads/duplicates', async (c) => {
+    controlGate(c);
+    return c.json({ groups: await findDuplicates(sql) });
+  });
+
+  app.get('/control/v1/stats', async (c) => {
+    controlGate(c);
+    return c.json(await leadStats(sql));
+  });
+
+  app.get('/control/v1/leads/:id', async (c) => {
+    controlGate(c);
+    const lead = await getLeadDetail(sql, uuidParam(c, 'id'));
+    if (!lead) throw new HttpError(404, 'LEAD_NOT_FOUND', 'lead not found');
+    return c.json({ lead });
+  });
+
+  app.patch('/control/v1/leads/:id', async (c) => {
+    controlGate(c);
+    const res = await updateLead(
+      sql,
+      uuidParam(c, 'id'),
+      leadPatch(await bodyJson(c)),
+      requireIdemKey(c),
+      'staff',
+    );
+    if (res.replayed) c.header('x-idempotent-replay', 'true');
+    return c.json(res.body);
+  });
+
+  app.delete('/control/v1/leads/:id', async (c) => {
+    controlGate(c);
+    const res = await deleteLead(sql, uuidParam(c, 'id'), requireIdemKey(c));
+    if (res.replayed) c.header('x-idempotent-replay', 'true');
+    return c.json(res.body);
+  });
+
+  app.post('/control/v1/leads/:id/unsubscribe', async (c) => {
+    controlGate(c);
+    const id = uuidParam(c, 'id');
+    const res = await claimControl(sql, requireIdemKey(c), async (tx) => {
+      const rows = await tx`
+        update leads set unsubscribed_at = now(), updated_at = now()
+        where id = ${id} and unsubscribed_at is null returning id
+      `;
+      const exists = rows[0] ?? (await tx`select id from leads where id = ${id}`)[0];
+      if (!exists) throw new HttpError(404, 'LEAD_NOT_FOUND', 'lead not found');
+      if (rows[0]) {
+        await tx`
+          insert into lead_activities (lead_id, kind, body, created_by)
+          values (${id}, 'system', 'Descadastrado pela equipe', 'staff')
+        `;
+      }
+      return { status: 200, body: { ok: true } };
+    });
+    if (res.replayed) c.header('x-idempotent-replay', 'true');
+    return c.json(res.body);
+  });
+
+  app.post('/control/v1/leads/:id/run', async (c) => {
+    controlGate(c);
+    const body = await bodyJson(c);
+    const kind = str(body.kind, 'kind', 40);
+    if (!['triage', 'reply', 'outreach', 'discovery'].includes(kind)) {
+      throw new HttpError(422, 'BAD_REQUEST', 'kind must be triage|reply|outreach|discovery');
+    }
+    const leadId = uuidParam(c, 'id');
+    const threadId = body.threadId ? str(body.threadId, 'threadId', 64) : null;
+    if (threadId && !UUID_RE.test(threadId)) {
+      throw new HttpError(400, 'BAD_REQUEST', 'threadId must be a uuid');
+    }
+    const res = await claimControl(sql, requireIdemKey(c), async (tx) => {
+      if (threadId) {
+        const th = (
+          await tx<{ lead_id: string }[]>`
+            select lead_id from lead_threads where id = ${threadId}
+          `
+        )[0];
+        if (!th) throw new HttpError(404, 'THREAD_NOT_FOUND', 'thread not found');
+        if (th.lead_id.toLowerCase() !== leadId.toLowerCase()) {
+          throw new HttpError(422, 'BAD_REQUEST', 'threadId does not belong to leadId');
+        }
+      }
+      return {
+        status: 201,
+        body: {
+          runId: await insertRun(tx, {
+            kind: kind as 'triage' | 'reply' | 'outreach' | 'discovery',
+            leadId,
+            ...(threadId ? { threadId } : {}),
+            params: (body.params as Record<string, unknown>) ?? {},
+          }),
+        },
+      };
+    });
+    if (res.replayed) c.header('x-idempotent-replay', 'true');
+    void drain(sql).catch((e) => console.error('[agent drain]', e));
+    return c.json(res.body, res.status as 201);
+  });
+
+  // ---- activities / tasks ---------------------------------------------------
+  app.get('/control/v1/leads/:id/activities', async (c) => {
+    controlGate(c);
+    return c.json({ activities: await listActivities(sql, uuidParam(c, 'id')) });
+  });
+
+  app.post('/control/v1/leads/:id/activities', async (c) => {
+    controlGate(c);
+    const body = await bodyJson(c);
+    const kind =
+      typeof body.kind === 'string' && (ACTIVITY_KINDS as readonly string[]).includes(body.kind)
+        ? (body.kind as ActivityKind)
+        : 'note';
+    const res = await addActivity(
+      sql,
+      uuidParam(c, 'id'),
+      { kind, body: str(body.body, 'body', 4000), createdBy: 'staff' },
+      requireIdemKey(c),
+    );
+    if (res.replayed) c.header('x-idempotent-replay', 'true');
+    return c.json(res.body, res.status as 200);
+  });
+
+  app.get('/control/v1/leads/:id/threads', async (c) => {
+    controlGate(c);
+    return c.json({ threads: await threadsForLead(sql, uuidParam(c, 'id')) });
+  });
+
+  app.post('/control/v1/leads/:id/threads', async (c) => {
+    controlGate(c);
+    const body = await bodyJson(c);
+    const leadId = uuidParam(c, 'id');
+    const chan = channel(str(body.channel, 'channel', 20));
+    const res = await claimControl(sql, requireIdemKey(c), async (tx) => {
+      const lead = await tx`select 1 from leads where id = ${leadId}`;
+      if (!lead[0]) throw new HttpError(404, 'LEAD_NOT_FOUND', 'lead not found');
+      const thread = await ensureThread(tx, leadId, chan);
+      return { status: 200, body: { thread } };
+    });
+    if (res.replayed) c.header('x-idempotent-replay', 'true');
+    return c.json(res.body, res.status as 200);
+  });
+
+  app.post('/control/v1/leads/:id/tasks', async (c) => {
+    controlGate(c);
+    const body = await bodyJson(c);
+    const res = await createTask(
+      sql,
+      uuidParam(c, 'id'),
+      {
+        title: str(body.title, 'title', 300),
+        dueAt: (body.dueAt as string) ?? null,
+        createdBy: 'staff',
+      },
+      requireIdemKey(c),
+    );
+    if (res.replayed) c.header('x-idempotent-replay', 'true');
+    return c.json(res.body, res.status as 200);
+  });
+
+  app.get('/control/v1/tasks', async (c) => {
+    controlGate(c);
+    const done = c.req.query('done');
+    const leadId = c.req.query('leadId');
+    return c.json({
+      tasks: await listTasks(sql, {
+        ...(leadId ? { leadId } : {}),
+        ...(done === 'true' || done === 'false' ? { done: done === 'true' } : {}),
+      }),
+    });
+  });
+
+  app.patch('/control/v1/tasks/:id', async (c) => {
+    controlGate(c);
+    const body = await bodyJson(c);
+    const res = await completeTask(sql, uuidParam(c, 'id'), body.done !== false, requireIdemKey(c));
+    if (res.replayed) c.header('x-idempotent-replay', 'true');
+    return c.json(res.body);
+  });
+
+  // ---- inbox / threads / messages -------------------------------------------
+  app.get('/control/v1/threads', async (c) => {
+    controlGate(c);
+    const chan = c.req.query('channel');
+    const q = c.req.query('q');
+    return c.json({
+      threads: await listThreads(sql, {
+        ...(chan ? { channel: channel(chan) as Channel } : {}),
+        ...(q ? { q } : {}),
+      }),
+    });
+  });
+
+  app.get('/control/v1/threads/:id', async (c) => {
+    controlGate(c);
+    const t = await getThread(sql, uuidParam(c, 'id'));
+    if (!t) throw new HttpError(404, 'THREAD_NOT_FOUND', 'thread not found');
+    return c.json(t);
+  });
+
+  app.post('/control/v1/threads/:id/agent', async (c) => {
+    controlGate(c);
+    const body = await bodyJson(c);
+    const res = await setThreadAgent(
+      sql,
+      uuidParam(c, 'id'),
+      body.enabled !== false,
+      requireIdemKey(c),
+    );
+    if (res.replayed) c.header('x-idempotent-replay', 'true');
+    return c.json(res.body);
+  });
+
+  app.post('/control/v1/threads/:id/messages', async (c) => {
+    controlGate(c);
+    const id = uuidParam(c, 'id');
+    const body = await bodyJson(c);
+    const t = await controlTx(
+      sql,
+      (tx) =>
+        tx<
+          { lead_id: string; channel: Channel }[]
+        >`select lead_id, channel from lead_threads where id = ${id}`,
+    );
+    if (!t[0]) throw new HttpError(404, 'THREAD_NOT_FOUND', 'thread not found');
+    const wantSend = body.send === true;
+    const res = await composeMessage(
+      sql,
+      {
+        leadId: t[0].lead_id,
+        channel: t[0].channel,
+        body: str(body.body, 'body', 8000),
+        author: 'staff',
+        status: wantSend ? 'queued' : 'draft',
+      },
+      requireIdemKey(c),
+    );
+    if (res.replayed) c.header('x-idempotent-replay', 'true');
+    if (wantSend) {
+      // dispatchMessage no-ops unless the row is still 'queued' — safe on replay.
+      const { dispatchMessage } = await import('./agent/send.ts');
+      const sent = await dispatchMessage(sql, res.body.message.id);
+      return c.json({ ...res.body, sent });
+    }
+    return c.json(res.body, res.status as 200);
+  });
+
+  // ---- approvals queue --------------------------------------------------------
+  app.get('/control/v1/approvals', async (c) => {
+    controlGate(c);
+    return c.json({ drafts: await listDrafts(sql) });
+  });
+
+  app.post('/control/v1/messages/:id/approve', async (c) => {
+    controlGate(c);
+    const res = await approveMessage(sql, uuidParam(c, 'id'), 'staff', requireIdemKey(c));
+    if (res.replayed) c.header('x-idempotent-replay', 'true');
+    const { dispatchMessage } = await import('./agent/send.ts');
+    const sent = await dispatchMessage(sql, res.body.message.id);
+    return c.json({ ...res.body, sent });
+  });
+
+  app.post('/control/v1/messages/:id/reject', async (c) => {
+    controlGate(c);
+    const res = await rejectMessage(sql, uuidParam(c, 'id'), requireIdemKey(c));
+    if (res.replayed) c.header('x-idempotent-replay', 'true');
+    return c.json(res.body);
+  });
+
+  // ---- integrations / settings ------------------------------------------------
+  app.get('/control/v1/integrations', async (c) => {
+    controlGate(c);
+    return c.json({ integrations: await listIntegrations(sql) });
+  });
+
+  app.put('/control/v1/integrations/:kind', async (c) => {
+    controlGate(c);
+    const body = await bodyJson(c);
+    const kind = integrationKind(c.req.param('kind'));
+    const res = await upsertIntegration(
+      sql,
+      {
+        kind,
+        driver: str(body.driver, 'driver', 60),
+        ...(body.enabled !== undefined ? { enabled: body.enabled === true } : {}),
+        ...(body.config !== undefined ? { config: body.config as Record<string, unknown> } : {}),
+        ...(body.secretRef !== undefined ? { secretRef: body.secretRef as string | null } : {}),
+      },
+      requireIdemKey(c),
+    );
+    if (res.replayed) c.header('x-idempotent-replay', 'true');
+    if (kind === 'whatsapp') {
+      // Reconcile the live socket now — a disable/switch must close the old
+      // Baileys session immediately, not whenever the next outbound or
+      // disconnect happens to trigger it.
+      const [{ getIntegration }, { ensureSocket }] = await Promise.all([
+        import('./modules/integrations.ts'),
+        import('./agent/channels/whatsapp.ts'),
+      ]);
+      void getIntegration(sql, 'whatsapp')
+        .then((i) => ensureSocket(sql, i))
+        .catch((e) => console.error('[whatsapp] socket reconcile failed', e));
+    }
+    return c.json(res.body);
+  });
+
+  app.get('/control/v1/settings', async (c) => {
+    controlGate(c);
+    const rows = await listSettings(sql);
+    // guardrails/pitch return the EFFECTIVE objects (defaults merged into the
+    // stored row) — what the agent actually runs on, not the sparse override.
+    return c.json({
+      settings: [
+        ...rows.filter((r) => r.key !== 'guardrails' && r.key !== 'pitch'),
+        { key: 'guardrails', value: await getGuardrails(sql) },
+        { key: 'pitch', value: await getPitch(sql) },
+      ],
+    });
+  });
+
+  app.put('/control/v1/settings/:key', async (c) => {
+    controlGate(c);
+    const body = await bodyJson(c);
+    const key = str(c.req.param('key'), 'key', 80);
+    validateSetting(key, body.value);
+    const res = await putSetting(sql, key, body.value, requireIdemKey(c));
+    if (res.replayed) c.header('x-idempotent-replay', 'true');
+    return c.json(res.body);
+  });
+
+  // ---- agent runs --------------------------------------------------------------
+  app.get('/control/v1/agent/runs', async (c) => {
+    controlGate(c);
+    const kind = c.req.query('kind');
+    const status = c.req.query('status');
+    const limit = Math.min(Math.max(Number(c.req.query('limit') ?? 50) || 50, 1), 200);
+    const params: unknown[] = [];
+    const p = (v: unknown) => {
+      params.push(v);
+      return `$${params.length}`;
+    };
+    const where = [kind ? `kind = ${p(kind)}` : 'true', status ? `status = ${p(status)}` : 'true'];
+    const rows = await controlTx(sql, (tx) =>
+      tx.unsafe(
+        `select r.id, r.kind, r.status, r.lead_id, r.thread_id, r.tokens_in, r.tokens_out,
+                r.cost_cents, r.error, r.created_at, r.started_at, r.finished_at,
+                l.name as lead_name
+         from agent_runs r left join leads l on l.id = r.lead_id
+         where ${where.join(' and ')}
+         order by r.created_at desc limit ${p(limit)}`,
+        params as never[],
+      ),
+    );
+    return c.json({ runs: rows });
+  });
+
+  app.get('/control/v1/agent/runs/:id', async (c) => {
+    controlGate(c);
+    const id = uuidParam(c, 'id');
+    const rows = await controlTx(
+      sql,
+      (tx) =>
+        tx`select r.*, l.name as lead_name from agent_runs r left join leads l on l.id = r.lead_id where r.id = ${id}`,
+    );
+    if (!rows[0]) throw new HttpError(404, 'RUN_NOT_FOUND', 'run not found');
+    return c.json({ run: rows[0] });
+  });
+
+  app.post('/control/v1/agent/runs', async (c) => {
+    controlGate(c);
+    const body = await bodyJson(c);
+    const kind = str(body.kind, 'kind', 40);
+    if (!['triage', 'reply', 'outreach', 'discovery'].includes(kind)) {
+      throw new HttpError(422, 'BAD_REQUEST', 'kind must be triage|reply|outreach|discovery');
+    }
+    const leadId = body.leadId ? str(body.leadId, 'leadId', 64) : null;
+    const threadId = body.threadId ? str(body.threadId, 'threadId', 64) : null;
+    for (const [field, v] of [
+      ['leadId', leadId],
+      ['threadId', threadId],
+    ] as const) {
+      if (v && !UUID_RE.test(v)) throw new HttpError(400, 'BAD_REQUEST', `${field} must be a uuid`);
+    }
+    const res = await claimControl(sql, requireIdemKey(c), async (tx) => {
+      // leadId and threadId aren't independent: a reply run bound to a thread
+      // must belong to that thread's lead, or thread content could be
+      // answered to the wrong lead's channel.
+      if (leadId && threadId) {
+        const th = (
+          await tx<{ lead_id: string }[]>`
+            select lead_id from lead_threads where id = ${threadId}
+          `
+        )[0];
+        if (!th) throw new HttpError(404, 'THREAD_NOT_FOUND', 'thread not found');
+        if (th.lead_id.toLowerCase() !== leadId.toLowerCase()) {
+          throw new HttpError(422, 'BAD_REQUEST', 'threadId does not belong to leadId');
+        }
+      }
+      return {
+        status: 201,
+        body: {
+          runId: await insertRun(tx, {
+            kind: kind as 'triage' | 'reply' | 'outreach' | 'discovery',
+            leadId,
+            threadId,
+            params: (body.params as Record<string, unknown>) ?? {},
+          }),
+        },
+      };
+    });
+    if (res.replayed) c.header('x-idempotent-replay', 'true');
+    void drain(sql).catch((e) => console.error('[agent drain]', e));
+    return c.json(res.body, res.status as 201);
+  });
+
+  // WhatsApp pairing state for the Settings screen (Baileys QR handshake).
+  app.get('/control/v1/wa/qr', async (c) => {
+    controlGate(c);
+    const rows = await controlTx(
+      sql,
+      (tx) =>
+        tx<
+          { value: { qr: string | null } | null }[]
+        >`select value from control_settings where key = 'wa_qr'`,
+    );
+    return c.json({ qr: rows[0]?.value?.qr ?? null });
+  });
+
+  // ---- channel webhooks ---------------------------------------------------------
+  // A shared webhook secret (VENDUA_WEBHOOK_SECRET, derived from the staff key
+  // when unset) gates inbound posts — channels can't carry our staff cookie.
+  const webhookSecret =
+    process.env.VENDUA_WEBHOOK_SECRET ??
+    createHmac('sha256', staffSecret).update('vendua.webhook').digest('hex');
+  // Constant-time compare — a leaked timing delta would make the shared
+  // secret byte-by-byte guessable.
+  const webhookSecretBytes = Buffer.from(webhookSecret, 'utf8');
+  const webhookSecretOk = (h: string | undefined) =>
+    h != null &&
+    h.length === webhookSecret.length &&
+    timingSafeEqual(Buffer.from(h, 'utf8'), webhookSecretBytes);
+  // Cap inbound volume — an accepted message writes CRM rows and launches an
+  // LLM run, so a guessed/leaked secret must not buy unbounded spend.
+  let webhookBucket = { count: 0, resetAt: 0 };
+  app.post('/control/v1/webhooks/:channel', async (c) => {
+    if (!webhookSecretOk(c.req.header('x-vendua-webhook'))) {
+      throw new HttpError(404, 'NOT_FOUND', 'not found');
+    }
+    const nowMs = Date.now();
+    if (webhookBucket.resetAt <= nowMs) {
+      webhookBucket = { count: 0, resetAt: nowMs + 60_000 };
+    }
+    if (++webhookBucket.count > 240) {
+      throw new HttpError(429, 'RATE_LIMITED', 'webhook rate exceeded — retry in a minute');
+    }
+    // Only real providers hit this endpoint — 'manual' threads exist so staff
+    // can type inbound notes, and no webhook should mint inbound activity
+    // under that channel.
+    const chan = channel(c.req.param('channel'));
+    if (chan !== 'email' && chan !== 'whatsapp') {
+      throw new HttpError(422, 'BAD_REQUEST', 'channel must be email|whatsapp');
+    }
+    const body = await bodyJson(c);
+    // Providers deliver at-least-once: without a stable message id a retry
+    // would mint a second conversation and a second reply run. Require it.
+    const rawMsgId = body.messageId ?? body.message_id;
+    if (rawMsgId == null || String(rawMsgId).trim() === '') {
+      throw new HttpError(422, 'BAD_REQUEST', 'messageId is required for webhook dedupe', {
+        field: 'messageId',
+      });
+    }
+    const res = await ingestInbound(sql, {
+      channel: chan,
+      from: str(body.from ?? body.sender, 'from', 200),
+      ...(body.fromName || body.from_name
+        ? { fromName: str(body.fromName ?? body.from_name, 'fromName', 200) }
+        : {}),
+      ...(body.subject ? { subject: str(body.subject, 'subject', 300) } : {}),
+      body: str(body.text ?? body.body ?? body.html, 'body', 8000),
+      providerMessageId: str(rawMsgId, 'messageId', 200),
+    });
+    return c.json(res, 201);
+  });
+
+  // ---- control SPA ---------------------------------------------------------------
+  // Prod: Core serves the built React app from apps/control/dist.
+  // Dev: the vite server on :5195 proxies /control/v1 here — hit it instead.
+  const CONTROL_DIST = join(import.meta.dir, '../../../apps/control/dist');
+  const SPA_MIME: Record<string, string> = {
+    '.html': 'text/html; charset=utf-8',
+    '.js': 'application/javascript; charset=utf-8',
+    '.css': 'text/css; charset=utf-8',
+    '.svg': 'image/svg+xml',
+    '.png': 'image/png',
+    '.jpg': 'image/jpeg',
+    '.webp': 'image/webp',
+    '.ico': 'image/x-icon',
+    '.json': 'application/json',
+    '.woff2': 'font/woff2',
+    '.woff': 'font/woff',
+    '.map': 'application/json',
+    '.txt': 'text/plain; charset=utf-8',
+  };
+  app.get('/control', (c) => c.redirect('/control/'));
+  app.get('/control/*', async (c) => {
+    const path = new URL(c.req.url).pathname;
+    // Unmatched /control/v1/* GETs must not fall through to the SPA shell.
+    if (path.startsWith('/control/v1')) {
+      return c.json({ error: { code: 'NOT_FOUND', message: 'not found' } }, 404);
+    }
+    if (!existsSync(CONTROL_DIST)) {
+      return c.html(
+        '<!doctype html><title>venduá control</title><p style="font-family:monospace">control app not built — <code>cd apps/control && bun run dev</code> (vite :5195) or <code>bun run build</code> for prod.</p>',
+      );
+    }
+    const rel = normalize(path.slice('/control'.length)).replace(/^[/\\]+/, '');
+    let file = join(CONTROL_DIST, rel);
+    if (!file.startsWith(CONTROL_DIST)) {
+      throw new HttpError(404, 'NOT_FOUND', 'not found');
+    }
+    if (!rel || !existsSync(file) || statSync(file).isDirectory()) {
+      file = join(CONTROL_DIST, 'index.html');
+    }
+    const ext = extname(file);
+    c.header('content-type', SPA_MIME[ext] ?? 'application/octet-stream');
+    c.header('cache-control', ext === '.html' ? 'no-store' : 'public, max-age=31536000, immutable');
+    return c.body(await Bun.file(file).arrayBuffer());
   });
 
   app.route('/storefront/v1', storefront);

@@ -10,3 +10,4 @@ artifacts/
 storefronts/*/qa-report/
 storefronts/*/dist/
 packages/conformance/test/.tmp/
+apps/control/dist/

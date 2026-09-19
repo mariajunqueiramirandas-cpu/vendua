@@ -8,7 +8,8 @@
     "site",
     "packages/*",
     "storefronts/*",
-    "storefronts/_examples/*"
+    "storefronts/_examples/*",
+    "apps/*"
   ],
   "scripts": {
     "dev": "bun --filter @vendua/site dev",
