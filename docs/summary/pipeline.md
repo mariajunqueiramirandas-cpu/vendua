@@ -46,6 +46,7 @@ conversation → DesignSpec (validated JSON) → agent_tasks queue
 ## Roadmap
 
 See [`../roadmap.md`](../roadmap.md) — rewritten fleet-first (2026-09-18):
-phases follow the fleet lifecycle (produce → deploy → operate → migrate →
-generate → scale), Control Plane lands in Phase 2, and growth is gated by
-fleet stages (1 / 5 / 25 / 100 / 1000 stores), not just phase exits.
+phases follow the fleet lifecycle (produce → sell → deploy → operate →
+migrate → generate → scale), Control Plane lands in Phase 4 (before the first
+real tenant), and growth is gated by fleet stages (1 / 5 / 25 / 100 / 1000
+stores), not just phase exits.

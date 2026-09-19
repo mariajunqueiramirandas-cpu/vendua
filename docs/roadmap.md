@@ -8,15 +8,17 @@ fleet _operable at its current size_ — we never ship a capability we can't
 operate at the N we have, and we never let manual operations survive the stage
 that created them. Manual ops at N=1 become permanent ops at N=100.
 
-Ordering follows the fleet lifecycle: **produce → deploy → operate → migrate →
-generate → scale**. Two consequences versus a naive build order:
+Ordering follows the fleet lifecycle: **produce → sell → deploy → operate →
+migrate → generate → scale**. Two consequences versus a naive build order:
 
-- The Control Plane and artifact pipeline land in Phase 2, not later — the
-  first real merchant is provisioned, promoted, probed and rolled back through
-  the same machinery as the thousandth.
+- The Control Plane and artifact pipeline land before the first real merchant
+  — they are prerequisites for tenant #1, not a later phase.
 - Monorepo machinery (scaffold, changed-path CI, affected builds, `_template`
-  /`_examples`) is Phase 1 factory work, not agent-era tooling — it is what
-  makes N storefronts one repo instead of N projects.
+  /`_examples`) is factory work, not agent-era tooling — it is what makes N
+  storefronts one repo instead of N projects.
+- **Commerce completeness is its own phase** (Phase 2) — the Quero Pudim port
+  proved the reference storefront ships features Core can't express; a real
+  merchant must not lose features versus the old stack.
 
 ## Fleet stages — the gates that actually matter
 
@@ -31,7 +33,7 @@ until its row is true.
 | Growth       | ~100  | Agent pipeline is the default intake; Core HA + LKG proven by a real failover drill; train cost measured      |
 | Fleet        | ~1000 | `fleet-*` shard rehearsed; Kernel publishing path proven; train economics budgeted                            |
 
-## Phase 0 — Fleet-shaped foundations (weeks 0–4)
+## Phase 0 — Fleet-shaped foundations (weeks 0–4) ✅
 
 Goal: stop guessing what the Contract must be — and start inside the real
 layout, not a scratch project.
@@ -39,20 +41,20 @@ layout, not a scratch project.
 - [x] Monorepo skeleton **first**: `packages/`, `storefronts/`, workspace
       wiring. Spike storefronts live at `storefronts/<slug>/` from day one.
 - [x] Core skeleton: tenancy, catalog, store settings/hours, server-side cart,
-      checkout stub, orders. **`tenant_id` + RLS on every table from the first
-      migration** — tenancy is the one thing that cannot be retrofitted.
-- [x] Rough Kernel: provider, 3–4 hooks, 3–4 primitives, `<SystemSurfaces />`
-      with only a generic notice renderer.
-- [ ] Build **3–5 storefronts semi-manually** (agent-assisted, human-steered),
-      starting by porting the existing Quero Pudim Gourmet storefront. The
-      strongest become `storefronts/_examples/` — the curated read set for
-      future agents ([06](architecture/06-monorepo.md#agents-in-the-monorepo)).
-- [x] Write down every place a store needed to touch behavior that should have
-      been central — those become slots/primitives/API fields.
-      → [`phase-0-findings.md`](phase-0-findings.md) + [`contract-v1-draft.md`](contract-v1-draft.md)
+      checkout, orders, delivery zones. **`tenant_id` + RLS on every table
+      from the first migration** — tenancy is the one thing that cannot be
+      retrofitted.
+- [x] Rough Kernel: provider, hooks, primitives, `<SystemSurfaces />` with a
+      generic notice renderer.
+- [x] Built **3 spike storefronts** semi-manually, including a full port of
+      Quero Pudim Gourmet — now `storefronts/_examples/quero-pudim`, the
+      curated read set for future agents.
+- [x] Every store-touch point written down → [`phase-0-findings.md`](phase-0-findings.md) + [`contract-v1-draft.md`](contract-v1-draft.md). The port surfaced 15
+      feature gaps — tracked in the [feature-gap ledger](#feature-gap-ledger)
+      below and assigned to phases.
 
-Exit: Contract v1 drafted from _observed_ needs; all spike code already lives
-in the monorepo layout it will keep.
+Exit met: Contract v1 drafted from observed needs; spike code lives in the
+monorepo layout it keeps.
 
 ## Phase 1 — The storefront factory (weeks 4–8)
 
@@ -75,20 +77,83 @@ Exit: `vendua scaffold && vendua build && vendua qa` is green on a fresh
 storefront without any custom code — and a storefront PR physically cannot
 touch platform code.
 
-## Phase 2 — One tenant, operated for real (weeks 6–14, overlaps)
+## Phase 2 — Commerce completeness (weeks 8–12)
+
+Goal: Core expresses everything a real merchant storefront needs — the
+Quero Pudim reference must run on the platform with **zero storefront-side
+workarounds**. Each gap below lands as schema + API + Kernel support; the
+`_examples/quero-pudim` golden gets migrated off its defensive shims as proof.
+
+### 2a — Order lifecycle (the post-checkout truth)
+
+- [ ] `items[]` (name, qty, unitPriceCents, modifiers) on `GET /orders/:id` —
+      today storefronts snapshot `cart.items` into sessionStorage to render
+      the order page.
+- [ ] `notes` on `CheckoutInput` → `OrderView` ("Alguma observação?").
+- [ ] Structured address fields (street/number/complement/bairro/cep) instead
+      of one freeform string.
+- [ ] Orders-by-phone (`GET /customer/orders?phone=`) + Kernel `useOrders(phone)`
+      — "sem senha, sem cadastro" order history across devices.
+- [ ] Realtime order updates — Kernel-owned `useOrder(id)` polling/SSE wrapper
+      (storefronts can't open EventSource per the contract).
+
+### 2b — Catalog depth
+
+- [ ] `imageUrl`/`gallery[]` on products (media table) — ports render
+      `figureVariant` SVG fallbacks today.
+- [ ] `stockQuantity` + `lowStockThreshold` on products ("Restam N", qty cap).
+- [ ] Combos entity: `slots[] { name, minSelect, maxSelect, qtyPerItem }` +
+      `items[]` per slot + checkout validation — kills the seeded "Kits as
+      modifier-groups" hack.
+- [ ] Preorder/encomendas: `requiresPreorder`, `preorderLeadDays`,
+      `scheduledFor` on `CheckoutInput` + payment-method constraints
+      (encomendas are Pix-only in the reference).
+
+### 2c — Growth surfaces
+
+- [ ] Coupons: `POST /checkout/v1/coupons/validate` + `discountCents` on cart
+      totals.
+- [ ] Waitlist: `POST /storefront/v1/waitlist` (productId, phone) — replaces
+      the wa.me deep-link workaround.
+- [ ] Loyalty card: `GET /customer/loyalty?phone=` (points/stamps).
+- [ ] Cross-device cart recovery: `POST /cart` accepting items, or Kernel
+      `importCart(items)` — the `?cart=` share-link flow.
+- [ ] CEP lookup / address autocomplete + distance-based zone pricing
+      (replaces bairro-name matching).
+- [ ] Pix fields on the store profile (`pixKey`, `pixBeneficiary`, QR payload)
+      — surfaced on the store page, not only post-checkout instructions.
+      Payment capture itself stays in Phase 4.
+
+Exit: `_examples/quero-pudim` compiles with every `(p as { … })` defensive
+cast and sessionStorage workaround deleted; conformance can assert the real
+flows.
+
+## Phase 3 — Payments + merchant admin (weeks 12–16)
+
+Goal: money moves through the platform and a merchant can run the store
+without touching a repo.
+
+- [ ] Mercado Pago OAuth + `application_fee` + PIX + webhook-driven order
+      state machine ([13](architecture/13-payments.md)).
+- [ ] Merchant admin MVP: catalog CRUD (incl. Phase-2 fields), hours,
+      zones/fees, orders, MP connect.
+- [ ] Server-driven notices end-to-end: emit `store_paused` from Core, watch
+      an _unmodified_ storefront render it
+      ([05](architecture/05-system-surfaces.md)).
+
+Exit: a merchant edits catalog/hours and receives paid PIX orders without
+engineer involvement.
+
+## Phase 4 — One tenant, operated for real (weeks 14–20, overlaps)
 
 Goal: the first merchant is live **through the fleet machinery**, not around
-it. This is the phase the old ordering got wrong — deployment and operations
-are prerequisites for tenant #1, not a later phase.
+it — deployment and operations are prerequisites for tenant #1.
 
-- [ ] Mercado Pago OAuth + `application_fee` + PIX + webhook-driven order state
-      machine ([13](architecture/13-payments.md)).
-- [ ] Server-driven notices end-to-end: emit `store_paused` from Core, watch an
-      _unmodified_ storefront render it ([05](architecture/05-system-surfaces.md)).
-- [ ] Merchant admin MVP (catalog CRUD, hours, orders, MP connect).
 - [ ] Edge v1: artifact serving + `vendua-state` injection
       ([07](architecture/07-deployment-and-hosting.md)); `slug.vendua.com.br`
-      auto-provisioning + wildcard TLS ([12](architecture/12-domains-and-tls.md)).
+      auto-provisioning + wildcard TLS
+      ([12](architecture/12-domains-and-tls.md)). The Dokploy compose is the
+      interim/self-hosted path until this lands.
 - [ ] **Control Plane v0** ([08](architecture/08-control-plane.md)): tenants /
       storefronts / releases / deployments / domains tables; promote and
       rollback as pointer flips; 60 s synthetic probes per live hostname;
@@ -98,7 +163,7 @@ Exit: a real merchant takes a real paid order on `*.vendua.com.br` — and their
 storefront was provisioned, promoted, is being probed, and could be rolled
 back entirely through the Control Plane. **Stage gate: First store.**
 
-## Phase 3 — The fleet loop (weeks 12–18)
+## Phase 5 — The fleet loop (weeks 18–24)
 
 Goal: change reaches the fleet as a boring, gated, reversible operation —
 proven while N is small enough to fix cheaply.
@@ -119,7 +184,7 @@ Exit: a fleet train is _boring_; a rollback drill takes minutes; stale-store
 CI has caught — or demonstrably would catch — a real break. **Stage gates:
 Pilot cohort → Early fleet.**
 
-## Phase 4 — Generation pilot (weeks 16–24)
+## Phase 6 — Generation pilot (weeks 22–30)
 
 Goal: agents produce storefronts through the exact path humans use — the PR
 interface is the only interface.
@@ -140,7 +205,7 @@ Exit: a new storefront goes from DesignSpec to live `*.vendua.com.br` site with
 at most one human approval gate; cost per launched storefront is a measured
 number. **Stage gate: Early fleet → Growth.**
 
-## Phase 5 — Scale hardening (ongoing, before ~50 tenants)
+## Phase 7 — Scale hardening (ongoing, before ~50 tenants)
 
 - [ ] Core HA: multi-instance, managed Postgres or rehearsed failover,
       last-known-good serving ([16](architecture/16-operations-and-incidents.md)).
@@ -153,7 +218,7 @@ number. **Stage gate: Early fleet → Growth.**
 Exit: a real failover drill passed; a custom domain live end-to-end; the
 rehearsed Contract major's failure tail measured under 20%.
 
-## Phase 6 — The road to 1000 (before ~300 tenants)
+## Phase 8 — The road to 1000 (before ~300 tenants)
 
 The monorepo's documented end-state is `fleet-*` repos on published Kernel
 versions ([06](architecture/06-monorepo.md#scaling-limits-and-the-sharding-trigger)).
@@ -172,6 +237,33 @@ This phase makes that path real before it is forced.
 
 Exit: sharding is rehearsed, not theoretical; the trigger decision is
 evidence-backed.
+
+## Feature-gap ledger
+
+Every feature the Quero Pudim reference ships that the platform couldn't
+express during the port (source:
+[`storefronts/quero-pudim/OBSERVATIONS.md`](../storefronts/quero-pudim/OBSERVATIONS.md)).
+Two landed during Phase-0 review; the rest are scheduled.
+
+| Gap                                  | Status                                                |
+| ------------------------------------ | ----------------------------------------------------- |
+| Delivery zones readable pre-checkout | ✅ Landed — `GET /storefront/v1/zones`                |
+| Order view / polling                 | ✅ Landed — `useOrder(id)` + session-bound order auth |
+| Order items on the order view        | Phase 2a                                              |
+| Order notes                          | Phase 2a                                              |
+| Structured address                   | Phase 2a                                              |
+| Orders-by-phone                      | Phase 2a                                              |
+| Realtime order updates               | Phase 2a                                              |
+| `imageUrl` / gallery                 | Phase 2b                                              |
+| Stock quantity + low-stock           | Phase 2b                                              |
+| Combos / kits                        | Phase 2b                                              |
+| Preorder / encomendas                | Phase 2b                                              |
+| Coupons                              | Phase 2c                                              |
+| Waitlist                             | Phase 2c                                              |
+| Loyalty card                         | Phase 2c                                              |
+| `?cart=` share links                 | Phase 2c                                              |
+| CEP lookup + distance pricing        | Phase 2c                                              |
+| Pix key on store profile             | Phase 2c (fields) + Phase 3 (capture)                 |
 
 ## Metrics that gate growth
 
@@ -192,5 +284,5 @@ evidence-backed.
   need; [07](architecture/07-deployment-and-hosting.md#option-b--multi-tenant-ssr-host-deferred).
 - Repo-per-storefront — [ADR 0001](adr/0001-monorepo-for-storefronts.md).
 - Microservices in Core — [ADR 0013](adr/0013-modular-monolith-core.md).
-- `fleet-*` sharding itself — rehearsed in Phase 6, executed on trigger.
-- Third-party courier/dispatch integrations — after Phase 6.
+- `fleet-*` sharding itself — rehearsed in Phase 8, executed on trigger.
+- Third-party courier/dispatch integrations — after Phase 8.
