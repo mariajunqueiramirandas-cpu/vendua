@@ -1,6 +1,12 @@
 import type { Sql } from '../platform/db.ts';
 import { controlTx } from '../modules/control.ts';
-import { getGuardrails, getIntegration, getPitch, getSetting } from '../modules/integrations.ts';
+import {
+  DEFAULT_GUARDRAILS,
+  getGuardrails,
+  getIntegration,
+  getPitch,
+  getSetting,
+} from '../modules/integrations.ts';
 import type { Guardrails } from '../modules/integrations.ts';
 import { providerFor, type AgentMessage } from './llm.ts';
 import { buildSystemPrompt } from './prompts.ts';
@@ -26,7 +32,7 @@ export function resolveMaxSteps(params: Record<string, unknown>, guardrails: Gua
       ? fromParams
       : typeof guardrails.maxSteps === 'number' && Number.isFinite(guardrails.maxSteps)
         ? guardrails.maxSteps
-        : 12;
+        : DEFAULT_GUARDRAILS.maxSteps;
   return n > 0 ? n : Number.POSITIVE_INFINITY;
 }
 
