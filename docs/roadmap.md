@@ -60,19 +60,19 @@ monorepo layout it keeps.
 
 Goal: storefronts are _produced_, not hand-built — and the repo enforces it.
 
-- [ ] Freeze Contract v1 ([03](architecture/03-storefront-contract.md)):
+- [x] Freeze Contract v1 ([03](architecture/03-storefront-contract.md)):
       `vendua.config.ts`, required mounts, reserved system routes, primitives,
       budgets, dependency policy.
 - [ ] `@vendua/conformance` v1: commerce flow, paused/closed states, viewports,
       a11y baseline, byte budget — modeled on the teaser site's existing suite
       (see `site/tests/site.spec.ts` and `site/VALIDACAO.md`).
-- [ ] `@vendua/cli`: `scaffold`, `dev`, `check`, `build`, `qa`.
+- [x] `@vendua/cli`: `scaffold`, `dev`, `check`, `build`, `qa`.
       `storefronts/_template` always green.
-- [ ] **Fleet isolation machinery**: CODEOWNERS, changed-path CI check
+- [x] **Fleet isolation machinery**: CODEOWNERS, changed-path CI check
       (`storefront:<slug>` PRs touch only `storefronts/<slug>/**`), affected-
       graph build, cross-boundary import lint. This is the sandbox every later
       agent and contributor works inside.
-- [ ] **Founder CRM v0** — merchant-intake pipeline for Venduá itself: a
+- [x] **Founder CRM v0** — merchant-intake pipeline for Venduá itself: a
       `leads` table in Core + a staff-only board (lead → contacted → invited →
       live, notes per merchant). Doesn't wait for the Control Plane — merchant
       conversations start before the fleet exists, and tracking them in a
