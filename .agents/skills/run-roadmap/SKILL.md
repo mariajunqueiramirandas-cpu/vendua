@@ -31,9 +31,9 @@ loop → merge per policy → structured report).
    `devin_session_interact`. Relay their questions to the user — never
    answer design decisions for them.
 5. When the batch settles, send the user ONE report: per-item
-   status/PR/summary plus the consolidated `manual_steps` list — that list
-   is the user's work queue. `blocked`/`open` items stay unchecked; the
-   next run picks them up.
+   status/PR/summary plus the consolidated `manual_steps` and `postponed`
+   lists — together they are the user's work queue. `blocked`/`open`
+   items stay unchecked; the next run picks them up.
 
 ## Merge policy
 
