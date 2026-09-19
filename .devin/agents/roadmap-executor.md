@@ -31,14 +31,14 @@ planning anything.
    (`bun run check`, `bun run build`, `bun run test:e2e`,
    `bun run format:check`). Name the commands and results in `summary`.
 4. Open the PR: branch `devin/<timestamp>-<slug>`; body names the roadmap
-   item. Always annotate your item's roadmap line with `(PR #N)` in THIS
-   PR — that tag is the in-flight marker the master uses to skip the item
-   while its PR is open. Fully done: flip `- [ ]` → `- [x]` so status
-   lands atomically with the merge. Partial slice: split per step 1
-   (shipped part `[x]`, remainder `[ ]`). Touch only your item's line(s):
-   other executors may be editing their own lines at the same time. Post
-   any required manual steps as a PR comment too, so they live with the
-   work.
+   item and quotes its first line verbatim — the master maps open PRs to
+   items by that quote (nothing in your PR is visible on main until it
+   merges). Annotate your item's roadmap line with `(PR #N)` in THIS PR:
+   fully done → flip `- [ ]` → `- [x]`; partial slice → split per step 1
+   (shipped part `[x]`, remainder `[ ]`). The tag is the permanent
+   item↔PR record after merge. Touch only your item's line(s): other
+   executors may be editing their own lines at the same time. Post any
+   required manual steps as a PR comment too, so they live with the work.
 5. Review loop: `git_pr_checks` until CI settles; `git_view_pr` for Devin
    Review and human comments. Fix what is real; answer — don't code — what
    is wrong; resolve every thread you addressed (`resolve_thread_id`). If a

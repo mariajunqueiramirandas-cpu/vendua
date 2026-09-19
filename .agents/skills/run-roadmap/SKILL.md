@@ -14,13 +14,16 @@ loop → merge per policy → structured report).
 
 ## Procedure
 
-1. Read `docs/roadmap.md`. The active phase is the first `## Phase` still
-   containing `- [ ]` items. An unchecked item already tagged `(PR #N)` is
-   in flight, not new work — `gh pr view N --json state`: OPEN means
-   awaiting merge (skip it, list it in the plan), CLOSED-unmerged means
-   free to re-delegate, MERGED means its check-off is missing (fix the box
-   in a housekeeping edit). Show the user the phase, the delegatable
-   items, and your plan before spawning anything.
+1. Read `docs/roadmap.md` AND enumerate open PRs
+   (`gh pr list --state open`) — executor PR bodies quote their item's
+   first line verbatim, so map each open executor PR to its item: those
+   items are in-flight (skip them, list them as awaiting merge). An
+   unchecked item on main already tagged `(PR #N)` is a stale marker —
+   `gh pr view N --json state`: CLOSED-unmerged = free to re-delegate,
+   MERGED = check-off missing (fix the box in a housekeeping edit). The
+   active phase is the first `## Phase` with open `- [ ]` items. Show the
+   user the phase, the delegatable items, and your plan before spawning
+   anything.
 2. Plan with judgment. Heavily favor one executor per item whenever items
    are independent — parallel executors are the default _when they help_.
    Do an item yourself or run sequentially when items depend on each other,
@@ -37,9 +40,9 @@ loop → merge per policy → structured report).
 5. When the batch settles, send the user ONE report: per-item
    status/PR/summary plus the consolidated `manual_steps` and `postponed`
    lists — together they are the user's work queue. `blocked` items stay
-   unchecked and untagged — the next run picks them up. `open` items keep
-   their `(PR #N)` in-flight tag — the next run skips them while the PR
-   awaits merge.
+   unchecked — the next run picks them up. `open` items are skipped while
+   their PR is live (detected via the open-PR list in step 1 — the
+   `(PR #N)` tag only reaches main at merge).
 
 ## Merge policy
 
