@@ -326,3 +326,24 @@ OBSERVATIONS.md `## Feature gaps`. Candidates for Contract v1 or Phase 1+.)
   checkout (pre-order), paused blocks. A product decision Core should state.
 - **No scaffold** — `vendua.config.ts`, vite proxy, tsconfig chain are all
   hand-rolled per store. Phase 1's `vendua scaffold` is already planned.
+
+## Review hardening — round 6
+
+- **Bounded public input** — `bodyJson` reads raw text and 413s over 32KB;
+  checkout/delivery/quote fields length-capped (name 200, phone 40,
+  neighborhood 200, address 500); `modifierIds` capped at 32 entries.
+- **Malformed identifiers → stable 4xx** — `uuidParam()` guards
+  `:itemId`/`:id` params and `productId` before uuid comparisons; Postgres
+  `22P02` no longer surfaces as `INTERNAL`.
+- **Manual `closed` no longer promises reopening** — the override persists
+  until cleared, so `resumesAt` is now only the configured `resumes_at`,
+  never the next scheduled window.
+- **v.js ↔ Kernel handoff** — `VenduaProvider` sets
+  `__VENDUA_KERNEL_MOUNTED__` and removes `#vendua-loader-overlay`; the
+  loader's tick yields once the flag is set, so blocking surfaces render
+  once (Kernel's) instead of under a max-z-index loader card.
+- **Kernel baseUrl changes** — a changed `baseUrl` mints a fresh client
+  (per-api cache, session cleared) instead of silently keeping the old
+  backend.
+- **Order tracking survives storage failures** — per-order checkout tokens
+  live in an in-memory map first; sessionStorage is the refresh layer.

@@ -146,10 +146,15 @@ export function deriveStatus(
   if (override === 'paused') {
     return resumesAt ? { status: 'paused', resumesAt } : { status: 'paused' };
   }
+  if (override === 'closed') {
+    // A manual close persists until explicitly cleared — the next scheduled
+    // window can't predict it, so only a configured resumes_at is honest.
+    return resumesAt ? { status: 'closed', resumesAt } : { status: 'closed' };
+  }
   const tz = hours.timezone || 'America/Sao_Paulo';
   const { day, minutes } = localParts(now, tz);
   const open = hours.windows.some((w) => withinWindow(minutes, w, day));
-  if (open && override !== 'closed') return { status: 'open' };
+  if (open) return { status: 'open' };
   const next = nextOpen(hours, now);
   return next
     ? { status: 'closed', resumesAt: next.toISOString() }

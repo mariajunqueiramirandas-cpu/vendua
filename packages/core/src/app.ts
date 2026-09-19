@@ -10,7 +10,9 @@ import {
   bodyJson,
   rateLimit,
   sessionCartId,
+  str,
   tenantMiddleware,
+  uuidParam,
   verifySessionToken,
 } from './platform/http.ts';
 import { TenantResolver, type Tenant } from './platform/tenancy.ts';
@@ -254,9 +256,17 @@ export function createApp({ sql, sessionSecret }: AppDeps) {
       const cartId = await sessionCartId(c, sessionSecret);
       const body = await bodyJson(c);
       await assertCartOpen(tx, tenant.id, cartId);
-      const productId = String(body.productId ?? '');
+      // Identifier + array bounds: malformed productIds would raise 22P02 in
+      // the uuid comparison (INTERNAL instead of a contract 4xx), and the
+      // modifier list is bounded so oversized arrays can't burn validation.
+      const productId = str(body.productId, 'productId', 64);
+      if (!/^[0-9a-f-]{36}$/i.test(productId)) {
+        throw new HttpError(422, 'BAD_REQUEST', 'productId must be a uuid');
+      }
       const qty = Number(body.qty ?? 1);
-      const modifierIds = Array.isArray(body.modifierIds) ? body.modifierIds.map(String) : [];
+      const modifierIds = Array.isArray(body.modifierIds)
+        ? body.modifierIds.slice(0, 32).map((m) => str(m, 'modifierId', 64))
+        : [];
       const cart = await addItem(tx, tenant.id, cartId, { productId, qty, modifierIds }, getProductById);
       return { status: 200, body: { cart } };
     })(c);
@@ -272,10 +282,11 @@ export function createApp({ sql, sessionSecret }: AppDeps) {
         throw new HttpError(422, 'INVALID_QTY', 'qty must be an integer between 0 and 99');
       }
       await assertCartOpen(tx, tenant.id, cartId);
+      const itemId = uuidParam(c, 'itemId');
       if (qty === 0) {
-        await tx`delete from cart_items where tenant_id = ${tenant.id} and cart_id = ${cartId} and id = ${c.req.param('itemId')}`;
+        await tx`delete from cart_items where tenant_id = ${tenant.id} and cart_id = ${cartId} and id = ${itemId}`;
       } else {
-        await tx`update cart_items set qty = ${qty} where tenant_id = ${tenant.id} and cart_id = ${cartId} and id = ${c.req.param('itemId')}`;
+        await tx`update cart_items set qty = ${qty} where tenant_id = ${tenant.id} and cart_id = ${cartId} and id = ${itemId}`;
       }
       await tx`update carts set updated_at = now() where id = ${cartId}`;
       const cart = await loadCartView(tx, tenant.id, cartId);
@@ -288,7 +299,7 @@ export function createApp({ sql, sessionSecret }: AppDeps) {
     return idempotency(sql, async (c, tx) => {
       const cartId = await sessionCartId(c, sessionSecret);
       await assertCartOpen(tx, tenant.id, cartId);
-      await tx`delete from cart_items where tenant_id = ${tenant.id} and cart_id = ${cartId} and id = ${c.req.param('itemId')}`;
+      await tx`delete from cart_items where tenant_id = ${tenant.id} and cart_id = ${cartId} and id = ${uuidParam(c, 'itemId')}`;
       const cart = await loadCartView(tx, tenant.id, cartId);
       return { status: 200, body: { cart } };
     })(c);
@@ -303,9 +314,11 @@ export function createApp({ sql, sessionSecret }: AppDeps) {
       if (mode !== 'pickup' && mode !== 'delivery') {
         throw new HttpError(422, 'INVALID_DELIVERY', 'mode must be pickup or delivery');
       }
+      const nb = neighborhood === undefined || neighborhood === null ? null : str(neighborhood, 'neighborhood', 200);
+      const addr = address === undefined || address === null ? null : str(address, 'address', 500);
       await assertCartOpen(tx, tenant.id, cartId);
       await tx`
-        update carts set delivery = ${tx.json({ mode, neighborhood: typeof neighborhood === 'string' ? neighborhood : null, address: typeof address === 'string' ? address : null })}, updated_at = now()
+        update carts set delivery = ${tx.json({ mode, neighborhood: nb, address: addr })}, updated_at = now()
         where tenant_id = ${tenant.id} and id = ${cartId}
       `;
       const cart = await loadCartView(tx, tenant.id, cartId);
@@ -318,7 +331,12 @@ export function createApp({ sql, sessionSecret }: AppDeps) {
     return idempotency(sql, async (c, tx) => {
       const { neighborhood } = await bodyJson(c);
       const zones = await loadZones(tx, tenant.id);
-      const zone = matchZone(zones, typeof neighborhood === 'string' ? neighborhood : '');
+      const zone = matchZone(
+        zones,
+        neighborhood === undefined || neighborhood === null
+          ? ''
+          : str(neighborhood, 'neighborhood', 200),
+      );
       if (!zone) {
         return { status: 200, body: { eligible: false, reason: 'OUT_OF_ZONE' } };
       }
@@ -424,7 +442,7 @@ export function createApp({ sql, sessionSecret }: AppDeps) {
     const tenant = c.get('tenant');
     const cartId = await sessionCartId(c, sessionSecret);
     const order = await withTenant(sql, tenant.id, (tx) =>
-      loadOrderView(tx, tenant.id, c.req.param('id'), cartId),
+      loadOrderView(tx, tenant.id, uuidParam(c, 'id'), cartId),
     );
     return c.json({ order });
   });

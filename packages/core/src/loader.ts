@@ -12,6 +12,14 @@ export const LOADER_JS = `(function () {
     return '';
   }
   async function tick() {
+    // Once the Kernel mounts it owns surfaces — the loader is the last-resort
+    // path only. Yield and strip any overlay already rendered.
+    if (window.__VENDUA_KERNEL_MOUNTED__) {
+      var stale = document.getElementById('vendua-loader-overlay');
+      if (stale) stale.remove();
+      window[PING].overlay = false;
+      return;
+    }
     var data;
     try {
       var res = await fetch(hostBase() + '/storefront/v1/state', { credentials: 'same-origin' });

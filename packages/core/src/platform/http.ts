@@ -283,16 +283,41 @@ export async function sessionCartId(c: Context, secret: string): Promise<string>
   return cartId;
 }
 
-/** `c.req.json()` that 400s on malformed input instead of 500ing. */
+/** Bounded `c.req.json()` — 400s on malformed input, 413s on oversized bodies. */
+const MAX_BODY_BYTES = 32 * 1024;
+
 export async function bodyJson(c: Context): Promise<Record<string, unknown>> {
+  // Public mutation endpoints take attacker-controlled bodies; cap the raw
+  // text before parsing so oversized payloads can't burn parse time/memory.
+  const raw = await c.req.text();
+  if (raw.length > MAX_BODY_BYTES) {
+    throw new HttpError(413, 'PAYLOAD_TOO_LARGE', `body exceeds ${MAX_BODY_BYTES} bytes`);
+  }
+  let body: unknown;
   try {
-    const body = await c.req.json();
-    if (!body || typeof body !== 'object' || Array.isArray(body)) {
-      throw new HttpError(400, 'BAD_REQUEST', 'body must be a JSON object');
-    }
-    return body as Record<string, unknown>;
-  } catch (err) {
-    if (err instanceof HttpError) throw err;
+    body = JSON.parse(raw);
+  } catch {
     throw new HttpError(400, 'BAD_REQUEST', 'body is not valid JSON');
   }
+  if (!body || typeof body !== 'object' || Array.isArray(body)) {
+    throw new HttpError(400, 'BAD_REQUEST', 'body must be a JSON object');
+  }
+  return body as Record<string, unknown>;
+}
+
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/** `param()` that 400s on malformed ids instead of letting Postgres 22P02 500. */
+export function uuidParam(c: Context, name: string): string {
+  const v = c.req.param(name) ?? '';
+  if (!UUID_RE.test(v)) throw new HttpError(400, 'BAD_REQUEST', `${name} must be a uuid`);
+  return v;
+}
+
+/** Bounded string field — `name` must be a string of at most `max` chars. */
+export function str(v: unknown, name: string, max = 500): string {
+  if (typeof v !== 'string' || v.length > max) {
+    throw new HttpError(422, 'BAD_REQUEST', `${name} must be a string of at most ${max} chars`);
+  }
+  return v;
 }

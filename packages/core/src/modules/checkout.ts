@@ -104,16 +104,21 @@ export function validateCheckout(
   return { zone: null };
 }
 
+/** Bounded string check — public checkout input must not be unbounded. */
+function bounded(v: unknown, max: number): v is string {
+  return typeof v === 'string' && v.length <= max;
+}
+
 export function validateCheckoutShape(input: unknown): asserts input is CheckoutInput {
   const i = input as CheckoutInput;
   if (!i || typeof i !== 'object')
     throw new HttpError(422, 'BAD_REQUEST', 'body must be an object');
-  if (typeof i.customer?.name !== 'string' || i.customer.name.trim().length < 2) {
+  if (!bounded(i.customer?.name, 200) || i.customer.name.trim().length < 2) {
     throw new HttpError(422, 'INVALID_CUSTOMER', 'customer.name is required', {
       field: 'customer.name',
     });
   }
-  if (typeof i.customer?.phone !== 'string' || i.customer.phone.trim().length < 8) {
+  if (!bounded(i.customer?.phone, 40) || i.customer.phone.trim().length < 8) {
     throw new HttpError(422, 'INVALID_CUSTOMER', 'customer.phone is required', {
       field: 'customer.phone',
     });
@@ -124,7 +129,12 @@ export function validateCheckoutShape(input: unknown): asserts input is Checkout
     });
   }
   if (i.delivery.mode === 'delivery') {
-    if (typeof i.delivery.address !== 'string' || i.delivery.address.trim().length === 0) {
+    if (i.delivery.neighborhood !== undefined && !bounded(i.delivery.neighborhood, 200)) {
+      throw new HttpError(422, 'INVALID_DELIVERY', 'delivery.neighborhood is too long', {
+        field: 'delivery.neighborhood',
+      });
+    }
+    if (!bounded(i.delivery.address, 500) || i.delivery.address.trim().length === 0) {
       throw new HttpError(422, 'INVALID_DELIVERY', 'delivery.address is required for delivery', {
         field: 'delivery.address',
       });

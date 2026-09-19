@@ -72,13 +72,20 @@ export function VenduaProvider({
   baseUrl?: string;
   children: ReactNode;
 }) {
-  const apiRef = useRef<VenduaApi>();
-  if (!apiRef.current) apiRef.current = createApi(baseUrl);
+  const apiRef = useRef<{ api: VenduaApi; baseUrl: string }>();
+  if (!apiRef.current || apiRef.current.baseUrl !== baseUrl) {
+    // baseUrl is effectively static — but if it ever changes, the old
+    // client's cache and session belong to the previous backend: drop the
+    // session and mint a fresh client (its WeakMap cache is separate).
+    apiRef.current?.api.clearSession();
+    apiRef.current = { api: createApi(baseUrl), baseUrl };
+  }
+  const api = apiRef.current.api;
   const listeners = useRef(new Map<string, Set<() => void>>());
 
   const ctx = useMemo<KernelCtx>(
     () => ({
-      api: apiRef.current!,
+      api,
       config,
       invalidate(key) {
         listeners.current.get(key)?.forEach((fn) => fn());
@@ -90,7 +97,7 @@ export function VenduaProvider({
         return () => set!.delete(fn);
       },
     }),
-    [config],
+    [config, api],
   );
 
   // Emit design tokens as --v-* vars on :root (02-kernel.md#design-tokens).
@@ -106,11 +113,20 @@ export function VenduaProvider({
   // Track this provider's cache while mounted so module-level invalidateQuery
   // can fan out to live providers without pinning unmounted ones.
   useEffect(() => {
-    const cache = cacheFor(apiRef.current!);
+    const cache = cacheFor(api);
     liveCaches.add(cache);
     return () => {
       liveCaches.delete(cache);
     };
+  }, [api]);
+
+  // Kernel mounted → v.js (the last-resort loader) yields: it removes its
+  // blocking overlay and stops owning surfaces. Without the handoff, a
+  // blocking notice would render twice — the loader's generic card at max
+  // z-index hides the storefront's override.
+  useEffect(() => {
+    (globalThis as Record<string, unknown>).__VENDUA_KERNEL_MOUNTED__ = true;
+    document.getElementById('vendua-loader-overlay')?.remove();
   }, []);
 
   return <Ctx.Provider value={ctx}>{children}</Ctx.Provider>;

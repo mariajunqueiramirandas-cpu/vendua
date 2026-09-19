@@ -264,6 +264,9 @@ export function createApi(baseUrl = '') {
   const co = (path: string) => `${baseUrl}/checkout/v1${path}`;
   let token: string | null = readStoredToken();
   let sessionPromise: Promise<{ cart: Cart }> | null = null;
+  // Per-order checkout tokens — memory first (survives sessionStorage
+  // write failures), persisted copy is the refresh-across-navigation layer.
+  const orderTokenMem = new Map<string, string>();
   const auth = () => (token ? { authorization: `Bearer ${token}` } : {});
 
   return {
@@ -359,11 +362,14 @@ export function createApi(baseUrl = '') {
       }).then((r) => {
         // The token used to place the order is its tracking credential —
         // keep it before session rotation swaps `token` to the next cart.
-        if (token) storeOrderToken(r.order.id, token);
+        if (token) {
+          orderTokenMem.set(r.order.id, token);
+          storeOrderToken(r.order.id, token);
+        }
         return r.order;
       }),
     order: (id: string) => {
-      const bearer = readOrderTokens()[id] ?? token;
+      const bearer = orderTokenMem.get(id) ?? readOrderTokens()[id] ?? token;
       return apiFetch<{ order: Order }>(co(`/orders/${id}`), {
         headers: bearer ? { authorization: `Bearer ${bearer}` } : {},
       }).then((r) => r.order);
