@@ -1334,7 +1334,7 @@ export function createApp({ sql, sessionSecret, controlSecret }: AppDeps) {
   // A shared webhook secret (VENDUA_WEBHOOK_SECRET, derived from the staff key
   // when unset) gates inbound posts — channels can't carry our staff cookie.
   const webhookSecret =
-    process.env.VENDUA_WEBHOOK_SECRET ??
+    process.env.VENDUA_WEBHOOK_SECRET ||
     createHmac('sha256', staffSecret).update('vendua.webhook').digest('hex');
   // Constant-time compare — a leaked timing delta would make the shared
   // secret byte-by-byte guessable.

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState, type ChangeEvent } from 'react';
+import { useCallback, useEffect, useRef, useState, type ChangeEvent } from 'react';
 import QRCode from 'qrcode';
 import { api, type Integration } from '../api.ts';
 import { Page } from '../components.tsx';
@@ -315,6 +315,38 @@ function ProviderCard({
     if (wa.status === 'open') setPairCode(null);
   }, [wa.status]);
 
+  const activateBaileys = () => {
+    const saved = rows.find((r) => r.driver === 'baileys');
+    onSave(
+      {
+        driver: 'baileys',
+        secretRef: saved?.secretRef ?? '',
+        config: Object.fromEntries(
+          Object.entries(saved?.config ?? {}).map(([k, v]) => [k, String(v)]),
+        ),
+      },
+      true,
+    );
+  };
+  // WhatsApp pairing needs a live socket, which only exists once an enabled
+  // baileys row does — and baileys is the card's default selection, so on a
+  // fresh setup it's already highlighted without any click. Activate it once
+  // the rows load instead of waiting for a save click that isn't obvious.
+  const waAuto = useRef(false);
+  useEffect(() => {
+    if (
+      waAuto.current ||
+      kind.key !== 'whatsapp' ||
+      driver !== 'baileys' ||
+      rows.length === 0 || // empty = still loading, not "no baileys row"
+      rows.some((r) => r.driver === 'baileys' && r.enabled)
+    )
+      return;
+    waAuto.current = true;
+    activateBaileys();
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- one-shot once rows arrive
+  }, [kind.key, driver, rows]);
+
   const drv = kind.drivers.find((x) => x.d === driver) ?? kind.drivers[0];
   // The saved row for the SELECTED driver — its secretName/secretPresent
   // reflect what's actually on the server, independent of `enabled`.
@@ -394,24 +426,14 @@ function ProviderCard({
                   setSecretRef(dd.secretName ?? '');
                   setConfig({});
                 }
-                // WhatsApp pairing needs a live socket, and the socket only
-                // exists once an enabled baileys row does — persisting the
-                // driver choice is the activation, so save it on select
-                // instead of making staff click salvar before the QR appears.
-                const baileysRow = rows.find((r) => r.driver === 'baileys' && r.enabled);
-                if (kind.key === 'whatsapp' && dd.d === 'baileys' && !baileysRow) {
-                  const saved = rows.find((r) => r.driver === 'baileys');
-                  onSave(
-                    {
-                      driver: 'baileys',
-                      secretRef: saved?.secretRef ?? '',
-                      config: Object.fromEntries(
-                        Object.entries(saved?.config ?? {}).map(([k, v]) => [k, String(v)]),
-                      ),
-                    },
-                    true,
-                  );
-                }
+                // Clicking baileys is also explicit activation intent —
+                // covers re-selects after the one-shot mount effect fired.
+                if (
+                  kind.key === 'whatsapp' &&
+                  dd.d === 'baileys' &&
+                  !rows.some((r) => r.driver === 'baileys' && r.enabled)
+                )
+                  activateBaileys();
               }}
             >
               {dd.label}
@@ -451,7 +473,7 @@ function ProviderCard({
             ))}
           </div>
         )}
-        {kind.key === 'whatsapp' && driver === 'baileys' && current?.enabled && (
+        {kind.key === 'whatsapp' && current?.driver === 'baileys' && current.enabled && (
           <div className="wa-pair">
             {wa.status === 'open' ? (
               <>
