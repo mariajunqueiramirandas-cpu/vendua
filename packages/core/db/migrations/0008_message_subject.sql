@@ -5,8 +5,13 @@
 
 alter table lead_messages add column if not exists subject text;
 
--- Existing queued/draft outbound rows inherit their thread's current subject.
+-- Only rows that can still dispatch inherit the thread's current subject —
+-- a completed send used whatever the thread said back then, so stamping it
+-- now would fabricate history.
 update lead_messages m
 set subject = t.subject
 from lead_threads t
-where m.thread_id = t.id and m.direction = 'out' and m.subject is null;
+where m.thread_id = t.id
+  and m.direction = 'out'
+  and m.status in ('draft', 'queued')
+  and m.subject is null;

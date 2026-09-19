@@ -401,8 +401,10 @@ export async function composeMessageTx(
     thread.subject = input.subjectOverride;
   }
   // Snapshot the effective subject on the row — dispatch must send what was
-  // approved, not whatever the thread says by the time it runs.
-  const messageSubject = input.subjectOverride ?? input.subject ?? thread.subject;
+  // approved. thread.subject is already the effective value: ensureThread
+  // coalesced a plain `subject` into an empty thread, and subjectOverride
+  // above replaced it outright.
+  const messageSubject = thread.subject;
   const message = (
     await tx<MessageRow[]>`
       insert into lead_messages (thread_id, direction, author, body, status, agent_run_id, subject)
