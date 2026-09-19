@@ -26,8 +26,8 @@ export async function dispatchMessage(
   const job = await controlTx(sql, async (tx) => {
     const msg = (
       await tx<
-        { id: string; thread_id: string; body: string; status: string }[]
-      >`select id, thread_id, body, status from lead_messages where id = ${messageId} for update`
+        { id: string; thread_id: string; body: string; status: string; subject: string | null }[]
+      >`select id, thread_id, body, status, subject from lead_messages where id = ${messageId} for update`
     )[0];
     if (!msg) return { fail: 'message not found' as const };
     // Terminal/in-flight states are honest outcomes, not errors — a replayed
@@ -109,7 +109,9 @@ export async function dispatchMessage(
       send: {
         channel: thread.channel,
         to,
-        subject: thread.subject ?? 'Venduá',
+        // The compose-time snapshot wins; the thread subject is only the
+        // fallback for rows written before message-level subjects existed.
+        subject: msg.subject ?? thread.subject ?? 'Venduá',
         body: msg.body,
         integration,
       },

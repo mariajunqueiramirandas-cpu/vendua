@@ -42,6 +42,8 @@ export interface MessageRow {
     'draft' | 'queued' | 'sending' | 'sent' | 'delivered' | 'received' | 'failed' | 'rejected';
   provider_message_id: string | null;
   agent_run_id: string | null;
+  /** Compose-time subject snapshot for outbound messages (0008). */
+  subject: string | null;
   error: string | null;
   approved_by: string | null;
   approved_at: string | null;
@@ -71,6 +73,7 @@ export function messageJson(row: MessageRow) {
     status: row.status,
     providerMessageId: row.provider_message_id,
     agentRunId: row.agent_run_id,
+    subject: row.subject,
     error: row.error,
     approvedBy: row.approved_by,
     approvedAt: row.approved_at,
@@ -397,10 +400,15 @@ export async function composeMessageTx(
     await tx`update lead_threads set subject = ${input.subjectOverride} where id = ${thread.id}`;
     thread.subject = input.subjectOverride;
   }
+  // Snapshot the effective subject on the row — dispatch must send what was
+  // approved. thread.subject is already the effective value: ensureThread
+  // coalesced a plain `subject` into an empty thread, and subjectOverride
+  // above replaced it outright.
+  const messageSubject = thread.subject;
   const message = (
     await tx<MessageRow[]>`
-      insert into lead_messages (thread_id, direction, author, body, status, agent_run_id)
-      values (${thread.id}, 'out', ${input.author}, ${body}, ${input.status ?? 'draft'}, ${input.agentRunId ?? null})
+      insert into lead_messages (thread_id, direction, author, body, status, agent_run_id, subject)
+      values (${thread.id}, 'out', ${input.author}, ${body}, ${input.status ?? 'draft'}, ${input.agentRunId ?? null}, ${messageSubject})
       returning *
     `
   )[0]!;
