@@ -29,14 +29,20 @@ export interface AppDeps {
   sessionSecret: string;
 }
 
-async function loadSettings(tx: Sql, tenantId: string): Promise<StoreSettingsRow | null> {
+async function loadSettings(
+  tx: Sql,
+  tenantId: string,
+  opts: { forUpdate?: boolean } = {},
+): Promise<StoreSettingsRow | null> {
+  const lock = opts.forUpdate ? tx`for update` : tx``;
   const rows = await tx<
     StoreSettingsRow[]
-  >`select * from store_settings where tenant_id = ${tenantId}`;
+  >`select * from store_settings where tenant_id = ${tenantId} ${lock}`;
   return rows[0] ?? null;
 }
 
-async function loadZones(tx: Sql, tenantId: string) {
+async function loadZones(tx: Sql, tenantId: string, opts: { forUpdate?: boolean } = {}) {
+  const lock = opts.forUpdate ? tx`for update` : tx``;
   return tx<
     {
       id: string;
@@ -50,7 +56,7 @@ async function loadZones(tx: Sql, tenantId: string) {
     }[]
   >`
     select id, name, neighborhoods, fee_cents, min_order_cents, eta_min_minutes, eta_max_minutes
-    from delivery_zones where tenant_id = ${tenantId} and active order by name
+    from delivery_zones where tenant_id = ${tenantId} and active order by name ${lock}
   `;
 }
 
@@ -143,7 +149,7 @@ export function createApp({ sql, sessionSecret }: AppDeps) {
   storefront.get('/products/:slug', async (c) => {
     const tenant = c.get('tenant');
     const product = await withTenant(sql, tenant.id, (tx) =>
-      getProduct(tx, tenant.id, c.req.param('slug')),
+      getProduct(tx, tenant.id, str(c.req.param('slug'), 'slug', 200)),
     );
     if (!product) throw new HttpError(404, 'PRODUCT_NOT_FOUND', 'product not found');
     return c.json({ product });
@@ -384,14 +390,23 @@ export function createApp({ sql, sessionSecret }: AppDeps) {
             cartStatus: cart.status,
           });
         }
-        const settings = await loadSettings(tx, tenant.id);
-        const zones = await loadZones(tx, tenant.id);
+        // Tenant-scoped advisory lock taken BEFORE reading eligibility: the
+        // documented choke point for every control-plane write that changes
+        // settings/zones/products/modifiers (REVIEW.md). Row locks below then
+        // pin the actual rows read, so even a non-cooperating writer can't
+        // slip a change between our read and commit under READ COMMITTED.
+        await tx`select pg_advisory_xact_lock(hashtext(${tenant.id}))`;
+        const settings = await loadSettings(tx, tenant.id, { forUpdate: true });
+        const zones = await loadZones(tx, tenant.id, { forUpdate: true });
         // Re-validate every line's stored modifier ids against the CURRENT
         // product definition — a deleted/retired modifier can't quietly drop
         // out of the price and slip through as an underpriced order.
         const products = new Map<string, Awaited<ReturnType<typeof getProductById>>>();
         for (const item of cart.items) {
-          products.set(item.productId, await getProductById(tx, tenant.id, item.productId));
+          products.set(
+            item.productId,
+            await getProductById(tx, tenant.id, item.productId, { forUpdate: true }),
+          );
         }
         const { zone } = validateCheckout(
           currentStatus(settings),
@@ -410,10 +425,9 @@ export function createApp({ sql, sessionSecret }: AppDeps) {
           etaMax: zone?.eta_max_minutes ?? null,
         };
         const deliveryFee = body.delivery.mode === 'delivery' ? (zone?.fee_cents ?? 0) : 0;
-        // Serializes number allocation per tenant for this transaction —
-        // without it two concurrent checkouts read the same max and the
-        // unique constraint eats a valid order (Review finding).
-        await tx`select pg_advisory_xact_lock(hashtext(${tenant.id}))`;
+        // Order numbering runs under the tenant advisory lock acquired at
+        // the top of this transaction — without it two concurrent checkouts
+        // read the same max and the unique constraint eats a valid order.
         const number = (
           await tx<
             { n: number }[]
@@ -467,8 +481,7 @@ export function createApp({ sql, sessionSecret }: AppDeps) {
     if (c.req.header('x-vendua-control') !== sessionSecret) {
       throw new HttpError(404, 'NOT_FOUND', 'not found');
     }
-    const slug = c.req.query('tenant');
-    if (!slug) throw new HttpError(400, 'BAD_REQUEST', 'tenant query param required');
+    const slug = str(c.req.query('tenant'), 'tenant', 200);
     const tenant = await resolver.resolveBySlug(slug);
     if (!tenant) throw new HttpError(404, 'TENANT_NOT_FOUND', 'tenant not found');
     const settings = await withTenant(sql, tenant.id, (tx) => loadSettings(tx, tenant.id));

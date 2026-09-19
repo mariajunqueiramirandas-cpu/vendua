@@ -367,3 +367,19 @@ OBSERVATIONS.md `## Feature gaps`. Candidates for Contract v1 or Phase 1+.)
 - **Checkout pages render Core's totals** — quero-pudim (and the `_examples`
   mirror) no longer recomputes `subtotal + fee` locally; the display follows
   the synced server cart's mode and `totals.totalCents`.
+
+## Review round 11 — commit-time eligibility locking + input caps
+
+- **Checkout eligibility reads are locked** — the checkout tx takes
+  `pg_advisory_xact_lock(hashtext(tenant_id))` up front (the documented
+  serialization point for all future availability writers) and reads
+  store_settings / delivery_zones / products + modifier graph `FOR UPDATE`.
+  Under READ COMMITTED a merchant write could previously slip between the
+  validation read and the order insert — verified live: a concurrent
+  `status='sold_out'` write blocks checkout until commit, then SOLD_OUT
+  instead of placing the order.
+- **`delivery_enabled` defaults true when settings are absent** — the checkout
+  check now matches what `/store` advertises (`?? true`).
+- **Public input caps closed** — `/products/:slug` and `/control/v1/state`'s
+  `tenant` param go through `str(..., 200)`; oversized values 422 instead of
+  reaching the resolver/catalog query.

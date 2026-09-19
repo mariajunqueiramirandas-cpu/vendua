@@ -113,22 +113,26 @@ export async function getProductById(
   tx: Sql,
   tenantId: string,
   id: string,
+  opts: { forUpdate?: boolean } = {},
 ): Promise<ProductDetail | null> {
+  const lock = opts.forUpdate ? tx`for update` : tx``;
   const rows = await tx<ProductRow[]>`
     select id, category_id, slug, name, description, base_price_cents, status, figure_variant, tags
     from products where tenant_id = ${tenantId} and id = ${id} and status != 'archived'
-    limit 1
+    limit 1 ${lock}
   `;
-  return attachModifierGroups(tx, tenantId, rows);
+  return attachModifierGroups(tx, tenantId, rows, opts);
 }
 
 async function attachModifierGroups(
   tx: Sql,
   tenantId: string,
   rows: ProductRow[],
+  opts: { forUpdate?: boolean } = {},
 ): Promise<ProductDetail | null> {
   const product = rows[0];
   if (!product) return null;
+  const lock = opts.forUpdate ? tx`for update` : tx``;
   const groups = await tx<
     {
       id: string;
@@ -140,7 +144,7 @@ async function attachModifierGroups(
     }[]
   >`
     select id, name, required, min_select, max_select, sort from modifier_groups
-    where tenant_id = ${tenantId} and product_id = ${product.id} order by sort, name
+    where tenant_id = ${tenantId} and product_id = ${product.id} order by sort, name ${lock}
   `;
   const modifiers = await tx<
     {
@@ -155,7 +159,7 @@ async function attachModifierGroups(
     select m.id, m.group_id, m.name, m.price_delta_cents, m.status, m.sort
     from modifiers m join modifier_groups g on g.id = m.group_id
     where m.tenant_id = ${tenantId} and g.product_id = ${product.id}
-    order by m.sort, m.name
+    order by m.sort, m.name ${lock}
   `;
   return {
     ...toSummary(product),

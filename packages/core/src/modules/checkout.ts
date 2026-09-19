@@ -82,7 +82,7 @@ export function validateCheckout(
     }
   }
   if (input.delivery.mode === 'delivery') {
-    if (!settings?.delivery_enabled) {
+    if (!(settings?.delivery_enabled ?? true)) {
       throw new HttpError(422, 'DELIVERY_UNAVAILABLE', 'delivery is not available');
     }
     const zone = matchZone(zones, input.delivery.neighborhood);

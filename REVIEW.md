@@ -51,7 +51,15 @@ test. Flag as **security** anything that crosses tenants or weakens auth.
   checkout; `closed` accepts pre-orders — do not flag this), fulfillment mode
   enabled, delivery zone match + fee, min-order, every item still active and
   every modifier still active (sold-out check happens AGAIN at checkout, not
-  only at add-time).
+  only at add-time). Eligibility rows (store_settings, delivery_zones,
+  products, modifier_groups, modifiers) are read `FOR UPDATE` inside the
+  checkout transaction — a read of those tables that runs unlocked in that tx
+  is a stale-read race.
+- Checkout takes `pg_advisory_xact_lock(hashtext(tenant_id))` before reading
+  eligibility. Every future control-plane write that mutates store_settings /
+  delivery_zones / products / modifier_groups / modifiers MUST take the same
+  lock first — a writer that skips it can slip between checkout's read and
+  commit.
 - Fulfillment modes are `pickup`/`delivery` only; `delivery` requires a
   neighborhood that resolves to a zone; a blank or whitespace address is
   invalid.
