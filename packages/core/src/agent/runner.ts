@@ -1,6 +1,7 @@
 import type { Sql } from '../platform/db.ts';
 import { controlTx } from '../modules/control.ts';
-import { getIntegration, getPitch, getSetting } from '../modules/integrations.ts';
+import { getGuardrails, getIntegration, getPitch, getSetting } from '../modules/integrations.ts';
+import type { Guardrails } from '../modules/integrations.ts';
 import { providerFor, type AgentMessage } from './llm.ts';
 import { buildSystemPrompt } from './prompts.ts';
 import { executeTool, toolsFor, type ToolContext } from './tools.ts';
@@ -14,7 +15,23 @@ import { dispatchMessage } from './send.ts';
  * steps are the audit trail.
  */
 
-const MAX_STEPS = 12;
+/** Step cap for the tool loop: run params override guardrails, guardrails
+ *  fall back to the default. 0 (or negative) = uncapped — the loop runs until
+ *  the model stops calling tools, and this cap is the only runaway bound.
+ *  Returns Infinity for the uncapped case so the loop condition stays `i <`. */
+export function resolveMaxSteps(
+  params: Record<string, unknown>,
+  guardrails: Guardrails,
+): number {
+  const fromParams = params.maxSteps;
+  const n =
+    typeof fromParams === 'number' && Number.isFinite(fromParams)
+      ? fromParams
+      : typeof guardrails.maxSteps === 'number' && Number.isFinite(guardrails.maxSteps)
+        ? guardrails.maxSteps
+        : 12;
+  return n > 0 ? n : Number.POSITIVE_INFINITY;
+}
 
 interface RunRow {
   id: string;
@@ -158,6 +175,8 @@ export async function runOnce(sql: Sql): Promise<boolean> {
     const provider = providerFor(integration, run.params);
     const pitch = await getPitch(sql);
     const memory = await getSetting<{ facts: string[] }>(sql, 'agent_memory', { facts: [] });
+    const guardrails = await getGuardrails(sql);
+    const maxSteps = resolveMaxSteps(run.params, guardrails);
     const system = buildSystemPrompt(run.kind, pitch, memory);
     const context = await contextFor(sql, run);
     const tools = toolsFor(run.kind);
@@ -173,7 +192,7 @@ export async function runOnce(sql: Sql): Promise<boolean> {
     steps.push({ type: 'system_prompt', content: system });
     messages.push({ role: 'user', content: context });
 
-    for (let i = 0; i < MAX_STEPS; i++) {
+    for (let i = 0; i < maxSteps; i++) {
       // Heartbeat: `started_at` doubles as the reclaim lease in drain() —
       // refreshing it every step means only a genuinely wedged run (no step in
       // 10 min) gets requeued, never a live one mid-flight.

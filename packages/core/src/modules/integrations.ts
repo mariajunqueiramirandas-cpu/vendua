@@ -167,6 +167,8 @@ export const DEFAULT_GUARDRAILS = {
   firstContactDraftOnly: true,
   /** discovery runs: cap on leads created per run */
   discoveryMaxLeads: 20,
+  /** tool-loop steps per agent run; 0 = uncapped */
+  maxSteps: 12,
 } as const;
 
 export type Guardrails = {
@@ -176,6 +178,7 @@ export type Guardrails = {
   timezone: string;
   firstContactDraftOnly: boolean;
   discoveryMaxLeads: number;
+  maxSteps: number;
 };
 
 export const DEFAULT_PITCH = {
@@ -238,6 +241,7 @@ export function validateSetting(key: string, value: unknown): void {
     };
     intField('maxOutboundPerLeadPerDay', 1, 100);
     intField('discoveryMaxLeads', 1, 1000);
+    intField('maxSteps', 0, 1000);
     for (const k of ['quietStart', 'quietEnd'] as const) {
       if (v[k] === undefined) continue;
       const t = v[k];

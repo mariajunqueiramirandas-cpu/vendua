@@ -422,6 +422,7 @@ function GuardrailsCard({
     timezone: str(value.timezone, 'America/Sao_Paulo'),
     firstContactDraftOnly: value.firstContactDraftOnly !== false,
     discoveryMaxLeads: num(value.discoveryMaxLeads, 20),
+    maxSteps: num(value.maxSteps, 12),
   };
   const [edit, setEdit] = useState(cur);
   useEffect(() => setEdit(cur), [JSON.stringify(cur)]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -430,7 +431,7 @@ function GuardrailsCard({
 
   return (
     <div className="drv on">
-      <div className="grid3">
+      <div className="grid4">
         <div className="field">
           <label>msgs/dia por lead</label>
           <input
@@ -452,6 +453,17 @@ function GuardrailsCard({
             value={edit.discoveryMaxLeads}
             onChange={(e) => setEdit({ ...edit, discoveryMaxLeads: Number(e.target.value) || 1 })}
           />
+        </div>
+        <div className="field">
+          <label>passos por run</label>
+          <input
+            type="number"
+            min={0}
+            max={1000}
+            value={edit.maxSteps}
+            onChange={(e) => setEdit({ ...edit, maxSteps: Number(e.target.value) || 0 })}
+          />
+          <div className="hint">0 = sem limite — roda até o modelo parar de chamar tools</div>
         </div>
         <div className="field">
           <label>fuso</label>
