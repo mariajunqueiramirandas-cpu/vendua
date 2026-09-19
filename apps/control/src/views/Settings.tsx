@@ -222,6 +222,7 @@ export default function Settings() {
                 kind={k}
                 rows={integrations.filter((i) => i.kind === k.key)}
                 wa={k.key === 'whatsapp' ? wa : { qr: null, status: 'off' }}
+                loading={loading}
                 onWaLogout={k.key === 'whatsapp' ? () => void waLogout() : undefined}
                 onSave={(d, enable) => void saveIntegration(k.key, d, enable)}
               />
@@ -259,12 +260,15 @@ function ProviderCard({
   kind,
   rows,
   wa,
+  loading,
   onWaLogout,
   onSave,
 }: {
   kind: { key: string; label: string; sub: string; drivers: Driver[] };
   rows: Integration[];
   wa: { qr: string | null; status: string };
+  /** parent's integrations fetch settled — rows=[] is "never configured" */
+  loading: boolean;
   onWaLogout: (() => void) | undefined;
   onSave: (
     d: { driver: string; secretRef: string; config: Record<string, string> },
@@ -330,22 +334,23 @@ function ProviderCard({
   };
   // WhatsApp pairing needs a live socket, which only exists once an enabled
   // baileys row does — and baileys is the card's default selection, so on a
-  // fresh setup it's already highlighted without any click. Activate it once
-  // the rows load instead of waiting for a save click that isn't obvious.
+  // fresh setup it's already highlighted without any click. Auto-activate
+  // only when the load proves whatsapp was NEVER configured (no rows at
+  // all): a disabled row is explicit state that a page visit must not undo.
   const waAuto = useRef(false);
   useEffect(() => {
     if (
       waAuto.current ||
       kind.key !== 'whatsapp' ||
       driver !== 'baileys' ||
-      rows.length === 0 || // empty = still loading, not "no baileys row"
-      rows.some((r) => r.driver === 'baileys' && r.enabled)
+      loading ||
+      rows.length > 0
     )
       return;
     waAuto.current = true;
     activateBaileys();
     // eslint-disable-next-line react-hooks/exhaustive-deps -- one-shot once rows arrive
-  }, [kind.key, driver, rows]);
+  }, [kind.key, driver, rows, loading]);
 
   const drv = kind.drivers.find((x) => x.d === driver) ?? kind.drivers[0];
   // The saved row for the SELECTED driver — its secretName/secretPresent
