@@ -2,7 +2,14 @@
 // (03-storefront-contract.md); the exports map + lint enforce it.
 
 export { defineStorefront, SLOT_KEYS } from './config.ts';
-export type { ContractMajor, Ring, SlotKey, StorefrontConfig, StorefrontTokens } from './config.ts';
+export type {
+  ContractMajor,
+  FontSource,
+  Ring,
+  SlotKey,
+  StorefrontConfig,
+  StorefrontTokens,
+} from './config.ts';
 
 export { VenduaProvider, useKernel, invalidateQuery } from './provider.tsx';
 export {

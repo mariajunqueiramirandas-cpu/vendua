@@ -18,6 +18,7 @@ export const SLOT_KEYS = [
   'system.ErrorFallback',
   'system.NotFound',
   'system.EmergencyOverlay',
+  'system.PromoNotice',
   'checkout.Layout',
   'checkout.Summary',
   'checkout.AddressForm',
@@ -35,6 +36,16 @@ export const SLOT_KEYS = [
 ] as const;
 export type SlotKey = (typeof SLOT_KEYS)[number];
 
+/** One @font-face declaration — `family` must equal a font role's family
+ *  name so `--v-font-*` vars resolve to the loaded face. `src` is a public
+ *  URL, conventionally under `assets/fonts/` (03-storefront-contract.md). */
+export interface FontSource {
+  family: string;
+  src: string;
+  weight?: number | string;
+  style?: 'normal' | 'italic';
+}
+
 export interface StorefrontTokens {
   color: {
     bg: string;
@@ -46,7 +57,7 @@ export interface StorefrontTokens {
     danger: string;
     success: string;
   };
-  font: { display: string; body: string; mono?: string };
+  font: { display: string; body: string; mono?: string; srcs?: FontSource[] };
   radius: { sm: string; md: string; lg: string };
   space: { scale: number | string[] };
   motion: { duration: string; easing: string };

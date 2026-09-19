@@ -110,6 +110,29 @@ export function VenduaProvider({
     };
   }, [config]);
 
+  // font.srcs → @font-face (03 §vendua.config.ts). font-display: swap is the
+  // contract default — brand fonts must never block first paint.
+  useEffect(() => {
+    const srcs = config.tokens.font.srcs;
+    if (!srcs?.length) return;
+    const style = document.createElement('style');
+    style.dataset.vendua = 'fonts';
+    style.textContent = srcs
+      .map(
+        (s) =>
+          `@font-face{font-family:${JSON.stringify(s.family)};` +
+          `src:url(${JSON.stringify(s.src)});font-display:swap;` +
+          (s.weight != null ? `font-weight:${s.weight};` : '') +
+          (s.style ? `font-style:${s.style};` : '') +
+          '}',
+      )
+      .join('');
+    document.head.appendChild(style);
+    return () => {
+      style.remove();
+    };
+  }, [config]);
+
   // Track this provider's cache + subscriber notifier while mounted so
   // module-level invalidateQuery can evict AND refetch on live providers
   // without pinning unmounted ones.

@@ -53,6 +53,7 @@ Renames require a Contract major + codemod + alias window.
 | `system.ErrorFallback`     | `error; retry`                        | Generic recoverable error panel                                                                        |
 | `system.NotFound`          | `path`                                | 404 page within the storefront shell                                                                   |
 | `system.EmergencyOverlay`  | `notice`                              | Loader-rendered last-resort overlay (see `v.js`)                                                       |
+| `system.PromoNotice`       | `notice; onDismiss`                   | Promo notice (kinds `promo`/`promo_notice`) — falls back to `system.Notice`                            |
 | `checkout.Layout`          | `steps; current; children`            | Step shell (address → delivery → payment → review)                                                     |
 | `checkout.Summary`         | `cart; deliveryFee; total`            | Order summary block                                                                                    |
 | `checkout.AddressForm`     | `value; onChange; errors`             | Address form (validation stays in Kernel)                                                              |
@@ -87,7 +88,7 @@ from the DesignSpec.
 ```ts
 tokens: {
   color:  { bg, surface, text, muted, accent, onAccent, danger, success },
-  font:   { display, body, mono },
+  font:   { display, body, mono, srcs }, // srcs: files in assets/fonts/ → Kernel @font-face
   radius: { sm, md, lg },
   space:  { scale },            // rem scale or explicit steps
   motion: { duration, easing }, // used by defaults' transitions

@@ -1,6 +1,8 @@
 # Contract v1 — draft (from Phase 0 observations)
 
-> Status: Draft · supersedes nothing yet. This is the Phase 0 exit artifact:
+> Status: **Superseded — frozen into [03](architecture/03-storefront-contract.md)
+> as Contract v1** (2026-09-19). Kept as Phase-0 provenance; where this draft
+> and 03 disagree, 03 wins. This is the Phase 0 exit artifact:
 > Contract v1 written from _observed_ needs (docs/roadmap.md). It refines
 > [03 — The Storefront Contract](architecture/03-storefront-contract.md); where
 > they disagree, this draft records what the spikes proved we need.
@@ -86,10 +88,11 @@ contract caught up to them; the rest are candidates for the v1 freeze.
 1. ~~`opensAt` on `/store` vs only in `store_closed` payload~~ — resolved
    Phase 0: `closed` sets `resumesAt` to the next window boundary; both the
    field and the notice payload carry it.
-2. Vocabulary scope: free-form strings or an inflected-forms registry.
-   Free-form for v1.
-3. `figure`/`imageUrl` format: asset URL vs built-in motif enum vs both.
-4. Orders-by-phone: privacy check (phone enumeration) before shipping —
-   likely needs a short OTP or rate limit.
-5. Whether `useOrder` poll interval lives in the hook signature or a
-   storefront config budget.
+2. ~~Vocabulary scope~~ — resolved at freeze: free-form
+   `Record<string, string>`; no inflected-forms registry in v1.
+3. ~~`figure`/`imageUrl` format~~ — resolved at freeze: `figureVariant` motif
+   enum is landed; `imageUrl`/`stockQuantity` land as additive Core fields.
+4. ~~Orders-by-phone~~ — resolved at freeze: deferred; ships only behind
+   phone verification (OTP or tight rate limit). Not in v1's required surface.
+5. ~~`useOrder` poll interval~~ — resolved at freeze: v1 polling is
+   storefront-driven `refetch`; SSE arrives as an additive hook option later.
