@@ -410,3 +410,18 @@ OBSERVATIONS.md `## Feature gaps`. Candidates for Contract v1 or Phase 1+.)
   address — is the bucket key). A shorter chain than configured fails closed
   to a shared 'unknown' bucket rather than falling back to a spoofable
   leftmost entry. Compose + .env.example + dokploy.md document the value.
+
+## Review round 15 (post-merge follow-up) — idempotency contract + byte caps
+
+- **Idempotency accepts structured results only** — `run` can no longer
+  return a raw `Response`: a handler that did would commit its writes with no
+  recorded result, leaving a pending claim that could rerun the mutation
+  after the 30s lease. The `raw` outcome branch is deleted; every mutation
+  must return `{ status, body }`.
+- **Body cap counts bytes** — `bodyJson` now measures `TextEncoder().encode(
+  raw).byteLength`, so multibyte payloads can't slip a >32KB body past the
+  `raw.length` check. Verified: a 102KB UTF-8 body → `413 PAYLOAD_TOO_LARGE`.
+- **Product CTA shows components, not a computed total** — the quero-pudim
+  product page (and its `_examples` golden) renders catalog unit price +
+  modifier deltas + qty instead of a client-multiplied line total; the
+  payable total remains Core's answer at checkout.

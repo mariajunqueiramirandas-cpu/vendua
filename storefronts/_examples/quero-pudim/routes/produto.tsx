@@ -70,7 +70,9 @@ export function ProductPage() {
     .flatMap((g) => g.modifiers)
     .filter((m) => chosenIds.includes(m.id))
     .reduce((s, m) => s + m.priceDeltaCents, 0);
-  const lineTotal = product ? (product.basePriceCents + extrasCents) * qty : 0;
+  // Prices on the CTA show catalog components only — never a combined,
+  // client-computed payable total (cart pricing is Core's answer, and a stale
+  // catalog read must not promise a number Core won't honor).
 
   useEffect(() => {
     if (product && store) document.title = `${product.name} · ${store.name}`;
@@ -375,7 +377,9 @@ export function ProductPage() {
                   ) : (
                     <>
                       <ShoppingBag size={16} aria-hidden="true" /> Adicionar à sacola ·{' '}
-                      {formatBRL(lineTotal)}
+                      {product ? formatBRL(product.basePriceCents) : ''}
+                      {extrasCents > 0 ? ` + ${formatBRL(extrasCents)}` : ''}
+                      {qty > 1 ? ` ×${qty}` : ''}
                     </>
                   )}
                 </button>
