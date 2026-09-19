@@ -70,12 +70,13 @@ export function createApp({ sql, sessionSecret }: AppDeps) {
   // do X-Forwarded-* headers carry routing truth (tenant spoofing otherwise).
   const trustProxy = process.env.VENDUA_TRUST_PROXY === '1';
   // CORS is not a blanket allow: the browser origin must be the request's own
-  // host (same-origin calls, incl. the vite dev proxy) or a registered tenant
-  // domain (cross-origin dev via a direct baseUrl).
+  // host (same-origin calls, incl. the vite dev proxy). Other registered
+  // tenant origins are deliberately NOT allowed — credentialed cross-tenant
+  // browser reads would follow from them (Review finding).
   app.use(
     '*',
     cors({
-      origin: async (o, c) => {
+      origin: (o, c) => {
         if (!o) return undefined;
         let originHost: string;
         try {
@@ -87,8 +88,7 @@ export function createApp({ sql, sessionSecret }: AppDeps) {
           (trustProxy ? c.req.header('x-forwarded-host') : undefined) ??
           c.req.header('host') ??
           '';
-        if (originHost === reqHost) return o;
-        return (await resolver.resolve(originHost)) ? o : null;
+        return originHost === reqHost ? o : null;
       },
       allowHeaders: ['Content-Type', 'Authorization', 'Idempotency-Key'],
       credentials: true,
