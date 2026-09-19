@@ -21,6 +21,7 @@
   },
   "devDependencies": {
     "@vendua/cli": "workspace:*",
+    "@vendua/conformance": "workspace:*",
     "prettier": "3.9.6",
     "prettier-plugin-svelte": "4.1.1"
   }
