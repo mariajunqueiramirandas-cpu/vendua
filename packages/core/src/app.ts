@@ -818,17 +818,30 @@ export function createApp({ sql, sessionSecret, controlSecret }: AppDeps) {
     if (threadId && !UUID_RE.test(threadId)) {
       throw new HttpError(400, 'BAD_REQUEST', 'threadId must be a uuid');
     }
-    const res = await claimControl(sql, requireIdemKey(c), async (tx) => ({
-      status: 201,
-      body: {
-        runId: await insertRun(tx, {
-          kind: kind as 'triage' | 'reply' | 'outreach' | 'discovery',
-          leadId,
-          ...(threadId ? { threadId } : {}),
-          params: (body.params as Record<string, unknown>) ?? {},
-        }),
-      },
-    }));
+    const res = await claimControl(sql, requireIdemKey(c), async (tx) => {
+      if (threadId) {
+        const th = (
+          await tx<{ lead_id: string }[]>`
+            select lead_id from lead_threads where id = ${threadId}
+          `
+        )[0];
+        if (!th) throw new HttpError(404, 'THREAD_NOT_FOUND', 'thread not found');
+        if (th.lead_id.toLowerCase() !== leadId.toLowerCase()) {
+          throw new HttpError(422, 'BAD_REQUEST', 'threadId does not belong to leadId');
+        }
+      }
+      return {
+        status: 201,
+        body: {
+          runId: await insertRun(tx, {
+            kind: kind as 'triage' | 'reply' | 'outreach' | 'discovery',
+            leadId,
+            ...(threadId ? { threadId } : {}),
+            params: (body.params as Record<string, unknown>) ?? {},
+          }),
+        },
+      };
+    });
     if (res.replayed) c.header('x-idempotent-replay', 'true');
     void drain(sql).catch((e) => console.error('[agent drain]', e));
     return c.json(res.body, res.status as 201);
@@ -1128,7 +1141,7 @@ export function createApp({ sql, sessionSecret, controlSecret }: AppDeps) {
           `
         )[0];
         if (!th) throw new HttpError(404, 'THREAD_NOT_FOUND', 'thread not found');
-        if (th.lead_id !== leadId) {
+        if (th.lead_id.toLowerCase() !== leadId.toLowerCase()) {
           throw new HttpError(422, 'BAD_REQUEST', 'threadId does not belong to leadId');
         }
       }
