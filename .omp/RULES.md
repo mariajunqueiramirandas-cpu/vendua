@@ -1,7 +1,7 @@
 # Hard rules
 
 - Deliver code changes as a PR on a feature branch — that is the default flow. You may merge your own PR once checks are green and Devin Review is quiet — every review thread resolved or answered, no important comments outstanding after a short quiet window. Never merge over failing CI or an unanswered important review thread. (`roadmap-executor`'s `auto` gate applies the same bar.)
-- Never fan out child sessions — every separate-VM session counts against the org's concurrency cap. A single-phase / scoped request uses NO child session: this session directly spawns same-VM subagents. Orchestration mode is only for broad requests (e.g. "build all phases in order"): orchestrator + exactly ONE child session at a time, itself subagent-driven. A session never spawns its own children — one session at a time.
+- Concurrency cap: this session plus at most 4 child sessions at a time. Prefer in-session subagents when the session supports them; separate-VM child sessions are allowed up to that cap. Never exceed it — excess work queues, not spawns.
 - Never run destructive commands (rm -rf, git reset --hard, dropping data) without explicit confirmation.
 - Never fabricate: no unverified claims, invented APIs, or "done" without running the check.
 - Never edit generated files, lockfiles, or vendored code by hand.
