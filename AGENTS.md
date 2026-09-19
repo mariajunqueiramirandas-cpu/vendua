@@ -31,10 +31,8 @@ packages/        other platform packages (Phase 1+)
 storefronts/     one package per storefront (React + Kernel; `_examples/`, `_template/` reserved)
 tools/           repo-level CI utilities (empty; Phase 1)
 docs/            normative architecture, ADRs, roadmap — read before designing
-.devin/agents/   Devin subagent profiles — auto-load in Devin CLI/Desktop
 .agents/skills/  custom skills — auto-discovered by Devin (omp agents provider)
-.claude/agents/  task-agent mirrors for Claude Code
-.omp/            omp config: RULES.md (sticky rules), agents/ (task agents)
+.omp/            omp config: RULES.md (sticky rules)
 ```
 
 ## Setup — fresh machine / Devin Cloud
@@ -93,13 +91,7 @@ touch it.
   flow. You may merge your own PR once checks are green and Devin Review
   is quiet — every review thread resolved or answered, no important
   comments outstanding after a short quiet window. Never merge over
-  failing CI or an unanswered important review thread. (`roadmap-executor`'s
-  `auto` gate applies the same bar.)
-- Concurrency cap: at most 4 child sessions per run, spawned only by
-  the orchestrator session — a child session never spawns descendants.
-  Prefer in-session subagents when the session supports them;
-  separate-VM child sessions are allowed up to that cap. Never exceed
-  it — excess work queues, not spawns.
+  failing CI or an unanswered important review thread.
 - Never run destructive commands (rm -rf, git reset --hard, dropping data)
   without explicit confirmation.
 - Never fabricate: no unverified claims, invented APIs, or "done" without
@@ -131,39 +123,6 @@ Mirrored in `.omp/RULES.md` for omp's sticky-rule enforcement — keep in sync.
   triggers.
 - Match the project's existing test conventions; don't add test scaffolding
   where none exists.
-
-## Delegation — when it helps, not by default
-
-- Do the work in-session by default. Delegate when a slice is genuinely
-  separable and big enough to justify a fresh context: an independent
-  module, a read-only investigation running alongside implementation, a
-  verification pass on a large change, or an explicit fan-out the user
-  asked for (e.g. `run-roadmap`).
-- Use whatever subagent mechanism the session supports — in-session
-  subagents first, separate-VM child sessions within the cap when
-  they're not. Subagents that edit the same repo work in separate
-  `git worktree`s or separate clones.
-- When you do delegate:
-  - Devin Cloud: read the profile file and pass its body verbatim as the
-    child-session or workflow-agent prompt.
-  - Devin CLI/Desktop: profiles auto-load; invoke by name.
-- Pick the most specific profile available: `architect` for read-only
-  analysis/design, `debugger` for unknown faults, `verifier` for
-  post-implementation checks, `frontend-designer` for substantial UI
-  builds, a general task agent for implementation.
-- **UI/frontend work carries the `frontend-design` anti-slop contract**
-  whoever implements it — invoke the skill in-session for small changes;
-  delegate larger surfaces (new pages, design systems) to
-  `frontend-designer`.
-- In Devin Cloud, verifying a running app in the browser goes to the
-  testing agent — not a code-reading subagent.
-- Fan out independent slices in one batch when you do delegate; never
-  serialize work that can run in parallel.
-- Keep interpretation, decomposition, and taste at the top level. Give each
-  subagent complete, self-contained instructions and a clear acceptance
-  check.
-- A subagent's "done" is a claim, not proof — verify its output before
-  reporting.
 
 ## Anti-slop framework
 
@@ -207,14 +166,13 @@ have to rediscover it.
 
 **Where to write it:**
 
-| Learning                               | File                                                                  |
-| -------------------------------------- | --------------------------------------------------------------------- |
-| Repo-wide workflow, commands, pitfalls | `AGENTS.md`                                                           |
-| Site-specific workflow or pitfall      | `site/AGENTS.md`                                                      |
-| A hard rule that must always hold      | § Hard rules here + `.omp/RULES.md`                                   |
-| A reusable procedure/playbook          | `.agents/skills/<name>/SKILL.md`                                      |
-| A subagent contract                    | `.devin/agents/<name>.md` + `.claude/agents/`, `.omp/agents/` mirrors |
-| Architecture or design decision        | `docs/` (ADRs for decisions)                                          |
+| Learning                               | File                                |
+| -------------------------------------- | ----------------------------------- |
+| Repo-wide workflow, commands, pitfalls | `AGENTS.md`                         |
+| Site-specific workflow or pitfall      | `site/AGENTS.md`                    |
+| A hard rule that must always hold      | § Hard rules here + `.omp/RULES.md` |
+| A reusable procedure/playbook          | `.agents/skills/<name>/SKILL.md`    |
+| Architecture or design decision        | `docs/` (ADRs for decisions)        |
 
 **Rules:**
 
@@ -227,8 +185,7 @@ have to rediscover it.
 - Repo copies are canonical. `~/.omp/agent/AGENTS.md` and `RULES.md` are
   global snapshots — refresh them when the repo versions change.
 - New skills need `name` + `description` frontmatter and live one level
-  under `.agents/skills/`; new subagents need the same frontmatter and live
-  flat under `.devin/agents/`.
+  under `.agents/skills/`.
 
 ## Communication
 
