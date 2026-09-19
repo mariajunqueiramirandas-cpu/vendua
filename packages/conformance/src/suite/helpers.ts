@@ -49,17 +49,22 @@ export async function apiPost(
   path: string,
   body?: unknown,
   token?: string,
+  idemKey?: string,
 ) {
   const res = await withRetry429(() =>
     request.post(`${base(host)}${path}`, {
       data: body,
       headers: {
-        'idempotency-key': crypto.randomUUID(),
+        'idempotency-key': idemKey ?? crypto.randomUUID(),
         ...(token ? { authorization: `Bearer ${token}` } : {}),
       },
     }),
   );
-  return { status: res.status(), body: await res.json().catch(() => null) };
+  return {
+    status: res.status(),
+    body: await res.json().catch(() => null),
+    replayed: res.headers()['x-idempotent-replay'] === 'true',
+  };
 }
 
 export async function newSession(request: APIRequestContext, host: QaHost) {

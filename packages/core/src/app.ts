@@ -630,7 +630,28 @@ export function createApp({ sql, sessionSecret, controlSecret }: AppDeps) {
     if (!controlAuthed(c)) return c.html(boardLoginHtml());
     return c.html(boardHtml());
   });
+  // Board login guesses a shared secret — cap attempts at 10/min/IP so a
+  // reachable deployment isn't an oracle for a weak CONTROL_SECRET. Same
+  // fixed-window shape as the checkout limiter; per-IP, no tenant context.
+  const loginHits = new Map<string, { count: number; resetAt: number }>();
   app.post('/control/v1/board', async (c) => {
+    // Same XFF convention as the checkout limiter: client sits left of the
+    // suffix our trusted proxies appended.
+    const ip = (() => {
+      if (!trustProxy) return 'local';
+      const xff = c.req
+        .header('x-forwarded-for')
+        ?.split(',')
+        .map((s) => s.trim());
+      return xff?.at(-1 - proxyHops) ?? 'unknown';
+    })();
+    const now = Date.now();
+    const bucket = loginHits.get(ip);
+    if (!bucket || bucket.resetAt <= now) {
+      loginHits.set(ip, { count: 1, resetAt: now + 60_000 });
+    } else if (++bucket.count > 10) {
+      throw new HttpError(429, 'RATE_LIMITED', 'too many attempts — retry in a minute');
+    }
     const form = (await c.req.parseBody().catch(() => ({}))) as Record<string, unknown>;
     if (form.key !== staffSecret) throw new HttpError(404, 'NOT_FOUND', 'not found');
     setCookie(c, CONTROL_COOKIE, controlToken, {

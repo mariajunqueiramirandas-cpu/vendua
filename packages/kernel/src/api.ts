@@ -139,7 +139,7 @@ export interface Cart {
   status: 'open' | 'completed' | 'abandoned';
   items: CartItem[];
   totals: CartTotals;
-  delivery: { mode: 'pickup' | 'delivery'; neighborhood?: string; zoneId?: string } | null;
+  delivery: { mode: 'pickup' | 'delivery'; neighborhood?: string; zoneId?: string | null } | null;
 }
 
 export interface CheckoutInput {

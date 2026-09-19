@@ -377,24 +377,27 @@ test('[C07] idempotent retry: double-submit of checkout produces exactly one ord
   page,
   request,
 }) => {
-  // deterministic half: one cart, two POST /checkout — orders_cart_unique must
-  // collapse the retry into exactly one order.
+  // deterministic half: ONE idempotency key retried twice — the second call
+  // must replay the stored response, not re-execute the mutation.
   const { sessionToken: tok, cart } = await apiAddItem(request, OPEN, SIMPLE_PRODUCT);
   const input = {
     customer: { name: 'QA Retry', phone: '22999990000' },
     delivery: { mode: 'pickup' },
     payment: { method: 'pix' },
   };
-  const first = await apiPost(request, OPEN, '/checkout/v1/checkout', input, tok);
+  const idem = crypto.randomUUID();
+  const first = await apiPost(request, OPEN, '/checkout/v1/checkout', input, tok, idem);
   expect(
     [200, 201].includes(first.status),
     `first checkout failed: ${first.status} ${JSON.stringify(first.body)}`,
   ).toBeTruthy();
-  const second = await apiPost(request, OPEN, '/checkout/v1/checkout', input, tok);
+  const second = await apiPost(request, OPEN, '/checkout/v1/checkout', input, tok, idem);
   expect(
-    [404, 409, 422].includes(second.status),
-    `second checkout expected rejection, got ${second.status}: ${JSON.stringify(second.body)}`,
-  ).toBeTruthy();
+    second.status,
+    `same-key retry expected the stored response, got ${second.status}: ${JSON.stringify(second.body)}`,
+  ).toBe(first.status);
+  expect(second.replayed, 'same-key retry missing x-idempotent-replay').toBe(true);
+  expect(second.body?.order?.id, 'replay returned a different order').toBe(first.body?.order?.id);
   expect(await orderCountByCart(cart.id), 'double-submit produced ≠1 order').toBe(1);
 
   // UI half: rapid double-submit on the storefront must also collapse
@@ -772,12 +775,30 @@ test('[Q07] contrast AA on token pairs used by default surfaces', async ({ page 
     return out;
   });
 
-  const lum = (hex: string) => {
-    const m = /#?([0-9a-f]{6})/i.exec(hex);
-    if (!m) return null;
-    const n = parseInt(m[1]!, 16);
-    const ch = [n >> 16, (n >> 8) & 255, n & 255].map((c) => {
-      const s = c / 255;
+  // Resolve each token through the browser: a probe element's computed color
+  // normalizes hex/rgb()/hsl()/named into `rgb(r, g, b)` — anything the page
+  // can render, this can parse; anything it can't parse is a failure, not a
+  // skip.
+  const resolved: Record<string, string | null> = await page.evaluate((vars) => {
+    const probe = document.createElement('div');
+    document.body.appendChild(probe);
+    const out: Record<string, string | null> = {};
+    for (const [name, v] of Object.entries(vars)) {
+      probe.style.color = v as string;
+      out[name] = getComputedStyle(probe).color || null;
+    }
+    probe.remove();
+    return out;
+  }, vars);
+  const rgb = (v: string | null) => {
+    const m = /rgba?\(\s*(\d+)[\s,]+(\d+)[\s,]+(\d+)/.exec(v ?? '');
+    return m ? [Number(m[1]), Number(m[2]), Number(m[3])] : null;
+  };
+  const lum = (v: string | null) => {
+    const c = rgb(v);
+    if (!c) return null;
+    const ch = c.map((x) => {
+      const s = x / 255;
       return s <= 0.03928 ? s / 12.92 : Math.pow((s + 0.055) / 1.055, 2.4);
     });
     return 0.2126 * ch[0]! + 0.7152 * ch[1]! + 0.0722 * ch[2]!;
@@ -793,21 +814,21 @@ test('[Q07] contrast AA on token pairs used by default surfaces', async ({ page 
     ['--v-color-danger', '--v-color-bg'],
   ];
   const bad: string[] = [];
-  const skippedPairs: string[] = [];
   for (const [fg, bg] of pairs) {
-    const lf = vars[fg] ? lum(vars[fg]!) : null;
-    const lb = vars[bg] ? lum(vars[bg]!) : null;
+    if (!vars[fg] || !vars[bg]) {
+      bad.push(`${fg}/${bg}: token unset — a required surface color has no value`);
+      continue;
+    }
+    const lf = lum(resolved[fg] ?? null);
+    const lb = lum(resolved[bg] ?? null);
     if (lf == null || lb == null) {
-      skippedPairs.push(`${fg}/${bg}`);
+      bad.push(`${fg} (${vars[fg]}) / ${bg} (${vars[bg]}): browser could not resolve the color`);
       continue;
     }
     const r = ratio(lf, lb);
     if (r < 4.5) bad.push(`${fg} (${vars[fg]}) on ${bg} (${vars[bg]}): ${r.toFixed(2)}:1`);
   }
-  expect(
-    bad,
-    `below 4.5:1 AA —\n${bad.join('\n')}${skippedPairs.length ? `\nskipped pairs: ${skippedPairs.join(', ')}` : ''}`,
-  ).toHaveLength(0);
+  expect(bad, `below 4.5:1 AA —\n${bad.join('\n')}`).toHaveLength(0);
 });
 
 test('[Q08] hostile-CSS global reset does not break Kernel defaults', async ({ page }) => {

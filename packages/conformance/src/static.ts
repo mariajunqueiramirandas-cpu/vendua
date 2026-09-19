@@ -181,9 +181,33 @@ function k02(dir: string): CheckResult {
     problems.push(`entry not found (tried: ${candidates.map((c) => basename(c)).join(', ')})`);
   } else {
     const src = readFileSync(entry, 'utf8');
-    if (!/\bVenduaProvider\b/.test(src)) problems.push('entry does not render <VenduaProvider>');
-    if (!/<\s*SystemSurfaces[\s/>]/.test(src))
-      problems.push('entry does not render <SystemSurfaces />');
+    // Structural mount check: exactly one <VenduaProvider> element whose
+    // children contain <SystemSurfaces /> before the router mount. Source-order
+    // on the flat JSX text — not a full AST, but it catches the realistic
+    // failure shapes: missing/duplicated mounts, surfaces outside the provider,
+    // surfaces after the router.
+    const provOpen = /<VenduaProvider[\s>]/.exec(src)?.index;
+    const provOpens = src.match(/<VenduaProvider[\s>]/g) ?? [];
+    const provClose = src.indexOf('</VenduaProvider>');
+    const surf = /<SystemSurfaces[\s/>]/.exec(src)?.index;
+    const surfs = src.match(/<SystemSurfaces[\s/>]/g) ?? [];
+    const router = /<(BrowserRouter|RouterProvider|Routes)[\s>]/.exec(src)?.index;
+
+    if (!/\bVenduaProvider\b/.test(src)) problems.push('entry does not import VenduaProvider');
+    if (provOpen === undefined) problems.push('entry does not render <VenduaProvider>');
+    else if (provOpens.length !== 1)
+      problems.push(`entry renders ${provOpens.length} <VenduaProvider> elements — exactly one`);
+    else if (provClose === -1)
+      problems.push('<VenduaProvider> never closes — SystemSurfaces must live inside it');
+    else {
+      if (surf === undefined) problems.push('entry does not render <SystemSurfaces />');
+      else if (surfs.length !== 1)
+        problems.push(`entry renders ${surfs.length} <SystemSurfaces> — exactly one`);
+      else if (surf < provOpen || surf > provClose)
+        problems.push('<SystemSurfaces /> must render inside <VenduaProvider>');
+      else if (router !== undefined && !(surf < router && router < provClose))
+        problems.push('<SystemSurfaces /> must mount before the router inside the provider');
+    }
   }
   if (problems.length) return fail(id, title, problems.join('\n'));
   return pass(id, title);

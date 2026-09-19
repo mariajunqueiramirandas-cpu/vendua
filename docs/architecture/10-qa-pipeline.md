@@ -71,13 +71,14 @@ referenced by ID in failure bundles and codemod reports.
 
 ### Contract checks (K-series — lint/type, run pre-browser)
 
-| ID  | Requirement                                                                                  |
-| --- | -------------------------------------------------------------------------------------------- |
-| K01 | `vendua.config.ts` type-checks; all override keys valid for declared Contract major          |
-| K02 | Required mounts present (`VenduaProvider`, `SystemSurfaces`, system route group, `v.js` tag) |
-| K03 | No direct fetch/API imports; no deep Kernel imports; deps within allow-list                  |
-| K04 | All commerce triggers reachable via primitives (no parallel cart/checkout)                   |
-| K05 | PR touches only `storefronts/<slug>/**`                                                      |
+| ID  | Requirement                                                                                                                                                                   |
+| --- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| K01 | `vendua.config.ts` type-checks; all override keys valid for declared Contract major                                                                                           |
+| K02 | Required mounts present (`VenduaProvider`, `SystemSurfaces`, system route group, `v.js` tag)                                                                                  |
+| K03 | No direct fetch/API imports; no deep Kernel imports; deps within allow-list                                                                                                   |
+| K04 | All commerce triggers reachable via primitives — no literal API-endpoint calls, no page routes under reserved API prefixes (`/v1`, `/storefront`, `/checkout/v1`, `/control`) |
+| K05 | PR touches only `storefronts/<slug>/**`                                                                                                                                       |
+| K06 | `vite.config.ts` proxy: object-form entries only, keys ⊆ reserved API prefixes, `changeOrigin` absent/false — Host must reach Core untouched                                  |
 
 ## Generation QA
 

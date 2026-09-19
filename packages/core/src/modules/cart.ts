@@ -63,7 +63,12 @@ export interface CartView {
   status: 'open' | 'completed' | 'abandoned';
   items: PricedItem[];
   totals: CartTotals;
-  delivery: { mode: 'pickup' | 'delivery'; neighborhood?: string; zoneId?: string } | null;
+  delivery: {
+    mode: 'pickup' | 'delivery';
+    neighborhood?: string;
+    address?: string;
+    zoneId?: string | null;
+  } | null;
 }
 
 /** Sum of base price + selected modifier deltas. Pure — unit-tested. */
@@ -224,8 +229,9 @@ export async function loadCartView(tx: Sql, tenantId: string, cartId: string): P
 
   let deliveryFee = 0;
   let effectiveMinOrder = settings?.min_order_cents ?? 0;
+  let zone: ZoneRow | null = null;
   if (cart.delivery?.mode === 'delivery') {
-    const zone = matchZone(zones, cart.delivery.neighborhood);
+    zone = matchZone(zones, cart.delivery.neighborhood);
     if (zone) {
       deliveryFee = zone.fee_cents;
       effectiveMinOrder = Math.max(effectiveMinOrder, zone.min_order_cents);
@@ -236,7 +242,9 @@ export async function loadCartView(tx: Sql, tenantId: string, cartId: string): P
     status: cart.status,
     items,
     totals: computeTotals(items, deliveryFee, effectiveMinOrder),
-    delivery: cart.delivery,
+    // zoneId is the server's zone-match verdict — a zero fee can mean a
+    // matched free zone, so clients must branch on zoneId, not the amount.
+    delivery: cart.delivery ? { ...cart.delivery, zoneId: zone?.id ?? null } : null,
   };
 }
 

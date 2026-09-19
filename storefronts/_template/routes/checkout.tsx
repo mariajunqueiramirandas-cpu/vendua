@@ -242,8 +242,10 @@ export function CheckoutPage() {
                 <p className="muted" role="status">
                   {deliverySync === 'syncing'
                     ? 'Calculando a taxa de entrega…'
-                    : (totals?.deliveryFeeCents ?? 0) > 0
-                      ? `Taxa: ${formatCents(totals?.deliveryFeeCents ?? 0, store?.currency)}`
+                    : cart?.delivery?.zoneId
+                      ? (totals?.deliveryFeeCents ?? 0) > 0
+                        ? `Taxa: ${formatCents(totals?.deliveryFeeCents ?? 0, store?.currency)}`
+                        : 'Entrega grátis nesse bairro.'
                       : 'Bairro sem taxa calculada — fora da área, o pedido avisa na confirmação.'}
                 </p>
               ) : null}
@@ -287,9 +289,11 @@ export function CheckoutPage() {
           <div className="summary-row">
             <span>Entrega</span>
             <span>
-              {mode === 'delivery' && (totals?.deliveryFeeCents ?? 0) > 0
-                ? formatCents(totals?.deliveryFeeCents ?? 0, store?.currency)
-                : 'grátis'}
+              {mode !== 'delivery'
+                ? 'grátis'
+                : cart?.delivery?.zoneId
+                  ? formatCents(totals?.deliveryFeeCents ?? 0, store?.currency)
+                  : '—'}
             </span>
           </div>
           <div className="summary-row summary-total">
