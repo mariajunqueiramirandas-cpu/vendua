@@ -15,7 +15,7 @@ export function Sacola() {
   const items = cart?.status === 'open' ? cart.items : [];
   const totals = cart?.totals;
   const belowMin = totals?.belowMinOrder ?? false;
-  const missing = totals ? totals.minOrderCents - totals.subtotalCents : 0;
+  const missing = totals?.remainingMinOrderCents ?? 0;
 
   return (
     <main className="page">

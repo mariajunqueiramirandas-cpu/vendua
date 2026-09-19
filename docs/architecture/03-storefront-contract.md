@@ -1,7 +1,11 @@
 # 03 — The Storefront Contract
 
-> Status: Proposed · Last reviewed: 2026-09-11
+> Status: **Frozen — Contract v1** · Last reviewed: 2026-09-19
 > Decisions: [ADR 0002](../adr/0002-single-storefront-framework-react.md), [ADR 0004](../adr/0004-kernel-owned-checkout.md), [ADR 0007](../adr/0007-headless-primitives.md), [ADR 0008](../adr/0008-contract-versioning.md)
+>
+> Frozen from the Phase-0 observations in [contract-v1-draft.md](../contract-v1-draft.md)
+> (superseded — kept as provenance). Changes to this file are Contract events
+> per ADR 0008: anything not marked additive needs a major.
 
 **This is the normative contract between Venduá and every storefront.** It is
 what makes arbitrary design freedom operable at fleet scale. The Contract bounds
@@ -60,7 +64,9 @@ export default defineStorefront({
   // consume all of these.
   tokens: {
     color: { bg, surface, text, muted, accent, onAccent, danger, success },
-    font:  { display, body, mono? },
+    font:  { display, body, mono?, srcs? },   // srcs: FontSource[] — Kernel emits
+                                             // @font-face (font-display: swap);
+                                             // files live under assets/fonts/
     radius:{ sm, md, lg },
     space: { scale },                 // numeric or token list
     motion:{ duration, easing },      // baseline; stores may exceed it
@@ -95,13 +101,31 @@ Every storefront root layout MUST render, exactly once:
 </VenduaProvider>
 ```
 
-- `<SystemSurfaces />` MUST be inside the provider and above the router outlet —
-  it owns blocking overlays that must cover brand pages.
-- The reserved system route group `/(vendua)/*` MUST be included. The Kernel
-  fills it with checkout, order tracking, auth and legal routes. Storefront
-  routes MUST NOT collide with it.
+- `<SystemSurfaces />` MUST be inside the provider and rendered BEFORE the
+  router — a sibling of `<Router />` as the sketch shows, not a child of a
+  page or outlet — it owns blocking overlays that must cover brand pages.
+- The reserved system route group `/(vendua)/*` is claimed by the Kernel for
+  checkout, order tracking, auth and legal routes; storefront routes MUST NOT
+  collide with it. In v1 the group is required once the Kernel ships its
+  system routes (ADR 0004 lands them with the Kernel-owned checkout) — until
+  then the storefront owns its checkout/order pages under the commerce rules
+  below and nothing may map that prefix to anything else.
 - The document `<head>` MUST include the loader script tag emitted by the
   scaffold (`<script src="https://cdn.vendua.com.br/v1/v.js" defer>`).
+
+### Reserved route prefixes
+
+Core API mounts are reserved — no page route may live under them:
+
+- `/storefront/v1` — tenant-facing reads (store, catalog, surfaces, zones)
+- `/checkout/v1` — session, cart, quote, checkout, orders
+- `/v1` — platform API
+- `/control` — staff/control plane
+
+Dev-server proxies forward ONLY these prefixes, in object form
+(`'/checkout/v1': { target, changeOrigin: false }`). String shorthand forces
+`changeOrigin: true`, rewriting `Host` so Core resolves `TENANT_NOT_FOUND`;
+a bare `'/checkout'` key swallows the SPA's own checkout route on refresh.
 
 ## Rules of engagement
 
@@ -118,6 +142,33 @@ Every storefront root layout MUST render, exactly once:
 | Overlays/modals for commerce | MUST use the corresponding primitive/slot. A storefront MUST NOT build a parallel cart, checkout, or payment UI.                                                                         |
 | Cookies/storage              | Only via Kernel session utilities (LGPD-consent-aware). No ad-hoc localStorage of order/customer data.                                                                                   |
 | Global CSS                   | Allowed, but MUST NOT target `v-*` classes or `[data-vendua]` hooks. Kernel styles are layered so resets can't break them (tested).                                                      |
+
+## Semantics pinned in v1
+
+Observed in the Phase-0 spikes; now contractual:
+
+- **`closed` ≠ `paused`.** `closed` is schedule-derived — checkout still runs
+  (orders are pre-orders for the next window, which `resumesAt` names).
+  `paused` is a manual merchant action and blocks checkout (`STORE_PAUSED`).
+  Storefronts display the state; they never decide it.
+- **`useCart` resolves without a session** — `cart: Cart | null`, `null`
+  before the first mutation. `CartTrigger` counts only `status: 'open'`
+  carts; a completed cart is history, not a bag.
+- **`asChild` composition is fixed**: the primitive's `onClick` runs first,
+  then the child's; `className`s concatenate; `disabled` ORs; child `aria-*`/
+  `data-*` props override primitive defaults — except `data-vendua`, which is
+  always the primitive's marker.
+- **Session transport**: Bearer token on every `/checkout/v1` route,
+  `Idempotency-Key` on every mutation, order reads scoped to the token that
+  placed them. `ERROR_CODES` is the exhaustive set storefronts may switch on.
+- **Notices** carry `payload.resumesAt` (next window boundary) and
+  `payload.region` (targets a `<SurfaceRegion name>` by name).
+- **`useOrder(id)` polling is storefront-driven `refetch`** — server push
+  (SSE) is an additive Kernel minor when it lands; the hook signature holds.
+- **`vocabulary` is free-form** `Record<string, string>` — no inflected-forms
+  registry in v1.
+- **Product imagery**: `figureVariant` (built-in motif enum) is landed;
+  `imageUrl`/`stockQuantity` are additive Core fields, not v1 requirements.
 
 ## What storefronts freely control
 

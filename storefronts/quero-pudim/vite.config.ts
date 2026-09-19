@@ -14,7 +14,7 @@ export default defineConfig({
     port: 5174,
     strictPort: true,
     proxy: {
-      '/storefront': { target: 'http://localhost:8787' },
+      '/storefront/v1': { target: 'http://localhost:8787' },
       // Narrowed to the API prefix: every Kernel call lives under
       // /checkout/v1/*, and a bare '/checkout' proxy would swallow the SPA
       // route (direct load of /checkout 404'd).

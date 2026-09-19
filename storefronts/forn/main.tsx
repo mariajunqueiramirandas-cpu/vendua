@@ -45,7 +45,9 @@ function App() {
     <VenduaProvider config={config}>
       <SessionResetProvider>
         <SystemSurfaces />
-        <Frame />
+        <BrowserRouter>
+          <Frame />
+        </BrowserRouter>
       </SessionResetProvider>
     </VenduaProvider>
   );
@@ -53,8 +55,6 @@ function App() {
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
-    <BrowserRouter>
-      <App />
-    </BrowserRouter>
+    <App />
   </StrictMode>,
 );

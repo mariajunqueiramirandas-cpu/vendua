@@ -294,7 +294,7 @@ export function Fechar() {
               ) : null}
               {totals?.belowMinOrder ? (
                 <div className="minbar" role="status">
-                  faltam {cents(totals.minOrderCents - totals.subtotalCents)} pro mínimo
+                  faltam {cents(totals.remainingMinOrderCents)} pro mínimo
                 </div>
               ) : null}
             </div>

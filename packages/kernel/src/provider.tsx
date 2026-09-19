@@ -110,6 +110,29 @@ export function VenduaProvider({
     };
   }, [config]);
 
+  // font.srcs → @font-face (03 §vendua.config.ts). font-display: swap is the
+  // contract default — brand fonts must never block first paint.
+  useEffect(() => {
+    const srcs = config.tokens.font.srcs;
+    if (!srcs?.length) return;
+    const style = document.createElement('style');
+    style.dataset.vendua = 'fonts';
+    style.textContent = srcs
+      .map(
+        (s) =>
+          `@font-face{font-family:${JSON.stringify(s.family)};` +
+          `src:url(${JSON.stringify(s.src)});font-display:swap;` +
+          (s.weight != null ? `font-weight:${s.weight};` : '') +
+          (s.style ? `font-style:${s.style};` : '') +
+          '}',
+      )
+      .join('');
+    document.head.appendChild(style);
+    return () => {
+      style.remove();
+    };
+  }, [config]);
+
   // Track this provider's cache + subscriber notifier while mounted so
   // module-level invalidateQuery can evict AND refetch on live providers
   // without pinning unmounted ones.
@@ -212,7 +235,10 @@ export function useQuery<T>(
         });
       cache.set(key, e);
     };
-    if (!entry.inflight && !entry.resolved) run();
+    // Errored entries are retryable — a mount (page reload) or invalidate
+    // re-runs them. Without this a transient failure (Core restarting under
+    // `bun --watch` during a page load) wedged the query permanently.
+    if (!entry.inflight && (!entry.resolved || entry.error)) run();
     // A subscriber that mounts while a fetch is in flight still needs a tick
     // when it lands — otherwise it can hold a stale cache read.
     entry.inflight?.finally(() => {
@@ -249,11 +275,19 @@ const liveProviders = new Set<{
   invalidate: (key: string) => void;
 }>();
 
-export function invalidateQuery(key: string) {
+export function invalidateQuery(key: string, data?: unknown) {
   // Evict alone leaves mounted hooks rendering their stale snapshot —
-  // notifying subscribers is what reruns the fetch.
+  // notifying subscribers is what reruns the fetch. When the mutation already
+  // holds the fresh value (every cart mutation returns the Cart), seed it
+  // instead of evicting: the hook goes straight to the new data and never
+  // renders a null flicker — an evict→refetch gap re-fires checkout's
+  // `items.length` effects and loops setDelivery calls (surfaced by e2e).
   for (const live of liveProviders) {
-    live.cache.delete(key);
+    if (data !== undefined) {
+      live.cache.set(key, { resolved: true, data });
+    } else {
+      live.cache.delete(key);
+    }
     live.invalidate(key);
   }
 }

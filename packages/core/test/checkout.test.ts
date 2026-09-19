@@ -76,6 +76,7 @@ function cart(subtotalCents: number): CartView {
       totalCents: subtotalCents,
       itemCount: 1,
       minOrderCents: 1000,
+      remainingMinOrderCents: Math.max(0, 1000 - subtotalCents),
       belowMinOrder: subtotalCents < 1000,
     },
     delivery: null,

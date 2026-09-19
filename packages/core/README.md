@@ -42,7 +42,7 @@ curl -H 'Host: quero-pudim.localhost' localhost:8787/storefront/v1/surfaces
 ## Notes / skeleton limits
 
 - Checkout is a **stub**: orders are created `placed` with
-  `payment.provider = 'stub'`. MP OAuth/PIX/webhooks land in Phase 2.
+  `payment.provider = 'sandbox'`. MP OAuth/PIX/webhooks land in Phase 2.
 - Admin APIs (`/admin/v1`), payments, notifications, identity, analytics are
   Phase 2+; only the tables needed for Phase 0 exist.
 - Order transitions exist (`modules/orders.ts`) but no admin surface consumes

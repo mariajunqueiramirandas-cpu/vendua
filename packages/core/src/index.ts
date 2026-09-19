@@ -7,10 +7,12 @@ const databaseUrl =
 const migrationUrl =
   process.env.MIGRATION_DATABASE_URL ?? 'postgres://vendua:vendua@localhost:5433/vendua';
 const port = Number(process.env.PORT ?? 8787);
-// SESSION_SECRET is the HMAC key for cart session tokens AND the control
-// gate header — a checked-in default would let anyone forge both. Unset =
-// random per boot: dev carts re-mint via POST /session, but restarts and
-// replicas disagree — deployments must set it.
+// SESSION_SECRET is the HMAC key for cart session tokens AND the dev fallback
+// for the control gate — a checked-in default would let anyone forge both.
+// Unset = random per boot: dev carts re-mint via POST /session, but restarts
+// and replicas disagree — deployments must set it. CONTROL_SECRET is the
+// staff key for /control/v1; set it wherever staff access is shared so it
+// never doubles as the shopper-signing key.
 const sessionSecret = process.env.SESSION_SECRET ?? crypto.randomUUID();
 if (!process.env.SESSION_SECRET) {
   console.warn(
@@ -25,7 +27,7 @@ if (applied.length) console.log(`migrations applied: ${applied.join(', ')}`);
 await migrator.end();
 
 const sql = createSql(databaseUrl);
-const app = createApp({ sql, sessionSecret });
+const app = createApp({ sql, sessionSecret, controlSecret: process.env.CONTROL_SECRET });
 
 console.log(`@vendua/core listening on :${port}`);
 export default { port, fetch: app.fetch };

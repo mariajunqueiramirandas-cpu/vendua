@@ -1,0 +1,560 @@
+/* _template baseline — deliberately plain. Consumes the --v-* vars the
+ * provider emits from vendua.config.ts tokens; every value has a fallback so
+ * the stylesheet also renders before hydration. */
+
+:root {
+  color-scheme: light;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  font-family: var(--v-font-body, system-ui, sans-serif);
+  background: var(--v-color-bg, #f7f6f4);
+  color: var(--v-color-text, #1c1b1a);
+  line-height: 1.5;
+}
+
+h1,
+h2,
+h3 {
+  font-family: var(--v-font-display, var(--v-font-body, system-ui));
+  line-height: 1.2;
+  margin: 0;
+}
+
+p {
+  margin: 0;
+}
+
+img {
+  max-width: 100%;
+  display: block;
+}
+
+.container {
+  width: min(100% - 32px, 960px);
+  margin-inline: auto;
+}
+
+.page {
+  padding-block: 32px 80px;
+}
+
+.page--narrow {
+  max-width: 40rem;
+}
+
+.page-head {
+  margin-bottom: 32px;
+  display: grid;
+  gap: 8px;
+}
+
+.muted {
+  color: var(--v-color-muted, #6e6a64);
+  font-size: 0.875rem;
+}
+
+/* -- skip link: first focusable, invisible until it takes focus (Q09) ------ */
+
+.skip-link {
+  position: absolute;
+  top: -100%;
+  left: 16px;
+  z-index: 100;
+  padding: 10px 16px;
+  background: var(--v-color-accent, #3f5e4e);
+  color: var(--v-color-on-accent, #fff);
+  border-radius: var(--v-radius-sm, 4px);
+  font-weight: 600;
+  text-decoration: none;
+}
+
+.skip-link:focus-visible {
+  top: 8px;
+}
+
+/* -- header / footer ------------------------------------------------------ */
+
+.site-header {
+  border-bottom: 1px solid color-mix(in srgb, var(--v-color-text, #1c1b1a) 10%, transparent);
+  background: var(--v-color-surface, #fff);
+  position: sticky;
+  top: 0;
+  z-index: 10;
+}
+
+.site-header-inner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 8px 16px;
+  padding-block: 12px;
+}
+
+.brand {
+  font-family: var(--v-font-display, var(--v-font-body));
+  font-weight: 600;
+  font-size: 1.125rem;
+  color: inherit;
+  text-decoration: none;
+  /* let the name shrink/ellipsize — status + cart keep their size at 320px */
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.header-actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+/* NOTE: storefront CSS never targets `v-*` or `[data-vendua]` (Contract v1).
+ * Kernel primitives' baseline lives in @vendua/kernel/styles.css. */
+
+.site-footer {
+  border-top: 1px solid color-mix(in srgb, var(--v-color-text, #1c1b1a) 10%, transparent);
+  padding-block: 32px;
+  display: grid;
+  gap: 8px;
+}
+
+/* -- buttons --------------------------------------------------------------- */
+
+.btn,
+.btn-ghost {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  min-height: 44px;
+  padding: 10px 20px;
+  border-radius: var(--v-radius-md, 8px);
+  font: inherit;
+  font-weight: 500;
+  text-decoration: none;
+  cursor: pointer;
+  transition: opacity var(--v-motion-duration, 180ms) var(--v-motion-easing, ease);
+}
+
+.btn {
+  background: var(--v-color-accent, #3f5e4e);
+  color: var(--v-color-on-accent, #fff);
+  border: 0;
+}
+
+.btn-ghost {
+  background: transparent;
+  color: var(--v-color-text, #1c1b1a);
+  border: 1px solid color-mix(in srgb, var(--v-color-text, #1c1b1a) 20%, transparent);
+}
+
+.btn:disabled,
+.btn-ghost:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.btn-block {
+  width: 100%;
+}
+
+.back-link {
+  display: inline-flex;
+  color: var(--v-color-muted, #6e6a64);
+  text-decoration: none;
+  font-size: 0.875rem;
+  margin-bottom: 24px;
+}
+
+/* -- catalog grid ---------------------------------------------------------- */
+
+.cat-section {
+  margin-bottom: 48px;
+}
+
+.cat-section h2 {
+  font-size: 1.25rem;
+  margin-bottom: 16px;
+}
+
+.grid {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+  gap: 16px;
+}
+
+.card {
+  display: grid;
+  gap: 8px;
+  padding: 12px;
+  border-radius: var(--v-radius-lg, 14px);
+  background: var(--v-color-surface, #fff);
+  border: 1px solid color-mix(in srgb, var(--v-color-text, #1c1b1a) 10%, transparent);
+  color: inherit;
+  text-decoration: none;
+}
+
+/* sold-out dims the figure only — dimming the whole card drags the name,
+   * description and flag under WCAG AA contrast (axe color-contrast). */
+.card[data-status='sold_out'] .card-figure {
+  opacity: 0.55;
+}
+
+.card-figure {
+  aspect-ratio: 1;
+  border-radius: var(--v-radius-md, 8px);
+  background: color-mix(in srgb, var(--v-color-accent, #3f5e4e) 12%, transparent);
+  color: var(--v-color-accent, #3f5e4e);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-family: var(--v-font-display, serif);
+  font-size: 2.5rem;
+}
+
+.card-figure[data-figure='alt'] {
+  background: color-mix(in srgb, var(--v-color-muted, #6e6a64) 14%, transparent);
+  color: var(--v-color-muted, #6e6a64);
+}
+
+.card-figure--lg {
+  aspect-ratio: 4 / 3;
+  font-size: 4rem;
+}
+
+.card-name {
+  font-weight: 600;
+}
+
+.card-desc {
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.card-price {
+  font-weight: 500;
+}
+
+.flag {
+  display: inline-block;
+  font-size: 0.75rem;
+  font-weight: 600;
+  padding: 2px 8px;
+  border-radius: var(--v-radius-sm, 4px);
+  background: color-mix(in srgb, var(--v-color-danger, #a33b32) 12%, transparent);
+}
+
+/* -- product page ----------------------------------------------------------- */
+
+.product-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 5fr) minmax(0, 6fr);
+  gap: 32px;
+}
+
+@media (max-width: 700px) {
+  .product-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+.price-lg {
+  font-size: 1.5rem;
+  font-weight: 600;
+  margin-block: 8px 16px;
+}
+
+.mod-group {
+  border: 0;
+  margin: 0 0 20px;
+  padding: 0;
+}
+
+.mod-group legend {
+  font-weight: 600;
+  margin-bottom: 8px;
+  padding: 0;
+}
+
+.mod-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 8px;
+}
+
+.mod-item {
+  width: 100%;
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 14px;
+  font: inherit;
+  text-align: left;
+  border-radius: var(--v-radius-md, 8px);
+  border: 1px solid color-mix(in srgb, var(--v-color-text, #1c1b1a) 15%, transparent);
+  background: var(--v-color-surface, #fff);
+  color: inherit;
+  cursor: pointer;
+}
+
+.mod-item[data-selected] {
+  border-color: var(--v-color-accent, #3f5e4e);
+  outline: 1px solid var(--v-color-accent, #3f5e4e);
+}
+
+.mod-item:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.buy-row {
+  margin-top: 24px;
+  display: grid;
+  gap: 16px;
+}
+
+.qty {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  border: 1px solid color-mix(in srgb, var(--v-color-text, #1c1b1a) 15%, transparent);
+  border-radius: var(--v-radius-md, 8px);
+  width: fit-content;
+}
+
+.qty button {
+  width: 36px;
+  height: 36px;
+  border: 0;
+  background: transparent;
+  font: inherit;
+  font-size: 1.125rem;
+  color: inherit;
+  cursor: pointer;
+}
+
+.qty button:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+}
+
+.qty output {
+  min-width: 2ch;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+}
+
+/* -- cart / checkout --------------------------------------------------------- */
+
+.cart-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 3fr) minmax(0, 2fr);
+  gap: 32px;
+  align-items: start;
+}
+
+@media (max-width: 700px) {
+  .cart-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+.cart-lines {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 16px;
+}
+
+.cart-line {
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 16px;
+  border-radius: var(--v-radius-lg, 14px);
+  background: var(--v-color-surface, #fff);
+  border: 1px solid color-mix(in srgb, var(--v-color-text, #1c1b1a) 10%, transparent);
+}
+
+.cart-line-main {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
+.cart-line-name {
+  font-weight: 600;
+}
+
+.cart-line-actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-top: 8px;
+}
+
+.cart-line-actions .btn-ghost {
+  min-height: 36px;
+  padding: 6px 12px;
+}
+
+.cart-line-total {
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.summary {
+  padding: 20px;
+  border-radius: var(--v-radius-lg, 14px);
+  background: var(--v-color-surface, #fff);
+  border: 1px solid color-mix(in srgb, var(--v-color-text, #1c1b1a) 10%, transparent);
+  display: grid;
+  gap: 10px;
+}
+
+.summary h2 {
+  font-size: 1.125rem;
+  margin-bottom: 4px;
+}
+
+.summary-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  font-size: 0.875rem;
+}
+
+.summary-total {
+  padding-top: 10px;
+  border-top: 1px solid color-mix(in srgb, var(--v-color-text, #1c1b1a) 10%, transparent);
+  font-size: 1rem;
+  font-weight: 600;
+}
+
+.ck-section {
+  margin-bottom: 32px;
+  display: grid;
+  gap: 14px;
+}
+
+.ck-section h2 {
+  font-size: 1.125rem;
+}
+
+.field {
+  display: grid;
+  gap: 6px;
+  font-size: 0.875rem;
+}
+
+.field-grid {
+  display: grid;
+  gap: 14px;
+  margin-top: 14px;
+}
+
+.input {
+  min-height: 44px;
+  padding: 10px 12px;
+  font: inherit;
+  border-radius: var(--v-radius-md, 8px);
+  border: 1px solid color-mix(in srgb, var(--v-color-text, #1c1b1a) 20%, transparent);
+  background: var(--v-color-surface, #fff);
+  color: inherit;
+}
+
+.input:focus-visible,
+.btn:focus-visible,
+.btn-ghost:focus-visible,
+.choice:focus-visible,
+.mod-item:focus-visible {
+  outline: 2px solid var(--v-color-accent, #3f5e4e);
+  outline-offset: 2px;
+}
+
+.choices {
+  display: grid;
+  gap: 8px;
+}
+
+.choice {
+  padding: 12px 14px;
+  font: inherit;
+  text-align: left;
+  border-radius: var(--v-radius-md, 8px);
+  border: 1px solid color-mix(in srgb, var(--v-color-text, #1c1b1a) 15%, transparent);
+  background: var(--v-color-surface, #fff);
+  color: inherit;
+  cursor: pointer;
+}
+
+.choice[aria-checked='true'] {
+  border-color: var(--v-color-accent, #3f5e4e);
+  outline: 1px solid var(--v-color-accent, #3f5e4e);
+}
+
+.choice:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+/* -- states ------------------------------------------------------------------- */
+
+.alert {
+  padding: 12px 14px;
+  border-radius: var(--v-radius-md, 8px);
+  border-left: 3px solid var(--v-color-danger, #a33b32);
+  background: color-mix(in srgb, var(--v-color-danger, #a33b32) 8%, transparent);
+  font-size: 0.875rem;
+}
+
+.empty {
+  display: grid;
+  justify-items: center;
+  gap: 12px;
+  text-align: center;
+  padding-block: 64px;
+}
+
+.sk-line {
+  height: 16px;
+  border-radius: var(--v-radius-sm, 4px);
+  background: color-mix(in srgb, var(--v-color-text, #1c1b1a) 8%, transparent);
+  margin-bottom: 12px;
+}
+
+.sk-line--short {
+  width: 55%;
+}
+
+.timeline {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 10px;
+}
+
+.timeline li {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  font-size: 0.875rem;
+}

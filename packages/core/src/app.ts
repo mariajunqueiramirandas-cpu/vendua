@@ -1,4 +1,6 @@
-import { Hono } from 'hono';
+import { createHmac } from 'node:crypto';
+import { Hono, type Context } from 'hono';
+import { getCookie, setCookie } from 'hono/cookie';
 import { cors } from 'hono/cors';
 import type { Sql } from './platform/db.ts';
 import { withTenant } from './platform/db.ts';
@@ -23,11 +25,27 @@ import { composeNotices, type SurfacesEnvelope } from './modules/notices.ts';
 import { addItem, assertCartOpen, loadCartView, matchZone } from './modules/cart.ts';
 import { validateCheckout, validateCheckoutShape } from './modules/checkout.ts';
 import { loadOrderView } from './modules/orders.ts';
+import {
+  appendNote,
+  createLead,
+  getLead,
+  leadInsert,
+  leadJson,
+  leadPatch,
+  leadState,
+  listLeads,
+  updateLead,
+} from './modules/leads.ts';
+import { boardHtml, boardLoginHtml } from './modules/board.ts';
 import { LOADER_JS } from './loader.ts';
 
 export interface AppDeps {
   sql: Sql;
   sessionSecret: string;
+  /** Staff credential for /control/v1 — distinct from sessionSecret so a
+   *  shared staff key never doubles as the shopper-session signing key.
+   *  Falls back to sessionSecret in dev when unset. */
+  controlSecret?: string | undefined;
 }
 
 async function loadSettings(
@@ -70,7 +88,7 @@ function currentStatus(settings: StoreSettingsRow | null) {
   );
 }
 
-export function createApp({ sql, sessionSecret }: AppDeps) {
+export function createApp({ sql, sessionSecret, controlSecret }: AppDeps) {
   const resolver = new TenantResolver(sql);
   const app = new Hono<{ Variables: { tenant: Tenant } }>();
 
@@ -448,13 +466,15 @@ export function createApp({ sql, sessionSecret }: AppDeps) {
         )[0]!.n;
         const orderId = crypto.randomUUID();
         const payment = {
-          provider: 'stub',
+          // 'sandbox' is the contract's dev provider name — the Phase-0
+          // pay-on-delivery stand-in stays until real orchestration lands.
+          provider: 'sandbox',
           method: body.payment.method,
           status: 'pending',
           instructions:
             body.payment.method === 'pix'
-              ? 'Pagamento PIX combinado na entrega/retirada (stub de Phase 0).'
-              : 'Pagamento na entrega ou retirada (stub de Phase 0).',
+              ? 'Pagamento PIX combinado na entrega/retirada (sandbox de Phase 0).'
+              : 'Pagamento na entrega ou retirada (sandbox de Phase 0).',
         };
         await tx`
           insert into orders (id, tenant_id, cart_id, number, customer, delivery, payment, state, subtotal_cents, delivery_fee_cents, total_cents)
@@ -463,7 +483,7 @@ export function createApp({ sql, sessionSecret }: AppDeps) {
         `;
         await tx`
           insert into order_events (tenant_id, order_id, from_state, to_state, actor, meta)
-          values (${tenant.id}, ${orderId}, null, 'placed', 'customer', ${tx.json({ via: 'checkout-stub' })})
+          values (${tenant.id}, ${orderId}, null, 'placed', 'customer', ${tx.json({ via: 'checkout-sandbox' })})
         `;
         await tx`
           insert into outbox (tenant_id, topic, payload)
@@ -490,10 +510,58 @@ export function createApp({ sql, sessionSecret }: AppDeps) {
   // Internal surface — shared-secret gated even in dev (public otherwise:
   // it answers for arbitrary tenant slugs). Prod binds it to mTLS/private
   // network on top of this.
-  app.get('/control/v1/state', async (c) => {
-    if (c.req.header('x-vendua-control') !== sessionSecret) {
-      throw new HttpError(404, 'NOT_FOUND', 'not found');
+  //
+  // The gate: the X-Vendua-Control header is the canonical credential — its
+  // value is CONTROL_SECRET, a staff key distinct from the shopper-session
+  // signing secret (staff access must never enable session forgery). The
+  // `vendua_control` cookie — minted by POST /control/v1/board — is a staff
+  // convenience so the board page can call this API from the browser.
+  // 404 (not 401) keeps the surface invisible to scans.
+  const CONTROL_COOKIE = 'vendua_control';
+  const staffSecret = controlSecret ?? sessionSecret;
+  // The cookie carries a derived token — never either secret itself: a leaked
+  // staff cookie opens the board without exposing a signing key, and rotating
+  // CONTROL_SECRET invalidates every cookie at once.
+  const controlToken = createHmac('sha256', staffSecret).update('vendua.control').digest('hex');
+  const controlAuthed = (c: Context) =>
+    c.req.header('x-vendua-control') === staffSecret ||
+    getCookie(c, CONTROL_COOKIE) === controlToken;
+  const controlGate = (c: Context) => {
+    if (!controlAuthed(c)) throw new HttpError(404, 'NOT_FOUND', 'not found');
+    // CSRF: a cookie-authenticated mutation must carry the custom
+    // `x-vendua-staff` marker — browsers can't add a custom header cross-site
+    // without a CORS preflight this API never answers — AND an Origin that
+    // matches the request host when one is present (the marker alone is a
+    // presence check a compromised same-site sibling could also send).
+    // SameSite=Lax already strips the cookie on cross-site POSTs.
+    const viaHeader = c.req.header('x-vendua-control') === staffSecret;
+    if (!viaHeader && c.req.method !== 'GET') {
+      if (!c.req.header('x-vendua-staff')) throw new HttpError(404, 'NOT_FOUND', 'not found');
+      const origin = c.req.header('origin');
+      const reqHost =
+        (trustProxy ? c.req.header('x-forwarded-host') : undefined) ?? c.req.header('host');
+      let originHost: string | null = null;
+      try {
+        originHost = origin ? new URL(origin).host : null;
+      } catch {
+        originHost = null;
+      }
+      if (origin && reqHost && originHost !== reqHost) {
+        throw new HttpError(404, 'NOT_FOUND', 'not found');
+      }
     }
+  };
+  const requireIdemKey = (c: Context) => {
+    const key = c.req.header('idempotency-key');
+    if (!key) {
+      throw new HttpError(400, 'IDEMPOTENCY_KEY_REQUIRED', 'Idempotency-Key header is required');
+    }
+    if (key.length > 200) throw new HttpError(400, 'BAD_REQUEST', 'Idempotency-Key too long');
+    return key;
+  };
+
+  app.get('/control/v1/state', async (c) => {
+    controlGate(c);
     const slug = str(c.req.query('tenant'), 'tenant', 200);
     const tenant = await resolver.resolveBySlug(slug);
     if (!tenant) throw new HttpError(404, 'TENANT_NOT_FOUND', 'tenant not found');
@@ -508,6 +576,100 @@ export function createApp({ sql, sessionSecret }: AppDeps) {
       },
       notices: notices.filter((n) => n.severity === 'blocking'),
     });
+  });
+
+  // Founder CRM v0 (docs/roadmap.md, Phase 1) — Venduá's own intake pipeline.
+  // Platform data, no tenant context; the gate above is the only boundary.
+  app.get('/control/v1/leads', async (c) => {
+    controlGate(c);
+    const q = c.req.query('state');
+    const rows = await listLeads(sql, q === undefined ? undefined : leadState(q));
+    return c.json({ leads: rows.map(leadJson) });
+  });
+
+  app.post('/control/v1/leads', async (c) => {
+    controlGate(c);
+    const res = await createLead(sql, leadInsert(await bodyJson(c)), requireIdemKey(c));
+    if (res.replayed) c.header('x-idempotent-replay', 'true');
+    return c.json(res.body, res.status as 200);
+  });
+
+  app.get('/control/v1/leads/:id', async (c) => {
+    controlGate(c);
+    const lead = await getLead(sql, uuidParam(c, 'id'));
+    if (!lead) throw new HttpError(404, 'LEAD_NOT_FOUND', 'lead not found');
+    return c.json({ lead: leadJson(lead) });
+  });
+
+  app.patch('/control/v1/leads/:id', async (c) => {
+    controlGate(c);
+    const res = await updateLead(
+      sql,
+      uuidParam(c, 'id'),
+      leadPatch(await bodyJson(c)),
+      requireIdemKey(c),
+    );
+    if (res.replayed) c.header('x-idempotent-replay', 'true');
+    return c.json(res.body);
+  });
+
+  app.post('/control/v1/leads/:id/notes', async (c) => {
+    controlGate(c);
+    const body = str((await bodyJson(c)).body, 'body', 2000).trim();
+    if (!body) throw new HttpError(422, 'BAD_REQUEST', 'body is required', { field: 'body' });
+    const res = await appendNote(sql, uuidParam(c, 'id'), body, requireIdemKey(c));
+    if (res.replayed) c.header('x-idempotent-replay', 'true');
+    return c.json(res.body);
+  });
+
+  // The staff board itself. POST /control/v1/board {key} mints the HttpOnly
+  // cookie and redirects to the clean URL — a POST body keeps the secret out
+  // of access logs and browser history (a ?key= URL would persist both).
+  // After that the cookie alone opens this page and its API.
+  app.get('/control/v1/board', (c) => {
+    if (!controlAuthed(c)) return c.html(boardLoginHtml());
+    return c.html(boardHtml());
+  });
+  // Board login guesses a shared secret — cap attempts at 10/min/IP so a
+  // reachable deployment isn't an oracle for a weak CONTROL_SECRET. Same
+  // fixed-window shape as the checkout limiter; per-IP, no tenant context.
+  const loginHits = new Map<string, { count: number; resetAt: number }>();
+  app.post('/control/v1/board', async (c) => {
+    // Same XFF convention as the checkout limiter: client sits left of the
+    // suffix our trusted proxies appended.
+    const ip = (() => {
+      if (!trustProxy) return 'local';
+      const xff = c.req
+        .header('x-forwarded-for')
+        ?.split(',')
+        .map((s) => s.trim());
+      return xff?.at(-1 - proxyHops) ?? 'unknown';
+    })();
+    const now = Date.now();
+    const bucket = loginHits.get(ip);
+    if (!bucket || bucket.resetAt <= now) {
+      loginHits.set(ip, { count: 1, resetAt: now + 60_000 });
+    } else if (++bucket.count > 10) {
+      throw new HttpError(429, 'RATE_LIMITED', 'too many attempts — retry in a minute');
+    }
+    const form = (await c.req.parseBody().catch(() => ({}))) as Record<string, unknown>;
+    if (form.key !== staffSecret) throw new HttpError(404, 'NOT_FOUND', 'not found');
+    setCookie(c, CONTROL_COOKIE, controlToken, {
+      httpOnly: true,
+      sameSite: 'Lax',
+      // Secure whenever the request is TLS — directly, or behind a
+      // terminating proxy when VENDUA_TRUST_PROXY marks X-Forwarded-*
+      // trustworthy (a strict c.req.url check would silently issue plaintext
+      // cookies in that deployment).
+      secure:
+        c.req.url.startsWith('https://') ||
+        (trustProxy && c.req.header('x-forwarded-proto') === 'https'),
+      // Staff sessions expire independently of shopper sessions (12h) — a
+      // captured cookie can't outlive the workday it was minted in.
+      maxAge: 60 * 60 * 12,
+      path: '/control',
+    });
+    return c.redirect('/control/v1/board');
   });
 
   app.route('/storefront/v1', storefront);

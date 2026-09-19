@@ -1,0 +1,107 @@
+---
+name: testing-vendua
+description: How to set up and end-to-end test vendua storefronts and the control board locally — seeded tenants, scaffolding real test tenants, board auth, store-state overrides, and known kernel pitfalls.
+---
+
+# Testing vendua locally
+
+## Devin Secrets Needed
+
+None — everything runs locally against a seeded Postgres.
+
+## Stack bring-up
+
+```sh
+export PATH="$HOME/.bun/bin:$PATH"          # bun is not on PATH by default
+cd packages/core
+docker compose up -d                        # postgres :5433, vendua/vendua
+bun run migrate && bun run seed             # schema + 3 seeded tenants
+SESSION_SECRET=test-secret bun run dev      # API :8787 — REQUIRED for /control routes
+```
+
+`SESSION_SECRET` gates the control surface; without it the board auth is a
+dead end. `bun --watch` (the dev script) hot-restarts on file save — expect
+~1s ECONNREFUSED windows when the tree changes mid-test.
+
+## Tenant resolution
+
+Tenants resolve from the **Host header** → `domains` table. Seeded dev hosts:
+`localhost:5174` quero-pudim, `:5191` brasa, `:5192` forn.
+`storefronts/_template` is **not** a registered tenant — loading it yields
+`TENANT_NOT_FOUND`. To test a real storefront UI:
+
+```sh
+bunx vendua scaffold <slug>   # allocates port ≥5200, registers tenant+domain,
+                              # seeds catalog (3 items; item 1 has a required
+                              # modifier group), zone "Entrega"/Centro R$5,00
+bun install                   # registers the new workspace in bun.lock
+bunx vendua dev <slug>        # vite on the allocated port
+```
+
+Cleanup: `rm -rf storefronts/<slug> && bun install` (drops lockfile entries).
+DB rows are left behind — consistent with existing `ph1demo` leftovers.
+
+### Closed-by-hours trap
+
+Scaffolded tenants seed hours 09:00–18:00 America/Sao_Paulo. If the box clock
+is outside that window the store is closed and checkout is blocked. Widen for
+testing:
+
+```sql
+docker compose -f packages/core/docker-compose.yml exec -T postgres psql \
+  -U vendua -d vendua -c \
+  "update store_settings set hours='[{\"day\":\"everyday\",\"open\":\"00:00\",\"close\":\"23:59\"}]'::jsonb where tenant_id=(select id from tenants where slug='<slug>');"
+```
+
+(check the actual column/type first — `store_settings` has `hours` jsonb and
+`status_override`.)
+
+## Store status overrides
+
+```sql
+update store_settings set status_override='paused'   -- blocking overlay, primitives off
+-- or 'closed'                                        -- dismissible banner, browse ok
+-- or null                                            -- back to derived hours status
+where tenant_id=(select id from tenants where slug='<slug>');
+```
+
+Verify via `curl -H "Host: <slug-host>" localhost:8787/storefront/v1/store`.
+
+## Control board (`/control/v1/board`)
+
+- Unauth'd `GET` → 200 login form (posts `key` back to same URL); wrong key →
+  404; right key → `vendua_control=<HMAC>` HttpOnly cookie + 302. Header
+  `x-vendua-control: <secret>` also works for API probes.
+- Cookie-auth mutations additionally need `x-vendua-staff: 1` (CSRF) — the
+  board's own `api()` helper sends it.
+- POST/PATCH mutations require `Idempotency-Key` → 400
+  `IDEMPOTENCY_KEY_REQUIRED` without it. Replay → 200 + `x-idempotent-replay`.
+- Board JS: add-lead form and "+ nota" (window.prompt — typeable via
+  computer-use + Enter) send `crypto.randomUUID()`; check that the "→" advance
+  button sends one too — it didn't in the Phase-1 PR (silent no-op).
+- Use an **incognito window** for board auth tests so cookie state is clean.
+
+## Kernel query-cache wedge (known gap)
+
+`useQuery` never refetches an already-`resolved` entry on mount — including
+entries that resolved with an error. If a vite page reload lands while Core
+is restarting (`--watch`), all queries wedge on error/empty until a manual
+reload — e.g. checkout permanently shows "Sua sacola está vazia" even though
+the server cart is intact. Workaround in tests: reload once more after Core
+is back. Session token survives reload in `sessionStorage` (`vendua.session`),
+so carts re-attach.
+
+## CLI verification (shell-only)
+
+```sh
+bunx vendua check <slug>   # tsc + conformance static K01–K04
+bunx vendua build <slug>   # vite build
+bunx vendua qa <slug>      # build + conformance e2e (playwright chromium)
+```
+
+`qa` needs playwright chromium installed (`bunx playwright install chromium`,
+already in repo maintenance) and a **free :5199** preview port; it seeds its
+own `qa-open/qa-paused/qa-closed/qa-edge` tenants and mutates the fixture's
+`dist/` — do NOT run two qa/e2e runs concurrently on the same storefront dir
+(teardown of one deletes dist under the other's preview → ENOENT failures).
+`_template` works as a qa fixture.

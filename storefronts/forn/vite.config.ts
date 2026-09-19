@@ -12,6 +12,6 @@ export default defineConfig({
     strictPort: true,
     // Reserved prefixes are the versioned mounts only — a bare '/checkout'
     // would swallow a storefront page route of the same name.
-    proxy: { '/storefront': core, '/checkout/v1': core, '/v1': core },
+    proxy: { '/storefront/v1': core, '/checkout/v1': core, '/v1': core },
   },
 });

@@ -1,0 +1,28 @@
+# CODEOWNERS — vendua monorepo
+#
+# A single human owns everything today; the *shape* is what matters. When
+# fleet automation lands (docs/architecture/06-monorepo.md § Isolation
+# rules), the storefronts rule gains the automation account and per-store
+# overrides slot in at the bottom.
+#
+# Order matters: the last matching pattern wins.
+
+# Default owner for everything not listed below — root-level files, docs/,
+# .github/, and anything new that isn't claimed further down.
+*                                @mariajunqueiramirandas-cpu
+
+# Platform: shared packages, repo tooling, the teaser site.
+/packages/                     @mariajunqueiramirandas-cpu
+/tools/                        @mariajunqueiramirandas-cpu
+/site/                         @mariajunqueiramirandas-cpu
+
+# Storefronts: fleet automation + on-call owner. Today this is the same
+# platform owner; the separate rule exists so `storefronts/<slug>` entries
+# can be re-owned per store (or assigned to the automation account) without
+# touching the platform rules.
+/storefronts/                  @mariajunqueiramirandas-cpu
+
+# The scaffold template and golden examples are platform-owned canonical
+# references, not customer storefronts.
+/storefronts/_template/        @mariajunqueiramirandas-cpu
+/storefronts/_examples/        @mariajunqueiramirandas-cpu

@@ -7,3 +7,6 @@ artifacts/
 .env
 .env.*
 !.env.example
+storefronts/*/qa-report/
+storefronts/*/dist/
+packages/conformance/test/.tmp/
