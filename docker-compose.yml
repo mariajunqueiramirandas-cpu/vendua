@@ -64,9 +64,9 @@ services:
     build:
       context: .
       dockerfile: storefronts/Dockerfile
+      target: storefront
       args:
         STOREFRONT: quero-pudim
-        PKG: '@vendua/storefront-quero-pudim'
     depends_on:
       core:
         condition: service_healthy
@@ -76,9 +76,9 @@ services:
     build:
       context: .
       dockerfile: storefronts/Dockerfile
+      target: storefront
       args:
         STOREFRONT: brasa
-        PKG: '@vendua/storefront-brasa'
     depends_on:
       core:
         condition: service_healthy
@@ -88,9 +88,9 @@ services:
     build:
       context: .
       dockerfile: storefronts/Dockerfile
+      target: storefront
       args:
         STOREFRONT: forn
-        PKG: '@vendua/forn'
     depends_on:
       core:
         condition: service_healthy
@@ -111,7 +111,8 @@ services:
   site:
     build:
       context: .
-      dockerfile: site/Dockerfile
+      dockerfile: storefronts/Dockerfile
+      target: site
     restart: unless-stopped
 
 volumes:
