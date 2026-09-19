@@ -250,6 +250,13 @@ export async function executeTool(
   // with the same name in one step gets its own key.
   const key = `agent:${runId}:${step}:${name}:${callId}`;
 
+  // toolsFor() only decides what the model is TOLD about — nothing stops it
+  // emitting another name. Enforce the toolset here too, or a discovery run
+  // can emit send_message and reach the real dispatch path.
+  if (!toolsFor(ctx.runKind).some((t) => t.name === name)) {
+    return { error: `tool ${name} not available for ${ctx.runKind} runs` };
+  }
+
   // Lead-bound runs (triage/reply/outreach) may only mutate THEIR lead — the
   // model picks the leadId arg, so enforce the binding in code. Read-only
   // tools (search_leads, get_lead) stay unscoped: triage legitimately inspects

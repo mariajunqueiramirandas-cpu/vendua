@@ -24,6 +24,7 @@ interface Step {
   out?: unknown;
   content?: unknown;
   toolCalls?: string[];
+  pending?: boolean;
 }
 
 export default function Runs() {
@@ -47,10 +48,18 @@ export default function Runs() {
 
   if (id && run) {
     const steps = (run.steps ?? []) as Step[];
+    const active = run.status === 'queued' || run.status === 'running';
     return (
       <Page
         title={`run ${run.id.slice(0, 8)}`}
         sub={`${KIND_LABEL[run.kind] ?? run.kind} · ${run.status}`}
+        actions={
+          active ? (
+            <button className="btn ghost" onClick={() => void api.cancelRun(run.id)}>
+              cancelar
+            </button>
+          ) : undefined
+        }
       >
         <div className="grid2" style={{ alignItems: 'start' }}>
           <div className="card" style={{ padding: 18 }}>
@@ -68,7 +77,12 @@ export default function Runs() {
                   {s.type === 'model' && s.toolCalls?.length ? (
                     <pre>→ {s.toolCalls.join(', ')}</pre>
                   ) : null}
-                  {s.type === 'tool' && <pre>{JSON.stringify(s.out, null, 1).slice(0, 3000)}</pre>}
+                  {s.type === 'tool' &&
+                    (s.pending ? (
+                      <pre className="pending-step">executando…</pre>
+                    ) : (
+                      <pre>{JSON.stringify(s.out, null, 1).slice(0, 3000)}</pre>
+                    ))}
                   {s.type === 'system_prompt' && <pre>{String(s.content).slice(0, 1500)}</pre>}
                 </div>
               ))}

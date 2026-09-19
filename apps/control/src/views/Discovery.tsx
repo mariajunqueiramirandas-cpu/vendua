@@ -25,6 +25,14 @@ export default function Discovery() {
       .catch(() => undefined);
   }, []);
   useEffect(load, [load]);
+  // Leads land in the table as the agent creates them and steps stream into
+  // the run — keep polling while a discovery run is live.
+  const active = runs.some((r) => r.status === 'queued' || r.status === 'running');
+  useEffect(() => {
+    if (!active) return;
+    const t = setInterval(load, 3000);
+    return () => clearInterval(t);
+  }, [active, load]);
 
   const start = async () => {
     setBusy(true);
@@ -36,7 +44,7 @@ export default function Discovery() {
         city: f.city,
       });
       setMsg(`run ${runId.slice(0, 8)} iniciado — o agente pesquisa e cria leads`);
-      setTimeout(load, 3000);
+      load();
     } catch (e) {
       setMsg(e instanceof Error ? e.message : 'erro');
     } finally {
@@ -160,10 +168,19 @@ export default function Discovery() {
                     </td>
                     <td>
                       <span
-                        className={`chip ${r.status === 'failed' ? 'bad' : r.status === 'done' ? '' : 'warn'}`}
+                        className={`chip ${r.status === 'failed' || r.status === 'canceled' ? 'bad' : r.status === 'done' ? '' : 'warn'}`}
                       >
                         {r.status}
                       </span>
+                      {(r.status === 'queued' || r.status === 'running') && (
+                        <button
+                          className="btn ghost"
+                          style={{ marginLeft: 6, padding: '2px 8px' }}
+                          onClick={() => void api.cancelRun(r.id).then(load)}
+                        >
+                          cancelar
+                        </button>
+                      )}
                     </td>
                     <td className="mono" style={{ fontSize: 'var(--t-2xs)' }}>
                       {(r.tokens_in + r.tokens_out).toLocaleString('pt-BR')} tok

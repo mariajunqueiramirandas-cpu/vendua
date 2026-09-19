@@ -1231,6 +1231,31 @@ export function createApp({ sql, sessionSecret, controlSecret }: AppDeps) {
     return c.json({ run: rows[0] });
   });
 
+  // Cooperative cancel: flip queued/running → canceled; the worker's next
+  // journal write stops matching its claim fence and unwinds at the boundary.
+  app.post('/control/v1/agent/runs/:id/cancel', async (c) => {
+    controlGate(c);
+    const id = uuidParam(c, 'id');
+    const res = await claimControl(sql, requireIdemKey(c), async (tx) => {
+      const rows = await tx`
+        update agent_runs set status = 'canceled', finished_at = now(), error = 'cancelado'
+        where id = ${id} and status in ('queued', 'running')
+        returning id
+      `;
+      if (!rows[0]) {
+        const cur = (
+          await tx<{ status: string }[]>`select status from agent_runs where id = ${id}`
+        )[0];
+        if (!cur) throw new HttpError(404, 'RUN_NOT_FOUND', 'run not found');
+        // already terminal — report it, don't error (cancel is idempotent)
+        return { status: 200, body: { ok: true, status: cur.status } };
+      }
+      return { status: 200, body: { ok: true, status: 'canceled' } };
+    });
+    if (res.replayed) c.header('x-idempotent-replay', 'true');
+    return c.json(res.body);
+  });
+
   app.post('/control/v1/agent/runs', async (c) => {
     controlGate(c);
     const body = await bodyJson(c);

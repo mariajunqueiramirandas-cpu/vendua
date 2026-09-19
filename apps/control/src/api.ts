@@ -321,4 +321,6 @@ export const api = {
       method: 'POST',
       body: JSON.stringify({ kind, params }),
     }),
+  cancelRun: (id: string) =>
+    req<{ ok: true; status?: string }>(`/agent/runs/${id}/cancel`, { method: 'POST' }),
 };

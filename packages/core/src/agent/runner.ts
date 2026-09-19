@@ -18,6 +18,7 @@ const agentLog = log.child({ mod: 'agent' });
  */
 
 const MAX_STEPS = 12;
+const HEARTBEAT_MS = 20_000;
 
 interface RunRow {
   id: string;
@@ -25,6 +26,9 @@ interface RunRow {
   lead_id: string | null;
   thread_id: string | null;
   params: Record<string, unknown>;
+  /** Minted at claim; every worker write is conditioned on it so a worker
+   *  that loses its lease (reclaimed row) can't overwrite the new owner. */
+  claim_token: string;
 }
 
 /** Transaction-local insert — call inside an existing tx (e.g. claimControl's)
@@ -64,7 +68,8 @@ export async function enqueueRun(
 async function claimRun(sql: Sql): Promise<RunRow | null> {
   return controlTx(sql, async (tx) => {
     const rows = await tx<RunRow[]>`
-      update agent_runs set status = 'running', started_at = now()
+      update agent_runs set status = 'running', started_at = now(),
+        claim_token = gen_random_uuid()::text
       where id = (
         select id from agent_runs
         where status = 'queued'
@@ -72,7 +77,7 @@ async function claimRun(sql: Sql): Promise<RunRow | null> {
         limit 1
         for update skip locked
       )
-      returning id, kind, lead_id, thread_id, params
+      returning id, kind, lead_id, thread_id, params, claim_token
     `;
     return rows[0] ?? null;
   });
@@ -80,7 +85,7 @@ async function claimRun(sql: Sql): Promise<RunRow | null> {
 
 async function finishRun(
   sql: Sql,
-  runId: string,
+  run: { id: string; claimToken: string },
   result: {
     status: 'done' | 'failed' | 'canceled';
     steps: unknown[];
@@ -101,7 +106,7 @@ async function finishRun(
       cost_cents = ${result.costCents},
       error = ${result.error ?? null},
       finished_at = now()
-    where id = ${runId}
+    where id = ${run.id} and status = 'running' and claim_token = ${run.claimToken}
   `,
   );
 }
@@ -147,6 +152,7 @@ async function contextFor(sql: Sql, run: RunRow): Promise<string> {
 export async function runOnce(sql: Sql): Promise<boolean> {
   const run = await claimRun(sql);
   if (!run) return false;
+  const claim = { id: run.id, claimToken: run.claim_token };
 
   const steps: unknown[] = [];
   const messages: AgentMessage[] = [];
@@ -155,6 +161,65 @@ export async function runOnce(sql: Sql): Promise<boolean> {
   // accumulate fractional dollars — rounding to cents per step would zero out
   // sub-cent calls and skew the run total.
   let costUsd = 0;
+  // Set when the row stops matching this execution: canceled via the API, or
+  // reclaimed and re-queued after going stale. The loop unwinds at the next
+  // boundary — in-flight tool calls finish but nothing else is persisted or
+  // sent.
+  let lost = false;
+
+  /** Streaming journal: every write commits the steps so far — staff watch
+   *  the trajectory live instead of a silent 'running' chip — AND refreshes
+   *  started_at, which doubles as the reclaim lease in drain(). Fenced by
+   *  claim_token: a stale worker's write no-ops once a new claim owns the
+   *  row. Writes serialize on `tail` and each snapshots [...steps, ...extra]
+   *  when its turn begins, so parallel tool resolutions can only advance the
+   *  journal — a delayed write never re-commits an older pending state. */
+  let tail: Promise<void> = Promise.resolve();
+  const persist = (extra: unknown[] = []): Promise<void> => {
+    const p = tail.then(async () => {
+      if (lost) return;
+      const rows = await controlTx(
+        sql,
+        (tx) => tx`
+          update agent_runs set started_at = now(), steps = ${tx.json([...steps, ...extra] as never[])}
+          where id = ${run.id} and status = 'running' and claim_token = ${run.claim_token}
+          returning id
+        `,
+      );
+      if (!rows.length) lost = true;
+    });
+    tail = p.catch(() => undefined);
+    return p;
+  };
+
+  /** Journal write for an aborted run — the trajectory up to cancellation is
+   *  still the audit trail, so keep it when the cancel endpoint flipped the
+   *  row mid-flight. Fenced by claim_token like every other write: a stale
+   *  worker can't overwrite the newer execution's journal. */
+  const persistAborted = async (): Promise<void> => {
+    await tail.catch(() => undefined);
+    await controlTx(
+      sql,
+      (tx) => tx`
+        update agent_runs set steps = ${tx.json(steps as never[])}, finished_at = now()
+        where id = ${run.id} and status = 'canceled' and claim_token = ${run.claim_token}
+      `,
+    ).catch(() => undefined);
+  };
+
+  // A single tool/model call can outlive the 10-min lease on its own — the
+  // timer keeps started_at fresh through it, so reclaim means a dead worker,
+  // never a live one stuck inside a slow provider call.
+  const heartbeat = setInterval(() => {
+    void controlTx(
+      sql,
+      (tx) => tx`
+        update agent_runs set started_at = now()
+        where id = ${run.id} and status = 'running' and claim_token = ${run.claim_token}
+      `,
+    ).catch(() => undefined);
+  }, HEARTBEAT_MS);
+  heartbeat.unref?.();
 
   try {
     const integration = await getIntegration(sql, 'llm');
@@ -175,23 +240,19 @@ export async function runOnce(sql: Sql): Promise<boolean> {
 
     steps.push({ type: 'system_prompt', content: system });
     messages.push({ role: 'user', content: context });
+    await persist();
 
-    for (let i = 0; i < MAX_STEPS; i++) {
-      // Heartbeat: `started_at` doubles as the reclaim lease in drain() —
-      // refreshing it every step means only a genuinely wedged run (no step in
-      // 10 min) gets requeued, never a live one mid-flight.
-      await controlTx(
-        sql,
-        (tx) => tx`update agent_runs set started_at = now() where id = ${run.id}`,
-      );
+    for (let i = 0; i < MAX_STEPS && !lost; i++) {
       const res = await provider.chat({ system, messages, tools });
       tokensIn += res.tokensIn;
       tokensOut += res.tokensOut;
       if (res.costUsd != null) costUsd += res.costUsd;
       steps.push({ type: 'model', content: res.text, toolCalls: res.toolCalls.map((t) => t.name) });
+      await persist();
+      if (lost) break;
 
       if (!res.toolCalls.length) {
-        await finishRun(sql, run.id, {
+        await finishRun(sql, claim, {
           status: 'done',
           steps,
           tokensIn,
@@ -206,25 +267,67 @@ export async function runOnce(sql: Sql): Promise<boolean> {
         content: res.text ?? '',
         toolCalls: res.toolCalls,
       });
+      ctx.step = i;
 
-      for (const [callIndex, call] of res.toolCalls.entries()) {
-        ctx.step = i;
-        let out: unknown;
-        try {
-          out = await executeTool(ctx, call.id ?? String(callIndex), call.name, call.args);
-        } catch (e) {
-          out = { error: e instanceof Error ? e.message : String(e) };
-        }
-        steps.push({ type: 'tool', name: call.name, args: call.args, out });
-        messages.push({
-          role: 'tool',
-          toolCallId: call.id,
+      if (run.kind === 'discovery') {
+        // Discovery tools are remote reads or idempotent inserts — a step's
+        // calls run in parallel (one provider automation per call would make
+        // a single iteration take minutes).
+        const batch: unknown[] = res.toolCalls.map((call) => ({
+          type: 'tool',
           name: call.name,
-          content: JSON.stringify(out),
-        });
+          args: call.args,
+          pending: true,
+        }));
+        const toolMsgs: AgentMessage[] = new Array(res.toolCalls.length);
+        await persist(batch);
+        await Promise.all(
+          res.toolCalls.map(async (call, callIndex) => {
+            let out: unknown;
+            try {
+              out = await executeTool(ctx, call.id ?? String(callIndex), call.name, call.args);
+            } catch (e) {
+              out = { error: e instanceof Error ? e.message : String(e) };
+            }
+            batch[callIndex] = { type: 'tool', name: call.name, args: call.args, out };
+            toolMsgs[callIndex] = {
+              role: 'tool',
+              toolCallId: call.id,
+              name: call.name,
+              content: JSON.stringify(out),
+            };
+            await persist(batch);
+          }),
+        );
+        steps.push(...batch);
+        messages.push(...toolMsgs);
+      } else {
+        // Messaging kinds stay sequential: tool calls in one response may
+        // depend on each other's ordering (draft before send).
+        for (const [callIndex, call] of res.toolCalls.entries()) {
+          let out: unknown;
+          try {
+            out = await executeTool(ctx, call.id ?? String(callIndex), call.name, call.args);
+          } catch (e) {
+            out = { error: e instanceof Error ? e.message : String(e) };
+          }
+          steps.push({ type: 'tool', name: call.name, args: call.args, out });
+          messages.push({
+            role: 'tool',
+            toolCallId: call.id,
+            name: call.name,
+            content: JSON.stringify(out),
+          });
+          await persist();
+          if (lost) break;
+        }
       }
     }
-    await finishRun(sql, run.id, {
+    if (lost) {
+      await persistAborted();
+      return true;
+    }
+    await finishRun(sql, claim, {
       // step exhaustion is a failure — the model never converged on an answer
       status: 'failed',
       steps,
@@ -235,7 +338,7 @@ export async function runOnce(sql: Sql): Promise<boolean> {
     });
     return true;
   } catch (e) {
-    await finishRun(sql, run.id, {
+    await finishRun(sql, claim, {
       status: 'failed',
       steps,
       tokensIn,
@@ -244,6 +347,8 @@ export async function runOnce(sql: Sql): Promise<boolean> {
       error: e instanceof Error ? e.message : String(e),
     });
     return true;
+  } finally {
+    clearInterval(heartbeat);
   }
 }
 
@@ -257,7 +362,7 @@ export async function drain(sql: Sql, limit = 20): Promise<number> {
   await controlTx(
     sql,
     (tx) => tx`
-      update agent_runs set status = 'queued', started_at = null
+      update agent_runs set status = 'queued', started_at = null, claim_token = null
       where status = 'running' and started_at < now() - make_interval(mins => ${RUN_LEASE_MIN})
     `,
   );
