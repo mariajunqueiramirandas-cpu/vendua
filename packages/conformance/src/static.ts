@@ -187,9 +187,21 @@ function k02(dir: string): CheckResult {
     const provClose = src.indexOf('</VenduaProvider>');
     const surf = /<SystemSurfaces[\s/>]/.exec(src)?.index;
     const surfs = src.match(/<SystemSurfaces[\s/>]/g) ?? [];
-    // <Routes> is a route table, not a router mount — it can legally live in
-    // a child component above the provider in source order.
-    const router = /<(BrowserRouter|RouterProvider|HashRouter|MemoryRouter)[\s>]/.exec(src)?.index;
+    // The router mount is whichever local name a react-router-dom import binds
+    // a router component to — `BrowserRouter as Router` makes `<Router>` the
+    // mount. <Routes> is a route table, not a router mount — it can legally
+    // live in a child component above the provider in source order.
+    const routerLocals = new Set<string>();
+    for (const m of src.matchAll(/import\s*\{([^}]+)\}\s*from\s*['"]react-router-dom['"]/g))
+      for (const spec of m[1]!.split(',')) {
+        const [imported, local] = spec.trim().split(/\s+as\s+/);
+        if (['BrowserRouter', 'RouterProvider', 'HashRouter', 'MemoryRouter'].includes(imported!))
+          routerLocals.add((local ?? imported)!.trim());
+      }
+    const router =
+      routerLocals.size > 0
+        ? new RegExp(`<(${[...routerLocals].join('|')})[\\s>]`).exec(src)?.index
+        : undefined;
 
     if (!/\bVenduaProvider\b/.test(src)) problems.push('entry does not import VenduaProvider');
     if (provOpen === undefined) problems.push('entry does not render <VenduaProvider>');

@@ -74,6 +74,19 @@ describe('runStatic', () => {
     expect(k02?.detail).toContain('router');
   }, 120_000);
 
+  test('an aliased router import passes K02', async () => {
+    const dir = fixture({
+      ...GOOD_BASE,
+      'main.tsx':
+        'import { VenduaProvider, SystemSurfaces } from "@vendua/kernel";\n' +
+        'import { BrowserRouter as Router } from "react-router-dom";\n' +
+        'export const App = () =>\n' +
+        '  <VenduaProvider api=""><SystemSurfaces /><Router /></VenduaProvider>;\n',
+    });
+    const k02 = (await runStatic(dir)).find((r) => r.id === 'K02');
+    expect(k02?.status, k02?.detail).toBe('pass');
+  }, 120_000);
+
   test('string-shorthand and bare-prefix proxies fail K06', async () => {
     for (const key of ['/checkout', '/storefront']) {
       const dir = fixture({
