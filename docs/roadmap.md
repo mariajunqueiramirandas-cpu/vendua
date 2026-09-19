@@ -1,6 +1,6 @@
 # Roadmap
 
-> Status: Proposed · Last reviewed: 2026-09-18
+> Status: Proposed · Last reviewed: 2026-09-19
 
 **Organizing principle: the fleet is the product.** This roadmap is not "build
 the platform, then learn to operate 1000 stores". Every phase must leave the
@@ -143,6 +143,15 @@ without touching a repo.
       state machine ([13](architecture/13-payments.md)).
 - [ ] Merchant admin MVP: catalog CRUD (incl. Phase-2 fields), hours,
       zones/fees, orders, MP connect.
+- [ ] **Self-serve signup + subscription billing** — the top-priority
+      product path: a visitor goes from plan selection on the site to a paid
+      Venduá subscription and a provisioned store with zero staff
+      involvement. Pre-auth signup surface in Core, a plan catalog
+      (`tenants.plan` already exists), and Venduá-side recurring billing —
+      distinct from shopper→merchant payments (which settle into the
+      merchant's own MP account; this is the merchant paying Venduá).
+      Paid signup hands off to the provisioner (Phase 4); the invite path
+      stays for sales-assisted deals.
 - [ ] Server-driven notices end-to-end: emit `store_paused` from Core, watch
       an _unmodified_ storefront render it
       ([05](architecture/05-system-surfaces.md)).
@@ -163,11 +172,13 @@ it — deployment and operations are prerequisites for tenant #1.
 - [ ] **Control Plane v0** ([08](architecture/08-control-plane.md)): tenants /
       storefronts / releases / deployments / domains tables; promote and
       rollback as pointer flips; 60 s synthetic probes per live hostname;
-      provisioner state machine (tenant row → DNS → promote → invite).
+      provisioner state machine (tenant row → DNS → promote → live),
+      triggered by either a staff invite or a paid self-serve signup.
 - [ ] **Founder CRM → Control Plane** — the Phase-1 intake board folds into
       the Control Plane: `lead` records graduate into the provisioner's
-      invite→live states, so onboarding is tracked in the same tool that
-      operates the fleet — not a separate spreadsheet.
+      invite→live states, and self-serve signups enter the same pipeline
+      directly — so onboarding is tracked in the same tool that operates
+      the fleet, never a separate spreadsheet.
 
 Exit: a real merchant takes a real paid order on `*.vendua.com.br` — and their
 storefront was provisioned, promoted, is being probed, and could be rolled
