@@ -40,10 +40,6 @@ create table if not exists lead_activities (
 );
 create index if not exists lead_activities_lead_at on lead_activities (lead_id, at desc);
 
--- Provider retries must never insert a second copy of the same inbound.
-create unique index if not exists lead_messages_provider_id
-  on lead_messages (provider_message_id) where provider_message_id is not null;
-
 create table if not exists lead_tasks (
   id uuid primary key default gen_random_uuid(),
   lead_id uuid not null references leads (id) on delete cascade,
@@ -84,7 +80,8 @@ create table if not exists lead_messages (
 );
 create index if not exists lead_messages_thread_at on lead_messages (thread_id, created_at);
 create index if not exists lead_messages_pending_drafts on lead_messages (created_at) where status = 'draft';
-create index if not exists lead_messages_provider_id on lead_messages (provider_message_id) where provider_message_id is not null;
+-- Provider retries must never insert a second copy of the same inbound.
+create unique index if not exists lead_messages_provider_id on lead_messages (provider_message_id) where provider_message_id is not null;
 
 create table if not exists lead_state_history (
   id uuid primary key default gen_random_uuid(),
