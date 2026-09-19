@@ -324,6 +324,13 @@ export async function listLeads(
       cursorAt = decoded.slice(0, sep);
       cursorId = decoded.slice(sep + 1);
       if (Number.isNaN(new Date(cursorAt).getTime())) throw new Error('shape');
+      // Postgres would reject a malformed uuid mid-query with a 500 — check
+      // the shape here so bad cursors get the BAD_REQUEST above instead.
+      if (
+        !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(cursorId)
+      ) {
+        throw new Error('shape');
+      }
     } catch {
       throw new HttpError(400, 'BAD_REQUEST', 'invalid cursor');
     }

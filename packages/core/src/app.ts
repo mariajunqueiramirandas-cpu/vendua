@@ -638,6 +638,9 @@ export function createApp({ sql, sessionSecret, controlSecret }: AppDeps) {
       return xff?.at(-1 - proxyHops) ?? 'unknown';
     })();
     const now = Date.now();
+    // Evict expired buckets — without this, rotating client addresses (each
+    // a new map key) grow the map until the process exhausts memory.
+    for (const [k, v] of loginHits) if (v.resetAt <= now) loginHits.delete(k);
     const bucket = loginHits.get(ip);
     if (!bucket || bucket.resetAt <= now) {
       loginHits.set(ip, { count: 1, resetAt: now + 60_000 });

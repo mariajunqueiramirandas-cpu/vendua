@@ -1,5 +1,5 @@
 import type { Sql } from '../../platform/db.ts';
-import type { IntegrationRow } from '../../modules/integrations.ts';
+import { getIntegration, type IntegrationRow } from '../../modules/integrations.ts';
 import { controlTx } from '../../modules/control.ts';
 
 /**
@@ -148,9 +148,12 @@ async function startSocket(sql: Sql, integration: IntegrationRow): Promise<Baile
       const loggedOut = u.lastDisconnect?.error?.output?.statusCode === 401;
       if (!loggedOut) {
         setTimeout(() => {
-          void ensureSocket(sql, integration).catch((e) =>
-            console.error('[whatsapp] reconnect failed', e),
-          );
+          // Re-read the integration instead of reconnecting with the config
+          // captured at startSocket time — a disabled or re-pointed driver
+          // must not come back on the old settings.
+          void getIntegration(sql, 'whatsapp')
+            .then((fresh) => ensureSocket(sql, fresh))
+            .catch((e) => console.error('[whatsapp] reconnect failed', e));
         }, 5_000);
       }
     }
@@ -237,11 +240,11 @@ export async function ensureSocket(
 
 export async function sendWhatsApp(
   sql: Sql,
-  integration: IntegrationRow | null,
+  integration: IntegrationRow,
   to: string,
   text: string,
 ): Promise<string | null> {
-  const driver = integration?.driver ?? 'log';
+  const driver = integration.driver;
   if (driver === 'log') {
     console.log(`[whatsapp:log] → ${to}\n${text}`);
     return `log:${crypto.randomUUID()}`;

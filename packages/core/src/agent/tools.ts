@@ -13,7 +13,7 @@ import {
 import { addActivity, createTask } from '../modules/activities.ts';
 import { composeMessage, composeMessageTx, setThreadAgent, channel } from '../modules/threads.ts';
 import { DEFAULT_GUARDRAILS, getSettingTx, type Guardrails } from '../modules/integrations.ts';
-import { checkSendAllowedTx } from './guardrails.ts';
+import { checkSendAllowedTx, type SendVerdict } from './guardrails.ts';
 import { dispatchMessage } from './send.ts';
 
 /**
@@ -249,6 +249,30 @@ export async function executeTool(
   // deterministic per call — a retried call replays, a batched second call
   // with the same name in one step gets its own key.
   const key = `agent:${runId}:${step}:${name}:${callId}`;
+
+  // Lead-bound runs (triage/reply/outreach) may only mutate THEIR lead — the
+  // model picks the leadId arg, so enforce the binding in code. Read-only
+  // tools (search_leads, get_lead) stay unscoped: triage legitimately inspects
+  // other leads, e.g. to spot duplicates.
+  const leadBoundArg =
+    {
+      update_lead: 'id',
+      set_state: 'leadId',
+      add_note: 'leadId',
+      create_task: 'leadId',
+      draft_message: 'leadId',
+      send_message: 'leadId',
+      request_human: 'leadId',
+    }[name] ?? null;
+  if (ctx.leadId && leadBoundArg) {
+    const target = String(args[leadBoundArg] ?? '');
+    if (target !== ctx.leadId) {
+      return {
+        error: `LEAD_MISMATCH — this run is bound to lead ${ctx.leadId}; pass that leadId`,
+      };
+    }
+  }
+
   switch (name) {
     case 'search_leads': {
       const q = typeof args.q === 'string' && args.q ? args.q : null;
@@ -272,8 +296,13 @@ export async function executeTool(
       return getLeadDetail(sql, String(args.id ?? ''));
     case 'create_lead': {
       const payload = { ...args };
-      if (ctx.runKind === 'discovery' && payload.discoveredVia === undefined) {
-        payload.discoveredVia = 'agente';
+      if (ctx.runKind === 'discovery') {
+        if (payload.discoveredVia === undefined) payload.discoveredVia = 'agente';
+        // The Discovery UI panel queries `tag=descoberto` — tag it here so
+        // agent-found leads are always findable there.
+        const tags = Array.isArray(payload.tags) ? [...payload.tags] : [];
+        if (!tags.includes('descoberto')) tags.push('descoberto');
+        payload.tags = tags;
       }
       const input = leadInsert(payload);
       const res = await claimControl(sql, key, async (tx) => {
@@ -357,15 +386,39 @@ export async function executeTool(
     case 'send_message': {
       const leadId = String(args.leadId);
       const chan = channel(args.channel);
-      // One tx: advisory lock on the lead → guardrails → insert. Two
-      // concurrent send_message calls serialize on the lock, so the second
-      // sees the first's 'queued' row in the daily-cap count instead of
-      // both passing the check on stale reads.
-      const res = await controlTx(sql, async (tx) => {
+      // Claimed: a retried tool call replays the recorded decision instead of
+      // composing again. The advisory lock serializes concurrent sends on the
+      // lead so the daily-cap count sees the winner's queued row.
+      type SendBody =
+        | { blocked: true; reason: string | undefined }
+        | {
+            blocked: false;
+            verdict: SendVerdict;
+            composed: Awaited<ReturnType<typeof composeMessageTx>>;
+          };
+      const res = await claimControl<SendBody>(sql, key, async (tx) => {
         await tx`select pg_advisory_xact_lock(hashtext(${`send:${leadId}`}))`;
+        // Run-scoped dedupe: a run reclaimed after a mid-send crash re-executes
+        // the whole conversation — the model may emit a different callId, so
+        // `key` can't catch it. The run's own prior dispatch can.
+        const already = await tx`
+          select 1 from lead_messages m
+          join lead_threads t on t.id = m.thread_id
+          where t.lead_id = ${leadId} and m.agent_run_id = ${ctx.runId}
+            and m.status in ('queued', 'sending', 'sent', 'delivered')
+          limit 1
+        `;
+        if (already[0]) {
+          return {
+            status: 200,
+            body: { blocked: true as const, reason: 'already dispatched by this run' },
+          };
+        }
         const g = await getSettingTx(tx, 'guardrails', {} as Partial<Guardrails>);
         const verdict = await checkSendAllowedTx(tx, { ...DEFAULT_GUARDRAILS, ...g }, leadId);
-        if (!verdict.ok) return { blocked: true as const, reason: verdict.reason };
+        if (!verdict.ok) {
+          return { status: 200, body: { blocked: true as const, reason: verdict.reason } };
+        }
         const composed = await composeMessageTx(tx, {
           leadId,
           channel: chan,
@@ -373,14 +426,18 @@ export async function executeTool(
           subject: (args.subject as string) ?? undefined,
           author: 'agent',
           status: verdict.forceDraft ? 'draft' : 'queued',
+          agentRunId: ctx.runId,
         });
-        return { blocked: false as const, verdict, composed };
+        return { status: 200, body: { blocked: false as const, verdict, composed } };
       });
-      if (res.blocked) return { blocked: true, reason: res.reason };
-      if (res.verdict.forceDraft === false) {
-        await dispatchMessage(sql, res.composed.body.message.id);
+      const out = res.body;
+      if (out.blocked) return { blocked: true, reason: out.reason };
+      // dispatchMessage no-ops unless the row is still 'queued' — safe when
+      // this response replays.
+      if (!res.replayed && out.verdict.forceDraft === false) {
+        await dispatchMessage(sql, out.composed.body.message.id);
       }
-      return { ...res.composed.body, draftFallback: res.verdict.forceDraft };
+      return { ...out.composed.body, draftFallback: out.verdict.forceDraft };
     }
     case 'remember': {
       const fact = String(args.fact ?? '').slice(0, 500);

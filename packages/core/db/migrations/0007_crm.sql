@@ -75,7 +75,13 @@ create table if not exists lead_messages (
   -- 'sending' = dispatch in flight: a crash between provider call and status
   -- write lands here, never back in 'queued' — at-most-once delivery.
   status text not null check (status in ('draft', 'queued', 'sending', 'sent', 'delivered', 'received', 'failed', 'rejected')),
+  -- Channel-namespaced on write ('whatsapp:AB12…') — a provider id must be
+  -- unique per channel, but ids across providers share no namespace, so the
+  -- unique index below can't let one channel's ids suppress another's.
   provider_message_id text,
+  -- run that authored this message — lets a re-executed agent run recognize
+  -- its own already-queued send instead of composing a duplicate.
+  agent_run_id uuid,
   approved_by text,
   approved_at timestamptz,
   created_at timestamptz not null default now(),
@@ -95,6 +101,25 @@ create table if not exists lead_state_history (
   at timestamptz not null default now()
 );
 create index if not exists lead_state_history_lead on lead_state_history (lead_id, at);
+
+-- Funnel reads `everReached` from this table only, so pre-existing leads
+-- need their history backfilled: every stage up to their current state,
+-- stamped at created_at. Leads with an out-of-funnel state are untouched.
+insert into lead_state_history (lead_id, from_state, to_state, actor, at)
+select l.id, prev.s, cur.s, 'system', l.created_at
+from leads l
+join lateral (
+  select s, ord
+  from (values ('lead', 1), ('contacted', 2), ('invited', 3), ('live', 4)) v(s, ord)
+  where v.ord <= (
+    select o.ord from (values ('lead', 1), ('contacted', 2), ('invited', 3), ('live', 4)) o(s, ord)
+    where o.s = l.state
+  )
+) cur on true
+left join lateral (
+  select s from (values ('lead', 1), ('contacted', 2), ('invited', 3), ('live', 4)) p(s, ord)
+  where p.ord = cur.ord - 1
+) prev on true;
 
 -- Agent harness queue: every run is an auditable row. steps[] is the full
 -- tool-call + model-io transcript; tokens/cost make spend a first-class read.

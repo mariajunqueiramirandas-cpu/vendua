@@ -7,12 +7,12 @@ import type { IntegrationRow } from '../../modules/integrations.ts';
  * with zero credentials.
  */
 export async function sendEmail(
-  integration: IntegrationRow | null,
+  integration: IntegrationRow,
   msg: { to: string; subject: string; body: string },
 ): Promise<string | null> {
-  const driver = integration?.driver ?? 'log';
-  const config = integration?.config ?? {};
-  const secretRef = integration?.secret_ref ?? null;
+  const driver = integration.driver;
+  const config = integration.config ?? {};
+  const secretRef = integration.secret_ref;
 
   if (driver === 'resend') {
     const apiKey = (secretRef && process.env[secretRef]) ?? process.env.RESEND_API_KEY;

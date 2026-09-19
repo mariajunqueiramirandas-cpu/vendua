@@ -37,8 +37,9 @@ export interface MessageRow {
   direction: 'in' | 'out';
   author: 'staff' | 'agent' | 'lead' | 'system';
   body: string;
-  status: 'draft' | 'queued' | 'sent' | 'delivered' | 'received' | 'failed' | 'rejected';
+  status: 'draft' | 'queued' | 'sending' | 'sent' | 'delivered' | 'received' | 'failed' | 'rejected';
   provider_message_id: string | null;
+  agent_run_id: string | null;
   approved_by: string | null;
   approved_at: string | null;
   created_at: string;
@@ -66,6 +67,7 @@ export function messageJson(row: MessageRow) {
     body: row.body,
     status: row.status,
     providerMessageId: row.provider_message_id,
+    agentRunId: row.agent_run_id,
     approvedBy: row.approved_by,
     approvedAt: row.approved_at,
     createdAt: row.created_at,
@@ -249,11 +251,15 @@ export async function addInboundMessage(
   const body = str(input.body, 'body', 8000).trim();
   if (!body) throw new HttpError(422, 'BAD_REQUEST', 'body is required');
   return controlTx(sql, async (tx) => {
-    if (input.providerMessageId) {
+    // Provider ids are namespaced per channel ('whatsapp:AB12…') — they share
+    // no global namespace, so a raw id stored from one channel could suppress
+    // a legitimate inbound on another.
+    const pmid = input.providerMessageId ? `${input.channel}:${input.providerMessageId}` : null;
+    if (pmid) {
       const seen = await tx`
         select m.id, t.lead_id, m.thread_id from lead_messages m
         join lead_threads t on t.id = m.thread_id
-        where m.provider_message_id = ${input.providerMessageId}
+        where m.provider_message_id = ${pmid}
       `;
       if (seen[0]) {
         return {
@@ -315,7 +321,7 @@ export async function addInboundMessage(
     const message = (
       await tx<MessageRow[]>`
         insert into lead_messages (thread_id, direction, author, body, status, provider_message_id)
-        values (${thread.id}, 'in', 'lead', ${body}, 'received', ${input.providerMessageId ?? null})
+        values (${thread.id}, 'in', 'lead', ${body}, 'received', ${pmid})
         returning *
       `
     )[0]!;
@@ -343,6 +349,9 @@ export async function composeMessage(
     author: 'staff' | 'agent';
     status?: 'draft' | 'queued';
     subject?: string;
+    /** the run that produced this message — send_message sets it so a
+     *  reclaimed-and-replayed run recognizes its earlier send. */
+    agentRunId?: string;
   },
   idemKey: string,
 ): Promise<
@@ -364,6 +373,7 @@ export async function composeMessageTx(
     author: 'staff' | 'agent';
     status?: 'draft' | 'queued';
     subject?: string;
+    agentRunId?: string;
   },
 ): Promise<{
   status: number;
@@ -377,8 +387,8 @@ export async function composeMessageTx(
   });
   const message = (
     await tx<MessageRow[]>`
-      insert into lead_messages (thread_id, direction, author, body, status)
-      values (${thread.id}, 'out', ${input.author}, ${body}, ${input.status ?? 'draft'})
+      insert into lead_messages (thread_id, direction, author, body, status, agent_run_id)
+      values (${thread.id}, 'out', ${input.author}, ${body}, ${input.status ?? 'draft'}, ${input.agentRunId ?? null})
       returning *
     `
   )[0]!;
