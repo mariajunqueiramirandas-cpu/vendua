@@ -5,7 +5,13 @@ export const log = pino({
   base: { service: 'core' }, // drop pid/hostname noise
   timestamp: pino.stdTimeFunctions.isoTime,
   redact: {
-    paths: ['req.headers.authorization', 'req.headers.cookie', '*.apiKey', '*.secret', '*.password'],
+    paths: [
+      'req.headers.authorization',
+      'req.headers.cookie',
+      '*.apiKey',
+      '*.secret',
+      '*.password',
+    ],
     censor: '[redacted]',
   },
   serializers: { err: pino.stdSerializers.err },

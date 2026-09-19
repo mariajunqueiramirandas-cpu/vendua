@@ -817,8 +817,7 @@ export function createApp({ sql, sessionSecret, controlSecret }: AppDeps) {
       },
     );
     if (res.replayed) c.header('x-idempotent-replay', 'true');
-    if (res.body.runId)
-      void drain(sql).catch((e) => agentLog.error({ err: e }, 'drain failed'));
+    if (res.body.runId) void drain(sql).catch((e) => agentLog.error({ err: e }, 'drain failed'));
     return c.json(res.body, res.status as 200);
   });
 

@@ -152,10 +152,7 @@ async function startSocket(sql: Sql, integration: IntegrationRow): Promise<Baile
     },
     printQRInTerminal: false,
     browser: ['Venduá', 'Chrome', '1.0.0'],
-    logger: log.child(
-      { mod: 'baileys' },
-      { level: process.env.BAILEYS_LOG_LEVEL ?? 'warn' },
-    ),
+    logger: log.child({ mod: 'baileys' }, { level: process.env.BAILEYS_LOG_LEVEL ?? 'warn' }),
   });
 
   // Claim module state synchronously — Baileys' first connection.update
