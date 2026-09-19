@@ -6,26 +6,28 @@ on:
   pull_request:
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
-  check:
+  # Runs prettier --write and commits style-only diffs back to the branch, so
+  # formatting can never be the reason a change is blocked. Same-repo branches
+  # only: a fork's head_ref doesn't exist in this repo (checkout would fail)
+  # and the token can't push to forks anyway. This job is the only holder of
+  # a write token; validation stays read-only.
+  format:
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    if: github.event_name == 'push' || github.event.pull_request.head.repo.fork == false
     steps:
       - uses: actions/checkout@v4
         with:
-          # Check out the PR branch itself (not the detached merge ref) so a
-          # formatting fix can be committed back to it.
           ref: ${{ github.head_ref || github.ref }}
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version: '1.4.2'
       - run: bun install --frozen-lockfile
-
-      # Format always runs FIRST and fixes the tree — a formatting-only diff
-      # is committed back to the branch instead of failing the check.
-      - name: Format
-        run: bunx prettier --write . --log-level warn
+      - run: bunx prettier --write . --log-level warn
       - name: Commit formatting fix
         run: |
           if [ -n "$(git status --porcelain)" ]; then
@@ -36,6 +38,16 @@ jobs:
             git push
           fi
 
+  # Validates GitHub's merge ref (PR) / the pushed commit (main) — the code
+  # that will actually land.
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: '1.4.2'
+      - run: bun install --frozen-lockfile
       - name: Typecheck
         run: |
           for pkg in packages/core packages/kernel site storefronts/quero-pudim storefronts/brasa storefronts/forn storefronts/_examples/quero-pudim; do
