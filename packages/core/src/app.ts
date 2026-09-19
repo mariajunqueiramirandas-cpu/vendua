@@ -13,6 +13,7 @@ import {
   str,
   tenantMiddleware,
   uuidParam,
+  UUID_RE,
   verifySessionToken,
 } from './platform/http.ts';
 import { TenantResolver, type Tenant } from './platform/tenancy.ts';
@@ -266,7 +267,7 @@ export function createApp({ sql, sessionSecret }: AppDeps) {
       // the uuid comparison (INTERNAL instead of a contract 4xx), and the
       // modifier list is bounded so oversized arrays can't burn validation.
       const productId = str(body.productId, 'productId', 64);
-      if (!/^[0-9a-f-]{36}$/i.test(productId)) {
+      if (!UUID_RE.test(productId)) {
         throw new HttpError(422, 'BAD_REQUEST', 'productId must be a uuid');
       }
       const qty = Number(body.qty ?? 1);

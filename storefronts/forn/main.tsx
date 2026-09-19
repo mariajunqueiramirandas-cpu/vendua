@@ -1,12 +1,11 @@
-import { StrictMode, useEffect, useState } from 'react';
+import { StrictMode, useEffect } from 'react';
 import { createRoot } from 'react-dom/client';
 import { BrowserRouter, Route, Routes } from 'react-router-dom';
 import { SystemSurfaces, useStore, VenduaProvider } from '@vendua/kernel';
 import '@vendua/kernel/styles.css';
 import './styles/global.css';
 import config from './vendua.config.ts';
-import { EpochSync, SessionResetContext } from './components/session.tsx';
-import { clearLastOrder } from './components/last-order.ts';
+import { SessionResetProvider } from './components/session.tsx';
 import Home from './routes/index.tsx';
 import ProductPage from './routes/product.tsx';
 import SacolaPage from './routes/sacola.tsx';
@@ -42,24 +41,13 @@ function Frame() {
 }
 
 function App() {
-  const [epoch, setEpoch] = useState(0);
-  const resetSession = () => {
-    try {
-      sessionStorage.removeItem('vendua.session');
-    } catch {
-      /* private mode */
-    }
-    clearLastOrder();
-    setEpoch((e) => e + 1);
-  };
   return (
-    <SessionResetContext.Provider value={resetSession}>
-      <VenduaProvider key={epoch} config={config}>
-        <EpochSync epoch={epoch} />
+    <VenduaProvider config={config}>
+      <SessionResetProvider>
         <SystemSurfaces />
         <Frame />
-      </VenduaProvider>
-    </SessionResetContext.Provider>
+      </SessionResetProvider>
+    </VenduaProvider>
   );
 }
 

@@ -383,3 +383,20 @@ OBSERVATIONS.md `## Feature gaps`. Candidates for Contract v1 or Phase 1+.)
 - **Public input caps closed** — `/products/:slug` and `/control/v1/state`'s
   `tenant` param go through `str(..., 200)`; oversized values 422 instead of
   reaching the resolver/catalog query.
+
+## Review round 12 — proxy honesty + kernel-owned sessions
+
+- **Rate limit keys on the rightmost X-Forwarded-For** — under
+  VENDUA_TRUST_PROXY the edge-appended (rightmost) IP is the real peer; the
+  leftmost is attacker-controlled and rotation would dodge per-IP limits.
+- **`invalidateQuery` notifies subscribers** — live providers register their
+  cache AND `invalidate` notifier; module-level invalidation now refetches on
+  mounted hooks instead of leaving stale views.
+- **forn session reset goes through the Kernel** — `api.clearSession()` +
+  `invalidate('cart')` replaces the sessionStorage poke + provider remount
+  (epoch key, EpochSync deleted). `SessionResetProvider` mounts inside
+  `VenduaProvider`; after checkout the cart already reads `null` because the
+  Kernel rotated the session.
+- **Strict UUID shape on productId** — the loose `[0-9a-f-]{36}` check let
+  36-char non-UUIDs reach Postgres (22P02 → 500). Now `UUID_RE`, verified:
+  malformed → 422, well-formed-but-missing → PRODUCT_NOT_FOUND.

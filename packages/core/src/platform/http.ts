@@ -210,9 +210,12 @@ export function rateLimit(
   return async (c, next) => {
     const tenant = c.get('tenant') as Tenant;
     // X-Forwarded-For is client-supplied without a trusted edge — key on it
-    // only when VENDUA_TRUST_PROXY=1, else a shared bucket per tenant.
+    // only when VENDUA_TRUST_PROXY=1, else a shared bucket per tenant. When
+    // trusted, take the RIGHTMOST entry: our edge appends the peer IP it
+    // observed, while earlier entries can be attacker-set (rotating the
+    // leftmost value must not dodge the limit).
     const ip = flags.trustForwardedFor
-      ? (c.req.header('x-forwarded-for')?.split(',')[0]?.trim() ?? 'unknown')
+      ? (c.req.header('x-forwarded-for')?.split(',').pop()?.trim() ?? 'unknown')
       : 'local';
     const now = Date.now();
     if (now >= nextSweep) {
@@ -305,7 +308,7 @@ export async function bodyJson(c: Context): Promise<Record<string, unknown>> {
   return body as Record<string, unknown>;
 }
 
-const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+export const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 /** `param()` that 400s on malformed ids instead of letting Postgres 22P02 500. */
 export function uuidParam(c: Context, name: string): string {
