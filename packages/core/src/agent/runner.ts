@@ -1,13 +1,13 @@
 import type { Sql } from '../platform/db.ts';
 import { log } from '../platform/log.ts';
-
-const agentLog = log.child({ mod: 'agent' });
 import { controlTx } from '../modules/control.ts';
 import { getIntegration, getPitch, getSetting } from '../modules/integrations.ts';
 import { providerFor, type AgentMessage } from './llm.ts';
 import { buildSystemPrompt } from './prompts.ts';
 import { executeTool, toolsFor, type ToolContext } from './tools.ts';
 import { dispatchMessage } from './send.ts';
+
+const agentLog = log.child({ mod: 'agent' });
 
 /**
  * agent/runner — the Hermes-style agent loop, CRM-sized: claim a queued run
