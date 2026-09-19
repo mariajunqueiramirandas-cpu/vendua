@@ -190,6 +190,7 @@ export interface Stats {
   everReached: Record<string, number>;
   medianDaysInState: Record<string, number>;
   openTasks: number;
+  overdueTasks: number;
   pendingDrafts: number;
   discoveredThisWeek: number;
   agent30d: { runs: number; tokens: number; costCents: number };

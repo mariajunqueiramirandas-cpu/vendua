@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
+import { ArrowUpRight } from 'lucide-react';
 import { api, type LeadListItem } from '../api.ts';
-import { Empty, Page, StateChip, fmtMoney, rel } from '../components.tsx';
+import { Empty, Page, fmtMoney, rel } from '../components.tsx';
 
 const COLS: { key: LeadListItem['state']; label: string }[] = [
   { key: 'lead', label: 'lead' },
@@ -14,6 +15,7 @@ export default function BoardView() {
   const [leads, setLeads] = useState<LeadListItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [dragId, setDragId] = useState<string | null>(null);
+  const [over, setOver] = useState<string | null>(null);
   const nav = useNavigate();
 
   const load = useCallback(() => {
@@ -65,12 +67,17 @@ export default function BoardView() {
           return (
             <section
               key={col.key}
-              className="board-col"
+              className={`board-col${over === col.key ? ' over' : ''}`}
               onDragOver={(e) => e.preventDefault()}
+              onDragEnter={() => setOver(col.key)}
+              onDragLeave={(e) => {
+                if (!e.currentTarget.contains(e.relatedTarget as Node)) setOver(null);
+              }}
               onDrop={() => {
                 const lead = leads.find((l) => l.id === dragId);
                 if (lead) void move(lead, col.key);
                 setDragId(null);
+                setOver(null);
               }}
             >
               <header>
@@ -81,18 +88,32 @@ export default function BoardView() {
               {items.map((l) => (
                 <article
                   key={l.id}
-                  className="lead-card"
+                  className={`lead-card${dragId === l.id ? ' dragging' : ''}`}
                   draggable
                   onDragStart={() => setDragId(l.id)}
+                  onDragEnd={() => {
+                    setDragId(null);
+                    setOver(null);
+                  }}
                   onDoubleClick={() => nav(`/leads/${l.id}`)}
+                  title="duplo clique abre o lead"
                 >
                   <div className="top">
                     <span className="name">{l.name}</span>
                     {l.agentMode !== 'off' && <span className="chip agent">agente</span>}
+                    <Link
+                      className="open"
+                      to={`/leads/${l.id}`}
+                      title="abrir lead"
+                      onClick={(e) => e.stopPropagation()}
+                    >
+                      <ArrowUpRight size={13} />
+                    </Link>
                   </div>
-                  {l.businessName && <div className="biz">{l.businessName}</div>}
+                  {l.businessName && l.businessName !== l.name && (
+                    <div className="biz">{l.businessName}</div>
+                  )}
                   <div className="meta">
-                    <StateChip state={l.state} />
                     {l.city && <span className="chip">{l.city}</span>}
                     {l.dealValueCents != null && (
                       <span className="score">{fmtMoney(l.dealValueCents)}</span>
@@ -107,6 +128,7 @@ export default function BoardView() {
                   </div>
                 </article>
               ))}
+              {!items.length && <div className="col-empty">arraste um lead pra cá</div>}
             </section>
           );
         })}

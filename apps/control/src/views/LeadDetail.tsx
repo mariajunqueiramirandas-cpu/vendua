@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useState } from 'react';
-import { useNavigate, useParams } from 'react-router-dom';
+import { Link, useNavigate, useParams } from 'react-router-dom';
 import { Archive, Ban, Bot, Plus } from 'lucide-react';
 import { api, type Activity, type LeadListItem, type Task } from '../api.ts';
-import { Empty, Page, StateChip, fmtDateTime, fmtMoney } from '../components.tsx';
+import { ConfirmBtn, Empty, Page, ScoreBar, fmtDateTime, fmtMoney } from '../components.tsx';
 
 const KIND_LABEL: Record<string, string> = {
   note: 'nota',
@@ -12,6 +12,28 @@ const KIND_LABEL: Record<string, string> = {
   agent: 'agente',
   system: 'sistema',
 };
+const STATE_OPTS: [string, string][] = [
+  ['lead', 'lead'],
+  ['contacted', 'contatado'],
+  ['invited', 'convidado'],
+  ['live', 'ativo'],
+];
+const AGENT_OPTS: [string, string][] = [
+  ['off', 'off'],
+  ['draft', 'rascunho'],
+  ['auto', 'auto'],
+];
+
+// stored websites are free text — linkify only values that normalize to an
+// absolute http(s) URL; anything else renders as plain text
+function httpUrl(raw: string): string | null {
+  try {
+    const u = new URL(/^[a-z][a-z0-9+.-]*:\/\//i.test(raw) ? raw : `https://${raw}`);
+    return u.protocol === 'http:' || u.protocol === 'https:' ? u.href : null;
+  } catch {
+    return null;
+  }
+}
 
 export default function LeadDetail() {
   const { id = '' } = useParams();
@@ -51,6 +73,7 @@ export default function LeadDetail() {
     );
 
   const patch = (p: Record<string, unknown>) => api.patchLead(lead.id, p).then(load);
+  const siteHref = lead.website ? httpUrl(lead.website) : null;
   const addNote = async () => {
     if (!note.trim()) return;
     await api.addActivity(lead.id, 'note', note);
@@ -79,49 +102,55 @@ export default function LeadDetail() {
               <Bot size={14} /> agir
             </button>
           )}
-          <button className="btn" onClick={() => void api.unsubscribe(lead.id).then(load)}>
+          <ConfirmBtn onConfirm={() => void api.unsubscribe(lead.id).then(load)}>
             <Ban size={14} /> descadastrar
-          </button>
-          <button
-            className="btn danger"
-            onClick={() => void api.deleteLead(lead.id).then(() => nav('/leads'))}
+          </ConfirmBtn>
+          <ConfirmBtn
+            className="danger"
+            confirm="arquivar mesmo?"
+            onConfirm={() => void api.deleteLead(lead.id).then(() => nav('/leads'))}
           >
             <Archive size={14} /> arquivar
-          </button>
+          </ConfirmBtn>
         </>
       }
     >
       <div className="grid2" style={{ alignItems: 'start' }}>
         <div>
           <div className="card" style={{ padding: 18, marginBottom: 14 }}>
-            <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginBottom: 14 }}>
-              <StateChip state={lead.state} />
-              <select value={lead.state} onChange={(e) => void patch({ state: e.target.value })}>
-                <option value="lead">lead</option>
-                <option value="contacted">contatado</option>
-                <option value="invited">convidado</option>
-                <option value="live">ativo</option>
-              </select>
-              <select
-                value={lead.agentMode}
-                onChange={(e) => void patch({ agentMode: e.target.value })}
-                title="modo do agente"
-              >
-                <option value="off">agente: off</option>
-                <option value="draft">agente: rascunho</option>
-                <option value="auto">agente: auto</option>
-              </select>
-              <span className="mono" style={{ marginLeft: 'auto', color: 'var(--muted)' }}>
-                score {lead.score}
+            <div className="seg-row">
+              <span className="seg" title="estágio do lead">
+                {STATE_OPTS.map(([v, l]) => (
+                  <button
+                    key={v}
+                    className={lead.state === v ? 'sel' : ''}
+                    onClick={() => void patch({ state: v })}
+                  >
+                    {l}
+                  </button>
+                ))}
+              </span>
+              <span className="seg" title="modo do agente">
+                {AGENT_OPTS.map(([v, l]) => (
+                  <button
+                    key={v}
+                    className={lead.agentMode === v ? 'sel' : ''}
+                    onClick={() => void patch({ agentMode: v })}
+                  >
+                    {l}
+                  </button>
+                ))}
+              </span>
+              <span style={{ marginLeft: 'auto' }}>
+                <ScoreBar score={lead.score} />
               </span>
             </div>
-            <div className="grid2">
+            <div className="kv">
               {(
                 [
                   ['whatsapp', lead.whatsapp],
                   ['email', lead.email],
                   ['instagram', lead.instagram],
-                  ['site', lead.website],
                   ['cidade', lead.city],
                   ['segmento', lead.segment],
                   ['origem', lead.source],
@@ -129,22 +158,24 @@ export default function LeadDetail() {
                 ] as [string, string | null][]
               ).map(([k, v]) => (
                 <div key={k}>
-                  <div
-                    className="k"
-                    style={{
-                      fontSize: 'var(--t-2xs)',
-                      color: 'var(--muted)',
-                      textTransform: 'uppercase',
-                      letterSpacing: '0.06em',
-                    }}
-                  >
-                    {k}
-                  </div>
-                  <div>{v ?? '—'}</div>
+                  <div className="k">{k}</div>
+                  <div className="v">{v ?? '—'}</div>
                 </div>
               ))}
+              <div>
+                <div className="k">site</div>
+                <div className="v">
+                  {siteHref ? (
+                    <a href={siteHref} target="_blank" rel="noreferrer">
+                      {lead.website!.replace(/^https?:\/\//i, '')}
+                    </a>
+                  ) : (
+                    (lead.website ?? '—')
+                  )}
+                </div>
+              </div>
             </div>
-            <div style={{ marginTop: 14, display: 'flex', gap: 12, alignItems: 'baseline' }}>
+            <div style={{ marginTop: 14, display: 'flex', gap: 12, alignItems: 'center' }}>
               <div
                 className="k"
                 style={{
@@ -155,19 +186,12 @@ export default function LeadDetail() {
               >
                 valor
               </div>
-              <span className="mono">{fmtMoney(lead.dealValueCents)}</span>
-              <input
-                style={{ width: 120 }}
-                placeholder="R$"
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter') {
-                    const v = Number((e.target as HTMLInputElement).value.replace(',', '.'));
-                    if (!Number.isNaN(v)) void patch({ dealValueCents: Math.round(v * 100) });
-                  }
-                }}
+              <MoneyEdit
+                cents={lead.dealValueCents}
+                onSave={(c) => void patch({ dealValueCents: c })}
               />
             </div>
-            <div style={{ marginTop: 10 }}>
+            <div style={{ marginTop: 12 }}>
               <div
                 className="k"
                 style={{
@@ -186,36 +210,19 @@ export default function LeadDetail() {
           <div className="card" style={{ padding: 18, marginBottom: 14 }}>
             <b>conversas</b>
             {threads.map((t) => (
-              <div
-                key={t.id}
-                style={{
-                  display: 'flex',
-                  gap: 8,
-                  alignItems: 'center',
-                  padding: '8px 0',
-                  borderBottom: '1px solid var(--line)',
-                }}
-              >
+              <div key={t.id} className="trow">
                 <span className="chip">{t.channel}</span>
-                <a href={`#/inbox/${t.id}`} style={{ textDecoration: 'underline' }}>
-                  abrir thread
-                </a>
-                <label
-                  style={{
-                    marginLeft: 'auto',
-                    fontSize: 'var(--t-xs)',
-                    color: 'var(--muted)',
-                    display: 'flex',
-                    gap: 5,
-                    alignItems: 'center',
-                  }}
-                >
-                  agente
+                <Link to={`/inbox/${t.id}`} className="btn ghost" style={{ padding: '3px 8px' }}>
+                  abrir
+                </Link>
+                <label className="tgl" style={{ marginLeft: 'auto' }}>
                   <input
                     type="checkbox"
                     checked={t.agentEnabled}
                     onChange={(e) => void api.setThreadAgent(t.id, e.target.checked).then(load)}
                   />
+                  <span className="tk" />
+                  <span className="lbl">agente</span>
                 </label>
               </div>
             ))}
@@ -242,32 +249,31 @@ export default function LeadDetail() {
 
           <div className="card" style={{ padding: 18 }}>
             <b>tarefas</b>
-            {tasks.map((t) => (
-              <div
-                key={t.id}
-                style={{ display: 'flex', gap: 8, alignItems: 'center', padding: '6px 0' }}
-              >
-                <input
-                  type="checkbox"
-                  checked={!!t.doneAt}
-                  onChange={(e) => void api.setTaskDone(t.id, e.target.checked).then(load)}
-                />
-                <span
-                  style={{
-                    textDecoration: t.doneAt ? 'line-through' : undefined,
-                    color: t.doneAt ? 'var(--muted)' : undefined,
-                  }}
-                >
-                  {t.title}
-                </span>
-                <span
-                  className="mono"
-                  style={{ marginLeft: 'auto', fontSize: 'var(--t-2xs)', color: 'var(--muted)' }}
-                >
-                  {fmtDateTime(t.dueAt)}
-                </span>
-              </div>
-            ))}
+            {tasks.map((t) => {
+              const late = t.dueAt && !t.doneAt && new Date(t.dueAt) < new Date();
+              return (
+                <div key={t.id} className="trow">
+                  <input
+                    type="checkbox"
+                    checked={!!t.doneAt}
+                    onChange={(e) => void api.setTaskDone(t.id, e.target.checked).then(load)}
+                  />
+                  <span
+                    style={{
+                      flex: 1,
+                      textDecoration: t.doneAt ? 'line-through' : undefined,
+                      color: t.doneAt ? 'var(--muted)' : undefined,
+                    }}
+                  >
+                    {t.title}
+                  </span>
+                  <span className={`due${late ? ' bad' : ''}`}>
+                    {late ? 'atrasada · ' : ''}
+                    {fmtDateTime(t.dueAt)}
+                  </span>
+                </div>
+              );
+            })}
             <div style={{ display: 'flex', gap: 8, marginTop: 8 }}>
               <input
                 placeholder="nova tarefa…"
@@ -317,6 +323,47 @@ export default function LeadDetail() {
         </div>
       </div>
     </Page>
+  );
+}
+
+/** Deal value — reads as a number, edits inline on click. */
+function MoneyEdit({
+  cents,
+  onSave,
+}: {
+  cents: number | null;
+  onSave: (cents: number | null) => void;
+}) {
+  const [editing, setEditing] = useState(false);
+  if (!editing) {
+    return (
+      <button
+        className="btn ghost"
+        style={{ padding: '2px 8px' }}
+        title="clique para editar"
+        onClick={() => setEditing(true)}
+      >
+        <span className="money-v">{fmtMoney(cents)}</span>
+      </button>
+    );
+  }
+  return (
+    <input
+      autoFocus
+      defaultValue={cents != null ? (cents / 100).toLocaleString('pt-BR') : ''}
+      placeholder="R$"
+      style={{ width: 130 }}
+      onKeyDown={(e) => {
+        if (e.key === 'Escape') setEditing(false);
+        if (e.key !== 'Enter') return;
+        const raw = (e.target as HTMLInputElement).value.trim();
+        const v = Number(raw.replace(/\./g, '').replace(',', '.'));
+        if (raw === '') onSave(null);
+        else if (!Number.isNaN(v)) onSave(Math.round(v * 100));
+        setEditing(false);
+      }}
+      onBlur={() => setEditing(false)}
+    />
   );
 }
 

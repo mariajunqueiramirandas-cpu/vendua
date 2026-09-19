@@ -10,6 +10,13 @@ const STATE_LABEL: Record<string, string> = {
   invited: 'convidado',
   live: 'ativo',
 };
+// Funnel reads left→right as deepening commitment: one hue, rising density.
+const FILL: Record<string, string> = {
+  lead: 'color-mix(in srgb, var(--forest-800) 26%, var(--surface-2))',
+  contacted: 'color-mix(in srgb, var(--forest-800) 48%, var(--surface-2))',
+  invited: 'color-mix(in srgb, var(--forest-800) 72%, var(--surface-2))',
+  live: 'var(--forest-800)',
+};
 
 export default function Dashboard() {
   const [s, setS] = useState<Stats | null>(null);
@@ -29,21 +36,28 @@ export default function Dashboard() {
       {err && <Empty title="não foi possível carregar" hint={err} />}
       {s && (
         <>
-          <div className="grid3" style={{ marginBottom: 18 }}>
-            <div className="card stat">
+          <div className="grid4" style={{ marginBottom: 18 }}>
+            <Link to="/leads" className="card stat lnk">
               <div className="v">{s.total}</div>
               <div className="k">leads ativos</div>
-            </div>
-            <div className="card stat">
+            </Link>
+            <Link to="/tarefas" className="card stat lnk">
               <div className="v">{s.openTasks}</div>
-              <div className="k">tarefas abertas</div>
-            </div>
-            <div className="card stat">
+              <div className="k">
+                tarefas abertas
+                {!!s.overdueTasks && <span className="warn-dot"> · {s.overdueTasks} atras.</span>}
+              </div>
+            </Link>
+            <Link to="/aprovacoes" className="card stat lnk">
               <div className="v" style={{ color: s.pendingDrafts ? '#7a5b12' : undefined }}>
                 {s.pendingDrafts}
               </div>
               <div className="k">rascunhos p/ aprovar</div>
-            </div>
+            </Link>
+            <Link to="/descoberta" className="card stat lnk">
+              <div className="v">{s.discoveredThisWeek}</div>
+              <div className="k">descobertos · 7d</div>
+            </Link>
           </div>
 
           <div className="grid2" style={{ marginBottom: 18 }}>
@@ -58,12 +72,15 @@ export default function Dashboard() {
                 {STATES.map((st) => (
                   <div className="bar" key={st}>
                     <span className="n">{s.everReached[st] ?? 0}</span>
-                    <div
-                      className="fill"
-                      style={{
-                        height: `${Math.max(3, ((s.everReached[st] ?? 0) / maxState) * 100)}%`,
-                      }}
-                    />
+                    <div className="track">
+                      <div
+                        className="fill"
+                        style={{
+                          height: `${Math.max(3, ((s.everReached[st] ?? 0) / maxState) * 100)}%`,
+                          background: FILL[st],
+                        }}
+                      />
+                    </div>
                     <span className="lbl">{STATE_LABEL[st]}</span>
                   </div>
                 ))}
@@ -108,7 +125,7 @@ export default function Dashboard() {
             </div>
           </div>
 
-          <div className="grid2">
+          <div className="grid3">
             <div className="card" style={{ padding: 18 }}>
               <b>por segmento</b>
               <table className="tbl" style={{ marginTop: 10 }}>
@@ -124,6 +141,26 @@ export default function Dashboard() {
                   {!s.bySegment.length && (
                     <tr>
                       <td style={{ color: 'var(--muted)' }}>sem segmentos ainda</td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
+            <div className="card" style={{ padding: 18 }}>
+              <b>por origem</b>
+              <table className="tbl" style={{ marginTop: 10 }}>
+                <tbody>
+                  {s.bySource.slice(0, 8).map((r) => (
+                    <tr key={r.key}>
+                      <td>{r.key || '—'}</td>
+                      <td className="mono" style={{ textAlign: 'right' }}>
+                        {r.count}
+                      </td>
+                    </tr>
+                  ))}
+                  {!s.bySource.length && (
+                    <tr>
+                      <td style={{ color: 'var(--muted)' }}>sem origens ainda</td>
                     </tr>
                   )}
                 </tbody>
