@@ -158,6 +158,31 @@ lists:
 - **Kernel `CartItem` type lagged the wire** — `productStatus` + modifier
   `status` fields declared.
 
+Round 2 (second review pass — all landed):
+
+- **Concurrent checkouts minted duplicate orders** — cart row is locked
+  `FOR UPDATE` before validation and `orders(cart_id)` is unique; verified
+  two simultaneous checkouts → one 201, one 409.
+- **`addItem` bypassed the 99-per-line cap** — on-conflict incremented past
+  it; now `CHECK (qty <= 99)` on `cart_items` maps to `INVALID_QTY`.
+- **Duplicate modifier ids double-charged** — `modifierIds` deduped and
+  sorted; reordered selections now merge into one line.
+- **Fulfillment checked the wrong axis** — closed stores rejected orders
+  when `pickup_enabled` was false regardless of requested mode; now pickup
+  needs `pickup_enabled`, delivery needs `delivery_enabled`, and `closed`
+  always allows preorder (`PICKUP_UNAVAILABLE` added to `ERROR_CODES`).
+- **Blank `delivery.address` accepted** — now requires non-whitespace.
+- **Exact vs bare host match was nondeterministic** — resolver orders
+  exact-host first.
+- **`vendua_app` role shipped a predictable password** — `migrate-cli`
+  rotates it from `VENDUA_APP_DB_PASSWORD` at deploy time.
+- **CORS allowed every registered tenant origin** — tightened to same-host
+  only (storefronts call Core same-origin via the dev proxy anyway).
+- **`SystemSurfaces` reused notices across `zoneMatched` changes** — query
+  key carries the flag; injected first paint only applies unscoped.
+- **`refetch` could be overwritten by the superseded in-flight fetch** —
+  `runToken` guard; invalidate no longer double-fetches across subscribers.
+
 ### Feature gaps the reference ships that the platform can't express yet
 
 (From `quero-pudim` — each had an honest storefront fallback; details in its
