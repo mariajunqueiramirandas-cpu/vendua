@@ -17,7 +17,7 @@ import {
   type ServerResponse,
 } from 'node:http';
 import { existsSync, readFileSync, statSync } from 'node:fs';
-import { extname, join, normalize } from 'node:path';
+import { extname, join, normalize, resolve } from 'node:path';
 
 const MIME: Record<string, string> = {
   '.html': 'text/html; charset=utf-8',
@@ -155,9 +155,17 @@ export function startPreview(opts: PreviewOptions): Promise<Server> {
       return;
     }
 
-    // Static dist with SPA history fallback.
-    const safe = normalize(pathname).replace(/^(\.\.[/\\])+/, '');
-    let file = join(distDir, safe);
+    // Static dist with SPA history fallback. Containment is checked after
+    // resolve — an encoded traversal (`/%2e%2e/…`) decodes to `..` segments
+    // that must never land outside distDir.
+    const root = resolve(distDir);
+    const safe = normalize(pathname).replace(/^([/\\]*\.\.[/\\])+/, '');
+    let file = resolve(root, `.${safe.startsWith('/') ? '' : '/'}${safe}`);
+    if (file !== root && !file.startsWith(root + '/')) {
+      res.writeHead(404);
+      res.end('not found');
+      return;
+    }
     if (!existsSync(file) || statSync(file).isDirectory()) {
       if (extname(safe)) {
         res.writeHead(404);

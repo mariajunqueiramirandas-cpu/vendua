@@ -21,6 +21,10 @@ import { execFileSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 
 const LABEL_PREFIX = 'storefront:';
+// `platform` is the deliberate escape hatch for platform-wide changes that
+// legitimately touch a storefront (a kernel-driven migration, a rename that
+// sweeps the fleet). It makes the bypass visible — the label is the audit.
+const PLATFORM_LABEL = 'platform';
 const SLUG_RE = /^[a-z0-9][a-z0-9._-]*$/i;
 
 function fail(msg) {
@@ -72,11 +76,12 @@ function changedFiles(base) {
 }
 
 const opts = parseArgs(process.argv.slice(2));
-const slugs = opts.slugs.map((s) =>
-  s.startsWith(LABEL_PREFIX) ? s.slice(LABEL_PREFIX.length) : s,
-);
+const slugs = opts.slugs
+  .map((s) => (s.startsWith(LABEL_PREFIX) ? s.slice(LABEL_PREFIX.length) : s))
+  .filter((s) => s !== PLATFORM_LABEL);
 let files = opts.files;
 
+let platformLabelled = opts.slugs.includes(PLATFORM_LABEL);
 if (files === null && slugs.length === 0) {
   // CI mode: labels and base ref come from the pull_request event payload.
   const eventPath = process.env.GITHUB_EVENT_PATH;
@@ -85,6 +90,7 @@ if (files === null && slugs.length === 0) {
   const pr = payload.pull_request;
   if (pr) {
     for (const label of pr.labels ?? []) {
+      if (label.name === PLATFORM_LABEL) platformLabelled = true;
       if (label.name?.startsWith(LABEL_PREFIX)) slugs.push(label.name.slice(LABEL_PREFIX.length));
     }
     opts.base ??= `origin/${pr.base.ref}`;
@@ -102,18 +108,28 @@ if (unique.length > 1) {
   );
 }
 if (unique.length === 0) {
-  // Unlabelled doesn't mean unbounded: a diff confined to one storefront is
-  // a storefront PR whether it was labelled or not — without this, omitting
-  // the label would bypass the boundary entirely. Underscored dirs
-  // (_template, _examples) are platform-owned and exempt.
+  // Unlabelled doesn't mean unbounded: ANY diff touching a non-reserved
+  // storefront is a storefront PR whether it was labelled or not — otherwise
+  // omitting the label would bypass the boundary entirely (confined diffs
+  // and mixed diffs alike). Underscored dirs (_template, _examples) are
+  // platform-owned and exempt; `platform` is the deliberate label for
+  // platform-wide changes that must touch a storefront.
   files ??= changedFiles(opts.base ?? 'origin/main');
   const sfRe = /^storefronts\/([^/]+)\//;
   const scoped = files.map((f) => sfRe.exec(f)?.[1]);
   const slugDirs = new Set(scoped.filter((s) => s && !s.startsWith('_')));
-  if (files.length > 0 && scoped.every(Boolean) && slugDirs.size === 1) {
+  if (slugDirs.size > 0) {
+    if (platformLabelled) {
+      console.log(
+        `'${PLATFORM_LABEL}' label — platform-wide change may touch storefronts (${[...slugDirs].join(', ')}); skipping`,
+      );
+      process.exit(0);
+    }
+    const slugs = [...slugDirs].join(', ');
     fail(
-      `this diff is confined to storefronts/${[...slugDirs][0]} but carries no '${LABEL_PREFIX}' label\n` +
-        `  label the PR '${LABEL_PREFIX}${[...slugDirs][0]}' — a storefront PR must be labelled to merge`,
+      `this diff touches storefronts/${slugs} but carries no '${LABEL_PREFIX}' label\n` +
+        `  label it '${LABEL_PREFIX}${slugDirs.size === 1 ? [...slugDirs][0] : '<slug>'}' — a storefront PR must be labelled to merge\n` +
+        `  (deliberate platform-wide change that must touch a storefront? label it '${PLATFORM_LABEL}')`,
     );
   }
   console.log('no storefront:* label — not a storefront PR; skipping');

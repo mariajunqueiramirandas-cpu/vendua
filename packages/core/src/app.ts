@@ -42,6 +42,10 @@ import { LOADER_JS } from './loader.ts';
 export interface AppDeps {
   sql: Sql;
   sessionSecret: string;
+  /** Staff credential for /control/v1 — distinct from sessionSecret so a
+   *  shared staff key never doubles as the shopper-session signing key.
+   *  Falls back to sessionSecret in dev when unset. */
+  controlSecret?: string | undefined;
 }
 
 async function loadSettings(
@@ -84,7 +88,7 @@ function currentStatus(settings: StoreSettingsRow | null) {
   );
 }
 
-export function createApp({ sql, sessionSecret }: AppDeps) {
+export function createApp({ sql, sessionSecret, controlSecret }: AppDeps) {
   const resolver = new TenantResolver(sql);
   const app = new Hono<{ Variables: { tenant: Tenant } }>();
 
@@ -507,28 +511,44 @@ export function createApp({ sql, sessionSecret }: AppDeps) {
   // it answers for arbitrary tenant slugs). Prod binds it to mTLS/private
   // network on top of this.
   //
-  // The gate: the X-Vendua-Control header is the canonical credential. The
+  // The gate: the X-Vendua-Control header is the canonical credential — its
+  // value is CONTROL_SECRET, a staff key distinct from the shopper-session
+  // signing secret (staff access must never enable session forgery). The
   // `vendua_control` cookie — minted by POST /control/v1/board — is a staff
-  // convenience so the board page can call this API from the browser: same
-  // secret, no new credential surface. 404 (not 401) keeps the surface
-  // invisible to scans.
+  // convenience so the board page can call this API from the browser.
+  // 404 (not 401) keeps the surface invisible to scans.
   const CONTROL_COOKIE = 'vendua_control';
-  // The cookie carries a derived token — never sessionSecret itself: a leaked
-  // staff cookie opens the board without exposing the shopper-token signing
-  // key, and rotating sessionSecret invalidates every cookie at once.
-  const controlToken = createHmac('sha256', sessionSecret).update('vendua.control').digest('hex');
+  const staffSecret = controlSecret ?? sessionSecret;
+  // The cookie carries a derived token — never either secret itself: a leaked
+  // staff cookie opens the board without exposing a signing key, and rotating
+  // CONTROL_SECRET invalidates every cookie at once.
+  const controlToken = createHmac('sha256', staffSecret).update('vendua.control').digest('hex');
   const controlAuthed = (c: Context) =>
-    c.req.header('x-vendua-control') === sessionSecret ||
+    c.req.header('x-vendua-control') === staffSecret ||
     getCookie(c, CONTROL_COOKIE) === controlToken;
   const controlGate = (c: Context) => {
     if (!controlAuthed(c)) throw new HttpError(404, 'NOT_FOUND', 'not found');
-    // CSRF: a cookie-authenticated mutation must also carry the custom
+    // CSRF: a cookie-authenticated mutation must carry the custom
     // `x-vendua-staff` marker — browsers can't add a custom header cross-site
-    // without a CORS preflight this API never answers. SameSite=Lax already
-    // strips the cookie on cross-site POSTs; this covers same-site siblings.
-    const viaHeader = c.req.header('x-vendua-control') === sessionSecret;
-    if (!viaHeader && c.req.method !== 'GET' && !c.req.header('x-vendua-staff')) {
-      throw new HttpError(404, 'NOT_FOUND', 'not found');
+    // without a CORS preflight this API never answers — AND an Origin that
+    // matches the request host when one is present (the marker alone is a
+    // presence check a compromised same-site sibling could also send).
+    // SameSite=Lax already strips the cookie on cross-site POSTs.
+    const viaHeader = c.req.header('x-vendua-control') === staffSecret;
+    if (!viaHeader && c.req.method !== 'GET') {
+      if (!c.req.header('x-vendua-staff')) throw new HttpError(404, 'NOT_FOUND', 'not found');
+      const origin = c.req.header('origin');
+      const reqHost =
+        (trustProxy ? c.req.header('x-forwarded-host') : undefined) ?? c.req.header('host');
+      let originHost: string | null = null;
+      try {
+        originHost = origin ? new URL(origin).host : null;
+      } catch {
+        originHost = null;
+      }
+      if (origin && reqHost && originHost !== reqHost) {
+        throw new HttpError(404, 'NOT_FOUND', 'not found');
+      }
     }
   };
   const requireIdemKey = (c: Context) => {
@@ -612,7 +632,7 @@ export function createApp({ sql, sessionSecret }: AppDeps) {
   });
   app.post('/control/v1/board', async (c) => {
     const form = (await c.req.parseBody().catch(() => ({}))) as Record<string, unknown>;
-    if (form.key !== sessionSecret) throw new HttpError(404, 'NOT_FOUND', 'not found');
+    if (form.key !== staffSecret) throw new HttpError(404, 'NOT_FOUND', 'not found');
     setCookie(c, CONTROL_COOKIE, controlToken, {
       httpOnly: true,
       sameSite: 'Lax',

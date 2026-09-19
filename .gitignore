@@ -9,3 +9,4 @@ artifacts/
 !.env.example
 storefronts/*/qa-report/
 storefronts/*/dist/
+packages/conformance/test/.tmp/

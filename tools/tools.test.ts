@@ -104,9 +104,31 @@ describe('check-storefront-paths', () => {
     expect(r.stderr).toContain('storefront:quero-pudim');
   });
 
-  test('unlabelled diffs that are NOT single-storefront pass', () => {
+  test('unlabelled diffs that touch NO storefront pass', () => {
     expect(run(['--files', 'docs/x.md', 'packages/core/app.ts']).status).toBe(0);
     expect(run(['--files', 'storefronts/_template/a.ts']).status).toBe(0); // platform-owned dir
-    expect(run(['--files', 'storefronts/a/x.ts', 'storefronts/b/y.ts']).status).toBe(0);
+  });
+
+  test('unlabelled mixed diff (storefront + platform) fails — the label hole', () => {
+    const r = run(['--files', 'storefronts/brasa/routes/i.tsx', 'packages/core/src/app.ts']);
+    expect(r.status).toBe(1);
+    expect(r.stderr).toContain('platform');
+  });
+
+  test('unlabelled multi-storefront diff fails', () => {
+    const r = run(['--files', 'storefronts/a/x.ts', 'storefronts/b/y.ts']);
+    expect(r.status).toBe(1);
+  });
+
+  test("'platform' label is the deliberate bypass for fleet-wide changes", () => {
+    const r = run([
+      '--slug',
+      'platform',
+      '--files',
+      'storefronts/brasa/routes/i.tsx',
+      'packages/kernel/src/api.ts',
+    ]);
+    expect(r.status).toBe(0);
+    expect(r.stdout).toContain('platform');
   });
 });

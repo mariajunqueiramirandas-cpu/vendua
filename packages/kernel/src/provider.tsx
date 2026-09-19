@@ -235,7 +235,10 @@ export function useQuery<T>(
         });
       cache.set(key, e);
     };
-    if (!entry.inflight && !entry.resolved) run();
+    // Errored entries are retryable — a mount (page reload) or invalidate
+    // re-runs them. Without this a transient failure (Core restarting under
+    // `bun --watch` during a page load) wedged the query permanently.
+    if (!entry.inflight && (!entry.resolved || entry.error)) run();
     // A subscriber that mounts while a fetch is in flight still needs a tick
     // when it lands — otherwise it can hold a stale cache read.
     entry.inflight?.finally(() => {

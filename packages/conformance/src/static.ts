@@ -42,7 +42,21 @@ const KERNEL_IMPORT_ALLOW = new Set([
   '@vendua/kernel/styles.css',
 ]);
 
-const RESERVED_ROUTE_PREFIXES = ['v1', 'storefront', 'checkout/v1'];
+const RESERVED_ROUTE_PREFIXES = ['v1', 'storefront', 'checkout/v1', 'control'];
+
+// Contract v1 (03): the dev proxy may only forward the reserved API
+// prefixes, in object form — vite's string shorthand forces
+// `changeOrigin: true` and rewrites the Host header tenant resolution
+// depends on. '/storefront' covers /storefront/v1 entirely (page routes
+// under it are already banned by K04); '/checkout' bare would swallow the
+// SPA checkout route.
+const PROXY_KEY_ALLOW = new Set([
+  '/storefront',
+  '/storefront/v1',
+  '/checkout/v1',
+  '/v1',
+  '/control',
+]);
 
 function sourceFiles(dir: string): string[] {
   const out: string[] = [];
@@ -250,7 +264,7 @@ function k04(dir: string): CheckResult {
       // Literal calls into commerce API paths — any call shape (fetch, axios,
       // custom wrappers). /v1/v.js in index.html is a script tag, not a call.
       for (const m of line.matchAll(
-        /\(\s*[`'"]([^`'"]*\/(?:checkout\/v1|storefront\/v1)[^`'"]*)[`'"]/g,
+        /\(\s*[`'"]([^`'"]*\/(?:checkout\/v1|storefront\/v1|control\/v1)[^`'"]*)[`'"]/g,
       )) {
         problems.push(
           `${loc}: literal call to '${m[1]}' — commerce calls go through @vendua/kernel`,
@@ -259,6 +273,65 @@ function k04(dir: string): CheckResult {
     });
   }
 
+  if (problems.length) return fail(id, title, problems.join('\n'));
+  return pass(id, title);
+}
+
+async function k06(dir: string): Promise<CheckResult> {
+  const id = 'K06';
+  const title = 'vite proxy: object form only, keys ⊆ reserved API prefixes';
+  const vitePath = join(dir, 'vite.config.ts');
+  if (!existsSync(vitePath)) return fail(id, title, 'vite.config.ts missing');
+
+  // Evaluate the real config (defineConfig may be an object, function, or
+  // promise) and read server.proxy off the resolved value.
+  const ev = await run(
+    [
+      'bun',
+      '-e',
+      'const m = await import(process.env.VITE_CFG); let v = m.default ?? m; ' +
+        'if (typeof v === "function") v = await v({ command: "serve", mode: "development" }); ' +
+        'v = await v; console.log(JSON.stringify(v?.server?.proxy ?? null));',
+    ],
+    dir,
+    60_000,
+    { VITE_CFG: vitePath },
+  );
+  if (ev.code !== 0)
+    return fail(id, title, `vite.config.ts failed to evaluate:\n${ev.output.slice(-2000)}`);
+  const proxy = JSON.parse(ev.output.trim().split('\n').pop() ?? 'null') as Record<
+    string,
+    unknown
+  > | null;
+
+  const problems: string[] = [];
+  if (proxy === null) {
+    problems.push(
+      'server.proxy missing — the storefront must proxy the reserved API prefixes to Core',
+    );
+  } else {
+    for (const [key, value] of Object.entries(proxy)) {
+      if (!PROXY_KEY_ALLOW.has(key)) {
+        problems.push(
+          `proxy key '${key}' is not a reserved API prefix (allowed: ${[...PROXY_KEY_ALLOW].join(', ')}) — ` +
+            `a bare '/checkout' or other page-path key swallows storefront routes`,
+        );
+        continue;
+      }
+      if (typeof value !== 'object' || value === null || Array.isArray(value)) {
+        problems.push(
+          `proxy '${key}' uses string shorthand — it forces changeOrigin:true and rewrites the ` +
+            `Host header tenant resolution needs. Use { target, changeOrigin: false }`,
+        );
+        continue;
+      }
+      if ((value as { changeOrigin?: unknown }).changeOrigin === true) {
+        problems.push(
+          `proxy '${key}' sets changeOrigin:true — Host rewrites break tenant resolution`,
+        );
+      }
+    }
+  }
   if (problems.length) return fail(id, title, problems.join('\n'));
   return pass(id, title);
 }
@@ -279,5 +352,6 @@ export async function runStatic(storefrontDir: string): Promise<CheckResult[]> {
   results.push(k02(dir));
   results.push(k03(dir));
   results.push(k04(dir));
+  results.push(await k06(dir));
   return results;
 }

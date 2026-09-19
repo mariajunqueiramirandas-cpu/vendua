@@ -10,6 +10,9 @@ import { defineConfig } from '@playwright/test';
  */
 export default defineConfig({
   testDir: './src/suite',
+  // `.e2e.ts`, not `.spec.ts` — keeps the Playwright suite out of `bun test`
+  // (the unit gate) so `bun test` only loads pure-TS test files.
+  testMatch: '**/*.e2e.ts',
   timeout: 120_000,
   expect: { timeout: 10_000 },
   // Serial: Core's fixed-window limiter (240 req/min per tenant on

@@ -119,5 +119,51 @@ jobs:
               (cd "$dir" && bun run build)
             fi
           done
-          # Deliberately not wired: the Playwright e2e suite needs docker +
-          # chromium on the runner; `vendua qa` covers it locally for now.
+      - name: Unit tests (conformance + any workspace with a test script)
+        run: |
+          for dir in packages/* tools; do
+            [ -d "$dir" ] || continue
+            [ -f "$dir/package.json" ] || continue
+            if jq -e '.scripts.test' "$dir/package.json" > /dev/null 2>&1; then
+              echo "test $dir"
+              (cd "$dir" && bun test)
+            fi
+          done
+
+  # The phase's exit criterion enforced in CI: scaffold a fresh storefront,
+  # boot real Postgres + Core, and run the full conformance e2e (C/S/Q
+  # Playwright suite) against it — the preview proxy forwards Host exactly
+  # like the production edge.
+  conformance:
+    runs-on: ubuntu-latest
+    if: >-
+      github.event_name == 'push' ||
+      !contains(fromJSON('["labeled","unlabeled"]'), github.event.action)
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: '1.4.2'
+      - run: bun install --frozen-lockfile
+      - name: Postgres + migrate
+        run: |
+          docker compose -f packages/core/docker-compose.yml up -d postgres
+          for i in $(seq 1 30); do
+            docker compose -f packages/core/docker-compose.yml exec -T postgres pg_isready -U vendua && break
+            sleep 1
+          done
+          (cd packages/core && bun run migrate)
+      - name: Core API
+        run: |
+          (cd packages/core && SESSION_SECRET=ci-secret bun run dev > /tmp/core.log 2>&1 &)
+          for i in $(seq 1 30); do
+            curl -sf http://localhost:8787/healthz && break
+            sleep 1
+          done
+      - name: Playwright browser
+        run: bunx playwright install --with-deps chromium
+      - name: Scaffold + qa (exit criterion)
+        run: |
+          bunx vendua scaffold ci-smoke
+          bun install
+          bunx vendua qa ci-smoke
