@@ -5,22 +5,42 @@ on:
     branches: [main]
   pull_request:
 
+permissions:
+  contents: write
+
 jobs:
   check:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          # Check out the PR branch itself (not the detached merge ref) so a
+          # formatting fix can be committed back to it.
+          ref: ${{ github.head_ref || github.ref }}
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version: '1.4.2'
       - run: bun install --frozen-lockfile
+
+      # Format always runs FIRST and fixes the tree — a formatting-only diff
+      # is committed back to the branch instead of failing the check.
+      - name: Format
+        run: bunx prettier --write . --log-level warn
+      - name: Commit formatting fix
+        run: |
+          if [ -n "$(git status --porcelain)" ]; then
+            git config user.name 'github-actions[bot]'
+            git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+            git add -A
+            git commit -m 'style: prettier auto-fix [skip ci]'
+            git push
+          fi
+
       - name: Typecheck
         run: |
           for pkg in packages/core packages/kernel site storefronts/quero-pudim storefronts/brasa storefronts/forn storefronts/_examples/quero-pudim; do
             (cd "$pkg" && bun run check)
           done
-      - name: Format
-        run: bunx prettier --check .
       - name: Core tests
         run: cd packages/core && bun test
       - name: Builds

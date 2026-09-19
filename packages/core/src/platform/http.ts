@@ -218,7 +218,10 @@ export function rateLimit(
     // entries left of it stay attacker-settable but unusable for rotation
     // bypass. A chain shorter than configured fails closed to 'unknown' —
     // one shared bucket — rather than falling back to a spoofable entry.
-    const xff = c.req.header('x-forwarded-for')?.split(',').map((s) => s.trim());
+    const xff = c.req
+      .header('x-forwarded-for')
+      ?.split(',')
+      .map((s) => s.trim());
     const idx = xff ? xff.length - 1 - (flags.proxyHops ?? 0) : -1;
     const ip = flags.trustForwardedFor ? (idx >= 0 ? xff![idx]! : 'unknown') : 'local';
     const now = Date.now();

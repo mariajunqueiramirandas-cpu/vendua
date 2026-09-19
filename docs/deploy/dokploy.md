@@ -21,7 +21,7 @@ Copy `.env.example` into the service's environment and fill it in:
 | `SESSION_SECRET`         | signs `vst.*` session tokens — required, stable across restarts |
 | `SEED_DEMO`              | `1` seeds the three demo tenants on boot; `0` = empty platform  |
 | `SEED_DOMAINS`           | `slug:public-domain` per storefront — registers real domains    |
-| `VENDUA_PROXY_HOPS`      | XFF trusted suffix length — `1` for the Traefik→nginx chain    |
+| `VENDUA_PROXY_HOPS`      | XFF trusted suffix length — `1` for the Traefik→nginx chain     |
 
 Generate secrets with `openssl rand -hex 32`.
 
