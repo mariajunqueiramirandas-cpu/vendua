@@ -126,10 +126,23 @@ export default function Settings() {
   const [integrationsOk, setIntegrationsOk] = useState(false);
 
   const load = useCallback(() => {
-    void Promise.all([api.integrations(), api.settings()])
-      .then(([i, s]) => {
+    // Independent fetches — a failed settings read must not discard a
+    // successful integrations response (it alone proves whatsapp state).
+    void api
+      .integrations()
+      .then((i) => {
         setIntegrations(i.integrations);
         setIntegrationsOk(true);
+      })
+      .catch((e: unknown) =>
+        setNotice({
+          kind: 'err',
+          text: `falha ao carregar: ${e instanceof Error ? e.message : e}`,
+        }),
+      );
+    void api
+      .settings()
+      .then((s) => {
         const map: Record<string, unknown> = {};
         for (const row of s.settings) map[row.key] = row.value;
         setSettings(map);
