@@ -1157,6 +1157,41 @@ input[type='checkbox'] {
   color: var(--lime-200);
   margin: 0;
 }
+.wa-qr {
+  display: block;
+  width: 220px;
+  height: 220px;
+  margin-top: 10px;
+  background: #fff;
+  border-radius: var(--r-sm);
+  padding: 6px;
+}
+.wa-paircode {
+  margin-top: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.wa-pairrow {
+  display: flex;
+  gap: 8px;
+}
+.wa-pairrow input {
+  flex: 1;
+}
+.wa-paircode .hint {
+  font-size: var(--t-2xs);
+  color: var(--rail-muted);
+}
+.wa-code {
+  font-family: var(--font-mono);
+  font-size: var(--t-xl);
+  letter-spacing: 0.14em;
+  color: var(--lime-300);
+}
+.wa-pair .btn {
+  margin-top: 10px;
+}
 .wa-pair .foot {
   font-size: var(--t-2xs);
   color: var(--rail-muted);

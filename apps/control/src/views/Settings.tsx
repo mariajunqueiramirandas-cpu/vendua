@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState, type ChangeEvent } from 'react';
+import QRCode from 'qrcode';
 import { api, type Integration } from '../api.ts';
 import { Page } from '../components.tsx';
 
@@ -113,7 +114,10 @@ type Notice = { kind: 'ok' | 'err'; text: string } | null;
 export default function Settings() {
   const [integrations, setIntegrations] = useState<Integration[]>([]);
   const [settings, setSettings] = useState<Record<string, unknown>>({});
-  const [qr, setQr] = useState<string | null>(null);
+  const [wa, setWa] = useState<{ qr: string | null; status: string }>({
+    qr: null,
+    status: 'off',
+  });
   const [notice, setNotice] = useState<Notice>(null);
   const [loading, setLoading] = useState(true);
 
@@ -134,7 +138,7 @@ export default function Settings() {
       .finally(() => setLoading(false));
     api
       .waQr()
-      .then((r) => setQr(r.qr))
+      .then((r) => setWa({ qr: r.qr, status: r.status }))
       .catch(() => undefined);
   }, []);
   useEffect(load, [load]);
@@ -143,14 +147,22 @@ export default function Settings() {
       () =>
         api
           .waQr()
-          .then((r) => setQr(r.qr))
+          .then((r) => setWa({ qr: r.qr, status: r.status }))
           .catch(() => undefined),
       4000,
     );
     return () => clearInterval(t);
   }, []);
 
-  const active = (kind: string) => integrations.find((i) => i.kind === kind && i.enabled);
+  const waLogout = async () => {
+    try {
+      await api.waLogout();
+      setNotice({ kind: 'ok', text: 'whatsapp desconectado — QR novo a caminho' });
+      load();
+    } catch (e) {
+      setNotice({ kind: 'err', text: `whatsapp: ${e instanceof Error ? e.message : e}` });
+    }
+  };
 
   const saveIntegration = async (
     kind: string,
@@ -208,8 +220,9 @@ export default function Settings() {
               <ProviderCard
                 key={k.key}
                 kind={k}
-                current={active(k.key)}
-                qr={k.key === 'whatsapp' ? qr : null}
+                rows={integrations.filter((i) => i.kind === k.key)}
+                wa={k.key === 'whatsapp' ? wa : { qr: null, status: 'off' }}
+                onWaLogout={k.key === 'whatsapp' ? () => void waLogout() : undefined}
                 onSave={(d, enable) => void saveIntegration(k.key, d, enable)}
               />
             ))}
@@ -244,18 +257,21 @@ export default function Settings() {
 
 function ProviderCard({
   kind,
-  current,
-  qr,
+  rows,
+  wa,
+  onWaLogout,
   onSave,
 }: {
   kind: { key: string; label: string; sub: string; drivers: Driver[] };
-  current: Integration | undefined;
-  qr: string | null;
+  rows: Integration[];
+  wa: { qr: string | null; status: string };
+  onWaLogout: (() => void) | undefined;
   onSave: (
     d: { driver: string; secretRef: string; config: Record<string, string> },
     enable: boolean,
   ) => void;
 }) {
+  const current = rows.find((r) => r.enabled);
   const baseline = {
     driver: current?.driver ?? kind.drivers[0]?.d ?? '',
     secretRef: current?.secretRef ?? '',
@@ -264,24 +280,68 @@ function ProviderCard({
   const [driver, setDriver] = useState(baseline.driver);
   const [secretRef, setSecretRef] = useState(baseline.secretRef);
   const [config, setConfig] = useState<Record<string, string>>(baseline.config);
+  const [test, setTest] = useState<{ ok: boolean; detail: string } | null>(null);
+  const [testing, setTesting] = useState(false);
+  const [pairPhone, setPairPhone] = useState('');
+  const [pairCode, setPairCode] = useState<string | null>(null);
+  const [pairErr, setPairErr] = useState<string | null>(null);
+  const [pairBusy, setPairBusy] = useState(false);
+  const [qrImg, setQrImg] = useState<string | null>(null);
   useEffect(() => {
     setDriver(baseline.driver);
     setSecretRef(baseline.secretRef);
     setConfig(baseline.config);
     // eslint-disable-next-line react-hooks/exhaustive-deps -- re-sync when the saved row changes
   }, [current?.driver, current?.secretRef, current?.updatedAt]);
+  useEffect(() => {
+    if (!wa.qr) {
+      setQrImg(null);
+      return;
+    }
+    let dead = false;
+    void QRCode.toDataURL(wa.qr, { margin: 1, width: 220 }).then((url) => {
+      if (!dead) setQrImg(url);
+    });
+    return () => {
+      dead = true;
+    };
+  }, [wa.qr]);
 
   const drv = kind.drivers.find((x) => x.d === driver) ?? kind.drivers[0];
+  // The saved row for the SELECTED driver — its secretName/secretPresent
+  // reflect what's actually on the server, independent of `enabled`.
+  const selRow = rows.find((r) => r.driver === driver);
   const dirty =
     driver !== baseline.driver ||
     secretRef !== baseline.secretRef ||
     JSON.stringify(config) !== JSON.stringify(baseline.config);
 
-  const state = !current
-    ? 'att'
-    : current.enabled && current.secretRef && !current.secretPresent
-      ? 'att'
-      : 'on';
+  const secretMissing = !!current?.enabled && !!current?.secretName && !current.secretPresent;
+  const state = !current || secretMissing ? 'att' : 'on';
+
+  const runTest = async () => {
+    setTesting(true);
+    setTest(null);
+    try {
+      setTest(await api.testIntegration(kind.key));
+    } catch (e) {
+      setTest({ ok: false, detail: e instanceof Error ? e.message : String(e) });
+    } finally {
+      setTesting(false);
+    }
+  };
+
+  const runPair = async () => {
+    setPairBusy(true);
+    setPairErr(null);
+    try {
+      setPairCode((await api.waPairCode(pairPhone)).code);
+    } catch (e) {
+      setPairErr(e instanceof Error ? e.message : String(e));
+    } finally {
+      setPairBusy(false);
+    }
+  };
 
   return (
     <div className={`drv ${state}`}>
@@ -298,11 +358,13 @@ function ProviderCard({
         ) : (
           <span className="chip warn">não configurado</span>
         )}
-        {current?.secretRef ? (
+        {current?.secretName ? (
           current.secretPresent ? (
-            <span className="chip">secret ✓</span>
+            <span className="chip" title="env presente no servidor">
+              {current.secretName} ✓
+            </span>
           ) : (
-            <span className="chip bad">secret ausente</span>
+            <span className="chip bad">{current.secretName} ausente</span>
           )
         ) : null}
       </div>
@@ -340,6 +402,14 @@ function ProviderCard({
                   placeholder={drv.secretName ?? `${kind.key.toUpperCase()}_API_KEY`}
                   onChange={(e) => setSecretRef(e.target.value)}
                 />
+                <div className="hint">
+                  env que o driver lê: <code>{selRow?.secretName ?? drv.secretName}</code>
+                  {selRow?.secretName && selRow.secretPresent != null
+                    ? selRow.secretPresent
+                      ? ' — presente no servidor ✓'
+                      : ' — ausente no servidor'
+                    : ''}
+                </div>
               </div>
             )}
             {drv.fields?.map((f) => (
@@ -354,17 +424,56 @@ function ProviderCard({
             ))}
           </div>
         )}
-        {kind.key === 'whatsapp' && driver === 'baileys' && qr && (
+        {kind.key === 'whatsapp' && driver === 'baileys' && current?.enabled && (
           <div className="wa-pair">
-            <div className="t">parear — escaneie no whatsapp → aparelhos conectados</div>
-            <pre>{qr}</pre>
-            <div className="foot">o QR expira rápido; esta tela atualiza sozinha a cada 4s</div>
-          </div>
-        )}
-        {kind.key === 'whatsapp' && driver === 'baileys' && !qr && current?.enabled && (
-          <div className="wa-pair">
-            <div className="t">whatsapp conectado</div>
-            <div className="foot">nenhum QR pendente — o socket do agente está pareado</div>
+            {wa.status === 'open' ? (
+              <>
+                <div className="t">whatsapp conectado</div>
+                <div className="foot">
+                  socket pareado — o agente já envia e recebe. desconectar libera o número e emite
+                  um QR novo.
+                </div>
+                <button className="btn danger" onClick={onWaLogout}>
+                  desconectar número
+                </button>
+              </>
+            ) : (
+              <>
+                <div className="t">
+                  {wa.status === 'qr'
+                    ? 'parear — whatsapp → aparelhos conectados → conectar aparelho'
+                    : wa.status === 'connecting'
+                      ? 'conectando ao whatsapp…'
+                      : 'whatsapp desligado — socket não está rodando'}
+                </div>
+                {wa.qr && qrImg && <img className="wa-qr" src={qrImg} alt="QR do whatsapp" />}
+                <div className="wa-paircode">
+                  <span className="hint">ou conectar com código:</span>
+                  {pairCode ? (
+                    <code className="wa-code">{pairCode}</code>
+                  ) : (
+                    <span className="wa-pairrow">
+                      <input
+                        placeholder="DDI+DDD+número — 5511…"
+                        value={pairPhone}
+                        onChange={(e) => setPairPhone(e.target.value)}
+                      />
+                      <button
+                        className="btn ghost"
+                        disabled={pairBusy}
+                        onClick={() => void runPair()}
+                      >
+                        {pairBusy ? 'gerando…' : 'gerar código'}
+                      </button>
+                    </span>
+                  )}
+                  {pairErr && <div className="hint">{pairErr}</div>}
+                </div>
+                <div className="foot">
+                  o QR expira rápido — esta tela atualiza sozinha a cada 4s
+                </div>
+              </>
+            )}
           </div>
         )}
         <div className="actions">
@@ -390,6 +499,20 @@ function ProviderCard({
             >
               desfazer
             </button>
+          )}
+          <button
+            className="btn ghost"
+            disabled={testing || !current?.enabled}
+            title="chama o driver ativo de verdade (1 chamada barata)"
+            onClick={() => void runTest()}
+          >
+            {testing ? 'testando…' : 'testar'}
+          </button>
+          {test && (
+            <span className={`chip ${test.ok ? 'agent' : 'bad'}`} title={test.detail}>
+              {test.ok ? '✓ ' : '✗ '}
+              {test.detail}
+            </span>
           )}
           {current?.enabled && (
             <button

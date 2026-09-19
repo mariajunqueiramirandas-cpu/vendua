@@ -21,6 +21,17 @@ export const DRIVERS: Record<IntegrationKind, readonly string[]> = {
   discovery: ['tinyfish', 'mock'],
 };
 
+/** Fallback env var each secret-bearing driver reads when the row's
+ *  secret_ref is null — mirrors the `?? process.env.X` fallback in the
+ *  channel/driver code so the UI reports what's actually in effect. */
+export const DEFAULT_SECRET: Record<string, string> = {
+  openrouter: 'OPENROUTER_API_KEY',
+  anthropic: 'ANTHROPIC_API_KEY',
+  openai: 'OPENAI_API_KEY',
+  resend: 'RESEND_API_KEY',
+  tinyfish: 'TINYFISH_API_KEY',
+};
+
 export interface IntegrationRow {
   id: string;
   kind: IntegrationKind;
@@ -34,6 +45,10 @@ export interface IntegrationRow {
 
 /** API view — secret_ref masked to the env var name only (never a value). */
 export function integrationJson(row: IntegrationRow) {
+  // The env var the driver will actually read — the row's override or its
+  // built-in default. `secretPresent` tracks that effective name so a
+  // default-env deployment shows "secret ✓" before any save.
+  const secretName = row.secret_ref ?? DEFAULT_SECRET[row.driver] ?? null;
   return {
     id: row.id,
     kind: row.kind,
@@ -42,7 +57,8 @@ export function integrationJson(row: IntegrationRow) {
     config: row.config ?? {},
     /** whether process.env actually provides the referenced secret */
     secretRef: row.secret_ref,
-    secretPresent: row.secret_ref ? !!process.env[row.secret_ref] : null,
+    secretName,
+    secretPresent: secretName ? !!process.env[secretName] : null,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };

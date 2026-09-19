@@ -68,6 +68,7 @@ import {
 } from './modules/threads.ts';
 import {
   getGuardrails,
+  getIntegration,
   getPitch,
   integrationKind,
   listIntegrations,
@@ -1046,15 +1047,86 @@ export function createApp({ sql, sessionSecret, controlSecret }: AppDeps) {
       // Reconcile the live socket now — a disable/switch must close the old
       // Baileys session immediately, not whenever the next outbound or
       // disconnect happens to trigger it.
-      const [{ getIntegration }, { ensureSocket }] = await Promise.all([
-        import('./modules/integrations.ts'),
-        import('./agent/channels/whatsapp.ts'),
-      ]);
+      const { ensureSocket } = await import('./agent/channels/whatsapp.ts');
       void getIntegration(sql, 'whatsapp')
         .then((i) => ensureSocket(sql, i))
         .catch((e) => console.error('[whatsapp] socket reconcile failed', e));
     }
     return c.json(res.body);
+  });
+
+  // Live driver check — exercises the ACTIVE provider for a kind for real
+  // (one cheap call), so Config can answer "is this actually working?"
+  // instead of only echoing config back.
+  app.post('/control/v1/integrations/:kind/test', async (c) => {
+    controlGate(c);
+    const kind = integrationKind(c.req.param('kind'));
+    const integration = await getIntegration(sql, kind);
+    if (!integration) {
+      return c.json({ ok: false, detail: 'nenhum driver ativo para este tipo' });
+    }
+    try {
+      if (kind === 'llm') {
+        if (integration.driver === 'mock') {
+          return c.json({ ok: true, detail: 'driver mock — respostas roteirizadas' });
+        }
+        const { providerFor } = await import('./agent/llm.ts');
+        const p = providerFor(integration);
+        const r = await p.chat({
+          system: 'Responda apenas com a palavra: ok',
+          messages: [{ role: 'user', content: 'teste' }],
+          tools: [],
+        });
+        return c.json({
+          ok: true,
+          detail: `${p.name} respondeu — ${r.tokensIn + r.tokensOut} tokens`,
+        });
+      }
+      if (kind === 'email') {
+        if (integration.driver === 'log') {
+          return c.json({ ok: true, detail: 'driver log — imprime no console' });
+        }
+        const key =
+          (integration.secret_ref && process.env[integration.secret_ref]) ??
+          process.env.RESEND_API_KEY;
+        if (!key) {
+          return c.json({
+            ok: false,
+            detail: `env ${integration.secret_ref ?? 'RESEND_API_KEY'} ausente`,
+          });
+        }
+        const res = await fetch('https://api.resend.com/domains', {
+          headers: { authorization: `Bearer ${key}` },
+        });
+        return res.ok
+          ? c.json({ ok: true, detail: 'resend autenticado' })
+          : c.json({ ok: false, detail: `resend respondeu ${res.status}` });
+      }
+      if (kind === 'whatsapp') {
+        if (integration.driver === 'log') {
+          return c.json({ ok: true, detail: 'driver log — imprime no console' });
+        }
+        const { ensureSocket, waStatus } = await import('./agent/channels/whatsapp.ts');
+        const s = await ensureSocket(sql, integration);
+        if (!s) return c.json({ ok: false, detail: 'socket não subiu' });
+        const st = waStatus();
+        if (st === 'open') return c.json({ ok: true, detail: 'socket pareado' });
+        if (st === 'qr') return c.json({ ok: true, detail: 'aguardando escanear o QR' });
+        return c.json({ ok: false, detail: `socket ${st}` });
+      }
+      if (kind === 'discovery') {
+        if (integration.driver === 'mock') {
+          return c.json({ ok: true, detail: 'driver mock — prospects enlatados' });
+        }
+        const { discoveryFor } = await import('./agent/channels/discovery.ts');
+        const d = await discoveryFor(sql);
+        const r = await d.search('padaria', 'teste de conectividade');
+        return c.json({ ok: true, detail: `tinyfish respondeu — ${r.results.length} resultados` });
+      }
+      return c.json({ ok: false, detail: `tipo desconhecido: ${kind}` });
+    } catch (e) {
+      return c.json({ ok: false, detail: e instanceof Error ? e.message : String(e) });
+    }
   });
 
   app.get('/control/v1/settings', async (c) => {
@@ -1167,6 +1239,8 @@ export function createApp({ sql, sessionSecret, controlSecret }: AppDeps) {
   });
 
   // WhatsApp pairing state for the Settings screen (Baileys QR handshake).
+  // `status` is the live socket state — 'off'/'connecting'/'qr'/'open' —
+  // so the UI can say "desligado" instead of guessing from QR presence.
   app.get('/control/v1/wa/qr', async (c) => {
     controlGate(c);
     const rows = await controlTx(
@@ -1176,7 +1250,38 @@ export function createApp({ sql, sessionSecret, controlSecret }: AppDeps) {
           { value: { qr: string | null } | null }[]
         >`select value from control_settings where key = 'wa_qr'`,
     );
-    return c.json({ qr: rows[0]?.value?.qr ?? null });
+    const { waStatus } = await import('./agent/channels/whatsapp.ts');
+    return c.json({ qr: rows[0]?.value?.qr ?? null, status: waStatus() });
+  });
+
+  // Pairing-code alternative to scanning the QR — WhatsApp's
+  // "conectar com número" flow. Staff sends their phone digits, we ask
+  // Baileys for the 8-char code.
+  app.post('/control/v1/wa/pair-code', async (c) => {
+    controlGate(c);
+    const body = await bodyJson(c);
+    const { pairCode } = await import('./agent/channels/whatsapp.ts');
+    try {
+      const code = await pairCode(sql, str(body.phone, 'phone', 40));
+      return c.json({ code });
+    } catch (e) {
+      throw new HttpError(422, 'BAD_REQUEST', e instanceof Error ? e.message : String(e));
+    }
+  });
+
+  // Unpair the WhatsApp session (linked-device logout + auth-state wipe) so
+  // a different number can pair. Restarts the socket afterwards so a fresh
+  // QR is emitted right away.
+  app.post('/control/v1/wa/logout', async (c) => {
+    controlGate(c);
+    const { logoutWa, ensureSocket } = await import('./agent/channels/whatsapp.ts');
+    const integration = await getIntegration(sql, 'whatsapp');
+    const accountId = (integration?.config.accountId as string) ?? 'default';
+    await logoutWa(sql, accountId);
+    void ensureSocket(sql, integration).catch((e) =>
+      console.error('[whatsapp] post-logout restart failed', e),
+    );
+    return c.json({ ok: true });
   });
 
   // ---- channel webhooks ---------------------------------------------------------

@@ -12,6 +12,12 @@ import { controlTx } from '../../modules/control.ts';
 interface BaileysSocket {
   sendMessage(jid: string, content: { text: string }): Promise<{ key?: { id?: string } }>;
   end(err?: Error): void;
+  /** 8-char pairing code as an alternative to scanning the QR — only valid
+   *  while the socket is unregistered (pre-`open`). */
+  requestPairingCode(phone: string): Promise<string>;
+  /** Server-side unpair — WhatsApp drops the linked device, then the
+   *  socket closes with a 401 (no auto-reconnect). */
+  logout(): Promise<unknown>;
   ev: {
     on(
       event: 'connection.update',
@@ -37,6 +43,13 @@ interface BaileysSocket {
 
 let socket: BaileysSocket | null = null;
 let starting: Promise<BaileysSocket> | null = null;
+/** Last connection state the socket reported — 'off' when no socket is
+ *  running or the session dropped/logged out. The Settings screen renders
+ *  this instead of guessing from QR presence. */
+let connState: 'off' | 'connecting' | 'qr' | 'open' = 'off';
+export function waStatus(): string {
+  return connState;
+}
 /** identity of the integration that opened `socket` — config changes must
  *  close it, not keep sending through the old account. */
 let socketFingerprint: string | null = null;
@@ -136,9 +149,16 @@ async function startSocket(sql: Sql, integration: IntegrationRow): Promise<Baile
 
   sock.ev.on('creds.update', () => void auth.write('creds', 'main', creds));
   sock.ev.on('connection.update', (u) => {
-    if (u.qr) void persistQr(sql, accountId, u.qr);
-    if (u.connection === 'open') void persistQr(sql, accountId, null);
+    if (u.qr) {
+      connState = 'qr';
+      void persistQr(sql, accountId, u.qr);
+    }
+    if (u.connection === 'open') {
+      connState = 'open';
+      void persistQr(sql, accountId, null);
+    }
     if (u.connection === 'close') {
+      connState = 'off';
       socket = null;
       starting = null;
       socketFingerprint = null;
@@ -220,6 +240,7 @@ export async function ensureSocket(
   if (!wanted) return null;
   if (socket) return socket;
   if (!starting) {
+    connState = 'connecting';
     starting = startSocket(sql, integration!).then(
       (s) => {
         socket = s;
@@ -231,11 +252,51 @@ export async function ensureSocket(
         // a failed start must not poison the flag — clear it so the next
         // send/pair attempt can retry.
         starting = null;
+        connState = 'off';
         throw err;
       },
     );
   }
   return starting;
+}
+
+/** Pairing-code alternative to scanning the QR — staff enters their number
+ *  and types the returned code in WhatsApp → aparelhos conectados →
+ *  "conectar com número". Only works while the socket is unregistered. */
+export async function pairCode(sql: Sql, phone: string): Promise<string> {
+  const digits = phone.replace(/\D/g, '');
+  if (digits.length < 10 || digits.length > 15) {
+    throw new Error('número inválido — DDI+DDD+número, só dígitos');
+  }
+  const sock = await ensureSocket(sql, await getIntegration(sql, 'whatsapp'));
+  if (!sock) throw new Error('driver baileys não está ativo');
+  if (connState === 'open') throw new Error('whatsapp já está conectado');
+  return sock.requestPairingCode(digits);
+}
+
+/** Unpair the linked device and wipe stored auth state — the QR/pair flow
+ *  can then pair a different number from scratch. logout() tells WhatsApp
+ *  the device is gone (its close event is a 401, which the reconnect logic
+ *  already leaves dead). */
+export async function logoutWa(sql: Sql, accountId: string): Promise<void> {
+  try {
+    await socket?.logout();
+  } catch {
+    /* socket may be half-dead */
+  }
+  try {
+    socket?.end();
+  } catch {
+    /* already closed */
+  }
+  socket = null;
+  starting = null;
+  socketFingerprint = null;
+  connState = 'off';
+  await controlTx(sql, async (tx) => {
+    await tx`delete from wa_auth_state where account_id = ${accountId}`;
+    await tx`delete from control_settings where key = 'wa_qr'`;
+  });
 }
 
 export async function sendWhatsApp(
