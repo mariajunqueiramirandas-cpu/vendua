@@ -223,8 +223,10 @@ export function useQuery<T>(
       alive = false;
       unsub();
     };
+    // `api` is a dep: a baseUrl change mints a new client with a fresh cache —
+    // without re-running, entries stay unresolved and queries hang loading.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [key]);
+  }, [key, api]);
 
   return {
     data: entry.data as T | undefined,

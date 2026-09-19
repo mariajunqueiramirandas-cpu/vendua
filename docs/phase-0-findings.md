@@ -347,3 +347,22 @@ OBSERVATIONS.md `## Feature gaps`. Candidates for Contract v1 or Phase 1+.)
   backend.
 - **Order tracking survives storage failures** — per-order checkout tokens
   live in an in-memory map first; sessionStorage is the refresh layer.
+
+## Review round 10 — price snapshots + cache/render honesty
+
+- **Cart lines freeze accepted prices** — `cart_items` now stores
+  `unit_price_cents` + `modifier_snapshot` at add time (migration 0005);
+  `loadPricedItems` prices from the snapshot and joins catalog rows only for
+  live availability (`productStatus`/modifier status). A merchant price edit
+  no longer alters an open cart or its checkout total — verified live
+  (add at 1990 → raise to 2690 → cart and order hold 2490/1990).
+- **Oversized modifier arrays reject** — >32 `modifierIds` returns
+  422 BAD_REQUEST instead of silently truncating the accepted line.
+- **`useQuery` re-runs on api change** — a `baseUrl` swap remints the client
+  and its cache; `api` is now an effect dep so queries refetch instead of
+  hanging loading.
+- **`PAYLOAD_TOO_LARGE` joins `ERROR_CODES`** — the contract list covers the
+  413 the body cap emits.
+- **Checkout pages render Core's totals** — quero-pudim (and the `_examples`
+  mirror) no longer recomputes `subtotal + fee` locally; the display follows
+  the synced server cart's mode and `totals.totalCents`.

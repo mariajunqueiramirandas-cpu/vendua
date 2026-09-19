@@ -14,7 +14,7 @@ import {
 } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import { ApiError, useCart, useCheckout, useKernel, useStore } from '@vendua/kernel';
+import { ApiError, useCart, useCheckout, useDeliveryZones, useStore } from '@vendua/kernel';
 import { ProductFigure } from './_components/ProductFigure.tsx';
 import { Skeleton } from './_components/Skeleton.tsx';
 import { formatBRL } from './_lib/format.ts';
@@ -28,20 +28,16 @@ import { waLink } from './_lib/whatsapp.ts';
  * cart's zone/fee in sync, `useCheckout().submit` places the order.
  *
  * Reference features without platform support (OBSERVATIONS.md, FEATURE-GAP):
- * CEP lookup/geolocation (no zones or quote read), scheduled encomendas (no
- * scheduledFor on CheckoutInput), coupons (no endpoint), order notes (no field
- * — kept locally and carried into the confirmation WhatsApp message).
+ * CEP lookup/geolocation, scheduled encomendas (no scheduledFor on
+ * CheckoutInput), coupons (no endpoint), order notes (no field — kept locally
+ * and carried into the confirmation WhatsApp message).
+ *
+ * Delivery neighborhoods come from Core's /zones (delivery_zones) — the
+ * reference's client-side BAIRROS list is gone.
  */
 
 type Mode = 'pickup' | 'delivery';
 type Pay = 'pix' | 'card_on_delivery' | 'cash';
-
-/**
- * Seeded delivery bairros — the reference app kept these in client config;
- * Core owns them now (delivery_zones.neighborhoods) but exposes no read, so
- * the datalist uses this copy until a zones endpoint exists (FEATURE-GAP).
- */
-const BAIRROS = ['Bacaxá', 'Centro', 'Gravatá', 'Itaúna', 'Vilatur'];
 
 const ERROR_COPY: Record<string, string> = {
   OUT_OF_ZONE: 'Esse bairro está fora da nossa área de entrega. Retirada continua disponível.',
@@ -63,8 +59,9 @@ export function CheckoutPage() {
   const navigate = useNavigate();
   const { cart, loading, mutations } = useCart();
   const { store } = useStore();
+  const { zones } = useDeliveryZones();
+  const bairros = zones.flatMap((z) => z.neighborhoods);
   const { submit } = useCheckout();
-  const { invalidate } = useKernel();
 
   const [name, setName] = useState(() => loadProfile().name);
   const [phone, setPhone] = useState(() => loadProfile().phone);
@@ -87,8 +84,12 @@ export function CheckoutPage() {
 
   const items = cart?.items ?? [];
   const totals = cart?.totals;
-  const feeCents = mode === 'delivery' ? totals?.deliveryFeeCents ?? 0 : 0;
-  const totalCents = (totals?.subtotalCents ?? 0) + feeCents;
+  // Display follows the SYNCED server cart (Core owns the math): while a
+  // setDelivery call is in flight the totals still reflect the previous mode —
+  // the confirm button stays disabled until deliverySync lands.
+  const syncedMode = cart?.delivery?.mode ?? mode;
+  const feeCents = syncedMode === 'delivery' ? (totals?.deliveryFeeCents ?? 0) : 0;
+  const totalCents = totals?.totalCents ?? 0;
   const zoneMin = totals?.minOrderCents ?? store?.minOrderCents ?? 0;
 
   // Keep the server cart's delivery in sync so the zone fee/min-order that
@@ -163,15 +164,8 @@ export function CheckoutPage() {
       });
       saveProfile({ name: name.trim(), phone, street, number, neighborhood, complement, cep });
       rememberOrder(order, items, notes.trim() || undefined);
-      // Core does not clear the cart on checkout, and useCheckout does not
-      // invalidate the cart query — empty it item-by-item so the sacola badge
-      // reflects the placed order (OBSERVATIONS.md).
-      try {
-        await Promise.all(items.map((i) => mutations.remove(i.id)));
-      } catch {
-        /* cart cleanup is best-effort — the order is already placed */
-      }
-      invalidate('cart');
+      // submit() already invalidates 'cart' — the completed cart drops out
+      // of the sacola badge without storefront plumbing.
       navigate(`/pedido/${order.id}`);
     } catch (err) {
       if (err instanceof ApiError) {
@@ -369,7 +363,7 @@ export function CheckoutPage() {
                     onChange={(e) => setNeighborhood(e.target.value)}
                   />
                   <datalist id="qp-bairros">
-                    {BAIRROS.map((b) => <option key={b} value={b} />)}
+                    {bairros.map((b) => <option key={b} value={b} />)}
                   </datalist>
                 </label>
                 <div style={{ display: 'grid', gridTemplateColumns: '1fr 96px', gap: 12 }}>
@@ -569,7 +563,7 @@ export function CheckoutPage() {
               <div className="summary-row">
                 <dt className="lbl">Entrega</dt>
                 <dd className="val">
-                  {mode === 'pickup' ? 'grátis' : feeCents > 0 ? formatBRL(feeCents) : 'a confirmar'}
+                  {syncedMode === 'pickup' ? 'grátis' : feeCents > 0 ? formatBRL(feeCents) : 'a confirmar'}
                 </dd>
               </div>
               <div className="summary-row summary-total">

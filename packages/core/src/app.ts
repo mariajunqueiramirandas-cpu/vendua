@@ -264,8 +264,11 @@ export function createApp({ sql, sessionSecret }: AppDeps) {
         throw new HttpError(422, 'BAD_REQUEST', 'productId must be a uuid');
       }
       const qty = Number(body.qty ?? 1);
+      if (Array.isArray(body.modifierIds) && body.modifierIds.length > 32) {
+        throw new HttpError(422, 'BAD_REQUEST', 'modifierIds accepts at most 32 entries');
+      }
       const modifierIds = Array.isArray(body.modifierIds)
-        ? body.modifierIds.slice(0, 32).map((m) => str(m, 'modifierId', 64))
+        ? body.modifierIds.map((m) => str(m, 'modifierId', 64))
         : [];
       const cart = await addItem(tx, tenant.id, cartId, { productId, qty, modifierIds }, getProductById);
       return { status: 200, body: { cart } };

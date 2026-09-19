@@ -20,9 +20,12 @@ interface ItemRow {
   product_id: string;
   qty: number;
   modifier_ids: string[];
+  /** Price accepted at add time — never repriced from live catalog rows. */
+  unit_price_cents: number;
+  /** [{id, name, priceDeltaCents}] frozen at add time; status stays live. */
+  modifier_snapshot: { id: string; name: string; priceDeltaCents: number }[];
   name: string;
   slug: string;
-  base_price_cents: number;
   product_status: string;
 }
 
@@ -126,45 +129,40 @@ export function validateItemModifiers(
 
 async function loadPricedItems(tx: Sql, tenantId: string, cartId: string): Promise<PricedItem[]> {
   const items = await tx<ItemRow[]>`
-    select ci.id, ci.product_id, ci.qty, ci.modifier_ids, p.name, p.slug,
-           p.base_price_cents, p.status as product_status
+    select ci.id, ci.product_id, ci.qty, ci.modifier_ids, ci.unit_price_cents,
+           ci.modifier_snapshot, p.name, p.slug, p.status as product_status
     from cart_items ci join products p on p.id = ci.product_id
     where ci.tenant_id = ${tenantId} and ci.cart_id = ${cartId}
     order by ci.created_at
   `;
   if (items.length === 0) return [];
+  // Live modifier read exists only for STATUS — names/prices come from the
+  // add-time snapshot so catalog edits never reprice an accepted line.
   const modifierIds = items.flatMap((i) => i.modifier_ids);
   const mods = modifierIds.length
-    ? await tx<{ id: string; name: string; price_delta_cents: number; status: string }[]>`
-        select id, name, price_delta_cents, status from modifiers
+    ? await tx<{ id: string; status: string }[]>`
+        select id, status from modifiers
         where tenant_id = ${tenantId} and id = any(${modifierIds}::uuid[])
       `
     : [];
-  const byId = new Map(mods.map((m) => [m.id, m]));
+  const liveStatus = new Map(mods.map((m) => [m.id, m.status]));
   return items.map((item) => {
-    const chosen = item.modifier_ids
-      .map((id) => byId.get(id))
-      .filter((m): m is NonNullable<typeof m> => m != null);
-    const unit = unitPriceCents(
-      item.base_price_cents,
-      chosen.map((m) => m.price_delta_cents),
-    );
     return {
       id: item.id,
       productId: item.product_id,
       slug: item.slug,
       name: item.name,
       qty: item.qty,
-      unitPriceCents: unit,
+      unitPriceCents: item.unit_price_cents,
       productStatus: item.product_status,
       modifierIds: item.modifier_ids,
-      modifiers: chosen.map((m) => ({
+      modifiers: item.modifier_snapshot.map((m) => ({
         id: m.id,
         name: m.name,
-        priceDeltaCents: m.price_delta_cents,
-        status: m.status,
+        priceDeltaCents: m.priceDeltaCents,
+        status: liveStatus.get(m.id) ?? 'archived',
       })),
-      lineTotalCents: unit * item.qty,
+      lineTotalCents: item.unit_price_cents * item.qty,
     };
   });
 }
@@ -256,13 +254,23 @@ export async function addItem(
   const invalid = validateItemModifiers(product, modifierIds);
   if (invalid) throw invalid;
 
+  // Freeze the accepted price: unit + modifier names/deltas snapshot into the
+  // row. A later catalog edit changes neither this line nor a checkout total.
+  const allModifiers = product.modifierGroups.flatMap((g) => g.modifiers);
+  const chosen = modifierIds.map((id) => allModifiers.find((m) => m.id === id)!);
+  const snapshot = chosen.map((m) => ({ id: m.id, name: m.name, priceDeltaCents: m.priceDeltaCents }));
+  const unit = unitPriceCents(
+    product.basePriceCents,
+    chosen.map((m) => m.priceDeltaCents),
+  );
+
   // Same product + same modifier set merges into one line. The merged qty is
   // capped by cart_items' CHECK (qty <= 99) — a check_violation surfaces as
   // INVALID_QTY, identical to the PATCH endpoint's contract.
   try {
     await tx`
-      insert into cart_items (tenant_id, cart_id, product_id, qty, modifier_ids)
-      values (${tenantId}, ${cartId}, ${input.productId}, ${input.qty}, ${tx.json(modifierIds)})
+      insert into cart_items (tenant_id, cart_id, product_id, qty, modifier_ids, unit_price_cents, modifier_snapshot)
+      values (${tenantId}, ${cartId}, ${input.productId}, ${input.qty}, ${tx.json(modifierIds)}, ${unit}, ${tx.json(snapshot)})
       on conflict (cart_id, product_id, modifier_ids)
       do update set qty = cart_items.qty + excluded.qty
     `;

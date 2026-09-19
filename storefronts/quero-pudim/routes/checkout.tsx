@@ -84,8 +84,12 @@ export function CheckoutPage() {
 
   const items = cart?.items ?? [];
   const totals = cart?.totals;
-  const feeCents = mode === 'delivery' ? totals?.deliveryFeeCents ?? 0 : 0;
-  const totalCents = (totals?.subtotalCents ?? 0) + feeCents;
+  // Display follows the SYNCED server cart (Core owns the math): while a
+  // setDelivery call is in flight the totals still reflect the previous mode —
+  // the confirm button stays disabled until deliverySync lands.
+  const syncedMode = cart?.delivery?.mode ?? mode;
+  const feeCents = syncedMode === 'delivery' ? (totals?.deliveryFeeCents ?? 0) : 0;
+  const totalCents = totals?.totalCents ?? 0;
   const zoneMin = totals?.minOrderCents ?? store?.minOrderCents ?? 0;
 
   // Keep the server cart's delivery in sync so the zone fee/min-order that
@@ -559,7 +563,7 @@ export function CheckoutPage() {
               <div className="summary-row">
                 <dt className="lbl">Entrega</dt>
                 <dd className="val">
-                  {mode === 'pickup' ? 'grátis' : feeCents > 0 ? formatBRL(feeCents) : 'a confirmar'}
+                  {syncedMode === 'pickup' ? 'grátis' : feeCents > 0 ? formatBRL(feeCents) : 'a confirmar'}
                 </dd>
               </div>
               <div className="summary-row summary-total">
