@@ -38,26 +38,69 @@ jobs:
             git push
           fi
 
+  # Storefront write-scope boundary (docs/architecture/06-monorepo.md): a PR
+  # labelled `storefront:<slug>` may only touch `storefronts/<slug>/**`. No
+  # `storefront:` label → no-op pass, so platform PRs don't need labels.
+  storefront-isolation:
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # the check diffs origin/<base>...HEAD
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: '1.4.2'
+      - run: bun tools/check-storefront-paths.mjs
+
   # Validates GitHub's merge ref (PR) / the pushed commit (main) — the code
   # that will actually land.
   check:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # tools/affected.mjs diffs origin/<base>...HEAD on PRs
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version: '1.4.2'
       - run: bun install --frozen-lockfile
       - name: Typecheck
         run: |
-          for pkg in packages/core packages/kernel site storefronts/quero-pudim storefronts/brasa storefronts/forn storefronts/_examples/quero-pudim; do
-            (cd "$pkg" && bun run check)
+          # Every workspace dir with a `check` script — a new package or
+          # storefront needs zero CI edits.
+          for dir in packages/* site storefronts/* storefronts/_examples/*; do
+            [ -d "$dir" ] || continue
+            [ -f "$dir/package.json" ] || continue
+            if jq -e '.scripts.check' "$dir/package.json" > /dev/null; then
+              echo "check $dir"
+              (cd "$dir" && bun run check)
+            fi
           done
       - name: Core tests
         run: cd packages/core && bun test
       - name: Builds
         run: |
-          bun --filter @vendua/site build
-          for sf in @vendua/storefront-quero-pudim @vendua/storefront-brasa @vendua/forn @vendua/example-quero-pudim; do
-            bun --filter "$sf" build
+          # Storefront builds follow the affected graph (tools/affected.mjs)
+          # against the PR base; a push to main builds every storefront.
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            affected="$(bun tools/affected.mjs --base "origin/${{ github.base_ref }}")"
+          else
+            affected='{"packages":["site"],"allStorefronts":true}'
+          fi
+          echo "$affected"
+          targets="$(echo "$affected" | jq -r '.packages[]')"
+          if [ "$(echo "$affected" | jq -r '.allStorefronts')" = "true" ]; then
+            targets="$targets
+          $(ls -d storefronts/*/ storefronts/_examples/*/ 2>/dev/null)"
+          fi
+          for dir in $targets; do
+            dir="${dir%/}"
+            [ -f "$dir/package.json" ] || continue
+            if jq -e '.scripts.build' "$dir/package.json" > /dev/null 2>&1; then
+              echo "build $dir"
+              (cd "$dir" && bun run build)
+            fi
           done
+          # Deliberately not wired: the Playwright e2e suite needs docker +
+          # chromium on the runner; `vendua qa` covers it locally for now.
