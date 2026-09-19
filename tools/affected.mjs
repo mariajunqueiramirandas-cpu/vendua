@@ -19,6 +19,7 @@
 //   other paths under storefronts/ (Dockerfile, nginx.conf — shared infra
 //     that can't be attributed to one slug)        → allStorefronts
 //   packages/<other>/**                            → that dir only
+//   apps/<name>/**                                 → that dir only
 //   site/**                                        → site
 //   docs/, tools/, .github/, other root files      → nothing
 
@@ -48,6 +49,8 @@ export function mapFiles(files) {
       } else {
         packages.add(`storefronts/${second}`);
       }
+    } else if (top === 'apps') {
+      if (depth > 2) packages.add(`apps/${second}`);
     } else if (top === 'site') {
       packages.add('site');
     } else if (SHARED_ROOT_FILES.has(f)) {

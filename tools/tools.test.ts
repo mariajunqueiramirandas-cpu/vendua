@@ -52,6 +52,13 @@ describe('mapFiles', () => {
   test('site teaser maps to site', () => {
     expect(mapFiles(['site/src/routes/+page.svelte']).packages).toEqual(['site']);
   });
+
+  test('apps map to their own dir', () => {
+    expect(mapFiles(['apps/control/src/App.tsx']).packages).toEqual(['apps/control']);
+    expect(mapFiles(['apps/control/src/App.tsx']).allStorefronts).toBe(false);
+    // a file directly under apps/ is not a workspace
+    expect(mapFiles(['apps/README.md']).packages).toEqual([]);
+  });
 });
 
 describe('check-storefront-paths', () => {

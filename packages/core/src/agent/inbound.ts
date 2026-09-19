@@ -33,6 +33,9 @@ export async function ingestInbound(
     ...(input.providerMessageId ? { providerMessageId: input.providerMessageId } : {}),
   });
 
+  // Provider retry of an already-recorded message: no side effects again.
+  if (res.alreadySeen) return res;
+
   if (OPT_OUT.test(input.body)) {
     await controlTx(sql, async (tx) => {
       await tx`update leads set unsubscribed_at = now(), updated_at = now() where id = ${res.leadId} and unsubscribed_at is null`;

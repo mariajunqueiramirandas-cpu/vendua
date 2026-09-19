@@ -189,10 +189,10 @@ export interface Stats {
   bySegment: { key: string; count: number }[];
   everReached: Record<string, number>;
   medianDaysInState: Record<string, number>;
-  tasksOpen: number;
-  draftsPending: number;
-  discovered: number;
-  agent30d: { runs: number; tokensIn: number; tokensOut: number; costCents: number };
+  openTasks: number;
+  pendingDrafts: number;
+  discoveredThisWeek: number;
+  agent30d: { runs: number; tokens: number; costCents: number };
 }
 export interface DupeGroup {
   field: string;

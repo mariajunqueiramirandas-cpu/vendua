@@ -35,12 +35,12 @@ export default function Dashboard() {
               <div className="k">leads ativos</div>
             </div>
             <div className="card stat">
-              <div className="v">{s.tasksOpen}</div>
+              <div className="v">{s.openTasks}</div>
               <div className="k">tarefas abertas</div>
             </div>
             <div className="card stat">
-              <div className="v" style={{ color: s.draftsPending ? '#7a5b12' : undefined }}>
-                {s.draftsPending}
+              <div className="v" style={{ color: s.pendingDrafts ? '#7a5b12' : undefined }}>
+                {s.pendingDrafts}
               </div>
               <div className="k">rascunhos p/ aprovar</div>
             </div>
@@ -82,7 +82,7 @@ export default function Dashboard() {
                 </div>
                 <div>
                   <div className="mono" style={{ fontSize: 'var(--t-lg)' }}>
-                    {(s.agent30d.tokensIn + s.agent30d.tokensOut).toLocaleString('pt-BR')}
+                    {s.agent30d.tokens.toLocaleString('pt-BR')}
                   </div>
                   <div className="k" style={{ fontSize: 'var(--t-2xs)', color: 'var(--muted)' }}>
                     tokens
@@ -98,7 +98,7 @@ export default function Dashboard() {
                 </div>
                 <div>
                   <div className="mono" style={{ fontSize: 'var(--t-lg)' }}>
-                    {s.discovered}
+                    {s.discoveredThisWeek}
                   </div>
                   <div className="k" style={{ fontSize: 'var(--t-2xs)', color: 'var(--muted)' }}>
                     descobertos

@@ -25,11 +25,16 @@ export default function Approvals() {
     load();
   };
   const saveEdit = async (d: Draft) => {
-    // Edit = reject the original + send an edited replacement draft via the
-    // thread's compose path — the audit trail keeps both versions.
+    // Edit = create the replacement draft first, then reject the original —
+    // if compose fails the original draft survives and nothing is lost.
+    // The audit trail keeps both versions.
+    try {
+      await api.sendThreadMessage(d.threadId, editBody, false);
+    } catch {
+      setResults((r) => ({ ...r, [d.id]: 'falhou ao criar rascunho editado — original mantido' }));
+      return;
+    }
     await api.reject(d.id);
-    await api.sendThreadMessage(d.threadId, editBody, false).catch(() => undefined);
-    await api.thread(d.threadId); // touch — keeps the queue fresh on reload
     setEditing(null);
     load();
   };

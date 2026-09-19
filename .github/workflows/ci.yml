@@ -84,7 +84,7 @@ jobs:
         run: |
           # Every workspace dir with a `check` script — a new package or
           # storefront needs zero CI edits.
-          for dir in packages/* site storefronts/* storefronts/_examples/*; do
+          for dir in packages/* site apps/* storefronts/* storefronts/_examples/*; do
             [ -d "$dir" ] || continue
             [ -f "$dir/package.json" ] || continue
             if jq -e '.scripts.check' "$dir/package.json" > /dev/null; then

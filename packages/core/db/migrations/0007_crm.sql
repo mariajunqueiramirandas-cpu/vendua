@@ -40,6 +40,10 @@ create table if not exists lead_activities (
 );
 create index if not exists lead_activities_lead_at on lead_activities (lead_id, at desc);
 
+-- Provider retries must never insert a second copy of the same inbound.
+create unique index if not exists lead_messages_provider_id
+  on lead_messages (provider_message_id) where provider_message_id is not null;
+
 create table if not exists lead_tasks (
   id uuid primary key default gen_random_uuid(),
   lead_id uuid not null references leads (id) on delete cascade,
@@ -128,9 +132,13 @@ create table if not exists control_integrations (
 
 -- Baileys auth state: the driver's multi-key credential store (replaces
 -- useMultiFileAuthState so the socket survives rebuilds and restarts).
+-- Keyed the way SignalKeyStore addresses keys: (account, category, name).
 create table if not exists wa_auth_state (
-  id text primary key,
-  value jsonb not null
+  account_id text not null,
+  category text not null,
+  name text not null,
+  data jsonb not null,
+  primary key (account_id, category, name)
 );
 
 -- Workspace-level knobs: 'guardrails', 'pitch', 'autopilot_default'.

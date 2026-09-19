@@ -3,7 +3,7 @@ import { getIntegration, type IntegrationRow } from '../../modules/integrations.
 
 /**
  * agent/channels/discovery — TinyFish driver. Search API for prospect
- * queries (GET api.search.tinyfish.ai), Agent API (automation/run-async)
+ * queries (GET api.search.tinyfish.ai), Agent API (automation/run)
  * for structured extraction from found pages. `mock` driver returns canned
  * prospects so discovery runs end-to-end with no credentials.
  */
@@ -56,7 +56,10 @@ function tinyfish(integration: IntegrationRow): DiscoveryProvider {
       };
     },
     async extract(url, goal) {
-      const res = await fetch(`${agentBase}/automation/run-async`, {
+      // Synchronous /run blocks until the automation completes — the right
+      // fit inside a discovery run's extract loop (run-async would need a
+      // separate poller for GET /v1/runs/{id}).
+      const res = await fetch(`${agentBase}/automation/run`, {
         method: 'POST',
         headers: { 'content-type': 'application/json', 'x-api-key': apiKey },
         body: JSON.stringify({
@@ -86,15 +89,15 @@ function tinyfish(integration: IntegrationRow): DiscoveryProvider {
       });
       if (!res.ok)
         throw new Error(`tinyfish extract ${res.status}: ${(await res.text()).slice(0, 200)}`);
-      // run-async returns a job handle; poll is the caller's concern in a
-      // real deployment. For the lightweight path, treat the response as
-      // the completed extraction when it carries contacts, else empty.
       const data = (await res.json()) as {
-        output?: ExtractResult;
-        contacts?: ExtractResult['contacts'];
+        status?: string;
+        result?: ExtractResult;
+        error?: { message?: string };
       };
-      if (data.output?.contacts) return { contacts: data.output.contacts };
-      return { contacts: data.contacts ?? [], raw: JSON.stringify(data).slice(0, 2000) };
+      if (data.status && data.status !== 'COMPLETED') {
+        throw new Error(`tinyfish extract ${data.status}: ${data.error?.message ?? 'no result'}`);
+      }
+      return { contacts: data.result?.contacts ?? [] };
     },
   };
 }

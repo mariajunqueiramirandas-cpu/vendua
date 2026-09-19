@@ -131,29 +131,32 @@ export async function runOnce(sql: Sql): Promise<boolean> {
   const run = await claimRun(sql);
   if (!run) return false;
 
-  const integration = await getIntegration(sql, 'llm');
-  const provider = providerFor(integration, run.params);
-  const pitch = await getPitch(sql);
-  const memory = await getSetting<{ facts: string[] }>(sql, 'agent_memory', { facts: [] });
-  const system = buildSystemPrompt(run.kind, pitch, memory);
-  const context = await contextFor(sql, run);
-  const tools = toolsFor(run.kind);
-  const ctx: ToolContext = {
-    sql,
-    runId: run.id,
-    runKind: run.kind,
-    leadId: run.lead_id,
-    threadId: run.thread_id,
-    step: 0,
-  };
-
-  const steps: unknown[] = [{ type: 'system_prompt', content: system }];
-  const messages: AgentMessage[] = [{ role: 'user', content: context }];
+  const steps: unknown[] = [];
+  const messages: AgentMessage[] = [];
   let tokensIn = 0;
   let tokensOut = 0;
   let costCents = 0;
 
   try {
+    const integration = await getIntegration(sql, 'llm');
+    const provider = providerFor(integration, run.params);
+    const pitch = await getPitch(sql);
+    const memory = await getSetting<{ facts: string[] }>(sql, 'agent_memory', { facts: [] });
+    const system = buildSystemPrompt(run.kind, pitch, memory);
+    const context = await contextFor(sql, run);
+    const tools = toolsFor(run.kind);
+    const ctx: ToolContext = {
+      sql,
+      runId: run.id,
+      runKind: run.kind,
+      leadId: run.lead_id,
+      threadId: run.thread_id,
+      step: 0,
+    };
+
+    steps.push({ type: 'system_prompt', content: system });
+    messages.push({ role: 'user', content: context });
+
     for (let i = 0; i < MAX_STEPS; i++) {
       const res = await provider.chat({ system, messages, tools });
       tokensIn += res.tokensIn;
@@ -178,11 +181,11 @@ export async function runOnce(sql: Sql): Promise<boolean> {
         toolCalls: res.toolCalls,
       });
 
-      for (const call of res.toolCalls) {
+      for (const [callIndex, call] of res.toolCalls.entries()) {
         ctx.step = i;
         let out: unknown;
         try {
-          out = await executeTool(ctx, call.name, call.args);
+          out = await executeTool(ctx, call.id ?? String(callIndex), call.name, call.args);
         } catch (e) {
           out = { error: e instanceof Error ? e.message : String(e) };
         }

@@ -152,11 +152,19 @@ export async function ensureSocket(
   if (!integration || integration.driver !== 'baileys' || !integration.enabled) return null;
   if (socket) return socket;
   if (!starting) {
-    starting = startSocket(sql, integration).then((s) => {
-      socket = s;
-      starting = null;
-      return s;
-    });
+    starting = startSocket(sql, integration).then(
+      (s) => {
+        socket = s;
+        starting = null;
+        return s;
+      },
+      (err) => {
+        // a failed start must not poison the flag — clear it so the next
+        // send/pair attempt can retry.
+        starting = null;
+        throw err;
+      },
+    );
   }
   return starting;
 }

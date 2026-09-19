@@ -783,14 +783,20 @@ export function createApp({ sql, sessionSecret, controlSecret }: AppDeps) {
       throw new HttpError(422, 'BAD_REQUEST', 'kind must be triage|reply|outreach|discovery');
     }
     const leadId = uuidParam(c, 'id');
-    const runId = await enqueueRun(sql, {
-      kind: kind as 'triage' | 'reply' | 'outreach' | 'discovery',
-      leadId,
-      ...(body.threadId ? { threadId: str(body.threadId, 'threadId', 64) } : {}),
-      params: (body.params as Record<string, unknown>) ?? {},
-    });
+    const res = await claimControl(sql, requireIdemKey(c), async (tx) => ({
+      status: 201,
+      body: {
+        runId: await enqueueRun(tx, {
+          kind: kind as 'triage' | 'reply' | 'outreach' | 'discovery',
+          leadId,
+          ...(body.threadId ? { threadId: str(body.threadId, 'threadId', 64) } : {}),
+          params: (body.params as Record<string, unknown>) ?? {},
+        }),
+      },
+    }));
+    if (res.replayed) c.header('x-idempotent-replay', 'true');
     void drain(sql).catch((e) => console.error('[agent drain]', e));
-    return c.json({ runId }, 201);
+    return c.json(res.body, res.status as 201);
   });
 
   // ---- activities / tasks ---------------------------------------------------
@@ -931,7 +937,8 @@ export function createApp({ sql, sessionSecret, controlSecret }: AppDeps) {
       requireIdemKey(c),
     );
     if (res.replayed) c.header('x-idempotent-replay', 'true');
-    if (wantSend && !res.replayed) {
+    if (wantSend) {
+      // dispatchMessage no-ops unless the row is still 'queued' — safe on replay.
       const { dispatchMessage } = await import('./agent/send.ts');
       const sent = await dispatchMessage(sql, res.body.message.id);
       return c.json({ ...res.body, sent });
@@ -950,7 +957,7 @@ export function createApp({ sql, sessionSecret, controlSecret }: AppDeps) {
     const res = await approveMessage(sql, uuidParam(c, 'id'), 'staff', requireIdemKey(c));
     if (res.replayed) c.header('x-idempotent-replay', 'true');
     const { dispatchMessage } = await import('./agent/send.ts');
-    const sent = res.replayed ? { ok: true } : await dispatchMessage(sql, res.body.message.id);
+    const sent = await dispatchMessage(sql, res.body.message.id);
     return c.json({ ...res.body, sent });
   });
 
@@ -1052,14 +1059,20 @@ export function createApp({ sql, sessionSecret, controlSecret }: AppDeps) {
     if (!['triage', 'reply', 'outreach', 'discovery'].includes(kind)) {
       throw new HttpError(422, 'BAD_REQUEST', 'kind must be triage|reply|outreach|discovery');
     }
-    const runId = await enqueueRun(sql, {
-      kind: kind as 'triage' | 'reply' | 'outreach' | 'discovery',
-      leadId: body.leadId ? str(body.leadId, 'leadId', 64) : null,
-      threadId: body.threadId ? str(body.threadId, 'threadId', 64) : null,
-      params: (body.params as Record<string, unknown>) ?? {},
-    });
+    const res = await claimControl(sql, requireIdemKey(c), async (tx) => ({
+      status: 201,
+      body: {
+        runId: await enqueueRun(tx, {
+          kind: kind as 'triage' | 'reply' | 'outreach' | 'discovery',
+          leadId: body.leadId ? str(body.leadId, 'leadId', 64) : null,
+          threadId: body.threadId ? str(body.threadId, 'threadId', 64) : null,
+          params: (body.params as Record<string, unknown>) ?? {},
+        }),
+      },
+    }));
+    if (res.replayed) c.header('x-idempotent-replay', 'true');
     void drain(sql).catch((e) => console.error('[agent drain]', e));
-    return c.json({ runId }, 201);
+    return c.json(res.body, res.status as 201);
   });
 
   // WhatsApp pairing state for the Settings screen (Baileys QR handshake).

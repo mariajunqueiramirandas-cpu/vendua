@@ -224,6 +224,9 @@ export interface InboundResult {
   threadId: string;
   messageId: string;
   leadCreated: boolean;
+  /** true when provider_message_id was already recorded — callers must not
+   *  re-trigger side effects (opt-out logging, reply runs) on replays. */
+  alreadySeen: boolean;
 }
 
 /** Inbound message → lead lookup by contact point → thread → message →
@@ -258,6 +261,7 @@ export async function addInboundMessage(
           threadId: seen[0].thread_id,
           messageId: seen[0].id,
           leadCreated: false,
+          alreadySeen: true,
         };
       }
     }
@@ -324,7 +328,7 @@ export async function addInboundMessage(
               ${tx.json({ channel: input.channel, messageId: message.id } as never)}, 'system')
     `;
 
-    return { leadId, threadId: thread.id, messageId: message.id, leadCreated };
+    return { leadId, threadId: thread.id, messageId: message.id, leadCreated, alreadySeen: false };
   });
 }
 

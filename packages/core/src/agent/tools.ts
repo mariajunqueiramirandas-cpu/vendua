@@ -241,11 +241,14 @@ export function toolsFor(kind: string): AgentTool[] {
 
 export async function executeTool(
   ctx: ToolContext,
+  callId: string,
   name: string,
   args: Record<string, unknown>,
 ): Promise<unknown> {
   const { sql, runId, step } = ctx;
-  const key = `agent:${runId}:${step}:${name}`; // deterministic — a retried tool call replays
+  // deterministic per call — a retried call replays, a batched second call
+  // with the same name in one step gets its own key.
+  const key = `agent:${runId}:${step}:${name}:${callId}`;
   switch (name) {
     case 'search_leads': {
       const q = typeof args.q === 'string' && args.q ? args.q : null;
