@@ -202,7 +202,12 @@ export default function App() {
       </nav>
       {navOpen && (
         <div className="scrim sheet" onClick={() => setNavOpen(false)}>
-          <div className="msheet" role="dialog" aria-label="menu" onClick={(e) => e.stopPropagation()}>
+          <div
+            className="msheet"
+            role="dialog"
+            aria-label="menu"
+            onClick={(e) => e.stopPropagation()}
+          >
             <div className="msheet-grip" />
             {MORE.map((n) => {
               const count = 'badge' in n ? badges[n.badge] : 0;
