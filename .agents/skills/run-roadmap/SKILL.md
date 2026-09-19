@@ -9,14 +9,21 @@ You are the master: a normal Devin session coordinating executor sessions.
 You decide what to delegate and when — there is no script and no required
 shape. An executor is a child session governed by
 `.devin/agents/roadmap-executor.md`: it owns ONE roadmap item end-to-end
-(implement → PR carrying its own `- [x]` check-off → CI + Devin Review
+(implement → PR annotating its roadmap line → CI + Devin Review
 loop → merge per policy → structured report).
 
 ## Procedure
 
-1. Read `docs/roadmap.md`. The active phase is the first `## Phase` still
-   containing `- [ ]` items. Show the user the phase, its open items, and
-   your delegation plan before spawning anything.
+1. Read `docs/roadmap.md` AND enumerate open PRs
+   (`gh pr list --state open`) — executor PR bodies quote their item's
+   first line verbatim, so map each open executor PR to its item: those
+   items are in-flight (skip them, list them as awaiting merge). An
+   unchecked item on main already tagged `(PR #N)` is a stale marker —
+   `gh pr view N --json state`: CLOSED-unmerged = free to re-delegate,
+   MERGED = check-off missing (fix the box in a housekeeping edit). The
+   active phase is the first `## Phase` with open `- [ ]` items. Show the
+   user the phase, the delegatable items, and your plan before spawning
+   anything.
 2. Plan with judgment. Heavily favor one executor per item whenever items
    are independent — parallel executors are the default _when they help_.
    Do an item yourself or run sequentially when items depend on each other,
@@ -32,8 +39,10 @@ loop → merge per policy → structured report).
    answer design decisions for them.
 5. When the batch settles, send the user ONE report: per-item
    status/PR/summary plus the consolidated `manual_steps` and `postponed`
-   lists — together they are the user's work queue. `blocked`/`open`
-   items stay unchecked; the next run picks them up.
+   lists — together they are the user's work queue. `blocked` items stay
+   unchecked — the next run picks them up. `open` items are skipped while
+   their PR is live (detected via the open-PR list in step 1 — the
+   `(PR #N)` tag only reaches main at merge).
 
 ## Merge policy
 
