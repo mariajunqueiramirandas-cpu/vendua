@@ -6,25 +6,25 @@
 System surfaces are the mechanism that lets a feature **exist everywhere**
 without touching storefront code — rungs 2–3 of the shipping ladder in
 [00](00-overview.md#how-a-global-feature-ships-the-ladder). They are
-server-driven: the Core decides *that* a surface appears and what it says; the
-Kernel decides *where* it mounts and *how it looks by default*; the storefront
+server-driven: the Core decides _that_ a surface appears and what it says; the
+Kernel decides _where_ it mounts and _how it looks by default_; the storefront
 may restyle it via slots.
 
 **Scope discipline — read this first.** Server-driven UI applies **only** to
 system surfaces: notices, blocking states, checkout structure, order timeline,
 consent, legal, emergency overlays. Brand pages are never SDUI — they are real
-code. This is deliberately *not* a page builder; the moment a brand surface is
+code. This is deliberately _not_ a page builder; the moment a brand surface is
 expressible as JSON it stops being bespoke, which is the product.
 
 ## Delivery channels
 
 A system surface reaches a storefront through one of three channels:
 
-| Channel | Delivered by | Reaches | Use |
-| --- | --- | --- | --- |
-| **State injection** | Edge injects `window.__VENDUA_STATE__` into HTML | Every request, first paint | Store status, blocking notices — zero-flicker |
-| **Kernel fetch** | `useNotices()`/surface queries to Core | Runtime updates | Non-blocking notices, timeline updates |
-| **Loader** | `v.js` polls a tiny Core endpoint | Always, even with broken Kernel | Emergency notices, kill switch |
+| Channel             | Delivered by                                     | Reaches                         | Use                                           |
+| ------------------- | ------------------------------------------------ | ------------------------------- | --------------------------------------------- |
+| **State injection** | Edge injects `window.__VENDUA_STATE__` into HTML | Every request, first paint      | Store status, blocking notices — zero-flicker |
+| **Kernel fetch**    | `useNotices()`/surface queries to Core           | Runtime updates                 | Non-blocking notices, timeline updates        |
+| **Loader**          | `v.js` polls a tiny Core endpoint                | Always, even with broken Kernel | Emergency notices, kill switch                |
 
 ## The notices envelope — schema v1
 
@@ -35,28 +35,29 @@ interface SurfacesEnvelope {
   version: 1;
   store: { status: 'open' | 'closed' | 'paused'; resumesAt?: string };
   notices: Notice[];
-  checkout?: CheckoutSurface;      // steps/config the checkout surface needs
-  timeline?: TimelineSurface;      // for order tracking contexts
+  checkout?: CheckoutSurface; // steps/config the checkout surface needs
+  timeline?: TimelineSurface; // for order tracking contexts
 }
 
 interface Notice {
   id: string;
-  kind: string;                    // registry below; OPEN — server may add kinds
+  kind: string; // registry below; OPEN — server may add kinds
   severity: 'info' | 'warning' | 'blocking';
   title: string;
-  body?: string;                   // plain text / markdown-lite
-  actions?: NoticeAction[];        // max 2
+  body?: string; // plain text / markdown-lite
+  actions?: NoticeAction[]; // max 2
   payload?: Record<string, unknown>; // kind-specific data for specialized slots
   dismissible: boolean;
   priority: number;
-  startsAt?: string; endsAt?: string;
+  startsAt?: string;
+  endsAt?: string;
 }
 
 type NoticeAction =
-  | { type: 'link';    label: string; href: string }
-  | { type: 'notify';  label: string; channel: 'whatsapp' | 'push' }
+  | { type: 'link'; label: string; href: string }
+  | { type: 'notify'; label: string; channel: 'whatsapp' | 'push' }
   | { type: 'dismiss'; label: string }
-  | { type: string;    label: string; [k: string]: unknown }; // forward-compat
+  | { type: string; label: string; [k: string]: unknown }; // forward-compat
 ```
 
 ### Forward-compatibility rules (normative)
@@ -72,21 +73,21 @@ invented in August:
    else be omitted.
 4. **`payload` is always optional** — consumers ignore keys they don't know.
 5. **Absent surfaces render nothing** — absence is valid, not an error.
-6. New `kind`s MUST be authored so the generic rendering is *acceptable* — the
+6. New `kind`s MUST be authored so the generic rendering is _acceptable_ — the
    generic path is not an edge case, it is the primary path on stale Kernels.
    Conformance includes a "future kind" fixture test.
 
 ### Kind registry (v1)
 
-| kind | severity | Generic render | Specialized slot |
-| --- | --- | --- | --- |
-| `store_paused` | blocking | modal: title/body + resume time in body | `system.StorePausedNotice` |
-| `store_closed` | warning | banner | `system.StoreClosedNotice` |
-| `out_of_zone` | warning | banner | — |
-| `promo` | info | banner | `system.Notice` theming |
-| `service_incident` | warning | banner | — |
-| `emergency` | blocking | overlay | `system.EmergencyOverlay` (loader too) |
-| `consent_required` | info | banner | `system.ConsentBanner` |
+| kind               | severity | Generic render                          | Specialized slot                       |
+| ------------------ | -------- | --------------------------------------- | -------------------------------------- |
+| `store_paused`     | blocking | modal: title/body + resume time in body | `system.StorePausedNotice`             |
+| `store_closed`     | warning  | banner                                  | `system.StoreClosedNotice`             |
+| `out_of_zone`      | warning  | banner                                  | —                                      |
+| `promo`            | info     | banner                                  | `system.Notice` theming                |
+| `service_incident` | warning  | banner                                  | —                                      |
+| `emergency`        | blocking | overlay                                 | `system.EmergencyOverlay` (loader too) |
+| `consent_required` | info     | banner                                  | `system.ConsentBanner`                 |
 
 ## Placement points
 
@@ -127,9 +128,9 @@ requires.
   released separately on its own slow cadence. It renders inside Shadow DOM so
   no storefront CSS can break it.
 - **Capabilities (exhaustive)**: fetch `/storefront/v1/state` on load + interval
-  + `visibilitychange`; render `severity: blocking` and `kind: emergency`
-  notices as a minimal overlay (title, body, first action); expose
-  `window.__VENDUA_LOADER__` health ping for synthetic monitoring.
+  - `visibilitychange`; render `severity: blocking` and `kind: emergency`
+    notices as a minimal overlay (title, body, first action); expose
+    `window.__VENDUA_LOADER__` health ping for synthetic monitoring.
 - **Kill switch**: Control Plane can set a tenant's `loader_state` to
   `maintenance` with a message (e.g. "instabilidade — peça pelo WhatsApp:
   +55…"), rendering even if Core storefront APIs are degraded (the loader's

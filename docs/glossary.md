@@ -31,7 +31,7 @@ single integer (`contract: 1`, `2`, …).
 ## Frontend concepts
 
 **Primitive (headless primitive)** — A Kernel component that owns commerce
-*behavior* (add to cart, quantity step, checkout entry) and renders no opinionated
+_behavior_ (add to cart, quantity step, checkout entry) and renders no opinionated
 markup: it accepts `asChild`/render delegation so the storefront controls all
 visuals. Stamps test hooks, wires analytics, enforces disabled/closed/paused
 states. See [architecture/02-kernel](architecture/02-kernel.md#primitives).
@@ -45,8 +45,8 @@ typed props in, callbacks out, no data fetching. Always wrapped by a Kernel
 error boundary that falls back to the default implementation on failure.
 See [architecture/04-extensions-and-overrides](architecture/04-extensions-and-overrides.md).
 
-**System surface** — UI whose *existence and behavior* are decided by the Core and
-whose *default look* is provided by the Kernel: notices, checkout, order
+**System surface** — UI whose _existence and behavior_ are decided by the Core and
+whose _default look_ is provided by the Kernel: notices, checkout, order
 tracking, legal pages, consent, error states. Rendered by `<SystemSurfaces />`
 from server-driven payloads, so new capabilities reach old storefronts without
 rebuilds. See [architecture/05-system-surfaces](architecture/05-system-surfaces.md).

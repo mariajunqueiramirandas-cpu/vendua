@@ -122,15 +122,15 @@ Treat a review request as read-only. Do not edit source unless the user also ask
 
 ## Before you finish
 
-| Mistake | Fix |
-| --- | --- |
-| Six disconnected domain reports | One ranked findings table |
-| Visual claim inferred only from source | Inspect the rendered state, or mark it not verified |
-| Silent gaps in coverage | Show which domains and states were actually inspected |
-| Missing owning skill treated as covered | Mark the domain `Not reviewed` and name the skill |
-| Every legacy issue in a touched file reported | Three pre-existing findings, in their own section |
-| A pre-existing issue blocking a change review | Keep pre-existing findings out of the cap and out of the verdict |
-| Domain marked `Clear` when the change never touched it | Mark it `Not reviewed: no evidence in the change scope` |
+| Mistake                                                | Fix                                                              |
+| ------------------------------------------------------ | ---------------------------------------------------------------- |
+| Six disconnected domain reports                        | One ranked findings table                                        |
+| Visual claim inferred only from source                 | Inspect the rendered state, or mark it not verified              |
+| Silent gaps in coverage                                | Show which domains and states were actually inspected            |
+| Missing owning skill treated as covered                | Mark the domain `Not reviewed` and name the skill                |
+| Every legacy issue in a touched file reported          | Three pre-existing findings, in their own section                |
+| A pre-existing issue blocking a change review          | Keep pre-existing findings out of the cap and out of the verdict |
+| Domain marked `Clear` when the change never touched it | Mark it `Not reviewed: no evidence in the change scope`          |
 
 ## Review output format
 

@@ -1,0 +1,23 @@
+{
+  "name": "@vendua/core",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "bun --watch src/index.ts",
+    "start": "bun src/index.ts",
+    "db:up": "docker compose up -d postgres",
+    "migrate": "bun src/platform/migrate-cli.ts",
+    "seed": "bun src/platform/seed.ts",
+    "check": "tsc --noEmit -p tsconfig.json",
+    "test": "bun test"
+  },
+  "dependencies": {
+    "hono": "4.10.7",
+    "postgres": "3.4.7"
+  },
+  "devDependencies": {
+    "@types/bun": "1.4.2",
+    "typescript": "6.0.3"
+  }
+}

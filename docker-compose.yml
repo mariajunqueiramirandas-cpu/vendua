@@ -1,0 +1,104 @@
+# Dokploy-ready compose for the whole platform.
+# Docs: deploy/dokploy.md. Env: copy .env.example → .env and fill it in.
+#
+#   dokploy: new Compose service → this repo → docker-compose.yml → set envs
+#            → attach a domain to site + each storefront → deploy.
+#
+# `core` is internal-only (no public domain needed): storefront nginx proxies
+# /storefront/v1, /checkout/v1, /v1 to it, forwarding Host for tenant routing.
+
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: vendua
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+      POSTGRES_DB: vendua
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U vendua -d vendua']
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    restart: unless-stopped
+
+  core:
+    build:
+      context: .
+      dockerfile: packages/core/Dockerfile
+    environment:
+      PORT: '8787'
+      DATABASE_URL: postgres://vendua_app:${VENDUA_APP_DB_PASSWORD:?set VENDUA_APP_DB_PASSWORD in .env}@db:5432/vendua
+      MIGRATION_DATABASE_URL: postgres://vendua:${POSTGRES_PASSWORD}@db:5432/vendua
+      VENDUA_APP_DB_PASSWORD: ${VENDUA_APP_DB_PASSWORD}
+      SESSION_SECRET: ${SESSION_SECRET:?set SESSION_SECRET in .env}
+      # Traefik fronts everything — X-Forwarded-* carries routing truth.
+      VENDUA_TRUST_PROXY: '1'
+      # Chain is client → Traefik → storefront nginx → core: nginx's append
+      # is the one trusted entry after the client IP (skip 1 from the right).
+      VENDUA_PROXY_HOPS: '1'
+      # 1 = seed the three demo tenants + catalog on first boot; 0 = empty.
+      SEED_DEMO: ${SEED_DEMO:-1}
+      # slug:public-host[,slug:host2] — registers each storefront's real
+      # domain at seed time (tenant routing is Host-header based).
+      SEED_DOMAINS: ${SEED_DOMAINS:-}
+    depends_on:
+      db:
+        condition: service_healthy
+    healthcheck:
+      test:
+        [
+          'CMD-SHELL',
+          'bun -e "fetch(''http://127.0.0.1:8787/healthz'').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"',
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 15s
+    restart: unless-stopped
+
+  quero-pudim:
+    build:
+      context: .
+      dockerfile: storefronts/Dockerfile
+      args:
+        STOREFRONT: quero-pudim
+        PKG: '@vendua/storefront-quero-pudim'
+    depends_on:
+      core:
+        condition: service_healthy
+    restart: unless-stopped
+
+  brasa:
+    build:
+      context: .
+      dockerfile: storefronts/Dockerfile
+      args:
+        STOREFRONT: brasa
+        PKG: '@vendua/storefront-brasa'
+    depends_on:
+      core:
+        condition: service_healthy
+    restart: unless-stopped
+
+  forn:
+    build:
+      context: .
+      dockerfile: storefronts/Dockerfile
+      args:
+        STOREFRONT: forn
+        PKG: '@vendua/forn'
+    depends_on:
+      core:
+        condition: service_healthy
+    restart: unless-stopped
+
+  site:
+    build:
+      context: .
+      dockerfile: site/Dockerfile
+    restart: unless-stopped
+
+volumes:
+  pgdata:

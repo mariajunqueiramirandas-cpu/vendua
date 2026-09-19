@@ -1,0 +1,10 @@
+.git
+**/node_modules
+**/dist
+site/build
+site/.svelte-kit
+docs
+tools
+*.md
+.env
+.env.*

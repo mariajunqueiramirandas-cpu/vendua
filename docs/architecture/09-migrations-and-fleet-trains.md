@@ -9,14 +9,14 @@ The design goal: a train is a boring, scheduled non-event.
 
 ## Change classes → process map
 
-| Change | Mechanism | Storefront code touched? |
-| --- | --- | --- |
-| Backend rule/content | Deploy Core. Done. | Never |
-| New notice kind / SDUI field | Deploy Core; generic render covers old Kernels | Never |
-| New Kernel default / new slot | Kernel minor → fleet train (rebuild all, promote by ring) | Never |
-| Additive hook/prop | Kernel minor → train; adoption optional | Never (opt-in) |
-| Slot rename, config shape change, removed API | Contract major → codemod → train | Codemod; failures → agent queue |
-| New brand page / redesign | Storefront PR (agent or human) | That storefront only |
+| Change                                        | Mechanism                                                 | Storefront code touched?        |
+| --------------------------------------------- | --------------------------------------------------------- | ------------------------------- |
+| Backend rule/content                          | Deploy Core. Done.                                        | Never                           |
+| New notice kind / SDUI field                  | Deploy Core; generic render covers old Kernels            | Never                           |
+| New Kernel default / new slot                 | Kernel minor → fleet train (rebuild all, promote by ring) | Never                           |
+| Additive hook/prop                            | Kernel minor → train; adoption optional                   | Never (opt-in)                  |
+| Slot rename, config shape change, removed API | Contract major → codemod → train                          | Codemod; failures → agent queue |
+| New brand page / redesign                     | Storefront PR (agent or human)                            | That storefront only            |
 
 ## Fleet trains
 
@@ -48,7 +48,7 @@ Rules (normative):
   conformance test covering the new behavior, and a dual-support plan (Core and
   Kernel support old and new for the window).
 - Codemods are **idempotent, scoped, and dry-runnable**: `vendua codemod run
-  <id> --dry` prints the per-storefront change report; the run is what the
+<id> --dry` prints the per-storefront change report; the run is what the
   fleet train executes.
 - A major runs as: codemod branch over all `storefronts/*` → typecheck +
   conformance per store → auto-commit green cases → failures go to the agent
@@ -86,7 +86,7 @@ Reality: at any moment the fleet runs a spread of Kernel versions. Policy:
 - "Just have the agent update all stores" for a routine change — agent time is
   for the failure tail and genuinely new surfaces, not plumbing.
 - Per-store feature flags in Kernel — flags live in Core and arrive via SDUI.
-- Shipping a Core change that only *new* Kernels can render — every feature
+- Shipping a Core change that only _new_ Kernels can render — every feature
   needs a generic-render story or it waits for the window.
 - Rolling restarts/redeploys as a "migration" — nothing in the fleet is
   restarted by a storefront change; artifacts are promoted.

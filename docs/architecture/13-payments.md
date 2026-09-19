@@ -75,7 +75,7 @@ interface PaymentProvider {
   handleOAuthCallback(code, tenant): Promise<Connection>;
   refreshIfNeeded(conn): Promise<Connection>;
   createCheckout(order, conn, opts): Promise<CheckoutIntent>; // preference/PIX/order
-  parseWebhook(headers, body): WebhookEvent;                  // verified, typed
+  parseWebhook(headers, body): WebhookEvent; // verified, typed
   refund(payment, amount?): Promise<RefundResult>;
 }
 ```

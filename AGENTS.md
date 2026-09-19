@@ -6,21 +6,29 @@ files apply to their own directory.
 
 ## Project snapshot
 
-- Venduá platform monorepo, **pre-Phase 0**. The design docs in `docs/` are
-  normative and design-complete; almost no platform code exists yet.
-- The only real code is `site/` — `@vendua/site`, a SvelteKit teaser site.
-  It is NOT a storefront and does not consume the Kernel (ADR 0002).
-- Storefronts will be React; the site is SvelteKit. Never mix the two.
-- `docs/roadmap.md` is the build order. Phase 0 = monorepo skeleton (done),
-  Core/Kernel skeletons, 3–5 spike storefronts. Do not create `packages/*`
-  or `storefronts/*` stubs ahead of it.
+- Venduá platform monorepo, **Phase 0 in flight**. The design docs in
+  `docs/` are normative and design-complete.
+- `site/` — `@vendua/site`, a SvelteKit teaser site. It is NOT a storefront
+  and does not consume the Kernel (ADR 0002).
+- `packages/core` — `@vendua/core`: Bun + Hono + Postgres skeleton (tenancy,
+  catalog, settings/hours, server-side cart, checkout stub, orders). RLS on
+  every table from the first migration.
+- `packages/kernel` — `@vendua/kernel`: React runtime — provider, hooks,
+  headless primitives, `<SystemSurfaces />` generic notice renderer.
+- `storefronts/` — React spike storefronts consuming the Kernel. Storefronts
+  are React; the site is SvelteKit. Never mix the two.
+- `docs/roadmap.md` is the build order. `docs/phase-0-findings.md` collects
+  observed contract touchpoints; `docs/contract-v1-draft.md` is the drafted
+  Contract v1 from those observations.
 
 ## Repo map
 
 ```
-site/            @vendua/site — SvelteKit teaser site (the only app today)
-packages/        platform packages (empty; Phase 0+)
-storefronts/     one package per storefront (empty; Phase 0+)
+site/            @vendua/site — SvelteKit teaser site
+packages/core    @vendua/core — Hono API + Postgres (tenant_id + RLS)
+packages/kernel  @vendua/kernel — React runtime for storefronts
+packages/        other platform packages (Phase 1+)
+storefronts/     one package per storefront (React + Kernel; `_examples/`, `_template/` reserved)
 tools/           repo-level CI utilities (empty; Phase 1)
 docs/            normative architecture, ADRs, roadmap — read before designing
 .devin/agents/   Devin subagent profiles — auto-load in Devin CLI/Desktop
@@ -32,12 +40,35 @@ docs/            normative architecture, ADRs, roadmap — read before designing
 ## Setup — fresh machine / Devin Cloud
 
 ```sh
+export PATH="$HOME/.bun/bin:$PATH"  # bun is NOT on PATH by default
 bun install                       # workspace root; bun.lock is authoritative
 bunx playwright install chromium  # once, required for test:e2e
 ```
 
-Bun 1.4.2 (pinned in `packageManager`). No env vars, secrets, or services —
-the site is fully static.
+Bun 1.4.2 (pinned in `packageManager`). Core needs Postgres — see
+`packages/core` below.
+
+### packages/core dev loop
+
+```sh
+cd packages/core
+docker compose up -d              # postgres:16 on localhost:5433 (vendua/vendua)
+bun run migrate && bun run seed   # schema + 3 seeded tenants
+bun run dev                       # API on :8787; tenant resolved from Host
+bun run check && bun test         # tsc + bun:test
+```
+
+Tenant resolution: `Host`/`x-forwarded-host` → `domains` table. Seeded dev
+hosts: `localhost:5174` quero-pudim, `localhost:5191` brasa,
+`localhost:5192` forn. Storefront vite servers proxy `/storefront`,
+`/checkout/v1`, `/v1` to :8787 — **object-form proxy entries only** (string
+shorthand forces `changeOrigin:true`, rewrites Host → `TENANT_NOT_FOUND`),
+and never a bare `/checkout` key (swallows the SPA route on reload).
+Reserved API prefixes — no page route may live under `/storefront`, `/v1`,
+or `/checkout/v1`.
+
+postgres.js footgun: never pass `JSON.stringify(x)` into a jsonb param — it
+double-encodes to a JSON string. Use `sql.json(x)`/`tx.json(x)`.
 
 ## Commands
 
@@ -49,6 +80,10 @@ Run from repo root; all delegate to `@vendua/site` via `bun --filter`.
 | `bun run build`        | static build → `site/build/`             |
 | `bun run test:e2e`     | 16 Playwright tests; auto-starts preview |
 | `bun run format:check` | prettier clean (config at repo root)     |
+
+Per-package `bun run check`/`bun test` inside `packages/core`,
+`packages/kernel`, `storefronts/<slug>` — run the package's own gate when you
+touch it.
 
 `test:e2e` requires a prior `bun run build` — the preview serves `site/build/`.
 
@@ -87,14 +122,16 @@ Mirrored in `.omp/RULES.md` for omp's sticky-rule enforcement — keep in sync.
 - Match the project's existing test conventions; don't add test scaffolding
   where none exists.
 
-## Delegation — default to subagents
+## Delegation — delegate by default
 
-- Bias hard toward delegating. Spawn a subagent for anything that is: a
-  separate file/module, an independent investigation, a verification pass,
-  or parallelizable with other work.
-- Subagent contracts live in `.devin/agents/`: `architect`, `debugger`,
-  `frontend-designer`, `verifier` — mirrored in `.claude/agents/` and
-  `.omp/agents/` (omp also has `scout`, `task`, `sonic`).
+- You are an orchestrator, not an implementer. Spawn a subagent for anything
+  that is: a separate file/module, an independent investigation, a
+  verification pass, a research or search task, an edit touching more than a
+  couple of spots, or anything parallelizable with other work. When in
+  doubt, delegate — the only work that stays in the top-level session is
+  trivial, single-point edits you can verify immediately.
+- Decompose at planning time: turn the task into self-contained,
+  subagent-shaped units with clear acceptance checks, then fan out.
   - Devin Cloud: read the profile file and pass its body verbatim as the
     child-session or workflow-agent prompt.
   - Devin CLI/Desktop: profiles auto-load; invoke by name.

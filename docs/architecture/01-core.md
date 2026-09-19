@@ -52,7 +52,7 @@ extracted to a service, its interface and events must not change.
   client.
 - Isolation levels per surface:
   - `/storefront/v1/*` — public, tenant-scoped by host, read-heavy, CDN-cacheable
-    with short TTLs. Store status and notices are *not* CDN-cached (or cached
+    with short TTLs. Store status and notices are _not_ CDN-cached (or cached
     ≤30 s) since they drive blocking UI.
   - `/checkout/v1/*` — session-token scoped (anonymous cart/checkout session,
     signed, rotatable). All mutations are idempotent via `Idempotency-Key`.
@@ -98,7 +98,7 @@ Kernel would exist in N versions simultaneously, unretractably.
   `PaymentProvider` interface; webhooks are the authoritative payment state
   (never client redirects), processed idempotently via outbox.
 - **Notices**: a first-class Core capability. `composeNotices(tenant, surface,
-  context)` returns the `notices[]` SDUI payload — store status, delivery-zone
+context)` returns the `notices[]` SDUI payload — store status, delivery-zone
   warnings, promotional banners, system-wide emergencies. The schema is defined
   in [05](05-system-surfaces.md).
 - **Notifications**: WhatsApp Cloud API templates for order status to customers

@@ -105,49 +105,49 @@ Rendered verification is opt-in. Mark visual and runtime claims **Not verified**
 
 ## Before you finish
 
-| Mistake | Fix |
-| --- | --- |
-| One stray edit reviewed instead of the branch | Check `merge-base` before the working tree, and report both counts |
-| The last commit reviewed because there was no change | State the facts and offer the last commit, a named target, or a repository audit |
-| Hunks reviewed without their consumers | Expand one hop, two for tokens and primitives, and name what you skipped |
-| Only the `+` side of the diff read | Search the `-` side for removed accessibility, focus, motion and text signals |
-| An equivalent replacement reported as a regression | Route the removal to its owner; report only what it confirms |
-| A removal reported as a new mistake | Status it `Regression` so the author knows it used to work |
-| A line near a hunk statused `Introduced` | Status by what the diff touched, confirmed with `git blame` against the base ref |
-| A pull request checked out to review it | Fetch the ref and review it in place |
-| Line numbers cited that do not exist on the reviewed ref | Cite against the head ref named in the scope block |
-| The severity scale or the finding cap restated here | Defer to `better-interface` |
-| Correctness, test, or security findings in the report | Name the concern once, point at the project's code review and drop it |
+| Mistake                                                  | Fix                                                                              |
+| -------------------------------------------------------- | -------------------------------------------------------------------------------- |
+| One stray edit reviewed instead of the branch            | Check `merge-base` before the working tree, and report both counts               |
+| The last commit reviewed because there was no change     | State the facts and offer the last commit, a named target, or a repository audit |
+| Hunks reviewed without their consumers                   | Expand one hop, two for tokens and primitives, and name what you skipped         |
+| Only the `+` side of the diff read                       | Search the `-` side for removed accessibility, focus, motion and text signals    |
+| An equivalent replacement reported as a regression       | Route the removal to its owner; report only what it confirms                     |
+| A removal reported as a new mistake                      | Status it `Regression` so the author knows it used to work                       |
+| A line near a hunk statused `Introduced`                 | Status by what the diff touched, confirmed with `git blame` against the base ref |
+| A pull request checked out to review it                  | Fetch the ref and review it in place                                             |
+| Line numbers cited that do not exist on the reviewed ref | Cite against the head ref named in the scope block                               |
+| The severity scale or the finding cap restated here      | Defer to `better-interface`                                                      |
+| Correctness, test, or security findings in the report    | Name the concern once, point at the project's code review and drop it            |
 
 ## Review output format
 
 Open with the scope block:
 
-| Field | Value |
-| --- | --- |
-| Target | `branch`, `working`, `staged`, `pr 482`, or the range as entered |
-| Base ref | `origin/main` at `a1b2c3d` |
-| Head ref | `refs/remotes/pr/482` at `e4f5g6h` |
-| Commits | 7 committed, 2 files uncommitted |
-| Files in scope | 12 after exclusions |
-| Excluded | `pnpm-lock.yaml`, `src/__snapshots__/`: lockfile and snapshots |
+| Field             | Value                                                                      |
+| ----------------- | -------------------------------------------------------------------------- |
+| Target            | `branch`, `working`, `staged`, `pr 482`, or the range as entered           |
+| Base ref          | `origin/main` at `a1b2c3d`                                                 |
+| Head ref          | `refs/remotes/pr/482` at `e4f5g6h`                                         |
+| Commits           | 7 committed, 2 files uncommitted                                           |
+| Files in scope    | 12 after exclusions                                                        |
+| Excluded          | `pnpm-lock.yaml`, `src/__snapshots__/`: lockfile and snapshots             |
 | Surfaces expanded | `CheckoutPage`, `SettingsPanel`; 3 further `Button` consumers not expanded |
 
 The coverage table follows it unchanged. A domain with no evidence in the change scope is `Not reviewed: no evidence in the change scope`, which is a coverage statement rather than a gap.
 
 Then the findings, with a `Status` column per **Classify every finding**:
 
-| Severity | Domain | Status | Location | Before | After | Why |
-| --- | --- | --- | --- | --- | --- | --- |
-| HIGH | Accessibility | Regression | `src/Dialog.tsx:42` | `aria-label="Close"` removed in this change | Restore `aria-label="Close"` on the icon-only control | The close control had an accessible name before this change and no longer does |
+| Severity | Domain        | Status     | Location            | Before                                      | After                                                 | Why                                                                            |
+| -------- | ------------- | ---------- | ------------------- | ------------------------------------------- | ----------------------------------------------------- | ------------------------------------------------------------------------------ |
+| HIGH     | Accessibility | Regression | `src/Dialog.tsx:42` | `aria-label="Close"` removed in this change | Restore `aria-label="Close"` on the icon-only control | The close control had an accessible name before this change and no longer does |
 
 With no `Introduced` or `Regression` findings, omit the table and state "No actionable interface findings in this change."
 
 Then `Pre-existing` findings, at most three, highest severity first, stated plainly as not this change's responsibility. Omit the section when there are none.
 
-| Severity | Domain | Location | Issue |
-| --- | --- | --- | --- |
-| MEDIUM | Typography | `src/Toolbar.tsx:7` | Numeric badges use proportional figures; predates this change |
+| Severity | Domain     | Location            | Issue                                                         |
+| -------- | ---------- | ------------------- | ------------------------------------------------------------- |
+| MEDIUM   | Typography | `src/Toolbar.tsx:7` | Numeric badges use proportional figures; predates this change |
 
 The cap and the verdict cover `Introduced` and `Regression` only. `Pre-existing` findings sit outside the cap, so touching a legacy file cannot turn into a full-file audit. They sit outside the verdict too, so a change whose only findings are pre-existing is an `Approve`.
 

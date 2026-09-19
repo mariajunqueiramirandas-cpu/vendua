@@ -12,11 +12,11 @@ and CI enforcement — not a hope. The invariant to protect:
 
 ## The three version axes
 
-| Axis | Versioned as | Who declares it | Compatibility rule |
-| --- | --- | --- | --- |
-| **Core API** | integer major per surface (`/storefront/v1`) | Core | N and N−1 supported ≥12 months; additive-only within a major |
-| **Kernel** | semver (`@vendua/kernel@2.4.1`) | storefront artifact manifest | minors/patches are non-breaking by definition; majors only via Contract major |
-| **Contract** | integer (`contract: 1`) | `vendua.config.ts` | majors ≤1/year, always with codemod + dual-support window |
+| Axis         | Versioned as                                 | Who declares it              | Compatibility rule                                                            |
+| ------------ | -------------------------------------------- | ---------------------------- | ----------------------------------------------------------------------------- |
+| **Core API** | integer major per surface (`/storefront/v1`) | Core                         | N and N−1 supported ≥12 months; additive-only within a major                  |
+| **Kernel**   | semver (`@vendua/kernel@2.4.1`)              | storefront artifact manifest | minors/patches are non-breaking by definition; majors only via Contract major |
+| **Contract** | integer (`contract: 1`)                      | `vendua.config.ts`           | majors ≤1/year, always with codemod + dual-support window                     |
 
 Why three axes: they evolve at different speeds. API fields change weekly;
 Kernel internals monthly; the Contract almost never. Collapsing them into one
@@ -56,14 +56,14 @@ Contract major × resolved Kernel version × Core API majors form a valid row.
    primitives' `data-vendua` hooks and ARIA semantics never change.
 2. Slot renames keep the old name aliased for one major.
 3. Overrides always render inside error boundaries — Kernel protects the store
-   *from* the storefront's own old code.
+   _from_ the storefront's own old code.
 4. Kernel internals are private by `exports`; "internal" is enforced so
    "private" can evolve freely.
 
 ## Rules — SDUI / surfaces
 
 1. Unknown `kind`/`severity`/action `type` degrade per the envelope spec —
-   new server capabilities never require a minimum Kernel version to be *safe*.
+   new server capabilities never require a minimum Kernel version to be _safe_.
 2. A new `kind` ships with generic-render copy reviewed — the fallback is the
    primary experience on stale stores, not a degraded edge case.
 3. `version` field bumps only for incompatible envelope changes; `v.js` and old
@@ -85,4 +85,4 @@ A dedicated CI job keeps a **reference stale storefront**: an artifact built on
 the oldest supported Kernel line + Contract major, never updated. On every Core
 and Kernel merge it re-runs the S-series conformance tests against it. If
 "store built 14 months ago" breaks, the merge that broke it reverts. This test
-*is* the backward-compatibility strategy; everything else is bookkeeping.
+_is_ the backward-compatibility strategy; everything else is bookkeeping.

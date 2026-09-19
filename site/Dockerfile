@@ -14,7 +14,7 @@ COPY site/package.json site/package.json
 RUN bun install --frozen-lockfile
 
 COPY site/ site/
-RUN bun --filter @vendua/site run build
+RUN bun --filter @vendua/site build
 
 ########## runtime ##########
 FROM nginx:1.28-alpine AS production

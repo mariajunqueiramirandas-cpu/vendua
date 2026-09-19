@@ -3,7 +3,7 @@
 > Status: Proposed · Last reviewed: 2026-09-11
 > Decisions: [ADR 0011](../adr/0011-ring-based-fleet-releases.md)
 
-The Control Plane is what makes 300 storefronts a *managed fleet* instead of
+The Control Plane is what makes 300 storefronts a _managed fleet_ instead of
 300 freelance projects. It holds the desired and actual state of every tenant
 and reconciles the difference. It is CLI-first; the UI is a thin client over
 the same API.
@@ -31,7 +31,7 @@ compat_matrix(contract_major, kernel_min, kernel_max, api_majors int[])
 ```
 
 Desired state is declarative: `storefronts.kernel_version` is what the tenant
-*should* run; `deployments` records what it *does* run. The reconciler closes
+_should_ run; `deployments` records what it _does_ run. The reconciler closes
 the gap.
 
 ## Reconciler
@@ -94,7 +94,7 @@ failure-bundles/<task-id>/
 ```
 
 An agent task = `{ kind, storefront, bundle, done-when: "conformance green" }`.
-The agent is *replaceable* — anything that can open a PR in the monorepo
+The agent is _replaceable_ — anything that can open a PR in the monorepo
 satisfies the interface. See [14](14-agent-pipeline.md).
 
 ## Provisioner
@@ -108,6 +108,6 @@ provisioner is a state machine, not a script.
 ## What the Control Plane is NOT
 
 - Not in the request path (except `state` and `loader_state` reads, which are
-  edge-cached). A Control Plane outage pauses *operations*, never *serving*.
+  edge-cached). A Control Plane outage pauses _operations_, never _serving_.
 - Not the owner of business data — tenants/catalog/orders live in Core; the
   Control Plane stores operational state and mirrors identifiers only.

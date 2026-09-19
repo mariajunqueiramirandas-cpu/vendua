@@ -1,0 +1,63 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  # Runs prettier --write and commits style-only diffs back to the branch, so
+  # formatting can never be the reason a change is blocked. Same-repo branches
+  # only: a fork's head_ref doesn't exist in this repo (checkout would fail)
+  # and the token can't push to forks anyway. This job is the only holder of
+  # a write token; validation stays read-only.
+  format:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    if: github.event_name == 'push' || github.event.pull_request.head.repo.fork == false
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.head_ref || github.ref }}
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: '1.4.2'
+      - run: bun install --frozen-lockfile
+      - run: bunx prettier --write . --log-level warn
+      - name: Commit formatting fix
+        run: |
+          if [ -n "$(git status --porcelain)" ]; then
+            git config user.name 'github-actions[bot]'
+            git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+            git add -A
+            git commit -m 'style: prettier auto-fix [skip ci]'
+            git push
+          fi
+
+  # Validates GitHub's merge ref (PR) / the pushed commit (main) — the code
+  # that will actually land.
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: '1.4.2'
+      - run: bun install --frozen-lockfile
+      - name: Typecheck
+        run: |
+          for pkg in packages/core packages/kernel site storefronts/quero-pudim storefronts/brasa storefronts/forn storefronts/_examples/quero-pudim; do
+            (cd "$pkg" && bun run check)
+          done
+      - name: Core tests
+        run: cd packages/core && bun test
+      - name: Builds
+        run: |
+          bun --filter @vendua/site build
+          for sf in @vendua/storefront-quero-pudim @vendua/storefront-brasa @vendua/forn @vendua/example-quero-pudim; do
+            bun --filter "$sf" build
+          done

@@ -21,7 +21,7 @@ conversation → DesignSpec (validated JSON) → agent_tasks queue
   agent produces it; generation agent satisfies it — separate cadences.
 - **Scaffold-first (anti-hallucination rule)**: agents never start blank —
   `vendua scaffold` yields a storefront that already passes conformance;
-  generation is *transformation*, and only the diff is judged.
+  generation is _transformation_, and only the diff is judged.
 - **Task contract**: sparse checkout (Kernel + docs + `_template` +
   `_examples` + the slug); reads never include the rest of the fleet; writes
   only `storefronts/<slug>/**`; done-when = conformance green + generation QA.
@@ -46,6 +46,7 @@ conversation → DesignSpec (validated JSON) → agent_tasks queue
 ## Roadmap
 
 See [`../roadmap.md`](../roadmap.md) — rewritten fleet-first (2026-09-18):
-phases follow the fleet lifecycle (produce → deploy → operate → migrate →
-generate → scale), Control Plane lands in Phase 2, and growth is gated by
-fleet stages (1 / 5 / 25 / 100 / 1000 stores), not just phase exits.
+phases follow the fleet lifecycle (produce → sell → deploy → operate →
+migrate → generate → scale), Control Plane lands in Phase 4 (before the first
+real tenant), and growth is gated by fleet stages (1 / 5 / 25 / 100 / 1000
+stores), not just phase exits.

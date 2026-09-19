@@ -15,7 +15,7 @@ apply here.
 - `bun run dev` — dev server at `http://127.0.0.1:5173`
 - `bun run check` — svelte-check; must be 0 errors
 - `bun run build` — static build → `site/build/` (runs content validation
-  + postbuild)
+  - postbuild)
 - `bun run test:e2e` — 16 Playwright tests; needs a prior `bun run build`
 - `bun run format` / `format:check` — prettier, config at repo root
   (`--config ../.prettierrc.json`)

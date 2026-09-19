@@ -4,6 +4,7 @@
 > the import path is `motion/react`. All APIs are identical. `framer-motion` still works.
 
 ## Table of Contents
+
 1. [Package & Import Paths](#package--import-paths)
 2. [Two Types of Scroll Animation](#two-types-of-scroll-animation)
 3. [useScroll — Options Reference](#usescroll--options-reference)
@@ -42,6 +43,7 @@ import { motion, useScroll, useTransform } from 'framer-motion';
 ```
 
 **Motion v12 new features (2025):**
+
 - Hardware-accelerated scroll via browser ScrollTimeline API
 - `useScroll` and `scroll()` now GPU-accelerated by default
 - New color types: `oklch`, `oklab`, `color-mix` animatable directly
@@ -83,10 +85,10 @@ The value updates on every scroll frame — must use `style` prop, not `animate`
 
 ```js
 const {
-  scrollX,          // Absolute horizontal scroll (pixels)
-  scrollY,          // Absolute vertical scroll (pixels)
-  scrollXProgress,  // Horizontal progress 0→1 between offsets
-  scrollYProgress,  // Vertical progress 0→1 between offsets
+  scrollX, // Absolute horizontal scroll (pixels)
+  scrollY, // Absolute vertical scroll (pixels)
+  scrollXProgress, // Horizontal progress 0→1 between offsets
+  scrollYProgress, // Vertical progress 0→1 between offsets
 } = useScroll({
   // Track a scrollable element instead of the viewport
   container: containerRef,
@@ -109,6 +111,7 @@ const {
 ```
 
 **Offset string values:**
+
 - `start` = `0` = top/left edge
 - `center` = `0.5` = middle
 - `end` = `1` = bottom/right edge
@@ -123,34 +126,23 @@ const {
 const y = useTransform(scrollYProgress, [0, 1], [0, -200]);
 
 // Multi-stop interpolation
-const opacity = useTransform(
-  scrollYProgress,
-  [0, 0.2, 0.8, 1],
-  [0, 1, 1, 0]
-);
+const opacity = useTransform(scrollYProgress, [0, 0.2, 0.8, 1], [0, 1, 1, 0]);
 
 // Non-numeric values (colors, strings)
-const color = useTransform(
-  scrollYProgress,
-  [0, 0.5, 1],
-  ['#6366f1', '#ec4899', '#f97316']
-);
+const color = useTransform(scrollYProgress, [0, 0.5, 1], ['#6366f1', '#ec4899', '#f97316']);
 
 // CSS string values
 const clipPath = useTransform(
   scrollYProgress,
   [0, 1],
-  ['inset(0% 100% 0% 0%)', 'inset(0% 0% 0% 0%)']
+  ['inset(0% 100% 0% 0%)', 'inset(0% 0% 0% 0%)'],
 );
 
 // Disable clamping (allow values outside output range)
 const y = useTransform(scrollYProgress, [0, 1], [0, -200], { clamp: false });
 
 // Transform from multiple inputs
-const combined = useTransform(
-  [scrollX, scrollY],
-  ([x, y]) => Math.sqrt(x * x + y * y)
-);
+const combined = useTransform([scrollX, scrollY], ([x, y]) => Math.sqrt(x * x + y * y));
 ```
 
 **Rule:** `useTransform` output is a `MotionValue`. It must go into the `style` prop of a `motion.*` element. Plain `<div style={{ y }}>` will NOT work — must be `<motion.div style={{ y }}>`.
@@ -165,9 +157,9 @@ Wrap any MotionValue in `useSpring` to add spring physics — great for progress
 const { scrollYProgress } = useScroll();
 
 const smooth = useSpring(scrollYProgress, {
-  stiffness: 100,   // Higher = faster/snappier response
-  damping: 30,      // Higher = less bounce
-  restDelta: 0.001  // Precision threshold for stopping
+  stiffness: 100, // Higher = faster/snappier response
+  damping: 30, // Higher = less bounce
+  restDelta: 0.001, // Precision threshold for stopping
 });
 
 return <motion.div style={{ scaleX: smooth }} />;
@@ -182,6 +174,7 @@ For a subtle lag (not physics), use `useTransform` with `clamp: false` and an ea
 ### 1. Scroll Progress Bar
 
 **Copilot Chat Prompt:**
+
 ```
 Framer Motion: fixed scroll progress bar at top of page.
 useScroll for page scroll progress, useSpring to smooth scaleX.
@@ -195,7 +188,9 @@ import { useScroll, useSpring, motion } from 'motion/react';
 export function ScrollProgressBar() {
   const { scrollYProgress } = useScroll();
   const scaleX = useSpring(scrollYProgress, {
-    stiffness: 100, damping: 30, restDelta: 0.001,
+    stiffness: 100,
+    damping: 30,
+    restDelta: 0.001,
   });
 
   return (
@@ -212,9 +207,10 @@ export function ScrollProgressBar() {
 ### 2. Reusable ScrollReveal Wrapper
 
 **Copilot Chat Prompt:**
+
 ```
-Framer Motion: reusable ScrollReveal component that wraps children with 
-fade-in-up entrance animation using whileInView. Props: delay (default 0), 
+Framer Motion: reusable ScrollReveal component that wraps children with
+fade-in-up entrance animation using whileInView. Props: delay (default 0),
 duration (default 0.6), once (default true). viewport margin -80px.
 TypeScript. 'use client'.
 ```
@@ -232,7 +228,11 @@ interface ScrollRevealProps {
 }
 
 export function ScrollReveal({
-  children, delay = 0, duration = 0.6, once = true, className
+  children,
+  delay = 0,
+  duration = 0.6,
+  once = true,
+  className,
 }: ScrollRevealProps) {
   return (
     <motion.div
@@ -256,9 +256,10 @@ export function ScrollReveal({
 ### 3. Parallax Layers
 
 **Copilot Chat Prompt:**
+
 ```
 Framer Motion parallax section: background moves y from 0% to 30% (slow),
-foreground text moves y from 50 to -50px (fast). 
+foreground text moves y from 50 to -50px (fast).
 Both use target ref with offset ['start end', 'end start'].
 Fade out at top and bottom using opacity useTransform [0, 0.3, 0.7, 1] → [0,1,1,0].
 ```
@@ -276,11 +277,14 @@ export function ParallaxSection() {
   });
 
   const backgroundY = useTransform(scrollYProgress, [0, 1], ['0%', '30%']);
-  const textY        = useTransform(scrollYProgress, [0, 1], [50, -50]);
-  const opacity      = useTransform(scrollYProgress, [0, 0.3, 0.7, 1], [0, 1, 1, 0]);
+  const textY = useTransform(scrollYProgress, [0, 1], [50, -50]);
+  const opacity = useTransform(scrollYProgress, [0, 0.3, 0.7, 1], [0, 1, 1, 0]);
 
   return (
-    <section ref={ref} className="relative h-screen overflow-hidden flex items-center justify-center">
+    <section
+      ref={ref}
+      className="relative h-screen overflow-hidden flex items-center justify-center"
+    >
       <motion.div
         className="absolute inset-0 bg-cover bg-center"
         style={{ backgroundImage: 'url(/hero-bg.jpg)', y: backgroundY, scale: 1.2 }}
@@ -299,6 +303,7 @@ export function ParallaxSection() {
 ### 4. Horizontal Scroll Section
 
 **Copilot Chat Prompt:**
+
 ```
 Framer Motion horizontal scroll: 4 cards scroll horizontally as user scrolls vertically.
 Outer container ref height 300vh controls speed (sticky pattern).
@@ -311,10 +316,10 @@ import { useRef } from 'react';
 import { motion, useScroll, useTransform } from 'motion/react';
 
 const cards = [
-  { id: 1, title: 'Card One',   color: 'bg-indigo-500' },
-  { id: 2, title: 'Card Two',   color: 'bg-pink-500'   },
-  { id: 3, title: 'Card Three', color: 'bg-amber-500'  },
-  { id: 4, title: 'Card Four',  color: 'bg-teal-500'   },
+  { id: 1, title: 'Card One', color: 'bg-indigo-500' },
+  { id: 2, title: 'Card Two', color: 'bg-pink-500' },
+  { id: 3, title: 'Card Three', color: 'bg-amber-500' },
+  { id: 4, title: 'Card Four', color: 'bg-teal-500' },
 ];
 
 export function HorizontalScroll() {
@@ -333,7 +338,7 @@ export function HorizontalScroll() {
           style={{ x, width: `${cards.length * 100}vw` }}
           className="flex gap-6 h-full items-center px-8"
         >
-          {cards.map(card => (
+          {cards.map((card) => (
             <div
               key={card.id}
               className={`${card.color} w-screen h-[70vh] rounded-2xl flex items-center justify-center flex-shrink-0`}
@@ -353,6 +358,7 @@ export function HorizontalScroll() {
 ### 5. Image Reveal with clipPath
 
 **Copilot Chat Prompt:**
+
 ```
 Framer Motion: image reveals left to right as it scrolls into view.
 useScroll target ref, offset ['start end', 'center center'].
@@ -375,14 +381,15 @@ export function ImageReveal({ src, alt }: { src: string; alt: string }) {
   const clipPath = useTransform(
     scrollYProgress,
     [0, 1],
-    ['inset(0% 100% 0% 0%)', 'inset(0% 0% 0% 0%)']
+    ['inset(0% 100% 0% 0%)', 'inset(0% 0% 0% 0%)'],
   );
   const scale = useTransform(scrollYProgress, [0, 1], [1.15, 1]);
 
   return (
     <div ref={ref} className="overflow-hidden rounded-xl">
       <motion.img
-        src={src} alt={alt}
+        src={src}
+        alt={alt}
         style={{ clipPath, scale }}
         className="w-full h-full object-cover"
       />
@@ -396,6 +403,7 @@ export function ImageReveal({ src, alt }: { src: string; alt: string }) {
 ### 6. Scroll-linked Navbar (Hide on Scroll Down)
 
 **Copilot Chat Prompt:**
+
 ```
 Framer Motion navbar: transparent when at top, white with shadow after 80px.
 Hide by sliding up when scrolling down, reveal when scrolling up.
@@ -411,14 +419,14 @@ import { motion, useScroll, useMotionValueEvent } from 'motion/react';
 export function Navbar() {
   const { scrollY } = useScroll();
   const [scrolled, setScrolled] = useState(false);
-  const [hidden,   setHidden]   = useState(false);
+  const [hidden, setHidden] = useState(false);
   const prevRef = useRef(0);
 
-  useMotionValueEvent(scrollY, 'change', latest => {
+  useMotionValueEvent(scrollY, 'change', (latest) => {
     const nextScrolled = latest > 80;
     const nextHidden = latest > prevRef.current && latest > 200;
-    setScrolled(current => (current === nextScrolled ? current : nextScrolled));
-    setHidden(current => (current === nextHidden ? current : nextHidden));
+    setScrolled((current) => (current === nextScrolled ? current : nextScrolled));
+    setHidden((current) => (current === nextHidden ? current : nextHidden));
     prevRef.current = latest;
   });
 
@@ -443,8 +451,9 @@ export function Navbar() {
 ### 7. Staggered Card Grid
 
 **Copilot Chat Prompt:**
+
 ```
-Framer Motion: card grid with stagger entrance. Use variants: 
+Framer Motion: card grid with stagger entrance. Use variants:
 container has staggerChildren 0.1, delayChildren 0.2.
 Each card: hidden (opacity 0, y 40, scale 0.96) → visible (opacity 1, y 0, scale 1).
 Trigger with whileInView on the container. Once.
@@ -457,16 +466,18 @@ import { motion } from 'motion/react';
 const containerVariants = {
   hidden: {},
   visible: {
-    transition: { staggerChildren: 0.1, delayChildren: 0.2 }
-  }
+    transition: { staggerChildren: 0.1, delayChildren: 0.2 },
+  },
 };
 
 const cardVariants = {
-  hidden:  { opacity: 0, y: 40, scale: 0.96 },
+  hidden: { opacity: 0, y: 40, scale: 0.96 },
   visible: {
-    opacity: 1, y: 0, scale: 1,
-    transition: { duration: 0.5, ease: [0.21, 0.47, 0.32, 0.98] }
-  }
+    opacity: 1,
+    y: 0,
+    scale: 1,
+    transition: { duration: 0.5, ease: [0.21, 0.47, 0.32, 0.98] },
+  },
 };
 
 export function CardGrid({ cards }: { cards: { id: number; title: string }[] }) {
@@ -478,8 +489,10 @@ export function CardGrid({ cards }: { cards: { id: number; title: string }[] }) 
       viewport={{ once: true, margin: '-50px' }}
       className="grid grid-cols-3 gap-6"
     >
-      {cards.map(card => (
-        <motion.div key={card.id} variants={cardVariants}
+      {cards.map((card) => (
+        <motion.div
+          key={card.id}
+          variants={cardVariants}
           className="bg-white rounded-xl p-6 shadow-sm border"
         >
           <h3>{card.title}</h3>
@@ -495,6 +508,7 @@ export function CardGrid({ cards }: { cards: { id: number; title: string }[] }) 
 ### 8. 3D Tilt on Scroll
 
 **Copilot Chat Prompt:**
+
 ```
 Framer Motion: 3D perspective card that rotates on X axis as it scrolls through view.
 rotateX 15→0→-15, scale 0.9→1→0.9, opacity 0→1→0.
@@ -513,8 +527,8 @@ export function TiltCard({ children }: { children: React.ReactNode }) {
     offset: ['start end', 'end start'],
   });
 
-  const rotateX = useTransform(scrollYProgress, [0, 0.5, 1], [15,  0, -15]);
-  const scale   = useTransform(scrollYProgress, [0, 0.5, 1], [0.9, 1,  0.9]);
+  const rotateX = useTransform(scrollYProgress, [0, 0.5, 1], [15, 0, -15]);
+  const scale = useTransform(scrollYProgress, [0, 0.5, 1], [0.9, 1, 0.9]);
   const opacity = useTransform(scrollYProgress, [0, 0.2, 0.8, 1], [0, 1, 1, 0]);
 
   return (
@@ -541,16 +555,16 @@ const parent = {
   hidden: {},
   visible: {
     transition: {
-      staggerChildren: 0.1,   // Delay between each child
-      delayChildren: 0.2,      // Initial delay before first child
-      when: 'beforeChildren',  // Parent animates before children
-    }
-  }
+      staggerChildren: 0.1, // Delay between each child
+      delayChildren: 0.2, // Initial delay before first child
+      when: 'beforeChildren', // Parent animates before children
+    },
+  },
 };
 
 const child = {
   hidden: { opacity: 0, y: 20 },
-  visible: { opacity: 1, y: 0, transition: { duration: 0.5 } }
+  visible: { opacity: 1, y: 0, transition: { duration: 0.5 } },
 };
 
 // Children with `variants={child}` automatically get the stagger
@@ -567,20 +581,21 @@ import { useScroll, useMotionValueEvent } from 'motion/react';
 const { scrollY } = useScroll();
 
 // Fires on every change — use for imperative side effects
-useMotionValueEvent(scrollY, 'change', latest => {
+useMotionValueEvent(scrollY, 'change', (latest) => {
   console.log('scroll position:', latest);
 });
 
 // Detect scroll direction
 const [direction, setDirection] = useState<'up' | 'down'>('down');
 
-useMotionValueEvent(scrollY, 'change', current => {
+useMotionValueEvent(scrollY, 'change', (current) => {
   const diff = current - scrollY.getPrevious()!;
   setDirection(diff > 0 ? 'down' : 'up');
 });
 ```
 
 **When to use `useMotionValueEvent` vs `useTransform`:**
+
 - Use `useTransform` when you want a CSS value that animates smoothly (y, opacity, color)
 - Use `useMotionValueEvent` when you want to fire React state changes or side effects
 
@@ -603,6 +618,7 @@ if (!mounted) return null; // or a skeleton
 ```
 
 **Recommended pattern for Next.js App Router:**
+
 1. Keep all `motion.*` components in separate `'use client'` files
 2. Import them into Server Components — they'll be client-rendered automatically
 3. Use `AnimatePresence` at the layout level for page transitions
@@ -630,11 +646,13 @@ export function AnimatedCard() {
 ```
 
 Or disable all scroll-linked transforms when reduced motion is preferred:
+
 ```tsx
 const prefersReducedMotion = useReducedMotion();
 const y = useTransform(
-  scrollYProgress, [0, 1],
-  prefersReducedMotion ? [0, 0] : [100, -100]  // no movement if reduced motion
+  scrollYProgress,
+  [0, 1],
+  prefersReducedMotion ? [0, 0] : [100, -100], // no movement if reduced motion
 );
 ```
 
@@ -655,14 +673,16 @@ Current canonical: `from 'motion/react'`.
 from 0 to 1 — not the element's position. Always pass `target` + `offset` for element-level tracking.
 
 **Missing ref on target:** Copilot sometimes writes `target: ref` but forgets to attach `ref` to the DOM element.
+
 ```tsx
 const ref = useRef(null);
 const { scrollYProgress } = useScroll({ target: ref }); // ← ref passed
-return <div ref={ref}>...</div>;                          // ← ref attached
+return <div ref={ref}>...</div>; // ← ref attached
 ```
 
 **Using animate prop for scroll-linked values:** Scroll-linked values must use `style`, not `animate`.
 `animate` runs on mount/unmount, not on scroll.
+
 ```tsx
 // ❌ Wrong
 <motion.div animate={{ opacity }} />

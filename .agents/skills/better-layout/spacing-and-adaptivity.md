@@ -6,11 +6,11 @@ Space between controls, margins against the viewport, hints at off-screen conten
 
 Controls placed too close get mis-tapped and read as one unit. Where the project has no density scale, start here:
 
-| Between | Starting point |
-| --- | --- |
-| Adjacent bordered/filled controls (buttons, inputs) | `12px` |
-| Around borderless controls (text buttons, icon buttons) | `24px` |
-| Unrelated control groups | `24px`+ (2× the intra-group gap) |
+| Between                                                 | Starting point                   |
+| ------------------------------------------------------- | -------------------------------- |
+| Adjacent bordered/filled controls (buttons, inputs)     | `12px`                           |
+| Around borderless controls (text buttons, icon buttons) | `24px`                           |
+| Unrelated control groups                                | `24px`+ (2× the intra-group gap) |
 
 Borderless controls need more clearance, because nothing marks where one target ends and the next begins. The space is the boundary. Compact professional tools may use less where hit areas stay distinct and never overlap. Preserve an established, usable density rather than expanding controls to match these values.
 
@@ -41,7 +41,10 @@ In content layouts, buttons pressed against the viewport look like system chrome
   padding-inline: 16px;
   padding-bottom: calc(16px + env(safe-area-inset-bottom));
 }
-.action-bar button { width: 100%; border-radius: 12px; }
+.action-bar button {
+  width: 100%;
+  border-radius: 12px;
+}
 
 /* Bad: button glued to all three edges */
 .action-bar button {
@@ -100,8 +103,12 @@ The two layers behave differently at the edges:
   display: grid;
   grid-template-columns: 1fr min(65ch, calc(100% - 48px)) 1fr;
 }
-.article > * { grid-column: 2; }
-.article > .full-bleed { grid-column: 1 / -1; }
+.article > * {
+  grid-column: 2;
+}
+.article > .full-bleed {
+  grid-column: 1 / -1;
+}
 ```
 
 Sticky headers and floating action buttons account for safe areas:
@@ -124,14 +131,20 @@ Breakpoints belong to the content, not the device catalog:
 
 ```css
 /* Good: component adapts to its container */
-.card-list { container-type: inline-size; }
+.card-list {
+  container-type: inline-size;
+}
 @container (max-width: 400px) {
-  .card { grid-template-columns: 1fr; }
+  .card {
+    grid-template-columns: 1fr;
+  }
 }
 
 /* Bad: viewport media query breaks the card inside a narrow sidebar */
 @media (max-width: 768px) {
-  .card { grid-template-columns: 1fr; }
+  .card {
+    grid-template-columns: 1fr;
+  }
 }
 ```
 
@@ -150,10 +163,16 @@ Layouts fail in two directions. Content grows, and viewports shrink.
 
 ```css
 /* Good: label defines the size */
-.button { padding-inline: 16px; white-space: nowrap; }
+.button {
+  padding-inline: 16px;
+  white-space: nowrap;
+}
 
 /* Bad: German will overflow or truncate */
-.button { width: 96px; overflow: hidden; }
+.button {
+  width: 96px;
+  overflow: hidden;
+}
 ```
 
 **Clipping.** Never park a critical action where it can be cut off: the bottom edge of a resizable pane, below the fold of a fixed-height modal, behind an expanding keyboard. Keep primary actions in stable chrome, a sticky footer with safe-area padding or the top of the view. Where a modal's content scrolls, its action row does not.
