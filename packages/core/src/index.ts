@@ -7,7 +7,11 @@ const databaseUrl =
 const migrationUrl =
   process.env.MIGRATION_DATABASE_URL ?? 'postgres://vendua:vendua@localhost:5433/vendua';
 const port = Number(process.env.PORT ?? 8787);
-const sessionSecret = process.env.SESSION_SECRET ?? 'dev-session-secret';
+// SESSION_SECRET is the HMAC key for cart session tokens AND the control
+// gate header — a checked-in default would let anyone forge both. Unset =
+// random per boot (dev carts don't survive a restart; fine — POST /session
+// re-mints). Deployments must set it.
+const sessionSecret = process.env.SESSION_SECRET ?? crypto.randomUUID();
 
 // Boot: apply migrations as the owner role, then serve as vendua_app (RLS on).
 const migrator = createSql(migrationUrl);

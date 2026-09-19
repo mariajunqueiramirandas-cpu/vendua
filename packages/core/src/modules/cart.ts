@@ -170,8 +170,11 @@ async function loadPricedItems(tx: Sql, tenantId: string, cartId: string): Promi
  * is a 409 (not 404) — the resource exists, it just isn't mutable.
  */
 export async function assertCartOpen(tx: Sql, tenantId: string, cartId: string): Promise<void> {
+  // FOR UPDATE serializes mutations with checkout: a concurrent checkout
+  // holds this lock while completing the cart, so a mutation either lands
+  // before it or re-reads the completed status and 409s.
   const rows = await tx<{ status: string }[]>`
-    select status from carts where tenant_id = ${tenantId} and id = ${cartId}
+    select status from carts where tenant_id = ${tenantId} and id = ${cartId} for update
   `;
   const cart = rows[0];
   if (!cart) throw new HttpError(404, 'CART_NOT_FOUND', 'cart not found');

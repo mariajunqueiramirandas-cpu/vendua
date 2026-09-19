@@ -230,16 +230,13 @@ export function createApp({ sql, sessionSecret }: AppDeps) {
       }
       // fall through to mint
     }
-    return idempotency(sql, async () => {
-      const { cartId, token } = await withTenant(sql, tenant.id, async (tx) => {
-        const cartId = crypto.randomUUID();
-        const token = await mintSessionToken(cartId, sessionSecret);
-        const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(token));
-        const hash = Buffer.from(digest).toString('hex');
-        await tx`insert into carts (id, tenant_id, session_hash) values (${cartId}, ${tenant.id}, ${hash})`;
-        return { cartId, token };
-      });
-      const cart = await withTenant(sql, tenant.id, (tx) => loadCartView(tx, tenant.id, cartId));
+    return idempotency(sql, async (c, tx) => {
+      const cartId = crypto.randomUUID();
+      const token = await mintSessionToken(cartId, sessionSecret);
+      const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(token));
+      const hash = Buffer.from(digest).toString('hex');
+      await tx`insert into carts (id, tenant_id, session_hash) values (${cartId}, ${tenant.id}, ${hash})`;
+      const cart = await loadCartView(tx, tenant.id, cartId);
       return { status: 201, body: { sessionToken: token, cart } };
     })(c);
   });
@@ -253,82 +250,74 @@ export function createApp({ sql, sessionSecret }: AppDeps) {
 
   checkout.post('/cart/items', async (c) => {
     const tenant = c.get('tenant');
-    return idempotency(sql, async () => {
+    return idempotency(sql, async (c, tx) => {
       const cartId = await sessionCartId(c, sessionSecret);
       const body = await bodyJson(c);
-      const cart = await withTenant(sql, tenant.id, async (tx) => {
-        await assertCartOpen(tx, tenant.id, cartId);
-        const productId = String(body.productId ?? '');
-        const qty = Number(body.qty ?? 1);
-        const modifierIds = Array.isArray(body.modifierIds) ? body.modifierIds.map(String) : [];
-        return addItem(tx, tenant.id, cartId, { productId, qty, modifierIds }, getProductById);
-      });
+      await assertCartOpen(tx, tenant.id, cartId);
+      const productId = String(body.productId ?? '');
+      const qty = Number(body.qty ?? 1);
+      const modifierIds = Array.isArray(body.modifierIds) ? body.modifierIds.map(String) : [];
+      const cart = await addItem(tx, tenant.id, cartId, { productId, qty, modifierIds }, getProductById);
       return { status: 200, body: { cart } };
     })(c);
   });
 
   checkout.patch('/cart/items/:itemId', async (c) => {
     const tenant = c.get('tenant');
-    return idempotency(sql, async () => {
+    return idempotency(sql, async (c, tx) => {
       const cartId = await sessionCartId(c, sessionSecret);
       const body = await bodyJson(c);
       const qty = Number(body.qty);
       if (!Number.isInteger(qty) || qty < 0 || qty > 99) {
         throw new HttpError(422, 'INVALID_QTY', 'qty must be an integer between 0 and 99');
       }
-      const cart = await withTenant(sql, tenant.id, async (tx) => {
-        await assertCartOpen(tx, tenant.id, cartId);
-        if (qty === 0) {
-          await tx`delete from cart_items where tenant_id = ${tenant.id} and cart_id = ${cartId} and id = ${c.req.param('itemId')}`;
-        } else {
-          await tx`update cart_items set qty = ${qty} where tenant_id = ${tenant.id} and cart_id = ${cartId} and id = ${c.req.param('itemId')}`;
-        }
-        await tx`update carts set updated_at = now() where id = ${cartId}`;
-        return loadCartView(tx, tenant.id, cartId);
-      });
+      await assertCartOpen(tx, tenant.id, cartId);
+      if (qty === 0) {
+        await tx`delete from cart_items where tenant_id = ${tenant.id} and cart_id = ${cartId} and id = ${c.req.param('itemId')}`;
+      } else {
+        await tx`update cart_items set qty = ${qty} where tenant_id = ${tenant.id} and cart_id = ${cartId} and id = ${c.req.param('itemId')}`;
+      }
+      await tx`update carts set updated_at = now() where id = ${cartId}`;
+      const cart = await loadCartView(tx, tenant.id, cartId);
       return { status: 200, body: { cart } };
     })(c);
   });
 
   checkout.delete('/cart/items/:itemId', async (c) => {
     const tenant = c.get('tenant');
-    return idempotency(sql, async () => {
+    return idempotency(sql, async (c, tx) => {
       const cartId = await sessionCartId(c, sessionSecret);
-      const cart = await withTenant(sql, tenant.id, async (tx) => {
-        await assertCartOpen(tx, tenant.id, cartId);
-        await tx`delete from cart_items where tenant_id = ${tenant.id} and cart_id = ${cartId} and id = ${c.req.param('itemId')}`;
-        return loadCartView(tx, tenant.id, cartId);
-      });
+      await assertCartOpen(tx, tenant.id, cartId);
+      await tx`delete from cart_items where tenant_id = ${tenant.id} and cart_id = ${cartId} and id = ${c.req.param('itemId')}`;
+      const cart = await loadCartView(tx, tenant.id, cartId);
       return { status: 200, body: { cart } };
     })(c);
   });
 
   checkout.post('/cart/delivery', async (c) => {
     const tenant = c.get('tenant');
-    return idempotency(sql, async () => {
+    return idempotency(sql, async (c, tx) => {
       const cartId = await sessionCartId(c, sessionSecret);
       const body = await bodyJson(c);
       const { mode, neighborhood, address } = body;
       if (mode !== 'pickup' && mode !== 'delivery') {
         throw new HttpError(422, 'INVALID_DELIVERY', 'mode must be pickup or delivery');
       }
-      const cart = await withTenant(sql, tenant.id, async (tx) => {
-        await assertCartOpen(tx, tenant.id, cartId);
-        await tx`
-          update carts set delivery = ${tx.json({ mode, neighborhood: typeof neighborhood === 'string' ? neighborhood : null, address: typeof address === 'string' ? address : null })}, updated_at = now()
-          where tenant_id = ${tenant.id} and id = ${cartId}
-        `;
-        return loadCartView(tx, tenant.id, cartId);
-      });
+      await assertCartOpen(tx, tenant.id, cartId);
+      await tx`
+        update carts set delivery = ${tx.json({ mode, neighborhood: typeof neighborhood === 'string' ? neighborhood : null, address: typeof address === 'string' ? address : null })}, updated_at = now()
+        where tenant_id = ${tenant.id} and id = ${cartId}
+      `;
+      const cart = await loadCartView(tx, tenant.id, cartId);
       return { status: 200, body: { cart } };
     })(c);
   });
 
   checkout.post('/quote', async (c) => {
     const tenant = c.get('tenant');
-    return idempotency(sql, async () => {
+    return idempotency(sql, async (c, tx) => {
       const { neighborhood } = await bodyJson(c);
-      const zones = await withTenant(sql, tenant.id, (tx) => loadZones(tx, tenant.id));
+      const zones = await loadZones(tx, tenant.id);
       const zone = matchZone(zones, typeof neighborhood === 'string' ? neighborhood : '');
       if (!zone) {
         return { status: 200, body: { eligible: false, reason: 'OUT_OF_ZONE' } };
@@ -348,11 +337,11 @@ export function createApp({ sql, sessionSecret }: AppDeps) {
 
   checkout.post('/checkout', async (c) => {
     const tenant = c.get('tenant');
-    return idempotency(sql, async () => {
+    return idempotency(sql, async (c, tx) => {
       const cartId = await sessionCartId(c, sessionSecret);
       const body = await bodyJson(c);
       validateCheckoutShape(body);
-      const order = await withTenant(sql, tenant.id, async (tx) => {
+      const order = await (async () => {
         // Lock the cart row before reading it — two concurrent checkouts
         // would otherwise both observe 'open' and mint duplicate orders
         // (Review finding). The loser rechecks status under the lock.
@@ -411,8 +400,8 @@ export function createApp({ sql, sessionSecret }: AppDeps) {
         `;
         await tx`update carts set status = 'completed', updated_at = now() where id = ${cartId}`;
         return orderId;
-      });
-      const view = await withTenant(sql, tenant.id, (tx) => loadOrderView(tx, tenant.id, order));
+      })();
+      const view = await loadOrderView(tx, tenant.id, order, cartId);
       return { status: 201, body: { order: view } };
     })(c);
   });

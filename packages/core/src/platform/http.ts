@@ -62,7 +62,7 @@ export function tenantMiddleware(
  */
 export function idempotency(
   sql: Sql,
-  run: (c: Context) => Promise<{ status: number; body: unknown } | Response>,
+  run: (c: Context, tx: Sql) => Promise<{ status: number; body: unknown } | Response>,
 ): (c: Context) => Promise<Response> {
   return async (c) => {
     const key = c.req.header('idempotency-key');
@@ -70,20 +70,25 @@ export function idempotency(
     if (!key) {
       throw new HttpError(400, 'IDEMPOTENCY_KEY_REQUIRED', 'Idempotency-Key header is required');
     }
+    if (key.length > 200) {
+      throw new HttpError(400, 'BAD_REQUEST', 'Idempotency-Key too long');
+    }
     // Claim the key atomically: exactly one handler owns (tenant, key).
     // `on conflict` only "steals" a claim whose owner died mid-handler
     // (pending >30s) — a live owner's row makes the insert return nothing.
-    const claimed = await withTenant(
-      sql,
-      tenant.id,
-      (tx) => tx<{ key: string }[]>`
+    // The claim commits in its own tx so peers see the pending row; the
+    // expiry sweep keeps the unauthenticated table bounded.
+    const claimed = await withTenant(sql, tenant.id, async (tx) => {
+      const rows = await tx<{ key: string }[]>`
         insert into idempotency_keys (tenant_id, key) values (${tenant.id}, ${key})
         on conflict (tenant_id, key) do update set created_at = now()
           where idempotency_keys.response is null
             and idempotency_keys.created_at < now() - interval '30 seconds'
         returning key
-      `,
-    );
+      `;
+      await tx`delete from idempotency_keys where created_at < now() - interval '7 days'`;
+      return rows;
+    });
     if (!claimed[0]) {
       // Someone else owns the key: replay their stored response, or wait
       // briefly for it to land before telling the client to retry.
@@ -110,17 +115,19 @@ export function idempotency(
         'a request with this Idempotency-Key is still in flight — retry',
       );
     }
-    const result = await run(c);
-    if (result instanceof Response) return result;
-    await withTenant(
-      sql,
-      tenant.id,
-      (tx) =>
-        tx`
-        update idempotency_keys set response = ${tx.json(result.body as never)}, status_code = ${result.status}
+    // The handler's writes and its recorded response commit in one tx — a
+    // crash between them can't leave a committed mutation behind a pending
+    // claim that would later rerun it.
+    const result = await withTenant(sql, tenant.id, async (tx) => {
+      const r = await run(c, tx);
+      if (r instanceof Response) return r;
+      await tx`
+        update idempotency_keys set response = ${tx.json(r.body as never)}, status_code = ${r.status}
         where tenant_id = ${tenant.id} and key = ${key}
-      `,
-    );
+      `;
+      return r;
+    });
+    if (result instanceof Response) return result;
     return c.json(result.body as object, result.status as 200);
   };
 }

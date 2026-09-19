@@ -229,6 +229,7 @@ export function createApi(baseUrl = '') {
   const sf = (path: string) => `${baseUrl}/storefront/v1${path}`;
   const co = (path: string) => `${baseUrl}/checkout/v1${path}`;
   let token: string | null = readStoredToken();
+  let sessionPromise: Promise<{ cart: Cart }> | null = null;
   const auth = () => (token ? { authorization: `Bearer ${token}` } : {});
 
   return {
@@ -262,24 +263,32 @@ export function createApi(baseUrl = '') {
       }
     },
     async ensureSession(): Promise<{ cart: Cart }> {
-      // Fast path: an open cart reuses its token. A token pinned to a
-      // completed/abandoned cart rotates through POST /session (the server
-      // re-attaches open carts and mints fresh ones for spent tokens).
-      if (token) {
-        try {
-          const { cart } = await this.cart();
-          if (cart.status === 'open') return { cart };
-        } catch (err) {
-          if (!(err instanceof ApiError) || err.status !== 401) throw err;
+      // Single-flight: concurrent first mutations must share ONE session
+      // creation, or each would mint its own cart and only the last token
+      // would survive (losing the others' items).
+      sessionPromise ??= (async () => {
+        // Fast path: an open cart reuses its token. A token pinned to a
+        // completed/abandoned cart rotates through POST /session (the server
+        // re-attaches open carts and mints fresh ones for spent tokens).
+        if (token) {
+          try {
+            const { cart } = await this.cart();
+            if (cart.status === 'open') return { cart };
+          } catch (err) {
+            if (!(err instanceof ApiError) || err.status !== 401) throw err;
+          }
         }
-      }
-      const res = await apiFetch<{ sessionToken: string; cart: Cart }>(co('/session'), {
-        method: 'POST',
-        headers: { ...auth(), 'idempotency-key': idemKey() },
+        const res = await apiFetch<{ sessionToken: string; cart: Cart }>(co('/session'), {
+          method: 'POST',
+          headers: { ...auth(), 'idempotency-key': idemKey() },
+        });
+        token = res.sessionToken;
+        storeToken(token);
+        return { cart: res.cart };
+      })().finally(() => {
+        sessionPromise = null;
       });
-      token = res.sessionToken;
-      storeToken(token);
-      return { cart: res.cart };
+      return sessionPromise;
     },
     cart: () => apiFetch<{ cart: Cart }>(co('/cart'), { headers: auth() }),
     async addItem(productId: string, qty = 1, modifierIds: string[] = []): Promise<Cart> {
