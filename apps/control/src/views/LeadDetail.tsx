@@ -24,6 +24,17 @@ const AGENT_OPTS: [string, string][] = [
   ['auto', 'auto'],
 ];
 
+// stored websites are free text — linkify only values that normalize to an
+// absolute http(s) URL; anything else renders as plain text
+function httpUrl(raw: string): string | null {
+  try {
+    const u = new URL(/^https?:\/\//i.test(raw) ? raw : `https://${raw}`);
+    return u.protocol === 'http:' || u.protocol === 'https:' ? u.href : null;
+  } catch {
+    return null;
+  }
+}
+
 export default function LeadDetail() {
   const { id = '' } = useParams();
   const nav = useNavigate();
@@ -62,6 +73,7 @@ export default function LeadDetail() {
     );
 
   const patch = (p: Record<string, unknown>) => api.patchLead(lead.id, p).then(load);
+  const siteHref = lead.website ? httpUrl(lead.website) : null;
   const addNote = async () => {
     if (!note.trim()) return;
     await api.addActivity(lead.id, 'note', note);
@@ -153,12 +165,12 @@ export default function LeadDetail() {
               <div>
                 <div className="k">site</div>
                 <div className="v">
-                  {lead.website ? (
-                    <a href={lead.website} target="_blank" rel="noreferrer">
-                      {lead.website.replace(/^https?:\/\//, '')}
+                  {siteHref ? (
+                    <a href={siteHref} target="_blank" rel="noreferrer">
+                      {lead.website!.replace(/^https?:\/\//i, '')}
                     </a>
                   ) : (
-                    '—'
+                    (lead.website ?? '—')
                   )}
                 </div>
               </div>
