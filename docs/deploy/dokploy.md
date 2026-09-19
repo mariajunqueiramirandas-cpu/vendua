@@ -19,6 +19,7 @@ Copy `.env.example` into the service's environment and fill it in:
 | `POSTGRES_PASSWORD`      | Postgres superuser (migrations run as it)                       |
 | `VENDUA_APP_DB_PASSWORD` | `vendua_app` app role — rotated on migrate                      |
 | `SESSION_SECRET`         | signs `vst.*` session tokens — required, stable across restarts |
+| `CONTROL_SECRET`         | staff login key for the CRM at `/control/` — keep distinct      |
 | `SEED_DEMO`              | `1` seeds the three demo tenants on boot; `0` = empty platform  |
 | `SEED_DOMAINS`           | `slug:public-domain` per storefront — registers real domains    |
 | `VENDUA_PROXY_HOPS`      | XFF trusted suffix length — `1` for the Traefik→nginx chain     |
@@ -31,8 +32,11 @@ In Dokploy, assign a domain to each web service (port 80):
 
 - `site` → marketing domain (e.g. `vendua.example.com`)
 - `quero-pudim`, `brasa`, `forn` → each storefront's public domain
-- `core` → **internal only**; no domain needed. Storefront nginx proxies
-  `/storefront/v1`, `/checkout/v1`, and `/v1` to it.
+- `core` → **internal only** for storefront traffic: storefront nginx
+  proxies `/storefront/v1`, `/checkout/v1`, and `/v1` to it. The CRM lives
+  at `/control/` on the same service — attach a staff-only domain to `core`
+  (port 8787, e.g. `crm.example.com`) to reach it, or keep it undomained
+  and access it over a private network. Log in with `CONTROL_SECRET`.
 
 Then set `SEED_DOMAINS` to match, e.g.
 `quero-pudim:pudim.example.com,brasa:grill.example.com` — tenant routing is
