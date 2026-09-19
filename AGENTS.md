@@ -95,8 +95,9 @@ touch it.
   comments outstanding after a short quiet window. Never merge over
   failing CI or an unanswered important review thread. (`roadmap-executor`'s
   `auto` gate applies the same bar.)
-- Concurrency cap: this session plus at most 4 child sessions at a
-  time. Prefer in-session subagents when the session supports them;
+- Concurrency cap: at most 4 child sessions per run, spawned only by
+  the orchestrator session — a child session never spawns descendants.
+  Prefer in-session subagents when the session supports them;
   separate-VM child sessions are allowed up to that cap. Never exceed
   it — excess work queues, not spawns.
 - Never run destructive commands (rm -rf, git reset --hard, dropping data)

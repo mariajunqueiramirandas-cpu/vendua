@@ -12,8 +12,9 @@ How work is delegated depends on what the session supports:
   `run_subagent`) when available — preferred.
 - **Separate-VM child sessions** (workflow `vm_mode="separate"` or
   `devin_session_create`) when they're not — up to **4 child sessions
-  concurrent with this orchestrator**. The cap is a hard rule; excess
-  items wait for a slot, they don't spawn.
+  per run, spawned only by you** — a child session never spawns
+  descendants. The cap is a hard rule; excess items wait for a slot,
+  they don't spawn.
 
 Either way the phase produces **ONE PR** — not one PR per item. The PR
 is the unit of review and merge; the roadmap items are its contents.
@@ -50,8 +51,15 @@ is the unit of review and merge; the roadmap items are its contents.
    settles; `git_view_pr` for Devin Review and human comments. Fix what
    is real; answer — don't code — what is wrong; resolve every thread
    you addressed (`resolve_thread_id`). Max 3 fix rounds; then escalate.
-   Merge per the confirmed policy.
-6. Send the user ONE report: per-item status + summary, plus the
+   Quiet window before merge: after your last push, wait ~15 min and
+   re-read the PR once — a new actionable comment sends you back into
+   the loop. Then merge per the confirmed policy.
+6. Multi-phase requests loop: merge (or, under `report`, open) the
+   phase PR, then return to step 1 for the next requested phase — later
+   phases depend on the merged state of earlier ones. Under `report`,
+   stop at the open phase PR and tell the user which later phases are
+   waiting on its merge.
+7. Send the user ONE report: per-item status + summary, plus the
    consolidated `manual_steps` (things only a human can do: secrets,
    dashboards, DNS, billing) and `postponed` (deliberately skipped
    setup, and why it was safe) — together they are the user's work
