@@ -116,7 +116,9 @@ export interface CartItem {
   name: string;
   qty: number;
   unitPriceCents: number;
-  modifiers: { id: string; name: string; priceDeltaCents: number }[];
+  /** Live product availability — 'active' | 'sold_out' | 'archived'. */
+  productStatus: string;
+  modifiers: { id: string; name: string; priceDeltaCents: number; status: string }[];
   lineTotalCents: number;
 }
 
@@ -317,10 +319,12 @@ export function createApi(baseUrl = '') {
   };
 }
 
-/** Error codes emitted by Core — storefronts may switch on these. */
+/** Error codes emitted by Core — kept in sync with `HttpError` call sites in
+ *  packages/core (storefronts may switch on these; never invent others). */
 export const ERROR_CODES = [
   'TENANT_NOT_FOUND',
-  'SESSION_EXPIRED',
+  'TENANT_SUSPENDED',
+  'SESSION_REQUIRED',
   'CART_NOT_FOUND',
   'CART_NOT_OPEN',
   'PRODUCT_NOT_FOUND',
@@ -328,18 +332,24 @@ export const ERROR_CODES = [
   'MODIFIER_SOLD_OUT',
   'INVALID_MODIFIER',
   'MODIFIER_REQUIRED',
-  'MODIFIER_MAX',
+  'MODIFIER_LIMIT',
+  'INVALID_QTY',
   'EMPTY_CART',
   'STORE_CLOSED',
-  'BELOW_MIN_ORDER',
-  'PICKUP_DISABLED',
-  'DELIVERY_DISABLED',
+  'STORE_PAUSED',
+  'ORDER_MIN_NOT_MET',
+  'DELIVERY_UNAVAILABLE',
   'OUT_OF_ZONE',
   'INVALID_DELIVERY',
   'INVALID_CUSTOMER',
   'INVALID_PAYMENT',
   'ORDER_NOT_FOUND',
+  'INVALID_ORDER_TRANSITION',
+  'IDEMPOTENCY_KEY_REQUIRED',
+  'IDEMPOTENCY_IN_PROGRESS',
+  'RATE_LIMITED',
   'BAD_REQUEST',
+  'NOT_FOUND',
   'INTERNAL',
 ] as const;
 export type ErrorCode = (typeof ERROR_CODES)[number];
@@ -354,5 +364,3 @@ export type VenduaApi = ReturnType<typeof createApi>;
 export function formatCents(cents: number, currency = 'BRL', locale = 'pt-BR'): string {
   return new Intl.NumberFormat(locale, { style: 'currency', currency }).format(cents / 100);
 }
-/** @deprecated kept as a friendly alias — use formatCents. */
-export const formatBRL = (cents: number) => formatCents(cents, 'BRL', 'pt-BR');

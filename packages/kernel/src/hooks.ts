@@ -92,10 +92,11 @@ export function useDeliveryZones(): {
   zones: DeliveryZone[];
   loading: boolean;
   error: QueryError | undefined;
+  refetch: () => void;
 } {
   const { api } = useKernel();
   const q = useQuery('zones', () => api.zones());
-  return { zones: q.data?.zones ?? [], loading: q.loading, error: q.error };
+  return { zones: q.data?.zones ?? [], loading: q.loading, error: q.error, refetch: q.refetch };
 }
 
 export interface CartMutations {

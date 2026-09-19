@@ -47,6 +47,21 @@ export function validateCheckout(
     });
   }
   if (cart.items.length === 0) throw new HttpError(422, 'EMPTY_CART', 'cart is empty');
+  // Re-validate availability at checkout time — a product or modifier can go
+  // sold_out between carting and payment (Review finding).
+  for (const item of cart.items) {
+    if (item.productStatus !== 'active') {
+      throw new HttpError(409, 'SOLD_OUT', `"${item.name}" is no longer available`, {
+        productId: item.productId,
+      });
+    }
+    const soldOut = item.modifiers.find((m) => m.status === 'sold_out');
+    if (soldOut) {
+      throw new HttpError(409, 'MODIFIER_SOLD_OUT', `"${soldOut.name}" is sold out`, {
+        productId: item.productId,
+      });
+    }
+  }
   if (input.delivery.mode === 'delivery') {
     if (!settings?.delivery_enabled) {
       throw new HttpError(422, 'DELIVERY_UNAVAILABLE', 'delivery is not available');

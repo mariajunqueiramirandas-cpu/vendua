@@ -124,10 +124,22 @@ interface ApiErrorShape {
 // `resolved` is tracked separately from `data`: a fetcher that legitimately
 // resolves `undefined` (e.g. useCart without a session) must not read as
 // still-loading forever.
-const cache = new Map<
-  string,
-  { resolved?: boolean; data?: unknown; error?: ApiErrorShape; inflight?: Promise<void> }
->();
+//
+// The cache is scoped per api client (one per provider): a module-global map
+// would leak the previous tenant's store/cart into a remounted provider.
+type CacheEntry = {
+  resolved?: boolean;
+  data?: unknown;
+  error?: ApiErrorShape;
+  inflight?: Promise<void>;
+};
+const caches = new Map<VenduaApi, Map<string, CacheEntry>>();
+
+function cacheFor(api: VenduaApi): Map<string, CacheEntry> {
+  let c = caches.get(api);
+  if (!c) caches.set(api, (c = new Map()));
+  return c;
+}
 
 export function useQuery<T>(
   key: string,
@@ -135,8 +147,9 @@ export function useQuery<T>(
 ): QueryState<T> & {
   refetch: () => void;
 } {
-  const { subscribe } = useKernel();
+  const { api, subscribe, invalidate } = useKernel();
   const [, setTick] = useState(0);
+  const cache = cacheFor(api);
   const entry = cache.get(key) ?? {};
 
   useEffect(() => {
@@ -173,13 +186,15 @@ export function useQuery<T>(
     data: entry.data as T | undefined,
     error: entry.error,
     loading: !entry.resolved && !entry.error,
+    // Deleting alone leaves the key stable so the effect never re-fires —
+    // notify subscribers (this hook's `run` included) to actually fetch.
     refetch: () => {
       cache.delete(key);
-      setTick((t) => t + 1);
+      invalidate(key);
     },
   };
 }
 
 export function invalidateQuery(key: string) {
-  cache.delete(key);
+  for (const cache of caches.values()) cache.delete(key);
 }

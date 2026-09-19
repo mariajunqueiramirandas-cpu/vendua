@@ -114,6 +114,50 @@ lists:
   migration 0002 and surfaced on `/store`; quero-pudim seeds
   `doce/sacola/"Escolher meu doce"`.
 
+### Review hardening (PR #10 review findings — all landed in base)
+
+- **Order numbers had a read-then-insert race** — concurrent checkouts could
+  share `max(number)+1`; the checkout tx now takes
+  `pg_advisory_xact_lock(hashtext(tenant_id))` before computing the number.
+- **`GET /orders/:id` answered any authenticated session** — now scoped to
+  the session's cart (`and cart_id = ${cartId}`); foreign-cart reads → 404
+  `ORDER_NOT_FOUND`.
+- **Idempotency claim wasn't atomic** — placeholder-insert-then-catch let two
+  same-key requests both execute. Rewritten as a single-owner atomic claim
+  (`INSERT ... ON CONFLICT ... WHERE response IS NULL AND stale`); losers
+  poll for the stored response and replay it, else 409
+  `IDEMPOTENCY_IN_PROGRESS`.
+- **`x-forwarded-host` trusted unconditionally** — tenant resolution could be
+  hijacked off-CDN. `tenantMiddleware` gates XFH behind
+  `VENDUA_TRUST_PROXY=1` (default off; sets the same env on the rate
+  limiter's `x-forwarded-for` read).
+- **CORS allowed `*`** — now reflects only origins equal to the request Host
+  or resolving to a seeded domain.
+- **Cart mutations on completed carts** — every cart write now runs
+  `assertCartOpen` (409 `CART_NOT_OPEN` + `details.cartStatus`).
+- **Checkout re-validates availability** — items priced earlier could turn
+  `sold_out` before pay; `validateCheckout` re-checks product + modifier
+  status (409 `SOLD_OUT` / `MODIFIER_SOLD_OUT`).
+- **`nextOpen` never returned future days** — `delta <= 0` skipped every
+  candidate once today's open passed, so daily stores got no `resumesAt`.
+  Rewritten to wall-clock-exact candidates; drift correction absorbs tz
+  offset shifts.
+- **`/control/v1/state` was open** — now requires `x-vendua-control` matching
+  the session-signing secret, else 404.
+- **No rate limiting** — fixed-window limiter on `/checkout/v1/*`
+  (240/min per tenant+ip, 429 `RATE_LIMITED`).
+- **Kernel `useQuery` cache was module-global** — leaked across providers;
+  now keyed per `VenduaApi` instance.
+- **`refetch` didn't refetch** — it deleted cache without notifying; now
+  routes through `invalidate(key)`. `useDeliveryZones` exposes `refetch`.
+- **`formatBRL` alias removed** — `formatCents` only (clean cutover).
+- **`ERROR_CODES` drifted from the wire** — synced to Core's emitted set
+  (added `IDEMPOTENCY_IN_PROGRESS`, `RATE_LIMITED`, `TENANT_SUSPENDED`,
+  `MODIFIER_LIMIT`, `DELIVERY_UNAVAILABLE`, `ORDER_MIN_NOT_MET`,
+  `INVALID_ORDER_TRANSITION`, `NOT_FOUND`; dropped never-emitted codes).
+- **Kernel `CartItem` type lagged the wire** — `productStatus` + modifier
+  `status` fields declared.
+
 ### Feature gaps the reference ships that the platform can't express yet
 
 (From `quero-pudim` — each had an honest storefront fallback; details in its

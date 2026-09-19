@@ -33,7 +33,10 @@ export interface PricedItem {
   name: string;
   qty: number;
   unitPriceCents: number;
-  modifiers: { id: string; name: string; priceDeltaCents: number }[];
+  /** Live product status — storefronts badge lines that went unavailable
+   *  between carting and checkout; checkout revalidates against it. */
+  productStatus: string;
+  modifiers: { id: string; name: string; priceDeltaCents: number; status: string }[];
   lineTotalCents: number;
 }
 
@@ -129,8 +132,8 @@ async function loadPricedItems(tx: Sql, tenantId: string, cartId: string): Promi
   if (items.length === 0) return [];
   const modifierIds = items.flatMap((i) => i.modifier_ids);
   const mods = modifierIds.length
-    ? await tx<{ id: string; name: string; price_delta_cents: number }[]>`
-        select id, name, price_delta_cents from modifiers
+    ? await tx<{ id: string; name: string; price_delta_cents: number; status: string }[]>`
+        select id, name, price_delta_cents, status from modifiers
         where tenant_id = ${tenantId} and id = any(${modifierIds}::uuid[])
       `
     : [];
@@ -150,14 +153,31 @@ async function loadPricedItems(tx: Sql, tenantId: string, cartId: string): Promi
       name: item.name,
       qty: item.qty,
       unitPriceCents: unit,
+      productStatus: item.product_status,
       modifiers: chosen.map((m) => ({
         id: m.id,
         name: m.name,
         priceDeltaCents: m.price_delta_cents,
+        status: m.status,
       })),
       lineTotalCents: unit * item.qty,
     };
   });
+}
+
+/**
+ * Guards a mutation: the cart must exist and still be open. A completed cart
+ * is a 409 (not 404) — the resource exists, it just isn't mutable.
+ */
+export async function assertCartOpen(tx: Sql, tenantId: string, cartId: string): Promise<void> {
+  const rows = await tx<{ status: string }[]>`
+    select status from carts where tenant_id = ${tenantId} and id = ${cartId}
+  `;
+  const cart = rows[0];
+  if (!cart) throw new HttpError(404, 'CART_NOT_FOUND', 'cart not found');
+  if (cart.status !== 'open') {
+    throw new HttpError(409, 'CART_NOT_OPEN', 'cart is not open', { cartStatus: cart.status });
+  }
 }
 
 interface ZoneRow {

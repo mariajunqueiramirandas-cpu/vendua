@@ -24,7 +24,7 @@ export { SystemSurfaces, SurfaceRegion, GenericNotice } from './SystemSurfaces.t
 export type { NoticeOverrideProps } from './SystemSurfaces.tsx';
 export { ErrorBoundary } from './error-boundary.tsx';
 
-export { ApiError, ERROR_CODES, formatCents, formatBRL } from './api.ts';
+export { ApiError, ERROR_CODES, formatCents } from './api.ts';
 export type {
   ApiErrorBody,
   StoreProfile,

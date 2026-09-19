@@ -8,6 +8,7 @@ import {
   idempotency,
   mintSessionToken,
   bodyJson,
+  rateLimit,
   sessionCartId,
   tenantMiddleware,
   verifySessionToken,
@@ -16,7 +17,7 @@ import { TenantResolver, type Tenant } from './platform/tenancy.ts';
 import { getCatalog, getProduct, getProductById } from './modules/catalog.ts';
 import { deriveStatus, type StoreSettingsRow } from './modules/store.ts';
 import { composeNotices, type SurfacesEnvelope } from './modules/notices.ts';
-import { addItem, loadCartView, matchZone } from './modules/cart.ts';
+import { addItem, assertCartOpen, loadCartView, matchZone } from './modules/cart.ts';
 import { validateCheckout, validateCheckoutShape } from './modules/checkout.ts';
 import { loadOrderView } from './modules/orders.ts';
 import { LOADER_JS } from './loader.ts';
@@ -65,11 +66,30 @@ export function createApp({ sql, sessionSecret }: AppDeps) {
   const app = new Hono<{ Variables: { tenant: Tenant } }>();
 
   app.onError((err, c) => errorJson(err, c));
-  // Dev convenience: storefront vite dev servers on localhost:* call us cross-origin.
+  // VENDUA_TRUST_PROXY=1 marks a deployment behind the Venduá edge — only then
+  // do X-Forwarded-* headers carry routing truth (tenant spoofing otherwise).
+  const trustProxy = process.env.VENDUA_TRUST_PROXY === '1';
+  // CORS is not a blanket allow: the browser origin must be the request's own
+  // host (same-origin calls, incl. the vite dev proxy) or a registered tenant
+  // domain (cross-origin dev via a direct baseUrl).
   app.use(
     '*',
     cors({
-      origin: (o) => o || '*',
+      origin: async (o, c) => {
+        if (!o) return undefined;
+        let originHost: string;
+        try {
+          originHost = new URL(o).host;
+        } catch {
+          return null;
+        }
+        const reqHost =
+          (trustProxy ? c.req.header('x-forwarded-host') : undefined) ??
+          c.req.header('host') ??
+          '';
+        if (originHost === reqHost) return o;
+        return (await resolver.resolve(originHost)) ? o : null;
+      },
       allowHeaders: ['Content-Type', 'Authorization', 'Idempotency-Key'],
       credentials: true,
     }),
@@ -87,7 +107,7 @@ export function createApp({ sql, sessionSecret }: AppDeps) {
 
   // ------------------------- /storefront/v1 (public, host-scoped) ----------
   const storefront = new Hono<{ Variables: { tenant: Tenant } }>();
-  storefront.use('*', tenantMiddleware(resolver));
+  storefront.use('*', tenantMiddleware(resolver, { trustForwardedHost: trustProxy }));
 
   storefront.get('/store', async (c) => {
     const tenant = c.get('tenant');
@@ -184,7 +204,10 @@ export function createApp({ sql, sessionSecret }: AppDeps) {
 
   // ------------------------- /checkout/v1 (session-scoped) -----------------
   const checkout = new Hono<{ Variables: { tenant: Tenant } }>();
-  checkout.use('*', tenantMiddleware(resolver));
+  checkout.use('*', tenantMiddleware(resolver, { trustForwardedHost: trustProxy }));
+  // Public, unauthenticated mutation surface — bounded so a script can't grow
+  // carts/idempotency tables unboundedly (edge replaces this in prod).
+  checkout.use('*', rateLimit({ windowMs: 60_000, max: 240 }, { trustForwardedFor: trustProxy }));
 
   checkout.post('/session', async (c) => {
     const tenant = c.get('tenant');
@@ -234,10 +257,7 @@ export function createApp({ sql, sessionSecret }: AppDeps) {
       const cartId = await sessionCartId(c, sessionSecret);
       const body = await bodyJson(c);
       const cart = await withTenant(sql, tenant.id, async (tx) => {
-        const open =
-          await tx`select id from carts where tenant_id = ${tenant.id} and id = ${cartId} and status = 'open'`;
-        if (!open[0])
-          throw new HttpError(404, 'CART_NOT_FOUND', 'cart not found or already completed');
+        await assertCartOpen(tx, tenant.id, cartId);
         const productId = String(body.productId ?? '');
         const qty = Number(body.qty ?? 1);
         const modifierIds = Array.isArray(body.modifierIds) ? body.modifierIds.map(String) : [];
@@ -257,6 +277,7 @@ export function createApp({ sql, sessionSecret }: AppDeps) {
         throw new HttpError(422, 'INVALID_QTY', 'qty must be an integer between 0 and 99');
       }
       const cart = await withTenant(sql, tenant.id, async (tx) => {
+        await assertCartOpen(tx, tenant.id, cartId);
         if (qty === 0) {
           await tx`delete from cart_items where tenant_id = ${tenant.id} and cart_id = ${cartId} and id = ${c.req.param('itemId')}`;
         } else {
@@ -274,6 +295,7 @@ export function createApp({ sql, sessionSecret }: AppDeps) {
     return idempotency(sql, async () => {
       const cartId = await sessionCartId(c, sessionSecret);
       const cart = await withTenant(sql, tenant.id, async (tx) => {
+        await assertCartOpen(tx, tenant.id, cartId);
         await tx`delete from cart_items where tenant_id = ${tenant.id} and cart_id = ${cartId} and id = ${c.req.param('itemId')}`;
         return loadCartView(tx, tenant.id, cartId);
       });
@@ -291,9 +313,10 @@ export function createApp({ sql, sessionSecret }: AppDeps) {
         throw new HttpError(422, 'INVALID_DELIVERY', 'mode must be pickup or delivery');
       }
       const cart = await withTenant(sql, tenant.id, async (tx) => {
+        await assertCartOpen(tx, tenant.id, cartId);
         await tx`
           update carts set delivery = ${tx.json({ mode, neighborhood: typeof neighborhood === 'string' ? neighborhood : null, address: typeof address === 'string' ? address : null })}, updated_at = now()
-          where tenant_id = ${tenant.id} and id = ${cartId} and status = 'open'
+          where tenant_id = ${tenant.id} and id = ${cartId}
         `;
         return loadCartView(tx, tenant.id, cartId);
       });
@@ -350,6 +373,10 @@ export function createApp({ sql, sessionSecret }: AppDeps) {
           etaMax: zone?.eta_max_minutes ?? null,
         };
         const deliveryFee = body.delivery.mode === 'delivery' ? (zone?.fee_cents ?? 0) : 0;
+        // Serializes number allocation per tenant for this transaction —
+        // without it two concurrent checkouts read the same max and the
+        // unique constraint eats a valid order (Review finding).
+        await tx`select pg_advisory_xact_lock(hashtext(${tenant.id}))`;
         const number = (
           await tx<
             { n: number }[]
@@ -388,16 +415,21 @@ export function createApp({ sql, sessionSecret }: AppDeps) {
 
   checkout.get('/orders/:id', async (c) => {
     const tenant = c.get('tenant');
-    await sessionCartId(c, sessionSecret);
+    const cartId = await sessionCartId(c, sessionSecret);
     const order = await withTenant(sql, tenant.id, (tx) =>
-      loadOrderView(tx, tenant.id, c.req.param('id')),
+      loadOrderView(tx, tenant.id, c.req.param('id'), cartId),
     );
     return c.json({ order });
   });
 
   // ------------------------- /control/v1 (internal/dev) --------------------
-  // Phase 0: open in dev. Prod binds this surface to mTLS/private network.
+  // Internal surface — shared-secret gated even in dev (public otherwise:
+  // it answers for arbitrary tenant slugs). Prod binds it to mTLS/private
+  // network on top of this.
   app.get('/control/v1/state', async (c) => {
+    if (c.req.header('x-vendua-control') !== sessionSecret) {
+      throw new HttpError(404, 'NOT_FOUND', 'not found');
+    }
     const slug = c.req.query('tenant');
     if (!slug) throw new HttpError(400, 'BAD_REQUEST', 'tenant query param required');
     const tenant = await resolver.resolveBySlug(slug);

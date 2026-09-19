@@ -31,11 +31,18 @@ export function errorJson(err: unknown, c: Context) {
 
 type Vars = { tenant: Tenant };
 
-export function tenantMiddleware(resolver: TenantResolver): MiddlewareHandler<{
+export function tenantMiddleware(
+  resolver: TenantResolver,
+  opts: { trustForwardedHost?: boolean } = {},
+): MiddlewareHandler<{
   Variables: Vars;
 }> {
   return async (c, next) => {
-    const host = c.req.header('x-forwarded-host') ?? c.req.header('host') ?? '';
+    // X-Forwarded-Host is only meaningful when a trusted edge sets it —
+    // honoring it blindly lets any client pick a tenant (host-scoped
+    // spoofing). Off unless VENDUA_TRUST_PROXY=1.
+    const forwarded = opts.trustForwardedHost ? c.req.header('x-forwarded-host') : undefined;
+    const host = forwarded ?? c.req.header('host') ?? '';
     const tenant = await resolver.resolve(host);
     if (!tenant) {
       throw new HttpError(404, 'TENANT_NOT_FOUND', `no tenant for host "${host}"`);
@@ -63,30 +70,45 @@ export function idempotency(
     if (!key) {
       throw new HttpError(400, 'IDEMPOTENCY_KEY_REQUIRED', 'Idempotency-Key header is required');
     }
-    // Reads/writes go through withTenant so the RLS policy sees the GUC.
-    const existing = await withTenant(
+    // Claim the key atomically: exactly one handler owns (tenant, key).
+    // `on conflict` only "steals" a claim whose owner died mid-handler
+    // (pending >30s) — a live owner's row makes the insert return nothing.
+    const claimed = await withTenant(
       sql,
       tenant.id,
-      (tx) =>
-        tx<{ response: unknown; status_code: number }[]>`
-        select response, status_code from idempotency_keys
-        where tenant_id = ${tenant.id} and key = ${key}
+      (tx) => tx<{ key: string }[]>`
+        insert into idempotency_keys (tenant_id, key) values (${tenant.id}, ${key})
+        on conflict (tenant_id, key) do update set created_at = now()
+          where idempotency_keys.response is null
+            and idempotency_keys.created_at < now() - interval '30 seconds'
+        returning key
       `,
     );
-    // If the row exists but has no stored response a prior attempt crashed
-    // mid-handler; treat as no replay and let it run again.
-    const hit = existing[0];
-    if (hit?.response != null && hit.status_code != null) {
-      return c.json(hit.response, hit.status_code as 200, { 'x-idempotent-replay': 'true' });
-    }
-    try {
-      await withTenant(
-        sql,
-        tenant.id,
-        (tx) => tx`insert into idempotency_keys (tenant_id, key) values (${tenant.id}, ${key})`,
+    if (!claimed[0]) {
+      // Someone else owns the key: replay their stored response, or wait
+      // briefly for it to land before telling the client to retry.
+      const replay = await withTenant(sql, tenant.id, async (tx) => {
+        for (let i = 0; i < 25; i++) {
+          const rows = await tx<{ response: unknown; status_code: number }[]>`
+            select response, status_code from idempotency_keys
+            where tenant_id = ${tenant.id} and key = ${key}
+          `;
+          const hit = rows[0];
+          if (hit?.response != null && hit.status_code != null) return hit;
+          await new Promise((r) => setTimeout(r, 100));
+        }
+        return null;
+      });
+      if (replay) {
+        return c.json(replay.response, replay.status_code as 200, {
+          'x-idempotent-replay': 'true',
+        });
+      }
+      throw new HttpError(
+        409,
+        'IDEMPOTENCY_IN_PROGRESS',
+        'a request with this Idempotency-Key is still in flight — retry',
       );
-    } catch {
-      // Concurrent in-flight duplicate — replay check above will catch the next retry.
     }
     const result = await run(c);
     if (result instanceof Response) return result;
@@ -100,6 +122,36 @@ export function idempotency(
       `,
     );
     return c.json(result.body as object, result.status as 200);
+  };
+}
+
+/**
+ * Fixed-window rate limit, per (tenant, client-ip). In-memory — Phase 0 is a
+ * single-node skeleton; the distributed limiter lives at the edge in prod.
+ */
+export function rateLimit(
+  opts: { windowMs: number; max: number },
+  flags: { trustForwardedFor?: boolean } = {},
+): MiddlewareHandler<{
+  Variables: Vars;
+}> {
+  const hits = new Map<string, { count: number; resetAt: number }>();
+  return async (c, next) => {
+    const tenant = c.get('tenant') as Tenant;
+    // X-Forwarded-For is client-supplied without a trusted edge — key on it
+    // only when VENDUA_TRUST_PROXY=1, else a shared bucket per tenant.
+    const ip = flags.trustForwardedFor
+      ? (c.req.header('x-forwarded-for')?.split(',')[0]?.trim() ?? 'unknown')
+      : 'local';
+    const now = Date.now();
+    const k = `${tenant.id}|${ip}`;
+    const bucket = hits.get(k);
+    if (!bucket || bucket.resetAt <= now) {
+      hits.set(k, { count: 1, resetAt: now + opts.windowMs });
+    } else if (++bucket.count > opts.max) {
+      throw new HttpError(429, 'RATE_LIMITED', 'too many requests — retry later');
+    }
+    await next();
   };
 }
 

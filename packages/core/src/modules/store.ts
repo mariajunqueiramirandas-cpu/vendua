@@ -59,13 +59,17 @@ function hhmmToMinutes(t: string): number {
   return (h ?? 0) * 60 + (m ?? 0);
 }
 
-/** Wall-clock {day, minutes} of `instant` in `tz`, via Intl (no manual TZ math). */
-function localParts(instant: Date, tz: string): { day: number; minutes: number } {
+/** Wall-clock {day, minutes, seconds} of `instant` in `tz`, via Intl (no manual TZ math). */
+function localParts(
+  instant: Date,
+  tz: string,
+): { day: number; minutes: number; seconds: number } {
   const parts = new Intl.DateTimeFormat('en-US', {
     timeZone: tz,
     weekday: 'short',
     hour: '2-digit',
     minute: '2-digit',
+    second: '2-digit',
     hourCycle: 'h23',
   }).formatToParts(instant);
   const get = (type: string) => parts.find((p) => p.type === type)?.value ?? '';
@@ -79,7 +83,11 @@ function localParts(instant: Date, tz: string): { day: number; minutes: number }
     Sat: 6,
   };
   const day = dayMap[get('weekday')] ?? 0;
-  return { day, minutes: Number(get('hour')) * 60 + Number(get('minute')) };
+  return {
+    day,
+    minutes: Number(get('hour')) * 60 + Number(get('minute')),
+    seconds: Number(get('second')),
+  };
 }
 
 function withinWindow(dayMinutes: number, w: WeeklyWindow, day: number): boolean {
@@ -105,13 +113,19 @@ function nextOpen(hours: StoreHours, now: Date): Date | undefined {
   let best: { t: number; openMin: number } | undefined;
   for (let d = 0; d <= 8; d++) {
     const probe = new Date(now.getTime() + d * 86_400_000);
-    const { day, minutes } = localParts(probe, tz);
+    const { day, minutes, seconds } = localParts(probe, tz);
     for (const w of hours.windows) {
       if (!w.days.includes(day)) continue;
       const openMin = hhmmToMinutes(w.open);
-      const delta = openMin - minutes;
-      if (delta <= 0) continue; // opening already passed on that local day
-      const t = probe.getTime() + delta * 60_000;
+      // `probe` carries `now`'s time-of-day, so candidate = probe + (open −
+      // tod) − probe's local seconds/millis → lands on the wall-clock minute.
+      // A negative delta is fine for d>=1 — it just rewinds the probe to
+      // that day's opening wall time. What matters is whether the resulting
+      // instant is still in the future.
+      const t =
+        probe.getTime() + (openMin - minutes) * 60_000 - seconds * 1000 -
+        (probe.getTime() % 1000);
+      if (t <= now.getTime()) continue; // opening already passed
       if (!best || t < best.t) best = { t, openMin };
     }
     if (best && d === 0) break; // a same-day open is the earliest possible

@@ -78,11 +78,14 @@ export async function loadOrderView(
   tx: Sql,
   tenantId: string,
   orderId: string,
+  /** Session-scope: only the cart that produced the order may read it. */
+  cartId?: string,
 ): Promise<OrderView> {
   const rows = await tx<OrderRow[]>`
     select id, number, state, customer, delivery, payment,
            subtotal_cents, delivery_fee_cents, total_cents, placed_at
     from orders where tenant_id = ${tenantId} and id = ${orderId}
+    ${cartId ? tx`and cart_id = ${cartId}` : tx``}
   `;
   const order = rows[0];
   if (!order) throw new HttpError(404, 'ORDER_NOT_FOUND', 'order not found');
