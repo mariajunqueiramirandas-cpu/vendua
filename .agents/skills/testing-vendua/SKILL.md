@@ -95,10 +95,11 @@ Verify via `curl -H "Host: <slug-host>" localhost:8787/storefront/v1/store`.
 unsubscribed` if `unsubscribed_at` is set and `lead has no whatsapp` if
   the column is null (seeded leads have no whatsapp) — set one via SQL for
   a happy-path send; UI shows `falhou` on the bubble.
-- The seeded whatsapp thread (Padaria Trigo Real) has a single draft — to
-  exercise day separators or the 'atrasadas' task bucket, backdate
-  `lead_messages.created_at` / `lead_tasks.due_at` via SQL, e.g.
-  `now() - interval '1 day'`.
+- The seed creates no threads/messages — open a lead's conversas →
+  "+ whatsapp" (needs `lead.whatsapp` set — seeded leads have none; set via
+  SQL), then compose a draft. To exercise day separators or the
+  'atrasadas' task bucket, backdate `lead_messages.created_at` /
+  `lead_tasks.due_at` via SQL, e.g. `now() - interval '1 day'`.
 - No `psql` on the box — query via
   `docker exec core-postgres-1 psql -U vendua -d vendua -c "..."`. Pass `-i`
   or individual `-c` flags; heredoc stdin is silently dropped without `-i`.
