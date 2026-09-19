@@ -482,7 +482,16 @@ for (const t of TENANTS) {
     const tid = tenant.id;
 
     await tx`delete from domains where tenant_id = ${tid}`;
-    for (const host of t.hosts) {
+    // SEED_DOMAINS maps slug → public host(s), comma-separated entries:
+    //   SEED_DOMAINS="quero-pudim:pudim.example.com,brasa:brasa.example.com"
+    // This is how a deploy registers its real domains at seed time — the
+    // resolver routes on Host, so a storefront's public domain must exist here.
+    const extra = (process.env.SEED_DOMAINS ?? '')
+      .split(',')
+      .map((e) => e.trim().split(':'))
+      .filter(([slug]) => slug === t.slug)
+      .flatMap(([, hosts]) => (hosts ?? '').split('|').filter(Boolean));
+    for (const host of [...t.hosts, ...extra]) {
       await tx`insert into domains (host, tenant_id) values (${host}, ${tid})`;
     }
 

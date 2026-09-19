@@ -273,7 +273,49 @@ export function createApi(baseUrl = '') {
   let deliveryQueue: Promise<unknown> = Promise.resolve();
   const auth = () => (token ? { authorization: `Bearer ${token}` } : {});
 
-  return {
+  // Closure-scoped so public methods never depend on the call-site receiver —
+  // a destructured `checkout` must behave identically to `api.checkout()`.
+  const cartGet = () => apiFetch<{ cart: Cart }>(co('/cart'), { headers: auth() });
+
+  const clearSessionNow = () => {
+    token = null;
+    try {
+      globalThis.sessionStorage?.removeItem(SESSION_KEY);
+    } catch {
+      /* private mode */
+    }
+  };
+
+  const ensureSessionNow = async (): Promise<{ cart: Cart }> => {
+    // Single-flight: concurrent first mutations must share ONE session
+    // creation, or each would mint its own cart and only the last token
+    // would survive (losing the others' items).
+    sessionPromise ??= (async () => {
+      // Fast path: an open cart reuses its token. A token pinned to a
+      // completed/abandoned cart rotates through POST /session (the server
+      // re-attaches open carts and mints fresh ones for spent tokens).
+      if (token) {
+        try {
+          const { cart } = await cartGet();
+          if (cart.status === 'open') return { cart };
+        } catch (err) {
+          if (!(err instanceof ApiError) || err.status !== 401) throw err;
+        }
+      }
+      const res = await apiFetch<{ sessionToken: string; cart: Cart }>(co('/session'), {
+        method: 'POST',
+        headers: { ...auth(), 'idempotency-key': idemKey() },
+      });
+      token = res.sessionToken;
+      storeToken(token);
+      return { cart: res.cart };
+    })().finally(() => {
+      sessionPromise = null;
+    });
+    return sessionPromise;
+  };
+
+  return { 
     get sessionToken() {
       return token;
     },
@@ -295,45 +337,11 @@ export function createApi(baseUrl = '') {
       }),
 
     // checkout session
-    clearSession() {
-      token = null;
-      try {
-        globalThis.sessionStorage?.removeItem(SESSION_KEY);
-      } catch {
-        /* private mode */
-      }
-    },
-    async ensureSession(): Promise<{ cart: Cart }> {
-      // Single-flight: concurrent first mutations must share ONE session
-      // creation, or each would mint its own cart and only the last token
-      // would survive (losing the others' items).
-      sessionPromise ??= (async () => {
-        // Fast path: an open cart reuses its token. A token pinned to a
-        // completed/abandoned cart rotates through POST /session (the server
-        // re-attaches open carts and mints fresh ones for spent tokens).
-        if (token) {
-          try {
-            const { cart } = await this.cart();
-            if (cart.status === 'open') return { cart };
-          } catch (err) {
-            if (!(err instanceof ApiError) || err.status !== 401) throw err;
-          }
-        }
-        const res = await apiFetch<{ sessionToken: string; cart: Cart }>(co('/session'), {
-          method: 'POST',
-          headers: { ...auth(), 'idempotency-key': idemKey() },
-        });
-        token = res.sessionToken;
-        storeToken(token);
-        return { cart: res.cart };
-      })().finally(() => {
-        sessionPromise = null;
-      });
-      return sessionPromise;
-    },
-    cart: () => apiFetch<{ cart: Cart }>(co('/cart'), { headers: auth() }),
+    clearSession: clearSessionNow,
+    ensureSession: ensureSessionNow,
+    cart: cartGet,
     async addItem(productId: string, qty = 1, modifierIds: string[] = []): Promise<Cart> {
-      await this.ensureSession();
+      await ensureSessionNow();
       const res = await apiFetch<{ cart: Cart }>(co('/cart/items'), {
         method: 'POST',
         headers: { ...auth(), 'idempotency-key': idemKey() },
@@ -353,10 +361,16 @@ export function createApi(baseUrl = '') {
         headers: { ...auth(), 'idempotency-key': idemKey() },
       }).then((r) => r.cart),
     setDelivery: (delivery: { mode: 'pickup' | 'delivery'; neighborhood?: string }) => {
+      // Bind the token at call time: a queued write must target the cart it
+      // was issued for — if checkout rotated the session before it runs, the
+      // server rejects it against the completed cart (CART_NOT_OPEN) instead
+      // of silently redirecting the delivery choice onto the fresh cart.
+      const bound = token;
+      const bearer = bound ? { authorization: `Bearer ${bound}` } : {};
       const p = deliveryQueue.then(() =>
         apiFetch<{ cart: Cart }>(co('/cart/delivery'), {
           method: 'POST',
-          headers: { ...auth(), 'idempotency-key': idemKey() },
+          headers: { ...bearer, 'idempotency-key': idemKey() },
           body: JSON.stringify(delivery),
         }).then((r) => r.cart),
       );
@@ -381,8 +395,8 @@ export function createApi(baseUrl = '') {
       // the purchased items. A rotation failure must not mask a successful
       // checkout: the next mutation re-mints on demand.
       try {
-        this.clearSession();
-        await this.ensureSession();
+        clearSessionNow();
+        await ensureSessionNow();
       } catch {
         /* order placed; session heals lazily */
       }
