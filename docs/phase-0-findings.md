@@ -355,7 +355,8 @@ OBSERVATIONS.md `## Feature gaps`. Candidates for Contract v1 or Phase 1+.)
   `loadPricedItems` prices from the snapshot and joins catalog rows only for
   live availability (`productStatus`/modifier status). A merchant price edit
   no longer alters an open cart or its checkout total — verified live
-  (add at 1990 → raise to 2690 → cart and order hold 2490/1990).
+  (add at 1990 → raise to 2490 → cart still reads 1990; order placed after
+  the raise commits the snapshotted total, not the live price).
 - **Oversized modifier arrays reject** — >32 `modifierIds` returns
   422 BAD_REQUEST instead of silently truncating the accepted line.
 - **`useQuery` re-runs on api change** — a `baseUrl` swap remints the client
