@@ -82,16 +82,7 @@ export default function Discovery() {
 
       <div className="grid2" style={{ alignItems: 'start' }}>
         <div>
-          <h3
-            style={{
-              fontFamily: 'var(--font-serif)',
-              fontStyle: 'italic',
-              fontWeight: 400,
-              marginBottom: 10,
-            }}
-          >
-            leads descobertos
-          </h3>
+          <h3 className="sec-t">leads descobertos</h3>
           <div className="card">
             <table className="tbl">
               <tbody>
@@ -130,14 +121,7 @@ export default function Discovery() {
 
           {dupes.length > 0 && (
             <>
-              <h3
-                style={{
-                  fontFamily: 'var(--font-serif)',
-                  fontStyle: 'italic',
-                  fontWeight: 400,
-                  margin: '18px 0 10px',
-                }}
-              >
+              <h3 className="sec-t" style={{ marginTop: 18 }}>
                 possíveis duplicados
               </h3>
               <div className="card" style={{ padding: 14 }}>
@@ -163,16 +147,7 @@ export default function Discovery() {
         </div>
 
         <div>
-          <h3
-            style={{
-              fontFamily: 'var(--font-serif)',
-              fontStyle: 'italic',
-              fontWeight: 400,
-              marginBottom: 10,
-            }}
-          >
-            runs de descoberta
-          </h3>
+          <h3 className="sec-t">runs de descoberta</h3>
           <div className="card">
             <table className="tbl">
               <tbody>

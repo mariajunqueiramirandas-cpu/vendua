@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Plus, Upload, Download } from 'lucide-react';
 import { api, type LeadListItem } from '../api.ts';
-import { Empty, Page, StateChip, fmtMoney, rel } from '../components.tsx';
+import { Empty, Page, ScoreBar, StateChip, fmtMoney, rel } from '../components.tsx';
 
 export default function Leads() {
   const [leads, setLeads] = useState<LeadListItem[]>([]);
@@ -151,7 +151,9 @@ export default function Leads() {
                   <td>{l.segment ?? '—'}</td>
                   <td>{l.city ?? '—'}</td>
                   <td className="mono">{fmtMoney(l.dealValueCents)}</td>
-                  <td className="mono">{l.score}</td>
+                  <td>
+                    <ScoreBar score={l.score} />
+                  </td>
                   <td>
                     {l.agentMode !== 'off' ? (
                       <span className="chip agent">{l.agentMode}</span>
@@ -238,12 +240,22 @@ function NewLead({ onClose }: { onClose: (created: boolean) => void }) {
     </div>
   );
 
+  useEffect(() => {
+    const onEsc = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') onClose(false);
+    };
+    window.addEventListener('keydown', onEsc);
+    return () => window.removeEventListener('keydown', onEsc);
+  }, [onClose]);
+
   return (
-    <div className="drawer">
-      <div className="d-head">
-        <b>novo lead</b>
-      </div>
-      <form onSubmit={submit} style={{ display: 'contents' }}>
+    <>
+      <div className="scrim" onClick={() => onClose(false)} />
+      <div className="drawer" role="dialog" aria-label="novo lead">
+        <div className="d-head">
+          <b>novo lead</b>
+        </div>
+        <form onSubmit={submit} style={{ display: 'contents' }}>
         <div className="d-body">
           {field('name', 'nome *')}
           {field('businessName', 'negócio')}
@@ -266,7 +278,8 @@ function NewLead({ onClose }: { onClose: (created: boolean) => void }) {
             cancelar
           </button>
         </div>
-      </form>
-    </div>
+        </form>
+      </div>
+    </>
   );
 }

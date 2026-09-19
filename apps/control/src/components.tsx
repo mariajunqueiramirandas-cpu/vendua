@@ -1,4 +1,4 @@
-import type { ReactNode } from 'react';
+import { useEffect, useState, type ReactNode } from 'react';
 
 /** Page chrome — serif display title + count/context line + actions. */
 export function Page({
@@ -42,6 +42,64 @@ export function StateChip({ state }: { state: string }) {
     live: 'ativo',
   };
   return <span className={`chip state-${state}`}>{label[state] ?? state}</span>;
+}
+
+/** Monogram puck — marks a person/thread across the app. */
+export function Avatar({ name, lg }: { name: string; lg?: boolean }) {
+  const init = name
+    .trim()
+    .split(/\s+/)
+    .slice(0, 2)
+    .map((w) => w[0])
+    .join('')
+    .toUpperCase();
+  return (
+    <span className={`avatar${lg ? ' lg' : ''}`} aria-hidden>
+      {init || '·'}
+    </span>
+  );
+}
+
+/** Score 0–100 as a sliver + tabular number. */
+export function ScoreBar({ score }: { score: number }) {
+  const pct = Math.max(0, Math.min(100, score));
+  return (
+    <span className="scorebar" title={`score ${score}`}>
+      <span className="rail-m">
+        <i style={{ width: `${pct}%` }} />
+      </span>
+      <span className="mono">{score}</span>
+    </span>
+  );
+}
+
+/** Two-tap confirm for destructive actions — arms red, fires on second click. */
+export function ConfirmBtn({
+  children,
+  confirm = 'confirmar?',
+  onConfirm,
+  className = '',
+}: {
+  children: ReactNode;
+  confirm?: string;
+  onConfirm: () => void;
+  className?: string;
+}) {
+  const [arm, setArm] = useState(false);
+  useEffect(() => {
+    if (!arm) return;
+    const t = setTimeout(() => setArm(false), 2600);
+    return () => clearTimeout(t);
+  }, [arm]);
+  return (
+    <button
+      className={`btn ${className}${arm ? ' arm' : ''}`}
+      onClick={() => (arm ? (setArm(false), onConfirm()) : setArm(true))}
+      onBlur={() => setArm(false)}
+    >
+      {arm ? confirm : children}
+    </button>
+  );
 }
 
 export const fmtMoney = (cents: number | null | undefined) =>

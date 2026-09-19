@@ -38,10 +38,12 @@ docs/            normative architecture, ADRs, roadmap — read before designing
 ## Setup — fresh machine / Devin Cloud
 
 ```sh
-export PATH="$HOME/.bun/bin:$PATH"  # bun is NOT on PATH by default
 bun install                       # workspace root; bun.lock is authoritative
 bunx playwright install chromium  # once, required for test:e2e
 ```
+
+(`bun` is preinstalled on PATH — `~/.local/bin/bun` on Devin machines.
+If `which bun` fails on a fresh box, it lives at `~/.bun/bin/bun`.)
 
 Bun 1.4.2 (pinned in `packageManager`). Core needs Postgres — see
 `packages/core` below.

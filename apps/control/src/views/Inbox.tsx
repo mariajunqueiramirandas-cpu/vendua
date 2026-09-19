@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { Bot, Send } from 'lucide-react';
 import { api, type ThreadItem, type ThreadView } from '../api.ts';
-import { Empty, Page, StateChip, rel } from '../components.tsx';
+import { Avatar, Empty, Page, StateChip, rel } from '../components.tsx';
 
 const CH_LABEL: Record<string, string> = { email: 'email', whatsapp: 'whats', manual: 'manual' };
 
@@ -74,14 +74,17 @@ export default function InboxView() {
               className={`thread-row${t.id === threadId ? ' active' : ''}`}
               onClick={() => nav(`/inbox/${t.id}`)}
             >
-              <div className="who">
-                <b>{t.leadName}</b>
-                {t.businessName && (
-                  <span style={{ color: 'var(--muted)', fontSize: 'var(--t-2xs)' }}>
-                    {t.businessName}
-                  </span>
-                )}
-                <span className="ch">
+              <Avatar name={t.leadName} />
+              <span className="tr-main">
+                <span className="tr-top">
+                  <b>{t.leadName}</b>
+                  <time>{rel(t.lastMessageAt)}</time>
+                </span>
+                <span className="last">
+                  {t.lastDirection === 'out' ? 'você: ' : ''}
+                  {t.lastBody ?? 'sem mensagens'}
+                </span>
+                <span className="tr-chips">
                   {t.needsReply && <span className="chip warn">responder</span>}
                   {t.pendingDrafts > 0 && (
                     <span className="chip warn">{t.pendingDrafts} rasc.</span>
@@ -93,14 +96,7 @@ export default function InboxView() {
                   )}
                   <span className="chip">{CH_LABEL[t.channel]}</span>
                 </span>
-              </div>
-              <div className="last">{t.lastBody ?? 'sem mensagens'}</div>
-              <div
-                className="mono"
-                style={{ fontSize: 'var(--t-2xs)', color: 'var(--muted)', marginTop: 2 }}
-              >
-                {rel(t.lastMessageAt)}
-              </div>
+              </span>
             </button>
           ))}
           {!threads.length && (
@@ -116,27 +112,25 @@ export default function InboxView() {
         ) : (
           <div className="thread-view">
             <div className="thread-head">
-              <Link to={`/leads/${view.thread.leadId}`}>
-                <b>{view.lead.name}</b>
-              </Link>
+              <Avatar name={view.lead.name} lg />
+              <div style={{ minWidth: 0 }}>
+                <Link to={`/leads/${view.thread.leadId}`}>
+                  <b>{view.lead.name}</b>
+                </Link>
+                <div
+                  style={{
+                    fontSize: 'var(--t-2xs)',
+                    color: 'var(--muted)',
+                    overflow: 'hidden',
+                    textOverflow: 'ellipsis',
+                    whiteSpace: 'nowrap',
+                  }}
+                >
+                  {view.thread.subject ?? CH_LABEL[view.thread.channel]}
+                </div>
+              </div>
               <StateChip state={view.lead.state} />
-              <span className="chip">{CH_LABEL[view.thread.channel]}</span>
-              {view.thread.subject && (
-                <span style={{ color: 'var(--muted)', fontSize: 'var(--t-xs)' }}>
-                  {view.thread.subject}
-                </span>
-              )}
-              <label
-                style={{
-                  marginLeft: 'auto',
-                  display: 'flex',
-                  gap: 5,
-                  alignItems: 'center',
-                  fontSize: 'var(--t-xs)',
-                  color: 'var(--muted)',
-                }}
-              >
-                <Bot size={13} /> agente
+              <label className="tgl" style={{ marginLeft: 'auto' }}>
                 <input
                   type="checkbox"
                   checked={view.thread.agentEnabled}
@@ -144,29 +138,47 @@ export default function InboxView() {
                     void api.setThreadAgent(view.thread.id, e.target.checked).then(loadThread)
                   }
                 />
+                <span className="tk" />
+                <span className="lbl">agente</span>
               </label>
             </div>
             <div className="thread-msgs">
-              {view.messages.map((m) => (
-                <div key={m.id} className={`msg ${m.direction}`}>
-                  {m.body}
-                  <div className="m-meta">
-                    {m.author === 'agent' && (
-                      <span className="chip agent" style={{ fontSize: '0.85em' }}>
-                        agente
-                      </span>
-                    )}
-                    {m.status === 'draft' && <span className="draft">rascunho</span>}
-                    {m.status === 'failed' && (
-                      <span style={{ color: 'var(--red-400)' }}>falhou</span>
-                    )}
-                    {m.status === 'rejected' && (
-                      <span style={{ color: 'var(--red-400)' }}>rejeitado</span>
-                    )}
-                    <span>{rel(m.createdAt)}</span>
+              {view.messages.map((m, i) => {
+                const day = new Date(m.createdAt).toLocaleDateString('pt-BR', {
+                  day: '2-digit',
+                  month: 'short',
+                });
+                const prevDay =
+                  i > 0
+                    ? new Date(view.messages[i - 1]!.createdAt).toLocaleDateString('pt-BR', {
+                        day: '2-digit',
+                        month: 'short',
+                      })
+                    : null;
+                return (
+                  <div key={m.id} style={{ display: 'contents' }}>
+                    {day !== prevDay && <div className="day-sep">{day}</div>}
+                    <div className={`msg ${m.direction}`}>
+                      {m.body}
+                      <div className="m-meta">
+                        {m.author === 'agent' && (
+                          <span className="chip agent" style={{ fontSize: '0.85em' }}>
+                            agente
+                          </span>
+                        )}
+                        {m.status === 'draft' && <span className="draft">rascunho</span>}
+                        {m.status === 'failed' && (
+                          <span style={{ color: 'var(--red-400)' }}>falhou</span>
+                        )}
+                        {m.status === 'rejected' && (
+                          <span style={{ color: 'var(--red-400)' }}>rejeitado</span>
+                        )}
+                        <span>{rel(m.createdAt)}</span>
+                      </div>
+                    </div>
                   </div>
-                </div>
-              ))}
+                );
+              })}
               <div ref={endRef} />
             </div>
             <div className="composer">

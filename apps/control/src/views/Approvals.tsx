@@ -68,7 +68,9 @@ export default function Approvals() {
               <Link to={`/leads/${d.leadId}`}>
                 <b>{d.leadName}</b>
               </Link>
-              {d.businessName && <span style={{ color: 'var(--muted)' }}>{d.businessName}</span>}
+              {d.businessName && d.businessName !== d.leadName && (
+                <span style={{ color: 'var(--muted)' }}>{d.businessName}</span>
+              )}
               <span
                 className="mono"
                 style={{ marginLeft: 'auto', fontSize: 'var(--t-2xs)', color: 'var(--muted)' }}
@@ -84,7 +86,7 @@ export default function Approvals() {
                 autoFocus
               />
             ) : (
-              <div style={{ whiteSpace: 'pre-wrap' }}>{d.body}</div>
+              <div className="d-bubble">{d.body}</div>
             )}
             {results[d.id] && (
               <div style={{ marginTop: 6, fontSize: 'var(--t-xs)', color: 'var(--muted)' }}>

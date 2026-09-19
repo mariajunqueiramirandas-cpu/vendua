@@ -12,8 +12,7 @@ None — everything runs locally against a seeded Postgres.
 ## Stack bring-up
 
 ```sh
-export PATH="$HOME/.bun/bin:$PATH"          # bun is not on PATH by default
-cd packages/core
+cd packages/core                            # bun is on PATH (~/.local/bin/bun)
 docker compose up -d                        # postgres :5433, vendua/vendua
 bun run migrate && bun run seed             # schema + 3 seeded tenants
 SESSION_SECRET=test-secret bun run dev      # API :8787 — REQUIRED for /control routes
