@@ -118,6 +118,31 @@ unsubscribed` if `unsubscribed_at` is set and `lead has no whatsapp` if
 - Old notes: cookie-auth mutations need `x-vendua-staff: 1` (CSRF);
   Idempotency-Key required → replay → 200 + `x-idempotent-replay`.
 
+## Config page (#/config) specifics
+
+- Login: after typing the password, screenshot-check the masked dot count
+  before submitting — a partial `type` (e.g. only 1 char lands) produces a
+  misleading "chave incorreta" even though the key is right.
+- Provider-card `testar` chips are per-card useState — cleared on driver
+  switch; only the latest result shows per card.
+- whatsapp → baileys: the dark pair panel renders as soon as `baileys` is
+  selected in the seg (the enabled check is against the *current* row, not
+  the pending driver) — preview shows "whatsapp desligado" before save.
+- From this box the baileys socket DOES reach WhatsApp — real QR renders
+  (`<img class="wa-qr">`, status 'qr') within ~2s of enabling, and
+  `gerar código` with a valid 10–15-digit phone returns a real 8-char code.
+  Invalid phone (<10 digits) → inline "número inválido…" without touching
+  the socket — deterministic error path for testing.
+- `desconectar número` only renders at status 'open' (i.e. a real phone
+  actually paired) — unreachable without a WhatsApp account on hand.
+- Switching whatsapp back to `log` tears the socket down
+  (`GET /control/v1/wa/qr` → `{"qr":null,"status":"off"}`) — verify restore
+  via `GET /control/v1/integrations`.
+- openrouter `testar` can transiently fail `✗ internal error` on the first
+  call right after enabling (free-model cold start); retry once before
+  reporting a bug — a direct curl to `POST …/integrations/llm/test`
+  (cookie-auth + `x-vendua-staff: 1`) distinguishes UI vs backend failure.
+
 ## Kernel query-cache wedge (known gap)
 
 `useQuery` never refetches an already-`resolved` entry on mount — including

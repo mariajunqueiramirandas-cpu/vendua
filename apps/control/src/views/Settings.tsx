@@ -384,6 +384,7 @@ function ProviderCard({
               className={dd.d === driver ? 'sel' : ''}
               onClick={() => {
                 setDriver(dd.d);
+                setTest(null);
                 // Drivers read different env vars and config keys — switching
                 // must not drag the previous driver's secretRef/model along.
                 if (dd.d === baseline.driver) {
