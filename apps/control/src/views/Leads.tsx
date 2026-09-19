@@ -256,28 +256,28 @@ function NewLead({ onClose }: { onClose: (created: boolean) => void }) {
           <b>novo lead</b>
         </div>
         <form onSubmit={submit} style={{ display: 'contents' }}>
-        <div className="d-body">
-          {field('name', 'nome *')}
-          {field('businessName', 'negócio')}
-          {field('whatsapp', 'whatsapp', '+55 85 9…')}
-          {field('email', 'email')}
-          {field('instagram', 'instagram', '@perfil')}
-          <div className="grid2">
-            {field('city', 'cidade')}
-            {field('segment', 'segmento')}
+          <div className="d-body">
+            {field('name', 'nome *')}
+            {field('businessName', 'negócio')}
+            {field('whatsapp', 'whatsapp', '+55 85 9…')}
+            {field('email', 'email')}
+            {field('instagram', 'instagram', '@perfil')}
+            <div className="grid2">
+              {field('city', 'cidade')}
+              {field('segment', 'segmento')}
+            </div>
+            {field('source', 'origem')}
+            {field('deal', 'valor estimado (R$)')}
+            {err && <div style={{ color: 'var(--red-400)', fontSize: 'var(--t-xs)' }}>{err}</div>}
           </div>
-          {field('source', 'origem')}
-          {field('deal', 'valor estimado (R$)')}
-          {err && <div style={{ color: 'var(--red-400)', fontSize: 'var(--t-xs)' }}>{err}</div>}
-        </div>
-        <div className="d-foot">
-          <button className="btn primary" disabled={busy || !f.name.trim()}>
-            criar
-          </button>
-          <button className="btn ghost" type="button" onClick={() => onClose(false)}>
-            cancelar
-          </button>
-        </div>
+          <div className="d-foot">
+            <button className="btn primary" disabled={busy || !f.name.trim()}>
+              criar
+            </button>
+            <button className="btn ghost" type="button" onClick={() => onClose(false)}>
+              cancelar
+            </button>
+          </div>
         </form>
       </div>
     </>

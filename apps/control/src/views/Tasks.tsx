@@ -69,9 +69,7 @@ export default function Tasks() {
                         <input
                           type="checkbox"
                           checked={!!t.doneAt}
-                          onChange={(e) =>
-                            void api.setTaskDone(t.id, e.target.checked).then(load)
-                          }
+                          onChange={(e) => void api.setTaskDone(t.id, e.target.checked).then(load)}
                         />
                       </td>
                       <td
