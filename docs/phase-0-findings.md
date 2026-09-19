@@ -419,7 +419,7 @@ OBSERVATIONS.md `## Feature gaps`. Candidates for Contract v1 or Phase 1+.)
   after the 30s lease. The `raw` outcome branch is deleted; every mutation
   must return `{ status, body }`.
 - **Body cap counts bytes** — `bodyJson` now measures `TextEncoder().encode(
-  raw).byteLength`, so multibyte payloads can't slip a >32KB body past the
+raw).byteLength`, so multibyte payloads can't slip a >32KB body past the
   `raw.length` check. Verified: a 102KB UTF-8 body → `413 PAYLOAD_TOO_LARGE`.
 - **Product CTA shows components, not a computed total** — the quero-pudim
   product page (and its `_examples` golden) renders catalog unit price +
