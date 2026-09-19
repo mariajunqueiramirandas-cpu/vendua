@@ -63,7 +63,7 @@ Goal: storefronts are _produced_, not hand-built — and the repo enforces it.
 - [x] Freeze Contract v1 ([03](architecture/03-storefront-contract.md)):
       `vendua.config.ts`, required mounts, reserved system routes, primitives,
       budgets, dependency policy.
-- [ ] `@vendua/conformance` v1: commerce flow, paused/closed states, viewports,
+- [x] `@vendua/conformance` v1: commerce flow, paused/closed states, viewports,
       a11y baseline, byte budget — modeled on the teaser site's existing suite
       (see `site/tests/site.spec.ts` and `site/VALIDACAO.md`).
 - [x] `@vendua/cli`: `scaffold`, `dev`, `check`, `build`, `qa`.
