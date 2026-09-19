@@ -95,6 +95,11 @@ touch it.
   comments outstanding after a short quiet window. Never merge over
   failing CI or an unanswered important review thread. (`roadmap-executor`'s
   `auto` gate applies the same bar.)
+- Never fan out child sessions. Orchestration mode (`run-roadmap`) is
+  orchestrator + exactly ONE child session at a time — every separate-VM
+  session counts against the org's concurrency cap. A worker session
+  never spawns children; parallelize inside a session with same-VM
+  subagents instead.
 - Never run destructive commands (rm -rf, git reset --hard, dropping data)
   without explicit confirmation.
 - Never fabricate: no unverified claims, invented APIs, or "done" without
@@ -133,7 +138,11 @@ Mirrored in `.omp/RULES.md` for omp's sticky-rule enforcement — keep in sync.
   separable and big enough to justify a fresh context: an independent
   module, a read-only investigation running alongside implementation, a
   verification pass on a large change, or an explicit fan-out the user
-  asked for (e.g. `run-roadmap` executors).
+  asked for (e.g. `run-roadmap`).
+- Prefer heavy use of same-VM subagents (shared-VM workflow agents, the
+  persistent sidekick) over child sessions — a child session is reserved
+  for orchestration mode, which is exactly one child at a time.
+  Subagents that edit the same repo work in separate `git worktree`s.
 - When you do delegate:
   - Devin Cloud: read the profile file and pass its body verbatim as the
     child-session or workflow-agent prompt.

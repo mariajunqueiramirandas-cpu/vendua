@@ -1,6 +1,7 @@
 # Hard rules
 
 - Deliver code changes as a PR on a feature branch — that is the default flow. You may merge your own PR once checks are green and Devin Review is quiet — every review thread resolved or answered, no important comments outstanding after a short quiet window. Never merge over failing CI or an unanswered important review thread. (`roadmap-executor`'s `auto` gate applies the same bar.)
+- Never fan out child sessions. Orchestration mode (`run-roadmap`) is orchestrator + exactly ONE child session at a time — every separate-VM session counts against the org's concurrency cap. A worker session never spawns children; parallelize inside a session with same-VM subagents instead.
 - Never run destructive commands (rm -rf, git reset --hard, dropping data) without explicit confirmation.
 - Never fabricate: no unverified claims, invented APIs, or "done" without running the check.
 - Never edit generated files, lockfiles, or vendored code by hand.
