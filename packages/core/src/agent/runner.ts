@@ -171,29 +171,38 @@ export async function runOnce(sql: Sql): Promise<boolean> {
    *  the trajectory live instead of a silent 'running' chip — AND refreshes
    *  started_at, which doubles as the reclaim lease in drain(). Fenced by
    *  claim_token: a stale worker's write no-ops once a new claim owns the
-   *  row. */
-  const persist = async (extra: unknown[] = []): Promise<void> => {
-    if (lost) return;
-    const rows = await controlTx(
-      sql,
-      (tx) => tx`
-        update agent_runs set started_at = now(), steps = ${tx.json([...steps, ...extra] as never[])}
-        where id = ${run.id} and status = 'running' and claim_token = ${run.claim_token}
-        returning id
-      `,
-    );
-    if (!rows.length) lost = true;
+   *  row. Writes serialize on `tail` and each snapshots [...steps, ...extra]
+   *  when its turn begins, so parallel tool resolutions can only advance the
+   *  journal — a delayed write never re-commits an older pending state. */
+  let tail: Promise<void> = Promise.resolve();
+  const persist = (extra: unknown[] = []): Promise<void> => {
+    const p = tail.then(async () => {
+      if (lost) return;
+      const rows = await controlTx(
+        sql,
+        (tx) => tx`
+          update agent_runs set started_at = now(), steps = ${tx.json([...steps, ...extra] as never[])}
+          where id = ${run.id} and status = 'running' and claim_token = ${run.claim_token}
+          returning id
+        `,
+      );
+      if (!rows.length) lost = true;
+    });
+    tail = p.catch(() => undefined);
+    return p;
   };
 
   /** Journal write for an aborted run — the trajectory up to cancellation is
    *  still the audit trail, so keep it when the cancel endpoint flipped the
-   *  row mid-flight. No-op when a new claim already owns the row. */
+   *  row mid-flight. Fenced by claim_token like every other write: a stale
+   *  worker can't overwrite the newer execution's journal. */
   const persistAborted = async (): Promise<void> => {
+    await tail.catch(() => undefined);
     await controlTx(
       sql,
       (tx) => tx`
         update agent_runs set steps = ${tx.json(steps as never[])}, finished_at = now()
-        where id = ${run.id} and status = 'canceled'
+        where id = ${run.id} and status = 'canceled' and claim_token = ${run.claim_token}
       `,
     ).catch(() => undefined);
   };
