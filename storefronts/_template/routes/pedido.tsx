@@ -31,7 +31,12 @@ export function OrderPage() {
 
   if (loading && !order) {
     return (
-      <main id="main" className="container page page--narrow" aria-busy="true" aria-label="Carregando pedido">
+      <main
+        id="main"
+        className="container page page--narrow"
+        aria-busy="true"
+        aria-label="Carregando pedido"
+      >
         <p className="sk-line" />
         <p className="sk-line" />
       </main>
