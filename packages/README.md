@@ -7,10 +7,10 @@ Planned set ([docs/architecture/06-monorepo.md](../docs/architecture/06-monorepo
 
 | Directory        | Package               | Contents                                                          |
 | ---------------- | --------------------- | ----------------------------------------------------------------- |
-| `core/`          | —                     | Backend modular monolith (Hono/Fastify + Postgres + RLS)          |
+| `core/`          | `@vendua/core`        | Backend modular monolith (Hono + Postgres + RLS)                  |
 | `kernel/`        | `@vendua/kernel`      | Storefront runtime: provider, hooks, primitives, `SystemSurfaces` |
-| `ui-defaults/`   | `@vendua/ui-defaults` | Token-driven default surfaces and slots                           |
 | `cli/`           | `@vendua/cli`         | `scaffold`, `dev`, `check`, `build`, `qa` — the only build path   |
+| `ui-defaults/`   | `@vendua/ui-defaults` | Token-driven default surfaces and slots                           |
 | `conformance/`   | `@vendua/conformance` | Playwright suite + lint rules + type tests                        |
 | `codemods/`      | `@vendua/codemods`    | Contract migration transforms                                     |
 | `loader/`        | `@vendua/loader`      | `v.js` source, versioned separately                               |
@@ -18,5 +18,5 @@ Planned set ([docs/architecture/06-monorepo.md](../docs/architecture/06-monorepo
 | `admin/`         | —                     | Merchant admin app (not a Kernel consumer)                        |
 | `edge/`          | —                     | Host→tenant resolution, artifact serving, state injection         |
 
-None of these exist yet — they land in Phase 0+ per
+`core/`, `kernel/`, and `cli/` exist today; the rest land in Phase 1+ per
 [docs/roadmap.md](../docs/roadmap.md).
