@@ -26,6 +26,14 @@ const KINDS: { key: string; label: string; sub: string; drivers: Driver[] }[] = 
     sub: 'o cérebro do agente',
     drivers: [
       {
+        d: 'gemini',
+        label: 'gemini',
+        hint: 'google ai studio — gemini 3.5 flash lite',
+        secret: true,
+        secretName: 'GEMINI_API_KEY',
+        fields: [{ key: 'model', label: 'modelo', placeholder: 'gemini-3.5-flash-lite' }],
+      },
+      {
         d: 'openrouter',
         label: 'openrouter',
         hint: 'um endpoint, qualquer modelo — config.model escolhe qual',
