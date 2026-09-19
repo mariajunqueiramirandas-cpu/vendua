@@ -267,6 +267,10 @@ export function createApi(baseUrl = '') {
   // Per-order checkout tokens — memory first (survives sessionStorage
   // write failures), persisted copy is the refresh-across-navigation layer.
   const orderTokenMem = new Map<string, string>();
+  // Serial delivery writes: rapid neighborhood/mode switches must land on
+  // the server in issue order — an earlier in-flight response otherwise
+  // overwrites the newer cart state when it resolves last.
+  let deliveryQueue: Promise<unknown> = Promise.resolve();
   const auth = () => (token ? { authorization: `Bearer ${token}` } : {});
 
   return {
@@ -348,26 +352,42 @@ export function createApi(baseUrl = '') {
         method: 'DELETE',
         headers: { ...auth(), 'idempotency-key': idemKey() },
       }).then((r) => r.cart),
-    setDelivery: (delivery: { mode: 'pickup' | 'delivery'; neighborhood?: string }) =>
-      apiFetch<{ cart: Cart }>(co('/cart/delivery'), {
-        method: 'POST',
-        headers: { ...auth(), 'idempotency-key': idemKey() },
-        body: JSON.stringify(delivery),
-      }).then((r) => r.cart),
-    checkout: (input: CheckoutInput) =>
-      apiFetch<{ order: Order }>(co('/checkout'), {
+    setDelivery: (delivery: { mode: 'pickup' | 'delivery'; neighborhood?: string }) => {
+      const p = deliveryQueue.then(() =>
+        apiFetch<{ cart: Cart }>(co('/cart/delivery'), {
+          method: 'POST',
+          headers: { ...auth(), 'idempotency-key': idemKey() },
+          body: JSON.stringify(delivery),
+        }).then((r) => r.cart),
+      );
+      // A failed write must not wedge the queue — the next call still runs.
+      deliveryQueue = p.catch(() => {});
+      return p;
+    },
+    async checkout(input: CheckoutInput): Promise<Order> {
+      const r = await apiFetch<{ order: Order }>(co('/checkout'), {
         method: 'POST',
         headers: { ...auth(), 'idempotency-key': idemKey() },
         body: JSON.stringify(input),
-      }).then((r) => {
-        // The token used to place the order is its tracking credential —
-        // keep it before session rotation swaps `token` to the next cart.
-        if (token) {
-          orderTokenMem.set(r.order.id, token);
-          storeOrderToken(r.order.id, token);
-        }
-        return r.order;
-      }),
+      });
+      // The token used to place the order is its tracking credential —
+      // keep it before session rotation swaps `token` to the next cart.
+      if (token) {
+        orderTokenMem.set(r.order.id, token);
+        storeOrderToken(r.order.id, token);
+      }
+      // The cart is completed server-side — rotate the session now so the
+      // next `cart()` read returns a fresh empty cart instead of surfacing
+      // the purchased items. A rotation failure must not mask a successful
+      // checkout: the next mutation re-mints on demand.
+      try {
+        this.clearSession();
+        await this.ensureSession();
+      } catch {
+        /* order placed; session heals lazily */
+      }
+      return r.order;
+    },
     order: (id: string) => {
       const bearer = orderTokenMem.get(id) ?? readOrderTokens()[id] ?? token;
       return apiFetch<{ order: Order }>(co(`/orders/${id}`), {
