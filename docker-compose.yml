@@ -45,6 +45,15 @@ services:
       # slug:public-host[,slug:host2] — registers each storefront's real
       # domain at seed time (tenant routing is Host-header based).
       SEED_DOMAINS: ${SEED_DOMAINS:-}
+      # Integration driver keys — a driver reads these when its Config row's
+      # secret_ref names the var (or falls back to the driver default). Unset
+      # = that driver reports "ausente" in /control Config.
+      OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      RESEND_API_KEY: ${RESEND_API_KEY:-}
+      TINYFISH_API_KEY: ${TINYFISH_API_KEY:-}
+      VENDUA_WEBHOOK_SECRET: ${VENDUA_WEBHOOK_SECRET:-}
     depends_on:
       db:
         condition: service_healthy
