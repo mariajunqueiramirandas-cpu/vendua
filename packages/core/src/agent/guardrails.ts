@@ -1,9 +1,5 @@
 import type { Sql } from '../platform/db.ts';
-import {
-  DEFAULT_GUARDRAILS,
-  getSettingTx,
-  type Guardrails,
-} from '../modules/integrations.ts';
+import { DEFAULT_GUARDRAILS, getSettingTx, type Guardrails } from '../modules/integrations.ts';
 
 /**
  * agent/guardrails — the hard rules around every outbound message. Enforced

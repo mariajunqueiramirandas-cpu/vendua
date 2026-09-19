@@ -80,7 +80,12 @@ const KINDS: { key: string; label: string; sub: string; drivers: Driver[] }[] = 
     label: 'descoberta',
     sub: 'busca e extração de novos leads',
     drivers: [
-      { d: 'tinyfish', label: 'tinyfish', hint: 'Search + Agent APIs (api.tinyfish.ai)', secret: true },
+      {
+        d: 'tinyfish',
+        label: 'tinyfish',
+        hint: 'Search + Agent APIs (api.tinyfish.ai)',
+        secret: true,
+      },
       { d: 'mock', label: 'mock', hint: 'prospects enlatados — dev' },
     ],
   },
@@ -114,7 +119,10 @@ export default function Settings() {
         setSettings(map);
       })
       .catch((e: unknown) =>
-        setNotice({ kind: 'err', text: `falha ao carregar: ${e instanceof Error ? e.message : e}` }),
+        setNotice({
+          kind: 'err',
+          text: `falha ao carregar: ${e instanceof Error ? e.message : e}`,
+        }),
       )
       .finally(() => setLoading(false));
     api
@@ -236,7 +244,10 @@ function ProviderCard({
   kind: { key: string; label: string; sub: string; drivers: Driver[] };
   current: Integration | undefined;
   qr: string | null;
-  onSave: (d: { driver: string; secretRef: string; config: Record<string, string> }, enable: boolean) => void;
+  onSave: (
+    d: { driver: string; secretRef: string; config: Record<string, string> },
+    enable: boolean,
+  ) => void;
 }) {
   const baseline = {
     driver: current?.driver ?? kind.drivers[0]?.d ?? '',
@@ -259,7 +270,11 @@ function ProviderCard({
     secretRef !== baseline.secretRef ||
     JSON.stringify(config) !== JSON.stringify(baseline.config);
 
-  const state = !current ? 'att' : current.enabled && current.secretRef && !current.secretPresent ? 'att' : 'on';
+  const state = !current
+    ? 'att'
+    : current.enabled && current.secretRef && !current.secretPresent
+      ? 'att'
+      : 'on';
 
   return (
     <div className={`drv ${state}`}>
@@ -360,9 +375,7 @@ function ProviderCard({
             <button
               className="btn danger"
               style={{ marginLeft: 'auto' }}
-              onClick={() =>
-                onSave({ driver: current.driver, secretRef, config }, false)
-              }
+              onClick={() => onSave({ driver: current.driver, secretRef, config }, false)}
             >
               desativar
             </button>
@@ -436,7 +449,10 @@ function GuardrailsCard({
       </div>
       <div className="grid2" style={{ alignItems: 'end' }}>
         <div className="field" style={{ marginBottom: 0 }}>
-          <label>horário de silêncio {quietWrap && <em style={{ textTransform: 'none' }}>(vira o dia)</em>}</label>
+          <label>
+            horário de silêncio{' '}
+            {quietWrap && <em style={{ textTransform: 'none' }}>(vira o dia)</em>}
+          </label>
           <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
             <input
               type="time"
@@ -503,15 +519,19 @@ function PitchCard({
   const [edit, setEdit] = useState(cur);
   useEffect(() => setEdit(cur), [JSON.stringify(cur)]); // eslint-disable-line react-hooks/exhaustive-deps
   const dirty = JSON.stringify(edit) !== JSON.stringify(cur);
-  const set =
-    (k: keyof typeof cur) => (e: ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) =>
+  const set = (k: keyof typeof cur) => (e: ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) =>
     setEdit({ ...edit, [k]: e.target.value });
 
   return (
     <div className="drv on">
       <div className="field">
         <label>produto</label>
-        <textarea rows={3} value={edit.product} onChange={set('product')} style={{ width: '100%' }} />
+        <textarea
+          rows={3}
+          value={edit.product}
+          onChange={set('product')}
+          style={{ width: '100%' }}
+        />
       </div>
       <div className="grid2">
         <div className="field">

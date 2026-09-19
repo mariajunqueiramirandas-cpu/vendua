@@ -365,7 +365,10 @@ export async function composeMessageTx(
     status?: 'draft' | 'queued';
     subject?: string;
   },
-): Promise<{ status: number; body: { thread: ReturnType<typeof threadJson>; message: ReturnType<typeof messageJson> } }> {
+): Promise<{
+  status: number;
+  body: { thread: ReturnType<typeof threadJson>; message: ReturnType<typeof messageJson> };
+}> {
   const body = str(input.body, 'body', 8000).trim();
   const exists = await tx`select 1 from leads where id = ${input.leadId}`;
   if (!exists[0]) throw new HttpError(404, 'LEAD_NOT_FOUND', 'lead not found');
@@ -492,11 +495,7 @@ export async function markMessageSent(
   `;
 }
 
-export async function markMessageFailed(
-  tx: Sql,
-  messageId: string,
-  reason: string,
-): Promise<void> {
+export async function markMessageFailed(tx: Sql, messageId: string, reason: string): Promise<void> {
   await tx`
     update lead_messages set status = 'failed',
       provider_message_id = coalesce(provider_message_id, ${`failed:${reason.slice(0, 120)}`})

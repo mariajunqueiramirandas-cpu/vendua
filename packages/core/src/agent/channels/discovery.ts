@@ -34,7 +34,10 @@ export interface DiscoveryProvider {
 function tinyfishBase(raw: unknown, fallback: string): string {
   const value = typeof raw === 'string' && raw ? raw : fallback;
   const u = new URL(value);
-  if (u.protocol !== 'https:' || !(u.hostname === 'tinyfish.ai' || u.hostname.endsWith('.tinyfish.ai'))) {
+  if (
+    u.protocol !== 'https:' ||
+    !(u.hostname === 'tinyfish.ai' || u.hostname.endsWith('.tinyfish.ai'))
+  ) {
     throw new Error(`tinyfish driver: url must be https under *.tinyfish.ai (got ${value})`);
   }
   return value.replace(/\/+$/, '');
