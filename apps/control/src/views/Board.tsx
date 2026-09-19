@@ -125,6 +125,24 @@ export default function BoardView() {
                     <span className="score" style={{ marginLeft: 'auto' }}>
                       {rel(l.lastActivityAt ?? l.updatedAt)}
                     </span>
+                    {/* touch can't HTML5-drag — the stage picker is the move affordance */}
+                    <select
+                      className="mv"
+                      value={l.state}
+                      title="mover para estágio"
+                      aria-label="mover para estágio"
+                      onClick={(e) => e.stopPropagation()}
+                      onChange={(e) => {
+                        e.stopPropagation();
+                        void move(l, e.target.value as LeadListItem['state']);
+                      }}
+                    >
+                      {COLS.map((c) => (
+                        <option key={c.key} value={c.key}>
+                          {c.label}
+                        </option>
+                      ))}
+                    </select>
                   </div>
                 </article>
               ))}

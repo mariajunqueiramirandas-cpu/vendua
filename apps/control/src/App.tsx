@@ -9,6 +9,7 @@ import {
   LayoutDashboard,
   ListTodo,
   LogOut,
+  Menu,
   Settings as SettingsIcon,
   Users,
 } from 'lucide-react';
@@ -37,6 +38,12 @@ const NAV = [
   { to: '/config', label: 'Config', icon: SettingsIcon, k: 'c' },
 ] as const;
 
+// Phone shell: the daily-desk destinations become bottom tabs; everything
+// else lives in the slide-up "menu" sheet.
+const TAB_PATHS = new Set<string>(['/', '/funil', '/leads', '/inbox']);
+const TABS = NAV.filter((n) => TAB_PATHS.has(n.to));
+const MORE = NAV.filter((n) => !TAB_PATHS.has(n.to));
+
 const SHORTCUTS: [string, string][] = [
   ['d f l i a e t g c', 'trocar de tela'],
   ['/', 'buscar (em leads)'],
@@ -54,8 +61,11 @@ export default function App() {
   });
   const [llmDriver, setLlmDriver] = useState('');
   const [showHelp, setShowHelp] = useState(false);
+  const [navOpen, setNavOpen] = useState(false);
   const nav = useNavigate();
   const loc = useLocation();
+
+  useEffect(() => setNavOpen(false), [loc.pathname]);
 
   useEffect(() => {
     api
@@ -97,6 +107,7 @@ export default function App() {
       if (e.metaKey || e.ctrlKey || e.altKey) return;
       if (e.key === '?' || e.key === 'Escape') {
         setShowHelp(e.key === '?');
+        setNavOpen(false);
         return;
       }
       const item = NAV.find((n) => n.k === e.key);
@@ -141,27 +152,7 @@ export default function App() {
             </NavLink>
           );
         })}
-        <div className="rail-foot">
-          <span>agente · {llmDriver || '…'}</span>
-          <button
-            className="btn ghost"
-            style={{
-              color: 'var(--rail-muted)',
-              justifyContent: 'flex-start',
-              padding: '4px 8px',
-            }}
-            onClick={() => setShowHelp(true)}
-          >
-            <span className="kbd">?</span> atalhos
-          </button>
-          <button
-            className="btn ghost"
-            style={{ color: 'var(--rail-muted)', justifyContent: 'flex-start', padding: '4px 8px' }}
-            onClick={logout}
-          >
-            <LogOut size={14} /> sair
-          </button>
-        </div>
+        <RailFoot llmDriver={llmDriver} onHelp={() => setShowHelp(true)} onLogout={logout} />
       </nav>
       <div className="main">
         <Routes key={loc.pathname}>
@@ -180,6 +171,64 @@ export default function App() {
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>
       </div>
+      <nav className="tabbar" aria-label="seções">
+        {TABS.map((n) => {
+          const count = 'badge' in n ? badges[n.badge] : 0;
+          return (
+            <NavLink
+              key={n.to}
+              to={n.to}
+              end={n.to === '/'}
+              className={({ isActive }) => `tab${isActive ? ' active' : ''}`}
+            >
+              <n.icon />
+              <span>{n.label}</span>
+              {count > 0 && <span className="nb">{count}</span>}
+            </NavLink>
+          );
+        })}
+        <button
+          type="button"
+          className={`tab${navOpen ? ' active' : ''}`}
+          onClick={() => setNavOpen((v) => !v)}
+          aria-expanded={navOpen}
+        >
+          <Menu />
+          <span>menu</span>
+          {badges.drafts + badges.tasks > 0 && (
+            <span className="nb">{badges.drafts + badges.tasks}</span>
+          )}
+        </button>
+      </nav>
+      {navOpen && (
+        <div className="scrim sheet" onClick={() => setNavOpen(false)}>
+          <div className="msheet" role="dialog" aria-label="menu" onClick={(e) => e.stopPropagation()}>
+            <div className="msheet-grip" />
+            {MORE.map((n) => {
+              const count = 'badge' in n ? badges[n.badge] : 0;
+              return (
+                <NavLink
+                  key={n.to}
+                  to={n.to}
+                  className={({ isActive }) => `nav-item${isActive ? ' active' : ''}`}
+                  onClick={() => setNavOpen(false)}
+                >
+                  <n.icon /> {n.label}
+                  {count > 0 && <span className="nb">{count}</span>}
+                </NavLink>
+              );
+            })}
+            <RailFoot
+              llmDriver={llmDriver}
+              onHelp={() => {
+                setNavOpen(false);
+                setShowHelp(true);
+              }}
+              onLogout={logout}
+            />
+          </div>
+        </div>
+      )}
       {showHelp && (
         <div className="scrim" onClick={() => setShowHelp(false)}>
           <div className="m-card" onClick={(e) => e.stopPropagation()}>
@@ -195,6 +244,40 @@ export default function App() {
           </div>
         </div>
       )}
+    </div>
+  );
+}
+
+function RailFoot({
+  llmDriver,
+  onHelp,
+  onLogout,
+}: {
+  llmDriver: string;
+  onHelp: () => void;
+  onLogout: () => void;
+}) {
+  return (
+    <div className="rail-foot">
+      <span>agente · {llmDriver || '…'}</span>
+      <button
+        className="btn ghost"
+        style={{
+          color: 'var(--rail-muted)',
+          justifyContent: 'flex-start',
+          padding: '4px 8px',
+        }}
+        onClick={onHelp}
+      >
+        <span className="kbd">?</span> atalhos
+      </button>
+      <button
+        className="btn ghost"
+        style={{ color: 'var(--rail-muted)', justifyContent: 'flex-start', padding: '4px 8px' }}
+        onClick={onLogout}
+      >
+        <LogOut size={14} /> sair
+      </button>
     </div>
   );
 }

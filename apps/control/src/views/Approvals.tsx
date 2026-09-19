@@ -93,7 +93,7 @@ export default function Approvals() {
                 {results[d.id]}
               </div>
             )}
-            <div style={{ display: 'flex', gap: 8, marginTop: 12 }}>
+            <div style={{ display: 'flex', gap: 8, marginTop: 12, flexWrap: 'wrap' }}>
               {editing === d.id ? (
                 <>
                   <button className="btn primary" onClick={() => void saveEdit(d)}>
