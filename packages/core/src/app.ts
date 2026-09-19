@@ -973,6 +973,15 @@ export function createApp({ sql, sessionSecret, controlSecret }: AppDeps) {
     );
     if (!t[0]) throw new HttpError(404, 'THREAD_NOT_FOUND', 'thread not found');
     const wantSend = body.send === true;
+    // An explicit subject is a staff override of the thread's — ensureThread
+    // only fills empty subjects (coalesce), so set it directly.
+    const subject = typeof body.subject === 'string' ? str(body.subject, 'subject', 200) : null;
+    if (subject) {
+      await controlTx(
+        sql,
+        (tx) => tx`update lead_threads set subject = ${subject} where id = ${id}`,
+      );
+    }
     const res = await composeMessage(
       sql,
       {
@@ -981,6 +990,7 @@ export function createApp({ sql, sessionSecret, controlSecret }: AppDeps) {
         body: str(body.body, 'body', 8000),
         author: 'staff',
         status: wantSend ? 'queued' : 'draft',
+        ...(subject ? { subject } : {}),
       },
       requireIdemKey(c),
     );

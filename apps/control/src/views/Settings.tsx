@@ -30,7 +30,7 @@ const KINDS: { key: string; label: string; sub: string; drivers: Driver[] }[] = 
         hint: 'um endpoint, qualquer modelo — config.model escolhe qual',
         secret: true,
         secretName: 'OPENROUTER_API_KEY',
-        fields: [{ key: 'model', label: 'modelo', placeholder: 'anthropic/claude-sonnet-4.5' }],
+        fields: [{ key: 'model', label: 'modelo', placeholder: 'liquid/lfm-2.5-2.6b:free' }],
       },
       {
         d: 'anthropic',

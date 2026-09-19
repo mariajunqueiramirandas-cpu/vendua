@@ -51,7 +51,7 @@ function openrouterProvider(
     throw new Error(`missing API key — set ${secretRef ?? 'OPENROUTER_API_KEY'}`);
   }
   const model =
-    typeof config.model === 'string' && config.model ? config.model : 'anthropic/claude-sonnet-4.5';
+    typeof config.model === 'string' && config.model ? config.model : 'liquid/lfm-2.5-2.6b:free';
   const client = new OpenRouter({ apiKey });
   return {
     name: `openrouter:${model}`,
