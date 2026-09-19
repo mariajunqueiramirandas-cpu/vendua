@@ -1,6 +1,10 @@
 import { createApp } from './app.ts';
 import { createSql, migrate } from './platform/db.ts';
 import { join } from 'node:path';
+import { ingestInbound } from './agent/inbound.ts';
+import { startAgentWorker } from './agent/runner.ts';
+import { ensureSocket, onInboundMessage } from './agent/channels/whatsapp.ts';
+import { getIntegration } from './modules/integrations.ts';
 
 const databaseUrl =
   process.env.DATABASE_URL ?? 'postgres://vendua_app:vendua_app@localhost:5433/vendua';
@@ -28,6 +32,21 @@ await migrator.end();
 
 const sql = createSql(databaseUrl);
 const app = createApp({ sql, sessionSecret, controlSecret: process.env.CONTROL_SECRET });
+
+// Agent harness: in-process worker (durable Postgres queue — runs survive
+// restarts) + WhatsApp socket when the baileys driver is enabled.
+startAgentWorker(sql);
+onInboundMessage(async (jid, text, providerId) => {
+  await ingestInbound(sql, {
+    channel: 'whatsapp',
+    from: jid,
+    body: text,
+    providerMessageId: providerId,
+  });
+});
+void getIntegration(sql, 'whatsapp')
+  .then((i) => ensureSocket(sql, i))
+  .catch((e) => console.error('[whatsapp]', e));
 
 console.log(`@vendua/core listening on :${port}`);
 export default { port, fetch: app.fetch };

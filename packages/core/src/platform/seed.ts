@@ -563,5 +563,92 @@ for (const t of TENANTS) {
   console.log(`seeded ${t.slug}`);
 }
 
+// CRM demo leads — wiped+recreated each seed (source='seed' is the marker).
+// Runs as the migration role (table owner, no FORCE RLS) so no GUC needed.
+{
+  await sql`delete from leads where source = 'seed'`;
+  const SEED_LEADS = [
+    {
+      name: 'Dona Mirtes',
+      business: 'Doces da Mirtes',
+      phone: '+5585988120001',
+      email: 'mirtes@doces.com',
+      city: 'Fortaleza',
+      segment: 'doceria',
+      state: 'contacted',
+      agentMode: 'draft',
+      tags: ['quente', 'indicacao'],
+      deal: 490000,
+      activity: 'Indicada pela Lia — vende brigadeiros por encomenda no IG, ~40 pedidos/semana.',
+    },
+    {
+      name: 'Atelier do Brigadeiro',
+      business: 'Atelier do Brigadeiro',
+      phone: '+5585988120002',
+      city: 'Fortaleza',
+      segment: 'doceria',
+      state: 'lead',
+      agentMode: 'draft',
+      discoveredVia: 'agente',
+      tags: ['descoberto'],
+      activity: 'Descoberto pelo agente via busca — IG ativo com 12k seguidores, sem loja online.',
+    },
+    {
+      name: 'Seu Norberto',
+      business: 'Marmitas do Norberto',
+      phone: '+5585988120003',
+      city: 'Caucaia',
+      segment: 'marmitaria',
+      state: 'invited',
+      agentMode: 'auto',
+      tags: ['almoço-corporativo'],
+      deal: 890000,
+      activity: 'Negociando plano anual — pediu proposta por escrito.',
+    },
+    {
+      name: 'Café Serra Azul',
+      business: 'Café Serra Azul',
+      phone: '+5585988120004',
+      city: 'Guaramiranga',
+      segment: 'cafeteria',
+      state: 'live',
+      agentMode: 'off',
+      tags: ['cliente'],
+      deal: 590000,
+      activity: 'Fechou! Loja no ar desde semana passada.',
+    },
+    {
+      name: 'Padaria Trigo Real',
+      business: 'Padaria Trigo Real',
+      phone: '+5585988120005',
+      city: 'Fortaleza',
+      segment: 'padaria',
+      state: 'contacted',
+      agentMode: 'draft',
+      lostReason: 'fechou contrato com concorrente',
+      tags: ['perdido'],
+      activity: 'Perdido — assinou com concorrente na sexta. Revisitar em 6 meses.',
+    },
+  ] as const;
+  for (const l of SEED_LEADS) {
+    const lead = (
+      await sql<{ id: string }[]>`
+        insert into leads (name, business_name, phone, email, city, segment, state, agent_mode,
+          tags, deal_value_cents, discovered_via, lost_reason, source)
+        values (${l.name}, ${l.business}, ${l.phone}, ${'email' in l ? l.email : null}, ${l.city},
+          ${l.segment}, ${l.state}, ${l.agentMode}, ${l.tags as unknown as never[]},
+          ${'deal' in l ? l.deal : null}, ${'discoveredVia' in l ? l.discoveredVia : null},
+          ${'lostReason' in l ? l.lostReason : null}, 'seed')
+        returning id
+      `
+    )[0]!;
+    await sql`
+      insert into lead_activities (lead_id, kind, body, created_by)
+      values (${lead.id}, 'note', ${l.activity}, 'staff')
+    `;
+  }
+  console.log('seeded 5 CRM leads');
+}
+
 await sql.end();
 console.log('done');

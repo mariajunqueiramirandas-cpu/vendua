@@ -46,10 +46,16 @@ describe('leadInsert', () => {
       name: 'Ana',
       business_name: 'Doces da Ana',
       phone: '2299',
+      whatsapp: null,
       email: null,
       instagram: null,
+      website: null,
       city: 'RJ',
+      segment: null,
       source: null,
+      owner: null,
+      lost_reason: null,
+      discovered_via: null,
     });
   });
   test('non-string field → BAD_REQUEST', () => {
@@ -84,12 +90,23 @@ describe('leadJson', () => {
     name: 'Ana',
     business_name: 'Doces da Ana',
     phone: '2299',
+    whatsapp: '85999990000',
     email: null,
     instagram: '@doces',
+    website: null,
     city: 'RJ',
+    segment: 'doceria',
     source: 'indicação',
+    owner: null,
+    tags: ['vip'],
+    deal_value_cents: 12000,
     state: 'contacted',
-    notes: [{ at: '2026-09-19T00:00:00.000Z', body: 'primeira conversa' }],
+    agent_mode: 'draft',
+    next_action_at: null,
+    lost_reason: null,
+    archived_at: null,
+    unsubscribed_at: null,
+    discovered_via: null,
     created_at: '2026-09-18T00:00:00.000Z',
     updated_at: '2026-09-19T00:00:00.000Z',
   };
@@ -97,10 +114,11 @@ describe('leadJson', () => {
     const l = leadJson(row);
     expect(l.businessName).toBe('Doces da Ana');
     expect(l.createdAt).toBe('2026-09-18T00:00:00.000Z');
-    expect(l.notes).toHaveLength(1);
-    expect(l.notes[0]!.body).toBe('primeira conversa');
+    expect(l.tags).toEqual(['vip']);
+    expect(l.agentMode).toBe('draft');
+    expect(l.dealValueCents).toBe(12000);
   });
-  test('null notes → empty array', () => {
-    expect(leadJson({ ...row, notes: null }).notes).toEqual([]);
+  test('null tags → empty array', () => {
+    expect(leadJson({ ...row, tags: null }).tags).toEqual([]);
   });
 });
