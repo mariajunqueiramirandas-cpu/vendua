@@ -15,8 +15,6 @@ export type LeadState = (typeof LEAD_STATES)[number];
 export interface LeadNote {
   at: string;
   body: string;
-  /** Idempotency-Key the note was appended under — retries dedupe on it. */
-  key?: string;
 }
 
 export interface LeadRow {
@@ -30,11 +28,6 @@ export interface LeadRow {
   source: string | null;
   state: LeadState;
   notes: LeadNote[] | null;
-  idempotency_key: string | null;
-  /** PATCH Idempotency-Keys already applied — bounded to the last 25 so the
-   *  row stays small; a replay older than that just writes again (convergent
-   *  by then). */
-  mutation_keys: string[] | null;
   created_at: string;
   updated_at: string;
 }
@@ -128,80 +121,116 @@ export function leadPatch(body: Record<string, unknown>): Record<string, string 
   return set;
 }
 
+/** Every control-plane query runs inside a transaction with the
+ *  `vendua.control` GUC set — the leads / control_idempotency_keys RLS
+ *  policies require it, so tenant-path code running as the same vendua_app
+ *  role can never touch CRM tables. */
+function controlTx<T>(sql: Sql, work: (tx: Sql) => Promise<T>): Promise<T> {
+  return sql.begin(async (t) => {
+    const tx = t as unknown as Sql;
+    await tx`select set_config('vendua.control', '1', true)`;
+    return work(tx);
+  }) as Promise<T>;
+}
+
 export async function listLeads(sql: Sql, state?: LeadState): Promise<LeadRow[]> {
-  return state === undefined
-    ? sql<LeadRow[]>`select * from leads order by created_at desc`
-    : sql<LeadRow[]>`select * from leads where state = ${state} order by created_at desc`;
+  return controlTx(sql, (tx) =>
+    state === undefined
+      ? tx<LeadRow[]>`select * from leads order by created_at desc`
+      : tx<LeadRow[]>`select * from leads where state = ${state} order by created_at desc`,
+  );
 }
 
 export async function getLead(sql: Sql, id: string): Promise<LeadRow | null> {
-  const rows = await sql<LeadRow[]>`select * from leads where id = ${id}`;
-  return rows[0] ?? null;
+  return controlTx(sql, async (tx) => {
+    const rows = await tx<LeadRow[]>`select * from leads where id = ${id}`;
+    return rows[0] ?? null;
+  });
 }
 
 /** Notes cap per lead — bounds both the jsonb row and every /leads response. */
 export const MAX_NOTES_PER_LEAD = 500;
 
-/** Insert claimed by the caller's Idempotency-Key: a retry lands on
- *  `on conflict do nothing` and replays the row the first write created. */
+export interface ClaimResult<T> {
+  status: number;
+  body: T;
+  replayed: boolean;
+}
+
+/** Durable Idempotency-Key claim for control mutations — the platform
+ *  counterpart of the tenant-scoped `idempotency()` wrapper (leads has no
+ *  tenant FK for that table's composite key). The first execution runs `work`
+ *  in the claim transaction and stores its status+body; every retry replays
+ *  that stored response. Claims are never evicted — a replay can never
+ *  re-apply — and a concurrent same-key request blocks on the row's write
+ *  lock until the winner commits. If `work` throws (e.g. LEAD_NOT_FOUND) the
+ *  claim rolls back with it, so errors are re-evaluated, never replayed. */
+async function claimControl<T>(
+  sql: Sql,
+  key: string,
+  work: (tx: Sql) => Promise<{ status: number; body: T }>,
+): Promise<ClaimResult<T>> {
+  return controlTx(sql, async (tx) => {
+    const claimed = await tx`
+      insert into control_idempotency_keys (key) values (${key})
+      on conflict (key) do nothing
+      returning key
+    `;
+    if (!claimed[0]) {
+      const row = (
+        await tx<{ response: T; status_code: number }[]>`
+          select response, status_code from control_idempotency_keys where key = ${key}
+        `
+      )[0]!;
+      return { status: row.status_code, body: row.response, replayed: true };
+    }
+    const res = await work(tx);
+    await tx`
+      update control_idempotency_keys
+      set response = ${tx.json(res.body as never)}, status_code = ${res.status}
+      where key = ${key}
+    `;
+    return { ...res, replayed: false };
+  });
+}
+
 export async function createLead(
   sql: Sql,
   fields: Record<string, string | null>,
   idemKey: string,
-): Promise<{ lead: LeadRow; replayed: boolean }> {
-  const rows = await sql<LeadRow[]>`
-    insert into leads ${sql({ ...fields, idempotency_key: idemKey })}
-    on conflict (idempotency_key) do nothing
-    returning *
-  `;
-  if (rows[0]) return { lead: rows[0], replayed: false };
-  const existing = await sql<LeadRow[]>`select * from leads where idempotency_key = ${idemKey}`;
-  return { lead: existing[0]!, replayed: true };
+): Promise<ClaimResult<{ lead: Lead }>> {
+  return claimControl(sql, idemKey, async (tx) => {
+    const rows = await tx<LeadRow[]>`insert into leads ${tx(fields)} returning *`;
+    return { status: 201, body: { lead: leadJson(rows[0]!) } };
+  });
 }
-
-// PATCH keys claimed so far — a retry replays the stored row instead of
-// writing again (and churning updated_at). The set converges anyway; the
-// claim makes the response identical, matching the platform idempotency rule.
-const MAX_MUTATION_KEYS = 25;
 
 export async function updateLead(
   sql: Sql,
   id: string,
   set: Record<string, string | null>,
   idemKey: string,
-): Promise<{ lead: LeadRow; replayed: boolean } | null> {
-  return sql.begin(async (t) => {
-    const tx = t as unknown as Sql;
-    const cur = (await tx<LeadRow[]>`select * from leads where id = ${id} for update`)[0];
-    if (!cur) return null;
-    if ((cur.mutation_keys ?? []).includes(idemKey)) {
-      return { lead: cur, replayed: true };
-    }
-    const keys = [...(cur.mutation_keys ?? []), idemKey].slice(-MAX_MUTATION_KEYS);
+): Promise<ClaimResult<{ lead: Lead }>> {
+  return claimControl(sql, idemKey, async (tx) => {
     const rows = await tx<LeadRow[]>`
-      update leads set ${sql(set)}, updated_at = now(), mutation_keys = ${tx.json(keys)}
-      where id = ${id} returning *
+      update leads set ${tx(set)}, updated_at = now() where id = ${id} returning *
     `;
-    return { lead: rows[0]!, replayed: false };
-  }) as Promise<{ lead: LeadRow; replayed: boolean } | null>;
+    if (!rows[0]) throw new HttpError(404, 'LEAD_NOT_FOUND', 'lead not found');
+    return { status: 200, body: { lead: leadJson(rows[0]) } };
+  });
 }
 
-/** Appends under the caller's Idempotency-Key, stored inside the note: a
- *  retry sees its key already in notes[] and replays instead of appending a
- *  second copy. `for update` serializes concurrent appends on the row. */
+/** Appends under the caller's Idempotency-Key claim; `for update` serializes
+ *  concurrent appends on the row. */
 export async function appendNote(
   sql: Sql,
   id: string,
   body: string,
   idemKey: string,
-): Promise<{ lead: LeadRow; replayed: boolean } | null> {
-  return sql.begin(async (t) => {
-    const tx = t as unknown as Sql;
+): Promise<ClaimResult<{ lead: Lead }>> {
+  return claimControl(sql, idemKey, async (tx) => {
     const cur = (await tx<LeadRow[]>`select * from leads where id = ${id} for update`)[0];
-    if (!cur) return null;
-    if ((cur.notes ?? []).some((n) => n.key === idemKey)) {
-      return { lead: cur, replayed: true };
-    }
+    if (!cur) throw new HttpError(404, 'LEAD_NOT_FOUND', 'lead not found');
     if ((cur.notes ?? []).length >= MAX_NOTES_PER_LEAD) {
       throw new HttpError(
         422,
@@ -209,13 +238,11 @@ export async function appendNote(
         `lead already has ${MAX_NOTES_PER_LEAD} notes — archive history before adding more`,
       );
     }
-    // Inferred literal (not the LeadNote interface) so the object satisfies
-    // tx.json's JSONValue/index-signature parameter type.
-    const note = { at: new Date().toISOString(), body, key: idemKey };
+    const note = { at: new Date().toISOString(), body };
     const rows = await tx<LeadRow[]>`
       update leads set notes = notes || ${tx.json([note])}, updated_at = now()
       where id = ${id} returning *
     `;
-    return { lead: rows[0]!, replayed: false };
-  }) as Promise<{ lead: LeadRow; replayed: boolean } | null>;
+    return { status: 200, body: { lead: leadJson(rows[0]!) } };
+  });
 }

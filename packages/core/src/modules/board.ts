@@ -153,13 +153,14 @@ function card(l) {
   if (i < STATES.length - 1) {
     const next = document.createElement('button');
     next.textContent = '→ ' + STATES[i + 1][1];
-    // PATCH converges (setting the same state twice is a no-op), so no
-    // idempotency key — POST creates/appends claim one.
     next.onclick = async () => {
-      const res = await api('/leads/' + l.id, {
-        method: 'PATCH',
-        body: JSON.stringify({ state: STATES[i + 1][0] }),
-      });
+      // PATCH claims an Idempotency-Key like every other mutation — one uuid
+      // per click, so a retried request replays instead of re-writing.
+      const res = await api(
+        '/leads/' + l.id,
+        { method: 'PATCH', body: JSON.stringify({ state: STATES[i + 1][0] }) },
+        crypto.randomUUID(),
+      );
       if (res.ok) load();
     };
     actions.appendChild(next);

@@ -15,7 +15,7 @@ export function CartPage() {
   const totals = cart?.totals;
 
   return (
-    <main className="container page">
+    <main id="main" className="container page">
       <Link to="/" className="back-link">
         ← Continuar escolhendo
       </Link>

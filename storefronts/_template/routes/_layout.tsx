@@ -10,6 +10,9 @@ export function Layout() {
   const { store } = useStore();
   return (
     <>
+      <a href="#main" className="skip-link">
+        Pular para o conteúdo
+      </a>
       <header className="site-header">
         <div className="container site-header-inner">
           <Link to="/" className="brand">

@@ -12,7 +12,7 @@ export function CatalogPage() {
   const { invalidate } = useKernel();
 
   return (
-    <main className="container page">
+    <main id="main" className="container page">
       <header className="page-head">
         <h1>{store?.name ?? 'Cardápio'}</h1>
         {store?.tagline ? <p className="muted">{store.tagline}</p> : null}

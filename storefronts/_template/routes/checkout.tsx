@@ -116,7 +116,7 @@ export function CheckoutPage() {
 
   if (loading && !cart) {
     return (
-      <main className="container page" aria-busy="true" aria-label="Carregando checkout">
+      <main id="main" className="container page" aria-busy="true" aria-label="Carregando checkout">
         <p className="sk-line" />
         <p className="sk-line" />
       </main>
@@ -125,7 +125,7 @@ export function CheckoutPage() {
 
   if (items.length === 0) {
     return (
-      <main className="container page">
+      <main id="main" className="container page">
         <div className="empty">
           <h1>Sua sacola está vazia.</h1>
           <p>Escolha um item no cardápio antes de fechar o pedido.</p>
@@ -138,7 +138,7 @@ export function CheckoutPage() {
   }
 
   return (
-    <main className="container page page--narrow">
+    <main id="main" className="container page page--narrow">
       <Link to="/cart" className="back-link">
         ← Voltar à sacola
       </Link>

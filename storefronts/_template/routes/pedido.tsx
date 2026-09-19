@@ -31,7 +31,7 @@ export function OrderPage() {
 
   if (loading && !order) {
     return (
-      <main className="container page page--narrow" aria-busy="true" aria-label="Carregando pedido">
+      <main id="main" className="container page page--narrow" aria-busy="true" aria-label="Carregando pedido">
         <p className="sk-line" />
         <p className="sk-line" />
       </main>
@@ -40,7 +40,7 @@ export function OrderPage() {
 
   if (!order) {
     return (
-      <main className="container page">
+      <main id="main" className="container page">
         <div className="empty" role={error ? 'alert' : undefined}>
           <h1>{error ? 'Não foi possível carregar o pedido.' : 'Pedido não encontrado.'}</h1>
           {error ? (
@@ -63,7 +63,7 @@ export function OrderPage() {
       : null;
 
   return (
-    <main className="container page page--narrow">
+    <main id="main" className="container page page--narrow">
       <header className="page-head">
         <p className="muted">Pedido #{order.number}</p>
         <h1>Obrigado, {order.customer.name.trim().split(/\s+/)[0]}.</h1>

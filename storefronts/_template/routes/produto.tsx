@@ -27,7 +27,7 @@ export function ProductPage() {
 
   if (loading && !product) {
     return (
-      <main className="container page" aria-busy="true" aria-label="Carregando produto">
+      <main id="main" className="container page" aria-busy="true" aria-label="Carregando produto">
         <div className="product-grid">
           <div className="card-figure" aria-hidden="true" />
           <div>
@@ -42,7 +42,7 @@ export function ProductPage() {
 
   if (!product) {
     return (
-      <main className="container page">
+      <main id="main" className="container page">
         <div className="empty" role={error ? 'alert' : undefined}>
           <h1>{error ? 'Não foi possível carregar o produto.' : 'Produto não encontrado.'}</h1>
           {error ? (
@@ -74,7 +74,7 @@ export function ProductPage() {
   };
 
   return (
-    <main className="container page">
+    <main id="main" className="container page">
       <Link to="/" className="back-link">
         ← Voltar ao cardápio
       </Link>

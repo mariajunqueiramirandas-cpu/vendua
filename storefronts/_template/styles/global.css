@@ -59,6 +59,25 @@ img {
   font-size: 0.875rem;
 }
 
+/* -- skip link: first focusable, invisible until it takes focus (Q09) ------ */
+
+.skip-link {
+  position: absolute;
+  top: -100%;
+  left: 16px;
+  z-index: 100;
+  padding: 10px 16px;
+  background: var(--v-color-accent, #3f5e4e);
+  color: var(--v-color-on-accent, #fff);
+  border-radius: var(--v-radius-sm, 4px);
+  font-weight: 600;
+  text-decoration: none;
+}
+
+.skip-link:focus-visible {
+  top: 8px;
+}
+
 /* -- header / footer ------------------------------------------------------ */
 
 .site-header {
@@ -73,7 +92,8 @@ img {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 16px;
+  flex-wrap: wrap;
+  gap: 8px 16px;
   padding-block: 12px;
 }
 
@@ -83,6 +103,11 @@ img {
   font-size: 1.125rem;
   color: inherit;
   text-decoration: none;
+  /* let the name shrink/ellipsize — status + cart keep their size at 320px */
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .header-actions {
@@ -180,8 +205,10 @@ img {
   text-decoration: none;
 }
 
-.card[data-status='sold_out'] {
-  opacity: 0.6;
+/* sold-out dims the figure only — dimming the whole card drags the name,
+   * description and flag under WCAG AA contrast (axe color-contrast). */
+.card[data-status='sold_out'] .card-figure {
+  opacity: 0.55;
 }
 
 .card-figure {

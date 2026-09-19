@@ -462,13 +462,15 @@ export function createApp({ sql, sessionSecret }: AppDeps) {
         )[0]!.n;
         const orderId = crypto.randomUUID();
         const payment = {
-          provider: 'stub',
+          // 'sandbox' is the contract's dev provider name — the Phase-0
+          // pay-on-delivery stand-in stays until real orchestration lands.
+          provider: 'sandbox',
           method: body.payment.method,
           status: 'pending',
           instructions:
             body.payment.method === 'pix'
-              ? 'Pagamento PIX combinado na entrega/retirada (stub de Phase 0).'
-              : 'Pagamento na entrega ou retirada (stub de Phase 0).',
+              ? 'Pagamento PIX combinado na entrega/retirada (sandbox de Phase 0).'
+              : 'Pagamento na entrega ou retirada (sandbox de Phase 0).',
         };
         await tx`
           insert into orders (id, tenant_id, cart_id, number, customer, delivery, payment, state, subtotal_cents, delivery_fee_cents, total_cents)
@@ -477,7 +479,7 @@ export function createApp({ sql, sessionSecret }: AppDeps) {
         `;
         await tx`
           insert into order_events (tenant_id, order_id, from_state, to_state, actor, meta)
-          values (${tenant.id}, ${orderId}, null, 'placed', 'customer', ${tx.json({ via: 'checkout-stub' })})
+          values (${tenant.id}, ${orderId}, null, 'placed', 'customer', ${tx.json({ via: 'checkout-sandbox' })})
         `;
         await tx`
           insert into outbox (tenant_id, topic, payload)
@@ -567,13 +569,9 @@ export function createApp({ sql, sessionSecret }: AppDeps) {
 
   app.post('/control/v1/leads', async (c) => {
     controlGate(c);
-    const { lead, replayed } = await createLead(
-      sql,
-      leadInsert(await bodyJson(c)),
-      requireIdemKey(c),
-    );
-    if (replayed) c.header('x-idempotent-replay', 'true');
-    return c.json({ lead: leadJson(lead) }, replayed ? 200 : 201);
+    const res = await createLead(sql, leadInsert(await bodyJson(c)), requireIdemKey(c));
+    if (res.replayed) c.header('x-idempotent-replay', 'true');
+    return c.json(res.body, res.status as 200);
   });
 
   app.get('/control/v1/leads/:id', async (c) => {
@@ -591,9 +589,8 @@ export function createApp({ sql, sessionSecret }: AppDeps) {
       leadPatch(await bodyJson(c)),
       requireIdemKey(c),
     );
-    if (!res) throw new HttpError(404, 'LEAD_NOT_FOUND', 'lead not found');
     if (res.replayed) c.header('x-idempotent-replay', 'true');
-    return c.json({ lead: leadJson(res.lead) });
+    return c.json(res.body);
   });
 
   app.post('/control/v1/leads/:id/notes', async (c) => {
@@ -601,9 +598,8 @@ export function createApp({ sql, sessionSecret }: AppDeps) {
     const body = str((await bodyJson(c)).body, 'body', 2000).trim();
     if (!body) throw new HttpError(422, 'BAD_REQUEST', 'body is required', { field: 'body' });
     const res = await appendNote(sql, uuidParam(c, 'id'), body, requireIdemKey(c));
-    if (!res) throw new HttpError(404, 'LEAD_NOT_FOUND', 'lead not found');
     if (res.replayed) c.header('x-idempotent-replay', 'true');
-    return c.json({ lead: leadJson(res.lead) });
+    return c.json(res.body);
   });
 
   // The staff board itself. POST /control/v1/board {key} mints the HttpOnly

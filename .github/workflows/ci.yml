@@ -4,6 +4,10 @@ on:
   push:
     branches: [main]
   pull_request:
+    # labeled/unlabeled rerun the pipeline so storefront-isolation can't go
+    # stale — adding/removing a storefront: label changes what the check
+    # enforces on the same head commit.
+    types: [opened, synchronize, reopened, labeled, unlabeled]
 
 permissions:
   contents: read
@@ -18,7 +22,10 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: write
-    if: github.event_name == 'push' || github.event.pull_request.head.repo.fork == false
+    if: >-
+      github.event_name == 'push' ||
+      (github.event.pull_request.head.repo.fork == false &&
+        !contains(fromJSON('["labeled","unlabeled"]'), github.event.action))
     steps:
       - uses: actions/checkout@v4
         with:
@@ -41,6 +48,9 @@ jobs:
   # Storefront write-scope boundary (docs/architecture/06-monorepo.md): a PR
   # labelled `storefront:<slug>` may only touch `storefronts/<slug>/**`. No
   # `storefront:` label → no-op pass, so platform PRs don't need labels.
+  # The only job gated on label events: labeled/unlabeled MUST rerun it (the
+  # whole point of the trigger above); check/format skip those events since
+  # the head commit is unchanged.
   storefront-isolation:
     runs-on: ubuntu-latest
     if: github.event_name == 'pull_request'
@@ -57,6 +67,11 @@ jobs:
   # that will actually land.
   check:
     runs-on: ubuntu-latest
+    # Label events only matter to storefront-isolation — check/format run the
+    # same unchanged head commit.
+    if: >-
+      github.event_name == 'push' ||
+      !contains(fromJSON('["labeled","unlabeled"]'), github.event.action)
     steps:
       - uses: actions/checkout@v4
         with:

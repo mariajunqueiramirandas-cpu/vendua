@@ -88,7 +88,12 @@ export async function cmdScaffold(slug: string | undefined, root: string): Promi
   // would permanently reject the retry (the tenant rows already committed).
   const tmp = join(root, 'storefronts', `.scaffold-${slug}-${randomBytes(4).toString('hex')}`);
   try {
-    cpSync(template, tmp, { recursive: true });
+    // Build/install artifacts must not leak into a scaffold — a stale dist/ or
+    // a template-local node_modules/ shipped into a fresh package is garbage.
+    cpSync(template, tmp, {
+      recursive: true,
+      filter: (src) => !/([\\/])(node_modules|dist|qa-report)([\\/]|$)/.test(src),
+    });
 
     const pkgPath = join(tmp, 'package.json');
     const pkg = JSON.parse(readFileSync(pkgPath, 'utf8')) as { name: string };

@@ -121,7 +121,10 @@ export function useCart(): {
 
   const bump = useCallback(
     (cart: Cart) => {
-      invalidateQuery('cart');
+      // Seed, don't evict: the mutation's response IS the fresh cart — an
+      // evict→refetch gap drops cart to null mid-render, which re-fires
+      // checkout delivery-sync effects (`items.length` dep) into a POST loop.
+      invalidateQuery('cart', cart);
       invalidate('cart');
       return cart;
     },

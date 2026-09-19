@@ -8,6 +8,26 @@
     <script src="/v1/v.js" defer></script>
   </head>
   <body>
+    <!-- No-JS shell: with scripts disabled the client never mounts, so the
+         body itself must carry a legible storefront shell (Contract Q04). The
+         kernel mounts over this; keep it honest and static. -->
+    <noscript>
+      <div
+        style="
+          font-family: system-ui, sans-serif;
+          max-width: 34rem;
+          margin: 64px auto;
+          padding: 0 24px;
+        "
+      >
+        <h1>Loja</h1>
+        <p>
+          Esta loja precisa de JavaScript para mostrar o cardápio, a sacola e o checkout. Ative o
+          JavaScript e recarregue a página — ou entre em contato diretamente com a loja para fazer
+          seu pedido.
+        </p>
+      </div>
+    </noscript>
     <div id="root"></div>
     <script type="module" src="/main.tsx"></script>
   </body>
