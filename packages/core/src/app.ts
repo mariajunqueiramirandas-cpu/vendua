@@ -182,9 +182,13 @@ async function testIntegration(
       if (!key) {
         return { ok: false, detail: `env ${integration.secret_ref ?? 'RESEND_API_KEY'} ausente` };
       }
+      // AbortSignal cancels the request itself — the race only abandons the
+      // await. SDK calls (llm, tinyfish, baileys) can't be aborted from
+      // here, so they keep the race bound.
       const res = await timed(
         fetch('https://api.resend.com/domains', {
           headers: { authorization: `Bearer ${key}` },
+          signal: AbortSignal.timeout(TEST_TIMEOUT_MS),
         }),
         'resend',
       );

@@ -51,23 +51,24 @@ export interface IntegrationRow {
 /** API view — secret_ref masked to the env var name only (never a value). */
 export function integrationJson(row: IntegrationRow) {
   // The env var the driver will actually read — the row's override or its
-  // built-in default. `secretPresent` mirrors each driver's lookup: strict
-  // for LLM providers, `(ref) ?? default` for resend/tinyfish — so a
-  // configured-but-unset ref still reports present when the default exists.
-  const secretName = row.secret_ref ?? DEFAULT_SECRET[row.driver] ?? null;
-  const present =
-    row.secret_ref && SECRET_FALLBACK.has(row.driver)
-      ? !!process.env[row.secret_ref] || !!process.env[DEFAULT_SECRET[row.driver]!]
-      : secretName
-        ? !!process.env[secretName]
-        : null;
+  // built-in default when the override is unset/fallbackable. Fallbackable
+  // drivers (resend/tinyfish do `(env[ref]) ?? env[DEFAULT]`) report the
+  // name they'd actually read, so a configured-but-missing custom ref never
+  // displays as "present"; strict LLM drivers keep naming the custom ref.
+  const secretName =
+    row.secret_ref && (!!process.env[row.secret_ref] || !SECRET_FALLBACK.has(row.driver))
+      ? row.secret_ref
+      : (DEFAULT_SECRET[row.driver] ?? row.secret_ref ?? null);
+  const present = secretName ? !!process.env[secretName] : null;
   return {
     id: row.id,
     kind: row.kind,
     driver: row.driver,
     enabled: row.enabled,
     config: row.config ?? {},
-    /** whether process.env actually provides the referenced secret */
+    /** whether process.env actually provides the referenced secret.
+     *  `secretName` is the var the driver reads today — the configured ref
+     *  unless a fallback driver falls through to its built-in default. */
     secretRef: row.secret_ref,
     secretName,
     secretPresent: present,

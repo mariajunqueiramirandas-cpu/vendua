@@ -147,8 +147,17 @@ async function startSocket(sql: Sql, integration: IntegrationRow): Promise<Baile
     browser: ['Venduá', 'Chrome', '1.0.0'],
   });
 
+  // Claim module state synchronously — Baileys' first connection.update
+  // fires on ws connect (always async, after this returns), so by then
+  // `socket === sock` and every handler can identity-check against it. A
+  // replaced socket's late `close` then can't erase the replacement's
+  // globals or report it offline.
+  socket = sock;
+  socketFingerprint = fingerprintOf(integration);
+
   sock.ev.on('creds.update', () => void auth.write('creds', 'main', creds));
   sock.ev.on('connection.update', (u) => {
+    if (socket !== sock) return; // stale socket — a replacement owns globals
     if (u.qr) {
       connState = 'qr';
       void persistQr(sql, accountId, u.qr);
@@ -243,8 +252,7 @@ export async function ensureSocket(
     connState = 'connecting';
     starting = startSocket(sql, integration!).then(
       (s) => {
-        socket = s;
-        socketFingerprint = wanted;
+        // globals were assigned inside startSocket — only the flag clears
         starting = null;
         return s;
       },
@@ -279,20 +287,22 @@ export async function pairCode(sql: Sql, phone: string): Promise<string> {
  *  the device is gone (its close event is a 401, which the reconnect logic
  *  already leaves dead). */
 export async function logoutWa(sql: Sql, accountId: string): Promise<void> {
-  try {
-    await socket?.logout();
-  } catch {
-    /* socket may be half-dead */
-  }
-  try {
-    socket?.end();
-  } catch {
-    /* already closed */
-  }
+  // Detach the globals first — a synchronous `close` on end() must not see
+  // itself as the live socket and schedule a reconnect under the old auth.
+  const s = socket;
   socket = null;
   starting = null;
   socketFingerprint = null;
   connState = 'off';
+  // logout() is the remote unlink — if it fails, auth state must survive
+  // so a retry can still talk to WhatsApp. Only a confirmed unlink (or an
+  // already-dead socket) proceeds to the local wipe.
+  if (s) await s.logout();
+  try {
+    s?.end();
+  } catch {
+    /* already closed */
+  }
   await controlTx(sql, async (tx) => {
     await tx`delete from wa_auth_state where account_id = ${accountId}`;
     await tx`delete from control_settings where key = 'wa_qr'`;
