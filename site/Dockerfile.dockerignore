@@ -1,0 +1,23 @@
+# Build context for site/Dockerfile (context = repo root). Docker prefers
+# <Dockerfile>.dockerignore over the root .dockerignore — which excludes
+# packages/, storefronts/ and apps/ entirely. Their package.json files must
+# stay visible: the Dockerfile COPYs every workspace manifest before
+# `bun install --frozen-lockfile`.
+.git
+.gitignore
+**/node_modules
+**/dist
+site/build
+site/.svelte-kit
+site/test-results
+site/playwright-report
+site/artifacts
+site/tests
+site/playwright.config.ts
+docs
+tools
+*.md
+.env
+.env.*
+*.log
+nul

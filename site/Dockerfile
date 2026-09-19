@@ -8,9 +8,21 @@
 FROM oven/bun:1.4.2 AS build
 WORKDIR /app
 
-# Dependency layer cached unless manifests change
+# Dependency layer cached unless manifests change. Every workspace
+# package.json must be present: --frozen-lockfile resolves the full
+# workspace graph from bun.lock and fails on a pruned checkout missing one.
 COPY package.json bun.lock ./
+COPY packages/cli/package.json packages/cli/package.json
+COPY packages/conformance/package.json packages/conformance/package.json
+COPY packages/core/package.json packages/core/package.json
+COPY packages/kernel/package.json packages/kernel/package.json
+COPY apps/control/package.json apps/control/package.json
 COPY site/package.json site/package.json
+COPY storefronts/quero-pudim/package.json storefronts/quero-pudim/package.json
+COPY storefronts/brasa/package.json storefronts/brasa/package.json
+COPY storefronts/forn/package.json storefronts/forn/package.json
+COPY storefronts/_examples/quero-pudim/package.json storefronts/_examples/quero-pudim/package.json
+COPY storefronts/_template/package.json storefronts/_template/package.json
 RUN bun install --frozen-lockfile
 
 COPY site/ site/
