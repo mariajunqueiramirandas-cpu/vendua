@@ -95,11 +95,13 @@ touch it.
   comments outstanding after a short quiet window. Never merge over
   failing CI or an unanswered important review thread. (`roadmap-executor`'s
   `auto` gate applies the same bar.)
-- Never fan out child sessions. Orchestration mode (`run-roadmap`) is
-  orchestrator + exactly ONE child session at a time — every separate-VM
-  session counts against the org's concurrency cap. A worker session
-  never spawns children; parallelize inside a session with same-VM
-  subagents instead.
+- Never fan out child sessions — every separate-VM session counts
+  against the org's concurrency cap. A single-phase / scoped request
+  uses NO child session: this session directly spawns same-VM
+  subagents. Orchestration mode is only for broad requests (e.g. "build
+  all phases in order"): orchestrator + exactly ONE child session at a
+  time, itself subagent-driven. A session never spawns its own
+  children — one session at a time.
 - Never run destructive commands (rm -rf, git reset --hard, dropping data)
   without explicit confirmation.
 - Never fabricate: no unverified claims, invented APIs, or "done" without
@@ -140,9 +142,11 @@ Mirrored in `.omp/RULES.md` for omp's sticky-rule enforcement — keep in sync.
   verification pass on a large change, or an explicit fan-out the user
   asked for (e.g. `run-roadmap`).
 - Prefer heavy use of same-VM subagents (shared-VM workflow agents, the
-  persistent sidekick) over child sessions — a child session is reserved
-  for orchestration mode, which is exactly one child at a time.
-  Subagents that edit the same repo work in separate `git worktree`s.
+  persistent sidekick) over child sessions. A child session exists only
+  for broad orchestration requests — a single-phase request runs
+  in-session on subagents; a multi-phase request gets exactly one
+  child. Subagents that edit the same repo work in separate
+  `git worktree`s.
 - When you do delegate:
   - Devin Cloud: read the profile file and pass its body verbatim as the
     child-session or workflow-agent prompt.
