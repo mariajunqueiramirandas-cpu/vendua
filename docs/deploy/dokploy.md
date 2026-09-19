@@ -59,13 +59,18 @@ Boot order is handled by healthchecks: `db` healthy → `core` migrates
 
 ## Services
 
-| Service                          | Image                                           | Exposed port   |
-| -------------------------------- | ----------------------------------------------- | -------------- |
-| `db`                             | postgres:16-alpine                              | internal only  |
-| `core`                           | `packages/core/Dockerfile` (Bun)                | 8787, internal |
-| `quero-pudim` / `brasa` / `forn` | `storefronts/Dockerfile` (vite build → nginx)   | 80             |
-| `crm`                            | `nginx:1.28-alpine` + `apps/control/nginx.conf` | 80             |
-| `site`                           | `site/Dockerfile` (SvelteKit static → nginx)    | 80             |
+| Service                          | Image                                                      | Exposed port   |
+| -------------------------------- | ---------------------------------------------------------- | -------------- |
+| `db`                             | postgres:16-alpine                                         | internal only  |
+| `core`                           | `packages/core/Dockerfile` (Bun)                           | 8787, internal |
+| `quero-pudim` / `brasa` / `forn` | `storefronts/Dockerfile` `target: storefront` (vite→nginx) | 80             |
+| `crm`                            | `nginx:1.28-alpine` + `apps/control/nginx.conf`            | 80             |
+| `site`                           | `storefronts/Dockerfile` `target: site` (SvelteKit→nginx)  | 80             |
+
+All web services share the Dockerfile's `build` stage, so a deploy runs one
+`bun install` + one vite pass total (compose/bake dedupe the shared stage).
 
 Adding a storefront later = one more service block using
-`storefronts/Dockerfile` with `STOREFRONT`/`PKG` args, plus its domain row.
+`storefronts/Dockerfile` with `target: storefront` + a `STOREFRONT` arg, one
+`COPY` line for its `package.json` in the Dockerfile's manifest block
+(`--frozen-lockfile` needs it on disk), plus its domain row.

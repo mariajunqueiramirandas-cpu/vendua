@@ -34,8 +34,9 @@ apply here.
 ## Pitfalls
 
 - `bun.lock` is at the workspace root — never create a site-local lockfile.
-- Docker builds use the **repo root** as context:
-  `docker build -f site/Dockerfile -t vendua .`
+- Docker builds use the **repo root** as context and share one build stage
+  with the storefronts:
+  `docker build -f storefronts/Dockerfile --target site -t vendua-site .`
 - `.svelte-kit/` is generated — never edit or commit it.
 - `publicDomain` in `site.ts` gates canonical/OG/sitemap output; leave it
   empty until the real domain is confirmed.
