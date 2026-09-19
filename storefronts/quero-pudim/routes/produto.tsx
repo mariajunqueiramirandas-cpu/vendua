@@ -66,11 +66,9 @@ export function ProductPage() {
   const lowStock = !soldOut && !preorder && stockQty !== null && stockQty > 0 && stockQty <= 5;
   const maxQty = preorder ? 99 : stockQty !== null ? Math.max(1, Math.min(99, stockQty)) : 99;
 
-  const extrasCents = groups
-    .flatMap((g) => g.modifiers)
-    .filter((m) => chosenIds.includes(m.id))
-    .reduce((s, m) => s + m.priceDeltaCents, 0);
-  const lineTotal = product ? (product.basePriceCents + extrasCents) * qty : 0;
+  // No client-computed totals anywhere: the CTA shows the unit price field
+  // as catalog data and each option carries its own signed delta; the payable
+  // total is Core's answer (checkout + committed cart snapshots).
 
   useEffect(() => {
     if (product && store) document.title = `${product.name} · ${store.name}`;
@@ -288,8 +286,11 @@ export function ProductPage() {
                                 {m.name}
                                 {modSoldOut ? <span className="mod-hint"> · esgotado</span> : null}
                               </span>
-                              {m.priceDeltaCents > 0 ? (
-                                <span className="mod-delta">+ {formatBRL(m.priceDeltaCents)}</span>
+                              {m.priceDeltaCents !== 0 ? (
+                                <span className="mod-delta">
+                                  {m.priceDeltaCents > 0 ? '+' : '−'}{' '}
+                                  {formatBRL(Math.abs(m.priceDeltaCents))}
+                                </span>
                               ) : null}
                             </button>
                           </li>
@@ -375,7 +376,8 @@ export function ProductPage() {
                   ) : (
                     <>
                       <ShoppingBag size={16} aria-hidden="true" /> Adicionar à sacola ·{' '}
-                      {formatBRL(lineTotal)}
+                      {product ? formatBRL(product.basePriceCents) : ''}
+                      {qty > 1 ? ` ×${qty}` : ''}
                     </>
                   )}
                 </button>

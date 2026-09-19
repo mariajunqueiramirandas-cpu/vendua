@@ -62,7 +62,9 @@ export function tenantMiddleware(
  */
 export function idempotency(
   sql: Sql,
-  run: (c: Context, tx: Sql) => Promise<{ status: number; body: unknown } | Response>,
+  // Structured result only — a raw Response would commit writes without a
+  // recorded result, so the pending claim could rerun the mutation later.
+  run: (c: Context, tx: Sql) => Promise<{ status: number; body: unknown }>,
 ): (c: Context) => Promise<Response> {
   return async (c) => {
     const key = c.req.header('idempotency-key');
@@ -123,7 +125,6 @@ export function idempotency(
     // tx to end, then replays its stored result instead of double-applying.
     type Outcome =
       | { kind: 'replay'; response: unknown; status: number }
-      | { kind: 'raw'; response: Response }
       | { kind: 'result'; status: number; body: unknown };
     let outcome: Outcome;
     try {
@@ -148,7 +149,6 @@ export function idempotency(
           );
         }
         const r = await run(c, tx);
-        if (r instanceof Response) return { kind: 'raw', response: r };
         const stored = await tx`
           update idempotency_keys set response = ${tx.json(r.body as never)}, status_code = ${r.status}
           where tenant_id = ${tenant.id} and key = ${key} and owner = ${owner}
@@ -182,7 +182,6 @@ export function idempotency(
       }
       throw err;
     }
-    if (outcome.kind === 'raw') return outcome.response;
     if (outcome.kind === 'replay') {
       return c.json(outcome.response as object, outcome.status as 200, {
         'x-idempotent-replay': 'true',
@@ -299,8 +298,17 @@ const MAX_BODY_BYTES = 32 * 1024;
 export async function bodyJson(c: Context): Promise<Record<string, unknown>> {
   // Public mutation endpoints take attacker-controlled bodies; cap the raw
   // text before parsing so oversized payloads can't burn parse time/memory.
+  // Content-Length is a free pre-filter — reject before buffering when the
+  // header already overruns the cap (absent/lying headers still hit the
+  // post-read byte check below).
+  const declared = Number(c.req.header('content-length'));
+  if (Number.isFinite(declared) && declared > MAX_BODY_BYTES) {
+    throw new HttpError(413, 'PAYLOAD_TOO_LARGE', `body exceeds ${MAX_BODY_BYTES} bytes`);
+  }
   const raw = await c.req.text();
-  if (raw.length > MAX_BODY_BYTES) {
+  // Bytes, not UTF-16 units — multibyte input would otherwise slip past
+  // the cap (string.length undercounts).
+  if (new TextEncoder().encode(raw).byteLength > MAX_BODY_BYTES) {
     throw new HttpError(413, 'PAYLOAD_TOO_LARGE', `body exceeds ${MAX_BODY_BYTES} bytes`);
   }
   let body: unknown;
