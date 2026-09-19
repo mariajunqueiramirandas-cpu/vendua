@@ -30,7 +30,9 @@ const GOOD_BASE = {
     '<html><body><script type="module" src="main.tsx"></script><script src="/v1/v.js"></script></body></html>',
   'main.tsx':
     'import { VenduaProvider, SystemSurfaces } from "@vendua/kernel";\n' +
-    'export const App = () => <VenduaProvider api=""><SystemSurfaces /></VenduaProvider>;\n',
+    'import { BrowserRouter } from "react-router-dom";\n' +
+    'export const App = () =>\n' +
+    '  <VenduaProvider api=""><SystemSurfaces /><BrowserRouter /></VenduaProvider>;\n',
   'package.json': JSON.stringify({
     name: '@vendua/storefront-fixture',
     dependencies: { react: '18.3.1', '@vendua/kernel': 'workspace:*' },
@@ -60,15 +62,27 @@ describe('runStatic', () => {
     expect(k04?.detail).toContain('control');
   }, 120_000);
 
-  test('string-shorthand and bare /checkout proxies fail K06', async () => {
+  test('an entry with no router mount fails K02', async () => {
     const dir = fixture({
       ...GOOD_BASE,
-      'vite.config.ts':
-        'export default { server: { proxy: { "/checkout": "http://localhost:8787" } } };\n',
+      'main.tsx':
+        'import { VenduaProvider, SystemSurfaces } from "@vendua/kernel";\n' +
+        'export const App = () => <VenduaProvider api=""><SystemSurfaces /></VenduaProvider>;\n',
     });
-    const results = await runStatic(dir);
-    const k06 = results.find((r) => r.id === 'K06');
-    expect(k06?.status).toBe('fail');
-    expect(k06?.detail).toContain('/checkout');
+    const k02 = (await runStatic(dir)).find((r) => r.id === 'K02');
+    expect(k02?.status).toBe('fail');
+    expect(k02?.detail).toContain('router');
+  }, 120_000);
+
+  test('string-shorthand and bare-prefix proxies fail K06', async () => {
+    for (const key of ['/checkout', '/storefront']) {
+      const dir = fixture({
+        ...GOOD_BASE,
+        'vite.config.ts': `export default { server: { proxy: { "${key}": "http://localhost:8787" } } };\n`,
+      });
+      const k06 = (await runStatic(dir)).find((r) => r.id === 'K06');
+      expect(k06?.status).toBe('fail');
+      expect(k06?.detail).toContain(key);
+    }
   }, 120_000);
 });

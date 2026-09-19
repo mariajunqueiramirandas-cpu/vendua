@@ -13,7 +13,7 @@ export default defineConfig({
   server: {
     port: 5191,
     proxy: {
-      '/storefront': { target: core, changeOrigin: false },
+      '/storefront/v1': { target: core, changeOrigin: false },
       // '/checkout/v1', not bare '/checkout' — reserved prefixes are the
       // versioned mounts; a bare prefix would swallow a same-named page route.
       '/checkout/v1': { target: core, changeOrigin: false },

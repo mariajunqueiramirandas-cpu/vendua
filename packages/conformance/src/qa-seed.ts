@@ -195,6 +195,7 @@ export async function seedQaTenants(opts: QaSeedOptions = {}): Promise<void> {
         // Deterministic re-run: drop all mutable state for the qa tenants.
         await tx`delete from order_events where tenant_id = ${tid}`;
         await tx`delete from orders where tenant_id = ${tid}`;
+        await tx`delete from outbox where tenant_id = ${tid}`;
         await tx`delete from cart_items where tenant_id = ${tid}`;
         await tx`delete from carts where tenant_id = ${tid}`;
         await tx`delete from idempotency_keys where tenant_id = ${tid}`;

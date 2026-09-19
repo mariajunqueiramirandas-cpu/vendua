@@ -47,16 +47,9 @@ const RESERVED_ROUTE_PREFIXES = ['v1', 'storefront', 'checkout/v1', 'control'];
 // Contract v1 (03): the dev proxy may only forward the reserved API
 // prefixes, in object form — vite's string shorthand forces
 // `changeOrigin: true` and rewrites the Host header tenant resolution
-// depends on. '/storefront' covers /storefront/v1 entirely (page routes
-// under it are already banned by K04); '/checkout' bare would swallow the
-// SPA checkout route.
-const PROXY_KEY_ALLOW = new Set([
-  '/storefront',
-  '/storefront/v1',
-  '/checkout/v1',
-  '/v1',
-  '/control',
-]);
+// depends on. Only the versioned mounts are legal: a bare '/storefront'
+// or '/checkout' proxy would swallow same-named page routes.
+const PROXY_KEY_ALLOW = new Set(['/storefront/v1', '/checkout/v1', '/v1', '/control']);
 
 function sourceFiles(dir: string): string[] {
   const out: string[] = [];
@@ -180,7 +173,10 @@ function k02(dir: string): CheckResult {
   if (!entry) {
     problems.push(`entry not found (tried: ${candidates.map((c) => basename(c)).join(', ')})`);
   } else {
-    const src = readFileSync(entry, 'utf8');
+    // Comments can mention the components — strip them before counting.
+    const src = readFileSync(entry, 'utf8')
+      .replace(/\/\*[\s\S]*?\*\//g, '')
+      .replace(/(^|[^:'"`])\/\/[^\n]*/g, '$1');
     // Structural mount check: exactly one <VenduaProvider> element whose
     // children contain <SystemSurfaces /> before the router mount. Source-order
     // on the flat JSX text — not a full AST, but it catches the realistic
@@ -191,7 +187,9 @@ function k02(dir: string): CheckResult {
     const provClose = src.indexOf('</VenduaProvider>');
     const surf = /<SystemSurfaces[\s/>]/.exec(src)?.index;
     const surfs = src.match(/<SystemSurfaces[\s/>]/g) ?? [];
-    const router = /<(BrowserRouter|RouterProvider|Routes)[\s>]/.exec(src)?.index;
+    // <Routes> is a route table, not a router mount — it can legally live in
+    // a child component above the provider in source order.
+    const router = /<(BrowserRouter|RouterProvider|HashRouter|MemoryRouter)[\s>]/.exec(src)?.index;
 
     if (!/\bVenduaProvider\b/.test(src)) problems.push('entry does not import VenduaProvider');
     if (provOpen === undefined) problems.push('entry does not render <VenduaProvider>');
@@ -205,7 +203,9 @@ function k02(dir: string): CheckResult {
         problems.push(`entry renders ${surfs.length} <SystemSurfaces> — exactly one`);
       else if (surf < provOpen || surf > provClose)
         problems.push('<SystemSurfaces /> must render inside <VenduaProvider>');
-      else if (router !== undefined && !(surf < router && router < provClose))
+      else if (router === undefined)
+        problems.push('no router mount inside <VenduaProvider> — the app shell is required');
+      else if (!(surf < router && router < provClose))
         problems.push('<SystemSurfaces /> must mount before the router inside the provider');
     }
   }

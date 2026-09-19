@@ -163,9 +163,16 @@ test('[C01] catalog browsable; product cards expose data-vendua="product-link" a
   const bad: string[] = [];
   for (const href of hrefs.slice(0, 6)) {
     const res = await page.goto(new URL(href, O).href);
-    if (!res?.ok()) bad.push(`${href} → ${res?.status()}`);
-    else if ((await page.locator('[data-vendua="add-to-cart"], h1').count()) === 0)
-      bad.push(`${href} → no product content rendered`);
+    if (!res?.ok()) {
+      bad.push(`${href} → ${res?.status()}`);
+      continue;
+    }
+    // Wait for real content — goto resolves at load, before React mounts.
+    const rendered = await page
+      .waitForSelector('[data-vendua="add-to-cart"], h1', { timeout: 10_000 })
+      .then(() => true)
+      .catch(() => false);
+    if (!rendered) bad.push(`${href} → no product content rendered`);
   }
   expect(bad, `unresolvable product links: ${bad.join(', ')}`).toHaveLength(0);
 });
