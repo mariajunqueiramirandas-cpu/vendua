@@ -183,6 +183,27 @@ Round 2 (second review pass — all landed):
 - **`refetch` could be overwritten by the superseded in-flight fetch** —
   `runToken` guard; invalidate no longer double-fetches across subscribers.
 
+Round 3 (third review pass — all landed):
+
+- **Idempotent claims could rerun a committed mutation** — handler work and
+  its recorded response now commit in one transaction (`run(c, tx)`); a
+  crash leaves a pending claim that safely reruns rolled-back work.
+- **Idempotency keys were unbounded** — length capped at 200; the claim tx
+  sweeps rows older than 7 days.
+- **Cart mutations raced checkout** — `assertCartOpen` takes the cart row
+  `FOR UPDATE`, so a mutation serializes against a completing checkout
+  instead of observing a stale `open` status.
+- **`migrate()` raced itself** — `pg_advisory_lock` on a reserved
+  connection serializes concurrent starters; each file's DDL +
+  `schema_migrations` row commit atomically.
+- **`SESSION_SECRET` had a checked-in default** — unset now means a random
+  per-boot secret (tokens unforgeable; dev re-mints via `POST /session`).
+- **Concurrent first mutations minted competing carts** — kernel
+  `ensureSession` is single-flight; callers share one session creation.
+- **quero-pudim kept dead cleanup + a stale zones comment** — removed the
+  item-by-item cart-empty loop (Core completes the cart server-side) and
+  the datalist now reads neighborhoods from `/zones`.
+
 ### Feature gaps the reference ships that the platform can't express yet
 
 (From `quero-pudim` — each had an honest storefront fallback; details in its
