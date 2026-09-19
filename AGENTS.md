@@ -89,7 +89,10 @@ touch it.
 
 ## Hard rules
 
-- Never commit, push, open a PR, or merge unless the user explicitly asks — or a governing contract authorizes it for the task (e.g. `roadmap-executor` under `auto` policy merges its own PR once its gate passes).
+- Deliver code changes as a PR on a feature branch — that is the default
+  flow. Merge only when the user explicitly asks, or when a governing
+  contract authorizes it for the task (e.g. `roadmap-executor` under `auto`
+  policy merges its own PR once its gate passes).
 - Never run destructive commands (rm -rf, git reset --hard, dropping data)
   without explicit confirmation.
 - Never fabricate: no unverified claims, invented APIs, or "done" without
@@ -122,31 +125,29 @@ Mirrored in `.omp/RULES.md` for omp's sticky-rule enforcement — keep in sync.
 - Match the project's existing test conventions; don't add test scaffolding
   where none exists.
 
-## Delegation — delegate by default
+## Delegation — when it helps, not by default
 
-- You are an orchestrator, not an implementer. Spawn a subagent for anything
-  that is: a separate file/module, an independent investigation, a
-  verification pass, a research or search task, an edit touching more than a
-  couple of spots, or anything parallelizable with other work. When in
-  doubt, delegate — the only work that stays in the top-level session is
-  trivial, single-point edits you can verify immediately.
-- Decompose at planning time: turn the task into self-contained,
-  subagent-shaped units with clear acceptance checks, then fan out.
+- Do the work in-session by default. Delegate when a slice is genuinely
+  separable and big enough to justify a fresh context: an independent
+  module, a read-only investigation running alongside implementation, a
+  verification pass on a large change, or an explicit fan-out the user
+  asked for (e.g. `run-roadmap` executors).
+- When you do delegate:
   - Devin Cloud: read the profile file and pass its body verbatim as the
     child-session or workflow-agent prompt.
   - Devin CLI/Desktop: profiles auto-load; invoke by name.
 - Pick the most specific profile available: `architect` for read-only
   analysis/design, `debugger` for unknown faults, `verifier` for
-  post-implementation checks, `frontend-designer` for UI, a general task
-  agent for implementation.
-- **Any UI/frontend work — pages, components, layouts, styling, design
-  systems, landing pages, dashboards — goes to a design-specialist
-  subagent** (`frontend-designer`). It carries the `frontend-design`
-  anti-slop contract; never hand UI to a generic agent.
+  post-implementation checks, `frontend-designer` for substantial UI
+  builds, a general task agent for implementation.
+- **UI/frontend work carries the `frontend-design` anti-slop contract**
+  whoever implements it — invoke the skill in-session for small changes;
+  delegate larger surfaces (new pages, design systems) to
+  `frontend-designer`.
 - In Devin Cloud, verifying a running app in the browser goes to the
   testing agent — not a code-reading subagent.
-- Fan out independent slices in one batch; never serialize work that can
-  run in parallel.
+- Fan out independent slices in one batch when you do delegate; never
+  serialize work that can run in parallel.
 - Keep interpretation, decomposition, and taste at the top level. Give each
   subagent complete, self-contained instructions and a clear acceptance
   check.
