@@ -1,6 +1,9 @@
 import type { Context, MiddlewareHandler } from 'hono';
 import { withTenant, type Sql } from './db.ts';
+import { log } from './log.ts';
 import type { Tenant, TenantResolver } from './tenancy.ts';
+
+const httpLog = log.child({ mod: 'http' });
 
 /**
  * Typed error model — `code` is the contract, `message` is human-readable and
@@ -25,8 +28,45 @@ export function errorJson(err: unknown, c: Context) {
     if (err.details) (body.error as Record<string, unknown>).details = err.details;
     return c.json(body, err.status as 400);
   }
-  console.error(err);
+  httpLog.error(
+    {
+      err,
+      method: c.req.method,
+      path: c.req.path,
+      requestId: (c as Context<{ Variables: { requestId?: string } }>).get('requestId'),
+    },
+    'unhandled error',
+  );
   return c.json({ error: { code: 'INTERNAL', message: 'internal error' } }, 500);
+}
+
+/**
+ * Per-request log line + x-request-id correlation. Registers first in
+ * createApp so every request (incl. CORS rejects) is counted. Incoming
+ * x-request-id is echoed when plausible (<128 chars) so edge-generated ids
+ * correlate end-to-end; anything else gets a fresh UUID.
+ */
+export function requestLogger(): MiddlewareHandler<{ Variables: { requestId: string } }> {
+  return async (c, next) => {
+    const incoming = c.req.header('x-request-id');
+    const requestId = incoming && incoming.length <= 128 ? incoming : crypto.randomUUID();
+    c.set('requestId', requestId);
+    c.header('x-request-id', requestId);
+    const start = performance.now();
+    await next();
+    const status = c.res.status;
+    const fields = {
+      requestId,
+      method: c.req.method,
+      path: c.req.path,
+      status,
+      ms: Math.round(performance.now() - start),
+      host: c.req.header('host'),
+    };
+    if (c.req.path === '/healthz') httpLog.debug(fields, 'request');
+    else if (status >= 500) httpLog.error(fields, 'request');
+    else httpLog.info(fields, 'request');
+  };
 }
 
 type Vars = { tenant: Tenant };

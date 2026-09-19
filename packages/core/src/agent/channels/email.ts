@@ -1,8 +1,11 @@
 import type { IntegrationRow } from '../../modules/integrations.ts';
+import { log } from '../../platform/log.ts';
+
+const mailLog = log.child({ mod: 'email' });
 
 /**
  * agent/channels/email — outbound drivers. `resend` posts to the Resend API;
- * `log` is the dev driver: writes the would-be send to the console and
+ * `log` is the dev driver: writes the would-be send to the log and
  * returns a synthetic provider id so the whole draft→send→reply loop runs
  * with zero credentials.
  */
@@ -33,7 +36,7 @@ export async function sendEmail(
   }
 
   if (driver === 'log') {
-    console.log(`[email:log] → ${msg.to} | ${msg.subject}\n${msg.body}`);
+    mailLog.info({ to: msg.to, subject: msg.subject, body: msg.body }, 'log-driver send');
     return `log:${crypto.randomUUID()}`;
   }
 

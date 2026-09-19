@@ -22,6 +22,9 @@ services:
       timeout: 3s
       retries: 20
     restart: unless-stopped
+    logging:
+      driver: json-file
+      options: { max-size: "10m", max-file: "3" }
 
   core:
     build:
@@ -54,6 +57,9 @@ services:
       RESEND_API_KEY: ${RESEND_API_KEY:-}
       TINYFISH_API_KEY: ${TINYFISH_API_KEY:-}
       VENDUA_WEBHOOK_SECRET: ${VENDUA_WEBHOOK_SECRET:-}
+      # pino level for core itself / the Baileys socket logger.
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+      BAILEYS_LOG_LEVEL: ${BAILEYS_LOG_LEVEL:-warn}
     depends_on:
       db:
         condition: service_healthy
@@ -80,6 +86,9 @@ services:
       core:
         condition: service_healthy
     restart: unless-stopped
+    logging:
+      driver: json-file
+      options: { max-size: "10m", max-file: "3" }
 
   brasa:
     build:
@@ -92,6 +101,9 @@ services:
       core:
         condition: service_healthy
     restart: unless-stopped
+    logging:
+      driver: json-file
+      options: { max-size: "10m", max-file: "3" }
 
   forn:
     build:
@@ -104,6 +116,9 @@ services:
       core:
         condition: service_healthy
     restart: unless-stopped
+    logging:
+      driver: json-file
+      options: { max-size: "10m", max-file: "3" }
 
   # Staff CRM — thin nginx in front of core serving /control only. Attach
   # the staff domain here (never directly on core: that shortens the proxy
@@ -116,6 +131,9 @@ services:
       core:
         condition: service_healthy
     restart: unless-stopped
+    logging:
+      driver: json-file
+      options: { max-size: "10m", max-file: "3" }
 
   site:
     build:
@@ -123,6 +141,9 @@ services:
       dockerfile: storefronts/Dockerfile
       target: site
     restart: unless-stopped
+    logging:
+      driver: json-file
+      options: { max-size: "10m", max-file: "3" }
 
 volumes:
   pgdata:

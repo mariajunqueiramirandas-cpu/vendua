@@ -15,6 +15,7 @@ import {
   rateLimit,
   sessionCartId,
   str,
+  requestLogger,
   tenantMiddleware,
   uuidParam,
   UUID_RE,
@@ -82,6 +83,10 @@ import { claimControl, controlTx } from './modules/control.ts';
 import { drain, insertRun } from './agent/runner.ts';
 import { ingestInbound } from './agent/inbound.ts';
 import { LOADER_JS } from './loader.ts';
+import { log } from './platform/log.ts';
+
+const agentLog = log.child({ mod: 'agent' });
+const waLog = log.child({ mod: 'whatsapp' });
 
 export interface AppDeps {
   sql: Sql;
@@ -231,6 +236,7 @@ export function createApp({ sql, sessionSecret, controlSecret }: AppDeps) {
   const app = new Hono<{ Variables: { tenant: Tenant } }>();
 
   app.onError((err, c) => errorJson(err, c));
+  app.use('*', requestLogger());
   // VENDUA_TRUST_PROXY=1 marks a deployment behind the Venduá edge — only then
   // do X-Forwarded-* headers carry routing truth (tenant spoofing otherwise).
   const trustProxy = process.env.VENDUA_TRUST_PROXY === '1';
@@ -811,7 +817,8 @@ export function createApp({ sql, sessionSecret, controlSecret }: AppDeps) {
       },
     );
     if (res.replayed) c.header('x-idempotent-replay', 'true');
-    if (res.body.runId) void drain(sql).catch((e) => console.error('[agent drain]', e));
+    if (res.body.runId)
+      void drain(sql).catch((e) => agentLog.error({ err: e }, 'drain failed'));
     return c.json(res.body, res.status as 200);
   });
 
@@ -939,7 +946,7 @@ export function createApp({ sql, sessionSecret, controlSecret }: AppDeps) {
       };
     });
     if (res.replayed) c.header('x-idempotent-replay', 'true');
-    void drain(sql).catch((e) => console.error('[agent drain]', e));
+    void drain(sql).catch((e) => agentLog.error({ err: e }, 'drain failed'));
     return c.json(res.body, res.status as 201);
   });
 
@@ -1145,7 +1152,7 @@ export function createApp({ sql, sessionSecret, controlSecret }: AppDeps) {
       const { ensureSocket } = await import('./agent/channels/whatsapp.ts');
       void getIntegration(sql, 'whatsapp')
         .then((i) => ensureSocket(sql, i))
-        .catch((e) => console.error('[whatsapp] socket reconcile failed', e));
+        .catch((e) => waLog.error({ err: e }, 'socket reconcile failed'));
     }
     return c.json(res.body);
   });
@@ -1268,7 +1275,7 @@ export function createApp({ sql, sessionSecret, controlSecret }: AppDeps) {
       };
     });
     if (res.replayed) c.header('x-idempotent-replay', 'true');
-    void drain(sql).catch((e) => console.error('[agent drain]', e));
+    void drain(sql).catch((e) => agentLog.error({ err: e }, 'drain failed'));
     return c.json(res.body, res.status as 201);
   });
 
@@ -1322,7 +1329,7 @@ export function createApp({ sql, sessionSecret, controlSecret }: AppDeps) {
       const accountId = (integration?.config.accountId as string) ?? 'default';
       await logoutWa(sql, accountId);
       void ensureSocket(sql, integration).catch((e) =>
-        console.error('[whatsapp] post-logout restart failed', e),
+        waLog.error({ err: e }, 'post-logout restart failed'),
       );
       return { status: 200, body: { ok: true } };
     });

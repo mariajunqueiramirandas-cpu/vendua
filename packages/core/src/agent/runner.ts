@@ -1,4 +1,7 @@
 import type { Sql } from '../platform/db.ts';
+import { log } from '../platform/log.ts';
+
+const agentLog = log.child({ mod: 'agent' });
 import { controlTx } from '../modules/control.ts';
 import { getIntegration, getPitch, getSetting } from '../modules/integrations.ts';
 import { providerFor, type AgentMessage } from './llm.ts';
@@ -282,7 +285,7 @@ export async function drain(sql: Sql, limit = 20): Promise<number> {
   );
   for (const m of stranded) {
     await dispatchMessage(sql, m.id).catch((e) =>
-      console.error('[agent drain] dispatch failed', m.id, e),
+      agentLog.error({ err: e, messageId: m.id }, 'dispatch failed'),
     );
   }
   let ran = 0;
@@ -302,7 +305,7 @@ export function startAgentWorker(sql: Sql, intervalMs = 15_000) {
     draining = true;
     void drain(sql)
       .then(() => sweepOutreach(sql))
-      .catch((e) => console.error('[agent worker]', e))
+      .catch((e) => agentLog.error({ err: e }, 'worker failed'))
       .finally(() => {
         draining = false;
       });
