@@ -60,14 +60,20 @@ export async function getIntegration(
   sql: Sql,
   kind: IntegrationKind,
 ): Promise<IntegrationRow | null> {
-  // The enabled row for a kind is THE provider — one active driver per kind.
-  const rows = await controlTx(
-    sql,
-    (tx) => tx<IntegrationRow[]>`
-      select * from control_integrations
-      where kind = ${kind} and enabled order by updated_at desc limit 1
-    `,
-  );
+  return controlTx(sql, (tx) => getIntegrationTx(tx, kind));
+}
+
+/** Tx-local variant — the enabled row for a kind is THE provider (one active
+ *  driver per kind). Use inside an existing control tx; `sql.begin` does not
+ *  exist on transaction handles. */
+export async function getIntegrationTx(
+  tx: Sql,
+  kind: IntegrationKind,
+): Promise<IntegrationRow | null> {
+  const rows = await tx<IntegrationRow[]>`
+    select * from control_integrations
+    where kind = ${kind} and enabled order by updated_at desc limit 1
+  `;
   return rows[0] ?? null;
 }
 
@@ -127,17 +133,22 @@ export async function upsertIntegration(
       on conflict (kind, driver) do update set
         config = excluded.config,
         secret_ref = excluded.secret_ref,
+        -- enabled only changes when the caller passes it explicitly.
+        enabled = case when ${input.enabled !== undefined}
+          then excluded.enabled else control_integrations.enabled end,
         updated_at = now()
       returning *
     `;
     // One enabled driver per kind: enabling this one clears the others.
-    if (input.enabled) {
+    if (input.enabled === true) {
       await tx`
         update control_integrations set enabled = false
         where kind = ${kind} and driver <> ${driver}
       `;
       await tx`update control_integrations set enabled = true where id = ${rows[0]!.id}`;
       rows[0]!.enabled = true;
+    } else if (input.enabled === false) {
+      rows[0]!.enabled = false;
     }
     return { status: 200, body: { integration: integrationJson(rows[0]!) } };
   });
@@ -186,10 +197,12 @@ export const DEFAULT_PITCH = {
 export type Pitch = typeof DEFAULT_PITCH;
 
 export async function getSetting<T>(sql: Sql, key: string, fallback: T): Promise<T> {
-  const rows = await controlTx(
-    sql,
-    (tx) => tx<{ value: T }[]>`select value from control_settings where key = ${key}`,
-  );
+  return controlTx(sql, (tx) => getSettingTx(tx, key, fallback));
+}
+
+/** Tx-local variant — call inside an existing control tx. */
+export async function getSettingTx<T>(tx: Sql, key: string, fallback: T): Promise<T> {
+  const rows = await tx<{ value: T }[]>`select value from control_settings where key = ${key}`;
   return (rows[0]?.value as T | undefined) ?? fallback;
 }
 

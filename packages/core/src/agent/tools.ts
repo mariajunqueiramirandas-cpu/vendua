@@ -11,9 +11,14 @@ import {
   updateLead,
 } from '../modules/leads.ts';
 import { addActivity, createTask } from '../modules/activities.ts';
-import { composeMessage, setThreadAgent, channel } from '../modules/threads.ts';
-import { getSetting } from '../modules/integrations.ts';
-import { checkSendAllowed } from './guardrails.ts';
+import { composeMessage, composeMessageTx, setThreadAgent, channel } from '../modules/threads.ts';
+import {
+  DEFAULT_GUARDRAILS,
+  getSetting,
+  getSettingTx,
+  type Guardrails,
+} from '../modules/integrations.ts';
+import { checkSendAllowedTx } from './guardrails.ts';
 import { dispatchMessage } from './send.ts';
 
 /**
@@ -329,26 +334,30 @@ export async function executeTool(
     case 'send_message': {
       const leadId = String(args.leadId);
       const chan = channel(args.channel);
-      const verdict = await checkSendAllowed(sql, leadId, chan);
-      if (!verdict.ok) {
-        return { blocked: true, reason: verdict.reason };
-      }
-      const res = await composeMessage(
-        sql,
-        {
+      // One tx: advisory lock on the lead → guardrails → insert. Two
+      // concurrent send_message calls serialize on the lock, so the second
+      // sees the first's 'queued' row in the daily-cap count instead of
+      // both passing the check on stale reads.
+      const res = await controlTx(sql, async (tx) => {
+        await tx`select pg_advisory_xact_lock(hashtext(${`send:${leadId}`}))`;
+        const g = await getSettingTx(tx, 'guardrails', {} as Partial<Guardrails>);
+        const verdict = await checkSendAllowedTx(tx, { ...DEFAULT_GUARDRAILS, ...g }, leadId);
+        if (!verdict.ok) return { blocked: true as const, reason: verdict.reason };
+        const composed = await composeMessageTx(tx, {
           leadId,
           channel: chan,
           body: String(args.body),
           subject: (args.subject as string) ?? undefined,
           author: 'agent',
           status: verdict.forceDraft ? 'draft' : 'queued',
-        },
-        key,
-      );
-      if (!verdict.forceDraft) {
-        await dispatchMessage(sql, res.body.message.id);
+        });
+        return { blocked: false as const, verdict, composed };
+      });
+      if (res.blocked) return { blocked: true, reason: res.reason };
+      if (res.verdict.forceDraft === false) {
+        await dispatchMessage(sql, res.composed.body.message.id);
       }
-      return { ...res.body, draftFallback: verdict.forceDraft };
+      return { ...res.composed.body, draftFallback: res.verdict.forceDraft };
     }
     case 'remember': {
       const fact = String(args.fact ?? '').slice(0, 500);

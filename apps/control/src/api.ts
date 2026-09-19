@@ -232,7 +232,8 @@ export const api = {
   importCsv: (csv: string) =>
     req<{ created: number; skipped: { reason: string; name?: string }[] }>('/leads/import', {
       method: 'POST',
-      body: JSON.stringify({ csv }),
+      headers: { 'content-type': 'text/csv' },
+      body: csv,
     }),
 
   activities: (leadId: string) => req<{ activities: Activity[] }>(`/leads/${leadId}/activities`),

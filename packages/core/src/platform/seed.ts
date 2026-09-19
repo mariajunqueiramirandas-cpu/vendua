@@ -646,6 +646,15 @@ for (const t of TENANTS) {
       insert into lead_activities (lead_id, kind, body, created_by)
       values (${lead.id}, 'note', ${l.activity}, 'staff')
     `;
+    // everReached counts `to_state` rows — a lead seeded mid-funnel gets one
+    // history row per stage it would have passed through.
+    const stages = ['lead', 'contacted', 'invited', 'live'] as const;
+    for (const s of stages.slice(0, stages.indexOf(l.state) + 1)) {
+      await sql`
+        insert into lead_state_history (lead_id, from_state, to_state, actor)
+        values (${lead.id}, null, ${s}, 'staff')
+      `;
+    }
   }
   console.log('seeded 5 CRM leads');
 }

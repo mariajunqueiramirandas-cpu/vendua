@@ -23,6 +23,28 @@ interface RunRow {
   params: Record<string, unknown>;
 }
 
+/** Transaction-local insert — call inside an existing tx (e.g. claimControl's)
+ *  to atomically pair a run with another write. postgres.js transaction
+ *  handles have no .begin(), so callers holding one must not use enqueueRun. */
+export async function insertRun(
+  tx: Sql,
+  input: {
+    kind: RunRow['kind'];
+    leadId?: string | null;
+    threadId?: string | null;
+    params?: Record<string, unknown>;
+  },
+): Promise<string> {
+  const row = (
+    await tx<{ id: string }[]>`
+      insert into agent_runs (kind, lead_id, thread_id, params)
+      values (${input.kind}, ${input.leadId ?? null}, ${input.threadId ?? null}, ${tx.json((input.params ?? {}) as never)})
+      returning id
+    `
+  )[0]!;
+  return row.id;
+}
+
 export async function enqueueRun(
   sql: Sql,
   input: {
@@ -32,16 +54,7 @@ export async function enqueueRun(
     params?: Record<string, unknown>;
   },
 ): Promise<string> {
-  return controlTx(sql, async (tx) => {
-    const row = (
-      await tx<{ id: string }[]>`
-        insert into agent_runs (kind, lead_id, thread_id, params)
-        values (${input.kind}, ${input.leadId ?? null}, ${input.threadId ?? null}, ${tx.json((input.params ?? {}) as never)})
-        returning id
-      `
-    )[0]!;
-    return row.id;
-  });
+  return controlTx(sql, (tx) => insertRun(tx, input));
 }
 
 async function claimRun(sql: Sql): Promise<RunRow | null> {
@@ -220,8 +233,20 @@ export async function runOnce(sql: Sql): Promise<boolean> {
   }
 }
 
-/** Drain the queue — called by the worker loop and after enqueues. */
+/** Drain the queue — called by the worker loop and after enqueues. First
+ *  reclaims runs whose worker died mid-flight (crash/restart leaves them
+ *  'running' forever): past the lease they're requeued, not failed, so a
+ *  crashed outreach still reaches the lead. */
+const RUN_LEASE_MIN = 10;
+
 export async function drain(sql: Sql, limit = 20): Promise<number> {
+  await controlTx(
+    sql,
+    (tx) => tx`
+      update agent_runs set status = 'queued', started_at = null
+      where status = 'running' and started_at < now() - make_interval(mins => ${RUN_LEASE_MIN})
+    `,
+  );
   let ran = 0;
   while (ran < limit && (await runOnce(sql))) ran++;
   return ran;

@@ -28,12 +28,24 @@ export interface DiscoveryProvider {
   extract(url: string, goal: string): Promise<ExtractResult>;
 }
 
+/** Base URLs are configurable per-integration but pinned to TinyFish hosts
+ *  over https — otherwise the config row becomes an SSRF primitive that
+ *  exfiltrates the API key to an arbitrary endpoint. */
+function tinyfishBase(raw: unknown, fallback: string): string {
+  const value = typeof raw === 'string' && raw ? raw : fallback;
+  const u = new URL(value);
+  if (u.protocol !== 'https:' || !(u.hostname === 'tinyfish.ai' || u.hostname.endsWith('.tinyfish.ai'))) {
+    throw new Error(`tinyfish driver: url must be https under *.tinyfish.ai (got ${value})`);
+  }
+  return value.replace(/\/+$/, '');
+}
+
 function tinyfish(integration: IntegrationRow): DiscoveryProvider {
   const secretRef = integration.secret_ref;
   const apiKey = (secretRef && process.env[secretRef]) ?? process.env.TINYFISH_API_KEY;
   if (!apiKey) throw new Error(`tinyfish driver: missing ${secretRef ?? 'TINYFISH_API_KEY'}`);
-  const searchBase = (integration.config.searchUrl as string) ?? 'https://api.search.tinyfish.ai';
-  const agentBase = (integration.config.agentUrl as string) ?? 'https://agent.tinyfish.ai/v1';
+  const searchBase = tinyfishBase(integration.config.searchUrl, 'https://api.search.tinyfish.ai');
+  const agentBase = tinyfishBase(integration.config.agentUrl, 'https://agent.tinyfish.ai/v1');
   return {
     async search(query, purpose) {
       const u = new URL(searchBase);
@@ -56,6 +68,13 @@ function tinyfish(integration: IntegrationRow): DiscoveryProvider {
       };
     },
     async extract(url, goal) {
+      // Only http(s) targets — the goal text is never parsed as a URL but
+      // `url` comes from search output or the agent and must not fetch
+      // internal/loopback hosts.
+      const target = new URL(url);
+      if (target.protocol !== 'http:' && target.protocol !== 'https:') {
+        throw new Error(`tinyfish extract: unsupported url scheme ${target.protocol}`);
+      }
       // Synchronous /run blocks until the automation completes — the right
       // fit inside a discovery run's extract loop (run-async would need a
       // separate poller for GET /v1/runs/{id}).

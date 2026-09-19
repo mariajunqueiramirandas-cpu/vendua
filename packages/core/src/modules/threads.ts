@@ -350,22 +350,37 @@ export async function composeMessage(
 > {
   const body = str(input.body, 'body', 8000).trim();
   if (!body) throw new HttpError(422, 'BAD_REQUEST', 'body is required');
-  return claimControl(sql, idemKey, async (tx) => {
-    const exists = await tx`select 1 from leads where id = ${input.leadId}`;
-    if (!exists[0]) throw new HttpError(404, 'LEAD_NOT_FOUND', 'lead not found');
-    const thread = await ensureThread(tx, input.leadId, input.channel, {
-      subject: input.subject ?? null,
-    });
-    const message = (
-      await tx<MessageRow[]>`
-        insert into lead_messages (thread_id, direction, author, body, status)
-        values (${thread.id}, 'out', ${input.author}, ${body}, ${input.status ?? 'draft'})
-        returning *
-      `
-    )[0]!;
-    await tx`update lead_threads set last_message_at = now() where id = ${thread.id}`;
-    return { status: 201, body: { thread: threadJson(thread), message: messageJson(message) } };
+  return claimControl(sql, idemKey, (tx) => composeMessageTx(tx, input));
+}
+
+/** Tx-local compose — the send_message tool calls this inside the same
+ *  transaction that took the lead's advisory lock and checked guardrails. */
+export async function composeMessageTx(
+  tx: Sql,
+  input: {
+    leadId: string;
+    channel: Channel;
+    body: string;
+    author: 'staff' | 'agent';
+    status?: 'draft' | 'queued';
+    subject?: string;
+  },
+): Promise<{ status: number; body: { thread: ReturnType<typeof threadJson>; message: ReturnType<typeof messageJson> } }> {
+  const body = str(input.body, 'body', 8000).trim();
+  const exists = await tx`select 1 from leads where id = ${input.leadId}`;
+  if (!exists[0]) throw new HttpError(404, 'LEAD_NOT_FOUND', 'lead not found');
+  const thread = await ensureThread(tx, input.leadId, input.channel, {
+    subject: input.subject ?? null,
   });
+  const message = (
+    await tx<MessageRow[]>`
+      insert into lead_messages (thread_id, direction, author, body, status)
+      values (${thread.id}, 'out', ${input.author}, ${body}, ${input.status ?? 'draft'})
+      returning *
+    `
+  )[0]!;
+  await tx`update lead_threads set last_message_at = now() where id = ${thread.id}`;
+  return { status: 201, body: { thread: threadJson(thread), message: messageJson(message) } };
 }
 
 export async function approveMessage(
@@ -462,34 +477,29 @@ export async function listDrafts(sql: Sql) {
   );
 }
 
-/** Marks a queued outbound as dispatched/failed — called by the channel
- *  driver, not by routes. */
+/** Marks a queued outbound as dispatched/failed — tx-local: call inside the
+ *  dispatch tx (agent/send.ts holds the row lock). No controlTx wrapper —
+ *  transaction handles lack `.begin()`. */
 export async function markMessageSent(
-  sql: Sql,
+  tx: Sql,
   messageId: string,
   providerMessageId: string | null,
 ): Promise<void> {
-  await controlTx(
-    sql,
-    (tx) => tx`
-      update lead_messages
-      set status = 'sent', provider_message_id = ${providerMessageId}
-      where id = ${messageId} and status = 'queued'
-    `,
-  );
+  await tx`
+    update lead_messages
+    set status = 'sent', provider_message_id = ${providerMessageId}
+    where id = ${messageId} and status = 'queued'
+  `;
 }
 
 export async function markMessageFailed(
-  sql: Sql,
+  tx: Sql,
   messageId: string,
   reason: string,
 ): Promise<void> {
-  await controlTx(
-    sql,
-    (tx) => tx`
-      update lead_messages set status = 'failed',
-        provider_message_id = coalesce(provider_message_id, ${`failed:${reason.slice(0, 120)}`})
-      where id = ${messageId}
-    `,
-  );
+  await tx`
+    update lead_messages set status = 'failed',
+      provider_message_id = coalesce(provider_message_id, ${`failed:${reason.slice(0, 120)}`})
+    where id = ${messageId}
+  `;
 }

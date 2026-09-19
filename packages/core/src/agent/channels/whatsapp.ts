@@ -39,25 +39,37 @@ export function onInboundMessage(fn: MessageHandler) {
 }
 
 /** DB-backed auth state. Baileys v7's initAuthCreds() +
- * SignalKeyStore-style read/write map onto our wa_auth_state rows. */
-function dbAuthState(sql: Sql, accountId: string) {
+ * SignalKeyStore-style read/write map onto our wa_auth_state rows. Creds and
+ * signal keys carry Buffers — round-trip through BufferJSON so binary data
+ * survives jsonb storage. */
+function dbAuthState(
+  sql: Sql,
+  accountId: string,
+  bufferJSON: {
+    replacer(k: string, v: unknown): unknown;
+    reviver(k: string, v: unknown): unknown;
+  },
+) {
   return {
     read: async (category: string, name: string) => {
       const rows = await controlTx(
         sql,
         (tx) =>
           tx<
-            { data: unknown }[]
+            { data: string }[]
           >`select data from wa_auth_state where account_id = ${accountId} and category = ${category} and name = ${name}`,
       );
-      return rows[0]?.data ?? null;
+      const raw = rows[0]?.data;
+      if (raw == null) return null;
+      return JSON.parse(JSON.stringify(raw), bufferJSON.reviver);
     },
     write: async (category: string, name: string, data: unknown) => {
+      const serialized = JSON.parse(JSON.stringify(data, bufferJSON.replacer));
       await controlTx(
         sql,
         (tx) =>
           tx`insert into wa_auth_state (account_id, category, name, data)
-             values (${accountId}, ${category}, ${name}, ${tx.json(data as never)})
+             values (${accountId}, ${category}, ${name}, ${tx.json(serialized as never)})
              on conflict (account_id, category, name) do update set data = excluded.data`,
       );
     },
@@ -81,14 +93,19 @@ async function startSocket(sql: Sql, integration: IntegrationRow): Promise<Baile
     };
   };
   const accountId = (integration.config.accountId as string) ?? 'default';
-  const auth = dbAuthState(sql, accountId);
+  const auth = dbAuthState(sql, accountId, baileys.BufferJSON);
 
   const creds = (await auth.read('creds', 'main')) ?? baileys.initAuthCreds();
   const sock = baileys.default({
     auth: {
       creds,
       keys: {
-        get: (type: string, ids: string[]) => Promise.all(ids.map((id) => auth.read(type, id))),
+        // SignalKeyStore contract: id → key map (not an array).
+        get: async (type: string, ids: string[]) => {
+          const out: Record<string, unknown> = {};
+          for (const id of ids) out[id] = await auth.read(type, id);
+          return out;
+        },
         set: (data: Record<string, Record<string, unknown | null>>) =>
           Promise.all(
             Object.entries(data).flatMap(([cat, items]) =>

@@ -407,14 +407,22 @@ export async function createLead(
   fields: Record<string, unknown>,
   idemKey: string,
 ): Promise<ClaimResult<{ lead: Lead }>> {
-  return claimControl(sql, idemKey, async (tx) => {
-    const rows = await tx<LeadRow[]>`insert into leads ${tx(fields)} returning *`;
-    await tx`
-      insert into lead_state_history (lead_id, from_state, to_state, actor)
-      values (${rows[0]!.id}, null, ${rows[0]!.state}, 'staff')
-    `;
-    return { status: 201, body: { lead: leadJson(rows[0]!) } };
-  });
+  return claimControl(sql, idemKey, (tx) => insertLeadTx(tx, fields));
+}
+
+/** Tx-local insert — callers combining lead creation with side effects in
+ *  one claim (the POST /leads route inserts the lead and its triage run
+ *  under a single idempotency key) use this. */
+export async function insertLeadTx(
+  tx: Sql,
+  fields: Record<string, unknown>,
+): Promise<{ status: number; body: { lead: Lead } }> {
+  const rows = await tx<LeadRow[]>`insert into leads ${tx(fields)} returning *`;
+  await tx`
+    insert into lead_state_history (lead_id, from_state, to_state, actor)
+    values (${rows[0]!.id}, null, ${rows[0]!.state}, 'staff')
+  `;
+  return { status: 201, body: { lead: leadJson(rows[0]!) } };
 }
 
 export async function updateLead(

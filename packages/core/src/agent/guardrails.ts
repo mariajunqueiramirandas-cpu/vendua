@@ -1,7 +1,9 @@
 import type { Sql } from '../platform/db.ts';
-import { controlTx } from '../modules/control.ts';
-import { getGuardrails } from '../modules/integrations.ts';
-import type { Channel } from '../modules/threads.ts';
+import {
+  DEFAULT_GUARDRAILS,
+  getSettingTx,
+  type Guardrails,
+} from '../modules/integrations.ts';
 
 /**
  * agent/guardrails — the hard rules around every outbound message. Enforced
@@ -16,14 +18,15 @@ export interface SendVerdict {
   reason?: string;
 }
 
-export async function checkSendAllowed(
-  sql: Sql,
+/** Tx-local guardrail check — the send_message tool calls this inside the
+ *  same transaction that takes the lead's advisory lock and inserts the
+ *  outbound message, so two concurrent runs can't both see spare cap. */
+export async function checkSendAllowedTx(
+  tx: Sql,
+  g: Guardrails,
   leadId: string,
-  _channel: Channel,
 ): Promise<SendVerdict> {
-  const g = await getGuardrails(sql);
-
-  return controlTx(sql, async (tx) => {
+  {
     const lead = (
       await tx<
         {
@@ -84,5 +87,10 @@ export async function checkSendAllowed(
     }
     if (lead.agent_mode === 'draft') return { ok: true, forceDraft: true };
     return { ok: true, forceDraft: false };
-  });
+  }
+}
+
+async function guardrailsTx(tx: Sql): Promise<Guardrails> {
+  const stored = await getSettingTx(tx, 'guardrails', {} as Partial<Guardrails>);
+  return { ...DEFAULT_GUARDRAILS, ...stored };
 }

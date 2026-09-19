@@ -28,12 +28,12 @@ import { addItem, assertCartOpen, loadCartView, matchZone } from './modules/cart
 import { validateCheckout, validateCheckoutShape } from './modules/checkout.ts';
 import { loadOrderView } from './modules/orders.ts';
 import {
-  createLead,
   deleteLead,
   exportLeadsCsv,
   findDuplicates,
   getLeadDetail,
   importLeads,
+  insertLeadTx,
   leadInsert,
   leadPatch,
   leadState,
@@ -41,6 +41,7 @@ import {
   listLeads,
   parseLeadsCsv,
   updateLead,
+  type Lead,
   type LeadState,
 } from './modules/leads.ts';
 import {
@@ -66,6 +67,8 @@ import {
   type Channel,
 } from './modules/threads.ts';
 import {
+  getGuardrails,
+  getPitch,
   integrationKind,
   listIntegrations,
   listSettings,
@@ -73,7 +76,7 @@ import {
   upsertIntegration,
 } from './modules/integrations.ts';
 import { claimControl, controlTx } from './modules/control.ts';
-import { drain, enqueueRun } from './agent/runner.ts';
+import { drain, insertRun } from './agent/runner.ts';
 import { ingestInbound } from './agent/inbound.ts';
 import { LOADER_JS } from './loader.ts';
 
@@ -690,15 +693,25 @@ export function createApp({ sql, sessionSecret, controlSecret }: AppDeps) {
 
   app.post('/control/v1/leads', async (c) => {
     controlGate(c);
-    const res = await createLead(sql, leadInsert(await bodyJson(c)), requireIdemKey(c));
+    // Lead + its triage run share ONE claim: a retried POST replays the
+    // stored body (lead + runId) instead of creating a second lead.
+    const res = await claimControl<{ lead: Lead; runId?: string }>(
+      sql,
+      requireIdemKey(c),
+      async (tx) => {
+        const created = await insertLeadTx(tx, leadInsert(await bodyJson(c)));
+        if (created.body.lead.agentMode !== 'off') {
+          const runId = await insertRun(tx, {
+            kind: 'triage',
+            leadId: created.body.lead.id,
+          });
+          return { status: created.status, body: { ...created.body, runId } };
+        }
+        return created;
+      },
+    );
     if (res.replayed) c.header('x-idempotent-replay', 'true');
-    // Fresh staff-created lead gets a triage run — the agent enriches and
-    // drafts first contact unless the lead opts out of the agent.
-    if (!res.replayed && res.body.lead.agentMode !== 'off') {
-      const runId = await enqueueRun(sql, { kind: 'triage', leadId: res.body.lead.id });
-      void drain(sql).catch((e) => console.error('[agent drain]', e));
-      return c.json({ ...res.body, runId }, res.status as 200);
-    }
+    if (res.body.runId) void drain(sql).catch((e) => console.error('[agent drain]', e));
     return c.json(res.body, res.status as 200);
   });
 
@@ -712,8 +725,15 @@ export function createApp({ sql, sessionSecret, controlSecret }: AppDeps) {
 
   app.post('/control/v1/leads/import', async (c) => {
     controlGate(c);
-    const body = await bodyJson(c);
-    const text = str(body.csv, 'csv', 2_000_000);
+    // Raw text/csv body — not the JSON cap — so bulk imports aren't capped
+    // at 32KB.
+    if (!(c.req.header('content-type') ?? '').includes('text/csv')) {
+      throw new HttpError(415, 'BAD_REQUEST', 'content-type must be text/csv');
+    }
+    const len = Number(c.req.header('content-length') ?? 0);
+    if (len > 4_000_000) throw new HttpError(413, 'BAD_REQUEST', 'csv too large');
+    const text = await c.req.text();
+    if (text.length > 4_000_000) throw new HttpError(413, 'BAD_REQUEST', 'csv too large');
     const { rows, skipped } = parseLeadsCsv(text);
     const res = await importLeads(sql, rows, requireIdemKey(c));
     if (res.replayed) c.header('x-idempotent-replay', 'true');
@@ -764,11 +784,18 @@ export function createApp({ sql, sessionSecret, controlSecret }: AppDeps) {
     controlGate(c);
     const id = uuidParam(c, 'id');
     const res = await claimControl(sql, requireIdemKey(c), async (tx) => {
-      await tx`update leads set unsubscribed_at = now(), updated_at = now() where id = ${id} and unsubscribed_at is null`;
-      await tx`
-        insert into lead_activities (lead_id, kind, body, created_by)
-        values (${id}, 'system', 'Descadastrado pela equipe', 'staff')
+      const rows = await tx`
+        update leads set unsubscribed_at = now(), updated_at = now()
+        where id = ${id} and unsubscribed_at is null returning id
       `;
+      const exists = rows[0] ?? (await tx`select id from leads where id = ${id}`)[0];
+      if (!exists) throw new HttpError(404, 'LEAD_NOT_FOUND', 'lead not found');
+      if (rows[0]) {
+        await tx`
+          insert into lead_activities (lead_id, kind, body, created_by)
+          values (${id}, 'system', 'Descadastrado pela equipe', 'staff')
+        `;
+      }
       return { status: 200, body: { ok: true } };
     });
     if (res.replayed) c.header('x-idempotent-replay', 'true');
@@ -783,13 +810,17 @@ export function createApp({ sql, sessionSecret, controlSecret }: AppDeps) {
       throw new HttpError(422, 'BAD_REQUEST', 'kind must be triage|reply|outreach|discovery');
     }
     const leadId = uuidParam(c, 'id');
+    const threadId = body.threadId ? str(body.threadId, 'threadId', 64) : null;
+    if (threadId && !UUID_RE.test(threadId)) {
+      throw new HttpError(400, 'BAD_REQUEST', 'threadId must be a uuid');
+    }
     const res = await claimControl(sql, requireIdemKey(c), async (tx) => ({
       status: 201,
       body: {
-        runId: await enqueueRun(tx, {
+        runId: await insertRun(tx, {
           kind: kind as 'triage' | 'reply' | 'outreach' | 'discovery',
           leadId,
-          ...(body.threadId ? { threadId: str(body.threadId, 'threadId', 64) } : {}),
+          ...(threadId ? { threadId } : {}),
           params: (body.params as Record<string, unknown>) ?? {},
         }),
       },
@@ -994,7 +1025,16 @@ export function createApp({ sql, sessionSecret, controlSecret }: AppDeps) {
 
   app.get('/control/v1/settings', async (c) => {
     controlGate(c);
-    return c.json({ settings: await listSettings(sql) });
+    const rows = await listSettings(sql);
+    // guardrails/pitch return the EFFECTIVE objects (defaults merged into the
+    // stored row) — what the agent actually runs on, not the sparse override.
+    return c.json({
+      settings: [
+        ...rows.filter((r) => r.key !== 'guardrails' && r.key !== 'pitch'),
+        { key: 'guardrails', value: await getGuardrails(sql) },
+        { key: 'pitch', value: await getPitch(sql) },
+      ],
+    });
   });
 
   app.put('/control/v1/settings/:key', async (c) => {
@@ -1021,11 +1061,7 @@ export function createApp({ sql, sessionSecret, controlSecret }: AppDeps) {
       params.push(v);
       return `$${params.length}`;
     };
-    const where = [
-      kind ? `kind = ${p(kind)}` : 'true',
-      status ? `status = ${p(status)}` : 'true',
-      `lead_id is null or ${p(limit)} >= 0`,
-    ];
+    const where = [kind ? `kind = ${p(kind)}` : 'true', status ? `status = ${p(status)}` : 'true'];
     const rows = await controlTx(sql, (tx) =>
       tx.unsafe(
         `select r.id, r.kind, r.status, r.lead_id, r.thread_id, r.tokens_in, r.tokens_out,
@@ -1059,13 +1095,21 @@ export function createApp({ sql, sessionSecret, controlSecret }: AppDeps) {
     if (!['triage', 'reply', 'outreach', 'discovery'].includes(kind)) {
       throw new HttpError(422, 'BAD_REQUEST', 'kind must be triage|reply|outreach|discovery');
     }
+    const leadId = body.leadId ? str(body.leadId, 'leadId', 64) : null;
+    const threadId = body.threadId ? str(body.threadId, 'threadId', 64) : null;
+    for (const [field, v] of [
+      ['leadId', leadId],
+      ['threadId', threadId],
+    ] as const) {
+      if (v && !UUID_RE.test(v)) throw new HttpError(400, 'BAD_REQUEST', `${field} must be a uuid`);
+    }
     const res = await claimControl(sql, requireIdemKey(c), async (tx) => ({
       status: 201,
       body: {
-        runId: await enqueueRun(tx, {
+        runId: await insertRun(tx, {
           kind: kind as 'triage' | 'reply' | 'outreach' | 'discovery',
-          leadId: body.leadId ? str(body.leadId, 'leadId', 64) : null,
-          threadId: body.threadId ? str(body.threadId, 'threadId', 64) : null,
+          leadId,
+          threadId,
           params: (body.params as Record<string, unknown>) ?? {},
         }),
       },
@@ -1098,7 +1142,13 @@ export function createApp({ sql, sessionSecret, controlSecret }: AppDeps) {
     if (c.req.header('x-vendua-webhook') !== webhookSecret) {
       throw new HttpError(404, 'NOT_FOUND', 'not found');
     }
+    // Only real providers hit this endpoint — 'manual' threads exist so staff
+    // can type inbound notes, and no webhook should mint inbound activity
+    // under that channel.
     const chan = channel(c.req.param('channel'));
+    if (chan !== 'email' && chan !== 'whatsapp') {
+      throw new HttpError(422, 'BAD_REQUEST', 'channel must be email|whatsapp');
+    }
     const body = await bodyJson(c);
     const res = await ingestInbound(sql, {
       channel: chan,
