@@ -60,7 +60,7 @@ export async function checkSendAllowedTx(
         select count(*)::int as n from lead_messages m
         join lead_threads t on t.id = m.thread_id
         where t.lead_id = ${leadId} and m.direction = 'out' and m.author = 'agent'
-          and m.status in ('queued', 'sent', 'delivered')
+          and m.status in ('queued', 'sending', 'sent', 'delivered')
           and m.created_at > now() - interval '1 day'
       `
     )[0]!.n;
@@ -75,7 +75,7 @@ export async function checkSendAllowedTx(
         select count(*)::int as n from lead_messages m
         join lead_threads t on t.id = m.thread_id
         where t.lead_id = ${leadId} and m.direction = 'out'
-          and m.status in ('queued', 'sent', 'delivered')
+          and m.status in ('queued', 'sending', 'sent', 'delivered')
       `
     )[0]!.n;
     if (g.firstContactDraftOnly && priorOut === 0) {

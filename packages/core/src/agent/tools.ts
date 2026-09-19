@@ -414,6 +414,22 @@ export async function executeTool(
             body: { blocked: true as const, reason: 'already dispatched by this run' },
           };
         }
+        // A staff-paused thread (or request_human earlier in this same run)
+        // must stop sends even when the lead's agent_mode still allows them.
+        if (ctx.threadId) {
+          const th = (
+            await tx<{ agent_enabled: boolean; lead_id: string }[]>`
+              select agent_enabled, lead_id from lead_threads
+              where id = ${ctx.threadId} for update
+            `
+          )[0];
+          if (!th || th.lead_id !== leadId || !th.agent_enabled) {
+            return {
+              status: 200,
+              body: { blocked: true as const, reason: 'thread paused for agent' },
+            };
+          }
+        }
         const g = await getSettingTx(tx, 'guardrails', {} as Partial<Guardrails>);
         const verdict = await checkSendAllowedTx(tx, { ...DEFAULT_GUARDRAILS, ...g }, leadId);
         if (!verdict.ok) {

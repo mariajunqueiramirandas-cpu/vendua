@@ -222,7 +222,8 @@ export async function runOnce(sql: Sql): Promise<boolean> {
       }
     }
     await finishRun(sql, run.id, {
-      status: 'done',
+      // step exhaustion is a failure — the model never converged on an answer
+      status: 'failed',
       steps,
       tokensIn,
       tokensOut,
