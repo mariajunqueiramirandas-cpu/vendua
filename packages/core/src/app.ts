@@ -1142,7 +1142,8 @@ export function createApp({ sql, sessionSecret, controlSecret }: AppDeps) {
             params: (body.params as Record<string, unknown>) ?? {},
           }),
         },
-    }));
+      };
+    });
     if (res.replayed) c.header('x-idempotent-replay', 'true');
     void drain(sql).catch((e) => console.error('[agent drain]', e));
     return c.json(res.body, res.status as 201);
