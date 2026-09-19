@@ -21,6 +21,22 @@ export const DRIVERS: Record<IntegrationKind, readonly string[]> = {
   discovery: ['tinyfish', 'mock'],
 };
 
+/** Fallback env var each secret-bearing driver reads when the row's
+ *  secret_ref is null — mirrors the `?? process.env.X` fallback in the
+ *  channel/driver code so the UI reports what's actually in effect. */
+export const DEFAULT_SECRET: Record<string, string> = {
+  openrouter: 'OPENROUTER_API_KEY',
+  anthropic: 'ANTHROPIC_API_KEY',
+  openai: 'OPENAI_API_KEY',
+  resend: 'RESEND_API_KEY',
+  tinyfish: 'TINYFISH_API_KEY',
+};
+
+/** Drivers whose credential lookup is `(env[ref]) ?? env[DEFAULT]` — a
+ *  configured-but-unset ref still authenticates via the default var.
+ *  LLM providers are strict: a set secret_ref that env lacks = missing. */
+const SECRET_FALLBACK: ReadonlySet<string> = new Set(['resend', 'tinyfish']);
+
 export interface IntegrationRow {
   id: string;
   kind: IntegrationKind;
@@ -34,15 +50,31 @@ export interface IntegrationRow {
 
 /** API view — secret_ref masked to the env var name only (never a value). */
 export function integrationJson(row: IntegrationRow) {
+  // The env var the driver will actually read — the row's override or its
+  // built-in default when the override is unset/fallbackable. Fallbackable
+  // drivers (resend/tinyfish do `(env[ref]) ?? env[DEFAULT]`) report the
+  // name they'd actually read, so a configured-but-missing custom ref never
+  // displays as "present"; strict LLM drivers keep naming the custom ref.
+  // `!== undefined`, not truthy — `??` in the drivers falls through only on
+  // absent vars; an EMPTY custom var is what the driver actually reads.
+  const secretName =
+    row.secret_ref &&
+    (process.env[row.secret_ref] !== undefined || !SECRET_FALLBACK.has(row.driver))
+      ? row.secret_ref
+      : (DEFAULT_SECRET[row.driver] ?? row.secret_ref ?? null);
+  const present = secretName ? !!process.env[secretName] : null;
   return {
     id: row.id,
     kind: row.kind,
     driver: row.driver,
     enabled: row.enabled,
     config: row.config ?? {},
-    /** whether process.env actually provides the referenced secret */
+    /** whether process.env actually provides the referenced secret.
+     *  `secretName` is the var the driver reads today — the configured ref
+     *  unless a fallback driver falls through to its built-in default. */
     secretRef: row.secret_ref,
-    secretPresent: row.secret_ref ? !!process.env[row.secret_ref] : null,
+    secretName,
+    secretPresent: present,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };

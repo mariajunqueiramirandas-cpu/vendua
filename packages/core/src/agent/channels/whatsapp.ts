@@ -12,6 +12,12 @@ import { controlTx } from '../../modules/control.ts';
 interface BaileysSocket {
   sendMessage(jid: string, content: { text: string }): Promise<{ key?: { id?: string } }>;
   end(err?: Error): void;
+  /** 8-char pairing code as an alternative to scanning the QR — only valid
+   *  while the socket is unregistered (pre-`open`). */
+  requestPairingCode(phone: string): Promise<string>;
+  /** Server-side unpair — WhatsApp drops the linked device, then the
+   *  socket closes with a 401 (no auto-reconnect). */
+  logout(): Promise<unknown>;
   ev: {
     on(
       event: 'connection.update',
@@ -37,6 +43,17 @@ interface BaileysSocket {
 
 let socket: BaileysSocket | null = null;
 let starting: Promise<BaileysSocket> | null = null;
+/** Last connection state the socket reported — 'off' when no socket is
+ *  running or the session dropped/logged out. The Settings screen renders
+ *  this instead of guessing from QR presence. */
+let connState: 'off' | 'connecting' | 'qr' | 'open' = 'off';
+/** While logout() is in flight its own close event clears the globals —
+ *  this flag stops ensureSocket from installing a replacement the logout
+ *  cleanup would then orphan (alive but identity-gated out of events). */
+let loggingOut = false;
+export function waStatus(): string {
+  return connState;
+}
 /** identity of the integration that opened `socket` — config changes must
  *  close it, not keep sending through the old account. */
 let socketFingerprint: string | null = null;
@@ -134,11 +151,27 @@ async function startSocket(sql: Sql, integration: IntegrationRow): Promise<Baile
     browser: ['Venduá', 'Chrome', '1.0.0'],
   });
 
+  // Claim module state synchronously — Baileys' first connection.update
+  // fires on ws connect (always async, after this returns), so by then
+  // `socket === sock` and every handler can identity-check against it. A
+  // replaced socket's late `close` then can't erase the replacement's
+  // globals or report it offline.
+  socket = sock;
+  socketFingerprint = fingerprintOf(integration);
+
   sock.ev.on('creds.update', () => void auth.write('creds', 'main', creds));
   sock.ev.on('connection.update', (u) => {
-    if (u.qr) void persistQr(sql, accountId, u.qr);
-    if (u.connection === 'open') void persistQr(sql, accountId, null);
+    if (socket !== sock) return; // stale socket — a replacement owns globals
+    if (u.qr) {
+      connState = 'qr';
+      void persistQr(sql, accountId, u.qr);
+    }
+    if (u.connection === 'open') {
+      connState = 'open';
+      void persistQr(sql, accountId, null);
+    }
     if (u.connection === 'close') {
+      connState = 'off';
       socket = null;
       starting = null;
       socketFingerprint = null;
@@ -159,6 +192,9 @@ async function startSocket(sql: Sql, integration: IntegrationRow): Promise<Baile
     }
   });
   sock.ev.on('messages.upsert', ({ type, messages }) => {
+    // A detached socket (replaced or post-logout) must not keep delivering
+    // inbound messages — its creds may already be wiped.
+    if (socket !== sock) return;
     if (type !== 'notify') return;
     for (const m of messages) {
       const key = m.key;
@@ -218,12 +254,13 @@ export async function ensureSocket(
     socketFingerprint = null;
   }
   if (!wanted) return null;
+  if (loggingOut) throw new Error('whatsapp logout em andamento');
   if (socket) return socket;
   if (!starting) {
+    connState = 'connecting';
     starting = startSocket(sql, integration!).then(
       (s) => {
-        socket = s;
-        socketFingerprint = wanted;
+        // globals were assigned inside startSocket — only the flag clears
         starting = null;
         return s;
       },
@@ -231,11 +268,66 @@ export async function ensureSocket(
         // a failed start must not poison the flag — clear it so the next
         // send/pair attempt can retry.
         starting = null;
+        connState = 'off';
         throw err;
       },
     );
   }
   return starting;
+}
+
+/** Pairing-code alternative to scanning the QR — staff enters their number
+ *  and types the returned code in WhatsApp → aparelhos conectados →
+ *  "conectar com número". Only works while the socket is unregistered. */
+export async function pairCode(sql: Sql, phone: string): Promise<string> {
+  const digits = phone.replace(/\D/g, '');
+  if (digits.length < 10 || digits.length > 15) {
+    throw new Error('número inválido — DDI+DDD+número, só dígitos');
+  }
+  const sock = await ensureSocket(sql, await getIntegration(sql, 'whatsapp'));
+  if (!sock) throw new Error('driver baileys não está ativo');
+  if (connState === 'open') throw new Error('whatsapp já está conectado');
+  return sock.requestPairingCode(digits);
+}
+
+/** Unpair the linked device and wipe stored auth state — the QR/pair flow
+ *  can then pair a different number from scratch. logout() tells WhatsApp
+ *  the device is gone (its close event is a 401, which the reconnect logic
+ *  already leaves dead). */
+export async function logoutWa(sql: Sql, accountId: string): Promise<void> {
+  const s = socket;
+  // Remote unlink while the socket is still tracked — if logout() rejects,
+  // `socket` stays owned and `wa_auth_state` survives, so a retry retries
+  // the unlink on the same live socket. `loggingOut` serializes the window:
+  // s's own close event clears globals mid-await, and without the flag a
+  // concurrent ensureSocket could install a replacement this cleanup then
+  // detaches. A socket that wasn't tracked (null) just wipes local state.
+  if (s) {
+    loggingOut = true;
+    try {
+      await s.logout();
+    } finally {
+      loggingOut = false;
+    }
+  }
+  // Clear only what's still owned by s — its close event may already have
+  // done it (idempotent), and nothing else could install a replacement
+  // while the flag was held.
+  if (socket === s) {
+    socket = null;
+    socketFingerprint = null;
+    connState = 'off';
+  }
+  starting = null;
+  try {
+    s?.end();
+  } catch {
+    /* already closed */
+  }
+  await controlTx(sql, async (tx) => {
+    await tx`delete from wa_auth_state where account_id = ${accountId}`;
+    await tx`delete from control_settings where key = 'wa_qr'`;
+  });
 }
 
 export async function sendWhatsApp(

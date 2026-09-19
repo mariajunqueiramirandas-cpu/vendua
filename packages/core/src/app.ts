@@ -68,6 +68,7 @@ import {
 } from './modules/threads.ts';
 import {
   getGuardrails,
+  getIntegration,
   getPitch,
   integrationKind,
   listIntegrations,
@@ -75,6 +76,7 @@ import {
   putSetting,
   upsertIntegration,
   validateSetting,
+  type IntegrationKind,
 } from './modules/integrations.ts';
 import { claimControl, controlTx } from './modules/control.ts';
 import { drain, insertRun } from './agent/runner.ts';
@@ -128,6 +130,100 @@ function currentStatus(settings: StoreSettingsRow | null) {
     settings?.resumes_at ?? null,
     new Date(),
   );
+}
+
+// Every external probe in testIntegration runs inside this bound — a dead
+// provider must not pin the route (or its claim transaction) open.
+const TEST_TIMEOUT_MS = 8_000;
+function timed<T>(p: Promise<T>, what: string): Promise<T> {
+  return Promise.race([
+    p,
+    new Promise<never>((_, reject) =>
+      setTimeout(
+        () => reject(new Error(`${what}: sem resposta em ${TEST_TIMEOUT_MS / 1000}s`)),
+        TEST_TIMEOUT_MS,
+      ),
+    ),
+  ]);
+}
+
+/** One cheap live call against the kind's ACTIVE driver. Never throws —
+ *  failures are the diagnostic result. */
+async function testIntegration(
+  sql: Sql,
+  kind: IntegrationKind,
+): Promise<{ status: number; body: { ok: boolean; detail: string } }> {
+  const integration = await getIntegration(sql, kind);
+  const probe = async (): Promise<{ ok: boolean; detail: string }> => {
+    if (!integration) return { ok: false, detail: 'nenhum driver ativo para este tipo' };
+    if (kind === 'llm') {
+      if (integration.driver === 'mock') {
+        return { ok: true, detail: 'driver mock — respostas roteirizadas' };
+      }
+      const { providerFor } = await import('./agent/llm.ts');
+      const p = providerFor(integration);
+      const r = await timed(
+        p.chat({
+          system: 'Responda apenas com a palavra: ok',
+          messages: [{ role: 'user', content: 'teste' }],
+          tools: [],
+        }),
+        p.name,
+      );
+      return { ok: true, detail: `${p.name} respondeu — ${r.tokensIn + r.tokensOut} tokens` };
+    }
+    if (kind === 'email') {
+      if (integration.driver === 'log') {
+        return { ok: true, detail: 'driver log — imprime no console' };
+      }
+      const key =
+        (integration.secret_ref && process.env[integration.secret_ref]) ??
+        process.env.RESEND_API_KEY;
+      if (!key) {
+        return { ok: false, detail: `env ${integration.secret_ref ?? 'RESEND_API_KEY'} ausente` };
+      }
+      // AbortSignal cancels the request itself — the race only abandons the
+      // await. SDK calls (llm, tinyfish, baileys) can't be aborted from
+      // here, so they keep the race bound.
+      const res = await timed(
+        fetch('https://api.resend.com/domains', {
+          headers: { authorization: `Bearer ${key}` },
+          signal: AbortSignal.timeout(TEST_TIMEOUT_MS),
+        }),
+        'resend',
+      );
+      return res.ok
+        ? { ok: true, detail: 'resend autenticado' }
+        : { ok: false, detail: `resend respondeu ${res.status}` };
+    }
+    if (kind === 'whatsapp') {
+      if (integration.driver === 'log') {
+        return { ok: true, detail: 'driver log — imprime no console' };
+      }
+      const { ensureSocket, waStatus } = await import('./agent/channels/whatsapp.ts');
+      const s = await timed(ensureSocket(sql, integration), 'socket baileys');
+      if (!s) return { ok: false, detail: 'socket não subiu' };
+      const st = waStatus();
+      if (st === 'open') return { ok: true, detail: 'socket pareado' };
+      if (st === 'qr') return { ok: true, detail: 'aguardando escanear o QR' };
+      return { ok: false, detail: `socket ${st}` };
+    }
+    if (kind === 'discovery') {
+      if (integration.driver === 'mock') {
+        return { ok: true, detail: 'driver mock — prospects enlatados' };
+      }
+      const { discoveryFor } = await import('./agent/channels/discovery.ts');
+      const d = await discoveryFor(sql);
+      const r = await timed(d.search('padaria', 'teste de conectividade'), 'tinyfish');
+      return { ok: true, detail: `tinyfish respondeu — ${r.results.length} resultados` };
+    }
+    return { ok: false, detail: `tipo desconhecido: ${kind}` };
+  };
+  try {
+    return { status: 200, body: await timed(probe(), kind) };
+  } catch (e) {
+    return { status: 200, body: { ok: false, detail: e instanceof Error ? e.message : String(e) } };
+  }
 }
 
 export function createApp({ sql, sessionSecret, controlSecret }: AppDeps) {
@@ -1046,15 +1142,25 @@ export function createApp({ sql, sessionSecret, controlSecret }: AppDeps) {
       // Reconcile the live socket now — a disable/switch must close the old
       // Baileys session immediately, not whenever the next outbound or
       // disconnect happens to trigger it.
-      const [{ getIntegration }, { ensureSocket }] = await Promise.all([
-        import('./modules/integrations.ts'),
-        import('./agent/channels/whatsapp.ts'),
-      ]);
+      const { ensureSocket } = await import('./agent/channels/whatsapp.ts');
       void getIntegration(sql, 'whatsapp')
         .then((i) => ensureSocket(sql, i))
         .catch((e) => console.error('[whatsapp] socket reconcile failed', e));
     }
     return c.json(res.body);
+  });
+
+  // Live driver check — exercises the ACTIVE provider for a kind for real
+  // (one cheap call), so Config can answer "is this actually working?"
+  // instead of only echoing config back. Claimed like every other control
+  // mutation — a retried POST replays the recorded result instead of
+  // spending another provider call.
+  app.post('/control/v1/integrations/:kind/test', async (c) => {
+    controlGate(c);
+    const kind = integrationKind(c.req.param('kind'));
+    const res = await claimControl(sql, requireIdemKey(c), () => testIntegration(sql, kind));
+    if (res.replayed) c.header('x-idempotent-replay', 'true');
+    return c.json(res.body, res.status as 200);
   });
 
   app.get('/control/v1/settings', async (c) => {
@@ -1167,6 +1273,8 @@ export function createApp({ sql, sessionSecret, controlSecret }: AppDeps) {
   });
 
   // WhatsApp pairing state for the Settings screen (Baileys QR handshake).
+  // `status` is the live socket state — 'off'/'connecting'/'qr'/'open' —
+  // so the UI can say "desligado" instead of guessing from QR presence.
   app.get('/control/v1/wa/qr', async (c) => {
     controlGate(c);
     const rows = await controlTx(
@@ -1176,7 +1284,50 @@ export function createApp({ sql, sessionSecret, controlSecret }: AppDeps) {
           { value: { qr: string | null } | null }[]
         >`select value from control_settings where key = 'wa_qr'`,
     );
-    return c.json({ qr: rows[0]?.value?.qr ?? null });
+    const { waStatus } = await import('./agent/channels/whatsapp.ts');
+    return c.json({ qr: rows[0]?.value?.qr ?? null, status: waStatus() });
+  });
+
+  // Pairing-code alternative to scanning the QR — WhatsApp's
+  // "conectar com número" flow. Staff sends their phone digits, we ask
+  // Baileys for the 8-char code.
+  app.post('/control/v1/wa/pair-code', async (c) => {
+    controlGate(c);
+    const body = await bodyJson(c);
+    const phone = str(body.phone, 'phone', 40);
+    // Claimed: a retry must replay the issued code, not ask Baileys twice.
+    // Failures throw inside the tx so the claim rolls back and a retry is
+    // a genuinely fresh attempt.
+    const res = await claimControl(sql, requireIdemKey(c), async () => {
+      const { pairCode } = await import('./agent/channels/whatsapp.ts');
+      try {
+        return { status: 200, body: { code: await pairCode(sql, phone) } };
+      } catch (e) {
+        throw new HttpError(422, 'BAD_REQUEST', e instanceof Error ? e.message : String(e));
+      }
+    });
+    if (res.replayed) c.header('x-idempotent-replay', 'true');
+    return c.json(res.body, res.status as 200);
+  });
+
+  // Unpair the WhatsApp session (linked-device logout + auth-state wipe) so
+  // a different number can pair. Restarts the socket afterwards so a fresh
+  // QR is emitted right away. Claimed — a retried logout can't race the
+  // replacement pairing.
+  app.post('/control/v1/wa/logout', async (c) => {
+    controlGate(c);
+    const res = await claimControl(sql, requireIdemKey(c), async () => {
+      const { logoutWa, ensureSocket } = await import('./agent/channels/whatsapp.ts');
+      const integration = await getIntegration(sql, 'whatsapp');
+      const accountId = (integration?.config.accountId as string) ?? 'default';
+      await logoutWa(sql, accountId);
+      void ensureSocket(sql, integration).catch((e) =>
+        console.error('[whatsapp] post-logout restart failed', e),
+      );
+      return { status: 200, body: { ok: true } };
+    });
+    if (res.replayed) c.header('x-idempotent-replay', 'true');
+    return c.json(res.body, res.status as 200);
   });
 
   // ---- channel webhooks ---------------------------------------------------------

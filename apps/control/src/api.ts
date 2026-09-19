@@ -161,7 +161,9 @@ export interface Integration {
   enabled: boolean;
   config: Record<string, unknown>;
   secretRef: string | null;
-  secretPresent: boolean;
+  /** effective env var the driver reads — secretRef or its built-in default */
+  secretName: string | null;
+  secretPresent: boolean | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -300,7 +302,12 @@ export const api = {
       method: 'PUT',
       body: JSON.stringify({ value }),
     }),
-  waQr: () => req<{ qr: string | null }>('/wa/qr'),
+  waQr: () => req<{ qr: string | null; status: string }>('/wa/qr'),
+  waPairCode: (phone: string) =>
+    req<{ code: string }>('/wa/pair-code', { method: 'POST', body: JSON.stringify({ phone }) }),
+  waLogout: () => req<{ ok: true }>('/wa/logout', { method: 'POST' }),
+  testIntegration: (kind: string) =>
+    req<{ ok: boolean; detail: string }>(`/integrations/${kind}/test`, { method: 'POST' }),
 
   runs: (q: { kind?: string; status?: string } = {}) => {
     const params = new URLSearchParams(
