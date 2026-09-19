@@ -71,6 +71,6 @@ All web services share the Dockerfile's `build` stage, so a deploy runs one
 `bun install` + one vite pass total (compose/bake dedupe the shared stage).
 
 Adding a storefront later = one more service block using
-`storefronts/Dockerfile` with `target: storefront` + a `STOREFRONT` arg, plus
-its domain row — no Dockerfile edit needed (the `./storefronts/*` glob picks
-it up).
+`storefronts/Dockerfile` with `target: storefront` + a `STOREFRONT` arg, one
+`COPY` line for its `package.json` in the Dockerfile's manifest block
+(`--frozen-lockfile` needs it on disk), plus its domain row.

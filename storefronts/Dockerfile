@@ -7,9 +7,10 @@
 #   docker build -f storefronts/Dockerfile --target storefront \
 #     --build-arg STOREFRONT=quero-pudim -t vendua-store-quero-pudim .
 #
-# New storefronts need no Dockerfile change: the `./storefronts/*` glob builds
-# them all, and `target: storefront` + `STOREFRONT` arg selects the dist —
-# see docs/deploy/dokploy.md.
+# New storefronts: the `./storefronts/*` glob builds them and
+# `target: storefront` + `STOREFRONT` arg selects the dist — but its
+# package.json still needs a COPY line in the manifest block below or
+# --frozen-lockfile never installs its deps. See docs/deploy/dokploy.md.
 
 ########## build — shared by every web image ##########
 FROM oven/bun:1.4.2 AS build
@@ -25,6 +26,7 @@ COPY packages/core/package.json packages/core/package.json
 COPY packages/kernel/package.json packages/kernel/package.json
 COPY apps/control/package.json apps/control/package.json
 COPY site/package.json site/package.json
+# New storefronts go here — one COPY per workspace package.json.
 COPY storefronts/quero-pudim/package.json storefronts/quero-pudim/package.json
 COPY storefronts/brasa/package.json storefronts/brasa/package.json
 COPY storefronts/forn/package.json storefronts/forn/package.json

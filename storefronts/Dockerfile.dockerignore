@@ -1,10 +1,22 @@
+# Build context for storefronts/Dockerfile (context = repo root). packages/,
+# storefronts/, apps/ and site/ stay visible — the build COPYs every workspace
+# manifest, plus kernel/site/storefronts sources.
 .git
+.gitignore
 **/node_modules
 **/dist
 site/build
 site/.svelte-kit
+site/test-results
+site/playwright-report
+site/artifacts
+site/tests
+site/playwright.config.ts
 docs
 tools
-*.md
+**/*.md
 .env
 .env.*
+!.env.example
+**/*.log
+nul

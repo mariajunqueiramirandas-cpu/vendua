@@ -1,10 +1,22 @@
+# Build context for packages/core/Dockerfile (context = repo root). Every
+# workspace manifest plus apps/control and packages/core sources must stay
+# visible to the build.
 .git
+.gitignore
 **/node_modules
 **/dist
 site/build
 site/.svelte-kit
+site/test-results
+site/playwright-report
+site/artifacts
+site/tests
+site/playwright.config.ts
 docs
 tools
-*.md
+**/*.md
 .env
 .env.*
+!.env.example
+**/*.log
+nul

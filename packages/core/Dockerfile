@@ -19,6 +19,8 @@ COPY packages/core/package.json packages/core/package.json
 COPY packages/kernel/package.json packages/kernel/package.json
 COPY apps/control/package.json apps/control/package.json
 COPY site/package.json site/package.json
+# New workspaces go here — one COPY per package.json or --frozen-lockfile
+# fails on the missing workspace.
 COPY storefronts/quero-pudim/package.json storefronts/quero-pudim/package.json
 COPY storefronts/brasa/package.json storefronts/brasa/package.json
 COPY storefronts/forn/package.json storefronts/forn/package.json
