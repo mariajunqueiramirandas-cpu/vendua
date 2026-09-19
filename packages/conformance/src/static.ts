@@ -200,7 +200,9 @@ function k02(dir: string): CheckResult {
       }
     const router =
       routerLocals.size > 0
-        ? new RegExp(`<(${[...routerLocals].join('|')})[\\s>]`).exec(src)?.index
+        ? new RegExp(
+            `<(${[...routerLocals].map((n) => n.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|')})[\\s>]`,
+          ).exec(src)?.index
         : undefined;
 
     if (!/\bVenduaProvider\b/.test(src)) problems.push('entry does not import VenduaProvider');

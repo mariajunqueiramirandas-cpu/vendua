@@ -79,9 +79,9 @@ describe('runStatic', () => {
       ...GOOD_BASE,
       'main.tsx':
         'import { VenduaProvider, SystemSurfaces } from "@vendua/kernel";\n' +
-        'import { BrowserRouter as Router } from "react-router-dom";\n' +
+        'import { BrowserRouter as $Router } from "react-router-dom";\n' +
         'export const App = () =>\n' +
-        '  <VenduaProvider api=""><SystemSurfaces /><Router /></VenduaProvider>;\n',
+        '  <VenduaProvider api=""><SystemSurfaces /><$Router /></VenduaProvider>;\n',
     });
     const k02 = (await runStatic(dir)).find((r) => r.id === 'K02');
     expect(k02?.status, k02?.detail).toBe('pass');
