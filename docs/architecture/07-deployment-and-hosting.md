@@ -22,16 +22,16 @@ s3://vendua-artifacts/storefronts/<slug>/<release-id>/
 
 ```ts
 interface StorefrontManifest {
-  release: string;            // content-addressed id
-  tenant: string;             // tenant slug
-  contract: 1;                // contract major
-  kernelVersion: string;      // semver actually built against
-  builtAt: string;            // ISO
-  commit: string;             // monorepo sha
-  routes: string[];           // prerendered paths incl. system routes
-  sduiMaxVersion: number;     // newest envelope version understood
-  budgets: BudgetReport;      // measured sizes per route
-  qaRef: string;              // conformance report id in Control Plane
+  release: string; // content-addressed id
+  tenant: string; // tenant slug
+  contract: 1; // contract major
+  kernelVersion: string; // semver actually built against
+  builtAt: string; // ISO
+  commit: string; // monorepo sha
+  routes: string[]; // prerendered paths incl. system routes
+  sduiMaxVersion: number; // newest envelope version understood
+  budgets: BudgetReport; // measured sizes per route
+  qaRef: string; // conformance report id in Control Plane
 }
 ```
 
@@ -74,12 +74,12 @@ One shared edge tier in front of all storefront hostnames:
 
 Failure modes by design:
 
-| Failure | Behavior |
-| --- | --- |
-| Core down | Static shell still serves; state injection serves last-known snapshot; `v.js` renders emergency/maintenance overlay from edge-cached `loader_state` |
-| Artifact store down | Edge serves last-known-good HTML from its cache |
-| Bad storefront deploy | Control Plane re-promotes previous artifact |
-| Bad Kernel train | Ring gate halts; affected rings roll back by re-promotion |
+| Failure               | Behavior                                                                                                                                            |
+| --------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Core down             | Static shell still serves; state injection serves last-known snapshot; `v.js` renders emergency/maintenance overlay from edge-cached `loader_state` |
+| Artifact store down   | Edge serves last-known-good HTML from its cache                                                                                                     |
+| Bad storefront deploy | Control Plane re-promotes previous artifact                                                                                                         |
+| Bad Kernel train      | Ring gate halts; affected rings roll back by re-promotion                                                                                           |
 
 ## Option B — multi-tenant SSR host (deferred)
 
@@ -106,13 +106,13 @@ PR merged (storefronts/<slug> only)
 
 ## DNS layout
 
-| Hostname | Purpose |
-| --- | --- |
-| `slug.vendua.com.br` | default tenant hostname, provisioned at signup |
-| `edge.vendua.com.br` | CNAME target for custom domains |
-| `cdn.vendua.com.br` | `v.js`, shared assets, artifact CDN |
-| `api.vendua.com.br` | Core APIs |
-| Custom domain | CNAME/ALIAS → `edge.vendua.com.br`; see [12](12-domains-and-tls.md) |
+| Hostname             | Purpose                                                             |
+| -------------------- | ------------------------------------------------------------------- |
+| `slug.vendua.com.br` | default tenant hostname, provisioned at signup                      |
+| `edge.vendua.com.br` | CNAME target for custom domains                                     |
+| `cdn.vendua.com.br`  | `v.js`, shared assets, artifact CDN                                 |
+| `api.vendua.com.br`  | Core APIs                                                           |
+| Custom domain        | CNAME/ALIAS → `edge.vendua.com.br`; see [12](12-domains-and-tls.md) |
 
 ## Where this runs
 

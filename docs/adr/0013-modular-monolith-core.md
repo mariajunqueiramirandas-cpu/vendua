@@ -26,7 +26,7 @@ with its interface and events unchanged.
 
 - One deployment, one transaction boundary for checkout, one schema migration
   story — the correct simplicity for the first few years.
-- Outbox + module interfaces preserve the *option* of services later without
+- Outbox + module interfaces preserve the _option_ of services later without
   paying for them now.
 - RLS + explicit scoping gives defense in depth without a service mesh.
 

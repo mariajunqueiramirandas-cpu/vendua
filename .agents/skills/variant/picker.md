@@ -44,8 +44,14 @@ Fixed, bottom centre, above everything the page can stack. Keep it clear of the 
   padding: 4px;
   border-radius: 999px;
   background: rgb(20 20 20 / 0.9);
-  box-shadow: inset 0 0 0 1px rgb(255 255 255 / 0.1), 0 8px 24px rgb(0 0 0 / 0.25);
-  font: 13px/1 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  box-shadow:
+    inset 0 0 0 1px rgb(255 255 255 / 0.1),
+    0 8px 24px rgb(0 0 0 / 0.25);
+  font:
+    13px/1 -apple-system,
+    BlinkMacSystemFont,
+    'Segoe UI',
+    sans-serif;
   user-select: none;
 }
 
@@ -62,7 +68,7 @@ Fixed, bottom centre, above everything the page can stack. Keep it clear of the 
   color: rgb(255 255 255 / 0.85);
 }
 
-.variant-picker button[aria-current="true"] {
+.variant-picker button[aria-current='true'] {
   background: rgb(255 255 255 / 0.14);
   color: rgb(255 255 255);
 }

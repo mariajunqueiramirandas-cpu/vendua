@@ -12,7 +12,12 @@ export function LoafMark({ size = 22 }: { size?: number }) {
         strokeWidth="2.6"
         strokeLinejoin="round"
       />
-      <path d="M13 18.5c-2.6 2.1-4 4.9-4 7.7M21 15.5c-2.9 2.3-4.4 5.3-4.4 8.7M29.5 15.8c-2.6 2.5-3.9 5.6-3.9 9.1" stroke="currentColor" strokeWidth="2.6" strokeLinecap="round"/>
+      <path
+        d="M13 18.5c-2.6 2.1-4 4.9-4 7.7M21 15.5c-2.9 2.3-4.4 5.3-4.4 8.7M29.5 15.8c-2.6 2.5-3.9 5.6-3.9 9.1"
+        stroke="currentColor"
+        strokeWidth="2.6"
+        strokeLinecap="round"
+      />
     </svg>
   );
 }
@@ -26,8 +31,18 @@ export function CupMark({ size = 22 }: { size?: number }) {
         strokeWidth="2.6"
         strokeLinejoin="round"
       />
-      <path d="M32 22h4a5 5 0 0 1 0 10h-4.5" stroke="currentColor" strokeWidth="2.6" strokeLinecap="round" />
-      <path d="M16 14.5c0-2 1.6-2.4 1.6-4.2M23 14.5c0-2 1.6-2.4 1.6-4.2" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" />
+      <path
+        d="M32 22h4a5 5 0 0 1 0 10h-4.5"
+        stroke="currentColor"
+        strokeWidth="2.6"
+        strokeLinecap="round"
+      />
+      <path
+        d="M16 14.5c0-2 1.6-2.4 1.6-4.2M23 14.5c0-2 1.6-2.4 1.6-4.2"
+        stroke="currentColor"
+        strokeWidth="2.4"
+        strokeLinecap="round"
+      />
     </svg>
   );
 }
@@ -55,13 +70,30 @@ export function BagMark({ size = 22 }: { size?: number }) {
         strokeWidth="2.6"
         strokeLinejoin="round"
       />
-      <path d="M17 16V13a7 7 0 0 1 14 0v3" stroke="currentColor" strokeWidth="2.6" strokeLinecap="round" />
-      <path d="M18.5 24.5l11 0" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeDasharray="1.5 4" />
+      <path
+        d="M17 16V13a7 7 0 0 1 14 0v3"
+        stroke="currentColor"
+        strokeWidth="2.6"
+        strokeLinecap="round"
+      />
+      <path
+        d="M18.5 24.5l11 0"
+        stroke="currentColor"
+        strokeWidth="2.4"
+        strokeLinecap="round"
+        strokeDasharray="1.5 4"
+      />
     </svg>
   );
 }
 
 /** figureVariant → mark: 'alt' is the café/doces figure, default is the loaf. */
-export function ProductFigure({ variant, size = 22 }: { variant?: string | undefined; size?: number }) {
+export function ProductFigure({
+  variant,
+  size = 22,
+}: {
+  variant?: string | undefined;
+  size?: number;
+}) {
   return variant === 'alt' ? <CupMark size={size} /> : <LoafMark size={size} />;
 }

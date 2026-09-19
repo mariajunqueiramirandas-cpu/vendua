@@ -16,13 +16,13 @@ Three variants that differ in accent color teach nothing. You flip between them,
 
 So each variant is a different answer to the same brief, on an axis this collection owns:
 
-| Axis | Owner | What varies |
-| --- | --- | --- |
-| Structure | `better-layout` | Grouping, order, column count, what collapses |
-| Density | `better-layout` | Spacing scale, hit areas, how much fits |
-| Emphasis | `better-colors` | Where filled color goes, what recedes |
-| Type | `better-typography` | Scale steps, weight contrast, measure |
-| Voice | `better-writing` | Labels, tone, how much copy |
+| Axis      | Owner               | What varies                                   |
+| --------- | ------------------- | --------------------------------------------- |
+| Structure | `better-layout`     | Grouping, order, column count, what collapses |
+| Density   | `better-layout`     | Spacing scale, hit areas, how much fits       |
+| Emphasis  | `better-colors`     | Where filled color goes, what recedes         |
+| Type      | `better-typography` | Scale steps, weight contrast, measure         |
+| Voice     | `better-writing`    | Labels, tone, how much copy                   |
 
 Pick **one primary axis** and give each variant a different position on it. Secondary choices follow from it rather than varying on their own. A dense variant may need a smaller type step, and that is coherence, not a second axis.
 
@@ -79,9 +79,9 @@ Flip through every variant yourself first. Each one renders, each interaction re
 
 Then hand the decision over:
 
-| Variant | Axis position | Right when | Costs |
-| --- | --- | --- | --- |
-| Quiet | Lowest visual weight | The page is used daily | Least memorable |
+| Variant   | Axis position            | Right when                 | Costs               |
+| --------- | ------------------------ | -------------------------- | ------------------- |
+| Quiet     | Lowest visual weight     | The page is used daily     | Least memorable     |
 | Editorial | Largest type, most space | The moment deserves weight | Eats vertical space |
 
 Say where the picker is running, which key flips it and which width you judged at. The answer can change between 375px and 1440px.
@@ -98,13 +98,13 @@ Until promotion, the harness never imports from production and production never 
 
 ## Before you finish
 
-| Mistake | Fix |
-| --- | --- |
+| Mistake                                      | Fix                                                             |
+| -------------------------------------------- | --------------------------------------------------------------- |
 | Variants differ only in accent color or copy | Move one to a different position on the primary axis, or cut it |
-| Every axis varies at once | Vary one; let the rest follow from it |
-| Judged on a blank route | Host them on the page that will contain the piece |
-| Lorem ipsum, three rows, "Jane Doe" | Real copy and the item count the page will really carry |
-| The boldest variant skips keyboard or focus | Clear the floor or drop the direction |
-| A favourite marked in the table | State each variant's cost and let the user choose |
-| Picker restyled with the project's tokens | Keep it visibly outside the design system |
-| Harness left behind after promotion | Delete it unless asked to keep it |
+| Every axis varies at once                    | Vary one; let the rest follow from it                           |
+| Judged on a blank route                      | Host them on the page that will contain the piece               |
+| Lorem ipsum, three rows, "Jane Doe"          | Real copy and the item count the page will really carry         |
+| The boldest variant skips keyboard or focus  | Clear the floor or drop the direction                           |
+| A favourite marked in the table              | State each variant's cost and let the user choose               |
+| Picker restyled with the project's tokens    | Keep it visibly outside the design system                       |
+| Harness left behind after promotion          | Delete it unless asked to keep it                               |

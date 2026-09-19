@@ -90,13 +90,15 @@ Modals must trap focus. Put `inert` on everything behind the dialog, which remov
 
 ```tsx
 // On open
-document.getElementById("app-content").inert = true;
+document.getElementById('app-content').inert = true;
 const dialog = dialogRef.current;
-(dialog.querySelector("[autofocus]") ??
-  dialog.querySelector("button, [href], input, select, textarea"))?.focus();
+(
+  dialog.querySelector('[autofocus]') ??
+  dialog.querySelector('button, [href], input, select, textarea')
+)?.focus();
 
 // On close
-document.getElementById("app-content").inert = false;
+document.getElementById('app-content').inert = false;
 triggerRef.current?.focus(); // always return focus to the element that opened it
 ```
 
@@ -110,14 +112,14 @@ Prefer native `<dialog>` with `showModal()`, which gives you the trap, the `iner
 
 Native elements come with these behaviors; custom widgets must implement them. A role is a promise. Give something `role="tab"` and users expect the full tab keyboard model.
 
-| Widget | Keys |
-| --- | --- |
-| Dialog | Tab/Shift+Tab cycle inside (wrap at ends); Escape closes |
-| Tabs | Arrow keys move between tabs (wrapping); Tab exits to the panel; Home/End jump to first/last |
-| Menu button | Enter/Space/ArrowDown opens and focuses first item; ArrowUp opens and focuses last; arrows navigate; Escape closes and refocuses the button |
-| Disclosure / accordion | Header is a `<button aria-expanded>`; Enter and Space toggle |
-| Combobox | ArrowDown opens/moves into the list; Enter accepts; Escape closes and returns to the input; typing filters |
-| Listbox / radio group | Arrow keys move selection; one Tab stop for the whole group |
+| Widget                 | Keys                                                                                                                                        |
+| ---------------------- | ------------------------------------------------------------------------------------------------------------------------------------------- |
+| Dialog                 | Tab/Shift+Tab cycle inside (wrap at ends); Escape closes                                                                                    |
+| Tabs                   | Arrow keys move between tabs (wrapping); Tab exits to the panel; Home/End jump to first/last                                                |
+| Menu button            | Enter/Space/ArrowDown opens and focuses first item; ArrowUp opens and focuses last; arrows navigate; Escape closes and refocuses the button |
+| Disclosure / accordion | Header is a `<button aria-expanded>`; Enter and Space toggle                                                                                |
+| Combobox               | ArrowDown opens/moves into the list; Enter accepts; Escape closes and returns to the input; typing filters                                  |
+| Listbox / radio group  | Arrow keys move selection; one Tab stop for the whole group                                                                                 |
 
 Universal rules:
 

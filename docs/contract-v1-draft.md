@@ -16,44 +16,44 @@ contract caught up to them; the rest are candidates for the v1 freeze.
 
 ## API surface — observed
 
-| Endpoint                   | Change                                                                                     | Status / why (observed)                                                           |
-| -------------------------- | ------------------------------------------------------------------------------------------ | ---------------------------------------------------------------------------------- |
-| `GET /store`               | `vocabulary` + `currency` **(landed)**; `resumesAt` on `closed` covers next-open **(landed)**; v1: `pixKey`/`pixBeneficiary` | Per-tenant copy is real ("doce"/"sacola"); pix details needed for confirmation UX |
-| `GET /catalog`             | `figureVariant`, `tags[]`, `imageUrl?`, `stockQuantity?`, `lowStockThreshold?`               | Imagery + stock badges; first two landed, rest are v1 candidates                  |
-| `GET /storefront/v1/zones` | `name, neighborhoods, feeCents, etaMin/Max, minOrderCents`                                 | **(landed)** — zone UX without it was guesswork                                   |
-| `POST /checkout/v1/quote`  | `api.quote(neighborhood)` client                                                           | **(landed)** — non-mutating fee preview                                           |
-| `POST /session`            | Re-attaches open carts, rotates spent tokens                                               | **(landed)** — one-order-then-stuck was the worst spike bug                       |
-| `GET /orders/:id`          | session-auth'd + scoped to the session's cart (landed); v1: + `items[]`, `trackingUrl`, `whatsappLink`, `notes` | My-orders + confirmation pages need items/share without sessionStorage snapshots  |
-| `GET /customer/orders`     | NEW — `?phone=` order history                                                              | "Sem senha" my-orders across devices                                              |
-| `POST /storefront/v1/waitlist` | NEW — `{ productId, phone }`                                                           | Sold-out waitlist is a real conversion flow                                       |
-| `POST /checkout/v1/coupons/validate` | NEW — `discountCents` on cart totals                                               | Coupon field exists in reference checkout                                         |
-| `CheckoutInput`            | + `notes`, + structured `delivery.address` (street/number/complement/cep), + `scheduledFor` | Order notes and real addresses observed; preorder for encomendas                  |
-| `POST /checkout`           | 409 `CART_NOT_OPEN` on a non-open cart **(landed)**; advisory-locked tenant order numbering; availability re-validated at pay **(landed)** | forn produced a real duplicate order before the guard |
-| `POST /checkout` response  | `payment.pixQrcodePayload?`, `expiresAt?`                                                  | Pix copy/QR on confirmation                                                       |
-| Combos                     | NEW `combos` entity (slots with per-slot min/max, qtyPerItem)                              | Kits/encomendas UX can't be expressed by flat modifier groups                     |
-| Notices                    | `payload.resumesAt` (landed); `payload.region` for `SurfaceRegion` targeting               | Countdown styling; mid-catalog promo placement                                    |
-| Security posture             | session Bearer on checkout routes; order read cart-scoped; `Idempotency-Key` claims atomic; `X-Vendua-Control` gate on `/control`; fixed-window rate limit on `/checkout/v1` | All landed in the PR-review pass — becomes Contract invariant                     |
+| Endpoint                             | Change                                                                                                                                                                       | Status / why (observed)                                                           |
+| ------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------- |
+| `GET /store`                         | `vocabulary` + `currency` **(landed)**; `resumesAt` on `closed` covers next-open **(landed)**; v1: `pixKey`/`pixBeneficiary`                                                 | Per-tenant copy is real ("doce"/"sacola"); pix details needed for confirmation UX |
+| `GET /catalog`                       | `figureVariant`, `tags[]`, `imageUrl?`, `stockQuantity?`, `lowStockThreshold?`                                                                                               | Imagery + stock badges; first two landed, rest are v1 candidates                  |
+| `GET /storefront/v1/zones`           | `name, neighborhoods, feeCents, etaMin/Max, minOrderCents`                                                                                                                   | **(landed)** — zone UX without it was guesswork                                   |
+| `POST /checkout/v1/quote`            | `api.quote(neighborhood)` client                                                                                                                                             | **(landed)** — non-mutating fee preview                                           |
+| `POST /session`                      | Re-attaches open carts, rotates spent tokens                                                                                                                                 | **(landed)** — one-order-then-stuck was the worst spike bug                       |
+| `GET /orders/:id`                    | session-auth'd + scoped to the session's cart (landed); v1: + `items[]`, `trackingUrl`, `whatsappLink`, `notes`                                                              | My-orders + confirmation pages need items/share without sessionStorage snapshots  |
+| `GET /customer/orders`               | NEW — `?phone=` order history                                                                                                                                                | "Sem senha" my-orders across devices                                              |
+| `POST /storefront/v1/waitlist`       | NEW — `{ productId, phone }`                                                                                                                                                 | Sold-out waitlist is a real conversion flow                                       |
+| `POST /checkout/v1/coupons/validate` | NEW — `discountCents` on cart totals                                                                                                                                         | Coupon field exists in reference checkout                                         |
+| `CheckoutInput`                      | + `notes`, + structured `delivery.address` (street/number/complement/cep), + `scheduledFor`                                                                                  | Order notes and real addresses observed; preorder for encomendas                  |
+| `POST /checkout`                     | 409 `CART_NOT_OPEN` on a non-open cart **(landed)**; advisory-locked tenant order numbering; availability re-validated at pay **(landed)**                                   | forn produced a real duplicate order before the guard                             |
+| `POST /checkout` response            | `payment.pixQrcodePayload?`, `expiresAt?`                                                                                                                                    | Pix copy/QR on confirmation                                                       |
+| Combos                               | NEW `combos` entity (slots with per-slot min/max, qtyPerItem)                                                                                                                | Kits/encomendas UX can't be expressed by flat modifier groups                     |
+| Notices                              | `payload.resumesAt` (landed); `payload.region` for `SurfaceRegion` targeting                                                                                                 | Countdown styling; mid-catalog promo placement                                    |
+| Security posture                     | session Bearer on checkout routes; order read cart-scoped; `Idempotency-Key` claims atomic; `X-Vendua-Control` gate on `/control`; fixed-window rate limit on `/checkout/v1` | All landed in the PR-review pass — becomes Contract invariant                     |
 
 ## Kernel additions observed
 
-| Piece                              | Kind      | Status / note                                                          |
-| ---------------------------------- | --------- | ---------------------------------------------------------------------- |
-| `useOrder(id)`                     | hook      | **(landed)** with `refetch`; poll interval option is the v1 question   |
-| `useDeliveryZones()`               | hook      | **(landed)**                                                           |
-| `useCheckout` `{pending,error,reset}` | hook state | **(landed)** — `error.details.field` for inline form errors         |
-| `refetch` on all read hooks        | hook      | **(landed)**                                                           |
-| `ERROR_CODES` + `details` schema   | export    | **(landed)** — synced to Core's emitted set incl. `RATE_LIMITED`, `IDEMPOTENCY_IN_PROGRESS` |
-| `formatCents`                      | util      | **(landed)** — currency-aware, `pt-BR` default; `formatBRL` alias dropped |
-| `useQuery` cache/refetch           | hook      | **(landed)** — per-provider cache; `refetch` routes through `invalidate` |
-| `invalidateQuery`                  | export    | **(landed)** — storefronts can clear cache after custom flows          |
-| `NoticeOverrideProps`              | type      | **(landed)** — `{ notice, onDismiss? }` for `system.*` overrides       |
-| `cart.Drawer` + `cart.LineItem`    | defaults  | No-override store currently has no cart UI                             |
-| `ModifierPicker`                   | primitive | Enforces required/min/max client-side, produces `modifierIds`          |
-| `checkout.Layout`                  | slot      | Kernel-owned checkout; storefronts keep rebuilding the 3-step flow     |
-| `system.PromoNotice`               | slot key  | Kind-camelization already produces it; add to `SLOT_KEYS`              |
-| Realtime order updates             | hook      | `useOrder(id, {poll})` covers Phase 0; SSE wrapper is Phase 1+         |
-| Font loading rule                  | contract  | `font.srcs` in config → Kernel `@font-face`; files in `assets/fonts/`  |
-| `importCart(items)` / `?cart=`     | primitive | Cross-device cart share links                                          |
+| Piece                                 | Kind       | Status / note                                                                               |
+| ------------------------------------- | ---------- | ------------------------------------------------------------------------------------------- |
+| `useOrder(id)`                        | hook       | **(landed)** with `refetch`; poll interval option is the v1 question                        |
+| `useDeliveryZones()`                  | hook       | **(landed)**                                                                                |
+| `useCheckout` `{pending,error,reset}` | hook state | **(landed)** — `error.details.field` for inline form errors                                 |
+| `refetch` on all read hooks           | hook       | **(landed)**                                                                                |
+| `ERROR_CODES` + `details` schema      | export     | **(landed)** — synced to Core's emitted set incl. `RATE_LIMITED`, `IDEMPOTENCY_IN_PROGRESS` |
+| `formatCents`                         | util       | **(landed)** — currency-aware, `pt-BR` default; `formatBRL` alias dropped                   |
+| `useQuery` cache/refetch              | hook       | **(landed)** — per-provider cache; `refetch` routes through `invalidate`                    |
+| `invalidateQuery`                     | export     | **(landed)** — storefronts can clear cache after custom flows                               |
+| `NoticeOverrideProps`                 | type       | **(landed)** — `{ notice, onDismiss? }` for `system.*` overrides                            |
+| `cart.Drawer` + `cart.LineItem`       | defaults   | No-override store currently has no cart UI                                                  |
+| `ModifierPicker`                      | primitive  | Enforces required/min/max client-side, produces `modifierIds`                               |
+| `checkout.Layout`                     | slot       | Kernel-owned checkout; storefronts keep rebuilding the 3-step flow                          |
+| `system.PromoNotice`                  | slot key   | Kind-camelization already produces it; add to `SLOT_KEYS`                                   |
+| Realtime order updates                | hook       | `useOrder(id, {poll})` covers Phase 0; SSE wrapper is Phase 1+                              |
+| Font loading rule                     | contract   | `font.srcs` in config → Kernel `@font-face`; files in `assets/fonts/`                       |
+| `importCart(items)` / `?cart=`        | primitive  | Cross-device cart share links                                                               |
 
 ## Contract rules — corrections from the spikes
 

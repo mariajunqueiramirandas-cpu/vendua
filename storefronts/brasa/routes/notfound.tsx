@@ -10,7 +10,11 @@ export function NotFound() {
       <p className="dim" style={{ maxWidth: '46ch' }}>
         essa página não consta no manifesto da noite — só a chapa, a comanda e o despacho.
       </p>
-      <Link to="/" className="cta" style={{ display: 'inline-block', padding: '12px 26px', textDecoration: 'none' }}>
+      <Link
+        to="/"
+        className="cta"
+        style={{ display: 'inline-block', padding: '12px 26px', textDecoration: 'none' }}
+      >
         Voltar ao quadro →
       </Link>
     </main>

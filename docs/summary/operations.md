@@ -7,7 +7,7 @@ Condenses `architecture/12–13, 15–16`. Full docs are normative.
 - **Default**: `slug.vendua.com.br` at provisioning; wildcard cert (DNS-01) —
   live in seconds, permanent fallback forever.
 - **Custom domain**: `pending → instructions_sent → verified → active →
-  failed/repairing`. CNAME/ALIAS → `edge.vendua.com.br`; verify via TXT
+failed/repairing`. CNAME/ALIAS → `edge.vendua.com.br`; verify via TXT
   `_vendua.<domain>` (preferred) or CNAME; cert on first request via Caddy
   on-demand TLS gated by `ask` endpoint (only verified domains get certs —
   prevents minting abuse).

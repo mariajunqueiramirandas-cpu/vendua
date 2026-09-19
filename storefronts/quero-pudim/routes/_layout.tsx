@@ -5,7 +5,9 @@ import { CartTrigger, StoreStatusBadge, useCart, useStore } from '@vendua/kernel
 
 const DAY_LABEL = ['dom', 'seg', 'ter', 'qua', 'qui', 'sex', 'sáb'];
 
-function hoursSummary(hours: { windows: { days: number[]; open: string; close: string }[] } | undefined) {
+function hoursSummary(
+  hours: { windows: { days: number[]; open: string; close: string }[] } | undefined,
+) {
   const w = hours?.windows ?? [];
   if (w.length === 0) return null;
   const everyDay = w.some((x) => x.days.length === 7);
@@ -13,7 +15,10 @@ function hoursSummary(hours: { windows: { days: number[]; open: string; close: s
     .map((x) => {
       const days = everyDay
         ? 'todos os dias'
-        : [...x.days].sort().map((d) => DAY_LABEL[d]).join(' · ');
+        : [...x.days]
+            .sort()
+            .map((d) => DAY_LABEL[d])
+            .join(' · ');
       return `${days}, ${x.open}–${x.close}`;
     })
     .join('  ·  ');
@@ -38,7 +43,9 @@ export function Layout() {
           </Link>
 
           <nav className="site-nav" aria-label="Navegação principal">
-            <NavLink to="/" end>Início</NavLink>
+            <NavLink to="/" end>
+              Início
+            </NavLink>
             <StoryLink />
             <NavLink to="/catalog">Nosso cardápio</NavLink>
             <NavLink to="/meus-pedidos">Meus pedidos</NavLink>
@@ -85,14 +92,20 @@ export function Layout() {
               ) : null}
             </div>
             <nav className="footer-nav" aria-label="Contatos da loja">
-              <p className="eyebrow" style={{ fontSize: '0.875rem' }}>Vamos conversar?</p>
+              <p className="eyebrow" style={{ fontSize: '0.875rem' }}>
+                Vamos conversar?
+              </p>
               <Link to="/catalog">Nosso cardápio</Link>
               <Link to="/meus-pedidos">Meus pedidos</Link>
               <Link to="/qrcode">
                 <QrCode size={16} aria-hidden="true" /> Cardápio QR Code
               </Link>
               {instagram ? (
-                <a href={`https://www.instagram.com/${instagram}/`} target="_blank" rel="noopener noreferrer">
+                <a
+                  href={`https://www.instagram.com/${instagram}/`}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                >
                   <Instagram size={16} aria-hidden="true" /> Instagram @{instagram}{' '}
                   <ArrowUpRight size={14} aria-hidden="true" />
                 </a>
@@ -106,8 +119,12 @@ export function Layout() {
             </nav>
           </div>
           <div className="footer-legal">
-            <p style={{ margin: 0 }}>© {new Date().getFullYear()} {store?.name ?? 'Quero Pudim Gourmet'}</p>
-            <p style={{ margin: 0 }}>{store?.tagline ?? 'Pudins sem furinhos e sacolés cremosos'}</p>
+            <p style={{ margin: 0 }}>
+              © {new Date().getFullYear()} {store?.name ?? 'Quero Pudim Gourmet'}
+            </p>
+            <p style={{ margin: 0 }}>
+              {store?.tagline ?? 'Pudins sem furinhos e sacolés cremosos'}
+            </p>
           </div>
         </div>
       </footer>

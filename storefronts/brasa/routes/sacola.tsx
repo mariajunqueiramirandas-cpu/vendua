@@ -36,7 +36,16 @@ export function Sacola() {
           <div className="empty">
             <div className="big">Comanda vazia</div>
             <p>o gancho tá livre — pede um smash que a chapa tá quente.</p>
-            <Link to="/" className="cta ghost" style={{ display: 'inline-block', padding: '10px 22px', textDecoration: 'none', marginTop: 8 }}>
+            <Link
+              to="/"
+              className="cta ghost"
+              style={{
+                display: 'inline-block',
+                padding: '10px 22px',
+                textDecoration: 'none',
+                marginTop: 8,
+              }}
+            >
               Ao quadro →
             </Link>
           </div>
@@ -53,7 +62,9 @@ export function Sacola() {
               {it.modifiers.length ? (
                 <div className="tmods">
                   {it.modifiers
-                    .map((m) => (m.priceDeltaCents ? `${m.name} +${cents(m.priceDeltaCents)}` : m.name))
+                    .map((m) =>
+                      m.priceDeltaCents ? `${m.name} +${cents(m.priceDeltaCents)}` : m.name,
+                    )
                     .join(' · ')}
                 </div>
               ) : null}

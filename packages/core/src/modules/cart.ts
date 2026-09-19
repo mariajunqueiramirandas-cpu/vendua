@@ -258,7 +258,11 @@ export async function addItem(
   // row. A later catalog edit changes neither this line nor a checkout total.
   const allModifiers = product.modifierGroups.flatMap((g) => g.modifiers);
   const chosen = modifierIds.map((id) => allModifiers.find((m) => m.id === id)!);
-  const snapshot = chosen.map((m) => ({ id: m.id, name: m.name, priceDeltaCents: m.priceDeltaCents }));
+  const snapshot = chosen.map((m) => ({
+    id: m.id,
+    name: m.name,
+    priceDeltaCents: m.priceDeltaCents,
+  }));
   const unit = unitPriceCents(
     product.basePriceCents,
     chosen.map((m) => m.priceDeltaCents),

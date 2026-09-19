@@ -28,19 +28,19 @@ primitive/surface → kernel beacon (batched, consent-gated)
 
 Auto-emitted — storefronts get these without writing a line:
 
-| Event | Emitted by | Key props |
-| --- | --- | --- |
-| `page_view` | router integration | path, referrer |
-| `product_view` | `ProductLink` target resolve | product_id |
-| `add_to_cart` | `AddToCart` | product_id, qty, modifiers, value |
-| `cart_open` | `CartTrigger` | item_count, cart_value |
-| `checkout_start` | `CheckoutButton` | cart_value |
-| `checkout_step` | checkout surface | step name, duration |
-| `payment_submit` | checkout surface | method |
-| `order_placed` | Core (server-side, authoritative) | order_id, value, method |
-| `order_failed` | Core/checkout | code |
-| `notice_shown` / `notice_action` | `SystemSurfaces` | kind, severity, action |
-| `notify_me` | `NotifyMeButton` | subject (store/product) |
+| Event                            | Emitted by                        | Key props                         |
+| -------------------------------- | --------------------------------- | --------------------------------- |
+| `page_view`                      | router integration                | path, referrer                    |
+| `product_view`                   | `ProductLink` target resolve      | product_id                        |
+| `add_to_cart`                    | `AddToCart`                       | product_id, qty, modifiers, value |
+| `cart_open`                      | `CartTrigger`                     | item_count, cart_value            |
+| `checkout_start`                 | `CheckoutButton`                  | cart_value                        |
+| `checkout_step`                  | checkout surface                  | step name, duration               |
+| `payment_submit`                 | checkout surface                  | method                            |
+| `order_placed`                   | Core (server-side, authoritative) | order_id, value, method           |
+| `order_failed`                   | Core/checkout                     | code                              |
+| `notice_shown` / `notice_action` | `SystemSurfaces`                  | kind, severity, action            |
+| `notify_me`                      | `NotifyMeButton`                  | subject (store/product)           |
 
 Custom events: `useAnalytics().track('custom.<name>', props)` — the `custom.`
 prefix is reserved for storefronts and lint-checked; platform names can't be

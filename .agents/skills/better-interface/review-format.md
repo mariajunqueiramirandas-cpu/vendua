@@ -6,8 +6,8 @@ This is the format for a review `better-interface` orchestrates. A domain skill 
 
 State the exact scope, stack and styling conventions, the project convention documents found in recon and any review boundary. Then show coverage:
 
-| Domain | Evidence inspected | Result |
-| --- | --- | --- |
+| Domain        | Evidence inspected                   | Result                    |
+| ------------- | ------------------------------------ | ------------------------- |
 | Accessibility | Files, components, states, or checks | Findings count or `Clear` |
 
 Include every domain listed under `better-interface`'s **Use domain skills as the sources of truth**. `Clear` means inspected with no actionable finding; `Not reviewed` must explain why.
@@ -16,9 +16,9 @@ Include every domain listed under `better-interface`'s **Use domain skills as th
 
 One table, ordered by severity, then by reach:
 
-| Severity | Domain | Location | Before | After | Why |
-| --- | --- | --- | --- | --- | --- |
-| HIGH | Accessibility | `src/Dialog.tsx:42` | `<button><XIcon /></button>` | Add `aria-label="Close"` and hide the icon from the accessibility tree | The icon-only control has no accessible name |
+| Severity | Domain        | Location            | Before                       | After                                                                  | Why                                          |
+| -------- | ------------- | ------------------- | ---------------------------- | ---------------------------------------------------------------------- | -------------------------------------------- |
+| HIGH     | Accessibility | `src/Dialog.tsx:42` | `<button><XIcon /></button>` | Add `aria-label="Close"` and hide the icon from the accessibility tree | The icon-only control has no accessible name |
 
 - **Severity** comes from `better-interface`'s **Rank by user impact**.
 - **Location** cites `path/to/file:line`. Cite the exact screen and component when the artifact has no source files.

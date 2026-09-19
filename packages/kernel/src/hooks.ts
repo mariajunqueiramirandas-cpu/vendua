@@ -139,7 +139,13 @@ export function useCart(): {
     [api, bump],
   );
 
-  return { cart: q.data ?? null, loading: q.loading, error: q.error, mutations, refetch: q.refetch };
+  return {
+    cart: q.data ?? null,
+    loading: q.loading,
+    error: q.error,
+    mutations,
+    refetch: q.refetch,
+  };
 }
 
 export function useOrder(id: string): {

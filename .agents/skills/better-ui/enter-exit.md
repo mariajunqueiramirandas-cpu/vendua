@@ -28,8 +28,8 @@ function PageHeader() {
     >
       <motion.h1
         variants={{
-          hidden: { opacity: 0, y: 12, filter: "blur(4px)" },
-          visible: { opacity: 1, y: 0, filter: "blur(0px)" },
+          hidden: { opacity: 0, y: 12, filter: 'blur(4px)' },
+          visible: { opacity: 1, y: 0, filter: 'blur(0px)' },
         }}
       >
         Welcome
@@ -37,8 +37,8 @@ function PageHeader() {
 
       <motion.p
         variants={{
-          hidden: { opacity: 0, y: 12, filter: "blur(4px)" },
-          visible: { opacity: 1, y: 0, filter: "blur(0px)" },
+          hidden: { opacity: 0, y: 12, filter: 'blur(4px)' },
+          visible: { opacity: 1, y: 0, filter: 'blur(0px)' },
         }}
       >
         A description of the page.
@@ -46,8 +46,8 @@ function PageHeader() {
 
       <motion.div
         variants={{
-          hidden: { opacity: 0, y: 12, filter: "blur(4px)" },
-          visible: { opacity: 1, y: 0, filter: "blur(0px)" },
+          hidden: { opacity: 0, y: 12, filter: 'blur(4px)' },
+          visible: { opacity: 1, y: 0, filter: 'blur(0px)' },
         }}
       >
         <Button>Get started</Button>
@@ -67,9 +67,15 @@ function PageHeader() {
   animation: fadeInUp 400ms ease-out forwards;
 }
 
-.stagger-item:nth-child(1) { animation-delay: 0ms; }
-.stagger-item:nth-child(2) { animation-delay: 100ms; }
-.stagger-item:nth-child(3) { animation-delay: 200ms; }
+.stagger-item:nth-child(1) {
+  animation-delay: 0ms;
+}
+.stagger-item:nth-child(2) {
+  animation-delay: 100ms;
+}
+.stagger-item:nth-child(3) {
+  animation-delay: 200ms;
+}
 
 @keyframes fadeInUp {
   to {
@@ -92,8 +98,8 @@ Exits are softer and less attention-grabbing than enters. The user's focus is mo
   exit={{
     opacity: 0,
     y: -12,
-    filter: "blur(4px)",
-    transition: { duration: 0.15, ease: "easeOut" },
+    filter: 'blur(4px)',
+    transition: { duration: 0.15, ease: 'easeOut' },
   }}
 >
   {content}
@@ -108,8 +114,8 @@ Exits are softer and less attention-grabbing than enters. The user's focus is mo
 <motion.div
   exit={{
     opacity: 0,
-    x: "-100%",
-    transition: { duration: 0.2, ease: "easeOut" },
+    x: '-100%',
+    transition: { duration: 0.2, ease: 'easeOut' },
   }}
 >
   {content}
@@ -123,7 +129,9 @@ Exits are softer and less attention-grabbing than enters. The user's focus is mo
 .item-exit {
   opacity: 0;
   transform: translateY(-12px);
-  transition: opacity 150ms ease-out, transform 150ms ease-out;
+  transition:
+    opacity 150ms ease-out,
+    transform 150ms ease-out;
 }
 
 /* Bad: dramatic exit that steals focus */
@@ -140,8 +148,8 @@ Exits are softer and less attention-grabbing than enters. The user's focus is mo
 ```
 
 **Key points:**
+
 - Use a small fixed `translateY`, say `-12px`, rather than the full container height
 - Keep some directional movement to indicate where the element went
 - Exit duration should be shorter than enter duration (150ms vs 300ms)
 - Use a subtle exit when it preserves spatial context. Remove immediately when motion adds no information, the interaction repeats frequently, or reduced motion is requested.
-

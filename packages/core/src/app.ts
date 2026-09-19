@@ -87,9 +87,7 @@ export function createApp({ sql, sessionSecret }: AppDeps) {
           return null;
         }
         const reqHost =
-          (trustProxy ? c.req.header('x-forwarded-host') : undefined) ??
-          c.req.header('host') ??
-          '';
+          (trustProxy ? c.req.header('x-forwarded-host') : undefined) ?? c.req.header('host') ?? '';
         return originHost === reqHost ? o : null;
       },
       allowHeaders: ['Content-Type', 'Authorization', 'Idempotency-Key'],
@@ -227,7 +225,9 @@ export function createApp({ sql, sessionSecret }: AppDeps) {
         return rows[0]?.status === 'open' ? cartId : null;
       });
       if (existing) {
-        const cart = await withTenant(sql, tenant.id, (tx) => loadCartView(tx, tenant.id, existing));
+        const cart = await withTenant(sql, tenant.id, (tx) =>
+          loadCartView(tx, tenant.id, existing),
+        );
         return c.json({ sessionToken: bearer, cart });
       }
       // fall through to mint
@@ -270,7 +270,13 @@ export function createApp({ sql, sessionSecret }: AppDeps) {
       const modifierIds = Array.isArray(body.modifierIds)
         ? body.modifierIds.map((m) => str(m, 'modifierId', 64))
         : [];
-      const cart = await addItem(tx, tenant.id, cartId, { productId, qty, modifierIds }, getProductById);
+      const cart = await addItem(
+        tx,
+        tenant.id,
+        cartId,
+        { productId, qty, modifierIds },
+        getProductById,
+      );
       return { status: 200, body: { cart } };
     })(c);
   });
@@ -317,7 +323,10 @@ export function createApp({ sql, sessionSecret }: AppDeps) {
       if (mode !== 'pickup' && mode !== 'delivery') {
         throw new HttpError(422, 'INVALID_DELIVERY', 'mode must be pickup or delivery');
       }
-      const nb = neighborhood === undefined || neighborhood === null ? null : str(neighborhood, 'neighborhood', 200);
+      const nb =
+        neighborhood === undefined || neighborhood === null
+          ? null
+          : str(neighborhood, 'neighborhood', 200);
       const addr = address === undefined || address === null ? null : str(address, 'address', 500);
       await assertCartOpen(tx, tenant.id, cartId);
       await tx`

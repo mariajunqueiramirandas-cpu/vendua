@@ -73,13 +73,13 @@ Mostly a legal/ops problem, flagged honestly:
 
 ## DNS records Venduá controls
 
-| Record | Purpose |
-| --- | --- |
-| `*.vendua.com.br` → edge | default hostnames |
-| `edge.vendua.com.br` → edge IPs | CNAME target for custom domains |
-| `cdn.vendua.com.br` → CDN | loader, shared assets |
-| `api.vendua.com.br` → Core | APIs |
-| `status.vendua.com.br` | status page (different infra ideally) |
+| Record                          | Purpose                               |
+| ------------------------------- | ------------------------------------- |
+| `*.vendua.com.br` → edge        | default hostnames                     |
+| `edge.vendua.com.br` → edge IPs | CNAME target for custom domains       |
+| `cdn.vendua.com.br` → CDN       | loader, shared assets                 |
+| `api.vendua.com.br` → Core      | APIs                                  |
+| `status.vendua.com.br`          | status page (different infra ideally) |
 
 ## Failure UX (the part everyone forgets)
 

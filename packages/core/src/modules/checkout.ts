@@ -141,8 +141,13 @@ export function validateCheckoutShape(input: unknown): asserts input is Checkout
     }
   }
   if (!['pix', 'card_on_delivery', 'cash'].includes(i.payment?.method)) {
-    throw new HttpError(422, 'INVALID_PAYMENT', 'payment.method must be pix, card_on_delivery or cash', {
-      field: 'payment.method',
-    });
+    throw new HttpError(
+      422,
+      'INVALID_PAYMENT',
+      'payment.method must be pix, card_on_delivery or cash',
+      {
+        field: 'payment.method',
+      },
+    );
   }
 }

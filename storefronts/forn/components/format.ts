@@ -30,7 +30,9 @@ export function daysLabel(days: number[]): string {
 
 /** Windows → display lines, e.g. "todos os dias · 6h30 às 11h30". */
 export function hoursLines(store: StoreProfile): string[] {
-  return store.hours.windows.map((w) => `${daysLabel(w.days)} · ${hhmm(w.open)} às ${hhmm(w.close)}`);
+  return store.hours.windows.map(
+    (w) => `${daysLabel(w.days)} · ${hhmm(w.open)} às ${hhmm(w.close)}`,
+  );
 }
 
 function localYMD(d: Date, tz: string): string {
@@ -60,7 +62,12 @@ export function resumeLabel(iso: string, tz: string): string {
   const dayOf = dayFmt.format(d).replace('.', '').toLowerCase().slice(0, 3);
   const dd = (s: string) => new Date(`${s}T12:00:00Z`).getTime();
   const diff = Math.round((dd(localYMD(d, tz)) - dd(localYMD(new Date(), tz))) / 86400000);
-  const day = diff <= 0 ? 'hoje' : diff === 1 ? 'amanhã' : (DAY_ABBR.find((d3) => dayOf.startsWith(d3.slice(0, 3))) ?? dayOf);
+  const day =
+    diff <= 0
+      ? 'hoje'
+      : diff === 1
+        ? 'amanhã'
+        : (DAY_ABBR.find((d3) => dayOf.startsWith(d3.slice(0, 3))) ?? dayOf);
   return `${day} ${time}`;
 }
 

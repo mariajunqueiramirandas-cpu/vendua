@@ -93,8 +93,8 @@ JSON.
 - **Channels**: edge state injection (`__VENDUA_STATE__`, first paint) →
   Kernel fetch (`useNotices`, runtime) → `v.js` loader (always works).
 - **Envelope**: `SurfacesEnvelope{version, store, notices[], checkout?,
-  timeline?}`; `Notice{id, kind, severity, title, body?, actions[], payload?,
-  dismissible, priority, startsAt?, endsAt?}`.
+timeline?}`; `Notice{id, kind, severity, title, body?, actions[], payload?,
+dismissible, priority, startsAt?, endsAt?}`.
 - **Forward-compat rules**: unknown `kind` → generic `system.Notice`; unknown
   `severity` → degrade to `info` (`blocking` always overlays); unknown action
   → `link` if `href` else omit; `payload` optional; absent surfaces render

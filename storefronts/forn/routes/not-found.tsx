@@ -6,7 +6,14 @@ export default function NotFound() {
   return (
     <Shell>
       <div className="empty-panel" style={{ marginTop: 40 }}>
-        <div style={{ display: 'flex', justifyContent: 'center', marginBottom: 10, color: 'var(--mute)' }}>
+        <div
+          style={{
+            display: 'flex',
+            justifyContent: 'center',
+            marginBottom: 10,
+            color: 'var(--mute)',
+          }}
+        >
           <LoafMark size={48} />
         </div>
         <h2>isso não está na vitrine</h2>

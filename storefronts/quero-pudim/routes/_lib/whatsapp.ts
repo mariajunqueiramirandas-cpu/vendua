@@ -36,8 +36,7 @@ export function orderWhatsAppMessage(
   storeName: string,
   notes?: string,
 ): string {
-  const addressText =
-    typeof order.delivery.address === 'string' ? order.delivery.address : null;
+  const addressText = typeof order.delivery.address === 'string' ? order.delivery.address : null;
   return (
     `Olá! Acabei de fazer o pedido *#${order.number}* na ${storeName}:\n\n` +
     `*Cliente:* ${order.customer.name}\n` +

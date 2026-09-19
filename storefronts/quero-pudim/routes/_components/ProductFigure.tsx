@@ -28,8 +28,18 @@ export function ProductFigure({
         />
         <rect x="46" y="26" width="28" height="10" rx="5" fill="#B45309" />
         <rect x="46" y="26" width="28" height="4" rx="2" fill="#D97706" opacity="0.8" />
-        <path d="M38 78 C50 70 70 86 82 76 L84 96 C84 106 36 106 36 96 Z" fill="#B45309" opacity="0.85" />
-        <path d="M38 84 C50 76 70 92 82 82" stroke="#7C2D12" strokeWidth="2" fill="none" opacity="0.5" />
+        <path
+          d="M38 78 C50 70 70 86 82 76 L84 96 C84 106 36 106 36 96 Z"
+          fill="#B45309"
+          opacity="0.85"
+        />
+        <path
+          d="M38 84 C50 76 70 92 82 82"
+          stroke="#7C2D12"
+          strokeWidth="2"
+          fill="none"
+          opacity="0.5"
+        />
         <rect x="44" y="44" width="7" height="52" rx="3.5" fill="#FFFFFF" opacity="0.65" />
       </svg>
     );

@@ -21,7 +21,7 @@ conversation → DesignSpec (validated JSON) → agent_tasks queue
   agent produces it; generation agent satisfies it — separate cadences.
 - **Scaffold-first (anti-hallucination rule)**: agents never start blank —
   `vendua scaffold` yields a storefront that already passes conformance;
-  generation is *transformation*, and only the diff is judged.
+  generation is _transformation_, and only the diff is judged.
 - **Task contract**: sparse checkout (Kernel + docs + `_template` +
   `_examples` + the slug); reads never include the rest of the fleet; writes
   only `storefronts/<slug>/**`; done-when = conformance green + generation QA.

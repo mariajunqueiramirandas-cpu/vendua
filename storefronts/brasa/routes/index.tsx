@@ -24,7 +24,15 @@ export function Board() {
       <h1 className="tagline">
         Smash na chapa. <em>Fogo de verdade.</em>
       </h1>
-      <p className="dim" style={{ fontFamily: 'var(--v-font-mono)', fontSize: 12, letterSpacing: '0.1em', textTransform: 'uppercase' }}>
+      <p
+        className="dim"
+        style={{
+          fontFamily: 'var(--v-font-mono)',
+          fontSize: 12,
+          letterSpacing: '0.1em',
+          textTransform: 'uppercase',
+        }}
+      >
         {windowLines(store?.hours.windows ?? []).join('  ·  ') || 'abrindo…'} — monte a comanda, a
         gente prensa na hora.
       </p>

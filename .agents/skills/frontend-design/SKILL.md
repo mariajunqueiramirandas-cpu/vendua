@@ -28,7 +28,7 @@ If any of these appear, the work is not done:
 
 Answer these in the work, not in prose. If you can't answer one, that's the gap to fix first.
 
-1. **One strong idea.** What is the single visual/conceptual idea that makes this *this product*? A layout, a motif, a type treatment, a motion signature — one thing, done with conviction. Not five weak ones.
+1. **One strong idea.** What is the single visual/conceptual idea that makes this _this product_? A layout, a motif, a type treatment, a motion signature — one thing, done with conviction. Not five weak ones.
 2. **A real type system.** Choose a typeface with a reason (or commit to a variable font with intent). Define a scale, weights, and tracking. Typography carries more design weight than any other single choice.
 3. **A deliberate palette.** Not "blue". A named, constrained set: one surface scale, one accent, semantic tokens. Check contrast. Color should be doing hierarchy work, not decoration.
 4. **Hierarchy through space.** Grouping, alignment, and whitespace before borders and shadows. If you need a border to separate two things, you probably needed more space.

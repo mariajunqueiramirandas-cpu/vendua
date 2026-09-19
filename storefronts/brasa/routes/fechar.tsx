@@ -33,7 +33,11 @@ export function Fechar() {
   const [address, setAddress] = useState('');
   const [pay, setPay] = useState<Pay>('pix');
   const [pending, setPending] = useState(false);
-  const [err, setErr] = useState<{ code: string; message: string; details?: Record<string, unknown> }>();
+  const [err, setErr] = useState<{
+    code: string;
+    message: string;
+    details?: Record<string, unknown>;
+  }>();
   const debounce = useRef<ReturnType<typeof setTimeout>>();
 
   const items = cart?.status === 'open' ? cart.items : [];
@@ -63,7 +67,8 @@ export function Fechar() {
           setDeliverySync('error');
           setErr({
             code: 'DELIVERY_SYNC',
-            message: 'Não conseguimos confirmar a entrega nesse bairro — ajuste para tentar de novo.',
+            message:
+              'Não conseguimos confirmar a entrega nesse bairro — ajuste para tentar de novo.',
           });
         });
     }, 350);
@@ -107,7 +112,16 @@ export function Fechar() {
           <div className="empty">
             <div className="big">Nada no gancho</div>
             <p>a chapa não despacha comanda vazia.</p>
-            <Link to="/" className="cta ghost" style={{ display: 'inline-block', padding: '10px 22px', textDecoration: 'none', marginTop: 8 }}>
+            <Link
+              to="/"
+              className="cta ghost"
+              style={{
+                display: 'inline-block',
+                padding: '10px 22px',
+                textDecoration: 'none',
+                marginTop: 8,
+              }}
+            >
               Ao quadro →
             </Link>
           </div>
@@ -231,7 +245,13 @@ export function Fechar() {
 
             {err ? <ErrorPlate error={err} /> : null}
 
-            <button type="button" className="cta" style={{ width: '100%' }} disabled={!canSubmit} onClick={onSubmit}>
+            <button
+              type="button"
+              className="cta"
+              style={{ width: '100%' }}
+              disabled={!canSubmit}
+              onClick={onSubmit}
+            >
               {pending ? 'Na chapa…' : 'Despachar pedido →'}
             </button>
           </div>

@@ -38,7 +38,10 @@ export default function PedidoPage() {
       {phase === 'loading' ? (
         <div className="comanda">
           <div className="comanda-body" aria-hidden="true">
-            <div className="skeleton-bar" style={{ width: '40%', height: 26, margin: '10px auto' }} />
+            <div
+              className="skeleton-bar"
+              style={{ width: '40%', height: 26, margin: '10px auto' }}
+            />
             <div className="skeleton-bar" style={{ width: '70%', margin: '18px auto 8px' }} />
           </div>
         </div>
@@ -50,7 +53,12 @@ export default function PedidoPage() {
             apareceu — ou chama no zap que a gente confere.
           </p>
           {store?.whatsapp ? (
-            <a className="link-btn" href={`https://wa.me/${store.whatsapp}`} target="_blank" rel="noreferrer">
+            <a
+              className="link-btn"
+              href={`https://wa.me/${store.whatsapp}`}
+              target="_blank"
+              rel="noreferrer"
+            >
               chamar no whatsapp
             </a>
           ) : (
@@ -83,7 +91,9 @@ export default function PedidoPage() {
             </div>
             <div className="f-row">
               <span className="k">pagamento</span>
-              <span className="v">{PAYMENT_LABELS[order.payment.method] ?? order.payment.method}</span>
+              <span className="v">
+                {PAYMENT_LABELS[order.payment.method] ?? order.payment.method}
+              </span>
             </div>
             {order.payment.instructions ? (
               <div className="f-row">
@@ -106,7 +116,10 @@ export default function PedidoPage() {
                   <li key={i}>
                     <span className="mono">{ORDER_STATE_LABELS[e.to] ?? e.to}</span>
                     <span className="mono">
-                      {new Date(e.at).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}
+                      {new Date(e.at).toLocaleTimeString('pt-BR', {
+                        hour: '2-digit',
+                        minute: '2-digit',
+                      })}
                     </span>
                   </li>
                 ))}

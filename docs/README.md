@@ -33,44 +33,44 @@ If you are new, read in this order:
 
 Then per topic as needed:
 
-| Topic | Doc |
-| --- | --- |
-| Backend modules, data model, APIs | [01-core](architecture/01-core.md) |
-| Kernel packages, hooks, primitives | [02-kernel](architecture/02-kernel.md) |
-| Storefront requirements | [03-storefront-contract](architecture/03-storefront-contract.md) |
-| Slot registry, overrides, tokens | [04-extensions-and-overrides](architecture/04-extensions-and-overrides.md) |
-| Server-driven UI, loader (`v.js`) | [05-system-surfaces](architecture/05-system-surfaces.md) |
-| Monorepo layout, isolation | [06-monorepo](architecture/06-monorepo.md) |
-| Artifacts, edge, hosting | [07-deployment-and-hosting](architecture/07-deployment-and-hosting.md) |
-| Fleet state, reconciler, ops API | [08-control-plane](architecture/08-control-plane.md) |
-| Majors, codemods, fleet trains | [09-migrations-and-fleet-trains](architecture/09-migrations-and-fleet-trains.md) |
-| Conformance + generation QA | [10-qa-pipeline](architecture/10-qa-pipeline.md) |
-| Versioning and compat policy | [11-backward-compatibility](architecture/11-backward-compatibility.md) |
-| Domains, DNS, TLS | [12-domains-and-tls](architecture/12-domains-and-tls.md) |
-| Mercado Pago marketplace | [13-payments](architecture/13-payments.md) |
-| DesignSpec → agent → deploy | [14-agent-pipeline](architecture/14-agent-pipeline.md) |
-| Event taxonomy, funnels | [15-analytics](architecture/15-analytics.md) |
-| SLOs, incidents, kill switch | [16-operations-and-incidents](architecture/16-operations-and-incidents.md) |
+| Topic                              | Doc                                                                              |
+| ---------------------------------- | -------------------------------------------------------------------------------- |
+| Backend modules, data model, APIs  | [01-core](architecture/01-core.md)                                               |
+| Kernel packages, hooks, primitives | [02-kernel](architecture/02-kernel.md)                                           |
+| Storefront requirements            | [03-storefront-contract](architecture/03-storefront-contract.md)                 |
+| Slot registry, overrides, tokens   | [04-extensions-and-overrides](architecture/04-extensions-and-overrides.md)       |
+| Server-driven UI, loader (`v.js`)  | [05-system-surfaces](architecture/05-system-surfaces.md)                         |
+| Monorepo layout, isolation         | [06-monorepo](architecture/06-monorepo.md)                                       |
+| Artifacts, edge, hosting           | [07-deployment-and-hosting](architecture/07-deployment-and-hosting.md)           |
+| Fleet state, reconciler, ops API   | [08-control-plane](architecture/08-control-plane.md)                             |
+| Majors, codemods, fleet trains     | [09-migrations-and-fleet-trains](architecture/09-migrations-and-fleet-trains.md) |
+| Conformance + generation QA        | [10-qa-pipeline](architecture/10-qa-pipeline.md)                                 |
+| Versioning and compat policy       | [11-backward-compatibility](architecture/11-backward-compatibility.md)           |
+| Domains, DNS, TLS                  | [12-domains-and-tls](architecture/12-domains-and-tls.md)                         |
+| Mercado Pago marketplace           | [13-payments](architecture/13-payments.md)                                       |
+| DesignSpec → agent → deploy        | [14-agent-pipeline](architecture/14-agent-pipeline.md)                           |
+| Event taxonomy, funnels            | [15-analytics](architecture/15-analytics.md)                                     |
+| SLOs, incidents, kill switch       | [16-operations-and-incidents](architecture/16-operations-and-incidents.md)       |
 
 ## ADRs
 
 Significant decisions are recorded as ADRs in [`adr/`](adr/). Current index:
 
-| # | Decision |
-| --- | --- |
-| [0001](adr/0001-monorepo-for-storefronts.md) | One monorepo for all storefronts |
-| [0002](adr/0002-single-storefront-framework-react.md) | React as the single storefront framework |
-| [0003](adr/0003-storefronts-as-artifacts.md) | Storefronts are deployable artifacts, not services |
-| [0004](adr/0004-kernel-owned-checkout.md) | Checkout and system surfaces are Kernel-owned |
-| [0005](adr/0005-server-driven-system-surfaces.md) | System surfaces are server-driven |
-| [0006](adr/0006-runtime-loader.md) | A tiny runtime loader (`v.js`) as the last-resort channel |
-| [0007](adr/0007-headless-primitives.md) | Headless primitives are the commerce API |
-| [0008](adr/0008-contract-versioning.md) | Three-axis versioning; majors require codemods |
-| [0009](adr/0009-mercado-pago-marketplace.md) | Mercado Pago Marketplace + OAuth + application fee |
-| [0010](adr/0010-automated-domains-tls.md) | Automated domains and TLS |
-| [0011](adr/0011-ring-based-fleet-releases.md) | Ring-based fleet releases with artifact promotion |
-| [0012](adr/0012-agent-agnostic-pipeline.md) | Agent-agnostic generation pipeline, CI as judge |
-| [0013](adr/0013-modular-monolith-core.md) | Core is a modular monolith on Postgres |
+| #                                                     | Decision                                                  |
+| ----------------------------------------------------- | --------------------------------------------------------- |
+| [0001](adr/0001-monorepo-for-storefronts.md)          | One monorepo for all storefronts                          |
+| [0002](adr/0002-single-storefront-framework-react.md) | React as the single storefront framework                  |
+| [0003](adr/0003-storefronts-as-artifacts.md)          | Storefronts are deployable artifacts, not services        |
+| [0004](adr/0004-kernel-owned-checkout.md)             | Checkout and system surfaces are Kernel-owned             |
+| [0005](adr/0005-server-driven-system-surfaces.md)     | System surfaces are server-driven                         |
+| [0006](adr/0006-runtime-loader.md)                    | A tiny runtime loader (`v.js`) as the last-resort channel |
+| [0007](adr/0007-headless-primitives.md)               | Headless primitives are the commerce API                  |
+| [0008](adr/0008-contract-versioning.md)               | Three-axis versioning; majors require codemods            |
+| [0009](adr/0009-mercado-pago-marketplace.md)          | Mercado Pago Marketplace + OAuth + application fee        |
+| [0010](adr/0010-automated-domains-tls.md)             | Automated domains and TLS                                 |
+| [0011](adr/0011-ring-based-fleet-releases.md)         | Ring-based fleet releases with artifact promotion         |
+| [0012](adr/0012-agent-agnostic-pipeline.md)           | Agent-agnostic generation pipeline, CI as judge           |
+| [0013](adr/0013-modular-monolith-core.md)             | Core is a modular monolith on Postgres                    |
 
 ## Conventions
 

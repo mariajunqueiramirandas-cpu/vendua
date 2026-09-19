@@ -29,11 +29,11 @@ primitive prop / API field for Contract v1.
    last-order gate on `/finalizar`.
 
 4. **Query cache is module-level and survives `<VenduaProvider>` remounts;**
-   `useKernel().invalidate(key)` only pings *mounted* subscribers and
+   `useKernel().invalidate(key)` only pings _mounted_ subscribers and
    `invalidateQuery` (the function that actually evicts the entry) is not
    exported. To clear stale `cart` after a session reset, `EpochSync` has to
    subscribe via `useCart()` first, then invalidate. Also observed: an
-   in-flight refetch never notifies subscribers that mount *during* the fetch
+   in-flight refetch never notifies subscribers that mount _during_ the fetch
    — the post-checkout badge can stick at the old count until next navigation
    (~1 in 3 races). Contract wants a public `invalidateQuery`-level API or
    query-key versioning per session epoch.

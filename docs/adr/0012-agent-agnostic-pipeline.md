@@ -15,7 +15,7 @@ model's quality curve and pricing.
 The agent interface is **a PR against the monorepo touching only
 `storefronts/<slug>/`**. The judge is CI: the Conformance Suite + generation
 QA (screenshots, visual triage). Agents always start from `vendua scaffold` —
-a baseline that is already green — so generation is *transformation*, and any
+a baseline that is already green — so generation is _transformation_, and any
 API hallucination shows up as a diff against a known-good state. Failures
 return as failure bundles (logs, test IDs, screenshots, traces) with a bounded
 iteration cap; the cap escalates to humans.
@@ -37,7 +37,7 @@ when judge-vs-human agreement is measured.
 
 - Agent variance is real: the same spec yields uneven quality — mitigated by
   rich DesignSpecs, golden reference storefronts, and the human launch gate.
-- The pipeline needs the Contract + conformance to be *good* before agents
+- The pipeline needs the Contract + conformance to be _good_ before agents
   arrive; a weak suite makes agents a chaos multiplier. Sequencing in
   [roadmap](../roadmap.md) puts agents at Phase 5 for this reason.
 

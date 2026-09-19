@@ -38,7 +38,11 @@ export function DayClock({ compact = false }: { compact?: boolean }) {
       <div className="dial-track-wrap">
         <div className="dial-track" role="img" aria-label={statusLine}>
           {spans.map((s, i) => (
-            <span key={i} className="dial-window" style={{ left: `${s.left}%`, width: `${s.width}%` }} />
+            <span
+              key={i}
+              className="dial-window"
+              style={{ left: `${s.left}%`, width: `${s.width}%` }}
+            />
           ))}
           <span className="dial-needle" style={{ left: `${(nowMin / 1440) * 100}%` }} />
         </div>

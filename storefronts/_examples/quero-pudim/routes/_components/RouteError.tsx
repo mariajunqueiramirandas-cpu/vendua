@@ -8,7 +8,12 @@ export function RouteError() {
       <p className="small muted" style={{ marginTop: 16, maxWidth: '28rem' }}>
         Recarregue a página — se continuar assim, chame a gente no WhatsApp.
       </p>
-      <button type="button" className="btn" style={{ marginTop: 32 }} onClick={() => window.location.reload()}>
+      <button
+        type="button"
+        className="btn"
+        style={{ marginTop: 32 }}
+        onClick={() => window.location.reload()}
+      >
         Recarregar
       </button>
     </main>

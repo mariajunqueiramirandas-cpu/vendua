@@ -60,10 +60,7 @@ function hhmmToMinutes(t: string): number {
 }
 
 /** Wall-clock {day, minutes, seconds} of `instant` in `tz`, via Intl (no manual TZ math). */
-function localParts(
-  instant: Date,
-  tz: string,
-): { day: number; minutes: number; seconds: number } {
+function localParts(instant: Date, tz: string): { day: number; minutes: number; seconds: number } {
   const parts = new Intl.DateTimeFormat('en-US', {
     timeZone: tz,
     weekday: 'short',
@@ -123,8 +120,7 @@ function nextOpen(hours: StoreHours, now: Date): Date | undefined {
       // that day's opening wall time. What matters is whether the resulting
       // instant is still in the future.
       const t =
-        probe.getTime() + (openMin - minutes) * 60_000 - seconds * 1000 -
-        (probe.getTime() % 1000);
+        probe.getTime() + (openMin - minutes) * 60_000 - seconds * 1000 - (probe.getTime() % 1000);
       if (t <= now.getTime()) continue; // opening already passed
       if (!best || t < best.t) best = { t, openMin };
     }
@@ -156,7 +152,5 @@ export function deriveStatus(
   const open = hours.windows.some((w) => withinWindow(minutes, w, day));
   if (open) return { status: 'open' };
   const next = nextOpen(hours, now);
-  return next
-    ? { status: 'closed', resumesAt: next.toISOString() }
-    : { status: 'closed' };
+  return next ? { status: 'closed', resumesAt: next.toISOString() } : { status: 'closed' };
 }

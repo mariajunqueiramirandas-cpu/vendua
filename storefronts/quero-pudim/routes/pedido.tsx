@@ -80,7 +80,8 @@ export function OrderPage() {
         if (cached) rememberOrder(live, cached.items, cached.notes);
         setRefreshNote(null);
       } catch {
-        if (manual) setRefreshNote('Não foi possível atualizar agora — mostrando o último estado conhecido.');
+        if (manual)
+          setRefreshNote('Não foi possível atualizar agora — mostrando o último estado conhecido.');
       } finally {
         setLoading(false);
         setRefreshing(false);
@@ -95,7 +96,12 @@ export function OrderPage() {
 
   if (loading) {
     return (
-      <main className="container" style={{ paddingBlock: '48px 96px', maxWidth: '40rem' }} aria-busy="true" aria-label="Carregando pedido">
+      <main
+        className="container"
+        style={{ paddingBlock: '48px 96px', maxWidth: '40rem' }}
+        aria-busy="true"
+        aria-label="Carregando pedido"
+      >
         <Skeleton style={{ height: 160, borderRadius: 12 }} />
         <Skeleton style={{ height: 280, borderRadius: 12, marginTop: 24 }} />
       </main>
@@ -117,8 +123,15 @@ export function OrderPage() {
   }
 
   const order: Order = entry.order;
-  const info = STATE_INFO[order.state] ?? { label: order.state, description: 'Atualizando.', tone: 'muted' };
-  const waUrl = waLink(store?.whatsapp, orderWhatsAppMessage(order, entry.items, store?.name ?? 'loja', entry.notes));
+  const info = STATE_INFO[order.state] ?? {
+    label: order.state,
+    description: 'Atualizando.',
+    tone: 'muted',
+  };
+  const waUrl = waLink(
+    store?.whatsapp,
+    orderWhatsAppMessage(order, entry.items, store?.name ?? 'loja', entry.notes),
+  );
   const eta =
     order.delivery.etaMin != null && order.delivery.etaMax != null
       ? `${order.delivery.etaMin}–${order.delivery.etaMax} min`
@@ -138,8 +151,14 @@ export function OrderPage() {
           <span className="state-chip-dot" aria-hidden="true" />
           {info.label}
         </p>
-        <p className="small muted" style={{ maxWidth: '24rem', margin: '8px auto 0' }}>{info.description}</p>
-        {eta ? <p className="small muted" style={{ marginTop: 8 }}>Previsão: {eta}</p> : null}
+        <p className="small muted" style={{ maxWidth: '24rem', margin: '8px auto 0' }}>
+          {info.description}
+        </p>
+        {eta ? (
+          <p className="small muted" style={{ marginTop: 8 }}>
+            Previsão: {eta}
+          </p>
+        ) : null}
         <button
           type="button"
           className="back-link"
@@ -147,18 +166,30 @@ export function OrderPage() {
           onClick={() => void load(true)}
           disabled={refreshing}
         >
-          <RefreshCw size={14} className={refreshing ? 'spin' : undefined} style={refreshing ? { animation: 'spin 1s linear infinite' } : undefined} aria-hidden="true" />
+          <RefreshCw
+            size={14}
+            className={refreshing ? 'spin' : undefined}
+            style={refreshing ? { animation: 'spin 1s linear infinite' } : undefined}
+            aria-hidden="true"
+          />
           Atualizar
         </button>
-        {refreshNote ? <p className="small muted" role="status" style={{ marginTop: 4 }}>{refreshNote}</p> : null}
+        {refreshNote ? (
+          <p className="small muted" role="status" style={{ marginTop: 4 }}>
+            {refreshNote}
+          </p>
+        ) : null}
       </section>
 
       {order.payment.method === 'pix' && order.payment.instructions ? (
         <section className="summary-card" style={{ marginTop: 24 }}>
           <h2 style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-            <MessageCircle size={16} style={{ color: 'var(--caramel-700)' }} aria-hidden="true" /> Pague com Pix
+            <MessageCircle size={16} style={{ color: 'var(--caramel-700)' }} aria-hidden="true" />{' '}
+            Pague com Pix
           </h2>
-          <p className="small" style={{ marginTop: 8, lineHeight: 1.6 }}>{order.payment.instructions}</p>
+          <p className="small" style={{ marginTop: 8, lineHeight: 1.6 }}>
+            {order.payment.instructions}
+          </p>
           <button
             type="button"
             className="btn btn-ghost"
@@ -170,7 +201,11 @@ export function OrderPage() {
               });
             }}
           >
-            {copied ? <Check size={15} aria-hidden="true" /> : <ClipboardCopy size={15} aria-hidden="true" />}
+            {copied ? (
+              <Check size={15} aria-hidden="true" />
+            ) : (
+              <ClipboardCopy size={15} aria-hidden="true" />
+            )}
             {copied ? 'Copiado!' : 'Copiar instruções'}
           </button>
         </section>
@@ -189,36 +224,90 @@ export function OrderPage() {
       ) : null}
 
       <section className="summary-card" style={{ marginTop: 24 }}>
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', gap: 12 }}>
+        <div
+          style={{
+            display: 'flex',
+            justifyContent: 'space-between',
+            alignItems: 'baseline',
+            gap: 12,
+          }}
+        >
           <h2>Resumo</h2>
-          <time dateTime={order.placedAt} className="small muted tnum">{formatDateTime(order.placedAt)}</time>
+          <time dateTime={order.placedAt} className="small muted tnum">
+            {formatDateTime(order.placedAt)}
+          </time>
         </div>
         <div className="order-meta">
-          <p style={{ display: 'flex', alignItems: 'center', gap: 8, fontWeight: 500, fontSize: '0.875rem' }}>
+          <p
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: 8,
+              fontWeight: 500,
+              fontSize: '0.875rem',
+            }}
+          >
             {order.delivery.mode === 'delivery' ? (
-              <><Truck size={16} style={{ color: 'var(--zinc-400)' }} aria-hidden="true" /> Entrega</>
+              <>
+                <Truck size={16} style={{ color: 'var(--zinc-400)' }} aria-hidden="true" /> Entrega
+              </>
             ) : (
-              <><Store size={16} style={{ color: 'var(--zinc-400)' }} aria-hidden="true" /> Retirada</>
+              <>
+                <Store size={16} style={{ color: 'var(--zinc-400)' }} aria-hidden="true" /> Retirada
+              </>
             )}
           </p>
           {order.delivery.mode === 'delivery' && typeof order.delivery.address === 'string' ? (
             <p className="small muted" style={{ display: 'flex', gap: 8, marginTop: 4 }}>
-              <MapPin size={14} style={{ color: 'var(--zinc-400)', flexShrink: 0, marginTop: 2 }} aria-hidden="true" />
+              <MapPin
+                size={14}
+                style={{ color: 'var(--zinc-400)', flexShrink: 0, marginTop: 2 }}
+                aria-hidden="true"
+              />
               {order.delivery.address}
               {order.delivery.neighborhood ? ` — ${order.delivery.neighborhood}` : ''}
             </p>
           ) : null}
-          <p className="small muted ficha-hairline" style={{ marginTop: 12, paddingTop: 8, display: 'flex', justifyContent: 'space-between' }}>
-            <span>Pagamento: <strong style={{ color: 'var(--zinc-950)', fontWeight: 500 }}>{PAYMENT_LABEL[order.payment.method] ?? order.payment.method}</strong></span>
-            <span style={{ fontWeight: 500 }}>{order.payment.status === 'paid' ? 'Pago' : PAYMENT_WHERE[order.payment.method] ?? ''}</span>
+          <p
+            className="small muted ficha-hairline"
+            style={{
+              marginTop: 12,
+              paddingTop: 8,
+              display: 'flex',
+              justifyContent: 'space-between',
+            }}
+          >
+            <span>
+              Pagamento:{' '}
+              <strong style={{ color: 'var(--zinc-950)', fontWeight: 500 }}>
+                {PAYMENT_LABEL[order.payment.method] ?? order.payment.method}
+              </strong>
+            </span>
+            <span style={{ fontWeight: 500 }}>
+              {order.payment.status === 'paid'
+                ? 'Pago'
+                : (PAYMENT_WHERE[order.payment.method] ?? '')}
+            </span>
           </p>
-          {entry.notes ? <p className="small muted" style={{ marginTop: 8 }}>Obs: {entry.notes}</p> : null}
+          {entry.notes ? (
+            <p className="small muted" style={{ marginTop: 8 }}>
+              Obs: {entry.notes}
+            </p>
+          ) : null}
         </div>
 
         {entry.items.length > 0 ? (
           <ol style={{ listStyle: 'none', margin: 0, padding: 0 }} className="ficha-hairline">
             {entry.items.map((item) => (
-              <li key={item.id} style={{ display: 'flex', justifyContent: 'space-between', gap: 12, paddingBlock: 14 }}>
+              <li
+                key={item.id}
+                style={{
+                  display: 'flex',
+                  justifyContent: 'space-between',
+                  gap: 12,
+                  paddingBlock: 14,
+                }}
+              >
                 <div style={{ minWidth: 0 }}>
                   <p style={{ margin: 0, fontWeight: 500, fontSize: '0.875rem' }}>{item.name}</p>
                   <p className="small muted tnum" style={{ margin: '2px 0 0' }}>
@@ -230,7 +319,9 @@ export function OrderPage() {
                     </p>
                   ) : null}
                 </div>
-                <span className="tnum" style={{ fontWeight: 500, fontSize: '0.875rem' }}>{formatBRL(item.lineTotalCents)}</span>
+                <span className="tnum" style={{ fontWeight: 500, fontSize: '0.875rem' }}>
+                  {formatBRL(item.lineTotalCents)}
+                </span>
               </li>
             ))}
           </ol>
@@ -248,7 +339,9 @@ export function OrderPage() {
             </div>
           ) : null}
           <div className="summary-row summary-total">
-            <dt className="lbl" style={{ color: 'var(--zinc-950)', fontWeight: 500 }}>Total</dt>
+            <dt className="lbl" style={{ color: 'var(--zinc-950)', fontWeight: 500 }}>
+              Total
+            </dt>
             <dd className="val">{formatBRL(order.totalCents)}</dd>
           </div>
         </dl>
@@ -265,7 +358,9 @@ export function OrderPage() {
                   <p style={{ margin: 0, fontSize: '0.875rem', fontWeight: 500 }}>
                     {STATE_INFO[ev.to]?.label ?? ev.to}
                   </p>
-                  <p className="small muted tnum" style={{ margin: 0 }}>{formatTime(ev.at)}</p>
+                  <p className="small muted tnum" style={{ margin: 0 }}>
+                    {formatTime(ev.at)}
+                  </p>
                 </div>
               </li>
             ))}
@@ -274,7 +369,11 @@ export function OrderPage() {
       ) : null}
 
       <p style={{ textAlign: 'center', marginTop: 32 }}>
-        <Link to={getContinueShoppingUrl()} className="back-link" style={{ display: 'inline-flex' }}>
+        <Link
+          to={getContinueShoppingUrl()}
+          className="back-link"
+          style={{ display: 'inline-flex' }}
+        >
           <ArrowLeft size={14} aria-hidden="true" /> Voltar ao cardápio
         </Link>
       </p>

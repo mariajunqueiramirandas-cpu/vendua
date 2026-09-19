@@ -113,7 +113,11 @@ export function Produto() {
           onError={(e) => setAddError(e)}
         >
           <button type="button" className="cta" disabled={!ready}>
-            {soldOut ? 'Saiu da chapa' : ready ? 'Botar na chapa' : `Marca o ${requiredMissing[0]!.name}`}
+            {soldOut
+              ? 'Saiu da chapa'
+              : ready
+                ? 'Botar na chapa'
+                : `Marca o ${requiredMissing[0]!.name}`}
           </button>
         </AddToCart>
 
@@ -181,7 +185,7 @@ function ModifierGroup({
                 disabled={out}
                 onClick={() => toggle(m.id)}
               >
-                <EmberBars level={(Math.min(i + 1, 3) as 1 | 2 | 3)} />
+                <EmberBars level={Math.min(i + 1, 3) as 1 | 2 | 3} />
                 {m.name}
                 {m.priceDeltaCents ? (
                   <span className="mono" style={{ fontSize: 11, color: 'var(--ash)' }}>

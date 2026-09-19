@@ -25,21 +25,41 @@ export function CartPage() {
         <ArrowLeft size={16} aria-hidden="true" /> Continuar escolhendo
       </Link>
 
-      <header className="ficha-hairline" style={{ marginTop: 32, paddingBottom: 32, borderBottom: '1px solid var(--zinc-200)', borderTop: 0 }}>
+      <header
+        className="ficha-hairline"
+        style={{
+          marginTop: 32,
+          paddingBottom: 32,
+          borderBottom: '1px solid var(--zinc-200)',
+          borderTop: 0,
+        }}
+      >
         <p className="eyebrow">Sua seleção</p>
-        <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'baseline', justifyContent: 'space-between', gap: 16, marginTop: 8 }}>
+        <div
+          style={{
+            display: 'flex',
+            flexWrap: 'wrap',
+            alignItems: 'baseline',
+            justifyContent: 'space-between',
+            gap: 16,
+            marginTop: 8,
+          }}
+        >
           <h1 className="display display-lg">Um doce momento.</h1>
           {items.length > 0 ? (
             <p className="small muted tnum" style={{ margin: 0 }}>
-              {totals?.itemCount ?? 0}{' '}
-              {(totals?.itemCount ?? 0) === 1 ? 'doce' : 'doces'} na sacola
+              {totals?.itemCount ?? 0} {(totals?.itemCount ?? 0) === 1 ? 'doce' : 'doces'} na sacola
             </p>
           ) : null}
         </div>
       </header>
 
       {loading && !cart ? (
-        <div style={{ display: 'grid', gap: 24, marginTop: 32 }} aria-busy="true" aria-label="Carregando sacola">
+        <div
+          style={{ display: 'grid', gap: 24, marginTop: 32 }}
+          aria-busy="true"
+          aria-label="Carregando sacola"
+        >
           {Array.from({ length: 2 }, (_, i) => (
             <div key={i} style={{ display: 'flex', gap: 16 }}>
               <Skeleton style={{ width: 112, height: 128, borderRadius: 8 }} />
@@ -53,7 +73,19 @@ export function CartPage() {
         </div>
       ) : items.length === 0 ? (
         <div className="empty-state" style={{ maxWidth: '32rem', marginInline: 'auto' }}>
-          <div style={{ width: 64, height: 64, borderRadius: 16, background: 'var(--caramel-100)', color: 'var(--caramel-700)', display: 'flex', alignItems: 'center', justifyContent: 'center', marginInline: 'auto' }}>
+          <div
+            style={{
+              width: 64,
+              height: 64,
+              borderRadius: 16,
+              background: 'var(--caramel-100)',
+              color: 'var(--caramel-700)',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              marginInline: 'auto',
+            }}
+          >
             <ShoppingBag size={20} aria-hidden="true" />
           </div>
           <h2>Ainda falta o seu favorito.</h2>
@@ -112,29 +144,42 @@ export function CartPage() {
             </div>
             {cart?.delivery?.mode === 'delivery' ? (
               <div className="summary-row">
-                <span className="lbl">Entrega{cart.delivery.neighborhood ? ` · ${cart.delivery.neighborhood}` : ''}</span>
+                <span className="lbl">
+                  Entrega{cart.delivery.neighborhood ? ` · ${cart.delivery.neighborhood}` : ''}
+                </span>
                 <span className="val">
-                  {(totals?.deliveryFeeCents ?? 0) > 0 ? formatBRL(totals?.deliveryFeeCents ?? 0) : 'a confirmar'}
+                  {(totals?.deliveryFeeCents ?? 0) > 0
+                    ? formatBRL(totals?.deliveryFeeCents ?? 0)
+                    : 'a confirmar'}
                 </span>
               </div>
             ) : null}
             <div className="summary-row summary-total">
-              <span className="lbl" style={{ color: 'var(--zinc-950)', fontWeight: 500 }}>Total</span>
+              <span className="lbl" style={{ color: 'var(--zinc-950)', fontWeight: 500 }}>
+                Total
+              </span>
               <span className="val">{formatBRL(totals?.totalCents ?? 0)}</span>
             </div>
 
-            <p className="small muted" style={{ marginTop: 20, display: 'flex', gap: 8, lineHeight: 1.5 }}>
-              <Truck size={18} style={{ color: 'var(--caramel-700)', flexShrink: 0 }} aria-hidden="true" />
+            <p
+              className="small muted"
+              style={{ marginTop: 20, display: 'flex', gap: 8, lineHeight: 1.5 }}
+            >
+              <Truck
+                size={18}
+                style={{ color: 'var(--caramel-700)', flexShrink: 0 }}
+                aria-hidden="true"
+              />
               <span>
-                Entrega{store?.city ? ` em ${store.city}` : ' local'} ou retirada
-                grátis — você escolhe no próximo passo.
+                Entrega{store?.city ? ` em ${store.city}` : ' local'} ou retirada grátis — você
+                escolhe no próximo passo.
               </span>
             </p>
 
             {totals?.belowMinOrder ? (
               <p className="inline-alert warn" role="status" style={{ marginTop: 16 }}>
-                Faltam {formatBRL(totals.minOrderCents - totals.subtotalCents)} para o
-                pedido mínimo de {formatBRL(totals.minOrderCents)}.
+                Faltam {formatBRL(totals.minOrderCents - totals.subtotalCents)} para o pedido mínimo
+                de {formatBRL(totals.minOrderCents)}.
               </p>
             ) : null}
 

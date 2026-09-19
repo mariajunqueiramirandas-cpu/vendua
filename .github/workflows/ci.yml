@@ -1,0 +1,31 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: '1.4.2'
+      - run: bun install --frozen-lockfile
+      - name: Typecheck
+        run: |
+          for pkg in packages/core packages/kernel site storefronts/quero-pudim storefronts/brasa storefronts/forn storefronts/_examples/quero-pudim; do
+            (cd "$pkg" && bun run check)
+          done
+      - name: Format
+        run: bunx prettier --check .
+      - name: Core tests
+        run: cd packages/core && bun test
+      - name: Builds
+        run: |
+          bun --filter @vendua/site build
+          for sf in @vendua/storefront-quero-pudim @vendua/storefront-brasa @vendua/forn @vendua/example-quero-pudim; do
+            bun --filter "$sf" build
+          done

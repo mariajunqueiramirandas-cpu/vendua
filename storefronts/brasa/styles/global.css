@@ -22,7 +22,7 @@
   --hairline: color-mix(in srgb, var(--v-color-text) 14%, transparent);
   --hairline-strong: color-mix(in srgb, var(--v-color-text) 30%, transparent);
   --rail-w: 304px;
-  --ease: var(--v-motion-easing, cubic-bezier(.2, .7, .2, 1));
+  --ease: var(--v-motion-easing, cubic-bezier(0.2, 0.7, 0.2, 1));
   --dur: var(--v-motion-duration, 160ms);
 }
 
@@ -40,9 +40,17 @@ body {
   color: var(--v-color-text);
   background:
     /* ember bloom — the chapa is the only light in the room */
-    radial-gradient(1100px 500px at 18% -12%, color-mix(in srgb, var(--ember) 13%, transparent), transparent 70%),
+    radial-gradient(
+      1100px 500px at 18% -12%,
+      color-mix(in srgb, var(--ember) 13%, transparent),
+      transparent 70%
+    ),
     /* faint warehouse wall texture: tall scan lines, 1px, 9% alpha */
-    repeating-linear-gradient(90deg, color-mix(in srgb, var(--v-color-text) 3%, transparent) 0 1px, transparent 1px 96px),
+    repeating-linear-gradient(
+        90deg,
+        color-mix(in srgb, var(--v-color-text) 3%, transparent) 0 1px,
+        transparent 1px 96px
+      ),
     var(--soot);
   line-height: 1.5;
   -webkit-font-smoothing: antialiased;
@@ -86,11 +94,7 @@ a {
 
 .hazard {
   height: 6px;
-  background: repeating-linear-gradient(
-    -45deg,
-    var(--ember) 0 7px,
-    transparent 7px 14px
-  );
+  background: repeating-linear-gradient(-45deg, var(--ember) 0 7px, transparent 7px 14px);
   opacity: 0.9;
 }
 
@@ -187,7 +191,9 @@ a {
   text-transform: uppercase;
   padding: 12px 14px;
   cursor: pointer;
-  transition: border-color var(--dur) var(--ease), transform var(--dur) var(--ease);
+  transition:
+    border-color var(--dur) var(--ease),
+    transform var(--dur) var(--ease);
 }
 
 .comanda-btn:hover {
@@ -372,7 +378,9 @@ a {
 .mrow .go {
   color: var(--ash);
   font-size: 18px;
-  transition: color var(--dur) var(--ease), transform var(--dur) var(--ease);
+  transition:
+    color var(--dur) var(--ease),
+    transform var(--dur) var(--ease);
 }
 
 .mrow:hover .go {
@@ -406,10 +414,19 @@ a {
 /* ---------- skeleton / error states ----------------------------------------- */
 
 @keyframes ember-flicker {
-  0%, 100% { opacity: 0.25; }
-  45% { opacity: 0.55; }
-  60% { opacity: 0.32; }
-  75% { opacity: 0.6; }
+  0%,
+  100% {
+    opacity: 0.25;
+  }
+  45% {
+    opacity: 0.55;
+  }
+  60% {
+    opacity: 0.32;
+  }
+  75% {
+    opacity: 0.6;
+  }
 }
 
 .sk {
@@ -586,7 +603,9 @@ a {
   font-weight: 700;
   letter-spacing: 0.06em;
   text-transform: uppercase;
-  transition: border-color var(--dur) var(--ease), background var(--dur) var(--ease);
+  transition:
+    border-color var(--dur) var(--ease),
+    background var(--dur) var(--ease);
 }
 
 .dial-opt:hover {
@@ -612,9 +631,15 @@ a {
   border-radius: 1px;
 }
 
-.ember-bars i:nth-child(1) { height: 5px; }
-.ember-bars i:nth-child(2) { height: 9px; }
-.ember-bars i:nth-child(3) { height: 14px; }
+.ember-bars i:nth-child(1) {
+  height: 5px;
+}
+.ember-bars i:nth-child(2) {
+  height: 9px;
+}
+.ember-bars i:nth-child(3) {
+  height: 14px;
+}
 
 .ember-bars[data-level='1'] i:nth-child(-n + 1),
 .ember-bars[data-level='2'] i:nth-child(-n + 2),
@@ -764,7 +789,9 @@ a {
   padding: 14px 20px;
   cursor: pointer;
   box-shadow: 4px 4px 0 color-mix(in srgb, var(--ember-dim) 60%, black);
-  transition: transform var(--dur) var(--ease), box-shadow var(--dur) var(--ease),
+  transition:
+    transform var(--dur) var(--ease),
+    box-shadow var(--dur) var(--ease),
     background var(--dur) var(--ease);
 }
 

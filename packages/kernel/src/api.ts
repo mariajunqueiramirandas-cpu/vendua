@@ -315,7 +315,7 @@ export function createApi(baseUrl = '') {
     return sessionPromise;
   };
 
-  return { 
+  return {
     get sessionToken() {
       return token;
     },

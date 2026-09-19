@@ -1,13 +1,17 @@
-import { ArrowLeft, Bell, Check, MessageCircle, Minus, Plus, ShoppingBag, Snowflake, Truck } from 'lucide-react';
+import {
+  ArrowLeft,
+  Bell,
+  Check,
+  MessageCircle,
+  Minus,
+  Plus,
+  ShoppingBag,
+  Snowflake,
+  Truck,
+} from 'lucide-react';
 import { useEffect, useMemo, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
-import {
-  AddToCart,
-  ApiError,
-  useKernel,
-  useProduct,
-  useStore,
-} from '@vendua/kernel';
+import { AddToCart, ApiError, useKernel, useProduct, useStore } from '@vendua/kernel';
 import type { ProductDetail } from '@vendua/kernel';
 import { Price } from './_components/Price.tsx';
 import { ProductFigure, type FigureVariant } from './_components/ProductFigure.tsx';
@@ -77,7 +81,12 @@ export function ProductPage() {
 
   if (loading && !product) {
     return (
-      <main className="container" style={{ paddingBlock: '32px 96px' }} aria-busy="true" aria-label="Carregando produto">
+      <main
+        className="container"
+        style={{ paddingBlock: '32px 96px' }}
+        aria-busy="true"
+        aria-label="Carregando produto"
+      >
         <Skeleton style={{ height: 44, width: 160, marginBottom: 32 }} />
         <div className="pd-grid">
           <Skeleton style={{ aspectRatio: '1', borderRadius: 12 }} />
@@ -169,20 +178,27 @@ export function ProductPage() {
             />
           ) : (
             <div className="pd-figure">
-              <ProductFigure
-                variant={detail?.figureVariant ?? 'default'}
-                title={product.name}
-              />
+              <ProductFigure variant={detail?.figureVariant ?? 'default'} title={product.name} />
             </div>
           )}
-          {soldOut ? <span className="soldout-flag" style={{ fontSize: '0.8125rem', padding: '8px 16px' }}>Esgotado hoje</span> : null}
+          {soldOut ? (
+            <span className="soldout-flag" style={{ fontSize: '0.8125rem', padding: '8px 16px' }}>
+              Esgotado hoje
+            </span>
+          ) : null}
           {!soldOut && preorder ? (
-            <span className="soldout-flag soldout-flag--preorder" style={{ fontSize: '0.8125rem', padding: '8px 16px' }}>
+            <span
+              className="soldout-flag soldout-flag--preorder"
+              style={{ fontSize: '0.8125rem', padding: '8px 16px' }}
+            >
               Sob encomenda
             </span>
           ) : null}
           {!soldOut && !preorder && lowStock ? (
-            <span className="soldout-flag soldout-flag--low" style={{ fontSize: '0.8125rem', padding: '8px 16px' }}>
+            <span
+              className="soldout-flag soldout-flag--low"
+              style={{ fontSize: '0.8125rem', padding: '8px 16px' }}
+            >
               Restam {stockQty} unidades
             </span>
           ) : null}
@@ -191,11 +207,24 @@ export function ProductPage() {
         <div>
           <h1 className="display display-lg">{product.name}</h1>
           <p className="pd-price">{formatBRL(product.basePriceCents)}</p>
-          <p className="pd-desc">{product.description ?? 'Pudim de receita de família, sem furinho: leite condensado, ovos selecionados e calda dourada de caramelo.'}</p>
-          <p className="small muted" style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 16, flexWrap: 'wrap' }}>
+          <p className="pd-desc">
+            {product.description ??
+              'Pudim de receita de família, sem furinho: leite condensado, ovos selecionados e calda dourada de caramelo.'}
+          </p>
+          <p
+            className="small muted"
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: 8,
+              marginTop: 16,
+              flexWrap: 'wrap',
+            }}
+          >
             <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}>
               <Truck size={16} style={{ color: 'var(--caramel-700)' }} aria-hidden="true" />
-              Entrega{store?.city ? ` em ${store.city}` : ' local'} · preparo em ~{store?.prepTimeMinutes ?? 40} min
+              Entrega{store?.city ? ` em ${store.city}` : ' local'} · preparo em ~
+              {store?.prepTimeMinutes ?? 40} min
             </span>
             <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}>
               <Snowflake size={16} style={{ color: 'var(--caramel-700)' }} aria-hidden="true" />
@@ -209,18 +238,30 @@ export function ProductPage() {
                 const single = g.maxSelect === 1;
                 const sel = selected[g.id] ?? [];
                 return (
-                  <fieldset key={g.id} className="mod-group" style={{ border: 0, margin: '0 0 24px', padding: 0 }}>
+                  <fieldset
+                    key={g.id}
+                    className="mod-group"
+                    style={{ border: 0, margin: '0 0 24px', padding: 0 }}
+                  >
                     <legend className="mod-group-head" style={{ display: 'contents' }}>
                       <div className="mod-group-head">
                         <h3>{g.name}</h3>
                         <span className="mod-hint">
                           {g.required
-                            ? single ? 'obrigatório' : `escolha ${Math.max(1, g.minSelect)}–${g.maxSelect}`
-                            : single ? 'opcional' : `até ${g.maxSelect}`}
+                            ? single
+                              ? 'obrigatório'
+                              : `escolha ${Math.max(1, g.minSelect)}–${g.maxSelect}`
+                            : single
+                              ? 'opcional'
+                              : `até ${g.maxSelect}`}
                         </span>
                       </div>
                     </legend>
-                    <ul className="mod-list" role={single ? 'radiogroup' : 'group'} aria-label={g.name}>
+                    <ul
+                      className="mod-list"
+                      role={single ? 'radiogroup' : 'group'}
+                      aria-label={g.name}
+                    >
                       {g.modifiers.map((m) => {
                         const isSel = sel.includes(m.id);
                         const modSoldOut = m.status === 'sold_out';
@@ -262,7 +303,10 @@ export function ProductPage() {
           ) : null}
 
           {!soldOut ? (
-            <div className="ficha-hairline" style={{ marginTop: groups.length ? 0 : 32, paddingTop: 24 }}>
+            <div
+              className="ficha-hairline"
+              style={{ marginTop: groups.length ? 0 : 32, paddingTop: 24 }}
+            >
               {stockQty !== null ? (
                 <div className="stock-line" role="status">
                   <span>Disponibilidade:</span>
@@ -271,14 +315,34 @@ export function ProductPage() {
                   </strong>
                 </div>
               ) : null}
-              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 16, marginTop: stockQty !== null ? 12 : 0 }}>
-                <span id="qty-label" className="small" style={{ fontWeight: 500 }}>Quantidade</span>
+              <div
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'space-between',
+                  gap: 16,
+                  marginTop: stockQty !== null ? 12 : 0,
+                }}
+              >
+                <span id="qty-label" className="small" style={{ fontWeight: 500 }}>
+                  Quantidade
+                </span>
                 <div className="qty" role="group" aria-labelledby="qty-label">
-                  <button type="button" aria-label="Diminuir quantidade" disabled={qty <= 1} onClick={() => setQty((q) => Math.max(1, q - 1))}>
+                  <button
+                    type="button"
+                    aria-label="Diminuir quantidade"
+                    disabled={qty <= 1}
+                    onClick={() => setQty((q) => Math.max(1, q - 1))}
+                  >
                     <Minus size={16} aria-hidden="true" />
                   </button>
                   <output aria-live="polite">{qty}</output>
-                  <button type="button" aria-label="Aumentar quantidade" disabled={qty >= maxQty} onClick={() => setQty((q) => Math.min(maxQty, q + 1))}>
+                  <button
+                    type="button"
+                    aria-label="Aumentar quantidade"
+                    disabled={qty >= maxQty}
+                    onClick={() => setQty((q) => Math.min(maxQty, q + 1))}
+                  >
                     <Plus size={16} aria-hidden="true" />
                   </button>
                 </div>
@@ -310,7 +374,8 @@ export function ProductPage() {
                     </>
                   ) : (
                     <>
-                      <ShoppingBag size={16} aria-hidden="true" /> Adicionar à sacola · {formatBRL(lineTotal)}
+                      <ShoppingBag size={16} aria-hidden="true" /> Adicionar à sacola ·{' '}
+                      {formatBRL(lineTotal)}
                     </>
                   )}
                 </button>
@@ -321,12 +386,22 @@ export function ProductPage() {
                 </p>
               ) : null}
               {cartError ? (
-                <p className="inline-alert error" role="alert" style={{ marginTop: 12 }}>{cartError}</p>
+                <p className="inline-alert error" role="alert" style={{ marginTop: 12 }}>
+                  {cartError}
+                </p>
               ) : null}
             </div>
           ) : (
             <div className="waitlist-box" role="status">
-              <p style={{ display: 'flex', alignItems: 'center', gap: 8, fontWeight: 500, fontSize: '0.875rem' }}>
+              <p
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: 8,
+                  fontWeight: 500,
+                  fontSize: '0.875rem',
+                }}
+              >
                 <Bell size={16} style={{ color: 'var(--zinc-400)' }} aria-hidden="true" />
                 Esgotado hoje
               </p>
@@ -335,8 +410,8 @@ export function ProductPage() {
               </p>
               {waitlistDone ? (
                 <p className="inline-alert info" style={{ marginTop: 12 }}>
-                  <Check size={14} style={{ verticalAlign: '-2px' }} aria-hidden="true" /> Ok — se a mensagem não abrir,
-                  fale com a gente pelo WhatsApp da loja.
+                  <Check size={14} style={{ verticalAlign: '-2px' }} aria-hidden="true" /> Ok — se a
+                  mensagem não abrir, fale com a gente pelo WhatsApp da loja.
                 </p>
               ) : waitlistOpen ? (
                 <form
@@ -352,7 +427,9 @@ export function ProductPage() {
                     setWaitlistDone(true);
                   }}
                 >
-                  <label htmlFor="waitlist-phone" className="sr-label">WhatsApp com DDD</label>
+                  <label htmlFor="waitlist-phone" className="sr-label">
+                    WhatsApp com DDD
+                  </label>
                   <input
                     id="waitlist-phone"
                     className="input"
@@ -366,7 +443,12 @@ export function ProductPage() {
                     value={waitlistPhone}
                     onChange={(e) => setWaitlistPhone(maskPhone(e.target.value))}
                   />
-                  <button type="submit" className="btn" style={{ height: 44, paddingInline: 16 }} disabled={phoneDigits(waitlistPhone).length < 10}>
+                  <button
+                    type="submit"
+                    className="btn"
+                    style={{ height: 44, paddingInline: 16 }}
+                    disabled={phoneDigits(waitlistPhone).length < 10}
+                  >
                     Avisar
                   </button>
                 </form>
@@ -381,7 +463,12 @@ export function ProductPage() {
                   <MessageCircle size={15} aria-hidden="true" /> Quero ser avisado
                 </a>
               ) : (
-                <button type="button" className="btn btn-ghost" style={{ marginTop: 12, height: 44 }} onClick={() => setWaitlistOpen(true)}>
+                <button
+                  type="button"
+                  className="btn btn-ghost"
+                  style={{ marginTop: 12, height: 44 }}
+                  onClick={() => setWaitlistOpen(true)}
+                >
                   Quero ser avisado
                 </button>
               )}

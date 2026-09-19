@@ -28,7 +28,7 @@ pages are real code and never go through a JSON schema.
 
 ### Positive
 
-- Feature *existence* reaches every storefront ever shipped, immediately,
+- Feature _existence_ reaches every storefront ever shipped, immediately,
   independent of Kernel version.
 - Core owns "when and whether" — the layer we control continuously.
 - The generic-render path converts version skew from a breaking problem into a

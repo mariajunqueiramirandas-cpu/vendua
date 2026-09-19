@@ -62,7 +62,8 @@ export function Shell() {
         {/* CartTrigger owns open behavior + data-vendua; the look is ours via asChild. */}
         <CartTrigger asChild onOpen={() => navigate('/sacola')}>
           <button type="button" className="comanda-btn">
-            Comanda <span className="count">{cart?.status === 'open' ? cart.totals.itemCount : 0}</span>
+            Comanda{' '}
+            <span className="count">{cart?.status === 'open' ? cart.totals.itemCount : 0}</span>
           </button>
         </CartTrigger>
 

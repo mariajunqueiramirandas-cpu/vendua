@@ -16,22 +16,22 @@ goal: software-house perceived value at near-SaaS marginal cost.
 
 Every platform capability is split across three owners:
 
-| Axis | Owner |
-| --- | --- |
-| Existence & behavior | Core |
-| Placement & default appearance | Kernel |
-| Appearance (optional) | Storefront |
+| Axis                           | Owner      |
+| ------------------------------ | ---------- |
+| Existence & behavior           | Core       |
+| Placement & default appearance | Kernel     |
+| Appearance (optional)          | Storefront |
 
 A feature that respects the split ships to 1000 storefronts touching zero
 storefront repos. A feature that violates it becomes an N-storefront migration.
 
 ## Files
 
-| File | Covers | Full docs |
-| --- | --- | --- |
-| [decisions.md](decisions.md) | All 13 ADRs, one paragraph each | `adr/` |
-| [platform.md](platform.md) | Core, Kernel, Contract, slots, SDUI, loader | `architecture/01–05` |
-| [repo-and-fleet.md](repo-and-fleet.md) | Monorepo, artifacts, edge, Control Plane, trains, QA, compat | `architecture/06–11` |
-| [operations.md](operations.md) | Domains/TLS, payments, analytics, incidents | `architecture/12–13, 15–16` |
-| [pipeline.md](pipeline.md) | DesignSpec → agent → deploy | `architecture/14` |
-| — | Fleet-first roadmap | [`../roadmap.md`](../roadmap.md) |
+| File                                   | Covers                                                       | Full docs                        |
+| -------------------------------------- | ------------------------------------------------------------ | -------------------------------- |
+| [decisions.md](decisions.md)           | All 13 ADRs, one paragraph each                              | `adr/`                           |
+| [platform.md](platform.md)             | Core, Kernel, Contract, slots, SDUI, loader                  | `architecture/01–05`             |
+| [repo-and-fleet.md](repo-and-fleet.md) | Monorepo, artifacts, edge, Control Plane, trains, QA, compat | `architecture/06–11`             |
+| [operations.md](operations.md)         | Domains/TLS, payments, analytics, incidents                  | `architecture/12–13, 15–16`      |
+| [pipeline.md](pipeline.md)             | DesignSpec → agent → deploy                                  | `architecture/14`                |
+| —                                      | Fleet-first roadmap                                          | [`../roadmap.md`](../roadmap.md) |

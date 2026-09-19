@@ -6,12 +6,12 @@ Target sizes, expanding hit areas without changing visual size and collision rul
 
 Separate the conformance baseline from larger usability targets:
 
-| Standard | Minimum |
-| --- | --- |
-| WCAG 2.5.8 (AA) | 24×24px, the hard floor |
-| WCAG 2.5.5 (AAA) | 44×44px |
-| Apple HIG | 44×44pt |
-| Material Design | 48×48dp |
+| Standard         | Minimum                 |
+| ---------------- | ----------------------- |
+| WCAG 2.5.8 (AA)  | 24×24px, the hard floor |
+| WCAG 2.5.5 (AAA) | 44×44px                 |
+| Apple HIG        | 44×44pt                 |
+| Material Design  | 48×48dp                 |
 
 WCAG 2.5.8 Level AA requires a 24×24 CSS-pixel target or one of its exceptions. Treat 44px as the recommended touch target for primary controls and 40px as a useful desktop target where density permits. Smaller controls are not automatic failures. Check the spacing, equivalent-control, inline, user-agent and essential exceptions before reporting one.
 
@@ -34,7 +34,7 @@ Where the visible element is smaller, say a 20×20 checkbox, extend the hit area
 }
 
 .checkbox-label::after {
-  content: "";
+  content: '';
   position: absolute;
   top: 50%;
   left: 50%; /* physical centering: direction-independent */

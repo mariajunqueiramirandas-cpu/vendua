@@ -53,9 +53,19 @@ export function MyOrdersPage() {
       <Link to={continueUrl} className="back-link">
         <ArrowLeft size={16} aria-hidden="true" /> Voltar ao cardápio
       </Link>
-      <header className="ficha-hairline" style={{ marginTop: 16, paddingBottom: 32, borderBottom: '1px solid var(--zinc-200)', borderTop: 0 }}>
+      <header
+        className="ficha-hairline"
+        style={{
+          marginTop: 16,
+          paddingBottom: 32,
+          borderBottom: '1px solid var(--zinc-200)',
+          borderTop: 0,
+        }}
+      >
         <p className="eyebrow">Sem senha, sem cadastro</p>
-        <h1 className="display display-lg" style={{ marginTop: 8 }}>Meus pedidos.</h1>
+        <h1 className="display display-lg" style={{ marginTop: 8 }}>
+          Meus pedidos.
+        </h1>
         <p className="small muted" style={{ marginTop: 12, maxWidth: '32rem', lineHeight: 1.6 }}>
           Acompanhe os pedidos feitos neste aparelho ou busque pelo WhatsApp usado na compra.
         </p>
@@ -80,7 +90,10 @@ export function MyOrdersPage() {
             className="input"
             style={{ flex: 1, minWidth: 200 }}
             value={phone}
-            onChange={(e) => { setPhone(maskPhone(e.target.value)); setPhoneError(null); }}
+            onChange={(e) => {
+              setPhone(maskPhone(e.target.value));
+              setPhoneError(null);
+            }}
             aria-invalid={Boolean(phoneError)}
             aria-describedby={`my-orders-phone-hint${phoneError ? ' my-orders-phone-error' : ''}`}
           />
@@ -89,23 +102,42 @@ export function MyOrdersPage() {
           </button>
         </div>
         {phoneError ? (
-          <p id="my-orders-phone-error" className="field-error" role="alert" style={{ marginTop: 8 }}>{phoneError}</p>
+          <p
+            id="my-orders-phone-error"
+            className="field-error"
+            role="alert"
+            style={{ marginTop: 8 }}
+          >
+            {phoneError}
+          </p>
         ) : null}
       </form>
 
       <section aria-label="Histórico de pedidos" style={{ marginTop: 32 }}>
-        <h2 className="step-heading" style={{ marginBottom: 16 }}>Histórico de pedidos</h2>
+        <h2 className="step-heading" style={{ marginBottom: 16 }}>
+          Histórico de pedidos
+        </h2>
         {filtered.length === 0 ? (
           searched && digits.length >= 10 ? (
             <p className="small muted" role="status" style={{ padding: '24px 0' }}>
-              Nenhum pedido encontrado para este WhatsApp neste aparelho. Confira o número e o DDD e busque novamente.
+              Nenhum pedido encontrado para este WhatsApp neste aparelho. Confira o número e o DDD e
+              busque novamente.
             </p>
           ) : (
-            <div className="empty-state" style={{ border: '1px dashed var(--zinc-300)', borderRadius: 12, background: 'var(--zinc-50)' }}>
+            <div
+              className="empty-state"
+              style={{
+                border: '1px dashed var(--zinc-300)',
+                borderRadius: 12,
+                background: 'var(--zinc-50)',
+              }}
+            >
               <Package size={32} style={{ color: 'var(--zinc-300)' }} aria-hidden="true" />
               <h3 style={{ fontSize: '1.125rem' }}>Nenhum pedido por aqui ainda</h3>
               <p>Seus próximos pedidos neste aparelho aparecem aqui automaticamente.</p>
-              <Link to={continueUrl} className="btn btn-ghost">Ver cardápio</Link>
+              <Link to={continueUrl} className="btn btn-ghost">
+                Ver cardápio
+              </Link>
             </div>
           )
         ) : (
@@ -131,11 +163,17 @@ export function MyOrdersPage() {
                   {items.length > 0 ? (
                     <ul className="order-row-items">
                       {items.map((item) => (
-                        <li key={item.id} className="tnum">{item.qty}x {item.name}</li>
+                        <li key={item.id} className="tnum">
+                          {item.qty}x {item.name}
+                        </li>
                       ))}
                     </ul>
                   ) : null}
-                  <Link to={`/pedido/${order.id}`} className="order-row-link" aria-label={`Ver detalhes do pedido ${order.number}`}>
+                  <Link
+                    to={`/pedido/${order.id}`}
+                    className="order-row-link"
+                    aria-label={`Ver detalhes do pedido ${order.number}`}
+                  >
                     Ver detalhes
                   </Link>
                 </li>

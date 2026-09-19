@@ -30,7 +30,7 @@ for commerce triggers; lint + conformance enforce it.
 - `data-vendua` hooks are stamped by the primitive: the Conformance Suite works
   on any design without per-store selectors.
 - Uniform funnel analytics is automatic — instrumentation is behavior.
-- Agents get a *small, legible* API surface: use the primitive, style it
+- Agents get a _small, legible_ API surface: use the primitive, style it
   however you want. Fewer ways to be wrong.
 
 ### Negative / costs

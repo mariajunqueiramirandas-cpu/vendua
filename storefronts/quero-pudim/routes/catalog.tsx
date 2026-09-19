@@ -22,8 +22,7 @@ type ListedProduct = CatalogProduct & {
 };
 
 const PREORDER_TAB = 'sob-encomenda';
-const normalize = (s: string) =>
-  s.normalize('NFD').replace(/[̀-ͯ]/g, '').toLocaleLowerCase('pt-BR');
+const normalize = (s: string) => s.normalize('NFD').replace(/[̀-ͯ]/g, '').toLocaleLowerCase('pt-BR');
 
 const formatAria = (cents: number) =>
   new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(cents / 100);
@@ -84,7 +83,9 @@ function ProductCard({
           <div className="card-frame">
             <CardImage product={product} />
             {soldOut ? <span className="soldout-flag">Esgotado hoje</span> : null}
-            {!soldOut && preorder ? <span className="soldout-flag soldout-flag--preorder">Sob encomenda</span> : null}
+            {!soldOut && preorder ? (
+              <span className="soldout-flag soldout-flag--preorder">Sob encomenda</span>
+            ) : null}
             {!soldOut && !preorder && lowStock ? (
               <span className="soldout-flag soldout-flag--low">Restam {product.stockQuantity}</span>
             ) : null}
@@ -162,7 +163,10 @@ export function CatalogPage() {
       const reduced = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
       el.scrollIntoView({ behavior: reduced ? 'instant' : 'smooth', block: 'center' });
       setHighlightedId(`produto-${slug}`);
-      window.setTimeout(() => setHighlightedId((cur) => (cur === `produto-${slug}` ? null : cur)), 2000);
+      window.setTimeout(
+        () => setHighlightedId((cur) => (cur === `produto-${slug}` ? null : cur)),
+        2000,
+      );
     });
   }, [allProducts, category]);
 
@@ -174,12 +178,21 @@ export function CatalogPage() {
     <main>
       <section className="container" style={{ paddingBlock: '40px 32px' }}>
         <p className="eyebrow">Escolha o seu favorito</p>
-        <h1 className="display display-lg" style={{ marginTop: 12 }}>Nosso cardápio</h1>
+        <h1 className="display display-lg" style={{ marginTop: 12 }}>
+          Nosso cardápio
+        </h1>
         <p className="lede small muted" style={{ marginTop: 12, maxWidth: '36rem' }}>
           Para um mimo só seu ou para dividir à mesa.
         </p>
-        <form role="search" className="search-wrap" style={{ marginTop: 28 }} onSubmit={(e) => e.preventDefault()}>
-          <span className="search-icon"><Search size={16} aria-hidden="true" /></span>
+        <form
+          role="search"
+          className="search-wrap"
+          style={{ marginTop: 28 }}
+          onSubmit={(e) => e.preventDefault()}
+        >
+          <span className="search-icon">
+            <Search size={16} aria-hidden="true" />
+          </span>
           <label htmlFor="busca" className="sr-label">
             Buscar no cardápio
           </label>
@@ -195,23 +208,43 @@ export function CatalogPage() {
             onChange={(e) => setQuery(e.target.value)}
           />
           {query ? (
-            <button type="button" className="search-clear" aria-label="Limpar busca" onClick={() => setQuery('')}>
+            <button
+              type="button"
+              className="search-clear"
+              aria-label="Limpar busca"
+              onClick={() => setQuery('')}
+            >
               <X size={16} aria-hidden="true" />
             </button>
           ) : null}
         </form>
       </section>
 
-      <section id="cardapio" className="container" style={{ paddingBottom: 80, scrollMarginTop: 120 }}>
+      <section
+        id="cardapio"
+        className="container"
+        style={{ paddingBottom: 80, scrollMarginTop: 120 }}
+      >
         <div className="ficha-rule" style={{ paddingTop: 12 }} />
-        <div style={{ display: 'flex', flexWrap: 'wrap', justifyContent: 'space-between', alignItems: 'center', gap: 12 }}>
+        <div
+          style={{
+            display: 'flex',
+            flexWrap: 'wrap',
+            justifyContent: 'space-between',
+            alignItems: 'center',
+            gap: 12,
+          }}
+        >
           <nav className="cat-tabs" aria-label="Categorias">
             <button
               type="button"
               className="cat-tab"
               aria-pressed={category === 'all'}
               data-active={category === 'all' || undefined}
-              onClick={() => { hashDone.current = true; setCategory('all'); }}
+              onClick={() => {
+                hashDone.current = true;
+                setCategory('all');
+              }}
             >
               Todos os doces
             </button>
@@ -221,7 +254,10 @@ export function CatalogPage() {
                 className="cat-tab"
                 aria-pressed={category === PREORDER_TAB}
                 data-active={category === PREORDER_TAB || undefined}
-                onClick={() => { hashDone.current = true; setCategory(PREORDER_TAB); }}
+                onClick={() => {
+                  hashDone.current = true;
+                  setCategory(PREORDER_TAB);
+                }}
               >
                 Sob encomenda
               </button>
@@ -233,7 +269,10 @@ export function CatalogPage() {
                 className="cat-tab"
                 aria-pressed={category === c.id}
                 data-active={category === c.id || undefined}
-                onClick={() => { hashDone.current = true; setCategory(c.id); }}
+                onClick={() => {
+                  hashDone.current = true;
+                  setCategory(c.id);
+                }}
               >
                 {c.name}
               </button>
@@ -281,7 +320,9 @@ export function CatalogPage() {
               <button
                 type="button"
                 className="btn"
-                onClick={() => (hasFilters ? (setQuery(''), setCategory('all')) : invalidate('catalog'))}
+                onClick={() =>
+                  hasFilters ? (setQuery(''), setCategory('all')) : invalidate('catalog')
+                }
               >
                 {hasFilters ? 'Ver todos os doces' : 'Atualizar cardápio'}
               </button>

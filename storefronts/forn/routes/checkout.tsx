@@ -21,10 +21,15 @@ function friendlyError(err: unknown): { msg: string; field?: 'name' | 'phone' } 
         return { msg: 'Esse bairro está fora da nossa rota — dá pra retirar no balcão.' };
       case 'ORDER_MIN_NOT_MET': {
         const min = err.details?.minOrderCents;
-        return { msg: `Pedido mínimo é ${typeof min === 'number' ? brl(min) : 'maior'} — bota mais um pão.` };
+        return {
+          msg: `Pedido mínimo é ${typeof min === 'number' ? brl(min) : 'maior'} — bota mais um pão.`,
+        };
       }
       case 'INVALID_CUSTOMER':
-        return { msg: 'Confere seu nome e telefone — a gente chama por eles no balcão.', field: 'name' };
+        return {
+          msg: 'Confere seu nome e telefone — a gente chama por eles no balcão.',
+          field: 'name',
+        };
       case 'INVALID_DELIVERY':
         return { msg: 'Escolhe como quer receber: balcão ou entrega.' };
       case 'INVALID_PAYMENT':
@@ -97,7 +102,11 @@ export default function CheckoutPage() {
     <Shell>
       {!open ? (
         <div className="empty-panel">
-          <h2>{alreadyOrdered || cart?.status === 'completed' ? 'pedido já anotado' : 'nada na sacola'}</h2>
+          <h2>
+            {alreadyOrdered || cart?.status === 'completed'
+              ? 'pedido já anotado'
+              : 'nada na sacola'}
+          </h2>
           <p>
             {alreadyOrdered || cart?.status === 'completed'
               ? 'Essa sacola já virou pedido — a comanda tá na cozinha.'
@@ -198,7 +207,11 @@ export default function CheckoutPage() {
             ))}
             <div className="s-line">
               <span>retirada</span>
-              <span>{cart!.totals.deliveryFeeCents === 0 ? 'sem taxa' : brl(cart!.totals.deliveryFeeCents)}</span>
+              <span>
+                {cart!.totals.deliveryFeeCents === 0
+                  ? 'sem taxa'
+                  : brl(cart!.totals.deliveryFeeCents)}
+              </span>
             </div>
             <div className="s-total">
               <span>total</span>

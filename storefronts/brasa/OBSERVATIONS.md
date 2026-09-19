@@ -15,20 +15,20 @@ hurt.
    can't help. Verified live: a second add renders `CART_NOT_FOUND`. Need either
    `clearSession()` on `VenduaApi` or a Core rule that an open-cart POST auto-mints
    a new cart for a completed-cart token.
-   *Workaround: none. ErrorPlate surfaces the 404 honestly; reload fixes it.*
+   _Workaround: none. ErrorPlate surfaces the 404 honestly; reload fixes it._
 
 2. **`api.order(id)` can never succeed.** `GET /checkout/v1/orders/:id` requires
    `Bearer` auth; `api.order` omits `auth()` → always 401 `SESSION_REQUIRED`. Docs
    mention a `useOrder` hook — it doesn't exist. Direct-nav/reload of the order
    page can't hydrate.
-   *Workaround: order data passes via `location.state`; reload falls back to a
-   "saiu do gancho" dead state.*
+   _Workaround: order data passes via `location.state`; reload falls back to a
+   "saiu do gancho" dead state._
 
 3. **No zone catalog.** No endpoint exposes zones/neighborhoods, so checkout can't
    list covered areas — `BAIRROS` is hardcoded from the seed. `useNotices` accepts
    `zoneMatched` but the storefront can't know it without a quote.
-   *Need: `GET /storefront/v1/zones` (names, fees, per-zone min, eta) or a
-   `useDeliveryZones` hook.*
+   _Need: `GET /storefront/v1/zones` (names, fees, per-zone min, eta) or a
+   `useDeliveryZones` hook._
 
 4. **No fee quote without a write.** `POST /checkout/v1/quote` exists in Core but
    no hook exposes it. The only way to learn a fee is `setDelivery`, which mutates
@@ -36,13 +36,13 @@ hurt.
    `deliveryFeeCents === 0` is ambiguous — out-of-zone and free-zone are
    indistinguishable; my "bairro ainda não confirmou frete" hint fakes that
    distinction.
-   *Need: `useDeliveryQuote(neighborhood)` returning `{matched, feeCents, eta}`.*
+   _Need: `useDeliveryQuote(neighborhood)` returning `{matched, feeCents, eta}`._
 
 5. **Sold-out modifiers are accepted.** `status:'sold_out'` renders fine, but
    `addItem` doesn't reject sold-out modifier ids (no `MODIFIER_SOLD_OUT` error —
    `validateItemModifiers` only checks membership). Brasa disables them in the UI,
    but the contract promises Core owns behavior.
-   *Need: server reject with an error code; primitive-level disable.*
+   _Need: server reject with an error code; primitive-level disable._
 
 ## Kernel/primitive frictions
 
@@ -51,34 +51,34 @@ hurt.
    cannot gate the add button on unmet required modifiers (my `!ready` gate is
    stripped; only Core's `MODIFIER_REQUIRED` 422 remains). Same on `CartTrigger`
    (child `onClick` replaced by `onOpen` behavior).
-   *Need: `disabled` prop union, or a render-state `{disabled, reason}` passed down.*
+   _Need: `disabled` prop union, or a render-state `{disabled, reason}` passed down._
 
 7. **`useCart().loading` never resolves before a session.** Without a token the
    fetcher resolves `undefined` → `loading` stays `true` forever → "loading" vs
    "empty" are indistinguishable, and `cart === undefined` also means both.
-   *Need: resolve `null` for no-session; or an explicit `status` on the hook.*
+   _Need: resolve `null` for no-session; or an explicit `status` on the hook._
 
 8. **`CartTrigger` count reads completed carts.** After checkout the kernel's
    internal count still sums the completed cart (`aria-label` says "1 itens" on an
    empty comanda). Storefront can't override the stamped label/count.
-   *Need: count only `status:'open'`, or expose `itemCount` slot.*
+   _Need: count only `status:'open'`, or expose `itemCount` slot._
 
 9. **Data hooks expose no `refetch`.** Retry = page reload. Error states on the
    board ("reler o quadro") reload because there's no other lever.
-   *Need: `refetch` on every read hook.*
+   _Need: `refetch` on every read hook._
 
 10. **`useCheckout` returns only `submit`** — no `pending`/`error`/`reset`, so each
     storefront re-implements submission state.
 
 11. **`@vendua/kernel/src/styles.css` isn't resolvable.** The exports map only
     defines `.` and `./config`; the documented CSS path 404s.
-    *Workaround: relative import `../../../packages/kernel/src/styles.css`.*
-    *Fix: add `"./src/styles.css"` (or `./styles.css`) to exports.*
+    _Workaround: relative import `../../../packages/kernel/src/styles.css`._
+    _Fix: add `"./src/styles.css"` (or `./styles.css`) to exports._
 
 12. **Kernel types hide live fields.** `ProductDetail` omits `figureVariant` and
     `tags` — both returned by Core. `CartItem` has no `slug`-level `status`
     snapshot. Untyped-but-present fields are a trap.
-    *Need: types that match the wire, or `extra` passthrough.*
+    _Need: types that match the wire, or `extra` passthrough._
 
 13. **No media surface.** Products have no image/asset field at all; merchandising
     is text-only. `figureVariant` hints at intent but isn't consumable.
@@ -106,7 +106,7 @@ hurt.
 
 17. **Vite proxy docs are subtly wrong.** "changeOrigin:false (default preserves
     Host)" is true only for object-form proxy config; the string shorthand
-    `proxy:{'/storefront':'http://localhost:8787'}` *forces* `changeOrigin:true`
+    `proxy:{'/storefront':'http://localhost:8787'}` _forces_ `changeOrigin:true`
     (vite dist normalizes it), rewriting Host to `localhost:8787` →
     `TENANT_NOT_FOUND`. Spell out the object form in the contract.
 
@@ -118,11 +118,11 @@ hurt.
 19. **No error contract for checkout field failures.** `INVALID_CUSTOMER`/
     `INVALID_DELIVERY`/`INVALID_PAYMENT` arrive as generic `message` strings —
     no `details.field`, so inline field-level errors can't be placed next to the
-    offending input. *Need: `details: {field: 'customer.phone'}`.*
+    offending input. _Need: `details: {field: 'customer.phone'}`._
 
 20. **Copy that should come from Core:** error messages are English machine copy
     ("cart not found or already completed"); every storefront rewrites them into
-    brand voice — fine — but the *semantic* mapping table (code → what happened)
+    brand voice — fine — but the _semantic_ mapping table (code → what happened)
     lives only in `modules/`. A `ERROR_CODES` enum + details schema exported from
     `@vendua/kernel` would stop each storefront from reverse-engineering it.
 

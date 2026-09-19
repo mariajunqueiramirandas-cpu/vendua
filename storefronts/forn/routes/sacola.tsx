@@ -20,13 +20,22 @@ export default function SacolaPage() {
           <div className="comanda-title">
             <h2>sua sacola</h2>
             <span className="mono microcaps" style={{ color: 'var(--mute)' }}>
-              {items.length === 0 ? 'vazia' : `${items.reduce((s, i) => s + i.qty, 0)} ite${items.length === 1 ? 'm' : 'ns'}`}
+              {items.length === 0
+                ? 'vazia'
+                : `${items.reduce((s, i) => s + i.qty, 0)} ite${items.length === 1 ? 'm' : 'ns'}`}
             </span>
           </div>
 
           {items.length === 0 ? (
             <div className="empty-panel" style={{ border: 'none', margin: '10px 0 0' }}>
-              <div style={{ display: 'flex', justifyContent: 'center', marginBottom: 12, color: 'var(--mute)' }}>
+              <div
+                style={{
+                  display: 'flex',
+                  justifyContent: 'center',
+                  marginBottom: 12,
+                  color: 'var(--mute)',
+                }}
+              >
                 <BagMark size={54} />
               </div>
               <h2>{completed ? 'pedido já anotado' : 'a sacola está vazia'}</h2>
@@ -64,7 +73,11 @@ export default function SacolaPage() {
                 </div>
                 <div className="t-row">
                   <span>retirada no balcão</span>
-                  <span>{cart!.totals.deliveryFeeCents === 0 ? 'sem taxa' : brl(cart!.totals.deliveryFeeCents)}</span>
+                  <span>
+                    {cart!.totals.deliveryFeeCents === 0
+                      ? 'sem taxa'
+                      : brl(cart!.totals.deliveryFeeCents)}
+                  </span>
                 </div>
                 <div className="t-row grand">
                   <span>total</span>

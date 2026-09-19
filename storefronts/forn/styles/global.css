@@ -73,21 +73,36 @@ body {
   --line: color-mix(in srgb, var(--ink) 16%, transparent);
   --line-strong: color-mix(in srgb, var(--ink) 38%, transparent);
   --glow: color-mix(in srgb, var(--ember) 9%, transparent);
-  --shadow-card: 0 1px 0 color-mix(in srgb, var(--ink) 8%, transparent),
+  --shadow-card:
+    0 1px 0 color-mix(in srgb, var(--ink) 8%, transparent),
     0 8px 24px color-mix(in srgb, var(--ink) 9%, transparent);
   --serif: var(--v-font-display, 'Fraunces Variable', Georgia, serif);
   --mono: var(--v-font-mono, 'IBM Plex Mono', monospace);
 
   min-height: 100vh;
   background:
-    radial-gradient(1100px 420px at 50% -8%, color-mix(in srgb, var(--ember) 8%, transparent), transparent 62%),
-    repeating-linear-gradient(0deg, transparent 0 3px, color-mix(in srgb, var(--ink) 1.6%, transparent) 3px 4px),
+    radial-gradient(
+      1100px 420px at 50% -8%,
+      color-mix(in srgb, var(--ember) 8%, transparent),
+      transparent 62%
+    ),
+    repeating-linear-gradient(
+      0deg,
+      transparent 0 3px,
+      color-mix(in srgb, var(--ink) 1.6%, transparent) 3px 4px
+    ),
     var(--paper);
   color: var(--ink);
   font-family: var(--serif);
-  font-variation-settings: 'opsz' 12, 'wght' 400, 'SOFT' 0, 'WONK' 0;
+  font-variation-settings:
+    'opsz' 12,
+    'wght' 400,
+    'SOFT' 0,
+    'WONK' 0;
   line-height: 1.5;
-  transition: background 0.7s ease, color 0.7s ease;
+  transition:
+    background 0.7s ease,
+    color 0.7s ease;
 }
 
 /* After hours — the shop sleeps, the site goes to dusk. */
@@ -104,12 +119,25 @@ body {
   --line: color-mix(in srgb, var(--ink) 18%, transparent);
   --line-strong: color-mix(in srgb, var(--ink) 40%, transparent);
   --glow: color-mix(in srgb, var(--ember) 16%, transparent);
-  --shadow-card: 0 1px 0 color-mix(in srgb, #000 20%, transparent),
+  --shadow-card:
+    0 1px 0 color-mix(in srgb, #000 20%, transparent),
     0 10px 32px color-mix(in srgb, #000 32%, transparent);
   background:
-    radial-gradient(1100px 460px at 50% -10%, color-mix(in srgb, var(--ember) 13%, transparent), transparent 60%),
-    radial-gradient(900px 700px at 85% 110%, color-mix(in srgb, #4a3220 55%, transparent), transparent 70%),
-    repeating-linear-gradient(0deg, transparent 0 3px, color-mix(in srgb, #000 6%, transparent) 3px 4px),
+    radial-gradient(
+      1100px 460px at 50% -10%,
+      color-mix(in srgb, var(--ember) 13%, transparent),
+      transparent 60%
+    ),
+    radial-gradient(
+      900px 700px at 85% 110%,
+      color-mix(in srgb, #4a3220 55%, transparent),
+      transparent 70%
+    ),
+    repeating-linear-gradient(
+      0deg,
+      transparent 0 3px,
+      color-mix(in srgb, #000 6%, transparent) 3px 4px
+    ),
     var(--paper);
 }
 
@@ -171,7 +199,11 @@ body {
 .wordmark {
   margin: 0;
   font-weight: 560;
-  font-variation-settings: 'opsz' 144, 'wght' 560, 'WONK' 1, 'SOFT' 40;
+  font-variation-settings:
+    'opsz' 144,
+    'wght' 560,
+    'WONK' 1,
+    'SOFT' 40;
   font-size: clamp(56px, 12vw, 104px);
   line-height: 0.86;
   letter-spacing: -0.02em;
@@ -216,7 +248,11 @@ body {
   border-radius: 999px;
   border: 1px solid var(--line-strong);
   background:
-    repeating-linear-gradient(90deg, transparent 0 calc(25% - 1px), var(--line) calc(25% - 1px) 25%),
+    repeating-linear-gradient(
+      90deg,
+      transparent 0 calc(25% - 1px),
+      var(--line) calc(25% - 1px) 25%
+    ),
     color-mix(in srgb, var(--ink) 5%, var(--card));
 }
 .dial-window {
@@ -228,7 +264,11 @@ body {
   box-shadow: 0 0 14px color-mix(in srgb, var(--ember) 45%, transparent);
 }
 .forn-app[data-status='closed'] .dial-window {
-  background: linear-gradient(180deg, color-mix(in srgb, var(--ember) 55%, var(--card)), color-mix(in srgb, var(--ember) 40%, var(--card)));
+  background: linear-gradient(
+    180deg,
+    color-mix(in srgb, var(--ember) 55%, var(--card)),
+    color-mix(in srgb, var(--ember) 40%, var(--card))
+  );
   box-shadow: none;
 }
 .dial-needle {
@@ -287,7 +327,9 @@ body {
   margin: 0;
   font-size: clamp(26px, 4.6vw, 38px);
   font-weight: 520;
-  font-variation-settings: 'opsz' 40, 'WONK' 1;
+  font-variation-settings:
+    'opsz' 40,
+    'WONK' 1;
   letter-spacing: -0.01em;
 }
 .case-group {
@@ -304,7 +346,9 @@ body {
   margin: 0;
   font-size: 21px;
   font-weight: 600;
-  font-variation-settings: 'opsz' 24, 'WONK' 1;
+  font-variation-settings:
+    'opsz' 24,
+    'WONK' 1;
 }
 .case-head .count {
   color: var(--mute);
@@ -323,7 +367,8 @@ body {
   padding: 15px 10px 15px 6px;
   border-bottom: 1px dashed var(--line);
   border-radius: var(--v-radius-sm, 4px);
-  transition: background var(--v-motion-duration, 180ms) var(--v-motion-easing, ease),
+  transition:
+    background var(--v-motion-duration, 180ms) var(--v-motion-easing, ease),
     padding-left var(--v-motion-duration, 180ms) var(--v-motion-easing, ease);
 }
 .case-row:hover {
@@ -384,8 +429,10 @@ body {
   padding: 7px 14px;
   cursor: pointer;
   white-space: nowrap;
-  transition: background var(--v-motion-duration, 180ms) ease,
-    color var(--v-motion-duration, 180ms) ease, transform 120ms ease;
+  transition:
+    background var(--v-motion-duration, 180ms) ease,
+    color var(--v-motion-duration, 180ms) ease,
+    transform 120ms ease;
 }
 .take-btn:hover:not(:disabled) {
   background: var(--ember);
@@ -419,7 +466,9 @@ body {
   margin: 0 0 8px;
   font-size: 24px;
   font-weight: 560;
-  font-variation-settings: 'opsz' 28, 'WONK' 1;
+  font-variation-settings:
+    'opsz' 28,
+    'WONK' 1;
 }
 .casa p {
   margin: 0 0 12px;
@@ -464,7 +513,9 @@ body {
 .subhead .brandlink {
   font-size: 30px;
   font-weight: 600;
-  font-variation-settings: 'opsz' 40, 'WONK' 1;
+  font-variation-settings:
+    'opsz' 40,
+    'WONK' 1;
   letter-spacing: -0.02em;
 }
 .subhead .brandlink span {
@@ -545,8 +596,13 @@ body {
   animation: forn-pulse 1.4s ease-in-out infinite;
 }
 @keyframes forn-pulse {
-  0%, 100% { opacity: 0.5; }
-  50% { opacity: 1; }
+  0%,
+  100% {
+    opacity: 0.5;
+  }
+  50% {
+    opacity: 1;
+  }
 }
 
 .err-panel,
@@ -561,7 +617,9 @@ body {
 .empty-panel h2 {
   margin: 0 0 6px;
   font-size: 26px;
-  font-variation-settings: 'opsz' 30, 'WONK' 1;
+  font-variation-settings:
+    'opsz' 30,
+    'WONK' 1;
 }
 .err-panel p,
 .empty-panel p {
@@ -626,7 +684,9 @@ body {
   margin: 0;
   font-size: 26px;
   font-weight: 580;
-  font-variation-settings: 'opsz' 30, 'WONK' 1;
+  font-variation-settings:
+    'opsz' 30,
+    'WONK' 1;
 }
 .bag-line {
   display: grid;
@@ -699,7 +759,9 @@ body {
   border-radius: var(--v-radius-md, 10px);
   padding: 15px;
   cursor: pointer;
-  transition: transform 120ms ease, filter var(--v-motion-duration, 180ms) ease;
+  transition:
+    transform 120ms ease,
+    filter var(--v-motion-duration, 180ms) ease;
 }
 .big-cta:hover:not(:disabled) {
   filter: brightness(1.06);
@@ -730,7 +792,11 @@ body {
   border: 1px solid var(--line-strong);
   border-radius: 50%;
   background:
-    radial-gradient(circle at 38% 30%, color-mix(in srgb, var(--ember) 14%, transparent), transparent 62%),
+    radial-gradient(
+      circle at 38% 30%,
+      color-mix(in srgb, var(--ember) 14%, transparent),
+      transparent 62%
+    ),
     var(--card);
   color: var(--ember);
 }
@@ -745,7 +811,9 @@ body {
   margin: 6px 0 4px;
   font-size: clamp(34px, 6vw, 52px);
   font-weight: 580;
-  font-variation-settings: 'opsz' 60, 'WONK' 1;
+  font-variation-settings:
+    'opsz' 60,
+    'WONK' 1;
   line-height: 1.02;
   letter-spacing: -0.015em;
 }
@@ -907,7 +975,8 @@ body {
   border-radius: var(--v-radius-md, 10px);
   padding: 12px 14px;
   cursor: pointer;
-  transition: border-color var(--v-motion-duration, 180ms) ease,
+  transition:
+    border-color var(--v-motion-duration, 180ms) ease,
     background var(--v-motion-duration, 180ms) ease;
 }
 .pay-opt:hover {
@@ -1029,14 +1098,22 @@ body {
   border-radius: 50%;
 }
 @keyframes forn-stamp {
-  from { transform: rotate(-9deg) scale(1.7); opacity: 0; }
-  to { transform: rotate(-9deg) scale(1); opacity: 1; }
+  from {
+    transform: rotate(-9deg) scale(1.7);
+    opacity: 0;
+  }
+  to {
+    transform: rotate(-9deg) scale(1);
+    opacity: 1;
+  }
 }
 .order-no {
   margin: 20px 0 4px;
   font-size: clamp(46px, 9vw, 76px);
   font-weight: 620;
-  font-variation-settings: 'opsz' 80, 'WONK' 1;
+  font-variation-settings:
+    'opsz' 80,
+    'WONK' 1;
   line-height: 1;
   letter-spacing: -0.02em;
 }
@@ -1105,7 +1182,9 @@ body {
     linear-gradient(180deg, #33261a, #241a10);
   border: 1px solid rgba(224, 138, 75, 0.55);
   border-radius: 14px;
-  box-shadow: 0 10px 34px rgba(20, 12, 6, 0.5), 0 0 24px rgba(224, 138, 75, 0.14);
+  box-shadow:
+    0 10px 34px rgba(20, 12, 6, 0.5),
+    0 0 24px rgba(224, 138, 75, 0.14);
   padding: 13px 16px;
   font-family: var(--v-font-body, Georgia, serif);
 }
@@ -1121,7 +1200,10 @@ body {
 .forn-sign .t {
   display: block;
   font-family: var(--v-font-display, Georgia, serif);
-  font-variation-settings: 'opsz' 18, 'wght' 560, 'WONK' 1;
+  font-variation-settings:
+    'opsz' 18,
+    'wght' 560,
+    'WONK' 1;
   font-size: 16px;
   letter-spacing: 0.01em;
 }
@@ -1154,8 +1236,14 @@ body {
   animation: forn-fade 0.35s ease both;
 }
 @keyframes forn-fade {
-  from { opacity: 0; transform: translateY(6px); }
-  to { opacity: 1; transform: none; }
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
 }
 
 @media (max-width: 720px) {

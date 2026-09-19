@@ -18,10 +18,7 @@ export default function ProductPage() {
 
   const groups = product?.modifierGroups ?? [];
   const satisfied = useMemo(
-    () =>
-      groups.every(
-        (g) => !g.required || (sel[g.id]?.length ?? 0) >= Math.max(1, g.minSelect),
-      ),
+    () => groups.every((g) => !g.required || (sel[g.id]?.length ?? 0) >= Math.max(1, g.minSelect)),
     [groups, sel],
   );
   const modifierIds = Object.values(sel).flat();
@@ -133,7 +130,12 @@ export default function ProductPage() {
                   </button>
                 </span>
                 {satisfied ? (
-                  <TakeButton product={p} qty={qty} modifierIds={modifierIds} label="botar na sacola" />
+                  <TakeButton
+                    product={p}
+                    qty={qty}
+                    modifierIds={modifierIds}
+                    label="botar na sacola"
+                  />
                 ) : (
                   <button type="button" className="take-btn" disabled>
                     escolhe ali em cima

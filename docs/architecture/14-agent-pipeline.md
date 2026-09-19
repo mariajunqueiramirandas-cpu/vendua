@@ -26,22 +26,25 @@ conversation (WhatsApp agent or human briefing)
 ```ts
 interface DesignSpec {
   version: 1;
-  tenant: { name: string; segment: 'bakery'|'dessert'|'restaurant'|'delivery'|string;
-            city?: string };
+  tenant: {
+    name: string;
+    segment: 'bakery' | 'dessert' | 'restaurant' | 'delivery' | string;
+    city?: string;
+  };
   brand: {
-    personality: string[];              // "afetiva", "premium", "divertida"
+    personality: string[]; // "afetiva", "premium", "divertida"
     palette: { primary?: string; refs: string[] }; // hex or "from instagram"
     typography: { vibe: string; refs?: string[] };
-    references: { url: string; note: string }[];   // sites they admire
-    assets: { logo?: string; photos: string[] };   // bucket keys
+    references: { url: string; note: string }[]; // sites they admire
+    assets: { logo?: string; photos: string[] }; // bucket keys
   };
   experience: {
-    mustHavePages: string[];            // default: menu, product, cart
-    differentials: string[];            // "3D cake preview", "story-driven"
-    motion: 'none'|'subtle'|'expressive';
-    avoid: string[];                    // "no dark mode", "no gradients"
+    mustHavePages: string[]; // default: menu, product, cart
+    differentials: string[]; // "3D cake preview", "story-driven"
+    motion: 'none' | 'subtle' | 'expressive';
+    avoid: string[]; // "no dark mode", "no gradients"
   };
-  commerce: { ordering: 'delivery'|'pickup'|'both'; paymentMethods: string[] };
+  commerce: { ordering: 'delivery' | 'pickup' | 'both'; paymentMethods: string[] };
   copy: { tone: string; language: 'pt-BR' };
   constraints: { budgets?: 'default'; deadline?: string };
 }
@@ -56,7 +59,7 @@ model than the generation agent (code-precise).
 
 Agents never start from a blank repo. `vendua scaffold` produces a storefront
 that **already passes conformance**: required mounts, a working catalog page,
-system routes wired, tokens populated. The agent's job is *transformation*, not
+system routes wired, tokens populated. The agent's job is _transformation_, not
 construction — hallucinated API usage is caught instantly because the baseline
 was green and only its diff is judged.
 
@@ -83,16 +86,17 @@ history. Iterations-to-green is a first-class metric — it prices the product.
 
 ## Approval gates
 
-| Stage | Gate |
-| --- | --- |
-| Initial launch | Human approval + merchant approval (they're buying "their" site — show it to them) |
-| Post-launch agent change (redesign, new surface) | Human approval while judge agreement unproven |
-| Codemod-failure fixes | Auto-merge allowed once conformance green (mechanical scope) |
-| Kernel train promotion | Gates are health metrics, not approvals ([09](09-migrations-and-fleet-trains.md)) |
+| Stage                                            | Gate                                                                               |
+| ------------------------------------------------ | ---------------------------------------------------------------------------------- |
+| Initial launch                                   | Human approval + merchant approval (they're buying "their" site — show it to them) |
+| Post-launch agent change (redesign, new surface) | Human approval while judge agreement unproven                                      |
+| Codemod-failure fixes                            | Auto-merge allowed once conformance green (mechanical scope)                       |
+| Kernel train promotion                           | Gates are health metrics, not approvals ([09](09-migrations-and-fleet-trains.md))  |
 
 ## Cost accounting
 
 Per `agent_tasks` row: `cost_usd`, wall time, iterations, outcome. Track:
+
 - **agent-minutes per launched storefront** — the marginal-cost number that
   decides whether the business model works.
 - **failure-tail rate per codemod/major** — the number that decides whether the

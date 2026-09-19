@@ -17,15 +17,35 @@ const FEATURED_LIMIT = 4;
 const twoDigits = (n: number) => String(n).padStart(2, '0');
 
 const VALUES = [
-  { icon: Heart, title: 'Feito à mão, de verdade', description: 'Receita de família, sem atalho e sem pó.' },
-  { icon: Snowflake, title: 'Cremoso de verdade', description: 'Pudim lisinho e sacolé que derrete na boca.' },
+  {
+    icon: Heart,
+    title: 'Feito à mão, de verdade',
+    description: 'Receita de família, sem atalho e sem pó.',
+  },
+  {
+    icon: Snowflake,
+    title: 'Cremoso de verdade',
+    description: 'Pudim lisinho e sacolé que derrete na boca.',
+  },
   { icon: Truck, title: 'Pertinho de você', description: 'Retire em Saquarema ou receba em casa.' },
 ];
 
 const STEPS = [
-  { icon: Utensils, title: 'Escolha seus doces', description: 'Monte a sacola com pudins e sacolés.' },
-  { icon: ShieldCheck, title: 'Confirme o pedido', description: 'Escolha entrega ou retirada na loja.' },
-  { icon: Snowflake, title: 'Receba geladinho', description: 'A gente embala com cuidado e leva até você.' },
+  {
+    icon: Utensils,
+    title: 'Escolha seus doces',
+    description: 'Monte a sacola com pudins e sacolés.',
+  },
+  {
+    icon: ShieldCheck,
+    title: 'Confirme o pedido',
+    description: 'Escolha entrega ou retirada na loja.',
+  },
+  {
+    icon: Snowflake,
+    title: 'Receba geladinho',
+    description: 'A gente embala com cuidado e leva até você.',
+  },
 ];
 
 export function LandingPage() {
@@ -37,9 +57,7 @@ export function LandingPage() {
     .slice(0, FEATURED_LIMIT);
   // Combos don't exist in Core (OBSERVATIONS.md) — the seeded "Kits" category
   // carries the equivalent products, so it gets the reference's combos strip.
-  const kits = categories.find(
-    (c) => (c as { slug?: string }).slug === 'kits',
-  )?.products ?? [];
+  const kits = categories.find((c) => (c as { slug?: string }).slug === 'kits')?.products ?? [];
   const city = store?.city ?? 'Saquarema · RJ';
 
   // /#nossa-historia — BrowserRouter does not scroll to anchors on its own.
@@ -64,12 +82,16 @@ export function LandingPage() {
               <em>um doce de verdade.</em>
             </h1>
             <p className="hero-sub rise-in rise-in-3">
-              Pudim lisinho, sem furinho, calda dourada no ponto. Sacolé bem
-              cremoso para o calor — feito à mão, para saborear sem pressa.
+              Pudim lisinho, sem furinho, calda dourada no ponto. Sacolé bem cremoso para o calor —
+              feito à mão, para saborear sem pressa.
             </p>
             <div className="hero-cta rise-in rise-in-4">
-              <Link to="/catalog" className="btn">Escolher meu doce</Link>
-              <a href="#nossa-historia" className="btn-ghost">Nossa história</a>
+              <Link to="/catalog" className="btn">
+                Escolher meu doce
+              </Link>
+              <a href="#nossa-historia" className="btn-ghost">
+                Nossa história
+              </a>
             </div>
           </div>
           <figure className="hero-fig rise-in rise-in-3">
@@ -90,7 +112,10 @@ export function LandingPage() {
           </figure>
         </div>
 
-        <dl className="values-grid ficha-rule" style={{ marginTop: 56, paddingTop: 24, marginBottom: 0 }}>
+        <dl
+          className="values-grid ficha-rule"
+          style={{ marginTop: 56, paddingTop: 24, marginBottom: 0 }}
+        >
           {VALUES.map((v) => (
             <div key={v.title}>
               <v.icon className="value-icon" strokeWidth={1.5} aria-hidden="true" />
@@ -130,13 +155,17 @@ export function LandingPage() {
                     <div className="card-frame">
                       <div className="card-figure">
                         <ProductFigure
-                          variant={(p as { figureVariant?: FigureVariant }).figureVariant ?? 'default'}
+                          variant={
+                            (p as { figureVariant?: FigureVariant }).figureVariant ?? 'default'
+                          }
                           title={p.name}
                         />
                       </div>
                     </div>
                   </div>
-                  <p className="ficha-num" style={{ marginTop: 12 }}>{twoDigits(i + 1)}</p>
+                  <p className="ficha-num" style={{ marginTop: 12 }}>
+                    {twoDigits(i + 1)}
+                  </p>
                   <h3 className="card-name">{p.name}</h3>
                   <Price cents={p.basePriceCents} className="card-price" />
                 </Link>
@@ -144,7 +173,9 @@ export function LandingPage() {
             ))}
           </ol>
         ) : null}
-        <Link to="/catalog" className="btn" style={{ marginTop: 40 }}>Ver todos os doces</Link>
+        <Link to="/catalog" className="btn" style={{ marginTop: 40 }}>
+          Ver todos os doces
+        </Link>
       </section>
 
       {/* Kits — the combos strip, on the category that holds kit products */}
@@ -153,7 +184,10 @@ export function LandingPage() {
           <div className="section-head">
             <p className="eyebrow">Kits e promoções especiais</p>
             <h2 className="display display-lg">Combos e kits personalizáveis</h2>
-            <p className="lede">Monte o kit com os sabores que você mais gosta — para a festa, o presente ou a sobremesa da semana.</p>
+            <p className="lede">
+              Monte o kit com os sabores que você mais gosta — para a festa, o presente ou a
+              sobremesa da semana.
+            </p>
           </div>
           <ol className="card-grid">
             {kits.slice(0, FEATURED_LIMIT).map((p) => (
@@ -163,7 +197,9 @@ export function LandingPage() {
                     <div className="card-frame">
                       <div className="card-figure">
                         <ProductFigure
-                          variant={(p as { figureVariant?: FigureVariant }).figureVariant ?? 'default'}
+                          variant={
+                            (p as { figureVariant?: FigureVariant }).figureVariant ?? 'default'
+                          }
                           title={p.name}
                         />
                       </div>
@@ -185,7 +221,9 @@ export function LandingPage() {
       {/* Nossa história */}
       <section id="nossa-historia" className="ficha-rule" style={{ scrollMarginTop: 120 }}>
         <div className="container" style={{ paddingBlock: 64 }}>
-          <p className="eyebrow" style={{ marginBottom: 24 }}>Da nossa cozinha para você</p>
+          <p className="eyebrow" style={{ marginBottom: 24 }}>
+            Da nossa cozinha para você
+          </p>
           <div className="hero-grid">
             <figure className="hero-fig" style={{ order: 2 }}>
               <div className="print-frame">
@@ -206,10 +244,9 @@ export function LandingPage() {
                 <em>sem pressa.</em>
               </h2>
               <p className="hero-sub">
-                Todo pudim sai da nossa cozinha em Saquarema, um por um, com
-                receita de família e ingredientes escolhidos a dedo. Sem furinho,
-                com calda dourada e aquele sabor de casa que a gente faz questão
-                de manter.
+                Todo pudim sai da nossa cozinha em Saquarema, um por um, com receita de família e
+                ingredientes escolhidos a dedo. Sem furinho, com calda dourada e aquele sabor de
+                casa que a gente faz questão de manter.
               </p>
             </div>
           </div>
@@ -244,9 +281,15 @@ export function LandingPage() {
       <section className="ficha-rule closing">
         <div className="container" style={{ paddingBlock: 64 }}>
           <p className="eyebrow">Feito à mão em Saquarema</p>
-          <h2 className="display display-lg" style={{ marginTop: 16 }}>Bateu a vontade?</h2>
-          <p className="hero-sub" style={{ marginTop: 8 }}>O cardápio completo está logo ali.</p>
-          <Link to="/catalog" className="btn" style={{ marginTop: 32 }}>Escolher meus doces</Link>
+          <h2 className="display display-lg" style={{ marginTop: 16 }}>
+            Bateu a vontade?
+          </h2>
+          <p className="hero-sub" style={{ marginTop: 8 }}>
+            O cardápio completo está logo ali.
+          </p>
+          <Link to="/catalog" className="btn" style={{ marginTop: 32 }}>
+            Escolher meus doces
+          </Link>
         </div>
       </section>
     </main>

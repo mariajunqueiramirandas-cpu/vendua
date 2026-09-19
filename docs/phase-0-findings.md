@@ -241,7 +241,7 @@ Round 5 (fifth review pass — all landed):
   of hitting `IDEMPOTENCY_IN_PROGRESS`. Failed responses are deliberately
   not persisted — retries rerun deterministically.
 - **Reseed died on cart activity** — `cart_items.product_id` is `NO
-  ACTION`, so the catalog wipe failed once dev carts existed; the seed now
+ACTION`, so the catalog wipe failed once dev carts existed; the seed now
   drops tenant `cart_items` first (carts themselves are preserved, emptied).
 - **Rate-limit buckets leaked per client IP** — a window-scoped lazy sweep
   deletes expired buckets, bounding the map to live traffic.

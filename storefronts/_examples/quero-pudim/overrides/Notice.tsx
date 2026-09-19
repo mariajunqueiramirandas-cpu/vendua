@@ -24,8 +24,15 @@ export default function BrandNotice(props: Record<string, unknown>) {
   const onDismiss = props.onDismiss as (() => void) | undefined;
   if (!notice) return null;
 
-  const severity = notice.kind === 'emergency' ? 'blocking' : (['info', 'warning', 'blocking'].includes(String(notice.severity)) ? String(notice.severity) : 'info');
-  const links = (notice.actions ?? []).map(actionHref).filter((x): x is NonNullable<typeof x> => x != null);
+  const severity =
+    notice.kind === 'emergency'
+      ? 'blocking'
+      : ['info', 'warning', 'blocking'].includes(String(notice.severity))
+        ? String(notice.severity)
+        : 'info';
+  const links = (notice.actions ?? [])
+    .map(actionHref)
+    .filter((x): x is NonNullable<typeof x> => x != null);
 
   return (
     <div
@@ -40,13 +47,20 @@ export default function BrandNotice(props: Record<string, unknown>) {
         {links.length > 0 ? (
           <p className="qp-notice-links">
             {links.map((l, i) => (
-              <a key={i} href={l.href} className="qp-notice-link">{l.label}</a>
+              <a key={i} href={l.href} className="qp-notice-link">
+                {l.label}
+              </a>
             ))}
           </p>
         ) : null}
       </div>
       {notice.dismissible && onDismiss ? (
-        <button type="button" className="qp-notice-dismiss" aria-label="Dispensar aviso" onClick={onDismiss}>
+        <button
+          type="button"
+          className="qp-notice-dismiss"
+          aria-label="Dispensar aviso"
+          onClick={onDismiss}
+        >
           <X size={16} aria-hidden="true" />
         </button>
       ) : null}

@@ -7,8 +7,8 @@
 
 Even with SDUI, a Kernel can be too old or too broken to render — or the
 storefront's own JS can be broken by a bad deploy. We still need a way to say
-"this store is paused" or "platform incident, order via WhatsApp" on *any*
-store, in *any* state, without a rebuild. Without this, the failure mode for a
+"this store is paused" or "platform incident, order via WhatsApp" on _any_
+store, in _any_ state, without a rebuild. Without this, the failure mode for a
 broken storefront is silently taking orders it can't fulfill — or silently
 losing sales with a white screen.
 

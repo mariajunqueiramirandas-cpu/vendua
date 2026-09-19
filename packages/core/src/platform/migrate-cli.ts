@@ -10,7 +10,9 @@ console.log(ran.length ? `applied: ${ran.join(', ')}` : 'already up to date');
 // migration must never be the production credential.
 const appPassword = process.env.VENDUA_APP_DB_PASSWORD;
 if (appPassword) {
-  await sql.unsafe(`alter role vendua_app with login password '${appPassword.replaceAll("'", "''")}'`);
+  await sql.unsafe(
+    `alter role vendua_app with login password '${appPassword.replaceAll("'", "''")}'`,
+  );
   console.log('vendua_app password rotated from VENDUA_APP_DB_PASSWORD');
 }
 await sql.end();

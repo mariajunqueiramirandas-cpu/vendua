@@ -16,9 +16,9 @@ Run them in this order. Tokens first, because a page that hands you its custom p
 
 ```js
 const html = document.documentElement;
-const res = performance.getEntriesByType('resource').map(r => r.name);
-const any = re => res.some(n => re.test(n));
-const attr = sel => !!document.querySelector(sel);
+const res = performance.getEntriesByType('resource').map((r) => r.name);
+const any = (re) => res.some((n) => re.test(n));
+const attr = (sel) => !!document.querySelector(sel);
 ({
   framework: {
     next: !!window.__NEXT_DATA__ || any(/\/_next\/static/),
@@ -29,27 +29,39 @@ const attr = sel => !!document.querySelector(sel);
     astro: attr('astro-island, [data-astro-cid]'),
     svelte: attr('[class*="svelte-"]') || any(/\/_app\/immutable\//),
     angular: attr('[ng-version]'),
-    reactFiber: Object.keys(document.body.firstElementChild ?? {}).some(k => k.startsWith('__react')),
+    reactFiber: Object.keys(document.body.firstElementChild ?? {}).some((k) =>
+      k.startsWith('__react'),
+    ),
   },
   styling: {
-    tailwind: getComputedStyle(html).getPropertyValue('--tw-ring-offset-width') !== ''
-              || !!document.querySelector('[class*="bg-linear-to"], [class*="bg-gradient-to"]'),
+    tailwind:
+      getComputedStyle(html).getPropertyValue('--tw-ring-offset-width') !== '' ||
+      !!document.querySelector('[class*="bg-linear-to"], [class*="bg-gradient-to"]'),
     tailwindV4: !!document.querySelector('[class*="bg-linear-to"]'),
     cssModules: attr('[class*="_"][class*="__"]'),
     styledComponents: attr('[class^="sc-"]') || attr('style[data-styled]'),
     emotion: attr('[class^="css-"]'),
   },
   components: {
-    radix: attr('[data-radix-popper-content-wrapper], [data-radix-scroll-area-viewport]')
-           || !!document.querySelector('[data-slot], [data-state][data-side]'),
+    radix:
+      attr('[data-radix-popper-content-wrapper], [data-radix-scroll-area-viewport]') ||
+      !!document.querySelector('[data-slot], [data-state][data-side]'),
     baseUi: attr('[data-base-ui-portal], [class*="base-ui"]'),
     headlessUi: attr('[data-headlessui-state]'),
     mui: attr('[class*="Mui"]'),
     arkOrChakra: attr('[data-scope][data-part]'),
   },
   motion: { animationsRunning: document.getAnimations().length, gsap: !!window.gsap },
-  images: { nextImage: any(/\/_next\/image\?/), modernFormats: [...document.images].some(i => /\.(avif|webp)/.test(i.currentSrc)), srcset: [...document.images].filter(i => i.srcset).length },
-  fonts: { count: document.fonts.size, variable: [...document.fonts].some(f => String(f.weight).includes(' ')), selfHosted: !any(/fonts\.g(oogleapis|static)\.com/) },
+  images: {
+    nextImage: any(/\/_next\/image\?/),
+    modernFormats: [...document.images].some((i) => /\.(avif|webp)/.test(i.currentSrc)),
+    srcset: [...document.images].filter((i) => i.srcset).length,
+  },
+  fonts: {
+    count: document.fonts.size,
+    variable: [...document.fonts].some((f) => String(f.weight).includes(' ')),
+    selfHosted: !any(/fonts\.g(oogleapis|static)\.com/),
+  },
 });
 ```
 
@@ -58,9 +70,16 @@ Two rules. A fingerprint is not a fact, so give the evidence: `/_next/static` in
 ## Tokens
 
 ```js
-const tokens = {}; const unreadable = [];
+const tokens = {};
+const unreadable = [];
 for (const sheet of document.styleSheets) {
-  let rules; try { rules = sheet.cssRules } catch { unreadable.push(sheet.href); continue }
+  let rules;
+  try {
+    rules = sheet.cssRules;
+  } catch {
+    unreadable.push(sheet.href);
+    continue;
+  }
   for (const r of rules ?? []) {
     if (r.selectorText === ':root' || r.selectorText === 'html') {
       for (const prop of r.style) {
@@ -141,13 +160,27 @@ for (const el of document.querySelectorAll('*')) {
 ## Breakpoints
 
 ```js
-const bp = new Set(); const unreadable = [];
+const bp = new Set();
+const unreadable = [];
 for (const sheet of document.styleSheets) {
-  let rules; try { rules = sheet.cssRules } catch { unreadable.push(sheet.href); continue }
-  const walk = list => { for (const r of list ?? []) {
-    if (r.media) { for (const m of r.media) { const hit = m.match(/(min|max)-width:\s*([\d.]+)(px|r?em)/); if (hit) bp.add(hit[0]) } }
-    if (r.cssRules) walk(r.cssRules);
-  }};
+  let rules;
+  try {
+    rules = sheet.cssRules;
+  } catch {
+    unreadable.push(sheet.href);
+    continue;
+  }
+  const walk = (list) => {
+    for (const r of list ?? []) {
+      if (r.media) {
+        for (const m of r.media) {
+          const hit = m.match(/(min|max)-width:\s*([\d.]+)(px|r?em)/);
+          if (hit) bp.add(hit[0]);
+        }
+      }
+      if (r.cssRules) walk(r.cssRules);
+    }
+  };
   walk(rules);
 }
 ({ breakpoints: [...bp].sort(), unreadable });
@@ -159,9 +192,9 @@ Compare against the framework defaults. Breakpoints at exactly `640/768/1024/128
 
 ```js
 ({
-  loaded: [...document.fonts].map(f => `${f.family} ${f.weight} ${f.style} ${f.status}`),
+  loaded: [...document.fonts].map((f) => `${f.family} ${f.weight} ${f.style} ${f.status}`),
   bodyStack: getComputedStyle(document.body).fontFamily,
-  variable: [...document.fonts].some(f => String(f.weight).includes(' ')),
+  variable: [...document.fonts].some((f) => String(f.weight).includes(' ')),
   themeClass: document.documentElement.className || '(none)',
   colorScheme: getComputedStyle(document.documentElement).colorScheme,
 });

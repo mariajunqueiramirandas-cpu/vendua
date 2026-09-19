@@ -85,7 +85,9 @@ export default function Home() {
         <div className="ledger-intro">
           <h2>a vitrine</h2>
           <span className="mono microcaps" style={{ color: 'var(--mute)' }}>
-            {status === 'closed' ? 'encomende pra próxima fornada' : 'sai da fornada, entra na sacola'}
+            {status === 'closed'
+              ? 'encomende pra próxima fornada'
+              : 'sai da fornada, entra na sacola'}
           </span>
         </div>
 
@@ -93,7 +95,9 @@ export default function Home() {
         {error ? (
           <div className="err-panel">
             <h2>a vitrine não abriu</h2>
-            <p>Não conseguimos falar com o balcão ({error.code}). Verifica a conexão e tenta de novo.</p>
+            <p>
+              Não conseguimos falar com o balcão ({error.code}). Verifica a conexão e tenta de novo.
+            </p>
             <button type="button" className="retry-btn" onClick={() => location.reload()}>
               recarregar
             </button>
@@ -111,7 +115,9 @@ export default function Home() {
             <section className="case-group" key={cat.id}>
               <div className="case-head">
                 <h3>{cat.name}</h3>
-                <span className="count mono microcaps">{String(cat.products.length).padStart(2, '0')}</span>
+                <span className="count mono microcaps">
+                  {String(cat.products.length).padStart(2, '0')}
+                </span>
                 <span className="rule" aria-hidden="true" />
               </div>
               {cat.products.map((p) => (
@@ -146,11 +152,15 @@ export default function Home() {
           </li>
           <li>
             <span className="k">entrega</span>
-            <span className="v">{store?.deliveryEnabled ? 'balcão + entrega' : 'só retirada no balcão'}</span>
+            <span className="v">
+              {store?.deliveryEnabled ? 'balcão + entrega' : 'só retirada no balcão'}
+            </span>
           </li>
           <li>
             <span className="k">pedido mínimo</span>
-            <span className="v">{store && store.minOrderCents > 0 ? brl(store.minOrderCents) : 'sem mínimo'}</span>
+            <span className="v">
+              {store && store.minOrderCents > 0 ? brl(store.minOrderCents) : 'sem mínimo'}
+            </span>
           </li>
           <li>
             <span className="k">preparo</span>

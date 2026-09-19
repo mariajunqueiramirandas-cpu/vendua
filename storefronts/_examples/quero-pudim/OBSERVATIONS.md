@@ -54,7 +54,7 @@ add for the real version.
   renders a "Sob encomenda" badge/CTA via `(p as { requiresPreorder?: boolean })`
   and falls back to the reference's WhatsApp deep link for scheduling. Core:
   `requiresPreorder`, `preorderLeadDays`, and `scheduledFor` on CheckoutInput
-  + payment-method constraints.
+  - payment-method constraints.
 - **FEATURE-GAP — `imageUrl` on products.** Reference hydrates photos; Core
   ships none. Cards render the ProductFigure SVG fallback (`figureVariant`)
   and upgrade to `<img>` if `imageUrl` ever arrives. Core: media table or a

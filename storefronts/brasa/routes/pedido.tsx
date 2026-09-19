@@ -51,7 +51,15 @@ export function Pedido() {
             <div className="hazard" aria-hidden="true" />
             <span className="state-chip">{STATE_LABEL[order.state] ?? order.state}</span>
             <div className="order-num">{String(order.number).padStart(3, '0')}</div>
-            <p className="dim mono" style={{ fontSize: 12, letterSpacing: '0.1em', textTransform: 'uppercase', margin: 0 }}>
+            <p
+              className="dim mono"
+              style={{
+                fontSize: 12,
+                letterSpacing: '0.1em',
+                textTransform: 'uppercase',
+                margin: 0,
+              }}
+            >
               escuta o número — a chapa chama pelo alto
             </p>
 
@@ -97,7 +105,10 @@ export function Pedido() {
               </div>
               {order.timeline.map((e, i) => (
                 <p key={i} className="mono dim" style={{ fontSize: 12, margin: '4px 0' }}>
-                  {new Date(e.at).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}{' '}
+                  {new Date(e.at).toLocaleTimeString('pt-BR', {
+                    hour: '2-digit',
+                    minute: '2-digit',
+                  })}{' '}
                   — {STATE_LABEL[e.to] ?? e.to}
                 </p>
               ))}
@@ -130,7 +141,16 @@ export function Pedido() {
                 ? 'a comanda foi registrada, mas esta sessão não guarda o número. fala com a chapa no zap se precisar.'
                 : 'procurando seu registro na chapa…'}
             </p>
-            <Link to="/" className="cta ghost" style={{ display: 'inline-block', padding: '10px 22px', textDecoration: 'none', marginTop: 8 }}>
+            <Link
+              to="/"
+              className="cta ghost"
+              style={{
+                display: 'inline-block',
+                padding: '10px 22px',
+                textDecoration: 'none',
+                marginTop: 8,
+              }}
+            >
               Ao quadro →
             </Link>
           </div>

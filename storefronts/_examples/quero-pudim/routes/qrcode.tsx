@@ -75,11 +75,17 @@ export function QrCodePage() {
       `}</style>
 
       <header className="qr-controls" role="toolbar" aria-label="Ações do QR">
-        <button type="button" className="btn btn-ghost" onClick={() => (window.history.length > 1 ? navigate(-1) : navigate('/catalog'))}>
+        <button
+          type="button"
+          className="btn btn-ghost"
+          onClick={() => (window.history.length > 1 ? navigate(-1) : navigate('/catalog'))}
+        >
           <ArrowLeft size={16} aria-hidden="true" /> Voltar
         </button>
         <div className="qr-controls-mid">
-          <label htmlFor="qr-produto" className="small" style={{ fontWeight: 500 }}>Doce:</label>
+          <label htmlFor="qr-produto" className="small" style={{ fontWeight: 500 }}>
+            Doce:
+          </label>
           <select
             id="qr-produto"
             className="input"
@@ -94,7 +100,9 @@ export function QrCodePage() {
           >
             <option value="">Cardápio completo</option>
             {products.map((p) => (
-              <option key={p.id} value={p.slug}>{p.name}</option>
+              <option key={p.id} value={p.slug}>
+                {p.name}
+              </option>
             ))}
           </select>
           <input
@@ -107,7 +115,11 @@ export function QrCodePage() {
         </div>
         <div style={{ display: 'flex', gap: 8 }}>
           {dataUrl ? (
-            <a href={dataUrl} download={`qrcode-quero-pudim-${selectedSlug || 'cardapio'}.png`} className="btn btn-ghost">
+            <a
+              href={dataUrl}
+              download={`qrcode-quero-pudim-${selectedSlug || 'cardapio'}.png`}
+              className="btn btn-ghost"
+            >
               <Download size={16} aria-hidden="true" /> Baixar PNG
             </a>
           ) : null}
@@ -121,23 +133,42 @@ export function QrCodePage() {
         <article className="qr-sheet" aria-label="Cardápio para impressão A4">
           <div className="qr-sheet-inner">
             <div style={{ textAlign: 'center' }}>
-              <img src="/brand/logo-principal.png" alt={store?.name ?? 'Quero Pudim'} className="qr-logo" />
-              <p className="qr-tagline">{store?.tagline ?? 'Pudins sem furinhos e sacolés cremosos'}</p>
-              <div className="qr-divider" aria-hidden="true"><span />◆<span /></div>
+              <img
+                src="/brand/logo-principal.png"
+                alt={store?.name ?? 'Quero Pudim'}
+                className="qr-logo"
+              />
+              <p className="qr-tagline">
+                {store?.tagline ?? 'Pudins sem furinhos e sacolés cremosos'}
+              </p>
+              <div className="qr-divider" aria-hidden="true">
+                <span />◆<span />
+              </div>
             </div>
 
             <div style={{ textAlign: 'center' }}>
               {selected ? (
                 <div style={{ marginBottom: 8 }}>
                   <span className="qr-chip">Destaque do cardápio</span>
-                  <h2 className="display display-md" style={{ marginTop: 4 }}>{selected.name}</h2>
-                  {selected.description ? <p className="small muted qr-desc">{selected.description}</p> : null}
-                  <p className="display display-md" style={{ color: 'var(--caramel-800)', marginTop: 4 }}>{formatBRL(selected.basePriceCents)}</p>
+                  <h2 className="display display-md" style={{ marginTop: 4 }}>
+                    {selected.name}
+                  </h2>
+                  {selected.description ? (
+                    <p className="small muted qr-desc">{selected.description}</p>
+                  ) : null}
+                  <p
+                    className="display display-md"
+                    style={{ color: 'var(--caramel-800)', marginTop: 4 }}
+                  >
+                    {formatBRL(selected.basePriceCents)}
+                  </p>
                 </div>
               ) : (
                 <div style={{ marginBottom: 8 }}>
                   <h2 className="display display-md">Cardápio &amp; Pedidos Online</h2>
-                  <p className="small muted">Aponte a câmera do celular para conferir nossos doces e fazer seu pedido</p>
+                  <p className="small muted">
+                    Aponte a câmera do celular para conferir nossos doces e fazer seu pedido
+                  </p>
                 </div>
               )}
 
@@ -145,7 +176,9 @@ export function QrCodePage() {
                 {qrLoading ? (
                   <div className="qr-placeholder">Gerando QR Code…</div>
                 ) : qrError ? (
-                  <div className="qr-placeholder" style={{ color: 'var(--danger)' }}>{qrError}</div>
+                  <div className="qr-placeholder" style={{ color: 'var(--danger)' }}>
+                    {qrError}
+                  </div>
                 ) : svg ? (
                   <div className="qr-svg" dangerouslySetInnerHTML={{ __html: svg }} />
                 ) : null}
@@ -159,10 +192,14 @@ export function QrCodePage() {
               <div className="ficha-hairline" style={{ paddingTop: 12 }} />
               <p className="qr-contacts">
                 {whatsapp ? (
-                  <span><MessageCircle size={12} aria-hidden="true" /> WhatsApp: {whatsapp}</span>
+                  <span>
+                    <MessageCircle size={12} aria-hidden="true" /> WhatsApp: {whatsapp}
+                  </span>
                 ) : null}
                 {instagram ? (
-                  <span><Instagram size={12} aria-hidden="true" /> @{instagram}</span>
+                  <span>
+                    <Instagram size={12} aria-hidden="true" /> @{instagram}
+                  </span>
                 ) : null}
                 {where ? <span>{where}</span> : null}
               </p>
@@ -171,7 +208,9 @@ export function QrCodePage() {
           </div>
         </article>
         <p className="qr-controls small muted" style={{ marginTop: 24, textAlign: 'center' }}>
-          <Link to="/catalog" style={{ textDecoration: 'underline' }}>← Voltar ao cardápio</Link>
+          <Link to="/catalog" style={{ textDecoration: 'underline' }}>
+            ← Voltar ao cardápio
+          </Link>
         </p>
       </main>
     </div>

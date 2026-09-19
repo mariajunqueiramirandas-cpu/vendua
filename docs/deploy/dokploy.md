@@ -14,13 +14,13 @@ Dokploy → **Compose** → point at this repo → compose file path
 
 Copy `.env.example` into the service's environment and fill it in:
 
-| Variable | Purpose |
-| --- | --- |
-| `POSTGRES_PASSWORD` | Postgres superuser (migrations run as it) |
-| `VENDUA_APP_DB_PASSWORD` | `vendua_app` app role — rotated on migrate |
-| `SESSION_SECRET` | signs `vst.*` session tokens — required, stable across restarts |
-| `SEED_DEMO` | `1` seeds the three demo tenants on boot; `0` = empty platform |
-| `SEED_DOMAINS` | `slug:public-domain` per storefront — registers real domains |
+| Variable                 | Purpose                                                         |
+| ------------------------ | --------------------------------------------------------------- |
+| `POSTGRES_PASSWORD`      | Postgres superuser (migrations run as it)                       |
+| `VENDUA_APP_DB_PASSWORD` | `vendua_app` app role — rotated on migrate                      |
+| `SESSION_SECRET`         | signs `vst.*` session tokens — required, stable across restarts |
+| `SEED_DEMO`              | `1` seeds the three demo tenants on boot; `0` = empty platform  |
+| `SEED_DOMAINS`           | `slug:public-domain` per storefront — registers real domains    |
 
 Generate secrets with `openssl rand -hex 32`.
 
@@ -52,12 +52,12 @@ Boot order is handled by healthchecks: `db` healthy → `core` migrates
 
 ## Services
 
-| Service | Image | Exposed port |
-| --- | --- | --- |
-| `db` | postgres:16-alpine | internal only |
-| `core` | `packages/core/Dockerfile` (Bun) | 8787, internal |
-| `quero-pudim` / `brasa` / `forn` | `storefronts/Dockerfile` (vite build → nginx) | 80 |
-| `site` | `site/Dockerfile` (SvelteKit static → nginx) | 80 |
+| Service                          | Image                                         | Exposed port   |
+| -------------------------------- | --------------------------------------------- | -------------- |
+| `db`                             | postgres:16-alpine                            | internal only  |
+| `core`                           | `packages/core/Dockerfile` (Bun)              | 8787, internal |
+| `quero-pudim` / `brasa` / `forn` | `storefronts/Dockerfile` (vite build → nginx) | 80             |
+| `site`                           | `site/Dockerfile` (SvelteKit static → nginx)  | 80             |
 
 Adding a storefront later = one more service block using
 `storefronts/Dockerfile` with `STOREFRONT`/`PKG` args, plus its domain row.
