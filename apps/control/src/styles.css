@@ -1480,8 +1480,8 @@ details.raw textarea {
   }
 }
 
-/* coarse pointer = touch: bigger hit areas, always-visible card actions */
-@media (pointer: coarse) {
+/* any-pointer so touchscreen laptops keep the affordances when touched */
+@media (any-pointer: coarse) {
   .btn {
     min-height: 40px;
     padding: 9px 14px;
@@ -1532,6 +1532,8 @@ details.raw textarea {
   }
   .main {
     min-height: 0;
+    /* landscape cutouts: keep topbar/content inside the safe rect */
+    padding-inline: env(safe-area-inset-left, 0px) env(safe-area-inset-right, 0px);
   }
   .topbar {
     padding: 10px 14px;
@@ -1577,6 +1579,7 @@ details.raw textarea {
     color: var(--rail-muted);
     border-top: 1px solid var(--night-700);
     padding-bottom: env(safe-area-inset-bottom, 0px);
+    padding-inline: env(safe-area-inset-left, 0px) env(safe-area-inset-right, 0px);
   }
   .tab {
     position: relative;
@@ -1623,6 +1626,7 @@ details.raw textarea {
   .scrim.sheet {
     align-items: end;
     justify-items: stretch;
+    padding-inline: env(safe-area-inset-left, 0px) env(safe-area-inset-right, 0px);
   }
   .msheet {
     background: var(--rail);
@@ -1778,6 +1782,7 @@ details.raw textarea {
     max-width: 100%;
     border-left: 0;
     animation: sheet-up 180ms cubic-bezier(0.3, 0, 0.2, 1);
+    padding-inline: env(safe-area-inset-left, 0px) env(safe-area-inset-right, 0px);
   }
   .m-card {
     width: min(360px, 92vw);

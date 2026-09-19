@@ -16,6 +16,7 @@ export default function BoardView() {
   const [loading, setLoading] = useState(true);
   const [dragId, setDragId] = useState<string | null>(null);
   const [over, setOver] = useState<string | null>(null);
+  const [movingIds, setMovingIds] = useState<Set<string>>(new Set());
   const nav = useNavigate();
 
   const load = useCallback(() => {
@@ -35,13 +36,22 @@ export default function BoardView() {
   useEffect(load, [load]);
 
   const move = async (lead: LeadListItem, state: LeadListItem['state']) => {
-    if (lead.state === state) return;
+    // In-flight PATCH for this lead: a second write could land out of order
+    // and leave the server's stage behind the optimistic one.
+    if (lead.state === state || movingIds.has(lead.id)) return;
+    setMovingIds((s) => new Set(s).add(lead.id));
     // Optimistic: the column swap is immediate; a failure snaps it back.
     setLeads((ls) => ls.map((l) => (l.id === lead.id ? { ...l, state } : l)));
     try {
       await api.patchLead(lead.id, { state });
     } catch {
       load();
+    } finally {
+      setMovingIds((s) => {
+        const n = new Set(s);
+        n.delete(lead.id);
+        return n;
+      });
     }
   };
 
@@ -131,6 +141,7 @@ export default function BoardView() {
                       value={l.state}
                       title="mover para estágio"
                       aria-label="mover para estágio"
+                      disabled={movingIds.has(l.id)}
                       onClick={(e) => e.stopPropagation()}
                       onChange={(e) => {
                         e.stopPropagation();
