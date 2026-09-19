@@ -7,7 +7,8 @@
   "workspaces": [
     "site",
     "packages/*",
-    "storefronts/*"
+    "storefronts/*",
+    "storefronts/_examples/*"
   ],
   "scripts": {
     "dev": "bun --filter @vendua/site dev",

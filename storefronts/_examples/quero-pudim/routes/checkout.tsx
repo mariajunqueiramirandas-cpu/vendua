@@ -93,12 +93,24 @@ export function CheckoutPage() {
 
   // Keep the server cart's delivery in sync so the zone fee/min-order that
   // Core resolves (matchZone inside loadCartView) shows up in cart.totals.
+  // Track the sync: a failed setDelivery leaves totals priced for the OLD
+  // neighborhood — block placing until the latest selection lands, and let
+  // the sequence guard ignore superseded responses.
+  const syncSeq = useRef(0);
+  const [deliverySync, setDeliverySync] = useState<'syncing' | 'ok' | 'error'>('ok');
   useEffect(() => {
     if (items.length === 0) return;
     if (mode === 'delivery' && neighborhood.trim().length === 0) return;
+    const seq = ++syncSeq.current;
+    setDeliverySync('syncing');
     void mutations
       .setDelivery(mode === 'pickup' ? { mode: 'pickup' } : { mode: 'delivery', neighborhood: neighborhood.trim() })
-      .catch(() => {});
+      .then(() => {
+        if (seq === syncSeq.current) setDeliverySync('ok');
+      })
+      .catch(() => {
+        if (seq === syncSeq.current) setDeliverySync('error');
+      });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [mode, neighborhood, items.length]);
 
@@ -117,6 +129,7 @@ export function CheckoutPage() {
 
   const canPlace =
     !pending &&
+    deliverySync === 'ok' &&
     items.length > 0 &&
     !totals?.belowMinOrder &&
     stepOk(0) &&
@@ -255,6 +268,11 @@ export function CheckoutPage() {
 
       {error ? (
         <p className="inline-alert error" role="alert" style={{ marginTop: 24 }}>{error}</p>
+      ) : null}
+      {deliverySync === 'error' ? (
+        <p className="inline-alert error" role="alert">
+          Não conseguimos confirmar a taxa desse bairro — ajuste a entrega para tentar de novo.
+        </p>
       ) : null}
 
       <form onSubmit={onSubmit} noValidate style={{ marginTop: 32 }}>

@@ -255,6 +255,27 @@ Round 5 (fifth review pass — all landed):
   the table with Core's shipped semantics: `paused` blocks, `closed`
   accepts pre-orders; the behavior text is normative now.
 
+Round 6 (sixth review pass — all landed):
+
+- **Order tracking died on session rotation** — `api.order(id)` sent only
+  the current cart token, and `loadOrderView` scopes reads to the token's
+  cart, so a new cart's token got `ORDER_NOT_FOUND` for previous orders.
+  The Kernel now stores the checkout-time token per order id
+  (`vendua.orderTokens`, bounded) and `order(id)` prefers it. Verified live:
+  rotated token → 404; stored token → reads the order.
+- **Failed `setDelivery` left stale-priced totals** — quero-pudim (both
+  copies) and brasa track the sync (`syncing`/`ok`/`error` + sequence guard
+  for superseded responses), block placing while a sync is pending or
+  failed, and surface a retry prompt in the UI.
+- **Stale comments in pedido/fechar** — corrected: `api.order` does send
+  Bearer (per-order token now), brasa's post-checkout `CART_NOT_FOUND`
+  caveat is obsolete (`ensureSession` rotates), and its redundant
+  `invalidate('cart')` is removed.
+- **`_examples/quero-pudim` couldn't typecheck** — it wasn't a workspace
+  member (name collided with the live storefront); renamed to
+  `@vendua/example-quero-pudim`, added `storefronts/_examples/*` to
+  workspaces, and fixed its `tsconfig` extends depth.
+
 ### Feature gaps the reference ships that the platform can't express yet
 
 (From `quero-pudim` — each had an honest storefront fallback; details in its

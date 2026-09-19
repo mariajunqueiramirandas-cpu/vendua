@@ -186,6 +186,33 @@ export interface Order {
 }
 
 const SESSION_KEY = 'vendua.session';
+const ORDER_TOKENS_KEY = 'vendua.orderTokens';
+
+// Per-order credentials: the checkout-time token stays authorized to read
+// THAT order after ensureSession rotates the session onto a fresh cart —
+// without it, order tracking dies the moment a customer starts a new cart.
+function readOrderTokens(): Record<string, string> {
+  try {
+    return JSON.parse(globalThis.sessionStorage?.getItem(ORDER_TOKENS_KEY) ?? '{}') as Record<
+      string,
+      string
+    >;
+  } catch {
+    return {};
+  }
+}
+
+function storeOrderToken(orderId: string, t: string) {
+  try {
+    const m = readOrderTokens();
+    m[orderId] = t;
+    // Bound the map — keep the newest ~20 entries.
+    for (const k of Object.keys(m).slice(0, -20)) delete m[k];
+    globalThis.sessionStorage?.setItem(ORDER_TOKENS_KEY, JSON.stringify(m));
+  } catch {
+    /* private mode — order tracking lives in memory only */
+  }
+}
 
 function readStoredToken(): string | null {
   try {
@@ -329,9 +356,18 @@ export function createApi(baseUrl = '') {
         method: 'POST',
         headers: { ...auth(), 'idempotency-key': idemKey() },
         body: JSON.stringify(input),
-      }).then((r) => r.order),
-    order: (id: string) =>
-      apiFetch<{ order: Order }>(co(`/orders/${id}`), { headers: auth() }).then((r) => r.order),
+      }).then((r) => {
+        // The token used to place the order is its tracking credential —
+        // keep it before session rotation swaps `token` to the next cart.
+        if (token) storeOrderToken(r.order.id, token);
+        return r.order;
+      }),
+    order: (id: string) => {
+      const bearer = readOrderTokens()[id] ?? token;
+      return apiFetch<{ order: Order }>(co(`/orders/${id}`), {
+        headers: bearer ? { authorization: `Bearer ${bearer}` } : {},
+      }).then((r) => r.order);
+    },
   };
 }
 

@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import { useCart, useCheckout, useKernel, useStore } from '@vendua/kernel';
+import { useCart, useCheckout, useStore } from '@vendua/kernel';
 import type { Order } from '@vendua/kernel';
 import { cents, ErrorPlate } from './_ui';
 
@@ -24,7 +24,6 @@ export function Fechar() {
   const { cart, mutations } = useCart();
   const { store } = useStore();
   const { submit } = useCheckout();
-  const { invalidate } = useKernel();
   const navigate = useNavigate();
 
   const [name, setName] = useState('');
@@ -41,20 +40,37 @@ export function Fechar() {
   const totals = cart?.totals;
 
   // Sync delivery choice into the server cart so the fee is Core-priced.
+  // Track it: a failed setDelivery leaves totals priced for the OLD bairro —
+  // block submit while a sync is in flight or errored (editing the field
+  // retries), and let the sequence guard ignore superseded responses.
+  const syncSeq = useRef(0);
+  const [deliverySync, setDeliverySync] = useState<'syncing' | 'ok' | 'error'>('ok');
   useEffect(() => {
     if (!items.length) return;
     if (mode === 'delivery' && !bairro.trim()) return;
     setErr(undefined);
+    const seq = ++syncSeq.current;
+    setDeliverySync('syncing');
     clearTimeout(debounce.current);
     debounce.current = setTimeout(() => {
       void mutations
         .setDelivery(mode === 'pickup' ? { mode } : { mode, neighborhood: bairro.trim() })
-        .catch(() => {});
+        .then(() => {
+          if (seq === syncSeq.current) setDeliverySync('ok');
+        })
+        .catch(() => {
+          if (seq !== syncSeq.current) return;
+          setDeliverySync('error');
+          setErr({
+            code: 'DELIVERY_SYNC',
+            message: 'Não conseguimos confirmar a entrega nesse bairro — ajuste para tentar de novo.',
+          });
+        });
     }, 350);
     return () => clearTimeout(debounce.current);
   }, [mode, bairro, items.length, mutations]);
 
-  const canSubmit = items.length > 0 && !pending;
+  const canSubmit = items.length > 0 && !pending && deliverySync === 'ok';
 
   const onSubmit = async () => {
     if (!canSubmit) return;
@@ -69,10 +85,8 @@ export function Fechar() {
             : { mode, neighborhood: bairro.trim(), address: address.trim() },
         payment: { method: pay },
       });
-      // Core marked the cart completed; the session token stays pinned to it
-      // (kernel exposes no reset — a second add 404s with CART_NOT_FOUND and
-      // the ErrorPlate surfaces that honestly until the tab is reloaded).
-      invalidate('cart');
+      // submit() already invalidates 'cart' — the completed cart drops out
+      // of the badge without storefront plumbing.
       navigate(`/pedido/${order.id}`, { state: { order } });
     } catch (e) {
       setErr(e as { code: string; message: string; details?: Record<string, unknown> });
