@@ -1,4 +1,5 @@
-import { Hono } from 'hono';
+import { Hono, type Context } from 'hono';
+import { getCookie, setCookie } from 'hono/cookie';
 import { cors } from 'hono/cors';
 import type { Sql } from './platform/db.ts';
 import { withTenant } from './platform/db.ts';
@@ -23,6 +24,18 @@ import { composeNotices, type SurfacesEnvelope } from './modules/notices.ts';
 import { addItem, assertCartOpen, loadCartView, matchZone } from './modules/cart.ts';
 import { validateCheckout, validateCheckoutShape } from './modules/checkout.ts';
 import { loadOrderView } from './modules/orders.ts';
+import {
+  appendNote,
+  createLead,
+  getLead,
+  leadInsert,
+  leadJson,
+  leadPatch,
+  leadState,
+  listLeads,
+  updateLead,
+} from './modules/leads.ts';
+import { boardHtml } from './modules/board.ts';
 import { LOADER_JS } from './loader.ts';
 
 export interface AppDeps {
@@ -490,10 +503,22 @@ export function createApp({ sql, sessionSecret }: AppDeps) {
   // Internal surface — shared-secret gated even in dev (public otherwise:
   // it answers for arbitrary tenant slugs). Prod binds it to mTLS/private
   // network on top of this.
+  //
+  // The gate: the X-Vendua-Control header is the canonical credential. The
+  // `vendua_control` cookie — minted by GET /control/v1/board?key= — is a
+  // staff convenience so the board page can call this API from the browser:
+  // same secret, no new credential surface. 404 (not 401) keeps the surface
+  // invisible to scans.
+  const CONTROL_COOKIE = 'vendua_control';
+  const controlGate = (c: Context) => {
+    const ok =
+      c.req.header('x-vendua-control') === sessionSecret ||
+      getCookie(c, CONTROL_COOKIE) === sessionSecret;
+    if (!ok) throw new HttpError(404, 'NOT_FOUND', 'not found');
+  };
+
   app.get('/control/v1/state', async (c) => {
-    if (c.req.header('x-vendua-control') !== sessionSecret) {
-      throw new HttpError(404, 'NOT_FOUND', 'not found');
-    }
+    controlGate(c);
     const slug = str(c.req.query('tenant'), 'tenant', 200);
     const tenant = await resolver.resolveBySlug(slug);
     if (!tenant) throw new HttpError(404, 'TENANT_NOT_FOUND', 'tenant not found');
@@ -508,6 +533,62 @@ export function createApp({ sql, sessionSecret }: AppDeps) {
       },
       notices: notices.filter((n) => n.severity === 'blocking'),
     });
+  });
+
+  // Founder CRM v0 (docs/roadmap.md, Phase 1) — Venduá's own intake pipeline.
+  // Platform data, no tenant context; the gate above is the only boundary.
+  app.get('/control/v1/leads', async (c) => {
+    controlGate(c);
+    const q = c.req.query('state');
+    const rows = await listLeads(sql, q === undefined ? undefined : leadState(q));
+    return c.json({ leads: rows.map(leadJson) });
+  });
+
+  app.post('/control/v1/leads', async (c) => {
+    controlGate(c);
+    const lead = await createLead(sql, leadInsert(await bodyJson(c)));
+    return c.json({ lead: leadJson(lead) }, 201);
+  });
+
+  app.get('/control/v1/leads/:id', async (c) => {
+    controlGate(c);
+    const lead = await getLead(sql, uuidParam(c, 'id'));
+    if (!lead) throw new HttpError(404, 'LEAD_NOT_FOUND', 'lead not found');
+    return c.json({ lead: leadJson(lead) });
+  });
+
+  app.patch('/control/v1/leads/:id', async (c) => {
+    controlGate(c);
+    const lead = await updateLead(sql, uuidParam(c, 'id'), leadPatch(await bodyJson(c)));
+    if (!lead) throw new HttpError(404, 'LEAD_NOT_FOUND', 'lead not found');
+    return c.json({ lead: leadJson(lead) });
+  });
+
+  app.post('/control/v1/leads/:id/notes', async (c) => {
+    controlGate(c);
+    const body = str((await bodyJson(c)).body, 'body', 2000).trim();
+    if (!body) throw new HttpError(422, 'BAD_REQUEST', 'body is required', { field: 'body' });
+    const lead = await appendNote(sql, uuidParam(c, 'id'), body);
+    if (!lead) throw new HttpError(404, 'LEAD_NOT_FOUND', 'lead not found');
+    return c.json({ lead: leadJson(lead) });
+  });
+
+  // The staff board itself. ?key=<secret> mints the HttpOnly cookie and
+  // redirects to the clean URL so the secret doesn't sit in browser history
+  // or a bookmark; after that the cookie alone opens this page and its API.
+  app.get('/control/v1/board', (c) => {
+    const key = c.req.query('key');
+    if (key !== undefined) {
+      if (key !== sessionSecret) throw new HttpError(404, 'NOT_FOUND', 'not found');
+      setCookie(c, CONTROL_COOKIE, sessionSecret, {
+        httpOnly: true,
+        sameSite: 'Lax',
+        path: '/control',
+      });
+      return c.redirect('/control/v1/board');
+    }
+    controlGate(c);
+    return c.html(boardHtml());
   });
 
   app.route('/storefront/v1', storefront);
