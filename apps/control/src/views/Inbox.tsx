@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
-import { Bot, Send } from 'lucide-react';
+import { ArrowLeft, Bot, Send } from 'lucide-react';
 import { api, type ThreadItem, type ThreadView } from '../api.ts';
 import { Avatar, Empty, Page, StateChip, rel } from '../components.tsx';
 
@@ -50,7 +50,8 @@ export default function InboxView() {
 
   return (
     <Page title="Inbox">
-      <div className="inbox card" style={{ overflow: 'hidden' }}>
+      {/* has-thread drives the mobile master/detail fold in styles.css */}
+      <div className={`inbox card${threadId ? ' has-thread' : ''}`} style={{ overflow: 'hidden' }}>
         <div className="thread-list">
           <div
             style={{ padding: 10, borderBottom: '1px solid var(--line)', display: 'flex', gap: 6 }}
@@ -112,6 +113,13 @@ export default function InboxView() {
         ) : (
           <div className="thread-view">
             <div className="thread-head">
+              <button
+                className="btn ghost m-back"
+                onClick={() => nav('/inbox')}
+                aria-label="voltar para a lista"
+              >
+                <ArrowLeft size={16} />
+              </button>
               <Avatar name={view.lead.name} lg />
               <div style={{ minWidth: 0 }}>
                 <Link to={`/leads/${view.thread.leadId}`}>

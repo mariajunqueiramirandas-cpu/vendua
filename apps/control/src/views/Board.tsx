@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { ArrowUpRight } from 'lucide-react';
 import { api, type LeadListItem } from '../api.ts';
@@ -34,14 +34,38 @@ export default function BoardView() {
   }, []);
   useEffect(load, [load]);
 
+  // Refs, not state: in-flight checks must be synchronous — a move that lands
+  // between the chain ending and a state flush would queue a write nothing
+  // drains, silently diverging the board from the server.
+  const inflightMoves = useRef(new Set<string>());
+  const queuedMoves = useRef(new Map<string, LeadListItem['state']>());
+
   const move = async (lead: LeadListItem, state: LeadListItem['state']) => {
     if (lead.state === state) return;
     // Optimistic: the column swap is immediate; a failure snaps it back.
     setLeads((ls) => ls.map((l) => (l.id === lead.id ? { ...l, state } : l)));
+    // A PATCH is in flight for this lead — fire-and-forget would let a slow
+    // earlier write overwrite the newer stage. Queue the latest target; the
+    // in-flight chain drains it in order.
+    if (inflightMoves.current.has(lead.id)) {
+      queuedMoves.current.set(lead.id, state);
+      return;
+    }
+    inflightMoves.current.add(lead.id);
     try {
-      await api.patchLead(lead.id, { state });
+      let target: LeadListItem['state'] | undefined = state;
+      while (target !== undefined) {
+        await api.patchLead(lead.id, { state: target });
+        target = queuedMoves.current.get(lead.id);
+        queuedMoves.current.delete(lead.id);
+      }
     } catch {
+      // drop the pending target — the reload restores server truth and a
+      // stale queue would otherwise leak into the next chain
+      queuedMoves.current.delete(lead.id);
       load();
+    } finally {
+      inflightMoves.current.delete(lead.id);
     }
   };
 
@@ -125,6 +149,24 @@ export default function BoardView() {
                     <span className="score" style={{ marginLeft: 'auto' }}>
                       {rel(l.lastActivityAt ?? l.updatedAt)}
                     </span>
+                    {/* touch can't HTML5-drag — the stage picker is the move affordance */}
+                    <select
+                      className="mv"
+                      value={l.state}
+                      title="mover para estágio"
+                      aria-label="mover para estágio"
+                      onClick={(e) => e.stopPropagation()}
+                      onChange={(e) => {
+                        e.stopPropagation();
+                        void move(l, e.target.value as LeadListItem['state']);
+                      }}
+                    >
+                      {COLS.map((c) => (
+                        <option key={c.key} value={c.key}>
+                          {c.label}
+                        </option>
+                      ))}
+                    </select>
                   </div>
                 </article>
               ))}

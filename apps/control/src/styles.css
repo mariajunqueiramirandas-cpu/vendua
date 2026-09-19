@@ -539,6 +539,8 @@ input[type='checkbox'] {
   flex-shrink: 0;
 }
 .thread-row .last {
+  /* block, not inline — overflow/ellipsis are no-ops on inline elements */
+  display: block;
   color: var(--muted);
   font-size: var(--t-xs);
   overflow: hidden;
@@ -761,7 +763,7 @@ input[type='checkbox'] {
   color: var(--cream-100);
 }
 .login form {
-  width: 320px;
+  width: min(320px, 88vw);
   display: flex;
   flex-direction: column;
   gap: 12px;
@@ -896,7 +898,7 @@ input[type='checkbox'] {
 }
 @media (max-width: 1080px) {
   .set-grid {
-    grid-template-columns: 1fr;
+    grid-template-columns: minmax(0, 1fr);
   }
 }
 .set-sec {
@@ -1456,5 +1458,337 @@ details.raw textarea {
   }
   50% {
     opacity: 1;
+  }
+}
+
+/* ---------- phone / touch ---------- */
+
+/* base states the media queries flip: tab bar only exists on narrow shells,
+   the kanban move-select and the inbox back button only on coarse pointers */
+.tabbar {
+  display: none;
+}
+.m-back,
+.lead-card .mv {
+  display: none;
+}
+
+@keyframes sheet-up {
+  from {
+    transform: translateY(40px);
+    opacity: 0.4;
+  }
+}
+
+/* any-pointer so touchscreen laptops keep the affordances when touched */
+@media (any-pointer: coarse) {
+  .btn {
+    min-height: 40px;
+    padding: 9px 14px;
+  }
+  .btn.ghost {
+    padding: 9px 10px;
+  }
+  .seg button {
+    padding: 7px 14px;
+  }
+  .tgl .tk {
+    width: 38px;
+    height: 21px;
+  }
+  .tgl .tk::after {
+    width: 15px;
+    height: 15px;
+  }
+  .tgl input:checked + .tk::after {
+    transform: translateX(17px);
+  }
+  .lead-card .open {
+    opacity: 1;
+  }
+  .lead-card .mv {
+    display: block;
+    margin-left: auto;
+    max-width: 122px;
+    padding: 5px 6px;
+    font-size: var(--t-xs);
+    border-radius: var(--r-sm);
+    border: 1px solid var(--line);
+    background: var(--surface);
+    color: var(--muted);
+  }
+}
+
+@media (max-width: 760px) {
+  /* shell: rail → bottom tab bar; height tracks the live viewport so the
+     iOS URL bar can't push the composer offscreen */
+  .shell {
+    flex-direction: column;
+    height: 100%;
+    height: 100dvh;
+  }
+  .rail {
+    display: none;
+  }
+  .main {
+    min-height: 0;
+    /* landscape cutouts: keep topbar/content inside the safe rect */
+    padding-inline: env(safe-area-inset-left, 0px) env(safe-area-inset-right, 0px);
+  }
+  .topbar {
+    padding: 10px 14px;
+    gap: 6px 12px;
+    flex-wrap: wrap;
+  }
+  .topbar h1 {
+    font-size: var(--t-xl);
+  }
+  .content {
+    padding: 12px;
+  }
+
+  /* keyboard hints are noise on glass (except inside the help modal) */
+  .kbd {
+    display: none;
+  }
+  .m-card .kbd {
+    display: inline;
+  }
+
+  /* iOS auto-zooms on focus when inputs render under 16px */
+  input,
+  select,
+  textarea {
+    font-size: 16px;
+    padding: 9px 12px;
+    /* let flex/grid rows shrink below the ~170px min-content width
+       that inputs otherwise force at 320px */
+    min-width: 0;
+  }
+  input[type='checkbox'] {
+    width: 18px;
+    height: 18px;
+    padding: 0;
+  }
+
+  /* ---------- tab bar ---------- */
+  .tabbar {
+    display: flex;
+    flex-shrink: 0;
+    background: var(--rail);
+    color: var(--rail-muted);
+    border-top: 1px solid var(--night-700);
+    padding-bottom: env(safe-area-inset-bottom, 0px);
+    padding-inline: env(safe-area-inset-left, 0px) env(safe-area-inset-right, 0px);
+  }
+  .tab {
+    position: relative;
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 3px;
+    padding: 9px 0 7px;
+    border: 0;
+    border-top: 2px solid transparent;
+    background: transparent;
+    color: var(--rail-muted);
+    font-size: 10px;
+    letter-spacing: 0.03em;
+  }
+  .tab svg {
+    width: 19px;
+    height: 19px;
+  }
+  .tab.active {
+    color: var(--cream-50);
+    border-top-color: var(--lime-300);
+  }
+  .tab .nb {
+    position: absolute;
+    top: 3px;
+    left: calc(50% + 5px);
+    background: var(--amber-400);
+    color: var(--night-900);
+    font-family: var(--font-mono);
+    font-size: 10px;
+    font-weight: 600;
+    min-width: 16px;
+    height: 16px;
+    border-radius: 999px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    padding: 0 4px;
+  }
+
+  /* "menu" — the rest of the rail as a slide-up sheet */
+  .scrim.sheet {
+    align-items: end;
+    justify-items: stretch;
+    padding-inline: env(safe-area-inset-left, 0px) env(safe-area-inset-right, 0px);
+  }
+  .msheet {
+    background: var(--rail);
+    color: var(--rail-ink);
+    border-radius: 16px 16px 0 0;
+    padding: 6px 14px calc(16px + env(safe-area-inset-bottom, 0px));
+    box-shadow: 0 -20px 60px color-mix(in srgb, var(--night-950) 40%, transparent);
+    animation: sheet-up 180ms cubic-bezier(0.3, 0, 0.2, 1);
+    max-height: 78vh;
+    overflow: auto;
+  }
+  .msheet-grip {
+    width: 38px;
+    height: 4px;
+    border-radius: 999px;
+    background: var(--night-700);
+    margin: 4px auto 10px;
+  }
+  .msheet .nav-item {
+    padding: 11px 10px;
+    font-size: var(--t-base);
+    border-radius: var(--r-md);
+  }
+  .msheet .rail-foot {
+    border-top-color: var(--night-700);
+    margin-top: 8px;
+  }
+
+  /* ---------- tables → stacked card rows ---------- */
+  .tbl,
+  .tbl tbody {
+    display: block;
+  }
+  .tbl thead {
+    display: none;
+  }
+  .tbl tr {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 5px 14px;
+    padding: 11px 12px;
+    border-bottom: 1px solid var(--line);
+    min-height: 44px;
+  }
+  .tbl td {
+    border: 0;
+    padding: 0;
+    min-width: 0;
+    overflow-wrap: anywhere;
+  }
+  .tbl tr.tgroup {
+    display: block;
+    min-height: 0;
+    padding: 0;
+  }
+  .tbl tr.tgroup td {
+    display: block;
+  }
+
+  .toolbar input[type='search'] {
+    min-width: 0;
+    flex: 1 1 100%;
+  }
+  .toolbar select {
+    flex: 1 1 0;
+    min-width: 0;
+  }
+
+  /* ---------- board: snap-scroll columns, one near-full screen wide ---------- */
+  .board {
+    overflow-x: auto;
+    scroll-snap-type: x mandatory;
+    align-items: flex-start;
+    padding-bottom: 10px;
+    min-height: 0;
+  }
+  .board-col {
+    flex: 0 0 78%;
+    min-width: 0;
+    scroll-snap-align: start;
+  }
+  .lead-card .open {
+    opacity: 1;
+  }
+
+  /* ---------- inbox: list or thread, one pane at a time ---------- */
+  .inbox {
+    grid-template-columns: 1fr;
+  }
+  .inbox.has-thread .thread-list {
+    display: none;
+  }
+  .inbox:not(.has-thread) > :not(.thread-list) {
+    display: none;
+  }
+  .thread-head {
+    padding: 10px 12px;
+    gap: 8px;
+    flex-wrap: wrap;
+  }
+  .m-back {
+    display: inline-flex;
+    padding-left: 6px;
+    padding-right: 6px;
+  }
+  .thread-msgs {
+    padding: 12px;
+  }
+  .msg {
+    max-width: 86%;
+  }
+  .composer {
+    padding: 10px 12px;
+    flex-wrap: wrap;
+    justify-content: flex-end;
+  }
+  .composer textarea {
+    flex: 1 1 100%;
+  }
+  .thread-list select {
+    max-width: 118px;
+  }
+  .lst-add {
+    flex-wrap: wrap;
+  }
+
+  /* ---------- grids collapse ---------- */
+  .grid2,
+  .grid3 {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .seg {
+    flex-wrap: wrap;
+    border-radius: var(--r-md);
+  }
+  .drv {
+    padding: 12px 13px 12px 15px;
+  }
+  .drv .actions {
+    flex-wrap: wrap;
+  }
+  .stat {
+    padding: 12px;
+  }
+  .funnel {
+    height: 140px;
+  }
+
+  /* ---------- overlays go full-screen ---------- */
+  .drawer {
+    width: 100%;
+    max-width: 100%;
+    border-left: 0;
+    animation: sheet-up 180ms cubic-bezier(0.3, 0, 0.2, 1);
+    padding-inline: env(safe-area-inset-left, 0px) env(safe-area-inset-right, 0px);
+  }
+  .m-card {
+    width: min(360px, 92vw);
+  }
+
+  .wa-pairrow {
+    flex-wrap: wrap;
   }
 }
