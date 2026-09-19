@@ -28,13 +28,26 @@ export default function Approvals() {
     // Edit = create the replacement draft first, then reject the original —
     // if compose fails the original draft survives and nothing is lost.
     // The audit trail keeps both versions.
+    let replacement: string;
     try {
-      await api.sendThreadMessage(d.threadId, editBody, false);
+      const res = await api.sendThreadMessage(d.threadId, editBody, false);
+      replacement = res.message.id;
     } catch {
       setResults((r) => ({ ...r, [d.id]: 'falhou ao criar rascunho editado — original mantido' }));
       return;
     }
     await api.reject(d.id);
+    // "salvar + aprovar" means the edited version goes out — approve the
+    // replacement, not just leave it pending for a second pass.
+    try {
+      const res = await api.approve(replacement);
+      setResults((r) => ({
+        ...r,
+        [d.id]: res.sent.ok ? 'enviado (editado)' : `salvo, falhou ao enviar: ${res.sent.reason}`,
+      }));
+    } catch {
+      setResults((r) => ({ ...r, [d.id]: 'salvo como rascunho — aprove na fila' }));
+    }
     setEditing(null);
     load();
   };

@@ -13,7 +13,14 @@ interface BaileysSocket {
   sendMessage(jid: string, content: { text: string }): Promise<{ key?: { id?: string } }>;
   end(err?: Error): void;
   ev: {
-    on(event: 'connection.update', cb: (u: { connection?: string; qr?: string }) => void): void;
+    on(
+      event: 'connection.update',
+      cb: (u: {
+        connection?: string;
+        qr?: string;
+        lastDisconnect?: { error?: { output?: { statusCode?: number } } };
+      }) => void,
+    ): void;
     on(event: 'creds.update', cb: () => void): void;
     on(
       event: 'messages.upsert',
@@ -30,6 +37,13 @@ interface BaileysSocket {
 
 let socket: BaileysSocket | null = null;
 let starting: Promise<BaileysSocket> | null = null;
+/** identity of the integration that opened `socket` — config changes must
+ *  close it, not keep sending through the old account. */
+let socketFingerprint: string | null = null;
+
+function fingerprintOf(integration: IntegrationRow): string {
+  return `${integration.id}:${(integration.config.accountId as string) ?? 'default'}:${integration.updated_at}`;
+}
 
 type MessageHandler = (jid: string, text: string, providerId: string | null) => Promise<void>;
 
@@ -127,16 +141,35 @@ async function startSocket(sql: Sql, integration: IntegrationRow): Promise<Baile
     if (u.connection === 'close') {
       socket = null;
       starting = null;
+      socketFingerprint = null;
+      // Baileys 401 = logged out — nothing to reconnect to until re-paired.
+      // Otherwise the stream dropped: restart inbound delivery instead of
+      // staying offline until an outbound send happens to reopen it.
+      const loggedOut = u.lastDisconnect?.error?.output?.statusCode === 401;
+      if (!loggedOut) {
+        setTimeout(() => {
+          void ensureSocket(sql, integration).catch((e) =>
+            console.error('[whatsapp] reconnect failed', e),
+          );
+        }, 5_000);
+      }
     }
   });
   sock.ev.on('messages.upsert', ({ type, messages }) => {
     if (type !== 'notify') return;
     for (const m of messages) {
-      if (m.key?.fromMe || !m.key?.remoteJid) continue;
+      const key = m.key;
+      const jid = key?.remoteJid;
+      // Only direct chats — group (@g.us) and broadcast JIDs would mint leads
+      // for every participant and reply into the group.
+      if (!key || key.fromMe || !jid || !jid.endsWith('@s.whatsapp.net')) continue;
+      // No provider id = nothing to dedupe a retry on — skip rather than
+      // insert a message we may see again.
+      if (!key.id) continue;
       const text = extractText(m.message);
       if (!text) continue;
       for (const fn of handlers) {
-        void fn(m.key.remoteJid, text, m.key.id ?? null);
+        void fn(jid, text, key.id);
       }
     }
   });
@@ -166,12 +199,28 @@ export async function ensureSocket(
   sql: Sql,
   integration: IntegrationRow | null,
 ): Promise<BaileysSocket | null> {
-  if (!integration || integration.driver !== 'baileys' || !integration.enabled) return null;
+  const wanted =
+    integration && integration.driver === 'baileys' && integration.enabled
+      ? fingerprintOf(integration)
+      : null;
+  // Config changed or driver disabled — the live socket belongs to the old
+  // config; close it instead of silently sending through the stale account.
+  if (socket && socketFingerprint !== wanted) {
+    try {
+      socket.end();
+    } catch {
+      /* closing a dead socket */
+    }
+    socket = null;
+    socketFingerprint = null;
+  }
+  if (!wanted) return null;
   if (socket) return socket;
   if (!starting) {
-    starting = startSocket(sql, integration).then(
+    starting = startSocket(sql, integration!).then(
       (s) => {
         socket = s;
+        socketFingerprint = wanted;
         starting = null;
         return s;
       },

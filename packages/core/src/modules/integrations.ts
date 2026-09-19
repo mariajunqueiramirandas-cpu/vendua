@@ -16,7 +16,7 @@ export type IntegrationKind = (typeof INTEGRATION_KINDS)[number];
  *  driver registry agree on names. */
 export const DRIVERS: Record<IntegrationKind, readonly string[]> = {
   llm: ['openrouter', 'anthropic', 'openai', 'mock'],
-  email: ['resend', 'smtp', 'log'],
+  email: ['resend', 'log'],
   whatsapp: ['baileys', 'log'],
   discovery: ['tinyfish', 'mock'],
 };
@@ -214,6 +214,89 @@ export async function getGuardrails(sql: Sql): Promise<Guardrails> {
 export async function getPitch(sql: Sql): Promise<Pitch> {
   const stored = await getSetting(sql, 'pitch', {} as Partial<Pitch>);
   return { ...DEFAULT_PITCH, ...stored };
+}
+
+/** Write-time validation for the settings the safety layer reads — a
+ *  malformed guardrails object must never silently disable the caps.
+ *  Unknown keys pass through (settings is a schemaless store), but the three
+ *  keys the agent depends on get their shape checked. */
+export function validateSetting(key: string, value: unknown): void {
+  const bad = (field: string, why: string) =>
+    new HttpError(422, 'BAD_REQUEST', `settings.${key}.${field} ${why}`, { field });
+
+  if (key === 'guardrails') {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) {
+      throw bad('*', 'must be an object');
+    }
+    const v = value as Record<string, unknown>;
+    const intField = (k: keyof Guardrails, min: number, max: number) => {
+      if (v[k] === undefined) return;
+      const n = v[k];
+      if (typeof n !== 'number' || !Number.isInteger(n) || n < min || n > max) {
+        throw bad(k, `must be an integer in [${min}, ${max}]`);
+      }
+    };
+    intField('maxOutboundPerLeadPerDay', 1, 100);
+    intField('discoveryMaxLeads', 1, 1000);
+    for (const k of ['quietStart', 'quietEnd'] as const) {
+      if (v[k] === undefined) continue;
+      const t = v[k];
+      if (
+        typeof t !== 'string' ||
+        !/^([01]\d|2[0-3]):[0-5]\d$/.test(t)
+      ) {
+        throw bad(k, 'must be HH:MM (00:00–23:59)');
+      }
+    }
+    if (v.timezone !== undefined) {
+      const tz = v.timezone;
+      if (typeof tz !== 'string' || !tz.trim() || tz.length > 80) {
+        throw bad('timezone', 'must be an IANA name');
+      }
+      try {
+        new Intl.DateTimeFormat('en', { timeZone: tz });
+      } catch {
+        throw bad('timezone', `unknown IANA timezone '${tz}'`);
+      }
+    }
+    if (v.firstContactDraftOnly !== undefined && typeof v.firstContactDraftOnly !== 'boolean') {
+      throw bad('firstContactDraftOnly', 'must be a boolean');
+    }
+    return;
+  }
+
+  if (key === 'pitch') {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) {
+      throw bad('*', 'must be an object');
+    }
+    const v = value as Record<string, unknown>;
+    for (const k of ['product', 'audience', 'tone', 'offerRange', 'goal'] as const) {
+      if (v[k] === undefined) continue;
+      if (typeof v[k] !== 'string' || (v[k] as string).length > 4000) {
+        throw bad(k, 'must be a string (≤4000 chars)');
+      }
+    }
+    if (v.hardRules !== undefined) {
+      if (
+        !Array.isArray(v.hardRules) ||
+        v.hardRules.length > 50 ||
+        v.hardRules.some((r) => typeof r !== 'string' || r.length > 500)
+      ) {
+        throw bad('hardRules', 'must be an array of ≤50 strings (≤500 chars each)');
+      }
+    }
+    return;
+  }
+
+  if (key === 'agent_memory') {
+    const v = value as { facts?: unknown } | null;
+    if (!v || typeof v !== 'object' || !Array.isArray(v.facts)) {
+      throw bad('facts', 'must be { facts: string[] }');
+    }
+    if (v.facts.length > 100 || v.facts.some((f) => typeof f !== 'string' || f.length > 500)) {
+      throw bad('facts', 'must be ≤100 strings of ≤500 chars');
+    }
+  }
 }
 
 export async function putSetting(

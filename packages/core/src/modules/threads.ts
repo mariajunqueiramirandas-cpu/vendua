@@ -490,14 +490,14 @@ export async function markMessageSent(
 ): Promise<void> {
   await tx`
     update lead_messages
-    set status = 'sent', provider_message_id = ${providerMessageId}
-    where id = ${messageId} and status = 'queued'
+    set status = 'sent', provider_message_id = ${providerMessageId}, updated_at = now()
+    where id = ${messageId} and status in ('queued', 'sending')
   `;
 }
 
 export async function markMessageFailed(tx: Sql, messageId: string, reason: string): Promise<void> {
   await tx`
-    update lead_messages set status = 'failed',
+    update lead_messages set status = 'failed', updated_at = now(),
       provider_message_id = coalesce(provider_message_id, ${`failed:${reason.slice(0, 120)}`})
     where id = ${messageId}
   `;

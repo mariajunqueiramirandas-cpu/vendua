@@ -78,6 +78,27 @@ function tinyfish(integration: IntegrationRow): DiscoveryProvider {
       if (target.protocol !== 'http:' && target.protocol !== 'https:') {
         throw new Error(`tinyfish extract: unsupported url scheme ${target.protocol}`);
       }
+      // The provider fetches the page, not us — but an agent-controlled URL
+      // should still never name an internal or loopback host.
+      const host = target.hostname.toLowerCase().replace(/^\[|\]$/g, '');
+      const privateHost =
+        host === 'localhost' ||
+        host === '::1' ||
+        host === '0.0.0.0' ||
+        host === '169.254.169.254' ||
+        host.endsWith('.local') ||
+        host.endsWith('.internal') ||
+        /^127\./.test(host) ||
+        /^10\./.test(host) ||
+        /^192\.168\./.test(host) ||
+        /^169\.254\./.test(host) ||
+        /^172\.(1[6-9]|2\d|3[01])\./.test(host) ||
+        // hex/octal/long-int hosts that resolve to loopback-adjacent IPs
+        /^0x/i.test(host) ||
+        /^\d+$/.test(host);
+      if (privateHost) {
+        throw new Error(`tinyfish extract: private/internal target not allowed: ${host}`);
+      }
       // Synchronous /run blocks until the automation completes — the right
       // fit inside a discovery run's extract loop (run-async would need a
       // separate poller for GET /v1/runs/{id}).

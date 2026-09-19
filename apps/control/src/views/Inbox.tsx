@@ -22,9 +22,18 @@ export default function InboxView() {
       .then((r) => setThreads(r.threads));
   }, [chan, q]);
 
+  const reqSeq = useRef(0);
   const loadThread = useCallback(() => {
-    if (!threadId) return;
+    if (!threadId) {
+      setView(null);
+      return;
+    }
+    const req = ++reqSeq.current;
     api.thread(threadId).then((v) => {
+      // Drop stale responses — a slower earlier request must never paint
+      // over the thread the URL now names (composer would send to threadId
+      // while the screen shows another conversation).
+      if (req !== reqSeq.current || v.thread.id !== threadId) return;
       setView(v);
       setTimeout(() => endRef.current?.scrollIntoView({ behavior: 'smooth' }), 30);
     });
@@ -32,8 +41,9 @@ export default function InboxView() {
   useEffect(loadThread, [loadThread]);
 
   const send = async (asDraft: boolean) => {
-    if (!threadId || !draft.trim()) return;
-    await api.sendThreadMessage(threadId, draft, !asDraft);
+    const target = view?.thread.id;
+    if (!target || target !== threadId || !draft.trim()) return;
+    await api.sendThreadMessage(target, draft, !asDraft);
     setDraft('');
     loadThread();
   };

@@ -641,7 +641,10 @@ export async function exportLeadsCsv(sql: Sql): Promise<string> {
 }
 
 /** Header aliases — accepts our own export plus the obvious pt-BR dump. */
-const CSV_HEADER_MAP: Record<string, keyof typeof LEAD_TEXT_FIELDS | 'dealValueCents'> = {
+const CSV_HEADER_MAP: Record<
+  string,
+  keyof typeof LEAD_TEXT_FIELDS | 'dealValueCents' | 'state' | 'tags'
+> = {
   name: 'name',
   nome: 'name',
   businessname: 'businessName',
@@ -668,6 +671,13 @@ const CSV_HEADER_MAP: Record<string, keyof typeof LEAD_TEXT_FIELDS | 'dealValueC
   origem: 'source',
   dealvaluecents: 'dealValueCents',
   valor: 'dealValueCents',
+  state: 'state',
+  estado: 'state',
+  estagio: 'state',
+  estágio: 'state',
+  stage: 'state',
+  tags: 'tags',
+  etiquetas: 'tags',
 };
 
 /** Minimal RFC-4180 CSV parse: quoted cells, doubled quotes, CRLF, `;`
@@ -717,7 +727,11 @@ export function parseLeadsCsv(text: string): {
     const out: Record<string, unknown> = {};
     rec.forEach((v, j) => {
       const field = cols[j];
-      if (field && v.trim() !== '') out[field] = v.trim();
+      if (!field || v.trim() === '') return;
+      // Our own export joins tags with ';' — split back so the round trip
+      // preserves them instead of writing one giant tag.
+      out[field] =
+        field === 'tags' ? v.split(/[;|]/).map((t) => t.trim()).filter(Boolean) : v.trim();
     });
     if (!out.name) skipped.push({ line: i + 2, reason: 'sem nome' });
     else rows.push(out);
@@ -745,6 +759,7 @@ export async function importLeads(
       }
       const email = fields.email as string | null;
       const phone = fields.phone as string | null;
+      const whatsapp = fields.whatsapp as string | null;
       const instagram = fields.instagram as string | null;
       const dup = await tx<{ id: string }[]>`
         select id from leads where archived_at is null and (
@@ -752,6 +767,9 @@ export async function importLeads(
           or (${phone} is not null
               and length(regexp_replace(${phone}, '\\D', '', 'g')) >= 6
               and regexp_replace(coalesce(phone, ''), '\\D', '', 'g') = regexp_replace(${phone}, '\\D', '', 'g'))
+          or (${whatsapp} is not null
+              and length(regexp_replace(${whatsapp}, '\\D', '', 'g')) >= 6
+              and regexp_replace(coalesce(whatsapp, ''), '\\D', '', 'g') = regexp_replace(${whatsapp}, '\\D', '', 'g'))
           or (${instagram} is not null and lower(trim(instagram)) = lower(trim(${instagram})))
         ) limit 1
       `;

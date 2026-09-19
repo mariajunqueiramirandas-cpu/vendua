@@ -1,10 +1,10 @@
 import type { Sql } from '../platform/db.ts';
 import { HttpError } from '../platform/http.ts';
 import type { AgentTool } from './llm.ts';
-import { controlTx } from '../modules/control.ts';
+import { claimControl, controlTx } from '../modules/control.ts';
 import {
-  createLead,
   getLeadDetail,
+  insertLeadTx,
   leadInsert,
   leadPatch,
   listLeads,
@@ -14,7 +14,6 @@ import { addActivity, createTask } from '../modules/activities.ts';
 import { composeMessage, composeMessageTx, setThreadAgent, channel } from '../modules/threads.ts';
 import {
   DEFAULT_GUARDRAILS,
-  getSetting,
   getSettingTx,
   type Guardrails,
 } from '../modules/integrations.ts';
@@ -280,7 +279,35 @@ export async function executeTool(
       if (ctx.runKind === 'discovery' && payload.discoveredVia === undefined) {
         payload.discoveredVia = 'agente';
       }
-      const res = await createLead(sql, leadInsert(payload), key);
+      const input = leadInsert(payload);
+      const res = await claimControl(sql, key, async (tx) => {
+        if (ctx.runKind === 'discovery') {
+          // Hard cap, enforced in code the prompt can't talk away: each
+          // create_lead claims `agent:{runId}:…:create_lead:{callId}`, so
+          // counting this run's claims under a per-run advisory lock — inside
+          // the same tx as the insert — makes the cap transactional (batched
+          // tool calls in one step can't slip past it).
+          await tx`select pg_advisory_xact_lock(hashtext(${`discovery-cap:${ctx.runId}`}))`;
+          const g = await getSettingTx<Partial<Guardrails>>(tx, 'guardrails', {});
+          const cap = g.discoveryMaxLeads ?? DEFAULT_GUARDRAILS.discoveryMaxLeads;
+          const n =
+            (
+              await tx<{ n: number }[]>`
+            select count(*)::int as n from control_idempotency_keys
+            where key like ${`agent:${ctx.runId}:%:create_lead:%`}
+          `
+            )[0]?.n ?? 0;
+          // n includes this call's own claim row (inserted before work ran).
+          if (n > cap) {
+            throw new HttpError(
+              409,
+              'DISCOVERY_CAP',
+              `discovery cap reached — max ${cap} leads per run`,
+            );
+          }
+        }
+        return insertLeadTx(tx, input);
+      });
       return res.body;
     }
     case 'update_lead': {
@@ -361,10 +388,28 @@ export async function executeTool(
     }
     case 'remember': {
       const fact = String(args.fact ?? '').slice(0, 500);
-      const memory = await getSetting<{ facts: string[] }>(sql, 'agent_memory', { facts: [] });
-      const facts = [...memory.facts.filter((f) => f !== fact), fact].slice(-40);
-      await claimlessPut(sql, 'agent_memory', { facts });
-      return { remembered: fact, total: facts.length };
+      // Row lock on the settings row makes the read-modify-write atomic —
+      // concurrent remembers serialize instead of clobbering each other.
+      const total = await controlTx(sql, async (tx) => {
+        await tx`
+          insert into control_settings (key, value)
+          values ('agent_memory', ${tx.json({ facts: [] } as never)})
+          on conflict (key) do nothing
+        `;
+        const rows = await tx<{ value: { facts?: unknown } }[]>`
+          select value from control_settings where key = 'agent_memory' for update
+        `;
+        const cur = Array.isArray(rows[0]?.value?.facts)
+          ? (rows[0]!.value.facts as string[])
+          : [];
+        const facts = [...cur.filter((f) => f !== fact), fact].slice(-40);
+        await tx`
+          update control_settings set value = ${tx.json({ facts } as never)}
+          where key = 'agent_memory'
+        `;
+        return facts.length;
+      });
+      return { remembered: fact, total };
     }
     case 'request_human': {
       const leadId = String(args.leadId);
@@ -392,12 +437,4 @@ export async function executeTool(
   }
 }
 
-async function claimlessPut(sql: Sql, key: string, value: unknown) {
-  await controlTx(
-    sql,
-    (tx) => tx`
-      insert into control_settings (key, value) values (${key}, ${tx.json(value as never)})
-      on conflict (key) do update set value = excluded.value
-    `,
-  );
-}
+

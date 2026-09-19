@@ -37,10 +37,29 @@ export async function dispatchMessage(
       >`select * from lead_threads where id = ${msg.thread_id}`
     )[0]!;
     const lead = (
-      await tx<{ id: string; name: string; email: string | null; whatsapp: string | null }[]>`
-        select id, name, email, whatsapp from leads where id = ${thread.lead_id}
+      await tx<
+        {
+          id: string;
+          name: string;
+          email: string | null;
+          whatsapp: string | null;
+          unsubscribed_at: string | null;
+        }[]
+      >`
+        select id, name, email, whatsapp, unsubscribed_at from leads where id = ${thread.lead_id}
       `
     )[0]!;
+    // Re-check opt-out at dispatch time — a draft approved after the lead
+    // unsubscribed must not leave the building.
+    if (lead.unsubscribed_at) {
+      await markMessageFailed(tx, messageId, 'lead unsubscribed');
+      return { ok: false, reason: 'lead unsubscribed' };
+    }
+
+    // Flip to 'sending' inside the lock before the provider call: a crash here
+    // leaves 'sending' (drain fails it past the lease), never 'queued' again —
+    // a retried mutation can never double-send.
+    await tx`update lead_messages set status = 'sending', updated_at = now() where id = ${messageId}`;
 
     try {
       if (thread.channel === 'email') {

@@ -72,11 +72,14 @@ create table if not exists lead_messages (
   author text not null check (author in ('staff', 'agent', 'lead', 'system')),
   body text not null,
   -- drafts wait in the Approvals queue; 'rejected' keeps the audit trail.
-  status text not null check (status in ('draft', 'queued', 'sent', 'delivered', 'received', 'failed', 'rejected')),
+  -- 'sending' = dispatch in flight: a crash between provider call and status
+  -- write lands here, never back in 'queued' — at-most-once delivery.
+  status text not null check (status in ('draft', 'queued', 'sending', 'sent', 'delivered', 'received', 'failed', 'rejected')),
   provider_message_id text,
   approved_by text,
   approved_at timestamptz,
-  created_at timestamptz not null default now()
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
 );
 create index if not exists lead_messages_thread_at on lead_messages (thread_id, created_at);
 create index if not exists lead_messages_pending_drafts on lead_messages (created_at) where status = 'draft';

@@ -171,6 +171,13 @@ export async function runOnce(sql: Sql): Promise<boolean> {
     messages.push({ role: 'user', content: context });
 
     for (let i = 0; i < MAX_STEPS; i++) {
+      // Heartbeat: `started_at` doubles as the reclaim lease in drain() —
+      // refreshing it every step means only a genuinely wedged run (no step in
+      // 10 min) gets requeued, never a live one mid-flight.
+      await controlTx(
+        sql,
+        (tx) => tx`update agent_runs set started_at = now() where id = ${run.id}`,
+      );
       const res = await provider.chat({ system, messages, tools });
       tokensIn += res.tokensIn;
       tokensOut += res.tokensOut;
@@ -245,6 +252,17 @@ export async function drain(sql: Sql, limit = 20): Promise<number> {
     (tx) => tx`
       update agent_runs set status = 'queued', started_at = null
       where status = 'running' and started_at < now() - make_interval(mins => ${RUN_LEASE_MIN})
+    `,
+  );
+  // 'sending' past the lease = worker died between provider call and status
+  // write. Fail it visibly — staff redrafts — instead of silently requeuing
+  // (at-most-once: the provider may already have accepted it).
+  await controlTx(
+    sql,
+    (tx) => tx`
+      update lead_messages set status = 'failed', updated_at = now(),
+        provider_message_id = coalesce(provider_message_id, 'failed:dispatch-interrupted')
+      where status = 'sending' and updated_at < now() - make_interval(mins => ${RUN_LEASE_MIN})
     `,
   );
   let ran = 0;

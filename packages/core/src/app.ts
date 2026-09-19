@@ -74,6 +74,7 @@ import {
   listSettings,
   putSetting,
   upsertIntegration,
+  validateSetting,
 } from './modules/integrations.ts';
 import { claimControl, controlTx } from './modules/control.ts';
 import { drain, insertRun } from './agent/runner.ts';
@@ -1040,12 +1041,9 @@ export function createApp({ sql, sessionSecret, controlSecret }: AppDeps) {
   app.put('/control/v1/settings/:key', async (c) => {
     controlGate(c);
     const body = await bodyJson(c);
-    const res = await putSetting(
-      sql,
-      str(c.req.param('key'), 'key', 80),
-      body.value,
-      requireIdemKey(c),
-    );
+    const key = str(c.req.param('key'), 'key', 80);
+    validateSetting(key, body.value);
+    const res = await putSetting(sql, key, body.value, requireIdemKey(c));
     if (res.replayed) c.header('x-idempotent-replay', 'true');
     return c.json(res.body);
   });
@@ -1150,6 +1148,14 @@ export function createApp({ sql, sessionSecret, controlSecret }: AppDeps) {
       throw new HttpError(422, 'BAD_REQUEST', 'channel must be email|whatsapp');
     }
     const body = await bodyJson(c);
+    // Providers deliver at-least-once: without a stable message id a retry
+    // would mint a second conversation and a second reply run. Require it.
+    const rawMsgId = body.messageId ?? body.message_id;
+    if (rawMsgId == null || String(rawMsgId).trim() === '') {
+      throw new HttpError(422, 'BAD_REQUEST', 'messageId is required for webhook dedupe', {
+        field: 'messageId',
+      });
+    }
     const res = await ingestInbound(sql, {
       channel: chan,
       from: str(body.from ?? body.sender, 'from', 200),
@@ -1158,9 +1164,7 @@ export function createApp({ sql, sessionSecret, controlSecret }: AppDeps) {
         : {}),
       ...(body.subject ? { subject: str(body.subject, 'subject', 300) } : {}),
       body: str(body.text ?? body.body ?? body.html, 'body', 8000),
-      ...(body.messageId || body.message_id
-        ? { providerMessageId: str(body.messageId ?? body.message_id, 'messageId', 200) }
-        : {}),
+      providerMessageId: str(rawMsgId, 'messageId', 200),
     });
     return c.json(res, 201);
   });
