@@ -89,7 +89,7 @@ touch it.
 
 ## Hard rules
 
-- Never commit, push, or open a PR unless the user explicitly asks.
+- Never commit, push, open a PR, or merge unless the user explicitly asks — or a governing contract authorizes it for the task (e.g. `roadmap-executor` under `auto` policy merges its own PR once its gate passes).
 - Never run destructive commands (rm -rf, git reset --hard, dropping data)
   without explicit confirmation.
 - Never fabricate: no unverified claims, invented APIs, or "done" without
