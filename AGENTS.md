@@ -70,6 +70,12 @@ or `/checkout/v1`.
 postgres.js footgun: never pass `JSON.stringify(x)` into a jsonb param — it
 double-encodes to a JSON string. Use `sql.json(x)`/`tx.json(x)`.
 
+Logging: `packages/core` logs JSON lines to stdout via pino
+(`src/platform/log.ts`) — `log.child({ mod: '<area>' })`, never `console.*`.
+`LOG_LEVEL` (default `info`), `BAILEYS_LOG_LEVEL` (default `warn`). Every
+request gets an `x-request-id` (echoed back, correlated in the `request`
+log line).
+
 ## Commands
 
 Run from repo root; all delegate to `@vendua/site` via `bun --filter`.

@@ -13,6 +13,9 @@
  *   forn          | forn.localhost, :5192            | closed hours → notice, pickup-only
  */
 import { createSql } from './db.ts';
+import { log } from './log.ts';
+
+const slog = log.child({ mod: 'seed' });
 
 const url = process.env.MIGRATION_DATABASE_URL ?? 'postgres://vendua:vendua@localhost:5433/vendua';
 const sql = createSql(url);
@@ -560,7 +563,7 @@ for (const t of TENANTS) {
     }
     return tid;
   });
-  console.log(`seeded ${t.slug}`);
+  slog.info({ slug: t.slug }, 'seeded tenant');
 }
 
 // CRM demo leads — wiped+recreated each seed (source='seed' is the marker).
@@ -656,8 +659,8 @@ for (const t of TENANTS) {
       `;
     }
   }
-  console.log('seeded 5 CRM leads');
+  slog.info({ count: 5 }, 'seeded CRM leads');
 }
 
 await sql.end();
-console.log('done');
+slog.info('done');

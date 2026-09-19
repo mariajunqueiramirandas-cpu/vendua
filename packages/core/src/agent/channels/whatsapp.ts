@@ -1,6 +1,9 @@
 import type { Sql } from '../../platform/db.ts';
 import { getIntegration, type IntegrationRow } from '../../modules/integrations.ts';
 import { controlTx } from '../../modules/control.ts';
+import { log } from '../../platform/log.ts';
+
+const waLog = log.child({ mod: 'whatsapp' });
 
 /**
  * agent/channels/whatsapp — Baileys v7, in-process. Auth state persists in
@@ -149,6 +152,7 @@ async function startSocket(sql: Sql, integration: IntegrationRow): Promise<Baile
     },
     printQRInTerminal: false,
     browser: ['Venduá', 'Chrome', '1.0.0'],
+    logger: log.child({ mod: 'baileys' }, { level: process.env.BAILEYS_LOG_LEVEL ?? 'warn' }),
   });
 
   // Claim module state synchronously — Baileys' first connection.update
@@ -186,7 +190,7 @@ async function startSocket(sql: Sql, integration: IntegrationRow): Promise<Baile
           // must not come back on the old settings.
           void getIntegration(sql, 'whatsapp')
             .then((fresh) => ensureSocket(sql, fresh))
-            .catch((e) => console.error('[whatsapp] reconnect failed', e));
+            .catch((e) => waLog.error({ err: e }, 'reconnect failed'));
         }, 5_000);
       }
     }
@@ -338,7 +342,7 @@ export async function sendWhatsApp(
 ): Promise<string | null> {
   const driver = integration.driver;
   if (driver === 'log') {
-    console.log(`[whatsapp:log] → ${to}\n${text}`);
+    waLog.info({ to, text }, 'log-driver send');
     return `log:${crypto.randomUUID()}`;
   }
   if (driver === 'baileys') {

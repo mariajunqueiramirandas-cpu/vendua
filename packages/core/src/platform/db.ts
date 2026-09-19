@@ -1,11 +1,19 @@
 import { readdir, readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import postgres from 'postgres';
+import { log } from './log.ts';
 
 export type Sql = postgres.Sql;
 
+const dbLog = log.child({ mod: 'db' });
+
 export function createSql(url: string): Sql {
-  return postgres(url, { max: 10 });
+  // Route Postgres NOTICEs through pino at debug — the default onnotice
+  // prints a raw object, breaking the JSON-lines contract on stdout.
+  return postgres(url, {
+    max: 10,
+    onnotice: (n) => dbLog.debug({ code: n.code, message: n.message }, 'notice'),
+  });
 }
 
 /**

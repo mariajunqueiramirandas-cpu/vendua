@@ -2,6 +2,9 @@ import type { Sql } from '../platform/db.ts';
 import { controlTx } from '../modules/control.ts';
 import { addInboundMessage, type Channel, type InboundResult } from '../modules/threads.ts';
 import { drain, enqueueRun } from './runner.ts';
+import { log } from '../platform/log.ts';
+
+const agentLog = log.child({ mod: 'agent' });
 
 /**
  * agent/inbound — the shared inbound path: a message from any channel (the
@@ -60,7 +63,7 @@ export async function ingestInbound(
   if (gate && gate.agent_enabled && gate.agent_mode !== 'off') {
     await enqueueRun(sql, { kind: 'reply', leadId: res.leadId, threadId: res.threadId });
     // Kick the queue now — don't wait up to the poll interval for a reply.
-    void drain(sql).catch((e) => console.error('[agent drain]', e));
+    void drain(sql).catch((e) => agentLog.error({ err: e }, 'drain failed'));
   }
   return res;
 }
