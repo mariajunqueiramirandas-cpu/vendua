@@ -233,6 +233,28 @@ Round 4 (fourth review pass — all landed):
 - **Unset `SESSION_SECRET` rotated silently** — boot now logs a loud
   warning when the random-per-boot secret is in use.
 
+Round 5 (fifth review pass — all landed):
+
+- **A failed mutation poisoned same-key retries for 30s** — when `run`
+  throws, its committed claim is now released (`delete ... where owner`)
+  before the error propagates, so an immediate retry re-executes instead
+  of hitting `IDEMPOTENCY_IN_PROGRESS`. Failed responses are deliberately
+  not persisted — retries rerun deterministically.
+- **Reseed died on cart activity** — `cart_items.product_id` is `NO
+  ACTION`, so the catalog wipe failed once dev carts existed; the seed now
+  drops tenant `cart_items` first (carts themselves are preserved, emptied).
+- **Rate-limit buckets leaked per client IP** — a window-scoped lazy sweep
+  deletes expired buckets, bounding the map to live traffic.
+- **Scheduled notices never flipped on time** — `SystemSurfaces` now arms a
+  timer for the nearest future `startsAt`/`endsAt` boundary instead of
+  computing visibility only on unrelated renders.
+- **brasa/forn proxied bare `/checkout`** — narrowed to `/checkout/v1` per
+  the reserved-prefix contract (a bare prefix would swallow a same-named
+  storefront route).
+- **Kernel doc demanded `AddToCart` disabled when `closed`** — reconciled
+  the table with Core's shipped semantics: `paused` blocks, `closed`
+  accepts pre-orders; the behavior text is normative now.
+
 ### Feature gaps the reference ships that the platform can't express yet
 
 (From `quero-pudim` — each had an honest storefront fallback; details in its

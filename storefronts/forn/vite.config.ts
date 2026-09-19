@@ -10,6 +10,8 @@ export default defineConfig({
   server: {
     port: 5192,
     strictPort: true,
-    proxy: { '/storefront': core, '/checkout': core, '/v1': core },
+    // Reserved prefixes are the versioned mounts only — a bare '/checkout'
+    // would swallow a storefront page route of the same name.
+    proxy: { '/storefront': core, '/checkout/v1': core, '/v1': core },
   },
 });

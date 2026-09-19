@@ -74,13 +74,18 @@ of the delegated child.
 | Primitive          | Behavior owned by Kernel                                                              | Stamps                          |
 | ------------------ | ------------------------------------------------------------------------------------- | ------------------------------- |
 | `ProductLink`      | product route resolution, prefetch, `product_view` event                              | `data-vendua="product-link"`    |
-| `AddToCart`        | disabled when closed/paused/sold-out, mutation, optimistic state, `add_to_cart` event | `data-vendua="add-to-cart"`     |
+| `AddToCart`        | disabled when paused/sold-out, mutation, optimistic state, `add_to_cart` event        | `data-vendua="add-to-cart"`     |
 | `QuantityStepper`  | min/max, stock cap, debounced mutation                                                | `data-vendua="qty-stepper"`     |
 | `CartTrigger`      | opens cart drawer/page, badge count                                                   | `data-vendua="cart-trigger"`    |
 | `CheckoutButton`   | starts checkout session, disabled states                                              | `data-vendua="checkout-button"` |
 | `StoreStatusBadge` | live open/closed/paused + countdown                                                   | `data-vendua="store-status"`    |
 | `NotifyMeButton`   | "avise-me" subscription for paused/sold-out                                           | `data-vendua="notify-me"`       |
 | `Img`              | CDN-backed responsive images, blur-up, budgets                                        | —                               |
+
+Closed vs paused is asymmetric: `paused` blocks ordering (manual hold), while
+`closed` still accepts orders as pre-orders for the next window — Core rejects
+`STORE_PAUSED` but lets `closed` through. Primitives disable on `paused`, not
+`closed`; the closed state is surfaced via `StoreStatusBadge`/notices instead.
 
 ```tsx
 // Storefront code — full visual freedom, zero behavioral freedom:

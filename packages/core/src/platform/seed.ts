@@ -512,6 +512,11 @@ for (const t of TENANTS) {
     }
 
     // Rebuild catalog rows for the spike tenants — deterministic reseed.
+    // cart_items.product_id is NO ACTION: preserved carts hold rows pointing
+    // at products this delete cascades away — drop their items first so a
+    // reseed after cart activity still runs (the carts themselves survive,
+    // emptied; product ids are regenerated anyway).
+    await tx`delete from cart_items where tenant_id = ${tid}`;
     await tx`delete from categories where tenant_id = ${tid}`;
     for (const cat of t.categories) {
       const catId = (

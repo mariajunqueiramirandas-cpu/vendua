@@ -125,41 +125,63 @@ export function idempotency(
       | { kind: 'replay'; response: unknown; status: number }
       | { kind: 'raw'; response: Response }
       | { kind: 'result'; status: number; body: unknown };
-    const outcome = await withTenant(sql, tenant.id, async (tx): Promise<Outcome> => {
-      await tx`select pg_advisory_xact_lock(hashtextextended(${`${tenant.id}|${key}`}, 0))`;
-      const cur = (
-        await tx<{ owner: string | null; response: unknown; status_code: number }[]>`
-          select owner, response, status_code from idempotency_keys
-          where tenant_id = ${tenant.id} and key = ${key}
-        `
-      )[0];
-      if (cur?.response != null && cur.status_code != null) {
-        return { kind: 'replay', response: cur.response, status: cur.status_code };
-      }
-      if (cur?.owner !== owner) {
-        // Our claim was itself stolen (>30s between claim and lock) — the
-        // other owner is committing behind the lock; abort, don't double up.
-        throw new HttpError(
-          409,
-          'IDEMPOTENCY_IN_PROGRESS',
-          'a request with this Idempotency-Key is still in flight — retry',
+    let outcome: Outcome;
+    try {
+      outcome = await withTenant(sql, tenant.id, async (tx): Promise<Outcome> => {
+        await tx`select pg_advisory_xact_lock(hashtextextended(${`${tenant.id}|${key}`}, 0))`;
+        const cur = (
+          await tx<{ owner: string | null; response: unknown; status_code: number }[]>`
+            select owner, response, status_code from idempotency_keys
+            where tenant_id = ${tenant.id} and key = ${key}
+          `
+        )[0];
+        if (cur?.response != null && cur.status_code != null) {
+          return { kind: 'replay', response: cur.response, status: cur.status_code };
+        }
+        if (cur?.owner !== owner) {
+          // Our claim was itself stolen (>30s between claim and lock) — the
+          // other owner is committing behind the lock; abort, don't double up.
+          throw new HttpError(
+            409,
+            'IDEMPOTENCY_IN_PROGRESS',
+            'a request with this Idempotency-Key is still in flight — retry',
+          );
+        }
+        const r = await run(c, tx);
+        if (r instanceof Response) return { kind: 'raw', response: r };
+        const stored = await tx`
+          update idempotency_keys set response = ${tx.json(r.body as never)}, status_code = ${r.status}
+          where tenant_id = ${tenant.id} and key = ${key} and owner = ${owner}
+        `;
+        if (stored.count === 0) {
+          throw new HttpError(
+            409,
+            'IDEMPOTENCY_IN_PROGRESS',
+            'a request with this Idempotency-Key is still in flight — retry',
+          );
+        }
+        return { kind: 'result', status: r.status, body: r.body };
+      });
+    } catch (err) {
+      // The work tx rolled back, but the claim row committed in the claim
+      // tx — a pending claim would poison same-key retries with
+      // IDEMPOTENCY_IN_PROGRESS for the 30s stale window. Release OUR claim
+      // so an immediate retry re-executes (failed responses are not
+      // persisted — retries rerun deterministically). The owner predicate
+      // keeps cleanup from removing a claim a peer stole.
+      try {
+        await withTenant(
+          sql,
+          tenant.id,
+          (tx) =>
+            tx`delete from idempotency_keys
+               where tenant_id = ${tenant.id} and key = ${key} and owner = ${owner}`,
         );
+      } catch {
+        /* best effort — the 30s stale window + 7-day sweep still bound it */
       }
-      const r = await run(c, tx);
-      if (r instanceof Response) return { kind: 'raw', response: r };
-      const stored = await tx`
-        update idempotency_keys set response = ${tx.json(r.body as never)}, status_code = ${r.status}
-        where tenant_id = ${tenant.id} and key = ${key} and owner = ${owner}
-      `;
-      if (stored.count === 0) {
-        throw new HttpError(
-          409,
-          'IDEMPOTENCY_IN_PROGRESS',
-          'a request with this Idempotency-Key is still in flight — retry',
-        );
-      }
-      return { kind: 'result', status: r.status, body: r.body };
-    });
+      throw err;
+    }
     if (outcome.kind === 'raw') return outcome.response;
     if (outcome.kind === 'replay') {
       return c.json(outcome.response as object, outcome.status as 200, {
@@ -181,6 +203,10 @@ export function rateLimit(
   Variables: Vars;
 }> {
   const hits = new Map<string, { count: number; resetAt: number }>();
+  // Buckets reset lazily per request — without a sweep, every distinct client
+  // IP leaves a permanent entry (the map would grow with lifetime traffic).
+  // Sweep expired entries at most once per window.
+  let nextSweep = 0;
   return async (c, next) => {
     const tenant = c.get('tenant') as Tenant;
     // X-Forwarded-For is client-supplied without a trusted edge — key on it
@@ -189,6 +215,10 @@ export function rateLimit(
       ? (c.req.header('x-forwarded-for')?.split(',')[0]?.trim() ?? 'unknown')
       : 'local';
     const now = Date.now();
+    if (now >= nextSweep) {
+      nextSweep = now + opts.windowMs;
+      for (const [bk, b] of hits) if (b.resetAt <= now) hits.delete(bk);
+    }
     const k = `${tenant.id}|${ip}`;
     const bucket = hits.get(k);
     if (!bucket || bucket.resetAt <= now) {

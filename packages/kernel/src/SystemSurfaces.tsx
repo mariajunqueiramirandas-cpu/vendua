@@ -1,4 +1,4 @@
-import { Suspense, lazy, useMemo, useState, type ReactNode } from 'react';
+import { Suspense, lazy, useEffect, useMemo, useState, type ReactNode } from 'react';
 import { ErrorBoundary } from './error-boundary.tsx';
 import { useKernel, useQuery } from './provider.tsx';
 import type { Notice, NoticeAction, SurfacesEnvelope } from './api.ts';
@@ -127,6 +127,26 @@ export function SystemSurfaces({ zoneMatched }: { zoneMatched?: boolean } = {}) 
   const q = useQuery(key, () => api.surfaces(zoneMatched));
   // Injected state is only a valid first paint for the unscoped query.
   const envelope = q.data ?? (zoneMatched === undefined ? injected : undefined);
+
+  // Notice visibility is computed from Date.now() at render — schedule one
+  // re-render at the nearest future startsAt/endsAt boundary so scheduled
+  // notices appear and expired ones disappear on time.
+  const [, setTick] = useState(0);
+  useEffect(() => {
+    if (!envelope) return;
+    const now = Date.now();
+    let nearest = Infinity;
+    for (const n of envelope.notices) {
+      for (const b of [n.startsAt, n.endsAt]) {
+        if (!b) continue;
+        const t = Date.parse(b);
+        if (t > now && t < nearest) nearest = t;
+      }
+    }
+    if (nearest === Infinity) return;
+    const id = setTimeout(() => setTick((t) => t + 1), nearest - now + 50);
+    return () => clearTimeout(id);
+  }, [envelope]);
 
   if (!envelope) return null;
   const now = Date.now();
