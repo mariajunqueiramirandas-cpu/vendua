@@ -91,21 +91,8 @@ img {
   gap: 12px;
 }
 
-[data-vendua='store-status'] {
-  font-size: 0.75rem;
-  padding: 4px 10px;
-  border-radius: var(--v-radius-sm, 4px);
-  background: color-mix(in srgb, var(--v-color-text, #1c1b1a) 8%, transparent);
-}
-
-[data-vendua='store-status'][data-status='open'] {
-  background: color-mix(in srgb, var(--v-color-success, #3d7a4f) 15%, transparent);
-}
-
-[data-vendua='store-status'][data-status='paused'],
-[data-vendua='store-status'][data-status='closed'] {
-  background: color-mix(in srgb, var(--v-color-danger, #a33b32) 12%, transparent);
-}
+/* NOTE: storefront CSS never targets `v-*` or `[data-vendua]` (Contract v1).
+ * Kernel primitives' baseline lives in @vendua/kernel/styles.css. */
 
 .site-footer {
   border-top: 1px solid color-mix(in srgb, var(--v-color-text, #1c1b1a) 10%, transparent);
@@ -314,8 +301,7 @@ img {
   gap: 16px;
 }
 
-.qty,
-[data-vendua='qty-stepper'] {
+.qty {
   display: inline-flex;
   align-items: center;
   gap: 4px;
@@ -324,8 +310,7 @@ img {
   width: fit-content;
 }
 
-.qty button,
-[data-vendua='qty-stepper'] button {
+.qty button {
   width: 36px;
   height: 36px;
   border: 0;
@@ -336,14 +321,12 @@ img {
   cursor: pointer;
 }
 
-.qty button:disabled,
-[data-vendua='qty-stepper'] button:disabled {
+.qty button:disabled {
   opacity: 0.35;
   cursor: not-allowed;
 }
 
-.qty output,
-[data-vendua='qty-stepper'] output {
+.qty output {
   min-width: 2ch;
   text-align: center;
   font-variant-numeric: tabular-nums;

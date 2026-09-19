@@ -89,7 +89,7 @@ if (files === null && slugs.length === 0) {
     }
     opts.base ??= `origin/${pr.base.ref}`;
   }
-} else if (files === null || slugs.length === 0) {
+} else if (files === null) {
   fail(
     'usage: --slug <slug> --files f1 f2 … — or no args in CI with $GITHUB_EVENT_PATH (see --help)',
   );
@@ -102,6 +102,20 @@ if (unique.length > 1) {
   );
 }
 if (unique.length === 0) {
+  // Unlabelled doesn't mean unbounded: a diff confined to one storefront is
+  // a storefront PR whether it was labelled or not — without this, omitting
+  // the label would bypass the boundary entirely. Underscored dirs
+  // (_template, _examples) are platform-owned and exempt.
+  files ??= changedFiles(opts.base ?? 'origin/main');
+  const sfRe = /^storefronts\/([^/]+)\//;
+  const scoped = files.map((f) => sfRe.exec(f)?.[1]);
+  const slugDirs = new Set(scoped.filter((s) => s && !s.startsWith('_')));
+  if (files.length > 0 && scoped.every(Boolean) && slugDirs.size === 1) {
+    fail(
+      `this diff is confined to storefronts/${[...slugDirs][0]} but carries no '${LABEL_PREFIX}' label\n` +
+        `  label the PR '${LABEL_PREFIX}${[...slugDirs][0]}' — a storefront PR must be labelled to merge`,
+    );
+  }
   console.log('no storefront:* label — not a storefront PR; skipping');
   process.exit(0);
 }

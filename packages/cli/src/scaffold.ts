@@ -1,5 +1,6 @@
-import { cpSync, existsSync, readFileSync, writeFileSync } from 'node:fs';
+import { cpSync, existsSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { randomBytes } from 'node:crypto';
 import postgres from 'postgres';
 import { die, isStorefrontDir, nextPort } from './paths.ts';
 
@@ -82,18 +83,29 @@ export async function cmdScaffold(slug: string | undefined, root: string): Promi
   const port = nextPort(root);
   await registerTenant(slug, port);
 
-  cpSync(template, target, { recursive: true });
+  // Build in a temp sibling and rename atomically — a copy/rewrite failure
+  // must leave no `storefronts/<slug>` behind, or the existsSync guard above
+  // would permanently reject the retry (the tenant rows already committed).
+  const tmp = join(root, 'storefronts', `.scaffold-${slug}-${randomBytes(4).toString('hex')}`);
+  try {
+    cpSync(template, tmp, { recursive: true });
 
-  const pkgPath = join(target, 'package.json');
-  const pkg = JSON.parse(readFileSync(pkgPath, 'utf8')) as { name: string };
-  pkg.name = `@vendua/storefront-${slug}`;
-  writeFileSync(pkgPath, `${JSON.stringify(pkg, null, 2)}\n`);
+    const pkgPath = join(tmp, 'package.json');
+    const pkg = JSON.parse(readFileSync(pkgPath, 'utf8')) as { name: string };
+    pkg.name = `@vendua/storefront-${slug}`;
+    writeFileSync(pkgPath, `${JSON.stringify(pkg, null, 2)}\n`);
 
-  const vitePath = join(target, 'vite.config.ts');
-  writeFileSync(
-    vitePath,
-    readFileSync(vitePath, 'utf8').replace(/port\s*:\s*\d+/, `port: ${port}`),
-  );
+    const vitePath = join(tmp, 'vite.config.ts');
+    writeFileSync(
+      vitePath,
+      readFileSync(vitePath, 'utf8').replace(/port\s*:\s*\d+/, `port: ${port}`),
+    );
+
+    renameSync(tmp, target);
+  } catch (err) {
+    rmSync(tmp, { recursive: true, force: true });
+    throw err;
+  }
 
   console.log(`created storefronts/${slug} (@vendua/storefront-${slug}) on dev port ${port}`);
   console.log(`registered dev tenant '${slug}' for localhost:${port} and 127.0.0.1:${port}`);

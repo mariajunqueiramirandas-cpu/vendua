@@ -1,3 +1,4 @@
+import { createHmac } from 'node:crypto';
 import { Hono, type Context } from 'hono';
 import { getCookie, setCookie } from 'hono/cookie';
 import { cors } from 'hono/cors';
@@ -510,9 +511,13 @@ export function createApp({ sql, sessionSecret }: AppDeps) {
   // secret, no new credential surface. 404 (not 401) keeps the surface
   // invisible to scans.
   const CONTROL_COOKIE = 'vendua_control';
+  // The cookie carries a derived token — never sessionSecret itself: a leaked
+  // staff cookie opens the board without exposing the shopper-token signing
+  // key, and rotating sessionSecret invalidates every cookie at once.
+  const controlToken = createHmac('sha256', sessionSecret).update('vendua.control').digest('hex');
   const controlAuthed = (c: Context) =>
     c.req.header('x-vendua-control') === sessionSecret ||
-    getCookie(c, CONTROL_COOKIE) === sessionSecret;
+    getCookie(c, CONTROL_COOKIE) === controlToken;
   const controlGate = (c: Context) => {
     if (!controlAuthed(c)) throw new HttpError(404, 'NOT_FOUND', 'not found');
     // CSRF: a cookie-authenticated mutation must also carry the custom
@@ -580,9 +585,15 @@ export function createApp({ sql, sessionSecret }: AppDeps) {
 
   app.patch('/control/v1/leads/:id', async (c) => {
     controlGate(c);
-    const lead = await updateLead(sql, uuidParam(c, 'id'), leadPatch(await bodyJson(c)));
-    if (!lead) throw new HttpError(404, 'LEAD_NOT_FOUND', 'lead not found');
-    return c.json({ lead: leadJson(lead) });
+    const res = await updateLead(
+      sql,
+      uuidParam(c, 'id'),
+      leadPatch(await bodyJson(c)),
+      requireIdemKey(c),
+    );
+    if (!res) throw new HttpError(404, 'LEAD_NOT_FOUND', 'lead not found');
+    if (res.replayed) c.header('x-idempotent-replay', 'true');
+    return c.json({ lead: leadJson(res.lead) });
   });
 
   app.post('/control/v1/leads/:id/notes', async (c) => {
@@ -606,12 +617,19 @@ export function createApp({ sql, sessionSecret }: AppDeps) {
   app.post('/control/v1/board', async (c) => {
     const form = (await c.req.parseBody().catch(() => ({}))) as Record<string, unknown>;
     if (form.key !== sessionSecret) throw new HttpError(404, 'NOT_FOUND', 'not found');
-    setCookie(c, CONTROL_COOKIE, sessionSecret, {
+    setCookie(c, CONTROL_COOKIE, controlToken, {
       httpOnly: true,
       sameSite: 'Lax',
-      // Transport-only flag under TLS; dev serves plain http where a Secure
-      // cookie would never be stored.
-      secure: c.req.url.startsWith('https://'),
+      // Secure whenever the request is TLS — directly, or behind a
+      // terminating proxy when VENDUA_TRUST_PROXY marks X-Forwarded-*
+      // trustworthy (a strict c.req.url check would silently issue plaintext
+      // cookies in that deployment).
+      secure:
+        c.req.url.startsWith('https://') ||
+        (trustProxy && c.req.header('x-forwarded-proto') === 'https'),
+      // Staff sessions expire independently of shopper sessions (12h) — a
+      // captured cookie can't outlive the workday it was minted in.
+      maxAge: 60 * 60 * 12,
       path: '/control',
     });
     return c.redirect('/control/v1/board');

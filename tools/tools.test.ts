@@ -97,4 +97,16 @@ describe('check-storefront-paths', () => {
     ).toBe(0);
     expect(run(['--slug', 'evil slug', '--files', 'x']).status).toBe(1);
   });
+
+  test('unlabelled diff confined to one storefront fails (label bypass hole)', () => {
+    const r = run(['--files', 'storefronts/quero-pudim/a.ts', 'storefronts/quero-pudim/b/c.ts']);
+    expect(r.status).toBe(1);
+    expect(r.stderr).toContain('storefront:quero-pudim');
+  });
+
+  test('unlabelled diffs that are NOT single-storefront pass', () => {
+    expect(run(['--files', 'docs/x.md', 'packages/core/app.ts']).status).toBe(0);
+    expect(run(['--files', 'storefronts/_template/a.ts']).status).toBe(0); // platform-owned dir
+    expect(run(['--files', 'storefronts/a/x.ts', 'storefronts/b/y.ts']).status).toBe(0);
+  });
 });

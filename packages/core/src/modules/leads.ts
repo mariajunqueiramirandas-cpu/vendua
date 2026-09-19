@@ -31,6 +31,10 @@ export interface LeadRow {
   state: LeadState;
   notes: LeadNote[] | null;
   idempotency_key: string | null;
+  /** PATCH Idempotency-Keys already applied — bounded to the last 25 so the
+   *  row stays small; a replay older than that just writes again (convergent
+   *  by then). */
+  mutation_keys: string[] | null;
   created_at: string;
   updated_at: string;
 }
@@ -135,6 +139,9 @@ export async function getLead(sql: Sql, id: string): Promise<LeadRow | null> {
   return rows[0] ?? null;
 }
 
+/** Notes cap per lead — bounds both the jsonb row and every /leads response. */
+export const MAX_NOTES_PER_LEAD = 500;
+
 /** Insert claimed by the caller's Idempotency-Key: a retry lands on
  *  `on conflict do nothing` and replays the row the first write created. */
 export async function createLead(
@@ -152,15 +159,31 @@ export async function createLead(
   return { lead: existing[0]!, replayed: true };
 }
 
+// PATCH keys claimed so far — a retry replays the stored row instead of
+// writing again (and churning updated_at). The set converges anyway; the
+// claim makes the response identical, matching the platform idempotency rule.
+const MAX_MUTATION_KEYS = 25;
+
 export async function updateLead(
   sql: Sql,
   id: string,
   set: Record<string, string | null>,
-): Promise<LeadRow | null> {
-  const rows = await sql<LeadRow[]>`
-    update leads set ${sql(set)}, updated_at = now() where id = ${id} returning *
-  `;
-  return rows[0] ?? null;
+  idemKey: string,
+): Promise<{ lead: LeadRow; replayed: boolean } | null> {
+  return sql.begin(async (t) => {
+    const tx = t as unknown as Sql;
+    const cur = (await tx<LeadRow[]>`select * from leads where id = ${id} for update`)[0];
+    if (!cur) return null;
+    if ((cur.mutation_keys ?? []).includes(idemKey)) {
+      return { lead: cur, replayed: true };
+    }
+    const keys = [...(cur.mutation_keys ?? []), idemKey].slice(-MAX_MUTATION_KEYS);
+    const rows = await tx<LeadRow[]>`
+      update leads set ${sql(set)}, updated_at = now(), mutation_keys = ${tx.json(keys)}
+      where id = ${id} returning *
+    `;
+    return { lead: rows[0]!, replayed: false };
+  }) as Promise<{ lead: LeadRow; replayed: boolean } | null>;
 }
 
 /** Appends under the caller's Idempotency-Key, stored inside the note: a
@@ -178,6 +201,13 @@ export async function appendNote(
     if (!cur) return null;
     if ((cur.notes ?? []).some((n) => n.key === idemKey)) {
       return { lead: cur, replayed: true };
+    }
+    if ((cur.notes ?? []).length >= MAX_NOTES_PER_LEAD) {
+      throw new HttpError(
+        422,
+        'NOTE_LIMIT',
+        `lead already has ${MAX_NOTES_PER_LEAD} notes — archive history before adding more`,
+      );
     }
     // Inferred literal (not the LeadNote interface) so the object satisfies
     // tx.json's JSONValue/index-signature parameter type.
