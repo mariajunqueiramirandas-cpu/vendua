@@ -28,7 +28,7 @@ const AGENT_OPTS: [string, string][] = [
 // absolute http(s) URL; anything else renders as plain text
 function httpUrl(raw: string): string | null {
   try {
-    const u = new URL(/^https?:\/\//i.test(raw) ? raw : `https://${raw}`);
+    const u = new URL(/^[a-z][a-z0-9+.-]*:\/\//i.test(raw) ? raw : `https://${raw}`);
     return u.protocol === 'http:' || u.protocol === 'https:' ? u.href : null;
   } catch {
     return null;
