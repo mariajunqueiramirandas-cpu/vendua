@@ -23,6 +23,17 @@ describe('pageKey', () => {
   test('null on unparseable url', () => {
     expect(pageKey('not a url')).toBeNull();
   });
+  test('content params stay in the key — different phones are different pages', () => {
+    expect(pageKey('https://api.whatsapp.com/send?phone=5511111111111')).not.toBe(
+      pageKey('https://api.whatsapp.com/send?phone=5522222222222'),
+    );
+  });
+  test('tracking params are stripped, order is canonical', () => {
+    expect(pageKey('https://site.com.br/x?b=2&utm_source=gp&a=1')).toBe('site.com.br/x?a=1&b=2');
+    expect(pageKey('https://site.com.br/x?a=1&b=2&fbclid=zzz')).toBe(
+      pageKey('https://site.com.br/x?b=2&a=1'),
+    );
+  });
 });
 
 describe('contactFromUrl', () => {

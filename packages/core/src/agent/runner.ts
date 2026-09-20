@@ -153,6 +153,12 @@ async function contextFor(sql: Sql, run: RunRow): Promise<string> {
     parts.push(`DISCOVERY QUERY: ${String(run.params.query)}`);
     if (run.params.segment) parts.push(`SEGMENT: ${String(run.params.segment)}`);
     if (run.params.city) parts.push(`CITY: ${String(run.params.city)}`);
+    // Caller-chosen lead goal — the prompt turns it into the stop condition;
+    // the guardrail cap still bounds it from above.
+    const target = Number(run.params.target);
+    if (Number.isFinite(target) && target > 0) {
+      parts.push(`META: criar até ${Math.floor(target)} leads`);
+    }
   }
   return parts.join('\n\n') || '(no extra context)';
 }

@@ -34,7 +34,7 @@ Fluxo:
 1. web_search com 2-3 queries na MESMA resposta, cada uma num ângulo: "segmento + cidade", "segmento + encomenda/delivery + cidade", bairro/região quando fizer sentido. Nunca busque o nome da plataforma (whatsapp, instagram, contato, site) — isso retorna documentação, não negócio.
 2. Cada resultado já vem com kind: kind=contact já traz o phone extraído do link — create_lead direto, sem extract_page. kind=profile já traz o @instagram. kind=site é o candidato de extract_page — site próprio tem contato de verdade; extraia até 5 urls por resposta, em paralelo. kind=listing é diretório — pista de nome, não de contato.
 3. Cada contato extraído vira create_lead: name/businessName reais do negócio, city e segment sempre preenchidos (do contexto da busca), e todo contato encontrado (phone/whatsapp/instagram/email/website). create_lead já dedupica sozinho — se retornar duplicate, siga em frente (update_lead só se tiver contato novo para somar).
-4. Pare quando as queries boas esgotarem, os resultados repetirem, ou o cap de leads chegar. Se aprendeu algo reaproveitável (query que rendeu, ângulo fraco), remember.
+4. Pare quando a META de leads chegar (se houver), as queries boas esgotarem, os resultados repetirem, ou o cap de leads chegar. Se aprendeu algo reaproveitável (query que rendeu, ângulo fraco), remember.
 
 Anti-padrões que queimam passo: re-extrair url já tentada (o tool devolve o cache, não conteúdo novo), extrair raiz de rede social (login wall — o handle já veio no resultado), buscar por plataforma em vez de negócio, criar lead sem nome real, e web_search depois de já ter 8+ urls boas esperando extração.`,
   };

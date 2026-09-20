@@ -320,6 +320,11 @@ export async function executeTool(
       const input = leadInsert(payload);
       const res = await claimControl(sql, key, async (tx) => {
         if (ctx.runKind === 'discovery') {
+          // One per-run advisory lock serializes dedupe + cap + insert:
+          // batched create_lead calls in a step run concurrently, so without
+          // the lock two parallel calls could both pass the dup check before
+          // either inserts.
+          await tx`select pg_advisory_xact_lock(hashtext(${`discovery-cap:${ctx.runId}`}))`;
           // Dedupe before the cap check so a repeat prospect can't burn cap:
           // phone/whatsapp compare digit-only, instagram handle case-folded,
           // and a name hit needs the same city — common names alone don't
@@ -365,14 +370,11 @@ export async function executeTool(
               body: { duplicate: true as const, existing: dup } as never,
             };
           }
-        }
-        if (ctx.runKind === 'discovery') {
-          // Hard cap, enforced in code the prompt can't talk away: each
-          // create_lead claims `agent:{runId}:…:create_lead:{callId}`, so
-          // counting this run's claims under a per-run advisory lock — inside
-          // the same tx as the insert — makes the cap transactional (batched
-          // tool calls in one step can't slip past it).
-          await tx`select pg_advisory_xact_lock(hashtext(${`discovery-cap:${ctx.runId}`}))`;
+          // Hard cap, enforced in code the prompt can't talk away: count this
+          // run's claim keys whose stored response actually created a lead
+          // (`response.lead.id`) — duplicate/no-op responses commit a claim
+          // row but must not burn cap slots. This call's own claim row has no
+          // response yet, so n = leads already created.
           const g = await getSettingTx<Partial<Guardrails>>(tx, 'guardrails', {});
           const cap = g.discoveryMaxLeads ?? DEFAULT_GUARDRAILS.discoveryMaxLeads;
           const n =
@@ -380,10 +382,10 @@ export async function executeTool(
               await tx<{ n: number }[]>`
             select count(*)::int as n from control_idempotency_keys
             where key like ${`agent:${ctx.runId}:%:create_lead:%`}
+              and response->'lead'->>'id' is not null
           `
             )[0]?.n ?? 0;
-          // n includes this call's own claim row (inserted before work ran).
-          if (n > cap) {
+          if (n >= cap) {
             throw new HttpError(
               409,
               'DISCOVERY_CAP',

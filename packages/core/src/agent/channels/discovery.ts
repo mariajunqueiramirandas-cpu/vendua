@@ -93,12 +93,26 @@ export function hostOf(url: string): string | null {
   }
 }
 
-/** Canonical identity for "have we extracted this yet" — host + path, no
- *  query/fragment/trailing slash. */
+/** Params that never change page content — stripped from the key; every
+ *  other param is content (e.g. api.whatsapp.com/send?phone=X is a different
+ *  page per phone) and stays, sorted for canonical order. */
+const TRACKING_PARAMS = /^(utm_|fbclid$|gclid$|igshid$|si$|ref$|_ga|pk_)/i;
+
+/** Canonical identity for "have we extracted this yet" — host + path +
+ *  content params, no fragment/trailing slash. */
 export function pageKey(url: string): string | null {
   try {
     const u = new URL(url);
-    return u.hostname.toLowerCase().replace(/^www\./, '') + u.pathname.replace(/\/+$/, '');
+    const params = [...u.searchParams.entries()]
+      .filter(([k]) => !TRACKING_PARAMS.test(k))
+      .sort(([a], [b]) => a.localeCompare(b))
+      .map(([k, v]) => `${k}=${v}`)
+      .join('&');
+    return (
+      u.hostname.toLowerCase().replace(/^www\./, '') +
+      u.pathname.replace(/\/+$/, '') +
+      (params ? `?${params}` : '')
+    );
   } catch {
     return null;
   }
