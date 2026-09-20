@@ -154,6 +154,11 @@ To mint a signed request locally:
   window will NOT show them. Emulate for real: Playwright
   `isMobile:true + hasTouch:true` (headed works on DISPLAY :0) or DevTools
   device toolbar set to "Mobile" — verify `matchMedia('(any-pointer: coarse)')`.
+- Fast path when the CSS is `max-width`-only (check the diff): just resize
+  the real window — `wmctrl -r :ACTIVE: -e 0,x,y,W,H` uses real px; CSS
+  innerWidth lands ~W−30 (e.g. W=805 → ~773px). Verify with a console
+  matchMedia probe. No emulation needed; coarse-pointer features still
+  require real emulation.
 - Full-screen `.drawer` at ≤760px covers the scrim entirely — scrim-tap close
   is untestable there (Escape/cancelar are the close paths); desktop keeps a
   visible scrim.
@@ -232,6 +237,79 @@ reload — e.g. checkout permanently shows "Sua sacola está vazia" even though
 the server cart is intact. Workaround in tests: reload once more after Core
 is back. Session token survives reload in `sessionStorage` (`vendua.session`),
 so carts re-attach.
+
+## Agent-feature test data (control CRM)
+
+The leads/discovery surfaces only show the new agent fields when the columns
+are populated — seeded leads have none. Seed via docker exec psql:
+
+```sql
+-- fit column (Leads + Descoberta found table): needs both score and reason
+update leads set fit_score=8, fit_reason='ICP forte' where name='…';
+-- found-leads table keys on tag 'descoberto' or discovered_via
+update leads set tags='{descoberto}', discovered_via='agente' where name='…';
+-- 'email bounce' chip: set email_bounced_at=now()
+```
+
+`leads.agent_mode` gates the LeadDetail goal seg + `agir` button (`off` hides
+both; `draft`/`auto` show a third 'objetivo' seg writing `agent_goal` via
+PATCH). `discovery_briefs` rows are plain inserts; re-enabling a paused brief
+(or editing query/segment/city/target) nulls `last_run_at` by design, so the
+next worker tick (~15s) fires a discovery run — the row's 'last run' cell
+goes '—' then re-stamps. The leads dispatch bar clears selection on success;
+the result line ("N disparados · M ignorados (Name: reason · …)") renders
+outside the selection card so it survives the clear — fixed in 82345c6 after
+it briefly shipped scoped inside the card where it never painted.
+
+## Channel resolution + scripted mock runs
+
+- Per-run channel override lives in `agent_runs.params.channel`
+  (`auto`/absent = resolver picks; `whatsapp`/`email` = CANAL FORÇADO). UI
+  surfaces: canal seg in the leads dispatch bar (`api.dispatch(ids, goal,
+channel)`), `canal:` `<select>` beside `agir` on LeadDetail
+  (`runOnLead(id,'outreach',{channel})`).
+- `resolveChannelTx` order: staff override > model arg > last inbound
+  channel > whatsapp > email. Availability = contact data (`lead.whatsapp`
+  or inbound wa `external_id`; `lead.email`) + enabled integration row in
+  `control_integrations` + `email_bounced_at is null`. Dead request →
+  `{blocked:true, reason, use:<first reachable>}` — the model is told to
+  retry on `use`.
+- The CANAIS line goes into the run's user-message context — NOT journaled
+  into `steps`, so it is invisible in the run-detail UI. To surface channel
+  resolution on camera, fire a scripted mock run (mock provider reads
+  `params.script: [{text?, toolCalls:[{name,args}]}]` per chat call):
+
+```sh
+curl -X POST localhost:8787/control/v1/agent/runs \
+  -H "x-vendua-control: $CONTROL_SECRET" -H "Idempotency-Key: $RANDOM" \
+  -H 'content-type: application/json' \
+  -d '{"kind":"outreach","leadId":"<lead>","params":{"script":[
+    {"toolCalls":[{"name":"draft_message","args":{"leadId":"<lead>","body":"oi","channel":"whatsapp"}}]},
+    {"toolCalls":[{"name":"draft_message","args":{"leadId":"<lead>","body":"oi","channel":"email"}}]},
+    {"text":"ok"}]}}'
+```
+
+On a no-whatsapp lead the first tool step journals
+`{blocked:true, reason:'lead has no whatsapp', use:'email'}` and the
+second `{channel:'email', via:'requested', message:{status:'draft'}}` —
+visible at `#/agente/runs/:id`.
+
+## Launch stage (#/lancar)
+
+- Discovery showcase screen: idle brief form (segmento/cidade/foco/meta
+  3·5·10·15; launch disabled until any field set) → `POST /agent/runs` →
+  `?run=<id>` streams the journal live (1300ms poll), lead cards on the
+  right rail keyed to create_lead steps (`out.duplicate:true` renders the
+  dimmed 'já existia' card).
+- Mock `script` steps take `delayMs` (capped 30s) — pace a scripted
+  discovery run at ~2-4s/step so the stream visibly fills on camera;
+  navigate to `#/lancar?run=<id>` immediately after the POST.
+- Clock note: the stage clock uses `started_at`; heartbeat/persist now
+  write `alive_at` (migration 0012) so elapsed is real. History: heartbeat
+  used to overwrite `started_at`, freezing the clock — if `alive_at` isn't
+  in your schema, expect `elapsed ≈ 0`.
+- The page merged `#/lancar` into `#/descoberta` (`/lancar` is a legacy
+  alias → same component; `?run=` deep links preserved).
 
 ## CLI verification (shell-only)
 
