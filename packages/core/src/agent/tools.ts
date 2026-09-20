@@ -379,6 +379,9 @@ export async function executeTool(
               }
             }
             payload[f] = u ? contactFromUrl(u).phone : undefined;
+          } else if (typeof v === 'string' && /^\+?\d{8,15}$/.test(v.trim())) {
+            // bare digits land as E.164 — same shape the extractors emit
+            payload[f] = `+${v.trim().replace(/^\+/, '')}`;
           }
         }
         // The bar for a discovered lead, enforced where the prompt can't be
