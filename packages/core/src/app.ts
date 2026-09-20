@@ -1465,7 +1465,9 @@ export function createApp({ sql, sessionSecret, controlSecret }: AppDeps) {
   app.delete('/control/v1/agent/briefs/:id', async (c) => {
     controlGate(c);
     const res = await claimControl(sql, requireIdemKey(c), async (tx) => {
-      const row = (await tx`delete from discovery_briefs where id = ${uuidParam(c, 'id')} returning id`)[0];
+      const row = (
+        await tx`delete from discovery_briefs where id = ${uuidParam(c, 'id')} returning id`
+      )[0];
       if (!row) throw new HttpError(404, 'BRIEF_NOT_FOUND', 'brief not found');
       return { status: 200, body: { ok: true } };
     });

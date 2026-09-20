@@ -53,7 +53,10 @@ const LEAD_FIELDS = {
   tags: { type: 'array', items: { type: 'string' } },
   dealValueCents: { type: 'integer' },
   nextActionAt: { type: 'string', description: 'ISO-8601' },
-  fitScore: { type: 'integer', description: '0–10 ICP fit — how well this business matches the target audience' },
+  fitScore: {
+    type: 'integer',
+    description: '0–10 ICP fit — how well this business matches the target audience',
+  },
   fitReason: { type: 'string', description: 'one line: why this fit score' },
 } as const;
 
@@ -316,7 +319,9 @@ export async function executeTool(
       const payload = { ...args };
       if (ctx.runKind === 'discovery') {
         if (payload.discoveredVia === undefined)
-          payload.discoveredVia = ctx.briefName ? `agente·${ctx.briefName}`.slice(0, 120) : 'agente';
+          payload.discoveredVia = ctx.briefName
+            ? `agente·${ctx.briefName}`.slice(0, 120)
+            : 'agente';
         // The Discovery UI panel queries `tag=descoberto` — tag it here so
         // agent-found leads are always findable there.
         const tags = Array.isArray(payload.tags) ? [...payload.tags] : [];
@@ -500,12 +505,7 @@ export async function executeTool(
           };
         }
         const g = await getSettingTx(tx, 'guardrails', {} as Partial<Guardrails>);
-        const verdict = await checkSendAllowedTx(
-          tx,
-          { ...DEFAULT_GUARDRAILS, ...g },
-          leadId,
-          chan,
-        );
+        const verdict = await checkSendAllowedTx(tx, { ...DEFAULT_GUARDRAILS, ...g }, leadId, chan);
         if (!verdict.ok) {
           return { status: 200, body: { blocked: true as const, reason: verdict.reason } };
         }

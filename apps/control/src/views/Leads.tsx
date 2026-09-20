@@ -144,8 +144,20 @@ export default function Leads() {
       </div>
 
       {sel.size > 0 && (
-        <div className="card" style={{ padding: '10px 14px', marginBottom: 12, display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
-          <b>{sel.size} selecionado{sel.size === 1 ? '' : 's'}</b>
+        <div
+          className="card"
+          style={{
+            padding: '10px 14px',
+            marginBottom: 12,
+            display: 'flex',
+            gap: 10,
+            alignItems: 'center',
+            flexWrap: 'wrap',
+          }}
+        >
+          <b>
+            {sel.size} selecionado{sel.size === 1 ? '' : 's'}
+          </b>
           <span className="sub">objetivo:</span>
           <span className="seg">
             {GOAL_OPTS.map(([v, l]) => (

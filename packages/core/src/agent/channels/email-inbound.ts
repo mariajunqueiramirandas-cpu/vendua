@@ -89,9 +89,7 @@ function htmlToText(html: string): string {
 }
 
 export type ResendWebhookResult =
-  | InboundResult
-  | { ok: true; leadId?: string }
-  | { ignored: string };
+  InboundResult | { ok: true; leadId?: string } | { ignored: string };
 
 /** Verify the svix signature, then route: received → fetch+ingest; delivered
  *  → mark sent message delivered; bounced/failed/complained → flag the lead.

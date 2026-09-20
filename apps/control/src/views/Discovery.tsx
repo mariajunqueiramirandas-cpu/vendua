@@ -241,10 +241,7 @@ export default function Discovery() {
                   <td className="mono">
                     <b>{s.replied}</b>
                     {s.contacted > 0 && (
-                      <span className="sub">
-                        {' '}
-                        · {Math.round((s.replied / s.contacted) * 100)}%
-                      </span>
+                      <span className="sub"> · {Math.round((s.replied / s.contacted) * 100)}%</span>
                     )}
                   </td>
                   <td className="mono">{s.live}</td>

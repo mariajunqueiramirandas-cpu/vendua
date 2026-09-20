@@ -131,7 +131,9 @@ async function contextFor(
     const rows = await controlTx(
       sql,
       (tx) =>
-        tx<{ j: { agent_goal?: AgentGoal } & Record<string, unknown> }[]>`select row_to_json(l) as j from leads l where l.id = ${run.lead_id}`,
+        tx<
+          { j: { agent_goal?: AgentGoal } & Record<string, unknown> }[]
+        >`select row_to_json(l) as j from leads l where l.id = ${run.lead_id}`,
     );
     if (rows[0]) {
       parts.push(`LEAD: ${JSON.stringify(rows[0].j)}`);
@@ -490,7 +492,14 @@ export function startAgentWorker(sql: Sql, intervalMs = 15_000) {
 export async function sweepBriefs(sql: Sql): Promise<number> {
   return controlTx(sql, async (tx) => {
     const due = await tx<
-      { id: string; name: string; query: string; segment: string | null; city: string | null; target: number | null }[]
+      {
+        id: string;
+        name: string;
+        query: string;
+        segment: string | null;
+        city: string | null;
+        target: number | null;
+      }[]
     >`
       select id, name, query, segment, city, target from discovery_briefs
       where enabled
