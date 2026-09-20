@@ -50,6 +50,9 @@ export interface ToolContext {
    *  can't (prose mentions) plus business context, verbatim-verified. Null on
    *  the mock driver so scripted runs keep their script. */
   pageExtract: PageExtractor | null;
+  /** Fold a side-channel model call's usage into the run's totals — the
+   *  extraction pass costs tokens that must land in the run's accounting. */
+  addUsage(u: { tokensIn: number; tokensOut: number; costUsd: number | null }): void;
 }
 
 const leadIdArg = { type: 'string', description: 'lead uuid' } as const;
@@ -910,9 +913,12 @@ export async function executeTool(
             );
             if (page) {
               // LLM pass sits inside the cached promise — a page's extraction
-              // runs once per identity, shared with every repeat read.
-              if (ctx.pageExtract && page.text.length >= 150) {
-                const ex = await ctx.pageExtract(page.text);
+              // runs once per identity, shared with every repeat read. It reads
+              // extractText (the wider cap) when the public text was truncated.
+              const extractInput = page.extractText ?? page.text;
+              if (ctx.pageExtract && extractInput.length >= 150) {
+                const { extract: ex, usage } = await ctx.pageExtract(extractInput);
+                ctx.addUsage(usage);
                 if (ex) {
                   for (const f of ['phones', 'whatsappLinks', 'emails', 'instagram'] as const) {
                     for (const v of ex[f]) {
@@ -928,6 +934,7 @@ export async function executeTool(
                   }
                 }
               }
+              delete page.extractText;
               return { page };
             }
             const err = res.errors.find((er) => pageKey(er.url) === key2);

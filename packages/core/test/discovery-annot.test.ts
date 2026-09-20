@@ -326,8 +326,9 @@ describe('pageExtractorFor — the LLM pass, verbatim-gated', () => {
         ],
       },
     ]);
-    const ex = await pageExtractorFor(provider)(TEXT);
+    const { extract: ex, usage } = await pageExtractorFor(provider)(TEXT);
     expect(ex).not.toBeNull();
+    expect(usage).toEqual({ tokensIn: 0, tokensOut: 0, costUsd: null });
     expect(ex!.phones).toEqual(['+5522999991234']);
     expect(ex!.emails).toEqual(['contato@judoces.com.br']);
     expect(ex!.whatsappLinks).toEqual([]);
@@ -335,18 +336,41 @@ describe('pageExtractorFor — the LLM pass, verbatim-gated', () => {
     expect(ex!.owner).toBe('Ju');
     expect(ex!.sells).toBe('bolos sob encomenda');
   });
+  test('business facts are grounded in the page too — invented content drops', async () => {
+    const provider = mockProvider([
+      {
+        toolCalls: [
+          {
+            name: 'report_page',
+            args: {
+              owner: 'Ana Nunca Mencionada',
+              address: 'Av. Paulista 1000, São Paulo',
+              sells: 'bolos sob encomenda',
+            },
+          },
+        ],
+      },
+    ]);
+    const { extract: ex } = await pageExtractorFor(provider)(TEXT);
+    expect(ex!.owner).toBeUndefined();
+    expect(ex!.address).toBeUndefined();
+    expect(ex!.sells).toBe('bolos sob encomenda'); // verbatim in TEXT
+  });
   test('whatsapp links verbatim on the page yield phone + channel', async () => {
     const text = `${TEXT} wa.me/5522999991234`;
     const provider = mockProvider([
       { toolCalls: [{ name: 'report_page', args: { whatsappLinks: ['wa.me/5522999991234'] } }] },
     ]);
-    const ex = await pageExtractorFor(provider)(text);
+    const { extract: ex } = await pageExtractorFor(provider)(text);
     expect(ex!.whatsappLinks).toEqual(['https://wa.me/5522999991234']);
     expect(ex!.phones).toEqual(['+5522999991234']);
   });
-  test('no report call or a provider error → null, deterministic fields stay', async () => {
-    expect(await pageExtractorFor(mockProvider([{ text: 'ok' }]))(TEXT)).toBeNull();
+  test('no report call or a provider error → null extract, usage still flows', async () => {
+    const noCall = await pageExtractorFor(mockProvider([{ text: 'ok' }]))(TEXT);
+    expect(noCall.extract).toBeNull();
     const broken = { name: 'x', chat: async () => Promise.reject(new Error('boom')) };
-    expect(await pageExtractorFor(broken)(TEXT)).toBeNull();
+    const failed = await pageExtractorFor(broken)(TEXT);
+    expect(failed.extract).toBeNull();
+    expect(failed.usage.tokensIn).toBe(0);
   });
 });

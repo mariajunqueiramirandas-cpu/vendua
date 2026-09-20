@@ -335,6 +335,13 @@ export async function runOnce(sql: Sql): Promise<boolean> {
       // The extraction pass costs one chat per fetched page — on mock runs it
       // would eat scripted steps, so it's wired only for real providers.
       pageExtract: provider.name === 'mock' ? null : pageExtractorFor(provider),
+      // Side-channel model calls (the read_pages extraction pass) don't ride
+      // the loop's res.tokensIn — they still belong to this run's bill.
+      addUsage: (u) => {
+        tokensIn += u.tokensIn;
+        tokensOut += u.tokensOut;
+        if (u.costUsd != null) costUsd += u.costUsd;
+      },
     };
 
     steps.push({ type: 'system_prompt', content: system });
