@@ -209,6 +209,19 @@ TINYFISH_API_KEY: ..., CONTROL_SECRET: ...}`). SESSION_SECRET has no org
   guardrails.discoveryContactMinScore (default 8, off via
   discoveryAutoContact=false) + whatsapp/phone → queues an outreach run and
   flips the lead to agent_mode=auto in the same claim.
+- Autocontact also needs an ENABLED whatsapp integration (`whatsappReadyTx`
+  — `log` driver counts on the row alone; baileys additionally needs
+  `waStatus='open'`). Enable `log` via PUT
+  /control/v1/integrations/whatsapp before expecting `contactRun`.
+  Suppression (`outreachActive`) blocks whenever ANY outreach exists for the
+  lead (queued/running/done — autocontact is a first-contact), so a dup
+  discovery on an already-contacted lead returns no `contactRun`.
+  Dedupe matches on
+  phone/whatsapp digits, instagram handle (case-folded), or name+city — an
+  instagram-only match merges into whatever lead already owns the handle.
+- `lead_activities` timeline rows: timestamp column is `at` (NOT
+  `created_at`); research dossiers are `kind='note', meta->>'type'=
+  'research', created_by='agent'`.
 
 ## Config page (#/config) specifics
 

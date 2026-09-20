@@ -404,13 +404,16 @@ export async function executeTool(
           score !== null &&
           score >= minScore &&
           Boolean(wa);
-        /** Same suppression dispatch and the outreach scheduler use — a lead
-         *  with live outreach never gets a second first-contact. */
+        /** Broader than dispatch/scheduler suppression: autocontact is a
+         *  first-contact, so a lead that ever got outreach (queued, running,
+         *  or already done — e.g. a draft still awaiting approval) never gets
+         *  a second one queued by discovery. */
         const outreachActive = async (leadId: string) =>
           (
             await tx`
             select 1 from agent_runs
-            where lead_id = ${leadId} and kind = 'outreach' and status in ('queued', 'running')
+            where lead_id = ${leadId} and kind = 'outreach'
+              and status in ('queued', 'running', 'done')
             limit 1
           `
           )[0];

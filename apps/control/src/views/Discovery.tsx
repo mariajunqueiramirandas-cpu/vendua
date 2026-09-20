@@ -83,6 +83,7 @@ const argHint = (s: Step): string => {
 const outHint = (s: Step): string => {
   const o = s.out;
   if (o == null) return '';
+  if (o.error) return String(o.error).slice(0, 60);
   if (o.duplicate) {
     const merged = o.merged;
     const base =
