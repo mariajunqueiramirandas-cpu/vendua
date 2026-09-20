@@ -12,7 +12,12 @@ import {
 } from '../modules/leads.ts';
 import { addActivity, createTask } from '../modules/activities.ts';
 import { composeMessageTx, setThreadAgent, channel } from '../modules/threads.ts';
-import { DEFAULT_GUARDRAILS, getSettingTx, type Guardrails } from '../modules/integrations.ts';
+import {
+  DEFAULT_GUARDRAILS,
+  getIntegrationTx,
+  getSettingTx,
+  type Guardrails,
+} from '../modules/integrations.ts';
 import { checkSendAllowedTx, resolveChannelTx, type SendVerdict } from './guardrails.ts';
 import { dispatchMessage } from './send.ts';
 
@@ -346,7 +351,9 @@ export async function executeTool(
       const findings = typeof args.findings === 'string' ? args.findings.trim() : '';
       const sources = (Array.isArray(args.sources) ? args.sources : [])
         .map((s) => String(s ?? '').trim())
-        .filter(Boolean)
+        // Count and length are both bounded — a multi-megabyte "source" is
+        // dropped, not truncated, so a stored URL is never a silent fragment.
+        .filter((s) => s.length > 0 && s.length <= 500)
         .slice(0, 10);
       // findings/sources are writeup args, not lead columns — strip them so
       // leadInsert/leadPatch never see them.
@@ -384,6 +391,31 @@ export async function executeTool(
         // The research dossier lands on the timeline as a note — created with
         // the lead in the same claim so a lead can never exist without it.
         let guardrails: Partial<Guardrails> = {};
+        let autoOn = false;
+        let minScore: number = DEFAULT_GUARDRAILS.discoveryContactMinScore;
+        let waDriverOn = false;
+        /** The autocontact gate, evaluated on whatever contact data the lead
+         *  ends up with — a verified whatsapp (never a guessed phone), a live
+         *  whatsapp driver, and fitScore ≥ the configured minimum. */
+        const gateFires = (score: number | null, wa: string) =>
+          ctx.runKind === 'discovery' &&
+          autoOn &&
+          waDriverOn &&
+          score !== null &&
+          score >= minScore &&
+          Boolean(wa);
+        const queueOutreach = async (leadId: string, score: number | null) => {
+          const { insertRun } = await import('./runner.ts');
+          return insertRun(tx, {
+            kind: 'outreach',
+            leadId,
+            params: {
+              channel: 'whatsapp',
+              auto: 'discovery',
+              focus: `primeiro contato — lead descoberto (fitScore ${String(score)}). O dossiê de pesquisa está na timeline do lead.`,
+            },
+          });
+        };
         const writeFindings = async (leadId: string, extra: Record<string, unknown> = {}) => {
           if (!findings) return;
           await tx`
@@ -398,6 +430,11 @@ export async function executeTool(
           // sweep + manual launch) must not observe the same empty dedupe read
           // and then insert the same prospect twice.
           await tx`select pg_advisory_xact_lock(hashtext('lead-dedupe'))`;
+          guardrails = await getSettingTx<Partial<Guardrails>>(tx, 'guardrails', {});
+          autoOn = guardrails.discoveryAutoContact ?? DEFAULT_GUARDRAILS.discoveryAutoContact;
+          minScore =
+            guardrails.discoveryContactMinScore ?? DEFAULT_GUARDRAILS.discoveryContactMinScore;
+          waDriverOn = Boolean(await getIntegrationTx(tx, 'whatsapp'));
           // Dedupe before the cap check so a repeat prospect can't burn cap:
           // each phone/whatsapp number is normalized independently and matched
           // against BOTH stored columns (a landline and a WhatsApp can differ),
@@ -481,15 +518,28 @@ export async function executeTool(
               set.fit_score = input.fit_score;
               merged.push('fit_score');
             }
+            // An enriched dup clears the same gate a fresh lead would — but
+            // only while the card is still untouched ('lead') and nobody
+            // switched its agent off ('off' is a human veto, never override).
+            const dupScore = (set.fit_score ?? dup.fit_score) as number | null;
+            const dupWa = String(set.whatsapp ?? dup.whatsapp ?? '').trim();
+            const dupContact =
+              gateFires(dupScore, dupWa) && dup.state === 'lead' && dup.agent_mode !== 'off';
+            if (dupContact && dup.agent_mode !== 'auto') {
+              set.agent_mode = 'auto';
+              merged.push('agent_mode');
+            }
             if (merged.length) {
               await tx`update leads set ${tx(set)}, updated_at = now() where id = ${dup.id as string}`;
             }
             await writeFindings(dup.id as string, { merged });
+            const contactRun = dupContact ? await queueOutreach(dup.id as string, dupScore) : null;
             return {
               status: 200,
               body: {
                 duplicate: true as const,
                 merged,
+                ...(contactRun ? { contactRun } : {}),
                 existing: { id: dup.id, name: dup.name, state: dup.state },
               } as never,
             };
@@ -499,7 +549,6 @@ export async function executeTool(
           // (`response.lead.id`) — duplicate/no-op responses commit a claim
           // row but must not burn cap slots. This call's own claim row has no
           // response yet, so n = leads already created.
-          guardrails = await getSettingTx<Partial<Guardrails>>(tx, 'guardrails', {});
           const cap = guardrails.discoveryMaxLeads ?? DEFAULT_GUARDRAILS.discoveryMaxLeads;
           const n =
             (
@@ -518,42 +567,20 @@ export async function executeTool(
           }
         }
         // Score gate → first contact without a human round-trip: a high-fit
-        // lead with a reachable whatsapp/phone gets agent autonomy + an
-        // outreach run queued in the same claim (the send still obeys the
-        // messaging guardrails — firstContactDraftOnly keeps it a draft).
-        let autoContact = false;
-        if (ctx.runKind === 'discovery') {
-          const autoOn = guardrails.discoveryAutoContact ?? DEFAULT_GUARDRAILS.discoveryAutoContact;
-          const minScore =
-            guardrails.discoveryContactMinScore ?? DEFAULT_GUARDRAILS.discoveryContactMinScore;
-          const score = typeof input.fit_score === 'number' ? input.fit_score : null;
-          const wa = String(input.whatsapp ?? input.phone ?? '').trim();
-          autoContact = autoOn && score !== null && score >= minScore && Boolean(wa);
-          if (autoContact) {
-            input.agent_mode = 'auto';
-            // channelAvailabilityTx only honors leads.whatsapp — a phone-only
-            // lead would queue an outreach that can never resolve. BR business
-            // phones are effectively WhatsApp numbers (dedupe already treats
-            // the columns interchangeably), so promote it.
-            if (!String(input.whatsapp ?? '').trim()) input.whatsapp = wa;
-          }
-        }
+        // lead with a VERIFIED whatsapp (never a guessed phone — a `phone`
+        // can be a landline) and a live whatsapp driver gets agent autonomy
+        // + an outreach run queued in the same claim. The send still obeys
+        // the messaging guardrails (firstContactDraftOnly → approval queue).
+        const newScore = typeof input.fit_score === 'number' ? input.fit_score : null;
+        const autoContact = gateFires(newScore, String(input.whatsapp ?? '').trim());
+        if (autoContact) input.agent_mode = 'auto';
         const created = await insertLeadTx(tx, input);
         await writeFindings(created.body.lead.id as string);
         if (autoContact) {
-          const { insertRun } = await import('./runner.ts');
-          const contactRunId = await insertRun(tx, {
-            kind: 'outreach',
-            leadId: created.body.lead.id,
-            params: {
-              channel: 'whatsapp',
-              auto: 'discovery',
-              focus: `primeiro contato — lead descoberto nesta caçada (fitScore ${String(input.fit_score)}). O dossiê de pesquisa está na timeline do lead.`,
-            },
-          });
+          const contactRun = await queueOutreach(created.body.lead.id, newScore);
           return {
             ...created,
-            body: { ...created.body, contactRun: contactRunId } as never,
+            body: { ...created.body, contactRun } as never,
           };
         }
         return created;

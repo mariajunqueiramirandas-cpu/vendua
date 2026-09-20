@@ -306,11 +306,14 @@ export async function runOnce(sql: Sql): Promise<boolean> {
     const memory = await getSetting<{ facts: string[] }>(sql, 'agent_memory', { facts: [] });
     const { text: context, goal, bookingUrl } = await contextFor(sql, run);
     const g = await getSetting<Partial<Guardrails>>(sql, 'guardrails', {});
+    // The prompt only promises autocontact when it can actually happen —
+    // the same conditions create_lead's gate checks (enabled + live driver).
+    const waDriverOn = run.kind === 'discovery' && Boolean(await getIntegration(sql, 'whatsapp'));
     const system = buildSystemPrompt(run.kind, pitch, memory, {
       goal,
       bookingUrl,
       autoContact: {
-        enabled: g.discoveryAutoContact ?? DEFAULT_GUARDRAILS.discoveryAutoContact,
+        enabled: (g.discoveryAutoContact ?? DEFAULT_GUARDRAILS.discoveryAutoContact) && waDriverOn,
         minScore: g.discoveryContactMinScore ?? DEFAULT_GUARDRAILS.discoveryContactMinScore,
       },
     });

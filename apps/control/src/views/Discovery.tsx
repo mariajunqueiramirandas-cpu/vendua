@@ -85,12 +85,16 @@ const outHint = (s: Step): string => {
   if (o == null) return '';
   if (o.duplicate) {
     const merged = o.merged;
-    return Array.isArray(merged) && merged.length
-      ? `somou ${merged.length} campo${merged.length === 1 ? '' : 's'} no existente`
-      : 'já estava no CRM';
+    const base =
+      Array.isArray(merged) && merged.length
+        ? `somou ${merged.length} campo${merged.length === 1 ? '' : 's'} no existente`
+        : 'já estava no CRM';
+    return `${base}${o.contactRun ? ' · contato auto' : ''}`;
   }
   const lead = o.lead as { id?: string } | undefined;
-  if (s.name === 'create_lead' && lead?.id) return '+ lead';
+  if (s.name === 'create_lead' && lead?.id) {
+    return `+ lead${o.contactRun ? ' · contato auto' : ''}`;
+  }
   if (s.name === 'web_search') {
     const results = o.results;
     if (Array.isArray(results))

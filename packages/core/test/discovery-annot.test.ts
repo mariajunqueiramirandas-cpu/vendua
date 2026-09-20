@@ -106,6 +106,11 @@ describe('contactsFromLinks', () => {
     expect(c.emails).toEqual(['contato@doceria.com.br']);
     expect(c.phones).toEqual(['+558532223344']);
   });
+  test('tel: without + is a BR-local number — normalized to +55, not +<digits>', () => {
+    const c = contactsFromLinks(['tel:(85) 3222-3344', 'tel:85999887766', 'tel:0800']);
+    // DDD+number → +55…; a fragment (<8 digits) is dropped entirely.
+    expect(c.phones).toEqual(['+558532223344', '+5585999887766']);
+  });
   test('social roots → handles; utility paths ignored', () => {
     const c = contactsFromLinks([
       'https://instagram.com/doceria.aurora',

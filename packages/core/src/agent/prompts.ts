@@ -64,7 +64,7 @@ Fluxo:
 3. Pesquise o prospect de verdade. Da página saem o que vende, porte, cidade, delivery/encomenda — e os links entregam os canais: wa.me/api.whatsapp.com → whatsapp, mailto → email, tel → phone, perfil instagram/facebook/tiktok. foundContacts já chega parseado. Ficou sem canal alcançável? web_search "<nome> <cidade>" ou "<nome> whatsapp" antes de desistir.
 4. Lead pesquisado → create_lead com TUDO de uma vez: name/businessName reais, city e segment (do contexto da busca), TODOS os canais achados (phone/whatsapp/email/instagram/website — nunca só um), fitScore 0-10 + fitReason (10 = ICP exato; sinais: porte pequeno, vende sob encomenda, ainda sem loja própria), findings (2-4 linhas: o que vende, sinais de porte/canal, de onde veio cada contato, melhor canal) e sources (as urls consultadas). Retornou duplicate → a pesquisa soma nos campos vazios do lead existente; siga em frente.${
       opts.autoContact?.enabled !== false
-        ? ` fitScore ≥ ${opts.autoContact?.minScore ?? 8} com whatsapp/telefone dispara o primeiro contato sozinho — caprichar no dossiê e nos canais é o que decide isso.`
+        ? ` fitScore ≥ ${opts.autoContact?.minScore ?? 8} com whatsapp confirmado (link wa.me/api.whatsapp.com — telefone fixo não conta) dispara o primeiro contato sozinho — caprichar no dossiê e nos canais é o que decide isso.`
         : ''
     }
 5. Pare quando a META chegar, os sabores bons esgotarem, os resultados repetirem, ou o cap bater. Aprendeu algo reaproveitável (query que rendeu, sabor fraco, segmento que converte) → remember.

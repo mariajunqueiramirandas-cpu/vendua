@@ -279,7 +279,17 @@ export function contactsFromLinks(links: string[]): FoundContacts {
     }
     if (u.protocol === 'tel:') {
       const d = digits(u.pathname);
-      if (d.length >= 8) uniqPush(out.phones, `+${d}`);
+      if (d.length < 8) continue;
+      // `tel:` only carries an international number when it starts with '+'.
+      // BR pages publish DDD+number (10-11 digits) without it — prefixing
+      // '+' there fabricates a wrong country code, so normalize local forms
+      // to +55 and keep short fragments as a bare-digit hint.
+      const phone = u.pathname.trim().startsWith('+')
+        ? `+${d}`
+        : d.length >= 10 && d.length <= 11
+          ? `+55${d}`
+          : d;
+      uniqPush(out.phones, phone);
       continue;
     }
     const wa = contactFromUrl(u);
