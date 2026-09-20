@@ -1,6 +1,7 @@
 import type { Sql } from '../platform/db.ts';
 import { HttpError, str } from '../platform/http.ts';
 import { claimControl, controlTx, type ClaimResult } from './control.ts';
+import { LEAD_STATES, type LeadState } from './leads.ts';
 
 /**
  * integrations module — modular provider configuration for the agentic CRM.
@@ -233,6 +234,36 @@ export const DEFAULT_PITCH = {
 
 export type Pitch = typeof DEFAULT_PITCH;
 
+/** Stage close-probabilities that turn pipeline value into a forecast —
+ *  the 'forecast' setting stores overrides under `probabilities`. */
+export const DEFAULT_FORECAST_PROBABILITIES: Record<LeadState, number> = {
+  lead: 0.05,
+  contacted: 0.2,
+  invited: 0.6,
+  live: 1,
+};
+
+/** Effective close-probability per state — defaults merged with the stored
+ *  'forecast' row; unknown keys and out-of-range values are ignored so a
+ *  hand-edited row can't poison the math. */
+export function forecastProbabilities(stored: unknown): Record<LeadState, number> {
+  const out = { ...DEFAULT_FORECAST_PROBABILITIES };
+  const p = (stored as { probabilities?: unknown } | null)?.probabilities;
+  if (p && typeof p === 'object' && !Array.isArray(p)) {
+    for (const st of LEAD_STATES) {
+      const v = (p as Record<string, unknown>)[st];
+      if (typeof v === 'number' && Number.isFinite(v) && v >= 0 && v <= 1) out[st] = v;
+    }
+  }
+  return out;
+}
+
+/** Tx-local read of the forecast probabilities — use inside an existing
+ *  control tx (leadStats, snapshotPipelineTx). */
+export async function getForecastConfigTx(tx: Sql): Promise<Record<LeadState, number>> {
+  return forecastProbabilities(await getSettingTx<unknown>(tx, 'forecast', null));
+}
+
 export async function getSetting<T>(sql: Sql, key: string, fallback: T): Promise<T> {
   return controlTx(sql, (tx) => getSettingTx(tx, key, fallback));
 }
@@ -343,6 +374,29 @@ export function validateSetting(key: string, value: unknown): void {
     } catch (e) {
       if (e instanceof HttpError) throw e;
       throw bad('bookingUrl', 'must be a URL');
+    }
+    return;
+  }
+
+  if (key === 'forecast') {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) {
+      throw bad('*', 'must be an object');
+    }
+    const p = (value as { probabilities?: unknown }).probabilities;
+    if (p === undefined) return;
+    if (!p || typeof p !== 'object' || Array.isArray(p)) {
+      throw bad('probabilities', 'must be an object');
+    }
+    for (const [k, n] of Object.entries(p)) {
+      if (!(LEAD_STATES as readonly string[]).includes(k)) {
+        throw bad(
+          `probabilities.${k}`,
+          `unknown state — must be one of: ${LEAD_STATES.join(', ')}`,
+        );
+      }
+      if (typeof n !== 'number' || !Number.isFinite(n) || n < 0 || n > 1) {
+        throw bad(`probabilities.${k}`, 'must be a number in [0, 1]');
+      }
     }
     return;
   }

@@ -84,6 +84,7 @@ import {
   type IntegrationKind,
 } from './modules/integrations.ts';
 import { claimControl, controlTx } from './modules/control.ts';
+import { pipelineForecast, snapshotPipelineTx } from './modules/forecast.ts';
 import { drain, insertRun } from './agent/runner.ts';
 import { ingestInbound } from './agent/inbound.ts';
 import { ingestResendEvent, svixHeaders, svixVerified } from './agent/channels/email-inbound.ts';
@@ -861,7 +862,23 @@ export function createApp({ sql, sessionSecret, controlSecret }: AppDeps) {
 
   app.get('/control/v1/stats', async (c) => {
     controlGate(c);
-    return c.json(await leadStats(sql));
+    const stats = await leadStats(sql);
+    // The forecast slice reuses this request's byState read — composed here
+    // (not inside leadStats) so leads.ts stays free of control-settings deps.
+    const forecast = await pipelineForecast(sql, stats.byState);
+    return c.json({ ...stats, forecast });
+  });
+
+  // Staff-forced pipeline snapshot — the worker also takes one daily. The
+  // taken_on upsert makes a same-day re-shot a refresh, not a duplicate.
+  app.post('/control/v1/stats/snapshot', async (c) => {
+    controlGate(c);
+    const res = await claimControl(sql, requireIdemKey(c), async (tx) => ({
+      status: 201,
+      body: { snapshot: await snapshotPipelineTx(tx) },
+    }));
+    if (res.replayed) c.header('x-idempotent-replay', 'true');
+    return c.json(res.body, 201);
   });
 
   app.get('/control/v1/leads/:id', async (c) => {
