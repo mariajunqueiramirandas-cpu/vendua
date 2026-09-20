@@ -146,5 +146,15 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('pipeline snapshots (db)', () =>
     const stats = await leadStats(sql);
     expect(stats.won30d.count).toBe(before.won30d.count + 1);
     expect(stats.won30d.valueCents).toBe(before.won30d.valueCents + 100000);
+
+    // A win with no deal value stamps null — a later assignment must not
+    // retroactively revalue it.
+    const nullWin = await controlTx(sql, (tx) => insertLeadTx(tx, { name: 'Null Win' }));
+    const id2 = nullWin.body.lead.id;
+    await updateLead(sql, id2, { state: 'live' }, `win-${id2}`);
+    await updateLead(sql, id2, { deal_value_cents: 99999 }, `revalue-${id2}`);
+    const after = await leadStats(sql);
+    expect(after.won30d.count).toBe(stats.won30d.count + 1);
+    expect(after.won30d.valueCents).toBe(stats.won30d.valueCents);
   });
 });

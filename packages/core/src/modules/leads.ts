@@ -596,17 +596,16 @@ export async function leadStats(sql: Sql): Promise<LeadStats> {
       from leads where archived_at is null group by 1 order by 2 desc, 1
     `;
     // "Won" = first 'live' entry inside the window per lead — a lead that
-    // bounced through 'live' twice counts once. value_cents is the deal value
-    // stamped at transition time; pre-column rows fall back to today's value.
+    // bounced through 'live' twice counts once. value_cents is frozen at
+    // transition time (migration 0015 backfills pre-column rows), so post-win
+    // edits to deal_value_cents can't rewrite reported revenue.
     const won = (
       await tx<{ n: number; value_cents: number }[]>`
-        select count(*)::int as n,
-               coalesce(sum(coalesce(w.value_cents, l.deal_value_cents)), 0)::int as value_cents
+        select count(*)::int as n, coalesce(sum(w.value_cents), 0)::int as value_cents
         from (select distinct on (lead_id) lead_id, value_cents
               from lead_state_history
               where to_state = 'live' and at > now() - interval '30 days'
               order by lead_id, at) w
-        join leads l on l.id = w.lead_id
       `
     )[0]!;
     const reached = await tx<{ to_state: string; n: number }[]>`
