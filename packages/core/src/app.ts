@@ -1326,6 +1326,14 @@ export function createApp({ sql, sessionSecret, controlSecret }: AppDeps) {
       throw new HttpError(422, 'BAD_REQUEST', 'leadIds must be an array of ≤200 uuids');
     }
     const goal = agentGoal(body.goal);
+    // Optional staff channel override — 'auto' or absent lets the agent pick;
+    // 'whatsapp'/'email' pins every send in the dispatched runs to it. The
+    // resolver still blocks when that channel is unreachable for a lead.
+    const wantChannel =
+      body.channel === 'whatsapp' || body.channel === 'email' ? body.channel : null;
+    if (body.channel != null && body.channel !== 'auto' && !wantChannel) {
+      throw new HttpError(422, 'BAD_REQUEST', 'channel must be auto|whatsapp|email');
+    }
     const res = await claimControl(sql, requireIdemKey(c), async (tx) => {
       let enqueued = 0;
       const skipped: { id: string; reason: string }[] = [];
@@ -1369,7 +1377,11 @@ export function createApp({ sql, sessionSecret, controlSecret }: AppDeps) {
           continue;
         }
         await tx`update leads set agent_goal = ${goal}, updated_at = now() where id = ${id}`;
-        await insertRun(tx, { kind: 'outreach', leadId: id, params: { goal } });
+        await insertRun(tx, {
+          kind: 'outreach',
+          leadId: id,
+          params: { goal, ...(wantChannel ? { channel: wantChannel } : {}) },
+        });
         enqueued++;
       }
       return { status: 200, body: { enqueued, skipped } };

@@ -7,6 +7,7 @@ import { providerFor, type AgentMessage } from './llm.ts';
 import { buildSystemPrompt } from './prompts.ts';
 import { executeTool, toolsFor, type ToolContext } from './tools.ts';
 import { dispatchMessage } from './send.ts';
+import { channelAvailabilityTx } from './guardrails.ts';
 
 const agentLog = log.child({ mod: 'agent' });
 
@@ -150,6 +151,18 @@ async function contextFor(
           bookingUrl = meeting.bookingUrl ?? null;
           parts.push(`BOOKING_URL: ${bookingUrl ?? '(não configurado)'}`);
         }
+        // Ground truth on reachable channels — the model must not compose on
+        // a channel the lead can't be reached on (the classic bug: draft on
+        // whatsapp when the lead has no number or the driver is off).
+        const avail = await controlTx(sql, (tx) => channelAvailabilityTx(tx, run.lead_id!));
+        const chanLine = (['whatsapp', 'email'] as const)
+          .map((ch) => `${ch} ${avail[ch].ok ? 'ok' : `indisponível (${avail[ch].reason})`}`)
+          .join(' · ');
+        parts.push(`CANAIS: ${chanLine}`);
+        const want = run.params.channel;
+        if (want === 'whatsapp' || want === 'email') {
+          parts.push(`CANAL FORÇADO (staff escolheu): ${want}`);
+        }
       }
     }
   }
@@ -292,6 +305,10 @@ export async function runOnce(sql: Sql): Promise<boolean> {
       threadId: run.thread_id,
       step: 0,
       briefName: typeof run.params.briefName === 'string' ? run.params.briefName : null,
+      channelOverride:
+        run.params.channel === 'whatsapp' || run.params.channel === 'email'
+          ? run.params.channel
+          : null,
       extractCache: new Map(),
     };
 

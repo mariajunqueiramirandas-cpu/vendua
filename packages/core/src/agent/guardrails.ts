@@ -1,5 +1,10 @@
 import type { Sql } from '../platform/db.ts';
-import { DEFAULT_GUARDRAILS, getSettingTx, type Guardrails } from '../modules/integrations.ts';
+import {
+  DEFAULT_GUARDRAILS,
+  getIntegrationTx,
+  getSettingTx,
+  type Guardrails,
+} from '../modules/integrations.ts';
 import type { Channel } from '../modules/threads.ts';
 
 /**
@@ -7,6 +12,127 @@ import type { Channel } from '../modules/threads.ts';
  * in code in the runner path, never in the prompt: the model asks, this
  * decides. Ordering matters — the first false answer wins.
  */
+
+export interface ChannelVerdict {
+  ok: boolean;
+  reason?: string;
+}
+
+/** Which channels can actually carry a message to this lead right now:
+ *  contact data + an enabled integration + deliverability. 'manual' always
+ *  works — a draft there is a note for staff to copy elsewhere. */
+export async function channelAvailabilityTx(
+  tx: Sql,
+  leadId: string,
+): Promise<Record<Channel, ChannelVerdict>> {
+  const lead = (
+    await tx<
+      {
+        email: string | null;
+        whatsapp: string | null;
+        email_bounced_at: string | null;
+      }[]
+    >`select email, whatsapp, email_bounced_at from leads where id = ${leadId}`
+  )[0];
+  if (!lead) {
+    const dead = { ok: false, reason: 'lead not found' };
+    return { whatsapp: dead, email: dead, manual: dead };
+  }
+  // An inbound whatsapp thread carries the sender's number on external_id —
+  // reachable even when lead.whatsapp was never saved.
+  const waThread = (
+    await tx<{ n: number }[]>`
+      select count(*)::int as n from lead_threads
+      where lead_id = ${leadId} and channel = 'whatsapp' and external_id is not null
+    `
+  )[0]!.n;
+  const [waInt, emInt] = await Promise.all([
+    getIntegrationTx(tx, 'whatsapp'),
+    getIntegrationTx(tx, 'email'),
+  ]);
+  return {
+    whatsapp:
+      !lead.whatsapp && !waThread
+        ? { ok: false, reason: 'lead has no whatsapp' }
+        : !waInt
+          ? { ok: false, reason: 'whatsapp integration off' }
+          : { ok: true },
+    email: !lead.email
+      ? { ok: false, reason: 'lead has no email' }
+      : !emInt
+        ? { ok: false, reason: 'email integration off' }
+        : lead.email_bounced_at
+          ? { ok: false, reason: 'email bounced' }
+          : { ok: true },
+    manual: { ok: true },
+  };
+}
+
+export type ChannelPick =
+  | {
+      ok: true;
+      channel: Channel;
+      via: 'requested' | 'override' | 'continuity' | 'fallback';
+      /** channel of the lead's last inbound — set when this send switches
+       *  channels mid-conversation, so the caller can say so in the copy. */
+      prevChannel: Channel | null;
+    }
+  | { ok: false; reason: string; available: Channel[] };
+
+/** Resolve which channel a send/draft should go out on. Priority: a staff
+ *  override (dispatch-time `params.channel`) > the model's explicit arg >
+ *  the channel the lead last wrote on (continuity) > whatsapp > email.
+ *  A requested-but-dead channel returns {ok:false, available} so the caller
+ *  can retry on a reachable one instead of composing on air. 'manual' is
+ *  only honored when explicitly requested — it never delivers by itself. */
+export async function resolveChannelTx(
+  tx: Sql,
+  leadId: string,
+  args: { requested?: Channel | null; override?: Channel | null },
+): Promise<ChannelPick> {
+  const avail = await channelAvailabilityTx(tx, leadId);
+  const usable = (['whatsapp', 'email'] as const).filter((ch) => avail[ch].ok);
+  // The lead's last inbound channel — for continuity picks and to flag a
+  // mid-conversation channel switch back to the caller.
+  const lastIn =
+    (
+      await tx<{ channel: Channel }[]>`
+      select t.channel from lead_messages m
+      join lead_threads t on t.id = m.thread_id
+      where t.lead_id = ${leadId} and m.direction = 'in'
+      order by m.created_at desc limit 1
+    `
+    )[0]?.channel ?? null;
+  const prev = lastIn === 'whatsapp' || lastIn === 'email' ? lastIn : null;
+  const want = args.override ?? args.requested ?? null;
+  if (want) {
+    // 'manual' never auto-picks — only the model/staff may draft to it.
+    if (want === 'manual')
+      return { ok: true, channel: 'manual', via: 'requested', prevChannel: prev };
+    if (avail[want].ok) {
+      return {
+        ok: true,
+        channel: want,
+        via: args.override ? 'override' : 'requested',
+        prevChannel: prev,
+      };
+    }
+    return { ok: false, reason: avail[want].reason!, available: usable };
+  }
+  // Continuity: answer on the channel the lead last wrote on if it's alive.
+  if (prev && avail[prev].ok) {
+    return { ok: true, channel: prev, via: 'continuity', prevChannel: prev };
+  }
+  // First contact / stale channel: whatsapp is the stronger channel for this
+  // audience, email the fallback.
+  const first = usable[0];
+  if (first) return { ok: true, channel: first, via: 'fallback', prevChannel: prev };
+  return {
+    ok: false,
+    reason: 'no reachable channel (whatsapp/email both unavailable)',
+    available: [],
+  };
+}
 
 export interface SendVerdict {
   ok: boolean;

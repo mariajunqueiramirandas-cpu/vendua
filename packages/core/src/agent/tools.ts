@@ -13,7 +13,7 @@ import {
 import { addActivity, createTask } from '../modules/activities.ts';
 import { composeMessage, composeMessageTx, setThreadAgent, channel } from '../modules/threads.ts';
 import { DEFAULT_GUARDRAILS, getSettingTx, type Guardrails } from '../modules/integrations.ts';
-import { checkSendAllowedTx, type SendVerdict } from './guardrails.ts';
+import { checkSendAllowedTx, resolveChannelTx, type SendVerdict } from './guardrails.ts';
 import { dispatchMessage } from './send.ts';
 
 /**
@@ -37,6 +37,9 @@ export interface ToolContext {
   /** Discovery-brief runs stamp created leads' discovered_via with the brief
    *  name so the board can tell scheduled-autopilot finds from ad-hoc ones. */
   briefName: string | null;
+  /** Staff channel override from dispatch (`params.channel`) — trumps the
+   *  model's own channel pick on send_message/draft_message. */
+  channelOverride: 'email' | 'whatsapp' | null;
 }
 
 const leadIdArg = { type: 'string', description: 'lead uuid' } as const;
@@ -157,10 +160,13 @@ const REGISTRY: { def: AgentTool; toolsets: string[] }[] = [
     },
   },
   {
-    toolsets: ['reply', 'outreach'],
+    // triage included: the first-contact draft IS triage's write-up — but
+    // send_message stays out, so a new lead can never be sent unreviewed.
+    toolsets: ['triage', 'reply', 'outreach'],
     def: {
       name: 'draft_message',
-      description: 'Draft an outbound message for human approval — always allowed, never sends.',
+      description:
+        'Draft an outbound message for human approval — always allowed, never sends. Omit channel to auto-pick the reachable one (last inbound channel, else whatsapp > email); if you pass a dead channel you get {blocked, reason, use} — retry on `use`.',
       parameters: {
         type: 'object',
         properties: {
@@ -169,7 +175,7 @@ const REGISTRY: { def: AgentTool; toolsets: string[] }[] = [
           body: { type: 'string' },
           subject: { type: 'string' },
         },
-        required: ['leadId', 'channel', 'body'],
+        required: ['leadId', 'body'],
       },
     },
   },
@@ -178,7 +184,7 @@ const REGISTRY: { def: AgentTool; toolsets: string[] }[] = [
     def: {
       name: 'send_message',
       description:
-        'Send an outbound message now. Guardrails decide whether it queues (auto mode) or falls back to draft.',
+        'Send an outbound message now. Guardrails decide whether it queues (auto mode) or falls back to draft. Omit channel to auto-pick the reachable one; a dead channel returns {blocked, reason, use} — retry on `use`.',
       parameters: {
         type: 'object',
         properties: {
@@ -187,7 +193,7 @@ const REGISTRY: { def: AgentTool; toolsets: string[] }[] = [
           body: { type: 'string' },
           subject: { type: 'string' },
         },
-        required: ['leadId', 'channel', 'body'],
+        required: ['leadId', 'body'],
       },
     },
   },
@@ -442,11 +448,23 @@ export async function executeTool(
       return res.body;
     }
     case 'draft_message': {
+      const leadId = String(args.leadId);
+      // Resolve before composing — a draft on a channel the lead can't be
+      // reached on is a dead draft staff will approve into a failure.
+      const pick = await controlTx(sql, (tx) =>
+        resolveChannelTx(tx, leadId, {
+          requested: args.channel ? channel(args.channel) : null,
+          override: ctx.channelOverride,
+        }),
+      );
+      if (!pick.ok) {
+        return { blocked: true, reason: pick.reason, use: pick.available[0] ?? null };
+      }
       const res = await composeMessage(
         sql,
         {
-          leadId: String(args.leadId),
-          channel: channel(args.channel),
+          leadId,
+          channel: pick.channel,
           body: String(args.body),
           subject: (args.subject as string) ?? undefined,
           author: 'agent',
@@ -454,20 +472,21 @@ export async function executeTool(
         },
         key,
       );
-      return res.body;
+      return { ...res.body, channel: pick.channel, via: pick.via };
     }
     case 'send_message': {
       const leadId = String(args.leadId);
-      const chan = channel(args.channel);
+      const chanArg = args.channel ? channel(args.channel) : null;
       // Claimed: a retried tool call replays the recorded decision instead of
       // composing again. The advisory lock serializes concurrent sends on the
       // lead so the daily-cap count sees the winner's queued row.
       type SendBody =
-        | { blocked: true; reason: string | undefined }
+        | { blocked: true; reason: string | undefined; use?: string | null }
         | {
             blocked: false;
             verdict: SendVerdict;
             composed: Awaited<ReturnType<typeof composeMessageTx>>;
+            pick: Extract<Awaited<ReturnType<typeof resolveChannelTx>>, { ok: true }>;
           };
       const res = await claimControl<SendBody>(sql, key, async (tx) => {
         await tx`select pg_advisory_xact_lock(hashtext(${`send:${leadId}`}))`;
@@ -487,6 +506,21 @@ export async function executeTool(
             body: { blocked: true as const, reason: 'already dispatched by this run' },
           };
         }
+        // Channel resolution inside the same claim: staff override > the
+        // model's arg > continuity > whatsapp > email. A dead channel blocks
+        // with the reachable alternative so the model retries on it — never
+        // compose on air.
+        const pick = await resolveChannelTx(tx, leadId, {
+          requested: chanArg,
+          override: ctx.channelOverride,
+        });
+        if (!pick.ok) {
+          return {
+            status: 200,
+            body: { blocked: true as const, reason: pick.reason, use: pick.available[0] ?? null },
+          };
+        }
+        const chan = pick.channel;
         // Pause applies per (lead, channel) — staff disabling the DESTINATION
         // thread (or request_human earlier in this same run) must stop sends
         // even when the lead's agent_mode still allows them. No thread yet =
@@ -518,16 +552,28 @@ export async function executeTool(
           status: verdict.forceDraft ? 'draft' : 'queued',
           agentRunId: ctx.runId,
         });
-        return { status: 200, body: { blocked: false as const, verdict, composed } };
+        return {
+          status: 200,
+          body: { blocked: false as const, verdict, composed, pick },
+        };
       });
       const out = res.body;
-      if (out.blocked) return { blocked: true, reason: out.reason };
+      if (out.blocked) return { blocked: true, reason: out.reason, use: out.use };
       // dispatchMessage no-ops unless the row is still 'queued' — safe when
       // this response replays.
       if (!res.replayed && out.verdict.forceDraft === false) {
         await dispatchMessage(sql, out.composed.body.message.id);
       }
-      return { ...out.composed.body, draftFallback: out.verdict.forceDraft };
+      return {
+        ...out.composed.body,
+        draftFallback: out.verdict.forceDraft,
+        channel: out.pick.channel,
+        via: out.pick.via,
+        switchedFrom:
+          out.pick.prevChannel && out.pick.prevChannel !== out.pick.channel
+            ? out.pick.prevChannel
+            : undefined,
+      };
     }
     case 'remember': {
       const fact = String(args.fact ?? '').slice(0, 500);

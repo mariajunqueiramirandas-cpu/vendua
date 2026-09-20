@@ -20,10 +20,14 @@ export default function Leads() {
   const [importMsg, setImportMsg] = useState('');
   const [sel, setSel] = useState<Set<string>>(new Set());
   const [goal, setGoal] = useState<'negotiation' | 'meeting'>('negotiation');
+  const [channel, setChannel] = useState<'auto' | 'whatsapp' | 'email'>('auto');
   const [dispatchMsg, setDispatchMsg] = useState('');
   const [dispatchBusy, setDispatchBusy] = useState(false);
   const nav = useNavigate();
   const fileRef = useRef<HTMLInputElement>(null);
+  // Bumps on every filter change — a late dispatch result only renders if it
+  // still belongs to the filter set it was launched under.
+  const filterGen = useRef(0);
 
   const load = useCallback(
     (cur?: string) => {
@@ -48,8 +52,11 @@ export default function Leads() {
     load();
   }, [load]);
   // Filter changes swap the result set — drop hidden selections so dispatch
-  // only ever acts on leads the staff can see selected.
+  // only ever acts on leads the staff can see selected. The generation bump
+  // also invalidates an in-flight dispatch result, which would otherwise
+  // land under the new lead set after the filters changed.
   useEffect(() => {
+    filterGen.current++;
     setSel(new Set());
     setDispatchMsg('');
   }, [q, state, archived]);
@@ -87,10 +94,12 @@ export default function Leads() {
     });
 
   const dispatch = async () => {
+    const gen = filterGen.current;
     setDispatchBusy(true);
     setDispatchMsg('');
     try {
-      const r = await api.dispatch([...sel], goal);
+      const r = await api.dispatch([...sel], goal, channel);
+      if (gen !== filterGen.current) return; // filters changed mid-flight — stale result
       const names = new Map(leads.map((l) => [l.id, l.name]));
       const skips = r.skipped
         .map((s) => `${names.get(s.id) ?? s.id.slice(0, 8)}: ${s.reason}`)
@@ -100,6 +109,7 @@ export default function Leads() {
       );
       setSel(new Set());
     } catch (e) {
+      if (gen !== filterGen.current) return;
       setDispatchMsg(e instanceof Error ? e.message : 'erro');
     } finally {
       setDispatchBusy(false);
@@ -173,6 +183,14 @@ export default function Leads() {
             {GOAL_OPTS.map(([v, l]) => (
               <button key={v} className={goal === v ? 'sel' : ''} onClick={() => setGoal(v)}>
                 {l}
+              </button>
+            ))}
+          </span>
+          <span className="sub">canal:</span>
+          <span className="seg" title="auto = o agente escolhe o canal alcançável">
+            {(['auto', 'whatsapp', 'email'] as const).map((v) => (
+              <button key={v} className={channel === v ? 'sel' : ''} onClick={() => setChannel(v)}>
+                {v}
               </button>
             ))}
           </span>

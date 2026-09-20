@@ -347,10 +347,14 @@ export const api = {
   cancelRun: (id: string) =>
     req<{ ok: true; status?: string }>(`/agent/runs/${id}/cancel`, { method: 'POST' }),
 
-  dispatch: (leadIds: string[], goal: 'negotiation' | 'meeting') =>
+  dispatch: (
+    leadIds: string[],
+    goal: 'negotiation' | 'meeting',
+    channel?: 'auto' | 'whatsapp' | 'email',
+  ) =>
     req<{ enqueued: number; skipped: { id: string; reason: string }[] }>('/agent/dispatch', {
       method: 'POST',
-      body: JSON.stringify({ leadIds, goal }),
+      body: JSON.stringify({ leadIds, goal, ...(channel ? { channel } : {}) }),
     }),
   briefs: () => req<{ briefs: Brief[] }>('/agent/briefs'),
   createBrief: (b: {
