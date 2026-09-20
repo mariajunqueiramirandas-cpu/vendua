@@ -421,6 +421,9 @@ function openaiProvider(config: Record<string, unknown>, secretRef: string | nul
 export interface MockStep {
   text?: string;
   toolCalls?: { name: string; args?: Record<string, unknown> }[];
+  /** Dev/demo pacing — sleep before this step lands, so scripted runs read
+   *  live on the launch stage (and in recordings) instead of flashing past. */
+  delayMs?: number;
 }
 
 export function mockProvider(script: MockStep[]): LlmProvider {
@@ -430,6 +433,9 @@ export function mockProvider(script: MockStep[]): LlmProvider {
     async chat() {
       const step = script[calls] ?? { text: 'ok' };
       calls++;
+      if (step.delayMs && step.delayMs > 0) {
+        await new Promise((r) => setTimeout(r, Math.min(step.delayMs as number, 30000)));
+      }
       return {
         text: step.text ?? null,
         toolCalls: (step.toolCalls ?? []).map((t, i) => ({

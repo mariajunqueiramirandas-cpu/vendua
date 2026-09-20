@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
+import { Link } from 'react-router-dom';
 import { FlaskConical, Plus, Trash2 } from 'lucide-react';
 import {
   api,
@@ -88,7 +89,15 @@ export default function Discovery() {
   };
 
   return (
-    <Page title="Descoberta" sub="o agente procura prospects e vira lead">
+    <Page
+      title="Descoberta"
+      sub="o agente procura prospects e vira lead"
+      actions={
+        <Link to="/lancar" className="btn ghost">
+          lançar agente →
+        </Link>
+      }
+    >
       <div className="card" style={{ padding: 18, marginBottom: 16, maxWidth: 720 }}>
         <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
           <input
