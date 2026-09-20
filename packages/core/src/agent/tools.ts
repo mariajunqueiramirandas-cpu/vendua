@@ -452,7 +452,13 @@ export async function executeTool(
       // Resolve inside the same claim that writes the draft — a bounce or
       // contact edit landing between resolution and insert can't strand a
       // draft on a dead channel for staff to approve into a failure.
-      const res = await claimControl(sql, key, async (tx) => {
+      type DraftBody =
+        | { blocked: true; reason: string | undefined; use?: string | null }
+        | (Awaited<ReturnType<typeof composeMessageTx>>['body'] & {
+            channel: string;
+            via: string;
+          });
+      const res = await claimControl<DraftBody>(sql, key, async (tx) => {
         const pick = await resolveChannelTx(tx, leadId, {
           requested: args.channel ? channel(args.channel) : null,
           override: ctx.channelOverride,
