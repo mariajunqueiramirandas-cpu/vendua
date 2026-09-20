@@ -3,6 +3,8 @@ import {
   annotateResult,
   annotateResults,
   contactFromUrl,
+  contactsFromLinks,
+  navLinks,
   pageKey,
 } from '../src/agent/channels/discovery.ts';
 import type { DiscoveryResult } from '../src/agent/channels/discovery.ts';
@@ -87,6 +89,74 @@ describe('annotateResult', () => {
   test('snippet truncated to 160', () => {
     const a = annotateResult(r('https://x.com.br', 'x', 'y'.repeat(400)));
     expect(a.snippet!.length).toBe(160);
+  });
+});
+
+describe('contactsFromLinks', () => {
+  test('whatsapp deep links → phone + whatsappLinks', () => {
+    const c = contactsFromLinks([
+      'https://wa.me/5585999887766',
+      'https://api.whatsapp.com/send?phone=5521999966823&text=oi',
+    ]);
+    expect(c.phones).toEqual(['+5585999887766', '+5521999966823']);
+    expect(c.whatsappLinks.length).toBe(2);
+  });
+  test('mailto: + tel: decode to emails/phones', () => {
+    const c = contactsFromLinks(['mailto:contato@doceria.com.br', 'tel:+558532223344']);
+    expect(c.emails).toEqual(['contato@doceria.com.br']);
+    expect(c.phones).toEqual(['+558532223344']);
+  });
+  test('tel: without + is a BR-local number — normalized to +55, not +<digits>', () => {
+    const c = contactsFromLinks(['tel:(85) 3222-3344', 'tel:85999887766', 'tel:0800']);
+    // DDD+number → +55…; a fragment (<8 digits) is dropped entirely.
+    expect(c.phones).toEqual(['+558532223344', '+5585999887766']);
+  });
+  test('social roots → handles; utility paths ignored', () => {
+    const c = contactsFromLinks([
+      'https://instagram.com/doceria.aurora',
+      'https://www.instagram.com/p/abc123/',
+      'https://facebook.com/atelledocelar',
+      'https://facebook.com/sharer/sharer.php?u=x',
+      'https://tiktok.com/@doceria.aurora',
+      'https://tiktok.com/discover',
+    ]);
+    expect(c.instagram).toEqual(['@doceria.aurora']);
+    expect(c.facebook).toEqual(['facebook.com/atelledocelar']);
+    expect(c.tiktok).toEqual(['@doceria.aurora']);
+  });
+  test('dedupes repeated channels, skips junk', () => {
+    const c = contactsFromLinks([
+      'https://wa.me/5585999887766?text=a',
+      'https://wa.me/5585999887766',
+      'not a url',
+      'https://doceria.com.br/menu',
+    ]);
+    expect(c.phones).toEqual(['+5585999887766']);
+    expect(c.whatsappLinks.length).toBe(2);
+  });
+});
+
+describe('navLinks', () => {
+  test('same-host contact-ish paths surface, capped and deduped', () => {
+    const nav = navLinks(
+      [
+        'https://doceria.com.br/contato',
+        'https://doceria.com.br/contato/',
+        'https://doceria.com.br/cardapio',
+        'https://doceria.com.br/blog/bolo-de-pote',
+        'https://instagram.com/doceria',
+        'https://doceria.com.br/sobre-nos',
+      ],
+      'https://doceria.com.br/',
+    );
+    expect(nav).toContain('https://doceria.com.br/contato');
+    expect(nav).toContain('https://doceria.com.br/cardapio');
+    expect(nav).toContain('https://doceria.com.br/sobre-nos');
+    expect(nav.length).toBe(3);
+  });
+  test('other hosts and unparseable urls are skipped', () => {
+    expect(navLinks(['https://outro.com.br/contato', 'junk'], 'https://a.com.br/')).toEqual([]);
+    expect(navLinks([], 'not a url')).toEqual([]);
   });
 });
 

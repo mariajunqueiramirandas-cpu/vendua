@@ -195,13 +195,35 @@ TINYFISH_API_KEY: ..., CONTROL_SECRET: ...}`). SESSION_SECRET has no org
   pre-crash leads stay visible and re-created prospects return
   duplicate:true under the PR-#41 dedupe. A long plateau at N steps with a
   frozen `started_at` is an orphan, not a slow tool — check `now()-started_at`
-  and whether steps grow after the lease. TinyFish extract calls are still
-  legitimately minutes-slow, so a plateau isn't proof of death on its own.
+  and whether steps grow after the lease. TinyFish fetch calls can be
+  minutes-slow, so a plateau isn't proof of death on its own.
 - Evidence markers in run steps: web_search outs carry per-result `kind`
-  (contact|profile|listing|site) + parsed phone/instagram; repeat extract_page
-  on the same pageKey → `cached:true`; repeat create_lead → `duplicate:true`.
+  (contact|profile|listing|site) + parsed phone/instagram; read_pages outs
+  carry `pages[]` with `foundContacts` (parsed wa.me/mailto:/tel:/social
+  links) + `nav` follow-up urls — repeat read on the same pageKey →
+  `cached:true`; repeat create_lead → `duplicate:true` (+ `merged` fields
+  when new contacts filled empty columns on the existing lead). Discovery
+  create_lead requires `findings` + ≥1 contact channel or it 4xxs.
   Discovery leads get `tags ∋ 'descoberto'` + `discovered_via='agente'` → the
-  #/descoberta "leads descobertos" list keys on that tag.
+  #/descoberta "leads descobertos" list keys on that tag. fitScore ≥
+  guardrails.discoveryContactMinScore (default 8, off via
+  discoveryAutoContact=false) + whatsapp/phone → queues an outreach run and
+  flips the lead to agent_mode=auto in the same claim.
+- Autocontact also needs an ENABLED whatsapp integration (`whatsappReadyTx`
+  — `log` driver counts on the row alone; baileys additionally needs
+  `waStatus='open'`). Enable `log` via PUT
+  /control/v1/integrations/whatsapp before expecting `contactRun`.
+  Suppression (`outreachActive`) blocks on a live outreach run OR ANY
+  outbound `lead_messages` row for the lead — 'failed'/'rejected' count
+  (provider may have delivered a crashed send; rejected is a staff veto).
+  A 'done' run with no message does NOT suppress, so a scripted dup after
+  an empty outreach run still re-queues `contactRun`.
+  Dedupe matches on
+  phone/whatsapp digits, instagram handle (case-folded), or name+city — an
+  instagram-only match merges into whatever lead already owns the handle.
+- `lead_activities` timeline rows: timestamp column is `at` (NOT
+  `created_at`); research dossiers are `kind='note', meta->>'type'=
+'research', created_by='agent'`.
 
 ## Config page (#/config) specifics
 

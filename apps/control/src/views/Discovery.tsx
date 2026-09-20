@@ -43,6 +43,7 @@ const TARGETS = [3, 5, 10, 15];
 const TOOL_LABEL: Record<string, string> = {
   web_search: 'buscando na web',
   extract_page: 'lendo página',
+  read_pages: 'lendo páginas',
   create_lead: 'criando lead',
   search_leads: 'olhando o CRM',
   get_lead: 'abrindo lead',
@@ -62,6 +63,16 @@ const argHint = (s: Step): string => {
       return String(a.url ?? '')
         .replace(/^https?:\/\//, '')
         .slice(0, 60);
+    case 'read_pages': {
+      const urls = (Array.isArray(a.urls) ? a.urls : [a.url])
+        .map((u) => String(u ?? '').replace(/^https?:\/\//, ''))
+        .filter(Boolean);
+      const head = urls
+        .slice(0, 2)
+        .map((u) => u.slice(0, 40))
+        .join(' · ');
+      return urls.length > 2 ? `${head} +${urls.length - 2}` : head;
+    }
     case 'create_lead':
       return [a.name, a.city].filter(Boolean).join(' · ');
     default:
@@ -72,13 +83,27 @@ const argHint = (s: Step): string => {
 const outHint = (s: Step): string => {
   const o = s.out;
   if (o == null) return '';
-  if (o.duplicate) return 'já estava no CRM';
+  if (o.error) return String(o.error).slice(0, 60);
+  if (o.duplicate) {
+    const merged = o.merged;
+    const base =
+      Array.isArray(merged) && merged.length
+        ? `somou ${merged.length} campo${merged.length === 1 ? '' : 's'} no existente`
+        : 'já estava no CRM';
+    return `${base}${o.contactRun ? ' · contato auto' : ''}`;
+  }
   const lead = o.lead as { id?: string } | undefined;
-  if (s.name === 'create_lead' && lead?.id) return '+ lead';
+  if (s.name === 'create_lead' && lead?.id) {
+    return `+ lead${o.contactRun ? ' · contato auto' : ''}`;
+  }
   if (s.name === 'web_search') {
     const results = o.results;
     if (Array.isArray(results))
       return `${results.length} resultado${results.length === 1 ? '' : 's'}`;
+  }
+  if (s.name === 'read_pages') {
+    const pages = o.pages;
+    if (Array.isArray(pages)) return `${pages.length} página${pages.length === 1 ? '' : 's'}`;
   }
   if (o.blocked) return `bloqueado: ${String(o.reason ?? '').slice(0, 60)}`;
   return 'ok';

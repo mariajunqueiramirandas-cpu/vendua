@@ -200,6 +200,11 @@ export const DEFAULT_GUARDRAILS = {
   firstContactDraftOnly: true,
   /** discovery runs: cap on leads created per run */
   discoveryMaxLeads: 20,
+  /** discovery: a created lead with fitScore >= discoveryContactMinScore and
+   *  a whatsapp/phone channel gets an outreach run queued on it (the send
+   *  still obeys firstContactDraftOnly). */
+  discoveryAutoContact: true,
+  discoveryContactMinScore: 8,
 } as const;
 
 export type Guardrails = {
@@ -209,6 +214,8 @@ export type Guardrails = {
   timezone: string;
   firstContactDraftOnly: boolean;
   discoveryMaxLeads: number;
+  discoveryAutoContact: boolean;
+  discoveryContactMinScore: number;
 };
 
 export const DEFAULT_PITCH = {
@@ -271,6 +278,7 @@ export function validateSetting(key: string, value: unknown): void {
     };
     intField('maxOutboundPerLeadPerDay', 1, 100);
     intField('discoveryMaxLeads', 1, 1000);
+    intField('discoveryContactMinScore', 1, 10);
     for (const k of ['quietStart', 'quietEnd'] as const) {
       if (v[k] === undefined) continue;
       const t = v[k];
@@ -291,6 +299,9 @@ export function validateSetting(key: string, value: unknown): void {
     }
     if (v.firstContactDraftOnly !== undefined && typeof v.firstContactDraftOnly !== 'boolean') {
       throw bad('firstContactDraftOnly', 'must be a boolean');
+    }
+    if (v.discoveryAutoContact !== undefined && typeof v.discoveryAutoContact !== 'boolean') {
+      throw bad('discoveryAutoContact', 'must be a boolean');
     }
     return;
   }
