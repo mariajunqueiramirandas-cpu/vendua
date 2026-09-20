@@ -12,6 +12,8 @@ import {
   idempotency,
   mintSessionToken,
   bodyJson,
+  boundedText,
+  parseJsonObject,
   rateLimit,
   sessionCartId,
   str,
@@ -82,6 +84,7 @@ import {
 import { claimControl, controlTx } from './modules/control.ts';
 import { drain, insertRun } from './agent/runner.ts';
 import { ingestInbound } from './agent/inbound.ts';
+import { ingestResendEvent, svixHeaders, svixVerified } from './agent/channels/email-inbound.ts';
 import { LOADER_JS } from './loader.ts';
 import { log } from './platform/log.ts';
 
@@ -1378,7 +1381,26 @@ export function createApp({ sql, sessionSecret, controlSecret }: AppDeps) {
   // LLM run, so a guessed/leaked secret must not buy unbounded spend.
   let webhookBucket = { count: 0, resetAt: 0 };
   app.post('/control/v1/webhooks/:channel', async (c) => {
-    if (!webhookSecretOk(c.req.header('x-vendua-webhook'))) {
+    // Two ways in: the shared x-vendua-webhook secret (manual relays, tests)
+    // or Resend's svix signature — real inbound email, since Resend can't
+    // set custom headers and signs the payload instead.
+    const sharedOk = webhookSecretOk(c.req.header('x-vendua-webhook'));
+    const svix = svixHeaders(c);
+    // The svix signature covers the raw body, so verify before charging the
+    // rate bucket — forged headers must not spend the inbound quota.
+    let raw: string | undefined;
+    let svixOk = false;
+    if (
+      !sharedOk &&
+      svix &&
+      process.env.RESEND_WEBHOOK_SECRET &&
+      // raw param compare — channel() would 422 and reveal the route exists
+      c.req.param('channel') === 'email'
+    ) {
+      raw = await boundedText(c);
+      svixOk = svixVerified(raw, svix, process.env.RESEND_WEBHOOK_SECRET);
+    }
+    if (!sharedOk && !svixOk) {
       throw new HttpError(404, 'NOT_FOUND', 'not found');
     }
     const nowMs = Date.now();
@@ -1395,7 +1417,11 @@ export function createApp({ sql, sessionSecret, controlSecret }: AppDeps) {
     if (chan !== 'email' && chan !== 'whatsapp') {
       throw new HttpError(422, 'BAD_REQUEST', 'channel must be email|whatsapp');
     }
-    const body = await bodyJson(c);
+    if (!sharedOk) {
+      const res = await ingestResendEvent(sql, raw!, svix!);
+      return c.json(res, 'ignored' in res ? 200 : 201);
+    }
+    const body = parseJsonObject(raw ?? (await boundedText(c)));
     // Providers deliver at-least-once: without a stable message id a retry
     // would mint a second conversation and a second reply run. Require it.
     const rawMsgId = body.messageId ?? body.message_id;
