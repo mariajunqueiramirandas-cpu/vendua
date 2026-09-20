@@ -1004,19 +1004,30 @@ function MeetingCard({
     weekly: normWeekly(value.weekly ?? status?.cfg.weekly),
   };
   const [edit, setEdit] = useState(cur);
+  // `touched` gates hydration, not `dirty`: a late `value`/`status` response
+  // changes `cur` and would otherwise mark an untouched form dirty and block
+  // the sync (and a save would persist the stale, all-closed weekly).
+  const [touched, setTouched] = useState(false);
+  const update = (next: typeof cur) => {
+    setTouched(true);
+    setEdit(next);
+  };
   const dirty = JSON.stringify(edit) !== JSON.stringify(cur);
   useEffect(() => {
-    // Hydrate whenever the authoritative settings value or the status
-    // endpoint lands — but only while the user hasn't typed; otherwise a
-    // late `value` would clobber in-progress edits (or stay empty forever).
-    if (status && !dirty) {
+    if (status && !touched) {
       setEdit({ ...cur, weekly: normWeekly(value.weekly ?? status.cfg.weekly) });
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [status, JSON.stringify(cur)]);
+  // Saving converges edit === cur — clear the flag so a later refresh can
+  // hydrate again; without this the first edit would lock out all future syncs.
+  useEffect(() => {
+    if (touched && JSON.stringify(edit) === JSON.stringify(cur)) setTouched(false);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [JSON.stringify(cur)]);
 
   const setDay = (day: string, wins: [string, string][]) =>
-    setEdit({ ...edit, weekly: { ...edit.weekly, [day]: wins } });
+    update({ ...edit, weekly: { ...edit.weekly, [day]: wins } });
 
   return (
     <div className="drv">
@@ -1044,7 +1055,7 @@ function MeetingCard({
         <input
           value={edit.roomUrl}
           placeholder="https://meet.google.com/…"
-          onChange={(e) => setEdit({ ...edit, roomUrl: e.target.value })}
+          onChange={(e) => update({ ...edit, roomUrl: e.target.value })}
         />
         <div className="hint">
           usado quando o provider é estático — o lead recebe na confirmação
@@ -1055,7 +1066,7 @@ function MeetingCard({
         <input
           value={edit.publicBaseUrl}
           placeholder="https://crm.vendua.com.br"
-          onChange={(e) => setEdit({ ...edit, publicBaseUrl: e.target.value })}
+          onChange={(e) => update({ ...edit, publicBaseUrl: e.target.value })}
         />
         <div className="hint">prefixo do link de agendamento — /agendar?t=…</div>
       </div>
@@ -1064,7 +1075,7 @@ function MeetingCard({
         <input
           value={edit.bookingUrl}
           placeholder="https://calendar.google.com/calendar/appointments/…"
-          onChange={(e) => setEdit({ ...edit, bookingUrl: e.target.value })}
+          onChange={(e) => update({ ...edit, bookingUrl: e.target.value })}
         />
       </div>
 
@@ -1076,7 +1087,7 @@ function MeetingCard({
             min={5}
             max={120}
             value={edit.slotMinutes}
-            onChange={(e) => setEdit({ ...edit, slotMinutes: Number(e.target.value) })}
+            onChange={(e) => update({ ...edit, slotMinutes: Number(e.target.value) })}
           />
         </div>
         <div className="field" style={{ flex: 1, marginBottom: 0 }}>
@@ -1086,7 +1097,7 @@ function MeetingCard({
             min={0}
             max={240}
             value={edit.bufferMinutes}
-            onChange={(e) => setEdit({ ...edit, bufferMinutes: Number(e.target.value) })}
+            onChange={(e) => update({ ...edit, bufferMinutes: Number(e.target.value) })}
           />
         </div>
         <div className="field" style={{ flex: 1, marginBottom: 0 }}>
@@ -1096,7 +1107,7 @@ function MeetingCard({
             min={1}
             max={60}
             value={edit.horizonDays}
-            onChange={(e) => setEdit({ ...edit, horizonDays: Number(e.target.value) })}
+            onChange={(e) => update({ ...edit, horizonDays: Number(e.target.value) })}
           />
         </div>
       </div>
@@ -1180,7 +1191,13 @@ function MeetingCard({
           salvar agenda
         </button>
         {dirty && (
-          <button className="btn ghost" onClick={() => setEdit(cur)}>
+          <button
+            className="btn ghost"
+            onClick={() => {
+              setTouched(false);
+              setEdit(cur);
+            }}
+          >
             desfazer
           </button>
         )}
