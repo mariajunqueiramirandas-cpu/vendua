@@ -1,5 +1,6 @@
 import type { IntegrationRow } from '../../modules/integrations.ts';
 import { log } from '../../platform/log.ts';
+import { renderReplyEmail } from './email-template.ts';
 
 const mailLog = log.child({ mod: 'email' });
 
@@ -20,14 +21,19 @@ export async function sendEmail(
   if (driver === 'resend') {
     const apiKey = (secretRef && process.env[secretRef]) ?? process.env.RESEND_API_KEY;
     if (!apiKey) throw new Error(`resend driver: missing ${secretRef ?? 'RESEND_API_KEY'}`);
+    const from =
+      typeof config.from === 'string' && config.from
+        ? config.from
+        : 'Venduá <agente@auto.vendua.com.br>';
     const res = await fetch('https://api.resend.com/emails', {
       method: 'POST',
       headers: { 'content-type': 'application/json', authorization: `Bearer ${apiKey}` },
       body: JSON.stringify({
-        from: config.from ?? 'Venduá <agente@auto.vendua.com.br>',
+        from,
         to: [msg.to],
         subject: msg.subject,
         text: msg.body,
+        html: renderReplyEmail({ body: msg.body, subject: msg.subject, from }),
       }),
     });
     if (!res.ok) throw new Error(`resend ${res.status}: ${(await res.text()).slice(0, 300)}`);
