@@ -167,6 +167,10 @@ export default function Discovery() {
       setRunMissing(false);
       return;
     }
+    // New run id → drop the previous run's stage immediately so a stale
+    // terminal frame can't be acted on (e.g. cancel targeting the old run).
+    setRun(null);
+    setRunMissing(false);
     let dead = false;
     let t: ReturnType<typeof setInterval> | undefined;
     // Overlapping polls resolve out of order — drop any response older than

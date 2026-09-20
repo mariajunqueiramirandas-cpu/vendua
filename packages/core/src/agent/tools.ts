@@ -337,18 +337,22 @@ export async function executeTool(
       const input = leadInsert(payload);
       const res = await claimControl(sql, key, async (tx) => {
         if (ctx.runKind === 'discovery') {
-          // One per-run advisory lock serializes dedupe + cap + insert:
-          // batched create_lead calls in a step run concurrently, so without
-          // the lock two parallel calls could both pass the dup check before
-          // either inserts.
-          await tx`select pg_advisory_xact_lock(hashtext(${`discovery-cap:${ctx.runId}`}))`;
+          // A single advisory key serializes dedupe + cap + insert across ALL
+          // runs: batched calls in a step and concurrent discovery runs (brief
+          // sweep + manual launch) must not observe the same empty dedupe read
+          // and then insert the same prospect twice.
+          await tx`select pg_advisory_xact_lock(hashtext('lead-dedupe'))`;
           // Dedupe before the cap check so a repeat prospect can't burn cap:
-          // phone/whatsapp compare digit-only, instagram handle case-folded,
-          // and a name hit needs the same city — common names alone don't
-          // merge distinct businesses.
+          // each phone/whatsapp number is normalized independently and matched
+          // against BOTH stored columns (a landline and a WhatsApp can differ),
+          // instagram handles compare case-folded, and a name/business hit only
+          // counts when the incoming city is present and equal — common names
+          // alone don't merge distinct businesses.
           const digits = (v: unknown) =>
             typeof v === 'string' && v.replace(/\D/g, '').length >= 8 ? v.replace(/\D/g, '') : null;
-          const phone = digits(input.phone) ?? digits(input.whatsapp);
+          const phones = [digits(input.phone), digits(input.whatsapp)].filter(
+            (d): d is string => d !== null,
+          );
           const ig =
             typeof input.instagram === 'string' && input.instagram.trim()
               ? input.instagram.trim().replace(/^@/, '').toLowerCase()
@@ -368,15 +372,15 @@ export async function executeTool(
             await tx<{ id: string; name: string; state: string }[]>`
               select id, name, state from leads
               where archived_at is null and (
-                (${phone}::text is not null and
-                  (regexp_replace(coalesce(phone,''), '\\D','','g') = ${phone}
-                   or regexp_replace(coalesce(whatsapp,''), '\\D','','g') = ${phone}))
+                (${phones.length}::int > 0 and
+                  (regexp_replace(coalesce(phone,''), '\\D','','g') = any(${phones})
+                   or regexp_replace(coalesce(whatsapp,''), '\\D','','g') = any(${phones})))
                 or (${ig}::text is not null and
                   lower(regexp_replace(coalesce(instagram,''), '^@', '')) = ${ig})
-                or ((${bizKey}::text is not null and lower(business_name) = ${bizKey}
-                     or lower(name) = ${nameKey})
-                    and (${city}::text is null
-                         or lower(coalesce(city,'')) = ${city}))
+                or (${city}::text is not null
+                    and lower(coalesce(city,'')) = ${city}
+                    and (${bizKey}::text is not null and lower(business_name) = ${bizKey}
+                         or lower(name) = ${nameKey}))
               )
               limit 3
             `
