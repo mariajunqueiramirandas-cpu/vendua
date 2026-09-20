@@ -274,7 +274,9 @@ export function contactFromUrl(u: URL): {
     if (d) out.phone = `+${d}`;
     return out;
   }
-  if (host === 'instagram.com' || host.endsWith('.instagram.com')) {
+  // apex or the mobile profile host only — other subdomains (l., about.)
+  // are redirect wrappers or corporate pages, not accounts.
+  if (host === 'instagram.com' || host === 'm.instagram.com') {
     const seg = u.pathname.split('/').filter(Boolean);
     if (seg.length === 1 && !PROFILE_STOP.has(seg[0]!.toLowerCase())) {
       return { instagram: `@${seg[0]}` };

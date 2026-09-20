@@ -103,6 +103,10 @@ describe('contactFromUrl', () => {
       instagram: '@doceria85',
     });
   });
+  test('non-profile instagram subdomains are not handles', () => {
+    expect(cfu('https://about.instagram.com/about-us')).toEqual({});
+    expect(cfu('https://l.instagram.com/x')).toEqual({});
+  });
   test('instagram utility paths are not handles', () => {
     for (const u of ['p', 'reel', 'reels', 'explore', 'accounts', 'stories']) {
       expect(cfu(`https://instagram.com/${u}/xyz`)).toEqual({});

@@ -401,10 +401,12 @@ export async function executeTool(
             }
           }
           const h = u?.hostname.toLowerCase().replace(/^www\./, '') ?? '';
-          payload.instagram =
-            u && (h === 'instagram.com' || h.endsWith('.instagram.com'))
-              ? contactFromUrl(u).instagram
-              : `@${ig.trim().replace(/^@/, '')}`;
+          if (u && (h === 'instagram.com' || h === 'm.instagram.com')) {
+            payload.instagram = contactFromUrl(u).instagram;
+          } else {
+            const m = /^@?([\w.-]+)$/.exec(ig.trim());
+            payload.instagram = m ? `@${m[1]}` : undefined;
+          }
         }
         // The bar for a discovered lead, enforced where the prompt can't be
         // talked around: it must carry a research dossier AND a reachable
