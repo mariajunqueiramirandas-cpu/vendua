@@ -221,7 +221,7 @@ TINYFISH_API_KEY: ..., CONTROL_SECRET: ...}`). SESSION_SECRET has no org
   instagram-only match merges into whatever lead already owns the handle.
 - `lead_activities` timeline rows: timestamp column is `at` (NOT
   `created_at`); research dossiers are `kind='note', meta->>'type'=
-  'research', created_by='agent'`.
+'research', created_by='agent'`.
 
 ## Config page (#/config) specifics
 
