@@ -18,6 +18,9 @@ type Driver = {
   secret?: boolean;
   /** default env-var name the backend falls back to */
   secretName?: string;
+  // placeholder doubles as the driver's runtime default — the head chip shows
+  // it as the effective value when the field is unset, so keep it in sync with
+  // the `?? 'default'` in packages/core (llm.ts, channels/*).
   fields?: { key: string; label: string; placeholder: string; hint?: string }[];
 };
 
@@ -57,7 +60,7 @@ const KINDS: { key: string; label: string; sub: string; drivers: Driver[] }[] = 
         hint: 'direto na API da OpenAI',
         secret: true,
         secretName: 'OPENAI_API_KEY',
-        fields: [{ key: 'model', label: 'modelo', placeholder: 'gpt-5' }],
+        fields: [{ key: 'model', label: 'modelo', placeholder: 'gpt-4o-mini' }],
       },
       { d: 'mock', label: 'mock', hint: 'respostas roteirizadas — dev e testes' },
     ],
@@ -73,7 +76,9 @@ const KINDS: { key: string; label: string; sub: string; drivers: Driver[] }[] = 
         hint: 'envio real + respostas chegam por webhook',
         secret: true,
         secretName: 'RESEND_API_KEY',
-        fields: [{ key: 'from', label: 'remetente', placeholder: 'Venduá <oi@vendua.shop>' }],
+        fields: [
+          { key: 'from', label: 'remetente', placeholder: 'Venduá <agente@auto.vendua.com.br>' },
+        ],
       },
       { d: 'log', label: 'log', hint: 'só imprime no console — nada sai de verdade' },
     ],
@@ -354,10 +359,13 @@ function ProviderCard({
   ) => void;
 }) {
   const current = rows.find((r) => r.enabled);
+  // Nothing enabled → seed the form from the first driver's saved row, so
+  // 'usar X' re-enables WITH its config instead of wiping it to {}.
+  const baseRow = current ?? rows.find((r) => r.driver === kind.drivers[0]?.d);
   const baseline = {
-    driver: current?.driver ?? kind.drivers[0]?.d ?? '',
-    secretRef: current?.secretRef ?? '',
-    config: (current?.config ?? {}) as Record<string, string>,
+    driver: baseRow?.driver ?? kind.drivers[0]?.d ?? '',
+    secretRef: baseRow?.secretRef ?? '',
+    config: (baseRow?.config ?? {}) as Record<string, string>,
   };
   const [driver, setDriver] = useState(baseline.driver);
   const [secretRef, setSecretRef] = useState(baseline.secretRef);
@@ -374,7 +382,7 @@ function ProviderCard({
     setSecretRef(baseline.secretRef);
     setConfig(baseline.config);
     // eslint-disable-next-line react-hooks/exhaustive-deps -- re-sync when the saved row changes
-  }, [current?.driver, current?.secretRef, current?.updatedAt]);
+  }, [baseRow?.driver, baseRow?.secretRef, baseRow?.updatedAt]);
   useEffect(() => {
     if (!wa.qr) {
       setQrImg(null);
