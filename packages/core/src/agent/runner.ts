@@ -277,13 +277,13 @@ export async function runOnce(sql: Sql): Promise<boolean> {
   };
 
   // A single tool/model call can outlive the 10-min lease on its own — the
-  // timer keeps started_at fresh through it, so reclaim means a dead worker,
+  // timer keeps alive_at fresh through it, so reclaim means a dead worker,
   // never a live one stuck inside a slow provider call.
   const heartbeat = setInterval(() => {
     void controlTx(
       sql,
       (tx) => tx`
-        update agent_runs set started_at = now()
+        update agent_runs set alive_at = now()
         where id = ${run.id} and status = 'running' and claim_token = ${run.claim_token}
       `,
     ).catch(() => undefined);
