@@ -1,13 +1,23 @@
 import { useCallback, useEffect, useState } from 'react';
-import { FlaskConical } from 'lucide-react';
-import { api, type AgentRun, type DupeGroup, type LeadListItem } from '../api.ts';
-import { Empty, Page, StateChip, rel } from '../components.tsx';
+import { FlaskConical, Plus, Trash2 } from 'lucide-react';
+import {
+  api,
+  type AgentRun,
+  type Brief,
+  type DupeGroup,
+  type LeadListItem,
+  type SegmentStat,
+} from '../api.ts';
+import { Empty, Page, StateChip, fmtMoney, rel } from '../components.tsx';
 
 export default function Discovery() {
   const [runs, setRuns] = useState<AgentRun[]>([]);
   const [found, setFound] = useState<LeadListItem[]>([]);
   const [dupes, setDupes] = useState<DupeGroup[]>([]);
   const [f, setF] = useState({ query: '', segment: 'doceria', city: 'Fortaleza' });
+  const [briefs, setBriefs] = useState<Brief[]>([]);
+  const [segs, setSegs] = useState<SegmentStat[]>([]);
+  const [bf, setBf] = useState({ name: '', query: '', segment: '', city: '', target: '' });
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState('');
 
@@ -22,6 +32,14 @@ export default function Discovery() {
     api
       .duplicates()
       .then((r) => setDupes(r.groups))
+      .catch(() => undefined);
+    api
+      .briefs()
+      .then((r) => setBriefs(r.briefs))
+      .catch(() => undefined);
+    api
+      .segments()
+      .then((r) => setSegs(r.segments))
       .catch(() => undefined);
   }, []);
   useEffect(load, [load]);
@@ -49,6 +67,23 @@ export default function Discovery() {
       setMsg(e instanceof Error ? e.message : 'erro');
     } finally {
       setBusy(false);
+    }
+  };
+
+  const createBrief = async () => {
+    setMsg('');
+    try {
+      await api.createBrief({
+        name: bf.name.trim(),
+        query: bf.query.trim(),
+        ...(bf.segment.trim() && { segment: bf.segment.trim() }),
+        ...(bf.city.trim() && { city: bf.city.trim() }),
+        ...(bf.target && { target: Number(bf.target) }),
+      });
+      setBf({ name: '', query: '', segment: '', city: '', target: '' });
+      load();
+    } catch (e) {
+      setMsg(e instanceof Error ? e.message : 'erro');
     }
   };
 
@@ -88,6 +123,142 @@ export default function Discovery() {
         )}
       </div>
 
+      <div className="card" style={{ padding: 18, marginBottom: 16, maxWidth: 720 }}>
+        <h3 style={{ margin: '0 0 4px', fontSize: 'var(--t-md)' }}>briefs diários</h3>
+        <p className="sub" style={{ marginBottom: 12 }}>
+          o agente roda cada brief uma vez por dia; disparar o contato continua manual
+        </p>
+        {briefs.length > 0 && (
+          <table className="tbl" style={{ marginBottom: 12 }}>
+            <tbody>
+              {briefs.map((b) => (
+                <tr key={b.id}>
+                  <td>
+                    <b>{b.name}</b>
+                    <div
+                      className="mono"
+                      style={{ fontSize: 'var(--t-2xs)', color: 'var(--muted)' }}
+                    >
+                      {b.query}
+                    </div>
+                  </td>
+                  <td className="sub" style={{ whiteSpace: 'nowrap' }}>
+                    {[b.segment, b.city].filter(Boolean).join(' · ') || '—'}
+                    {b.target ? ` · ≤${b.target}/dia` : ''}
+                  </td>
+                  <td className="mono" style={{ whiteSpace: 'nowrap' }}>
+                    {rel(b.last_run_at)}
+                  </td>
+                  <td>
+                    <div style={{ display: 'flex', gap: 6, justifyContent: 'flex-end' }}>
+                      <button
+                        className={`btn ${b.enabled ? 'primary' : ''}`}
+                        title={b.enabled ? 'ativado — clica pra pausar' : 'pausado'}
+                        onClick={() =>
+                          void api.patchBrief(b.id, { enabled: !b.enabled }).then(load)
+                        }
+                      >
+                        {b.enabled ? 'ativo' : 'pausado'}
+                      </button>
+                      <button
+                        className="btn"
+                        title="remover brief"
+                        onClick={() => void api.deleteBrief(b.id).then(load)}
+                      >
+                        <Trash2 size={14} />
+                      </button>
+                    </div>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
+        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+          <input
+            style={{ width: 130 }}
+            placeholder="nome"
+            value={bf.name}
+            onChange={(e) => setBf({ ...bf, name: e.target.value })}
+          />
+          <input
+            style={{ flex: 2, minWidth: 200 }}
+            placeholder="busca — ex: padarias de bairro sem site"
+            value={bf.query}
+            onChange={(e) => setBf({ ...bf, query: e.target.value })}
+          />
+          <input
+            style={{ width: 110 }}
+            placeholder="segmento"
+            value={bf.segment}
+            onChange={(e) => setBf({ ...bf, segment: e.target.value })}
+          />
+          <input
+            style={{ width: 110 }}
+            placeholder="cidade"
+            value={bf.city}
+            onChange={(e) => setBf({ ...bf, city: e.target.value })}
+          />
+          <input
+            style={{ width: 80 }}
+            type="number"
+            min={1}
+            max={1000}
+            placeholder="alvo"
+            value={bf.target}
+            onChange={(e) => setBf({ ...bf, target: e.target.value })}
+          />
+          <button
+            className="btn"
+            disabled={!bf.name.trim() || !bf.query.trim()}
+            onClick={() => void createBrief()}
+          >
+            <Plus size={14} /> criar
+          </button>
+        </div>
+      </div>
+
+      {segs.length > 0 && (
+        <div className="card" style={{ padding: 18, marginBottom: 16, maxWidth: 720 }}>
+          <h3 style={{ margin: '0 0 10px', fontSize: 'var(--t-md)' }}>o que converte</h3>
+          <table className="tbl">
+            <thead>
+              <tr>
+                <th>segmento</th>
+                <th>leads</th>
+                <th>contatados</th>
+                <th>responderam</th>
+                <th>ativos</th>
+                <th>custo 30d</th>
+              </tr>
+            </thead>
+            <tbody>
+              {segs.map((s) => (
+                <tr key={s.segment}>
+                  <td>{s.segment}</td>
+                  <td className="mono">{s.leads}</td>
+                  <td className="mono">{s.contacted}</td>
+                  <td className="mono">
+                    <b>{s.replied}</b>
+                    {s.contacted > 0 && (
+                      <span className="sub">
+                        {' '}
+                        · {Math.round((s.replied / s.contacted) * 100)}%
+                      </span>
+                    )}
+                  </td>
+                  <td className="mono">{s.live}</td>
+                  <td className="mono">{fmtMoney(s.costCents)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+          <div className="hint" style={{ marginTop: 8 }}>
+            o agente vê este quadro na busca e reforça o que está convertendo
+          </div>
+        </div>
+      )}
+
       <div className="grid2" style={{ alignItems: 'start' }}>
         <div>
           <h3 className="sec-t">leads descobertos</h3>
@@ -112,6 +283,9 @@ export default function Discovery() {
                       style={{ fontSize: 'var(--t-2xs)', color: 'var(--muted)' }}
                     >
                       {l.discoveredVia ?? ''}
+                    </td>
+                    <td className="mono" title={l.fitReason ?? undefined}>
+                      {l.fitScore != null ? `${l.fitScore}/10` : ''}
                     </td>
                     <td className="mono">{rel(l.createdAt)}</td>
                   </tr>

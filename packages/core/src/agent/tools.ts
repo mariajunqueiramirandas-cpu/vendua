@@ -34,6 +34,9 @@ export interface ToolContext {
    *  (same step's batch or a later step) shares the same provider call
    *  instead of paying for the identical page twice. */
   extractCache: Map<string, Promise<unknown>>;
+  /** Discovery-brief runs stamp created leads' discovered_via with the brief
+   *  name so the board can tell scheduled-autopilot finds from ad-hoc ones. */
+  briefName: string | null;
 }
 
 const leadIdArg = { type: 'string', description: 'lead uuid' } as const;
@@ -50,6 +53,8 @@ const LEAD_FIELDS = {
   tags: { type: 'array', items: { type: 'string' } },
   dealValueCents: { type: 'integer' },
   nextActionAt: { type: 'string', description: 'ISO-8601' },
+  fitScore: { type: 'integer', description: '0–10 ICP fit — how well this business matches the target audience' },
+  fitReason: { type: 'string', description: 'one line: why this fit score' },
 } as const;
 
 const REGISTRY: { def: AgentTool; toolsets: string[] }[] = [
@@ -81,7 +86,7 @@ const REGISTRY: { def: AgentTool; toolsets: string[] }[] = [
     def: {
       name: 'create_lead',
       description:
-        'Create a new lead (state=lead). Self-dedupes on name/phone/instagram — a duplicate returns {duplicate, existing} instead of inserting.',
+        'Create a new lead (state=lead). Pass fitScore/fitReason — the ICP match judgment. Self-dedupes on name/phone/instagram — a duplicate returns {duplicate, existing} instead of inserting.',
       parameters: {
         type: 'object',
         properties: { name: { type: 'string' }, ...LEAD_FIELDS },
@@ -310,7 +315,8 @@ export async function executeTool(
     case 'create_lead': {
       const payload = { ...args };
       if (ctx.runKind === 'discovery') {
-        if (payload.discoveredVia === undefined) payload.discoveredVia = 'agente';
+        if (payload.discoveredVia === undefined)
+          payload.discoveredVia = ctx.briefName ? `agente·${ctx.briefName}`.slice(0, 120) : 'agente';
         // The Discovery UI panel queries `tag=descoberto` — tag it here so
         // agent-found leads are always findable there.
         const tags = Array.isArray(payload.tags) ? [...payload.tags] : [];
@@ -494,7 +500,12 @@ export async function executeTool(
           };
         }
         const g = await getSettingTx(tx, 'guardrails', {} as Partial<Guardrails>);
-        const verdict = await checkSendAllowedTx(tx, { ...DEFAULT_GUARDRAILS, ...g }, leadId);
+        const verdict = await checkSendAllowedTx(
+          tx,
+          { ...DEFAULT_GUARDRAILS, ...g },
+          leadId,
+          chan,
+        );
         if (!verdict.ok) {
           return { status: 200, body: { blocked: true as const, reason: verdict.reason } };
         }

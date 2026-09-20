@@ -225,6 +225,7 @@ export default function Settings() {
 
   const guardrails = (settings.guardrails ?? {}) as Record<string, unknown>;
   const pitch = (settings.pitch ?? {}) as Record<string, unknown>;
+  const meeting = (settings.meeting ?? {}) as Record<string, unknown>;
   const memory = (settings.agent_memory ?? { facts: [] }) as { facts: string[] };
 
   return (
@@ -265,6 +266,11 @@ export default function Settings() {
             <h2>voz do agente</h2>
             <p className="sub">o pitch inteiro que o modelo recebe no system prompt</p>
             <PitchCard value={pitch} onSave={(v) => void saveSetting('pitch', v)} />
+          </section>
+          <section className="set-sec">
+            <h2>reunião</h2>
+            <p className="sub">objetivo 'reunião' — o link que o agente envia quando o lead topa</p>
+            <MeetingCard value={meeting} onSave={(v) => void saveSetting('meeting', v)} />
           </section>
           <section className="set-sec">
             <h2>memória do agente</h2>
@@ -808,6 +814,53 @@ function PitchCard({
         )}
       </div>
       <RawJson value={value} onSave={onSave} />
+    </div>
+  );
+}
+
+// ---------- meeting ----------
+
+/** The booking link the 'meeting' goal shares — a Google Calendar
+ *  appointment-schedule URL (auto-creates the Meet). Agent sends it verbatim
+ *  once a lead agrees; validation enforces https. */
+function MeetingCard({
+  value,
+  onSave,
+}: {
+  value: Record<string, unknown>;
+  onSave: (v: Record<string, unknown>) => void;
+}) {
+  const cur = { bookingUrl: str(value.bookingUrl, '') };
+  const [edit, setEdit] = useState(cur);
+  useEffect(() => setEdit(cur), [JSON.stringify(cur)]); // eslint-disable-line react-hooks/exhaustive-deps
+  const dirty = JSON.stringify(edit) !== JSON.stringify(cur);
+  return (
+    <div className="drv on">
+      <div className="field" style={{ marginBottom: 0 }}>
+        <label>link de agendamento</label>
+        <input
+          value={edit.bookingUrl}
+          placeholder="https://calendar.google.com/calendar/appointments/…"
+          onChange={(e) => setEdit({ bookingUrl: e.target.value })}
+        />
+        <div className="hint">
+          google calendar → agendamento — gera o Meet sozinho pra quem marcar
+        </div>
+      </div>
+      <div className="actions">
+        <button
+          className="btn primary"
+          disabled={!dirty}
+          onClick={() => onSave({ ...value, ...edit })}
+        >
+          salvar link
+        </button>
+        {dirty && (
+          <button className="btn ghost" onClick={() => setEdit(cur)}>
+            desfazer
+          </button>
+        )}
+      </div>
     </div>
   );
 }

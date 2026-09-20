@@ -2,6 +2,7 @@ import type { Sql } from '../platform/db.ts';
 import { log } from '../platform/log.ts';
 import { controlTx } from '../modules/control.ts';
 import { getIntegration, getPitch, getSetting } from '../modules/integrations.ts';
+import { segmentStats, type AgentGoal } from '../modules/leads.ts';
 import { providerFor, type AgentMessage } from './llm.ts';
 import { buildSystemPrompt } from './prompts.ts';
 import { executeTool, toolsFor, type ToolContext } from './tools.ts';
@@ -119,14 +120,36 @@ async function finishRun(
   );
 }
 
-async function contextFor(sql: Sql, run: RunRow): Promise<string> {
+async function contextFor(
+  sql: Sql,
+  run: RunRow,
+): Promise<{ text: string; goal: AgentGoal; bookingUrl: string | null }> {
   const parts: string[] = [];
+  let goal: AgentGoal = 'negotiation';
+  let bookingUrl: string | null = null;
   if (run.lead_id) {
     const rows = await controlTx(
       sql,
-      (tx) => tx`select row_to_json(l) as j from leads l where l.id = ${run.lead_id}`,
+      (tx) =>
+        tx<{ j: { agent_goal?: AgentGoal } & Record<string, unknown> }[]>`select row_to_json(l) as j from leads l where l.id = ${run.lead_id}`,
     );
-    if (rows[0]) parts.push(`LEAD: ${JSON.stringify(rows[0].j)}`);
+    if (rows[0]) {
+      parts.push(`LEAD: ${JSON.stringify(rows[0].j)}`);
+      goal = rows[0].j.agent_goal === 'meeting' ? 'meeting' : 'negotiation';
+      // Run params can override the lead's standing goal for a one-off run —
+      // dispatch writes agent_goal; ad-hoc callers may pass params.goal only.
+      if (run.params.goal === 'meeting' || run.params.goal === 'negotiation') {
+        goal = run.params.goal;
+      }
+      if (run.kind === 'triage' || run.kind === 'reply' || run.kind === 'outreach') {
+        parts.push(`GOAL: ${goal}`);
+        if (goal === 'meeting') {
+          const meeting = await getSetting<{ bookingUrl?: string }>(sql, 'meeting', {});
+          bookingUrl = meeting.bookingUrl ?? null;
+          parts.push(`BOOKING_URL: ${bookingUrl ?? '(não configurado)'}`);
+        }
+      }
+    }
   }
   if (run.thread_id) {
     const rows = await controlTx(
@@ -159,8 +182,24 @@ async function contextFor(sql: Sql, run: RunRow): Promise<string> {
     if (Number.isFinite(target) && target > 0) {
       parts.push(`META: criar até ${Math.floor(target)} leads`);
     }
+    if (run.params.briefName) {
+      parts.push(`BRIEF: ${String(run.params.briefName)}`);
+    }
+    // What already converts — the learning loop. Discovery should lean toward
+    // segments that reply, not just the brief's default.
+    const stats = await segmentStats(sql);
+    if (stats.length) {
+      parts.push(
+        `SEGMENTOS (leads · responderam · ativos · custo):\n${stats
+          .map(
+            (s) =>
+              `- ${s.segment}: ${s.leads} leads · ${s.replied} responderam · ${s.live} ativos · R$${(s.costCents / 100).toFixed(2)}`,
+          )
+          .join('\n')}`,
+      );
+    }
   }
-  return parts.join('\n\n') || '(no extra context)';
+  return { text: parts.join('\n\n') || '(no extra context)', goal, bookingUrl };
 }
 
 export async function runOnce(sql: Sql): Promise<boolean> {
@@ -240,8 +279,8 @@ export async function runOnce(sql: Sql): Promise<boolean> {
     const provider = providerFor(integration, run.params);
     const pitch = await getPitch(sql);
     const memory = await getSetting<{ facts: string[] }>(sql, 'agent_memory', { facts: [] });
-    const system = buildSystemPrompt(run.kind, pitch, memory);
-    const context = await contextFor(sql, run);
+    const { text: context, goal, bookingUrl } = await contextFor(sql, run);
+    const system = buildSystemPrompt(run.kind, pitch, memory, { goal, bookingUrl });
     const tools = toolsFor(run.kind);
     const ctx: ToolContext = {
       sql,
@@ -250,6 +289,7 @@ export async function runOnce(sql: Sql): Promise<boolean> {
       leadId: run.lead_id,
       threadId: run.thread_id,
       step: 0,
+      briefName: typeof run.params.briefName === 'string' ? run.params.briefName : null,
       extractCache: new Map(),
     };
 
@@ -434,12 +474,51 @@ export function startAgentWorker(sql: Sql, intervalMs = 15_000) {
     draining = true;
     void drain(sql)
       .then(() => sweepOutreach(sql))
+      .then(() => sweepBriefs(sql))
       .catch((e) => agentLog.error({ err: e }, 'worker failed'))
       .finally(() => {
         draining = false;
       });
   }, intervalMs);
   workerTimer.unref?.();
+}
+
+/** Scheduled discovery: each enabled brief past its 23h cadence gets a
+ *  discovery run carrying its query/segment/city/target + briefId (the
+ *  not-exists check keeps a still-queued brief run from double-firing). Leads
+ *  it creates land tagged 'descoberto' — contact dispatch stays manual. */
+export async function sweepBriefs(sql: Sql): Promise<number> {
+  return controlTx(sql, async (tx) => {
+    const due = await tx<
+      { id: string; name: string; query: string; segment: string | null; city: string | null; target: number | null }[]
+    >`
+      select id, name, query, segment, city, target from discovery_briefs
+      where enabled
+        and (last_run_at is null or last_run_at < now() - interval '23 hours')
+        and not exists (
+          select 1 from agent_runs r
+          where r.kind = 'discovery' and r.status in ('queued', 'running')
+            and r.params->>'briefId' = discovery_briefs.id::text
+        )
+      limit 10
+      for update of discovery_briefs skip locked
+    `;
+    for (const b of due) {
+      await insertRun(tx, {
+        kind: 'discovery',
+        params: {
+          query: b.query,
+          ...(b.segment ? { segment: b.segment } : {}),
+          ...(b.city ? { city: b.city } : {}),
+          ...(b.target ? { target: b.target } : {}),
+          briefId: b.id,
+          briefName: b.name,
+        },
+      });
+      await tx`update discovery_briefs set last_run_at = now() where id = ${b.id}`;
+    }
+    return due.length;
+  });
 }
 
 /** Periodic sweep: leads due for a follow-up get an outreach run. */

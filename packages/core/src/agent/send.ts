@@ -60,19 +60,23 @@ export async function dispatchMessage(
           whatsapp: string | null;
           unsubscribed_at: string | null;
           archived_at: string | null;
+          email_bounced_at: string | null;
         }[]
       >`
-        select id, email, whatsapp, unsubscribed_at, archived_at from leads where id = ${thread.lead_id}
+        select id, email, whatsapp, unsubscribed_at, archived_at, email_bounced_at from leads where id = ${thread.lead_id}
       `
     )[0]!;
 
     // Re-check suppression at dispatch time — a draft approved after the lead
-    // was archived or unsubscribed must not leave the building.
+    // was archived, unsubscribed, or had its email bounce must not leave the
+    // building.
     const suppressed = lead.archived_at
       ? 'lead archived'
       : lead.unsubscribed_at
         ? 'lead unsubscribed'
-        : null;
+        : thread.channel === 'email' && lead.email_bounced_at
+          ? 'email bounced'
+          : null;
     if (suppressed) {
       await markMessageFailed(tx, messageId, suppressed);
       return { fail: suppressed };

@@ -23,6 +23,10 @@ const AGENT_OPTS: [string, string][] = [
   ['draft', 'rascunho'],
   ['auto', 'auto'],
 ];
+const GOAL_OPTS: [string, string][] = [
+  ['negotiation', 'negócio'],
+  ['meeting', 'reunião'],
+];
 
 // stored websites are free text — linkify only values that normalize to an
 // absolute http(s) URL; anything else renders as plain text
@@ -141,6 +145,19 @@ export default function LeadDetail() {
                   </button>
                 ))}
               </span>
+              {lead.agentMode !== 'off' && (
+                <span className="seg" title="objetivo do agente">
+                  {GOAL_OPTS.map(([v, l]) => (
+                    <button
+                      key={v}
+                      className={lead.agentGoal === v ? 'sel' : ''}
+                      onClick={() => void patch({ agentGoal: v })}
+                    >
+                      {l}
+                    </button>
+                  ))}
+                </span>
+              )}
               <span style={{ marginLeft: 'auto' }}>
                 <ScoreBar score={lead.score} />
               </span>

@@ -318,6 +318,28 @@ export function validateSetting(key: string, value: unknown): void {
     return;
   }
 
+  // Goal 'meeting' — the founders' Google Meet booking link (Google Calendar
+  // appointment schedule). The agent shares it verbatim once a lead agrees;
+  // https only, or a prompt-injected javascript:/data: URL would ride out in
+  // an outbound message.
+  if (key === 'meeting') {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) {
+      throw bad('*', 'must be an object');
+    }
+    const v = value as { bookingUrl?: unknown };
+    if (v.bookingUrl === undefined || v.bookingUrl === null || v.bookingUrl === '') return;
+    if (typeof v.bookingUrl !== 'string' || v.bookingUrl.length > 500) {
+      throw bad('bookingUrl', 'must be a string (≤500 chars)');
+    }
+    try {
+      if (new URL(v.bookingUrl).protocol !== 'https:') throw bad('bookingUrl', 'must be https');
+    } catch (e) {
+      if (e instanceof HttpError) throw e;
+      throw bad('bookingUrl', 'must be a URL');
+    }
+    return;
+  }
+
   if (key === 'agent_memory') {
     const v = value as { facts?: unknown } | null;
     if (!v || typeof v !== 'object' || !Array.isArray(v.facts)) {

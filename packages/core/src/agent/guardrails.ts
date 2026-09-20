@@ -1,5 +1,6 @@
 import type { Sql } from '../platform/db.ts';
 import { DEFAULT_GUARDRAILS, getSettingTx, type Guardrails } from '../modules/integrations.ts';
+import type { Channel } from '../modules/threads.ts';
 
 /**
  * agent/guardrails — the hard rules around every outbound message. Enforced
@@ -21,6 +22,7 @@ export async function checkSendAllowedTx(
   tx: Sql,
   g: Guardrails,
   leadId: string,
+  channel: Channel,
 ): Promise<SendVerdict> {
   {
     const lead = (
@@ -29,14 +31,20 @@ export async function checkSendAllowedTx(
           agent_mode: string;
           archived_at: string | null;
           unsubscribed_at: string | null;
+          email_bounced_at: string | null;
         }[]
-      >`select agent_mode, archived_at, unsubscribed_at from leads where id = ${leadId}`
+      >`select agent_mode, archived_at, unsubscribed_at, email_bounced_at from leads where id = ${leadId}`
     )[0];
     if (!lead) return { ok: false, forceDraft: false, reason: 'lead not found' };
     if (lead.archived_at) return { ok: false, forceDraft: false, reason: 'lead archived' };
     if (lead.unsubscribed_at) return { ok: false, forceDraft: false, reason: 'lead unsubscribed' };
     if (lead.agent_mode === 'off')
       return { ok: false, forceDraft: false, reason: 'agent off for lead' };
+    // A bounced address is a dead address — Resend told us so. Blocking here
+    // pushes the agent to the lead's other channels instead of burning
+    // reputation on a guaranteed bounce.
+    if (channel === 'email' && lead.email_bounced_at)
+      return { ok: false, forceDraft: false, reason: 'email bounced' };
 
     // Quiet hours — compared in the configured timezone (America/Sao_Paulo
     // default). Overnight window (21:00→08:00) wraps past midnight.
