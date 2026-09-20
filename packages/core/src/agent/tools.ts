@@ -11,7 +11,7 @@ import {
   updateLead,
 } from '../modules/leads.ts';
 import { addActivity, createTask } from '../modules/activities.ts';
-import { composeMessage, composeMessageTx, setThreadAgent, channel } from '../modules/threads.ts';
+import { composeMessageTx, setThreadAgent, channel } from '../modules/threads.ts';
 import { DEFAULT_GUARDRAILS, getSettingTx, type Guardrails } from '../modules/integrations.ts';
 import { checkSendAllowedTx, resolveChannelTx, type SendVerdict } from './guardrails.ts';
 import { dispatchMessage } from './send.ts';
@@ -449,30 +449,35 @@ export async function executeTool(
     }
     case 'draft_message': {
       const leadId = String(args.leadId);
-      // Resolve before composing — a draft on a channel the lead can't be
-      // reached on is a dead draft staff will approve into a failure.
-      const pick = await controlTx(sql, (tx) =>
-        resolveChannelTx(tx, leadId, {
+      // Resolve inside the same claim that writes the draft — a bounce or
+      // contact edit landing between resolution and insert can't strand a
+      // draft on a dead channel for staff to approve into a failure.
+      const res = await claimControl(sql, key, async (tx) => {
+        const pick = await resolveChannelTx(tx, leadId, {
           requested: args.channel ? channel(args.channel) : null,
           override: ctx.channelOverride,
-        }),
-      );
-      if (!pick.ok) {
-        return { blocked: true, reason: pick.reason, use: pick.available[0] ?? null };
-      }
-      const res = await composeMessage(
-        sql,
-        {
+          threadId: ctx.threadId,
+        });
+        if (!pick.ok) {
+          return {
+            status: 200,
+            body: { blocked: true as const, reason: pick.reason, use: pick.available[0] ?? null },
+          };
+        }
+        const composed = await composeMessageTx(tx, {
           leadId,
           channel: pick.channel,
           body: String(args.body),
           subject: (args.subject as string) ?? undefined,
           author: 'agent',
           status: 'draft',
-        },
-        key,
-      );
-      return { ...res.body, channel: pick.channel, via: pick.via };
+        });
+        return {
+          status: composed.status,
+          body: { ...composed.body, channel: pick.channel, via: pick.via },
+        };
+      });
+      return res.body;
     }
     case 'send_message': {
       const leadId = String(args.leadId);
@@ -513,6 +518,7 @@ export async function executeTool(
         const pick = await resolveChannelTx(tx, leadId, {
           requested: chanArg,
           override: ctx.channelOverride,
+          threadId: ctx.threadId,
         });
         if (!pick.ok) {
           return {

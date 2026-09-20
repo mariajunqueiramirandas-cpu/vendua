@@ -88,19 +88,30 @@ export type ChannelPick =
 export async function resolveChannelTx(
   tx: Sql,
   leadId: string,
-  args: { requested?: Channel | null; override?: Channel | null },
+  args: {
+    requested?: Channel | null;
+    override?: Channel | null;
+    /** A thread-bound run (reply) continues on ITS thread's channel — the
+     *  lead's newer inbound on another channel must not hijack a reply
+     *  composed from this thread's context. Unbound runs use the lead's
+     *  last inbound instead. */
+    threadId?: string | null;
+  },
 ): Promise<ChannelPick> {
   const avail = await channelAvailabilityTx(tx, leadId);
   const usable = (['whatsapp', 'email'] as const).filter((ch) => avail[ch].ok);
-  // The lead's last inbound channel — for continuity picks and to flag a
-  // mid-conversation channel switch back to the caller.
+  // Continuity channel — for continuity picks and to flag a mid-conversation
+  // switch back to the caller.
   const lastIn =
     (
-      await tx<{ channel: Channel }[]>`
-      select t.channel from lead_messages m
-      join lead_threads t on t.id = m.thread_id
-      where t.lead_id = ${leadId} and m.direction = 'in'
-      order by m.created_at desc limit 1
+      await tx<{ channel: Channel | null }[]>`
+      select coalesce(
+        (select channel from lead_threads where id = ${args.threadId ?? null} and lead_id = ${leadId}),
+        (select t.channel from lead_messages m
+          join lead_threads t on t.id = m.thread_id
+          where t.lead_id = ${leadId} and m.direction = 'in'
+          order by m.created_at desc limit 1)
+      ) as channel
     `
     )[0]?.channel ?? null;
   const prev = lastIn === 'whatsapp' || lastIn === 'email' ? lastIn : null;

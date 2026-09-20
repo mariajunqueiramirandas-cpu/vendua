@@ -126,18 +126,29 @@ export default function Launch() {
       return;
     }
     let dead = false;
+    let t: ReturnType<typeof setInterval> | undefined;
     const tick = () =>
       api
         .run(runId)
         .then((r) => {
-          if (!dead) setRun(r.run);
+          if (dead) return;
+          setRun(r.run);
+          // Terminal state — nothing left to watch, stop polling.
+          if (
+            t &&
+            r.run.status !== 'queued' &&
+            r.run.status !== 'running'
+          ) {
+            clearInterval(t);
+            t = undefined;
+          }
         })
         .catch(() => undefined);
     void tick();
-    const t = setInterval(tick, 1300);
+    t = setInterval(tick, 1300);
     return () => {
       dead = true;
-      clearInterval(t);
+      if (t) clearInterval(t);
     };
   }, [runId]);
 
