@@ -3,7 +3,6 @@ import { Navigate, NavLink, Route, Routes, useLocation, useNavigate } from 'reac
 import {
   Bot,
   CheckSquare,
-  Crosshair,
   FlaskConical,
   Inbox,
   KanbanSquare,
@@ -25,7 +24,6 @@ import Approvals from './views/Approvals.tsx';
 import Discovery from './views/Discovery.tsx';
 import Tasks from './views/Tasks.tsx';
 import Runs from './views/Runs.tsx';
-import Launch from './views/Launch.tsx';
 import Settings from './views/Settings.tsx';
 
 const NAV = [
@@ -34,7 +32,6 @@ const NAV = [
   { to: '/leads', label: 'Leads', icon: Users, k: 'l' },
   { to: '/inbox', label: 'Inbox', icon: Inbox, k: 'i' },
   { to: '/aprovacoes', label: 'Aprovações', icon: CheckSquare, k: 'a', badge: 'drafts' },
-  { to: '/lancar', label: 'Lançar', icon: Crosshair, k: 'x' },
   { to: '/descoberta', label: 'Descoberta', icon: FlaskConical, k: 'e' },
   { to: '/tarefas', label: 'Tarefas', icon: ListTodo, k: 't', badge: 'tasks' },
   { to: '/agente', label: 'Agente', icon: Bot, k: 'g' },
@@ -48,7 +45,7 @@ const TABS = NAV.filter((n) => TAB_PATHS.has(n.to));
 const MORE = NAV.filter((n) => !TAB_PATHS.has(n.to));
 
 const SHORTCUTS: [string, string][] = [
-  ['d f l i a x e t g c', 'trocar de tela'],
+  ['d f l i a e t g c', 'trocar de tela'],
   ['/', 'buscar (em leads)'],
   ['n', 'novo lead (em leads)'],
   ['ctrl + enter', 'enviar mensagem (no inbox)'],
@@ -167,7 +164,8 @@ export default function App() {
           <Route path="/inbox/:threadId" element={<InboxView />} />
           <Route path="/aprovacoes" element={<Approvals />} />
           <Route path="/descoberta" element={<Discovery />} />
-          <Route path="/lancar" element={<Launch />} />
+          {/* legacy: the launch screen merged into Descoberta — keep ?run= deep links working */}
+          <Route path="/lancar" element={<Discovery />} />
           <Route path="/tarefas" element={<Tasks />} />
           <Route path="/agente" element={<Runs />} />
           <Route path="/agente/runs/:id" element={<Runs />} />
