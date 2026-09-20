@@ -27,8 +27,15 @@ export async function dispatchMessage(
   const job = await controlTx(sql, async (tx) => {
     const msg = (
       await tx<
-        { id: string; thread_id: string; body: string; status: string; subject: string | null }[]
-      >`select id, thread_id, body, status, subject from lead_messages where id = ${messageId} for update`
+        {
+          id: string;
+          thread_id: string;
+          body: string;
+          status: string;
+          subject: string | null;
+          meeting_id: string | null;
+        }[]
+      >`select id, thread_id, body, status, subject, meeting_id from lead_messages where id = ${messageId} for update`
     )[0];
     if (!msg) return { fail: 'message not found' as const };
     // Terminal/in-flight states are honest outcomes, not errors — a replayed
@@ -81,6 +88,22 @@ export async function dispatchMessage(
     if (suppressed) {
       await markMessageFailed(tx, messageId, suppressed);
       return { fail: suppressed };
+    }
+
+    // Meeting-bound messages (confirmations, reminders) die with the meeting:
+    // the row lock serializes the check against a cancel/reschedule that
+    // commits between compose and this claim — including the stranded-message
+    // recovery path in drain(), which re-checks the same durable link.
+    if (msg.meeting_id) {
+      const meeting = (
+        await tx<
+          { status: string }[]
+        >`select status from meetings where id = ${msg.meeting_id} for update`
+      )[0];
+      if (!meeting || meeting.status !== 'scheduled') {
+        await markMessageFailed(tx, messageId, 'meeting no longer scheduled');
+        return { fail: 'meeting no longer scheduled' };
+      }
     }
 
     // A disabled/absent integration must fail loudly — never fall through to

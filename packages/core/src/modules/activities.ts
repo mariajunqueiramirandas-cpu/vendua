@@ -16,6 +16,10 @@ export const ACTIVITY_KINDS = [
   'state_change',
   'agent',
   'system',
+  'meeting_booked',
+  'meeting_done',
+  'meeting_no_show',
+  'meeting_cancelled',
 ] as const;
 export type ActivityKind = (typeof ACTIVITY_KINDS)[number];
 

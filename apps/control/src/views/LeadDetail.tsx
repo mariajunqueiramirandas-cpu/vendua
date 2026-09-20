@@ -1,13 +1,17 @@
 import { useCallback, useEffect, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
-import { Archive, Ban, Bot, Plus } from 'lucide-react';
-import { api, type Activity, type LeadListItem, type Task } from '../api.ts';
+import { Archive, Ban, Bot, Link2, Plus, Video } from 'lucide-react';
+import { api, type Activity, type LeadListItem, type Meeting, type Task } from '../api.ts';
 import { ConfirmBtn, Empty, Page, ScoreBar, fmtDateTime, fmtMoney } from '../components.tsx';
 
 const KIND_LABEL: Record<string, string> = {
   note: 'nota',
   call: 'liga',
   meeting: 'reunião',
+  meeting_booked: 'call marcada',
+  meeting_done: 'call feita',
+  meeting_no_show: 'no-show',
+  meeting_cancelled: 'call cancelada',
   state_change: 'estágio',
   agent: 'agente',
   system: 'sistema',
@@ -48,6 +52,7 @@ export default function LeadDetail() {
   const [threads, setThreads] = useState<{ id: string; channel: string; agentEnabled: boolean }[]>(
     [],
   );
+  const [meetings, setMeetings] = useState<Meeting[]>([]);
   const [note, setNote] = useState('');
   const [taskTitle, setTaskTitle] = useState('');
   const [actChannel, setActChannel] = useState<'auto' | 'whatsapp' | 'email'>('auto');
@@ -61,6 +66,7 @@ export default function LeadDetail() {
     api.activities(id).then((r) => setActs(r.activities));
     api.tasks({ leadId: id }).then((r) => setTasks(r.tasks));
     api.leadThreads(id).then((r) => setThreads(r.threads));
+    api.meetings({ leadId: id, scope: 'all' }).then((r) => setMeetings(r.meetings));
   }, [id]);
   useEffect(load, [load]);
 
@@ -284,6 +290,55 @@ export default function LeadDetail() {
             </div>
           </div>
 
+          <div className="card" style={{ padding: 18, marginBottom: 14 }}>
+            <div style={{ display: 'flex', alignItems: 'center', marginBottom: 6 }}>
+              <b>calls</b>
+              <CopyLinkBtn leadId={lead.id} />
+            </div>
+            {meetings.map((m) => (
+              <div key={m.id} className="trow">
+                <span style={{ flex: 1 }}>
+                  {fmtDateTime(m.startsAt)}
+                  <span className={`chip stc-${m.status}`} style={{ marginLeft: 8 }}>
+                    {m.status === 'no_show'
+                      ? 'no-show'
+                      : m.status === 'done'
+                        ? 'feita'
+                        : m.status === 'cancelled'
+                          ? 'cancelada'
+                          : 'marcada'}
+                  </span>
+                </span>
+                {m.roomUrl && m.status === 'scheduled' && (
+                  <a
+                    className="icon-btn"
+                    href={m.roomUrl}
+                    target="_blank"
+                    rel="noopener"
+                    title="abrir sala"
+                    aria-label="abrir sala"
+                  >
+                    <Video size={13} />
+                  </a>
+                )}
+                {m.status === 'scheduled' && (
+                  <button
+                    className="btn ghost"
+                    style={{ padding: '2px 8px', fontSize: 'var(--t-2xs)' }}
+                    onClick={() => void api.patchMeeting(m.id, { status: 'cancelled' }).then(load)}
+                  >
+                    cancelar
+                  </button>
+                )}
+              </div>
+            ))}
+            {!meetings.length && (
+              <div style={{ color: 'var(--muted)', marginTop: 6 }}>
+                nenhuma call ainda — copie o link e mande pro lead
+              </div>
+            )}
+          </div>
+
           <div className="card" style={{ padding: 18 }}>
             <b>tarefas</b>
             {tasks.map((t) => {
@@ -401,6 +456,32 @@ function MoneyEdit({
       }}
       onBlur={() => setEditing(false)}
     />
+  );
+}
+
+/** Mints the per-lead booking link and copies it — token sign happens
+ *  server-side so the URL the lead gets is the same one the agent sends. */
+function CopyLinkBtn({ leadId }: { leadId: string }) {
+  const [copied, setCopied] = useState(false);
+  return (
+    <button
+      className="btn ghost"
+      style={{ marginLeft: 'auto', padding: '2px 8px', fontSize: 'var(--t-2xs)' }}
+      title="link de agendamento do lead (válido por 30 dias)"
+      onClick={() =>
+        void api.bookingLink(leadId).then(async (r) => {
+          try {
+            await navigator.clipboard.writeText(r.url);
+            setCopied(true);
+            setTimeout(() => setCopied(false), 2000);
+          } catch {
+            window.prompt('copie o link:', r.url);
+          }
+        })
+      }
+    >
+      <Link2 size={12} /> {copied ? 'copiado!' : 'copiar link'}
+    </button>
   );
 }
 

@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { Navigate, NavLink, Route, Routes, useLocation, useNavigate } from 'react-router-dom';
 import {
   Bot,
+  CalendarDays,
   CheckSquare,
   FlaskConical,
   Inbox,
@@ -26,6 +27,7 @@ import Discovery from './views/Discovery.tsx';
 import Tasks from './views/Tasks.tsx';
 import Runs from './views/Runs.tsx';
 import Reports from './views/Reports.tsx';
+import Calendar from './views/Calendar.tsx';
 import Settings from './views/Settings.tsx';
 
 const NAV = [
@@ -33,6 +35,7 @@ const NAV = [
   { to: '/funil', label: 'Funil', icon: KanbanSquare, k: 'f' },
   { to: '/leads', label: 'Leads', icon: Users, k: 'l' },
   { to: '/inbox', label: 'Inbox', icon: Inbox, k: 'i' },
+  { to: '/agenda', label: 'Agenda', icon: CalendarDays, k: 'j' },
   { to: '/aprovacoes', label: 'Aprovações', icon: CheckSquare, k: 'a', badge: 'drafts' },
   { to: '/descoberta', label: 'Descoberta', icon: FlaskConical, k: 'e' },
   { to: '/tarefas', label: 'Tarefas', icon: ListTodo, k: 't', badge: 'tasks' },
@@ -48,7 +51,7 @@ const TABS = NAV.filter((n) => TAB_PATHS.has(n.to));
 const MORE = NAV.filter((n) => !TAB_PATHS.has(n.to));
 
 const SHORTCUTS: [string, string][] = [
-  ['d f l i a e t g r c', 'trocar de tela'],
+  ['d f l i j a e t g r c', 'trocar de tela'],
   ['/', 'buscar (em leads)'],
   ['n', 'novo lead (em leads)'],
   ['ctrl + enter', 'enviar mensagem (no inbox)'],
@@ -165,6 +168,7 @@ export default function App() {
           <Route path="/leads/:id" element={<LeadDetail />} />
           <Route path="/inbox" element={<InboxView />} />
           <Route path="/inbox/:threadId" element={<InboxView />} />
+          <Route path="/agenda" element={<Calendar />} />
           <Route path="/aprovacoes" element={<Approvals />} />
           <Route path="/descoberta" element={<Discovery />} />
           {/* legacy: the launch screen merged into Descoberta — keep ?run= deep links working */}

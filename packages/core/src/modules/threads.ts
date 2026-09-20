@@ -357,13 +357,16 @@ export async function composeMessage(
     leadId: string;
     channel: Channel;
     body: string;
-    author: 'staff' | 'agent';
+    author: 'staff' | 'agent' | 'system';
     status?: 'draft' | 'queued';
     subject?: string;
     subjectOverride?: string;
     /** the run that produced this message — send_message sets it so a
      *  reclaimed-and-replayed run recognizes its earlier send. */
     agentRunId?: string;
+    /** the meeting this message belongs to — dispatch suppresses the send
+     *  once that meeting is no longer 'scheduled'. */
+    meetingId?: string;
   },
   idemKey: string,
 ): Promise<
@@ -382,13 +385,16 @@ export async function composeMessageTx(
     leadId: string;
     channel: Channel;
     body: string;
-    author: 'staff' | 'agent';
+    author: 'staff' | 'agent' | 'system';
     status?: 'draft' | 'queued';
     subject?: string;
     /** Explicit staff/agent override — replaces the thread's subject even when
      *  one already exists (plain `subject` only fills an empty one). */
     subjectOverride?: string;
     agentRunId?: string;
+    /** the meeting this message belongs to — dispatch suppresses the send
+     *  once that meeting is no longer 'scheduled'. */
+    meetingId?: string;
   },
 ): Promise<{
   status: number;
@@ -411,8 +417,8 @@ export async function composeMessageTx(
   const messageSubject = thread.subject;
   const message = (
     await tx<MessageRow[]>`
-      insert into lead_messages (thread_id, direction, author, body, status, agent_run_id, subject)
-      values (${thread.id}, 'out', ${input.author}, ${body}, ${input.status ?? 'draft'}, ${input.agentRunId ?? null}, ${messageSubject})
+      insert into lead_messages (thread_id, direction, author, body, status, agent_run_id, subject, meeting_id)
+      values (${thread.id}, 'out', ${input.author}, ${body}, ${input.status ?? 'draft'}, ${input.agentRunId ?? null}, ${messageSubject}, ${input.meetingId ?? null})
       returning *
     `
   )[0]!;
