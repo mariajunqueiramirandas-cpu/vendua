@@ -4,8 +4,10 @@ import {
   annotateResults,
   contactFromUrl,
   contactsFromLinks,
+  contactsFromText,
   navLinks,
   pageKey,
+  phoneFromText,
 } from '../src/agent/channels/discovery.ts';
 import type { DiscoveryResult } from '../src/agent/channels/discovery.ts';
 
@@ -39,13 +41,52 @@ describe('pageKey', () => {
 });
 
 describe('contactFromUrl', () => {
-  test('wa.me digits → +phone', () => {
-    expect(cfu('https://wa.me/5585999887766')).toEqual({ phone: '+5585999887766' });
+  test('wa.me digits → +phone + whatsappLink', () => {
+    expect(cfu('https://wa.me/5585999887766')).toEqual({
+      phone: '+5585999887766',
+      whatsappLink: 'https://wa.me/5585999887766',
+    });
   });
   test('api.whatsapp.com ?phone= param', () => {
     expect(cfu('https://api.whatsapp.com/send?phone=558512345678')).toEqual({
       phone: '+558512345678',
+      whatsappLink: 'https://api.whatsapp.com/send?phone=558512345678',
     });
+  });
+  test('wa.me/message + wa.me/c are whatsapp channels without digits', () => {
+    const msg = cfu('https://wa.me/message/2HDCP7FOAFBXB1');
+    expect(msg.phone).toBeUndefined();
+    expect(msg.whatsappLink).toBe('https://wa.me/message/2HDCP7FOAFBXB1');
+    const cat = cfu('https://wa.me/c/5522992086005');
+    expect(cat.whatsappLink).toBe('https://wa.me/c/5522992086005');
+    expect(cat.phone).toBe('+5522992086005');
+  });
+  test('opaque wa.me codes never become phones', () => {
+    // a /message/ code with an all-digit body is still not a number
+    const m = cfu('https://wa.me/message/1234567890AB');
+    expect(m.phone).toBeUndefined();
+    expect(m.whatsappLink).toBe('https://wa.me/message/1234567890AB');
+    const m2 = cfu('https://wa.me/message/12345678901');
+    expect(m2.phone).toBeUndefined();
+  });
+  test('wa.me/p/<item>/<phone> — number is the last segment', () => {
+    const p = cfu('https://wa.me/p/1149164198755526/5516999999999');
+    expect(p.phone).toBe('+5516999999999');
+    expect(p.whatsappLink).toBe('https://wa.me/p/1149164198755526/5516999999999');
+  });
+  test('query digits never leak into the phone', () => {
+    const c = cfu('https://wa.me/5511999999999?text=pedido%202026%20por%20favor');
+    expect(c.phone).toBe('+5511999999999');
+    const s = cfu('https://api.whatsapp.com/send?phone=558512345678&text=pedido%202026');
+    expect(s.phone).toBe('+558512345678');
+    // a non-numeric phone param is a share link, not a destination
+    const bare = cfu('https://api.whatsapp.com/send?text=oi');
+    expect(bare.phone).toBeUndefined();
+    expect(bare.whatsappLink).toBeUndefined();
+    // E.164's leading + on the phone param is the same number
+    const plus = cfu('https://api.whatsapp.com/send?phone=%2B558512345678');
+    expect(plus.phone).toBe('+558512345678');
+    expect(plus.whatsappLink).toBeDefined();
   });
   test('too-short digits are not a phone', () => {
     expect(cfu('https://wa.me/1234')).toEqual({});
@@ -57,6 +98,14 @@ describe('contactFromUrl', () => {
     expect(cfu('https://www.instagram.com/doceria.mar/')).toEqual({
       instagram: '@doceria.mar',
     });
+    // mobile subdomain — same profile parser
+    expect(cfu('https://m.instagram.com/doceria85')).toEqual({
+      instagram: '@doceria85',
+    });
+  });
+  test('non-profile instagram subdomains are not handles', () => {
+    expect(cfu('https://about.instagram.com/about-us')).toEqual({});
+    expect(cfu('https://l.instagram.com/x')).toEqual({});
   });
   test('instagram utility paths are not handles', () => {
     for (const u of ['p', 'reel', 'reels', 'explore', 'accounts', 'stories']) {
@@ -82,6 +131,30 @@ describe('annotateResult', () => {
   test('listing host → kind listing', () => {
     expect(annotateResult(r('https://www.ifood.com.br/x')).kind).toBe('listing');
     expect(annotateResult(r('https://tripadvisor.com.br/resto')).kind).toBe('listing');
+  });
+  test('ordering-platform subdomains → listing (js-shell pages)', () => {
+    expect(annotateResult(r('https://pedido.anota.ai/loja/doce')).kind).toBe('listing');
+    expect(annotateResult(r('https://instadelivery.com.br/x')).kind).toBe('listing');
+    expect(annotateResult(r('https://delicias.goomer.app/')).kind).toBe('listing');
+  });
+  test('snippet carrying a phone/email is parsed for free', () => {
+    const a = annotateResult(
+      r(
+        'https://doceria.com.br',
+        'Doceria',
+        'Encomendas: (22) 99712-3470 ou contato@doceria.com.br',
+      ),
+    );
+    expect(a.phone).toBe('+5522997123470');
+    expect(a.email).toBe('contato@doceria.com.br');
+    expect(a.kind).toBe('contact');
+  });
+  test('snippet email fills even when the URL already carried a phone', () => {
+    const a = annotateResult(
+      r('https://wa.me/5585999887766', 'x', 'ou escreva para vendas@doceria.com.br'),
+    );
+    expect(a.phone).toBe('+5585999887766');
+    expect(a.email).toBe('vendas@doceria.com.br');
   });
   test('own site → kind site', () => {
     expect(annotateResult(r('https://doceria85.com.br/contato')).kind).toBe('site');
@@ -134,6 +207,48 @@ describe('contactsFromLinks', () => {
     expect(c.phones).toEqual(['+5585999887766']);
     expect(c.whatsappLinks.length).toBe(2);
   });
+  test('social redirect wrappers unwrap to the real destination', () => {
+    const c = contactsFromLinks([
+      'https://l.instagram.com/?u=' + encodeURIComponent('https://wa.me/5522992086005') + '&e=ABC',
+      'https://l.facebook.com/l.php?u=' + encodeURIComponent('https://linktr.ee/doceria'),
+    ]);
+    expect(c.phones).toEqual(['+5522992086005']);
+    expect(c.whatsappLinks).toEqual(['https://wa.me/5522992086005']);
+  });
+});
+
+describe('contactsFromText', () => {
+  test('wa.me urls written as prose text carry the phone', () => {
+    const c = contactsFromText(
+      'Peça pelo nosso whats wa.me/c/5522992086005 ou wa.me/5521998877665',
+    );
+    expect(c.phones).toEqual(['+5522992086005', '+5521998877665']);
+    expect(c.whatsappLinks.length).toBe(2);
+  });
+  test('formatted BR phones in text → +55 numbers; cnpj/dates stay out', () => {
+    const c = contactsFromText(
+      'Loja na Rua Pereira nº 615 — WhatsApp (22) 9 9712-3470. CNPJ 50.182.263/0001-37. Aberto 13:30 às 19:30.',
+    );
+    expect(c.phones).toEqual(['+5522997123470']);
+  });
+  test('explicit + numbers keep their country code — no glued +55', () => {
+    expect(phoneFromText('+1 (415) 555-2671')).toBe('+14155552671');
+    expect(phoneFromText('+55 22 99712-3470')).toBe('+5522997123470');
+    expect(phoneFromText('+0800')).toBeNull();
+    expect(phoneFromText('+01234567')).toBeNull();
+  });
+  test('emails parsed, image-asset lookalikes excluded', () => {
+    const c = contactsFromText('fale conosco: vendas@doceria.com.br — logo@2x.png hero@3x.webp');
+    expect(c.emails).toEqual(['vendas@doceria.com.br']);
+  });
+  test('link-in-bio hubs in text surface for the follow-up read', () => {
+    const c = contactsFromText('Encomendas e cardápio: linktr.ee/deliciasdamahh');
+    expect(c.hubs).toEqual(['https://linktr.ee/deliciasdamahh']);
+  });
+  test('shorteners in text are hubs too — the fetch follows the redirect', () => {
+    const c = contactsFromText('peça pelo bit.ly/jodoces ou w.app/jodoces');
+    expect(c.hubs).toEqual(['https://bit.ly/jodoces', 'https://w.app/jodoces']);
+  });
 });
 
 describe('navLinks', () => {
@@ -157,6 +272,40 @@ describe('navLinks', () => {
   test('other hosts and unparseable urls are skipped', () => {
     expect(navLinks(['https://outro.com.br/contato', 'junk'], 'https://a.com.br/')).toEqual([]);
     expect(navLinks([], 'not a url')).toEqual([]);
+  });
+  test('link-in-bio hubs surface cross-host, wrapped or bare', () => {
+    const nav = navLinks(
+      [
+        'https://l.instagram.com/?u=' + encodeURIComponent('https://linktr.ee/doceria85'),
+        'https://instagram.com/doceria85',
+      ],
+      'https://instagram.com/doceria85',
+    );
+    expect(nav).toContain('https://linktr.ee/doceria85');
+  });
+  test('hub subdomains count — carrd.co sites are <name>.carrd.co', () => {
+    const nav = navLinks(['https://doceria85.carrd.co/'], 'https://instagram.com/doceria85');
+    expect(nav).toContain('https://doceria85.carrd.co');
+  });
+  test('on a hub page, nav points OUT — same-host platform chrome is dropped', () => {
+    const nav = navLinks(
+      [
+        'https://linktr.ee/s/about',
+        'https://linktr.ee/features/contact-forms',
+        'https://wa.me/message/ABC123',
+        'https://ifood.com.br/doceria85',
+        'https://doceria85.com.br/contato',
+      ],
+      'https://linktr.ee/doceria85',
+    );
+    expect(nav).toEqual(['https://doceria85.com.br/contato']);
+  });
+  test('on a hub page a shortener link is the OUTBOUND contact, not chrome', () => {
+    const nav = navLinks(
+      ['https://w.app/doceria85', 'https://linktr.ee/features/x'],
+      'https://linktr.ee/doceria85',
+    );
+    expect(nav).toContain('https://w.app/doceria85');
   });
 });
 

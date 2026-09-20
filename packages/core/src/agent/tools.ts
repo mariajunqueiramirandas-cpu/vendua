@@ -248,7 +248,7 @@ const REGISTRY: { def: AgentTool; toolsets: string[] }[] = [
     def: {
       name: 'web_search',
       description:
-        'Search the web for prospects. Results come annotated: kind=contact/profile already carry the parsed phone/@handle from the URL (no read needed); kind=site is the read_pages candidate; kind=listing is a directory. Emit 2-3 different-angled queries per step — they run in parallel.',
+        'Search the web for prospects. Results come annotated: kind=contact already carries the parsed phone/whatsapp link from the URL; kind=profile is a social root — instagram profiles are worth a read_pages (the bio carries whatsapp + link-in-bio), facebook is login-walled; kind=site is the read_pages candidate; kind=listing is a directory/ordering platform. Snippet-carried phones/emails arrive pre-parsed. Emit 2-3 different-angled queries per step — they run in parallel.',
       parameters: {
         type: 'object',
         properties: {
@@ -264,7 +264,7 @@ const REGISTRY: { def: AgentTool; toolsets: string[] }[] = [
     def: {
       name: 'read_pages',
       description:
-        "Read pages via the fetch provider — returns each page's markdown text, foundContacts (phone/whatsapp/email/socials parsed out of the page's links), and nav (internal contact-ish links worth a follow-up read). Use it on every prospect's own pages: home + contato/sobre/cardápio + directory pages, up to 6 urls per call. Social profile roots are login-walled. A repeated URL returns its cached output.",
+        "Read pages via the fetch provider — returns each page's markdown text (read it: contact channels hide in prose — 'chama a Ju no zap', '(22) 9xxxx-xxxx' in a bio, a footer mailto), foundContacts (the deterministic safety net: phone/whatsapp/email/socials parsed out of the page's links AND body text — a wa.me printed in an instagram bio counts), and nav (contact-ish follow-up reads: same-host pages + link-in-bio hubs like linktr.ee). Use it on every prospect's own pages AND instagram profiles: home + contato/sobre/cardápio + the profile's bio link, up to 6 urls per call. Facebook roots are login-walled. A repeated URL returns its cached output.",
       parameters: {
         type: 'object',
         properties: {
@@ -363,6 +363,54 @@ export async function executeTool(
       delete payload.findings;
       delete payload.sources;
       if (ctx.runKind === 'discovery') {
+        // A wa.me/whatsapp URL pasted into phone/whatsapp is a channel
+        // mention, not a dialable number — resolve it through contactFromUrl
+        // (path-segment aware, so a wa.me/message code or a ?text= full of
+        // digits can't masquerade as a phone) or drop it BEFORE the channel
+        // gate counts it, or a link-only card would slip through as reachable.
+        const { contactFromUrl, phoneFromText } = await import('./channels/discovery.ts');
+        for (const f of ['phone', 'whatsapp'] as const) {
+          const v = payload[f];
+          if (typeof v === 'string' && /wa\.me|whatsapp\.com/i.test(v)) {
+            let u: URL | null = null;
+            for (const candidate of [v, `https://${v}`]) {
+              try {
+                u = new URL(candidate);
+                break;
+              } catch {
+                /* try next form */
+              }
+            }
+            payload[f] = u ? contactFromUrl(u).phone : undefined;
+          } else if (typeof v === 'string' && /^[\d\s()+.-]+$/.test(v.trim())) {
+            // digit-ish values normalize like the extractors: 10-11 digits =
+            // BR local → +55…, 12+ w/ country code → +…, unparseable kept as-is.
+            const p = phoneFromText(v.trim());
+            if (p) payload[f] = p;
+          }
+        }
+        // instagram lands one shape only — '@handle'. A profile URL
+        // (instagram.com/x) or a bare 'x' would otherwise dodge dedupe's
+        // handle comparison and split the column into two formats.
+        const ig = payload.instagram;
+        if (typeof ig === 'string' && ig.trim()) {
+          let u: URL | null = null;
+          for (const candidate of [ig.trim(), `https://${ig.trim()}`]) {
+            try {
+              u = new URL(candidate);
+              break;
+            } catch {
+              /* try next form */
+            }
+          }
+          const h = u?.hostname.toLowerCase().replace(/^www\./, '') ?? '';
+          if (u && (h === 'instagram.com' || h === 'm.instagram.com')) {
+            payload.instagram = contactFromUrl(u).instagram;
+          } else {
+            const m = /^@?([\w.-]+)$/.exec(ig.trim());
+            payload.instagram = m ? `@${m[1]}` : undefined;
+          }
+        }
         // The bar for a discovered lead, enforced where the prompt can't be
         // talked around: it must carry a research dossier AND a reachable
         // channel — a name-only row is a dead card on the board.
@@ -837,7 +885,7 @@ export async function executeTool(
       return {
         results,
         ...(droppedDupes ? { droppedDupes } : {}),
-        note: 'kind=contact/profile já traz o contato parseado da URL — primeira pista, pesquise antes de criar; kind=site é o que vale read_pages; listing = diretório, página do negócio também vale leitura.',
+        note: 'kind=contact já traz phone/whatsappLink da URL; kind=profile instagram vale read_pages (a bio entrega whatsapp + link-in-bio — facebook é login wall); kind=site é o que vale read_pages; listing = diretório/plataforma de pedido, evidência mais que fonte de contato. phone/email podem vir do snippet.',
       };
     }
     case 'read_pages': {
@@ -882,7 +930,7 @@ export async function executeTool(
           );
         for (const url of miss) {
           const key2 = pageKey(url);
-          const p: Promise<PageResult> = batch.then((res) => {
+          const p: Promise<PageResult> = batch.then(async (res) => {
             const page = res.pages.find(
               (pg) => pageKey(pg.url) === key2 || pageKey(pg.finalUrl ?? '') === key2,
             );
