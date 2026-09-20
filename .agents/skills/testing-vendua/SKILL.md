@@ -266,7 +266,7 @@ it briefly shipped scoped inside the card where it never painted.
 - Per-run channel override lives in `agent_runs.params.channel`
   (`auto`/absent = resolver picks; `whatsapp`/`email` = CANAL FORÇADO). UI
   surfaces: canal seg in the leads dispatch bar (`api.dispatch(ids, goal,
-  channel)`), `canal:` `<select>` beside `agir` on LeadDetail
+channel)`), `canal:` `<select>` beside `agir` on LeadDetail
   (`runOnLead(id,'outreach',{channel})`).
 - `resolveChannelTx` order: staff override > model arg > last inbound
   channel > whatsapp > email. Availability = contact data (`lead.whatsapp`
@@ -289,10 +289,10 @@ curl -X POST localhost:8787/control/v1/agent/runs \
     {"text":"ok"}]}}'
 ```
 
-  On a no-whatsapp lead the first tool step journals
-  `{blocked:true, reason:'lead has no whatsapp', use:'email'}` and the
-  second `{channel:'email', via:'requested', message:{status:'draft'}}` —
-  visible at `#/agente/runs/:id`.
+On a no-whatsapp lead the first tool step journals
+`{blocked:true, reason:'lead has no whatsapp', use:'email'}` and the
+second `{channel:'email', via:'requested', message:{status:'draft'}}` —
+visible at `#/agente/runs/:id`.
 
 ## Launch stage (#/lancar)
 
