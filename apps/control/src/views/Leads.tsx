@@ -47,6 +47,9 @@ export default function Leads() {
     setLoading(true);
     load();
   }, [load]);
+  // Filter changes swap the result set — drop hidden selections so dispatch
+  // only ever acts on leads the staff can see selected.
+  useEffect(() => setSel(new Set()), [q, state, archived]);
 
   // `/` focuses search, `n` opens new-lead — list-view keys.
   useEffect(() => {
@@ -188,10 +191,12 @@ export default function Leads() {
                 <th style={{ width: 24 }}>
                   <input
                     type="checkbox"
-                    checked={sel.size > 0 && sel.size === leads.length}
+                    checked={leads.length > 0 && leads.every((l) => sel.has(l.id))}
                     onChange={() =>
                       setSel((s) =>
-                        s.size === leads.length ? new Set() : new Set(leads.map((l) => l.id)),
+                        leads.every((l) => s.has(l.id))
+                          ? new Set()
+                          : new Set(leads.map((l) => l.id)),
                       )
                     }
                   />

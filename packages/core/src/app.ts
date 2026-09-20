@@ -1449,13 +1449,27 @@ export function createApp({ sql, sessionSecret, controlSecret }: AppDeps) {
     if (!Object.keys(set).length)
       throw new HttpError(422, 'BAD_REQUEST', 'no updatable fields in body');
     const res = await claimControl(sql, requireIdemKey(c), async (tx) => {
+      const cur = (
+        await tx<{ enabled: boolean }[]>`select enabled from discovery_briefs where id = ${id} for update`
+      )[0];
+      if (!cur) throw new HttpError(404, 'BRIEF_NOT_FOUND', 'brief not found');
+      // A changed definition — or a paused brief switched back on — should
+      // refire promptly, not ride out the previous run's 23h cadence.
+      if (
+        'query' in set ||
+        'segment' in set ||
+        'city' in set ||
+        'target' in set ||
+        (set.enabled === true && !cur.enabled)
+      ) {
+        set.last_run_at = null;
+      }
       const row = (
         await tx`
           update discovery_briefs set ${tx(set)} where id = ${id}
           returning id, name, query, segment, city, target, enabled, last_run_at, created_at
         `
-      )[0];
-      if (!row) throw new HttpError(404, 'BRIEF_NOT_FOUND', 'brief not found');
+      )[0]!;
       return { status: 200, body: { brief: row } };
     });
     if (res.replayed) c.header('x-idempotent-replay', 'true');

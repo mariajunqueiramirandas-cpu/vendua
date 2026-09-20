@@ -490,6 +490,12 @@ export async function updateLead(
   return claimControl(sql, idemKey, async (tx) => {
     const cur = (await tx<LeadRow[]>`select * from leads where id = ${id}`)[0];
     if (!cur) throw new HttpError(404, 'LEAD_NOT_FOUND', 'lead not found');
+    // The bounce marker describes the stored address — a patch that swaps in
+    // a different one must clear it, or the replacement stays blocked forever.
+    const normEmail = (v: unknown) => (typeof v === 'string' ? v.trim().toLowerCase() : null);
+    if ('email' in set && normEmail(set.email) !== normEmail(cur.email)) {
+      set.email_bounced_at = null;
+    }
     const rows = await tx<LeadRow[]>`
       update leads set ${tx(set)}, updated_at = now() where id = ${id} returning *
     `;

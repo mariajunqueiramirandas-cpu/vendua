@@ -185,16 +185,36 @@ async function applyDeliveryEvent(
   emailId: string,
   to: string[] | string | undefined,
 ): Promise<{ ok: true; leadId: string } | { ignored: string }> {
-  const tos = Array.isArray(to) ? to : typeof to === 'string' ? [to] : [];
-  const recipient = (tos[0] ?? '').trim().toLowerCase();
-  if (!recipient) return { ignored: 'no recipient' };
+  const recipients = (Array.isArray(to) ? to : typeof to === 'string' ? [to] : [])
+    .map((t) => t.trim().toLowerCase())
+    .filter(Boolean);
   return controlTx(sql, async (tx) => {
-    const lead = (
-      await tx<{ id: string }[]>`
-        select id from leads where lower(email) = ${recipient} limit 1
+    // provider_message_id names the exact send — thread → lead resolves the
+    // real owner. Recipient email is only a fallback for sends without a
+    // stored provider id, and leads can share an address, so it must match
+    // exactly one lead to flag anything.
+    const owned = (
+      await tx<{ lead_id: string }[]>`
+        select t.lead_id from lead_messages m
+        join lead_threads t on t.id = m.thread_id
+        where m.provider_message_id = ${`email:${emailId}`}
+        limit 1
       `
     )[0];
-    if (!lead) return { status: 200, body: { ignored: 'unknown recipient' } };
+    let leadId = owned?.lead_id ?? null;
+    if (!leadId) {
+      if (!recipients.length) return { status: 200, body: { ignored: 'no recipient' } };
+      const byEmail = await tx<{ id: string }[]>`
+        select id from leads where lower(email) = any(${recipients})
+      `;
+      if (byEmail.length !== 1) {
+        return {
+          status: 200,
+          body: { ignored: byEmail.length ? 'ambiguous recipient' : 'unknown recipient' },
+        };
+      }
+      leadId = byEmail[0]!.id;
+    }
 
     // Fail the sending row when the event names it — keeps message status
     // honest even for sends that predate the flag.
@@ -204,30 +224,40 @@ async function applyDeliveryEvent(
     `;
 
     if (type === 'email.complained') {
-      await tx`
+      // Transition-only writes: provider retries re-deliver the same event,
+      // and `returning` keeps the activity single-shot + preserves the first
+      // event's timestamp.
+      const upd = await tx`
         update leads set unsubscribed_at = now(), updated_at = now()
-        where id = ${lead.id} and unsubscribed_at is null
+        where id = ${leadId} and unsubscribed_at is null
+        returning id
       `;
-      await tx`
-        insert into lead_activities (lead_id, kind, body, created_by)
-        values (${lead.id}, 'system', 'Reclamação de spam (${type}) — descadastrado', 'system')
-      `;
+      if (upd.length) {
+        await tx`
+          insert into lead_activities (lead_id, kind, body, created_by)
+          values (${leadId}, 'system', 'Reclamação de spam (${type}) — descadastrado', 'system')
+        `;
+      }
     } else {
-      await tx`
-        update leads set email_bounced_at = now(), updated_at = now() where id = ${lead.id}
+      const upd = await tx`
+        update leads set email_bounced_at = now(), updated_at = now()
+        where id = ${leadId} and email_bounced_at is null
+        returning id
       `;
-      await tx`
-        insert into lead_activities (lead_id, kind, body, created_by)
-        values (${lead.id}, 'system', ${`Email ${type === 'email.bounced' ? 'bounce' : 'falhou'} — endereço morto, agente muda de canal`}, 'system')
-      `;
+      if (upd.length) {
+        await tx`
+          insert into lead_activities (lead_id, kind, body, created_by)
+          values (${leadId}, 'system', ${`Email ${type === 'email.bounced' ? 'bounce' : 'falhou'} — endereço morto, agente muda de canal`}, 'system')
+        `;
+      }
       // Nothing still queued should go out to a dead address.
       await tx`
         update lead_messages m set status = 'failed', error = 'email bounced', updated_at = now()
         from lead_threads t
-        where m.thread_id = t.id and t.lead_id = ${lead.id}
+        where m.thread_id = t.id and t.lead_id = ${leadId}
           and t.channel = 'email' and m.status in ('queued', 'sending')
       `;
     }
-    return { status: 200, body: { ok: true as const, leadId: lead.id } };
+    return { status: 200, body: { ok: true as const, leadId } };
   }).then((r) => r.body);
 }
