@@ -62,6 +62,7 @@ export function renderReplyEmail(opts: { body: string; subject?: string; from?: 
 <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background-color:#f7f4ea;">
 <tr><td align="center" style="padding:40px 16px;">
 
+<!--[if mso]><table role="presentation" width="600" align="center" cellpadding="0" cellspacing="0" border="0"><tr><td><![endif]-->
 <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="width:100%;max-width:600px;">
 
   <!-- eyebrow row -->
@@ -156,6 +157,7 @@ export function renderReplyEmail(opts: { body: string; subject?: string; from?: 
   </tr>
 
 </table>
+<!--[if mso]></td></tr></table><![endif]-->
 </td></tr>
 </table>
 </body>
