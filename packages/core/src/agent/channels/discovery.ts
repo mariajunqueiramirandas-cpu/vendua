@@ -33,10 +33,8 @@ export interface ReadPage {
   finalUrl?: string;
   title: string | null;
   description: string | null;
-  /** page content as markdown, bounded for context size */
+  /** page content as markdown, full text — the agent does the reading */
   text: string;
-  /** true when text was cut at the context cap */
-  truncated?: boolean;
   /** internal links worth a follow-up read (contato, sobre, cardápio…) */
   nav: string[];
   foundContacts: FoundContacts;
@@ -342,11 +340,6 @@ export function annotateResults(results: { title: string; url: string; snippet?:
   out.sort((a, b) => rank[a.kind] - rank[b.kind]);
   return { results: out.slice(0, 12), droppedDupes };
 }
-
-/** How much of a fetched page's markdown the model sees — wide enough that
- *  footer contact blocks survive on real pages, small enough to batch
- *  several pages per step. */
-const PAGE_TEXT_CAP = 8000;
 
 const uniqPush = (arr: string[], v: string) => {
   if (!arr.includes(v)) arr.push(v);
@@ -783,8 +776,7 @@ function tinyfish(integration: IntegrationRow): DiscoveryProvider {
           ...(r.final_url && r.final_url !== url ? { finalUrl: r.final_url } : {}),
           title: r.title ?? null,
           description: r.description ?? null,
-          text: text.slice(0, PAGE_TEXT_CAP),
-          ...(text.length > PAGE_TEXT_CAP ? { truncated: true } : {}),
+          text,
           // links belong to the rendered destination — on a redirect the
           // same-host nav check must compare against final_url, not the
           // requested url, or every internal follow-up drops out.
