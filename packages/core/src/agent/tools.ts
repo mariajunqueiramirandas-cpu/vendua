@@ -42,6 +42,9 @@ export interface ToolContext {
   /** Discovery-brief runs stamp created leads' discovered_via with the brief
    *  name so the board can tell scheduled-autopilot finds from ad-hoc ones. */
   briefName: string | null;
+  /** Hard per-run ceiling on created leads — the run's meta (params.target),
+   *  enforced in code so the prompt can't talk past it. */
+  leadCap: number;
   /** Staff channel override from dispatch (`params.channel`) — trumps the
    *  model's own channel pick on send_message/draft_message. */
   channelOverride: 'email' | 'whatsapp' | null;
@@ -579,8 +582,9 @@ export async function executeTool(
           // run's claim keys whose stored response actually created a lead
           // (`response.lead.id`) — duplicate/no-op responses commit a claim
           // row but must not burn cap slots. This call's own claim row has no
-          // response yet, so n = leads already created.
-          const cap = guardrails.discoveryMaxLeads ?? DEFAULT_GUARDRAILS.discoveryMaxLeads;
+          // response yet, so n = leads already created. The cap IS the run's
+          // meta — "criar até N" enforced, no separate guardrail setting.
+          const cap = ctx.leadCap;
           const n =
             (
               await tx<{ n: number }[]>`

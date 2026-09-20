@@ -198,8 +198,6 @@ export const DEFAULT_GUARDRAILS = {
   timezone: 'America/Sao_Paulo',
   /** first outbound to a lead always goes through the approvals queue */
   firstContactDraftOnly: true,
-  /** discovery runs: cap on leads created per run */
-  discoveryMaxLeads: 20,
   /** discovery: a created lead with fitScore >= discoveryContactMinScore and
    *  a whatsapp/phone channel gets an outreach run queued on it (the send
    *  still obeys firstContactDraftOnly). */
@@ -213,7 +211,6 @@ export type Guardrails = {
   quietEnd: string;
   timezone: string;
   firstContactDraftOnly: boolean;
-  discoveryMaxLeads: number;
   discoveryAutoContact: boolean;
   discoveryContactMinScore: number;
 };
@@ -277,7 +274,6 @@ export function validateSetting(key: string, value: unknown): void {
       }
     };
     intField('maxOutboundPerLeadPerDay', 1, 100);
-    intField('discoveryMaxLeads', 1, 1000);
     intField('discoveryContactMinScore', 1, 10);
     for (const k of ['quietStart', 'quietEnd'] as const) {
       if (v[k] === undefined) continue;

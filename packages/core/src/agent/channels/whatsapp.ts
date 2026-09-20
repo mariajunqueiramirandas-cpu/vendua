@@ -21,6 +21,8 @@ interface BaileysSocket {
   /** Server-side unpair — WhatsApp drops the linked device, then the
    *  socket closes with a 401 (no auto-reconnect). */
   logout(): Promise<unknown>;
+  /** The account once `open` — id/phoneNumber are jids ('5511…:dev@s.whatsapp.net'). */
+  user?: { id?: string; phoneNumber?: string; name?: string } | undefined;
   ev: {
     on(
       event: 'connection.update',
@@ -50,6 +52,9 @@ let starting: Promise<BaileysSocket> | null = null;
  *  running or the session dropped/logged out. The Settings screen renders
  *  this instead of guessing from QR presence. */
 let connState: 'off' | 'connecting' | 'qr' | 'open' = 'off';
+/** The paired account once the socket is `open` — lets the Config screen
+ *  say WHO is connected instead of implying enabled == working. */
+let waMe: { phone: string | null; name: string | null } | null = null;
 /** While logout() is in flight its own close event clears the globals —
  *  this flag stops ensureSocket from installing a replacement the logout
  *  cleanup would then orphan (alive but identity-gated out of events). */
@@ -57,9 +62,23 @@ let loggingOut = false;
 export function waStatus(): string {
   return connState;
 }
+export function waIdentity(): { phone: string | null; name: string | null } | null {
+  return waMe;
+}
 /** identity of the integration that opened `socket` — config changes must
  *  close it, not keep sending through the old account. */
 let socketFingerprint: string | null = null;
+let socketAccountId: string | null = null;
+/** Socket generation — bumps on every ownership transition. `wa_qr` is a
+ *  single global row and last writer wins, so QR writes carry the writer's
+ *  gen and the upsert drops strictly-older ones: a detached socket's late
+ *  clear can't erase the replacement's fresh QR (or vice versa).
+ *  Seeded by the wall clock so a process restart can't collide with the
+ *  gen the surviving row carries; the counter breaks same-ms ties. */
+let waGen = 0;
+function nextWaGen(): number {
+  return (waGen = Math.max(Date.now(), waGen + 1));
+}
 
 function fingerprintOf(integration: IntegrationRow): string {
   return `${integration.id}:${(integration.config.accountId as string) ?? 'default'}:${integration.updated_at}`;
@@ -162,23 +181,28 @@ async function startSocket(sql: Sql, integration: IntegrationRow): Promise<Baile
   // globals or report it offline.
   socket = sock;
   socketFingerprint = fingerprintOf(integration);
+  socketAccountId = accountId;
+  const gen = nextWaGen();
 
   sock.ev.on('creds.update', () => void auth.write('creds', 'main', creds));
   sock.ev.on('connection.update', (u) => {
     if (socket !== sock) return; // stale socket — a replacement owns globals
     if (u.qr) {
       connState = 'qr';
-      void persistQr(sql, accountId, u.qr);
+      void persistQr(sql, accountId, u.qr, gen);
     }
     if (u.connection === 'open') {
       connState = 'open';
-      void persistQr(sql, accountId, null);
+      waMe = readIdentity(sock);
+      void persistQr(sql, accountId, null, gen);
     }
     if (u.connection === 'close') {
       connState = 'off';
       socket = null;
       starting = null;
       socketFingerprint = null;
+      socketAccountId = null;
+      waMe = null;
       // Baileys 401 = logged out — nothing to reconnect to until re-paired.
       // Otherwise the stream dropped: restart inbound delivery instead of
       // staying offline until an outbound send happens to reopen it.
@@ -219,6 +243,17 @@ async function startSocket(sql: Sql, integration: IntegrationRow): Promise<Baile
   return sock;
 }
 
+/** '5511…:dev@s.whatsapp.net' / lid jids → bare digits for display. */
+function readIdentity(sock: BaileysSocket): {
+  phone: string | null;
+  name: string | null;
+} {
+  const u = sock.user;
+  const raw = u?.phoneNumber ?? u?.id;
+  const digits = raw?.split('@')[0]?.split(':')[0]?.replace(/\D/g, '');
+  return { phone: digits || null, name: u?.name ?? null };
+}
+
 function extractText(message: unknown): string | null {
   if (!message || typeof message !== 'object') return null;
   const m = message as Record<string, unknown>;
@@ -229,12 +264,13 @@ function extractText(message: unknown): string | null {
   return null;
 }
 
-async function persistQr(sql: Sql, accountId: string, qr: string | null) {
+async function persistQr(sql: Sql, accountId: string, qr: string | null, gen: number) {
   await controlTx(
     sql,
     (tx) =>
-      tx`insert into control_settings (key, value) values (${'wa_qr'}, ${tx.json({ accountId, qr } as never)})
-         on conflict (key) do update set value = excluded.value`,
+      tx`insert into control_settings (key, value) values (${'wa_qr'}, ${tx.json({ accountId, qr, gen } as never)})
+         on conflict (key) do update set value = excluded.value
+         where coalesce((control_settings.value ->> 'gen')::bigint, -1) <= ${gen}`,
   );
 }
 
@@ -256,6 +292,13 @@ export async function ensureSocket(
     }
     socket = null;
     socketFingerprint = null;
+    waMe = null;
+    // The detached socket's own close event early-returns (it no longer
+    // owns globals) — reset state here or waStatus()/wa_qr keep reporting
+    // a socket that no longer exists.
+    connState = 'off';
+    if (socketAccountId) void persistQr(sql, socketAccountId, null, nextWaGen());
+    socketAccountId = null;
   }
   if (!wanted) return null;
   if (loggingOut) throw new Error('whatsapp logout em andamento');
@@ -320,7 +363,9 @@ export async function logoutWa(sql: Sql, accountId: string): Promise<void> {
   if (socket === s) {
     socket = null;
     socketFingerprint = null;
+    socketAccountId = null;
     connState = 'off';
+    waMe = null;
   }
   starting = null;
   try {
@@ -330,8 +375,10 @@ export async function logoutWa(sql: Sql, accountId: string): Promise<void> {
   }
   await controlTx(sql, async (tx) => {
     await tx`delete from wa_auth_state where account_id = ${accountId}`;
-    await tx`delete from control_settings where key = 'wa_qr'`;
   });
+  // Clear through the gen-guarded path — a plain delete could be followed
+  // by a stale in-flight QR write that re-creates the row.
+  await persistQr(sql, accountId, null, nextWaGen());
 }
 
 export async function sendWhatsApp(
