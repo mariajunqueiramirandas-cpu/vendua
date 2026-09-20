@@ -400,9 +400,10 @@ export async function executeTool(
               /* try next form */
             }
           }
+          const h = u?.hostname.toLowerCase().replace(/^www\./, '') ?? '';
           payload.instagram =
-            u && u.hostname.toLowerCase().replace(/^www\./, '') === 'instagram.com'
-              ? (contactFromUrl(u).instagram ?? ig.trim())
+            u && (h === 'instagram.com' || h.endsWith('.instagram.com'))
+              ? contactFromUrl(u).instagram
               : `@${ig.trim().replace(/^@/, '')}`;
         }
         // The bar for a discovered lead, enforced where the prompt can't be
