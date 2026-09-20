@@ -508,6 +508,10 @@ export async function bookMeeting(sql: Sql, input: BookInput): Promise<BookResul
       `
     )[0];
     if (existing) return { meeting: existing, created: false as const, cfg, lead };
+    // Serialize the busy check + insert across concurrent bookings: at READ
+    // COMMITTED two transactions could both see the slot free — the advisory
+    // lock turns check-then-write into a critical section.
+    await tx`select pg_advisory_xact_lock(hashtext('vendua.meetings.slot'))`;
     const durationMin =
       input.durationMin && Number.isInteger(input.durationMin) && input.durationMin >= 5
         ? Math.min(input.durationMin, 240)
@@ -575,27 +579,70 @@ export async function bookMeeting(sql: Sql, input: BookInput): Promise<BookResul
   });
 
   const { meeting, cfg, lead } = txResult;
-  if (!txResult.created) return { meeting: meetingJson(meeting), created: false };
+  // Post-commit effects run for replays too — a crash between the insert
+  // commit and here leaves room_url/gcal/confirmation unfinished, and a
+  // retried request is the natural retry point. Each step fills only what's
+  // missing, so re-running is safe.
+  await meetingEffects(sql, meeting, cfg, lead, bookerContact);
+  return { meeting: meetingJson(meeting), created: txResult.created };
+}
 
-  // Post-commit, order matters: the room URL must exist before gcal's
-  // description and the confirmation copy are written.
-  const room = await rooms.createRoom(meeting.id, new Date(meeting.ends_at), cfg.roomUrl);
-  let roomUrl = room.url;
-  let gcalEventId = await gcal.insertEvent({
-    summary: `Venduá · ${lead.name}`,
-    description: [
-      bookerContact ? `contato: ${bookerContact}` : null,
-      roomUrl ? `sala: ${roomUrl}` : null,
-      `lead: ${lead.name} (${leadId})`,
-    ]
-      .filter(Boolean)
-      .join('\n'),
-    start: meeting.starts_at,
-    end: meeting.ends_at,
-    tz: cfg.tz,
-    leadId,
+/** Re-runnable effect completion for a meeting whose booking committed but
+ *  whose post-commit steps may not have finished (crash mid-effects, then a
+ *  claim/idempotency replay that skips the work fn). Called by routes on
+ *  replayed responses; no-ops when everything is already in place. */
+export async function ensureMeetingEffects(sql: Sql, meetingId: string): Promise<void> {
+  const snap = await controlTx(sql, async (tx) => {
+    const meeting = (await tx<MeetingRow[]>`select * from meetings where id = ${meetingId}`)[0];
+    if (!meeting || meeting.status !== 'scheduled' || !meeting.lead_id) return {};
+    const lead = (await tx<LeadRow[]>`select * from leads where id = ${meeting.lead_id}`)[0];
+    if (!lead) return {};
+    return { meeting, lead, cfg: await meetingConfigTx(tx) };
   });
-  if (roomUrl !== meeting.room_url || gcalEventId) {
+  if (!snap.meeting || !snap.lead || !snap.cfg) return;
+  await meetingEffects(sql, snap.meeting, snap.cfg, snap.lead, snap.meeting.booker_contact);
+}
+
+/** Per-meeting room URL ends with `vendua-<meetingId>` — anything else on
+ *  the row is the static fallback (or nothing), i.e. the Daily step failed
+ *  or never ran. */
+function hasDailyRoom(roomUrl: string | null, meetingId: string): boolean {
+  return (roomUrl ?? '').endsWith(`/vendua-${meetingId}`);
+}
+
+async function meetingEffects(
+  sql: Sql,
+  meeting: MeetingRow,
+  cfg: MeetingConfig,
+  lead: LeadRow,
+  bookerContact: string | null,
+): Promise<void> {
+  const leadId = meeting.lead_id ?? lead.id;
+  let roomUrl = meeting.room_url;
+  if (!roomUrl || (rooms.dailyConfigured() && !hasDailyRoom(roomUrl, meeting.id))) {
+    // Order matters: the room URL must exist before gcal's description and
+    // the confirmation copy are written.
+    const room = await rooms.createRoom(meeting.id, new Date(meeting.ends_at), cfg.roomUrl);
+    roomUrl = room.url;
+  }
+  let gcalEventId = meeting.gcal_event_id;
+  if (!gcalEventId) {
+    gcalEventId = await gcal.insertEvent({
+      summary: `Venduá · ${lead.name}`,
+      description: [
+        bookerContact ? `contato: ${bookerContact}` : null,
+        roomUrl ? `sala: ${roomUrl}` : null,
+        `lead: ${lead.name} (${leadId})`,
+      ]
+        .filter(Boolean)
+        .join('\n'),
+      start: meeting.starts_at,
+      end: meeting.ends_at,
+      tz: cfg.tz,
+      leadId,
+    });
+  }
+  if (roomUrl !== meeting.room_url || gcalEventId !== meeting.gcal_event_id) {
     await controlTx(sql, async (tx) => {
       await tx`
         update meetings set room_url = ${roomUrl}, gcal_event_id = coalesce(${gcalEventId}, gcal_event_id),
@@ -615,7 +662,6 @@ export async function bookMeeting(sql: Sql, input: BookInput): Promise<BookResul
       idemKey: `meeting-confirm:${meeting.id}`,
     });
   }
-  return { meeting: meetingJson(meeting), created: true };
 }
 
 function confirmationBody(startsAt: string, roomUrl: string | null, cfg: MeetingConfig): string {
@@ -694,7 +740,19 @@ export async function cancelByLead(
         for update
       `
     )[0];
-    if (!row) throw new HttpError(404, 'MEETING_NOT_FOUND', 'nenhuma call marcada');
+    // Replay: the upcoming meeting was already cancelled (e.g. a retry whose
+    // first response was lost) — return it instead of a 404.
+    if (!row) {
+      const replay = (
+        await tx<MeetingRow[]>`
+          select * from meetings
+          where lead_id = ${leadId} and status = 'cancelled'
+          order by cancelled_at desc limit 1
+        `
+      )[0];
+      if (replay) return { row: replay, fresh: false as const };
+      throw new HttpError(404, 'MEETING_NOT_FOUND', 'nenhuma call marcada');
+    }
     if (!selfCancelAllowed(new Date(row.starts_at).getTime(), Date.now())) {
       throw new HttpError(409, 'CANCEL_WINDOW', 'cancelamento só até 12h antes — fala com a gente');
     }
@@ -713,10 +771,10 @@ export async function cancelByLead(
       { meetingId: row.id, startsAt: row.starts_at, via: 'booking_link' },
       'system',
     );
-    return cancelled;
+    return { row: cancelled, fresh: true as const };
   });
-  if (out.gcal_event_id) await gcal.deleteEvent(out.gcal_event_id);
-  return meetingJson(out);
+  if (out.fresh && out.row.gcal_event_id) await gcal.deleteEvent(out.row.gcal_event_id);
+  return meetingJson(out.row);
 }
 
 export interface PatchMeetingInput {
@@ -837,6 +895,9 @@ export async function patchMeeting(
     }
     const end = new Date(start.getTime() + durationMin * 60_000);
     const now = new Date();
+    // Same advisory section as bookMeeting — reschedule can't run its busy
+    // check concurrently with a booking for the same slot.
+    await tx`select pg_advisory_xact_lock(hashtext('vendua.meetings.slot'))`;
     const dbBusy = await meetingBusyTx(
       tx,
       now,
@@ -873,11 +934,29 @@ export async function patchMeeting(
     return { status: 200, body: { meeting: meetingJson(updated) } };
   });
 
-  // Post-commit gcal/room sync — skipped entirely on a replayed claim.
-  if (!res.replayed && committed.row && committed.cfg) {
-    const { row, cfg } = committed as { row: MeetingRow; cfg: MeetingConfig };
+  // Post-commit gcal/room sync — runs on replayed claims too: a crash
+  // between claim commit and here leaves the calendar unsynced, and the
+  // retried request is the retry point. Every step fills or rewrites a
+  // stored marker so re-running is safe.
+  const row =
+    committed.row ??
+    (await controlTx(
+      sql,
+      async (tx) => (await tx<MeetingRow[]>`select * from meetings where id = ${id}`)[0],
+    ));
+  const cfg =
+    committed.cfg ?? (row ? await controlTx(sql, (tx) => meetingConfigTx(tx)) : undefined);
+  if (row && cfg) {
     if (row.status === 'cancelled' && row.gcal_event_id) {
       await gcal.deleteEvent(row.gcal_event_id);
+      // The stored id doubles as the "gcal sync pending" marker — clear it
+      // so a later replay doesn't chase an already-deleted event.
+      await controlTx(
+        sql,
+        async (tx) =>
+          await tx`update meetings set gcal_event_id = null, updated_at = now() where id = ${row.id} and status = 'cancelled'`,
+      );
+      row.gcal_event_id = null;
     } else if (row.status === 'scheduled' && input.startsAt !== undefined) {
       if (row.gcal_event_id) await gcal.deleteEvent(row.gcal_event_id);
       const newId = await gcal.insertEvent({
@@ -895,7 +974,7 @@ export async function patchMeeting(
       }
       await rooms.bumpRoomExpiry(row.room_url, new Date(row.ends_at));
     }
-    return { status: res.status, body: { meeting: meetingJson(row) }, replayed: false };
+    return { status: res.status, body: { meeting: meetingJson(row) }, replayed: res.replayed };
   }
   return { status: res.status, body: res.body, replayed: res.replayed };
 }
@@ -945,7 +1024,7 @@ export async function sweepMeetingReminders(sql: Sql): Promise<number> {
   );
   for (const m of due) {
     if (!m.lead_id) continue;
-    const messageId = await controlTx(sql, async (tx) => {
+    const claim = await controlTx(sql, async (tx) => {
       // Lock the row and re-derive under the lock — a concurrent sweep or a
       // cancel landing between the list read and here can't double-send.
       const cur = (await tx<MeetingRow[]>`select * from meetings where id = ${m.id} for update`)[0];
@@ -972,19 +1051,33 @@ export async function sweepMeetingReminders(sql: Sql): Promise<number> {
         author: 'system',
         status: 'queued',
       });
+      const claimed24 = cur.reminder_24h_at === null;
       if (kind === '1h') {
         await tx`update meetings set reminder_1h_at = now(), reminder_24h_at = coalesce(reminder_24h_at, now()), updated_at = now() where id = ${cur.id}`;
       } else {
         await tx`update meetings set reminder_24h_at = now(), updated_at = now() where id = ${cur.id}`;
       }
-      return composed.body.message.id;
+      return { messageId: composed.body.message.id, kind, claimed24 };
     });
-    if (messageId) {
-      const dispatch = await dispatchMessage(sql, messageId);
-      if (dispatch.ok) sent++;
-      else {
-        mlog.warn({ meetingId: m.id, reason: dispatch.reason }, 'meeting reminder dispatch failed');
-      }
+    if (!claim) continue;
+    const dispatch = await dispatchMessage(sql, claim.messageId);
+    if (dispatch.ok) {
+      sent++;
+    } else {
+      // Dispatch failed → release the marker(s) this tick claimed so a later
+      // tick recomposes and retries; the failed message row stays on the
+      // thread as the attempt's record. reminder_24h_at is only cleared when
+      // a 1h claim set it as a side marker (it was null before).
+      await controlTx(sql, async (tx) => {
+        if (claim.kind === '1h' && claim.claimed24) {
+          await tx`update meetings set reminder_1h_at = null, reminder_24h_at = null, updated_at = now() where id = ${m.id}`;
+        } else if (claim.kind === '1h') {
+          await tx`update meetings set reminder_1h_at = null, updated_at = now() where id = ${m.id}`;
+        } else {
+          await tx`update meetings set reminder_24h_at = null, updated_at = now() where id = ${m.id}`;
+        }
+      });
+      mlog.warn({ meetingId: m.id, reason: dispatch.reason }, 'meeting reminder dispatch failed');
     }
   }
   return sent;

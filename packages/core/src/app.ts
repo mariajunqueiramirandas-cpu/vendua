@@ -90,6 +90,7 @@ import {
   bookMeeting,
   bookingLink,
   cancelByLead,
+  ensureMeetingEffects,
   listMeetings,
   meetingsStatus,
   nextMeetingForLead,
@@ -1241,13 +1242,25 @@ export function createApp({ sql, sessionSecret, controlSecret }: AppDeps) {
     controlGate(c);
     const scope = c.req.query('scope');
     const leadId = c.req.query('lead_id');
-    const from = c.req.query('from');
-    const to = c.req.query('to');
+    const dateQ = (name: string): Date | undefined => {
+      const raw = c.req.query(name);
+      if (!raw) return undefined;
+      const d = new Date(raw);
+      if (Number.isNaN(d.getTime())) {
+        throw new HttpError(422, 'BAD_REQUEST', `${name} must be an ISO-8601 timestamp`);
+      }
+      return d;
+    };
+    const from = dateQ('from');
+    const to = dateQ('to');
+    if (leadId && !UUID_RE.test(leadId)) {
+      throw new HttpError(400, 'BAD_REQUEST', 'lead_id must be a uuid');
+    }
     const meetings = await listMeetings(sql, {
       ...(scope === 'upcoming' || scope === 'past' || scope === 'all' ? { scope } : {}),
-      ...(leadId ? { leadId: str(leadId, 'lead_id', 64) } : {}),
-      ...(from ? { from: new Date(from) } : {}),
-      ...(to ? { to: new Date(to) } : {}),
+      ...(leadId ? { leadId } : {}),
+      ...(from ? { from } : {}),
+      ...(to ? { to } : {}),
     });
     return c.json({ meetings });
   });
@@ -1257,6 +1270,9 @@ export function createApp({ sql, sessionSecret, controlSecret }: AppDeps) {
   app.get('/control/v1/meetings/link', async (c) => {
     controlGate(c);
     const leadId = str(c.req.query('lead_id'), 'lead_id', 64);
+    if (!UUID_RE.test(leadId)) {
+      throw new HttpError(400, 'BAD_REQUEST', 'lead_id must be a uuid');
+    }
     const lead = await controlTx(
       sql,
       async (tx) => (await tx`select id from leads where id = ${leadId}`)[0],
@@ -1284,7 +1300,12 @@ export function createApp({ sql, sessionSecret, controlSecret }: AppDeps) {
       });
       return { status: 201, body: { meeting: out.meeting } };
     });
-    if (res.replayed) c.header('x-idempotent-replay', 'true');
+    if (res.replayed) {
+      c.header('x-idempotent-replay', 'true');
+      // The claim skipped the work fn — the first attempt may have died
+      // between commit and the room/gcal/email effects; fill what's missing.
+      await ensureMeetingEffects(sql, res.body.meeting.id);
+    }
     return c.json(res.body, res.status as 201);
   });
 

@@ -62,6 +62,12 @@ export async function createRoom(
     });
     if (!res.ok) {
       const text = (await res.text()).slice(0, 300);
+      // Retry path: the room can already exist if an earlier attempt created
+      // it but failed before the URL reached the meeting row — recover it.
+      if (res.status === 400) {
+        const existing = await fetchRoom(`vendua-${meetingId}`);
+        if (existing) return { url: existing, provider: 'daily' };
+      }
       rlog.warn({ status: res.status, err: text }, 'daily room create failed');
       return { url: fallback, provider: 'static', error: `daily ${res.status}` };
     }
@@ -75,6 +81,21 @@ export async function createRoom(
     const err = e instanceof Error ? e.message : String(e);
     rlog.warn({ err }, 'daily room create failed');
     return { url: fallback, provider: 'static', error: err };
+  }
+}
+
+/** Fetch an existing room's URL by name — recovery for create-collision. */
+async function fetchRoom(name: string): Promise<string | null> {
+  try {
+    const res = await fetch(`${DAILY_API}/rooms/${encodeURIComponent(name)}`, {
+      headers: { authorization: `Bearer ${process.env.DAILY_API_KEY!.trim()}` },
+      signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
+    });
+    if (!res.ok) return null;
+    const room = (await res.json()) as { url?: string };
+    return room.url ?? null;
+  } catch {
+    return null;
   }
 }
 

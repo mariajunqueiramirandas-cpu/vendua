@@ -264,15 +264,38 @@ footer {
 <body>
   <div class="wordmark"><b>venduá</b>&nbsp;·&nbsp;agendar call</div>
   <main class="card" id="card"><div id="view"></div></main>
-  <footer>horário de brasília · venduá</footer>
+  <footer>venduá</footer>
 <script>
 (function () {
   var view = document.getElementById('view');
   var token = new URLSearchParams(location.search).get('t') || '';
-  var state = { slots: [], sel: null, name: '', contact: '', roomConfigured: false, existing: null, leadName: '' };
+  var state = { slots: [], sel: null, name: '', contact: '', roomConfigured: false, existing: null, leadName: '', tz: 'America/Sao_Paulo' };
   var DIAS = ['domingo','segunda','terça','quarta','quinta','sexta','sábado'];
   var MESES = ['jan','fev','mar','abr','mai','jun','jul','ago','set','out','nov','dez'];
+  var DOW = { Sun: 0, Mon: 1, Tue: 2, Wed: 3, Thu: 4, Fri: 5, Sat: 6 };
 
+  // All wall-clock display is in the configured meeting tz (state.tz) —
+  // never the visitor's browser tz.
+  function parts(iso) {
+    var p = {};
+    new Intl.DateTimeFormat('en-US', {
+      timeZone: state.tz,
+      year: 'numeric', month: 'numeric', day: 'numeric',
+      weekday: 'short', hour: '2-digit', minute: '2-digit', hour12: false,
+    }).formatToParts(new Date(iso)).forEach(function (x) { p[x.type] = x.value; });
+    if (p.hour === '24') p.hour = '00';
+    return p;
+  }
+  function dayKey(iso) {
+    // 'YYYY-MM-DD' in the meeting tz — grouping key for the picker
+    var p = parts(iso);
+    return p.year + '-' + String(p.month).padStart(2, '0') + '-' + String(p.day).padStart(2, '0');
+  }
+  function tzLabel() {
+    return state.tz === 'America/Sao_Paulo'
+      ? 'horário de Brasília'
+      : 'horário ' + state.tz.split('/').pop().replace(/_/g, ' ');
+  }
   function esc(s) {
     return String(s == null ? '' : s).replace(/[&<>"']/g, function (ch) {
       return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[ch];
@@ -280,17 +303,17 @@ footer {
   }
   function el(html) { var d = document.createElement('div'); d.innerHTML = html; return d.firstElementChild; }
   function fmtTime(iso) {
-    var d = new Date(iso);
-    return String(d.getHours()).padStart(2, '0') + ':' + String(d.getMinutes()).padStart(2, '0');
+    var p = parts(iso);
+    return p.hour + ':' + p.minute;
   }
   function fmtDay(iso) {
-    var d = new Date(iso);
-    return DIAS[d.getDay()] + ' · ' + d.getDate() + ' ' + MESES[d.getMonth()];
+    var p = parts(iso);
+    return DIAS[DOW[p.weekday]] + ' · ' + Number(p.day) + ' ' + MESES[Number(p.month) - 1];
   }
   function fmtLong(iso) {
-    var d = new Date(iso);
-    return DIAS[d.getDay()] + ', ' + d.getDate() + ' de ' +
-      ['janeiro','fevereiro','março','abril','maio','junho','julho','agosto','setembro','outubro','novembro','dezembro'][d.getMonth()] +
+    var p = parts(iso);
+    return DIAS[DOW[p.weekday]] + ', ' + Number(p.day) + ' de ' +
+      ['janeiro','fevereiro','março','abril','maio','junho','julho','agosto','setembro','outubro','novembro','dezembro'][Number(p.month) - 1] +
       ' · ' + fmtTime(iso);
   }
   function api(path, opts) {
@@ -318,8 +341,10 @@ footer {
 
   function renderPicker() {
     var groups = {};
+    var firstOfDay = {};
     state.slots.forEach(function (s) {
-      var key = s.start.slice(0, 10);
+      var key = dayKey(s.start);
+      if (!groups[key]) firstOfDay[key] = s.start;
       (groups[key] = groups[key] || []).push(s);
     });
     var days = Object.keys(groups).sort();
@@ -341,7 +366,7 @@ footer {
       html += '<div class="state"><p>Nenhum horário livre nas próximas duas semanas — responde a mensagem que a gente acha uma janela.</p></div>';
     }
     days.forEach(function (day) {
-      html += '<div class="day"><div class="day-head"><span>' + esc(fmtDay(day + 'T12:00:00')) + '</span></div><div class="slots">';
+      html += '<div class="day"><div class="day-head"><span>' + esc(fmtDay(firstOfDay[day])) + '</span></div><div class="slots">';
       groups[day].forEach(function (s) {
         html += '<button class="slot" data-start="' + esc(s.start) + '">' + esc(fmtTime(s.start)) + '</button>';
       });
@@ -376,7 +401,7 @@ footer {
     view.innerHTML =
       '<div class="eyebrow">sua call</div>' +
       '<div class="big-time">' + esc(fmtLong(m.startsAt)) + '</div>' +
-      '<p class="sub">' + esc(fmtTime(m.startsAt)) + ' – ' + esc(fmtTime(m.endsAt)) + ' · horário de Brasília</p>' +
+      '<p class="sub">' + esc(fmtTime(m.startsAt)) + ' – ' + esc(fmtTime(m.endsAt)) + ' · ' + esc(tzLabel()) + '</p>' +
       (roomUrl ? '<a class="room" href="' + esc(roomUrl) + '" target="_blank" rel="noopener">entrar na sala →</a>' : '') +
       '<button class="cancel-link" id="doCancel">cancelar esta call</button>' +
       '<div id="err"></div>';
@@ -393,7 +418,7 @@ footer {
       '<div class="eyebrow" style="justify-content:center">marcado</div>' +
       '<div class="big-time" style="text-align:center">' + esc(fmtLong(m.startsAt)) + '</div>' +
       '<p class="sub" style="text-align:center">' +
-        'até ' + esc(fmtTime(m.endsAt)) + ' · horário de Brasília' +
+        'até ' + esc(fmtTime(m.endsAt)) + ' · ' + esc(tzLabel()) +
         (m.roomUrl ? '' : ' · a gente manda o link da sala antes') +
       '</p>' +
       (m.roomUrl ? '<div style="text-align:center"><a class="room" href="' + esc(m.roomUrl) + '" target="_blank" rel="noopener">entrar na sala →</a></div>' : '') +
@@ -459,6 +484,10 @@ footer {
       state.slotMinutes = r.body.slotMinutes || 30;
       state.roomConfigured = !!r.body.roomConfigured;
       state.existing = r.body.existing || null;
+      if (r.body.tz) {
+        state.tz = r.body.tz;
+        document.querySelector('footer').textContent = tzLabel().toLowerCase() + ' · venduá';
+      }
       state.name = state.name || state.leadName;
       state.contact = state.contact || r.body.leadWhats || '';
       if (intoPicker || !state.existing) renderPicker();
