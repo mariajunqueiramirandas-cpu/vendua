@@ -2264,12 +2264,13 @@ a.lcard:hover {
   flex: 1;
   min-height: 0;
   display: grid;
-  grid-template-columns: 1fr 340px;
+  grid-template-columns: minmax(0, 1fr) 340px;
   gap: 40px;
   padding: 8px 36px 32px;
 }
 .stage-stream {
   min-height: 0;
+  min-width: 0;
   overflow: auto;
   scrollbar-width: thin;
   scrollbar-color: var(--night-700) transparent;
@@ -2324,6 +2325,10 @@ a.lcard:hover {
   color: var(--sage-300);
   font-size: var(--t-xs);
   flex-shrink: 0;
+  max-width: 55%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .act.tool.pending .act-out {
   color: var(--amber-400);
@@ -2335,11 +2340,14 @@ a.lcard:hover {
   color: color-mix(in srgb, var(--sage-300) 92%, var(--cream-50));
   font-style: italic;
   font-size: var(--t-md);
+  min-width: 0;
+  overflow-wrap: anywhere;
 }
 .think-calls {
   color: var(--sage-300);
   font-size: var(--t-2xs);
   margin-left: 10px;
+  min-width: 0;
 }
 .blink {
   animation: l-blink 1s steps(2, start) infinite;
@@ -2500,21 +2508,26 @@ a.lcard:hover {
   }
 }
 @media (max-width: 860px) {
-  /* the whole stage flows as one scroll column on small screens — no
-     inner panes to fight the phone's own scrolling */
+  /* a phone reads the stage as one column: the head collapses to a single
+     status line over a meta row, tool steps go two-line (label + outcome up
+     top, the query/URL full-width below), and nothing may scroll sideways */
   .stage-live {
-    grid-template-columns: 1fr;
-    gap: 24px;
-    overflow: auto;
-    padding: 4px 18px 24px;
+    display: block;
+    overflow: hidden auto;
+    padding: 2px 18px 24px;
   }
   .stage-rail {
+    margin-top: 20px;
     border-left: 0;
     padding-left: 0;
     border-top: 1px solid color-mix(in srgb, var(--cream-100) 10%, transparent);
     padding-top: 16px;
     min-height: 0;
-    text-align: center;
+    min-width: 0;
+    gap: 12px;
+  }
+  .stage-count {
+    font-size: 2rem;
   }
   .stage-stream {
     min-height: 40vh;
@@ -2522,21 +2535,81 @@ a.lcard:hover {
   }
   .stage-leads {
     overflow: visible;
-    text-align: left;
   }
   .stage-head {
-    padding: 18px 18px 12px;
-    gap: 10px;
+    padding: 14px 18px 10px;
+    gap: 4px 10px;
     flex-wrap: wrap;
+    align-items: center;
   }
   .stage-title {
-    font-size: 1.6rem;
+    order: -1;
+    flex-basis: 100%;
+    font-size: 1.35rem;
+    line-height: 1.15;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .stage-runid {
+    font-size: var(--t-2xs);
   }
   .stage-clock {
-    font-size: var(--t-base);
+    font-size: var(--t-sm);
+  }
+  .stage-head .btn {
+    margin-left: auto;
+    padding: 6px 14px;
+    font-size: var(--t-sm);
+  }
+  .act {
+    gap: 4px 9px;
+  }
+  .act.tool {
+    flex-wrap: wrap;
+    padding: 9px 12px;
+  }
+  .act-label {
+    flex: 1;
+    min-width: 0;
+    font-size: var(--t-xs);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .act-out {
+    font-size: var(--t-2xs);
+  }
+  .act-arg {
+    order: 4;
+    flex-basis: 100%;
+    font-size: var(--t-2xs);
+  }
+  .act-arg:empty {
+    display: none;
+  }
+  .act.think {
+    flex-wrap: wrap;
+    row-gap: 2px;
+    padding: 8px 2px;
+  }
+  .think-t {
+    flex: 1 1 100%;
+    font-size: var(--t-sm);
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+  }
+  .think-calls {
+    flex-basis: 100%;
+    margin-left: 0;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
   }
   .stage-hero {
-    grid-template-columns: 1fr;
+    grid-template-columns: minmax(0, 1fr);
     gap: 40px;
     padding: 32px 22px;
     min-height: auto;

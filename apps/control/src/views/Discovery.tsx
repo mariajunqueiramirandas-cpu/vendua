@@ -339,7 +339,7 @@ export default function Discovery() {
                     ? 'acordando o agente…'
                     : 'a máquina está caçando.'}
           </div>
-          <span className="mono dim">run {run.id.slice(0, 8)}</span>
+          <span className="mono dim stage-runid">run {run.id.slice(0, 8)}</span>
           <span className="mono stage-clock">{fmtClock(elapsed)}</span>
           {runActive && (
             <button className="btn stage-ghost" onClick={() => void api.cancelRun(run.id)}>
