@@ -227,11 +227,14 @@ async function applyDeliveryEvent(
     // if the email changed since the send. A bounce/fail, though, belongs to
     // the rejected address: when the event names recipients and none is the
     // lead's current email (staff swapped it after the send), fail the named
-    // send but don't flag the new address or purge its queue.
+    // send but don't flag the new address or purge its queue. The FOR UPDATE
+    // lock serializes the check-and-flag with a concurrent email patch —
+    // otherwise a committed replacement could still get re-flagged by a
+    // stale read taken before it.
     if (type !== 'email.complained') {
       const curEmail = (
         await tx<{ email: string | null }[]>`
-          select lower(email) as email from leads where id = ${leadId}
+          select lower(email) as email from leads where id = ${leadId} for update
         `
       )[0]?.email;
       if (!curEmail || (recipients.length > 0 && !recipients.includes(curEmail))) {
