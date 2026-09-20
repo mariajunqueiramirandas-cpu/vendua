@@ -78,7 +78,7 @@ export async function enqueueRun(
 async function claimRun(sql: Sql): Promise<RunRow | null> {
   return controlTx(sql, async (tx) => {
     const rows = await tx<RunRow[]>`
-      update agent_runs set status = 'running', started_at = now(),
+      update agent_runs set status = 'running', started_at = now(), alive_at = now(),
         claim_token = gen_random_uuid()::text
       where id = (
         select id from agent_runs
@@ -237,7 +237,8 @@ export async function runOnce(sql: Sql): Promise<boolean> {
 
   /** Streaming journal: every write commits the steps so far — staff watch
    *  the trajectory live instead of a silent 'running' chip — AND refreshes
-   *  started_at, which doubles as the reclaim lease in drain(). Fenced by
+   *  alive_at, the reclaim lease in drain() (started_at stays the real
+   *  attempt-start timestamp — UIs read it for elapsed time). Fenced by
    *  claim_token: a stale worker's write no-ops once a new claim owns the
    *  row. Writes serialize on `tail` and each snapshots [...steps, ...extra]
    *  when its turn begins, so parallel tool resolutions can only advance the
@@ -249,7 +250,7 @@ export async function runOnce(sql: Sql): Promise<boolean> {
       const rows = await controlTx(
         sql,
         (tx) => tx`
-          update agent_runs set started_at = now(), steps = ${tx.json([...steps, ...extra] as never[])}
+          update agent_runs set alive_at = now(), steps = ${tx.json([...steps, ...extra] as never[])}
           where id = ${run.id} and status = 'running' and claim_token = ${run.claim_token}
           returning id
         `,
@@ -445,8 +446,8 @@ export async function drain(sql: Sql, limit = 20): Promise<number> {
   await controlTx(
     sql,
     (tx) => tx`
-      update agent_runs set status = 'queued', started_at = null, claim_token = null
-      where status = 'running' and started_at < now() - make_interval(mins => ${RUN_LEASE_MIN})
+      update agent_runs set status = 'queued', started_at = null, alive_at = null, claim_token = null
+      where status = 'running' and coalesce(alive_at, started_at) < now() - make_interval(mins => ${RUN_LEASE_MIN})
     `,
   );
   // 'sending' past the lease = worker died between provider call and status

@@ -127,19 +127,29 @@ export default function Launch() {
     }
     let dead = false;
     let t: ReturnType<typeof setInterval> | undefined;
-    const tick = () =>
+    // Overlapping polls resolve out of order — drop any response older than
+    // the newest seen, and latch terminal: a delayed 'running' snapshot can't
+    // resurrect a finished run after the interval is cleared.
+    let seq = 0;
+    let seen = 0;
+    let terminal = false;
+    const tick = () => {
+      const my = ++seq;
       api
         .run(runId)
         .then((r) => {
-          if (dead) return;
+          if (dead || my <= seen || terminal) return;
+          seen = my;
           setRun(r.run);
           // Terminal state — nothing left to watch, stop polling.
           if (t && r.run.status !== 'queued' && r.run.status !== 'running') {
+            terminal = true;
             clearInterval(t);
             t = undefined;
           }
         })
         .catch(() => undefined);
+    };
     void tick();
     t = setInterval(tick, 1300);
     return () => {

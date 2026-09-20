@@ -24,7 +24,12 @@ export interface ChannelVerdict {
 export async function channelAvailabilityTx(
   tx: Sql,
   leadId: string,
+  opts: { lock?: boolean } = {},
 ): Promise<Record<Channel, ChannelVerdict>> {
+  // lock: serialize against concurrent contact/bounce writes (updateLead,
+  // delivery events) — a resolve→insert caller holding the lead row can't be
+  // stranded on a channel that died mid-transaction. Display-only callers
+  // (run context's CANAIS line) leave it off — no need to block writes.
   const lead = (
     await tx<
       {
@@ -32,7 +37,7 @@ export async function channelAvailabilityTx(
         whatsapp: string | null;
         email_bounced_at: string | null;
       }[]
-    >`select email, whatsapp, email_bounced_at from leads where id = ${leadId}`
+    >`select email, whatsapp, email_bounced_at from leads where id = ${leadId} ${opts.lock ? tx.unsafe('for update') : tx.unsafe('')}`
   )[0];
   if (!lead) {
     const dead = { ok: false, reason: 'lead not found' };
@@ -98,7 +103,7 @@ export async function resolveChannelTx(
     threadId?: string | null;
   },
 ): Promise<ChannelPick> {
-  const avail = await channelAvailabilityTx(tx, leadId);
+  const avail = await channelAvailabilityTx(tx, leadId, { lock: true });
   const usable = (['whatsapp', 'email'] as const).filter((ch) => avail[ch].ok);
   // Continuity channel — for continuity picks and to flag a mid-conversation
   // switch back to the caller.
