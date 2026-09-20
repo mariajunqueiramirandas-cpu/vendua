@@ -2514,6 +2514,7 @@ a.lcard:hover {
     border-top: 1px solid color-mix(in srgb, var(--cream-100) 10%, transparent);
     padding-top: 16px;
     min-height: 0;
+    text-align: center;
   }
   .stage-stream {
     min-height: 40vh;
@@ -2521,6 +2522,7 @@ a.lcard:hover {
   }
   .stage-leads {
     overflow: visible;
+    text-align: left;
   }
   .stage-head {
     padding: 18px 18px 12px;
@@ -2546,6 +2548,14 @@ a.lcard:hover {
   .stage-h {
     font-size: clamp(2.4rem, 9.5vw, 4rem);
   }
+  /* centered hero chrome — a launch moment reads centered on a phone */
+  .stage-brief {
+    text-align: center;
+  }
+  .stage-brief input,
+  .stage-brief textarea {
+    text-align: left;
+  }
   /* label-above-input: the 130px rail would squeeze the field at 360px */
   .brief-row {
     grid-template-columns: 1fr;
@@ -2553,6 +2563,19 @@ a.lcard:hover {
   }
   .brief-k {
     padding-top: 0;
+  }
+  /* seg pills distribute across the bar instead of clustering left */
+  .stage-seg {
+    display: flex;
+  }
+  .stage-seg button {
+    flex: 1;
+    justify-content: center;
+  }
+  /* primary CTA goes full-width — the mobile convention */
+  .stage-launch {
+    align-self: stretch;
+    justify-content: center;
   }
   .hrail {
     gap: 14px;
@@ -2568,6 +2591,11 @@ a.lcard:hover {
   }
   .bnew-row input[type='number'] {
     flex: 1 1 64px;
+  }
+  /* the add-brief button gets its own full-width row */
+  .bnew-row .btn {
+    flex: 1 1 100%;
+    justify-content: center;
   }
   .recent-row {
     grid-template-columns: 64px 1fr auto;
