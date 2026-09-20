@@ -292,6 +292,13 @@ describe('navLinks', () => {
     );
     expect(nav).toEqual(['https://doceria85.com.br/contato']);
   });
+  test('on a hub page a shortener link is the OUTBOUND contact, not chrome', () => {
+    const nav = navLinks(
+      ['https://w.app/doceria85', 'https://linktr.ee/features/x'],
+      'https://linktr.ee/doceria85',
+    );
+    expect(nav).toContain('https://w.app/doceria85');
+  });
 });
 
 describe('annotateResults', () => {

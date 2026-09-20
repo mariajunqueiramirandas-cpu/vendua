@@ -127,7 +127,11 @@ const LINK_HUB_HOSTS = new Set([
   'linkbio.co',
   'camps.bio',
   'flow.page',
-  // shorteners — one segment, opaque target, resolves on read
+]);
+/** URL shorteners — one opaque segment, destination resolves on read. Kept
+ *  out of LINK_HUB_HOSTS on purpose: on a hub page a shortener link is the
+ *  OUTBOUND contact (linktr.ee/x → w.app/x), not platform chrome. */
+const SHORTENER_HOSTS = new Set([
   'bit.ly',
   'w.app',
   'cutt.ly',
@@ -473,7 +477,7 @@ function isHubHost(host: string): boolean {
 function isProfileHubUrl(u: URL): boolean {
   const h = u.hostname.toLowerCase().replace(/^www\./, '');
   const segs = u.pathname.split('/').filter(Boolean).length;
-  if (LINK_HUB_HOSTS.has(h)) return segs === 1;
+  if (LINK_HUB_HOSTS.has(h) || SHORTENER_HOSTS.has(h)) return segs === 1;
   return hostMatches(h, LINK_HUB_HOSTS) && segs <= 1;
 }
 
