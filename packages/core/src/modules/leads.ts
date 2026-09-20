@@ -671,6 +671,7 @@ export async function segmentStats(sql: Sql): Promise<SegmentStat[]> {
              coalesce(sum(r.cost_cents), 0)::int as cost_cents
       from agent_runs r join leads l on l.id = r.lead_id
       where r.created_at > now() - interval '30 days'
+        and l.archived_at is null
       group by 1
     `;
     const costBy = new Map(costs.map((c) => [c.segment, c.cost_cents]));

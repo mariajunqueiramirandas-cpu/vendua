@@ -120,14 +120,23 @@ export async function ingestResendEvent(
     if (event.type === 'email.delivered' && deliveryId) {
       // The provider id stored on dispatch is channel-namespaced ('email:<id>').
       await controlTx(sql, async (tx) => {
+        // Serialize with dispatch's finalize on the same advisory key — a
+        // parked event can't slip between its pmid write and its drain.
+        await tx`select pg_advisory_xact_lock(hashtext(${`pev:email:${deliveryId}`}))`;
         const hit = await tx`
           update lead_messages set status = 'delivered', updated_at = now()
           where provider_message_id = ${`email:${deliveryId}`} and status = 'sent'
           returning id`;
         if (!hit.length) {
-          // Delivered can beat dispatch's finalize — the pmid isn't on the row
-          // yet. Park it; finalize drains provider_events once it lands.
-          await parkProviderEventTx(tx, deliveryId, event.type, {});
+          // A retry after 'delivered' (or a failed send) also updates zero
+          // rows — only park when NO message owns this pmid yet, i.e. the
+          // event genuinely beat dispatch's finalize.
+          const exists = await tx`
+            select 1 from lead_messages
+            where provider_message_id = ${`email:${deliveryId}`} limit 1`;
+          if (!exists.length) {
+            await parkProviderEventTx(tx, deliveryId, 'email.delivered', {});
+          }
         }
       });
       return { ok: true } as ResendWebhookResult;
@@ -210,6 +219,10 @@ export async function applyDeliveryEventTx(
     .map((t) => t.trim().toLowerCase())
     .filter(Boolean);
   {
+    // Serialize with dispatch's finalize on the same advisory key — the
+    // pmid-existence check and the park must be atomic against its
+    // store-pmid-then-drain sequence.
+    await tx`select pg_advisory_xact_lock(hashtext(${`pev:email:${emailId}`}))`;
     // provider_message_id names the exact send — thread → lead resolves the
     // real owner. Recipient email is only a fallback for sends without a
     // stored provider id, and leads can share an address, so it must match

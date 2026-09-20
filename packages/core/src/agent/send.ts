@@ -156,6 +156,12 @@ export async function dispatchMessage(
       return { ok: false, reason: sendError };
     }
     const pmid = providerMessageId ? `${send.channel}:${providerMessageId}` : null;
+    // The webhook parks events that find no pmid — serialize both sides on
+    // this advisory key so a parker can't slip between our pmid write and
+    // the drain below (its pmid check happens under the same lock).
+    if (providerMessageId) {
+      await tx`select pg_advisory_xact_lock(hashtext(${`pev:${send.channel}:${providerMessageId}`}))`;
+    }
     await markMessageSent(tx, messageId, pmid);
     // A delivery event can beat this finalize — Resend emits it before our
     // send call returns the provider id. Webhook ingest parks those in
