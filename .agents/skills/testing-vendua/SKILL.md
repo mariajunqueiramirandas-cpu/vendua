@@ -213,9 +213,10 @@ TINYFISH_API_KEY: ..., CONTROL_SECRET: ...}`). SESSION_SECRET has no org
   — `log` driver counts on the row alone; baileys additionally needs
   `waStatus='open'`). Enable `log` via PUT
   /control/v1/integrations/whatsapp before expecting `contactRun`.
-  Suppression (`outreachActive`) blocks whenever ANY outreach exists for the
-  lead (queued/running/done — autocontact is a first-contact), so a dup
-  discovery on an already-contacted lead returns no `contactRun`.
+  Suppression (`outreachActive`) blocks on a live outreach run OR an
+  outbound `lead_messages` row (draft/queued/sending/sent/delivered) — a
+  'done' run that produced no message does NOT suppress, so a scripted dup
+  after an empty outreach run still re-queues `contactRun`.
   Dedupe matches on
   phone/whatsapp digits, instagram handle (case-folded), or name+city — an
   instagram-only match merges into whatever lead already owns the handle.

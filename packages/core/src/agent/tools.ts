@@ -404,19 +404,32 @@ export async function executeTool(
           score !== null &&
           score >= minScore &&
           Boolean(wa);
-        /** Broader than dispatch/scheduler suppression: autocontact is a
-         *  first-contact, so a lead that ever got outreach (queued, running,
-         *  or already done — e.g. a draft still awaiting approval) never gets
-         *  a second one queued by discovery. */
-        const outreachActive = async (leadId: string) =>
-          (
+        /** Autocontact is a first-contact, so it suppresses on live runs —
+         *  and on evidence a contact attempt already exists (a sent/delivered
+         *  message or a draft awaiting approval). A 'done' run that produced
+         *  nothing (e.g. quiet-hours blocked) must not suppress a re-fire. */
+        const outreachActive = async (leadId: string) => {
+          const live = (
             await tx`
             select 1 from agent_runs
             where lead_id = ${leadId} and kind = 'outreach'
-              and status in ('queued', 'running', 'done')
+              and status in ('queued', 'running')
             limit 1
           `
           )[0];
+          if (live) return true;
+          return Boolean(
+            (
+              await tx`
+            select 1 from lead_messages m
+            join lead_threads t on t.id = m.thread_id
+            where t.lead_id = ${leadId} and m.direction = 'out'
+              and m.status in ('draft', 'queued', 'sending', 'sent', 'delivered')
+            limit 1
+          `
+            )[0],
+          );
+        };
         const queueOutreach = async (leadId: string, score: number | null) => {
           if (await outreachActive(leadId)) return null;
           const { insertRun } = await import('./runner.ts');
