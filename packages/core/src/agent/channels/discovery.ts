@@ -106,7 +106,7 @@ export function pageKey(url: string): string | null {
     const params = [...u.searchParams.entries()]
       .filter(([k]) => !TRACKING_PARAMS.test(k))
       .sort(([a], [b]) => a.localeCompare(b))
-      .map(([k, v]) => `${k}=${v}`)
+      .map(([k, v]) => `${encodeURIComponent(k)}=${encodeURIComponent(v)}`)
       .join('&');
     return (
       u.hostname.toLowerCase().replace(/^www\./, '') +
