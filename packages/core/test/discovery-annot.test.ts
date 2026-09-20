@@ -98,6 +98,10 @@ describe('contactFromUrl', () => {
     expect(cfu('https://www.instagram.com/doceria.mar/')).toEqual({
       instagram: '@doceria.mar',
     });
+    // mobile subdomain — same profile parser
+    expect(cfu('https://m.instagram.com/doceria85')).toEqual({
+      instagram: '@doceria85',
+    });
   });
   test('instagram utility paths are not handles', () => {
     for (const u of ['p', 'reel', 'reels', 'explore', 'accounts', 'stories']) {
