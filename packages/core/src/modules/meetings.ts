@@ -678,7 +678,9 @@ async function meetingEffects(
 }
 
 function tzLabel(tz: string): string {
-  return tz === 'America/Sao_Paulo' ? 'horário de Brasília' : `horário ${tz.split('/').pop()?.replace(/_/g, ' ') ?? tz}`;
+  return tz === 'America/Sao_Paulo'
+    ? 'horário de Brasília'
+    : `horário ${tz.split('/').pop()?.replace(/_/g, ' ') ?? tz}`;
 }
 
 function confirmationBody(startsAt: string, roomUrl: string | null, cfg: MeetingConfig): string {
