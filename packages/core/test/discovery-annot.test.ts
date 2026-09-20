@@ -6,11 +6,9 @@ import {
   contactsFromLinks,
   contactsFromText,
   navLinks,
-  pageExtractorFor,
   pageKey,
 } from '../src/agent/channels/discovery.ts';
 import type { DiscoveryResult } from '../src/agent/channels/discovery.ts';
-import { mockProvider } from '../src/agent/llm.ts';
 
 const r = (url: string, title = 'x', snippet = ''): DiscoveryResult['results'][number] => ({
   title,
@@ -299,78 +297,5 @@ describe('annotateResults', () => {
     const { results } = annotateResults([r('https://www.youtube.com/watch?v=x')]);
     expect(results.length).toBe(1);
     expect(results[0]!.kind).toBe('listing');
-  });
-});
-
-describe('pageExtractorFor — the LLM pass, verbatim-gated', () => {
-  const TEXT =
-    'Doceria da Ju — bolos sob encomenda. Encomendas pelo whats (22) 9 9999-1234 ' +
-    'ou contato@judoces.com.br. Rua das Flores 120, centro. Siga @judoces.';
-
-  test('model-reported channels land only when the page literally carries them', async () => {
-    const provider = mockProvider([
-      {
-        toolCalls: [
-          {
-            name: 'report_page',
-            args: {
-              phones: ['22 9 9999-1234', '11 4002-8922'], // second is NOT on the page
-              emails: ['contato@judoces.com.br', 'fake@never-printed.com'],
-              whatsappLinks: ['wa.me/55999991234'], // not on page — dropped
-              instagram: ['@judoces', '@notthere'],
-              owner: 'Ju',
-              address: 'Rua das Flores 120, centro',
-              sells: 'bolos sob encomenda',
-            },
-          },
-        ],
-      },
-    ]);
-    const { extract: ex, usage } = await pageExtractorFor(provider)(TEXT);
-    expect(ex).not.toBeNull();
-    expect(usage).toEqual({ tokensIn: 0, tokensOut: 0, costUsd: null });
-    expect(ex!.phones).toEqual(['+5522999991234']);
-    expect(ex!.emails).toEqual(['contato@judoces.com.br']);
-    expect(ex!.whatsappLinks).toEqual([]);
-    expect(ex!.instagram).toEqual(['@judoces']);
-    expect(ex!.owner).toBe('Ju');
-    expect(ex!.sells).toBe('bolos sob encomenda');
-  });
-  test('business facts are grounded in the page too — invented content drops', async () => {
-    const provider = mockProvider([
-      {
-        toolCalls: [
-          {
-            name: 'report_page',
-            args: {
-              owner: 'Ana Nunca Mencionada',
-              address: 'Av. Paulista 1000, São Paulo',
-              sells: 'bolos sob encomenda',
-            },
-          },
-        ],
-      },
-    ]);
-    const { extract: ex } = await pageExtractorFor(provider)(TEXT);
-    expect(ex!.owner).toBeUndefined();
-    expect(ex!.address).toBeUndefined();
-    expect(ex!.sells).toBe('bolos sob encomenda'); // verbatim in TEXT
-  });
-  test('whatsapp links verbatim on the page yield phone + channel', async () => {
-    const text = `${TEXT} wa.me/5522999991234`;
-    const provider = mockProvider([
-      { toolCalls: [{ name: 'report_page', args: { whatsappLinks: ['wa.me/5522999991234'] } }] },
-    ]);
-    const { extract: ex } = await pageExtractorFor(provider)(text);
-    expect(ex!.whatsappLinks).toEqual(['https://wa.me/5522999991234']);
-    expect(ex!.phones).toEqual(['+5522999991234']);
-  });
-  test('no report call or a provider error → null extract, usage still flows', async () => {
-    const noCall = await pageExtractorFor(mockProvider([{ text: 'ok' }]))(TEXT);
-    expect(noCall.extract).toBeNull();
-    const broken = { name: 'x', chat: async () => Promise.reject(new Error('boom')) };
-    const failed = await pageExtractorFor(broken)(TEXT);
-    expect(failed.extract).toBeNull();
-    expect(failed.usage.tokensIn).toBe(0);
   });
 });

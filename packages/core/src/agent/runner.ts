@@ -12,7 +12,6 @@ import { segmentStats, type AgentGoal } from '../modules/leads.ts';
 import { providerFor, type AgentMessage } from './llm.ts';
 import { buildSystemPrompt } from './prompts.ts';
 import { executeTool, toolsFor, type ToolContext } from './tools.ts';
-import { pageExtractorFor } from './channels/discovery.ts';
 import { dispatchMessage } from './send.ts';
 import { channelAvailabilityTx, whatsappReadyTx } from './guardrails.ts';
 
@@ -332,16 +331,6 @@ export async function runOnce(sql: Sql): Promise<boolean> {
           ? run.params.channel
           : null,
       pageCache: new Map(),
-      // The extraction pass costs one chat per fetched page — on mock runs it
-      // would eat scripted steps, so it's wired only for real providers.
-      pageExtract: provider.name === 'mock' ? null : pageExtractorFor(provider),
-      // Side-channel model calls (the read_pages extraction pass) don't ride
-      // the loop's res.tokensIn — they still belong to this run's bill.
-      addUsage: (u) => {
-        tokensIn += u.tokensIn;
-        tokensOut += u.tokensOut;
-        if (u.costUsd != null) costUsd += u.costUsd;
-      },
     };
 
     steps.push({ type: 'system_prompt', content: system });

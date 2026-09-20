@@ -1,6 +1,5 @@
 import type { Sql } from '../../platform/db.ts';
 import { getIntegration, type IntegrationRow } from '../../modules/integrations.ts';
-import type { AgentTool, LlmProvider } from '../llm.ts';
 
 /**
  * agent/channels/discovery — TinyFish driver. Search API for prospect
@@ -41,13 +40,6 @@ export interface ReadPage {
   /** internal links worth a follow-up read (contato, sobre, cardápio…) */
   nav: string[];
   foundContacts: FoundContacts;
-  /** business context the LLM page pass extracted — owner, address, what it
-   *  sells; dossier material, not channel columns */
-  business?: { owner?: string; address?: string; sells?: string };
-  /** fuller text for the LLM pass (up to EXTRACT_TEXT_CAP) when the public
-   *  `text` was cut at PAGE_TEXT_CAP — stripped before the tool result goes
-   *  out, so the model context stays bounded. */
-  extractText?: string;
 }
 
 export interface ReadPagesResult {
@@ -351,10 +343,10 @@ export function annotateResults(results: { title: string; url: string; snippet?:
   return { results: out.slice(0, 12), droppedDupes };
 }
 
-/** How much of a fetched page's markdown the model sees — enough for the
- *  contact/about sections that matter, small enough to batch several pages
- *  per step. */
-const PAGE_TEXT_CAP = 4000;
+/** How much of a fetched page's markdown the model sees — wide enough that
+ *  footer contact blocks survive on real pages, small enough to batch
+ *  several pages per step. */
+const PAGE_TEXT_CAP = 8000;
 
 const uniqPush = (arr: string[], v: string) => {
   if (!arr.includes(v)) arr.push(v);
@@ -517,152 +509,6 @@ export function contactsFromText(text: string): FoundContacts & { hubs: string[]
     if (out.phones.length >= 6) break;
   }
   return out;
-}
-
-// ---------------------------------------------------------------------------
-// LLM page pass — regexes catch link/number SHAPES; the model reads the prose
-// they can't ("chama a Ju no zap", an OCR'd menu footer, a CTA naming the
-// owner). It reports via a function call and every channel value is then
-// verified verbatim against the page text — the model proposes, the page
-// confirms; nothing inferred lands in a channel field.
-// ---------------------------------------------------------------------------
-
-export interface PageExtract {
-  phones: string[];
-  whatsappLinks: string[];
-  emails: string[];
-  instagram: string[];
-  /** free-form context printed on the page — dossier material */
-  owner?: string;
-  address?: string;
-  sells?: string;
-}
-
-export interface PageExtractResult {
-  extract: PageExtract | null;
-  usage: { tokensIn: number; tokensOut: number; costUsd: number | null };
-}
-
-export type PageExtractor = (text: string) => Promise<PageExtractResult>;
-
-const PAGE_EXTRACT_TOOL: AgentTool = {
-  name: 'report_page',
-  description: 'Report the contact channels and business facts literally printed on this page.',
-  parameters: {
-    type: 'object',
-    properties: {
-      phones: {
-        type: 'array',
-        items: { type: 'string' },
-        description: 'phone/whatsapp numbers printed on the page, any format',
-      },
-      whatsappLinks: {
-        type: 'array',
-        items: { type: 'string' },
-        description: 'wa.me / api.whatsapp.com urls printed on the page',
-      },
-      emails: { type: 'array', items: { type: 'string' } },
-      instagram: {
-        type: 'array',
-        items: { type: 'string' },
-        description: 'instagram handles mentioned',
-      },
-      owner: { type: 'string', description: 'owner / contact person, if named' },
-      address: { type: 'string' },
-      sells: { type: 'string', description: 'one line: what the business sells' },
-    },
-  },
-};
-
-const strList = (v: unknown): string[] =>
-  Array.isArray(v) ? v.filter((s): s is string => typeof s === 'string') : [];
-
-const str = (v: unknown): string | undefined => {
-  const s = typeof v === 'string' ? v.trim() : '';
-  return s || undefined;
-};
-
-/** Text cap for the LLM pass — larger than the public page text so contacts
- *  printed past the model's context budget still reach extraction. */
-const EXTRACT_TEXT_CAP = 12000;
-
-/** A reported fact only survives when the page literally carries it — every
- *  numeric token verbatim, most alpha tokens (≥2 chars). Tolerates light
- *  reformatting ("R. das Flores 120") but not invented content. */
-function groundedIn(value: string, textLower: string): boolean {
-  const toks = value.toLowerCase().match(/[\p{L}\p{N}]+/gu) ?? [];
-  const alpha = toks.filter((t) => /[\p{L}]/u.test(t) && t.length >= 2);
-  const num = toks.filter((t) => !/[\p{L}]/u.test(t));
-  if (num.some((t) => !textLower.includes(t))) return false;
-  if (!alpha.length) return num.length > 0;
-  const hit = alpha.filter((t) => textLower.includes(t)).length;
-  return hit / alpha.length >= 0.6;
-}
-
-/** One extraction chat per fetched page. Usage rides along so run-level
- *  token/cost accounting stays honest — a null extract still cost the call. */
-export function pageExtractorFor(provider: LlmProvider): PageExtractor {
-  return async (text) => {
-    let res;
-    try {
-      res = await provider.chat({
-        system:
-          'Você extrai contatos de uma página de negócio (markdown). Chame report_page SÓ com o que está literalmente impresso na página — telefone/whatsapp em qualquer formato, e-mail, @instagram, dono, endereço, o que vende. Nunca infira nem complete um número. Se a página não mostra contato, reporte arrays vazios.',
-        messages: [{ role: 'user', content: text.slice(0, EXTRACT_TEXT_CAP) }],
-        tools: [PAGE_EXTRACT_TOOL],
-      });
-    } catch {
-      return { extract: null, usage: { tokensIn: 0, tokensOut: 0, costUsd: null } };
-    }
-    const usage = {
-      tokensIn: res.tokensIn,
-      tokensOut: res.tokensOut,
-      costUsd: res.costUsd,
-    };
-    const call = res.toolCalls.find((t) => t.name === 'report_page');
-    if (!call) return { extract: null, usage };
-    const a = call.args;
-    const textDigits = digits(text);
-    const textLower = text.toLowerCase();
-    const out: PageExtract = { phones: [], whatsappLinks: [], emails: [], instagram: [] };
-    // verbatim gate — a channel only counts when its digits/literal text sits
-    // on the page; a hallucinated number can't survive this check.
-    for (const raw of strList(a.phones)) {
-      const d = digits(raw);
-      if (d.length >= 8 && textDigits.includes(d)) {
-        const p = phoneFromText(raw);
-        if (p) uniqPush(out.phones, p);
-      }
-    }
-    for (const raw of strList(a.whatsappLinks)) {
-      const v = raw.trim();
-      if (!v || !textLower.includes(v.toLowerCase())) continue;
-      try {
-        const c = contactFromUrl(new URL(/^https?:/i.test(v) ? v : `https://${v}`));
-        if (c.whatsappLink) uniqPush(out.whatsappLinks, c.whatsappLink);
-        if (c.phone) uniqPush(out.phones, c.phone);
-      } catch {
-        /* not a parseable url */
-      }
-    }
-    for (const raw of strList(a.emails)) {
-      const v = raw.trim().toLowerCase();
-      if (v && textLower.includes(v)) uniqPush(out.emails, v);
-    }
-    for (const raw of strList(a.instagram)) {
-      const v = raw.trim().replace(/^@/, '');
-      if (v && textLower.includes(v.toLowerCase())) uniqPush(out.instagram, `@${v}`);
-    }
-    // the same page-grounding gate guards business context — an invented
-    // owner/address can't enter the dossier as page evidence.
-    const owner = str(a.owner)?.slice(0, 120);
-    const address = str(a.address)?.slice(0, 200);
-    const sells = str(a.sells)?.slice(0, 200);
-    if (owner && groundedIn(owner, textLower)) out.owner = owner;
-    if (address && groundedIn(address, textLower)) out.address = address;
-    if (sells && groundedIn(sells, textLower)) out.sells = sells;
-    return { extract: out, usage };
-  };
 }
 
 /** The links most likely to carry contact info or the catalog — surfaced so
@@ -933,9 +779,6 @@ function tinyfish(integration: IntegrationRow): DiscoveryProvider {
           description: r.description ?? null,
           text: text.slice(0, PAGE_TEXT_CAP),
           ...(text.length > PAGE_TEXT_CAP ? { truncated: true } : {}),
-          // the LLM pass reads wider than the model-facing cap — a contact
-          // block sitting at char 5k still reaches extraction.
-          ...(text.length > PAGE_TEXT_CAP ? { extractText: text.slice(0, EXTRACT_TEXT_CAP) } : {}),
           // links belong to the rendered destination — on a redirect the
           // same-host nav check must compare against final_url, not the
           // requested url, or every internal follow-up drops out.

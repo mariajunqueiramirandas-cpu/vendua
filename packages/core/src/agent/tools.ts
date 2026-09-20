@@ -1,7 +1,6 @@
 import type { Sql } from '../platform/db.ts';
 import { HttpError } from '../platform/http.ts';
 import type { AgentTool } from './llm.ts';
-import type { PageExtractor } from './channels/discovery.ts';
 import { claimControl, controlTx } from '../modules/control.ts';
 import {
   getLeadDetail,
@@ -46,13 +45,6 @@ export interface ToolContext {
   /** Staff channel override from dispatch (`params.channel`) — trumps the
    *  model's own channel pick on send_message/draft_message. */
   channelOverride: 'email' | 'whatsapp' | null;
-  /** LLM pass over each fetched page's text — extracts contacts the regexes
-   *  can't (prose mentions) plus business context, verbatim-verified. Null on
-   *  the mock driver so scripted runs keep their script. */
-  pageExtract: PageExtractor | null;
-  /** Fold a side-channel model call's usage into the run's totals — the
-   *  extraction pass costs tokens that must land in the run's accounting. */
-  addUsage(u: { tokensIn: number; tokensOut: number; costUsd: number | null }): void;
 }
 
 const leadIdArg = { type: 'string', description: 'lead uuid' } as const;
@@ -269,7 +261,7 @@ const REGISTRY: { def: AgentTool; toolsets: string[] }[] = [
     def: {
       name: 'read_pages',
       description:
-        "Read pages via the fetch provider — returns each page's markdown text, foundContacts (phone/whatsapp/email/socials parsed out of the page's links AND body text — wa.me printed in an instagram bio counts — PLUS a second AI extraction pass over the prose), business (owner/address/what it sells, when the text carries it), and nav (contact-ish follow-up reads: same-host pages + link-in-bio hubs like linktr.ee). Use it on every prospect's own pages AND instagram profiles: home + contato/sobre/cardápio + the profile's bio link, up to 6 urls per call. Facebook roots are login-walled. A repeated URL returns its cached output.",
+        "Read pages via the fetch provider — returns each page's markdown text (read it: contact channels hide in prose — 'chama a Ju no zap', '(22) 9xxxx-xxxx' in a bio, a footer mailto), foundContacts (the deterministic safety net: phone/whatsapp/email/socials parsed out of the page's links AND body text — a wa.me printed in an instagram bio counts), and nav (contact-ish follow-up reads: same-host pages + link-in-bio hubs like linktr.ee). Use it on every prospect's own pages AND instagram profiles: home + contato/sobre/cardápio + the profile's bio link, up to 6 urls per call. Facebook roots are login-walled. A repeated URL returns its cached output.",
       parameters: {
         type: 'object',
         properties: {
@@ -911,32 +903,7 @@ export async function executeTool(
             const page = res.pages.find(
               (pg) => pageKey(pg.url) === key2 || pageKey(pg.finalUrl ?? '') === key2,
             );
-            if (page) {
-              // LLM pass sits inside the cached promise — a page's extraction
-              // runs once per identity, shared with every repeat read. It reads
-              // extractText (the wider cap) when the public text was truncated.
-              const extractInput = page.extractText ?? page.text;
-              if (ctx.pageExtract && extractInput.length >= 150) {
-                const { extract: ex, usage } = await ctx.pageExtract(extractInput);
-                ctx.addUsage(usage);
-                if (ex) {
-                  for (const f of ['phones', 'whatsappLinks', 'emails', 'instagram'] as const) {
-                    for (const v of ex[f]) {
-                      if (!page.foundContacts[f].includes(v)) page.foundContacts[f].push(v);
-                    }
-                  }
-                  if (ex.owner || ex.address || ex.sells) {
-                    page.business = {
-                      ...(ex.owner ? { owner: ex.owner } : {}),
-                      ...(ex.address ? { address: ex.address } : {}),
-                      ...(ex.sells ? { sells: ex.sells } : {}),
-                    };
-                  }
-                }
-              }
-              delete page.extractText;
-              return { page };
-            }
+            if (page) return { page };
             const err = res.errors.find((er) => pageKey(er.url) === key2);
             return { page: null, error: err?.error ?? 'no result for url' };
           });
