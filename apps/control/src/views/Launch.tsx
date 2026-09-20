@@ -134,11 +134,7 @@ export default function Launch() {
           if (dead) return;
           setRun(r.run);
           // Terminal state — nothing left to watch, stop polling.
-          if (
-            t &&
-            r.run.status !== 'queued' &&
-            r.run.status !== 'running'
-          ) {
+          if (t && r.run.status !== 'queued' && r.run.status !== 'running') {
             clearInterval(t);
             t = undefined;
           }
