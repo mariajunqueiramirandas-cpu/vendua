@@ -652,6 +652,10 @@ export default function Discovery() {
             </div>
           )}
         </div>
+        <div className="stage-cue mono" aria-hidden="true">
+          <span>o que converte · leads · runs</span>
+          <span className="stage-cue-arrow">↓</span>
+        </div>
       </div>
 
       {/* scoreboard — same dark room, below the fold */}
