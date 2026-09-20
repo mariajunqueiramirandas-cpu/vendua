@@ -311,6 +311,34 @@ visible at `#/agente/runs/:id`.
 - The page merged `#/lancar` into `#/descoberta` (`/lancar` is a legacy
   alias → same component; `?run=` deep links preserved).
 
+## Live-stage mobile testing (Descoberta `?run=<id>`)
+
+- A fake `agent_runs` row with `status='running'` is only stable until the
+  10-min reclaim lease (`coalesce(alive_at, started_at) < now() - 10min` →
+  drain() requeues it and overwrites `steps` with a real trajectory — the
+  mock llm ends it in ~2 steps → `done`). For a stable fixture insert
+  `alive_at = now() + interval '2 hours'`.
+- The live-stage scroller is `.stage-live` on ≤860px and `.stage-stream` on
+  desktop; the idle page scrolls inside `.stage-idle` — `window.scrollTo`
+  is a no-op (document is height:100%/overflow hidden). The watcher polls
+  `GET /agent/runs/:id` every 1300ms; append a step via SQL
+  `steps = steps || '<json>'::jsonb` and the feed re-renders + auto-scrolls
+  via `scrollIntoView({block:'nearest'})` — that scrolls minimally (last
+  row's bottom edge into view), not all the way to scrollHeight bottom.
+- No `node` on the box — run playwright scripts with `bun file.mjs` from
+  the repo root (playwright resolves from repo node_modules). A
+  backgrounded `exec` shell does NOT accept `write_to_process` stdin —
+  drive step-wise browsers through a fifo instead:
+  `mkfifo /tmp/drv; tail -f /tmp/drv | bun driver.mjs` then
+  `echo "cmd" > /tmp/drv` from other shells. Serialize commands inside the
+  script with a promise chain (readline 'line' handlers don't await).
+- `--force-device-scale-factor=1.4` enlarges the headed window (390×800 CSS
+  → ~546×1120 physical) so mobile emulation is readable in a screen
+  recording; keep CSS viewport at 390 wide — the stage media query is
+  width-keyed (≤860px), height is flexible.
+- Chrome fires a Translate bubble over the page on first load — dismiss it
+  before screenshots.
+
 ## CLI verification (shell-only)
 
 ```sh
