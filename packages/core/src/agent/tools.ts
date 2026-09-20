@@ -472,6 +472,15 @@ export async function executeTool(
                 merged.push(col);
               }
             }
+            // fit_score isn't a text column — fill it separately when the
+            // existing card never got scored.
+            if (
+              typeof input.fit_score === 'number' &&
+              (dup.fit_score === null || dup.fit_score === undefined)
+            ) {
+              set.fit_score = input.fit_score;
+              merged.push('fit_score');
+            }
             if (merged.length) {
               await tx`update leads set ${tx(set)}, updated_at = now() where id = ${dup.id as string}`;
             }
@@ -520,7 +529,14 @@ export async function executeTool(
           const score = typeof input.fit_score === 'number' ? input.fit_score : null;
           const wa = String(input.whatsapp ?? input.phone ?? '').trim();
           autoContact = autoOn && score !== null && score >= minScore && Boolean(wa);
-          if (autoContact) input.agent_mode = 'auto';
+          if (autoContact) {
+            input.agent_mode = 'auto';
+            // channelAvailabilityTx only honors leads.whatsapp — a phone-only
+            // lead would queue an outreach that can never resolve. BR business
+            // phones are effectively WhatsApp numbers (dedupe already treats
+            // the columns interchangeably), so promote it.
+            if (!String(input.whatsapp ?? '').trim()) input.whatsapp = wa;
+          }
         }
         const created = await insertLeadTx(tx, input);
         await writeFindings(created.body.lead.id as string);
@@ -771,25 +787,22 @@ export async function executeTool(
       if (!urls.length) return { error: 'read_pages needs urls: ["https://…"] (1–6)' };
       const provider = await discoveryFor(sql);
       const goal = String(args.goal ?? '');
-      type PageSlot = {
-        url: string;
-        cached: boolean;
-        p: Promise<{ page: import('./channels/discovery.ts').ReadPage | null; error?: string }>;
+      type PageResult = {
+        page: import('./channels/discovery.ts').ReadPage | null;
+        error?: string;
       };
-      // Same page this run → share the in-flight/cached call. Provably
-      // identical output for zero provider spend; covers both batched
-      // duplicates and a later step re-trying a URL.
-      const slots: PageSlot[] = [];
+      // Dedupe by page identity across the run cache AND this call — the
+      // same page twice in one batch (https vs https://www, trailing slash)
+      // resolves to one fetch, not two.
       const miss: string[] = [];
+      const queued = new Set<string>();
       for (const url of urls) {
-        const key2 = pageKey(url);
-        const hit = key2 ? ctx.pageCache.get(key2) : undefined;
-        if (hit) {
-          slots.push({ url, cached: true, p: hit as PageSlot['p'] });
-        } else {
-          miss.push(url);
-        }
+        const id = pageKey(url) ?? url;
+        if (ctx.pageCache.has(id) || queued.has(id)) continue;
+        queued.add(id);
+        miss.push(url);
       }
+      const missOut = new Map<string, Promise<PageResult>>(); // miss url → its slice
       if (miss.length) {
         // One provider call for the whole miss batch — the Fetch API is
         // natively batched, so N misses still cost a single HTTP round-trip.
@@ -807,7 +820,7 @@ export async function executeTool(
           );
         for (const url of miss) {
           const key2 = pageKey(url);
-          const p: PageSlot['p'] = batch.then((res) => {
+          const p: Promise<PageResult> = batch.then((res) => {
             const page = res.pages.find(
               (pg) => pageKey(pg.url) === key2 || pageKey(pg.finalUrl ?? '') === key2,
             );
@@ -815,16 +828,27 @@ export async function executeTool(
             const err = res.errors.find((er) => pageKey(er.url) === key2);
             return { page: null, error: err?.error ?? 'no result for url' };
           });
+          missOut.set(url, p);
           if (key2) ctx.pageCache.set(key2, p);
-          slots.push({ url, cached: false, p });
         }
       }
       const pages: unknown[] = [];
       const errs: { url: string; error: string }[] = [];
-      for (const { url, cached, p } of slots) {
-        const out = await p;
-        if (out.page) pages.push({ ...out.page, ...(cached ? { cached: true } : {}) });
-        else errs.push({ url, error: out.error ?? 'no result' });
+      for (const url of urls) {
+        const key2 = pageKey(url);
+        const p =
+          (key2 ? (ctx.pageCache.get(key2) as Promise<PageResult> | undefined) : undefined) ??
+          missOut.get(url);
+        const out = p ? await p : null;
+        if (out?.page) {
+          // fresh this call only when the url itself was queued — a shared
+          // identity means the output came from another slot's fetch.
+          const shared = key2 !== null && queued.has(key2) && !missOut.has(url);
+          const fromCache = key2 !== null && !queued.has(key2);
+          pages.push({ ...out.page, ...(shared || fromCache ? { cached: true } : {}) });
+        } else {
+          errs.push({ url, error: out?.error ?? 'no result for url' });
+        }
       }
       return { pages, ...(errs.length ? { errors: errs } : {}) };
     }

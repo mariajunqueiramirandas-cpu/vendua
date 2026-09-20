@@ -266,7 +266,14 @@ export function contactsFromLinks(links: string[]): FoundContacts {
     }
     const host = u.hostname.toLowerCase().replace(/^www\./, '');
     if (u.protocol === 'mailto:') {
-      const email = decodeURIComponent(u.pathname).trim();
+      // Provider-returned links are external page data — a malformed percent
+      // escape must cost this link, not the whole batch.
+      let email: string;
+      try {
+        email = decodeURIComponent(u.pathname).trim();
+      } catch {
+        continue;
+      }
       if (/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) uniqPush(out.emails, email);
       continue;
     }
@@ -341,6 +348,49 @@ function tinyfishBase(raw: unknown, fallback: string): string {
   return value.replace(/\/+$/, '');
 }
 
+/** inet_aton semantics — 1–4 parts, each decimal/octal/hex; the last part
+ *  carries however many bytes are left. Returns the address as u32, or
+ *  null when the host isn't an IPv4 literal at all. Catches every notation
+ *  an agent could smuggle past string-prefix checks (0177.0.0.1, 0x7f…1,
+ *  2130706433). */
+function ipv4ToU32(host: string): number | null {
+  const parts = host.split('.');
+  if (parts.length > 4) return null;
+  const nums = parts.map((p) =>
+    /^0x[0-9a-f]+$/i.test(p)
+      ? parseInt(p, 16)
+      : /^0[0-7]+$/.test(p)
+        ? parseInt(p, 8)
+        : /^[0-9]+$/.test(p)
+          ? parseInt(p, 10)
+          : NaN,
+  );
+  if (nums.some((n) => !Number.isFinite(n))) return null;
+  const last = nums[nums.length - 1]!;
+  const lastBytes = 5 - nums.length; // bytes the last part must hold
+  if (nums.slice(0, -1).some((n) => n > 255) || last >= 256 ** lastBytes) return null;
+  let ip = 0;
+  for (const n of nums.slice(0, -1)) ip = ip * 256 + n;
+  return ip * 256 ** lastBytes + last;
+}
+
+/** Private/reserved IPv4 ranges — the targets a fetched URL must never
+ *  name. */
+function isPrivateV4(ip: number): boolean {
+  const top = (bits: number) => ip >>> (32 - bits);
+  return (
+    top(8) === 0 || // 0.0.0.0/8 "this host"
+    top(8) === 10 ||
+    top(8) === 127 ||
+    top(12) === 0xac1 || // 172.16/12
+    top(16) === 0xa9fe || // 169.254/16 link-local (incl. 169.254.169.254)
+    top(16) === 0xc0a8 || // 192.168/16
+    top(10) === 0x19 || // 100.64/10 CGNAT
+    top(15) === 0x6122 || // 198.18/15 benchmarking
+    top(4) >= 0xe // 224/4 multicast + 240/4 reserved
+  );
+}
+
 /** The provider fetches the page, not us — but an agent-controlled URL
  *  should still never name an internal or loopback host. */
 function assertFetchable(url: string): URL {
@@ -349,21 +399,29 @@ function assertFetchable(url: string): URL {
     throw new Error(`unsupported url scheme ${target.protocol}`);
   }
   const host = target.hostname.toLowerCase().replace(/^\[|\]$/g, '');
-  const privateHost =
+  let privateHost =
     host === 'localhost' ||
-    host === '::1' ||
-    host === '0.0.0.0' ||
-    host === '169.254.169.254' ||
     host.endsWith('.local') ||
     host.endsWith('.internal') ||
-    /^127\./.test(host) ||
-    /^10\./.test(host) ||
-    /^192\.168\./.test(host) ||
-    /^169\.254\./.test(host) ||
-    /^172\.(1[6-9]|2\d|3[01])\./.test(host) ||
-    // hex/octal/long-int hosts that resolve to loopback-adjacent IPs
-    /^0x/i.test(host) ||
-    /^\d+$/.test(host);
+    host.endsWith('.localhost');
+  if (!privateHost && host.includes(':')) {
+    // IPv6 literal: ::/::1 (unspecified/loopback), fc00::/7 unique-local,
+    // fe80::/10 link-local, and any ::ffff:-mapped or dotted-quad tail whose
+    // v4 part is private.
+    const head = parseInt(host.split(':')[0] || '0', 16);
+    const v4Tail = /([0-9]+\.[0-9]+\.[0-9]+\.[0-9]+)$/.exec(host)?.[1];
+    privateHost =
+      host === '::' ||
+      host === '::1' ||
+      host.startsWith('::ffff:') ||
+      (head & 0xfe00) === 0xfc00 ||
+      (head & 0xffc0) === 0xfe80 ||
+      (v4Tail !== undefined && isPrivateV4(ipv4ToU32(v4Tail) ?? 0));
+  }
+  if (!privateHost) {
+    const ip = ipv4ToU32(host);
+    if (ip !== null) privateHost = isPrivateV4(ip);
+  }
   if (privateHost) {
     throw new Error(`private/internal target not allowed: ${host}`);
   }
