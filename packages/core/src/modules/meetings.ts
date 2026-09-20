@@ -695,15 +695,25 @@ async function meetingEffects(
   // blocks freebusy forever. A session-scoped advisory lock on a reserved
   // connection spans the provider calls; a tx-scoped lock can't (the rule
   // against network calls inside a tx still stands). Each SQL step is its
-  // own conn.begin with the tx-local GUC — no session-scoped 'vendua.control'
+  // own manual tx with the tx-local GUC — no session-scoped 'vendua.control'
   // is ever set on the reserved conn, so nothing can leak to the next pool
   // borrower.
   const conn = await sql.reserve();
-  const withControl = <T>(tx: (t: Sql) => Promise<T>) =>
-    conn.begin(async (t) => {
-      await t`select set_config('vendua.control', '1', true)`;
-      return tx(t);
-    });
+  // postgres.js ReservedSql has no .begin() at runtime (the type extends Sql
+  // but the runtime object lacks it) — drive the tx manually on the pinned
+  // conn; the tx-local GUC still auto-resets at commit/rollback.
+  const withControl = async <T>(fn: (t: Sql) => Promise<T>): Promise<T> => {
+    await conn`begin`;
+    try {
+      await conn`select set_config('vendua.control', '1', true)`;
+      const out = await fn(conn);
+      await conn`commit`;
+      return out;
+    } catch (e) {
+      await conn`rollback`.catch(() => {});
+      throw e;
+    }
+  };
   // The row as re-read under the lock — post-commit state the confirmation
   // copy must reflect (a stale caller snapshot could name an old slot).
   let locked: MeetingRow | null = null;
@@ -1227,27 +1237,45 @@ export async function patchMeeting(
         }
         await rooms.bumpRoomExpiry(row.room_url, new Date(row.ends_at));
       } else {
-        // Fresh run: swap the calendar event. A failed delete of the old
-        // event must not 500 a committed reschedule — the orphan sits at the
-        // old time and expires on its own, while the row tracks the new event.
-        if (committed.prevGcalId && !(await gcal.deleteEvent(committed.prevGcalId))) {
-          mlog.warn(
-            { meetingId: row.id, eventId: committed.prevGcalId },
-            'gcal delete of previous event failed — orphaned at old time',
-          );
-        }
-        const newId = await gcal.insertEvent({
-          summary: 'Venduá · call remarcada',
-          start: row.starts_at,
-          end: row.ends_at,
-          tz: cfg.tz,
-          leadId: row.lead_id,
-        });
-        if (newId !== committed.prevGcalId) {
-          await controlTx(sql, async (tx) => {
-            await tx`update meetings set gcal_event_id = ${newId}, updated_at = now() where id = ${row.id}`;
+        // Fresh run: prefer PATCHing the existing event in place — the row
+        // keeps tracking the same id, so a failed update leaves no untracked
+        // event at the old time. The delete+insert swap only runs when the
+        // old event is actually gone (patch 404 → delete is a no-op true),
+        // which is the only state where overwriting the stored id is safe.
+        let synced = false;
+        let prevGone = !committed.prevGcalId;
+        if (committed.prevGcalId) {
+          synced = await gcal.updateEvent(committed.prevGcalId, {
+            start: row.starts_at,
+            end: row.ends_at,
+            tz: cfg.tz,
           });
-          row.gcal_event_id = newId;
+          if (!synced) prevGone = await gcal.deleteEvent(committed.prevGcalId);
+          if (!synced && !prevGone) {
+            // Both patch and delete failed — keep tracking the old id rather
+            // than inserting a replacement and orphaning it. The event stays
+            // owned by this row: a later reschedule's PATCH heals the times,
+            // and the cancelled-meeting sweeper still deletes it.
+            mlog.warn(
+              { meetingId: row.id, eventId: committed.prevGcalId },
+              'gcal reschedule failed — stored event kept at old time for retry',
+            );
+          }
+        }
+        if (!synced && prevGone) {
+          const newId = await gcal.insertEvent({
+            summary: 'Venduá · call remarcada',
+            start: row.starts_at,
+            end: row.ends_at,
+            tz: cfg.tz,
+            leadId: row.lead_id,
+          });
+          if (newId !== committed.prevGcalId) {
+            await controlTx(sql, async (tx) => {
+              await tx`update meetings set gcal_event_id = ${newId}, updated_at = now() where id = ${row.id}`;
+            });
+            row.gcal_event_id = newId;
+          }
         }
         await rooms.bumpRoomExpiry(row.room_url, new Date(row.ends_at));
       }

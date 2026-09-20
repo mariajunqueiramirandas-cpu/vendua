@@ -100,6 +100,7 @@ import {
   parseBookInput,
   patchMeeting,
   verifyBookingToken,
+  type MeetingRow,
 } from './modules/meetings.ts';
 import { BOOKING_PAGE } from './modules/booking-page.ts';
 import * as rooms from './modules/rooms.ts';
@@ -1314,9 +1315,15 @@ export function createApp({ sql, sessionSecret, controlSecret }: AppDeps) {
     // Post-commit effects run on fresh claims AND replays: room/gcal/email
     // happen after commit, so a crash between them leaves the replay (or the
     // first request that died right here) as the retry point. Fills only
-    // what's missing — safe to re-run.
+    // what's missing — safe to re-run. Re-read after effects so the response
+    // carries the provisioned roomUrl/gcalEventId, not the claim's snapshot.
     await ensureMeetingEffects(sql, res.body.meeting.id);
-    return c.json(res.body, res.status as 201);
+    const fresh = await controlTx(
+      sql,
+      async (tx) =>
+        (await tx<MeetingRow[]>`select * from meetings where id = ${res.body.meeting.id}`)[0],
+    );
+    return c.json({ meeting: fresh ? meetingJson(fresh) : res.body.meeting }, res.status as 201);
   });
 
   app.patch('/control/v1/meetings/:id', async (c) => {

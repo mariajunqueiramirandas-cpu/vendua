@@ -233,6 +233,44 @@ export async function insertEvent(input: GcalEventInput): Promise<string | null>
   }
 }
 
+/**
+ * In-place reschedule — PATCH the existing event's window. Preferred over
+ * delete+insert: the meeting row keeps tracking the same id, so a failed
+ * update can't strand an anonymous old event that no row remembers.
+ * Returns true on 2xx; false otherwise (caller falls back to delete+insert,
+ * which only overwrites the stored id when the old event is actually gone).
+ */
+export async function updateEvent(
+  gcalEventId: string,
+  input: { start: string; end: string; tz: string },
+): Promise<boolean> {
+  if (disabled()) return false;
+  const { calendarId } = gcalEnv();
+  try {
+    const res = await calFetch(
+      `/calendars/${encodeURIComponent(calendarId!)}/events/${encodeURIComponent(gcalEventId)}`,
+      {
+        method: 'PATCH',
+        body: JSON.stringify({
+          start: { dateTime: input.start, timeZone: input.tz },
+          end: { dateTime: input.end, timeZone: input.tz },
+        }),
+      },
+    );
+    if (res.ok) {
+      lastError = null;
+      return true;
+    }
+    lastError = `events.patch http ${res.status}`;
+    gcalLog.warn({ status: res.status }, 'gcal patch failed');
+    return false;
+  } catch (e) {
+    lastError = e instanceof Error ? e.message : String(e);
+    gcalLog.warn({ err: lastError }, 'gcal patch failed');
+    return false;
+  }
+}
+
 /** Best-effort delete — 404/410 (already gone) is treated as success. */
 export async function deleteEvent(gcalEventId: string): Promise<boolean> {
   if (disabled()) return false;
