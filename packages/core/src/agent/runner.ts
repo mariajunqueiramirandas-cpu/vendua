@@ -38,6 +38,9 @@ const STEP_BUDGET: Record<RunRow['kind'], number> = {
   discovery: 30,
 };
 const HEARTBEAT_MS = 20_000;
+/** Per-run lead ceiling for discovery runs launched without a meta — the
+ *  safety bound the prompt can't talk past. Runs WITH a meta cap at it. */
+const DISCOVERY_LEAD_CAP = 20;
 
 interface RunRow {
   id: string;
@@ -200,8 +203,8 @@ async function contextFor(
     parts.push(`DISCOVERY QUERY: ${String(run.params.query)}`);
     if (run.params.segment) parts.push(`SEGMENT: ${String(run.params.segment)}`);
     if (run.params.city) parts.push(`CITY: ${String(run.params.city)}`);
-    // Caller-chosen lead goal — the prompt turns it into the stop condition;
-    // the guardrail cap still bounds it from above.
+    // Caller-chosen lead goal — the prompt turns it into the stop condition
+    // and create_lead enforces it as the per-run cap (ctx.leadCap).
     const target = Number(run.params.target);
     if (Number.isFinite(target) && target > 0) {
       parts.push(`META: criar até ${Math.floor(target)} leads`);
@@ -326,6 +329,10 @@ export async function runOnce(sql: Sql): Promise<boolean> {
       threadId: run.thread_id,
       step: 0,
       briefName: typeof run.params.briefName === 'string' ? run.params.briefName : null,
+      leadCap: (() => {
+        const t = Math.floor(Number(run.params.target));
+        return Number.isFinite(t) && t > 0 ? Math.min(1000, t) : DISCOVERY_LEAD_CAP;
+      })(),
       channelOverride:
         run.params.channel === 'whatsapp' || run.params.channel === 'email'
           ? run.params.channel

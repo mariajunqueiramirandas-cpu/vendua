@@ -242,9 +242,28 @@ TINYFISH_API_KEY: ..., CONTROL_SECRET: ...}`). SESSION_SECRET has no org
   the socket — deterministic error path for testing.
 - `desconectar número` only renders at status 'open' (i.e. a real phone
   actually paired) — unreachable without a WhatsApp account on hand.
-- Switching whatsapp back to `log` tears the socket down
-  (`GET /control/v1/wa/qr` → `{"qr":null,"status":"off"}`) — verify restore
-  via `GET /control/v1/integrations`.
+- Switching whatsapp back to `log` tears the socket down — BUT
+  `GET /control/v1/wa/qr` can keep `status:'qr'` + a frozen qr string for
+  ~45s+ after teardown (connState isn't cleared on the non-wanted path;
+  the close handler early-returns for the replaced socket). Distinguish
+  dead-vs-live by md5'ing `qr` twice ~30s apart — a frozen string means
+  dead socket; status alone lies briefly. Verify restore via
+  `GET /control/v1/integrations` (driver row), not the qr endpoint.
+- Baileys socket restarts throttle fast: every config save / driver toggle
+  re-handshakes WhatsApp; a few in a row → WhatsApp drops them →
+  `connState` cycles `connecting↔off` for minutes (card correctly shows
+  'socket parado'/'conectando…', never 'ativo'). Recovery: `reconectar
+  agora` + wait, or just leave it — the 5s reconnect loop eventually
+  lands `qr`. Not a code bug; avoid rapid socket restarts in test flows.
+- Stale component-state chips: a generated `.wa-code` pair code and a
+  `✓/✗` testar chip survive driver switches + save/reload cycles in the
+  same page session (pairCode clears only on status 'open'). Read them
+  as "last requested", not current — a pair code shown after a driver
+  swap belongs to the previous socket.
+- Disabled-state seeding: with no driver enabled the form seeds from the
+  first driver's saved row, so 'usar X' restores its prior config instead
+  of blanking it — check typed field VALUES (DOM `text=` attr), not
+  placeholders.
 - openrouter `testar` can transiently fail `✗ internal error` on the first
   call right after enabling (free-model cold start); retry once before
   reporting a bug — a direct curl to `POST …/integrations/llm/test`

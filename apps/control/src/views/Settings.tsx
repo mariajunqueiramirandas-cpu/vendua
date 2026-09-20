@@ -730,7 +730,6 @@ function GuardrailsCard({
     quietEnd: str(value.quietEnd, '08:00'),
     timezone: str(value.timezone, 'America/Sao_Paulo'),
     firstContactDraftOnly: value.firstContactDraftOnly !== false,
-    discoveryMaxLeads: num(value.discoveryMaxLeads, 20),
     discoveryAutoContact: value.discoveryAutoContact !== false,
     discoveryContactMinScore: num(value.discoveryContactMinScore, 8),
   };
@@ -752,16 +751,6 @@ function GuardrailsCard({
             onChange={(e) =>
               setEdit({ ...edit, maxOutboundPerLeadPerDay: Number(e.target.value) || 1 })
             }
-          />
-        </div>
-        <div className="field">
-          <label>leads por discovery</label>
-          <input
-            type="number"
-            min={1}
-            max={200}
-            value={edit.discoveryMaxLeads}
-            onChange={(e) => setEdit({ ...edit, discoveryMaxLeads: Number(e.target.value) || 1 })}
           />
         </div>
         <div className="field">
