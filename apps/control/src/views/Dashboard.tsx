@@ -85,6 +85,22 @@ export default function Dashboard() {
                   </div>
                 ))}
               </div>
+              <Link
+                to="/relatorios"
+                className="mono"
+                style={{
+                  display: 'block',
+                  borderTop: '1px solid var(--line)',
+                  marginTop: 12,
+                  paddingTop: 10,
+                  fontSize: 'var(--t-xs)',
+                  color: 'var(--muted)',
+                }}
+              >
+                previsão ponderada{' '}
+                <b style={{ color: 'var(--forest-800)' }}>{fmtMoney(s.forecast.weightedCents)}</b>
+                {' → relatórios'}
+              </Link>
             </div>
             <div className="card" style={{ padding: 18 }}>
               <b>agente · 30 dias</b>

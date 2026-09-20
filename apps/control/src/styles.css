@@ -754,6 +754,71 @@ input[type='checkbox'] {
   font-size: var(--t-sm);
 }
 
+/* relatórios — svg trend chart + horizontal value bars */
+.chart-tick {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  fill: var(--muted);
+}
+.legend {
+  font-size: var(--t-2xs);
+  color: var(--muted);
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+.legend .sw {
+  width: 8px;
+  height: 8px;
+  border-radius: 2px;
+  display: inline-block;
+}
+.hbars {
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+  margin-top: 12px;
+}
+.hbars .row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: var(--t-xs);
+}
+.hbars .lb {
+  width: 104px;
+  flex-shrink: 0;
+  color: var(--muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.hbars .track {
+  flex: 1;
+  height: 8px;
+  border-radius: 99px;
+  background: var(--surface-2);
+  overflow: hidden;
+}
+.hbars .track i {
+  display: block;
+  height: 100%;
+  border-radius: 99px;
+  background: var(--forest-800);
+}
+.hbars .v {
+  font-family: var(--font-mono);
+  font-size: var(--t-xs);
+  text-align: right;
+}
+.hbars .n {
+  font-family: var(--font-mono);
+  font-size: var(--t-2xs);
+  color: var(--muted);
+  width: 2ch;
+  text-align: right;
+}
+
 /* login — the only night-surface page */
 .login {
   height: 100%;

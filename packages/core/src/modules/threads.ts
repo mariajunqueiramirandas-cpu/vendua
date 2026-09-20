@@ -311,12 +311,16 @@ export async function addInboundMessage(
       };
       if (input.channel === 'email') fields.email = from;
       else fields.whatsapp = from;
-      const lead = (await tx<{ id: string }[]>`insert into leads ${tx(fields)} returning id`)[0]!;
+      const lead = (
+        await tx<
+          { id: string; deal_value_cents: number | null }[]
+        >`insert into leads ${tx(fields)} returning id, deal_value_cents`
+      )[0]!;
       leadId = lead.id;
       leadCreated = true;
       await tx`
-        insert into lead_state_history (lead_id, from_state, to_state, actor)
-        values (${leadId}, null, 'lead', 'system')
+        insert into lead_state_history (lead_id, from_state, to_state, actor, value_cents)
+        values (${leadId}, null, 'lead', 'system', ${lead.deal_value_cents})
       `;
     }
 

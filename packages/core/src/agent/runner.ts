@@ -9,6 +9,7 @@ import {
   type Guardrails,
 } from '../modules/integrations.ts';
 import { segmentStats, type AgentGoal } from '../modules/leads.ts';
+import { sweepPipelineSnapshots } from '../modules/forecast.ts';
 import { providerFor, type AgentMessage } from './llm.ts';
 import { buildSystemPrompt } from './prompts.ts';
 import { executeTool, toolsFor, type ToolContext } from './tools.ts';
@@ -522,6 +523,7 @@ export function startAgentWorker(sql: Sql, intervalMs = 15_000) {
     void drain(sql)
       .then(() => sweepOutreach(sql))
       .then(() => sweepBriefs(sql))
+      .then(() => sweepPipelineSnapshots(sql))
       .catch((e) => agentLog.error({ err: e }, 'worker failed'))
       .finally(() => {
         draining = false;

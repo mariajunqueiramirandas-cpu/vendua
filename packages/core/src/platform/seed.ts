@@ -654,8 +654,8 @@ for (const t of TENANTS) {
     const stages = ['lead', 'contacted', 'invited', 'live'] as const;
     for (const s of stages.slice(0, stages.indexOf(l.state) + 1)) {
       await sql`
-        insert into lead_state_history (lead_id, from_state, to_state, actor)
-        values (${lead.id}, null, ${s}, 'staff')
+        insert into lead_state_history (lead_id, from_state, to_state, actor, value_cents)
+        values (${lead.id}, null, ${s}, 'staff', ${'deal' in l ? l.deal : null})
       `;
     }
   }

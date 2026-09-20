@@ -11,6 +11,7 @@ import {
   LogOut,
   Menu,
   Settings as SettingsIcon,
+  TrendingUp,
   Users,
 } from 'lucide-react';
 import { api, ApiError } from './api.ts';
@@ -24,6 +25,7 @@ import Approvals from './views/Approvals.tsx';
 import Discovery from './views/Discovery.tsx';
 import Tasks from './views/Tasks.tsx';
 import Runs from './views/Runs.tsx';
+import Reports from './views/Reports.tsx';
 import Settings from './views/Settings.tsx';
 
 const NAV = [
@@ -35,6 +37,7 @@ const NAV = [
   { to: '/descoberta', label: 'Descoberta', icon: FlaskConical, k: 'e' },
   { to: '/tarefas', label: 'Tarefas', icon: ListTodo, k: 't', badge: 'tasks' },
   { to: '/agente', label: 'Agente', icon: Bot, k: 'g' },
+  { to: '/relatorios', label: 'Relatórios', icon: TrendingUp, k: 'r' },
   { to: '/config', label: 'Config', icon: SettingsIcon, k: 'c' },
 ] as const;
 
@@ -45,7 +48,7 @@ const TABS = NAV.filter((n) => TAB_PATHS.has(n.to));
 const MORE = NAV.filter((n) => !TAB_PATHS.has(n.to));
 
 const SHORTCUTS: [string, string][] = [
-  ['d f l i a e t g c', 'trocar de tela'],
+  ['d f l i a e t g r c', 'trocar de tela'],
   ['/', 'buscar (em leads)'],
   ['n', 'novo lead (em leads)'],
   ['ctrl + enter', 'enviar mensagem (no inbox)'],
@@ -169,6 +172,7 @@ export default function App() {
           <Route path="/tarefas" element={<Tasks />} />
           <Route path="/agente" element={<Runs />} />
           <Route path="/agente/runs/:id" element={<Runs />} />
+          <Route path="/relatorios" element={<Reports />} />
           <Route path="/config" element={<Settings />} />
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>

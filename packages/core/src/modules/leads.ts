@@ -474,8 +474,8 @@ export async function insertLeadTx(
 ): Promise<{ status: number; body: { lead: Lead } }> {
   const rows = await tx<LeadRow[]>`insert into leads ${tx(fields)} returning *`;
   await tx`
-    insert into lead_state_history (lead_id, from_state, to_state, actor)
-    values (${rows[0]!.id}, null, ${rows[0]!.state}, 'staff')
+    insert into lead_state_history (lead_id, from_state, to_state, actor, value_cents)
+    values (${rows[0]!.id}, null, ${rows[0]!.state}, 'staff', ${rows[0]!.deal_value_cents})
   `;
   return { status: 201, body: { lead: leadJson(rows[0]!) } };
 }
@@ -500,9 +500,11 @@ export async function updateLead(
       update leads set ${tx(set)}, updated_at = now() where id = ${id} returning *
     `;
     if (typeof set.state === 'string' && set.state !== cur.state) {
+      // value_cents stamps the post-update deal value — a same-patch edit to
+      // dealValueCents is the value effective at the transition.
       await tx`
-        insert into lead_state_history (lead_id, from_state, to_state, actor)
-        values (${id}, ${cur.state}, ${set.state}, ${actor})
+        insert into lead_state_history (lead_id, from_state, to_state, actor, value_cents)
+        values (${id}, ${cur.state}, ${set.state}, ${actor}, ${rows[0]!.deal_value_cents})
       `;
       await tx`
         insert into lead_activities (lead_id, kind, body, meta, created_by)
@@ -546,11 +548,13 @@ export async function unsubscribeLead(sql: Sql, id: string): Promise<void> {
 export interface LeadStats {
   total: number;
   byState: Record<string, { count: number; valueCents: number }>;
-  bySource: { key: string; count: number }[];
-  bySegment: { key: string; count: number }[];
+  bySource: { key: string; count: number; valueCents: number }[];
+  bySegment: { key: string; count: number; valueCents: number }[];
   /** distinct leads that ever reached each state (funnel conversion). */
   everReached: Record<string, number>;
   medianDaysInState: Record<string, number>;
+  /** leads that reached 'live' in the last 30d — the "won" read for reports. */
+  won30d: { count: number; valueCents: number };
   openTasks: number;
   overdueTasks: number;
   pendingDrafts: number;
@@ -558,23 +562,52 @@ export interface LeadStats {
   agent30d: { runs: number; tokens: number; costCents: number };
 }
 
+export interface StateBucket {
+  count: number;
+  valueCents: number;
+}
+
+/** Live per-state funnel totals — the same read leadStats serves and
+ *  snapshotPipelineTx freezes into pipeline_snapshots (forecast.ts). */
+export async function pipelineByStateTx(tx: Sql): Promise<Record<string, StateBucket>> {
+  const rows = await tx<{ state: string; count: number; value_cents: number }[]>`
+    select state, count(*)::int as count, coalesce(sum(deal_value_cents), 0)::int as value_cents
+    from leads where archived_at is null group by state
+  `;
+  return Object.fromEntries(
+    rows.map((r) => [r.state, { count: r.count, valueCents: r.value_cents }]),
+  );
+}
+
 export async function leadStats(sql: Sql): Promise<LeadStats> {
   return controlTx(sql, async (tx) => {
-    const byState = await tx<{ state: string; count: number; value_cents: number }[]>`
-      select state, count(*)::int as count, coalesce(sum(deal_value_cents), 0)::int as value_cents
-      from leads where archived_at is null group by state
-    `;
+    const byStateMap = await pipelineByStateTx(tx);
     const total = (
       await tx<{ n: number }[]>`select count(*)::int n from leads where archived_at is null`
     )[0]!.n;
-    const bySource = await tx<{ key: string; count: number }[]>`
-      select coalesce(nullif(source, ''), '—') as key, count(*)::int as count
+    const bySource = await tx<{ key: string; count: number; value_cents: number }[]>`
+      select coalesce(nullif(source, ''), '—') as key, count(*)::int as count,
+             coalesce(sum(deal_value_cents), 0)::int as value_cents
       from leads where archived_at is null group by 1 order by 2 desc, 1
     `;
-    const bySegment = await tx<{ key: string; count: number }[]>`
-      select coalesce(nullif(segment, ''), '—') as key, count(*)::int as count
+    const bySegment = await tx<{ key: string; count: number; value_cents: number }[]>`
+      select coalesce(nullif(segment, ''), '—') as key, count(*)::int as count,
+             coalesce(sum(deal_value_cents), 0)::int as value_cents
       from leads where archived_at is null group by 1 order by 2 desc, 1
     `;
+    // "Won" = first 'live' entry inside the window per lead — a lead that
+    // bounced through 'live' twice counts once. value_cents is frozen at
+    // transition time (migration 0015 backfills pre-column rows), so post-win
+    // edits to deal_value_cents can't rewrite reported revenue.
+    const won = (
+      await tx<{ n: number; value_cents: number }[]>`
+        select count(*)::int as n, coalesce(sum(w.value_cents), 0)::int as value_cents
+        from (select distinct on (lead_id) lead_id, value_cents
+              from lead_state_history
+              where to_state = 'live' and at > now() - interval '30 days'
+              order by lead_id, at) w
+      `
+    )[0]!;
     const reached = await tx<{ to_state: string; n: number }[]>`
       select to_state, count(distinct lead_id)::int n from lead_state_history group by to_state
     `;
@@ -616,13 +649,12 @@ export async function leadStats(sql: Sql): Promise<LeadStats> {
 
     return {
       total,
-      byState: Object.fromEntries(
-        byState.map((r) => [r.state, { count: r.count, valueCents: r.value_cents }]),
-      ),
-      bySource,
-      bySegment,
+      byState: byStateMap,
+      bySource: bySource.map((r) => ({ key: r.key, count: r.count, valueCents: r.value_cents })),
+      bySegment: bySegment.map((r) => ({ key: r.key, count: r.count, valueCents: r.value_cents })),
       everReached: Object.fromEntries(reached.map((r) => [r.to_state, r.n])),
       medianDaysInState: Object.fromEntries(medians.map((r) => [r.to_state, r.days])),
+      won30d: { count: won.n, valueCents: won.value_cents },
       openTasks: tasks.open,
       overdueTasks: tasks.overdue,
       pendingDrafts: drafts,
@@ -892,8 +924,8 @@ export async function importLeads(
       }
       const ins = await tx<LeadRow[]>`insert into leads ${tx(fields)} returning *`;
       await tx`
-        insert into lead_state_history (lead_id, from_state, to_state, actor)
-        values (${ins[0]!.id}, null, ${ins[0]!.state}, 'staff')
+        insert into lead_state_history (lead_id, from_state, to_state, actor, value_cents)
+        values (${ins[0]!.id}, null, ${ins[0]!.state}, 'staff', ${ins[0]!.deal_value_cents})
       `;
       created++;
     }

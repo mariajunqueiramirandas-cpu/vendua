@@ -268,6 +268,7 @@ export default function Settings() {
   const guardrails = (settings.guardrails ?? {}) as Record<string, unknown>;
   const pitch = (settings.pitch ?? {}) as Record<string, unknown>;
   const meeting = (settings.meeting ?? {}) as Record<string, unknown>;
+  const forecast = (settings.forecast ?? {}) as Record<string, unknown>;
   const memory = (settings.agent_memory ?? { facts: [] }) as { facts: string[] };
 
   return (
@@ -325,6 +326,14 @@ export default function Settings() {
             <h2>reunião</h2>
             <p className="sub">objetivo 'reunião' — o link que o agente envia quando o lead topa</p>
             <MeetingCard value={meeting} onSave={(v) => void saveSetting('meeting', v)} />
+          </section>
+          <section className="set-sec">
+            <h2>previsão do pipeline</h2>
+            <p className="sub">
+              probabilidade de fechar por estágio — multiplica o valor do lead na previsão de
+              relatórios
+            </p>
+            <ForecastCard value={forecast} onSave={(v) => void saveSetting('forecast', v)} />
           </section>
           <section className="set-sec">
             <h2>memória do agente</h2>
@@ -982,6 +991,98 @@ function MeetingCard({
           </button>
         )}
       </div>
+    </div>
+  );
+}
+
+// ---------- forecast ----------
+
+const FORECAST_STATES = [
+  ['lead', 'lead'],
+  ['contacted', 'contatado'],
+  ['invited', 'convidado'],
+  ['live', 'ativo'],
+] as const;
+/** Percent defaults mirrored from DEFAULT_FORECAST_PROBABILITIES (core). */
+const FORECAST_DEFAULT_PCT: Record<(typeof FORECAST_STATES)[number][0], number> = {
+  lead: 5,
+  contacted: 20,
+  invited: 60,
+  live: 100,
+};
+
+function ForecastCard({
+  value,
+  onSave,
+}: {
+  value: Record<string, unknown>;
+  onSave: (v: Record<string, unknown>) => void;
+}) {
+  const stored = (value.probabilities ?? {}) as Record<string, unknown>;
+  // Stored as 0..1 fractions; the card edits percent — staff reads %.
+  // ×10000/100 keeps two decimal places so a hand-set 55.5% isn't silently
+  // rounded to 56 on the next save of an untouched field.
+  const cur = Object.fromEntries(
+    FORECAST_STATES.map(([k]) => [
+      k,
+      Math.round(num(stored[k], FORECAST_DEFAULT_PCT[k] / 100) * 10000) / 100,
+    ]),
+  ) as Record<(typeof FORECAST_STATES)[number][0], number>;
+  const [edit, setEdit] = useState(cur);
+  useEffect(() => setEdit(cur), [JSON.stringify(cur)]); // eslint-disable-line react-hooks/exhaustive-deps
+  const dirty = JSON.stringify(edit) !== JSON.stringify(cur);
+  const invalid = FORECAST_STATES.some(
+    ([k]) => !Number.isFinite(edit[k]) || edit[k] < 0 || edit[k] > 100,
+  );
+
+  return (
+    <div className="drv">
+      <div className="grid4">
+        {FORECAST_STATES.map(([k, label]) => (
+          <div className="field" key={k}>
+            <label>{label}</label>
+            <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+              <input
+                type="number"
+                min={0}
+                max={100}
+                step="any"
+                value={edit[k]}
+                onChange={(e) => setEdit({ ...edit, [k]: Number(e.target.value) })}
+              />
+              <span className="hint">%</span>
+            </div>
+          </div>
+        ))}
+      </div>
+      <div className="hint">
+        valor ponderado = valor em aberto no estágio × probabilidade — relatórios
+      </div>
+      {invalid && (
+        <div className="hint" style={{ color: 'var(--red-400)' }}>
+          probabilidades precisam ficar entre 0 e 100%
+        </div>
+      )}
+      <div className="actions">
+        <button
+          className="btn primary"
+          disabled={!dirty || invalid}
+          onClick={() =>
+            onSave({
+              ...value,
+              probabilities: Object.fromEntries(FORECAST_STATES.map(([k]) => [k, edit[k] / 100])),
+            })
+          }
+        >
+          salvar previsão
+        </button>
+        {dirty && (
+          <button className="btn ghost" onClick={() => setEdit(cur)}>
+            desfazer
+          </button>
+        )}
+      </div>
+      <RawJson value={value} onSave={onSave} />
     </div>
   );
 }

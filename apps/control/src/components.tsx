@@ -110,6 +110,18 @@ export const fmtMoney = (cents: number | null | undefined) =>
 export const fmtDate = (iso: string | null | undefined) =>
   iso ? new Date(iso).toLocaleDateString('pt-BR', { day: '2-digit', month: 'short' }) : '—';
 
+/** Date-only values ('YYYY-MM-DD') — `new Date(s)` parses them as UTC
+ *  midnight, which renders as the previous day anywhere west of UTC.
+ *  Build a local-day Date instead. */
+export const fmtDay = (iso: string | null | undefined) => {
+  const m = iso?.match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if (!m) return fmtDate(iso);
+  return new Date(+m[1]!, +m[2]! - 1, +m[3]!).toLocaleDateString('pt-BR', {
+    day: '2-digit',
+    month: 'short',
+  });
+};
+
 export const fmtDateTime = (iso: string | null | undefined) =>
   iso
     ? new Date(iso).toLocaleString('pt-BR', {

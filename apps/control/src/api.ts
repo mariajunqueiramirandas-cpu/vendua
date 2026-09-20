@@ -191,15 +191,33 @@ export interface AgentRun {
 export interface Stats {
   total: number;
   byState: Record<string, { count: number; valueCents: number }>;
-  bySource: { key: string; count: number }[];
-  bySegment: { key: string; count: number }[];
+  bySource: { key: string; count: number; valueCents: number }[];
+  bySegment: { key: string; count: number; valueCents: number }[];
   everReached: Record<string, number>;
   medianDaysInState: Record<string, number>;
+  /** leads that entered 'live' in the last 30d — the "won" read. */
+  won30d: { count: number; valueCents: number };
   openTasks: number;
   overdueTasks: number;
   pendingDrafts: number;
   discoveredThisWeek: number;
   agent30d: { runs: number; tokens: number; costCents: number };
+  forecast: {
+    weightedCents: number;
+    byState: Record<
+      string,
+      { count: number; valueCents: number; probability: number; weightedCents: number }
+    >;
+    trend: { takenOn: string; weightedCents: number; valueCents: number }[];
+  };
+}
+export interface Snapshot {
+  id: string;
+  takenOn: string;
+  byState: Record<string, { count: number; valueCents: number }>;
+  weightedCents: number;
+  agentCostCents: number;
+  createdAt: string;
 }
 export interface DupeGroup {
   field: string;
@@ -254,6 +272,7 @@ export const api = {
       body: JSON.stringify({ kind, ...(params ? { params } : {}) }),
     }),
   stats: () => req<Stats>('/stats'),
+  snapshotNow: () => req<{ snapshot: Snapshot }>('/stats/snapshot', { method: 'POST' }),
   duplicates: () => req<{ groups: DupeGroup[] }>('/leads/duplicates'),
   importCsv: (csv: string) =>
     req<{ created: number; skipped: { reason: string; name?: string }[] }>('/leads/import', {
