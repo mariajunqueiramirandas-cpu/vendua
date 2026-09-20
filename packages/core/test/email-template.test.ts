@@ -22,14 +22,21 @@ describe('renderReplyEmail', () => {
 
   test('carries the brand markers', () => {
     const html = renderReplyEmail({ body: 'oi' });
-    for (const marker of [
-      'vendu&aacute;',
-      '#123c32',
-      '#d9f875',
-      '#f7f4ea',
-      'agente@auto.vendua.com.br',
-    ])
+    for (const marker of ['vendu&aacute;', '#123c32', '#d9f875', '#f7f4ea'])
       expect(html).toContain(marker);
+  });
+
+  test('footer mailbox follows the effective from', () => {
+    const html = renderReplyEmail({ body: 'oi', from: 'Venduá <oi@vendua.shop>' });
+    expect(html).toContain('mailto:oi@vendua.shop');
+    expect(html).toContain('>oi@vendua.shop</a>');
+    expect(html).not.toContain('agente@auto.vendua.com.br');
+  });
+
+  test('no from → generic reply line, no mailbox link', () => {
+    const html = renderReplyEmail({ body: 'oi' });
+    expect(html).toContain('Responda direto a este e-mail');
+    expect(html).not.toContain('mailto:');
   });
 
   test('empty-ish body renders without stray paragraphs', () => {

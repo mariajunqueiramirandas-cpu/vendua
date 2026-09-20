@@ -25,8 +25,20 @@ const bodyHtml = (body: string): string =>
     .map((p) => `<p style="margin:0 0 18px 0;">${p.replaceAll(/\r?\n/g, '<br>')}</p>`)
     .join('');
 
-export function renderReplyEmail(opts: { body: string; subject?: string }): string {
+const mailboxOf = (from?: string): string | null => {
+  if (!from) return null;
+  const mbox = from.match(/<([^>]+)>/)?.[1] ?? from.trim();
+  return /^[^@\s]+@[^@\s]+$/.test(mbox) ? mbox : null;
+};
+
+export function renderReplyEmail(opts: { body: string; subject?: string; from?: string }): string {
   const subject = opts.subject?.trim();
+  const mailbox = mailboxOf(opts.from);
+  const footerLine = mailbox
+    ? `Voc&ecirc; recebeu este e-mail porque conversou com a gente em
+            <a href="mailto:${esc(mailbox)}" style="color:#123c32;text-decoration:underline;">${esc(mailbox)}</a>.
+            Responda direto por aqui &mdash; cai na nossa caixa de entrada.`
+    : 'Responda direto a este e-mail &mdash; cai na nossa caixa de entrada.';
   return `<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Transitional//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd">
 <html xmlns="http://www.w3.org/1999/xhtml" lang="pt-BR">
 <head>
@@ -115,9 +127,7 @@ export function renderReplyEmail(opts: { body: string; subject?: string }): stri
         </tr>
         <tr>
           <td style="padding-top:14px;font-family:'Space Grotesk',Manrope,'Segoe UI',Arial,sans-serif;font-size:12px;line-height:1.6;color:#4f6a5e;">
-            Voc&ecirc; recebeu este e-mail porque conversou com a gente em
-            <a href="mailto:agente@auto.vendua.com.br" style="color:#123c32;text-decoration:underline;">agente@auto.vendua.com.br</a>.
-            Responda direto por aqui &mdash; cai na nossa caixa de entrada.
+            ${footerLine}
           </td>
         </tr>
         <tr>
