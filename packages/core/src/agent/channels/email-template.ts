@@ -35,10 +35,10 @@ export function renderReplyEmail(opts: { body: string; subject?: string; from?: 
   const subject = opts.subject?.trim();
   const mailbox = mailboxOf(opts.from);
   const footerLine = mailbox
-    ? `Voc&ecirc; recebeu este e-mail porque conversou com a gente em
-            <a href="mailto:${esc(mailbox)}" style="color:#123c32;text-decoration:underline;">${esc(mailbox)}</a>.
-            Responda direto por aqui &mdash; cai na nossa caixa de entrada.`
-    : 'Responda direto a este e-mail &mdash; cai na nossa caixa de entrada.';
+    ? `Fale com a gente em
+            <a href="mailto:${esc(mailbox)}" style="color:#123c32;text-decoration:underline;">${esc(mailbox)}</a>
+            &mdash; ou responda este e-mail, cai direto na nossa caixa de entrada.`
+    : 'Responda a este e-mail &mdash; cai direto na nossa caixa de entrada.';
   return `<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Transitional//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd">
 <html xmlns="http://www.w3.org/1999/xhtml" lang="pt-BR">
 <head>
@@ -48,6 +48,13 @@ export function renderReplyEmail(opts: { body: string; subject?: string; from?: 
 <meta name="supported-color-schemes" content="light">
 <title>${subject ? esc(subject) : 'Venduá'}</title>
 <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;700&family=Instrument+Serif:ital@0;1&display=swap" rel="stylesheet">
+<style>
+  @media (max-width:480px) {
+    .lh-pad { padding:20px 20px !important; }
+    .lh-label { display:none !important; }
+    .body-pad { padding-left:24px !important; padding-right:24px !important; }
+  }
+</style>
 <!--[if mso]><style>table,td{font-family:Arial,sans-serif!important;}</style><![endif]-->
 </head>
 <body style="margin:0;padding:0;background-color:#f7f4ea;">
@@ -55,7 +62,7 @@ export function renderReplyEmail(opts: { body: string; subject?: string; from?: 
 <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background-color:#f7f4ea;">
 <tr><td align="center" style="padding:40px 16px;">
 
-<table role="presentation" width="600" cellpadding="0" cellspacing="0" border="0" style="width:600px;max-width:100%;">
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="width:100%;max-width:600px;">
 
   <!-- eyebrow row -->
   <tr>
@@ -76,7 +83,7 @@ export function renderReplyEmail(opts: { body: string; subject?: string; from?: 
       <!-- letterhead -->
       <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
         <tr>
-          <td style="background-color:#123c32;padding:30px 40px;">
+          <td class="lh-pad" style="background-color:#123c32;padding:30px 40px;">
             <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
               <tr>
                 <td>
@@ -89,7 +96,7 @@ export function renderReplyEmail(opts: { body: string; subject?: string; from?: 
                     </tr>
                   </table>
                 </td>
-                <td align="right" valign="middle" style="font-family:ui-monospace,'Cascadia Mono',Consolas,monospace;font-size:10px;letter-spacing:2.5px;text-transform:uppercase;color:#d9f875;">Resposta</td>
+                <td align="right" valign="middle" class="lh-label" style="font-family:ui-monospace,'Cascadia Mono',Consolas,monospace;font-size:10px;letter-spacing:2.5px;text-transform:uppercase;color:#d9f875;">Resposta</td>
               </tr>
             </table>
           </td>
@@ -104,7 +111,7 @@ export function renderReplyEmail(opts: { body: string; subject?: string; from?: 
       <!-- body -->
       <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
         <tr>
-          <td style="padding:36px 40px 8px;font-family:'Space Grotesk',Manrope,'Segoe UI',Arial,sans-serif;font-size:17px;line-height:1.65;color:#123c32;">
+          <td class="body-pad" style="padding:36px 40px 8px;font-family:'Space Grotesk',Manrope,'Segoe UI',Arial,sans-serif;font-size:17px;line-height:1.65;color:#123c32;">
             ${subject ? `<p style="margin:0 0 20px;font-family:ui-monospace,'Cascadia Mono',Consolas,monospace;font-size:11px;letter-spacing:2px;text-transform:uppercase;color:#4f6a5e;">Re: ${esc(subject)}</p>` : ''}
             ${bodyHtml(opts.body)}
           </td>
@@ -114,7 +121,7 @@ export function renderReplyEmail(opts: { body: string; subject?: string; from?: 
       <!-- signature -->
       <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
         <tr>
-          <td style="padding:14px 40px 36px;">
+          <td class="body-pad" style="padding:14px 40px 36px;">
             <p style="margin:0;font-family:'Instrument Serif',Georgia,'Times New Roman',serif;font-style:italic;font-size:24px;color:#123c32;">&mdash; equipe vendu&aacute;</p>
           </td>
         </tr>

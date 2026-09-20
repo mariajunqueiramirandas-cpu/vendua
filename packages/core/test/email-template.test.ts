@@ -35,7 +35,7 @@ describe('renderReplyEmail', () => {
 
   test('no from → generic reply line, no mailbox link', () => {
     const html = renderReplyEmail({ body: 'oi' });
-    expect(html).toContain('Responda direto a este e-mail');
+    expect(html).toContain('Responda a este e-mail');
     expect(html).not.toContain('mailto:');
   });
 
