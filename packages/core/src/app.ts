@@ -1543,8 +1543,8 @@ export function createApp({ sql, sessionSecret, controlSecret }: AppDeps) {
           { value: { qr: string | null } | null }[]
         >`select value from control_settings where key = 'wa_qr'`,
     );
-    const { waStatus } = await import('./agent/channels/whatsapp.ts');
-    return c.json({ qr: rows[0]?.value?.qr ?? null, status: waStatus() });
+    const { waStatus, waIdentity } = await import('./agent/channels/whatsapp.ts');
+    return c.json({ qr: rows[0]?.value?.qr ?? null, status: waStatus(), me: waIdentity() });
   });
 
   // Pairing-code alternative to scanning the QR — WhatsApp's

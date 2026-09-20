@@ -887,8 +887,9 @@ input[type='checkbox'] {
 }
 
 /* ---------- config ("sala de máquinas") ----------
-   Provider cards get a left status rail: lime = live driver, amber = needs
-   attention, plain line = not configured. Agent-owned surface → night mono
+   Provider cards get a left status rail reflecting REAL runtime state:
+   lime = driver can work now, amber = enabled but not ready (missing key,
+   unscanned QR), plain line = off. Agent-owned surface → night mono
    details, lime accents. */
 .set-grid {
   display: grid;
@@ -935,10 +936,10 @@ input[type='checkbox'] {
   width: 3px;
   background: var(--line-strong);
 }
-.drv.on::before {
+.drv.live::before {
   background: var(--lime-300);
 }
-.drv.att::before {
+.drv.warn::before {
   background: var(--amber-400);
 }
 .drv-head {
@@ -961,12 +962,65 @@ input[type='checkbox'] {
   flex-shrink: 0;
   transform: translateY(-1px);
 }
-.drv.on .drv-head .dot {
+.drv.live .drv-head .dot {
   background: var(--forest-800);
   box-shadow: 0 0 0 3px color-mix(in srgb, var(--lime-300) 60%, transparent);
 }
-.drv.att .drv-head .dot {
+.drv.warn .drv-head .dot {
   background: var(--amber-400);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--amber-400) 30%, transparent);
+}
+
+/* runtime-state chip in the card head — the honest answer to "is it on?" */
+.chip.st-live {
+  background: var(--lime-300);
+  color: var(--forest-900);
+}
+.chip.st-warn {
+  background: color-mix(in srgb, var(--amber-400) 22%, var(--cream-100));
+  color: #7a5b12;
+}
+.chip.st-off {
+  background: var(--surface-2);
+  color: var(--muted);
+}
+.drv-cur {
+  font-family: var(--font-mono);
+  font-size: var(--t-2xs);
+  color: var(--muted);
+  background: var(--surface-2);
+  border-radius: 999px;
+  padding: 2px 9px;
+  max-width: 240px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* per-driver marks inside the segmented picker */
+.seg .mk {
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  margin-right: 5px;
+  vertical-align: 1px;
+}
+.seg .mk.live {
+  background: var(--lime-300);
+}
+.seg button:not(.sel) .mk.live {
+  background: var(--forest-800);
+}
+.seg .mk.warn {
+  background: var(--amber-400);
+}
+.seg .mk.cfg {
+  background: transparent;
+  border: 1px solid var(--muted);
+}
+.seg button.sel .mk.cfg {
+  border-color: var(--cream-50);
 }
 .drv-head .sp {
   flex: 1;
@@ -1190,6 +1244,38 @@ input[type='checkbox'] {
   font-size: var(--t-xl);
   letter-spacing: 0.14em;
   color: var(--lime-300);
+}
+.wa-me {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+}
+.wa-phone {
+  font-family: var(--font-mono);
+  font-size: var(--t-xl);
+  letter-spacing: 0.02em;
+  color: var(--cream-50);
+}
+.wa-name {
+  font-size: var(--t-xs);
+  color: var(--rail-muted);
+}
+.wa-pending {
+  margin-top: 8px;
+}
+.wa-pair .btn.ghost {
+  color: var(--rail-muted);
+  border: 1px solid color-mix(in srgb, var(--cream-100) 16%, transparent);
+}
+.wa-pair .btn.ghost:hover {
+  color: var(--cream-50);
+  background: var(--night-800);
+}
+.wa-pair .btn.danger {
+  color: var(--red-400);
+}
+.drv-off {
+  margin-left: auto;
 }
 .wa-pair .btn {
   margin-top: 10px;

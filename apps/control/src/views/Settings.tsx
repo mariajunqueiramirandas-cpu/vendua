@@ -1,10 +1,12 @@
-import { useCallback, useEffect, useRef, useState, type ChangeEvent } from 'react';
+import { useCallback, useEffect, useState, type ChangeEvent } from 'react';
 import QRCode from 'qrcode';
 import { api, type Integration } from '../api.ts';
-import { Page } from '../components.tsx';
+import { ConfirmBtn, Page } from '../components.tsx';
 
-/** Config — "sala de máquinas". Left column: provider cards, one active
- *  driver per kind, status rail lime when live. Right column: guardrails,
+/** Config — "sala de máquinas". Left column: provider cards. The card's
+ *  state is the REAL runtime state, not the saved config: 'enabled' is a
+ *  fact about the row, 'live' means the driver can actually work right now
+ *  (secret present; for baileys, socket open). Right column: guardrails,
  *  pitch and agent memory as structured editors (raw JSON under a toggle
  *  for the long tail of keys). */
 
@@ -16,7 +18,7 @@ type Driver = {
   secret?: boolean;
   /** default env-var name the backend falls back to */
   secretName?: string;
-  fields?: { key: string; label: string; placeholder: string }[];
+  fields?: { key: string; label: string; placeholder: string; hint?: string }[];
 };
 
 const KINDS: { key: string; label: string; sub: string; drivers: Driver[] }[] = [
@@ -28,7 +30,7 @@ const KINDS: { key: string; label: string; sub: string; drivers: Driver[] }[] = 
       {
         d: 'gemini',
         label: 'gemini',
-        hint: 'google ai studio — gemini 3.5 flash lite',
+        hint: 'google ai studio — acesso direto',
         secret: true,
         secretName: 'GEMINI_API_KEY',
         fields: [{ key: 'model', label: 'modelo', placeholder: 'gemini-3.5-flash-lite' }],
@@ -36,7 +38,7 @@ const KINDS: { key: string; label: string; sub: string; drivers: Driver[] }[] = 
       {
         d: 'openrouter',
         label: 'openrouter',
-        hint: 'um endpoint, qualquer modelo — config.model escolhe qual',
+        hint: 'um endpoint, qualquer modelo — o campo modelo escolhe qual',
         secret: true,
         secretName: 'OPENROUTER_API_KEY',
         fields: [{ key: 'model', label: 'modelo', placeholder: 'liquid/lfm-2.5-2.6b:free' }],
@@ -68,12 +70,12 @@ const KINDS: { key: string; label: string; sub: string; drivers: Driver[] }[] = 
       {
         d: 'resend',
         label: 'resend',
-        hint: 'envia de verdade + inbound por webhook',
+        hint: 'envio real + respostas chegam por webhook',
         secret: true,
         secretName: 'RESEND_API_KEY',
         fields: [{ key: 'from', label: 'remetente', placeholder: 'Venduá <oi@vendua.shop>' }],
       },
-      { d: 'log', label: 'log', hint: 'imprime no console — dev' },
+      { d: 'log', label: 'log', hint: 'só imprime no console — nada sai de verdade' },
     ],
   },
   {
@@ -84,10 +86,17 @@ const KINDS: { key: string; label: string; sub: string; drivers: Driver[] }[] = 
       {
         d: 'baileys',
         label: 'baileys',
-        hint: 'socket em processo — pareie por QR abaixo',
-        fields: [{ key: 'accountId', label: 'accountId', placeholder: 'default' }],
+        hint: 'conecta o número de verdade — pareia por QR ou código',
+        fields: [
+          {
+            key: 'accountId',
+            label: 'id da sessão',
+            placeholder: 'default',
+            hint: 'só mude se rodar mais de um número no mesmo core',
+          },
+        ],
       },
-      { d: 'log', label: 'log', hint: 'imprime no console — dev' },
+      { d: 'log', label: 'log', hint: 'só imprime no console — nada sai de verdade' },
     ],
   },
   {
@@ -98,11 +107,11 @@ const KINDS: { key: string; label: string; sub: string; drivers: Driver[] }[] = 
       {
         d: 'tinyfish',
         label: 'tinyfish',
-        hint: 'Search + Agent APIs (api.tinyfish.ai)',
+        hint: 'busca e extrai negócios reais na web',
         secret: true,
         secretName: 'TINYFISH_API_KEY',
       },
-      { d: 'mock', label: 'mock', hint: 'prospects enlatados — dev' },
+      { d: 'mock', label: 'mock', hint: 'prospects enlatados — dev e testes' },
     ],
   },
 ];
@@ -118,30 +127,54 @@ const TZ_SUGGESTIONS = [
 ];
 
 type Notice = { kind: 'ok' | 'err'; text: string } | null;
+type WaState = {
+  qr: string | null;
+  status: string;
+  me: { phone: string | null; name: string | null } | null;
+};
+const WA_IDLE: WaState = { qr: null, status: 'off', me: null };
+
+/** 'ativo' means the driver can work NOW — not just that a row is enabled.
+ *  baileys enabled with an unscanned QR is 'warn', not live. */
+type ProvTone = 'off' | 'warn' | 'live';
+function providerStatus(kindKey: string, rows: Integration[], wa: WaState): {
+  tone: ProvTone;
+  text: string;
+} {
+  const cur = rows.find((r) => r.enabled);
+  if (!cur) return { tone: 'off', text: rows.length ? 'desativado' : 'não configurado' };
+  if (kindKey === 'whatsapp' && cur.driver === 'baileys') {
+    if (wa.status === 'open') return { tone: 'live', text: 'conectado' };
+    if (wa.status === 'qr') return { tone: 'warn', text: 'escanear QR' };
+    if (wa.status === 'connecting') return { tone: 'warn', text: 'conectando…' };
+    return { tone: 'warn', text: 'socket offline' };
+  }
+  if (cur.secretName && !cur.secretPresent) return { tone: 'warn', text: 'falta chave' };
+  return { tone: 'live', text: 'ativo' };
+}
+
+const fmtPhone = (digits: string) => {
+  // '5511988887777' → '+55 11 98888-7777'; anything else → '+<digits>'
+  if (digits.startsWith('55') && digits.length === 13)
+    return `+55 ${digits.slice(2, 4)} ${digits.slice(4, 9)}-${digits.slice(9)}`;
+  if (digits.startsWith('55') && digits.length === 12)
+    return `+55 ${digits.slice(2, 4)} ${digits.slice(4, 8)}-${digits.slice(8)}`;
+  return `+${digits}`;
+};
 
 export default function Settings() {
   const [integrations, setIntegrations] = useState<Integration[]>([]);
   const [settings, setSettings] = useState<Record<string, unknown>>({});
-  const [wa, setWa] = useState<{ qr: string | null; status: string }>({
-    qr: null,
-    status: 'off',
-  });
+  const [wa, setWa] = useState<WaState>(WA_IDLE);
   const [notice, setNotice] = useState<Notice>(null);
   const [loading, setLoading] = useState(true);
-  // Only a SUCCESSFUL integrations fetch may prove whatsapp unconfigured —
-  // a failed load also leaves rows empty, and auto-activating off a failed
-  // read could flip a deliberately-disabled baileys row back on.
-  const [integrationsOk, setIntegrationsOk] = useState(false);
 
   const load = useCallback(() => {
     // Independent fetches — a failed settings read must not discard a
     // successful integrations response (it alone proves whatsapp state).
     void api
       .integrations()
-      .then((i) => {
-        setIntegrations(i.integrations);
-        setIntegrationsOk(true);
-      })
+      .then((i) => setIntegrations(i.integrations))
       .catch((e: unknown) =>
         setNotice({
           kind: 'err',
@@ -164,7 +197,7 @@ export default function Settings() {
       .finally(() => setLoading(false));
     api
       .waQr()
-      .then((r) => setWa({ qr: r.qr, status: r.status }))
+      .then((r) => setWa({ qr: r.qr, status: r.status, me: r.me }))
       .catch(() => undefined);
   }, []);
   useEffect(load, [load]);
@@ -173,7 +206,7 @@ export default function Settings() {
       () =>
         api
           .waQr()
-          .then((r) => setWa({ qr: r.qr, status: r.status }))
+          .then((r) => setWa({ qr: r.qr, status: r.status, me: r.me }))
           .catch(() => undefined),
       4000,
     );
@@ -235,7 +268,20 @@ export default function Settings() {
         <div>
           <section className="set-sec">
             <h2>provedores</h2>
-            <p className="sub">um driver ativo por tipo — trocar não reinicia nada</p>
+            <p className="sub">
+              um driver ativo por tipo —{' '}
+              {
+                KINDS.filter(
+                  (k) =>
+                    providerStatus(
+                      k.key,
+                      integrations.filter((i) => i.kind === k.key),
+                      k.key === 'whatsapp' ? wa : WA_IDLE,
+                    ).tone === 'live',
+                ).length
+              }
+              /{KINDS.length} prontos
+            </p>
             {loading && !integrations.length && (
               <div className="empty">
                 <div className="serif" style={{ fontSize: 'var(--t-lg)' }}>
@@ -248,8 +294,7 @@ export default function Settings() {
                 key={k.key}
                 kind={k}
                 rows={integrations.filter((i) => i.kind === k.key)}
-                wa={k.key === 'whatsapp' ? wa : { qr: null, status: 'off' }}
-                ready={integrationsOk}
+                wa={k.key === 'whatsapp' ? wa : WA_IDLE}
                 onWaLogout={k.key === 'whatsapp' ? () => void waLogout() : undefined}
                 onSave={(d, enable) => void saveIntegration(k.key, d, enable)}
               />
@@ -292,15 +337,12 @@ function ProviderCard({
   kind,
   rows,
   wa,
-  ready,
   onWaLogout,
   onSave,
 }: {
   kind: { key: string; label: string; sub: string; drivers: Driver[] };
   rows: Integration[];
-  wa: { qr: string | null; status: string };
-  /** integrations fetch SUCCEEDED — rows=[] then means "never configured" */
-  ready: boolean;
+  wa: WaState;
   onWaLogout: (() => void) | undefined;
   onSave: (
     d: { driver: string; secretRef: string; config: Record<string, string> },
@@ -351,50 +393,48 @@ function ProviderCard({
     if (wa.status === 'open') setPairCode(null);
   }, [wa.status]);
 
-  const activateBaileys = () => {
-    const saved = rows.find((r) => r.driver === 'baileys');
-    onSave(
-      {
-        driver: 'baileys',
-        secretRef: saved?.secretRef ?? '',
-        config: Object.fromEntries(
-          Object.entries(saved?.config ?? {}).map(([k, v]) => [k, String(v)]),
-        ),
-      },
-      true,
-    );
-  };
-  // WhatsApp pairing needs a live socket, which only exists once an enabled
-  // baileys row does — and baileys is the card's default selection, so on a
-  // fresh setup it's already highlighted without any click. Auto-activate
-  // only when the load proves whatsapp was NEVER configured (no rows at
-  // all): a disabled row is explicit state that a page visit must not undo.
-  const waAuto = useRef(false);
-  useEffect(() => {
-    if (
-      waAuto.current ||
-      kind.key !== 'whatsapp' ||
-      driver !== 'baileys' ||
-      !ready ||
-      rows.length > 0
-    )
-      return;
-    waAuto.current = true;
-    activateBaileys();
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- one-shot once rows arrive
-  }, [kind.key, driver, rows, ready]);
-
   const drv = kind.drivers.find((x) => x.d === driver) ?? kind.drivers[0];
   // The saved row for the SELECTED driver — its secretName/secretPresent
   // reflect what's actually on the server, independent of `enabled`.
   const selRow = rows.find((r) => r.driver === driver);
+  const selIsActive = !!current && driver === current.driver;
   const dirty =
     driver !== baseline.driver ||
     secretRef !== baseline.secretRef ||
     JSON.stringify(config) !== JSON.stringify(baseline.config);
+  const st = providerStatus(kind.key, rows, wa);
+  // What's live, at a glance: `gemini · gemini-3.5-flash-lite`.
+  const liveDetail = current
+    ? [
+        current.driver,
+        ...(kind.drivers.find((x) => x.d === current.driver)?.fields ?? []).map(
+          (f) => String(current.config[f.key] ?? '') || f.placeholder,
+        ),
+      ]
+        .filter(Boolean)
+        .join(' · ')
+    : '';
 
-  const secretMissing = !!current?.enabled && !!current?.secretName && !current.secretPresent;
-  const state = !current || secretMissing ? 'att' : 'on';
+  const pickDriver = (dd: Driver) => {
+    setDriver(dd.d);
+    setTest(null);
+    if (dd.d === baseline.driver) {
+      setSecretRef(baseline.secretRef);
+      setConfig(baseline.config);
+    } else {
+      // Preload that driver's own saved row — not the live one's leftovers.
+      const row = rows.find((r) => r.driver === dd.d);
+      setSecretRef(row?.secretRef ?? dd.secretName ?? '');
+      setConfig(
+        Object.fromEntries(Object.entries(row?.config ?? {}).map(([k, v]) => [k, String(v)])),
+      );
+    }
+  };
+  const reset = () => {
+    setDriver(baseline.driver);
+    setSecretRef(baseline.secretRef);
+    setConfig(baseline.config);
+  };
 
   const runTest = async () => {
     setTesting(true);
@@ -421,80 +461,164 @@ function ProviderCard({
   };
 
   return (
-    <div className={`drv ${state}`}>
+    <div className={`drv ${st.tone}`}>
       <div className="drv-head">
         <span className="dot" />
         <h3>{kind.label}</h3>
         <span className="hint">{kind.sub}</span>
         <span className="sp" />
-        {current ? (
-          <span className={`chip ${current.enabled ? 'agent' : ''}`}>
-            {current.driver}
-            {current.enabled ? '' : ' · off'}
-          </span>
-        ) : (
-          <span className="chip warn">não configurado</span>
+        {liveDetail && (
+          <code className="drv-cur" title="driver ativo + config efetiva">
+            {liveDetail}
+          </code>
         )}
-        {current?.secretName ? (
-          current.secretPresent ? (
-            <span className="chip" title="env presente no servidor">
-              {current.secretName} ✓
-            </span>
-          ) : (
-            <span className="chip bad">{current.secretName} ausente</span>
-          )
-        ) : null}
+        <span className={`chip st-${st.tone}`}>{st.text}</span>
       </div>
       <div className="drv-body">
         <span className="seg">
-          {kind.drivers.map((dd) => (
-            <button
-              key={dd.d}
-              className={dd.d === driver ? 'sel' : ''}
-              onClick={() => {
-                setDriver(dd.d);
-                setTest(null);
-                // Drivers read different env vars and config keys — switching
-                // must not drag the previous driver's secretRef/model along.
-                if (dd.d === baseline.driver) {
-                  setSecretRef(baseline.secretRef);
-                  setConfig(baseline.config);
-                } else {
-                  setSecretRef(dd.secretName ?? '');
-                  setConfig({});
+          {kind.drivers.map((dd) => {
+            const row = rows.find((r) => r.driver === dd.d);
+            const mark = row?.enabled
+              ? st.tone
+              : row?.secretName && !row.secretPresent
+                ? 'warn'
+                : row
+                  ? 'cfg'
+                  : '';
+            return (
+              <button
+                key={dd.d}
+                className={dd.d === driver ? 'sel' : ''}
+                title={
+                  row?.enabled
+                    ? 'driver ativo'
+                    : row
+                      ? 'configurado, desligado'
+                      : 'nunca configurado'
                 }
-                // Clicking baileys is also explicit activation intent —
-                // covers re-selects after the one-shot mount effect fired.
-                if (
-                  kind.key === 'whatsapp' &&
-                  dd.d === 'baileys' &&
-                  !rows.some((r) => r.driver === 'baileys' && r.enabled)
-                )
-                  activateBaileys();
-              }}
-            >
-              {dd.label}
-            </button>
-          ))}
+                onClick={() => pickDriver(dd)}
+              >
+                {mark && <i className={`mk ${mark}`} />}
+                {dd.label}
+              </button>
+            );
+          })}
         </span>
         {drv?.hint && <div className="hint">{drv.hint}</div>}
+        {kind.key === 'whatsapp' &&
+          driver === 'baileys' &&
+          (current?.driver === 'baileys' && current.enabled ? (
+            <div className="wa-pair">
+              {wa.status === 'open' ? (
+                <>
+                  <div className="t">conectado</div>
+                  <div className="wa-me">
+                    <span className="wa-phone">
+                      {wa.me?.phone ? fmtPhone(wa.me.phone) : 'número pareado'}
+                    </span>
+                    {wa.me?.name && <span className="wa-name">{wa.me.name}</span>}
+                  </div>
+                  <div className="foot">
+                    o agente já envia e recebe por esse número — desconectar libera o
+                    aparelho e emite um QR novo.
+                  </div>
+                  <ConfirmBtn
+                    className="danger"
+                    confirm="desconectar mesmo?"
+                    onConfirm={() => onWaLogout?.()}
+                  >
+                    desconectar número
+                  </ConfirmBtn>
+                </>
+              ) : wa.status === 'off' ? (
+                <>
+                  <div className="t">socket parado</div>
+                  <div className="foot">
+                    o driver está ativo mas o socket não está rodando — ele religa sozinho
+                    depois de uma queda; se o número foi desvinculado, pareie de novo.
+                  </div>
+                  <button
+                    className="btn ghost wa-mini"
+                    disabled={testing}
+                    onClick={() => void runTest()}
+                  >
+                    {testing ? 'religando…' : 'reconectar agora'}
+                  </button>
+                </>
+              ) : (
+                <>
+                  <div className="t">
+                    {wa.qr
+                      ? 'parear — whatsapp → aparelhos conectados → conectar aparelho'
+                      : 'conectando ao whatsapp…'}
+                  </div>
+                  {wa.qr && qrImg && (
+                    <img className="wa-qr" src={qrImg} alt="QR do whatsapp" />
+                  )}
+                  <div className="wa-paircode">
+                    <span className="hint">ou conectar com código:</span>
+                    {pairCode && <code className="wa-code">{pairCode}</code>}
+                    <span className="wa-pairrow">
+                      <input
+                        placeholder="DDI+DDD+número — 5511…"
+                        value={pairPhone}
+                        onChange={(e) => {
+                          setPairPhone(e.target.value);
+                          setPairCode(null);
+                        }}
+                      />
+                      <button
+                        className="btn ghost"
+                        disabled={pairBusy}
+                        onClick={() => void runPair()}
+                      >
+                        {pairBusy ? 'gerando…' : pairCode ? 'novo código' : 'gerar código'}
+                      </button>
+                    </span>
+                    {pairErr && <div className="hint">{pairErr}</div>}
+                  </div>
+                  <div className="foot">
+                    o QR expira rápido — esta tela atualiza sozinha a cada 4s
+                  </div>
+                </>
+              )}
+            </div>
+          ) : (
+            <div className="hint wa-pending">
+              ative pra gerar o QR — o número pareia por aqui mesmo
+            </div>
+          ))}
         {(drv?.secret || drv?.fields?.length) && (
           <div className="grid2" style={{ marginTop: 10 }}>
             {drv.secret && (
               <div className="field" style={{ marginBottom: 0 }}>
-                <label>secretRef</label>
+                <label>chave — nome da env var</label>
                 <input
                   value={secretRef}
                   placeholder={drv.secretName ?? `${kind.key.toUpperCase()}_API_KEY`}
                   onChange={(e) => setSecretRef(e.target.value)}
                 />
                 <div className="hint">
-                  env que o driver lê: <code>{selRow?.secretName ?? drv.secretName}</code>
-                  {selRow?.secretName && selRow.secretPresent != null
-                    ? selRow.secretPresent
-                      ? ' — presente no servidor ✓'
-                      : ' — ausente no servidor'
-                    : ''}
+                  {(() => {
+                    const envName = selRow?.secretName ?? drv.secretName;
+                    if (!envName) return 'a chave mora numa env var do servidor — nunca no banco';
+                    return selRow ? (
+                      selRow.secretPresent ? (
+                        <>
+                          <code>{envName}</code> presente no servidor ✓
+                        </>
+                      ) : (
+                        <>
+                          <code>{envName}</code> ausente — cadastre nas envs do serviço e
+                          reinicie
+                        </>
+                      )
+                    ) : (
+                      <>
+                        o driver lê <code>{envName}</code> quando o campo fica vazio
+                      </>
+                    );
+                  })()}
                 </div>
               </div>
             )}
@@ -506,83 +630,34 @@ function ProviderCard({
                   placeholder={f.placeholder}
                   onChange={(e) => setConfig({ ...config, [f.key]: e.target.value })}
                 />
+                {f.hint && <div className="hint">{f.hint}</div>}
               </div>
             ))}
           </div>
         )}
-        {kind.key === 'whatsapp' && current?.driver === 'baileys' && current.enabled && (
-          <div className="wa-pair">
-            {wa.status === 'open' ? (
-              <>
-                <div className="t">whatsapp conectado</div>
-                <div className="foot">
-                  socket pareado — o agente já envia e recebe. desconectar libera o número e emite
-                  um QR novo.
-                </div>
-                <button className="btn danger" onClick={onWaLogout}>
-                  desconectar número
-                </button>
-              </>
-            ) : (
-              <>
-                <div className="t">
-                  {wa.status === 'qr'
-                    ? 'parear — whatsapp → aparelhos conectados → conectar aparelho'
-                    : wa.status === 'connecting'
-                      ? 'conectando ao whatsapp…'
-                      : 'whatsapp desligado — socket não está rodando'}
-                </div>
-                {wa.qr && qrImg && <img className="wa-qr" src={qrImg} alt="QR do whatsapp" />}
-                <div className="wa-paircode">
-                  <span className="hint">ou conectar com código:</span>
-                  {pairCode && <code className="wa-code">{pairCode}</code>}
-                  <span className="wa-pairrow">
-                    <input
-                      placeholder="DDI+DDD+número — 5511…"
-                      value={pairPhone}
-                      onChange={(e) => {
-                        setPairPhone(e.target.value);
-                        setPairCode(null);
-                      }}
-                    />
-                    <button
-                      className="btn ghost"
-                      disabled={pairBusy}
-                      onClick={() => void runPair()}
-                    >
-                      {pairBusy ? 'gerando…' : pairCode ? 'novo código' : 'gerar código'}
-                    </button>
-                  </span>
-                  {pairErr && <div className="hint">{pairErr}</div>}
-                </div>
-                <div className="foot">
-                  o QR expira rápido — esta tela atualiza sozinha a cada 4s
-                </div>
-              </>
-            )}
+        {!selIsActive && current && (
+          <div className="hint" style={{ marginTop: 8 }}>
+            rodando agora: <code>{current.driver}</code>
           </div>
         )}
         <div className="actions">
-          <button
-            className="btn primary"
-            disabled={!dirty && !!current?.enabled}
-            onClick={() => onSave({ driver, secretRef, config }, true)}
-          >
-            {current && !current.enabled && !dirty
-              ? 'ativar'
-              : current?.enabled && dirty
-                ? 'trocar driver'
-                : 'salvar + ativar'}
-          </button>
-          {dirty && (
+          {!selIsActive ? (
             <button
-              className="btn ghost"
-              onClick={() => {
-                setDriver(baseline.driver);
-                setSecretRef(baseline.secretRef);
-                setConfig(baseline.config);
-              }}
+              className="btn primary"
+              onClick={() => onSave({ driver, secretRef, config }, true)}
             >
+              usar {drv?.label ?? driver}
+            </button>
+          ) : dirty ? (
+            <button
+              className="btn primary"
+              onClick={() => onSave({ driver, secretRef, config }, true)}
+            >
+              salvar
+            </button>
+          ) : null}
+          {dirty && (
+            <button className="btn ghost" onClick={reset}>
               desfazer
             </button>
           )}
@@ -600,14 +675,23 @@ function ProviderCard({
               {test.detail}
             </span>
           )}
-          {current?.enabled && (
-            <button
-              className="btn danger"
-              style={{ marginLeft: 'auto' }}
-              onClick={() => onSave({ driver: current.driver, secretRef, config }, false)}
+          {current?.enabled && selIsActive && (
+            <ConfirmBtn
+              className="danger drv-off"
+              confirm="desativar mesmo?"
+              onConfirm={() =>
+                onSave(
+                  {
+                    driver: current.driver,
+                    secretRef: baseline.secretRef,
+                    config: baseline.config,
+                  },
+                  false,
+                )
+              }
             >
               desativar
-            </button>
+            </ConfirmBtn>
           )}
         </div>
       </div>
@@ -640,7 +724,7 @@ function GuardrailsCard({
   const quietWrap = edit.quietStart > edit.quietEnd;
 
   return (
-    <div className="drv on">
+    <div className="drv">
       <div className="grid3">
         <div className="field">
           <label>msgs/dia por lead</label>
@@ -790,7 +874,7 @@ function PitchCard({
     setEdit({ ...edit, [k]: e.target.value });
 
   return (
-    <div className="drv on">
+    <div className="drv">
       <div className="field">
         <label>produto</label>
         <textarea
@@ -867,7 +951,7 @@ function MeetingCard({
   useEffect(() => setEdit(cur), [JSON.stringify(cur)]); // eslint-disable-line react-hooks/exhaustive-deps
   const dirty = JSON.stringify(edit) !== JSON.stringify(cur);
   return (
-    <div className="drv on">
+    <div className="drv">
       <div className="field" style={{ marginBottom: 0 }}>
         <label>link de agendamento</label>
         <input
@@ -901,7 +985,7 @@ function MeetingCard({
 
 function MemoryCard({ facts, onSave }: { facts: string[]; onSave: (facts: string[]) => void }) {
   return (
-    <div className="drv on">
+    <div className="drv">
       <ListEditor
         items={facts}
         placeholder="grave um fato — ex.: a Lia sempre indica leads quentes"

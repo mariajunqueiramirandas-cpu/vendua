@@ -21,6 +21,8 @@ interface BaileysSocket {
   /** Server-side unpair — WhatsApp drops the linked device, then the
    *  socket closes with a 401 (no auto-reconnect). */
   logout(): Promise<unknown>;
+  /** The account once `open` — id/phoneNumber are jids ('5511…:dev@s.whatsapp.net'). */
+  user?: { id?: string; phoneNumber?: string; name?: string } | undefined;
   ev: {
     on(
       event: 'connection.update',
@@ -50,12 +52,18 @@ let starting: Promise<BaileysSocket> | null = null;
  *  running or the session dropped/logged out. The Settings screen renders
  *  this instead of guessing from QR presence. */
 let connState: 'off' | 'connecting' | 'qr' | 'open' = 'off';
+/** The paired account once the socket is `open` — lets the Config screen
+ *  say WHO is connected instead of implying enabled == working. */
+let waMe: { phone: string | null; name: string | null } | null = null;
 /** While logout() is in flight its own close event clears the globals —
  *  this flag stops ensureSocket from installing a replacement the logout
  *  cleanup would then orphan (alive but identity-gated out of events). */
 let loggingOut = false;
 export function waStatus(): string {
   return connState;
+}
+export function waIdentity(): { phone: string | null; name: string | null } | null {
+  return waMe;
 }
 /** identity of the integration that opened `socket` — config changes must
  *  close it, not keep sending through the old account. */
@@ -172,6 +180,7 @@ async function startSocket(sql: Sql, integration: IntegrationRow): Promise<Baile
     }
     if (u.connection === 'open') {
       connState = 'open';
+      waMe = readIdentity(sock);
       void persistQr(sql, accountId, null);
     }
     if (u.connection === 'close') {
@@ -179,6 +188,7 @@ async function startSocket(sql: Sql, integration: IntegrationRow): Promise<Baile
       socket = null;
       starting = null;
       socketFingerprint = null;
+      waMe = null;
       // Baileys 401 = logged out — nothing to reconnect to until re-paired.
       // Otherwise the stream dropped: restart inbound delivery instead of
       // staying offline until an outbound send happens to reopen it.
@@ -219,6 +229,17 @@ async function startSocket(sql: Sql, integration: IntegrationRow): Promise<Baile
   return sock;
 }
 
+/** '5511…:dev@s.whatsapp.net' / lid jids → bare digits for display. */
+function readIdentity(sock: BaileysSocket): {
+  phone: string | null;
+  name: string | null;
+} {
+  const u = sock.user;
+  const raw = u?.phoneNumber ?? u?.id;
+  const digits = raw?.split('@')[0]?.split(':')[0]?.replace(/\D/g, '');
+  return { phone: digits || null, name: u?.name ?? null };
+}
+
 function extractText(message: unknown): string | null {
   if (!message || typeof message !== 'object') return null;
   const m = message as Record<string, unknown>;
@@ -256,6 +277,7 @@ export async function ensureSocket(
     }
     socket = null;
     socketFingerprint = null;
+    waMe = null;
   }
   if (!wanted) return null;
   if (loggingOut) throw new Error('whatsapp logout em andamento');
@@ -321,6 +343,7 @@ export async function logoutWa(sql: Sql, accountId: string): Promise<void> {
     socket = null;
     socketFingerprint = null;
     connState = 'off';
+    waMe = null;
   }
   starting = null;
   try {

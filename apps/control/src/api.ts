@@ -325,7 +325,13 @@ export const api = {
       method: 'PUT',
       body: JSON.stringify({ value }),
     }),
-  waQr: () => req<{ qr: string | null; status: string }>('/wa/qr'),
+  waQr: () =>
+    req<{
+      qr: string | null;
+      status: string;
+      /** the paired account, once the socket is open — null while unpaired */
+      me: { phone: string | null; name: string | null } | null;
+    }>('/wa/qr'),
   waPairCode: (phone: string) =>
     req<{ code: string }>('/wa/pair-code', { method: 'POST', body: JSON.stringify({ phone }) }),
   waLogout: () => req<{ ok: true }>('/wa/logout', { method: 'POST' }),
