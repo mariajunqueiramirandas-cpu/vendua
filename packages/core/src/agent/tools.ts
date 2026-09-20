@@ -386,6 +386,25 @@ export async function executeTool(
             if (p) payload[f] = p;
           }
         }
+        // instagram lands one shape only — '@handle'. A profile URL
+        // (instagram.com/x) or a bare 'x' would otherwise dodge dedupe's
+        // handle comparison and split the column into two formats.
+        const ig = payload.instagram;
+        if (typeof ig === 'string' && ig.trim()) {
+          let u: URL | null = null;
+          for (const candidate of [ig.trim(), `https://${ig.trim()}`]) {
+            try {
+              u = new URL(candidate);
+              break;
+            } catch {
+              /* try next form */
+            }
+          }
+          payload.instagram =
+            u && u.hostname.toLowerCase().replace(/^www\./, '') === 'instagram.com'
+              ? (contactFromUrl(u).instagram ?? ig.trim())
+              : `@${ig.trim().replace(/^@/, '')}`;
+        }
         // The bar for a discovered lead, enforced where the prompt can't be
         // talked around: it must carry a research dossier AND a reachable
         // channel — a name-only row is a dead card on the board.
