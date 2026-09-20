@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { RefreshCw } from 'lucide-react';
 import { api, type Stats } from '../api.ts';
@@ -26,22 +26,30 @@ export default function Reports() {
   const [s, setS] = useState<Stats | null>(null);
   const [err, setErr] = useState('');
   const [snapping, setSnapping] = useState(false);
+  // Loads overlap (mount + snapNow refresh) — only the newest request may
+  // write s/err, else a slow mount response masks a failed refresh.
+  const loadSeq = useRef(0);
 
-  const load = () =>
+  const load = () => {
+    const seq = ++loadSeq.current;
     api
       .stats()
       .then((stats) => {
+        if (seq !== loadSeq.current) return;
         setS(stats);
         setErr('');
       })
-      .catch((e) => setErr(String(e)));
-  useEffect(() => void load(), []);
+      .catch((e) => {
+        if (seq === loadSeq.current) setErr(String(e));
+      });
+  };
+  useEffect(() => load(), []);
 
   const snapNow = async () => {
     setSnapping(true);
     try {
       await api.snapshotNow();
-      await load();
+      load();
     } catch (e) {
       setErr(String(e));
     } finally {
