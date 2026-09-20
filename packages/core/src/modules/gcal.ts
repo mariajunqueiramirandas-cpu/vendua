@@ -197,9 +197,7 @@ export async function insertEvent(input: GcalEventInput): Promise<string | null>
         ...(input.description ? { description: input.description } : {}),
         start: { dateTime: input.start, timeZone: input.tz },
         end: { dateTime: input.end, timeZone: input.tz },
-        ...(input.leadId
-          ? { extendedProperties: { private: { leadId: input.leadId } } }
-          : {}),
+        ...(input.leadId ? { extendedProperties: { private: { leadId: input.leadId } } } : {}),
       }),
     });
     if (!res.ok) {

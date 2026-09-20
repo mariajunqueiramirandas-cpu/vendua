@@ -1295,7 +1295,9 @@ export function createApp({ sql, sessionSecret, controlSecret }: AppDeps) {
       sql,
       uuidParam(c, 'id'),
       {
-        ...(body.status !== undefined ? { status: str(body.status, 'status', 20) as 'cancelled' | 'done' | 'no_show' } : {}),
+        ...(body.status !== undefined
+          ? { status: str(body.status, 'status', 20) as 'cancelled' | 'done' | 'no_show' }
+          : {}),
         ...(body.startsAt !== undefined ? { startsAt: str(body.startsAt, 'startsAt', 64) } : {}),
         ...(body.endsAt !== undefined ? { endsAt: str(body.endsAt, 'endsAt', 64) } : {}),
       },

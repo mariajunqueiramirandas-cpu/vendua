@@ -22,13 +22,7 @@ import { createHmac, timingSafeEqual } from 'node:crypto';
 import type { Sql } from '../platform/db.ts';
 import { HttpError, str } from '../platform/http.ts';
 import { log } from '../platform/log.ts';
-import {
-  addDays,
-  hhmmToMinutes,
-  localDateOf,
-  localParts,
-  zonedInstant,
-} from '../platform/tz.ts';
+import { addDays, hhmmToMinutes, localDateOf, localParts, zonedInstant } from '../platform/tz.ts';
 import { claimControl, controlTx } from './control.ts';
 import { getSettingTx, type Guardrails } from './integrations.ts';
 import type { LeadRow } from './leads.ts';
@@ -62,10 +56,10 @@ export interface MeetingConfig {
 
 const WORKWEEK: WeeklyWindows = [
   [], // sun
-  ...[0, 0, 0, 0, 0].map(() => [
+  ...([0, 0, 0, 0, 0].map(() => [
     [9 * 60, 12 * 60],
     [14 * 60, 18 * 60],
-  ]) as [number, number][][],
+  ]) as [number, number][][]),
   [], // sat
 ];
 
@@ -107,8 +101,7 @@ export const MEETING_DEFAULTS: Record<string, unknown> = {
  *  defaults rather than breaking booking (validateSetting guards writes;
  *  this tolerates rows written before validation existed). */
 export function normalizeMeetingConfig(raw: Record<string, unknown>): MeetingConfig {
-  const s = (v: unknown): string | null =>
-    typeof v === 'string' && v.trim() ? v.trim() : null;
+  const s = (v: unknown): string | null => (typeof v === 'string' && v.trim() ? v.trim() : null);
   const int = (v: unknown, dflt: number, lo: number, hi: number): number => {
     const n = typeof v === 'number' ? v : typeof v === 'string' ? Number(v) : NaN;
     return Number.isInteger(n) && n >= lo && n <= hi ? n : dflt;
@@ -191,12 +184,7 @@ function dayDiff(a: ReturnType<typeof localDateOf>, b: ReturnType<typeof localDa
 /** Does `start` land on the slot grid — a weekly window, aligned to
  *  slotMinutes from window open, whole duration inside the window, within
  *  the horizon, and in the future? */
-export function onGrid(
-  cfg: MeetingConfig,
-  start: Date,
-  durationMin: number,
-  now: Date,
-): boolean {
+export function onGrid(cfg: MeetingConfig, start: Date, durationMin: number, now: Date): boolean {
   if (Number.isNaN(start.getTime()) || start.getTime() <= now.getTime()) return false;
   const date = localDateOf(start, cfg.tz);
   const today = localDateOf(now, cfg.tz);
@@ -213,12 +201,7 @@ export function onGrid(
 }
 
 /** Does [start,end) overlap any busy window padded by bufferMinutes? */
-export function isFree(
-  start: Date,
-  end: Date,
-  busy: BusyWindow[],
-  bufferMinutes: number,
-): boolean {
+export function isFree(start: Date, end: Date, busy: BusyWindow[], bufferMinutes: number): boolean {
   const buf = bufferMinutes * 60_000;
   const s = start.getTime();
   const e = end.getTime();
@@ -233,7 +216,10 @@ export function slotFits(
   now: Date,
   busy: BusyWindow[],
 ): boolean {
-  return onGrid(cfg, start, durationMin, now) && isFree(start, new Date(start.getTime() + durationMin * 60_000), busy, cfg.bufferMinutes);
+  return (
+    onGrid(cfg, start, durationMin, now) &&
+    isFree(start, new Date(start.getTime() + durationMin * 60_000), busy, cfg.bufferMinutes)
+  );
 }
 
 /**
@@ -320,11 +306,7 @@ export function bookingToken(leadId: string, secret: string, now = new Date()): 
 }
 
 /** Returns the lead_id for a valid token, null for malformed/expired. */
-export function verifyBookingToken(
-  token: string,
-  secret: string,
-  now = new Date(),
-): string | null {
+export function verifyBookingToken(token: string, secret: string, now = new Date()): string | null {
   const parts = token.split('.');
   if (parts.length !== 4 || parts[0] !== TOKEN_PREFIX) return null;
   const leadId = parts[1]!;
@@ -714,11 +696,7 @@ export async function cancelByLead(
     )[0];
     if (!row) throw new HttpError(404, 'MEETING_NOT_FOUND', 'nenhuma call marcada');
     if (!selfCancelAllowed(new Date(row.starts_at).getTime(), Date.now())) {
-      throw new HttpError(
-        409,
-        'CANCEL_WINDOW',
-        'cancelamento só até 12h antes — fala com a gente',
-      );
+      throw new HttpError(409, 'CANCEL_WINDOW', 'cancelamento só até 12h antes — fala com a gente');
     }
     const cfg = await meetingConfigTx(tx);
     const cancelled = (
@@ -853,9 +831,7 @@ export async function patchMeeting(
     }
     const durationMin = input.endsAt
       ? Math.round((new Date(input.endsAt).getTime() - start.getTime()) / 60_000)
-      : Math.round(
-          (new Date(row.ends_at).getTime() - new Date(row.starts_at).getTime()) / 60_000,
-        );
+      : Math.round((new Date(row.ends_at).getTime() - new Date(row.starts_at).getTime()) / 60_000);
     if (!Number.isInteger(durationMin) || durationMin < 5 || durationMin > 240) {
       throw new HttpError(422, 'BAD_END', 'endsAt must be 5–240min after startsAt');
     }
@@ -972,9 +948,7 @@ export async function sweepMeetingReminders(sql: Sql): Promise<number> {
     const messageId = await controlTx(sql, async (tx) => {
       // Lock the row and re-derive under the lock — a concurrent sweep or a
       // cancel landing between the list read and here can't double-send.
-      const cur = (
-        await tx<MeetingRow[]>`select * from meetings where id = ${m.id} for update`
-      )[0];
+      const cur = (await tx<MeetingRow[]>`select * from meetings where id = ${m.id} for update`)[0];
       if (!cur || cur.status !== 'scheduled' || !cur.lead_id) return null;
       const msToStart = new Date(cur.starts_at).getTime() - Date.now();
       const want1 = cur.reminder_1h_at === null && msToStart <= REMINDER_1H_MS;

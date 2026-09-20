@@ -417,9 +417,7 @@ export function validateSetting(key: string, value: unknown): void {
           const ok =
             Array.isArray(w) &&
             w.length === 2 &&
-            w.every(
-              (t) => typeof t === 'string' && /^([01]\d|2[0-3]):[0-5]\d$/.test(t),
-            );
+            w.every((t) => typeof t === 'string' && /^([01]\d|2[0-3]):[0-5]\d$/.test(t));
           if (!ok) throw bad(`weekly.${day}`, 'windows must be [HH:MM, HH:MM] pairs');
           if (w[0] >= w[1]) throw bad(`weekly.${day}`, 'window open must be before close');
         }

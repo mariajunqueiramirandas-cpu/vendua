@@ -433,8 +433,9 @@ export const api = {
 
   meetings: (q: { scope?: string; leadId?: string; from?: string; to?: string } = {}) => {
     const params = new URLSearchParams(
-      Object.entries({ ...q, ...(q.leadId ? { lead_id: q.leadId } : {}) })
-        .filter(([k, v]) => v && k !== 'leadId') as [string, string][],
+      Object.entries({ ...q, ...(q.leadId ? { lead_id: q.leadId } : {}) }).filter(
+        ([k, v]) => v && k !== 'leadId',
+      ) as [string, string][],
     );
     return req<{ meetings: Meeting[] }>(`/meetings${params.size ? `?${params}` : ''}`);
   },

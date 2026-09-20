@@ -973,7 +973,10 @@ function MeetingCard({
 }) {
   const [status, setStatus] = useState<MeetingStatus | null>(null);
   useEffect(() => {
-    api.meetingsStatus().then(setStatus).catch(() => undefined);
+    api
+      .meetingsStatus()
+      .then(setStatus)
+      .catch(() => undefined);
   }, []);
 
   type Weekly = Record<string, [string, string][]>;
@@ -982,9 +985,7 @@ function MeetingCard({
     if (w && typeof w === 'object' && !Array.isArray(w)) {
       for (const [day, list] of Object.entries(w as Record<string, unknown>)) {
         if (Array.isArray(list)) {
-          out[day] = list.filter(
-            (p): p is [string, string] => Array.isArray(p) && p.length === 2,
-          );
+          out[day] = list.filter((p): p is [string, string] => Array.isArray(p) && p.length === 2);
         }
       }
     }
@@ -1021,7 +1022,8 @@ function MeetingCard({
     <div className="drv">
       <div style={{ display: 'flex', gap: 6, marginBottom: 12, flexWrap: 'wrap' }}>
         <span className={`chip ${status?.room.provider === 'daily' ? 'agent' : ''}`}>
-          sala: {status ? (status.room.provider === 'daily' ? 'daily.co (por call)' : 'estática') : '…'}
+          sala:{' '}
+          {status ? (status.room.provider === 'daily' ? 'daily.co (por call)' : 'estática') : '…'}
         </span>
         <span className={`chip ${status?.gcal.configured ? 'agent' : 'warn'}`}>
           {status
@@ -1044,7 +1046,9 @@ function MeetingCard({
           placeholder="https://meet.google.com/…"
           onChange={(e) => setEdit({ ...edit, roomUrl: e.target.value })}
         />
-        <div className="hint">usado quando o provider é estático — o lead recebe na confirmação</div>
+        <div className="hint">
+          usado quando o provider é estático — o lead recebe na confirmação
+        </div>
       </div>
       <div className="field">
         <label>base pública do link</label>
@@ -1140,7 +1144,10 @@ function MeetingCard({
                   className="icon-btn"
                   title="remover janela"
                   onClick={() =>
-                    setDay(day, (edit.weekly[day] ?? []).filter((_, j) => j !== i))
+                    setDay(
+                      day,
+                      (edit.weekly[day] ?? []).filter((_, j) => j !== i),
+                    )
                   }
                 >
                   ×

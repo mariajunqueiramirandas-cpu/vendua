@@ -19,8 +19,7 @@ const SECRET = 'test-staff-secret';
 const SUN = new Date('2026-09-20T15:00:00Z'); // 12:00 BRT
 const MON_0900 = new Date('2026-09-21T12:00:00Z'); // seg 09:00 BRT
 
-const cfg = (over: Record<string, unknown> = {}) =>
-  normalizeMeetingConfig({ ...over });
+const cfg = (over: Record<string, unknown> = {}) => normalizeMeetingConfig({ ...over });
 
 // ---------- tz helpers ----------
 
@@ -112,10 +111,18 @@ describe('isFree/slotFits', () => {
   const busy: BusyWindow[] = [{ start: MON_0900, end: new Date('2026-09-21T12:30:00Z') }];
   test('buffer pads busy both sides', () => {
     // busy seg 09:00–09:30 BRT, buffer 15 → kills 08:30, 09:00, 09:30 slots
-    expect(isFree(new Date('2026-09-21T11:30:00Z'), new Date('2026-09-21T12:00:00Z'), busy, 15)).toBe(false);
-    expect(isFree(new Date('2026-09-21T12:00:00Z'), new Date('2026-09-21T12:30:00Z'), busy, 15)).toBe(false);
-    expect(isFree(new Date('2026-09-21T12:30:00Z'), new Date('2026-09-21T13:00:00Z'), busy, 15)).toBe(false);
-    expect(isFree(new Date('2026-09-21T12:45:00Z'), new Date('2026-09-21T13:15:00Z'), busy, 15)).toBe(true);
+    expect(
+      isFree(new Date('2026-09-21T11:30:00Z'), new Date('2026-09-21T12:00:00Z'), busy, 15),
+    ).toBe(false);
+    expect(
+      isFree(new Date('2026-09-21T12:00:00Z'), new Date('2026-09-21T12:30:00Z'), busy, 15),
+    ).toBe(false);
+    expect(
+      isFree(new Date('2026-09-21T12:30:00Z'), new Date('2026-09-21T13:00:00Z'), busy, 15),
+    ).toBe(false);
+    expect(
+      isFree(new Date('2026-09-21T12:45:00Z'), new Date('2026-09-21T13:15:00Z'), busy, 15),
+    ).toBe(true);
   });
   test('slotFits combines grid + busy', () => {
     expect(slotFits(c, MON_0900, 30, SUN, busy)).toBe(false);
@@ -138,7 +145,8 @@ describe('computeSlots', () => {
       expect([1, 2, 3, 4, 5]).toContain(p.weekday);
       expect(p.second).toBe(0);
       expect(s.start.getTime()).toBeGreaterThan(SUN.getTime());
-      const inWindow = p.minutes >= 540 && p.minutes + 30 <= 720 || p.minutes >= 840 && p.minutes + 30 <= 1080;
+      const inWindow =
+        (p.minutes >= 540 && p.minutes + 30 <= 720) || (p.minutes >= 840 && p.minutes + 30 <= 1080);
       expect(inWindow).toBe(true);
     }
   });

@@ -80,10 +80,7 @@ export async function createRoom(
 
 /** Keep a rescheduled meeting's room alive to the new end + 30min. No-op
  *  when the room isn't a Daily room or the key is gone. */
-export async function bumpRoomExpiry(
-  roomUrl: string | null,
-  endsAt: Date,
-): Promise<void> {
+export async function bumpRoomExpiry(roomUrl: string | null, endsAt: Date): Promise<void> {
   if (!roomUrl || !dailyConfigured()) return;
   const m = /\/([a-z0-9-]+)$/i.exec(new URL(roomUrl).pathname);
   const name = m?.[1];

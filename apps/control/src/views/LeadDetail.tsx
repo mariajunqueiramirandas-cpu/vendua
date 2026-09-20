@@ -325,9 +325,7 @@ export default function LeadDetail() {
                   <button
                     className="btn ghost"
                     style={{ padding: '2px 8px', fontSize: 'var(--t-2xs)' }}
-                    onClick={() =>
-                      void api.patchMeeting(m.id, { status: 'cancelled' }).then(load)
-                    }
+                    onClick={() => void api.patchMeeting(m.id, { status: 'cancelled' }).then(load)}
                   >
                     cancelar
                   </button>
