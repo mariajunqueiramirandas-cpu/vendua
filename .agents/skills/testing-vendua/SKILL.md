@@ -118,6 +118,58 @@ unsubscribed` if `unsubscribed_at` is set and `lead has no whatsapp` if
 - Old notes: cookie-auth mutations need `x-vendua-staff: 1` (CSRF);
   Idempotency-Key required → replay → 200 + `x-idempotent-replay`.
 
+## Mobile / touch emulation (control)
+
+- Phone shell is ≤760px width AND coarse-pointer keyed: `.tabbar`/`.msheet`/
+  folded `.tbl`/snap board are `max-width`, but `.mv` stage select, always-on
+  `.open`, and 40px targets are `any-pointer: coarse` — a resized desktop
+  window will NOT show them. Emulate for real: Playwright
+  `isMobile:true + hasTouch:true` (headed works on DISPLAY :0) or DevTools
+  device toolbar set to "Mobile" — verify `matchMedia('(any-pointer: coarse)')`.
+- Full-screen `.drawer` at ≤760px covers the scrim entirely — scrim-tap close
+  is untestable there (Escape/cancelar are the close paths); desktop keeps a
+  visible scrim.
+- Board cards: single tap is a no-op — open via the `.open` arrow link
+  (always visible on coarse) or dblclick. `.mv` picks serialize per lead
+  (rapid selects queue, last write wins); hold the PATCH with `page.route`
+  to observe the queue deterministically.
+- Nav badges poll `api.stats()` on mount + 30s — create a task/draft then
+  reload to see the aggregated count on the "menu" tab.
+- Waiting on `.tabbar, .rail` never resolves: `.rail` stays in the DOM but
+  `display:none` on phones — wait on `.tabbar` alone.
+- Marking a task done removes it from the default view (server-side
+  `done=false` filter); "incluir concluídas" reshows it struck-through.
+
+## Live discovery runs (gemini + tinyfish)
+
+- Real keys reach the core process as env vars: bind org secrets on the exec
+  call that starts `bun run dev` (`env: {GEMINI_API_KEY: 'secret:org:GEMINI_API_KEY',
+TINYFISH_API_KEY: ..., CONTROL_SECRET: ...}`). SESSION_SECRET has no org
+  entry — any literal works. Integration rows persist in
+  `control_integrations`; `secretRef` holds an env-var NAME and falls back to
+  the driver's default (GEMINI_API_KEY/TINYFISH_API_KEY), so PUT
+  `{driver, enabled:true}` alone wires the bound key.
+- Staff API auth: `x-vendua-control: $CONTROL_SECRET` header (cookie auth is
+  for the SPA); mutations also need an `Idempotency-Key` header.
+  `POST /control/v1/integrations/:kind/test` does a real live probe —
+  `{ok:true, detail:"gemini:… respondeu — N tokens"}`.
+- `POST /control/v1/agent/runs {kind:'discovery', params:{query,segment,city}}`
+  → `{runId}` + fire-and-forget `drain()`; poll `GET /agent/runs/:id`.
+- Orphan trap: `bun --watch` restarts kill in-flight runs silently — the row
+  sits 'running' with a stale claim until the 10-min lease, then drain()
+  requeues and the whole trajectory RE-executes — the journal restarts at
+  step 0, but every create_lead before the crash already committed, so
+  pre-crash leads stay visible and re-created prospects return
+  duplicate:true under the PR-#41 dedupe. A long plateau at N steps with a
+  frozen `started_at` is an orphan, not a slow tool — check `now()-started_at`
+  and whether steps grow after the lease. TinyFish extract calls are still
+  legitimately minutes-slow, so a plateau isn't proof of death on its own.
+- Evidence markers in run steps: web_search outs carry per-result `kind`
+  (contact|profile|listing|site) + parsed phone/instagram; repeat extract_page
+  on the same pageKey → `cached:true`; repeat create_lead → `duplicate:true`.
+  Discovery leads get `tags ∋ 'descoberto'` + `discovered_via='agente'` → the
+  #/descoberta "leads descobertos" list keys on that tag.
+
 ## Config page (#/config) specifics
 
 - Login: after typing the password, screenshot-check the masked dot count
