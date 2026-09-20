@@ -73,31 +73,38 @@ export function renderReplyEmail(opts: { body: string; subject?: string; from?: 
   <tr>
     <td style="background-color:#efe9d8;border:1px solid #d9d2ba;">
 
-      <!-- lime rule -->
-      <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
-        <tr><td style="height:4px;line-height:4px;font-size:0;background-color:#d9f875;">&nbsp;</td></tr>
-      </table>
-
       <!-- letterhead -->
       <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
         <tr>
-          <td style="padding:32px 40px 28px;">
-            <table role="presentation" cellpadding="0" cellspacing="0" border="0">
+          <td style="background-color:#123c32;padding:30px 40px;">
+            <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
               <tr>
-                <td width="40" height="40" align="center" valign="middle" style="background-color:#123c32;width:40px;height:40px;">
-                  <span style="font-family:'Space Grotesk',Manrope,'Segoe UI',Arial,sans-serif;font-size:22px;font-weight:700;color:#d9f875;line-height:40px;">&#10003;</span>
+                <td>
+                  <table role="presentation" cellpadding="0" cellspacing="0" border="0">
+                    <tr>
+                      <td width="40" height="40" align="center" valign="middle" style="background-color:#d9f875;width:40px;height:40px;">
+                        <span style="font-family:'Space Grotesk',Manrope,'Segoe UI',Arial,sans-serif;font-size:22px;font-weight:700;color:#123c32;line-height:40px;">&#10003;</span>
+                      </td>
+                      <td style="padding-left:14px;font-family:'Space Grotesk',Manrope,'Segoe UI',Arial,sans-serif;font-size:30px;font-weight:700;letter-spacing:-1.5px;color:#f7f4ea;line-height:1;">vendu&aacute;</td>
+                    </tr>
+                  </table>
                 </td>
-                <td style="padding-left:14px;font-family:'Space Grotesk',Manrope,'Segoe UI',Arial,sans-serif;font-size:30px;font-weight:700;letter-spacing:-1.5px;color:#123c32;line-height:1;">vendu&aacute;</td>
+                <td align="right" valign="middle" style="font-family:ui-monospace,'Cascadia Mono',Consolas,monospace;font-size:10px;letter-spacing:2.5px;text-transform:uppercase;color:#d9f875;">Resposta</td>
               </tr>
             </table>
           </td>
         </tr>
       </table>
 
+      <!-- lime rule -->
+      <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
+        <tr><td style="height:3px;line-height:3px;font-size:0;background-color:#d9f875;">&nbsp;</td></tr>
+      </table>
+
       <!-- body -->
       <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
         <tr>
-          <td style="padding:0 40px 8px;font-family:'Space Grotesk',Manrope,'Segoe UI',Arial,sans-serif;font-size:17px;line-height:1.65;color:#123c32;">
+          <td style="padding:36px 40px 8px;font-family:'Space Grotesk',Manrope,'Segoe UI',Arial,sans-serif;font-size:17px;line-height:1.65;color:#123c32;">
             ${subject ? `<p style="margin:0 0 20px;font-family:ui-monospace,'Cascadia Mono',Consolas,monospace;font-size:11px;letter-spacing:2px;text-transform:uppercase;color:#4f6a5e;">Re: ${esc(subject)}</p>` : ''}
             ${bodyHtml(opts.body)}
           </td>
