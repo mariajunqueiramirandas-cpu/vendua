@@ -381,6 +381,11 @@ function ProviderCard({
     setDriver(baseline.driver);
     setSecretRef(baseline.secretRef);
     setConfig(baseline.config);
+    // A saved-row change restarts the socket / swaps the driver — any probe
+    // result or pair code on screen belongs to the old config.
+    setTest(null);
+    setPairCode(null);
+    setPairErr(null);
     // eslint-disable-next-line react-hooks/exhaustive-deps -- re-sync when the saved row changes
   }, [baseRow?.driver, baseRow?.secretRef, baseRow?.updatedAt]);
   useEffect(() => {
@@ -430,6 +435,8 @@ function ProviderCard({
   const pickDriver = (dd: Driver) => {
     setDriver(dd.d);
     setTest(null);
+    setPairCode(null);
+    setPairErr(null);
     if (dd.d === baseline.driver) {
       setSecretRef(baseline.secretRef);
       setConfig(baseline.config);

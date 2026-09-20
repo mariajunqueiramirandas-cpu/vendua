@@ -68,6 +68,7 @@ export function waIdentity(): { phone: string | null; name: string | null } | nu
 /** identity of the integration that opened `socket` — config changes must
  *  close it, not keep sending through the old account. */
 let socketFingerprint: string | null = null;
+let socketAccountId: string | null = null;
 
 function fingerprintOf(integration: IntegrationRow): string {
   return `${integration.id}:${(integration.config.accountId as string) ?? 'default'}:${integration.updated_at}`;
@@ -170,6 +171,7 @@ async function startSocket(sql: Sql, integration: IntegrationRow): Promise<Baile
   // globals or report it offline.
   socket = sock;
   socketFingerprint = fingerprintOf(integration);
+  socketAccountId = accountId;
 
   sock.ev.on('creds.update', () => void auth.write('creds', 'main', creds));
   sock.ev.on('connection.update', (u) => {
@@ -188,6 +190,7 @@ async function startSocket(sql: Sql, integration: IntegrationRow): Promise<Baile
       socket = null;
       starting = null;
       socketFingerprint = null;
+      socketAccountId = null;
       waMe = null;
       // Baileys 401 = logged out — nothing to reconnect to until re-paired.
       // Otherwise the stream dropped: restart inbound delivery instead of
@@ -278,6 +281,12 @@ export async function ensureSocket(
     socket = null;
     socketFingerprint = null;
     waMe = null;
+    // The detached socket's own close event early-returns (it no longer
+    // owns globals) — reset state here or waStatus()/wa_qr keep reporting
+    // a socket that no longer exists.
+    connState = 'off';
+    if (socketAccountId) void persistQr(sql, socketAccountId, null);
+    socketAccountId = null;
   }
   if (!wanted) return null;
   if (loggingOut) throw new Error('whatsapp logout em andamento');
@@ -342,6 +351,7 @@ export async function logoutWa(sql: Sql, accountId: string): Promise<void> {
   if (socket === s) {
     socket = null;
     socketFingerprint = null;
+    socketAccountId = null;
     connState = 'off';
     waMe = null;
   }
