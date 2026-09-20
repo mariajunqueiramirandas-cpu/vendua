@@ -365,7 +365,7 @@ export async function executeTool(
         // (path-segment aware, so a wa.me/message code or a ?text= full of
         // digits can't masquerade as a phone) or drop it BEFORE the channel
         // gate counts it, or a link-only card would slip through as reachable.
-        const { contactFromUrl } = await import('./channels/discovery.ts');
+        const { contactFromUrl, phoneFromText } = await import('./channels/discovery.ts');
         for (const f of ['phone', 'whatsapp'] as const) {
           const v = payload[f];
           if (typeof v === 'string' && /wa\.me|whatsapp\.com/i.test(v)) {
@@ -379,9 +379,11 @@ export async function executeTool(
               }
             }
             payload[f] = u ? contactFromUrl(u).phone : undefined;
-          } else if (typeof v === 'string' && /^\+?\d{8,15}$/.test(v.trim())) {
-            // bare digits land as E.164 — same shape the extractors emit
-            payload[f] = `+${v.trim().replace(/^\+/, '')}`;
+          } else if (typeof v === 'string' && /^[\d\s()+.-]+$/.test(v.trim())) {
+            // digit-ish values normalize like the extractors: 10-11 digits =
+            // BR local → +55…, 12+ w/ country code → +…, unparseable kept as-is.
+            const p = phoneFromText(v.trim());
+            if (p) payload[f] = p;
           }
         }
         // The bar for a discovered lead, enforced where the prompt can't be
