@@ -999,11 +999,7 @@ export async function cancelByLead(
  * keeps its id for the next pass — 'unknown' is never treated as missing.
  * Mutates row.gcal_event_id to the persisted value.
  */
-async function reconcileMeetingEvent(
-  sql: Sql,
-  row: MeetingRow,
-  cfg: MeetingConfig,
-): Promise<void> {
+async function reconcileMeetingEvent(sql: Sql, row: MeetingRow, cfg: MeetingConfig): Promise<void> {
   const wantStart = new Date(row.starts_at).getTime();
   const wantEnd = new Date(row.ends_at).getTime();
   let id = row.gcal_event_id;

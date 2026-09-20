@@ -272,9 +272,7 @@ export async function updateEvent(
 }
 
 export type EventProbe =
-  | { state: 'ok'; start: Date; end: Date }
-  | { state: 'gone' }
-  | { state: 'unknown' };
+  { state: 'ok'; start: Date; end: Date } | { state: 'gone' } | { state: 'unknown' };
 
 /** One event's live window — 'gone' on 404/410/cancelled, 'unknown' on any
  *  transient failure (callers must never treat 'unknown' as missing). */
