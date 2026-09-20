@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { RefreshCw } from 'lucide-react';
 import { api, type Stats } from '../api.ts';
-import { Empty, Page, fmtDate, fmtMoney } from '../components.tsx';
+import { Empty, Page, fmtDay, fmtMoney } from '../components.tsx';
 
 const STATES = ['lead', 'contacted', 'invited', 'live'] as const;
 const STATE_LABEL: Record<string, string> = {
@@ -30,7 +30,10 @@ export default function Reports() {
   const load = () =>
     api
       .stats()
-      .then(setS)
+      .then((stats) => {
+        setS(stats);
+        setErr('');
+      })
       .catch((e) => setErr(String(e)));
   useEffect(() => void load(), []);
 
@@ -54,7 +57,7 @@ export default function Reports() {
       title="Relatórios"
       sub={
         fc?.trend.length
-          ? `${fc.trend.length} snapshots · desde ${fmtDate(fc.trend[0]!.takenOn)}`
+          ? `${fc.trend.length} snapshots · desde ${fmtDay(fc.trend[0]!.takenOn)}`
           : 'um snapshot por dia'
       }
       actions={
@@ -93,7 +96,7 @@ export default function Reports() {
           <div className="grid2" style={{ marginBottom: 18 }}>
             <div className="card" style={{ padding: 18 }}>
               <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 6 }}>
-                <b>valor ponderado · 30d</b>
+                <b>valor ponderado · últimos 30 snapshots</b>
                 <span className="legend mono">
                   <i className="sw" style={{ background: 'var(--forest-800)' }} /> ponderado
                   <i
@@ -237,10 +240,10 @@ function TrendChart({ trend }: { trend: Stats['forecast']['trend'] }) {
         />
       ))}
       <text x={PL} y={H - 5} textAnchor="start" className="chart-tick">
-        {fmtDate(trend[0]!.takenOn)}
+        {fmtDay(trend[0]!.takenOn)}
       </text>
       <text x={W - PR} y={H - 5} textAnchor="end" className="chart-tick">
-        {fmtDate(trend.at(-1)!.takenOn)}
+        {fmtDay(trend.at(-1)!.takenOn)}
       </text>
     </svg>
   );
@@ -253,12 +256,14 @@ function ValueBars({
   title: string;
   rows: { key: string; count: number; valueCents: number }[];
 }) {
-  const max = Math.max(1, ...rows.map((r) => r.valueCents));
+  // Rank by value — the arrays arrive count-ordered for the dashboard.
+  const ranked = [...rows].sort((a, b) => b.valueCents - a.valueCents).slice(0, 8);
+  const max = Math.max(1, ...ranked.map((r) => r.valueCents));
   return (
     <div className="card" style={{ padding: 18 }}>
       <b>{title}</b>
       <div className="hbars">
-        {rows.slice(0, 8).map((r) => (
+        {ranked.map((r) => (
           <div className="row" key={r.key}>
             <span className="lb" title={r.key}>
               {r.key || '—'}

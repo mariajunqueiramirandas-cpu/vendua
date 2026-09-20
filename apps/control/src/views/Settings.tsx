@@ -1020,10 +1020,12 @@ function ForecastCard({
 }) {
   const stored = (value.probabilities ?? {}) as Record<string, unknown>;
   // Stored as 0..1 fractions; the card edits percent — staff reads %.
+  // ×10000/100 keeps two decimal places so a hand-set 55.5% isn't silently
+  // rounded to 56 on the next save of an untouched field.
   const cur = Object.fromEntries(
     FORECAST_STATES.map(([k]) => [
       k,
-      Math.round(num(stored[k], FORECAST_DEFAULT_PCT[k] / 100) * 100),
+      Math.round(num(stored[k], FORECAST_DEFAULT_PCT[k] / 100) * 10000) / 100,
     ]),
   ) as Record<(typeof FORECAST_STATES)[number][0], number>;
   const [edit, setEdit] = useState(cur);
@@ -1044,6 +1046,7 @@ function ForecastCard({
                 type="number"
                 min={0}
                 max={100}
+                step="any"
                 value={edit[k]}
                 onChange={(e) => setEdit({ ...edit, [k]: Number(e.target.value) })}
               />
