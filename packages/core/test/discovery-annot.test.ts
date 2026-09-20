@@ -227,6 +227,7 @@ describe('contactsFromText', () => {
     expect(phoneFromText('+1 (415) 555-2671')).toBe('+14155552671');
     expect(phoneFromText('+55 22 99712-3470')).toBe('+5522997123470');
     expect(phoneFromText('+0800')).toBeNull();
+    expect(phoneFromText('+01234567')).toBeNull();
   });
   test('emails parsed, image-asset lookalikes excluded', () => {
     const c = contactsFromText('fale conosco: vendas@doceria.com.br — logo@2x.png hero@3x.webp');
