@@ -17,7 +17,15 @@ const agentLog = log.child({ mod: 'agent' });
  * steps are the audit trail.
  */
 
-const MAX_STEPS = 12;
+/** Model-call budget per run kind — each iteration can fan out into parallel
+ *  tool calls, so discovery (search → batch extract → create) legitimately
+ *  needs more headroom than a reply. */
+const STEP_BUDGET: Record<RunRow['kind'], number> = {
+  triage: 12,
+  reply: 14,
+  outreach: 12,
+  discovery: 20,
+};
 const HEARTBEAT_MS = 20_000;
 
 interface RunRow {
@@ -145,6 +153,12 @@ async function contextFor(sql: Sql, run: RunRow): Promise<string> {
     parts.push(`DISCOVERY QUERY: ${String(run.params.query)}`);
     if (run.params.segment) parts.push(`SEGMENT: ${String(run.params.segment)}`);
     if (run.params.city) parts.push(`CITY: ${String(run.params.city)}`);
+    // Caller-chosen lead goal — the prompt turns it into the stop condition;
+    // the guardrail cap still bounds it from above.
+    const target = Number(run.params.target);
+    if (Number.isFinite(target) && target > 0) {
+      parts.push(`META: criar até ${Math.floor(target)} leads`);
+    }
   }
   return parts.join('\n\n') || '(no extra context)';
 }
@@ -236,13 +250,14 @@ export async function runOnce(sql: Sql): Promise<boolean> {
       leadId: run.lead_id,
       threadId: run.thread_id,
       step: 0,
+      extractCache: new Map(),
     };
 
     steps.push({ type: 'system_prompt', content: system });
     messages.push({ role: 'user', content: context });
     await persist();
 
-    for (let i = 0; i < MAX_STEPS && !lost; i++) {
+    for (let i = 0; i < STEP_BUDGET[run.kind] && !lost; i++) {
       const res = await provider.chat({ system, messages, tools });
       tokensIn += res.tokensIn;
       tokensOut += res.tokensOut;
@@ -327,14 +342,23 @@ export async function runOnce(sql: Sql): Promise<boolean> {
       await persistAborted();
       return true;
     }
+    // Step exhaustion is a failure — the model never converged. For
+    // discovery the trajectory still reports what it produced: the create
+    // count keeps a lead-yielding run from reading as a dead loss.
+    const created = steps.filter(
+      (s) =>
+        typeof s === 'object' &&
+        s !== null &&
+        (s as { name?: string }).name === 'create_lead' &&
+        typeof (s as { out?: { id?: string } }).out?.id === 'string',
+    ).length;
     await finishRun(sql, claim, {
-      // step exhaustion is a failure — the model never converged on an answer
       status: 'failed',
       steps,
       tokensIn,
       tokensOut,
       costCents: Math.round(costUsd * 100),
-      error: 'max steps reached',
+      error: `max steps reached${created ? ` — ${created} lead(s) created` : ''}`,
     });
     return true;
   } catch (e) {

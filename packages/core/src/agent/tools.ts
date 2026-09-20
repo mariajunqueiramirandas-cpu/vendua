@@ -30,6 +30,10 @@ export interface ToolContext {
   threadId: string | null;
   /** tool call index within the run — seeds deterministic idempotency keys */
   step: number;
+  /** In-flight/finished extract_page calls by page identity — a repeat call
+   *  (same step's batch or a later step) shares the same provider call
+   *  instead of paying for the identical page twice. */
+  extractCache: Map<string, Promise<unknown>>;
 }
 
 const leadIdArg = { type: 'string', description: 'lead uuid' } as const;
@@ -76,7 +80,8 @@ const REGISTRY: { def: AgentTool; toolsets: string[] }[] = [
     toolsets: ['triage', 'discovery'],
     def: {
       name: 'create_lead',
-      description: 'Create a new lead (state=lead).',
+      description:
+        'Create a new lead (state=lead). Self-dedupes on name/phone/instagram — a duplicate returns {duplicate, existing} instead of inserting.',
       parameters: {
         type: 'object',
         properties: { name: { type: 'string' }, ...LEAD_FIELDS },
@@ -208,7 +213,7 @@ const REGISTRY: { def: AgentTool; toolsets: string[] }[] = [
     def: {
       name: 'web_search',
       description:
-        'Search the web for prospects via the discovery provider (TinyFish). Returns ranked results.',
+        'Search the web for prospects. Results come annotated: kind=contact/profile already carry the parsed phone/@handle from the URL (no extract needed); kind=site is the extract_page candidate; kind=listing is a directory. Emit 2-3 different-angled queries per step — they run in parallel.',
       parameters: {
         type: 'object',
         properties: {
@@ -223,7 +228,8 @@ const REGISTRY: { def: AgentTool; toolsets: string[] }[] = [
     toolsets: ['discovery'],
     def: {
       name: 'extract_page',
-      description: 'Extract structured contact info from a page via the discovery provider.',
+      description:
+        'Extract structured contacts from a page via the discovery provider. Only worth it on kind=site results — social roots are login-walled (the handle is already in the search result). Re-extracting a URL returns its cached output.',
       parameters: {
         type: 'object',
         properties: { url: { type: 'string' }, goal: { type: 'string' } },
@@ -314,12 +320,61 @@ export async function executeTool(
       const input = leadInsert(payload);
       const res = await claimControl(sql, key, async (tx) => {
         if (ctx.runKind === 'discovery') {
-          // Hard cap, enforced in code the prompt can't talk away: each
-          // create_lead claims `agent:{runId}:…:create_lead:{callId}`, so
-          // counting this run's claims under a per-run advisory lock — inside
-          // the same tx as the insert — makes the cap transactional (batched
-          // tool calls in one step can't slip past it).
+          // One per-run advisory lock serializes dedupe + cap + insert:
+          // batched create_lead calls in a step run concurrently, so without
+          // the lock two parallel calls could both pass the dup check before
+          // either inserts.
           await tx`select pg_advisory_xact_lock(hashtext(${`discovery-cap:${ctx.runId}`}))`;
+          // Dedupe before the cap check so a repeat prospect can't burn cap:
+          // phone/whatsapp compare digit-only, instagram handle case-folded,
+          // and a name hit needs the same city — common names alone don't
+          // merge distinct businesses.
+          const digits = (v: unknown) =>
+            typeof v === 'string' && v.replace(/\D/g, '').length >= 8 ? v.replace(/\D/g, '') : null;
+          const phone = digits(input.phone) ?? digits(input.whatsapp);
+          const ig =
+            typeof input.instagram === 'string' && input.instagram.trim()
+              ? input.instagram.trim().replace(/^@/, '').toLowerCase()
+              : null;
+          const nameKey = String(input.name ?? '')
+            .trim()
+            .toLowerCase();
+          const bizKey =
+            typeof input.business_name === 'string' && input.business_name.trim()
+              ? input.business_name.trim().toLowerCase()
+              : null;
+          const city =
+            typeof input.city === 'string' && input.city.trim()
+              ? input.city.trim().toLowerCase()
+              : null;
+          const dup = (
+            await tx<{ id: string; name: string; state: string }[]>`
+              select id, name, state from leads
+              where archived_at is null and (
+                (${phone}::text is not null and
+                  (regexp_replace(coalesce(phone,''), '\\D','','g') = ${phone}
+                   or regexp_replace(coalesce(whatsapp,''), '\\D','','g') = ${phone}))
+                or (${ig}::text is not null and
+                  lower(regexp_replace(coalesce(instagram,''), '^@', '')) = ${ig})
+                or ((${bizKey}::text is not null and lower(business_name) = ${bizKey}
+                     or lower(name) = ${nameKey})
+                    and (${city}::text is null
+                         or lower(coalesce(city,'')) = ${city}))
+              )
+              limit 3
+            `
+          )[0];
+          if (dup) {
+            return {
+              status: 200,
+              body: { duplicate: true as const, existing: dup } as never,
+            };
+          }
+          // Hard cap, enforced in code the prompt can't talk away: count this
+          // run's claim keys whose stored response actually created a lead
+          // (`response.lead.id`) — duplicate/no-op responses commit a claim
+          // row but must not burn cap slots. This call's own claim row has no
+          // response yet, so n = leads already created.
           const g = await getSettingTx<Partial<Guardrails>>(tx, 'guardrails', {});
           const cap = g.discoveryMaxLeads ?? DEFAULT_GUARDRAILS.discoveryMaxLeads;
           const n =
@@ -327,10 +382,10 @@ export async function executeTool(
               await tx<{ n: number }[]>`
             select count(*)::int as n from control_idempotency_keys
             where key like ${`agent:${ctx.runId}:%:create_lead:%`}
+              and response->'lead'->>'id' is not null
           `
             )[0]?.n ?? 0;
-          // n includes this call's own claim row (inserted before work ran).
-          if (n > cap) {
+          if (n >= cap) {
             throw new HttpError(
               409,
               'DISCOVERY_CAP',
@@ -498,14 +553,37 @@ export async function executeTool(
       return { handedOff: true };
     }
     case 'web_search': {
-      const { discoveryFor } = await import('./channels/discovery.ts');
+      const { discoveryFor, annotateResults } = await import('./channels/discovery.ts');
       const provider = await discoveryFor(sql);
-      return provider.search(String(args.query), String(args.purpose ?? ''));
+      const raw = await provider.search(String(args.query), String(args.purpose ?? ''));
+      const { results, droppedDupes } = annotateResults(raw.results);
+      return {
+        results,
+        ...(droppedDupes ? { droppedDupes } : {}),
+        note: 'kind=contact/profile já traz o contato parseado da URL — use direto; kind=site é o que vale extract_page; listing = diretório, pista de nome.',
+      };
     }
     case 'extract_page': {
-      const { discoveryFor } = await import('./channels/discovery.ts');
+      const { discoveryFor, pageKey } = await import('./channels/discovery.ts');
+      const url = String(args.url);
+      const key2 = pageKey(url);
+      // Same page this run → share the in-flight/cached call. Provably
+      // identical output for zero provider spend; covers both batched
+      // duplicates and a later step re-trying a URL.
+      if (key2) {
+        const hit = ctx.extractCache.get(key2);
+        if (hit) {
+          const out = await hit;
+          return { ...(typeof out === 'object' && out !== null ? out : { out }), cached: true };
+        }
+      }
       const provider = await discoveryFor(sql);
-      return provider.extract(String(args.url), String(args.goal));
+      const p = provider.extract(url, String(args.goal)).then(
+        (out) => out,
+        (e: unknown) => ({ error: e instanceof Error ? e.message : String(e) }),
+      );
+      if (key2) ctx.extractCache.set(key2, p);
+      return p;
     }
     default:
       throw new HttpError(422, 'UNKNOWN_TOOL', `unknown tool: ${name}`);
