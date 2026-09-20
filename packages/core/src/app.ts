@@ -1450,7 +1450,9 @@ export function createApp({ sql, sessionSecret, controlSecret }: AppDeps) {
       throw new HttpError(422, 'BAD_REQUEST', 'no updatable fields in body');
     const res = await claimControl(sql, requireIdemKey(c), async (tx) => {
       const cur = (
-        await tx<{ enabled: boolean }[]>`select enabled from discovery_briefs where id = ${id} for update`
+        await tx<
+          { enabled: boolean }[]
+        >`select enabled from discovery_briefs where id = ${id} for update`
       )[0];
       if (!cur) throw new HttpError(404, 'BRIEF_NOT_FOUND', 'brief not found');
       // A changed definition — or a paused brief switched back on — should
