@@ -49,7 +49,10 @@ export default function Leads() {
   }, [load]);
   // Filter changes swap the result set — drop hidden selections so dispatch
   // only ever acts on leads the staff can see selected.
-  useEffect(() => setSel(new Set()), [q, state, archived]);
+  useEffect(() => {
+    setSel(new Set());
+    setDispatchMsg('');
+  }, [q, state, archived]);
 
   // `/` focuses search, `n` opens new-lead — list-view keys.
   useEffect(() => {
@@ -88,8 +91,12 @@ export default function Leads() {
     setDispatchMsg('');
     try {
       const r = await api.dispatch([...sel], goal);
+      const names = new Map(leads.map((l) => [l.id, l.name]));
+      const skips = r.skipped
+        .map((s) => `${names.get(s.id) ?? s.id.slice(0, 8)}: ${s.reason}`)
+        .join(' · ');
       setDispatchMsg(
-        `${r.enqueued} disparado${r.enqueued === 1 ? '' : 's'}${r.skipped.length ? ` · ${r.skipped.length} ignorado${r.skipped.length === 1 ? '' : 's'}` : ''}`,
+        `${r.enqueued} disparado${r.enqueued === 1 ? '' : 's'}${r.skipped.length ? ` · ${r.skipped.length} ignorado${r.skipped.length === 1 ? '' : 's'}${skips ? ` (${skips})` : ''}` : ''}`,
       );
       setSel(new Set());
     } catch (e) {
@@ -172,7 +179,13 @@ export default function Leads() {
           <button className="btn agent" disabled={dispatchBusy} onClick={() => void dispatch()}>
             <Send size={14} /> disparar agente
           </button>
-          {dispatchMsg && <span className="sub">{dispatchMsg}</span>}
+        </div>
+      )}
+      {/* Result lives outside the selection card — dispatch clears `sel`,
+          which would unmount the message in the same render. */}
+      {dispatchMsg && (
+        <div className="sub" style={{ marginBottom: 12 }}>
+          {dispatchMsg}
         </div>
       )}
 
