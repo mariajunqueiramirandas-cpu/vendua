@@ -1281,6 +1281,31 @@ export async function sweepMeetingReminders(sql: Sql): Promise<number> {
       mlog.warn({ meetingId: m.id, reason: dispatch.reason }, 'meeting reminder dispatch failed');
     }
   }
+  // Heal bookings whose post-commit effects never ran — a crash between the
+  // booking commit and meetingEffects otherwise waits for a client replay.
+  // Scoped to artifacts a configured provider should have produced, so a
+  // bare install (null room_url/gcal_event_id legitimately) isn't re-scanned.
+  const wantGcal = gcal.gcalConfigured();
+  const wantDaily = rooms.dailyConfigured();
+  if (wantGcal || wantDaily) {
+    const pending = await controlTx(
+      sql,
+      (tx) => tx<{ id: string }[]>`
+        select id from meetings
+        where status = 'scheduled'
+          and starts_at > now() - interval '10 minutes'
+          and ((${wantGcal} and gcal_event_id is null)
+            or (${wantDaily} and room_url is null))
+        order by created_at asc
+        limit 20
+      `,
+    );
+    for (const p of pending) {
+      await ensureMeetingEffects(sql, p.id).catch((err) =>
+        mlog.warn({ meetingId: p.id, err }, 'meeting effects heal failed'),
+      );
+    }
+  }
   return sent;
 }
 
