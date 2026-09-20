@@ -69,6 +69,11 @@ export function waIdentity(): { phone: string | null; name: string | null } | nu
  *  close it, not keep sending through the old account. */
 let socketFingerprint: string | null = null;
 let socketAccountId: string | null = null;
+/** Socket generation — bumps on every ownership transition. `wa_qr` is a
+ *  single global row and last writer wins, so QR writes carry the writer's
+ *  gen and the upsert drops strictly-older ones: a detached socket's late
+ *  clear can't erase the replacement's fresh QR (or vice versa). */
+let waGen = 0;
 
 function fingerprintOf(integration: IntegrationRow): string {
   return `${integration.id}:${(integration.config.accountId as string) ?? 'default'}:${integration.updated_at}`;
@@ -172,18 +177,19 @@ async function startSocket(sql: Sql, integration: IntegrationRow): Promise<Baile
   socket = sock;
   socketFingerprint = fingerprintOf(integration);
   socketAccountId = accountId;
+  const gen = ++waGen;
 
   sock.ev.on('creds.update', () => void auth.write('creds', 'main', creds));
   sock.ev.on('connection.update', (u) => {
     if (socket !== sock) return; // stale socket — a replacement owns globals
     if (u.qr) {
       connState = 'qr';
-      void persistQr(sql, accountId, u.qr);
+      void persistQr(sql, accountId, u.qr, gen);
     }
     if (u.connection === 'open') {
       connState = 'open';
       waMe = readIdentity(sock);
-      void persistQr(sql, accountId, null);
+      void persistQr(sql, accountId, null, gen);
     }
     if (u.connection === 'close') {
       connState = 'off';
@@ -253,12 +259,13 @@ function extractText(message: unknown): string | null {
   return null;
 }
 
-async function persistQr(sql: Sql, accountId: string, qr: string | null) {
+async function persistQr(sql: Sql, accountId: string, qr: string | null, gen: number) {
   await controlTx(
     sql,
     (tx) =>
-      tx`insert into control_settings (key, value) values (${'wa_qr'}, ${tx.json({ accountId, qr } as never)})
-         on conflict (key) do update set value = excluded.value`,
+      tx`insert into control_settings (key, value) values (${'wa_qr'}, ${tx.json({ accountId, qr, gen } as never)})
+         on conflict (key) do update set value = excluded.value
+         where coalesce((control_settings.value ->> 'gen')::int, -1) <= ${gen}`,
   );
 }
 
@@ -285,7 +292,7 @@ export async function ensureSocket(
     // owns globals) — reset state here or waStatus()/wa_qr keep reporting
     // a socket that no longer exists.
     connState = 'off';
-    if (socketAccountId) void persistQr(sql, socketAccountId, null);
+    if (socketAccountId) void persistQr(sql, socketAccountId, null, ++waGen);
     socketAccountId = null;
   }
   if (!wanted) return null;
@@ -363,8 +370,10 @@ export async function logoutWa(sql: Sql, accountId: string): Promise<void> {
   }
   await controlTx(sql, async (tx) => {
     await tx`delete from wa_auth_state where account_id = ${accountId}`;
-    await tx`delete from control_settings where key = 'wa_qr'`;
   });
+  // Clear through the gen-guarded path — a plain delete could be followed
+  // by a stale in-flight QR write that re-creates the row.
+  await persistQr(sql, accountId, null, ++waGen);
 }
 
 export async function sendWhatsApp(
