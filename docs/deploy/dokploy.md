@@ -23,6 +23,8 @@ Copy `.env.example` into the service's environment and fill it in:
 | `SEED_DEMO`              | `1` seeds the three demo tenants on boot; `0` = empty platform  |
 | `SEED_DOMAINS`           | `slug:public-domain` per storefront — registers real domains    |
 | `VENDUA_PROXY_HOPS`      | XFF trusted suffix length — `1` for the Traefik→nginx chain     |
+| `RESEND_API_KEY`         | email driver — sending + fetching received bodies               |
+| `RESEND_WEBHOOK_SECRET`  | svix signing secret of the inbound webhook (see below)          |
 
 Generate secrets with `openssl rand -hex 32`.
 
@@ -51,6 +53,22 @@ insert into domains (host, tenant_id)
 ```
 
 (Exec into the `db` container or use Dokploy's database console.)
+
+## Inbound email (agent inbox)
+
+Mail to `*@auto.<domain>` is received by Resend (the `auto.` domain's MX
+points at Resend inbound) and pushed to Core:
+
+1. Resend → **Webhooks** → add `https://<crm-domain>/control/v1/webhooks/email`,
+   event `email.received`. The route lives under `/control`, so the `crm`
+   nginx proxy reaches it.
+2. Copy the webhook's signing secret (`whsec_…`) into `RESEND_WEBHOOK_SECRET`
+   and redeploy — unsigned or unverifiable events get a 404.
+3. `RESEND_API_KEY` must be set: the event carries metadata only, Core
+   fetches the body via `GET /emails/receiving/{id}`.
+
+`VENDUA_WEBHOOK_SECRET` is a separate shared secret for manual/relay posts
+(`x-vendua-webhook` header) — unset, it's derived from `CONTROL_SECRET`.
 
 ## 4. Deploy
 

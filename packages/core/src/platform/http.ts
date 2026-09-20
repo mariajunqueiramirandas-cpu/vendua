@@ -335,7 +335,7 @@ export async function sessionCartId(c: Context, secret: string): Promise<string>
 /** Bounded `c.req.json()` — 400s on malformed input, 413s on oversized bodies. */
 const MAX_BODY_BYTES = 32 * 1024;
 
-export async function bodyJson(c: Context): Promise<Record<string, unknown>> {
+export async function boundedText(c: Context): Promise<string> {
   // Public mutation endpoints take attacker-controlled bodies; cap the raw
   // text before parsing so oversized payloads can't burn parse time/memory.
   // Content-Length is a free pre-filter — reject before buffering when the
@@ -351,6 +351,10 @@ export async function bodyJson(c: Context): Promise<Record<string, unknown>> {
   if (new TextEncoder().encode(raw).byteLength > MAX_BODY_BYTES) {
     throw new HttpError(413, 'PAYLOAD_TOO_LARGE', `body exceeds ${MAX_BODY_BYTES} bytes`);
   }
+  return raw;
+}
+
+export function parseJsonObject(raw: string): Record<string, unknown> {
   let body: unknown;
   try {
     body = JSON.parse(raw);
@@ -361,6 +365,10 @@ export async function bodyJson(c: Context): Promise<Record<string, unknown>> {
     throw new HttpError(400, 'BAD_REQUEST', 'body must be a JSON object');
   }
   return body as Record<string, unknown>;
+}
+
+export async function bodyJson(c: Context): Promise<Record<string, unknown>> {
+  return parseJsonObject(await boundedText(c));
 }
 
 export const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
