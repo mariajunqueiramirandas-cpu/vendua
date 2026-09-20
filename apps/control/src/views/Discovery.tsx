@@ -265,8 +265,11 @@ export default function Discovery() {
   }, [steps]);
 
   useEffect(() => {
+    // Mobile: .stage-live owns scrolling and .stage-stream is overflow:visible,
+    // so el.scrollTop is a no-op — scrollIntoView hits whichever ancestor
+    // scrolls on either breakpoint.
     const el = streamRef.current;
-    if (el) el.scrollTop = el.scrollHeight;
+    el?.lastElementChild?.scrollIntoView({ block: 'nearest' });
   }, [steps.length]);
 
   const canLaunch = Boolean(segment.trim() || city.trim() || focus.trim()) && !launching;

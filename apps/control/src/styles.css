@@ -2500,24 +2500,117 @@ a.lcard:hover {
   }
 }
 @media (max-width: 860px) {
+  /* the whole stage flows as one scroll column on small screens — no
+     inner panes to fight the phone's own scrolling */
   .stage-live {
     grid-template-columns: 1fr;
+    gap: 24px;
     overflow: auto;
+    padding: 4px 18px 24px;
   }
   .stage-rail {
     border-left: 0;
     padding-left: 0;
     border-top: 1px solid color-mix(in srgb, var(--cream-100) 10%, transparent);
-    padding-top: 14px;
+    padding-top: 16px;
+    min-height: 0;
   }
   .stage-stream {
     min-height: 40vh;
+    overflow: visible;
+  }
+  .stage-leads {
+    overflow: visible;
+  }
+  .stage-head {
+    padding: 18px 18px 12px;
+    gap: 10px;
+    flex-wrap: wrap;
+  }
+  .stage-title {
+    font-size: 1.6rem;
+  }
+  .stage-clock {
+    font-size: var(--t-base);
   }
   .stage-hero {
     grid-template-columns: 1fr;
-    gap: 32px;
-    padding: 28px;
+    gap: 40px;
+    padding: 32px 22px;
     min-height: auto;
+  }
+  /* no fold on a phone — everything scrolls, the cue is dead weight */
+  .stage-cue {
+    display: none;
+  }
+  .stage-h {
+    font-size: clamp(2.4rem, 9.5vw, 4rem);
+  }
+  /* label-above-input: the 130px rail would squeeze the field at 360px */
+  .brief-row {
+    grid-template-columns: 1fr;
+    gap: 8px;
+  }
+  .brief-k {
+    padding-top: 0;
+  }
+  .hrail {
+    gap: 14px;
+  }
+  .hcard {
+    padding: 16px;
+  }
+  .bnew-row {
+    flex-wrap: wrap;
+  }
+  .bnew-row input {
+    flex: 1 1 120px;
+  }
+  .bnew-row input[type='number'] {
+    flex: 1 1 64px;
+  }
+  .recent-row {
+    grid-template-columns: 64px 1fr auto;
+    gap: 8px;
+    padding: 10px 4px;
+  }
+  .stage-end-count {
+    font-size: 4rem;
+  }
+  .stage-end-line {
+    font-size: 1.6rem;
+  }
+  .stage-end-cta {
+    flex-wrap: wrap;
+    justify-content: center;
+  }
+  .stage-data {
+    padding: 28px 22px calc(44px + env(safe-area-inset-bottom, 0px));
+    gap: 36px;
+  }
+  .dsec-t {
+    font-size: 1.5rem;
+  }
+  /* six-column stat tables can't reflow into cards — scroll them sideways
+     inside their section instead of squeezing */
+  .dsec {
+    overflow-x: auto;
+  }
+  .dtbl {
+    min-width: 560px;
+  }
+  .harvest {
+    grid-template-columns: repeat(auto-fill, minmax(min(240px, 100%), 1fr));
+  }
+}
+
+@media (max-width: 760px) {
+  /* iOS zooms on focus below 16px — the app's global rule loses
+     specificity to .stage input inside the dark room */
+  .stage input,
+  .stage textarea,
+  .stage select {
+    font-size: 16px;
   }
 }
 @media (prefers-reduced-motion: reduce) {
