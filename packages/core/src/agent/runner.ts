@@ -410,7 +410,7 @@ export async function runOnce(sql: Sql): Promise<boolean> {
         typeof s === 'object' &&
         s !== null &&
         (s as { name?: string }).name === 'create_lead' &&
-        typeof (s as { out?: { id?: string } }).out?.id === 'string',
+        typeof (s as { out?: { lead?: { id?: string } } }).out?.lead?.id === 'string',
     ).length;
     await finishRun(sql, claim, {
       status: 'failed',

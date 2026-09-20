@@ -1844,16 +1844,20 @@ details.raw textarea {
   color: color-mix(in srgb, var(--sage-300) 70%, transparent);
 }
 
-/* hero — idle mode, the launch pad inside the page */
+/* idle — the stage IS the page: hero fills the viewport, the scoreboard
+   scrolls below inside the same dark room. */
+.stage-idle {
+  overflow: auto;
+  scrollbar-width: thin;
+  scrollbar-color: var(--night-700) transparent;
+}
 .stage-hero {
   flex: none;
   display: grid;
-  grid-template-columns: minmax(0, 1.2fr) minmax(300px, 0.8fr);
+  grid-template-columns: minmax(0, 1.2fr) minmax(320px, 0.8fr);
   gap: 56px;
   padding: 52px;
-  min-height: min(720px, calc(100vh - 172px));
-  border-radius: var(--r-lg);
-  overflow: auto;
+  min-height: 100%;
 }
 .stage-brief {
   display: flex;
@@ -2093,6 +2097,106 @@ details.raw textarea {
 .recent-status.failed,
 .recent-status.canceled {
   color: var(--red-400);
+}
+
+/* scoreboard — below the fold, still inside the dark room */
+.stage-data {
+  padding: 44px 52px 72px;
+  border-top: 1px solid color-mix(in srgb, var(--cream-100) 8%, transparent);
+  display: flex;
+  flex-direction: column;
+  gap: 44px;
+  max-width: 1240px;
+}
+.dsec-t {
+  font-style: italic;
+  font-weight: 400;
+  font-size: 1.9rem;
+  color: var(--cream-50);
+  letter-spacing: -0.01em;
+  margin: 0 0 16px;
+}
+.dsec-sub {
+  font-size: var(--t-xs);
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  margin: 22px 0 8px;
+}
+.dsec-hint {
+  font-size: var(--t-xs);
+  margin-top: 10px;
+}
+.lime {
+  color: var(--lime-300);
+}
+.dtbl {
+  width: 100%;
+  border-collapse: collapse;
+}
+.dtbl th {
+  text-align: left;
+  font-size: var(--t-2xs);
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--sage-300);
+  font-weight: 500;
+  padding: 8px 14px 8px 0;
+  border-bottom: 1px solid color-mix(in srgb, var(--cream-100) 10%, transparent);
+}
+.dtbl td {
+  padding: 10px 14px 10px 0;
+  border-bottom: 1px solid color-mix(in srgb, var(--cream-100) 6%, transparent);
+  font-size: var(--t-sm);
+  vertical-align: middle;
+}
+.dtbl tr:last-child td {
+  border-bottom: 0;
+}
+.dtbl a {
+  color: var(--lime-300);
+}
+.harvest {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+  gap: 12px;
+}
+a.lcard {
+  display: block;
+  text-decoration: none;
+  transition:
+    transform var(--motion),
+    box-shadow var(--motion);
+}
+a.lcard:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 6px 24px rgb(0 0 0 / 0.25);
+}
+.drow {
+  padding: 9px 0;
+  border-bottom: 1px solid color-mix(in srgb, var(--cream-100) 6%, transparent);
+  font-size: var(--t-sm);
+}
+.dchip {
+  font-size: var(--t-2xs);
+  color: var(--sage-300);
+  border: 1px solid color-mix(in srgb, var(--cream-100) 16%, transparent);
+  border-radius: 99px;
+  padding: 2px 9px;
+}
+.drow-links {
+  margin-top: 5px;
+  display: flex;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+.drow-links a {
+  color: var(--lime-300);
+}
+.stage .empty {
+  color: var(--sage-300);
+}
+.stage .empty .serif {
+  color: var(--cream-100);
 }
 
 /* live */

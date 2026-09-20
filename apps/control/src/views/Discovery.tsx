@@ -3,13 +3,14 @@ import { Link, useSearchParams } from 'react-router-dom';
 import { Plus, Trash2 } from 'lucide-react';
 import {
   api,
+  ApiError,
   type AgentRun,
   type Brief,
   type DupeGroup,
   type LeadListItem,
   type SegmentStat,
 } from '../api.ts';
-import { Empty, Page, StateChip, fmtMoney, rel } from '../components.tsx';
+import { Empty, StateChip, fmtMoney, rel } from '../components.tsx';
 
 /* Descoberta — the launch pad AND the scoreboard. Idle is a dark hero:
    brief on the left, the daily rotation and recent hunts on the right.
@@ -114,6 +115,7 @@ export default function Discovery() {
 
   /* ---- watched run ---- */
   const [run, setRun] = useState<AgentRun | null>(null);
+  const [runMissing, setRunMissing] = useState(false);
   const [now, setNow] = useState(() => Date.now());
   const streamRef = useRef<HTMLDivElement>(null);
 
@@ -162,6 +164,7 @@ export default function Discovery() {
   useEffect(() => {
     if (!runId) {
       setRun(null);
+      setRunMissing(false);
       return;
     }
     let dead = false;
@@ -172,6 +175,11 @@ export default function Discovery() {
     let seq = 0;
     let seen = 0;
     let terminal = false;
+    // 'canceled' lands on the row before the worker persists its final
+    // journal — keep polling through a short grace window so late tool
+    // results still land in the summary.
+    let cancelAt = 0;
+    let cancelLen = -1;
     const tick = () => {
       const my = ++seq;
       api
@@ -179,14 +187,39 @@ export default function Discovery() {
         .then((r) => {
           if (dead || my <= seen || terminal) return;
           seen = my;
+          const st = r.run.status;
+          let latch = st !== 'queued' && st !== 'running';
+          if (st === 'canceled') {
+            const len = Array.isArray(r.run.steps) ? r.run.steps.length : 0;
+            const since = cancelAt ? Date.now() - cancelAt : 0;
+            if (!cancelAt) {
+              cancelAt = Date.now();
+              cancelLen = len;
+              latch = false;
+            } else if (since < 2000 || (since < 6000 && len > cancelLen)) {
+              cancelLen = Math.max(cancelLen, len);
+              latch = false;
+            }
+          }
           setRun(r.run);
-          if (t && r.run.status !== 'queued' && r.run.status !== 'running') {
+          if (latch) {
             terminal = true;
+            if (t) {
+              clearInterval(t);
+              t = undefined;
+            }
+          }
+        })
+        .catch((e) => {
+          // A 404 is permanent — stop polling instead of spinning on the
+          // loading state forever.
+          if (dead || !(e instanceof ApiError && e.status === 404)) return;
+          setRunMissing(true);
+          if (t) {
             clearInterval(t);
             t = undefined;
           }
-        })
-        .catch(() => undefined);
+        });
     };
     void tick();
     t = setInterval(tick, 1300);
@@ -421,18 +454,25 @@ export default function Discovery() {
     return (
       <div className="stage">
         <div className="stage-head">
-          <span className="livedot on" aria-hidden />
-          <div className="stage-title">abrindo a sala…</div>
+          <span className={`livedot ${runMissing ? '' : 'on'}`} aria-hidden />
+          <div className="stage-title">
+            {runMissing ? 'essa caçada não existe mais.' : 'abrindo a sala…'}
+          </div>
+          {runMissing && (
+            <button className="btn stage-ghost" onClick={reset}>
+              voltar
+            </button>
+          )}
         </div>
       </div>
     );
   }
 
-  /* ================= launch hero + scoreboard ================= */
+  /* ============ idle — the stage IS the page ============ */
 
   return (
-    <Page title="Descoberta" sub="o agente procura prospects e vira lead">
-      <div className="stage stage-hero">
+    <div className="stage stage-idle">
+      <div className="stage-hero">
         <div className="stage-brief">
           <div className="mono kicker">venduá · descoberta autônoma</div>
           <h1 className="serif stage-h">o que a máquina caça hoje?</h1>
@@ -610,159 +650,139 @@ export default function Discovery() {
         </div>
       </div>
 
-      {segs.length > 0 && (
-        <div className="card" style={{ padding: 18, marginTop: 16 }}>
-          <h3 style={{ margin: '0 0 10px', fontSize: 'var(--t-md)' }}>o que converte</h3>
-          <table className="tbl">
-            <thead>
-              <tr>
-                <th>segmento</th>
-                <th>leads</th>
-                <th>contatados</th>
-                <th>responderam</th>
-                <th>ativos</th>
-                <th>custo 30d</th>
-              </tr>
-            </thead>
-            <tbody>
-              {segs.map((s) => (
-                <tr key={s.segment}>
-                  <td>{s.segment}</td>
-                  <td className="mono">{s.leads}</td>
-                  <td className="mono">{s.contacted}</td>
-                  <td className="mono">
-                    <b>{s.replied}</b>
-                    {s.contacted > 0 && (
-                      <span className="sub"> · {Math.round((s.replied / s.contacted) * 100)}%</span>
-                    )}
-                  </td>
-                  <td className="mono">{s.live}</td>
-                  <td className="mono">{fmtMoney(s.costCents)}</td>
+      {/* scoreboard — same dark room, below the fold */}
+      <div className="stage-data">
+        {segs.length > 0 && (
+          <section className="dsec">
+            <h2 className="dsec-t serif">o que converte</h2>
+            <table className="dtbl">
+              <thead>
+                <tr>
+                  <th>segmento</th>
+                  <th>leads</th>
+                  <th>contatados</th>
+                  <th>responderam</th>
+                  <th>ativos</th>
+                  <th>custo 30d</th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
-          <div className="hint" style={{ marginTop: 8 }}>
-            o agente vê este quadro na busca e reforça o que está convertendo
-          </div>
-        </div>
-      )}
-
-      <div className="grid2" style={{ alignItems: 'start', marginTop: 16 }}>
-        <div>
-          <h3 className="sec-t">leads descobertos</h3>
-          <div className="card">
-            <table className="tbl">
+              </thead>
               <tbody>
-                {found.map((l) => (
-                  <tr key={l.id}>
-                    <td>
-                      <a href={`#/leads/${l.id}`}>
-                        <b>{l.name}</b>
-                      </a>
-                      {l.businessName && (
-                        <span style={{ color: 'var(--muted)' }}> · {l.businessName}</span>
+                {segs.map((s) => (
+                  <tr key={s.segment}>
+                    <td>{s.segment}</td>
+                    <td className="mono">{s.leads}</td>
+                    <td className="mono">{s.contacted}</td>
+                    <td className="mono">
+                      <b className="lime">{s.replied}</b>
+                      {s.contacted > 0 && (
+                        <span className="dim">
+                          {' '}
+                          · {Math.round((s.replied / s.contacted) * 100)}%
+                        </span>
                       )}
                     </td>
-                    <td>
-                      <StateChip state={l.state} />
-                    </td>
-                    <td
-                      className="mono"
-                      style={{ fontSize: 'var(--t-2xs)', color: 'var(--muted)' }}
-                    >
-                      {l.discoveredVia ?? ''}
-                    </td>
-                    <td className="mono" title={l.fitReason ?? undefined}>
-                      {l.fitScore != null ? `${l.fitScore}/10` : ''}
-                    </td>
-                    <td className="mono">{rel(l.createdAt)}</td>
+                    <td className="mono">{s.live}</td>
+                    <td className="mono">{fmtMoney(s.costCents)}</td>
                   </tr>
                 ))}
-                {!found.length && (
-                  <tr>
-                    <td>
-                      <Empty title="nenhum ainda" hint="rode uma descoberta" />
-                    </td>
-                  </tr>
-                )}
               </tbody>
             </table>
-          </div>
+            <div className="dsec-hint dim">
+              o agente vê este quadro na busca e reforça o que está convertendo
+            </div>
+          </section>
+        )}
+
+        <section className="dsec">
+          <h2 className="dsec-t serif">leads descobertos</h2>
+          {found.length ? (
+            <div className="harvest">
+              {found.map((l) => (
+                <a key={l.id} href={`#/leads/${l.id}`} className="lcard">
+                  <div className="lcard-top">
+                    <div className="lcard-name">{l.name}</div>
+                    {l.fitScore != null && (
+                      <span className="lcard-fit mono" title={l.fitReason ?? undefined}>
+                        {l.fitScore}
+                      </span>
+                    )}
+                  </div>
+                  <div className="lcard-meta">
+                    {[l.businessName, l.segment, l.city].filter(Boolean).join(' · ') || '—'}
+                  </div>
+                  <div className="lcard-foot">
+                    <span className="lcard-contact">
+                      <StateChip state={l.state} /> {l.discoveredVia ?? ''}
+                    </span>
+                    <span className="lcard-dup mono">{rel(l.createdAt)}</span>
+                  </div>
+                </a>
+              ))}
+            </div>
+          ) : (
+            <Empty title="nenhum ainda" hint="rode uma descoberta" />
+          )}
 
           {dupes.length > 0 && (
             <>
-              <h3 className="sec-t" style={{ marginTop: 18 }}>
-                possíveis duplicados
-              </h3>
-              <div className="card" style={{ padding: 14 }}>
-                {dupes.slice(0, 10).map((g, i) => (
-                  <div key={i} style={{ padding: '6px 0', borderBottom: '1px solid var(--line)' }}>
-                    <span className="chip">{g.field}</span> <span className="mono">{g.value}</span>
-                    <div style={{ marginTop: 4, display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-                      {g.leads.map((l) => (
-                        <a
-                          key={l.id}
-                          href={`#/leads/${l.id}`}
-                          style={{ textDecoration: 'underline' }}
-                        >
-                          {l.name}
-                        </a>
-                      ))}
-                    </div>
+              <h3 className="dsec-sub mono dim">possíveis duplicados</h3>
+              {dupes.slice(0, 10).map((g, i) => (
+                <div key={i} className="drow">
+                  <span className="dchip mono">{g.field}</span>{' '}
+                  <span className="mono">{g.value}</span>
+                  <div className="drow-links">
+                    {g.leads.map((l) => (
+                      <a key={l.id} href={`#/leads/${l.id}`}>
+                        {l.name}
+                      </a>
+                    ))}
                   </div>
-                ))}
-              </div>
+                </div>
+              ))}
             </>
           )}
-        </div>
+        </section>
 
-        <div>
-          <h3 className="sec-t">runs de descoberta</h3>
-          <div className="card">
-            <table className="tbl">
-              <tbody>
-                {runs.map((r) => (
-                  <tr key={r.id}>
-                    <td>
-                      <Link to={`?run=${r.id}`} className="mono">
-                        {r.id.slice(0, 8)}
-                      </Link>
-                    </td>
-                    <td>
-                      <span
-                        className={`chip ${r.status === 'failed' || r.status === 'canceled' ? 'bad' : r.status === 'done' ? '' : 'warn'}`}
+        <section className="dsec">
+          <h2 className="dsec-t serif">runs de descoberta</h2>
+          <table className="dtbl">
+            <tbody>
+              {runs.map((r) => (
+                <tr key={r.id}>
+                  <td>
+                    <Link to={`?run=${r.id}`} className="mono lime">
+                      {r.id.slice(0, 8)}
+                    </Link>
+                  </td>
+                  <td>
+                    <span className={`recent-status ${r.status}`}>{r.status}</span>
+                    {(r.status === 'queued' || r.status === 'running') && (
+                      <button
+                        className="btn mini stage-ghost"
+                        style={{ marginLeft: 8 }}
+                        onClick={() => void api.cancelRun(r.id).then(load)}
                       >
-                        {r.status}
-                      </span>
-                      {(r.status === 'queued' || r.status === 'running') && (
-                        <button
-                          className="btn ghost"
-                          style={{ marginLeft: 6, padding: '2px 8px' }}
-                          onClick={() => void api.cancelRun(r.id).then(load)}
-                        >
-                          cancelar
-                        </button>
-                      )}
-                    </td>
-                    <td className="mono" style={{ fontSize: 'var(--t-2xs)' }}>
-                      {(r.tokens_in + r.tokens_out).toLocaleString('pt-BR')} tok
-                    </td>
-                    <td className="mono">{rel(r.created_at)}</td>
-                  </tr>
-                ))}
-                {!runs.length && (
-                  <tr>
-                    <td>
-                      <Empty title="nenhum run" />
-                    </td>
-                  </tr>
-                )}
-              </tbody>
-            </table>
-          </div>
-        </div>
+                        cancelar
+                      </button>
+                    )}
+                  </td>
+                  <td className="mono dim">
+                    {(r.tokens_in + r.tokens_out).toLocaleString('pt-BR')} tok
+                  </td>
+                  <td className="mono dim">{rel(r.created_at)}</td>
+                </tr>
+              ))}
+              {!runs.length && (
+                <tr>
+                  <td>
+                    <Empty title="nenhum run" />
+                  </td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+        </section>
       </div>
-    </Page>
+    </div>
   );
 }
