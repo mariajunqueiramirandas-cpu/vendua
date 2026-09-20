@@ -2981,6 +2981,53 @@ a.lcard:hover {
   gap: 4px;
   margin-top: 5px;
 }
+
+@media (max-width: 760px) {
+  /* Agenda on phones: the 7-column week grid collapses to a stacked day
+     list — only days with meetings (plus today, as an anchor) render.
+     A week of empty boxes is pure scroll noise on a small screen. */
+  .agenda {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    min-width: 0;
+  }
+  .aday {
+    min-height: 0;
+    padding: 12px 14px;
+  }
+  .aday:not(.today):not(:has(.mtg)) {
+    display: none;
+  }
+  .aday.today:not(:has(.mtg))::after {
+    content: 'livre hoje';
+    color: var(--muted);
+    font-size: var(--t-xs);
+  }
+  .mtg {
+    padding: 10px 12px;
+    font-size: var(--t-sm);
+  }
+  .mtg-time {
+    font-size: var(--t-xs);
+  }
+  .mtg-acts .icon-btn {
+    min-width: 36px;
+    height: 36px;
+  }
+}
+@media (any-pointer: coarse) {
+  /* Meeting action icons are touch targets everywhere the pointer is
+     coarse — tablets get the week grid but still tap with fingers. */
+  .mtg-acts .icon-btn {
+    min-width: 36px;
+    height: 36px;
+  }
+}
+.cal-nav {
+  display: flex;
+  gap: 6px;
+}
 .icon-btn {
   display: inline-flex;
   align-items: center;

@@ -159,7 +159,7 @@ export default function Calendar() {
       title="Agenda"
       sub={`${meetings.filter((m) => m.status === 'scheduled').length} calls · ${weekLabel}`}
       actions={
-        <>
+        <div className="cal-nav">
           <button
             className="btn"
             onClick={() => setWeekStart((w) => shiftDay(w, -7))}
@@ -177,7 +177,7 @@ export default function Calendar() {
           >
             <ChevronRight size={14} />
           </button>
-        </>
+        </div>
       }
     >
       {err && <div className="notice err">{err}</div>}
