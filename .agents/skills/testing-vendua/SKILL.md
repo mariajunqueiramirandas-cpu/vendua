@@ -253,7 +253,7 @@ TINYFISH_API_KEY: ..., CONTROL_SECRET: ...}`). SESSION_SECRET has no org
   re-handshakes WhatsApp; a few in a row → WhatsApp drops them →
   `connState` cycles `connecting↔off` for minutes (card correctly shows
   'socket parado'/'conectando…', never 'ativo'). Recovery: `reconectar
-  agora` + wait, or just leave it — the 5s reconnect loop eventually
+agora` + wait, or just leave it — the 5s reconnect loop eventually
   lands `qr`. Not a code bug; avoid rapid socket restarts in test flows.
 - Stale component-state chips: a generated `.wa-code` pair code and a
   `✓/✗` testar chip survive driver switches + save/reload cycles in the
