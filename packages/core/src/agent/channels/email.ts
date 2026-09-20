@@ -24,7 +24,7 @@ export async function sendEmail(
       method: 'POST',
       headers: { 'content-type': 'application/json', authorization: `Bearer ${apiKey}` },
       body: JSON.stringify({
-        from: config.from ?? 'Venduá <agente@updates.vendua.com.br>',
+        from: config.from ?? 'Venduá <agente@auto.vendua.com.br>',
         to: [msg.to],
         subject: msg.subject,
         text: msg.body,
