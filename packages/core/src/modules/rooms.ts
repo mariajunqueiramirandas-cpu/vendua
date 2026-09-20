@@ -107,7 +107,7 @@ export async function bumpRoomExpiry(roomUrl: string | null, endsAt: Date): Prom
   const name = m?.[1];
   if (!name || !name.startsWith('vendua-')) return;
   try {
-    await fetch(`${DAILY_API}/rooms/${encodeURIComponent(name)}`, {
+    const res = await fetch(`${DAILY_API}/rooms/${encodeURIComponent(name)}`, {
       method: 'POST',
       headers: {
         authorization: `Bearer ${process.env.DAILY_API_KEY!.trim()}`,
@@ -118,6 +118,9 @@ export async function bumpRoomExpiry(roomUrl: string | null, endsAt: Date): Prom
       }),
       signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
     });
+    if (!res.ok) {
+      rlog.warn({ status: res.status, room: name }, 'daily room update failed');
+    }
   } catch (e) {
     rlog.warn({ err: e instanceof Error ? e.message : String(e) }, 'daily room update failed');
   }

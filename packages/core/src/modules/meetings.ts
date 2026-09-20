@@ -20,7 +20,7 @@
  */
 import { createHmac, timingSafeEqual } from 'node:crypto';
 import type { Sql } from '../platform/db.ts';
-import { HttpError, str } from '../platform/http.ts';
+import { HttpError, str, UUID_RE } from '../platform/http.ts';
 import { log } from '../platform/log.ts';
 import { addDays, hhmmToMinutes, localDateOf, localParts, zonedInstant } from '../platform/tz.ts';
 import { claimControl, controlTx } from './control.ts';
@@ -479,6 +479,7 @@ export interface BookResult {
  */
 export async function bookMeeting(sql: Sql, input: BookInput): Promise<BookResult> {
   const leadId = str(input.leadId, 'leadId', 64);
+  if (!UUID_RE.test(leadId)) throw new HttpError(400, 'BAD_REQUEST', 'leadId must be a uuid');
   const start = new Date(str(input.start, 'start', 64));
   if (Number.isNaN(start.getTime())) {
     throw new HttpError(422, 'BAD_START', 'start must be an ISO-8601 timestamp');
@@ -512,6 +513,15 @@ export async function bookMeeting(sql: Sql, input: BookInput): Promise<BookResul
     // COMMITTED two transactions could both see the slot free — the advisory
     // lock turns check-then-write into a critical section.
     await tx`select pg_advisory_xact_lock(hashtext('vendua.meetings.slot'))`;
+    // A racing book for this same (lead, slot) may have committed while we
+    // waited on the lock — re-check so it replays instead of 409ing.
+    const racedExisting = (
+      await tx<MeetingRow[]>`
+        select * from meetings where lead_id = ${leadId} and starts_at = ${start.toISOString()}
+          and status = 'scheduled'
+      `
+    )[0];
+    if (racedExisting) return { meeting: racedExisting, created: false as const, cfg, lead };
     const durationMin =
       input.durationMin && Number.isInteger(input.durationMin) && input.durationMin >= 5
         ? Math.min(input.durationMin, 240)
@@ -653,7 +663,10 @@ async function meetingEffects(
     meeting.room_url = roomUrl;
     meeting.gcal_event_id = gcalEventId ?? meeting.gcal_event_id;
   }
-  if (lead.email) {
+  // An unsubscribed lead can still book (clicking the link is fresh consent),
+  // but outbound honors the opt-out — dispatchMessage would refuse anyway, so
+  // don't leave a stranded 'queued' message on the thread.
+  if (lead.email && !lead.unsubscribed_at) {
     await queueMeetingMessage(sql, {
       leadId,
       channel: 'email',
@@ -664,10 +677,14 @@ async function meetingEffects(
   }
 }
 
+function tzLabel(tz: string): string {
+  return tz === 'America/Sao_Paulo' ? 'horário de Brasília' : `horário ${tz.split('/').pop()?.replace(/_/g, ' ') ?? tz}`;
+}
+
 function confirmationBody(startsAt: string, roomUrl: string | null, cfg: MeetingConfig): string {
   const when = fmtWhen(startsAt, cfg.tz);
   return [
-    `Oi! Sua call com a Venduá está marcada para ${when} (horário de Brasília).`,
+    `Oi! Sua call com a Venduá está marcada para ${when} (${tzLabel(cfg.tz)}).`,
     '',
     roomUrl
       ? `Link da sala: ${roomUrl}`
@@ -773,7 +790,22 @@ export async function cancelByLead(
     );
     return { row: cancelled, fresh: true as const };
   });
-  if (out.fresh && out.row.gcal_event_id) await gcal.deleteEvent(out.row.gcal_event_id);
+  // Delete runs on replays too — a first attempt may have crashed before or
+  // during it. gcal_event_id is only cleared on success so a failed delete
+  // stays retryable on the next cancel attempt instead of leaking a busy
+  // calendar event.
+  if (out.row.gcal_event_id) {
+    if (await gcal.deleteEvent(out.row.gcal_event_id)) {
+      await controlTx(
+        sql,
+        async (tx) =>
+          await tx`update meetings set gcal_event_id = null, updated_at = now() where id = ${out.row.id} and status = 'cancelled'`,
+      );
+      out.row.gcal_event_id = null;
+    } else {
+      mlog.warn({ meetingId: out.row.id }, 'gcal delete failed — event id kept for retry');
+    }
+  }
   return meetingJson(out.row);
 }
 
@@ -866,10 +898,26 @@ export async function patchMeeting(
           'staff',
         );
         if (target === 'no_show') {
+          // One open re-engagement task per lead — a no_show → done → no_show
+          // flip-flop must not stack duplicates.
           await tx`
             insert into lead_tasks (lead_id, title, due_at, created_by)
-            values (${leadId}, ${`Reengajar após no-show da call de ${fmtWhen(row.starts_at, cfg.tz)}`},
-                    ${new Date(Date.now() + 24 * 3600_000).toISOString()}, 'agent')
+            select ${leadId}, ${`Reengajar após no-show da call de ${fmtWhen(row.starts_at, cfg.tz)}`},
+                   ${new Date(Date.now() + 24 * 3600_000).toISOString()}, 'agent'
+            where not exists (
+              select 1 from lead_tasks
+              where lead_id = ${leadId} and done_at is null and created_by = 'agent'
+                and title like 'Reengajar após no-show da call%'
+            )
+          `;
+        }
+        if (target === 'done') {
+          // A done verdict after no_show means the call happened — the
+          // re-engagement task is moot, close it instead of leaving it open.
+          await tx`
+            update lead_tasks set done_at = now()
+            where lead_id = ${leadId} and done_at is null and created_by = 'agent'
+              and title like 'Reengajar após no-show da call%'
           `;
         }
       }
@@ -948,9 +996,13 @@ export async function patchMeeting(
     committed.cfg ?? (row ? await controlTx(sql, (tx) => meetingConfigTx(tx)) : undefined);
   if (row && cfg) {
     if (row.status === 'cancelled' && row.gcal_event_id) {
-      await gcal.deleteEvent(row.gcal_event_id);
-      // The stored id doubles as the "gcal sync pending" marker — clear it
-      // so a later replay doesn't chase an already-deleted event.
+      // The stored id doubles as the "gcal sync pending" marker — cleared only
+      // on success so a replay retries a failed delete instead of orphaning
+      // the event. Throwing surfaces a 500 whose retry replays the claim and
+      // lands right back here.
+      if (!(await gcal.deleteEvent(row.gcal_event_id))) {
+        throw new Error(`gcal delete failed for meeting ${row.id} — retry the request`);
+      }
       await controlTx(
         sql,
         async (tx) =>
@@ -958,7 +1010,12 @@ export async function patchMeeting(
       );
       row.gcal_event_id = null;
     } else if (row.status === 'scheduled' && input.startsAt !== undefined) {
-      if (row.gcal_event_id) await gcal.deleteEvent(row.gcal_event_id);
+      // Same retry contract: a failed delete throws (claim replay retries it);
+      // a replay after full success re-runs harmlessly — the stored id is the
+      // live event's.
+      if (row.gcal_event_id && !(await gcal.deleteEvent(row.gcal_event_id))) {
+        throw new Error(`gcal delete failed for meeting ${row.id} — retry the request`);
+      }
       const newId = await gcal.insertEvent({
         summary: 'Venduá · call remarcada',
         start: row.starts_at,

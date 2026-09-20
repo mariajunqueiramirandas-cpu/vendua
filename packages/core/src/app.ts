@@ -1824,6 +1824,9 @@ export function createApp({ sql, sessionSecret, controlSecret }: AppDeps) {
 
   app.get('/agendar', (c) => {
     c.header('cache-control', 'no-store');
+    // The ?t= token is the credential — don't let it ride Referer headers out
+    // to the fonts/CDN origins the page loads.
+    c.header('referrer-policy', 'no-referrer');
     return c.html(BOOKING_PAGE);
   });
 
