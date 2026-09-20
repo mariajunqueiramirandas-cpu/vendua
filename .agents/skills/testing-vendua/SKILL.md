@@ -394,3 +394,27 @@ own `qa-open/qa-paused/qa-closed/qa-edge` tenants and mutates the fixture's
 `dist/` — do NOT run two qa/e2e runs concurrently on the same storefront dir
 (teardown of one deletes dist under the other's preview → ENOENT failures).
 `_template` works as a qa fixture.
+
+## Live runs under a moving tree / HEAD-frozen probes
+
+- Prefer `bun run start` (not `dev`) when driving real provider runs: no
+  `--watch`, so a long TinyFish call can't be orphaned by a file save AND the
+  process keeps the code snapshot loaded at boot — critical when the working
+  tree is being edited mid-test (you test one consistent revision).
+- `bun install`-free HEAD probe: `git archive HEAD packages/core/src | tar -x
+  -C packages/core/.probe-snap` gives a stable importable copy of the committed
+  code — write the probe script inside `.probe-snap/` so bare imports still
+  resolve to the package's node_modules. Delete the dir when done.
+- `bun run seed` creates one `descoberto`-tagged lead fixture (Atelier do
+  Brigadeiro, Fortaleza, +5585…) — it predates any run; don't count it in a
+  run's output. Filter leads by `created_at > <run start>` for a clean count.
+- Real discovery runs (gemini + tinyfish) finish in ~45–90s on this box —
+  cheap enough to fire several per session; start recording the #/descoberta
+  `?run=<id>` stage immediately after the POST or you miss the stream.
+- Dedupe keys when asserting lead counts: phones (both cols) and the
+  instagram handle — URL-form instagram args (`instagram.com/x/`) now
+  normalize to `@x` on write, but older rows may hold either shape; the
+  name/business key also requires exact city-string equality.
+- Lookup-mode verification: grep the run journal for the quoted-name
+  web_search and for read_pages on name-matched directory/listing pages —
+  that's the signature the exception is firing.
