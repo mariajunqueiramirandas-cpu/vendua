@@ -10,9 +10,13 @@
  * `conferenceData.createRequest` with `Invalid conference type value`). The
  * video room is a configured static URL (settings `meeting.roomUrl`).
  *
- * If GOOGLE_CALENDAR_SERVICE_ACCOUNT_JSON or GOOGLE_CALENDAR_ID are unset
- * the module is disabled: warn-log once, booking keeps working with rules
- * as the only availability source, and insertEvent() returns null.
+ * Credentials come from GOOGLE_CALENDAR_SERVICE_ACCOUNT_JSON_B64
+ * (base64-encoded minified JSON — survives dotenv-style parsers that choke
+ * on raw JSON's spaces/newlines) falling back to raw
+ * GOOGLE_CALENDAR_SERVICE_ACCOUNT_JSON for local dev. If neither that nor
+ * GOOGLE_CALENDAR_ID is set the module is disabled: warn-log once, booking
+ * keeps working with rules as the only availability source, and
+ * insertEvent() returns null.
  */
 import { createSign } from 'node:crypto';
 import { log } from '../platform/log.ts';
@@ -40,26 +44,37 @@ let tokenCache: { token: string; expiresAt: number } | null = null;
 let lastError: string | null = null;
 let warnedDisabled = false;
 
+function parseSaKey(json: string): SaKey | null {
+  const parsed = JSON.parse(json) as Partial<SaKey>;
+  return parsed.client_email && parsed.private_key && parsed.token_uri
+    ? {
+        client_email: parsed.client_email,
+        private_key: parsed.private_key,
+        token_uri: parsed.token_uri,
+      }
+    : null;
+}
+
 function gcalEnv(): GcalEnv {
   if (envCache) return envCache;
-  const raw = process.env.GOOGLE_CALENDAR_SERVICE_ACCOUNT_JSON;
   const calendarId = process.env.GOOGLE_CALENDAR_ID?.trim() || null;
   let key: SaKey | null = null;
   let keyError: string | null = null;
-  if (raw) {
+  // b64-encoded JSON first (dotenv-safe), raw JSON as the local-dev fallback.
+  const sources: { raw: string | undefined; b64: boolean }[] = [
+    { raw: process.env.GOOGLE_CALENDAR_SERVICE_ACCOUNT_JSON_B64?.trim(), b64: true },
+    { raw: process.env.GOOGLE_CALENDAR_SERVICE_ACCOUNT_JSON, b64: false },
+  ];
+  for (const source of sources) {
+    if (key || !source.raw) continue;
     try {
-      const parsed = JSON.parse(raw) as Partial<SaKey>;
-      if (parsed.client_email && parsed.private_key && parsed.token_uri) {
-        key = {
-          client_email: parsed.client_email,
-          private_key: parsed.private_key,
-          token_uri: parsed.token_uri,
-        };
-      } else {
-        keyError = 'service account json missing client_email/private_key/token_uri';
-      }
+      const json = source.b64 ? Buffer.from(source.raw, 'base64').toString('utf8') : source.raw;
+      key = parseSaKey(json);
+      keyError = key
+        ? keyError
+        : (keyError ?? 'service account json missing client_email/private_key/token_uri');
     } catch (e) {
-      keyError = `service account json parse failed: ${e instanceof Error ? e.message : String(e)}`;
+      keyError = `service account json decode/parse failed: ${e instanceof Error ? e.message : String(e)}`;
     }
   }
   envCache = { key, keyError, calendarId };
