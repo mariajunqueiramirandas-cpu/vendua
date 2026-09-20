@@ -28,9 +28,13 @@ export default function Leads() {
   // Bumps on every filter change — a late dispatch result only renders if it
   // still belongs to the filter set it was launched under.
   const filterGen = useRef(0);
+  // Last-issued load wins: a stale response must not replace a newer result
+  // set under the same filters (it would dispatch hidden leads from `sel`).
+  const loadGen = useRef(0);
 
   const load = useCallback(
     (cur?: string) => {
+      const gen = ++loadGen.current;
       api
         .leads({
           ...(q ? { q } : {}),
@@ -40,9 +44,16 @@ export default function Leads() {
           limit: '100',
         })
         .then((r) => {
+          if (gen !== loadGen.current) return; // superseded by a newer request
           setLeads((ls) => (cur ? [...ls, ...r.leads] : r.leads));
           setCursor(r.nextCursor);
           setLoading(false);
+          if (!cur) {
+            // The visible set was replaced — keep only selections that
+            // survived, so dispatch never acts on leads staff can't see.
+            const ids = new Set(r.leads.map((l) => l.id));
+            setSel((s) => new Set([...s].filter((id) => ids.has(id))));
+          }
         });
     },
     [q, state, archived],

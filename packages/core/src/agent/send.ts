@@ -4,6 +4,7 @@ import { getIntegrationTx, type IntegrationRow } from '../modules/integrations.t
 import { markMessageFailed, markMessageSent, type Channel } from '../modules/threads.ts';
 import { sendEmail } from './channels/email.ts';
 import { sendWhatsApp } from './channels/whatsapp.ts';
+import { applyDeliveryEventTx } from './channels/email-inbound.ts';
 
 /**
  * agent/send — outbound dispatch, two transactions around the provider call:
@@ -156,6 +157,40 @@ export async function dispatchMessage(
     }
     const pmid = providerMessageId ? `${send.channel}:${providerMessageId}` : null;
     await markMessageSent(tx, messageId, pmid);
+    // A delivery event can beat this finalize — Resend emits it before our
+    // send call returns the provider id. Webhook ingest parks those in
+    // provider_events; now that the pmid exists, replay them in-order so the
+    // message/lead land in the state the event described.
+    if (providerMessageId) {
+      const pending = await tx<{ event: string; payload: { to?: string[] } }[]>`
+        select event, payload from provider_events
+        where channel = ${send.channel} and provider_id = ${providerMessageId}
+        order by id
+      `;
+      for (const ev of pending) {
+        if (ev.event === 'email.delivered') {
+          await tx`
+            update lead_messages set status = 'delivered', updated_at = now()
+            where id = ${messageId} and status = 'sent'`;
+        } else if (
+          ev.event === 'email.bounced' ||
+          ev.event === 'email.failed' ||
+          ev.event === 'email.complained'
+        ) {
+          await applyDeliveryEventTx(
+            tx,
+            ev.event as 'email.bounced' | 'email.failed' | 'email.complained',
+            providerMessageId,
+            ev.payload?.to,
+          );
+        }
+      }
+      if (pending.length) {
+        await tx`
+          delete from provider_events
+          where channel = ${send.channel} and provider_id = ${providerMessageId}`;
+      }
+    }
     return { ok: true };
   });
 }

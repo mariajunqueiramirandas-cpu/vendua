@@ -1407,10 +1407,21 @@ export function createApp({ sql, sessionSecret, controlSecret }: AppDeps) {
   app.post('/control/v1/agent/briefs', async (c) => {
     controlGate(c);
     const body = await bodyJson(c);
-    const name = str(body.name, 'name', 120);
-    const query = str(body.query, 'query', 500);
+    // A blank definition would schedule a useless daily run — require real
+    // text for the two fields the sweep feeds to discovery.
+    const name = str(body.name, 'name', 120).trim();
+    const query = str(body.query, 'query', 500).trim();
+    if (!name) throw new HttpError(422, 'BAD_REQUEST', 'name must be non-empty', { field: 'name' });
+    if (!query)
+      throw new HttpError(422, 'BAD_REQUEST', 'query must be non-empty', { field: 'query' });
     const segment = body.segment == null ? null : str(body.segment, 'segment', 80);
     const city = body.city == null ? null : str(body.city, 'city', 120);
+    let enabled = true;
+    if (body.enabled !== undefined && body.enabled !== null) {
+      if (typeof body.enabled !== 'boolean')
+        throw new HttpError(422, 'BAD_REQUEST', 'enabled must be a boolean', { field: 'enabled' });
+      enabled = body.enabled;
+    }
     let target: number | null = null;
     if (body.target !== undefined && body.target !== null && body.target !== '') {
       const n = Number(body.target);
@@ -1422,7 +1433,7 @@ export function createApp({ sql, sessionSecret, controlSecret }: AppDeps) {
       const row = (
         await tx`
           insert into discovery_briefs (name, query, segment, city, target, enabled)
-          values (${name}, ${query}, ${segment}, ${city}, ${target}, ${body.enabled !== false})
+          values (${name}, ${query}, ${segment}, ${city}, ${target}, ${enabled})
           returning id, name, query, segment, city, target, enabled, last_run_at, created_at
         `
       )[0]!;
@@ -1439,8 +1450,18 @@ export function createApp({ sql, sessionSecret, controlSecret }: AppDeps) {
     // Partial patch — absent keys untouched, explicit null clears
     // segment/city/target.
     const set: Record<string, unknown> = {};
-    if ('name' in body) set.name = str(body.name, 'name', 120);
-    if ('query' in body) set.query = str(body.query, 'query', 500);
+    // Same contract as POST — a blank name/query would schedule a useless run.
+    if ('name' in body) {
+      const v = str(body.name, 'name', 120).trim();
+      if (!v) throw new HttpError(422, 'BAD_REQUEST', 'name must be non-empty', { field: 'name' });
+      set.name = v;
+    }
+    if ('query' in body) {
+      const v = str(body.query, 'query', 500).trim();
+      if (!v)
+        throw new HttpError(422, 'BAD_REQUEST', 'query must be non-empty', { field: 'query' });
+      set.query = v;
+    }
     if ('segment' in body)
       set.segment = body.segment == null ? null : str(body.segment, 'segment', 80);
     if ('city' in body) set.city = body.city == null ? null : str(body.city, 'city', 120);

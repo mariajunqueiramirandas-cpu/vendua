@@ -119,12 +119,17 @@ export async function ingestResendEvent(
     const deliveryId = typeof event.data?.email_id === 'string' ? event.data.email_id : null;
     if (event.type === 'email.delivered' && deliveryId) {
       // The provider id stored on dispatch is channel-namespaced ('email:<id>').
-      await controlTx(
-        sql,
-        (tx) =>
-          tx`update lead_messages set status = 'delivered', updated_at = now()
-             where provider_message_id = ${`email:${deliveryId}`} and status = 'sent'`,
-      );
+      await controlTx(sql, async (tx) => {
+        const hit = await tx`
+          update lead_messages set status = 'delivered', updated_at = now()
+          where provider_message_id = ${`email:${deliveryId}`} and status = 'sent'
+          returning id`;
+        if (!hit.length) {
+          // Delivered can beat dispatch's finalize — the pmid isn't on the row
+          // yet. Park it; finalize drains provider_events once it lands.
+          await parkProviderEventTx(tx, deliveryId, event.type, {});
+        }
+      });
       return { ok: true } as ResendWebhookResult;
     }
     if (
@@ -174,13 +179,29 @@ export async function ingestResendEvent(
   });
 }
 
+/** Park a delivery event that arrived before dispatch stored the provider
+ *  id — finalize drains these once the pmid lands. Deduped on
+ *  (channel, provider_id, event) so provider retries don't pile up. */
+async function parkProviderEventTx(
+  tx: Sql,
+  providerId: string,
+  event: string,
+  payload: Record<string, unknown>,
+): Promise<void> {
+  await tx`
+    insert into provider_events (channel, provider_id, event, payload)
+    values ('email', ${providerId}, ${event}, ${tx.json(payload as never)})
+    on conflict do nothing`;
+}
+
 /** Deliverability feedback for outbound sends: bounce/fail flags the lead's
  *  address dead (email_bounced_at blocks further email sends via guardrails
  *  and dispatch), complaint = legal unsubscribe. Also fails any email still
  *  queued to the dead address so it never leaves the building. Unknown
- *  recipients ack-and-ignore — we only send to leads we recorded. */
-async function applyDeliveryEvent(
-  sql: Sql,
+ *  recipients ack-and-ignore — we only send to leads we recorded.
+ *  Tx-local so dispatch's finalize can replay parked events in its own tx. */
+export async function applyDeliveryEventTx(
+  tx: Sql,
   type: 'email.bounced' | 'email.failed' | 'email.complained',
   emailId: string,
   to: string[] | string | undefined,
@@ -188,7 +209,7 @@ async function applyDeliveryEvent(
   const recipients = (Array.isArray(to) ? to : typeof to === 'string' ? [to] : [])
     .map((t) => t.trim().toLowerCase())
     .filter(Boolean);
-  return controlTx(sql, async (tx) => {
+  {
     // provider_message_id names the exact send — thread → lead resolves the
     // real owner. Recipient email is only a fallback for sends without a
     // stored provider id, and leads can share an address, so it must match
@@ -201,17 +222,20 @@ async function applyDeliveryEvent(
         limit 1
       `
     )[0];
+    if (!owned) {
+      // The event beat dispatch's finalize — the pmid isn't stored yet. Park
+      // it so finalize can apply the per-message part later; lead-level
+      // effects below still apply now via the recipient fallback.
+      await parkProviderEventTx(tx, emailId, type, { to: recipients });
+    }
     let leadId = owned?.lead_id ?? null;
     if (!leadId) {
-      if (!recipients.length) return { status: 200, body: { ignored: 'no recipient' } };
+      if (!recipients.length) return { ignored: 'no recipient' };
       const byEmail = await tx<{ id: string }[]>`
         select id from leads where lower(email) = any(${recipients})
       `;
       if (byEmail.length !== 1) {
-        return {
-          status: 200,
-          body: { ignored: byEmail.length ? 'ambiguous recipient' : 'unknown recipient' },
-        };
+        return { ignored: byEmail.length ? 'ambiguous recipient' : 'unknown recipient' };
       }
       leadId = byEmail[0]!.id;
     }
@@ -238,7 +262,7 @@ async function applyDeliveryEvent(
         `
       )[0]?.email;
       if (!curEmail || (recipients.length > 0 && !recipients.includes(curEmail))) {
-        return { status: 200, body: { ok: true as const, leadId } };
+        return { ok: true as const, leadId };
       }
     }
 
@@ -277,6 +301,16 @@ async function applyDeliveryEvent(
           and t.channel = 'email' and m.status in ('queued', 'sending')
       `;
     }
-    return { status: 200, body: { ok: true as const, leadId } };
-  }).then((r) => r.body);
+    return { ok: true as const, leadId };
+  }
+}
+
+/** Webhook entry — opens its own control tx around the tx-local worker. */
+async function applyDeliveryEvent(
+  sql: Sql,
+  type: 'email.bounced' | 'email.failed' | 'email.complained',
+  emailId: string,
+  to: string[] | string | undefined,
+): Promise<{ ok: true; leadId: string } | { ignored: string }> {
+  return controlTx(sql, async (tx) => applyDeliveryEventTx(tx, type, emailId, to));
 }
