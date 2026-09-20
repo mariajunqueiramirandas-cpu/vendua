@@ -237,6 +237,10 @@ describe('contactsFromText', () => {
     const c = contactsFromText('Encomendas e cardápio: linktr.ee/deliciasdamahh');
     expect(c.hubs).toEqual(['https://linktr.ee/deliciasdamahh']);
   });
+  test('shorteners in text are hubs too — the fetch follows the redirect', () => {
+    const c = contactsFromText('peça pelo bit.ly/jodoces ou w.app/jodoces');
+    expect(c.hubs).toEqual(['https://bit.ly/jodoces', 'https://w.app/jodoces']);
+  });
 });
 
 describe('navLinks', () => {

@@ -109,7 +109,9 @@ const LISTING_HOSTS = new Set([
   'casadosdados.com',
 ]);
 /** Link-in-bio hubs — where an instagram-first business parks its real
- *  channels. A hub page is the cheapest fetch to a wa.me link. */
+ *  channels. A hub page is the cheapest fetch to a wa.me link. The shortener
+ *  tail is the same pattern: the provider follows the redirect, so surfacing
+ *  `bit.ly/x` in nav is a fetch that lands on the real contact page. */
 const LINK_HUB_HOSTS = new Set([
   'linktr.ee',
   'lnk.bio',
@@ -125,6 +127,13 @@ const LINK_HUB_HOSTS = new Set([
   'linkbio.co',
   'camps.bio',
   'flow.page',
+  // shorteners — one segment, opaque target, resolves on read
+  'bit.ly',
+  'w.app',
+  'cutt.ly',
+  'tinyurl.com',
+  'rebrand.ly',
+  'short.io',
 ]);
 /** Social redirect wrappers — the real destination sits in the `u` param
  *  (l.instagram.com/?u=…, l.facebook.com/l.php?u=…). Unwrap before parsing
@@ -427,7 +436,7 @@ export function contactsFromLinks(links: string[]): FoundContacts {
  *  required otherwise. */
 const TEXT_URL_RE = /https?:\/\/[^\s"'<>()[\]]+/gi;
 const BARE_CONTACT_RE =
-  /\b(?:[\w-]+\.)?(?:wa\.me|api\.whatsapp\.com|linktr\.ee|lnk\.bio|bio\.link|beacons\.ai|linklist\.bio|allmylinks\.com|msha\.ke|hoo\.be|carrd\.co|solo\.to|wa\.link|linkbio\.co|camps\.bio|flow\.page)\/[^\s"'<>()[\]]*/gi;
+  /\b(?:[\w-]+\.)?(?:wa\.me|api\.whatsapp\.com|linktr\.ee|lnk\.bio|bio\.link|beacons\.ai|linklist\.bio|allmylinks\.com|msha\.ke|hoo\.be|carrd\.co|solo\.to|wa\.link|linkbio\.co|camps\.bio|flow\.page|bit\.ly|w\.app|cutt\.ly|tinyurl\.com|rebrand\.ly|short\.io)\/[^\s"'<>()[\]]*/gi;
 const EMAIL_TEXT_RE = /[\w.+-]+@[\w-]+(?:\.[\w-]+)+/g;
 const ASSET_TAIL_RE = /\.(?:png|jpe?g|gif|webp|svg|css|js|mjs|ico|woff2?|ttf|otf)$/i;
 /** BR phones, formatted: optional +55, DDD (parens optional), 8-9 digit
