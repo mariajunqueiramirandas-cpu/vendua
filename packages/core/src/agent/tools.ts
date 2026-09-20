@@ -405,9 +405,10 @@ export async function executeTool(
           score >= minScore &&
           Boolean(wa);
         /** Autocontact is a first-contact, so it suppresses on live runs —
-         *  and on evidence a contact attempt already exists (a sent/delivered
-         *  message or a draft awaiting approval). A 'done' run that produced
-         *  nothing (e.g. quiet-hours blocked) must not suppress a re-fire. */
+         *  and on ANY outbound message row for the lead: 'failed' sends may
+         *  have been accepted by the provider before the crash (recovery
+         *  deliberately never retries them), 'rejected' is a staff veto.
+         *  A 'done' run that produced no message doesn't count. */
         const outreachActive = async (leadId: string) => {
           const live = (
             await tx`
@@ -424,7 +425,6 @@ export async function executeTool(
             select 1 from lead_messages m
             join lead_threads t on t.id = m.thread_id
             where t.lead_id = ${leadId} and m.direction = 'out'
-              and m.status in ('draft', 'queued', 'sending', 'sent', 'delivered')
             limit 1
           `
             )[0],
