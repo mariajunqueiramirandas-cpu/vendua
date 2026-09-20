@@ -243,6 +243,43 @@ export interface SegmentStat {
   live: number;
   costCents: number;
 }
+export interface Meeting {
+  id: string;
+  leadId: string | null;
+  leadName: string | null;
+  startsAt: string;
+  endsAt: string;
+  status: 'scheduled' | 'cancelled' | 'done' | 'no_show';
+  roomUrl: string | null;
+  bookerName: string | null;
+  bookerContact: string | null;
+  source: 'link' | 'staff' | 'agent';
+  gcalEventId: string | null;
+  reminder24hAt: string | null;
+  reminder1hAt: string | null;
+  cancelledAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+export interface MeetingStatus {
+  cfg: {
+    roomUrl: string | null;
+    publicBaseUrl: string;
+    tz: string;
+    slotMinutes: number;
+    bufferMinutes: number;
+    horizonDays: number;
+    weekly: Record<string, [string, string][]>;
+    bookingUrl: string | null;
+  };
+  room: { provider: 'daily' | 'static' };
+  gcal: {
+    configured: boolean;
+    calendarId: string | null;
+    clientEmail: string | null;
+    lastError: string | null;
+  };
+}
 
 // ---------- calls ----------
 export const api = {
@@ -393,4 +430,19 @@ export const api = {
     req<{ brief: Brief }>(`/agent/briefs/${id}`, { method: 'PATCH', body: JSON.stringify(patch) }),
   deleteBrief: (id: string) => req<{ ok: true }>(`/agent/briefs/${id}`, { method: 'DELETE' }),
   segments: () => req<{ segments: SegmentStat[] }>('/agent/segments'),
+
+  meetings: (q: { scope?: string; leadId?: string; from?: string; to?: string } = {}) => {
+    const params = new URLSearchParams(
+      Object.entries({ ...q, ...(q.leadId ? { lead_id: q.leadId } : {}) })
+        .filter(([k, v]) => v && k !== 'leadId') as [string, string][],
+    );
+    return req<{ meetings: Meeting[] }>(`/meetings${params.size ? `?${params}` : ''}`);
+  },
+  meetingsStatus: () => req<MeetingStatus>('/meetings/status'),
+  bookingLink: (leadId: string) =>
+    req<{ url: string }>(`/meetings/link?lead_id=${encodeURIComponent(leadId)}`),
+  createMeeting: (body: { leadId: string; start: string; durationMin?: number }) =>
+    req<{ meeting: Meeting }>('/meetings', { method: 'POST', body: JSON.stringify(body) }),
+  patchMeeting: (id: string, patch: { status?: string; startsAt?: string; endsAt?: string }) =>
+    req<{ meeting: Meeting }>(`/meetings/${id}`, { method: 'PATCH', body: JSON.stringify(patch) }),
 };

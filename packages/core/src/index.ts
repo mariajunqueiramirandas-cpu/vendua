@@ -6,6 +6,7 @@ import { ingestInbound } from './agent/inbound.ts';
 import { startAgentWorker } from './agent/runner.ts';
 import { ensureSocket, onInboundMessage } from './agent/channels/whatsapp.ts';
 import { getIntegration } from './modules/integrations.ts';
+import { setBookingSecret } from './modules/meetings.ts';
 
 const databaseUrl =
   process.env.DATABASE_URL ?? 'postgres://vendua_app:vendua_app@localhost:5433/vendua';
@@ -33,6 +34,10 @@ await migrator.end();
 
 const sql = createSql(databaseUrl);
 const app = createApp({ sql, sessionSecret, controlSecret: process.env.CONTROL_SECRET });
+
+// Booking links minted by the agent worker sign with the same staff key the
+// app uses (controlSecret ?? sessionSecret) — set before the worker starts.
+setBookingSecret(process.env.CONTROL_SECRET ?? sessionSecret);
 
 // Agent harness: in-process worker (durable Postgres queue — runs survive
 // restarts) + WhatsApp socket when the baileys driver is enabled.

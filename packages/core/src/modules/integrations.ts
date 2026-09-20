@@ -356,24 +356,74 @@ export function validateSetting(key: string, value: unknown): void {
     return;
   }
 
-  // Goal 'meeting' — the founders' Google Meet booking link (Google Calendar
-  // appointment schedule). The agent shares it verbatim once a lead agrees;
-  // https only, or a prompt-injected javascript:/data: URL would ride out in
-  // an outbound message.
+  // 'meeting' — CRM-native booking config. bookingUrl is the legacy static
+  // link the agent prompt falls back on when token minting fails; roomUrl is
+  // the static video room used when the Daily provider isn't configured;
+  // publicBaseUrl is where /agendar links point. All URLs https-only — a
+  // prompt-injected javascript:/data: URL would ride out in an outbound
+  // message.
   if (key === 'meeting') {
     if (!value || typeof value !== 'object' || Array.isArray(value)) {
       throw bad('*', 'must be an object');
     }
-    const v = value as { bookingUrl?: unknown };
-    if (v.bookingUrl === undefined || v.bookingUrl === null || v.bookingUrl === '') return;
-    if (typeof v.bookingUrl !== 'string' || v.bookingUrl.length > 500) {
-      throw bad('bookingUrl', 'must be a string (≤500 chars)');
+    const v = value as Record<string, unknown>;
+    for (const k of ['bookingUrl', 'roomUrl', 'publicBaseUrl'] as const) {
+      const u = v[k];
+      if (u === undefined || u === null || u === '') continue;
+      if (typeof u !== 'string' || u.length > 500) throw bad(k, 'must be a string (≤500 chars)');
+      try {
+        if (new URL(u).protocol !== 'https:') throw bad(k, 'must be https');
+      } catch (e) {
+        if (e instanceof HttpError) throw e;
+        throw bad(k, 'must be a URL');
+      }
     }
-    try {
-      if (new URL(v.bookingUrl).protocol !== 'https:') throw bad('bookingUrl', 'must be https');
-    } catch (e) {
-      if (e instanceof HttpError) throw e;
-      throw bad('bookingUrl', 'must be a URL');
+    if (v.tz !== undefined) {
+      if (typeof v.tz !== 'string' || v.tz.length > 80) throw bad('tz', 'must be an IANA name');
+      try {
+        new Intl.DateTimeFormat('en', { timeZone: v.tz });
+      } catch {
+        throw bad('tz', `unknown IANA timezone '${v.tz}'`);
+      }
+    }
+    const intField = (k: 'slotMinutes' | 'bufferMinutes' | 'horizonDays') => {
+      const n = v[k];
+      if (n === undefined || n === null) return undefined;
+      if (typeof n !== 'number' || !Number.isInteger(n) || n < 0 || n > 240) {
+        throw bad(k, 'must be an integer 0–240');
+      }
+      return n;
+    };
+    const slotMinutes = intField('slotMinutes');
+    intField('bufferMinutes');
+    const horizonDays = intField('horizonDays');
+    if (slotMinutes !== undefined && (slotMinutes < 5 || slotMinutes > 120)) {
+      throw bad('slotMinutes', 'must be 5–120');
+    }
+    if (horizonDays !== undefined && (horizonDays < 1 || horizonDays > 60)) {
+      throw bad('horizonDays', 'must be 1–60');
+    }
+    if (v.weekly !== undefined) {
+      if (typeof v.weekly !== 'object' || v.weekly === null || Array.isArray(v.weekly)) {
+        throw bad('weekly', 'must be { sun…sat: [[open, close], …] }');
+      }
+      for (const day of ['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat']) {
+        const windows = (v.weekly as Record<string, unknown>)[day];
+        if (windows === undefined) continue;
+        if (!Array.isArray(windows) || windows.length > 6) {
+          throw bad(`weekly.${day}`, 'must be an array of ≤6 [HH:MM, HH:MM] windows');
+        }
+        for (const w of windows) {
+          const ok =
+            Array.isArray(w) &&
+            w.length === 2 &&
+            w.every(
+              (t) => typeof t === 'string' && /^([01]\d|2[0-3]):[0-5]\d$/.test(t),
+            );
+          if (!ok) throw bad(`weekly.${day}`, 'windows must be [HH:MM, HH:MM] pairs');
+          if (w[0] >= w[1]) throw bad(`weekly.${day}`, 'window open must be before close');
+        }
+      }
     }
     return;
   }

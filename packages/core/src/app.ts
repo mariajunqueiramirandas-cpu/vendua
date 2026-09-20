@@ -85,6 +85,19 @@ import {
 } from './modules/integrations.ts';
 import { claimControl, controlTx } from './modules/control.ts';
 import { pipelineForecast, snapshotPipelineTx } from './modules/forecast.ts';
+import {
+  availableSlots,
+  bookMeeting,
+  bookingLink,
+  cancelByLead,
+  listMeetings,
+  meetingsStatus,
+  nextMeetingForLead,
+  patchMeeting,
+  verifyBookingToken,
+} from './modules/meetings.ts';
+import { BOOKING_PAGE } from './modules/booking-page.ts';
+import * as rooms from './modules/rooms.ts';
 import { drain, insertRun } from './agent/runner.ts';
 import { ingestInbound } from './agent/inbound.ts';
 import { ingestResendEvent, svixHeaders, svixVerified } from './agent/channels/email-inbound.ts';
@@ -1215,6 +1228,83 @@ export function createApp({ sql, sessionSecret, controlSecret }: AppDeps) {
     return c.json(res.body);
   });
 
+  // ---- meetings ---------------------------------------------------------------
+  // CRM-native booking: staff list/patch/manual-book, plus the booking-link
+  // mint the LeadDetail "copiar link" button uses.
+
+  app.get('/control/v1/meetings/status', async (c) => {
+    controlGate(c);
+    return c.json(await meetingsStatus(sql));
+  });
+
+  app.get('/control/v1/meetings', async (c) => {
+    controlGate(c);
+    const scope = c.req.query('scope');
+    const leadId = c.req.query('lead_id');
+    const from = c.req.query('from');
+    const to = c.req.query('to');
+    const meetings = await listMeetings(sql, {
+      ...(scope === 'upcoming' || scope === 'past' || scope === 'all' ? { scope } : {}),
+      ...(leadId ? { leadId: str(leadId, 'lead_id', 64) } : {}),
+      ...(from ? { from: new Date(from) } : {}),
+      ...(to ? { to: new Date(to) } : {}),
+    });
+    return c.json({ meetings });
+  });
+
+  // Minted per lead — the agent and the UI share the same token format, so a
+  // link copied here and one sent by the agent resolve identically.
+  app.get('/control/v1/meetings/link', async (c) => {
+    controlGate(c);
+    const leadId = str(c.req.query('lead_id'), 'lead_id', 64);
+    const lead = await controlTx(
+      sql,
+      async (tx) => (await tx`select id from leads where id = ${leadId}`)[0],
+    );
+    if (!lead) throw new HttpError(404, 'LEAD_NOT_FOUND', 'lead not found');
+    return c.json({ url: await bookingLink(sql, leadId, staffSecret) });
+  });
+
+  // Staff-side booking — same pipeline the public endpoint runs (grid check,
+  // buffer, gcal busy, room, confirm email).
+  app.post('/control/v1/meetings', async (c) => {
+    controlGate(c);
+    const key = requireIdemKey(c);
+    const body = await bodyJson(c);
+    // The claim wraps bookMeeting's insert step — a retried POST replays the
+    // stored meeting instead of re-validating against a now-taken slot.
+    const res = await claimControl(sql, key, async () => {
+      const out = await bookMeeting(sql, {
+        leadId: str(body.leadId, 'leadId', 64),
+        start: str(body.start, 'start', 64),
+        bookerName: body.name ? str(body.name, 'name', 200) : null,
+        bookerContact: body.contact ? str(body.contact, 'contact', 300) : null,
+        source: 'staff',
+        ...(typeof body.durationMin === 'number' ? { durationMin: body.durationMin } : {}),
+      });
+      return { status: 201, body: { meeting: out.meeting } };
+    });
+    if (res.replayed) c.header('x-idempotent-replay', 'true');
+    return c.json(res.body, res.status as 201);
+  });
+
+  app.patch('/control/v1/meetings/:id', async (c) => {
+    controlGate(c);
+    const body = await bodyJson(c);
+    const res = await patchMeeting(
+      sql,
+      uuidParam(c, 'id'),
+      {
+        ...(body.status !== undefined ? { status: str(body.status, 'status', 20) as 'cancelled' | 'done' | 'no_show' } : {}),
+        ...(body.startsAt !== undefined ? { startsAt: str(body.startsAt, 'startsAt', 64) } : {}),
+        ...(body.endsAt !== undefined ? { endsAt: str(body.endsAt, 'endsAt', 64) } : {}),
+      },
+      requireIdemKey(c),
+    );
+    if (res.replayed) c.header('x-idempotent-replay', 'true');
+    return c.json(res.body, res.status as 200);
+  });
+
   // ---- agent runs --------------------------------------------------------------
   app.get('/control/v1/agent/runs', async (c) => {
     controlGate(c);
@@ -1683,6 +1773,90 @@ export function createApp({ sql, sessionSecret, controlSecret }: AppDeps) {
       providerMessageId: str(rawMsgId, 'messageId', 200),
     });
     return c.json(res, 201);
+  });
+
+  // ---- public booking surface --------------------------------------------------
+  // UNAUTHENTICATED — the token IS the credential (HMAC lead id + exp).
+  // Invalid/expired tokens get a uniform 404: no oracle on whether a lead
+  // exists. Rate-limited per IP like /control/v1/login.
+  const bookHits = new Map<string, { count: number; resetAt: number }>();
+  const bookRate = (c: Context) => {
+    const ip = (() => {
+      if (!trustProxy) return 'local';
+      const xff = c.req
+        .header('x-forwarded-for')
+        ?.split(',')
+        .map((s) => s.trim());
+      return xff?.at(-1 - proxyHops) ?? 'unknown';
+    })();
+    const now = Date.now();
+    for (const [k, v] of bookHits) if (v.resetAt <= now) bookHits.delete(k);
+    const bucket = bookHits.get(ip);
+    if (!bucket || bucket.resetAt <= now) {
+      bookHits.set(ip, { count: 1, resetAt: now + 60_000 });
+    } else if (++bucket.count > 60) {
+      throw new HttpError(429, 'RATE_LIMITED', 'too many requests — retry in a minute');
+    }
+  };
+
+  app.get('/agendar', (c) => {
+    c.header('cache-control', 'no-store');
+    return c.html(BOOKING_PAGE);
+  });
+
+  app.get('/book/v1/slots', async (c) => {
+    bookRate(c);
+    const leadId = verifyBookingToken(str(c.req.query('t') ?? '', 't', 500), staffSecret);
+    if (!leadId) throw new HttpError(404, 'NOT_FOUND', 'not found');
+    const lead = await controlTx(
+      sql,
+      async (tx) =>
+        (
+          await tx<{ name: string; whatsapp: string | null; phone: string | null }[]>`
+            select name, whatsapp, phone from leads where id = ${leadId} and archived_at is null
+          `
+        )[0],
+    );
+    if (!lead) throw new HttpError(404, 'NOT_FOUND', 'not found');
+    const [{ cfg, slots }, existing] = await Promise.all([
+      availableSlots(sql, new Date()),
+      nextMeetingForLead(sql, leadId),
+    ]);
+    return c.json({
+      leadName: lead.name,
+      leadWhats: lead.whatsapp ?? lead.phone ?? null,
+      // roomConfigured drives the page's copy — true when either the static
+      // URL is set or the Daily provider will mint a room at book time.
+      roomConfigured: Boolean(cfg.roomUrl) || rooms.dailyConfigured(),
+      slotMinutes: cfg.slotMinutes,
+      tz: cfg.tz,
+      existing,
+      slots: slots.map((s) => ({ start: s.start.toISOString(), end: s.end.toISOString() })),
+    });
+  });
+
+  app.post('/book/v1/book', async (c) => {
+    bookRate(c);
+    const body = await bodyJson(c);
+    const leadId = verifyBookingToken(str(body.t ?? '', 't', 500), staffSecret);
+    if (!leadId) throw new HttpError(404, 'NOT_FOUND', 'not found');
+    const out = await bookMeeting(sql, {
+      leadId,
+      start: str(body.start, 'start', 64),
+      bookerName: body.name ? str(body.name, 'name', 200) : null,
+      bookerContact: body.contact ? str(body.contact, 'contact', 300) : null,
+      source: 'link',
+    });
+    // created=false is the idempotent replay — same meeting, no side effects.
+    return c.json({ meeting: out.meeting }, out.created ? 201 : 200);
+  });
+
+  app.post('/book/v1/cancel', async (c) => {
+    bookRate(c);
+    const body = await bodyJson(c);
+    const leadId = verifyBookingToken(str(body.t ?? '', 't', 500), staffSecret);
+    if (!leadId) throw new HttpError(404, 'NOT_FOUND', 'not found');
+    return c.json({ meeting: await cancelByLead(sql, leadId) });
   });
 
   // ---- control SPA ---------------------------------------------------------------

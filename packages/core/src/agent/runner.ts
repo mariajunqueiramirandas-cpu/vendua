@@ -15,6 +15,7 @@ import { buildSystemPrompt } from './prompts.ts';
 import { executeTool, toolsFor, type ToolContext } from './tools.ts';
 import { dispatchMessage } from './send.ts';
 import { channelAvailabilityTx, whatsappReadyTx } from './guardrails.ts';
+import { bookingLinkForRunner, sweepMeetingReminders } from '../modules/meetings.ts';
 
 const agentLog = log.child({ mod: 'agent' });
 
@@ -161,7 +162,15 @@ async function contextFor(
         parts.push(`GOAL: ${goal}`);
         if (goal === 'meeting') {
           const meeting = await getSetting<{ bookingUrl?: string }>(sql, 'meeting', {});
-          bookingUrl = meeting.bookingUrl ?? null;
+          // CRM-native link: /agendar?t=<per-lead signed token>. The stored
+          // bookingUrl stays as the fallback — mint needs the boot secret.
+          try {
+            bookingUrl =
+              (await bookingLinkForRunner(sql, run.lead_id!)) ?? meeting.bookingUrl ?? null;
+          } catch (e) {
+            agentLog.warn({ err: e }, 'booking link mint failed — falling back to setting');
+            bookingUrl = meeting.bookingUrl ?? null;
+          }
           parts.push(`BOOKING_URL: ${bookingUrl ?? '(não configurado)'}`);
         }
         // Ground truth on reachable channels — the model must not compose on
@@ -524,6 +533,7 @@ export function startAgentWorker(sql: Sql, intervalMs = 15_000) {
       .then(() => sweepOutreach(sql))
       .then(() => sweepBriefs(sql))
       .then(() => sweepPipelineSnapshots(sql))
+      .then(() => sweepMeetingReminders(sql))
       .catch((e) => agentLog.error({ err: e }, 'worker failed'))
       .finally(() => {
         draining = false;

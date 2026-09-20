@@ -357,7 +357,7 @@ export async function composeMessage(
     leadId: string;
     channel: Channel;
     body: string;
-    author: 'staff' | 'agent';
+    author: 'staff' | 'agent' | 'system';
     status?: 'draft' | 'queued';
     subject?: string;
     subjectOverride?: string;
@@ -382,7 +382,7 @@ export async function composeMessageTx(
     leadId: string;
     channel: Channel;
     body: string;
-    author: 'staff' | 'agent';
+    author: 'staff' | 'agent' | 'system';
     status?: 'draft' | 'queued';
     subject?: string;
     /** Explicit staff/agent override — replaces the thread's subject even when

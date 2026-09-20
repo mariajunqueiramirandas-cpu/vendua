@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState, type ChangeEvent } from 'react';
 import QRCode from 'qrcode';
-import { api, type Integration } from '../api.ts';
+import { api, type Integration, type MeetingStatus } from '../api.ts';
 import { ConfirmBtn, Page } from '../components.tsx';
 
 /** Config — "sala de máquinas". Left column: provider cards. The card's
@@ -950,9 +950,20 @@ function PitchCard({
 
 // ---------- meeting ----------
 
-/** The booking link the 'meeting' goal shares — a Google Calendar
- *  appointment-schedule URL (auto-creates the Meet). Agent sends it verbatim
- *  once a lead agrees; validation enforces https. */
+const DAY_NAMES: [string, string][] = [
+  ['seg', 'mon'],
+  ['ter', 'tue'],
+  ['qua', 'wed'],
+  ['qui', 'thu'],
+  ['sex', 'fri'],
+  ['sáb', 'sat'],
+  ['dom', 'sun'],
+];
+
+/** Availability used by /agendar + the agent's booking link. Weekly windows
+ *  per weekday (lists of HH:MM–HH:MM pairs), slot grid, buffer, horizon; the
+ *  roomUrl is the static video room unless DAILY_API_KEY mints per-meeting
+ *  rooms; status chips report the gcal + room wiring from the status API. */
 function MeetingCard({
   value,
   onSave,
@@ -960,30 +971,206 @@ function MeetingCard({
   value: Record<string, unknown>;
   onSave: (v: Record<string, unknown>) => void;
 }) {
-  const cur = { bookingUrl: str(value.bookingUrl, '') };
+  const [status, setStatus] = useState<MeetingStatus | null>(null);
+  useEffect(() => {
+    api.meetingsStatus().then(setStatus).catch(() => undefined);
+  }, []);
+
+  type Weekly = Record<string, [string, string][]>;
+  const normWeekly = (w: unknown): Weekly => {
+    const out: Weekly = {};
+    if (w && typeof w === 'object' && !Array.isArray(w)) {
+      for (const [day, list] of Object.entries(w as Record<string, unknown>)) {
+        if (Array.isArray(list)) {
+          out[day] = list.filter(
+            (p): p is [string, string] => Array.isArray(p) && p.length === 2,
+          );
+        }
+      }
+    }
+    for (const [, k] of DAY_NAMES) if (!out[k]) out[k] = [];
+    return out;
+  };
+
+  const cur = {
+    bookingUrl: str(value.bookingUrl, ''),
+    roomUrl: str(value.roomUrl, ''),
+    publicBaseUrl: str(value.publicBaseUrl, 'https://crm.vendua.com.br'),
+    tz: str(value.tz, 'America/Sao_Paulo'),
+    slotMinutes: num(value.slotMinutes, 30),
+    bufferMinutes: num(value.bufferMinutes, 15),
+    horizonDays: num(value.horizonDays, 14),
+    weekly: normWeekly(value.weekly ?? status?.cfg.weekly),
+  };
   const [edit, setEdit] = useState(cur);
-  useEffect(() => setEdit(cur), [JSON.stringify(cur)]); // eslint-disable-line react-hooks/exhaustive-deps
+  const [loaded, setLoaded] = useState(false);
+  useEffect(() => {
+    // hydrate once from the status endpoint (normalized defaults) — then user edits win
+    if (status && !loaded) {
+      setEdit({ ...cur, weekly: normWeekly(value.weekly ?? status.cfg.weekly) });
+      setLoaded(true);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [status]);
   const dirty = JSON.stringify(edit) !== JSON.stringify(cur);
+
+  const setDay = (day: string, wins: [string, string][]) =>
+    setEdit({ ...edit, weekly: { ...edit.weekly, [day]: wins } });
+
   return (
     <div className="drv">
+      <div style={{ display: 'flex', gap: 6, marginBottom: 12, flexWrap: 'wrap' }}>
+        <span className={`chip ${status?.room.provider === 'daily' ? 'agent' : ''}`}>
+          sala: {status ? (status.room.provider === 'daily' ? 'daily.co (por call)' : 'estática') : '…'}
+        </span>
+        <span className={`chip ${status?.gcal.configured ? 'agent' : 'warn'}`}>
+          {status
+            ? status.gcal.configured
+              ? 'google agenda conectada'
+              : 'google agenda: não configurada'
+            : '…'}
+        </span>
+        {status?.gcal.lastError && (
+          <span className="chip bad" title={status.gcal.lastError}>
+            erro: {status.gcal.lastError.slice(0, 40)}
+          </span>
+        )}
+      </div>
+
+      <div className="field">
+        <label>link da sala (estático)</label>
+        <input
+          value={edit.roomUrl}
+          placeholder="https://meet.google.com/…"
+          onChange={(e) => setEdit({ ...edit, roomUrl: e.target.value })}
+        />
+        <div className="hint">usado quando o provider é estático — o lead recebe na confirmação</div>
+      </div>
+      <div className="field">
+        <label>base pública do link</label>
+        <input
+          value={edit.publicBaseUrl}
+          placeholder="https://crm.vendua.com.br"
+          onChange={(e) => setEdit({ ...edit, publicBaseUrl: e.target.value })}
+        />
+        <div className="hint">prefixo do link de agendamento — /agendar?t=…</div>
+      </div>
       <div className="field" style={{ marginBottom: 0 }}>
-        <label>link de agendamento</label>
+        <label>fallback manual (objetivo reunião sem link interno)</label>
         <input
           value={edit.bookingUrl}
           placeholder="https://calendar.google.com/calendar/appointments/…"
-          onChange={(e) => setEdit({ bookingUrl: e.target.value })}
+          onChange={(e) => setEdit({ ...edit, bookingUrl: e.target.value })}
         />
-        <div className="hint">
-          google calendar → agendamento — gera o Meet sozinho pra quem marcar
+      </div>
+
+      <div style={{ display: 'flex', gap: 8, margin: '12px 0' }}>
+        <div className="field" style={{ flex: 1, marginBottom: 0 }}>
+          <label>duração (min)</label>
+          <input
+            type="number"
+            min={5}
+            max={120}
+            value={edit.slotMinutes}
+            onChange={(e) => setEdit({ ...edit, slotMinutes: Number(e.target.value) })}
+          />
+        </div>
+        <div className="field" style={{ flex: 1, marginBottom: 0 }}>
+          <label>intervalo (min)</label>
+          <input
+            type="number"
+            min={0}
+            max={240}
+            value={edit.bufferMinutes}
+            onChange={(e) => setEdit({ ...edit, bufferMinutes: Number(e.target.value) })}
+          />
+        </div>
+        <div className="field" style={{ flex: 1, marginBottom: 0 }}>
+          <label>horizonte (dias)</label>
+          <input
+            type="number"
+            min={1}
+            max={60}
+            value={edit.horizonDays}
+            onChange={(e) => setEdit({ ...edit, horizonDays: Number(e.target.value) })}
+          />
         </div>
       </div>
+
+      <div className="field">
+        <label>disponibilidade semanal</label>
+        {DAY_NAMES.map(([label, day]) => (
+          <div key={day} style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 4 }}>
+            <span
+              className="mono"
+              style={{ width: 30, color: 'var(--muted)', fontSize: 'var(--t-2xs)' }}
+            >
+              {label}
+            </span>
+            {(edit.weekly[day] ?? []).map((w, i) => (
+              <span key={i} style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+                <input
+                  type="time"
+                  value={w[0]}
+                  onChange={(e) =>
+                    setDay(
+                      day,
+                      (edit.weekly[day] ?? []).map((x, j) =>
+                        j === i ? ([e.target.value, x[1]] as [string, string]) : x,
+                      ),
+                    )
+                  }
+                  style={{ padding: '3px 5px', width: 78 }}
+                />
+                <span style={{ color: 'var(--muted)' }}>–</span>
+                <input
+                  type="time"
+                  value={w[1]}
+                  onChange={(e) =>
+                    setDay(
+                      day,
+                      (edit.weekly[day] ?? []).map((x, j) =>
+                        j === i ? ([x[0], e.target.value] as [string, string]) : x,
+                      ),
+                    )
+                  }
+                  style={{ padding: '3px 5px', width: 78 }}
+                />
+                <button
+                  className="icon-btn"
+                  title="remover janela"
+                  onClick={() =>
+                    setDay(day, (edit.weekly[day] ?? []).filter((_, j) => j !== i))
+                  }
+                >
+                  ×
+                </button>
+              </span>
+            ))}
+            {(edit.weekly[day] ?? []).length === 0 && (
+              <span className="hint" style={{ margin: 0 }}>
+                fechado
+              </span>
+            )}
+            <button
+              className="icon-btn"
+              title="adicionar janela"
+              onClick={() => setDay(day, [...(edit.weekly[day] ?? []), ['09:00', '12:00']])}
+            >
+              +
+            </button>
+          </div>
+        ))}
+        <div className="hint">janelas no horário de Brasília — fora delas nenhum slot aparece</div>
+      </div>
+
       <div className="actions">
         <button
           className="btn primary"
           disabled={!dirty}
           onClick={() => onSave({ ...value, ...edit })}
         >
-          salvar link
+          salvar agenda
         </button>
         {dirty && (
           <button className="btn ghost" onClick={() => setEdit(cur)}>
