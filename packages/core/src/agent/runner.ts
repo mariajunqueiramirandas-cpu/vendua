@@ -1,7 +1,13 @@
 import type { Sql } from '../platform/db.ts';
 import { log } from '../platform/log.ts';
 import { controlTx } from '../modules/control.ts';
-import { getIntegration, getPitch, getSetting } from '../modules/integrations.ts';
+import {
+  getIntegration,
+  getPitch,
+  getSetting,
+  DEFAULT_GUARDRAILS,
+  type Guardrails,
+} from '../modules/integrations.ts';
 import { segmentStats, type AgentGoal } from '../modules/leads.ts';
 import { providerFor, type AgentMessage } from './llm.ts';
 import { buildSystemPrompt } from './prompts.ts';
@@ -26,7 +32,10 @@ const STEP_BUDGET: Record<RunRow['kind'], number> = {
   triage: 12,
   reply: 14,
   outreach: 12,
-  discovery: 20,
+  // Research-per-lead discovery: flavors fan-out → page reads per prospect
+  // → dossier'd create. A step fans out into parallel calls, so this is
+  // model turns, not tool calls.
+  discovery: 30,
 };
 const HEARTBEAT_MS = 20_000;
 
@@ -296,7 +305,15 @@ export async function runOnce(sql: Sql): Promise<boolean> {
     const pitch = await getPitch(sql);
     const memory = await getSetting<{ facts: string[] }>(sql, 'agent_memory', { facts: [] });
     const { text: context, goal, bookingUrl } = await contextFor(sql, run);
-    const system = buildSystemPrompt(run.kind, pitch, memory, { goal, bookingUrl });
+    const g = await getSetting<Partial<Guardrails>>(sql, 'guardrails', {});
+    const system = buildSystemPrompt(run.kind, pitch, memory, {
+      goal,
+      bookingUrl,
+      autoContact: {
+        enabled: g.discoveryAutoContact ?? DEFAULT_GUARDRAILS.discoveryAutoContact,
+        minScore: g.discoveryContactMinScore ?? DEFAULT_GUARDRAILS.discoveryContactMinScore,
+      },
+    });
     const tools = toolsFor(run.kind);
     const ctx: ToolContext = {
       sql,
@@ -310,7 +327,7 @@ export async function runOnce(sql: Sql): Promise<boolean> {
         run.params.channel === 'whatsapp' || run.params.channel === 'email'
           ? run.params.channel
           : null,
-      extractCache: new Map(),
+      pageCache: new Map(),
     };
 
     steps.push({ type: 'system_prompt', content: system });

@@ -15,7 +15,13 @@ export function buildSystemPrompt(
   kind: 'triage' | 'reply' | 'outreach' | 'discovery',
   pitch: Pitch,
   memory: { facts: string[] },
-  opts: { goal?: AgentGoal; bookingUrl?: string | null } = {},
+  opts: {
+    goal?: AgentGoal;
+    bookingUrl?: string | null;
+    /** discovery: score gate for auto-contact — mirrors the create_lead
+     *  guardrail so the model knows what its fitScore decides. */
+    autoContact?: { enabled: boolean; minScore: number };
+  } = {},
 ): string {
   const base = [
     `Você é o agente de vendas da Venduá. Produto: ${pitch.product}`,
@@ -50,15 +56,20 @@ export function buildSystemPrompt(
     triage: `Você está triando um lead novo. Um passo de contexto: get_lead + search_leads em paralelo (a busca expõe duplicatas). Depois aja de uma vez: add_note com um resumo de uma linha (quem é, sinal de valor, próximo passo), set_state se o estado estiver errado, create_task com dueAt realista, e draft_message de primeiro contato — omita channel e deixe o sistema escolher o canal alcançável — a chamada segue o OBJETIVO do lead (meeting → convite à call; negotiation → proposta direta). Nada é enviado — primeiro contato sempre vira rascunho. Achou duplicata? Anote na task em vez de criar outra.`,
     reply: `Você está respondendo uma mensagem recebida. Leia o contexto completo (lead + thread) antes de escrever. Responda à pergunta feita, à altura do tom da pessoa, via send_message (o guardrail decide draft vs. envio) ou draft_message se houver qualquer dúvida. Pedido de parada ou desinteresse claro → não responda: request_human ou set_state. Sinal de fechamento (quer preço, pedido, demo) → set_state invited/live + add_note explicando o que viu. Nunca prometa fora das ofertas.`,
     outreach: `Você está reabrindo um lead parado. get_lead antes de escrever — a mensagem precisa trazer algo novo: um gancho sobre o negócio dela, uma novidade, uma pergunta específica, sempre a serviço do OBJETIVO. Nunca "só passando pra saber". send_message/draft_message — omita channel para o sistema escolher (canal vivo da conversa > whatsapp > email); se o canal atual morreu e outro está ok, mude e avise a troca na primeira linha. Várias tentativas sem resposta → create_task para humano ou request_human em vez de insistir.`,
-    discovery: `Você está descobrindo leads novos: negócios reais do segmento/cidade pedidos, com canal de contato público. O que vale é contato alcançável — whatsapp/telefone > instagram > site > só nome.
+    discovery: `Você está descobrindo leads novos: negócios reais do segmento/cidade pedidos. Lead só entra no CRM DEPOIS de pesquisado — create_lead exige findings (o dossiê) + ≥1 canal de contato real, e rejeita o resto.
 
 Fluxo:
-1. web_search com 2-3 queries na MESMA resposta, cada uma num ângulo: "segmento + cidade", "segmento + encomenda/delivery + cidade", bairro/região quando fizer sentido. Nunca busque o nome da plataforma (whatsapp, instagram, contato, site) — isso retorna documentação, não negócio.
-2. Cada resultado já vem com kind: kind=contact já traz o phone extraído do link — create_lead direto, sem extract_page. kind=profile já traz o @instagram. kind=site é o candidato de extract_page — site próprio tem contato de verdade; extraia até 5 urls por resposta, em paralelo. kind=listing é diretório — pista de nome, não de contato.
-3. Cada contato extraído vira create_lead: name/businessName reais do negócio, city e segment sempre preenchidos (do contexto da busca), todo contato encontrado (phone/whatsapp/instagram/email/website), e fitScore 0-10 + fitReason de uma linha — quão bem o negócio casa com o público-alvo (10 = perfil exato; sinais: porte pequeno, vende sob encomenda, ainda não tem loja própria). create_lead já dedupica sozinho — se retornar duplicate, siga em frente (update_lead só se tiver contato novo para somar).
-4. Pare quando a META de leads chegar (se houver), as queries boas esgotarem, os resultados repetirem, ou o cap de leads chegar. Se aprendeu algo reaproveitável (query que rendeu, ângulo fraco, segmento que converte), remember.
+1. Abra o leque antes de buscar: pense ~10 "sabores" de como esse negócio pode existir (variações de modelo — ex.: de casa sem delivery, dark kitchen só delivery, ateliê sob encomenda, loja física com instagram forte, revendedora). Cada sabor vira uma query de web_search; emita as primeiras 3-4 na MESMA resposta. Nunca busque nome de plataforma (whatsapp, instagram, contato, site) — isso retorna documentação, não negócio.
+2. Cada resultado vem com kind: contact/profile já trazem a pista parseada (phone, @instagram). site é o que vale ler — read_pages na home + as páginas de contato/sobre/cardápio que a própria página linkar (os nav links já vêm marcados; até 6 urls por chamada). listing é diretório — vale um read_pages na página do negócio lá dentro. Raiz de rede social é login wall: não leia.
+3. Pesquise o prospect de verdade. Da página saem o que vende, porte, cidade, delivery/encomenda — e os links entregam os canais: wa.me/api.whatsapp.com → whatsapp, mailto → email, tel → phone, perfil instagram/facebook/tiktok. foundContacts já chega parseado. Ficou sem canal alcançável? web_search "<nome> <cidade>" ou "<nome> whatsapp" antes de desistir.
+4. Lead pesquisado → create_lead com TUDO de uma vez: name/businessName reais, city e segment (do contexto da busca), TODOS os canais achados (phone/whatsapp/email/instagram/website — nunca só um), fitScore 0-10 + fitReason (10 = ICP exato; sinais: porte pequeno, vende sob encomenda, ainda sem loja própria), findings (2-4 linhas: o que vende, sinais de porte/canal, de onde veio cada contato, melhor canal) e sources (as urls consultadas). Retornou duplicate → a pesquisa soma nos campos vazios do lead existente; siga em frente.${
+      opts.autoContact?.enabled !== false
+        ? ` fitScore ≥ ${opts.autoContact?.minScore ?? 8} com whatsapp/telefone dispara o primeiro contato sozinho — caprichar no dossiê e nos canais é o que decide isso.`
+        : ''
+    }
+5. Pare quando a META chegar, os sabores bons esgotarem, os resultados repetirem, ou o cap bater. Aprendeu algo reaproveitável (query que rendeu, sabor fraco, segmento que converte) → remember.
 
-Anti-padrões que queimam passo: re-extrair url já tentada (o tool devolve o cache, não conteúdo novo), extrair raiz de rede social (login wall — o handle já veio no resultado), buscar por plataforma em vez de negócio, criar lead sem nome real, e web_search depois de já ter 8+ urls boas esperando extração.`,
+Anti-padrões que queimam passo: reler url já lida (o tool devolve cache, não conteúdo novo), ler raiz de rede social, buscar plataforma em vez de negócio, create_lead sem findings ou sem canal (rejeitado), e encher lead com um único canal quando a página tinha mais.`,
   };
   return `${base.join('\n')}\n\n${perKind[kind]}`;
 }

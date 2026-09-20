@@ -631,6 +631,8 @@ function GuardrailsCard({
     timezone: str(value.timezone, 'America/Sao_Paulo'),
     firstContactDraftOnly: value.firstContactDraftOnly !== false,
     discoveryMaxLeads: num(value.discoveryMaxLeads, 20),
+    discoveryAutoContact: value.discoveryAutoContact !== false,
+    discoveryContactMinScore: num(value.discoveryContactMinScore, 8),
   };
   const [edit, setEdit] = useState(cur);
   useEffect(() => setEdit(cur), [JSON.stringify(cur)]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -661,6 +663,19 @@ function GuardrailsCard({
             value={edit.discoveryMaxLeads}
             onChange={(e) => setEdit({ ...edit, discoveryMaxLeads: Number(e.target.value) || 1 })}
           />
+        </div>
+        <div className="field">
+          <label>nota p/ autocontato</label>
+          <input
+            type="number"
+            min={1}
+            max={10}
+            value={edit.discoveryContactMinScore}
+            onChange={(e) =>
+              setEdit({ ...edit, discoveryContactMinScore: Number(e.target.value) || 1 })
+            }
+          />
+          <div className="hint">fitScore mínimo p/ o agente chamar no whatsapp sozinho</div>
         </div>
         <div className="field">
           <label>fuso</label>
@@ -711,6 +726,23 @@ function GuardrailsCard({
             </span>
           </label>
           <div className="hint">quem nunca recebeu mensagem nossa passa pela fila de aprovação</div>
+        </div>
+        <div className="field" style={{ marginBottom: 0 }}>
+          <label>autocontato no discovery</label>
+          <label className="tgl">
+            <input
+              type="checkbox"
+              checked={edit.discoveryAutoContact}
+              onChange={(e) => setEdit({ ...edit, discoveryAutoContact: e.target.checked })}
+            />
+            <span className="tk" />
+            <span className="lbl">
+              {edit.discoveryAutoContact ? 'nota alta chama no whatsapp' : 'só cria o card'}
+            </span>
+          </label>
+          <div className="hint">
+            lead descoberto com fitScore ≥ o mínimo ganha um run de outreach na hora
+          </div>
         </div>
       </div>
       <div className="actions">

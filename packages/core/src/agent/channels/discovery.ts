@@ -3,29 +3,53 @@ import { getIntegration, type IntegrationRow } from '../../modules/integrations.
 
 /**
  * agent/channels/discovery — TinyFish driver. Search API for prospect
- * queries (GET api.search.tinyfish.ai), Agent API (automation/run)
- * for structured extraction from found pages. `mock` driver returns canned
- * prospects so discovery runs end-to-end with no credentials.
+ * queries (GET api.search.tinyfish.ai), Fetch API (POST api.fetch.tinyfish.ai)
+ * for reading found pages: clean markdown + every link on the page, which is
+ * where the contact channels live (wa.me/api.whatsapp.com send links, mailto:,
+ * tel:, social profiles). The model reads the text; contactsFromLinks parses
+ * the URLs deterministically. `mock` driver returns canned prospects so
+ * discovery runs end-to-end with no credentials.
  */
 
 export interface DiscoveryResult {
   results: { title: string; url: string; snippet?: string }[];
 }
-export interface ExtractResult {
-  contacts: {
-    name?: string;
-    phone?: string;
-    instagram?: string;
-    website?: string;
-    email?: string;
-    businessName?: string;
-    city?: string;
-  }[];
-  raw?: string;
+
+/** Contacts parsed out of a fetched page's links — deterministic, no model
+ *  judgment involved. Phones come from wa.me/api.whatsapp.com deep links and
+ *  tel: urls; emails from mailto:. */
+export interface FoundContacts {
+  phones: string[];
+  whatsappLinks: string[];
+  emails: string[];
+  instagram: string[];
+  facebook: string[];
+  tiktok: string[];
 }
+
+export interface ReadPage {
+  url: string;
+  /** redirect target when the provider followed one */
+  finalUrl?: string;
+  title: string | null;
+  description: string | null;
+  /** page content as markdown, bounded for context size */
+  text: string;
+  /** true when text was cut at the context cap */
+  truncated?: boolean;
+  /** internal links worth a follow-up read (contato, sobre, cardápio…) */
+  nav: string[];
+  foundContacts: FoundContacts;
+}
+
+export interface ReadPagesResult {
+  pages: ReadPage[];
+  errors: { url: string; error: string }[];
+}
+
 export interface DiscoveryProvider {
   search(query: string, purpose: string): Promise<DiscoveryResult>;
-  extract(url: string, goal: string): Promise<ExtractResult>;
+  readPages(urls: string[], purpose: string): Promise<ReadPagesResult>;
 }
 
 // ---------------------------------------------------------------------------
@@ -42,7 +66,7 @@ export type ResultKind =
   | 'profile'
   /** directory/aggregator (ifood, guia) — lead signal, weak contact source */
   | 'listing'
-  /** own-domain page — the only kind worth an extract_page call */
+  /** own-domain page — the only kind worth a read_pages call */
   | 'site';
 
 export interface AnnotatedResult {
@@ -81,6 +105,25 @@ const PROFILE_STOP = new Set([
   'developer',
   'stories',
 ]);
+// facebook paths that aren't business pages — shares, dialogs, platform dirs.
+const FACEBOOK_STOP = new Set([
+  'sharer',
+  'share',
+  'dialog',
+  'plugins',
+  'login',
+  'help',
+  'policies',
+  'groups',
+  'events',
+  'watch',
+  'marketplace',
+  'gaming',
+]);
+// internal links that usually carry contact info or the catalog — these are
+// the follow-up reads worth spending a fetch on.
+const NAV_HINT =
+  /contato|contact|sobre|about|quem-somos|cardapio|card[aá]pio|menu|produtos|products|encomend|pedido|order|or[cç]amento|delivery|loja|shop|atendimento|unidades|visite-nos|where/i;
 
 const digits = (s: string): string => s.replace(/\D/g, '');
 
@@ -192,6 +235,97 @@ export function annotateResults(results: { title: string; url: string; snippet?:
   return { results: out.slice(0, 12), droppedDupes };
 }
 
+/** How much of a fetched page's markdown the model sees — enough for the
+ *  contact/about sections that matter, small enough to batch several pages
+ *  per step. */
+const PAGE_TEXT_CAP = 4000;
+
+const uniqPush = (arr: string[], v: string) => {
+  if (!arr.includes(v)) arr.push(v);
+};
+
+/** Every contact channel a page's links encode — whatsapp/wa.me send links
+ *  carry the phone, social roots carry the handle, mailto:/tel: are direct.
+ *  This is why read_pages returns links:true: for this prospect segment the
+ *  contact block is a row of icon links, not body text. */
+export function contactsFromLinks(links: string[]): FoundContacts {
+  const out: FoundContacts = {
+    phones: [],
+    whatsappLinks: [],
+    emails: [],
+    instagram: [],
+    facebook: [],
+    tiktok: [],
+  };
+  for (const raw of links) {
+    let u: URL;
+    try {
+      u = new URL(raw);
+    } catch {
+      continue;
+    }
+    const host = u.hostname.toLowerCase().replace(/^www\./, '');
+    if (u.protocol === 'mailto:') {
+      const email = decodeURIComponent(u.pathname).trim();
+      if (/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) uniqPush(out.emails, email);
+      continue;
+    }
+    if (u.protocol === 'tel:') {
+      const d = digits(u.pathname);
+      if (d.length >= 8) uniqPush(out.phones, `+${d}`);
+      continue;
+    }
+    const wa = contactFromUrl(u);
+    if (wa.phone) {
+      uniqPush(out.phones, wa.phone);
+      uniqPush(out.whatsappLinks, raw);
+      continue;
+    }
+    if (wa.instagram) uniqPush(out.instagram, wa.instagram);
+    if (host === 'facebook.com') {
+      const seg = u.pathname.split('/').filter(Boolean);
+      if (seg.length === 1 && !FACEBOOK_STOP.has(seg[0]!.toLowerCase())) {
+        uniqPush(out.facebook, `facebook.com/${seg[0]}`);
+      }
+    }
+    if (host === 'tiktok.com') {
+      const seg = u.pathname.split('/').filter(Boolean);
+      if (seg.length === 1 && seg[0]!.startsWith('@')) {
+        uniqPush(out.tiktok, seg[0]!);
+      }
+    }
+  }
+  return out;
+}
+
+/** The internal links most likely to carry contact info or the catalog —
+ *  surfaced so the model can queue a follow-up read without re-fetching junk
+ *  (blog posts, product detail pages, anchors). Same-host only, capped. */
+export function navLinks(links: string[], pageUrl: string): string[] {
+  const host = hostOf(pageUrl);
+  if (!host) return [];
+  const out: string[] = [];
+  const seen = new Set<string>();
+  for (const raw of links) {
+    const h = hostOf(raw);
+    if (h !== host) continue;
+    let u: URL;
+    try {
+      u = new URL(raw);
+    } catch {
+      continue;
+    }
+    const path = u.pathname.replace(/\/+$/, '') || '/';
+    if (!NAV_HINT.test(path)) continue;
+    const key = `${host}${path}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(`${u.protocol}//${u.host}${path}`);
+    if (out.length >= 8) break;
+  }
+  return out;
+}
+
 /** Base URLs are configurable per-integration but pinned to TinyFish hosts
  *  over https — otherwise the config row becomes an SSRF primitive that
  *  exfiltrates the API key to an arbitrary endpoint. */
@@ -207,12 +341,41 @@ function tinyfishBase(raw: unknown, fallback: string): string {
   return value.replace(/\/+$/, '');
 }
 
+/** The provider fetches the page, not us — but an agent-controlled URL
+ *  should still never name an internal or loopback host. */
+function assertFetchable(url: string): URL {
+  const target = new URL(url);
+  if (target.protocol !== 'http:' && target.protocol !== 'https:') {
+    throw new Error(`unsupported url scheme ${target.protocol}`);
+  }
+  const host = target.hostname.toLowerCase().replace(/^\[|\]$/g, '');
+  const privateHost =
+    host === 'localhost' ||
+    host === '::1' ||
+    host === '0.0.0.0' ||
+    host === '169.254.169.254' ||
+    host.endsWith('.local') ||
+    host.endsWith('.internal') ||
+    /^127\./.test(host) ||
+    /^10\./.test(host) ||
+    /^192\.168\./.test(host) ||
+    /^169\.254\./.test(host) ||
+    /^172\.(1[6-9]|2\d|3[01])\./.test(host) ||
+    // hex/octal/long-int hosts that resolve to loopback-adjacent IPs
+    /^0x/i.test(host) ||
+    /^\d+$/.test(host);
+  if (privateHost) {
+    throw new Error(`private/internal target not allowed: ${host}`);
+  }
+  return target;
+}
+
 function tinyfish(integration: IntegrationRow): DiscoveryProvider {
   const secretRef = integration.secret_ref;
   const apiKey = (secretRef && process.env[secretRef]) ?? process.env.TINYFISH_API_KEY;
   if (!apiKey) throw new Error(`tinyfish driver: missing ${secretRef ?? 'TINYFISH_API_KEY'}`);
   const searchBase = tinyfishBase(integration.config.searchUrl, 'https://api.search.tinyfish.ai');
-  const agentBase = tinyfishBase(integration.config.agentUrl, 'https://agent.tinyfish.ai/v1');
+  const fetchBase = tinyfishBase(integration.config.fetchUrl, 'https://api.fetch.tinyfish.ai');
   return {
     async search(query, purpose) {
       const u = new URL(searchBase);
@@ -234,77 +397,67 @@ function tinyfish(integration: IntegrationRow): DiscoveryProvider {
         })),
       };
     },
-    async extract(url, goal) {
-      // Only http(s) targets — the goal text is never parsed as a URL but
-      // `url` comes from search output or the agent and must not fetch
-      // internal/loopback hosts.
-      const target = new URL(url);
-      if (target.protocol !== 'http:' && target.protocol !== 'https:') {
-        throw new Error(`tinyfish extract: unsupported url scheme ${target.protocol}`);
+    async readPages(urls, purpose) {
+      // Fetch API batches up to 10 urls per POST; per-URL failures land in
+      // errors[] without sinking the batch — mirrors how the tool treats a
+      // batch of reads.
+      const errors: { url: string; error: string }[] = [];
+      const good: string[] = [];
+      for (const url of urls.slice(0, 10)) {
+        try {
+          assertFetchable(url);
+          good.push(url);
+        } catch (e) {
+          errors.push({ url, error: e instanceof Error ? e.message : String(e) });
+        }
       }
-      // The provider fetches the page, not us — but an agent-controlled URL
-      // should still never name an internal or loopback host.
-      const host = target.hostname.toLowerCase().replace(/^\[|\]$/g, '');
-      const privateHost =
-        host === 'localhost' ||
-        host === '::1' ||
-        host === '0.0.0.0' ||
-        host === '169.254.169.254' ||
-        host.endsWith('.local') ||
-        host.endsWith('.internal') ||
-        /^127\./.test(host) ||
-        /^10\./.test(host) ||
-        /^192\.168\./.test(host) ||
-        /^169\.254\./.test(host) ||
-        /^172\.(1[6-9]|2\d|3[01])\./.test(host) ||
-        // hex/octal/long-int hosts that resolve to loopback-adjacent IPs
-        /^0x/i.test(host) ||
-        /^\d+$/.test(host);
-      if (privateHost) {
-        throw new Error(`tinyfish extract: private/internal target not allowed: ${host}`);
-      }
-      // Synchronous /run blocks until the automation completes — the right
-      // fit inside a discovery run's extract loop (run-async would need a
-      // separate poller for GET /v1/runs/{id}).
-      const res = await fetch(`${agentBase}/automation/run`, {
+      if (!good.length) return { pages: [], errors };
+      const res = await fetch(fetchBase, {
         method: 'POST',
         headers: { 'content-type': 'application/json', 'x-api-key': apiKey },
         body: JSON.stringify({
-          url,
-          goal,
-          output_schema: {
-            type: 'object',
-            properties: {
-              contacts: {
-                type: 'array',
-                items: {
-                  type: 'object',
-                  properties: {
-                    name: { type: 'string' },
-                    phone: { type: 'string' },
-                    instagram: { type: 'string' },
-                    website: { type: 'string' },
-                    email: { type: 'string' },
-                    businessName: { type: 'string' },
-                    city: { type: 'string' },
-                  },
-                },
-              },
-            },
-          },
+          urls: good,
+          format: 'markdown',
+          // links are the contact surface — wa.me/mailto:/tel:/socials live
+          // there even when body text doesn't render them.
+          links: true,
+          ...(purpose.trim() ? { purpose: purpose.slice(0, 2000) } : {}),
+          per_url_timeout_ms: 45_000,
         }),
       });
       if (!res.ok)
-        throw new Error(`tinyfish extract ${res.status}: ${(await res.text()).slice(0, 200)}`);
+        throw new Error(`tinyfish fetch ${res.status}: ${(await res.text()).slice(0, 200)}`);
       const data = (await res.json()) as {
-        status?: string;
-        result?: ExtractResult;
-        error?: { message?: string };
+        results?: {
+          url?: string;
+          final_url?: string;
+          title?: string | null;
+          description?: string | null;
+          text?: string | null;
+          links?: string[];
+        }[];
+        errors?: { url?: string; error?: string }[];
       };
-      if (data.status && data.status !== 'COMPLETED') {
-        throw new Error(`tinyfish extract ${data.status}: ${data.error?.message ?? 'no result'}`);
+      const pages: ReadPage[] = [];
+      for (const r of data.results ?? []) {
+        const links = Array.isArray(r.links) ? r.links : [];
+        const url = r.url ?? '';
+        const text = typeof r.text === 'string' ? r.text : '';
+        pages.push({
+          url,
+          ...(r.final_url && r.final_url !== url ? { finalUrl: r.final_url } : {}),
+          title: r.title ?? null,
+          description: r.description ?? null,
+          text: text.slice(0, PAGE_TEXT_CAP),
+          ...(text.length > PAGE_TEXT_CAP ? { truncated: true } : {}),
+          nav: navLinks(links, url),
+          foundContacts: contactsFromLinks(links),
+        });
       }
-      return { contacts: data.result?.contacts ?? [] };
+      for (const e of data.errors ?? []) {
+        if (e.url) errors.push({ url: e.url, error: e.error ?? 'fetch failed' });
+      }
+      return { pages, errors };
     },
   };
 }
@@ -327,17 +480,30 @@ function mock(): DiscoveryProvider {
         ],
       };
     },
-    async extract(url) {
+    async readPages(urls) {
+      const empty: FoundContacts = {
+        phones: [],
+        whatsappLinks: [],
+        emails: [],
+        instagram: [],
+        facebook: [],
+        tiktok: [],
+      };
       return {
-        contacts: [
-          {
-            businessName: 'Doceria Aurora',
-            instagram: '@doceria.aurora',
-            phone: '+5585999990001',
-            city: 'Fortaleza',
-            website: url,
+        pages: urls.map((url) => ({
+          url,
+          title: 'Ateliê Doce Lar',
+          description: 'Brigaderia artesanal sob encomenda, Fortaleza',
+          text: '# Ateliê Doce Lar\n\nBrigaderia artesanal sob encomenda. Peça pelo WhatsApp ou Instagram. Entregas no Meireles e região.',
+          nav: [`${url.replace(/\/+$/, '')}/contato`],
+          foundContacts: {
+            ...empty,
+            phones: ['+5585999990001'],
+            whatsappLinks: ['https://wa.me/5585999990001'],
+            instagram: ['@doceria.aurora'],
           },
-        ],
+        })),
+        errors: [],
       };
     },
   };

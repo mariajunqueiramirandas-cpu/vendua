@@ -30,10 +30,10 @@ export interface ToolContext {
   threadId: string | null;
   /** tool call index within the run — seeds deterministic idempotency keys */
   step: number;
-  /** In-flight/finished extract_page calls by page identity — a repeat call
+  /** In-flight/finished read_pages calls by page identity — a repeat read
    *  (same step's batch or a later step) shares the same provider call
    *  instead of paying for the identical page twice. */
-  extractCache: Map<string, Promise<unknown>>;
+  pageCache: Map<string, Promise<unknown>>;
   /** Discovery-brief runs stamp created leads' discovered_via with the brief
    *  name so the board can tell scheduled-autopilot finds from ad-hoc ones. */
   briefName: string | null;
@@ -92,10 +92,23 @@ const REGISTRY: { def: AgentTool; toolsets: string[] }[] = [
     def: {
       name: 'create_lead',
       description:
-        'Create a new lead (state=lead). Pass fitScore/fitReason — the ICP match judgment. Self-dedupes on name/phone/instagram — a duplicate returns {duplicate, existing} instead of inserting.',
+        'Create a new lead (state=lead) — only AFTER researching it. Required in discovery runs: findings (the 2-4 line dossier — what the business sells, size/channel signals, where each contact came from) and at least one contact channel. Pass fitScore/fitReason too — the ICP match judgment. Self-dedupes on name/phone/instagram — a duplicate merges your new contacts + findings into the existing lead and returns {duplicate, merged, existing}.',
       parameters: {
         type: 'object',
-        properties: { name: { type: 'string' }, ...LEAD_FIELDS },
+        properties: {
+          name: { type: 'string' },
+          ...LEAD_FIELDS,
+          findings: {
+            type: 'string',
+            description:
+              'the research dossier — what the business sells, fit signals, best channel, sources',
+          },
+          sources: {
+            type: 'array',
+            items: { type: 'string' },
+            description: 'urls consulted while researching',
+          },
+        },
         required: ['name'],
       },
     },
@@ -227,7 +240,7 @@ const REGISTRY: { def: AgentTool; toolsets: string[] }[] = [
     def: {
       name: 'web_search',
       description:
-        'Search the web for prospects. Results come annotated: kind=contact/profile already carry the parsed phone/@handle from the URL (no extract needed); kind=site is the extract_page candidate; kind=listing is a directory. Emit 2-3 different-angled queries per step — they run in parallel.',
+        'Search the web for prospects. Results come annotated: kind=contact/profile already carry the parsed phone/@handle from the URL (no read needed); kind=site is the read_pages candidate; kind=listing is a directory. Emit 2-3 different-angled queries per step — they run in parallel.',
       parameters: {
         type: 'object',
         properties: {
@@ -241,13 +254,20 @@ const REGISTRY: { def: AgentTool; toolsets: string[] }[] = [
   {
     toolsets: ['discovery'],
     def: {
-      name: 'extract_page',
+      name: 'read_pages',
       description:
-        'Extract structured contacts from a page via the discovery provider. Only worth it on kind=site results — social roots are login-walled (the handle is already in the search result). Re-extracting a URL returns its cached output.',
+        "Read pages via the fetch provider — returns each page's markdown text, foundContacts (phone/whatsapp/email/socials parsed out of the page's links), and nav (internal contact-ish links worth a follow-up read). Use it on every prospect's own pages: home + contato/sobre/cardápio + directory pages, up to 6 urls per call. Social profile roots are login-walled. A repeated URL returns its cached output.",
       parameters: {
         type: 'object',
-        properties: { url: { type: 'string' }, goal: { type: 'string' } },
-        required: ['url', 'goal'],
+        properties: {
+          urls: {
+            type: 'array',
+            items: { type: 'string' },
+            description: '1–6 urls of the SAME prospect',
+          },
+          goal: { type: 'string', description: 'what you are looking for' },
+        },
+        required: ['urls'],
       },
     },
   },
@@ -323,7 +343,32 @@ export async function executeTool(
       return getLeadDetail(sql, String(args.id ?? ''));
     case 'create_lead': {
       const payload = { ...args };
+      const findings = typeof args.findings === 'string' ? args.findings.trim() : '';
+      const sources = (Array.isArray(args.sources) ? args.sources : [])
+        .map((s) => String(s ?? '').trim())
+        .filter(Boolean)
+        .slice(0, 10);
+      // findings/sources are writeup args, not lead columns — strip them so
+      // leadInsert/leadPatch never see them.
+      delete payload.findings;
+      delete payload.sources;
       if (ctx.runKind === 'discovery') {
+        // The bar for a discovered lead, enforced where the prompt can't be
+        // talked around: it must carry a research dossier AND a reachable
+        // channel — a name-only row is a dead card on the board.
+        if (findings.length < 20) {
+          return {
+            error:
+              'FINDINGS_REQUIRED — escreva o dossiê do prospect (2-4 linhas: o que o negócio vende, sinais de porte/canal, de onde veio cada contato). Lead sem pesquisa não entra no CRM.',
+          };
+        }
+        const channels = ['phone', 'whatsapp', 'email', 'instagram', 'website'];
+        if (!channels.some((f) => typeof payload[f] === 'string' && String(payload[f]).trim())) {
+          return {
+            error:
+              'NO_CHANNEL — o lead precisa de ≥1 canal de contato (phone/whatsapp/email/instagram/website). Pesquise mais o prospect (read_pages, web_search "nome cidade") ou desista dele.',
+          };
+        }
         if (payload.discoveredVia === undefined)
           payload.discoveredVia = ctx.briefName
             ? `agente·${ctx.briefName}`.slice(0, 120)
@@ -336,6 +381,17 @@ export async function executeTool(
       }
       const input = leadInsert(payload);
       const res = await claimControl(sql, key, async (tx) => {
+        // The research dossier lands on the timeline as a note — created with
+        // the lead in the same claim so a lead can never exist without it.
+        let guardrails: Partial<Guardrails> = {};
+        const writeFindings = async (leadId: string, extra: Record<string, unknown> = {}) => {
+          if (!findings) return;
+          await tx`
+            insert into lead_activities (lead_id, kind, body, meta, created_by)
+            values (${leadId}, 'note', ${findings.slice(0, 4000)},
+                    ${tx.json({ type: 'research', sources, ...extra } as never)}, 'agent')
+          `;
+        };
         if (ctx.runKind === 'discovery') {
           // A single advisory key serializes dedupe + cap + insert across ALL
           // runs: batched calls in a step and concurrent discovery runs (brief
@@ -369,8 +425,8 @@ export async function executeTool(
               ? input.city.trim().toLowerCase()
               : null;
           const dup = (
-            await tx<{ id: string; name: string; state: string }[]>`
-              select id, name, state from leads
+            await tx<Record<string, unknown>[]>`
+              select * from leads
               where archived_at is null and (
                 (${phones.length}::int > 0 and
                   (regexp_replace(coalesce(phone,''), '\\D','','g') = any(${phones})
@@ -386,9 +442,47 @@ export async function executeTool(
             `
           )[0];
           if (dup) {
+            // Known prospect, new research: fill still-empty contact/profile
+            // columns (never overwrite what a human or earlier run set) and
+            // append the dossier to its timeline instead of dropping it.
+            const FILL_COLS = [
+              'business_name',
+              'phone',
+              'whatsapp',
+              'email',
+              'instagram',
+              'website',
+              'city',
+              'segment',
+              'source',
+              'owner',
+              'fit_reason',
+            ] as const;
+            const set: Record<string, unknown> = {};
+            const merged: string[] = [];
+            for (const col of FILL_COLS) {
+              const v = input[col];
+              const cur = dup[col];
+              if (
+                typeof v === 'string' &&
+                v.trim() &&
+                (cur === null || cur === undefined || String(cur).trim() === '')
+              ) {
+                set[col] = v.trim();
+                merged.push(col);
+              }
+            }
+            if (merged.length) {
+              await tx`update leads set ${tx(set)}, updated_at = now() where id = ${dup.id as string}`;
+            }
+            await writeFindings(dup.id as string, { merged });
             return {
               status: 200,
-              body: { duplicate: true as const, existing: dup } as never,
+              body: {
+                duplicate: true as const,
+                merged,
+                existing: { id: dup.id, name: dup.name, state: dup.state },
+              } as never,
             };
           }
           // Hard cap, enforced in code the prompt can't talk away: count this
@@ -396,8 +490,8 @@ export async function executeTool(
           // (`response.lead.id`) — duplicate/no-op responses commit a claim
           // row but must not burn cap slots. This call's own claim row has no
           // response yet, so n = leads already created.
-          const g = await getSettingTx<Partial<Guardrails>>(tx, 'guardrails', {});
-          const cap = g.discoveryMaxLeads ?? DEFAULT_GUARDRAILS.discoveryMaxLeads;
+          guardrails = await getSettingTx<Partial<Guardrails>>(tx, 'guardrails', {});
+          const cap = guardrails.discoveryMaxLeads ?? DEFAULT_GUARDRAILS.discoveryMaxLeads;
           const n =
             (
               await tx<{ n: number }[]>`
@@ -414,7 +508,39 @@ export async function executeTool(
             );
           }
         }
-        return insertLeadTx(tx, input);
+        // Score gate → first contact without a human round-trip: a high-fit
+        // lead with a reachable whatsapp/phone gets agent autonomy + an
+        // outreach run queued in the same claim (the send still obeys the
+        // messaging guardrails — firstContactDraftOnly keeps it a draft).
+        let autoContact = false;
+        if (ctx.runKind === 'discovery') {
+          const autoOn = guardrails.discoveryAutoContact ?? DEFAULT_GUARDRAILS.discoveryAutoContact;
+          const minScore =
+            guardrails.discoveryContactMinScore ?? DEFAULT_GUARDRAILS.discoveryContactMinScore;
+          const score = typeof input.fit_score === 'number' ? input.fit_score : null;
+          const wa = String(input.whatsapp ?? input.phone ?? '').trim();
+          autoContact = autoOn && score !== null && score >= minScore && Boolean(wa);
+          if (autoContact) input.agent_mode = 'auto';
+        }
+        const created = await insertLeadTx(tx, input);
+        await writeFindings(created.body.lead.id as string);
+        if (autoContact) {
+          const { insertRun } = await import('./runner.ts');
+          const contactRunId = await insertRun(tx, {
+            kind: 'outreach',
+            leadId: created.body.lead.id,
+            params: {
+              channel: 'whatsapp',
+              auto: 'discovery',
+              focus: `primeiro contato — lead descoberto nesta caçada (fitScore ${String(input.fit_score)}). O dossiê de pesquisa está na timeline do lead.`,
+            },
+          });
+          return {
+            ...created,
+            body: { ...created.body, contactRun: contactRunId } as never,
+          };
+        }
+        return created;
       });
       return res.body;
     }
@@ -633,30 +759,74 @@ export async function executeTool(
       return {
         results,
         ...(droppedDupes ? { droppedDupes } : {}),
-        note: 'kind=contact/profile já traz o contato parseado da URL — use direto; kind=site é o que vale extract_page; listing = diretório, pista de nome.',
+        note: 'kind=contact/profile já traz o contato parseado da URL — primeira pista, pesquise antes de criar; kind=site é o que vale read_pages; listing = diretório, página do negócio também vale leitura.',
       };
     }
-    case 'extract_page': {
+    case 'read_pages': {
       const { discoveryFor, pageKey } = await import('./channels/discovery.ts');
-      const url = String(args.url);
-      const key2 = pageKey(url);
+      const urls = (Array.isArray(args.urls) ? args.urls : [args.url])
+        .map((u) => String(u ?? '').trim())
+        .filter(Boolean)
+        .slice(0, 6);
+      if (!urls.length) return { error: 'read_pages needs urls: ["https://…"] (1–6)' };
+      const provider = await discoveryFor(sql);
+      const goal = String(args.goal ?? '');
+      type PageSlot = {
+        url: string;
+        cached: boolean;
+        p: Promise<{ page: import('./channels/discovery.ts').ReadPage | null; error?: string }>;
+      };
       // Same page this run → share the in-flight/cached call. Provably
       // identical output for zero provider spend; covers both batched
       // duplicates and a later step re-trying a URL.
-      if (key2) {
-        const hit = ctx.extractCache.get(key2);
+      const slots: PageSlot[] = [];
+      const miss: string[] = [];
+      for (const url of urls) {
+        const key2 = pageKey(url);
+        const hit = key2 ? ctx.pageCache.get(key2) : undefined;
         if (hit) {
-          const out = await hit;
-          return { ...(typeof out === 'object' && out !== null ? out : { out }), cached: true };
+          slots.push({ url, cached: true, p: hit as PageSlot['p'] });
+        } else {
+          miss.push(url);
         }
       }
-      const provider = await discoveryFor(sql);
-      const p = provider.extract(url, String(args.goal)).then(
-        (out) => out,
-        (e: unknown) => ({ error: e instanceof Error ? e.message : String(e) }),
-      );
-      if (key2) ctx.extractCache.set(key2, p);
-      return p;
+      if (miss.length) {
+        // One provider call for the whole miss batch — the Fetch API is
+        // natively batched, so N misses still cost a single HTTP round-trip.
+        const batch: Promise<import('./channels/discovery.ts').ReadPagesResult> = provider
+          .readPages(miss, goal)
+          .then(
+            (out) => out,
+            (e: unknown) => ({
+              pages: [],
+              errors: miss.map((url) => ({
+                url,
+                error: e instanceof Error ? e.message : String(e),
+              })),
+            }),
+          );
+        for (const url of miss) {
+          const key2 = pageKey(url);
+          const p: PageSlot['p'] = batch.then((res) => {
+            const page = res.pages.find(
+              (pg) => pageKey(pg.url) === key2 || pageKey(pg.finalUrl ?? '') === key2,
+            );
+            if (page) return { page };
+            const err = res.errors.find((er) => pageKey(er.url) === key2);
+            return { page: null, error: err?.error ?? 'no result for url' };
+          });
+          if (key2) ctx.pageCache.set(key2, p);
+          slots.push({ url, cached: false, p });
+        }
+      }
+      const pages: unknown[] = [];
+      const errs: { url: string; error: string }[] = [];
+      for (const { url, cached, p } of slots) {
+        const out = await p;
+        if (out.page) pages.push({ ...out.page, ...(cached ? { cached: true } : {}) });
+        else errs.push({ url, error: out.error ?? 'no result' });
+      }
+      return { pages, ...(errs.length ? { errors: errs } : {}) };
     }
     default:
       throw new HttpError(422, 'UNKNOWN_TOOL', `unknown tool: ${name}`);
