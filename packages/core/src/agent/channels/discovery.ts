@@ -76,6 +76,10 @@ export interface AnnotatedResult {
   /** contacts parsed straight out of the URL — zero extraction needed */
   phone?: string;
   instagram?: string;
+  /** verified whatsapp deep link without the number exposed (wa.me/message/…) */
+  whatsappLink?: string;
+  /** email/phone spotted in the result's own snippet — free, no fetch */
+  email?: string;
   snippet?: string;
 }
 
@@ -92,6 +96,45 @@ const LISTING_HOSTS = new Set([
   'tiktok.com',
   'kwai.com',
   'linkedin.com',
+  // hosted ordering platforms — JS-shell pages that fetch renders empty; the
+  // store URL is still lead evidence, just a weak contact source
+  'anota.ai',
+  'instadelivery.com.br',
+  'goomer.app',
+  'takeat.app',
+  'ueniweb.com',
+  '99app.com',
+  // company registries — bot-blocked on fetch, so a read never pays off
+  'cnpj.biz',
+  'cnpj.info',
+  'casadosdados.com',
+]);
+/** Link-in-bio hubs — where an instagram-first business parks its real
+ *  channels. A hub page is the cheapest fetch to a wa.me link. */
+const LINK_HUB_HOSTS = new Set([
+  'linktr.ee',
+  'lnk.bio',
+  'bio.link',
+  'beacons.ai',
+  'linklist.bio',
+  'allmylinks.com',
+  'msha.ke',
+  'hoo.be',
+  'carrd.co',
+  'solo.to',
+  'wa.link',
+  'linkbio.co',
+  'camps.bio',
+  'flow.page',
+]);
+/** Social redirect wrappers — the real destination sits in the `u` param
+ *  (l.instagram.com/?u=…, l.facebook.com/l.php?u=…). Unwrap before parsing
+ *  or the bio's linktr.ee reads as an instagram link. */
+const REDIRECT_HOSTS = new Set([
+  'l.instagram.com',
+  'lm.instagram.com',
+  'l.facebook.com',
+  'lm.facebook.com',
 ]);
 const PROFILE_HOSTS = new Set(['instagram.com', 'facebook.com']);
 // instagram paths that aren't profiles — posts, help, auth.
@@ -104,6 +147,12 @@ const PROFILE_STOP = new Set([
   'accounts',
   'developer',
   'stories',
+  'popular',
+  'legal',
+  'web',
+  'tv',
+  'direct',
+  'topics',
 ]);
 // facebook paths that aren't business pages — shares, dialogs, platform dirs.
 const FACEBOOK_STOP = new Set([
@@ -120,10 +169,12 @@ const FACEBOOK_STOP = new Set([
   'marketplace',
   'gaming',
 ]);
-// internal links that usually carry contact info or the catalog — these are
-// the follow-up reads worth spending a fetch on.
-const NAV_HINT =
-  /contato|contact|sobre|about|quem-somos|cardapio|card[aá]pio|menu|produtos|products|encomend|pedido|order|or[cç]amento|delivery|loja|shop|atendimento|unidades|visite-nos|where/i;
+// internal links that usually carry contact info — the follow-up reads worth
+// spending a fetch on, ahead of catalog-ish links (a product page repeats
+// the home's contact block at best).
+const NAV_CONTACT =
+  /contato|contact|sobre|about|quem-somos|atendimento|or[cç]amento|encomend|visite-nos|where|unidades/i;
+const NAV_CATALOG = /cardapio|card[aá]pio|menu|produtos|products|pedido|order|delivery|loja|shop/i;
 
 const digits = (s: string): string => s.replace(/\D/g, '');
 
@@ -161,17 +212,49 @@ export function pageKey(url: string): string | null {
   }
 }
 
+/** Unwrap a social redirect-wrapper link (l.instagram.com/?u=…) to its
+ *  real destination. Non-wrapper or unparseable input comes back as-is. */
+export function unwrapLink(raw: string): string {
+  try {
+    const u = new URL(raw);
+    const host = u.hostname.toLowerCase().replace(/^www\./, '');
+    if (!REDIRECT_HOSTS.has(host)) return raw;
+    const inner = u.searchParams.get('u');
+    return inner && /^https?:\/\//.test(inner) ? inner : raw;
+  } catch {
+    return raw;
+  }
+}
+
 /** Pull whatever the URL itself encodes: phone out of wa.me/whatsapp deep
- *  links, handle out of profile roots. Returns null fields otherwise. */
-export function contactFromUrl(u: URL): { phone?: string; instagram?: string } {
+ *  links, handle out of profile roots. `whatsappLink` marks every verified
+ *  click-to-chat url — including wa.me/message/ and wa.me/c/ variants — even
+ *  when it doesn't expose the number. Returns null fields otherwise. */
+export function contactFromUrl(u: URL): {
+  phone?: string;
+  whatsappLink?: string;
+  instagram?: string;
+} {
   const host = u.hostname.toLowerCase().replace(/^www\./, '');
   if (host === 'wa.me' || host === 'whatsapp.com') {
+    const out: { phone?: string; whatsappLink?: string } = {};
     const d = digits(u.pathname);
-    if (d.length >= 10) return { phone: `+${d}` };
+    // click-to-chat surfaces: /<digits>, /message/<code>, /c/<digits>. A bare
+    // wa.me/<short> isn't a chat — the whatsappLink flag only counts real ones.
+    if (host === 'wa.me' && (d.length >= 10 || /^\/(?:message|c|p)\//i.test(u.pathname))) {
+      out.whatsappLink = u.toString();
+    }
+    if (d.length >= 10 && d.length <= 15) out.phone = `+${d}`;
+    return out;
   }
   if (host === 'api.whatsapp.com') {
+    const out: { phone?: string; whatsappLink?: string } = {};
     const d = digits(u.searchParams.get('phone') ?? '');
-    if (d.length >= 10) return { phone: `+${d}` };
+    if (d.length >= 10 || /^\/(?:send|message)/i.test(u.pathname)) {
+      out.whatsappLink = u.toString();
+    }
+    if (d.length >= 10 && d.length <= 15) out.phone = `+${d}`;
+    return out;
   }
   if (host === 'instagram.com') {
     const seg = u.pathname.split('/').filter(Boolean);
@@ -180,6 +263,10 @@ export function contactFromUrl(u: URL): { phone?: string; instagram?: string } {
     }
   }
   return {};
+}
+
+function hostMatches(host: string, hosts: Set<string>): boolean {
+  return hosts.has(host) || [...hosts].some((h) => host.endsWith(`.${h}`));
 }
 
 /** Classify one result and surface contacts encoded in the URL. */
@@ -202,13 +289,28 @@ export function annotateResult(r: {
   }
   const host = u.hostname.toLowerCase().replace(/^www\./, '');
   const contact = contactFromUrl(u);
-  if (contact.phone) return { ...base, kind: 'contact', phone: contact.phone };
-  if (contact.instagram) return { ...base, kind: 'profile', instagram: contact.instagram };
-  if (PROFILE_HOSTS.has(host)) return { ...base, kind: 'profile' };
-  if (LISTING_HOSTS.has(host) || host.endsWith('.gov.br') || host.endsWith('.gov')) {
-    return { ...base, kind: 'listing' };
+  const out: AnnotatedResult = contact.phone
+    ? { ...base, kind: 'contact', phone: contact.phone }
+    : contact.whatsappLink
+      ? { ...base, kind: 'contact', whatsappLink: contact.whatsappLink }
+      : contact.instagram
+        ? { ...base, kind: 'profile', instagram: contact.instagram }
+        : PROFILE_HOSTS.has(host)
+          ? { ...base, kind: 'profile' }
+          : hostMatches(host, LISTING_HOSTS) || host.endsWith('.gov.br') || host.endsWith('.gov')
+            ? { ...base, kind: 'listing' }
+            : base;
+  // Snippet text sometimes carries the contact itself (google business blurb,
+  // bio teaser) — parse it for free before spending a fetch.
+  if (r.snippet && !out.phone) {
+    const c = contactsFromText(r.snippet);
+    if (c.phones[0]) out.phone = c.phones[0];
+    if (c.emails[0]) out.email = c.emails[0];
+    if (c.phones[0] || c.emails[0]) {
+      if (out.kind === 'site') out.kind = 'contact';
+    }
   }
-  return base;
+  return out;
 }
 
 /** Annotate + dedupe by page identity + order contact > site > profile >
@@ -257,7 +359,8 @@ export function contactsFromLinks(links: string[]): FoundContacts {
     facebook: [],
     tiktok: [],
   };
-  for (const raw of links) {
+  for (const link of links) {
+    const raw = unwrapLink(link);
     let u: URL;
     try {
       u = new URL(raw);
@@ -293,9 +396,9 @@ export function contactsFromLinks(links: string[]): FoundContacts {
       continue;
     }
     const wa = contactFromUrl(u);
+    if (wa.whatsappLink) uniqPush(out.whatsappLinks, wa.whatsappLink);
     if (wa.phone) {
       uniqPush(out.phones, wa.phone);
-      uniqPush(out.whatsappLinks, raw);
       continue;
     }
     if (wa.instagram) uniqPush(out.instagram, wa.instagram);
@@ -315,32 +418,172 @@ export function contactsFromLinks(links: string[]): FoundContacts {
   return out;
 }
 
-/** The internal links most likely to carry contact info or the catalog —
- *  surfaced so the model can queue a follow-up read without re-fetching junk
- *  (blog posts, product detail pages, anchors). Same-host only, capped. */
-export function navLinks(links: string[], pageUrl: string): string[] {
-  const host = hostOf(pageUrl);
-  if (!host) return [];
-  const out: string[] = [];
+// ---------------------------------------------------------------------------
+// Text extraction — the contact surface that isn't an anchor. Brazilian
+// small-business pages (and instagram bios above all) print the whatsapp as
+// text: "wa.me/5522…", "(22) 9 9712-3470", "pedidos: contato@doceria.com".
+// ---------------------------------------------------------------------------
+
+/** A url written out in prose — scheme optional for the contact domains,
+ *  required otherwise. */
+const TEXT_URL_RE = /https?:\/\/[^\s"'<>()[\]]+/gi;
+const BARE_CONTACT_RE =
+  /\b(?:wa\.me|api\.whatsapp\.com|linktr\.ee|lnk\.bio|bio\.link|beacons\.ai|linklist\.bio|allmylinks\.com|msha\.ke|hoo\.be|carrd\.co|solo\.to|wa\.link|linkbio\.co|camps\.bio|flow\.page)\/[^\s"'<>()[\]]*/gi;
+const EMAIL_TEXT_RE = /[\w.+-]+@[\w-]+(?:\.[\w-]+)+/g;
+const ASSET_TAIL_RE = /\.(?:png|jpe?g|gif|webp|svg|css|js|mjs|ico|woff2?|ttf|otf)$/i;
+/** BR phones, formatted: optional +55, DDD (parens optional), 8-9 digit
+ *  subscriber with a separator before the last 4 — the separator requirement
+ *  and the \w-ish boundaries keep CNPJs/dates/prices out. Bare contiguous
+ *  numbers only count when they're the 11-13 digit mobile shape (55? + DDD +
+ *  9xxxxxxxx) — a bare landline can't be told apart from any 10-digit code. */
+const PHONE_TEXT_RE =
+  /(?<![\w@/.-])(?:\+?55[\s.-]?)?\(?\d{2}\)?[\s.-]?(?:9[\s.-]?)?\d{4}[\s.-]\d{4}(?![\w/-])|\b\+?(?:55)?\d{2}9\d{8}\b/g;
+
+/** Normalize a phone-shaped match to +55…/intl, or null when it's not a
+ *  callable-looking number (too short, weird country-less form). */
+export function phoneFromText(raw: string): string | null {
+  const d = digits(raw);
+  if (d.length === 10 || d.length === 11) return `+55${d}`;
+  if ((d.length === 12 || d.length === 13) && d.startsWith('55')) return `+${d}`;
+  if (raw.trim().startsWith('+') && d.length >= 12 && d.length <= 15) return `+${d}`;
+  return null;
+}
+
+function isHubHost(host: string): boolean {
+  return LINK_HUB_HOSTS.has(host);
+}
+
+/** Contacts printed in body text — same fields as contactsFromLinks, so the
+ *  caller merges the two lists per field. Also returns link-in-bio hub urls
+ *  spotted in prose (instagram renders the bio link as text, not an anchor). */
+export function contactsFromText(text: string): FoundContacts & { hubs: string[] } {
+  const out: FoundContacts & { hubs: string[] } = {
+    phones: [],
+    whatsappLinks: [],
+    emails: [],
+    instagram: [],
+    facebook: [],
+    tiktok: [],
+    hubs: [],
+  };
   const seen = new Set<string>();
-  for (const raw of links) {
-    const h = hostOf(raw);
-    if (h !== host) continue;
+  const urlish = [...text.matchAll(TEXT_URL_RE), ...text.matchAll(BARE_CONTACT_RE)];
+  for (const m of urlish) {
+    let raw = m[0].replace(/[.,;!?]+$/, '');
+    if (!/^https?:\/\//.test(raw)) raw = `https://${raw}`;
+    raw = unwrapLink(raw);
+    if (seen.has(raw)) continue;
+    seen.add(raw);
     let u: URL;
     try {
       u = new URL(raw);
     } catch {
       continue;
     }
-    const path = u.pathname.replace(/\/+$/, '') || '/';
-    if (!NAV_HINT.test(path)) continue;
-    const key = `${host}${path}`;
-    if (seen.has(key)) continue;
-    seen.add(key);
-    out.push(`${u.protocol}//${u.host}${path}`);
-    if (out.length >= 8) break;
+    const wa = contactFromUrl(u);
+    if (wa.whatsappLink) uniqPush(out.whatsappLinks, wa.whatsappLink);
+    if (wa.phone) uniqPush(out.phones, wa.phone);
+    if (wa.instagram) uniqPush(out.instagram, wa.instagram);
+    if (
+      isHubHost(u.hostname.toLowerCase().replace(/^www\./, '')) &&
+      u.pathname.split('/').filter(Boolean).length === 1
+    ) {
+      uniqPush(out.hubs, `${u.protocol}//${u.host}${u.pathname.replace(/\/+$/, '')}`);
+    }
+  }
+  for (const m of text.matchAll(EMAIL_TEXT_RE)) {
+    const email = m[0].toLowerCase();
+    if (ASSET_TAIL_RE.test(email) || /@\d+x\./.test(email)) continue;
+    uniqPush(out.emails, email);
+    if (out.emails.length >= 4) break;
+  }
+  for (const m of text.matchAll(PHONE_TEXT_RE)) {
+    const phone = phoneFromText(m[0]);
+    if (phone) uniqPush(out.phones, phone);
+    if (out.phones.length >= 6) break;
   }
   return out;
+}
+
+/** The links most likely to carry contact info or the catalog — surfaced so
+ *  the model can queue a follow-up read without re-fetching junk (blog posts,
+ *  product detail pages, anchors). Same-host contact-ish paths plus
+ *  cross-host link-in-bio hubs (unwrapped from social redirects), capped. */
+export function navLinks(links: string[], pageUrl: string): string[] {
+  const host = hostOf(pageUrl);
+  const out: string[] = [];
+  const seen = new Set<string>();
+  const push = (v: string) => {
+    if (!seen.has(v)) {
+      seen.add(v);
+      out.push(v);
+    }
+  };
+  // hubs first — for ig-first businesses the link-in-bio IS the contact
+  // page. A hub's OWN pages are footer noise (staff picks, /s/about), so hub
+  // surfacing only happens from non-hub pages and only for profile-shaped
+  // (single-segment) urls.
+  if (!host || !isHubHost(host)) {
+    for (const link of links) {
+      const raw = unwrapLink(link);
+      let u: URL;
+      try {
+        u = new URL(raw);
+      } catch {
+        continue;
+      }
+      if (
+        isHubHost(u.hostname.toLowerCase().replace(/^www\./, '')) &&
+        u.pathname.split('/').filter(Boolean).length === 1
+      ) {
+        push(`${u.protocol}//${u.host}${u.pathname.replace(/\/+$/, '')}`);
+      }
+    }
+  }
+  if (!host) return out.slice(0, 8);
+  if (isHubHost(host)) {
+    // On a hub page the same-host links are the platform's own chrome — the
+    // follow-ups worth anything point OUT to the business's own domain.
+    for (const link of links) {
+      const raw = unwrapLink(link);
+      const h = hostOf(raw);
+      if (!h || h === host) continue;
+      if (isHubHost(h) || PROFILE_HOSTS.has(h) || hostMatches(h, LISTING_HOSTS)) continue;
+      let u: URL;
+      try {
+        u = new URL(raw);
+      } catch {
+        continue;
+      }
+      const c = contactFromUrl(u);
+      // wa.me/api.whatsapp destinations are already in foundContacts — nav
+      // exists to point at pages worth another fetch.
+      if (c.phone || c.whatsappLink) continue;
+      push(`${u.protocol}//${u.host}${u.pathname.replace(/\/+$/, '') || '/'}`);
+      if (out.length >= 8) break;
+    }
+    return out.slice(0, 8);
+  }
+  // two passes: contact-ish paths first, catalog-ish backfill to the cap —
+  // otherwise a site whose nav is mostly product cards never surfaces /contato.
+  for (const hint of [NAV_CONTACT, NAV_CATALOG]) {
+    for (const link of links) {
+      const raw = unwrapLink(link);
+      const h = hostOf(raw);
+      if (h !== host) continue;
+      let u: URL;
+      try {
+        u = new URL(raw);
+      } catch {
+        continue;
+      }
+      const path = u.pathname.replace(/\/+$/, '') || '/';
+      if (!hint.test(path)) continue;
+      push(`${u.protocol}//${u.host}${path}`);
+    }
+    if (out.length >= 8) break;
+  }
+  return out.slice(0, 8);
 }
 
 /** Base URLs are configurable per-integration but pinned to TinyFish hosts
@@ -511,6 +754,18 @@ function tinyfish(integration: IntegrationRow): DiscoveryProvider {
         const links = Array.isArray(r.links) ? r.links : [];
         const url = r.url ?? '';
         const text = typeof r.text === 'string' ? r.text : '';
+        // Links carry the rendered anchors; text carries what the business
+        // printed (the instagram bio's wa.me is text, not a link). Union both.
+        const fromLinks = contactsFromLinks(links);
+        const fromText = contactsFromText(text);
+        const foundContacts: FoundContacts = {
+          phones: [...new Set([...fromLinks.phones, ...fromText.phones])],
+          whatsappLinks: [...new Set([...fromLinks.whatsappLinks, ...fromText.whatsappLinks])],
+          emails: [...new Set([...fromLinks.emails, ...fromText.emails])],
+          instagram: [...new Set([...fromLinks.instagram, ...fromText.instagram])],
+          facebook: [...new Set([...fromLinks.facebook, ...fromText.facebook])],
+          tiktok: [...new Set([...fromLinks.tiktok, ...fromText.tiktok])],
+        };
         pages.push({
           url,
           ...(r.final_url && r.final_url !== url ? { finalUrl: r.final_url } : {}),
@@ -518,8 +773,8 @@ function tinyfish(integration: IntegrationRow): DiscoveryProvider {
           description: r.description ?? null,
           text: text.slice(0, PAGE_TEXT_CAP),
           ...(text.length > PAGE_TEXT_CAP ? { truncated: true } : {}),
-          nav: navLinks(links, url),
-          foundContacts: contactsFromLinks(links),
+          nav: [...new Set([...navLinks(links, url), ...fromText.hubs])].slice(0, 8),
+          foundContacts,
         });
       }
       for (const e of data.errors ?? []) {
