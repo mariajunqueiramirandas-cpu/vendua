@@ -223,6 +223,22 @@ async function applyDeliveryEvent(
       where provider_message_id = ${`email:${emailId}`} and status in ('sent', 'queued', 'sending')
     `;
 
+    // A spam complaint is about the person, not the address — it applies even
+    // if the email changed since the send. A bounce/fail, though, belongs to
+    // the rejected address: when the event names recipients and none is the
+    // lead's current email (staff swapped it after the send), fail the named
+    // send but don't flag the new address or purge its queue.
+    if (type !== 'email.complained') {
+      const curEmail = (
+        await tx<{ email: string | null }[]>`
+          select lower(email) as email from leads where id = ${leadId}
+        `
+      )[0]?.email;
+      if (!curEmail || (recipients.length > 0 && !recipients.includes(curEmail))) {
+        return { status: 200, body: { ok: true as const, leadId } };
+      }
+    }
+
     if (type === 'email.complained') {
       // Transition-only writes: provider retries re-deliver the same event,
       // and `returning` keeps the activity single-shot + preserves the first
