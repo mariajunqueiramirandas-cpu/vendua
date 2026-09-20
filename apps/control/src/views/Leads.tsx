@@ -1,8 +1,13 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Plus, Upload, Download } from 'lucide-react';
+import { Plus, Upload, Download, Send } from 'lucide-react';
 import { api, type LeadListItem } from '../api.ts';
 import { Empty, Page, ScoreBar, StateChip, fmtMoney, rel } from '../components.tsx';
+
+const GOAL_OPTS = [
+  ['negotiation', 'fechar negócio'],
+  ['meeting', 'marcar reunião'],
+] as const;
 
 export default function Leads() {
   const [leads, setLeads] = useState<LeadListItem[]>([]);
@@ -13,11 +18,23 @@ export default function Leads() {
   const [loading, setLoading] = useState(true);
   const [showNew, setShowNew] = useState(false);
   const [importMsg, setImportMsg] = useState('');
+  const [sel, setSel] = useState<Set<string>>(new Set());
+  const [goal, setGoal] = useState<'negotiation' | 'meeting'>('negotiation');
+  const [channel, setChannel] = useState<'auto' | 'whatsapp' | 'email'>('auto');
+  const [dispatchMsg, setDispatchMsg] = useState('');
+  const [dispatchBusy, setDispatchBusy] = useState(false);
   const nav = useNavigate();
   const fileRef = useRef<HTMLInputElement>(null);
+  // Bumps on every filter change — a late dispatch result only renders if it
+  // still belongs to the filter set it was launched under.
+  const filterGen = useRef(0);
+  // Last-issued load wins: a stale response must not replace a newer result
+  // set under the same filters (it would dispatch hidden leads from `sel`).
+  const loadGen = useRef(0);
 
   const load = useCallback(
     (cur?: string) => {
+      const gen = ++loadGen.current;
       api
         .leads({
           ...(q ? { q } : {}),
@@ -27,9 +44,16 @@ export default function Leads() {
           limit: '100',
         })
         .then((r) => {
+          if (gen !== loadGen.current) return; // superseded by a newer request
           setLeads((ls) => (cur ? [...ls, ...r.leads] : r.leads));
           setCursor(r.nextCursor);
           setLoading(false);
+          if (!cur) {
+            // The visible set was replaced — keep only selections that
+            // survived, so dispatch never acts on leads staff can't see.
+            const ids = new Set(r.leads.map((l) => l.id));
+            setSel((s) => new Set([...s].filter((id) => ids.has(id))));
+          }
         });
     },
     [q, state, archived],
@@ -38,6 +62,15 @@ export default function Leads() {
     setLoading(true);
     load();
   }, [load]);
+  // Filter changes swap the result set — drop hidden selections so dispatch
+  // only ever acts on leads the staff can see selected. The generation bump
+  // also invalidates an in-flight dispatch result, which would otherwise
+  // land under the new lead set after the filters changed.
+  useEffect(() => {
+    filterGen.current++;
+    setSel(new Set());
+    setDispatchMsg('');
+  }, [q, state, archived]);
 
   // `/` focuses search, `n` opens new-lead — list-view keys.
   useEffect(() => {
@@ -61,6 +94,37 @@ export default function Leads() {
     const res = await api.importCsv(csv);
     setImportMsg(`${res.created} criados · ${res.skipped.length} ignorados`);
     load();
+  };
+
+  const toggleSel = (id: string) =>
+    setSel((s) => {
+      const n = new Set(s);
+      if (n.has(id)) n.delete(id);
+      else n.add(id);
+      return n;
+    });
+
+  const dispatch = async () => {
+    const gen = filterGen.current;
+    setDispatchBusy(true);
+    setDispatchMsg('');
+    try {
+      const r = await api.dispatch([...sel], goal, channel);
+      if (gen !== filterGen.current) return; // filters changed mid-flight — stale result
+      const names = new Map(leads.map((l) => [l.id, l.name]));
+      const skips = r.skipped
+        .map((s) => `${names.get(s.id) ?? s.id.slice(0, 8)}: ${s.reason}`)
+        .join(' · ');
+      setDispatchMsg(
+        `${r.enqueued} disparado${r.enqueued === 1 ? '' : 's'}${r.skipped.length ? ` · ${r.skipped.length} ignorado${r.skipped.length === 1 ? '' : 's'}${skips ? ` (${skips})` : ''}` : ''}`,
+      );
+      setSel(new Set());
+    } catch (e) {
+      if (gen !== filterGen.current) return;
+      setDispatchMsg(e instanceof Error ? e.message : 'erro');
+    } finally {
+      setDispatchBusy(false);
+    }
   };
 
   return (
@@ -110,6 +174,50 @@ export default function Leads() {
         {importMsg && <span className="sub">{importMsg}</span>}
       </div>
 
+      {sel.size > 0 && (
+        <div
+          className="card"
+          style={{
+            padding: '10px 14px',
+            marginBottom: 12,
+            display: 'flex',
+            gap: 10,
+            alignItems: 'center',
+            flexWrap: 'wrap',
+          }}
+        >
+          <b>
+            {sel.size} selecionado{sel.size === 1 ? '' : 's'}
+          </b>
+          <span className="sub">objetivo:</span>
+          <span className="seg">
+            {GOAL_OPTS.map(([v, l]) => (
+              <button key={v} className={goal === v ? 'sel' : ''} onClick={() => setGoal(v)}>
+                {l}
+              </button>
+            ))}
+          </span>
+          <span className="sub">canal:</span>
+          <span className="seg" title="auto = o agente escolhe o canal alcançável">
+            {(['auto', 'whatsapp', 'email'] as const).map((v) => (
+              <button key={v} className={channel === v ? 'sel' : ''} onClick={() => setChannel(v)}>
+                {v}
+              </button>
+            ))}
+          </span>
+          <button className="btn agent" disabled={dispatchBusy} onClick={() => void dispatch()}>
+            <Send size={14} /> disparar agente
+          </button>
+        </div>
+      )}
+      {/* Result lives outside the selection card — dispatch clears `sel`,
+          which would unmount the message in the same render. */}
+      {dispatchMsg && (
+        <div className="sub" style={{ marginBottom: 12 }}>
+          {dispatchMsg}
+        </div>
+      )}
+
       {loading ? (
         <Empty title="carregando…" />
       ) : !leads.length ? (
@@ -122,12 +230,26 @@ export default function Leads() {
           <table className="tbl">
             <thead>
               <tr>
+                <th style={{ width: 24 }}>
+                  <input
+                    type="checkbox"
+                    checked={leads.length > 0 && leads.every((l) => sel.has(l.id))}
+                    onChange={() =>
+                      setSel((s) =>
+                        leads.every((l) => s.has(l.id))
+                          ? new Set()
+                          : new Set(leads.map((l) => l.id)),
+                      )
+                    }
+                  />
+                </th>
                 <th>nome</th>
                 <th>negócio</th>
                 <th>estágio</th>
                 <th>segmento</th>
                 <th>cidade</th>
                 <th>valor</th>
+                <th>fit</th>
                 <th>score</th>
                 <th>agente</th>
                 <th>últ. atividade</th>
@@ -136,11 +258,23 @@ export default function Leads() {
             <tbody>
               {leads.map((l) => (
                 <tr key={l.id} className="clickable" onClick={() => nav(`/leads/${l.id}`)}>
+                  <td onClick={(e) => e.stopPropagation()}>
+                    <input
+                      type="checkbox"
+                      checked={sel.has(l.id)}
+                      onChange={() => toggleSel(l.id)}
+                    />
+                  </td>
                   <td>
                     <b>{l.name}</b>
                     {l.unsubscribedAt && (
                       <span className="chip bad" style={{ marginLeft: 6 }}>
                         descadastrado
+                      </span>
+                    )}
+                    {l.emailBouncedAt && (
+                      <span className="chip warn" style={{ marginLeft: 4 }}>
+                        email bounce
                       </span>
                     )}
                   </td>
@@ -151,6 +285,9 @@ export default function Leads() {
                   <td>{l.segment ?? '—'}</td>
                   <td>{l.city ?? '—'}</td>
                   <td className="mono">{fmtMoney(l.dealValueCents)}</td>
+                  <td className="mono" title={l.fitReason ?? undefined}>
+                    {l.fitScore != null ? `${l.fitScore}/10` : '—'}
+                  </td>
                   <td>
                     <ScoreBar score={l.score} />
                   </td>

@@ -15,6 +15,12 @@ export type LeadState = (typeof LEAD_STATES)[number];
 export const AGENT_MODES = ['off', 'draft', 'auto'] as const;
 export type AgentMode = (typeof AGENT_MODES)[number];
 
+/** What the agent is trying to get out of the conversation — staff picks it
+ *  at dispatch time; 'negotiation' closes in-thread, 'meeting' drives toward
+ *  the configured booking link. */
+export const AGENT_GOALS = ['negotiation', 'meeting'] as const;
+export type AgentGoal = (typeof AGENT_GOALS)[number];
+
 export interface LeadRow {
   id: string;
   name: string;
@@ -32,6 +38,10 @@ export interface LeadRow {
   deal_value_cents: number | null;
   state: LeadState;
   agent_mode: AgentMode;
+  agent_goal: AgentGoal;
+  fit_score: number | null;
+  fit_reason: string | null;
+  email_bounced_at: string | null;
   next_action_at: string | null;
   lost_reason: string | null;
   archived_at: string | null;
@@ -59,6 +69,10 @@ export interface Lead {
   dealValueCents: number | null;
   state: LeadState;
   agentMode: AgentMode;
+  agentGoal: AgentGoal;
+  fitScore: number | null;
+  fitReason: string | null;
+  emailBouncedAt: string | null;
   nextActionAt: string | null;
   lostReason: string | null;
   archivedAt: string | null;
@@ -95,6 +109,10 @@ export function leadJson(row: LeadRow): Lead {
     dealValueCents: row.deal_value_cents,
     state: row.state,
     agentMode: row.agent_mode,
+    agentGoal: row.agent_goal,
+    fitScore: row.fit_score,
+    fitReason: row.fit_reason,
+    emailBouncedAt: row.email_bounced_at,
     nextActionAt: row.next_action_at,
     lostReason: row.lost_reason,
     archivedAt: row.archived_at,
@@ -113,6 +131,33 @@ export function leadState(v: unknown): LeadState {
     });
   }
   return v as LeadState;
+}
+
+export function agentGoal(v: unknown): AgentGoal {
+  if (typeof v !== 'string' || !(AGENT_GOALS as readonly string[]).includes(v)) {
+    throw new HttpError(
+      422,
+      'INVALID_AGENT_GOAL',
+      `agentGoal must be one of: ${AGENT_GOALS.join(', ')}`,
+      {
+        field: 'agentGoal',
+      },
+    );
+  }
+  return v as AgentGoal;
+}
+
+/** fitScore payload → int 0–10 or null. The model's ICP match — kept
+ *  separate from the SQL completeness score. */
+function fitScoreValue(v: unknown): number | null {
+  if (v === null || v === undefined || v === '') return null;
+  const n = Number(v);
+  if (!Number.isInteger(n) || n < 0 || n > 10) {
+    throw new HttpError(422, 'BAD_REQUEST', 'fitScore must be an integer in [0, 10]', {
+      field: 'fitScore',
+    });
+  }
+  return n;
 }
 
 export function agentMode(v: unknown): AgentMode {
@@ -144,6 +189,7 @@ const LEAD_TEXT_FIELDS = {
   owner: ['owner', 80],
   lostReason: ['lost_reason', 300],
   discoveredVia: ['discovered_via', 120],
+  fitReason: ['fit_reason', 300],
 } as const;
 
 type LeadTextField = keyof typeof LEAD_TEXT_FIELDS;
@@ -203,6 +249,8 @@ export function leadInsert(body: Record<string, unknown>): Record<string, unknow
   if ('nextActionAt' in body)
     out.next_action_at = timestampValue(body.nextActionAt, 'nextActionAt');
   if ('agentMode' in body) out.agent_mode = agentMode(body.agentMode);
+  if ('agentGoal' in body) out.agent_goal = agentGoal(body.agentGoal);
+  if ('fitScore' in body) out.fit_score = fitScoreValue(body.fitScore);
   if ('state' in body) out.state = leadState(body.state);
   return out;
 }
@@ -223,6 +271,8 @@ export function leadPatch(body: Record<string, unknown>): Record<string, unknown
   }
   if ('state' in body) set.state = leadState(body.state);
   if ('agentMode' in body) set.agent_mode = agentMode(body.agentMode);
+  if ('agentGoal' in body) set.agent_goal = agentGoal(body.agentGoal);
+  if ('fitScore' in body) set.fit_score = fitScoreValue(body.fitScore);
   if ('tags' in body) set.tags = tagsValue(body.tags);
   if ('dealValueCents' in body) set.deal_value_cents = dealValue(body.dealValueCents);
   if ('nextActionAt' in body)
@@ -440,6 +490,12 @@ export async function updateLead(
   return claimControl(sql, idemKey, async (tx) => {
     const cur = (await tx<LeadRow[]>`select * from leads where id = ${id}`)[0];
     if (!cur) throw new HttpError(404, 'LEAD_NOT_FOUND', 'lead not found');
+    // The bounce marker describes the stored address — a patch that swaps in
+    // a different one must clear it, or the replacement stays blocked forever.
+    const normEmail = (v: unknown) => (typeof v === 'string' ? v.trim().toLowerCase() : null);
+    if ('email' in set && normEmail(set.email) !== normEmail(cur.email)) {
+      set.email_bounced_at = null;
+    }
     const rows = await tx<LeadRow[]>`
       update leads set ${tx(set)}, updated_at = now() where id = ${id} returning *
     `;
@@ -573,6 +629,53 @@ export async function leadStats(sql: Sql): Promise<LeadStats> {
       discoveredThisWeek: discovered,
       agent30d: { runs: agent.runs, tokens: agent.tokens, costCents: agent.cost_cents },
     };
+  });
+}
+
+export interface SegmentStat {
+  segment: string;
+  leads: number;
+  contacted: number;
+  replied: number;
+  live: number;
+  costCents: number;
+}
+
+/** Per-segment performance — leads found, contacts made, replies received,
+ *  actives won, and 30d agent spend. Powers the Discovery panel and feeds
+ *  each discovery run's context, so the agent leans into segments that
+ *  convert instead of only following the brief's defaults. */
+export async function segmentStats(sql: Sql): Promise<SegmentStat[]> {
+  return controlTx(sql, async (tx) => {
+    const rows = await tx<
+      { segment: string; leads: number; contacted: number; replied: number; live: number }[]
+    >`
+      select coalesce(nullif(l.segment, ''), '—') as segment,
+             count(*)::int as leads,
+             count(*) filter (where exists (
+               select 1 from lead_state_history h
+               where h.lead_id = l.id and h.to_state <> 'lead'))::int as contacted,
+             count(*) filter (where exists (
+               select 1 from lead_threads t
+               join lead_messages m on m.thread_id = t.id
+               where t.lead_id = l.id and m.direction = 'in'))::int as replied,
+             count(*) filter (where l.state = 'live')::int as live
+      from leads l
+      where l.archived_at is null
+      group by 1
+      order by 4 desc, 2 desc
+      limit 12
+    `;
+    const costs = await tx<{ segment: string; cost_cents: number }[]>`
+      select coalesce(nullif(l.segment, ''), '—') as segment,
+             coalesce(sum(r.cost_cents), 0)::int as cost_cents
+      from agent_runs r join leads l on l.id = r.lead_id
+      where r.created_at > now() - interval '30 days'
+        and l.archived_at is null
+      group by 1
+    `;
+    const costBy = new Map(costs.map((c) => [c.segment, c.cost_cents]));
+    return rows.map((r) => ({ ...r, costCents: costBy.get(r.segment) ?? 0 }));
   });
 }
 

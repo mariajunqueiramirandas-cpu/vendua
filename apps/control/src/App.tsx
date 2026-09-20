@@ -164,6 +164,8 @@ export default function App() {
           <Route path="/inbox/:threadId" element={<InboxView />} />
           <Route path="/aprovacoes" element={<Approvals />} />
           <Route path="/descoberta" element={<Discovery />} />
+          {/* legacy: the launch screen merged into Descoberta — keep ?run= deep links working */}
+          <Route path="/lancar" element={<Discovery />} />
           <Route path="/tarefas" element={<Tasks />} />
           <Route path="/agente" element={<Runs />} />
           <Route path="/agente/runs/:id" element={<Runs />} />

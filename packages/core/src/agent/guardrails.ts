@@ -1,11 +1,154 @@
 import type { Sql } from '../platform/db.ts';
-import { DEFAULT_GUARDRAILS, getSettingTx, type Guardrails } from '../modules/integrations.ts';
+import {
+  DEFAULT_GUARDRAILS,
+  getIntegrationTx,
+  getSettingTx,
+  type Guardrails,
+} from '../modules/integrations.ts';
+import type { Channel } from '../modules/threads.ts';
 
 /**
  * agent/guardrails — the hard rules around every outbound message. Enforced
  * in code in the runner path, never in the prompt: the model asks, this
  * decides. Ordering matters — the first false answer wins.
  */
+
+export interface ChannelVerdict {
+  ok: boolean;
+  reason?: string;
+}
+
+/** Which channels can actually carry a message to this lead right now:
+ *  contact data + an enabled integration + deliverability. 'manual' always
+ *  works — a draft there is a note for staff to copy elsewhere. */
+export async function channelAvailabilityTx(
+  tx: Sql,
+  leadId: string,
+  opts: { lock?: boolean } = {},
+): Promise<Record<Channel, ChannelVerdict>> {
+  // lock: serialize against concurrent contact/bounce writes (updateLead,
+  // delivery events) — a resolve→insert caller holding the lead row can't be
+  // stranded on a channel that died mid-transaction. Display-only callers
+  // (run context's CANAIS line) leave it off — no need to block writes.
+  const lead = (
+    await tx<
+      {
+        email: string | null;
+        whatsapp: string | null;
+        email_bounced_at: string | null;
+      }[]
+    >`select email, whatsapp, email_bounced_at from leads where id = ${leadId} ${opts.lock ? tx.unsafe('for update') : tx.unsafe('')}`
+  )[0];
+  if (!lead) {
+    const dead = { ok: false, reason: 'lead not found' };
+    return { whatsapp: dead, email: dead, manual: dead };
+  }
+  // An inbound whatsapp thread carries the sender's number on external_id —
+  // reachable even when lead.whatsapp was never saved.
+  const waThread = (
+    await tx<{ n: number }[]>`
+      select count(*)::int as n from lead_threads
+      where lead_id = ${leadId} and channel = 'whatsapp' and external_id is not null
+    `
+  )[0]!.n;
+  const [waInt, emInt] = await Promise.all([
+    getIntegrationTx(tx, 'whatsapp'),
+    getIntegrationTx(tx, 'email'),
+  ]);
+  return {
+    whatsapp:
+      !lead.whatsapp && !waThread
+        ? { ok: false, reason: 'lead has no whatsapp' }
+        : !waInt
+          ? { ok: false, reason: 'whatsapp integration off' }
+          : { ok: true },
+    email: !lead.email
+      ? { ok: false, reason: 'lead has no email' }
+      : !emInt
+        ? { ok: false, reason: 'email integration off' }
+        : lead.email_bounced_at
+          ? { ok: false, reason: 'email bounced' }
+          : { ok: true },
+    manual: { ok: true },
+  };
+}
+
+export type ChannelPick =
+  | {
+      ok: true;
+      channel: Channel;
+      via: 'requested' | 'override' | 'continuity' | 'fallback';
+      /** channel of the lead's last inbound — set when this send switches
+       *  channels mid-conversation, so the caller can say so in the copy. */
+      prevChannel: Channel | null;
+    }
+  | { ok: false; reason: string; available: Channel[] };
+
+/** Resolve which channel a send/draft should go out on. Priority: a staff
+ *  override (dispatch-time `params.channel`) > the model's explicit arg >
+ *  the channel the lead last wrote on (continuity) > whatsapp > email.
+ *  A requested-but-dead channel returns {ok:false, available} so the caller
+ *  can retry on a reachable one instead of composing on air. 'manual' is
+ *  only honored when explicitly requested — it never delivers by itself. */
+export async function resolveChannelTx(
+  tx: Sql,
+  leadId: string,
+  args: {
+    requested?: Channel | null;
+    override?: Channel | null;
+    /** A thread-bound run (reply) continues on ITS thread's channel — the
+     *  lead's newer inbound on another channel must not hijack a reply
+     *  composed from this thread's context. Unbound runs use the lead's
+     *  last inbound instead. */
+    threadId?: string | null;
+  },
+): Promise<ChannelPick> {
+  const avail = await channelAvailabilityTx(tx, leadId, { lock: true });
+  const usable = (['whatsapp', 'email'] as const).filter((ch) => avail[ch].ok);
+  // Continuity channel — for continuity picks and to flag a mid-conversation
+  // switch back to the caller.
+  const lastIn =
+    (
+      await tx<{ channel: Channel | null }[]>`
+      select coalesce(
+        (select channel from lead_threads where id = ${args.threadId ?? null} and lead_id = ${leadId}),
+        (select t.channel from lead_messages m
+          join lead_threads t on t.id = m.thread_id
+          where t.lead_id = ${leadId} and m.direction = 'in'
+          order by m.created_at desc limit 1)
+      ) as channel
+    `
+    )[0]?.channel ?? null;
+  const prev = lastIn === 'whatsapp' || lastIn === 'email' ? lastIn : null;
+  const want = args.override ?? args.requested ?? null;
+  if (want) {
+    // 'manual' never auto-picks — only the model/staff may draft to it.
+    if (want === 'manual')
+      return { ok: true, channel: 'manual', via: 'requested', prevChannel: prev };
+    if (avail[want].ok) {
+      return {
+        ok: true,
+        channel: want,
+        via: args.override ? 'override' : 'requested',
+        prevChannel: prev,
+      };
+    }
+    return { ok: false, reason: avail[want].reason!, available: usable };
+  }
+  // Continuity: answer on the channel the lead last wrote on if it's alive.
+  if (prev && avail[prev].ok) {
+    return { ok: true, channel: prev, via: 'continuity', prevChannel: prev };
+  }
+  // First contact / stale channel: whatsapp is the stronger channel for this
+  // audience, email the fallback.
+  const first = usable[0];
+  if (first) return { ok: true, channel: first, via: 'fallback', prevChannel: prev };
+  return {
+    ok: false,
+    reason: 'no reachable channel (whatsapp/email both unavailable)',
+    available: [],
+  };
+}
 
 export interface SendVerdict {
   ok: boolean;
@@ -21,6 +164,7 @@ export async function checkSendAllowedTx(
   tx: Sql,
   g: Guardrails,
   leadId: string,
+  channel: Channel,
 ): Promise<SendVerdict> {
   {
     const lead = (
@@ -29,14 +173,20 @@ export async function checkSendAllowedTx(
           agent_mode: string;
           archived_at: string | null;
           unsubscribed_at: string | null;
+          email_bounced_at: string | null;
         }[]
-      >`select agent_mode, archived_at, unsubscribed_at from leads where id = ${leadId}`
+      >`select agent_mode, archived_at, unsubscribed_at, email_bounced_at from leads where id = ${leadId}`
     )[0];
     if (!lead) return { ok: false, forceDraft: false, reason: 'lead not found' };
     if (lead.archived_at) return { ok: false, forceDraft: false, reason: 'lead archived' };
     if (lead.unsubscribed_at) return { ok: false, forceDraft: false, reason: 'lead unsubscribed' };
     if (lead.agent_mode === 'off')
       return { ok: false, forceDraft: false, reason: 'agent off for lead' };
+    // A bounced address is a dead address — Resend told us so. Blocking here
+    // pushes the agent to the lead's other channels instead of burning
+    // reputation on a guaranteed bounce.
+    if (channel === 'email' && lead.email_bounced_at)
+      return { ok: false, forceDraft: false, reason: 'email bounced' };
 
     // Quiet hours — compared in the configured timezone (America/Sao_Paulo
     // default). Overnight window (21:00→08:00) wraps past midnight.

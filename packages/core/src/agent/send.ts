@@ -4,6 +4,7 @@ import { getIntegrationTx, type IntegrationRow } from '../modules/integrations.t
 import { markMessageFailed, markMessageSent, type Channel } from '../modules/threads.ts';
 import { sendEmail } from './channels/email.ts';
 import { sendWhatsApp } from './channels/whatsapp.ts';
+import { applyDeliveryEventTx } from './channels/email-inbound.ts';
 
 /**
  * agent/send — outbound dispatch, two transactions around the provider call:
@@ -60,19 +61,23 @@ export async function dispatchMessage(
           whatsapp: string | null;
           unsubscribed_at: string | null;
           archived_at: string | null;
+          email_bounced_at: string | null;
         }[]
       >`
-        select id, email, whatsapp, unsubscribed_at, archived_at from leads where id = ${thread.lead_id}
+        select id, email, whatsapp, unsubscribed_at, archived_at, email_bounced_at from leads where id = ${thread.lead_id}
       `
     )[0]!;
 
     // Re-check suppression at dispatch time — a draft approved after the lead
-    // was archived or unsubscribed must not leave the building.
+    // was archived, unsubscribed, or had its email bounce must not leave the
+    // building.
     const suppressed = lead.archived_at
       ? 'lead archived'
       : lead.unsubscribed_at
         ? 'lead unsubscribed'
-        : null;
+        : thread.channel === 'email' && lead.email_bounced_at
+          ? 'email bounced'
+          : null;
     if (suppressed) {
       await markMessageFailed(tx, messageId, suppressed);
       return { fail: suppressed };
@@ -151,7 +156,47 @@ export async function dispatchMessage(
       return { ok: false, reason: sendError };
     }
     const pmid = providerMessageId ? `${send.channel}:${providerMessageId}` : null;
+    // The webhook parks events that find no pmid — serialize both sides on
+    // this advisory key so a parker can't slip between our pmid write and
+    // the drain below (its pmid check happens under the same lock).
+    if (providerMessageId) {
+      await tx`select pg_advisory_xact_lock(hashtext(${`pev:${send.channel}:${providerMessageId}`}))`;
+    }
     await markMessageSent(tx, messageId, pmid);
+    // A delivery event can beat this finalize — Resend emits it before our
+    // send call returns the provider id. Webhook ingest parks those in
+    // provider_events; now that the pmid exists, replay them in-order so the
+    // message/lead land in the state the event described.
+    if (providerMessageId) {
+      const pending = await tx<{ event: string; payload: { to?: string[] } }[]>`
+        select event, payload from provider_events
+        where channel = ${send.channel} and provider_id = ${providerMessageId}
+        order by id
+      `;
+      for (const ev of pending) {
+        if (ev.event === 'email.delivered') {
+          await tx`
+            update lead_messages set status = 'delivered', updated_at = now()
+            where id = ${messageId} and status = 'sent'`;
+        } else if (
+          ev.event === 'email.bounced' ||
+          ev.event === 'email.failed' ||
+          ev.event === 'email.complained'
+        ) {
+          await applyDeliveryEventTx(
+            tx,
+            ev.event as 'email.bounced' | 'email.failed' | 'email.complained',
+            providerMessageId,
+            ev.payload?.to,
+          );
+        }
+      }
+      if (pending.length) {
+        await tx`
+          delete from provider_events
+          where channel = ${send.channel} and provider_id = ${providerMessageId}`;
+      }
+    }
     return { ok: true };
   });
 }

@@ -56,10 +56,21 @@ describe('leadInsert', () => {
       owner: null,
       lost_reason: null,
       discovered_via: null,
+      fit_reason: null,
     });
   });
   test('non-string field → BAD_REQUEST', () => {
     expect(code(() => leadInsert({ name: 'Ana', phone: 123 }))).toBe('BAD_REQUEST');
+  });
+  test('agentGoal + fitScore map to snake_case columns', () => {
+    const out = leadInsert({ name: 'Ana', agentGoal: 'meeting', fitScore: 8 });
+    expect(out.agent_goal).toBe('meeting');
+    expect(out.fit_score).toBe(8);
+  });
+  test('bad agentGoal / fitScore → 422', () => {
+    expect(code(() => leadInsert({ name: 'A', agentGoal: 'spam' }))).toBe('INVALID_AGENT_GOAL');
+    expect(code(() => leadInsert({ name: 'A', fitScore: 11 }))).toBe('BAD_REQUEST');
+    expect(code(() => leadInsert({ name: 'A', fitScore: 3.5 }))).toBe('BAD_REQUEST');
   });
 });
 
@@ -102,6 +113,10 @@ describe('leadJson', () => {
     deal_value_cents: 12000,
     state: 'contacted',
     agent_mode: 'draft',
+    agent_goal: 'negotiation',
+    fit_score: null,
+    fit_reason: null,
+    email_bounced_at: null,
     next_action_at: null,
     lost_reason: null,
     archived_at: null,

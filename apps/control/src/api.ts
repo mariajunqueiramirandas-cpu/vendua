@@ -66,6 +66,10 @@ export interface Lead {
   dealValueCents: number | null;
   state: 'lead' | 'contacted' | 'invited' | 'live';
   agentMode: 'off' | 'draft' | 'auto';
+  agentGoal: 'negotiation' | 'meeting';
+  fitScore: number | null;
+  fitReason: string | null;
+  emailBouncedAt: string | null;
   nextActionAt: string | null;
   lostReason: string | null;
   archivedAt: string | null;
@@ -202,6 +206,25 @@ export interface DupeGroup {
   value: string;
   leads: { id: string; name: string; businessName: string | null; state: string }[];
 }
+export interface Brief {
+  id: string;
+  name: string;
+  query: string;
+  segment: string | null;
+  city: string | null;
+  target: number | null;
+  enabled: boolean;
+  last_run_at: string | null;
+  created_at: string;
+}
+export interface SegmentStat {
+  segment: string;
+  leads: number;
+  contacted: number;
+  replied: number;
+  live: number;
+  costCents: number;
+}
 
 // ---------- calls ----------
 export const api = {
@@ -323,4 +346,26 @@ export const api = {
     }),
   cancelRun: (id: string) =>
     req<{ ok: true; status?: string }>(`/agent/runs/${id}/cancel`, { method: 'POST' }),
+
+  dispatch: (
+    leadIds: string[],
+    goal: 'negotiation' | 'meeting',
+    channel?: 'auto' | 'whatsapp' | 'email',
+  ) =>
+    req<{ enqueued: number; skipped: { id: string; reason: string }[] }>('/agent/dispatch', {
+      method: 'POST',
+      body: JSON.stringify({ leadIds, goal, ...(channel ? { channel } : {}) }),
+    }),
+  briefs: () => req<{ briefs: Brief[] }>('/agent/briefs'),
+  createBrief: (b: {
+    name: string;
+    query: string;
+    segment?: string | null;
+    city?: string | null;
+    target?: number | null;
+  }) => req<{ brief: Brief }>('/agent/briefs', { method: 'POST', body: JSON.stringify(b) }),
+  patchBrief: (id: string, patch: Record<string, unknown>) =>
+    req<{ brief: Brief }>(`/agent/briefs/${id}`, { method: 'PATCH', body: JSON.stringify(patch) }),
+  deleteBrief: (id: string) => req<{ ok: true }>(`/agent/briefs/${id}`, { method: 'DELETE' }),
+  segments: () => req<{ segments: SegmentStat[] }>('/agent/segments'),
 };

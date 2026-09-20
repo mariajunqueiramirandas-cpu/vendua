@@ -23,6 +23,10 @@ const AGENT_OPTS: [string, string][] = [
   ['draft', 'rascunho'],
   ['auto', 'auto'],
 ];
+const GOAL_OPTS: [string, string][] = [
+  ['negotiation', 'negócio'],
+  ['meeting', 'reunião'],
+];
 
 // stored websites are free text — linkify only values that normalize to an
 // absolute http(s) URL; anything else renders as plain text
@@ -46,6 +50,7 @@ export default function LeadDetail() {
   );
   const [note, setNote] = useState('');
   const [taskTitle, setTaskTitle] = useState('');
+  const [actChannel, setActChannel] = useState<'auto' | 'whatsapp' | 'email'>('auto');
   const [notFound, setNotFound] = useState(false);
 
   const load = useCallback(() => {
@@ -94,13 +99,32 @@ export default function LeadDetail() {
       actions={
         <>
           {lead.agentMode !== 'off' && (
-            <button
-              className="btn agent"
-              title="rodar o agente agora"
-              onClick={() => void api.runOnLead(lead.id, 'outreach').then(load)}
-            >
-              <Bot size={14} /> agir
-            </button>
+            <>
+              <select
+                value={actChannel}
+                onChange={(e) => setActChannel(e.target.value as typeof actChannel)}
+                title="canal do disparo — auto = o agente escolhe o canal alcançável"
+              >
+                <option value="auto">canal: auto</option>
+                <option value="whatsapp">canal: whatsapp</option>
+                <option value="email">canal: email</option>
+              </select>
+              <button
+                className="btn agent"
+                title="rodar o agente agora"
+                onClick={() =>
+                  void api
+                    .runOnLead(
+                      lead.id,
+                      'outreach',
+                      actChannel === 'auto' ? {} : { channel: actChannel },
+                    )
+                    .then(load)
+                }
+              >
+                <Bot size={14} /> agir
+              </button>
+            </>
           )}
           <ConfirmBtn onConfirm={() => void api.unsubscribe(lead.id).then(load)}>
             <Ban size={14} /> descadastrar
@@ -141,6 +165,19 @@ export default function LeadDetail() {
                   </button>
                 ))}
               </span>
+              {lead.agentMode !== 'off' && (
+                <span className="seg" title="objetivo do agente">
+                  {GOAL_OPTS.map(([v, l]) => (
+                    <button
+                      key={v}
+                      className={lead.agentGoal === v ? 'sel' : ''}
+                      onClick={() => void patch({ agentGoal: v })}
+                    >
+                      {l}
+                    </button>
+                  ))}
+                </span>
+              )}
               <span style={{ marginLeft: 'auto' }}>
                 <ScoreBar score={lead.score} />
               </span>

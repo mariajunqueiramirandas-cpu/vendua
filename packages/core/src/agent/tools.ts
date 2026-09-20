@@ -11,9 +11,9 @@ import {
   updateLead,
 } from '../modules/leads.ts';
 import { addActivity, createTask } from '../modules/activities.ts';
-import { composeMessage, composeMessageTx, setThreadAgent, channel } from '../modules/threads.ts';
+import { composeMessageTx, setThreadAgent, channel } from '../modules/threads.ts';
 import { DEFAULT_GUARDRAILS, getSettingTx, type Guardrails } from '../modules/integrations.ts';
-import { checkSendAllowedTx, type SendVerdict } from './guardrails.ts';
+import { checkSendAllowedTx, resolveChannelTx, type SendVerdict } from './guardrails.ts';
 import { dispatchMessage } from './send.ts';
 
 /**
@@ -34,6 +34,12 @@ export interface ToolContext {
    *  (same step's batch or a later step) shares the same provider call
    *  instead of paying for the identical page twice. */
   extractCache: Map<string, Promise<unknown>>;
+  /** Discovery-brief runs stamp created leads' discovered_via with the brief
+   *  name so the board can tell scheduled-autopilot finds from ad-hoc ones. */
+  briefName: string | null;
+  /** Staff channel override from dispatch (`params.channel`) — trumps the
+   *  model's own channel pick on send_message/draft_message. */
+  channelOverride: 'email' | 'whatsapp' | null;
 }
 
 const leadIdArg = { type: 'string', description: 'lead uuid' } as const;
@@ -50,6 +56,11 @@ const LEAD_FIELDS = {
   tags: { type: 'array', items: { type: 'string' } },
   dealValueCents: { type: 'integer' },
   nextActionAt: { type: 'string', description: 'ISO-8601' },
+  fitScore: {
+    type: 'integer',
+    description: '0–10 ICP fit — how well this business matches the target audience',
+  },
+  fitReason: { type: 'string', description: 'one line: why this fit score' },
 } as const;
 
 const REGISTRY: { def: AgentTool; toolsets: string[] }[] = [
@@ -81,7 +92,7 @@ const REGISTRY: { def: AgentTool; toolsets: string[] }[] = [
     def: {
       name: 'create_lead',
       description:
-        'Create a new lead (state=lead). Self-dedupes on name/phone/instagram — a duplicate returns {duplicate, existing} instead of inserting.',
+        'Create a new lead (state=lead). Pass fitScore/fitReason — the ICP match judgment. Self-dedupes on name/phone/instagram — a duplicate returns {duplicate, existing} instead of inserting.',
       parameters: {
         type: 'object',
         properties: { name: { type: 'string' }, ...LEAD_FIELDS },
@@ -149,10 +160,13 @@ const REGISTRY: { def: AgentTool; toolsets: string[] }[] = [
     },
   },
   {
-    toolsets: ['reply', 'outreach'],
+    // triage included: the first-contact draft IS triage's write-up — but
+    // send_message stays out, so a new lead can never be sent unreviewed.
+    toolsets: ['triage', 'reply', 'outreach'],
     def: {
       name: 'draft_message',
-      description: 'Draft an outbound message for human approval — always allowed, never sends.',
+      description:
+        'Draft an outbound message for human approval — always allowed, never sends. Omit channel to auto-pick the reachable one (last inbound channel, else whatsapp > email); if you pass a dead channel you get {blocked, reason, use} — retry on `use`.',
       parameters: {
         type: 'object',
         properties: {
@@ -161,7 +175,7 @@ const REGISTRY: { def: AgentTool; toolsets: string[] }[] = [
           body: { type: 'string' },
           subject: { type: 'string' },
         },
-        required: ['leadId', 'channel', 'body'],
+        required: ['leadId', 'body'],
       },
     },
   },
@@ -170,7 +184,7 @@ const REGISTRY: { def: AgentTool; toolsets: string[] }[] = [
     def: {
       name: 'send_message',
       description:
-        'Send an outbound message now. Guardrails decide whether it queues (auto mode) or falls back to draft.',
+        'Send an outbound message now. Guardrails decide whether it queues (auto mode) or falls back to draft. Omit channel to auto-pick the reachable one; a dead channel returns {blocked, reason, use} — retry on `use`.',
       parameters: {
         type: 'object',
         properties: {
@@ -179,7 +193,7 @@ const REGISTRY: { def: AgentTool; toolsets: string[] }[] = [
           body: { type: 'string' },
           subject: { type: 'string' },
         },
-        required: ['leadId', 'channel', 'body'],
+        required: ['leadId', 'body'],
       },
     },
   },
@@ -310,7 +324,10 @@ export async function executeTool(
     case 'create_lead': {
       const payload = { ...args };
       if (ctx.runKind === 'discovery') {
-        if (payload.discoveredVia === undefined) payload.discoveredVia = 'agente';
+        if (payload.discoveredVia === undefined)
+          payload.discoveredVia = ctx.briefName
+            ? `agente·${ctx.briefName}`.slice(0, 120)
+            : 'agente';
         // The Discovery UI panel queries `tag=descoberto` — tag it here so
         // agent-found leads are always findable there.
         const tags = Array.isArray(payload.tags) ? [...payload.tags] : [];
@@ -320,18 +337,22 @@ export async function executeTool(
       const input = leadInsert(payload);
       const res = await claimControl(sql, key, async (tx) => {
         if (ctx.runKind === 'discovery') {
-          // One per-run advisory lock serializes dedupe + cap + insert:
-          // batched create_lead calls in a step run concurrently, so without
-          // the lock two parallel calls could both pass the dup check before
-          // either inserts.
-          await tx`select pg_advisory_xact_lock(hashtext(${`discovery-cap:${ctx.runId}`}))`;
+          // A single advisory key serializes dedupe + cap + insert across ALL
+          // runs: batched calls in a step and concurrent discovery runs (brief
+          // sweep + manual launch) must not observe the same empty dedupe read
+          // and then insert the same prospect twice.
+          await tx`select pg_advisory_xact_lock(hashtext('lead-dedupe'))`;
           // Dedupe before the cap check so a repeat prospect can't burn cap:
-          // phone/whatsapp compare digit-only, instagram handle case-folded,
-          // and a name hit needs the same city — common names alone don't
-          // merge distinct businesses.
+          // each phone/whatsapp number is normalized independently and matched
+          // against BOTH stored columns (a landline and a WhatsApp can differ),
+          // instagram handles compare case-folded, and a name/business hit only
+          // counts when the incoming city is present and equal — common names
+          // alone don't merge distinct businesses.
           const digits = (v: unknown) =>
             typeof v === 'string' && v.replace(/\D/g, '').length >= 8 ? v.replace(/\D/g, '') : null;
-          const phone = digits(input.phone) ?? digits(input.whatsapp);
+          const phones = [digits(input.phone), digits(input.whatsapp)].filter(
+            (d): d is string => d !== null,
+          );
           const ig =
             typeof input.instagram === 'string' && input.instagram.trim()
               ? input.instagram.trim().replace(/^@/, '').toLowerCase()
@@ -351,15 +372,15 @@ export async function executeTool(
             await tx<{ id: string; name: string; state: string }[]>`
               select id, name, state from leads
               where archived_at is null and (
-                (${phone}::text is not null and
-                  (regexp_replace(coalesce(phone,''), '\\D','','g') = ${phone}
-                   or regexp_replace(coalesce(whatsapp,''), '\\D','','g') = ${phone}))
+                (${phones.length}::int > 0 and
+                  (regexp_replace(coalesce(phone,''), '\\D','','g') = any(${phones})
+                   or regexp_replace(coalesce(whatsapp,''), '\\D','','g') = any(${phones})))
                 or (${ig}::text is not null and
                   lower(regexp_replace(coalesce(instagram,''), '^@', '')) = ${ig})
-                or ((${bizKey}::text is not null and lower(business_name) = ${bizKey}
-                     or lower(name) = ${nameKey})
-                    and (${city}::text is null
-                         or lower(coalesce(city,'')) = ${city}))
+                or (${city}::text is not null
+                    and lower(coalesce(city,'')) = ${city}
+                    and (${bizKey}::text is not null and lower(business_name) = ${bizKey}
+                         or lower(name) = ${nameKey}))
               )
               limit 3
             `
@@ -431,32 +452,56 @@ export async function executeTool(
       return res.body;
     }
     case 'draft_message': {
-      const res = await composeMessage(
-        sql,
-        {
-          leadId: String(args.leadId),
-          channel: channel(args.channel),
+      const leadId = String(args.leadId);
+      // Resolve inside the same claim that writes the draft — a bounce or
+      // contact edit landing between resolution and insert can't strand a
+      // draft on a dead channel for staff to approve into a failure.
+      type DraftBody =
+        | { blocked: true; reason: string | undefined; use?: string | null }
+        | (Awaited<ReturnType<typeof composeMessageTx>>['body'] & {
+            channel: string;
+            via: string;
+          });
+      const res = await claimControl<DraftBody>(sql, key, async (tx) => {
+        const pick = await resolveChannelTx(tx, leadId, {
+          requested: args.channel ? channel(args.channel) : null,
+          override: ctx.channelOverride,
+          threadId: ctx.threadId,
+        });
+        if (!pick.ok) {
+          return {
+            status: 200,
+            body: { blocked: true as const, reason: pick.reason, use: pick.available[0] ?? null },
+          };
+        }
+        const composed = await composeMessageTx(tx, {
+          leadId,
+          channel: pick.channel,
           body: String(args.body),
           subject: (args.subject as string) ?? undefined,
           author: 'agent',
           status: 'draft',
-        },
-        key,
-      );
+        });
+        return {
+          status: composed.status,
+          body: { ...composed.body, channel: pick.channel, via: pick.via },
+        };
+      });
       return res.body;
     }
     case 'send_message': {
       const leadId = String(args.leadId);
-      const chan = channel(args.channel);
+      const chanArg = args.channel ? channel(args.channel) : null;
       // Claimed: a retried tool call replays the recorded decision instead of
       // composing again. The advisory lock serializes concurrent sends on the
       // lead so the daily-cap count sees the winner's queued row.
       type SendBody =
-        | { blocked: true; reason: string | undefined }
+        | { blocked: true; reason: string | undefined; use?: string | null }
         | {
             blocked: false;
             verdict: SendVerdict;
             composed: Awaited<ReturnType<typeof composeMessageTx>>;
+            pick: Extract<Awaited<ReturnType<typeof resolveChannelTx>>, { ok: true }>;
           };
       const res = await claimControl<SendBody>(sql, key, async (tx) => {
         await tx`select pg_advisory_xact_lock(hashtext(${`send:${leadId}`}))`;
@@ -476,6 +521,22 @@ export async function executeTool(
             body: { blocked: true as const, reason: 'already dispatched by this run' },
           };
         }
+        // Channel resolution inside the same claim: staff override > the
+        // model's arg > continuity > whatsapp > email. A dead channel blocks
+        // with the reachable alternative so the model retries on it — never
+        // compose on air.
+        const pick = await resolveChannelTx(tx, leadId, {
+          requested: chanArg,
+          override: ctx.channelOverride,
+          threadId: ctx.threadId,
+        });
+        if (!pick.ok) {
+          return {
+            status: 200,
+            body: { blocked: true as const, reason: pick.reason, use: pick.available[0] ?? null },
+          };
+        }
+        const chan = pick.channel;
         // Pause applies per (lead, channel) — staff disabling the DESTINATION
         // thread (or request_human earlier in this same run) must stop sends
         // even when the lead's agent_mode still allows them. No thread yet =
@@ -494,7 +555,7 @@ export async function executeTool(
           };
         }
         const g = await getSettingTx(tx, 'guardrails', {} as Partial<Guardrails>);
-        const verdict = await checkSendAllowedTx(tx, { ...DEFAULT_GUARDRAILS, ...g }, leadId);
+        const verdict = await checkSendAllowedTx(tx, { ...DEFAULT_GUARDRAILS, ...g }, leadId, chan);
         if (!verdict.ok) {
           return { status: 200, body: { blocked: true as const, reason: verdict.reason } };
         }
@@ -507,16 +568,28 @@ export async function executeTool(
           status: verdict.forceDraft ? 'draft' : 'queued',
           agentRunId: ctx.runId,
         });
-        return { status: 200, body: { blocked: false as const, verdict, composed } };
+        return {
+          status: 200,
+          body: { blocked: false as const, verdict, composed, pick },
+        };
       });
       const out = res.body;
-      if (out.blocked) return { blocked: true, reason: out.reason };
+      if (out.blocked) return { blocked: true, reason: out.reason, use: out.use };
       // dispatchMessage no-ops unless the row is still 'queued' — safe when
       // this response replays.
       if (!res.replayed && out.verdict.forceDraft === false) {
         await dispatchMessage(sql, out.composed.body.message.id);
       }
-      return { ...out.composed.body, draftFallback: out.verdict.forceDraft };
+      return {
+        ...out.composed.body,
+        draftFallback: out.verdict.forceDraft,
+        channel: out.pick.channel,
+        via: out.pick.via,
+        switchedFrom:
+          out.pick.prevChannel && out.pick.prevChannel !== out.pick.channel
+            ? out.pick.prevChannel
+            : undefined,
+      };
     }
     case 'remember': {
       const fact = String(args.fact ?? '').slice(0, 500);

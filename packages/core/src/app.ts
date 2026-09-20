@@ -31,6 +31,7 @@ import { addItem, assertCartOpen, loadCartView, matchZone } from './modules/cart
 import { validateCheckout, validateCheckoutShape } from './modules/checkout.ts';
 import { loadOrderView } from './modules/orders.ts';
 import {
+  agentGoal,
   deleteLead,
   exportLeadsCsv,
   findDuplicates,
@@ -43,6 +44,7 @@ import {
   leadStats,
   listLeads,
   parseLeadsCsv,
+  segmentStats,
   updateLead,
   type Lead,
   type LeadState,
@@ -1304,6 +1306,229 @@ export function createApp({ sql, sessionSecret, controlSecret }: AppDeps) {
     if (res.replayed) c.header('x-idempotent-replay', 'true');
     void drain(sql).catch((e) => agentLog.error({ err: e }, 'drain failed'));
     return c.json(res.body, res.status as 201);
+  });
+
+  // ---- dispatch + briefs + segment stats -------------------------------------
+
+  // Manual batch dispatch — staff picks the leads and the goal; each eligible
+  // lead gets its agent_goal set and an outreach run queued. Ineligible leads
+  // come back named with the reason instead of silently skipped.
+  app.post('/control/v1/agent/dispatch', async (c) => {
+    controlGate(c);
+    const body = await bodyJson(c);
+    const ids = body.leadIds;
+    if (
+      !Array.isArray(ids) ||
+      !ids.length ||
+      ids.length > 200 ||
+      ids.some((id) => typeof id !== 'string' || !UUID_RE.test(id))
+    ) {
+      throw new HttpError(422, 'BAD_REQUEST', 'leadIds must be an array of ≤200 uuids');
+    }
+    const goal = agentGoal(body.goal);
+    // Optional staff channel override — 'auto' or absent lets the agent pick;
+    // 'whatsapp'/'email' pins every send in the dispatched runs to it. The
+    // resolver still blocks when that channel is unreachable for a lead.
+    const wantChannel =
+      body.channel === 'whatsapp' || body.channel === 'email' ? body.channel : null;
+    if (body.channel != null && body.channel !== 'auto' && !wantChannel) {
+      throw new HttpError(422, 'BAD_REQUEST', 'channel must be auto|whatsapp|email');
+    }
+    const res = await claimControl(sql, requireIdemKey(c), async (tx) => {
+      let enqueued = 0;
+      const skipped: { id: string; reason: string }[] = [];
+      for (const id of ids as string[]) {
+        const lead = (
+          await tx<
+            {
+              archived_at: string | null;
+              unsubscribed_at: string | null;
+              agent_mode: string;
+            }[]
+          >`
+            select archived_at, unsubscribed_at, agent_mode from leads
+            where id = ${id} for update
+          `
+        )[0];
+        if (!lead) {
+          skipped.push({ id, reason: 'lead not found' });
+          continue;
+        }
+        const reason = lead.archived_at
+          ? 'lead archived'
+          : lead.unsubscribed_at
+            ? 'lead unsubscribed'
+            : lead.agent_mode === 'off'
+              ? 'agent off'
+              : null;
+        if (reason) {
+          skipped.push({ id, reason });
+          continue;
+        }
+        const running = (
+          await tx`
+            select 1 from agent_runs
+            where lead_id = ${id} and kind = 'outreach' and status in ('queued', 'running')
+            limit 1
+          `
+        )[0];
+        if (running) {
+          skipped.push({ id, reason: 'outreach already queued' });
+          continue;
+        }
+        await tx`update leads set agent_goal = ${goal}, updated_at = now() where id = ${id}`;
+        await insertRun(tx, {
+          kind: 'outreach',
+          leadId: id,
+          params: { goal, ...(wantChannel ? { channel: wantChannel } : {}) },
+        });
+        enqueued++;
+      }
+      return { status: 200, body: { enqueued, skipped } };
+    });
+    if (res.replayed) c.header('x-idempotent-replay', 'true');
+    if (res.body.enqueued) void drain(sql).catch((e) => agentLog.error({ err: e }, 'drain failed'));
+    return c.json(res.body);
+  });
+
+  // Discovery briefs — the daily-autopilot side of lead gathering: each
+  // enabled brief fires one discovery run every ~23h (see sweepBriefs).
+  app.get('/control/v1/agent/briefs', async (c) => {
+    controlGate(c);
+    const rows = await controlTx(
+      sql,
+      (tx) =>
+        tx`select id, name, query, segment, city, target, enabled, last_run_at, created_at
+           from discovery_briefs order by created_at desc`,
+    );
+    return c.json({ briefs: rows });
+  });
+
+  app.post('/control/v1/agent/briefs', async (c) => {
+    controlGate(c);
+    const body = await bodyJson(c);
+    // A blank definition would schedule a useless daily run — require real
+    // text for the two fields the sweep feeds to discovery.
+    const name = str(body.name, 'name', 120).trim();
+    const query = str(body.query, 'query', 500).trim();
+    if (!name) throw new HttpError(422, 'BAD_REQUEST', 'name must be non-empty', { field: 'name' });
+    if (!query)
+      throw new HttpError(422, 'BAD_REQUEST', 'query must be non-empty', { field: 'query' });
+    const segment = body.segment == null ? null : str(body.segment, 'segment', 80);
+    const city = body.city == null ? null : str(body.city, 'city', 120);
+    let enabled = true;
+    if (body.enabled !== undefined && body.enabled !== null) {
+      if (typeof body.enabled !== 'boolean')
+        throw new HttpError(422, 'BAD_REQUEST', 'enabled must be a boolean', { field: 'enabled' });
+      enabled = body.enabled;
+    }
+    let target: number | null = null;
+    if (body.target !== undefined && body.target !== null && body.target !== '') {
+      const n = Number(body.target);
+      if (!Number.isInteger(n) || n < 1 || n > 1000)
+        throw new HttpError(422, 'BAD_REQUEST', 'target must be an integer in [1, 1000]');
+      target = n;
+    }
+    const res = await claimControl(sql, requireIdemKey(c), async (tx) => {
+      const row = (
+        await tx`
+          insert into discovery_briefs (name, query, segment, city, target, enabled)
+          values (${name}, ${query}, ${segment}, ${city}, ${target}, ${enabled})
+          returning id, name, query, segment, city, target, enabled, last_run_at, created_at
+        `
+      )[0]!;
+      return { status: 201, body: { brief: row } };
+    });
+    if (res.replayed) c.header('x-idempotent-replay', 'true');
+    return c.json(res.body, res.status as 201);
+  });
+
+  app.patch('/control/v1/agent/briefs/:id', async (c) => {
+    controlGate(c);
+    const id = uuidParam(c, 'id');
+    const body = await bodyJson(c);
+    // Partial patch — absent keys untouched, explicit null clears
+    // segment/city/target.
+    const set: Record<string, unknown> = {};
+    // Same contract as POST — a blank name/query would schedule a useless run.
+    if ('name' in body) {
+      const v = str(body.name, 'name', 120).trim();
+      if (!v) throw new HttpError(422, 'BAD_REQUEST', 'name must be non-empty', { field: 'name' });
+      set.name = v;
+    }
+    if ('query' in body) {
+      const v = str(body.query, 'query', 500).trim();
+      if (!v)
+        throw new HttpError(422, 'BAD_REQUEST', 'query must be non-empty', { field: 'query' });
+      set.query = v;
+    }
+    if ('segment' in body)
+      set.segment = body.segment == null ? null : str(body.segment, 'segment', 80);
+    if ('city' in body) set.city = body.city == null ? null : str(body.city, 'city', 120);
+    if ('enabled' in body) {
+      if (typeof body.enabled !== 'boolean')
+        throw new HttpError(422, 'BAD_REQUEST', 'enabled must be a boolean', { field: 'enabled' });
+      set.enabled = body.enabled;
+    }
+    if ('target' in body) {
+      if (body.target === null) set.target = null;
+      else {
+        const n = Number(body.target);
+        if (!Number.isInteger(n) || n < 1 || n > 1000)
+          throw new HttpError(422, 'BAD_REQUEST', 'target must be an integer in [1, 1000]');
+        set.target = n;
+      }
+    }
+    if (!Object.keys(set).length)
+      throw new HttpError(422, 'BAD_REQUEST', 'no updatable fields in body');
+    const res = await claimControl(sql, requireIdemKey(c), async (tx) => {
+      const cur = (
+        await tx<
+          { enabled: boolean }[]
+        >`select enabled from discovery_briefs where id = ${id} for update`
+      )[0];
+      if (!cur) throw new HttpError(404, 'BRIEF_NOT_FOUND', 'brief not found');
+      // A changed definition — or a paused brief switched back on — should
+      // refire promptly, not ride out the previous run's 23h cadence.
+      if (
+        'query' in set ||
+        'segment' in set ||
+        'city' in set ||
+        'target' in set ||
+        (set.enabled === true && !cur.enabled)
+      ) {
+        set.last_run_at = null;
+      }
+      const row = (
+        await tx`
+          update discovery_briefs set ${tx(set)} where id = ${id}
+          returning id, name, query, segment, city, target, enabled, last_run_at, created_at
+        `
+      )[0]!;
+      return { status: 200, body: { brief: row } };
+    });
+    if (res.replayed) c.header('x-idempotent-replay', 'true');
+    return c.json(res.body);
+  });
+
+  app.delete('/control/v1/agent/briefs/:id', async (c) => {
+    controlGate(c);
+    const res = await claimControl(sql, requireIdemKey(c), async (tx) => {
+      const row = (
+        await tx`delete from discovery_briefs where id = ${uuidParam(c, 'id')} returning id`
+      )[0];
+      if (!row) throw new HttpError(404, 'BRIEF_NOT_FOUND', 'brief not found');
+      return { status: 200, body: { ok: true } };
+    });
+    if (res.replayed) c.header('x-idempotent-replay', 'true');
+    return c.json(res.body);
+  });
+
+  // Segment performance — the learning-loop read surface: which segments
+  // reply, which convert, what they cost.
+  app.get('/control/v1/agent/segments', async (c) => {
+    controlGate(c);
+    return c.json({ segments: await segmentStats(sql) });
   });
 
   // WhatsApp pairing state for the Settings screen (Baileys QR handshake).
