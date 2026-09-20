@@ -442,9 +442,13 @@ const PHONE_TEXT_RE =
  *  callable-looking number (too short, weird country-less form). */
 export function phoneFromText(raw: string): string | null {
   const d = digits(raw);
+  // An explicit + means the country code is already there — keep it verbatim
+  // (8–15 digits = E.164 range) instead of gluing +55 onto a foreign number.
+  if (/^\s*\(?\+/.test(raw)) {
+    return d.length >= 8 && d.length <= 15 ? `+${d}` : null;
+  }
   if (d.length === 10 || d.length === 11) return `+55${d}`;
   if ((d.length === 12 || d.length === 13) && d.startsWith('55')) return `+${d}`;
-  if (raw.trim().startsWith('+') && d.length >= 12 && d.length <= 15) return `+${d}`;
   return null;
 }
 

@@ -7,6 +7,7 @@ import {
   contactsFromText,
   navLinks,
   pageKey,
+  phoneFromText,
 } from '../src/agent/channels/discovery.ts';
 import type { DiscoveryResult } from '../src/agent/channels/discovery.ts';
 
@@ -221,6 +222,11 @@ describe('contactsFromText', () => {
       'Loja na Rua Pereira nº 615 — WhatsApp (22) 9 9712-3470. CNPJ 50.182.263/0001-37. Aberto 13:30 às 19:30.',
     );
     expect(c.phones).toEqual(['+5522997123470']);
+  });
+  test('explicit + numbers keep their country code — no glued +55', () => {
+    expect(phoneFromText('+1 (415) 555-2671')).toBe('+14155552671');
+    expect(phoneFromText('+55 22 99712-3470')).toBe('+5522997123470');
+    expect(phoneFromText('+0800')).toBeNull();
   });
   test('emails parsed, image-asset lookalikes excluded', () => {
     const c = contactsFromText('fale conosco: vendas@doceria.com.br — logo@2x.png hero@3x.webp');
