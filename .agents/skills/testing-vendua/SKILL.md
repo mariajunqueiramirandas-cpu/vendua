@@ -402,7 +402,7 @@ own `qa-open/qa-paused/qa-closed/qa-edge` tenants and mutates the fixture's
   process keeps the code snapshot loaded at boot — critical when the working
   tree is being edited mid-test (you test one consistent revision).
 - `bun install`-free HEAD probe: `git archive HEAD packages/core/src | tar -x
-  -C packages/core/.probe-snap` gives a stable importable copy of the committed
+-C packages/core/.probe-snap` gives a stable importable copy of the committed
   code — write the probe script inside `.probe-snap/` so bare imports still
   resolve to the package's node_modules. Delete the dir when done.
 - `bun run seed` creates one `descoberto`-tagged lead fixture (Atelier do
