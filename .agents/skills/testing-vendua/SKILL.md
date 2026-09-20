@@ -144,7 +144,7 @@ unsubscribed` if `unsubscribed_at` is set and `lead has no whatsapp` if
 
 - Real keys reach the core process as env vars: bind org secrets on the exec
   call that starts `bun run dev` (`env: {GEMINI_API_KEY: 'secret:org:GEMINI_API_KEY',
-  TINYFISH_API_KEY: ..., CONTROL_SECRET: ...}`). SESSION_SECRET has no org
+TINYFISH_API_KEY: ..., CONTROL_SECRET: ...}`). SESSION_SECRET has no org
   entry — any literal works. Integration rows persist in
   `control_integrations`; `secretRef` holds an env-var NAME and falls back to
   the driver's default (GEMINI_API_KEY/TINYFISH_API_KEY), so PUT
