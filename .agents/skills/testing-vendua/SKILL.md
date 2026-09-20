@@ -157,8 +157,10 @@ TINYFISH_API_KEY: ..., CONTROL_SECRET: ...}`). SESSION_SECRET has no org
   → `{runId}` + fire-and-forget `drain()`; poll `GET /agent/runs/:id`.
 - Orphan trap: `bun --watch` restarts kill in-flight runs silently — the row
   sits 'running' with a stale claim until the 10-min lease, then drain()
-  requeues and the whole trajectory RE-executes (journal is overwritten from
-  step 0, leads land in one late burst). A long plateau at N steps with a
+  requeues and the whole trajectory RE-executes — the journal restarts at
+  step 0, but every create_lead before the crash already committed, so
+  pre-crash leads stay visible and re-created prospects return
+  duplicate:true under the PR-#41 dedupe. A long plateau at N steps with a
   frozen `started_at` is an orphan, not a slow tool — check `now()-started_at`
   and whether steps grow after the lease. TinyFish extract calls are still
   legitimately minutes-slow, so a plateau isn't proof of death on its own.
