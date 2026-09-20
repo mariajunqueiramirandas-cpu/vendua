@@ -1,6 +1,7 @@
 import type { Sql } from '../platform/db.ts';
 import { HttpError } from '../platform/http.ts';
 import type { AgentTool } from './llm.ts';
+import type { PageExtractor } from './channels/discovery.ts';
 import { claimControl, controlTx } from '../modules/control.ts';
 import {
   getLeadDetail,
@@ -45,6 +46,10 @@ export interface ToolContext {
   /** Staff channel override from dispatch (`params.channel`) — trumps the
    *  model's own channel pick on send_message/draft_message. */
   channelOverride: 'email' | 'whatsapp' | null;
+  /** LLM pass over each fetched page's text — extracts contacts the regexes
+   *  can't (prose mentions) plus business context, verbatim-verified. Null on
+   *  the mock driver so scripted runs keep their script. */
+  pageExtract: PageExtractor | null;
 }
 
 const leadIdArg = { type: 'string', description: 'lead uuid' } as const;
@@ -261,7 +266,7 @@ const REGISTRY: { def: AgentTool; toolsets: string[] }[] = [
     def: {
       name: 'read_pages',
       description:
-        "Read pages via the fetch provider — returns each page's markdown text, foundContacts (phone/whatsapp/email/socials parsed out of the page's links AND body text — wa.me printed in an instagram bio counts), and nav (contact-ish follow-up reads: same-host pages + link-in-bio hubs like linktr.ee). Use it on every prospect's own pages AND instagram profiles: home + contato/sobre/cardápio + the profile's bio link, up to 6 urls per call. Facebook roots are login-walled. A repeated URL returns its cached output.",
+        "Read pages via the fetch provider — returns each page's markdown text, foundContacts (phone/whatsapp/email/socials parsed out of the page's links AND body text — wa.me printed in an instagram bio counts — PLUS a second AI extraction pass over the prose), business (owner/address/what it sells, when the text carries it), and nav (contact-ish follow-up reads: same-host pages + link-in-bio hubs like linktr.ee). Use it on every prospect's own pages AND instagram profiles: home + contato/sobre/cardápio + the profile's bio link, up to 6 urls per call. Facebook roots are login-walled. A repeated URL returns its cached output.",
       parameters: {
         type: 'object',
         properties: {
@@ -361,14 +366,24 @@ export async function executeTool(
       delete payload.sources;
       if (ctx.runKind === 'discovery') {
         // A wa.me/whatsapp URL pasted into phone/whatsapp is a channel
-        // mention, not a dialable number — reduce it to digits or drop it
-        // (wa.me/message/<code> exposes none) BEFORE the channel gate counts
-        // it, or a link-only card would slip through as reachable.
+        // mention, not a dialable number — resolve it through contactFromUrl
+        // (path-segment aware, so a wa.me/message code or a ?text= full of
+        // digits can't masquerade as a phone) or drop it BEFORE the channel
+        // gate counts it, or a link-only card would slip through as reachable.
+        const { contactFromUrl } = await import('./channels/discovery.ts');
         for (const f of ['phone', 'whatsapp'] as const) {
           const v = payload[f];
           if (typeof v === 'string' && /wa\.me|whatsapp\.com/i.test(v)) {
-            const d = v.replace(/\D/g, '');
-            payload[f] = d.length >= 10 && d.length <= 15 ? `+${d}` : undefined;
+            let u: URL | null = null;
+            for (const candidate of [v, `https://${v}`]) {
+              try {
+                u = new URL(candidate);
+                break;
+              } catch {
+                /* try next form */
+              }
+            }
+            payload[f] = u ? contactFromUrl(u).phone : undefined;
           }
         }
         // The bar for a discovered lead, enforced where the prompt can't be
@@ -889,11 +904,32 @@ export async function executeTool(
           );
         for (const url of miss) {
           const key2 = pageKey(url);
-          const p: Promise<PageResult> = batch.then((res) => {
+          const p: Promise<PageResult> = batch.then(async (res) => {
             const page = res.pages.find(
               (pg) => pageKey(pg.url) === key2 || pageKey(pg.finalUrl ?? '') === key2,
             );
-            if (page) return { page };
+            if (page) {
+              // LLM pass sits inside the cached promise — a page's extraction
+              // runs once per identity, shared with every repeat read.
+              if (ctx.pageExtract && page.text.length >= 150) {
+                const ex = await ctx.pageExtract(page.text);
+                if (ex) {
+                  for (const f of ['phones', 'whatsappLinks', 'emails', 'instagram'] as const) {
+                    for (const v of ex[f]) {
+                      if (!page.foundContacts[f].includes(v)) page.foundContacts[f].push(v);
+                    }
+                  }
+                  if (ex.owner || ex.address || ex.sells) {
+                    page.business = {
+                      ...(ex.owner ? { owner: ex.owner } : {}),
+                      ...(ex.address ? { address: ex.address } : {}),
+                      ...(ex.sells ? { sells: ex.sells } : {}),
+                    };
+                  }
+                }
+              }
+              return { page };
+            }
             const err = res.errors.find((er) => pageKey(er.url) === key2);
             return { page: null, error: err?.error ?? 'no result for url' };
           });

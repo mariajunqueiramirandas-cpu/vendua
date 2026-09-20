@@ -1,5 +1,6 @@
 import type { Sql } from '../../platform/db.ts';
 import { getIntegration, type IntegrationRow } from '../../modules/integrations.ts';
+import type { AgentTool, LlmProvider } from '../llm.ts';
 
 /**
  * agent/channels/discovery — TinyFish driver. Search API for prospect
@@ -40,6 +41,9 @@ export interface ReadPage {
   /** internal links worth a follow-up read (contato, sobre, cardápio…) */
   nav: string[];
   foundContacts: FoundContacts;
+  /** business context the LLM page pass extracted — owner, address, what it
+   *  sells; dossier material, not channel columns */
+  business?: { owner?: string; address?: string; sells?: string };
 }
 
 export interface ReadPagesResult {
@@ -238,22 +242,28 @@ export function contactFromUrl(u: URL): {
   const host = u.hostname.toLowerCase().replace(/^www\./, '');
   if (host === 'wa.me' || host === 'whatsapp.com') {
     const out: { phone?: string; whatsappLink?: string } = {};
-    const d = digits(u.pathname);
-    // click-to-chat surfaces: /<digits>, /message/<code>, /c/<digits>. A bare
-    // wa.me/<short> isn't a chat — the whatsappLink flag only counts real ones.
-    if (host === 'wa.me' && (d.length >= 10 || /^\/(?:message|c|p)\//i.test(u.pathname))) {
+    // click-to-chat surfaces: /<digits>, /message/<code>, /c/<digits>, /p/<item>/<digits>.
+    // /message/ codes are opaque alphanumeric — never a phone. /p/ puts the
+    // number LAST (wa.me/p/<item>/<phone>), so the last all-digit segment is
+    // the destination; a segment with letters is a code, not a number.
+    const segs = u.pathname.split('/').filter(Boolean);
+    const numSeg = /^\/(message)\//i.test(u.pathname)
+      ? undefined
+      : [...segs].reverse().find((s) => /^\d{10,15}$/.test(s));
+    if (host === 'wa.me' && (numSeg || /^\/(?:message|c|p)\//i.test(u.pathname))) {
       out.whatsappLink = u.toString();
     }
-    if (d.length >= 10 && d.length <= 15) out.phone = `+${d}`;
+    if (numSeg) out.phone = `+${numSeg}`;
     return out;
   }
   if (host === 'api.whatsapp.com') {
     const out: { phone?: string; whatsappLink?: string } = {};
-    const d = digits(u.searchParams.get('phone') ?? '');
-    if (d.length >= 10 || /^\/(?:send|message)/i.test(u.pathname)) {
+    const p = u.searchParams.get('phone') ?? '';
+    const d = /^\d{10,15}$/.test(p) ? p : '';
+    if (d || /^\/(?:send|message)/i.test(u.pathname)) {
       out.whatsappLink = u.toString();
     }
-    if (d.length >= 10 && d.length <= 15) out.phone = `+${d}`;
+    if (d) out.phone = `+${d}`;
     return out;
   }
   if (host === 'instagram.com') {
@@ -301,14 +311,13 @@ export function annotateResult(r: {
             ? { ...base, kind: 'listing' }
             : base;
   // Snippet text sometimes carries the contact itself (google business blurb,
-  // bio teaser) — parse it for free before spending a fetch.
-  if (r.snippet && !out.phone) {
+  // bio teaser) — parse it for free before spending a fetch; each field fills
+  // independently so a URL phone doesn't hide a snippet email.
+  if (r.snippet && (!out.phone || !out.email)) {
     const c = contactsFromText(r.snippet);
-    if (c.phones[0]) out.phone = c.phones[0];
-    if (c.emails[0]) out.email = c.emails[0];
-    if (c.phones[0] || c.emails[0]) {
-      if (out.kind === 'site') out.kind = 'contact';
-    }
+    if (!out.phone && c.phones[0]) out.phone = c.phones[0];
+    if (!out.email && c.emails[0]) out.email = c.emails[0];
+    if ((c.phones[0] || c.emails[0]) && out.kind === 'site') out.kind = 'contact';
   }
   return out;
 }
@@ -503,6 +512,123 @@ export function contactsFromText(text: string): FoundContacts & { hubs: string[]
     if (out.phones.length >= 6) break;
   }
   return out;
+}
+
+// ---------------------------------------------------------------------------
+// LLM page pass — regexes catch link/number SHAPES; the model reads the prose
+// they can't ("chama a Ju no zap", an OCR'd menu footer, a CTA naming the
+// owner). It reports via a function call and every channel value is then
+// verified verbatim against the page text — the model proposes, the page
+// confirms; nothing inferred lands in a channel field.
+// ---------------------------------------------------------------------------
+
+export interface PageExtract {
+  phones: string[];
+  whatsappLinks: string[];
+  emails: string[];
+  instagram: string[];
+  /** free-form context printed on the page — dossier material */
+  owner?: string;
+  address?: string;
+  sells?: string;
+}
+
+export type PageExtractor = (text: string) => Promise<PageExtract | null>;
+
+const PAGE_EXTRACT_TOOL: AgentTool = {
+  name: 'report_page',
+  description: 'Report the contact channels and business facts literally printed on this page.',
+  parameters: {
+    type: 'object',
+    properties: {
+      phones: {
+        type: 'array',
+        items: { type: 'string' },
+        description: 'phone/whatsapp numbers printed on the page, any format',
+      },
+      whatsappLinks: {
+        type: 'array',
+        items: { type: 'string' },
+        description: 'wa.me / api.whatsapp.com urls printed on the page',
+      },
+      emails: { type: 'array', items: { type: 'string' } },
+      instagram: {
+        type: 'array',
+        items: { type: 'string' },
+        description: 'instagram handles mentioned',
+      },
+      owner: { type: 'string', description: 'owner / contact person, if named' },
+      address: { type: 'string' },
+      sells: { type: 'string', description: 'one line: what the business sells' },
+    },
+  },
+};
+
+const strList = (v: unknown): string[] =>
+  Array.isArray(v) ? v.filter((s): s is string => typeof s === 'string') : [];
+
+const str = (v: unknown): string | undefined => {
+  const s = typeof v === 'string' ? v.trim() : '';
+  return s || undefined;
+};
+
+/** One extraction chat per fetched page. Returns null on any provider or
+ *  parse failure — deterministic contacts already landed, this is additive. */
+export function pageExtractorFor(provider: LlmProvider): PageExtractor {
+  return async (text) => {
+    let res;
+    try {
+      res = await provider.chat({
+        system:
+          'Você extrai contatos de uma página de negócio (markdown). Chame report_page SÓ com o que está literalmente impresso na página — telefone/whatsapp em qualquer formato, e-mail, @instagram, dono, endereço, o que vende. Nunca infira nem complete um número. Se a página não mostra contato, reporte arrays vazios.',
+        messages: [{ role: 'user', content: text.slice(0, 12000) }],
+        tools: [PAGE_EXTRACT_TOOL],
+      });
+    } catch {
+      return null;
+    }
+    const call = res.toolCalls.find((t) => t.name === 'report_page');
+    if (!call) return null;
+    const a = call.args;
+    const textDigits = digits(text);
+    const textLower = text.toLowerCase();
+    const out: PageExtract = { phones: [], whatsappLinks: [], emails: [], instagram: [] };
+    // verbatim gate — a channel only counts when its digits/literal text sits
+    // on the page; a hallucinated number can't survive this check.
+    for (const raw of strList(a.phones)) {
+      const d = digits(raw);
+      if (d.length >= 8 && textDigits.includes(d)) {
+        const p = phoneFromText(raw);
+        if (p) uniqPush(out.phones, p);
+      }
+    }
+    for (const raw of strList(a.whatsappLinks)) {
+      const v = raw.trim();
+      if (!v || !textLower.includes(v.toLowerCase())) continue;
+      try {
+        const c = contactFromUrl(new URL(/^https?:/i.test(v) ? v : `https://${v}`));
+        if (c.whatsappLink) uniqPush(out.whatsappLinks, c.whatsappLink);
+        if (c.phone) uniqPush(out.phones, c.phone);
+      } catch {
+        /* not a parseable url */
+      }
+    }
+    for (const raw of strList(a.emails)) {
+      const v = raw.trim().toLowerCase();
+      if (v && textLower.includes(v)) uniqPush(out.emails, v);
+    }
+    for (const raw of strList(a.instagram)) {
+      const v = raw.trim().replace(/^@/, '');
+      if (v && textLower.includes(v.toLowerCase())) uniqPush(out.instagram, `@${v}`);
+    }
+    const owner = str(a.owner)?.slice(0, 120);
+    const address = str(a.address)?.slice(0, 200);
+    const sells = str(a.sells)?.slice(0, 200);
+    if (owner) out.owner = owner;
+    if (address) out.address = address;
+    if (sells) out.sells = sells;
+    return out;
+  };
 }
 
 /** The links most likely to carry contact info or the catalog — surfaced so
@@ -773,7 +899,10 @@ function tinyfish(integration: IntegrationRow): DiscoveryProvider {
           description: r.description ?? null,
           text: text.slice(0, PAGE_TEXT_CAP),
           ...(text.length > PAGE_TEXT_CAP ? { truncated: true } : {}),
-          nav: [...new Set([...navLinks(links, url), ...fromText.hubs])].slice(0, 8),
+          // links belong to the rendered destination — on a redirect the
+          // same-host nav check must compare against final_url, not the
+          // requested url, or every internal follow-up drops out.
+          nav: [...new Set([...navLinks(links, r.final_url ?? url), ...fromText.hubs])].slice(0, 8),
           foundContacts,
         });
       }

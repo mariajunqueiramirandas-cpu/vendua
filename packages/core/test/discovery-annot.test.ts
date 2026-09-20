@@ -6,9 +6,11 @@ import {
   contactsFromLinks,
   contactsFromText,
   navLinks,
+  pageExtractorFor,
   pageKey,
 } from '../src/agent/channels/discovery.ts';
 import type { DiscoveryResult } from '../src/agent/channels/discovery.ts';
+import { mockProvider } from '../src/agent/llm.ts';
 
 const r = (url: string, title = 'x', snippet = ''): DiscoveryResult['results'][number] => ({
   title,
@@ -59,6 +61,27 @@ describe('contactFromUrl', () => {
     const cat = cfu('https://wa.me/c/5522992086005');
     expect(cat.whatsappLink).toBe('https://wa.me/c/5522992086005');
     expect(cat.phone).toBe('+5522992086005');
+  });
+  test('opaque wa.me codes never become phones', () => {
+    // a /message/ code with an all-digit body is still not a number
+    const m = cfu('https://wa.me/message/1234567890AB');
+    expect(m.phone).toBeUndefined();
+    expect(m.whatsappLink).toBe('https://wa.me/message/1234567890AB');
+    const m2 = cfu('https://wa.me/message/12345678901');
+    expect(m2.phone).toBeUndefined();
+  });
+  test('wa.me/p/<item>/<phone> — number is the last segment', () => {
+    const p = cfu('https://wa.me/p/1149164198755526/5516999999999');
+    expect(p.phone).toBe('+5516999999999');
+    expect(p.whatsappLink).toBe('https://wa.me/p/1149164198755526/5516999999999');
+  });
+  test('query digits never leak into the phone', () => {
+    const c = cfu('https://wa.me/5511999999999?text=pedido%202026%20por%20favor');
+    expect(c.phone).toBe('+5511999999999');
+    const s = cfu('https://api.whatsapp.com/send?phone=558512345678&text=pedido%202026');
+    expect(s.phone).toBe('+558512345678');
+    // a non-numeric phone param is a share link, not a destination
+    expect(cfu('https://api.whatsapp.com/send?text=oi').phone).toBeUndefined();
   });
   test('too-short digits are not a phone', () => {
     expect(cfu('https://wa.me/1234')).toEqual({});
@@ -112,6 +135,13 @@ describe('annotateResult', () => {
     expect(a.phone).toBe('+5522997123470');
     expect(a.email).toBe('contato@doceria.com.br');
     expect(a.kind).toBe('contact');
+  });
+  test('snippet email fills even when the URL already carried a phone', () => {
+    const a = annotateResult(
+      r('https://wa.me/5585999887766', 'x', 'ou escreva para vendas@doceria.com.br'),
+    );
+    expect(a.phone).toBe('+5585999887766');
+    expect(a.email).toBe('vendas@doceria.com.br');
   });
   test('own site → kind site', () => {
     expect(annotateResult(r('https://doceria85.com.br/contato')).kind).toBe('site');
@@ -230,6 +260,19 @@ describe('navLinks', () => {
     );
     expect(nav).toContain('https://linktr.ee/doceria85');
   });
+  test('on a hub page, nav points OUT — same-host platform chrome is dropped', () => {
+    const nav = navLinks(
+      [
+        'https://linktr.ee/s/about',
+        'https://linktr.ee/features/contact-forms',
+        'https://wa.me/message/ABC123',
+        'https://ifood.com.br/doceria85',
+        'https://doceria85.com.br/contato',
+      ],
+      'https://linktr.ee/doceria85',
+    );
+    expect(nav).toEqual(['https://doceria85.com.br/contato']);
+  });
 });
 
 describe('annotateResults', () => {
@@ -256,5 +299,54 @@ describe('annotateResults', () => {
     const { results } = annotateResults([r('https://www.youtube.com/watch?v=x')]);
     expect(results.length).toBe(1);
     expect(results[0]!.kind).toBe('listing');
+  });
+});
+
+describe('pageExtractorFor — the LLM pass, verbatim-gated', () => {
+  const TEXT =
+    'Doceria da Ju — bolos sob encomenda. Encomendas pelo whats (22) 9 9999-1234 ' +
+    'ou contato@judoces.com.br. Rua das Flores 120, centro. Siga @judoces.';
+
+  test('model-reported channels land only when the page literally carries them', async () => {
+    const provider = mockProvider([
+      {
+        toolCalls: [
+          {
+            name: 'report_page',
+            args: {
+              phones: ['22 9 9999-1234', '11 4002-8922'], // second is NOT on the page
+              emails: ['contato@judoces.com.br', 'fake@never-printed.com'],
+              whatsappLinks: ['wa.me/55999991234'], // not on page — dropped
+              instagram: ['@judoces', '@notthere'],
+              owner: 'Ju',
+              address: 'Rua das Flores 120, centro',
+              sells: 'bolos sob encomenda',
+            },
+          },
+        ],
+      },
+    ]);
+    const ex = await pageExtractorFor(provider)(TEXT);
+    expect(ex).not.toBeNull();
+    expect(ex!.phones).toEqual(['+5522999991234']);
+    expect(ex!.emails).toEqual(['contato@judoces.com.br']);
+    expect(ex!.whatsappLinks).toEqual([]);
+    expect(ex!.instagram).toEqual(['@judoces']);
+    expect(ex!.owner).toBe('Ju');
+    expect(ex!.sells).toBe('bolos sob encomenda');
+  });
+  test('whatsapp links verbatim on the page yield phone + channel', async () => {
+    const text = `${TEXT} wa.me/5522999991234`;
+    const provider = mockProvider([
+      { toolCalls: [{ name: 'report_page', args: { whatsappLinks: ['wa.me/5522999991234'] } }] },
+    ]);
+    const ex = await pageExtractorFor(provider)(text);
+    expect(ex!.whatsappLinks).toEqual(['https://wa.me/5522999991234']);
+    expect(ex!.phones).toEqual(['+5522999991234']);
+  });
+  test('no report call or a provider error → null, deterministic fields stay', async () => {
+    expect(await pageExtractorFor(mockProvider([{ text: 'ok' }]))(TEXT)).toBeNull();
+    const broken = { name: 'x', chat: async () => Promise.reject(new Error('boom')) };
+    expect(await pageExtractorFor(broken)(TEXT)).toBeNull();
   });
 });
