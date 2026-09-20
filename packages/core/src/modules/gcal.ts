@@ -70,8 +70,10 @@ function gcalEnv(): GcalEnv {
     try {
       const json = source.b64 ? Buffer.from(source.raw, 'base64').toString('utf8') : source.raw;
       key = parseSaKey(json);
+      // A working fallback source must clear the error a broken primary set —
+      // otherwise status reports lastError while the calendar actually works.
       keyError = key
-        ? keyError
+        ? null
         : (keyError ?? 'service account json missing client_email/private_key/token_uri');
     } catch (e) {
       keyError = `service account json decode/parse failed: ${e instanceof Error ? e.message : String(e)}`;
@@ -288,6 +290,64 @@ export async function busyWindows(
   } catch (e) {
     lastError = e instanceof Error ? e.message : String(e);
     gcalLog.warn({ err: lastError }, 'gcal freebusy failed');
+    return [];
+  }
+}
+
+/**
+ * Busy windows for a PATCH/reschedule — freebusy can't say WHICH event owns a
+ * window, so when the meeting already has a gcal event the query switches to
+ * events.list and drops that id (a same-day nudge must not conflict with the
+ * event it is moving). Without an exclude id this is exactly `busyWindows`.
+ */
+export async function busyWindowsExceptEvent(
+  timeMin: Date,
+  timeMax: Date,
+  excludeEventId: string | null | undefined,
+): Promise<{ start: Date; end: Date }[]> {
+  if (!excludeEventId) return busyWindows(timeMin, timeMax);
+  if (disabled()) return [];
+  const { calendarId } = gcalEnv();
+  try {
+    const params = new URLSearchParams({
+      timeMin: timeMin.toISOString(),
+      timeMax: timeMax.toISOString(),
+      singleEvents: 'true',
+      fields: 'items(id,status,transparency,start,end)',
+      maxResults: '250',
+    });
+    const res = await calFetch(
+      `/calendars/${encodeURIComponent(calendarId!)}/events?${params}`,
+      {},
+    );
+    if (!res.ok) {
+      lastError = `events.list http ${res.status}`;
+      gcalLog.warn({ status: res.status }, 'gcal events.list failed');
+      return [];
+    }
+    const body = (await res.json()) as {
+      items?: {
+        id: string;
+        status?: string;
+        transparency?: string;
+        start?: { dateTime?: string; date?: string };
+        end?: { dateTime?: string; date?: string };
+      }[];
+    };
+    lastError = null;
+    return (body.items ?? [])
+      .filter(
+        (e) =>
+          e.id !== excludeEventId && e.status !== 'cancelled' && e.transparency !== 'transparent',
+      )
+      .map((e) => ({
+        start: new Date(e.start?.dateTime ?? e.start?.date ?? ''),
+        end: new Date(e.end?.dateTime ?? e.end?.date ?? ''),
+      }))
+      .filter((w) => !Number.isNaN(w.start.getTime()) && !Number.isNaN(w.end.getTime()));
+  } catch (e) {
+    lastError = e instanceof Error ? e.message : String(e);
+    gcalLog.warn({ err: lastError }, 'gcal events.list failed');
     return [];
   }
 }

@@ -87,13 +87,17 @@ import { claimControl, controlTx } from './modules/control.ts';
 import { pipelineForecast, snapshotPipelineTx } from './modules/forecast.ts';
 import {
   availableSlots,
+  bookBusyWindows,
   bookMeeting,
+  bookMeetingTx,
   bookingLink,
   cancelByLead,
   ensureMeetingEffects,
   listMeetings,
+  meetingJson,
   meetingsStatus,
   nextMeetingForLead,
+  parseBookInput,
   patchMeeting,
   verifyBookingToken,
 } from './modules/meetings.ts';
@@ -1289,23 +1293,29 @@ export function createApp({ sql, sessionSecret, controlSecret }: AppDeps) {
     const body = await bodyJson(c);
     // The claim wraps bookMeeting's insert step — a retried POST replays the
     // stored meeting instead of re-validating against a now-taken slot.
-    const res = await claimControl(sql, key, async () => {
-      const out = await bookMeeting(sql, {
-        leadId: str(body.leadId, 'leadId', 64),
-        start: str(body.start, 'start', 64),
-        bookerName: body.name ? str(body.name, 'name', 200) : null,
-        bookerContact: body.contact ? str(body.contact, 'contact', 300) : null,
-        source: 'staff',
-        ...(typeof body.durationMin === 'number' ? { durationMin: body.durationMin } : {}),
-      });
-      return { status: 201, body: { meeting: out.meeting } };
+    // Single-connection claim: bookMeetingTx runs INSIDE the claim tx — a
+    // nested controlTx would grab a second pooled conn per request and ~10
+    // concurrent staff bookings would deadlock the (size-10) pool. The gcal
+    // busy read happens before the claim — no network call inside the tx.
+    const input = parseBookInput({
+      leadId: str(body.leadId, 'leadId', 64),
+      start: str(body.start, 'start', 64),
+      bookerName: body.name ? str(body.name, 'name', 200) : null,
+      bookerContact: body.contact ? str(body.contact, 'contact', 300) : null,
+      source: 'staff',
+      ...(typeof body.durationMin === 'number' ? { durationMin: body.durationMin } : {}),
     });
-    if (res.replayed) {
-      c.header('x-idempotent-replay', 'true');
-      // The claim skipped the work fn — the first attempt may have died
-      // between commit and the room/gcal/email effects; fill what's missing.
-      await ensureMeetingEffects(sql, res.body.meeting.id);
-    }
+    const gcalBusy = await bookBusyWindows(input.start);
+    const res = await claimControl(sql, key, async (tx) => {
+      const out = await bookMeetingTx(tx, input, new Date(), gcalBusy);
+      return { status: 201, body: { meeting: meetingJson(out.meeting) } };
+    });
+    if (res.replayed) c.header('x-idempotent-replay', 'true');
+    // Post-commit effects run on fresh claims AND replays: room/gcal/email
+    // happen after commit, so a crash between them leaves the replay (or the
+    // first request that died right here) as the retry point. Fills only
+    // what's missing — safe to re-run.
+    await ensureMeetingEffects(sql, res.body.meeting.id);
     return c.json(res.body, res.status as 201);
   });
 

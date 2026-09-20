@@ -312,7 +312,10 @@ export function verifyBookingToken(token: string, secret: string, now = new Date
   const leadId = parts[1]!;
   const exp = Number(parts[2]);
   const sig = parts[3]!;
-  if (!Number.isInteger(exp) || exp * 1000 < now.getTime()) return null;
+  // A token may never outlive the mint TTL — reject distant expiries too so
+  // the lifetime is bounded even if a signer is ever used carelessly.
+  if (!Number.isInteger(exp)) return null;
+  if (exp * 1000 < now.getTime() || exp * 1000 > now.getTime() + TOKEN_TTL_S * 1000) return null;
   const expect = createHmac('sha256', `${secret}:booking`)
     .update(`${TOKEN_PREFIX}|${leadId}|${exp}`)
     .digest('base64url');
@@ -471,31 +474,65 @@ export interface BookResult {
   created: boolean;
 }
 
-/**
- * The booking pipeline shared by the public endpoint and staff POST:
- * validate slot → insert (idempotent) → state bump + activity → room + gcal
- * + confirmation after commit. Post-commit effects are best-effort — a
- * Daily/gcal/mail outage must not lose a booked meeting.
- */
-export async function bookMeeting(sql: Sql, input: BookInput): Promise<BookResult> {
+export interface BookTxInput {
+  leadId: string;
+  start: Date;
+  bookerName: string | null;
+  bookerContact: string | null;
+  source: MeetingSource;
+  durationMin?: number;
+}
+
+/** Validate + normalize a BookInput the same way for both entry points —
+ *  the public route calls `bookMeeting`, the staff route runs `bookMeetingTx`
+ *  under its own idempotency claim. */
+export function parseBookInput(input: BookInput): BookTxInput {
   const leadId = str(input.leadId, 'leadId', 64);
   if (!UUID_RE.test(leadId)) throw new HttpError(400, 'BAD_REQUEST', 'leadId must be a uuid');
   const start = new Date(str(input.start, 'start', 64));
   if (Number.isNaN(start.getTime())) {
     throw new HttpError(422, 'BAD_START', 'start must be an ISO-8601 timestamp');
   }
-  const bookerName = input.bookerName ? str(input.bookerName, 'name', 200) : null;
-  const bookerContact = input.bookerContact ? str(input.bookerContact, 'contact', 300) : null;
-  const now = new Date();
+  return {
+    leadId,
+    start,
+    bookerName: input.bookerName ? str(input.bookerName, 'name', 200) : null,
+    bookerContact: input.bookerContact ? str(input.bookerContact, 'contact', 300) : null,
+    source: input.source,
+    ...(input.durationMin !== undefined ? { durationMin: input.durationMin } : {}),
+  };
+}
 
-  // gcal busy read happens BEFORE the tx — never hold a connection/lock over
-  // a network call. On failure it contributes nothing (rules-only fallback).
-  const gcalBusy = await gcal.busyWindows(
+/** gcal busy around a candidate start — fetch BEFORE opening the transaction:
+ *  a network call must never run inside one (nor hold a pooled conn open). */
+export async function bookBusyWindows(start: Date, excludeEventId?: string | null | undefined) {
+  return gcal.busyWindowsExceptEvent(
     new Date(start.getTime() - 24 * 3600_000),
     new Date(start.getTime() + 24 * 3600_000),
+    excludeEventId,
   );
+}
 
-  const txResult = await controlTx(sql, async (tx) => {
+export interface BookTxResult {
+  meeting: MeetingRow;
+  created: boolean;
+  cfg: MeetingConfig;
+  lead: LeadRow;
+}
+
+/** The booking insert step inside the caller's transaction — the staff POST
+ *  runs it under its own claimControl claim so the request stays on ONE
+ *  pooled connection. A nested controlTx per request plus ten concurrent
+ *  staff bookings would hold every pool connection while each waited on
+ *  another (deadlock). */
+export async function bookMeetingTx(
+  tx: Sql,
+  input: BookTxInput,
+  now: Date,
+  gcalBusy: BusyWindow[],
+): Promise<BookTxResult> {
+  const { leadId, start, bookerName, bookerContact } = input;
+  {
     const lead = (await tx<LeadRow[]>`select * from leads where id = ${leadId}`)[0];
     if (!lead) throw new HttpError(404, 'LEAD_NOT_FOUND', 'lead not found');
     if (lead.archived_at) throw new HttpError(409, 'LEAD_ARCHIVED', 'lead is archived');
@@ -599,15 +636,26 @@ export async function bookMeeting(sql: Sql, input: BookInput): Promise<BookResul
       actor,
     );
     return { meeting: row, created: true as const, cfg, lead };
-  });
+  }
+}
 
-  const { meeting, cfg, lead } = txResult;
+/**
+ * The booking pipeline shared by the public endpoint and staff POST:
+ * validate slot → insert (idempotent) → state bump + activity → room + gcal
+ * + confirmation after commit. Post-commit effects are best-effort — a
+ * Daily/gcal/mail outage must not lose a booked meeting.
+ */
+export async function bookMeeting(sql: Sql, input: BookInput): Promise<BookResult> {
+  const bookInput = parseBookInput(input);
+  const now = new Date();
+  const gcalBusy = await bookBusyWindows(bookInput.start);
+  const txResult = await controlTx(sql, (tx) => bookMeetingTx(tx, bookInput, now, gcalBusy));
   // Post-commit effects run for replays too — a crash between the insert
   // commit and here leaves room_url/gcal/confirmation unfinished, and a
   // retried request is the natural retry point. Each step fills only what's
   // missing, so re-running is safe.
-  await meetingEffects(sql, meeting, cfg, lead, bookerContact);
-  return { meeting: meetingJson(meeting), created: txResult.created };
+  await meetingEffects(sql, txResult.meeting, txResult.cfg, txResult.lead, bookInput.bookerContact);
+  return { meeting: meetingJson(txResult.meeting), created: txResult.created };
 }
 
 /** Re-runnable effect completion for a meeting whose booking committed but
@@ -646,15 +694,25 @@ async function meetingEffects(
   // gcal_event_id null and insert two events — the loser is orphaned and
   // blocks freebusy forever. A session-scoped advisory lock on a reserved
   // connection spans the provider calls; a tx-scoped lock can't (the rule
-  // against network calls inside a tx still stands).
+  // against network calls inside a tx still stands). Each SQL step is its
+  // own conn.begin with the tx-local GUC — no session-scoped 'vendua.control'
+  // is ever set on the reserved conn, so nothing can leak to the next pool
+  // borrower.
   const conn = await sql.reserve();
+  const withControl = <T>(tx: (t: Sql) => Promise<T>) =>
+    conn.begin(async (t) => {
+      await t`select set_config('vendua.control', '1', true)`;
+      return tx(t);
+    });
+  // The row as re-read under the lock — post-commit state the confirmation
+  // copy must reflect (a stale caller snapshot could name an old slot).
+  let locked: MeetingRow | null = null;
   try {
-    // Session-scoped GUC on the reserved conn — must be cleared before
-    // release or the next pool borrower reads the CRM schema unchecked.
-    await conn`select set_config('vendua.control', '1', false)`;
     await conn`select pg_advisory_lock(hashtext('vendua.meetings.effects'), hashtext(${meeting.id}))`;
     // Re-read under the lock — a serialized predecessor may have completed.
-    const cur = (await conn<MeetingRow[]>`select * from meetings where id = ${meeting.id}`)[0];
+    const cur = await withControl(
+      async (t) => (await t<MeetingRow[]>`select * from meetings where id = ${meeting.id}`)[0],
+    );
     if (!cur || cur.status !== 'scheduled') return;
     let roomUrl = cur.room_url;
     if (!roomUrl || (rooms.dailyConfigured() && !hasDailyRoom(roomUrl, cur.id))) {
@@ -681,33 +739,39 @@ async function meetingEffects(
       });
     }
     if (roomUrl !== cur.room_url || gcalEventId !== cur.gcal_event_id) {
-      await conn`
-        update meetings set room_url = ${roomUrl}, gcal_event_id = coalesce(${gcalEventId}, gcal_event_id),
-          updated_at = now()
-        where id = ${cur.id}
-      `;
+      await withControl(async (t) => {
+        await t`
+          update meetings set room_url = ${roomUrl}, gcal_event_id = coalesce(${gcalEventId}, gcal_event_id),
+            updated_at = now()
+          where id = ${cur.id}
+        `;
+      });
     }
     meeting.room_url = roomUrl;
     meeting.gcal_event_id = gcalEventId ?? cur.gcal_event_id;
-    // An unsubscribed lead can still book (clicking the link is fresh consent),
-    // but outbound honors the opt-out — dispatchMessage would refuse anyway, so
-    // don't leave a stranded 'queued' message on the thread.
-    if (lead.email && !lead.unsubscribed_at) {
-      await queueMeetingMessage(sql, {
-        leadId,
-        channel: 'email',
-        meetingId: cur.id,
-        subject: 'Venduá — sua call está marcada',
-        body: confirmationBody(cur.starts_at, roomUrl, cfg),
-        idemKey: `meeting-confirm:${cur.id}`,
-      });
-    }
+    locked = { ...cur, room_url: roomUrl, gcal_event_id: meeting.gcal_event_id };
   } finally {
     await conn`select pg_advisory_unlock(hashtext('vendua.meetings.effects'), hashtext(${meeting.id}))`.catch(
       () => {},
     );
-    await conn`select set_config('vendua.control', '', false)`.catch(() => {});
     conn.release();
+  }
+  if (!locked) return;
+  // Confirmation is composed+dispatched only after conn is released — the
+  // pool is size 10, so compose (claimControl on a pooled conn) running while
+  // we held a reserved conn would deadlock under ~10 concurrent bookings.
+  if (lead.email && !lead.unsubscribed_at) {
+    // An unsubscribed lead can still book (clicking the link is fresh consent),
+    // but outbound honors the opt-out — dispatchMessage would refuse anyway, so
+    // don't leave a stranded 'queued' message on the thread.
+    await queueMeetingMessage(sql, {
+      leadId,
+      channel: 'email',
+      meetingId: locked.id,
+      subject: 'Venduá — sua call está marcada',
+      body: confirmationBody(locked.starts_at, locked.room_url, cfg),
+      idemKey: `meeting-confirm:${locked.id}`,
+    });
   }
 }
 
@@ -740,8 +804,9 @@ async function queueMeetingMessage(
   opts: {
     leadId: string;
     channel: 'email' | 'whatsapp';
-    /** Dispatch is suppressed if this meeting is no longer 'scheduled' —
-     *  a confirmation/reminder must not outlive a cancellation. */
+    /** Written to lead_messages.meeting_id — dispatch suppresses the send if
+     *  this meeting is no longer 'scheduled': a confirmation/reminder must
+     *  not outlive a cancellation. */
     meetingId?: string;
     subject: string;
     body: string;
@@ -782,18 +847,16 @@ async function queueMeetingMessage(
       subject: opts.subject,
       author: 'system',
       status: 'queued',
+      ...(opts.meetingId ? { meetingId: opts.meetingId } : {}),
     },
     key,
   );
   // Dispatch even on a replayed claim: a crash between compose and dispatch
   // leaves the row 'queued' — dispatchMessage no-ops on terminal states, so
-  // re-dispatch is also the self-heal path. The meetingId guard drops the
-  // send if the meeting was cancelled/rescheduled in the compose→dispatch gap.
-  const dispatch = await dispatchMessage(
-    sql,
-    res.body.message.id,
-    opts.meetingId ? { meetingId: opts.meetingId } : undefined,
-  );
+  // re-dispatch is also the self-heal path. The row's meeting_id drops the
+  // send if the meeting was cancelled/rescheduled in the compose→dispatch
+  // gap — and it also guards the stranded-message recovery in drain().
+  const dispatch = await dispatchMessage(sql, res.body.message.id);
   return { queued: dispatch.ok, reason: dispatch.reason };
 }
 
@@ -939,11 +1002,25 @@ export async function patchMeeting(
   replayed: boolean;
 }> {
   // gcal busy read for a reschedule must precede the claim tx — never hold
-  // the claim transaction open over a network call.
+  // the claim transaction open over a network call. The pre-read is only for
+  // the meeting's own gcal_event_id: the freebusy feed can't name events, so
+  // excluding "the meeting itself" requires the events.list path — without it
+  // a same-day nudge 409s against the event it's moving.
   const gcalBusy = input.startsAt
-    ? await gcal.busyWindows(
+    ? await gcal.busyWindowsExceptEvent(
         new Date(new Date(input.startsAt).getTime() - 24 * 3600_000),
         new Date(new Date(input.startsAt).getTime() + 24 * 3600_000),
+        (
+          await controlTx(
+            sql,
+            async (tx) =>
+              (
+                await tx<
+                  { gcal_event_id: string | null }[]
+                >`select gcal_event_id from meetings where id = ${id}`
+              )[0],
+          )
+        )?.gcal_event_id ?? null,
       )
     : [];
   // Object-ref instead of a narrowed local — TS narrows `= null` to null and
@@ -1251,6 +1328,7 @@ export async function sweepMeetingReminders(sql: Sql): Promise<number> {
         ...(pick.channel === 'email' ? { subject: 'Venduá — lembrete da call' } : {}),
         author: 'system',
         status: 'queued',
+        meetingId: cur.id,
       });
       const claimed24 = cur.reminder_24h_at === null;
       if (kind === '1h') {
@@ -1261,7 +1339,7 @@ export async function sweepMeetingReminders(sql: Sql): Promise<number> {
       return { messageId: composed.body.message.id, kind, claimed24 };
     });
     if (!claim) continue;
-    const dispatch = await dispatchMessage(sql, claim.messageId, { meetingId: m.id });
+    const dispatch = await dispatchMessage(sql, claim.messageId);
     if (dispatch.ok) {
       sent++;
     } else {
@@ -1303,6 +1381,28 @@ export async function sweepMeetingReminders(sql: Sql): Promise<number> {
     for (const p of pending) {
       await ensureMeetingEffects(sql, p.id).catch((err) =>
         mlog.warn({ meetingId: p.id, err }, 'meeting effects heal failed'),
+      );
+    }
+  }
+  // The same reap on the other side of a cancel: a failed deleteEvent leaves
+  // gcal_event_id on the cancelled row as the retry marker — without a sweeper
+  // the stale event blocks that slot on the shared calendar forever.
+  if (wantGcal) {
+    const stale = await controlTx(
+      sql,
+      (tx) => tx<{ id: string; gcal_event_id: string }[]>`
+        select id, gcal_event_id from meetings
+        where status = 'cancelled' and gcal_event_id is not null
+        order by cancelled_at asc
+        limit 20
+      `,
+    );
+    for (const s of stale) {
+      if (!(await gcal.deleteEvent(s.gcal_event_id))) continue;
+      await controlTx(
+        sql,
+        async (tx) =>
+          await tx`update meetings set gcal_event_id = null, updated_at = now() where id = ${s.id} and status = 'cancelled'`,
       );
     }
   }
