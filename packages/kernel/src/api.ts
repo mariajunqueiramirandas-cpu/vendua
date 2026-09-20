@@ -458,6 +458,8 @@ export const ERROR_CODES = [
   'BAD_REQUEST',
   'NOT_FOUND',
   'INTERNAL',
+  'EMAIL_PROVIDER_UNAVAILABLE',
+  'EMAIL_FETCH_FAILED',
 ] as const;
 export type ErrorCode = (typeof ERROR_CODES)[number];
 

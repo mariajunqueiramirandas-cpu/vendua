@@ -120,6 +120,7 @@ export async function ingestResendEvent(
   }
   const res = await fetch(`https://api.resend.com/emails/receiving/${emailId}`, {
     headers: { authorization: `Bearer ${apiKey}` },
+    signal: AbortSignal.timeout(10_000),
   });
   if (!res.ok) {
     // 5xx so Resend retries — the received email may not be readable the
@@ -129,14 +130,18 @@ export async function ingestResendEvent(
   const mail = (await res.json()) as ReceivedEmail;
   const { from, fromName } = splitFrom(mail.headers?.from, mail.from ?? '');
   if (!from) throw new HttpError(422, 'BAD_REQUEST', 'received email has no sender');
-  const body = mail.text?.trim() || (mail.html ? htmlToText(mail.html) : '');
+  // The sender doesn't control our limits — clip to the message contract
+  // (body 8000, subject 300) instead of dropping the email. Replies keep
+  // quoted history at the bottom, so the head holds the newest content.
+  let body = mail.text?.trim() || (mail.html ? htmlToText(mail.html) : '');
   if (!body) throw new HttpError(422, 'BAD_REQUEST', 'received email has no readable body');
+  if (body.length > 8000) body = `${body.slice(0, 7950).trimEnd()}\n[… truncado]`;
 
   return ingestInbound(sql, {
     channel: 'email',
     from,
     ...(fromName ? { fromName } : {}),
-    ...(mail.subject ? { subject: str(mail.subject, 'subject', 300) } : {}),
+    ...(mail.subject ? { subject: str(mail.subject.slice(0, 300), 'subject', 300) } : {}),
     body,
     providerMessageId: mail.message_id ?? event.data?.message_id ?? emailId,
   });
