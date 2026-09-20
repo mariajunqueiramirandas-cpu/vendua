@@ -6,6 +6,7 @@ import {
   type Guardrails,
 } from '../modules/integrations.ts';
 import type { Channel } from '../modules/threads.ts';
+import { waStatus } from './channels/whatsapp.ts';
 
 /**
  * agent/guardrails — the hard rules around every outbound message. Enforced
@@ -16,6 +17,17 @@ import type { Channel } from '../modules/threads.ts';
 export interface ChannelVerdict {
   ok: boolean;
   reason?: string;
+}
+
+/** Enabled integration alone doesn't mean whatsapp can send — the baileys
+ *  driver also needs a live session (waStatus 'open'); drivers that need no
+ *  connection (log) count as ready on the row alone. Shared by the discovery
+ *  autocontact gate and channel availability so 'reachable' means the same
+ *  thing everywhere. */
+export async function whatsappReadyTx(tx: Sql): Promise<boolean> {
+  const wa = await getIntegrationTx(tx, 'whatsapp');
+  if (!wa) return false;
+  return wa.driver === 'baileys' ? waStatus() === 'open' : true;
 }
 
 /** Which channels can actually carry a message to this lead right now:
@@ -61,7 +73,9 @@ export async function channelAvailabilityTx(
         ? { ok: false, reason: 'lead has no whatsapp' }
         : !waInt
           ? { ok: false, reason: 'whatsapp integration off' }
-          : { ok: true },
+          : waInt.driver === 'baileys' && waStatus() !== 'open'
+            ? { ok: false, reason: 'whatsapp disconnected' }
+            : { ok: true },
     email: !lead.email
       ? { ok: false, reason: 'lead has no email' }
       : !emInt

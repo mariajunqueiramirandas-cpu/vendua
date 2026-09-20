@@ -13,7 +13,7 @@ import { providerFor, type AgentMessage } from './llm.ts';
 import { buildSystemPrompt } from './prompts.ts';
 import { executeTool, toolsFor, type ToolContext } from './tools.ts';
 import { dispatchMessage } from './send.ts';
-import { channelAvailabilityTx } from './guardrails.ts';
+import { channelAvailabilityTx, whatsappReadyTx } from './guardrails.ts';
 
 const agentLog = log.child({ mod: 'agent' });
 
@@ -307,8 +307,8 @@ export async function runOnce(sql: Sql): Promise<boolean> {
     const { text: context, goal, bookingUrl } = await contextFor(sql, run);
     const g = await getSetting<Partial<Guardrails>>(sql, 'guardrails', {});
     // The prompt only promises autocontact when it can actually happen —
-    // the same conditions create_lead's gate checks (enabled + live driver).
-    const waDriverOn = run.kind === 'discovery' && Boolean(await getIntegration(sql, 'whatsapp'));
+    // the same conditions create_lead's gate checks (enabled + reachable).
+    const waDriverOn = run.kind === 'discovery' && (await whatsappReadyTx(sql));
     const system = buildSystemPrompt(run.kind, pitch, memory, {
       goal,
       bookingUrl,

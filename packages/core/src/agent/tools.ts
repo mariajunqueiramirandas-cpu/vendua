@@ -12,13 +12,13 @@ import {
 } from '../modules/leads.ts';
 import { addActivity, createTask } from '../modules/activities.ts';
 import { composeMessageTx, setThreadAgent, channel } from '../modules/threads.ts';
+import { DEFAULT_GUARDRAILS, getSettingTx, type Guardrails } from '../modules/integrations.ts';
 import {
-  DEFAULT_GUARDRAILS,
-  getIntegrationTx,
-  getSettingTx,
-  type Guardrails,
-} from '../modules/integrations.ts';
-import { checkSendAllowedTx, resolveChannelTx, type SendVerdict } from './guardrails.ts';
+  checkSendAllowedTx,
+  resolveChannelTx,
+  whatsappReadyTx,
+  type SendVerdict,
+} from './guardrails.ts';
 import { dispatchMessage } from './send.ts';
 
 /**
@@ -404,7 +404,18 @@ export async function executeTool(
           score !== null &&
           score >= minScore &&
           Boolean(wa);
+        /** Same suppression dispatch and the outreach scheduler use — a lead
+         *  with live outreach never gets a second first-contact. */
+        const outreachActive = async (leadId: string) =>
+          (
+            await tx`
+            select 1 from agent_runs
+            where lead_id = ${leadId} and kind = 'outreach' and status in ('queued', 'running')
+            limit 1
+          `
+          )[0];
         const queueOutreach = async (leadId: string, score: number | null) => {
+          if (await outreachActive(leadId)) return null;
           const { insertRun } = await import('./runner.ts');
           return insertRun(tx, {
             kind: 'outreach',
@@ -434,7 +445,7 @@ export async function executeTool(
           autoOn = guardrails.discoveryAutoContact ?? DEFAULT_GUARDRAILS.discoveryAutoContact;
           minScore =
             guardrails.discoveryContactMinScore ?? DEFAULT_GUARDRAILS.discoveryContactMinScore;
-          waDriverOn = Boolean(await getIntegrationTx(tx, 'whatsapp'));
+          waDriverOn = await whatsappReadyTx(tx);
           // Dedupe before the cap check so a repeat prospect can't burn cap:
           // each phone/whatsapp number is normalized independently and matched
           // against BOTH stored columns (a landline and a WhatsApp can differ),
@@ -519,12 +530,16 @@ export async function executeTool(
               merged.push('fit_score');
             }
             // An enriched dup clears the same gate a fresh lead would — but
-            // only while the card is still untouched ('lead') and nobody
-            // switched its agent off ('off' is a human veto, never override).
+            // only while the card is still untouched ('lead'), nobody
+            // switched its agent off ('off' is a human veto, never override),
+            // and no outreach is already live for it.
             const dupScore = (set.fit_score ?? dup.fit_score) as number | null;
             const dupWa = String(set.whatsapp ?? dup.whatsapp ?? '').trim();
             const dupContact =
-              gateFires(dupScore, dupWa) && dup.state === 'lead' && dup.agent_mode !== 'off';
+              gateFires(dupScore, dupWa) &&
+              dup.state === 'lead' &&
+              dup.agent_mode !== 'off' &&
+              !(await outreachActive(dup.id as string));
             if (dupContact && dup.agent_mode !== 'auto') {
               set.agent_mode = 'auto';
               merged.push('agent_mode');
