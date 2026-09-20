@@ -990,6 +990,59 @@ export async function cancelByLead(
   return meetingJson(out.row);
 }
 
+/**
+ * Bring the meeting's tracked calendar event to the row's window — the durable
+ * retry for a reschedule interrupted mid-sync (patch + delete both failing on
+ * an outage leaves the stored event at the OLD window while the row holds the
+ * new one). Probes first: a live event is PATCHed in place, a confirmed-gone
+ * one is replaced (delete+insert then writes the new id), an unreachable one
+ * keeps its id for the next pass — 'unknown' is never treated as missing.
+ * Mutates row.gcal_event_id to the persisted value.
+ */
+async function reconcileMeetingEvent(
+  sql: Sql,
+  row: MeetingRow,
+  cfg: MeetingConfig,
+): Promise<void> {
+  const wantStart = new Date(row.starts_at).getTime();
+  const wantEnd = new Date(row.ends_at).getTime();
+  let id = row.gcal_event_id;
+  if (id) {
+    const probe = await gcal.eventWindow(id);
+    if (probe.state === 'unknown') return; // transient — next pass retries
+    if (probe.state === 'ok') {
+      if (probe.start.getTime() === wantStart && probe.end.getTime() === wantEnd) return;
+      if (await gcal.updateEvent(id, { start: row.starts_at, end: row.ends_at, tz: cfg.tz })) {
+        return; // synced in place — nothing to persist
+      }
+      if (!(await gcal.deleteEvent(id))) return; // unreachable — keep the id
+    }
+    // 'gone', or drifted + deleted — fall through to replace
+    id = null;
+  }
+  const leadName = row.lead_id
+    ? (
+        await controlTx(
+          sql,
+          async (tx) =>
+            await tx<{ name: string }[]>`select name from leads where id = ${row.lead_id}`,
+        )
+      )[0]?.name
+    : null;
+  const newId = await gcal.insertEvent({
+    summary: `Venduá · ${leadName ?? 'call'}`,
+    start: row.starts_at,
+    end: row.ends_at,
+    tz: cfg.tz,
+    leadId: row.lead_id,
+  });
+  if (newId === row.gcal_event_id) return; // was already null and insert failed
+  await controlTx(sql, async (tx) => {
+    await tx`update meetings set gcal_event_id = ${newId}, updated_at = now() where id = ${row.id}`;
+  });
+  row.gcal_event_id = newId;
+}
+
 export interface PatchMeetingInput {
   status?: 'cancelled' | 'done' | 'no_show';
   startsAt?: string;
@@ -1217,24 +1270,11 @@ export async function patchMeeting(
     } else if (row.status === 'scheduled' && input.startsAt !== undefined) {
       if (committed.prevStart === undefined) {
         // Claim replay — the reschedule already committed and its effects
-        // already ran (or this is the crash window between them). Heal only
-        // what's missing; re-deleting the stored id would kill the live event
-        // just to recreate it.
-        if (!row.gcal_event_id) {
-          const newId = await gcal.insertEvent({
-            summary: 'Venduá · call remarcada',
-            start: row.starts_at,
-            end: row.ends_at,
-            tz: cfg.tz,
-            leadId: row.lead_id,
-          });
-          if (newId) {
-            await controlTx(sql, async (tx) => {
-              await tx`update meetings set gcal_event_id = ${newId}, updated_at = now() where id = ${row.id}`;
-            });
-            row.gcal_event_id = newId;
-          }
-        }
+        // already ran (or this is the crash window between them, or a first
+        // run whose gcal calls failed mid-sync). Reconcile heals whatever the
+        // event still needs: in-place PATCH when it's live but drifted,
+        // replace when gone, nothing when already synced or unreachable.
+        await reconcileMeetingEvent(sql, row, cfg);
         await rooms.bumpRoomExpiry(row.room_url, new Date(row.ends_at));
       } else {
         // Fresh run: prefer PATCHing the existing event in place — the row
@@ -1412,10 +1452,31 @@ export async function sweepMeetingReminders(sql: Sql): Promise<number> {
       );
     }
   }
-  // The same reap on the other side of a cancel: a failed deleteEvent leaves
-  // gcal_event_id on the cancelled row as the retry marker — without a sweeper
-  // the stale event blocks that slot on the shared calendar forever.
+  // Reschedule reconcile: a gcal outage mid-reschedule can leave the stored
+  // event on the OLD window while the row holds the new one — probe each
+  // tracked upcoming meeting and PATCH/replace drifted events.
   if (wantGcal) {
+    const driftCandidates = await controlTx(
+      sql,
+      (tx) => tx<MeetingRow[]>`
+        select * from meetings
+        where status = 'scheduled' and gcal_event_id is not null
+          and starts_at > now() - interval '10 minutes'
+        order by updated_at asc
+        limit 20
+      `,
+    );
+    if (driftCandidates.length) {
+      const cfg = await controlTx(sql, (tx) => meetingConfigTx(tx));
+      for (const m of driftCandidates) {
+        await reconcileMeetingEvent(sql, m, cfg).catch((err) =>
+          mlog.warn({ meetingId: m.id, err }, 'meeting event reconcile failed'),
+        );
+      }
+    }
+    // The same reap on the other side of a cancel: a failed deleteEvent leaves
+    // gcal_event_id on the cancelled row as the retry marker — without a sweeper
+    // the stale event blocks that slot on the shared calendar forever.
     const stale = await controlTx(
       sql,
       (tx) => tx<{ id: string; gcal_event_id: string }[]>`

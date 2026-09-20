@@ -271,6 +271,42 @@ export async function updateEvent(
   }
 }
 
+export type EventProbe =
+  | { state: 'ok'; start: Date; end: Date }
+  | { state: 'gone' }
+  | { state: 'unknown' };
+
+/** One event's live window — 'gone' on 404/410/cancelled, 'unknown' on any
+ *  transient failure (callers must never treat 'unknown' as missing). */
+export async function eventWindow(gcalEventId: string): Promise<EventProbe> {
+  if (disabled()) return { state: 'unknown' };
+  const { calendarId } = gcalEnv();
+  try {
+    const res = await calFetch(
+      `/calendars/${encodeURIComponent(calendarId!)}/events/${encodeURIComponent(gcalEventId)}?fields=status,start,end`,
+      {},
+    );
+    if (res.status === 404 || res.status === 410) return { state: 'gone' };
+    if (!res.ok) {
+      lastError = `events.get http ${res.status}`;
+      return { state: 'unknown' };
+    }
+    const ev = (await res.json()) as {
+      status?: string;
+      start?: { dateTime?: string };
+      end?: { dateTime?: string };
+    };
+    if (ev.status === 'cancelled' || !ev.start?.dateTime || !ev.end?.dateTime) {
+      return { state: 'gone' };
+    }
+    lastError = null;
+    return { state: 'ok', start: new Date(ev.start.dateTime), end: new Date(ev.end.dateTime) };
+  } catch (e) {
+    lastError = e instanceof Error ? e.message : String(e);
+    return { state: 'unknown' };
+  }
+}
+
 /** Best-effort delete — 404/410 (already gone) is treated as success. */
 export async function deleteEvent(gcalEventId: string): Promise<boolean> {
   if (disabled()) return false;
