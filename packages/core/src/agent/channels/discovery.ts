@@ -256,8 +256,8 @@ export function contactFromUrl(u: URL): {
   if (host === 'api.whatsapp.com') {
     const out: { phone?: string; whatsappLink?: string } = {};
     const p = u.searchParams.get('phone') ?? '';
-    const d = /^\d{10,15}$/.test(p) ? p : '';
-    if (d || /^\/(?:send|message)/i.test(u.pathname)) {
+    const d = /^\+?\d{10,15}$/.test(p.trim()) ? p.trim().replace(/^\+/, '') : '';
+    if (d || /^\/message(?:\/|$)/i.test(u.pathname)) {
       out.whatsappLink = u.toString();
     }
     if (d) out.phone = `+${d}`;
@@ -434,7 +434,7 @@ export function contactsFromLinks(links: string[]): FoundContacts {
  *  required otherwise. */
 const TEXT_URL_RE = /https?:\/\/[^\s"'<>()[\]]+/gi;
 const BARE_CONTACT_RE =
-  /\b(?:wa\.me|api\.whatsapp\.com|linktr\.ee|lnk\.bio|bio\.link|beacons\.ai|linklist\.bio|allmylinks\.com|msha\.ke|hoo\.be|carrd\.co|solo\.to|wa\.link|linkbio\.co|camps\.bio|flow\.page)\/[^\s"'<>()[\]]*/gi;
+  /\b(?:[\w-]+\.)?(?:wa\.me|api\.whatsapp\.com|linktr\.ee|lnk\.bio|bio\.link|beacons\.ai|linklist\.bio|allmylinks\.com|msha\.ke|hoo\.be|carrd\.co|solo\.to|wa\.link|linkbio\.co|camps\.bio|flow\.page)\/[^\s"'<>()[\]]*/gi;
 const EMAIL_TEXT_RE = /[\w.+-]+@[\w-]+(?:\.[\w-]+)+/g;
 const ASSET_TAIL_RE = /\.(?:png|jpe?g|gif|webp|svg|css|js|mjs|ico|woff2?|ttf|otf)$/i;
 /** BR phones, formatted: optional +55, DDD (parens optional), 8-9 digit
@@ -456,7 +456,19 @@ export function phoneFromText(raw: string): string | null {
 }
 
 function isHubHost(host: string): boolean {
-  return LINK_HUB_HOSTS.has(host);
+  // subdomain-aware: carrd.co sites are <name>.carrd.co — an exact-match set
+  // would drop every one of them out of the hub path.
+  return hostMatches(host, LINK_HUB_HOSTS);
+}
+
+/** Profile-shaped url on a link-in-bio host — the business's own hub page,
+ *  not platform chrome. Apex hubs put the handle in the path (linktr.ee/x);
+ *  subdomain hubs put it in the host (x.carrd.co, path `/` or a section). */
+function isProfileHubUrl(u: URL): boolean {
+  const h = u.hostname.toLowerCase().replace(/^www\./, '');
+  const segs = u.pathname.split('/').filter(Boolean).length;
+  if (LINK_HUB_HOSTS.has(h)) return segs === 1;
+  return hostMatches(h, LINK_HUB_HOSTS) && segs <= 1;
 }
 
 /** Contacts printed in body text — same fields as contactsFromLinks, so the
@@ -490,10 +502,7 @@ export function contactsFromText(text: string): FoundContacts & { hubs: string[]
     if (wa.whatsappLink) uniqPush(out.whatsappLinks, wa.whatsappLink);
     if (wa.phone) uniqPush(out.phones, wa.phone);
     if (wa.instagram) uniqPush(out.instagram, wa.instagram);
-    if (
-      isHubHost(u.hostname.toLowerCase().replace(/^www\./, '')) &&
-      u.pathname.split('/').filter(Boolean).length === 1
-    ) {
+    if (isProfileHubUrl(u)) {
       uniqPush(out.hubs, `${u.protocol}//${u.host}${u.pathname.replace(/\/+$/, '')}`);
     }
   }
@@ -538,10 +547,7 @@ export function navLinks(links: string[], pageUrl: string): string[] {
       } catch {
         continue;
       }
-      if (
-        isHubHost(u.hostname.toLowerCase().replace(/^www\./, '')) &&
-        u.pathname.split('/').filter(Boolean).length === 1
-      ) {
+      if (isProfileHubUrl(u)) {
         push(`${u.protocol}//${u.host}${u.pathname.replace(/\/+$/, '')}`);
       }
     }

@@ -79,7 +79,13 @@ describe('contactFromUrl', () => {
     const s = cfu('https://api.whatsapp.com/send?phone=558512345678&text=pedido%202026');
     expect(s.phone).toBe('+558512345678');
     // a non-numeric phone param is a share link, not a destination
-    expect(cfu('https://api.whatsapp.com/send?text=oi').phone).toBeUndefined();
+    const bare = cfu('https://api.whatsapp.com/send?text=oi');
+    expect(bare.phone).toBeUndefined();
+    expect(bare.whatsappLink).toBeUndefined();
+    // E.164's leading + on the phone param is the same number
+    const plus = cfu('https://api.whatsapp.com/send?phone=%2B558512345678');
+    expect(plus.phone).toBe('+558512345678');
+    expect(plus.whatsappLink).toBeDefined();
   });
   test('too-short digits are not a phone', () => {
     expect(cfu('https://wa.me/1234')).toEqual({});
@@ -257,6 +263,10 @@ describe('navLinks', () => {
       'https://instagram.com/doceria85',
     );
     expect(nav).toContain('https://linktr.ee/doceria85');
+  });
+  test('hub subdomains count — carrd.co sites are <name>.carrd.co', () => {
+    const nav = navLinks(['https://doceria85.carrd.co/'], 'https://instagram.com/doceria85');
+    expect(nav).toContain('https://doceria85.carrd.co');
   });
   test('on a hub page, nav points OUT — same-host platform chrome is dropped', () => {
     const nav = navLinks(
