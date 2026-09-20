@@ -118,6 +118,34 @@ unsubscribed` if `unsubscribed_at` is set and `lead has no whatsapp` if
 - Old notes: cookie-auth mutations need `x-vendua-staff: 1` (CSRF);
   Idempotency-Key required → replay → 200 + `x-idempotent-replay`.
 
+## Email inbound webhook (Resend svix)
+
+`POST /control/v1/webhooks/email` takes two auth modes: the
+`x-vendua-webhook` shared secret (env `VENDUA_WEBHOOK_SECRET`, else
+HMAC-derived from `CONTROL_SECRET`) or Resend's svix signature — svix is
+email-only; on other channels it 404s even when correctly signed. Verified
+`email.received` → core fetches `api.resend.com/emails/receiving/{data.email_id}`
+with `RESEND_API_KEY` → `ingestInbound` → 201 `{leadId,threadId,messageId,
+leadCreated,alreadySeen}`. Other event types → 200 `{ignored}`. Unsigned,
+bad signature, stale ts (>5 min), or bad channel → 404.
+
+To mint a signed request locally:
+
+- Secret: `whsec_$(openssl rand -base64 32)` → `RESEND_WEBHOOK_SECRET` env.
+- Sign `HMAC-SHA256(key=base64_decode(secret minus 'whsec_'))` over
+  `{svix-id}.{svix-timestamp}.{rawBody}`; header `svix-signature: v1,<b64>`;
+  `svix-timestamp` in seconds, ±5 min window.
+- The event body needs only `type` + `data.email_id`; a REAL `email_id`
+  makes the Resend fetch return real content (requires `RESEND_API_KEY` —
+  org secret; `api.resend.com` is reachable from the box). Without a valid
+  key/id the webhook 502s.
+- Replay dedupes on the RFC `Message-ID` (`provider_message_id`), not the
+  svix id → second post → `alreadySeen:true`, same ids, no new rows.
+- Seed creates no threads: any conversation in `#/inbox` (or Painel
+  "por origem: inbound:email" > 0) proves the webhook path end-to-end.
+  Inbound enqueues a `reply` agent run that drains with mock/log drivers —
+  expected, no real email sent.
+
 ## Mobile / touch emulation (control)
 
 - Phone shell is ≤760px width AND coarse-pointer keyed: `.tabbar`/`.msheet`/
