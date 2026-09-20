@@ -1317,7 +1317,15 @@ export function createApp({ sql, sessionSecret, controlSecret }: AppDeps) {
       uuidParam(c, 'id'),
       {
         ...(body.status !== undefined
-          ? { status: str(body.status, 'status', 20) as 'cancelled' | 'done' | 'no_show' }
+          ? {
+              status: (() => {
+                const s = str(body.status, 'status', 20);
+                if (!['cancelled', 'done', 'no_show'].includes(s)) {
+                  throw new HttpError(422, 'BAD_REQUEST', `unknown status '${s}'`);
+                }
+                return s as 'cancelled' | 'done' | 'no_show';
+              })(),
+            }
           : {}),
         ...(body.startsAt !== undefined ? { startsAt: str(body.startsAt, 'startsAt', 64) } : {}),
         ...(body.endsAt !== undefined ? { endsAt: str(body.endsAt, 'endsAt', 64) } : {}),
@@ -1882,7 +1890,11 @@ export function createApp({ sql, sessionSecret, controlSecret }: AppDeps) {
     const body = await bodyJson(c);
     const leadId = verifyBookingToken(str(body.t ?? '', 't', 500), staffSecret);
     if (!leadId) throw new HttpError(404, 'NOT_FOUND', 'not found');
-    return c.json({ meeting: await cancelByLead(sql, leadId) });
+    // `m` pins which meeting to cancel — without it a retry with multiple
+    // scheduled meetings could walk to the next one.
+    const m = body.m !== undefined && body.m !== null ? str(body.m, 'm', 64) : undefined;
+    if (m && !UUID_RE.test(m)) throw new HttpError(400, 'BAD_REQUEST', 'm must be a uuid');
+    return c.json({ meeting: await cancelByLead(sql, leadId, m) });
   });
 
   // ---- control SPA ---------------------------------------------------------------

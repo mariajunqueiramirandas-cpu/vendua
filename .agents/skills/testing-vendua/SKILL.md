@@ -420,3 +420,40 @@ archive HEAD packages/core/src | tar -x -C packages/core/.probe-snap` gives a
 - Lookup-mode verification: grep the run journal for the quoted-name
   web_search and for read_pages on name-matched directory/listing pages —
   that's the signature the exception is firing.
+
+## Meeting booking (/agendar, #/agenda, LeadDetail calls, Config reunião)
+
+- Mint a lead's booking link via staff API — no UI click needed:
+  `curl "localhost:8787/control/v1/meetings/link?lead_id=<uuid>" -H
+"x-vendua-control: $CONTROL_SECRET"` → `{url}`; swap the
+  `publicBaseUrl` host for `localhost:8787` and keep `?t=` (HMAC token,
+  ~30d TTL). Bad/expired token → uniform 404 → page dead state.
+- TZ split that looks like a bug but isn't: `/agendar` renders slot and
+  meeting times in `control_settings.meeting.tz` (default
+  America/Sao_Paulo) regardless of browser tz, while the Agenda grid and
+  LeadDetail `calls` card render browser-local. On a UTC box expect the
+  two surfaces to differ by 3h for the same meeting — compare DB
+  `starts_at` (UTC) to each surface's expectation, not the surfaces to
+  each other.
+- Picker busy-merge check: slots = weekly windows × `horizonDays` in
+  `slotMinutes` steps, minus scheduled meetings ± `bufferMinutes` on both
+  sides, minus gcal busy windows. A lead's cancelled meeting frees its
+  slot again; a no_show/cancelled meeting's gcal event may still block
+  until deleted — assert specific absent slots to prove the merge.
+- Lead self-cancel via the page is only allowed >12h out (409
+  "cancelamento só até 12h antes" → inline error); staff PATCH cancels
+  anytime. Repeat `POST /book/v1/cancel` replays the last cancelled row
+  with 200, not 404.
+- Booking side effects to assert in psql: `meetings.status/source/
+room_url` (daily rooms are `…/vendua-<meetingId>` and resolve HTTP 200
+  while DAILY_API_KEY is set), `gcal_event_id` non-null, a `meeting_booked`
+  `lead_activities` row, and a `sent` outbound `lead_messages` confirmation
+  when the lead has an email. `meeting_done`/`no_show`/`cancelled` rows
+  appear on staff PATCH / lead cancel.
+- `GET /control/v1/meetings/status` reports `{room.provider, gcal.
+configured, gcal.lastError}` — the Config "reunião" card's chips
+  render straight from it; check it first when chips look wrong.
+- Control session cookie survives server restarts: if #/config renders
+  real data you're already logged in — do NOT re-run a blind login script
+  that fills "the first input on the page" (it lands in a config field
+  and waits forever for a login response that never comes).

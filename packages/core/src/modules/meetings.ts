@@ -522,6 +522,19 @@ export async function bookMeeting(sql: Sql, input: BookInput): Promise<BookResul
       `
     )[0];
     if (racedExisting) return { meeting: racedExisting, created: false as const, cfg, lead };
+    // The public link books one call at a time — a lead with a scheduled
+    // meeting must cancel it (the page offers that) before picking a new slot.
+    // Staff/agent bookings stay unrestricted: staff schedules series.
+    if (input.source === 'link') {
+      const other = (
+        await tx<MeetingRow[]>`
+          select * from meetings
+          where lead_id = ${leadId} and status = 'scheduled' and starts_at > now() - interval '1 hour'
+          order by starts_at asc limit 1
+        `
+      )[0];
+      if (other) return { meeting: other, created: false as const, cfg, lead };
+    }
     const durationMin =
       input.durationMin && Number.isInteger(input.durationMin) && input.durationMin >= 5
         ? Math.min(input.durationMin, 240)
@@ -697,8 +710,10 @@ function confirmationBody(startsAt: string, roomUrl: string | null, cfg: Meeting
 }
 
 /** Compose a system-authored outbound and dispatch it — used for booking
- *  confirmations. The deterministic idemKey makes a retry replay instead of
- *  duplicating the message. */
+ *  confirmations. Attempts are numbered: the first runs under the plain
+ *  idemKey, and when the latest attempt's message died ('failed') a
+ *  `<key>:retry-N` claim composes a fresh row — otherwise replays would only
+ *  ever re-dispatch the dead one (dispatchMessage refuses failed messages). */
 async function queueMeetingMessage(
   sql: Sql,
   opts: {
@@ -711,6 +726,29 @@ async function queueMeetingMessage(
 ): Promise<{ queued: boolean; reason?: string | undefined }> {
   const { composeMessage } = await import('./threads.ts');
   const { dispatchMessage } = await import('../agent/send.ts');
+  const prior = await controlTx(
+    sql,
+    async (tx) =>
+      await tx<{ key: string; response: { message?: { id?: string } } }[]>`
+        select key, response from control_idempotency_keys
+        where key = ${opts.idemKey} or key like ${`${opts.idemKey}:retry-%`}
+        order by length(key) desc, key desc
+      `,
+  );
+  let key = prior[0]?.key ?? opts.idemKey;
+  const lastMessageId = prior[0]?.response?.message?.id;
+  if (lastMessageId) {
+    const lastStatus = (
+      await controlTx(
+        sql,
+        async (tx) =>
+          await tx<
+            { status: string }[]
+          >`select status from lead_messages where id = ${lastMessageId}`,
+      )
+    )[0]?.status;
+    if (lastStatus === 'failed') key = `${opts.idemKey}:retry-${prior.length}`;
+  }
   const res = await composeMessage(
     sql,
     {
@@ -721,7 +759,7 @@ async function queueMeetingMessage(
       author: 'system',
       status: 'queued',
     },
-    opts.idemKey,
+    key,
   );
   // Dispatch even on a replayed claim: a crash between compose and dispatch
   // leaves the row 'queued' — dispatchMessage no-ops on terminal states, so
@@ -743,14 +781,53 @@ export function selfCancelAllowed(startsAtMs: number, nowMs: number): boolean {
 }
 
 /**
- * Public-token cancel: the soonest upcoming scheduled meeting of the token's
- * lead, only while it's still >12h away. Returns the cancelled row.
+ * Public-token cancel. `meetingId` pins the target when the caller knows it
+ * (the booking page always does — from slots' `existing` or the book
+ * response); without it, the soonest upcoming scheduled meeting is cancelled.
+ * A retry on an already-cancelled target replays the cancelled row instead of
+ * walking on to the lead's next meeting.
  */
 export async function cancelByLead(
   sql: Sql,
   leadId: string,
+  meetingId?: string,
 ): Promise<ReturnType<typeof meetingJson>> {
   const out = await controlTx(sql, async (tx) => {
+    if (meetingId) {
+      const target = (
+        await tx<MeetingRow[]>`
+          select * from meetings where id = ${meetingId} and lead_id = ${leadId} for update
+        `
+      )[0];
+      if (!target) throw new HttpError(404, 'MEETING_NOT_FOUND', 'nenhuma call marcada');
+      if (target.status === 'cancelled') return { row: target, fresh: false as const };
+      if (target.status !== 'scheduled') {
+        throw new HttpError(409, 'BAD_TRANSITION', `essa call já está ${target.status}`);
+      }
+      if (!selfCancelAllowed(new Date(target.starts_at).getTime(), Date.now())) {
+        throw new HttpError(
+          409,
+          'CANCEL_WINDOW',
+          'cancelamento só até 12h antes — fala com a gente',
+        );
+      }
+      const cfg = await meetingConfigTx(tx);
+      const cancelled = (
+        await tx<MeetingRow[]>`
+          update meetings set status = 'cancelled', cancelled_at = now(), updated_at = now()
+          where id = ${target.id} returning *
+        `
+      )[0]!;
+      await writeActivityTx(
+        tx,
+        leadId,
+        'meeting_cancelled',
+        `Call de ${fmtWhen(target.starts_at, cfg.tz)} cancelada pelo link`,
+        { meetingId: target.id, startsAt: target.starts_at, via: 'booking_link' },
+        'system',
+      );
+      return { row: cancelled, fresh: true as const };
+    }
     const row = (
       await tx<MeetingRow[]>`
         select * from meetings
@@ -842,7 +919,12 @@ export async function patchMeeting(
     : [];
   // Object-ref instead of a narrowed local — TS narrows `= null` to null and
   // can't see the closure assignment; a property read keeps the union.
-  const committed: { row?: MeetingRow; cfg?: MeetingConfig } = {};
+  const committed: {
+    row?: MeetingRow;
+    cfg?: MeetingConfig;
+    prevStart?: string;
+    prevGcalId?: string | null;
+  } = {};
   const res = await claimControl(sql, idemKey, async (tx) => {
     const row = (await tx<MeetingRow[]>`select * from meetings where id = ${id} for update`)[0];
     if (!row) throw new HttpError(404, 'MEETING_NOT_FOUND', 'meeting not found');
@@ -981,6 +1063,8 @@ export async function patchMeeting(
     }
     committed.row = updated;
     committed.cfg = cfg;
+    committed.prevStart = row.starts_at;
+    committed.prevGcalId = row.gcal_event_id;
     return { status: 200, body: { meeting: meetingJson(updated) } };
   });
 
@@ -1012,26 +1096,50 @@ export async function patchMeeting(
       );
       row.gcal_event_id = null;
     } else if (row.status === 'scheduled' && input.startsAt !== undefined) {
-      // Same retry contract: a failed delete throws (claim replay retries it);
-      // a replay after full success re-runs harmlessly — the stored id is the
-      // live event's.
-      if (row.gcal_event_id && !(await gcal.deleteEvent(row.gcal_event_id))) {
-        throw new Error(`gcal delete failed for meeting ${row.id} — retry the request`);
-      }
-      const newId = await gcal.insertEvent({
-        summary: 'Venduá · call remarcada',
-        start: row.starts_at,
-        end: row.ends_at,
-        tz: cfg.tz,
-        leadId: row.lead_id,
-      });
-      if (newId !== row.gcal_event_id) {
-        await controlTx(sql, async (tx) => {
-          await tx`update meetings set gcal_event_id = ${newId}, updated_at = now() where id = ${row.id}`;
+      if (committed.prevStart === undefined) {
+        // Claim replay — the reschedule already committed and its effects
+        // already ran (or this is the crash window between them). Heal only
+        // what's missing; re-deleting the stored id would kill the live event
+        // just to recreate it.
+        if (!row.gcal_event_id) {
+          const newId = await gcal.insertEvent({
+            summary: 'Venduá · call remarcada',
+            start: row.starts_at,
+            end: row.ends_at,
+            tz: cfg.tz,
+            leadId: row.lead_id,
+          });
+          if (newId) {
+            await controlTx(sql, async (tx) => {
+              await tx`update meetings set gcal_event_id = ${newId}, updated_at = now() where id = ${row.id}`;
+            });
+            row.gcal_event_id = newId;
+          }
+        }
+        await rooms.bumpRoomExpiry(row.room_url, new Date(row.ends_at));
+      } else {
+        // Fresh run: swap the calendar event. The stored gcal id doubles as
+        // the "sync pending" marker — cleared/replaced only on success, and a
+        // failed delete throws so the client's retry (claim replay → the heal
+        // branch above) picks the contract back up.
+        if (committed.prevGcalId && !(await gcal.deleteEvent(committed.prevGcalId))) {
+          throw new Error(`gcal delete failed for meeting ${row.id} — retry the request`);
+        }
+        const newId = await gcal.insertEvent({
+          summary: 'Venduá · call remarcada',
+          start: row.starts_at,
+          end: row.ends_at,
+          tz: cfg.tz,
+          leadId: row.lead_id,
         });
-        row.gcal_event_id = newId;
+        if (newId !== committed.prevGcalId) {
+          await controlTx(sql, async (tx) => {
+            await tx`update meetings set gcal_event_id = ${newId}, updated_at = now() where id = ${row.id}`;
+          });
+          row.gcal_event_id = newId;
+        }
+        await rooms.bumpRoomExpiry(row.room_url, new Date(row.ends_at));
       }
-      await rooms.bumpRoomExpiry(row.room_url, new Date(row.ends_at));
     }
     return { status: res.status, body: { meeting: meetingJson(row) }, replayed: res.replayed };
   }

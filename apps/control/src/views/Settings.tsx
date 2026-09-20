@@ -1004,16 +1004,16 @@ function MeetingCard({
     weekly: normWeekly(value.weekly ?? status?.cfg.weekly),
   };
   const [edit, setEdit] = useState(cur);
-  const [loaded, setLoaded] = useState(false);
+  const dirty = JSON.stringify(edit) !== JSON.stringify(cur);
   useEffect(() => {
-    // hydrate once from the status endpoint (normalized defaults) — then user edits win
-    if (status && !loaded) {
+    // Hydrate whenever the authoritative settings value or the status
+    // endpoint lands — but only while the user hasn't typed; otherwise a
+    // late `value` would clobber in-progress edits (or stay empty forever).
+    if (status && !dirty) {
       setEdit({ ...cur, weekly: normWeekly(value.weekly ?? status.cfg.weekly) });
-      setLoaded(true);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [status]);
-  const dirty = JSON.stringify(edit) !== JSON.stringify(cur);
+  }, [status, JSON.stringify(cur)]);
 
   const setDay = (day: string, wins: [string, string][]) =>
     setEdit({ ...edit, weekly: { ...edit.weekly, [day]: wins } });

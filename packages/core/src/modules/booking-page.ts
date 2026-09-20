@@ -458,7 +458,9 @@ footer {
   function doCancel() {
     var btn = document.getElementById('doCancel');
     btn.disabled = true;
-    api('/book/v1/cancel', { t: token }).then(function (r) {
+    // Pin the meeting the page is showing — a retry must cancel THIS one,
+    // never the lead's next scheduled call.
+    api('/book/v1/cancel', { t: token, m: state.existing && state.existing.id }).then(function (r) {
       if (r.status === 200) {
         state.existing = null;
         state.notice = 'Call cancelada — quando quiser, escolhe outro horário:';
