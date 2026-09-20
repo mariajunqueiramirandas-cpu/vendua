@@ -1,5 +1,6 @@
 import type { IntegrationRow } from '../../modules/integrations.ts';
 import { log } from '../../platform/log.ts';
+import { renderReplyEmail } from './email-template.ts';
 
 const mailLog = log.child({ mod: 'email' });
 
@@ -28,6 +29,7 @@ export async function sendEmail(
         to: [msg.to],
         subject: msg.subject,
         text: msg.body,
+        html: renderReplyEmail({ body: msg.body, subject: msg.subject }),
       }),
     });
     if (!res.ok) throw new Error(`resend ${res.status}: ${(await res.text()).slice(0, 300)}`);
