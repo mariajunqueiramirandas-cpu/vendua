@@ -1033,9 +1033,25 @@ async function reconcileMeetingEvent(sql: Sql, row: MeetingRow, cfg: MeetingConf
     leadId: row.lead_id,
   });
   if (newId === row.gcal_event_id) return; // was already null and insert failed
-  await controlTx(sql, async (tx) => {
-    await tx`update meetings set gcal_event_id = ${newId}, updated_at = now() where id = ${row.id}`;
-  });
+  // Stale-snapshot guard: the row may have moved on while the probe/insert ran
+  // (a concurrent reschedule stored event B while we probed gone event A).
+  // Write only when the row still matches what we read; on miss, delete the
+  // event we just made so it can't sit orphaned on the calendar.
+  const wrote = await controlTx(
+    sql,
+    async (tx) =>
+      await tx`
+        update meetings set gcal_event_id = ${newId}, updated_at = now()
+        where id = ${row.id} and status = 'scheduled'
+          and gcal_event_id is not distinct from ${row.gcal_event_id}
+          and starts_at = ${row.starts_at} and ends_at = ${row.ends_at}
+      `,
+  );
+  if (wrote.count === 0) {
+    if (newId) await gcal.deleteEvent(newId);
+    mlog.warn({ meetingId: row.id }, 'gcal reconcile raced a row change — discarded new event');
+    return;
+  }
   row.gcal_event_id = newId;
 }
 
@@ -1328,6 +1344,10 @@ export async function patchMeeting(
 const REMINDER_24H_MS = 24 * 3600_000;
 const REMINDER_1H_MS = 3600_000;
 
+// Cursor for the gcal drift-reconcile scan in sweepMeetingReminders — a plain
+// in-memory watermark (worst case on restart: the scan restarts from id 0).
+let reconcileCursor: string | null = null;
+
 function reminderBody(kind: '24h' | '1h', meeting: MeetingRow, cfg: MeetingConfig): string {
   const when = fmtWhen(meeting.starts_at, cfg.tz);
   const room = meeting.room_url ? `\nSala: ${meeting.room_url}` : '';
@@ -1450,19 +1470,29 @@ export async function sweepMeetingReminders(sql: Sql): Promise<number> {
   }
   // Reschedule reconcile: a gcal outage mid-reschedule can leave the stored
   // event on the OLD window while the row holds the new one — probe each
-  // tracked upcoming meeting and PATCH/replace drifted events.
+  // tracked upcoming meeting and PATCH/replace drifted events. The scan walks
+  // a module-level cursor over id order: with more rows than the batch, a
+  // static order would re-check the same in-sync prefix every tick and starve
+  // the drifted tail.
   if (wantGcal) {
-    const driftCandidates = await controlTx(
-      sql,
-      (tx) => tx<MeetingRow[]>`
-        select * from meetings
-        where status = 'scheduled' and gcal_event_id is not null
-          and starts_at > now() - interval '10 minutes'
-        order by updated_at asc
-        limit 20
-      `,
-    );
+    let driftCandidates: MeetingRow[] = [];
+    for (let attempt = 0; attempt < 2; attempt++) {
+      driftCandidates = await controlTx(
+        sql,
+        (tx) => tx<MeetingRow[]>`
+          select * from meetings
+          where status = 'scheduled' and gcal_event_id is not null
+            and starts_at > now() - interval '10 minutes'
+            and (${reconcileCursor ?? null}::uuid is null or id > ${reconcileCursor ?? null}::uuid)
+          order by id asc
+          limit 20
+        `,
+      );
+      if (driftCandidates.length) break;
+      reconcileCursor = null; // wrapped past the end — rescan from the top
+    }
     if (driftCandidates.length) {
+      reconcileCursor = driftCandidates[driftCandidates.length - 1]!.id;
       const cfg = await controlTx(sql, (tx) => meetingConfigTx(tx));
       for (const m of driftCandidates) {
         await reconcileMeetingEvent(sql, m, cfg).catch((err) =>

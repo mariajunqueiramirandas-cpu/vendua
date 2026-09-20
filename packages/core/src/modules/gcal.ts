@@ -291,14 +291,18 @@ export async function eventWindow(gcalEventId: string): Promise<EventProbe> {
     }
     const ev = (await res.json()) as {
       status?: string;
-      start?: { dateTime?: string };
-      end?: { dateTime?: string };
+      start?: { dateTime?: string; date?: string };
+      end?: { dateTime?: string; date?: string };
     };
-    if (ev.status === 'cancelled' || !ev.start?.dateTime || !ev.end?.dateTime) {
-      return { state: 'gone' };
-    }
+    if (ev.status === 'cancelled') return { state: 'gone' };
+    // All-day events carry `date`, not `dateTime` — reporting them 'gone'
+    // would insert a duplicate while the live all-day block stays. They parse
+    // as a drifted window instead: the caller PATCHes them back to timed.
+    const start = ev.start?.dateTime ?? ev.start?.date;
+    const end = ev.end?.dateTime ?? ev.end?.date;
+    if (!start || !end) return { state: 'unknown' };
     lastError = null;
-    return { state: 'ok', start: new Date(ev.start.dateTime), end: new Date(ev.end.dateTime) };
+    return { state: 'ok', start: new Date(start), end: new Date(end) };
   } catch (e) {
     lastError = e instanceof Error ? e.message : String(e);
     return { state: 'unknown' };
