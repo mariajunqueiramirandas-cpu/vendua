@@ -137,7 +137,11 @@ const WA_IDLE: WaState = { qr: null, status: 'off', me: null };
 /** 'ativo' means the driver can work NOW — not just that a row is enabled.
  *  baileys enabled with an unscanned QR is 'warn', not live. */
 type ProvTone = 'off' | 'warn' | 'live';
-function providerStatus(kindKey: string, rows: Integration[], wa: WaState): {
+function providerStatus(
+  kindKey: string,
+  rows: Integration[],
+  wa: WaState,
+): {
   tone: ProvTone;
   text: string;
 } {
@@ -519,8 +523,8 @@ function ProviderCard({
                     {wa.me?.name && <span className="wa-name">{wa.me.name}</span>}
                   </div>
                   <div className="foot">
-                    o agente já envia e recebe por esse número — desconectar libera o
-                    aparelho e emite um QR novo.
+                    o agente já envia e recebe por esse número — desconectar libera o aparelho e
+                    emite um QR novo.
                   </div>
                   <ConfirmBtn
                     className="danger"
@@ -534,8 +538,8 @@ function ProviderCard({
                 <>
                   <div className="t">socket parado</div>
                   <div className="foot">
-                    o driver está ativo mas o socket não está rodando — ele religa sozinho
-                    depois de uma queda; se o número foi desvinculado, pareie de novo.
+                    o driver está ativo mas o socket não está rodando — ele religa sozinho depois de
+                    uma queda; se o número foi desvinculado, pareie de novo.
                   </div>
                   <button
                     className="btn ghost wa-mini"
@@ -552,9 +556,7 @@ function ProviderCard({
                       ? 'parear — whatsapp → aparelhos conectados → conectar aparelho'
                       : 'conectando ao whatsapp…'}
                   </div>
-                  {wa.qr && qrImg && (
-                    <img className="wa-qr" src={qrImg} alt="QR do whatsapp" />
-                  )}
+                  {wa.qr && qrImg && <img className="wa-qr" src={qrImg} alt="QR do whatsapp" />}
                   <div className="wa-paircode">
                     <span className="hint">ou conectar com código:</span>
                     {pairCode && <code className="wa-code">{pairCode}</code>}
@@ -609,8 +611,7 @@ function ProviderCard({
                         </>
                       ) : (
                         <>
-                          <code>{envName}</code> ausente — cadastre nas envs do serviço e
-                          reinicie
+                          <code>{envName}</code> ausente — cadastre nas envs do serviço e reinicie
                         </>
                       )
                     ) : (
