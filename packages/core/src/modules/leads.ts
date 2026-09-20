@@ -474,8 +474,8 @@ export async function insertLeadTx(
 ): Promise<{ status: number; body: { lead: Lead } }> {
   const rows = await tx<LeadRow[]>`insert into leads ${tx(fields)} returning *`;
   await tx`
-    insert into lead_state_history (lead_id, from_state, to_state, actor)
-    values (${rows[0]!.id}, null, ${rows[0]!.state}, 'staff')
+    insert into lead_state_history (lead_id, from_state, to_state, actor, value_cents)
+    values (${rows[0]!.id}, null, ${rows[0]!.state}, 'staff', ${rows[0]!.deal_value_cents})
   `;
   return { status: 201, body: { lead: leadJson(rows[0]!) } };
 }
@@ -500,9 +500,11 @@ export async function updateLead(
       update leads set ${tx(set)}, updated_at = now() where id = ${id} returning *
     `;
     if (typeof set.state === 'string' && set.state !== cur.state) {
+      // value_cents stamps the post-update deal value — a same-patch edit to
+      // dealValueCents is the value effective at the transition.
       await tx`
-        insert into lead_state_history (lead_id, from_state, to_state, actor)
-        values (${id}, ${cur.state}, ${set.state}, ${actor})
+        insert into lead_state_history (lead_id, from_state, to_state, actor, value_cents)
+        values (${id}, ${cur.state}, ${set.state}, ${actor}, ${rows[0]!.deal_value_cents})
       `;
       await tx`
         insert into lead_activities (lead_id, kind, body, meta, created_by)
@@ -593,13 +595,17 @@ export async function leadStats(sql: Sql): Promise<LeadStats> {
              coalesce(sum(deal_value_cents), 0)::int as value_cents
       from leads where archived_at is null group by 1 order by 2 desc, 1
     `;
-    // "Won" = entered 'live' inside the window; distinct leads first so a
-    // lead that bounced through 'live' twice isn't double-counted.
+    // "Won" = first 'live' entry inside the window per lead — a lead that
+    // bounced through 'live' twice counts once. value_cents is the deal value
+    // stamped at transition time; pre-column rows fall back to today's value.
     const won = (
       await tx<{ n: number; value_cents: number }[]>`
-        select count(*)::int as n, coalesce(sum(l.deal_value_cents), 0)::int as value_cents
-        from (select distinct lead_id from lead_state_history
-              where to_state = 'live' and at > now() - interval '30 days') w
+        select count(*)::int as n,
+               coalesce(sum(coalesce(w.value_cents, l.deal_value_cents)), 0)::int as value_cents
+        from (select distinct on (lead_id) lead_id, value_cents
+              from lead_state_history
+              where to_state = 'live' and at > now() - interval '30 days'
+              order by lead_id, at) w
         join leads l on l.id = w.lead_id
       `
     )[0]!;
@@ -919,8 +925,8 @@ export async function importLeads(
       }
       const ins = await tx<LeadRow[]>`insert into leads ${tx(fields)} returning *`;
       await tx`
-        insert into lead_state_history (lead_id, from_state, to_state, actor)
-        values (${ins[0]!.id}, null, ${ins[0]!.state}, 'staff')
+        insert into lead_state_history (lead_id, from_state, to_state, actor, value_cents)
+        values (${ins[0]!.id}, null, ${ins[0]!.state}, 'staff', ${ins[0]!.deal_value_cents})
       `;
       created++;
     }

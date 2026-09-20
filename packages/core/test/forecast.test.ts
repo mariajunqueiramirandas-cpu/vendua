@@ -13,6 +13,7 @@ import {
   validateSetting,
 } from '../src/modules/integrations.ts';
 import { controlTx } from '../src/modules/control.ts';
+import { insertLeadTx, leadStats, updateLead } from '../src/modules/leads.ts';
 import { migrate } from '../src/platform/db.ts';
 
 const code = (fn: () => unknown) => {
@@ -131,5 +132,19 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('pipeline snapshots (db)', () =>
     expect(today?.takenOn).toBe(snap.takenOn);
     expect(today?.weightedCents).toBe(snap.weightedCents);
     expect(typeof today?.valueCents).toBe('number');
+  });
+
+  test('won30d freezes the deal value stamped at win time', async () => {
+    await migrate(sql, join(import.meta.dir, '../db/migrations'));
+    const created = await controlTx(sql, (tx) =>
+      insertLeadTx(tx, { name: 'Freeze Test', deal_value_cents: 100000 }),
+    );
+    const id = created.body.lead.id;
+    const before = await leadStats(sql);
+    await updateLead(sql, id, { state: 'live' }, `win-${id}`);
+    await updateLead(sql, id, { deal_value_cents: 250000 }, `revalue-${id}`);
+    const stats = await leadStats(sql);
+    expect(stats.won30d.count).toBe(before.won30d.count + 1);
+    expect(stats.won30d.valueCents).toBe(before.won30d.valueCents + 100000);
   });
 });
