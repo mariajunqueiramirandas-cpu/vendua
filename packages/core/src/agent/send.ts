@@ -22,6 +22,10 @@ import { applyDeliveryEventTx } from './channels/email-inbound.ts';
 export async function dispatchMessage(
   sql: Sql,
   messageId: string,
+  /** When set, the message is suppressed unless this meeting is still
+   *  'scheduled' — the row lock serializes the check against a cancel or
+   *  reschedule committing between compose and dispatch. */
+  guard?: { meetingId: string },
 ): Promise<{ ok: boolean; reason?: string }> {
   // Phase 1: claim.
   const job = await controlTx(sql, async (tx) => {
@@ -81,6 +85,18 @@ export async function dispatchMessage(
     if (suppressed) {
       await markMessageFailed(tx, messageId, suppressed);
       return { fail: suppressed };
+    }
+
+    if (guard) {
+      const meeting = (
+        await tx<
+          { status: string }[]
+        >`select status from meetings where id = ${guard.meetingId} for update`
+      )[0];
+      if (!meeting || meeting.status !== 'scheduled') {
+        await markMessageFailed(tx, messageId, 'meeting no longer scheduled');
+        return { fail: 'meeting no longer scheduled' };
+      }
     }
 
     // A disabled/absent integration must fail loudly — never fall through to

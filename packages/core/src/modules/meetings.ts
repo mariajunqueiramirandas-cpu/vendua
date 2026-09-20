@@ -641,52 +641,73 @@ async function meetingEffects(
   bookerContact: string | null,
 ): Promise<void> {
   const leadId = meeting.lead_id ?? lead.id;
-  let roomUrl = meeting.room_url;
-  if (!roomUrl || (rooms.dailyConfigured() && !hasDailyRoom(roomUrl, meeting.id))) {
-    // Order matters: the room URL must exist before gcal's description and
-    // the confirmation copy are written.
-    const room = await rooms.createRoom(meeting.id, new Date(meeting.ends_at), cfg.roomUrl);
-    roomUrl = room.url;
-  }
-  let gcalEventId = meeting.gcal_event_id;
-  if (!gcalEventId) {
-    gcalEventId = await gcal.insertEvent({
-      summary: `Venduá · ${lead.name}`,
-      description: [
-        bookerContact ? `contato: ${bookerContact}` : null,
-        roomUrl ? `sala: ${roomUrl}` : null,
-        `lead: ${lead.name} (${leadId})`,
-      ]
-        .filter(Boolean)
-        .join('\n'),
-      start: meeting.starts_at,
-      end: meeting.ends_at,
-      tz: cfg.tz,
-      leadId,
-    });
-  }
-  if (roomUrl !== meeting.room_url || gcalEventId !== meeting.gcal_event_id) {
-    await controlTx(sql, async (tx) => {
-      await tx`
+  // Serialize effects per meeting: two concurrent runs (book + idempotent
+  // replay, staff PATCH replay, ensureMeetingEffects) could both read
+  // gcal_event_id null and insert two events — the loser is orphaned and
+  // blocks freebusy forever. A session-scoped advisory lock on a reserved
+  // connection spans the provider calls; a tx-scoped lock can't (the rule
+  // against network calls inside a tx still stands).
+  const conn = await sql.reserve();
+  try {
+    // Session-scoped GUC on the reserved conn — must be cleared before
+    // release or the next pool borrower reads the CRM schema unchecked.
+    await conn`select set_config('vendua.control', '1', false)`;
+    await conn`select pg_advisory_lock(hashtext('vendua.meetings.effects'), hashtext(${meeting.id}))`;
+    // Re-read under the lock — a serialized predecessor may have completed.
+    const cur = (await conn<MeetingRow[]>`select * from meetings where id = ${meeting.id}`)[0];
+    if (!cur || cur.status !== 'scheduled') return;
+    let roomUrl = cur.room_url;
+    if (!roomUrl || (rooms.dailyConfigured() && !hasDailyRoom(roomUrl, cur.id))) {
+      // Order matters: the room URL must exist before gcal's description and
+      // the confirmation copy are written.
+      const room = await rooms.createRoom(cur.id, new Date(cur.ends_at), cfg.roomUrl);
+      roomUrl = room.url;
+    }
+    let gcalEventId = cur.gcal_event_id;
+    if (!gcalEventId) {
+      gcalEventId = await gcal.insertEvent({
+        summary: `Venduá · ${lead.name}`,
+        description: [
+          bookerContact ? `contato: ${bookerContact}` : null,
+          roomUrl ? `sala: ${roomUrl}` : null,
+          `lead: ${lead.name} (${leadId})`,
+        ]
+          .filter(Boolean)
+          .join('\n'),
+        start: cur.starts_at,
+        end: cur.ends_at,
+        tz: cfg.tz,
+        leadId,
+      });
+    }
+    if (roomUrl !== cur.room_url || gcalEventId !== cur.gcal_event_id) {
+      await conn`
         update meetings set room_url = ${roomUrl}, gcal_event_id = coalesce(${gcalEventId}, gcal_event_id),
           updated_at = now()
-        where id = ${meeting.id}
+        where id = ${cur.id}
       `;
-    });
+    }
     meeting.room_url = roomUrl;
-    meeting.gcal_event_id = gcalEventId ?? meeting.gcal_event_id;
-  }
-  // An unsubscribed lead can still book (clicking the link is fresh consent),
-  // but outbound honors the opt-out — dispatchMessage would refuse anyway, so
-  // don't leave a stranded 'queued' message on the thread.
-  if (lead.email && !lead.unsubscribed_at) {
-    await queueMeetingMessage(sql, {
-      leadId,
-      channel: 'email',
-      subject: 'Venduá — sua call está marcada',
-      body: confirmationBody(meeting.starts_at, roomUrl, cfg),
-      idemKey: `meeting-confirm:${meeting.id}`,
-    });
+    meeting.gcal_event_id = gcalEventId ?? cur.gcal_event_id;
+    // An unsubscribed lead can still book (clicking the link is fresh consent),
+    // but outbound honors the opt-out — dispatchMessage would refuse anyway, so
+    // don't leave a stranded 'queued' message on the thread.
+    if (lead.email && !lead.unsubscribed_at) {
+      await queueMeetingMessage(sql, {
+        leadId,
+        channel: 'email',
+        meetingId: cur.id,
+        subject: 'Venduá — sua call está marcada',
+        body: confirmationBody(cur.starts_at, roomUrl, cfg),
+        idemKey: `meeting-confirm:${cur.id}`,
+      });
+    }
+  } finally {
+    await conn`select pg_advisory_unlock(hashtext('vendua.meetings.effects'), hashtext(${meeting.id}))`.catch(
+      () => {},
+    );
+    await conn`select set_config('vendua.control', '', false)`.catch(() => {});
+    conn.release();
   }
 }
 
@@ -719,6 +740,9 @@ async function queueMeetingMessage(
   opts: {
     leadId: string;
     channel: 'email' | 'whatsapp';
+    /** Dispatch is suppressed if this meeting is no longer 'scheduled' —
+     *  a confirmation/reminder must not outlive a cancellation. */
+    meetingId?: string;
     subject: string;
     body: string;
     idemKey: string;
@@ -763,8 +787,13 @@ async function queueMeetingMessage(
   );
   // Dispatch even on a replayed claim: a crash between compose and dispatch
   // leaves the row 'queued' — dispatchMessage no-ops on terminal states, so
-  // re-dispatch is also the self-heal path.
-  const dispatch = await dispatchMessage(sql, res.body.message.id);
+  // re-dispatch is also the self-heal path. The meetingId guard drops the
+  // send if the meeting was cancelled/rescheduled in the compose→dispatch gap.
+  const dispatch = await dispatchMessage(
+    sql,
+    res.body.message.id,
+    opts.meetingId ? { meetingId: opts.meetingId } : undefined,
+  );
   return { queued: dispatch.ok, reason: dispatch.reason };
 }
 
@@ -1083,18 +1112,21 @@ export async function patchMeeting(
   if (row && cfg) {
     if (row.status === 'cancelled' && row.gcal_event_id) {
       // The stored id doubles as the "gcal sync pending" marker — cleared only
-      // on success so a replay retries a failed delete instead of orphaning
-      // the event. Throwing surfaces a 500 whose retry replays the claim and
-      // lands right back here.
+      // on success. A failed delete must NOT throw: the cancellation is
+      // already committed and the client makes a fresh idempotency key per
+      // click, so a 500 would report failure for a meeting that's cancelled
+      // and send the retry into BAD_TRANSITION. Warn and keep the marker —
+      // any same-key replay (or a later PATCH replay) retries the delete.
       if (!(await gcal.deleteEvent(row.gcal_event_id))) {
-        throw new Error(`gcal delete failed for meeting ${row.id} — retry the request`);
+        mlog.warn({ meetingId: row.id }, 'gcal delete failed — event id kept, replay retries it');
+      } else {
+        await controlTx(
+          sql,
+          async (tx) =>
+            await tx`update meetings set gcal_event_id = null, updated_at = now() where id = ${row.id} and status = 'cancelled'`,
+        );
+        row.gcal_event_id = null;
       }
-      await controlTx(
-        sql,
-        async (tx) =>
-          await tx`update meetings set gcal_event_id = null, updated_at = now() where id = ${row.id} and status = 'cancelled'`,
-      );
-      row.gcal_event_id = null;
     } else if (row.status === 'scheduled' && input.startsAt !== undefined) {
       if (committed.prevStart === undefined) {
         // Claim replay — the reschedule already committed and its effects
@@ -1118,12 +1150,14 @@ export async function patchMeeting(
         }
         await rooms.bumpRoomExpiry(row.room_url, new Date(row.ends_at));
       } else {
-        // Fresh run: swap the calendar event. The stored gcal id doubles as
-        // the "sync pending" marker — cleared/replaced only on success, and a
-        // failed delete throws so the client's retry (claim replay → the heal
-        // branch above) picks the contract back up.
+        // Fresh run: swap the calendar event. A failed delete of the old
+        // event must not 500 a committed reschedule — the orphan sits at the
+        // old time and expires on its own, while the row tracks the new event.
         if (committed.prevGcalId && !(await gcal.deleteEvent(committed.prevGcalId))) {
-          throw new Error(`gcal delete failed for meeting ${row.id} — retry the request`);
+          mlog.warn(
+            { meetingId: row.id, eventId: committed.prevGcalId },
+            'gcal delete of previous event failed — orphaned at old time',
+          );
         }
         const newId = await gcal.insertEvent({
           summary: 'Venduá · call remarcada',
@@ -1227,7 +1261,7 @@ export async function sweepMeetingReminders(sql: Sql): Promise<number> {
       return { messageId: composed.body.message.id, kind, claimed24 };
     });
     if (!claim) continue;
-    const dispatch = await dispatchMessage(sql, claim.messageId);
+    const dispatch = await dispatchMessage(sql, claim.messageId, { meetingId: m.id });
     if (dispatch.ok) {
       sent++;
     } else {

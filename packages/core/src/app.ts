@@ -1829,6 +1829,24 @@ export function createApp({ sql, sessionSecret, controlSecret }: AppDeps) {
       throw new HttpError(429, 'RATE_LIMITED', 'too many requests — retry in a minute');
     }
   };
+  // The booking token is a bearer credential in the body — CORS doesn't
+  // apply, but a browser request carrying a *foreign* Origin is never the
+  // page we served: enforce the same same-origin rule controlGate uses.
+  const bookSameOrigin = (c: Context) => {
+    const origin = c.req.header('origin');
+    if (!origin) return;
+    const reqHost =
+      (trustProxy ? c.req.header('x-forwarded-host') : undefined) ?? c.req.header('host');
+    let originHost: string | null = null;
+    try {
+      originHost = new URL(origin).host;
+    } catch {
+      originHost = null;
+    }
+    if (!originHost || (reqHost && originHost !== reqHost)) {
+      throw new HttpError(403, 'BAD_ORIGIN', 'cross-origin booking request');
+    }
+  };
 
   app.get('/agendar', (c) => {
     c.header('cache-control', 'no-store');
@@ -1871,6 +1889,7 @@ export function createApp({ sql, sessionSecret, controlSecret }: AppDeps) {
 
   app.post('/book/v1/book', async (c) => {
     bookRate(c);
+    bookSameOrigin(c);
     const body = await bodyJson(c);
     const leadId = verifyBookingToken(str(body.t ?? '', 't', 500), staffSecret);
     if (!leadId) throw new HttpError(404, 'NOT_FOUND', 'not found');
@@ -1887,6 +1906,7 @@ export function createApp({ sql, sessionSecret, controlSecret }: AppDeps) {
 
   app.post('/book/v1/cancel', async (c) => {
     bookRate(c);
+    bookSameOrigin(c);
     const body = await bodyJson(c);
     const leadId = verifyBookingToken(str(body.t ?? '', 't', 500), staffSecret);
     if (!leadId) throw new HttpError(404, 'NOT_FOUND', 'not found');

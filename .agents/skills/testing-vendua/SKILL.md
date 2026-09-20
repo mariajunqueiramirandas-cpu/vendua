@@ -428,13 +428,12 @@ archive HEAD packages/core/src | tar -x -C packages/core/.probe-snap` gives a
 "x-vendua-control: $CONTROL_SECRET"` → `{url}`; swap the
   `publicBaseUrl` host for `localhost:8787` and keep `?t=` (HMAC token,
   ~30d TTL). Bad/expired token → uniform 404 → page dead state.
-- TZ split that looks like a bug but isn't: `/agendar` renders slot and
-  meeting times in `control_settings.meeting.tz` (default
-  America/Sao_Paulo) regardless of browser tz, while the Agenda grid and
-  LeadDetail `calls` card render browser-local. On a UTC box expect the
-  two surfaces to differ by 3h for the same meeting — compare DB
-  `starts_at` (UTC) to each surface's expectation, not the surfaces to
-  each other.
+- `/agendar` and the Agenda view (week grouping AND times) render in
+  `control_settings.meeting.tz` (default America/Sao_Paulo); the
+  LeadDetail `calls` card still renders browser-local (`fmtDateTime`).
+  On a UTC box expect Agenda vs LeadDetail to differ by 3h for the same
+  meeting — compare each surface to its own expectation, never the
+  surfaces to each other.
 - Picker busy-merge check: slots = weekly windows × `horizonDays` in
   `slotMinutes` steps, minus scheduled meetings ± `bufferMinutes` on both
   sides, minus gcal busy windows. A lead's cancelled meeting frees its
