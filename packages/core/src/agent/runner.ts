@@ -17,7 +17,15 @@ const agentLog = log.child({ mod: 'agent' });
  * steps are the audit trail.
  */
 
-const MAX_STEPS = 12;
+/** Model-call budget per run kind — each iteration can fan out into parallel
+ *  tool calls, so discovery (search → batch extract → create) legitimately
+ *  needs more headroom than a reply. */
+const STEP_BUDGET: Record<RunRow['kind'], number> = {
+  triage: 12,
+  reply: 14,
+  outreach: 12,
+  discovery: 20,
+};
 const HEARTBEAT_MS = 20_000;
 
 interface RunRow {
@@ -236,13 +244,14 @@ export async function runOnce(sql: Sql): Promise<boolean> {
       leadId: run.lead_id,
       threadId: run.thread_id,
       step: 0,
+      extractCache: new Map(),
     };
 
     steps.push({ type: 'system_prompt', content: system });
     messages.push({ role: 'user', content: context });
     await persist();
 
-    for (let i = 0; i < MAX_STEPS && !lost; i++) {
+    for (let i = 0; i < STEP_BUDGET[run.kind] && !lost; i++) {
       const res = await provider.chat({ system, messages, tools });
       tokensIn += res.tokensIn;
       tokensOut += res.tokensOut;
@@ -327,14 +336,23 @@ export async function runOnce(sql: Sql): Promise<boolean> {
       await persistAborted();
       return true;
     }
+    // Step exhaustion is a failure — the model never converged. For
+    // discovery the trajectory still reports what it produced: the create
+    // count keeps a lead-yielding run from reading as a dead loss.
+    const created = steps.filter(
+      (s) =>
+        typeof s === 'object' &&
+        s !== null &&
+        (s as { name?: string }).name === 'create_lead' &&
+        typeof (s as { out?: { id?: string } }).out?.id === 'string',
+    ).length;
     await finishRun(sql, claim, {
-      // step exhaustion is a failure — the model never converged on an answer
       status: 'failed',
       steps,
       tokensIn,
       tokensOut,
       costCents: Math.round(costUsd * 100),
-      error: 'max steps reached',
+      error: `max steps reached${created ? ` — ${created} lead(s) created` : ''}`,
     });
     return true;
   } catch (e) {

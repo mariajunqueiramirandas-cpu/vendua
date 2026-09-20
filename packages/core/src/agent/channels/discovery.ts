@@ -28,6 +28,156 @@ export interface DiscoveryProvider {
   extract(url: string, goal: string): Promise<ExtractResult>;
 }
 
+// ---------------------------------------------------------------------------
+// Result annotation — pure URL-structure parsing. Nothing is dropped: the
+// model keeps every result and every judgment call; the annotations just
+// spare it work it can't do better than code (a wa.me URL literally contains
+// the phone; an instagram.com/<user> URL literally contains the handle).
+// ---------------------------------------------------------------------------
+
+export type ResultKind =
+  /** deep link that IS the contact (wa.me/99…, api.whatsapp.com/send?phone=) */
+  | 'contact'
+  /** social profile root — the handle is the contact; pages are login-walled */
+  | 'profile'
+  /** directory/aggregator (ifood, guia) — lead signal, weak contact source */
+  | 'listing'
+  /** own-domain page — the only kind worth an extract_page call */
+  | 'site';
+
+export interface AnnotatedResult {
+  title: string;
+  url: string;
+  kind: ResultKind;
+  /** contacts parsed straight out of the URL — zero extraction needed */
+  phone?: string;
+  instagram?: string;
+  snippet?: string;
+}
+
+const LISTING_HOSTS = new Set([
+  'ifood.com.br',
+  'tripadvisor.com.br',
+  'tripadvisor.com',
+  'guiamais.com.br',
+  'apontador.com.br',
+  'telelistas.net',
+  'solutudo.com.br',
+  'waze.com',
+  'youtube.com',
+  'tiktok.com',
+  'kwai.com',
+  'linkedin.com',
+]);
+const PROFILE_HOSTS = new Set(['instagram.com', 'facebook.com']);
+// instagram paths that aren't profiles — posts, help, auth.
+const PROFILE_STOP = new Set([
+  'p',
+  'reel',
+  'reels',
+  'explore',
+  'help',
+  'accounts',
+  'developer',
+  'stories',
+]);
+
+const digits = (s: string): string => s.replace(/\D/g, '');
+
+/** Hostname normalized for comparison — lowercased, www stripped. */
+export function hostOf(url: string): string | null {
+  try {
+    return new URL(url).hostname.toLowerCase().replace(/^www\./, '');
+  } catch {
+    return null;
+  }
+}
+
+/** Canonical identity for "have we extracted this yet" — host + path, no
+ *  query/fragment/trailing slash. */
+export function pageKey(url: string): string | null {
+  try {
+    const u = new URL(url);
+    return u.hostname.toLowerCase().replace(/^www\./, '') + u.pathname.replace(/\/+$/, '');
+  } catch {
+    return null;
+  }
+}
+
+/** Pull whatever the URL itself encodes: phone out of wa.me/whatsapp deep
+ *  links, handle out of profile roots. Returns null fields otherwise. */
+export function contactFromUrl(u: URL): { phone?: string; instagram?: string } {
+  const host = u.hostname.toLowerCase().replace(/^www\./, '');
+  if (host === 'wa.me' || host === 'whatsapp.com') {
+    const d = digits(u.pathname);
+    if (d.length >= 10) return { phone: `+${d}` };
+  }
+  if (host === 'api.whatsapp.com') {
+    const d = digits(u.searchParams.get('phone') ?? '');
+    if (d.length >= 10) return { phone: `+${d}` };
+  }
+  if (host === 'instagram.com') {
+    const seg = u.pathname.split('/').filter(Boolean);
+    if (seg.length === 1 && !PROFILE_STOP.has(seg[0]!.toLowerCase())) {
+      return { instagram: `@${seg[0]}` };
+    }
+  }
+  return {};
+}
+
+/** Classify one result and surface contacts encoded in the URL. */
+export function annotateResult(r: {
+  title: string;
+  url: string;
+  snippet?: string;
+}): AnnotatedResult {
+  const base: AnnotatedResult = {
+    title: r.title,
+    url: r.url,
+    kind: 'site',
+    ...(r.snippet ? { snippet: r.snippet.slice(0, 160) } : {}),
+  };
+  let u: URL;
+  try {
+    u = new URL(r.url);
+  } catch {
+    return base;
+  }
+  const host = u.hostname.toLowerCase().replace(/^www\./, '');
+  const contact = contactFromUrl(u);
+  if (contact.phone) return { ...base, kind: 'contact', phone: contact.phone };
+  if (contact.instagram) return { ...base, kind: 'profile', instagram: contact.instagram };
+  if (PROFILE_HOSTS.has(host)) return { ...base, kind: 'profile' };
+  if (LISTING_HOSTS.has(host) || host.endsWith('.gov.br') || host.endsWith('.gov')) {
+    return { ...base, kind: 'listing' };
+  }
+  return base;
+}
+
+/** Annotate + dedupe by page identity + order contact > site > profile >
+ *  listing, capped at 12 — every result is still returned, just shaped so
+ *  the model spends calls on pages that can pay off. */
+export function annotateResults(results: { title: string; url: string; snippet?: string }[]): {
+  results: AnnotatedResult[];
+  droppedDupes: number;
+} {
+  const seen = new Set<string>();
+  const out: AnnotatedResult[] = [];
+  let droppedDupes = 0;
+  for (const r of results) {
+    const key = pageKey(r.url) ?? r.url;
+    if (seen.has(key)) {
+      droppedDupes++;
+      continue;
+    }
+    seen.add(key);
+    out.push(annotateResult(r));
+  }
+  const rank: Record<ResultKind, number> = { contact: 0, site: 1, profile: 2, listing: 3 };
+  out.sort((a, b) => rank[a.kind] - rank[b.kind]);
+  return { results: out.slice(0, 12), droppedDupes };
+}
+
 /** Base URLs are configurable per-integration but pinned to TinyFish hosts
  *  over https — otherwise the config row becomes an SSRF primitive that
  *  exfiltrates the API key to an arbitrary endpoint. */
