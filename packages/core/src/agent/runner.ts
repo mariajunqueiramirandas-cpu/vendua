@@ -398,16 +398,52 @@ export async function runOnce(sql: Sql): Promise<boolean> {
           const missingWa = created.filter(
             (l) => !(typeof l.whatsapp === 'string' && l.whatsapp.trim()),
           );
+          // The journal knows every query fired and url read — feed it back
+          // so the extra round tries new angles instead of re-walking the
+          // dead ends that got the run here.
+          const triedQueries = new Set<string>();
+          const readUrls = new Set<string>();
+          for (const s of steps) {
+            if (typeof s !== 'object' || s === null) continue;
+            const st = s as {
+              name?: string;
+              args?: Record<string, unknown>;
+              out?: { pages?: { url?: string }[] };
+            };
+            if (st.name === 'web_search' && typeof st.args?.query === 'string')
+              triedQueries.add(st.args.query);
+            if (st.name === 'read_pages') {
+              const seen = [
+                ...(Array.isArray(st.args?.urls) ? st.args.urls : []),
+                ...(st.out?.pages ?? []).map((p) => p.url),
+              ];
+              for (const u of seen) {
+                try {
+                  const uu = new URL(String(u));
+                  readUrls.add(`${uu.hostname}${uu.pathname}`.replace(/\/+$/, ''));
+                } catch {
+                  readUrls.add(String(u));
+                }
+              }
+            }
+          }
+          const tried =
+            triedQueries.size || readUrls.size
+              ? ` Já tentado — NÃO repita: buscas ${[...triedQueries]
+                  .slice(0, 8)
+                  .map((q) => `"${q}"`)
+                  .join(', ')}${readUrls.size ? `; leituras ${[...readUrls].slice(0, 8).join(', ')}` : ''}.`
+              : '';
           const nudge =
             !created.length && !merged
-              ? 'Nenhum lead entrou no CRM ainda — descoberta só conta quando o lead é criado. Se ainda há sabor não tentado, segue: web_search com outra variação do segmento/cidade, ou read_pages no prospect fraco (o diretório que citar o nome é onde telefone mora).'
+              ? `Nenhum lead entrou no CRM ainda — descoberta só conta quando o lead é criado.${tried} Siga por um sabor NÃO tentado — outra variação de segmento/modelo de negócio/cidade — ou read_pages no prospect fraco (o diretório que citar o nome é onde telefone mora).`
               : missingWa.length
                 ? `${missingWa.length} lead(s) sem whatsapp: ${missingWa
                     .map((l) => String(l.name ?? '?'))
                     .slice(0, 6)
                     .join(
                       ', ',
-                    )}. Uma rodada por nome antes de encerrar: web_search "<nome> <cidade>" telefone/whatsapp; e no resultado que citar o nome — mesmo diretório/guia local — read_pages vale (é onde telefone e endereço moram).`
+                    )}.${tried} Uma rodada por nome antes de encerrar: web_search "<nome> <cidade>" telefone/whatsapp (ângulo novo, não repita as buscas listadas); e no resultado que citar o nome — mesmo diretório/guia local — read_pages vale (é onde telefone e endereço moram).`
                 : null;
           if (nudge) {
             nudged = true;
