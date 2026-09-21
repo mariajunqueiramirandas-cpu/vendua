@@ -1,0 +1,146 @@
+import { join } from 'node:path';
+import { mkdir, writeFile } from 'node:fs/promises';
+import { createSql, migrate } from '../platform/db.ts';
+import { upsertIntegration, DEFAULT_SECRET } from '../modules/integrations.ts';
+import { runSim } from './sim.ts';
+import { SIM_SCENARIOS, getScenario } from './sim-scenarios.ts';
+
+/**
+ * agent/sim-cli — `bun run sim` — drives the negotiation simulator.
+ *
+ *   bun run sim -- --all                      every scenario
+ *   bun run sim -- --scenario padaria-cetica  one scenario
+ *   bun run sim -- --list                     names only
+ *   --driver gemini|openrouter|anthropic|openai  (default gemini)
+ *   --model <id>                               provider model override
+ *
+ * Runs against an isolated `vendua_sim` database (created + migrated on the
+ * same docker postgres): the `whatsapp`/`email` drivers are `log` (messages
+ * record 'sent' without leaving the building), `llm` is gemini, and guardrails
+ * are loosened so the sim can actually talk (no quiet hours, no first-contact
+ * draft gate, high daily cap). Needs GEMINI_API_KEY in env.
+ *
+ * Each run writes sim-results/<scenario>-<ts>.json (transcript + judge) and a
+ * sim_runs row.
+ */
+
+const BASE_URL =
+  process.env.MIGRATION_DATABASE_URL ?? 'postgres://vendua:vendua@localhost:5433/vendua';
+const SIM_URL = process.env.SIM_DATABASE_URL ?? BASE_URL.replace(/\/[^/]+$/, '/vendua_sim');
+
+async function ensureSimDb() {
+  const admin = createSql(BASE_URL);
+  try {
+    await admin.unsafe(`create database vendua_sim`);
+    console.log('created database vendua_sim');
+  } catch (e) {
+    if (!String(e).includes('already exists')) throw e;
+  } finally {
+    await admin.end();
+  }
+}
+
+async function seedSimEnv(
+  sql: ReturnType<typeof createSql>,
+  llm: { driver: string; model?: string | undefined },
+) {
+  const opts = [
+    await upsertIntegration(
+      sql,
+      {
+        kind: 'llm',
+        driver: llm.driver,
+        enabled: true,
+        config: llm.model ? { model: llm.model } : {},
+      },
+      `sim:llm:${llm.driver}:${llm.model ?? 'default'}`,
+    ),
+    await upsertIntegration(sql, { kind: 'whatsapp', driver: 'log', enabled: true }, 'sim:wa'),
+    await upsertIntegration(sql, { kind: 'email', driver: 'log', enabled: true }, 'sim:email'),
+  ];
+  for (const o of opts)
+    if (o.status !== 200) throw new Error(`integration seed failed: ${JSON.stringify(o)}`);
+  await sql`
+    insert into control_settings (key, value) values ('guardrails', ${sql.json({
+      maxOutboundPerLeadPerDay: 50,
+      quietStart: '00:00',
+      quietEnd: '00:00',
+      timezone: 'America/Sao_Paulo',
+      firstContactDraftOnly: false,
+      discoveryAutoContact: false,
+      discoveryContactMinScore: 8,
+      inboundReplyDelayMin: 0,
+      firstContactDelayMin: 0,
+    })})
+    on conflict (key) do update set value = excluded.value`;
+  await sql`
+    insert into control_settings (key, value) values ('meeting', ${sql.json({
+      bookingUrl: 'https://sim.invalid/agendar',
+    })})
+    on conflict (key) do update set value = excluded.value`;
+}
+
+const args = process.argv.slice(2);
+const list = args.includes('--list');
+const all = args.includes('--all');
+const names = args.flatMap((a, i) => (a === '--scenario' && args[i + 1] ? [args[i + 1]!] : []));
+
+const flag = (name: string) => {
+  const i = args.indexOf(name);
+  return i >= 0 ? args[i + 1] : undefined;
+};
+const llmDriver = flag('--driver') ?? 'gemini';
+const llmModel = flag('--model');
+const driverKey = DEFAULT_SECRET[llmDriver];
+if (driverKey && !process.env[driverKey]) {
+  console.error(
+    `${driverKey} is required for --driver ${llmDriver} — the sim plays both sides live.`,
+  );
+  process.exit(1);
+}
+
+if (list) {
+  for (const s of SIM_SCENARIOS) console.log(`${s.name} — ${s.description}`);
+  process.exit(0);
+}
+
+const wanted = all
+  ? SIM_SCENARIOS
+  : names.map((n) => {
+      const s = getScenario(n);
+      if (!s) throw new Error(`unknown scenario '${n}' — try --list`);
+      return s;
+    });
+if (!wanted.length) {
+  console.error(
+    `usage: bun run sim -- --all | --scenario <name>\navailable: ${SIM_SCENARIOS.map((s) => s.name).join(', ')}`,
+  );
+  process.exit(1);
+}
+
+await ensureSimDb();
+const sql = createSql(SIM_URL);
+await migrate(sql, join(import.meta.dir, '../../db/migrations'));
+await seedSimEnv(sql, { driver: llmDriver, model: llmModel });
+
+await mkdir(join(import.meta.dir, '../../sim-results'), { recursive: true });
+
+for (const scenario of wanted) {
+  console.log(`\n=== ${scenario.name} — ${scenario.description}`);
+  try {
+    const result = await runSim(sql, scenario);
+    const file = join(
+      import.meta.dir,
+      '../../sim-results',
+      `${scenario.name}-${new Date().toISOString().replaceAll(':', '-')}.json`,
+    );
+    await writeFile(file, JSON.stringify(result, null, 2));
+    console.log(`outcome=${result.outcome} score=${result.score} turns=${result.turns}`);
+    console.log(`judge: ${JSON.stringify(result.judge, null, 0).slice(0, 400)}`);
+    console.log(`saved ${file}`);
+  } catch (e) {
+    console.error(`FAILED ${scenario.name}: ${e instanceof Error ? e.message : String(e)}`);
+  }
+}
+
+await sql.end();

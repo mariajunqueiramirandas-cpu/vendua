@@ -44,6 +44,72 @@ export interface LlmProvider {
 }
 
 // ---------------------------------------------------------------------------
+// rate limiting — providerFor builds a fresh provider per run, so the throttle
+// lives at module level and keys by driver: a shared slot chain spaces calls
+// to at most RPM, and every call retries 429/5xx honoring Retry-After. This is
+// what keeps parallel drain batches, the sim persona, and the judge under
+// Gemini's free-tier 15 RPM cap instead of every caller bursting at once.
+// ---------------------------------------------------------------------------
+
+const slotChains = new Map<string, Promise<void>>();
+const lastCallAt = new Map<string, number>();
+const sleepMs = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+async function takeSlot(key: string, minGapMs: number) {
+  const cur = (slotChains.get(key) ?? Promise.resolve()).then(async () => {
+    const wait = (lastCallAt.get(key) ?? 0) + minGapMs - Date.now();
+    if (wait > 0) await sleepMs(wait);
+    lastCallAt.set(key, Date.now());
+  });
+  slotChains.set(key, cur);
+  await cur;
+}
+
+const RETRYABLE = /429|quota|rate.?limit|resource_exhausted|overload|temporarily|5\d\d/i;
+
+function retryAfterMs(e: unknown): number | null {
+  const headers = (e as { headers?: Headers }).headers;
+  const raw = headers?.get?.('retry-after');
+  const secs = raw ? Number(raw) : NaN;
+  return Number.isFinite(secs) ? Math.min(secs * 1000, 90_000) : null;
+}
+
+/** Calls `fn` through the driver's slot chain, retrying provider-side 429/5xx
+ *  up to 6 attempts (Retry-After header first, else capped exp. backoff).
+ *  Non-retryable errors (400s, auth) throw on the first pass. */
+async function llmCall<T>(key: string, minGapMs: number, fn: () => Promise<T>): Promise<T> {
+  const maxAttempts = 6;
+  for (let attempt = 0; ; attempt++) {
+    await takeSlot(key, minGapMs);
+    try {
+      return await fn();
+    } catch (e) {
+      const status = (e as { statusCode?: number }).statusCode;
+      const retryable =
+        status === 429 ||
+        (typeof status === 'number' && status >= 500) ||
+        RETRYABLE.test(e instanceof Error ? e.message : String(e));
+      if (!retryable || attempt >= maxAttempts - 1) throw e;
+      await sleepMs(retryAfterMs(e) ?? Math.min(5_000 * 2 ** attempt, 60_000));
+    }
+  }
+}
+
+/** fetch wrapper that throws a headers-carrying error on non-2xx so llmCall
+ *  can read Retry-After. */
+async function llmFetch(url: string, init: RequestInit, label: string): Promise<Response> {
+  const res = await fetch(url, init);
+  if (!res.ok) {
+    const e = new Error(`${label} ${res.status}: ${(await res.text()).slice(0, 300)}`) as Error & {
+      headers?: Headers;
+    };
+    e.headers = res.headers;
+    throw e;
+  }
+  return res;
+}
+
+// ---------------------------------------------------------------------------
 // openrouter — official SDK, OpenAI-compatible tool calling
 // ---------------------------------------------------------------------------
 
@@ -82,17 +148,19 @@ function openrouterProvider(
       // stream:false inside chatRequest → the response is ChatResult; the
       // SDK's union type only narrows on a top-level `stream` flag, so the
       // cast is the honest read of what came back.
-      const res = (await client.chat.send({
-        chatRequest: {
-          model,
-          messages: orMessages as never,
-          tools: tools.map((t) => ({
-            type: 'function' as const,
-            function: { name: t.name, description: t.description, parameters: t.parameters },
-          })),
-          stream: false,
-        },
-      })) as {
+      const res = (await llmCall('openrouter', 0, () =>
+        client.chat.send({
+          chatRequest: {
+            model,
+            messages: orMessages as never,
+            tools: tools.map((t) => ({
+              type: 'function' as const,
+              function: { name: t.name, description: t.description, parameters: t.parameters },
+            })),
+            stream: false,
+          },
+        }),
+      )) as {
         choices?: {
           message?: {
             content?: string | { type: string; text?: string }[] | null;
@@ -146,6 +214,9 @@ function geminiProvider(config: Record<string, unknown>, secretRef: string | nul
   if (!apiKey) throw new Error(`missing API key — set ${secretRef ?? 'GEMINI_API_KEY'}`);
   const model =
     typeof config.model === 'string' && config.model ? config.model : 'gemini-3.5-flash-lite';
+  // free tier caps at 15 RPM — space calls to `rpm` (config override for paid tiers).
+  const rpm = typeof config.rpm === 'number' && config.rpm > 0 ? config.rpm : 14;
+  const minGapMs = 60_000 / rpm;
   type Part = Record<string, unknown>;
   return {
     name: `gemini:${model}`,
@@ -190,30 +261,32 @@ function geminiProvider(config: Record<string, unknown>, secretRef: string | nul
         }
         contents.push({ role: 'user', parts: [{ text: m.content }] });
       }
-      const res = await fetch(
-        `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`,
-        {
-          method: 'POST',
-          // header auth — a ?key= query param lands in proxy/server logs.
-          headers: { 'content-type': 'application/json', 'x-goog-api-key': apiKey },
-          body: JSON.stringify({
-            systemInstruction: { parts: [{ text: system }] },
-            contents,
-            tools: tools.length
-              ? [
-                  {
-                    functionDeclarations: tools.map((t) => ({
-                      name: t.name,
-                      description: t.description,
-                      parameters: t.parameters,
-                    })),
-                  },
-                ]
-              : undefined,
-          }),
-        },
+      const res = await llmCall('gemini', minGapMs, () =>
+        llmFetch(
+          `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`,
+          {
+            method: 'POST',
+            // header auth — a ?key= query param lands in proxy/server logs.
+            headers: { 'content-type': 'application/json', 'x-goog-api-key': apiKey },
+            body: JSON.stringify({
+              systemInstruction: { parts: [{ text: system }] },
+              contents,
+              tools: tools.length
+                ? [
+                    {
+                      functionDeclarations: tools.map((t) => ({
+                        name: t.name,
+                        description: t.description,
+                        parameters: t.parameters,
+                      })),
+                    },
+                  ]
+                : undefined,
+            }),
+          },
+          'gemini',
+        ),
       );
-      if (!res.ok) throw new Error(`gemini ${res.status}: ${(await res.text()).slice(0, 300)}`);
       const data = (await res.json()) as {
         candidates?: {
           content?: {
@@ -239,13 +312,12 @@ function geminiProvider(config: Record<string, unknown>, secretRef: string | nul
         );
       }
       const parts = cand.content?.parts ?? [];
-      // An empty candidate (e.g. finishReason SAFETY/RECITATION) carries no
-      // text and no call — returning it would make the runner converge on a
-      // silent 'done', so fail visibly with the reason instead.
-      if (!parts.some((p) => p.text || p.functionCall)) {
-        throw new Error(
-          `gemini returned empty candidate${cand.finishReason ? ` — ${cand.finishReason}` : ''}`,
-        );
+      // An empty STOP candidate means the model ended its turn with nothing
+      // to say — normal 'done' after tools ran, so return it and let the
+      // runner converge (throwing here marks a finished run 'failed').
+      // Abnormal finishes (SAFETY/RECITATION) still throw visibly.
+      if (!parts.some((p) => p.text || p.functionCall) && cand.finishReason !== 'STOP') {
+        throw new Error(`gemini returned empty candidate — ${cand.finishReason ?? 'no reason'}`);
       }
       const text = parts.map((p) => p.text ?? '').join('') || null;
       const toolCalls = parts
@@ -303,26 +375,31 @@ function anthropicProvider(config: Record<string, unknown>, secretRef: string | 
         }
         return { role: m.role, content: m.content };
       });
-      const res = await fetch('https://api.anthropic.com/v1/messages', {
-        method: 'POST',
-        headers: {
-          'content-type': 'application/json',
-          'x-api-key': apiKey,
-          'anthropic-version': '2023-06-01',
-        },
-        body: JSON.stringify({
-          model,
-          max_tokens: 2048,
-          system,
-          messages: amMessages,
-          tools: tools.map((t) => ({
-            name: t.name,
-            description: t.description,
-            input_schema: t.parameters,
-          })),
-        }),
-      });
-      if (!res.ok) throw new Error(`anthropic ${res.status}: ${(await res.text()).slice(0, 300)}`);
+      const res = await llmCall('anthropic', 0, () =>
+        llmFetch(
+          'https://api.anthropic.com/v1/messages',
+          {
+            method: 'POST',
+            headers: {
+              'content-type': 'application/json',
+              'x-api-key': apiKey,
+              'anthropic-version': '2023-06-01',
+            },
+            body: JSON.stringify({
+              model,
+              max_tokens: 2048,
+              system,
+              messages: amMessages,
+              tools: tools.map((t) => ({
+                name: t.name,
+                description: t.description,
+                input_schema: t.parameters,
+              })),
+            }),
+          },
+          'anthropic',
+        ),
+      );
       const data = (await res.json()) as {
         content?: { type: string; text?: string; id?: string; name?: string; input?: unknown }[];
         usage?: { input_tokens?: number; output_tokens?: number };
@@ -374,19 +451,24 @@ function openaiProvider(config: Record<string, unknown>, secretRef: string | nul
               : { role: m.role, content: m.content },
         ),
       ];
-      const res = await fetch('https://api.openai.com/v1/chat/completions', {
-        method: 'POST',
-        headers: { 'content-type': 'application/json', authorization: `Bearer ${apiKey}` },
-        body: JSON.stringify({
-          model,
-          messages: oaMessages,
-          tools: tools.map((t) => ({
-            type: 'function',
-            function: { name: t.name, description: t.description, parameters: t.parameters },
-          })),
-        }),
-      });
-      if (!res.ok) throw new Error(`openai ${res.status}: ${(await res.text()).slice(0, 300)}`);
+      const res = await llmCall('openai', 0, () =>
+        llmFetch(
+          'https://api.openai.com/v1/chat/completions',
+          {
+            method: 'POST',
+            headers: { 'content-type': 'application/json', authorization: `Bearer ${apiKey}` },
+            body: JSON.stringify({
+              model,
+              messages: oaMessages,
+              tools: tools.map((t) => ({
+                type: 'function',
+                function: { name: t.name, description: t.description, parameters: t.parameters },
+              })),
+            }),
+          },
+          'openai',
+        ),
+      );
       const data = (await res.json()) as {
         choices?: {
           message?: {
