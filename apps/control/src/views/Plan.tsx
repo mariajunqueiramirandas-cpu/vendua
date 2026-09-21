@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { CalendarClock, CheckCircle2, Circle, SkipForward } from 'lucide-react';
+import { CheckCircle2, ChevronDown, Circle, SkipForward } from 'lucide-react';
 import { api, type AgentRun, type LeadListItem } from '../api.ts';
 import { Empty, Page, fmtDateTime } from '../components.tsx';
 
@@ -15,15 +15,14 @@ const RUN_KIND: Record<string, string> = {
   discovery: 'descoberta',
 };
 
-// Buckets by when the agent's next move lands: an overdue nextActionAt means
-// the sweep is behind; future nextActionAt or a queued run means scheduled;
-// the rest carry a plan with no timer armed.
-function bucket(l: LeadListItem, runs: AgentRun[], now: number): string {
-  if (l.nextActionAt && new Date(l.nextActionAt).getTime() <= now) return 'agora';
-  if (l.nextActionAt || runs.length) return 'agendadas';
-  return 'sem horário';
+// One upcoming event: a queued run's run_at, or the lead's next_action_at.
+interface Pending {
+  at: string;
+  what: string;
+  leadId: string;
+  leadName: string;
+  late: boolean;
 }
-const ORDER = ['agora', 'agendadas', 'sem horário'];
 
 export default function Plan() {
   const [leads, setLeads] = useState<LeadListItem[]>([]);
@@ -40,8 +39,8 @@ export default function Plan() {
         all.push(...r.leads);
         return r.nextCursor ? page(r.nextCursor) : undefined;
       });
-    // Queued runs have no cursor (ordered created_at desc, cap 200) — the set
-    // of runs waiting on run_at is small, but the bound is a real limit.
+    // Queued runs have no cursor (created_at desc, cap 200) — the set waiting
+    // on run_at is small, but the bound is a real limit.
     void Promise.all([
       page(),
       api
@@ -56,156 +55,198 @@ export default function Plan() {
   };
   useEffect(load, []);
 
-  // Re-bucket on the minute so an action crossing its deadline moves to agora
-  // without a manual reload.
+  // Re-derive lateness on the minute so a deadline crossing shows without a
+  // manual reload.
   useEffect(() => {
     const t = setInterval(() => setNow(Date.now()), 60_000);
     return () => clearInterval(t);
   }, []);
 
-  const runsByLead = new Map<string, AgentRun[]>();
-  for (const r of runs) {
-    const arr = runsByLead.get(r.lead_id!) ?? [];
-    arr.push(r);
-    runsByLead.set(r.lead_id!, arr);
-  }
+  const byId = new Map(leads.map((l) => [l.id, l]));
 
-  const active = leads.filter(
-    (l) =>
-      l.agentMode !== 'off' && (l.agentPlan.length > 0 || l.nextActionAt || runsByLead.has(l.id)),
-  );
-  const groups = new Map<string, LeadListItem[]>();
-  for (const l of active) {
-    const b = bucket(l, runsByLead.get(l.id) ?? [], now);
-    groups.set(b, [...(groups.get(b) ?? []), l]);
-  }
-  for (const arr of groups.values())
-    arr.sort((a, b) => (a.nextActionAt ?? '').localeCompare(b.nextActionAt ?? ''));
+  // Flat timeline: every future agent move, soonest first.
+  const pending: Pending[] = [
+    ...runs.map((r) => ({
+      at: r.run_at!,
+      what: `run ${RUN_KIND[r.kind] ?? r.kind}`,
+      leadId: r.lead_id!,
+      leadName: byId.get(r.lead_id!)?.name ?? r.lead_name ?? 'lead',
+      late: new Date(r.run_at!).getTime() <= now,
+    })),
+    ...leads
+      .filter((l) => l.agentMode !== 'off' && l.nextActionAt)
+      .map((l) => ({
+        at: l.nextActionAt!,
+        what: 'follow-up do agente',
+        leadId: l.id,
+        leadName: l.name,
+        late: new Date(l.nextActionAt!).getTime() <= now,
+      })),
+  ].sort((a, b) => a.at.localeCompare(b.at));
+
+  // Leads carrying a plan, most-progressed first.
+  const planned = leads
+    .filter((l) => l.agentMode !== 'off' && l.agentPlan.length > 0)
+    .sort(
+      (a, b) =>
+        b.agentPlan.filter((s) => s.status === 'done').length / b.agentPlan.length -
+        a.agentPlan.filter((s) => s.status === 'done').length / a.agentPlan.length,
+    );
 
   return (
     <Page
       title="Planos do agente"
-      sub={`${active.length} ${active.length === 1 ? 'lead sob plano' : 'leads sob plano'}`}
+      sub={`${pending.length} ${pending.length === 1 ? 'ação marcada' : 'ações marcadas'} · ${planned.length} ${planned.length === 1 ? 'plano' : 'planos'}`}
     >
       {state === 'error' && (
-        <Empty
-          title="não deu pra carregar"
-          hint="a lista de leads ou de runs falhou — tenta de novo"
-        />
+        <>
+          <Empty
+            title="não deu pra carregar"
+            hint="a lista de leads ou de runs falhou — tenta de novo"
+          />
+          <button className="btn" onClick={load} style={{ marginTop: 10 }}>
+            tentar de novo
+          </button>
+        </>
       )}
-      {state === 'error' && (
-        <button className="btn" onClick={load}>
-          tentar de novo
-        </button>
-      )}
-      {state === 'ok' && !active.length && (
+      {state === 'ok' && !pending.length && !planned.length && (
         <Empty
           title="nenhum plano ainda"
           hint="o agente monta um plano por lead no primeiro contato — metas, objeções e próxima ação aparecem aqui"
         />
       )}
-      {ORDER.filter((b) => groups.has(b)).map((b) => (
-        <div key={b} style={{ marginBottom: 18 }}>
+
+      {pending.length > 0 && (
+        <>
           <div className="k" style={{ margin: '0 4px 8px' }}>
-            {b} · {groups.get(b)!.length}
+            próximas ações
           </div>
-          <div className="grid2" style={{ alignItems: 'start' }}>
-            {groups.get(b)!.map((l) => (
-              <LeadPlanCard key={l.id} lead={l} runs={runsByLead.get(l.id) ?? []} />
+          <div className="card" style={{ maxWidth: 860 }}>
+            <table className="tbl">
+              <tbody>
+                {pending.map((p, i) => (
+                  <tr key={i}>
+                    <td style={{ whiteSpace: 'nowrap', width: 110 }}>
+                      {fmtDateTime(p.at)}
+                      {p.late && (
+                        <span className="chip warn" style={{ marginLeft: 6 }}>
+                          atrasada
+                        </span>
+                      )}
+                    </td>
+                    <td style={{ color: 'var(--muted)' }}>{p.what}</td>
+                    <td>
+                      <Link to={`/leads/${p.leadId}`}>{p.leadName}</Link>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </>
+      )}
+
+      {planned.length > 0 && (
+        <>
+          <div className="k" style={{ margin: '18px 4px 8px' }}>
+            planos em curso
+          </div>
+          <div className="card" style={{ maxWidth: 860, padding: '2px 14px' }}>
+            {planned.map((l) => (
+              <PlanRow key={l.id} lead={l} />
             ))}
           </div>
-        </div>
-      ))}
+        </>
+      )}
     </Page>
   );
 }
 
-function LeadPlanCard({ lead, runs }: { lead: LeadListItem; runs: AgentRun[] }) {
+function PlanRow({ lead }: { lead: LeadListItem }) {
+  const [open, setOpen] = useState(false);
   const done = lead.agentPlan.filter((s) => s.status === 'done').length;
-  const late = lead.nextActionAt && new Date(lead.nextActionAt).getTime() < Date.now();
+  const total = lead.agentPlan.length;
   return (
-    <div className="card" style={{ padding: 16 }}>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>
-        <Link to={`/leads/${lead.id}`} style={{ fontWeight: 600 }}>
+    <div className="planrow">
+      <button
+        className="btn ghost"
+        style={{
+          display: 'flex',
+          alignItems: 'center',
+          gap: 10,
+          width: '100%',
+          textAlign: 'left',
+          padding: '10px 2px',
+          fontWeight: 500,
+        }}
+        onClick={() => setOpen(!open)}
+        aria-expanded={open}
+      >
+        <Link
+          to={`/leads/${lead.id}`}
+          style={{ fontWeight: 600 }}
+          onClick={(e) => e.stopPropagation()}
+        >
           {lead.name}
         </Link>
-        {lead.businessName && (
-          <span
-            style={{
-              color: 'var(--muted)',
-              fontSize: 'var(--t-xs)',
-              overflow: 'hidden',
-              textOverflow: 'ellipsis',
-              whiteSpace: 'nowrap',
-            }}
-          >
-            {lead.businessName}
-          </span>
-        )}
-        <span className="chip agent" style={{ marginLeft: 'auto' }} title="objetivo atual">
+        <span className="chip agent" title="objetivo atual">
           {GOAL_LABEL[lead.agentGoal] ?? lead.agentGoal}
         </span>
-        {lead.agentPlan.length > 0 && (
-          <span
-            style={{
-              color: 'var(--muted)',
-              fontSize: 'var(--t-2xs)',
-              fontFamily: 'var(--font-mono)',
-            }}
-          >
-            {done}/{lead.agentPlan.length}
-          </span>
-        )}
-      </div>
-      {lead.agentPlan.map((s, i) => (
-        <div key={i} className="trow" style={{ alignItems: 'flex-start', gap: 8 }}>
-          {s.status === 'done' ? (
-            <CheckCircle2
-              size={15}
-              style={{ color: 'var(--forest-800)', flexShrink: 0, marginTop: 2 }}
-            />
-          ) : s.status === 'skip' ? (
-            <SkipForward size={15} style={{ color: 'var(--muted)', flexShrink: 0, marginTop: 2 }} />
-          ) : (
-            <Circle size={15} style={{ color: 'var(--muted)', flexShrink: 0, marginTop: 2 }} />
-          )}
-          <span style={{ flex: 1, minWidth: 0 }}>
-            <div
-              style={{
-                textDecoration: s.status === 'skip' ? 'line-through' : undefined,
-                color: s.status === 'todo' ? undefined : 'var(--muted)',
-              }}
-            >
-              {s.step}
+        <span className="planbar" title={`${done} de ${total} etapas`} style={{ flex: '0 0 64px' }}>
+          <span style={{ width: `${(done / total) * 100}%` }} />
+        </span>
+        <span
+          style={{
+            color: 'var(--muted)',
+            fontSize: 'var(--t-2xs)',
+            fontFamily: 'var(--font-mono)',
+          }}
+        >
+          {done}/{total}
+        </span>
+        <ChevronDown
+          size={14}
+          style={{
+            color: 'var(--muted)',
+            transform: open ? 'rotate(180deg)' : undefined,
+            transition: 'transform 150ms cubic-bezier(0.2, 0, 0, 1)',
+          }}
+        />
+      </button>
+      {open && (
+        <div style={{ paddingBottom: 10 }}>
+          {lead.agentPlan.map((s, i) => (
+            <div key={i} className="trow" style={{ alignItems: 'flex-start', gap: 8 }}>
+              {s.status === 'done' ? (
+                <CheckCircle2
+                  size={15}
+                  style={{ color: 'var(--forest-800)', flexShrink: 0, marginTop: 2 }}
+                />
+              ) : s.status === 'skip' ? (
+                <SkipForward
+                  size={15}
+                  style={{ color: 'var(--muted)', flexShrink: 0, marginTop: 2 }}
+                />
+              ) : (
+                <Circle size={15} style={{ color: 'var(--muted)', flexShrink: 0, marginTop: 2 }} />
+              )}
+              <span style={{ flex: 1, minWidth: 0 }}>
+                <div
+                  style={{
+                    textDecoration: s.status === 'skip' ? 'line-through' : undefined,
+                    color: s.status === 'todo' ? undefined : 'var(--muted)',
+                  }}
+                >
+                  {s.step}
+                </div>
+                {s.note && (
+                  <div style={{ color: 'var(--muted)', fontSize: 'var(--t-xs)', marginTop: 2 }}>
+                    {s.note}
+                  </div>
+                )}
+              </span>
             </div>
-            {s.note && (
-              <div style={{ color: 'var(--muted)', fontSize: 'var(--t-xs)', marginTop: 2 }}>
-                {s.note}
-              </div>
-            )}
-          </span>
-        </div>
-      ))}
-      {!lead.agentPlan.length && (
-        <div style={{ color: 'var(--muted)', fontSize: 'var(--t-sm)', padding: '6px 0' }}>
-          sem checklist — só um horário armado
-        </div>
-      )}
-      {runs.map((r) => (
-        <div key={r.id} className="trow">
-          <span className="chip agent">{RUN_KIND[r.kind] ?? r.kind}</span>
-          <span style={{ color: 'var(--muted)', fontSize: 'var(--t-xs)', flex: 1 }}>
-            run agenda {fmtDateTime(r.run_at)}
-          </span>
-        </div>
-      ))}
-      {lead.nextActionAt && (
-        <div className="trow">
-          <CalendarClock size={14} style={{ color: 'var(--muted)', flexShrink: 0 }} />
-          <span style={{ color: 'var(--muted)', fontSize: 'var(--t-xs)', flex: 1 }}>
-            próxima ação · {fmtDateTime(lead.nextActionAt)}
-          </span>
-          {late && <span className="chip warn">atrasada</span>}
+          ))}
         </div>
       )}
     </div>

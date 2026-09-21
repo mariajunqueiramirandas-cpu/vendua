@@ -1452,6 +1452,28 @@ details.raw textarea {
   background: var(--forest-800);
 }
 
+/* plan progress — same rail grammar as .scorebar, agent accent fill */
+.planbar {
+  display: inline-block;
+  width: 44px;
+  height: 4px;
+  border-radius: 999px;
+  background: var(--surface-2);
+  overflow: hidden;
+}
+.planbar > span {
+  display: block;
+  height: 100%;
+  border-radius: 999px;
+  background: var(--lime-300);
+}
+.planrow {
+  border-bottom: 1px solid var(--line);
+}
+.planrow:last-child {
+  border-bottom: 0;
+}
+
 /* nav badge — count of things waiting on you */
 .nav-item .nb {
   margin-left: auto;
