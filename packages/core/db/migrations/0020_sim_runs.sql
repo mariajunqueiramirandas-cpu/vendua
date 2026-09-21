@@ -17,3 +17,17 @@ create table if not exists sim_runs (
   created_at timestamptz not null default now()
 );
 create index if not exists sim_runs_created on sim_runs (created_at desc);
+
+do $$
+begin
+  execute format('alter table %I enable row level security', 'sim_runs');
+  execute format('drop policy if exists staff_all on %I', 'sim_runs');
+  execute format(
+    'create policy staff_all on %I for all
+       using (current_setting(''vendua.control'', true) = ''1'')
+       with check (current_setting(''vendua.control'', true) = ''1'')',
+    'sim_runs'
+  );
+  execute format('grant select, insert, update, delete on %I to vendua_app', 'sim_runs');
+end
+$$;

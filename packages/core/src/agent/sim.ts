@@ -187,6 +187,17 @@ export async function runSim(
     });
     await settle(sql, leadId);
     terminal = await terminalState(sql, leadId);
+    if (terminal) {
+      // A run can go terminal on the same step that sends (send_message +
+      // set_state together) — harvest that closing message before ending, or
+      // the judge scores a transcript missing the agent's last word.
+      const out = await latestOutbound(sql, leadId, lastSeenId);
+      if (out) {
+        lastSeenId = out.id;
+        transcript.push({ from: 'agent', body: out.body, at: new Date().toISOString() });
+        simLog.info({ out: out.body.slice(0, 80) }, 'agent → lead (final)');
+      }
+    }
   }
   terminal = terminal ?? { outcome: 'stalled', why: `turn cap ${maxTurns}` };
 
@@ -212,14 +223,26 @@ export async function runSim(
   }
   const outcome =
     typeof judge.outcome === 'string' && judge.outcome ? judge.outcome : terminal.outcome;
-  const score = typeof judge.score === 'number' ? judge.score : null;
+  const score =
+    typeof judge.score === 'number' &&
+    Number.isInteger(judge.score) &&
+    judge.score >= 1 &&
+    judge.score <= 5
+      ? judge.score
+      : null;
 
-  const [simRun] = await sql<{ id: string }[]>`
+  const simRun = await controlTx(
+    sql,
+    async (tx) =>
+      (
+        await tx<{ id: string }[]>`
     insert into sim_runs (scenario, lead_id, outcome, score, judge, transcript, turns, tokens_in, tokens_out, llm, duration_ms)
-    values (${scenario.name}, ${leadId}, ${outcome}, ${score}, ${sql.json(judge as never)},
-            ${sql.json(transcript as never)}, ${transcript.length}, ${tokensIn}, ${tokensOut},
+    values (${scenario.name}, ${leadId}, ${outcome}, ${score}, ${tx.json(judge as never)},
+            ${tx.json(transcript as never)}, ${transcript.length}, ${tokensIn}, ${tokensOut},
             ${llm.name}, ${Date.now() - startedAt})
-    returning id`;
+    returning id`
+      )[0],
+  );
 
   simLog.info({ outcome, score, simRunId: simRun!.id }, 'sim done');
   return {

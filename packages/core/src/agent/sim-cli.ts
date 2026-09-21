@@ -4,6 +4,7 @@ import { createSql, migrate } from '../platform/db.ts';
 import { upsertIntegration, DEFAULT_SECRET } from '../modules/integrations.ts';
 import { runSim } from './sim.ts';
 import { SIM_SCENARIOS, getScenario } from './sim-scenarios.ts';
+import { log } from '../platform/log.ts';
 
 /**
  * agent/sim-cli — `bun run sim` — drives the negotiation simulator.
@@ -28,11 +29,15 @@ const BASE_URL =
   process.env.MIGRATION_DATABASE_URL ?? 'postgres://vendua:vendua@localhost:5433/vendua';
 const SIM_URL = process.env.SIM_DATABASE_URL ?? BASE_URL.replace(/\/[^/]+$/, '/vendua_sim');
 
+const cliLog = log.child({ mod: 'sim-cli' });
+
 async function ensureSimDb() {
+  // Honor SIM_DATABASE_URL's target db (same server as BASE_URL).
+  const dbName = SIM_URL.replace(/\?.*$/, '').split('/').pop() ?? 'vendua_sim';
   const admin = createSql(BASE_URL);
   try {
-    await admin.unsafe(`create database vendua_sim`);
-    console.log('created database vendua_sim');
+    await admin.unsafe(`create database ${dbName}`);
+    cliLog.info({ db: dbName }, 'sim database created');
   } catch (e) {
     if (!String(e).includes('already exists')) throw e;
   } finally {
@@ -53,7 +58,7 @@ async function seedSimEnv(
         enabled: true,
         config: llm.model ? { model: llm.model } : {},
       },
-      `sim:llm:${llm.driver}:${llm.model ?? 'default'}`,
+      `sim:llm:${llm.driver}:${llm.model ?? 'default'}:${process.pid}`,
     ),
     await upsertIntegration(sql, { kind: 'whatsapp', driver: 'log', enabled: true }, 'sim:wa'),
     await upsertIntegration(sql, { kind: 'email', driver: 'log', enabled: true }, 'sim:email'),
@@ -91,17 +96,17 @@ const flag = (name: string) => {
 };
 const llmDriver = flag('--driver') ?? 'gemini';
 const llmModel = flag('--model');
+if (list) {
+  for (const s of SIM_SCENARIOS) cliLog.info(`${s.name} — ${s.description}`);
+  process.exit(0);
+}
+
 const driverKey = DEFAULT_SECRET[llmDriver];
 if (driverKey && !process.env[driverKey]) {
-  console.error(
+  cliLog.error(
     `${driverKey} is required for --driver ${llmDriver} — the sim plays both sides live.`,
   );
   process.exit(1);
-}
-
-if (list) {
-  for (const s of SIM_SCENARIOS) console.log(`${s.name} — ${s.description}`);
-  process.exit(0);
 }
 
 const wanted = all
@@ -112,7 +117,7 @@ const wanted = all
       return s;
     });
 if (!wanted.length) {
-  console.error(
+  cliLog.error(
     `usage: bun run sim -- --all | --scenario <name>\navailable: ${SIM_SCENARIOS.map((s) => s.name).join(', ')}`,
   );
   process.exit(1);
@@ -126,7 +131,7 @@ await seedSimEnv(sql, { driver: llmDriver, model: llmModel });
 await mkdir(join(import.meta.dir, '../../sim-results'), { recursive: true });
 
 for (const scenario of wanted) {
-  console.log(`\n=== ${scenario.name} — ${scenario.description}`);
+  cliLog.info(`\n=== ${scenario.name} — ${scenario.description}`);
   try {
     const result = await runSim(sql, scenario);
     const file = join(
@@ -135,11 +140,11 @@ for (const scenario of wanted) {
       `${scenario.name}-${new Date().toISOString().replaceAll(':', '-')}.json`,
     );
     await writeFile(file, JSON.stringify(result, null, 2));
-    console.log(`outcome=${result.outcome} score=${result.score} turns=${result.turns}`);
-    console.log(`judge: ${JSON.stringify(result.judge, null, 0).slice(0, 400)}`);
-    console.log(`saved ${file}`);
+    cliLog.info(`outcome=${result.outcome} score=${result.score} turns=${result.turns}`);
+    cliLog.info(`judge: ${JSON.stringify(result.judge, null, 0).slice(0, 400)}`);
+    cliLog.info(`saved ${file}`);
   } catch (e) {
-    console.error(`FAILED ${scenario.name}: ${e instanceof Error ? e.message : String(e)}`);
+    cliLog.error(`FAILED ${scenario.name}: ${e instanceof Error ? e.message : String(e)}`);
   }
 }
 
