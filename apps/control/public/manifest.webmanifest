@@ -1,0 +1,56 @@
+{
+  "name": "venduá · controle",
+  "short_name": "controle",
+  "description": "CRM venduá — funil, leads, inbox, agenda e sala de máquinas.",
+  "lang": "pt-BR",
+  "dir": "ltr",
+  "start_url": "/control/",
+  "scope": "/control/",
+  "display": "standalone",
+  "background_color": "#f7f4ea",
+  "theme_color": "#f7f4ea",
+  "categories": ["business", "productivity"],
+  "icons": [
+    {
+      "src": "/control/icons/icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any"
+    },
+    {
+      "src": "/control/icons/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/control/icons/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/control/icons/icon-maskable-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "maskable"
+    }
+  ],
+  "shortcuts": [
+    {
+      "name": "Inbox",
+      "url": "/control/#/inbox",
+      "icons": [{ "src": "/control/icons/icon-192.png", "sizes": "192x192" }]
+    },
+    {
+      "name": "Leads",
+      "url": "/control/#/leads",
+      "icons": [{ "src": "/control/icons/icon-192.png", "sizes": "192x192" }]
+    },
+    {
+      "name": "Agenda",
+      "url": "/control/#/agenda",
+      "icons": [{ "src": "/control/icons/icon-192.png", "sizes": "192x192" }]
+    }
+  ]
+}
