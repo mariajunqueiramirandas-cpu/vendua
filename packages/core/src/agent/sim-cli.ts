@@ -40,8 +40,9 @@ async function ensureSimDb() {
   if (!/^[a-zA-Z_][a-zA-Z0-9_]*$/.test(dbName)) {
     throw new Error(`SIM_DATABASE_URL has an invalid database name: '${dbName}'`);
   }
-  const adminUrl = SIM_URL.replace(/\?.*$/, '').replace(/\/[^/]+$/, '/postgres');
-  const admin = createSql(adminUrl);
+  const adminUrl = new URL(SIM_URL);
+  adminUrl.pathname = adminUrl.pathname.replace(/\/[^/]+$/, '/postgres');
+  const admin = createSql(adminUrl.toString());
   try {
     await admin.unsafe(`create database ${dbName}`);
     cliLog.info({ db: dbName }, 'sim database created');
