@@ -413,12 +413,15 @@ export const api = {
       lead_id?: string;
       limit?: string;
       scheduled?: string;
+      cursor?: string;
     } = {},
   ) => {
     const params = new URLSearchParams(
       Object.entries(q).filter(([, v]) => v) as [string, string][],
     );
-    return req<{ runs: AgentRun[] }>(`/agent/runs${params.size ? `?${params}` : ''}`);
+    return req<{ runs: AgentRun[]; nextCursor?: string }>(
+      `/agent/runs${params.size ? `?${params}` : ''}`,
+    );
   },
   run: (id: string) => req<{ run: AgentRun }>(`/agent/runs/${id}`),
   startRun: (kind: string, params: Record<string, unknown> = {}) =>

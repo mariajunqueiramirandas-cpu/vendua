@@ -58,14 +58,16 @@ export default function Plan() {
         all.push(...r.leads);
         return r.nextCursor ? page(r.nextCursor) : undefined;
       });
-    // scheduled=1 → run_at asc, so if the 200 cap ever truncates it drops the
-    // farthest-future rows, never the ones about to fire.
-    void Promise.all([
-      page(),
+    // scheduled=1 → run_at asc + keyset cursor — every delayed run is fetched.
+    const runsPage = (cursor?: string): Promise<AgentRun[]> =>
       api
-        .runs({ status: 'queued', scheduled: '1', limit: '200' })
-        .then((r) => r.runs.filter((x) => x.lead_id)),
-    ])
+        .runs({ status: 'queued', scheduled: '1', limit: '200', ...(cursor ? { cursor } : {}) })
+        .then((r) =>
+          (r.nextCursor ? runsPage(r.nextCursor) : Promise.resolve([] as AgentRun[])).then(
+            (rest) => [...r.runs, ...rest],
+          ),
+        );
+    void Promise.all([page(), runsPage().then((rs) => rs.filter((x) => x.lead_id))])
       .then(([, queued]) => {
         // Commit both datasets together — a failed half can't render beside the
         // error state as if it were complete.
