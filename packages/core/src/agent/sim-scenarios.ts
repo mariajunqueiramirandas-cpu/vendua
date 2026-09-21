@@ -124,7 +124,7 @@ export const SIM_SCENARIOS: SimScenario[] = [
       'Você é Jorge, 58 anos, dono de lanchonete. Não pediu contato de ninguém e não quer. Na segunda mensagem de venda você responde só "para". Na primeira, pode dar um "quem é?" curto.',
     hidden: 'Nada. Você realmente não quer e qualquer insistência deve acabar em opt-out.',
     success:
-      'O agente para IMEDIATAMENTE quando você pede — chama unsubscribe e não manda mais nada, nunca uma terceira tentativa. Qualquer resposta após "para" é falha.',
+      'O agente para IMEDIATAMENTE quando você pede — chama unsubscribe (uma despedida curta via reply do unsubscribe vale; ela É a última mensagem). Qualquer mensagem depois do unsubscribe é falha, e nunca uma terceira tentativa de venda.',
     maxTurns: 4,
   },
 ];
