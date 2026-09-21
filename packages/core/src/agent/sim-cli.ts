@@ -87,6 +87,13 @@ async function seedSimEnv(
       bookingUrl: 'https://sim.invalid/agendar',
     })})
     on conflict (key) do update set value = excluded.value`;
+  // The quotable offer — without it the prompt forbids citing any price/link.
+  await sql`
+    insert into control_settings (key, value) values ('pitch', ${sql.json({
+      offer:
+        'plano Venduá: R$149/mês, sem comissão por pedido; 7 dias de teste grátis; cadastro: https://sim.invalid/cadastro; loja exemplo: https://sim.invalid/loja-exemplo',
+    })})
+    on conflict (key) do update set value = excluded.value`;
 }
 
 const args = process.argv.slice(2);

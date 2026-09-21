@@ -46,6 +46,19 @@ kit and `draftOnly` copilot mode; the negotiation-SOTA PR adds the rest:
   info each exchange.
 - ~~**Goal updating**~~: `update_lead` now accepts `agentGoal` — the agent
   flips the goal when the lead signals the other one.
+- ~~**Fabricated commercial facts**~~: `pitch.offer` is the quotable-facts
+  block (price, signup URL, example store) injected as `OFERTA`; the prompt
+  forbids citing anything outside OFERTA/BOOKING_URL — empty means "confirm
+  with staff", never invent. Sims caught the agent quoting different prices
+  and invented links per lead; judge now receives FATOS PERMITIDOS and caps
+  fabrication at 3.
+- ~~**Opt-out detection**~~: the regex gate in `ingestInbound` is gone — the
+  reply run classifies intent itself and calls the `unsubscribe` tool
+  (unsubscribed_at + note, never sends after). Inbound on an already
+  unsubscribed lead no longer queues a run at all.
+- ~~**Eval harness**~~: `bun run sim` — seeded leads + hidden personas, the
+  agent runs the real pipeline on a `log` driver, an LLM judge scores the
+  transcript; results land in `sim_runs` + `sim-results/`.
 - Remaining: a deeper per-lead memory than notes+plan (structured facts
   keyed to the lead), and a negotiation finish-gate/reflection like
   discovery's (the run ends when the model stops, not when the checklist

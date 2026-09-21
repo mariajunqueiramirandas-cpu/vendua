@@ -913,6 +913,7 @@ function PitchCard({
     audience: str(value.audience, ''),
     tone: str(value.tone, ''),
     offerRange: str(value.offerRange, ''),
+    offer: str(value.offer, ''),
     goal: str(value.goal, ''),
     hardRules: Array.isArray(value.hardRules) ? (value.hardRules as string[]) : [],
   };
@@ -950,6 +951,16 @@ function PitchCard({
           value={edit.offerRange}
           onChange={set('offerRange')}
           style={{ width: '100%' }}
+        />
+      </div>
+      <div className="field">
+        <label>oferta concreta — fatos citáveis (preço, link de cadastro, loja exemplo)</label>
+        <textarea
+          rows={3}
+          value={edit.offer}
+          onChange={set('offer')}
+          style={{ width: '100%' }}
+          placeholder="ex.: plano R$149/mês, sem comissão; 7 dias grátis; cadastro: https://...; exemplo: https://..."
         />
       </div>
       <div className="field">

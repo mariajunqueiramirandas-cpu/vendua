@@ -232,6 +232,10 @@ export const DEFAULT_PITCH = {
   tone: 'direto, caloroso, português brasileiro, mensagens curtas estilo WhatsApp',
   offerRange:
     'pode oferecer teste gratuito e desconto de lançamento; nunca prometa preço final nem isenção — escale para humano quando pedirem desconto além do lançamento',
+  /** Verbatim quotable facts — the only commercial claims the agent may
+   *  state (price, plan, trial length, signup URL, example storefront).
+   *  Empty = nothing may be quoted; the agent must confirm with staff. */
+  offer: '',
   goal: 'descobrir interesse e marcar uma conversa curta ou pedido de demonstração',
   hardRules: [
     'nunca invente funcionalidades, prazos ou preços',
@@ -349,7 +353,7 @@ export function validateSetting(key: string, value: unknown): void {
       throw bad('*', 'must be an object');
     }
     const v = value as Record<string, unknown>;
-    for (const k of ['product', 'audience', 'tone', 'offerRange', 'goal'] as const) {
+    for (const k of ['product', 'audience', 'tone', 'offerRange', 'offer', 'goal'] as const) {
       if (v[k] === undefined) continue;
       if (typeof v[k] !== 'string' || (v[k] as string).length > 4000) {
         throw bad(k, 'must be a string (≤4000 chars)');

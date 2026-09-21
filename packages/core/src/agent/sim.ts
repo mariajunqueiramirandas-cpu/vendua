@@ -1,7 +1,7 @@
 import type { Sql } from '../platform/db.ts';
 import { controlTx } from '../modules/control.ts';
 import { leadInsert, insertLeadTx } from '../modules/leads.ts';
-import { getIntegrationTx } from '../modules/integrations.ts';
+import { getIntegrationTx, getPitch, getSetting } from '../modules/integrations.ts';
 import { enqueueRun, drain } from './runner.ts';
 import { ingestInbound } from './inbound.ts';
 import { providerFor, type AgentMessage, type LlmProvider } from './llm.ts';
@@ -115,7 +115,8 @@ Regras de interpretação:
 
 const JUDGE_SYSTEM = `Você é juiz de qualidade de negociação por WhatsApp. Avalie SÓ o vendedor (o agente), nunca o lead. Responda SÓ JSON válido neste formato:
 {"outcome":"booked|progress|lost|optout|handoff|stalled","score":<1-5>,"strengths":["..."],"weaknesses":["..."],"summary":"uma frase"}
-score 5 = fez o melhor possível dentro do que o lead permitia; 3 = ok com chances perdidas claras; 1 = falhou no básico (genérico, insistente, ignorou sinal).`;
+score 5 = fez o melhor possível dentro do que o lead permitia; 3 = ok com chances perdidas claras; 1 = falhou no básico (genérico, insistente, ignorou sinal).
+INVENTAR fato comercial — preço, plano, prazo, cupom ou link fora dos FATOS PERMITIDOS — é weakness grave: o score não passa de 3 não importa o quão bem vendeu.`;
 
 export async function runSim(
   sql: Sql,
@@ -200,29 +201,70 @@ export async function runSim(
     }
   }
   terminal = terminal ?? { outcome: 'stalled', why: `turn cap ${maxTurns}` };
+  // A run that went terminal before the loop (e.g. failed after its send)
+  // still left a message on the wire — harvest it so the record isn't empty.
+  if (!transcript.length) {
+    const out = await latestOutbound(sql, leadId, lastSeenId);
+    if (out) {
+      lastSeenId = out.id;
+      transcript.push({ from: 'agent', body: out.body, at: new Date().toISOString() });
+      simLog.info({ out: out.body.slice(0, 80) }, 'agent → lead (final)');
+    }
+  }
 
   // Judge: score the agent's side of the transcript against the scenario.
-  const judgeRes = await llm.chat({
-    system: JUDGE_SYSTEM,
-    tools: [],
-    messages: [
-      {
-        role: 'user',
-        content: `CENÁRIO: ${scenario.name} — ${scenario.description}\nO QUE SERIA SUCESSO: ${scenario.success}\n\nTRANSCRIÇÃO (vendedor = "agent", cliente = "lead"; só mensagens enviadas aparecem — o lead não vê rascunhos nem notas):\n${transcript.map((t) => `${t.from}: ${t.body}`).join('\n')}\n\nCOMO TERMINOU: ${terminal.why} — leve isso em conta (ex.: request_human depois de um "não" é a resposta certa, não insistência).`,
-      },
-    ],
-  });
+  // FATOS PERMITIDOS mirrors exactly what the agent's prompt claims is
+  // quotable — the judge calls fabrication when a price/link strays from it.
+  const pitch = await getPitch(sql);
+  const meeting = await getSetting<{ bookingUrl?: string }>(sql, 'meeting', {});
+  const facts = [
+    `OFERTA: ${pitch.offer?.trim() ? pitch.offer : '(não configurada — nada comercial é citável)'}`,
+    `BOOKING_URL: ${meeting.bookingUrl ?? '(não configurado)'}`,
+  ].join('\n');
+  // Judge: score the agent's side of the transcript against the scenario.
+  // An empty transcript has nothing to score — don't let the judge invent a
+  // review for a conversation that never happened (observed: it praised an
+  // opt-out that was actually a stalled no-send).
+  let judgeRes: Awaited<ReturnType<LlmProvider['chat']>> = {
+    text: null,
+    toolCalls: [],
+    tokensIn: 0,
+    tokensOut: 0,
+    costUsd: 0,
+  };
+  if (transcript.length) {
+    judgeRes = await llm.chat({
+      system: JUDGE_SYSTEM,
+      tools: [],
+      messages: [
+        {
+          role: 'user',
+          content: `CENÁRIO: ${scenario.name} — ${scenario.description}\nO QUE SERIA SUCESSO: ${scenario.success}\n\nFATOS PERMITIDOS (o que o agente pode citar verbatim — qualquer outro preço/link/condição é invenção):\n${facts}\n\nTRANSCRIÇÃO (vendedor = "agent", cliente = "lead"; só mensagens enviadas aparecem — o lead não vê rascunhos nem notas):\n${transcript.map((t) => `${t.from}: ${t.body}`).join('\n')}\n\nCOMO TERMINOU: ${terminal.why} — leve isso em conta (ex.: request_human depois de um "não" é a resposta certa, não insistência).`,
+        },
+      ],
+    });
+  }
   tokensIn += judgeRes.tokensIn;
   tokensOut += judgeRes.tokensOut;
   let judge: Record<string, unknown> = {};
-  try {
-    const m = /```(?:json)?\s*(\{[\s\S]*\})```|(\{[\s\S]*\})/.exec(judgeRes.text ?? '');
-    judge = JSON.parse(m?.[1] ?? m?.[2] ?? '{}') as Record<string, unknown>;
-  } catch {
-    judge = { parse_error: judgeRes.text ?? 'empty' };
+  if (!transcript.length) {
+    judge = { summary: 'sem conversa — o agente não produziu nenhuma mensagem' };
+  } else {
+    try {
+      const m = /```(?:json)?\s*(\{[\s\S]*\})```|(\{[\s\S]*\})/.exec(judgeRes.text ?? '');
+      judge = JSON.parse(m?.[1] ?? m?.[2] ?? '{}') as Record<string, unknown>;
+    } catch {
+      judge = { parse_error: judgeRes.text ?? 'empty' };
+    }
   }
-  const outcome =
-    typeof judge.outcome === 'string' && judge.outcome ? judge.outcome : terminal.outcome;
+  // Deterministic endings (db facts) beat the judge's guess; the judge only
+  // refines the fuzzy ones (stalled/ended/progress).
+  const PINNED = new Set(['optout', 'run_failed', 'booked', 'handoff']);
+  const outcome = PINNED.has(terminal.outcome)
+    ? terminal.outcome
+    : typeof judge.outcome === 'string' && judge.outcome
+      ? judge.outcome
+      : terminal.outcome;
   const score =
     typeof judge.score === 'number' &&
     Number.isInteger(judge.score) &&

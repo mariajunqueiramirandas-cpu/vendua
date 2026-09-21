@@ -295,6 +295,19 @@ const REGISTRY: { def: AgentTool; toolsets: string[] }[] = [
     },
   },
   {
+    toolsets: ['reply'],
+    def: {
+      name: 'unsubscribe',
+      description:
+        'The sender asked to stop receiving messages / be removed — opts the lead out (unsubscribed_at). Never send anything after calling this.',
+      parameters: {
+        type: 'object',
+        properties: { leadId: leadIdArg, reason: { type: 'string' } },
+        required: ['leadId'],
+      },
+    },
+  },
+  {
     // triage/reply too — a fresh lead (inbound sender, staff-created card)
     // gets researched before the agent writes anything.
     toolsets: ['triage', 'reply', 'discovery'],
@@ -478,6 +491,7 @@ export async function executeTool(
       draft_message: 'leadId',
       send_message: 'leadId',
       request_human: 'leadId',
+      unsubscribe: 'leadId',
     }[name] ?? null;
   if (ctx.leadId && leadBoundArg) {
     const target = String(args[leadBoundArg] ?? '');
@@ -1102,6 +1116,19 @@ export async function executeTool(
         key + ':task',
       );
       return { handedOff: true };
+    }
+    case 'unsubscribe': {
+      // Idempotent by construction — replays and double-fires are no-ops.
+      const leadId = String(args.leadId);
+      const reason = typeof args.reason === 'string' ? args.reason.slice(0, 200) : null;
+      return controlTx(sql, async (tx) => {
+        await tx`update leads set unsubscribed_at = now(), updated_at = now() where id = ${leadId} and unsubscribed_at is null`;
+        await tx`
+          insert into lead_activities (lead_id, kind, body, created_by)
+          values (${leadId}, 'system', ${`Pediu para sair — opt-out registrado${reason ? ` (${reason})` : ''}`}, 'agent')
+        `;
+        return { unsubscribed: true };
+      });
     }
     case 'web_search': {
       const { discoveryFor, annotateResults } = await import('./channels/discovery.ts');
