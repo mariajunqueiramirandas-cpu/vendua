@@ -1382,13 +1382,21 @@ export function createApp({ sql, sessionSecret, controlSecret }: AppDeps) {
     controlGate(c);
     const kind = c.req.query('kind');
     const status = c.req.query('status');
+    const leadId = c.req.query('lead_id');
+    if (leadId && !UUID_RE.test(leadId)) {
+      throw new HttpError(400, 'BAD_REQUEST', 'lead_id must be a uuid');
+    }
     const limit = Math.min(Math.max(Number(c.req.query('limit') ?? 50) || 50, 1), 200);
     const params: unknown[] = [];
     const p = (v: unknown) => {
       params.push(v);
       return `$${params.length}`;
     };
-    const where = [kind ? `kind = ${p(kind)}` : 'true', status ? `status = ${p(status)}` : 'true'];
+    const where = [
+      kind ? `kind = ${p(kind)}` : 'true',
+      status ? `status = ${p(status)}` : 'true',
+      leadId ? `r.lead_id = ${p(leadId)}` : 'true',
+    ];
     const rows = await controlTx(sql, (tx) =>
       tx.unsafe(
         `select r.id, r.kind, r.status, r.lead_id, r.thread_id, r.tokens_in, r.tokens_out,

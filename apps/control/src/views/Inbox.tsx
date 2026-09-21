@@ -27,11 +27,12 @@ export default function InboxView() {
   const nav = useNavigate();
   const endRef = useRef<HTMLDivElement>(null);
 
-  useEffect(() => {
+  const refreshList = useCallback(() => {
     api
       .threads({ ...(chan ? { channel: chan } : {}), ...(q ? { q } : {}) })
       .then((r) => setThreads(r.threads));
   }, [chan, q]);
+  useEffect(refreshList, [refreshList]);
 
   // "nova conversa" picker — debounced lead search while the panel is open.
   useEffect(() => {
@@ -46,9 +47,7 @@ export default function InboxView() {
     const r = await api.newThread(leadId, channel);
     setNewOpen(false);
     setLeadQ('');
-    api
-      .threads({ ...(chan ? { channel: chan } : {}), ...(q ? { q } : {}) })
-      .then((r) => setThreads(r.threads));
+    refreshList();
     nav(`/inbox/${r.thread.id}`);
   };
 
@@ -76,6 +75,8 @@ export default function InboxView() {
     await api.sendThreadMessage(target, draft, !asDraft);
     setDraft('');
     loadThread();
+    // the row's last-message preview + rasc. chip go stale otherwise
+    refreshList();
   };
 
   // "agente sugere" — a draftOnly run bound to this thread: the agent reads
@@ -108,6 +109,7 @@ export default function InboxView() {
               if (drafts > beforeDrafts || Date.now() > deadline) {
                 setAssistBusy(false);
                 setView(t);
+                refreshList();
                 setTimeout(() => endRef.current?.scrollIntoView({ behavior: 'smooth' }), 30);
                 return;
               }
