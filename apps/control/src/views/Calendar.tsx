@@ -214,9 +214,7 @@ export default function Calendar() {
     [mobile, cells, days],
   );
   const scheduledCount = meetings.filter(
-    (m) =>
-      m.status === 'scheduled' &&
-      visibleKeys.has(dayKeyOf(new Date(m.startsAt), tz).key),
+    (m) => m.status === 'scheduled' && visibleKeys.has(dayKeyOf(new Date(m.startsAt), tz).key),
   ).length;
   const sub = `${scheduledCount} calls · ${mobile ? monthLabel : weekLabel}`;
 
