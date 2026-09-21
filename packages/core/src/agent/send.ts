@@ -33,9 +33,10 @@ export async function dispatchMessage(
           body: string;
           status: string;
           subject: string | null;
+          is_farewell: boolean;
           meeting_id: string | null;
         }[]
-      >`select id, thread_id, body, status, subject, meeting_id from lead_messages where id = ${messageId} for update`
+      >`select id, thread_id, body, status, subject, is_farewell, meeting_id from lead_messages where id = ${messageId} for update`
     )[0];
     if (!msg) return { fail: 'message not found' as const };
     // Terminal/in-flight states are honest outcomes, not errors — a replayed
@@ -80,7 +81,7 @@ export async function dispatchMessage(
     // building.
     const suppressed = lead.archived_at
       ? 'lead archived'
-      : lead.unsubscribed_at
+      : lead.unsubscribed_at && !msg.is_farewell
         ? 'lead unsubscribed'
         : thread.channel === 'email' && lead.email_bounced_at
           ? 'email bounced'

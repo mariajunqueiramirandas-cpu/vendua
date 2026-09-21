@@ -9,13 +9,12 @@ const agentLog = log.child({ mod: 'agent' });
 
 /**
  * agent/inbound — the shared inbound path: a message from any channel (the
- * Baileys socket handler or an email webhook) lands here. Opt-out phrases
- * flip unsubscribed_at instead of starting a reply run; otherwise a reply
- * run is enqueued when the thread's agent switch and the lead's agent_mode
- * allow it.
+ * Baileys socket handler or an email webhook) lands here. Opt-out intent is
+ * the agent's call — the reply run reads the message and flips
+ * unsubscribed_at via the `unsubscribe` tool; this file just queues the run
+ * (and skips it entirely once the lead is already unsubscribed). A bare
+ * "sair"/"cancelar" can be normal speech, so nothing is decided by regex.
  */
-
-const OPT_OUT = /^\s*(parar|stop|cancelar|sair|remover|descadastrar|unsubscribe|pare)\b/i;
 
 export async function ingestInbound(
   sql: Sql,
@@ -40,28 +39,17 @@ export async function ingestInbound(
   // Provider retry of an already-recorded message: no side effects again.
   if (res.alreadySeen) return res;
 
-  if (OPT_OUT.test(input.body)) {
-    await controlTx(sql, async (tx) => {
-      await tx`update leads set unsubscribed_at = now(), updated_at = now() where id = ${res.leadId} and unsubscribed_at is null`;
-      await tx`
-        insert into lead_activities (lead_id, kind, body, created_by)
-        values (${res.leadId}, 'system', 'Pediu para sair — opt-out registrado', 'system')
-      `;
-    });
-    return res;
-  }
-
   const gate = (
     await controlTx(
       sql,
-      (tx) => tx<{ agent_enabled: boolean; agent_mode: string }[]>`
-        select t.agent_enabled, l.agent_mode
+      (tx) => tx<{ agent_enabled: boolean; agent_mode: string; unsubscribed_at: string | null }[]>`
+        select t.agent_enabled, l.agent_mode, l.unsubscribed_at
         from lead_threads t join leads l on l.id = t.lead_id
         where t.id = ${res.threadId}
       `,
     )
   )[0];
-  if (gate && gate.agent_enabled && gate.agent_mode !== 'off') {
+  if (gate && gate.agent_enabled && gate.agent_mode !== 'off' && !gate.unsubscribed_at) {
     // guardrails.inboundReplyDelayMin paces the answer — the run sits queued
     // with a future run_at instead of replying while the lead is still typing.
     const { inboundReplyDelayMin } = await getGuardrails(sql);

@@ -295,6 +295,23 @@ const REGISTRY: { def: AgentTool; toolsets: string[] }[] = [
     },
   },
   {
+    toolsets: ['reply'],
+    def: {
+      name: 'unsubscribe',
+      description:
+        'The sender asked to stop receiving messages / be removed — opts the lead out (unsubscribed_at). `reply` is an optional one-line farewell sent as the final message; never send anything else after calling this.',
+      parameters: {
+        type: 'object',
+        properties: {
+          leadId: leadIdArg,
+          reason: { type: 'string' },
+          reply: { type: 'string' },
+        },
+        required: ['leadId'],
+      },
+    },
+  },
+  {
     // triage/reply too — a fresh lead (inbound sender, staff-created card)
     // gets researched before the agent writes anything.
     toolsets: ['triage', 'reply', 'discovery'],
@@ -478,6 +495,7 @@ export async function executeTool(
       draft_message: 'leadId',
       send_message: 'leadId',
       request_human: 'leadId',
+      unsubscribe: 'leadId',
     }[name] ?? null;
   if (ctx.leadId && leadBoundArg) {
     const target = String(args[leadBoundArg] ?? '');
@@ -1094,14 +1112,90 @@ export async function executeTool(
     }
     case 'request_human': {
       const leadId = String(args.leadId);
+      const reason = String(args.reason).slice(0, 500);
       if (ctx.threadId) await setThreadAgent(sql, ctx.threadId, false, key + ':thread');
       await createTask(
         sql,
         leadId,
-        { title: `[humano] ${String(args.reason).slice(0, 200)}`, createdBy: 'agent' },
+        { title: `[humano] ${reason.slice(0, 200)}`, createdBy: 'agent' },
         key + ':task',
       );
+      // The handoff belongs on the lead's timeline too — staff reading the
+      // card sees why the agent stepped aside, not just a task title. Claimed
+      // so a reclaimed run doesn't duplicate the note.
+      await claimControl(sql, key + ':note', async (tx) => {
+        await tx`
+          insert into lead_activities (lead_id, kind, body, created_by)
+          values (${leadId}, 'system', ${`Handoff para humano — ${reason}`}, 'agent')
+        `;
+        return { status: 200, body: { noted: true } };
+      });
       return { handedOff: true };
+    }
+    case 'unsubscribe': {
+      const leadId = String(args.leadId);
+      const reason = typeof args.reason === 'string' ? args.reason.slice(0, 200) : null;
+      const reply = typeof args.reply === 'string' ? args.reply.slice(0, 500) : null;
+      // The whole transition is ONE claimed tx holding the send:lead advisory
+      // lock: compose the farewell (lead still subscribed → guardrails pass
+      // it), stamp unsubscribed_at, write the note — all before the lock
+      // releases. A concurrent send serializes behind this claim and sees the
+      // lead already opted out; only the farewell (is_farewell) survives the
+      // dispatch suppression re-check. Replays return the recorded result.
+      type UnsubBody = { messageId: string | null; sendBlocked: string | null };
+      const res = await claimControl<UnsubBody>(sql, key, async (tx) => {
+        await tx`select pg_advisory_xact_lock(hashtext(${`send:${leadId}`}))`;
+        let messageId: string | null = null;
+        let sendBlocked: string | null = null;
+        if (reply) {
+          const pick = await resolveChannelTx(tx, leadId, {
+            requested: null,
+            override: ctx.channelOverride,
+            threadId: ctx.threadId,
+          });
+          if (!pick.ok) {
+            sendBlocked = pick.reason ?? 'no channel';
+          } else {
+            const g = await getSettingTx(tx, 'guardrails', {} as Partial<Guardrails>);
+            const verdict = await checkSendAllowedTx(
+              tx,
+              { ...DEFAULT_GUARDRAILS, ...g },
+              leadId,
+              pick.channel,
+            );
+            if (!verdict.ok) {
+              sendBlocked = verdict.reason ?? 'guardrail';
+            } else {
+              const composed = await composeMessageTx(tx, {
+                leadId,
+                channel: pick.channel,
+                body: reply,
+                author: 'agent',
+                status: 'queued',
+                agentRunId: ctx.runId,
+                farewell: true,
+              });
+              messageId = composed.body.message.id;
+            }
+          }
+        }
+        const changed = await tx<{ id: string }[]>`
+          update leads set unsubscribed_at = now(), updated_at = now()
+          where id = ${leadId} and unsubscribed_at is null
+          returning id
+        `;
+        if (changed.length) {
+          await tx`
+            insert into lead_activities (lead_id, kind, body, created_by)
+            values (${leadId}, 'system', ${`Pediu para sair — opt-out registrado${reason ? ` (${reason})` : ''}`}, 'agent')
+          `;
+        }
+        return { status: 200, body: { messageId, sendBlocked } };
+      });
+      if (!res.replayed && res.body.messageId) {
+        await dispatchMessage(sql, res.body.messageId);
+      }
+      return { unsubscribed: true, farewellSent: !!res.body.messageId };
     }
     case 'web_search': {
       const { discoveryFor, annotateResults } = await import('./channels/discovery.ts');

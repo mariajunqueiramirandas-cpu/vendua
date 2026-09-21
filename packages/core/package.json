@@ -8,6 +8,7 @@
     "start": "bun src/index.ts",
     "db:up": "docker compose up -d postgres",
     "migrate": "bun src/platform/migrate-cli.ts",
+    "sim": "bun src/agent/sim-cli.ts",
     "seed": "bun src/platform/seed.ts",
     "check": "tsc --noEmit -p tsconfig.json",
     "test": "bun test"
