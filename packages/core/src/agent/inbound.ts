@@ -1,5 +1,6 @@
 import type { Sql } from '../platform/db.ts';
 import { controlTx } from '../modules/control.ts';
+import { getGuardrails } from '../modules/integrations.ts';
 import { addInboundMessage, type Channel, type InboundResult } from '../modules/threads.ts';
 import { drain, enqueueRun } from './runner.ts';
 import { log } from '../platform/log.ts';
@@ -61,8 +62,19 @@ export async function ingestInbound(
     )
   )[0];
   if (gate && gate.agent_enabled && gate.agent_mode !== 'off') {
-    await enqueueRun(sql, { kind: 'reply', leadId: res.leadId, threadId: res.threadId });
-    // Kick the queue now — don't wait up to the poll interval for a reply.
+    // guardrails.inboundReplyDelayMin paces the answer — the run sits queued
+    // with a future run_at instead of replying while the lead is still typing.
+    const { inboundReplyDelayMin } = await getGuardrails(sql);
+    await enqueueRun(sql, {
+      kind: 'reply',
+      leadId: res.leadId,
+      threadId: res.threadId,
+      ...(inboundReplyDelayMin > 0
+        ? { runAt: new Date(Date.now() + inboundReplyDelayMin * 60_000) }
+        : {}),
+    });
+    // Kick the queue now — don't wait up to the poll interval for a reply
+    // (a delayed run_at is simply not due yet; the worker tick picks it up).
     void drain(sql).catch((e) => agentLog.error({ err: e }, 'drain failed'));
   }
   return res;

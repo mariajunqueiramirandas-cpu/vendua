@@ -115,6 +115,19 @@ unsubscribed` if `unsubscribed_at` is set and `lead has no whatsapp` if
   `control_settings` holds facts saved by the `remember` tool.
 - Guardrails default: quiet 21:00–08:00 America/Sao_Paulo,
   firstContactDraftOnly → agent first-contact lands in /aprovacoes.
+- UI-triggered runs carry no `script` (e.g. Inbox 'agente sugere' sends only
+  `{draftOnly:true}`) — a stock `mock` run emits 'ok' and nothing happens.
+  To make the mock call tools, set a script on the integration row, which
+  applies to every run until removed: `PUT /control/v1/integrations/llm
+{driver:'mock',enabled:true,config:{script:[{toolCalls:[{name:'send_message',
+args:{leadId,channel:'email',body:'…'}}]},{text:'pronto'}]}}`. Disable it
+  (`enabled:false`) before unrelated runs or they'll replay the same script.
+- To prove `draftOnly` (not `firstContactDraftOnly`) is what made a scripted
+  send_message draft: the lead needs agent_mode='auto' AND a prior non-draft
+  outbound (a staff 'enviar' counts toward priorOut) — then forceDraft=false
+  and only draftOnly keeps it a draft. Channel must resolve: 'manual' isn't in
+  send_message's enum (draft_message only), email needs lead.email + an
+  enabled email row (`log` suffices).
 - Old notes: cookie-auth mutations need `x-vendua-staff: 1` (CSRF);
   Idempotency-Key required → replay → 200 + `x-idempotent-replay`.
 

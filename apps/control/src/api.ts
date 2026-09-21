@@ -184,6 +184,8 @@ export interface AgentRun {
   created_at: string;
   started_at: string | null;
   finished_at: string | null;
+  /** queued rows only — the earliest-start the run is waiting on */
+  run_at?: string | null;
   lead_name?: string | null;
   steps?: unknown[];
   params?: Record<string, unknown>;
@@ -303,10 +305,14 @@ export const api = {
     req<{ lead: Lead }>(`/leads/${id}`, { method: 'PATCH', body: JSON.stringify(patch) }),
   deleteLead: (id: string) => req<{ ok: true }>(`/leads/${id}`, { method: 'DELETE' }),
   unsubscribe: (id: string) => req<{ ok: true }>(`/leads/${id}/unsubscribe`, { method: 'POST' }),
-  runOnLead: (id: string, kind: string, params?: Record<string, unknown>) =>
+  runOnLead: (id: string, kind: string, params?: Record<string, unknown>, threadId?: string) =>
     req<{ runId: string }>(`/leads/${id}/run`, {
       method: 'POST',
-      body: JSON.stringify({ kind, ...(params ? { params } : {}) }),
+      body: JSON.stringify({
+        kind,
+        ...(threadId ? { threadId } : {}),
+        ...(params ? { params } : {}),
+      }),
     }),
   stats: () => req<Stats>('/stats'),
   snapshotNow: () => req<{ snapshot: Snapshot }>('/stats/snapshot', { method: 'POST' }),
@@ -394,7 +400,7 @@ export const api = {
   testIntegration: (kind: string) =>
     req<{ ok: boolean; detail: string }>(`/integrations/${kind}/test`, { method: 'POST' }),
 
-  runs: (q: { kind?: string; status?: string } = {}) => {
+  runs: (q: { kind?: string; status?: string; lead_id?: string } = {}) => {
     const params = new URLSearchParams(
       Object.entries(q).filter(([, v]) => v) as [string, string][],
     );

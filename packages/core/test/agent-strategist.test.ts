@@ -18,6 +18,7 @@ const ctx = (): ToolContext => ({
   plan: null,
   monid: new MonidBudget(0.25),
   seenContacts: new Set(),
+  draftOnly: false,
 });
 
 const realFetch = globalThis.fetch;

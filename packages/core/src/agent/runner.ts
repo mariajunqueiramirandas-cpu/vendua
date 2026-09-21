@@ -69,12 +69,15 @@ export async function insertRun(
     leadId?: string | null;
     threadId?: string | null;
     params?: Record<string, unknown>;
+    /** earliest start — the row sits 'queued' until run_at is due
+     *  (guardrails-configured pacing); null = claimable immediately. */
+    runAt?: Date | null;
   },
 ): Promise<string> {
   const row = (
     await tx<{ id: string }[]>`
-      insert into agent_runs (kind, lead_id, thread_id, params)
-      values (${input.kind}, ${input.leadId ?? null}, ${input.threadId ?? null}, ${tx.json((input.params ?? {}) as never)})
+      insert into agent_runs (kind, lead_id, thread_id, params, run_at)
+      values (${input.kind}, ${input.leadId ?? null}, ${input.threadId ?? null}, ${tx.json((input.params ?? {}) as never)}, ${input.runAt ?? null})
       returning id
     `
   )[0]!;
@@ -87,6 +90,7 @@ export async function enqueueRun(
     kind: RunRow['kind'];
     leadId?: string | null;
     threadId?: string | null;
+    runAt?: Date | null;
     params?: Record<string, unknown>;
   },
 ): Promise<string> {
@@ -101,6 +105,7 @@ async function claimRun(sql: Sql): Promise<RunRow | null> {
       where id = (
         select id from agent_runs
         where status = 'queued'
+          and (run_at is null or run_at <= now())
         order by created_at
         limit 1
         for update skip locked
@@ -190,6 +195,11 @@ async function contextFor(
         const want = run.params.channel;
         if (want === 'whatsapp' || want === 'email') {
           parts.push(`CANAL FORÇADO (staff escolheu): ${want}`);
+        }
+        if (run.params.draftOnly === true) {
+          parts.push(
+            'MODO ASSISTÊNCIA: staff pediu uma sugestão — send_message compõe rascunho, nada sai sem aprovação da equipe.',
+          );
         }
       }
     }
@@ -354,17 +364,19 @@ export async function runOnce(sql: Sql): Promise<boolean> {
     const e = s as { type?: string; spentUsd?: number } | null;
     return e?.type === 'monid_spend' && typeof e.spentUsd === 'number' ? e.spentUsd : acc;
   }, 0);
-  const monidBudget =
-    run.kind === 'discovery'
-      ? new MonidBudget(
-          // 0 is a real cap (free tools only) — only an absent/non-numeric
-          // param gets the default
-          run.params.monidCapUsd == null || !Number.isFinite(Number(run.params.monidCapUsd))
-            ? 0.25
-            : Math.min(5, Math.max(0, Number(run.params.monidCapUsd))),
-          priorSpend,
-        )
-      : null;
+  // Every kind gets a cap — research tools aren't discovery-only anymore
+  // (triage/reply enrich fresh leads), so a null budget would silently mean
+  // uncapped monid calls. Discovery prospecting keeps the bigger default.
+  const monidBudget = new MonidBudget(
+    // 0 is a real cap (free tools only) — only an absent/non-numeric
+    // param gets the default
+    run.params.monidCapUsd == null || !Number.isFinite(Number(run.params.monidCapUsd))
+      ? run.kind === 'discovery'
+        ? 0.25
+        : 0.05
+      : Math.min(5, Math.max(0, Number(run.params.monidCapUsd))),
+    priorSpend,
+  );
   // The restored balance must survive another crash: seed the NEW journal
   // with it before the first persist, or a second reclaim restores zero.
   if (priorSpend > 0) steps.push({ type: 'monid_spend', spentUsd: priorSpend });
@@ -411,7 +423,7 @@ export async function runOnce(sql: Sql): Promise<boolean> {
       (tx) => tx`
         update agent_runs set steps = ${tx.json(steps as never[])}, finished_at = now(),
           tokens_in = ${tokensIn}, tokens_out = ${tokensOut},
-          cost_cents = ${Math.round((costUsd + (monidBudget?.spent ?? 0)) * 100)}
+          cost_cents = ${Math.round((costUsd + monidBudget.spent) * 100)}
         where id = ${run.id} and status = 'canceled' and claim_token = ${run.claim_token}
       `,
     ).catch(() => undefined);
@@ -419,12 +431,10 @@ export async function runOnce(sql: Sql): Promise<boolean> {
 
   // Every reserve/reconcile journals a monid_spend marker — a future
   // retried attempt reads it back into the budget before it can re-spend.
-  if (monidBudget) {
-    monidBudget.onChange = (spent) => {
-      steps.push({ type: 'monid_spend', spentUsd: spent });
-      void persist();
-    };
-  }
+  monidBudget.onChange = (spent) => {
+    steps.push({ type: 'monid_spend', spentUsd: spent });
+    void persist();
+  };
 
   // A single tool/model call can outlive the 10-min lease on its own — the
   // timer keeps alive_at fresh through it, so reclaim means a dead worker,
@@ -480,6 +490,9 @@ export async function runOnce(sql: Sql): Promise<boolean> {
       plan: null,
       seenContacts: new Set(),
       monid: monidBudget,
+      // Staff assist runs (Inbox 'agente sugere') may only compose —
+      // send_message degrades to a draft so a suggestion never ships.
+      draftOnly: run.params.draftOnly === true,
     };
 
     steps.push({ type: 'system_prompt', content: system });
@@ -591,7 +604,7 @@ export async function runOnce(sql: Sql): Promise<boolean> {
             steps,
             tokensIn,
             tokensOut,
-            costCents: Math.round((costUsd + (monidBudget?.spent ?? 0)) * 100),
+            costCents: Math.round((costUsd + monidBudget.spent) * 100),
           })
         ) {
           if (run.kind === 'discovery') {
@@ -724,7 +737,7 @@ export async function runOnce(sql: Sql): Promise<boolean> {
         steps,
         tokensIn,
         tokensOut,
-        costCents: Math.round((costUsd + (monidBudget?.spent ?? 0)) * 100),
+        costCents: Math.round((costUsd + monidBudget.spent) * 100),
         error: `max steps reached${created ? ` — ${created} lead(s) created` : ''}`,
       })
     ) {
@@ -742,7 +755,7 @@ export async function runOnce(sql: Sql): Promise<boolean> {
         steps,
         tokensIn,
         tokensOut,
-        costCents: Math.round((costUsd + (monidBudget?.spent ?? 0)) * 100),
+        costCents: Math.round((costUsd + monidBudget.spent) * 100),
         error: e instanceof Error ? e.message : String(e),
       }))
     )

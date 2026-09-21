@@ -1,10 +1,17 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
-import { ArrowLeft, Bot, Send } from 'lucide-react';
-import { api, type ThreadItem, type ThreadView } from '../api.ts';
+import { ArrowLeft, Bot, Plus, Send } from 'lucide-react';
+import { api, type LeadListItem, type ThreadItem, type ThreadView } from '../api.ts';
 import { Avatar, Empty, Page, StateChip, rel } from '../components.tsx';
 
 const CH_LABEL: Record<string, string> = { email: 'email', whatsapp: 'whats', manual: 'manual' };
+/** Channels a fresh conversation can start on — gated by what the lead card
+ *  actually carries (manual is always available: it never dispatches). */
+const CH_PICK: { ch: string; has: (l: LeadListItem) => boolean }[] = [
+  { ch: 'whatsapp', has: (l) => Boolean(l.whatsapp) },
+  { ch: 'email', has: (l) => Boolean(l.email) },
+  { ch: 'manual', has: () => true },
+];
 
 export default function InboxView() {
   const { threadId } = useParams();
@@ -13,14 +20,48 @@ export default function InboxView() {
   const [q, setQ] = useState('');
   const [view, setView] = useState<ThreadView | null>(null);
   const [draft, setDraft] = useState('');
+  const [newOpen, setNewOpen] = useState(false);
+  const [leadQ, setLeadQ] = useState('');
+  const [leadHits, setLeadHits] = useState<LeadListItem[]>([]);
+  const [assistBusy, setAssistBusy] = useState(false);
   const nav = useNavigate();
   const endRef = useRef<HTMLDivElement>(null);
 
-  useEffect(() => {
+  const listSeq = useRef(0);
+  const refreshList = useCallback(() => {
+    const req = ++listSeq.current;
     api
       .threads({ ...(chan ? { channel: chan } : {}), ...(q ? { q } : {}) })
-      .then((r) => setThreads(r.threads));
+      // a slower response for an earlier filter can't overwrite the latest
+      .then((r) => {
+        if (req === listSeq.current) setThreads(r.threads);
+      });
   }, [chan, q]);
+  useEffect(refreshList, [refreshList]);
+
+  // "nova conversa" picker — debounced lead search while the panel is open.
+  const pickSeq = useRef(0);
+  useEffect(() => {
+    if (!newOpen) return;
+    const req = ++pickSeq.current;
+    const t = setTimeout(() => {
+      api
+        .leads({ ...(leadQ ? { q: leadQ } : {}) })
+        // a slower response for an earlier query can't overwrite the latest
+        .then((r) => {
+          if (req === pickSeq.current) setLeadHits(r.leads);
+        });
+    }, 250);
+    return () => clearTimeout(t);
+  }, [newOpen, leadQ]);
+
+  const openThread = async (leadId: string, channel: string) => {
+    const r = await api.newThread(leadId, channel);
+    setNewOpen(false);
+    setLeadQ('');
+    refreshList();
+    nav(`/inbox/${r.thread.id}`);
+  };
 
   const reqSeq = useRef(0);
   const loadThread = useCallback(() => {
@@ -46,6 +87,50 @@ export default function InboxView() {
     await api.sendThreadMessage(target, draft, !asDraft);
     setDraft('');
     loadThread();
+    // the row's last-message preview + rasc. chip go stale otherwise
+    refreshList();
+  };
+
+  // "agente sugere" — a draftOnly run bound to this thread: the agent reads
+  // lead + conversation and leaves a draft in the approvals lane instead of
+  // sending. reply when there's an inbound to answer, outreach for the first
+  // touch on an empty thread.
+  const suggest = () => {
+    const v = view;
+    if (!v || v.thread.id !== threadId || assistBusy) return;
+    setAssistBusy(true);
+    const kind = v.messages.some((m) => m.direction === 'in') ? 'reply' : 'outreach';
+    const beforeDrafts = v.messages.filter(
+      (m) => m.author === 'agent' && m.status === 'draft',
+    ).length;
+    void api
+      .runOnLead(v.lead.id, kind, { draftOnly: true }, v.thread.id)
+      .then(() => {
+        const deadline = Date.now() + 90_000;
+        const tick = () =>
+          api
+            .thread(v.thread.id)
+            .then((t) => {
+              if (t.thread.id !== threadId) {
+                setAssistBusy(false);
+                return;
+              }
+              const drafts = t.messages.filter(
+                (m) => m.author === 'agent' && m.status === 'draft',
+              ).length;
+              if (drafts > beforeDrafts || Date.now() > deadline) {
+                setAssistBusy(false);
+                setView(t);
+                refreshList();
+                setTimeout(() => endRef.current?.scrollIntoView({ behavior: 'smooth' }), 30);
+                return;
+              }
+              setTimeout(tick, 4000);
+            })
+            .catch(() => setAssistBusy(false));
+        setTimeout(tick, 3000);
+      })
+      .catch(() => setAssistBusy(false));
   };
 
   return (
@@ -60,15 +145,75 @@ export default function InboxView() {
               placeholder="buscar…"
               value={q}
               onChange={(e) => setQ(e.target.value)}
-              style={{ flex: 1 }}
+              style={{ flex: 1, minWidth: 0 }}
             />
-            <select value={chan} onChange={(e) => setChan(e.target.value)}>
+            <select
+              value={chan}
+              onChange={(e) => setChan(e.target.value)}
+              style={{ maxWidth: 118 }}
+            >
               <option value="">todos</option>
               <option value="whatsapp">whatsapp</option>
               <option value="email">email</option>
               <option value="manual">manual</option>
             </select>
+            <button
+              className={`btn ghost${newOpen ? ' active' : ''}`}
+              onClick={() => setNewOpen((o) => !o)}
+              aria-label="nova conversa"
+              title="nova conversa com um lead"
+            >
+              <Plus size={14} />
+            </button>
           </div>
+          {newOpen && (
+            <div style={{ padding: 10, borderBottom: '1px solid var(--line)' }}>
+              <input
+                placeholder="buscar lead por nome, negócio ou contato…"
+                value={leadQ}
+                onChange={(e) => setLeadQ(e.target.value)}
+                autoFocus
+              />
+              <div style={{ marginTop: 8 }}>
+                {leadHits.map((l) => (
+                  <div
+                    key={l.id}
+                    style={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: 8,
+                      padding: '6px 0',
+                      borderTop: '1px solid var(--line)',
+                    }}
+                  >
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <b>{l.name}</b>
+                      {l.businessName && l.businessName !== l.name && (
+                        <span style={{ color: 'var(--muted)' }}> · {l.businessName}</span>
+                      )}
+                    </div>
+                    {CH_PICK.map(({ ch, has }) => (
+                      <button
+                        key={ch}
+                        className="btn ghost"
+                        style={{ padding: '2px 8px', fontSize: 'var(--t-2xs)' }}
+                        disabled={!has(l)}
+                        title={has(l) ? `conversar via ${ch}` : `lead sem ${ch}`}
+                        onClick={() => void openThread(l.id, ch)}
+                      >
+                        {CH_LABEL[ch]}
+                      </button>
+                    ))}
+                  </div>
+                ))}
+                {!leadHits.length && (
+                  <div className="hint" style={{ padding: '8px 0' }}>
+                    {leadQ ? 'nenhum lead com esse nome' : 'digite para buscar'}
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
           {threads.map((t) => (
             <button
               key={t.id}
@@ -103,7 +248,7 @@ export default function InboxView() {
           {!threads.length && (
             <Empty
               title="inbox vazia"
-              hint="conversas chegam via whatsapp/email ou quando o agente inicia contato"
+              hint="conversas chegam via whatsapp/email, pelo botão + acima, ou quando o agente inicia contato"
             />
           )}
         </div>
@@ -204,6 +349,14 @@ export default function InboxView() {
                   }
                 }}
               />
+              <button
+                className="btn ghost"
+                onClick={suggest}
+                disabled={assistBusy}
+                title="o agente lê a conversa e deixa um rascunho — nada é enviado"
+              >
+                <Bot size={14} /> {assistBusy ? 'escrevendo…' : 'agente sugere'}
+              </button>
               <button className="btn" onClick={() => void send(true)} disabled={!draft.trim()}>
                 rascunho
               </button>

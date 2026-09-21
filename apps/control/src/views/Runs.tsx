@@ -113,6 +113,7 @@ export default function Runs() {
                     ],
                     ['tokens', `${run.tokens_in} in · ${run.tokens_out} out`],
                     ['custo', fmtMoney(run.cost_cents)],
+                    ...(run.run_at ? [['agendado p/', fmtDateTime(run.run_at)] as const] : []),
                     ['início', fmtDateTime(run.started_at)],
                     ['fim', fmtDateTime(run.finished_at)],
                     ...(run.error ? [['erro', run.error] as const] : []),
@@ -177,6 +178,13 @@ export default function Runs() {
                 <td>{KIND_LABEL[r.kind] ?? r.kind}</td>
                 <td>
                   <span className={`chip ${STATUS_CHIP[r.status] ?? ''}`}>{r.status}</span>
+                  {r.status === 'queued' && r.run_at && (
+                    <span
+                      style={{ color: 'var(--muted)', fontSize: 'var(--t-2xs)', marginLeft: 6 }}
+                    >
+                      agenda {fmtDateTime(r.run_at)}
+                    </span>
+                  )}
                   {r.error && (
                     <span
                       style={{ color: 'var(--red-400)', fontSize: 'var(--t-2xs)', marginLeft: 6 }}

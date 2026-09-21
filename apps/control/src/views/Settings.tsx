@@ -741,6 +741,8 @@ function GuardrailsCard({
     firstContactDraftOnly: value.firstContactDraftOnly !== false,
     discoveryAutoContact: value.discoveryAutoContact !== false,
     discoveryContactMinScore: num(value.discoveryContactMinScore, 8),
+    inboundReplyDelayMin: num(value.inboundReplyDelayMin, 0),
+    firstContactDelayMin: num(value.firstContactDelayMin, 0),
   };
   const [edit, setEdit] = useState(cur);
   useEffect(() => setEdit(cur), [JSON.stringify(cur)]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -840,6 +842,39 @@ function GuardrailsCard({
           </label>
           <div className="hint">
             lead descoberto com fitScore ≥ o mínimo ganha um run de outreach na hora
+          </div>
+        </div>
+      </div>
+      <div className="grid2" style={{ alignItems: 'end' }}>
+        <div className="field" style={{ marginBottom: 0 }}>
+          <label>resposta do agente (min)</label>
+          <input
+            type="number"
+            min={0}
+            max={1440}
+            value={edit.inboundReplyDelayMin}
+            onChange={(e) =>
+              setEdit({ ...edit, inboundReplyDelayMin: Number(e.target.value) || 0 })
+            }
+          />
+          <div className="hint">
+            0 = responde na hora; &gt;0 o agente espera esse tempo depois da mensagem chegar
+          </div>
+        </div>
+        <div className="field" style={{ marginBottom: 0 }}>
+          <label>1º contato automático (min)</label>
+          <input
+            type="number"
+            min={0}
+            max={10080}
+            value={edit.firstContactDelayMin}
+            onChange={(e) =>
+              setEdit({ ...edit, firstContactDelayMin: Number(e.target.value) || 0 })
+            }
+          />
+          <div className="hint">
+            0 = desligado; &gt;0 agenda um run de outreach esse tempo depois do lead ser criado
+            (modo do lead decide rascunho vs. envio)
           </div>
         </div>
       </div>

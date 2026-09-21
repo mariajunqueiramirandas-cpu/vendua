@@ -1,7 +1,14 @@
 import { useCallback, useEffect, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { Archive, Ban, Bot, Link2, Plus, Video } from 'lucide-react';
-import { api, type Activity, type LeadListItem, type Meeting, type Task } from '../api.ts';
+import {
+  api,
+  type Activity,
+  type AgentRun,
+  type LeadListItem,
+  type Meeting,
+  type Task,
+} from '../api.ts';
 import { ConfirmBtn, Empty, Page, ScoreBar, fmtDateTime, fmtMoney } from '../components.tsx';
 
 const KIND_LABEL: Record<string, string> = {
@@ -15,6 +22,12 @@ const KIND_LABEL: Record<string, string> = {
   state_change: 'estágio',
   agent: 'agente',
   system: 'sistema',
+};
+const RUN_KIND: Record<string, string> = {
+  triage: 'triagem',
+  reply: 'resposta',
+  outreach: 'alcance',
+  discovery: 'descoberta',
 };
 const STATE_OPTS: [string, string][] = [
   ['lead', 'lead'],
@@ -53,6 +66,7 @@ export default function LeadDetail() {
     [],
   );
   const [meetings, setMeetings] = useState<Meeting[]>([]);
+  const [schedRuns, setSchedRuns] = useState<AgentRun[]>([]);
   const [note, setNote] = useState('');
   const [taskTitle, setTaskTitle] = useState('');
   const [actChannel, setActChannel] = useState<'auto' | 'whatsapp' | 'email'>('auto');
@@ -67,6 +81,11 @@ export default function LeadDetail() {
     api.tasks({ leadId: id }).then((r) => setTasks(r.tasks));
     api.leadThreads(id).then((r) => setThreads(r.threads));
     api.meetings({ leadId: id, scope: 'all' }).then((r) => setMeetings(r.meetings));
+    // Queued runs with a run_at — the scheduled first contact (or a delayed
+    // reply) staff would otherwise have to find on the Runs page.
+    api
+      .runs({ lead_id: id, status: 'queued' })
+      .then((r) => setSchedRuns(r.runs.filter((x) => x.run_at)));
   }, [id]);
   useEffect(load, [load]);
 
@@ -274,6 +293,21 @@ export default function LeadDetail() {
                 nenhuma conversa ainda — o agente cria uma ao primeiro contato
               </div>
             )}
+            {schedRuns.map((r) => (
+              <div key={r.id} className="trow">
+                <span className="chip">{RUN_KIND[r.kind] ?? r.kind}</span>
+                <span style={{ color: 'var(--muted)', fontSize: 'var(--t-xs)', flex: 1 }}>
+                  agenda {fmtDateTime(r.run_at)}
+                </span>
+                <button
+                  className="btn ghost"
+                  style={{ padding: '3px 8px' }}
+                  onClick={() => void api.cancelRun(r.id).then(load)}
+                >
+                  cancelar
+                </button>
+              </div>
+            ))}
             <div style={{ display: 'flex', gap: 6, marginTop: 10 }}>
               {(['whatsapp', 'email', 'manual'] as const)
                 .filter((ch) => !threads.some((t) => t.channel === ch))

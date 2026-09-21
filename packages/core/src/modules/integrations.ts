@@ -204,6 +204,13 @@ export const DEFAULT_GUARDRAILS = {
    *  still obeys firstContactDraftOnly). */
   discoveryAutoContact: true,
   discoveryContactMinScore: 8,
+  /** pacing before the agent answers an inbound message — the reply run is
+   *  queued with run_at = now() + this many minutes. 0 = answer at once. */
+  inboundReplyDelayMin: 0,
+  /** staff-created lead (POST /leads) gets an outreach run scheduled this
+   *  many minutes after creation — the agent makes first contact alone.
+   *  0 = off: creation only enqueues triage (draft for approval). */
+  firstContactDelayMin: 0,
 } as const;
 
 export type Guardrails = {
@@ -214,6 +221,8 @@ export type Guardrails = {
   firstContactDraftOnly: boolean;
   discoveryAutoContact: boolean;
   discoveryContactMinScore: number;
+  inboundReplyDelayMin: number;
+  firstContactDelayMin: number;
 };
 
 export const DEFAULT_PITCH = {
@@ -306,6 +315,8 @@ export function validateSetting(key: string, value: unknown): void {
     };
     intField('maxOutboundPerLeadPerDay', 1, 100);
     intField('discoveryContactMinScore', 1, 10);
+    intField('inboundReplyDelayMin', 0, 1440);
+    intField('firstContactDelayMin', 0, 10080);
     for (const k of ['quietStart', 'quietEnd'] as const) {
       if (v[k] === undefined) continue;
       const t = v[k];
