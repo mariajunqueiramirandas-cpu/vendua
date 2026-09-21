@@ -61,9 +61,7 @@ export async function migrate(sql: Sql, dir: string): Promise<string[]> {
     // existing DB came up through the deltas, so the baseline is marked
     // covered without executing (replaying would collide with live tables).
     const baselineFile = files.find((f) => /^(\d+)_baseline_thru_(\d+)\.sql$/.test(f));
-    const baselineThru = baselineFile
-      ? Number(baselineFile.match(/_thru_(\d+)\.sql$/)![1])
-      : -1;
+    const baselineThru = baselineFile ? Number(baselineFile.match(/_thru_(\d+)\.sql$/)![1]) : -1;
     const freshDb = applied.size === 0;
     const ran: string[] = [];
     for (const file of files) {
