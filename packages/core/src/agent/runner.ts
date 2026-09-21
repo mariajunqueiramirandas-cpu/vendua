@@ -119,8 +119,8 @@ async function finishRun(
     costCents: number;
     error?: string;
   },
-) {
-  await controlTx(
+): Promise<boolean> {
+  const rows = await controlTx(
     sql,
     (tx) => tx`
     update agent_runs set
@@ -132,8 +132,10 @@ async function finishRun(
       error = ${result.error ?? null},
       finished_at = now()
     where id = ${run.id} and status = 'running' and claim_token = ${run.claimToken}
+    returning id
   `,
   );
+  return rows.length > 0;
 }
 
 async function contextFor(
@@ -561,13 +563,19 @@ export async function runOnce(sql: Sql): Promise<boolean> {
           // start smarter. Best-effort — never fail a finished run on it.
           await writeDebrief(sql, run, ctx, steps).catch(() => undefined);
         }
-        await finishRun(sql, claim, {
-          status: 'done',
-          steps,
-          tokensIn,
-          tokensOut,
-          costCents: Math.round((costUsd + (monidBudget?.spent ?? 0)) * 100),
-        });
+        // A cancel landing between the last persist and now leaves the row
+        // 'canceled' — finishRun matches nothing; persistAborted's canceled-
+        // fence still stores the usage so the spend isn't lost.
+        if (
+          !(await finishRun(sql, claim, {
+            status: 'done',
+            steps,
+            tokensIn,
+            tokensOut,
+            costCents: Math.round((costUsd + (monidBudget?.spent ?? 0)) * 100),
+          }))
+        )
+          await persistAborted();
         return true;
       }
 
@@ -684,24 +692,30 @@ export async function runOnce(sql: Sql): Promise<boolean> {
         (s as { name?: string }).name === 'create_lead' &&
         typeof (s as { out?: { lead?: { id?: string } } }).out?.lead?.id === 'string',
     ).length;
-    await finishRun(sql, claim, {
-      status: 'failed',
-      steps,
-      tokensIn,
-      tokensOut,
-      costCents: Math.round((costUsd + (monidBudget?.spent ?? 0)) * 100),
-      error: `max steps reached${created ? ` — ${created} lead(s) created` : ''}`,
-    });
+    if (
+      !(await finishRun(sql, claim, {
+        status: 'failed',
+        steps,
+        tokensIn,
+        tokensOut,
+        costCents: Math.round((costUsd + (monidBudget?.spent ?? 0)) * 100),
+        error: `max steps reached${created ? ` — ${created} lead(s) created` : ''}`,
+      }))
+    )
+      await persistAborted();
     return true;
   } catch (e) {
-    await finishRun(sql, claim, {
-      status: 'failed',
-      steps,
-      tokensIn,
-      tokensOut,
-      costCents: Math.round((costUsd + (monidBudget?.spent ?? 0)) * 100),
-      error: e instanceof Error ? e.message : String(e),
-    });
+    if (
+      !(await finishRun(sql, claim, {
+        status: 'failed',
+        steps,
+        tokensIn,
+        tokensOut,
+        costCents: Math.round((costUsd + (monidBudget?.spent ?? 0)) * 100),
+        error: e instanceof Error ? e.message : String(e),
+      }))
+    )
+      await persistAborted();
     return true;
   } finally {
     clearInterval(heartbeat);
