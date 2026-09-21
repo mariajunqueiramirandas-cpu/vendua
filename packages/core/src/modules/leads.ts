@@ -27,6 +27,8 @@ export interface LeadRow {
   business_name: string | null;
   phone: string | null;
   whatsapp: string | null;
+  /** false = auto-derived from a mobile phone; true = real whatsapp evidence. */
+  whatsapp_verified: boolean;
   email: string | null;
   instagram: string | null;
   website: string | null;
@@ -58,6 +60,7 @@ export interface Lead {
   businessName: string | null;
   phone: string | null;
   whatsapp: string | null;
+  whatsappVerified: boolean;
   email: string | null;
   instagram: string | null;
   website: string | null;
@@ -98,6 +101,7 @@ export function leadJson(row: LeadRow): Lead {
     businessName: row.business_name,
     phone: row.phone,
     whatsapp: row.whatsapp,
+    whatsappVerified: row.whatsapp_verified,
     email: row.email,
     instagram: row.instagram,
     website: row.website,
@@ -244,6 +248,10 @@ export function leadInsert(body: Record<string, unknown>): Record<string, unknow
   if (!out.name?.toString().trim()) {
     throw new HttpError(422, 'INVALID_LEAD', 'name is required', { field: 'name' });
   }
+  // Every path through here is an explicit whatsapp write — the setter is
+  // asserting real evidence, so the provenance flag rides with the value.
+  // Discovery overrides this to false right after for its mobile-derived fill.
+  out.whatsapp_verified = Boolean(out.whatsapp);
   if ('tags' in body) out.tags = tagsValue(body.tags);
   if ('dealValueCents' in body) out.deal_value_cents = dealValue(body.dealValueCents);
   if ('nextActionAt' in body)
@@ -269,6 +277,10 @@ export function leadPatch(body: Record<string, unknown>): Record<string, unknown
   if ('name' in set && !set.name?.toString().trim()) {
     throw new HttpError(422, 'INVALID_LEAD', 'name cannot be empty', { field: 'name' });
   }
+  // An explicit whatsapp write is the setter asserting real evidence — flag
+  // it; clearing the field clears the flag too. (Discovery's mobile-derived
+  // fill bypasses this path and lands the column itself.)
+  if ('whatsapp' in set) set.whatsapp_verified = Boolean(set.whatsapp);
   if ('state' in body) set.state = leadState(body.state);
   if ('agentMode' in body) set.agent_mode = agentMode(body.agentMode);
   if ('agentGoal' in body) set.agent_goal = agentGoal(body.agentGoal);
@@ -361,6 +373,12 @@ export async function listLeads(
   const q = query.q?.trim();
   // \ is Postgres' default LIKE escape — user % and _ can't widen the match.
   const qEsc = q ? `%${q.replace(/[%_\\]/g, (ch) => `\\${ch}`)}%` : null;
+  // Phone-shaped queries match NORMALIZED digits, not the stored formatting —
+  // "997123470" must find "+55 22 99712-3470". The query must be ALL phone
+  // characters, or a name like "Studio 54 2026" digit-matches strangers'
+  // numbers. ≥4 digits guards short runs like "Doces 22".
+  const qDigits = q && /^[+\d\s().-]+$/.test(q) ? q.replace(/\D/g, '') : '';
+  const qDigitsLike = qDigits.length >= 4 ? `%${qDigits}%` : null;
 
   // Keyset pagination: (created_at, id) desc — stable under concurrent
   // inserts where a naive offset page can skip/dupe rows.
@@ -402,7 +420,13 @@ export async function listLeads(
         ? `(l.name ilike ${p(qEsc)} or l.business_name ilike ${p(qEsc)}
            or l.email ilike ${p(qEsc)} or l.phone ilike ${p(qEsc)}
            or l.whatsapp ilike ${p(qEsc)} or l.instagram ilike ${p(qEsc)}
-           or l.city ilike ${p(qEsc)})`
+           or l.city ilike ${p(qEsc)}
+           ${
+             qDigitsLike
+               ? `or regexp_replace(coalesce(l.phone,''),'\\D','','g') like ${p(qDigitsLike)}
+           or regexp_replace(coalesce(l.whatsapp,''),'\\D','','g') like ${p(qDigitsLike)}`
+               : ''
+           })`
         : 'true',
       cursorAt && cursorId ? `(l.created_at, l.id) < (${p(cursorAt)}, ${p(cursorId)})` : 'true',
     ];

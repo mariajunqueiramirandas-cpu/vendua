@@ -47,6 +47,7 @@ describe('leadInsert', () => {
       business_name: 'Doces da Ana',
       phone: '2299',
       whatsapp: null,
+      whatsapp_verified: false,
       email: null,
       instagram: null,
       website: null,
@@ -82,6 +83,13 @@ describe('leadPatch', () => {
   test('explicit null clears a field', () => {
     expect(leadPatch({ phone: null })).toEqual({ phone: null });
   });
+  test('whatsapp writes carry the verified flag', () => {
+    expect(leadPatch({ whatsapp: '5522999990000' })).toEqual({
+      whatsapp: '5522999990000',
+      whatsapp_verified: true,
+    });
+    expect(leadPatch({ whatsapp: null })).toEqual({ whatsapp: null, whatsapp_verified: false });
+  });
   test('name cannot be emptied', () => {
     expect(code(() => leadPatch({ name: null }))).toBe('INVALID_LEAD');
     expect(code(() => leadPatch({ name: '' }))).toBe('INVALID_LEAD');
@@ -102,6 +110,7 @@ describe('leadJson', () => {
     business_name: 'Doces da Ana',
     phone: '2299',
     whatsapp: '85999990000',
+    whatsapp_verified: true,
     email: null,
     instagram: '@doces',
     website: null,

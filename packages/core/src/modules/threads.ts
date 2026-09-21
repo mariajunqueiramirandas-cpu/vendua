@@ -299,6 +299,20 @@ export async function addInboundMessage(
         `;
         leadId = rows[0]?.id ?? null;
       }
+      // The sender number is proven for a matched lead too: an empty
+      // whatsapp (e.g. phone-only match) takes it verified; a digit-matching
+      // stored value gets verified; a different stored value keeps its own
+      // provenance — inbound proves `from`, not that other number.
+      if (leadId && input.channel === 'whatsapp') {
+        await tx`
+          update leads set
+            whatsapp = coalesce(nullif(whatsapp, ''), ${from}),
+            whatsapp_verified = whatsapp_verified
+              or whatsapp is null or whatsapp = ''
+              or regexp_replace(whatsapp, '\\D', '', 'g') = ${digits}
+          where id = ${leadId}
+        `;
+      }
     }
 
     let leadCreated = false;
@@ -310,7 +324,12 @@ export async function addInboundMessage(
         discovered_via: input.channel,
       };
       if (input.channel === 'email') fields.email = from;
-      else fields.whatsapp = from;
+      else {
+        // An inbound whatsapp number is self-evidencing — they messaged us
+        // from it — so the provenance flag lands with the value.
+        fields.whatsapp = from;
+        fields.whatsapp_verified = true;
+      }
       const lead = (
         await tx<
           { id: string; deal_value_cents: number | null }[]

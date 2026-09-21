@@ -48,6 +48,46 @@ export interface ToolContext {
   /** Staff channel override from dispatch (`params.channel`) — trumps the
    *  model's own channel pick on send_message/draft_message. */
   channelOverride: 'email' | 'whatsapp' | null;
+  /** Working memory — the prospect ledger the agent maintains via `book`
+   *  and its self-authored campaign plan via `plan`. Run-scoped; the runner
+   *  renders it into reflection ticks and the finish nudge. */
+  book: Map<string, BookEntry>;
+  plan: string | null;
+  /** monid.ai spend guard — enrichment calls charge against a per-run cap
+   *  (`params.monidCapUsd`, default 0.25) so a live balance can't loop-drain. */
+  monid: import('./channels/monid.ts').MonidBudget | null;
+  /** Contact values already banked this run (book channels + enrichment
+   *  hits) — a repeated phone/email isn't progress, only a fresh one is. */
+  seenContacts: Set<string>;
+}
+
+/** One prospect in the agent's ledger — what it found and which moves it
+ *  already spent, so the strategist can decide instead of re-walking. */
+export interface BookEntry {
+  name: string;
+  city: string | null;
+  status: 'open' | 'resolved' | 'dead';
+  channels: Record<string, string>;
+  /** move tags — 'maps', 'ig', 'hub', 'serp', 'dir', free-form */
+  tried: string[];
+  note: string | null;
+}
+
+/** Compact ledger render — echoes inside book/plan tool results and feeds
+ *  the reflection tick + finish nudge. */
+export function bookDigest(book: Map<string, BookEntry>): string {
+  if (!book.size) return '(livro vazio)';
+  return [...book.values()]
+    .slice(0, 20)
+    .map((e) => {
+      const ch = Object.entries(e.channels)
+        .filter(([, v]) => v)
+        .map(([k]) => k)
+        .join('+');
+      const mark = e.status === 'dead' ? '✗' : e.status === 'resolved' ? '✓' : '·';
+      return `${mark} ${e.name}${e.city ? ` (${e.city})` : ''} — tentou: ${e.tried.join(',') || 'nada'} — canais: ${ch || 'nenhum'}${e.note ? ` — ${e.note}` : ''}`;
+    })
+    .join('\n');
 }
 
 const leadIdArg = { type: 'string', description: 'lead uuid' } as const;
@@ -76,7 +116,8 @@ const REGISTRY: { def: AgentTool; toolsets: string[] }[] = [
     toolsets: ['triage', 'reply', 'outreach', 'discovery'],
     def: {
       name: 'search_leads',
-      description: 'Search leads by name/business/contact fields. Returns compact list.',
+      description:
+        'Check names against the leads already registered — free + instant. In discovery the flow is: a maps/web sweep surfaces CANDIDATE names → search_leads filters them → only the misses are real targets worth paid investigation. A hit is a POSSIBLE duplicate — the match is a broad substring search, so compare the returned name/business/city against your candidate before discarding it. q matches name/business/instagram/email/phone/whatsapp (phone digits match normalized numbers). Returns channel flags + whatsappVerified.',
       parameters: {
         type: 'object',
         properties: {
@@ -279,6 +320,94 @@ const REGISTRY: { def: AgentTool; toolsets: string[] }[] = [
       },
     },
   },
+  {
+    toolsets: ['discovery'],
+    def: {
+      name: 'plan',
+      description:
+        "Write or rewrite your campaign plan — the strategist's map. Call it at the start of the run (segments/angles you'll try, which lane per prospect type, kill-criteria for a prospect that resists) and again whenever field results change the picture. The harness reflects it back at every reflection tick — write what you'd want to be reminded of mid-run. Not scored; your judgment is the point.",
+      parameters: {
+        type: 'object',
+        properties: {
+          content: { type: 'string', description: 'the plan, free text (≤2000 chars)' },
+        },
+        required: ['content'],
+      },
+    },
+  },
+  {
+    toolsets: ['discovery'],
+    def: {
+      name: 'book',
+      description:
+        "Your prospect ledger — working memory. 'upsert' the moment a prospect enters the radar, BEFORE the next move on it: name, channels found (whatsapp/phone/instagram/email/site with values), the move tags already spent (tried: 'maps','ig','hub','serp','dir'), status open|resolved|dead, and a short note. 'list' dumps it. The harness injects the ledger into reflection ticks and the finish gate — dead must be earned with spent moves, and an abandoned book is what the reflection shows you back.",
+      parameters: {
+        type: 'object',
+        properties: {
+          action: { type: 'string', enum: ['upsert', 'list'] },
+          name: { type: 'string' },
+          city: { type: 'string' },
+          status: { type: 'string', enum: ['open', 'resolved', 'dead'] },
+          channels: {
+            type: 'object',
+            description: 'channel → value, e.g. {"whatsapp":"+55...","instagram":"@h"}',
+          },
+          tried: {
+            type: 'array',
+            items: { type: 'string' },
+            description: 'move tags already spent on this prospect',
+          },
+          note: { type: 'string' },
+        },
+        required: ['action'],
+      },
+    },
+  },
+  {
+    toolsets: ['discovery'],
+    def: {
+      name: 'maps_lookup',
+      description:
+        "Google Maps business lookup via monid (~$0.0045/result against the run's monid cap). query='what' + city='where' → structured candidates: name, phone, whatsappLikely (true when the phone is a BR mobile — that number IS the whatsapp, carry it into the lead's whatsapp field), address, website, rating, category. The strongest open for physical segments; the agent picks when.",
+      parameters: {
+        type: 'object',
+        properties: {
+          query: { type: 'string', description: "business/segment, e.g. 'padaria artesanal'" },
+          city: { type: 'string' },
+          limit: { type: 'number', description: 'max results, ≤10 (default 8)' },
+        },
+        required: ['query', 'city'],
+      },
+    },
+  },
+  {
+    toolsets: ['discovery'],
+    def: {
+      name: 'instagram_profile',
+      description:
+        "Full Instagram profile via monid (~$0.003/profile). Returns the REAL complete biography (never the '…mais' truncation), externalUrl (the link-in-bio), category, followers, and any public contact fields — with bio text parsed into contacts. The fix for profiles that render as shells in read_pages.",
+      parameters: {
+        type: 'object',
+        properties: {
+          handle: { type: 'string', description: 'instagram @handle (with or without @)' },
+        },
+        required: ['handle'],
+      },
+    },
+  },
+  {
+    toolsets: ['discovery'],
+    def: {
+      name: 'serp',
+      description:
+        "One Google SERP via monid (~$0.001) — the cheap follow-up round for a named prospect ('<nome> <cidade>' telefone/whatsapp). Snippets arrive phone-parsed; the result that names the prospect (even a directory — cylex, apontador, guia local) is worth a read_pages.",
+      parameters: {
+        type: 'object',
+        properties: { query: { type: 'string' } },
+        required: ['query'],
+      },
+    },
+  },
 ];
 
 /** Toolset filter — the Hermes enabled_toolsets pattern: each run kind sees
@@ -337,7 +466,7 @@ export async function executeTool(
         ...(state ? { state } : {}),
         limit: 10,
       });
-      return leads.map((l) => ({
+      const matches = leads.map((l) => ({
         id: l.id,
         name: l.name,
         business: l.businessName,
@@ -345,7 +474,20 @@ export async function executeTool(
         score: l.score,
         city: l.city,
         segment: l.segment,
+        // Channel flags (not the raw values — get_lead has those) so the
+        // agent sees what the card ALREADY holds before deciding to hunt.
+        hasWhatsapp: Boolean(l.whatsapp),
+        whatsappVerified: l.whatsappVerified,
+        hasPhone: Boolean(l.phone),
+        hasInstagram: Boolean(l.instagram),
       }));
+      return {
+        matches,
+        count: matches.length,
+        next: matches.length
+          ? 'possível registro existente — compare nome/negócio/cidade; correspondência parcial em outro campo não prova duplicata'
+          : 'nenhuma correspondência — prospect provavelmente novo, vale a investigação paga',
+      };
     }
     case 'get_lead':
       return getLeadDetail(sql, String(args.id ?? ''));
@@ -362,13 +504,18 @@ export async function executeTool(
       // leadInsert/leadPatch never see them.
       delete payload.findings;
       delete payload.sources;
+      // true when whatsapp was auto-filled from a mobile phone — reachable,
+      // but NOT verified whatsapp evidence; the autocontact gate must not
+      // treat it as a confirmed wa.me channel.
+      let whatsappDerived = false;
       if (ctx.runKind === 'discovery') {
         // A wa.me/whatsapp URL pasted into phone/whatsapp is a channel
         // mention, not a dialable number — resolve it through contactFromUrl
         // (path-segment aware, so a wa.me/message code or a ?text= full of
         // digits can't masquerade as a phone) or drop it BEFORE the channel
         // gate counts it, or a link-only card would slip through as reachable.
-        const { contactFromUrl, phoneFromText } = await import('./channels/discovery.ts');
+        const { contactFromUrl, phoneFromText, isBrMobilePhone } =
+          await import('./channels/discovery.ts');
         for (const f of ['phone', 'whatsapp'] as const) {
           const v = payload[f];
           if (typeof v === 'string' && /wa\.me|whatsapp\.com/i.test(v)) {
@@ -411,6 +558,15 @@ export async function executeTool(
             payload.instagram = m ? `@${m[1]}` : undefined;
           }
         }
+        // A BR mobile IS whatsapp-reachable — maps listings and directories
+        // print "phone" for what is the whatsapp line. Fill the channel when
+        // the model left it empty instead of shipping a wa-less lead that the
+        // finish gate then has to recover. Marked derived so the autocontact
+        // gate keeps requiring REAL whatsapp evidence (wa.me/api.whatsapp.com,
+        // or an explicit whatsapp arg) — a maps phone is eligible, not proven.
+        whatsappDerived =
+          !payload.whatsapp && typeof payload.phone === 'string' && isBrMobilePhone(payload.phone);
+        if (whatsappDerived) payload.whatsapp = payload.phone;
         // The bar for a discovered lead, enforced where the prompt can't be
         // talked around: it must carry a research dossier AND a reachable
         // channel — a name-only row is a dead card on the board.
@@ -438,6 +594,9 @@ export async function executeTool(
         payload.tags = tags;
       }
       const input = leadInsert(payload);
+      // Provenance column: explicit whatsapp (wa.me-normalized or raw) is
+      // verified; the mobile-derived fill stays unverified for the gate.
+      input.whatsapp_verified = Boolean(input.whatsapp) && !whatsappDerived;
       const res = await claimControl(sql, key, async (tx) => {
         // The research dossier lands on the timeline as a note — created with
         // the lead in the same claim so a lead can never exist without it.
@@ -596,12 +755,34 @@ export async function executeTool(
               set.fit_score = input.fit_score;
               merged.push('fit_score');
             }
+            // Provenance travels with the merge: a whatsapp landed this call
+            // is verified only when it wasn't auto-derived from a phone.
+            if ('whatsapp' in set) set.whatsapp_verified = !whatsappDerived;
+            // Confirmation upgrade: an explicit whatsapp that digit-matches a
+            // stored UNVERIFIED value confirms it (e.g. wa.me found for a
+            // mobile we derived earlier) — the column was already filled, so
+            // the fill loop alone would never flip the flag.
+            if (
+              !whatsappDerived &&
+              input.whatsapp &&
+              dup.whatsapp &&
+              dup.whatsapp_verified !== true &&
+              digits(String(dup.whatsapp)) === digits(String(input.whatsapp))
+            ) {
+              set.whatsapp_verified = true;
+              if (!merged.includes('whatsapp_verified')) merged.push('whatsapp_verified');
+            }
             // An enriched dup clears the same gate a fresh lead would — but
             // only while the card is still untouched ('lead'), nobody
             // switched its agent off ('off' is a human veto, never override),
             // and no outreach is already live for it.
             const dupScore = (set.fit_score ?? dup.fit_score) as number | null;
-            const dupWa = String(set.whatsapp ?? dup.whatsapp ?? '').trim();
+            // Only VERIFIED whatsapp unlocks autocontact: a stored value whose
+            // provenance flag is set, or a non-derived merge from this call.
+            const dupWa =
+              (dup.whatsapp_verified === true || set.whatsapp_verified === true
+                ? String(dup.whatsapp ?? '').trim()
+                : '') || (whatsappDerived ? '' : String(set.whatsapp ?? '').trim());
             const dupContact =
               gateFires(dupScore, dupWa) &&
               dup.state === 'lead' &&
@@ -623,6 +804,10 @@ export async function executeTool(
                 merged,
                 ...(contactRun ? { contactRun } : {}),
                 existing: { id: dup.id, name: dup.name, state: dup.state },
+                // A merge confirms an existing card — it does NOT advance the
+                // run's lead goal. Say so, or the model counts the same
+                // prospects as delivered and stops hunting new ones.
+                next: 'duplicado — NÃO conta pra META; siga o plano e traga prospects novos',
               } as never,
             };
           }
@@ -655,10 +840,18 @@ export async function executeTool(
         // + an outreach run queued in the same claim. The send still obeys
         // the messaging guardrails (firstContactDraftOnly → approval queue).
         const newScore = typeof input.fit_score === 'number' ? input.fit_score : null;
-        const autoContact = gateFires(newScore, String(input.whatsapp ?? '').trim());
+        const autoContact = gateFires(
+          newScore,
+          whatsappDerived ? '' : String(input.whatsapp ?? '').trim(),
+        );
         if (autoContact) input.agent_mode = 'auto';
         const created = await insertLeadTx(tx, input);
         await writeFindings(created.body.lead.id as string);
+        if (whatsappDerived) {
+          (created.body as Record<string, unknown>).whatsappUnverified = true;
+          (created.body as Record<string, unknown>).next =
+            'whatsapp derivado do celular — um wa.me/link-in-bio confirma de verdade (e destrava autocontato)';
+        }
         if (autoContact) {
           const contactRun = await queueOutreach(created.body.lead.id, newScore);
           return {
@@ -1040,6 +1233,233 @@ export async function executeTool(
         }
       }
       return { pages, ...(errs.length ? { errors: errs } : {}) };
+    }
+    case 'plan': {
+      ctx.plan = String(args.content ?? '').slice(0, 2000);
+      return { stored: true, plan: ctx.plan, book: bookDigest(ctx.book) };
+    }
+    case 'book': {
+      if (args.action === 'list') {
+        return { book: bookDigest(ctx.book), entries: [...ctx.book.values()] };
+      }
+      const name = String(args.name ?? '').trim();
+      if (!name) return { error: 'book upsert precisa de name' };
+      const key = name.toLowerCase();
+      const e = ctx.book.get(key) ?? {
+        name,
+        city: null,
+        status: 'open' as const,
+        channels: {},
+        tried: [],
+        note: null,
+      };
+      if (typeof args.city === 'string' && args.city.trim()) e.city = args.city.trim();
+      if (args.status === 'open' || args.status === 'resolved' || args.status === 'dead')
+        e.status = args.status;
+      const addedChannels: string[] = [];
+      if (args.channels && typeof args.channels === 'object') {
+        for (const [k, v] of Object.entries(args.channels as Record<string, unknown>)) {
+          const val = String(v ?? '')
+            .trim()
+            .slice(0, 200);
+          const ck = k.toLowerCase().slice(0, 20);
+          if (val && e.channels[ck] !== val) {
+            e.channels[ck] = val;
+            addedChannels.push(ck);
+            ctx.seenContacts.add(val);
+          }
+        }
+      }
+      if (Array.isArray(args.tried)) {
+        for (const t of args.tried) {
+          const tag = String(t ?? '')
+            .trim()
+            .slice(0, 24);
+          if (tag && !e.tried.includes(tag)) e.tried.push(tag);
+        }
+      }
+      if (typeof args.note === 'string' && args.note.trim()) e.note = args.note.slice(0, 200);
+      ctx.book.set(key, e);
+      return { entry: e, addedChannels, book: bookDigest(ctx.book) };
+    }
+    case 'maps_lookup':
+    case 'instagram_profile':
+    case 'serp': {
+      const { monidRun } = await import('./channels/monid.ts');
+      const { contactsFromText, contactFromUrl, isProfileHubUrl, isBrMobilePhone } =
+        await import('./channels/discovery.ts');
+      const apiKey = process.env.MONID_API_KEY;
+      if (!apiKey) return { error: 'MONID_API_KEY não configurada — use web_search/read_pages' };
+      const budget = () => ({ spentUsd: ctx.monid?.spent ?? 0, capUsd: ctx.monid?.cap() ?? 0 });
+      // contact values that hadn't been banked yet — counts progress
+      const freshContacts = (vals: (string | null | undefined)[]): number => {
+        let n = 0;
+        for (const v of vals) {
+          if (v && !ctx.seenContacts.has(v)) {
+            ctx.seenContacts.add(v);
+            n++;
+          }
+        }
+        return n;
+      };
+      const str = (v: unknown): string | null => {
+        const s = String(v ?? '').trim();
+        return s || null;
+      };
+      const igFrom = (o: Record<string, unknown>): string | null => {
+        const m = /instagram\.com\/([\w.]+)/i.exec(JSON.stringify(o));
+        return m ? `@${m[1]}` : null;
+      };
+      if (name === 'maps_lookup') {
+        const limit = Math.min(10, Math.max(1, Math.floor(Number(args.limit) || 8)));
+        const est = 0.0045 * limit;
+        ctx.monid?.reserve(est);
+        const city = String(args.city ?? '').trim();
+        const res = await monidRun(
+          { provider: 'apify', endpoint: '/damilo/google-maps-scraper' },
+          {
+            query: String(args.query ?? ''),
+            // bare city names drift to neighboring towns — anchor on Brasil
+            // unless the caller already qualified (", RJ" etc.)
+            location: /,/.test(city) ? city : `${city}, Brasil`,
+            language: 'pt',
+            max_results: limit,
+          },
+          apiKey,
+        );
+        ctx.monid?.reconcile(est, res.costUsd || 0.0045 * res.output.length);
+        const candidates = res.output.map((r) => {
+          const phone = str(r.phone ?? r.phoneNumber ?? r.phone_number ?? r.telefone);
+          return {
+            name: str(r.name ?? r.title),
+            phone,
+            // a BR mobile is the whatsapp line — flag it so create_lead can
+            // carry it straight into the whatsapp field
+            whatsappLikely: phone ? isBrMobilePhone(phone) : false,
+            address: str(r.address ?? r.fullAddress ?? r.street),
+            website: str(r.website),
+            instagram: igFrom(r),
+            rating:
+              typeof (r.rating ?? r.totalScore) === 'number' ? (r.rating ?? r.totalScore) : null,
+            category: str(r.categoryName ?? r.category),
+          };
+        });
+        return {
+          candidates,
+          newContacts: freshContacts(candidates.map((c) => c.phone)),
+          ...budget(),
+          next: candidates
+            .filter((c) => !c.phone)
+            .slice(0, 5)
+            .map((c) =>
+              c.instagram
+                ? `${c.name}: sem telefone — instagram_profile('${c.instagram}') ou serp "${c.name} ${args.city}" telefone`
+                : `${c.name}: sem telefone — serp "${c.name} ${args.city}" telefone`,
+            ),
+        };
+      }
+      if (name === 'instagram_profile') {
+        const handle = String(args.handle ?? '')
+          .replace(/^@/, '')
+          .trim();
+        if (!handle) return { error: 'handle vazio' };
+        ctx.monid?.reserve(0.003);
+        const res = await monidRun(
+          { provider: 'apify', endpoint: '/apify/instagram-profile-scraper' },
+          { usernames: [handle] },
+          apiKey,
+        );
+        ctx.monid?.reconcile(0.003, res.costUsd || 0.003 * res.output.length);
+        const p = res.output[0];
+        if (!p) return { error: `perfil @${handle} não encontrado`, ...budget() };
+        const bio = str(p.biography) ?? '';
+        const externalUrl =
+          str(p.externalUrl) ?? str((p.externalUrls as { url?: string }[])?.[0]?.url);
+        const contacts = contactsFromText(bio);
+        if (externalUrl) {
+          try {
+            const c = contactFromUrl(new URL(externalUrl));
+            if (c.phone) contacts.phones.push(c.phone);
+            if (c.whatsappLink) contacts.whatsappLinks.push(c.whatsappLink);
+            if (c.instagram) contacts.instagram.push(c.instagram);
+          } catch {
+            /* not a url */
+          }
+        }
+        for (const f of ['publicEmail', 'contactPhoneNumber', 'whatsappNumber'] as const) {
+          const v = str(p[f]);
+          if (v) {
+            if (/@/.test(v)) contacts.emails.push(v);
+            else contacts.phones.push(v);
+          }
+        }
+        const next: string[] = [];
+        const extIsHub = (() => {
+          try {
+            return externalUrl ? isProfileHubUrl(new URL(externalUrl)) : false;
+          } catch {
+            return false;
+          }
+        })();
+        if (extIsHub)
+          next.push(
+            `externalUrl é hub — read_pages("${externalUrl}") entrega os links reais (wa.me mora lá)`,
+          );
+        else if (externalUrl) next.push(`externalUrl="${externalUrl}" — read_pages vale`);
+        if (contacts.phoneHints.length && !contacts.phones.length)
+          next.push(
+            `phoneHints ${contacts.phoneHints.join(', ')} sem DDD — serp "${handle} ${contacts.phoneHints[0]}" ou "<nome> <cidade>" telefone resolve`,
+          );
+        return {
+          profile: {
+            username: str(p.username) ?? handle,
+            fullName: str(p.fullName),
+            biography: bio,
+            externalUrl,
+            followers: p.followersCount ?? null,
+            category: str(p.businessCategoryName),
+          },
+          foundContacts: contacts,
+          newContacts: freshContacts([
+            ...contacts.phones,
+            ...contacts.whatsappLinks,
+            ...contacts.emails,
+          ]),
+          ...budget(),
+          ...(next.length ? { next } : {}),
+        };
+      }
+      // serp — one cheap google page for a named prospect
+      ctx.monid?.reserve(0.001);
+      const res = await monidRun(
+        { provider: 'mrscraper', endpoint: '/serp/google' },
+        { query: String(args.query ?? ''), region: 'br', language: 'pt' },
+        apiKey,
+      );
+      ctx.monid?.reconcile(0.001, res.costUsd || 0.001);
+      const results = res.output.slice(0, 10).map((r) => {
+        const snippet = str(r.snippet ?? r.description) ?? '';
+        return {
+          title: str(r.title),
+          url: str(r.link ?? r.url),
+          snippet: snippet.slice(0, 300),
+          contacts: contactsFromText(snippet),
+        };
+      });
+      return {
+        results,
+        newContacts: freshContacts(
+          results.flatMap((r) => [
+            ...(r.contacts.phones ?? []),
+            ...(r.contacts.whatsappLinks ?? []),
+            ...(r.contacts.emails ?? []),
+          ]),
+        ),
+        ...budget(),
+        next: [
+          'o resultado que citar o nome do prospect (mesmo diretório/guia) → read_pages — é onde telefone mora',
+        ],
+      };
     }
     default:
       throw new HttpError(422, 'UNKNOWN_TOOL', `unknown tool: ${name}`);
