@@ -24,6 +24,14 @@ interface Pending {
   late: boolean;
 }
 
+// Mission-clock countdown: T− until fire, T+ once overdue.
+function tMinus(at: string, now: number): string {
+  const d = new Date(at).getTime() - now;
+  const m = Math.abs(Math.round(d / 60000));
+  const v = m >= 60 ? `${Math.floor(m / 60)}h${String(m % 60).padStart(2, '0')}` : `${m}m`;
+  return d <= 0 ? `T+${v}` : `T−${v}`;
+}
+
 export default function Plan() {
   const [leads, setLeads] = useState<LeadListItem[]>([]);
   const [runs, setRuns] = useState<AgentRun[]>([]);
@@ -58,8 +66,8 @@ export default function Plan() {
   };
   useEffect(load, []);
 
-  // Re-derive lateness on the minute so a deadline crossing shows without a
-  // manual reload.
+  // Re-derive countdowns/lateness on the minute so a deadline crossing shows
+  // without a manual reload.
   useEffect(() => {
     const t = setInterval(() => setNow(Date.now()), 60_000);
     return () => clearInterval(t);
@@ -70,7 +78,7 @@ export default function Plan() {
   // Flat timeline: every future agent move, soonest first.
   const pending: Pending[] = [
     ...runs
-      // A lead with the agent off can't fire — its queued runs aren't upcoming.
+      // claimRun skips leads with the agent off — the queue mirrors it here.
       .filter((r) => byId.get(r.lead_id!)?.agentMode !== 'off')
       .map((r) => ({
         at: r.run_at!,
@@ -95,51 +103,63 @@ export default function Plan() {
     .filter((l) => l.agentMode !== 'off' && l.agentPlan.length > 0)
     .sort(
       (a, b) =>
-        b.agentPlan.filter((s) => s.status === 'done').length / b.agentPlan.length -
-        a.agentPlan.filter((s) => s.status === 'done').length / a.agentPlan.length,
+        b.agentPlan.filter((s) => s.status !== 'todo').length / b.agentPlan.length -
+        a.agentPlan.filter((s) => s.status !== 'todo').length / a.agentPlan.length,
     );
+
+  const clock = new Date(now).toLocaleTimeString('pt-BR', {
+    hour: '2-digit',
+    minute: '2-digit',
+  });
 
   return (
     <Page
       title="Planos do agente"
       sub={`${pending.length} ${pending.length === 1 ? 'ação marcada' : 'ações marcadas'} · ${planned.length} ${planned.length === 1 ? 'plano' : 'planos'}`}
     >
-      {state === 'error' && (
-        <>
-          <Empty
-            title="não deu pra carregar"
-            hint="a lista de leads ou de runs falhou — tenta de novo"
-          />
-          <button className="btn" onClick={load} style={{ marginTop: 10 }}>
-            tentar de novo
-          </button>
-        </>
-      )}
-      {state === 'ok' && !pending.length && !planned.length && (
-        <Empty
-          title="nenhum plano ainda"
-          hint="o agente monta um plano por lead no primeiro contato — metas, objeções e próxima ação aparecem aqui"
-        />
-      )}
+      <div className="deck">
+        <div className="deck-head">
+          <span className="deck-live">
+            <span className="deck-dot" />
+            console do agente
+          </span>
+          <span className="deck-clock">{clock}</span>
+        </div>
 
-      {state === 'ok' && pending.length > 0 && (
-        <>
-          <div className="k" style={{ margin: '0 4px 8px' }}>
-            próximas ações
-          </div>
-          <div className="card" style={{ maxWidth: 860 }}>
-            <table className="tbl">
+        {state === 'error' && (
+          <>
+            <Empty
+              title="não deu pra carregar"
+              hint="a lista de leads ou de runs falhou — tenta de novo"
+            />
+            <button className="btn" onClick={load} style={{ marginTop: 10 }}>
+              tentar de novo
+            </button>
+          </>
+        )}
+        {state === 'ok' && !pending.length && !planned.length && (
+          <Empty
+            title="nenhum plano ainda"
+            hint="o agente monta um plano por lead no primeiro contato — metas, objeções e próxima ação aparecem aqui"
+          />
+        )}
+
+        {state === 'ok' && pending.length > 0 && (
+          <>
+            <div className="k" style={{ margin: '4px 2px 8px' }}>
+              próximas ações
+            </div>
+            <table className="tbl deck-tbl">
               <tbody>
                 {pending.map((p, i) => (
                   <tr key={i}>
-                    <td style={{ whiteSpace: 'nowrap', width: 110 }}>
-                      {fmtDateTime(p.at)}
-                      {p.late && (
-                        <span className="chip warn" style={{ marginLeft: 6 }}>
-                          atrasada
-                        </span>
-                      )}
+                    <td className="deck-idx">{String(i + 1).padStart(2, '0')}</td>
+                    <td className="deck-t">
+                      <span className={p.late ? 'deck-t late' : 'deck-t on'}>
+                        {tMinus(p.at, now)}
+                      </span>
                     </td>
+                    <td className="deck-abs">{fmtDateTime(p.at)}</td>
                     <td style={{ color: 'var(--muted)' }}>{p.what}</td>
                     <td>
                       <Link to={`/leads/${p.leadId}`}>{p.leadName}</Link>
@@ -148,22 +168,20 @@ export default function Plan() {
                 ))}
               </tbody>
             </table>
-          </div>
-        </>
-      )}
+          </>
+        )}
 
-      {state === 'ok' && planned.length > 0 && (
-        <>
-          <div className="k" style={{ margin: '18px 4px 8px' }}>
-            planos em curso
-          </div>
-          <div className="card" style={{ maxWidth: 860, padding: '2px 14px' }}>
+        {state === 'ok' && planned.length > 0 && (
+          <>
+            <div className="k" style={{ margin: '18px 2px 8px' }}>
+              planos em curso
+            </div>
             {planned.map((l) => (
               <PlanRow key={l.id} lead={l} />
             ))}
-          </div>
-        </>
-      )}
+          </>
+        )}
+      </div>
     </Page>
   );
 }
@@ -205,13 +223,7 @@ function PlanRow({ lead }: { lead: LeadListItem }) {
           >
             <span style={{ width: `${(resolved / total) * 100}%` }} />
           </span>
-          <span
-            style={{
-              color: 'var(--muted)',
-              fontSize: 'var(--t-2xs)',
-              fontFamily: 'var(--font-mono)',
-            }}
-          >
+          <span className="deck-mono">
             {resolved}/{total}
           </span>
           <ChevronDown
@@ -231,7 +243,7 @@ function PlanRow({ lead }: { lead: LeadListItem }) {
               {s.status === 'done' ? (
                 <CheckCircle2
                   size={15}
-                  style={{ color: 'var(--forest-800)', flexShrink: 0, marginTop: 2 }}
+                  style={{ color: 'var(--accent)', flexShrink: 0, marginTop: 2 }}
                 />
               ) : s.status === 'skip' ? (
                 <SkipForward

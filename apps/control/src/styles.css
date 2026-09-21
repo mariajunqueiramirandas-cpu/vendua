@@ -1452,6 +1452,96 @@ details.raw textarea {
   background: var(--forest-800);
 }
 
+/* planos deck — the agent's console: night surfaces, lime data. Re-scopes the
+   shared tokens so .tbl/.chip/.btn.ghost adapt without bespoke overrides. */
+.deck {
+  --surface: var(--night-800);
+  --surface-2: var(--night-700);
+  --ink: var(--cream-50);
+  --muted: var(--sage-300);
+  --line: color-mix(in srgb, var(--cream-50) 11%, transparent);
+  --line-strong: color-mix(in srgb, var(--cream-50) 20%, transparent);
+  background: var(--night-900);
+  border: 1px solid var(--night-700);
+  border-radius: var(--r-md);
+  padding: 10px 14px 14px;
+  color: var(--ink);
+}
+.deck a {
+  color: var(--lime-200);
+}
+.deck-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 2px 2px 10px;
+  border-bottom: 1px solid var(--line);
+  font-family: var(--font-mono);
+  font-size: var(--t-2xs);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+.deck-live {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+}
+.deck-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 999px;
+  background: var(--lime-300);
+}
+.deck-clock {
+  color: var(--lime-300);
+  font-variant-numeric: tabular-nums;
+}
+.deck-tbl td {
+  padding: 7px 10px;
+}
+.deck-idx {
+  width: 30px;
+  font-family: var(--font-mono);
+  font-size: var(--t-2xs);
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+.deck-t {
+  white-space: nowrap;
+  width: 64px;
+  font-family: var(--font-mono);
+  font-size: var(--t-xs);
+  font-variant-numeric: tabular-nums;
+}
+.deck-t.on {
+  color: var(--lime-300);
+}
+.deck-t.late {
+  color: var(--amber-400);
+}
+.deck-abs {
+  white-space: nowrap;
+  font-family: var(--font-mono);
+  font-size: var(--t-2xs);
+  color: var(--muted);
+}
+.deck-mono {
+  color: var(--muted);
+  font-size: var(--t-2xs);
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+}
+.deck .chip.warn {
+  background: color-mix(in srgb, var(--amber-400) 20%, var(--night-800));
+  color: var(--amber-400);
+}
+@media (max-width: 640px) {
+  .deck-abs {
+    display: none;
+  }
+}
+
 /* plan progress — same rail grammar as .scorebar, agent accent fill */
 .planbar {
   display: inline-block;
