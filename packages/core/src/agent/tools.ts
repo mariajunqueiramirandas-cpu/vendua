@@ -889,9 +889,8 @@ export async function executeTool(
       };
     }
     case 'read_pages': {
-      const { chaseLinks, discoveryFor, isMapPointer, pageKey, resolveMapPointer } = await import(
-        './channels/discovery.ts'
-      );
+      const { chaseLinks, discoveryFor, isMapPointer, pageKey, resolveMapPointer } =
+        await import('./channels/discovery.ts');
       type ReadPage = import('./channels/discovery.ts').ReadPage;
       const urls = (Array.isArray(args.urls) ? args.urls : [args.url])
         .map((u) => String(u ?? '').trim())

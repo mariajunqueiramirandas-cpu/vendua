@@ -1040,7 +1040,10 @@ export async function resolveMapPointer(url: string): Promise<ReadPage | null> {
  *  directories instead of trusting a bio that was cut. */
 function isTruncatedText(text: string): boolean {
   const tail = text.trim().slice(-80);
-  return /(?:\.\.|…)\s*$/.test(tail) || /(?:^|\n)\s*(?:mais|more|ver mais|see more)\.?\.?\.?\s*$/i.test(tail);
+  return (
+    /(?:\.\.|…)\s*$/.test(tail) ||
+    /(?:^|\n)\s*(?:mais|more|ver mais|see more)\.?\.?\.?\s*$/i.test(tail)
+  );
 }
 
 export async function discoveryFor(sql: Sql): Promise<DiscoveryProvider> {
