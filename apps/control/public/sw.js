@@ -26,6 +26,10 @@ self.addEventListener('install', (e) => {
   e.waitUntil(
     fetch('/control/', { cache: 'no-store' })
       .then(async (res) => {
+        // fetch resolves on HTTP errors too — a 503 mid-deploy must not
+        // become the cached shell. Throw → install fails → prior
+        // generation stays live.
+        if (!res.ok) throw new Error(`control shell fetch failed: ${res.status}`);
         const html = await res.text();
         const hash = /assets\/index-([\w-]+)\.js/.exec(html)?.[1] ?? `${Date.now()}`;
         generation = PREFIX + hash;
@@ -44,10 +48,14 @@ self.addEventListener('activate', (e) => {
     caches
       .keys()
       .then((keys) => {
-        if (!generation) return; // restarted post-install — keep caches, fetch repopulates
-        return Promise.all(
-          keys.filter((k) => k.startsWith(PREFIX) && k !== generation).map((k) => caches.delete(k)),
-        );
+        // The worker can be killed between install and activate, losing
+        // `generation` — recover the live cache as the newest namespaced
+        // one (install created it last) before sweeping the rest.
+        const own = keys.filter((k) => k.startsWith(PREFIX));
+        const live = generation ?? own[own.length - 1];
+        if (!live) return;
+        generation = live;
+        return Promise.all(own.filter((k) => k !== live).map((k) => caches.delete(k)));
       })
       .then(() => self.clients.claim()),
   );
