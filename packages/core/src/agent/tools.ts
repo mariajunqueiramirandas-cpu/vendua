@@ -48,6 +48,43 @@ export interface ToolContext {
   /** Staff channel override from dispatch (`params.channel`) — trumps the
    *  model's own channel pick on send_message/draft_message. */
   channelOverride: 'email' | 'whatsapp' | null;
+  /** Working memory — the prospect ledger the agent maintains via `book`
+   *  and its self-authored campaign plan via `plan`. Run-scoped; the runner
+   *  renders it into reflection ticks and the finish nudge. */
+  book: Map<string, BookEntry>;
+  plan: string | null;
+  /** monid.ai spend guard — enrichment calls charge against a per-run cap
+   *  (`params.monidCapUsd`, default 0.25) so a live balance can't loop-drain. */
+  monid: import('./channels/monid.ts').MonidBudget | null;
+}
+
+/** One prospect in the agent's ledger — what it found and which moves it
+ *  already spent, so the strategist can decide instead of re-walking. */
+export interface BookEntry {
+  name: string;
+  city: string | null;
+  status: 'open' | 'resolved' | 'dead';
+  channels: Record<string, string>;
+  /** move tags — 'maps', 'ig', 'hub', 'serp', 'dir', free-form */
+  tried: string[];
+  note: string | null;
+}
+
+/** Compact ledger render — echoes inside book/plan tool results and feeds
+ *  the reflection tick + finish nudge. */
+export function bookDigest(book: Map<string, BookEntry>): string {
+  if (!book.size) return '(livro vazio)';
+  return [...book.values()]
+    .slice(0, 20)
+    .map((e) => {
+      const ch = Object.entries(e.channels)
+        .filter(([, v]) => v)
+        .map(([k]) => k)
+        .join('+');
+      const mark = e.status === 'dead' ? '✗' : e.status === 'resolved' ? '✓' : '·';
+      return `${mark} ${e.name}${e.city ? ` (${e.city})` : ''} — tentou: ${e.tried.join(',') || 'nada'} — canais: ${ch || 'nenhum'}${e.note ? ` — ${e.note}` : ''}`;
+    })
+    .join('\n');
 }
 
 const leadIdArg = { type: 'string', description: 'lead uuid' } as const;
@@ -276,6 +313,92 @@ const REGISTRY: { def: AgentTool; toolsets: string[] }[] = [
           goal: { type: 'string', description: 'what you are looking for' },
         },
         required: ['urls'],
+      },
+    },
+  },
+  {
+    toolsets: ['discovery'],
+    def: {
+      name: 'plan',
+      description:
+        "Write or rewrite your campaign plan — the strategist's map. Call it at the start of the run (segments/angles you'll try, which lane per prospect type, kill-criteria for a prospect that resists) and again whenever field results change the picture. The harness reflects it back at every reflection tick — write what you'd want to be reminded of mid-run. Not scored; your judgment is the point.",
+      parameters: {
+        type: 'object',
+        properties: { content: { type: 'string', description: 'the plan, free text (≤2000 chars)' } },
+        required: ['content'],
+      },
+    },
+  },
+  {
+    toolsets: ['discovery'],
+    def: {
+      name: 'book',
+      description:
+        "Your prospect ledger — working memory. 'upsert' a prospect when it enters the radar: name, channels found (whatsapp/phone/instagram/email/site), the move tags you already spent on it (tried: 'maps','ig','hub','serp','dir'), status open|resolved|dead, and a short note. 'list' dumps it. The harness injects the ledger into reflection ticks and the finish gate — a prospect marked dead must have earned it.",
+      parameters: {
+        type: 'object',
+        properties: {
+          action: { type: 'string', enum: ['upsert', 'list'] },
+          name: { type: 'string' },
+          city: { type: 'string' },
+          status: { type: 'string', enum: ['open', 'resolved', 'dead'] },
+          channels: {
+            type: 'object',
+            description: 'channel → value, e.g. {"whatsapp":"+55...","instagram":"@h"}',
+          },
+          tried: {
+            type: 'array',
+            items: { type: 'string' },
+            description: 'move tags already spent on this prospect',
+          },
+          note: { type: 'string' },
+        },
+        required: ['action'],
+      },
+    },
+  },
+  {
+    toolsets: ['discovery'],
+    def: {
+      name: 'maps_lookup',
+      description:
+        "Google Maps business lookup via monid (~$0.0045/result against the run's monid cap). query='what' + city='where' → structured candidates: name, phone, address, website, rating, category — phones often arrive free. The strongest open for physical segments; the agent picks when.",
+      parameters: {
+        type: 'object',
+        properties: {
+          query: { type: 'string', description: "business/segment, e.g. 'padaria artesanal'" },
+          city: { type: 'string' },
+          limit: { type: 'number', description: 'max results, ≤10 (default 8)' },
+        },
+        required: ['query', 'city'],
+      },
+    },
+  },
+  {
+    toolsets: ['discovery'],
+    def: {
+      name: 'instagram_profile',
+      description:
+        "Full Instagram profile via monid (~$0.003/profile). Returns the REAL complete biography (never the '…mais' truncation), externalUrl (the link-in-bio), category, followers, and any public contact fields — with bio text parsed into contacts. The fix for profiles that render as shells in read_pages.",
+      parameters: {
+        type: 'object',
+        properties: {
+          handle: { type: 'string', description: 'instagram @handle (with or without @)' },
+        },
+        required: ['handle'],
+      },
+    },
+  },
+  {
+    toolsets: ['discovery'],
+    def: {
+      name: 'serp',
+      description:
+        "One Google SERP via monid (~$0.001) — the cheap follow-up round for a named prospect ('<nome> <cidade>' telefone/whatsapp). Snippets arrive phone-parsed; the result that names the prospect (even a directory — cylex, apontador, guia local) is worth a read_pages.",
+      parameters: {
+        type: 'object',
+        properties: { query: { type: 'string' } },
+        required: ['query'],
       },
     },
   },
@@ -1040,6 +1163,185 @@ export async function executeTool(
         }
       }
       return { pages, ...(errs.length ? { errors: errs } : {}) };
+    }
+    case 'plan': {
+      ctx.plan = String(args.content ?? '').slice(0, 2000);
+      return { stored: true, plan: ctx.plan, book: bookDigest(ctx.book) };
+    }
+    case 'book': {
+      if (args.action === 'list') {
+        return { book: bookDigest(ctx.book), entries: [...ctx.book.values()] };
+      }
+      const name = String(args.name ?? '').trim();
+      if (!name) return { error: 'book upsert precisa de name' };
+      const key = name.toLowerCase();
+      const e = ctx.book.get(key) ?? {
+        name,
+        city: null,
+        status: 'open' as const,
+        channels: {},
+        tried: [],
+        note: null,
+      };
+      if (typeof args.city === 'string' && args.city.trim()) e.city = args.city.trim();
+      if (args.status === 'open' || args.status === 'resolved' || args.status === 'dead')
+        e.status = args.status;
+      if (args.channels && typeof args.channels === 'object') {
+        for (const [k, v] of Object.entries(args.channels as Record<string, unknown>)) {
+          const val = String(v ?? '').trim();
+          if (val) e.channels[k.toLowerCase().slice(0, 20)] = val.slice(0, 200);
+        }
+      }
+      if (Array.isArray(args.tried)) {
+        for (const t of args.tried) {
+          const tag = String(t ?? '').trim().slice(0, 24);
+          if (tag && !e.tried.includes(tag)) e.tried.push(tag);
+        }
+      }
+      if (typeof args.note === 'string' && args.note.trim()) e.note = args.note.slice(0, 200);
+      ctx.book.set(key, e);
+      return { entry: e, book: bookDigest(ctx.book) };
+    }
+    case 'maps_lookup':
+    case 'instagram_profile':
+    case 'serp': {
+      const { monidRun } = await import('./channels/monid.ts');
+      const { contactsFromText, contactFromUrl, isProfileHubUrl } = await import(
+        './channels/discovery.ts'
+      );
+      const apiKey = process.env.MONID_API_KEY;
+      if (!apiKey) return { error: 'MONID_API_KEY não configurada — use web_search/read_pages' };
+      const budget = () => ({ spentUsd: ctx.monid?.spent ?? 0, capUsd: ctx.monid?.cap() ?? 0 });
+      const str = (v: unknown): string | null => {
+        const s = String(v ?? '').trim();
+        return s || null;
+      };
+      const igFrom = (o: Record<string, unknown>): string | null => {
+        const m = /instagram\.com\/([\w.]+)/i.exec(JSON.stringify(o));
+        return m ? `@${m[1]}` : null;
+      };
+      if (name === 'maps_lookup') {
+        const limit = Math.min(10, Math.max(1, Math.floor(Number(args.limit) || 8)));
+        ctx.monid?.assertHeadroom(0.0045 * limit);
+        const city = String(args.city ?? '').trim();
+        const res = await monidRun(
+          { provider: 'apify', endpoint: '/damilo/google-maps-scraper' },
+          {
+            query: String(args.query ?? ''),
+            // bare city names drift to neighboring towns — anchor on Brasil
+            // unless the caller already qualified (", RJ" etc.)
+            location: /,/.test(city) ? city : `${city}, Brasil`,
+            language: 'pt',
+            max_results: limit,
+          },
+          apiKey,
+        );
+        ctx.monid?.charge(res.costUsd || 0.0045 * res.output.length);
+        const candidates = res.output.map((r) => ({
+          name: str(r.name ?? r.title),
+          phone: str(r.phone ?? r.phoneNumber ?? r.phone_number ?? r.telefone),
+          address: str(r.address ?? r.fullAddress ?? r.street),
+          website: str(r.website),
+          instagram: igFrom(r),
+          rating: typeof (r.rating ?? r.totalScore) === 'number' ? (r.rating ?? r.totalScore) : null,
+          category: str(r.categoryName ?? r.category),
+        }));
+        return {
+          candidates,
+          ...budget(),
+          next: candidates
+            .filter((c) => !c.phone)
+            .slice(0, 5)
+            .map((c) =>
+              c.instagram
+                ? `${c.name}: sem telefone — instagram_profile('${c.instagram}') ou serp "${c.name} ${args.city}" telefone`
+                : `${c.name}: sem telefone — serp "${c.name} ${args.city}" telefone`,
+            ),
+        };
+      }
+      if (name === 'instagram_profile') {
+        const handle = String(args.handle ?? '').replace(/^@/, '').trim();
+        if (!handle) return { error: 'handle vazio' };
+        ctx.monid?.assertHeadroom(0.003);
+        const res = await monidRun(
+          { provider: 'apify', endpoint: '/apify/instagram-profile-scraper' },
+          { usernames: [handle] },
+          apiKey,
+        );
+        ctx.monid?.charge(res.costUsd || 0.003 * res.output.length);
+        const p = res.output[0];
+        if (!p) return { error: `perfil @${handle} não encontrado`, ...budget() };
+        const bio = str(p.biography) ?? '';
+        const externalUrl = str(p.externalUrl) ?? str((p.externalUrls as { url?: string }[])?.[0]?.url);
+        const contacts = contactsFromText(bio);
+        if (externalUrl) {
+          try {
+            const c = contactFromUrl(new URL(externalUrl));
+            if (c.phone) contacts.phones.push(c.phone);
+            if (c.whatsappLink) contacts.whatsappLinks.push(c.whatsappLink);
+            if (c.instagram) contacts.instagram.push(c.instagram);
+          } catch {
+            /* not a url */
+          }
+        }
+        for (const f of ['publicEmail', 'contactPhoneNumber', 'whatsappNumber'] as const) {
+          const v = str(p[f]);
+          if (v) {
+            if (/@/.test(v)) contacts.emails.push(v);
+            else contacts.phones.push(v);
+          }
+        }
+        const next: string[] = [];
+        const extIsHub = (() => {
+          try {
+            return externalUrl ? isProfileHubUrl(new URL(externalUrl)) : false;
+          } catch {
+            return false;
+          }
+        })();
+        if (extIsHub)
+          next.push(
+            `externalUrl é hub — read_pages("${externalUrl}") entrega os links reais (wa.me mora lá)`,
+          );
+        else if (externalUrl) next.push(`externalUrl="${externalUrl}" — read_pages vale`);
+        if (contacts.phoneHints.length && !contacts.phones.length)
+          next.push(`phoneHints ${contacts.phoneHints.join(', ')} sem DDD — serp "${handle} ${contacts.phoneHints[0]}" ou "<nome> <cidade>" telefone resolve`);
+        return {
+          profile: {
+            username: str(p.username) ?? handle,
+            fullName: str(p.fullName),
+            biography: bio,
+            externalUrl,
+            followers: p.followersCount ?? null,
+            category: str(p.businessCategoryName),
+          },
+          foundContacts: contacts,
+          ...budget(),
+          ...(next.length ? { next } : {}),
+        };
+      }
+      // serp — one cheap google page for a named prospect
+      ctx.monid?.assertHeadroom(0.001);
+      const res = await monidRun(
+        { provider: 'mrscraper', endpoint: '/serp/google' },
+        { query: String(args.query ?? ''), region: 'br', language: 'pt' },
+        apiKey,
+      );
+      ctx.monid?.charge(res.costUsd || 0.001);
+      const results = res.output.slice(0, 10).map((r) => {
+        const snippet = str(r.snippet ?? r.description) ?? '';
+        return {
+          title: str(r.title),
+          url: str(r.link ?? r.url),
+          snippet: snippet.slice(0, 300),
+          contacts: contactsFromText(snippet),
+        };
+      });
+      return {
+        results,
+        ...budget(),
+        next: ['o resultado que citar o nome do prospect (mesmo diretório/guia) → read_pages — é onde telefone mora'],
+      };
     }
     default:
       throw new HttpError(422, 'UNKNOWN_TOOL', `unknown tool: ${name}`);

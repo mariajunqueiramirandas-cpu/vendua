@@ -12,7 +12,8 @@ import { segmentStats, type AgentGoal } from '../modules/leads.ts';
 import { sweepPipelineSnapshots } from '../modules/forecast.ts';
 import { providerFor, type AgentMessage } from './llm.ts';
 import { buildSystemPrompt } from './prompts.ts';
-import { executeTool, toolsFor, type ToolContext } from './tools.ts';
+import { executeTool, toolsFor, bookDigest, type ToolContext } from './tools.ts';
+import { MonidBudget } from './channels/monid.ts';
 import { dispatchMessage } from './send.ts';
 import { channelAvailabilityTx, whatsappReadyTx } from './guardrails.ts';
 import { bookingLinkForRunner, sweepMeetingReminders } from '../modules/meetings.ts';
@@ -239,6 +240,98 @@ async function contextFor(
   return { text: parts.join('\n\n') || '(no extra context)', goal, bookingUrl };
 }
 
+/** Journal mining — every query fired and url read this run, for the
+ *  reflection tick and finish nudge ("don't re-walk dead ends"). */
+function mineAttempts(steps: unknown[]): { queries: Set<string>; urls: Set<string> } {
+  const queries = new Set<string>();
+  const urls = new Set<string>();
+  for (const s of steps) {
+    if (typeof s !== 'object' || s === null) continue;
+    const st = s as {
+      name?: string;
+      args?: Record<string, unknown>;
+      out?: { pages?: { url?: string }[] };
+    };
+    if (
+      (st.name === 'web_search' || st.name === 'serp') &&
+      typeof st.args?.query === 'string'
+    )
+      queries.add(st.args.query);
+    if (st.name === 'read_pages') {
+      const seen = [
+        ...(Array.isArray(st.args?.urls) ? st.args.urls : []),
+        ...(st.out?.pages ?? []).map((p) => p.url),
+      ];
+      for (const u of seen) {
+        try {
+          const uu = new URL(String(u));
+          urls.add(`${uu.hostname}${uu.pathname}`.replace(/\/+$/, ''));
+        } catch {
+          urls.add(String(u));
+        }
+      }
+    }
+  }
+  return { queries, urls };
+}
+
+/** Doctrine write-back — a deterministic debrief line appended to
+ *  agent_memory on a finished discovery run: what the segment/city yielded,
+ *  which tools resolved whatsapp, which prospects dead-ended. Next run's
+ *  system prompt already loads agent_memory, so runs compound. */
+async function writeDebrief(
+  sql: Sql,
+  run: RunRow,
+  ctx: ToolContext,
+  steps: unknown[],
+): Promise<void> {
+  let leads = 0;
+  let merges = 0;
+  let withWa = 0;
+  const resolvers = new Set<string>();
+  for (const s of steps) {
+    if (typeof s !== 'object' || s === null) continue;
+    const st = s as { name?: string; out?: Record<string, unknown> | null };
+    const out = st.out;
+    if (!out) continue;
+    if (st.name === 'create_lead') {
+      if (out.lead) {
+        leads++;
+        if (typeof (out.lead as { whatsapp?: string }).whatsapp === 'string') withWa++;
+      } else if (out.duplicate) merges++;
+    }
+    const fc = out.foundContacts as { phones?: string[]; whatsappLinks?: string[] } | undefined;
+    if (st.name && (fc?.phones?.length || fc?.whatsappLinks?.length)) resolvers.add(st.name);
+    if ((out.candidates as { phone?: string | null }[] | undefined)?.some((c) => c.phone))
+      resolvers.add(st.name!);
+  }
+  const dead = [...ctx.book.values()].filter((e) => e.status === 'dead').map((e) => e.name);
+  if (!leads && !merges && !dead.length) return;
+  const seg = String(run.params.query ?? run.params.briefName ?? 'discovery').slice(0, 60);
+  const city = String(run.params.city ?? '').slice(0, 40);
+  const fact =
+    `run ${seg}${city ? `/${city}` : ''}: ${leads} leads (${withWa} c/ whatsapp)` +
+    `${merges ? `, ${merges} merges` : ''}` +
+    `${resolvers.size ? `; canais via ${[...resolvers].join('+')}` : ''}` +
+    `${dead.length ? `; beco sem saída: ${dead.slice(0, 4).join(', ')}` : ''}` +
+    `${ctx.monid?.spent ? `; monid $${ctx.monid.spent.toFixed(3)}` : ''}`;
+  await controlTx(sql, async (tx) => {
+    await tx`
+      insert into control_settings (key, value)
+      values ('agent_memory', ${tx.json({ facts: [] } as never)})
+      on conflict (key) do nothing
+    `;
+    const rows = await tx<{ value: { facts?: unknown } }[]>`
+      select value from control_settings where key = 'agent_memory' for update
+    `;
+    const cur = Array.isArray(rows[0]?.value?.facts) ? (rows[0]!.value.facts as string[]) : [];
+    await tx`
+      update control_settings set value = ${tx.json({ facts: [...cur, fact.slice(0, 500)].slice(-40) } as never)}
+      where key = 'agent_memory'
+    `;
+  });
+}
+
 export async function runOnce(sql: Sql): Promise<boolean> {
   const run = await claimRun(sql);
   if (!run) return false;
@@ -348,6 +441,14 @@ export async function runOnce(sql: Sql): Promise<boolean> {
           ? run.params.channel
           : null,
       pageCache: new Map(),
+      book: new Map(),
+      plan: null,
+      monid:
+        run.kind === 'discovery'
+          ? new MonidBudget(
+              Math.min(5, Math.max(0, Number(run.params.monidCapUsd) || 0.25)),
+            )
+          : null,
     };
 
     steps.push({ type: 'system_prompt', content: system });
@@ -364,6 +465,9 @@ export async function runOnce(sql: Sql): Promise<boolean> {
     // into a full second budget.
     let nudged = false;
     let limit = STEP_BUDGET[run.kind];
+    // Last step index that produced something (lead/merge/new channel) —
+    // the reflection tick fires after enough drift past it.
+    let lastProgress = 0;
 
     for (let i = 0; i < limit && !lost; i++) {
       const res = await provider.chat({ system, messages, tools });
@@ -401,32 +505,7 @@ export async function runOnce(sql: Sql): Promise<boolean> {
           // The journal knows every query fired and url read — feed it back
           // so the extra round tries new angles instead of re-walking the
           // dead ends that got the run here.
-          const triedQueries = new Set<string>();
-          const readUrls = new Set<string>();
-          for (const s of steps) {
-            if (typeof s !== 'object' || s === null) continue;
-            const st = s as {
-              name?: string;
-              args?: Record<string, unknown>;
-              out?: { pages?: { url?: string }[] };
-            };
-            if (st.name === 'web_search' && typeof st.args?.query === 'string')
-              triedQueries.add(st.args.query);
-            if (st.name === 'read_pages') {
-              const seen = [
-                ...(Array.isArray(st.args?.urls) ? st.args.urls : []),
-                ...(st.out?.pages ?? []).map((p) => p.url),
-              ];
-              for (const u of seen) {
-                try {
-                  const uu = new URL(String(u));
-                  readUrls.add(`${uu.hostname}${uu.pathname}`.replace(/\/+$/, ''));
-                } catch {
-                  readUrls.add(String(u));
-                }
-              }
-            }
-          }
+          const { queries: triedQueries, urls: readUrls } = mineAttempts(steps);
           const tried =
             triedQueries.size || readUrls.size
               ? ` Já tentado — NÃO repita: buscas ${[...triedQueries]
@@ -436,16 +515,25 @@ export async function runOnce(sql: Sql): Promise<boolean> {
                     ', ',
                   )}${readUrls.size ? `; leituras ${[...readUrls].slice(0, 8).join(', ')}` : ''}.`
               : '';
+          // Per-prospect untried moves from the ledger — 'serp'/'dir' left on
+          // a wa-less lead is a concrete next step, not a generic recipe.
+          const LADDER = ['maps', 'ig', 'hub', 'serp', 'dir'];
+          const untried = (leadName: string): string => {
+            const e = ctx.book.get(leadName.toLowerCase());
+            if (!e) return '';
+            const left = LADDER.filter((m) => !e.tried.includes(m));
+            return left.length ? ` (falta: ${left.join('/')})` : '';
+          };
           const nudge =
             !created.length && !merged
               ? `Nenhum lead entrou no CRM ainda — descoberta só conta quando o lead é criado.${tried} Siga por um sabor NÃO tentado — outra variação de segmento/modelo de negócio/cidade — ou read_pages no prospect fraco (o diretório que citar o nome é onde telefone mora).`
               : missingWa.length
                 ? `${missingWa.length} lead(s) sem whatsapp: ${missingWa
-                    .map((l) => String(l.name ?? '?'))
+                    .map((l) => `${String(l.name ?? '?')}${untried(String(l.name ?? ''))}`)
                     .slice(0, 6)
                     .join(
                       ', ',
-                    )}.${tried} Uma rodada por nome antes de encerrar: web_search "<nome> <cidade>" telefone/whatsapp (ângulo novo, não repita as buscas listadas); e no resultado que citar o nome — mesmo diretório/guia local — read_pages vale (é onde telefone e endereço moram).`
+                    )}.${tried} Uma rodada por nome antes de encerrar: serp "<nome> <cidade>" telefone/whatsapp (ângulo novo, não repita as buscas listadas); e no resultado que citar o nome — mesmo diretório/guia local — read_pages vale (é onde telefone e endereço moram).`
                 : null;
           if (nudge) {
             nudged = true;
@@ -460,6 +548,11 @@ export async function runOnce(sql: Sql): Promise<boolean> {
             await persist();
             continue;
           }
+        }
+        if (run.kind === 'discovery') {
+          // debrief → agent_memory: the doctrine that makes the next run
+          // start smarter. Best-effort — never fail a finished run on it.
+          await writeDebrief(sql, run, ctx, steps).catch(() => undefined);
         }
         await finishRun(sql, claim, {
           status: 'done',
@@ -510,6 +603,43 @@ export async function runOnce(sql: Sql): Promise<boolean> {
         );
         steps.push(...batch);
         messages.push(...toolMsgs);
+
+        // Reflection tick — progress = a lead created/merged, a channel
+        // landed on the book, or an enrichment hit. 4 steps of drift and the
+        // harness reflects the field state back and asks for the next move;
+        // what to do stays the model's call, this is just pressure.
+        if (!lost) {
+          const progressed = batch.some((b) => {
+            if (typeof b !== 'object' || !b) return false;
+            const s = b as {
+              name?: string;
+              out?: Record<string, unknown> | null;
+            };
+            const out = s.out;
+            if (!out) return false;
+            if (s.name === 'create_lead' && (out.lead || out.duplicate)) return true;
+            if (s.name === 'book' && out.entry) {
+              const ch = (out.entry as { channels?: Record<string, string> }).channels ?? {};
+              if (Object.values(ch).some(Boolean)) return true;
+            }
+            const fc = out.foundContacts as
+              | { phones?: string[]; whatsappLinks?: string[] }
+              | undefined;
+            if (fc && (fc.phones?.length || fc.whatsappLinks?.length)) return true;
+            const cands = out.candidates as { phone?: string | null }[] | undefined;
+            if (cands?.some((c) => c.phone)) return true;
+            return false;
+          });
+          if (progressed) lastProgress = i;
+          else if (i - lastProgress >= 3) {
+            const drift = i - lastProgress + 1;
+            lastProgress = i;
+            const { queries, urls } = mineAttempts(steps);
+            const reflection = `REFLEXÃO — ${drift} passos sem progresso (nenhum canal novo, lead criado ou merge).\nPlano atual: ${ctx.plan ?? '(nenhum — escreva um via plan)'}\nLivro:\n${bookDigest(ctx.book)}\nJá tentado: buscas ${[...queries].slice(0, 8).map((q) => `"${q}"`).join(', ') || 'nenhuma'}; leituras ${[...urls].slice(0, 8).join(', ') || 'nenhuma'}.\nPassos restantes: ~${Math.max(0, limit - i)}. Qual o próximo melhor movimento — novo ângulo de busca, maps_lookup, instagram_profile num @ que sobrou, ou fechar um prospect como dead? Responda e siga.`;
+            steps.push({ type: 'reflection', content: reflection });
+            messages.push({ role: 'user', content: reflection });
+          }
+        }
       } else {
         // Messaging kinds stay sequential: tool calls in one response may
         // depend on each other's ordering (draft before send).

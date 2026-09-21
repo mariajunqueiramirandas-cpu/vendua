@@ -513,7 +513,7 @@ function isHubHost(host: string): boolean {
 /** Profile-shaped url on a link-in-bio host — the business's own hub page,
  *  not platform chrome. Apex hubs put the handle in the path (linktr.ee/x);
  *  subdomain hubs put it in the host (x.carrd.co, path `/` or a section). */
-function isProfileHubUrl(u: URL): boolean {
+export function isProfileHubUrl(u: URL): boolean {
   const h = u.hostname.toLowerCase().replace(/^www\./, '');
   const segs = u.pathname.split('/').filter(Boolean).length;
   if (LINK_HUB_HOSTS.has(h) || SHORTENER_HOSTS.has(h)) return segs === 1;
