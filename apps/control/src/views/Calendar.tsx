@@ -111,7 +111,9 @@ export default function Calendar() {
             ? firstOfMonth(dayKeyOf(new Date(), s.cfg.tz))
             : m,
         );
-        setSel((d) => (d.key === dayKeyOf(new Date(), tz).key ? dayKeyOf(new Date(), s.cfg.tz) : d));
+        setSel((d) =>
+          d.key === dayKeyOf(new Date(), tz).key ? dayKeyOf(new Date(), s.cfg.tz) : d,
+        );
       })
       .catch(() => undefined);
     // eslint-disable-next-line react-hooks/exhaustive-deps
