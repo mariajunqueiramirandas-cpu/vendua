@@ -3,14 +3,38 @@
    Everything else under /control/ (index.html, manifest, icons, sw.js)
    goes network-first so a deploy lands on the next navigation — the cache
    is the offline fallback, never the source of truth.
-   /control/v1 is the API: never intercepted, never cached. */
-const CACHE = 'vendua-control-v1';
+   /control/v1 is the API: never intercepted, never cached.
+
+   One cache per deploy: install reads the bundle hash out of index.html
+   (assets/index-<hash>.js) and names the generation after it, so an update
+   can never serve the previous shell offline. Cleanup on activate is
+   scoped to this worker's vendua-control-* namespace — other apps on the
+   origin (storefronts) keep their own caches. */
+const PREFIX = 'vendua-control-';
+let generation; // set by install — undefined if the worker restarted between install and activate
+
+const currentCache = () =>
+  caches.keys().then((keys) => {
+    // After activate only the live generation remains; before it, pick the
+    // newest (insertion order puts it last) so writes never go to the stale
+    // cache that is about to be deleted.
+    const own = keys.filter((k) => k.startsWith(PREFIX));
+    return caches.open(generation ?? own[own.length - 1] ?? PREFIX + 'boot');
+  });
 
 self.addEventListener('install', (e) => {
   e.waitUntil(
-    caches
-      .open(CACHE)
-      .then((c) => c.add('/control/'))
+    fetch('/control/', { cache: 'no-store' })
+      .then(async (res) => {
+        const html = await res.text();
+        const hash = /assets\/index-([\w-]+)\.js/.exec(html)?.[1] ?? `${Date.now()}`;
+        generation = PREFIX + hash;
+        const cache = await caches.open(generation);
+        await cache.put(
+          '/control/',
+          new Response(html, { headers: { 'content-type': 'text/html; charset=utf-8' } }),
+        );
+      })
       .then(() => self.skipWaiting()),
   );
 });
@@ -19,18 +43,15 @@ self.addEventListener('activate', (e) => {
   e.waitUntil(
     caches
       .keys()
-      .then((keys) => Promise.all(keys.filter((k) => k !== CACHE).map((k) => caches.delete(k))))
+      .then((keys) => {
+        if (!generation) return; // restarted post-install — keep caches, fetch repopulates
+        return Promise.all(
+          keys.filter((k) => k.startsWith(PREFIX) && k !== generation).map((k) => caches.delete(k)),
+        );
+      })
       .then(() => self.clients.claim()),
   );
 });
-
-const put = (req, res) => {
-  if (res.ok) {
-    const copy = res.clone();
-    caches.open(CACHE).then((c) => c.put(req, copy));
-  }
-  return res;
-};
 
 self.addEventListener('fetch', (e) => {
   const { request } = e;
@@ -39,16 +60,24 @@ self.addEventListener('fetch', (e) => {
   if (url.origin !== location.origin) return;
   if (!url.pathname.startsWith('/control/') || url.pathname.startsWith('/control/v1')) return;
 
+  const put = (res) => {
+    if (res.ok) {
+      const copy = res.clone();
+      // waitUntil keeps the write alive past the response — without it the
+      // worker can die mid-put and the offline shell never populates
+      e.waitUntil(currentCache().then((c) => c.put(request, copy)));
+    }
+    return res;
+  };
+
   if (url.pathname.startsWith('/control/assets/')) {
-    e.respondWith(
-      caches.match(request).then((hit) => hit ?? fetch(request).then((r) => put(request, r))),
-    );
+    e.respondWith(caches.match(request).then((hit) => hit ?? fetch(request).then(put)));
     return;
   }
 
   e.respondWith(
     fetch(request)
-      .then((res) => put(request, res))
+      .then(put)
       .catch(() =>
         caches
           .match(request)
