@@ -269,6 +269,10 @@ export function leadPatch(body: Record<string, unknown>): Record<string, unknown
   if ('name' in set && !set.name?.toString().trim()) {
     throw new HttpError(422, 'INVALID_LEAD', 'name cannot be empty', { field: 'name' });
   }
+  // An explicit whatsapp write is the setter asserting real evidence — flag
+  // it; clearing the field clears the flag too. (Discovery's mobile-derived
+  // fill bypasses this path and lands the column itself.)
+  if ('whatsapp' in set) set.whatsapp_verified = Boolean(set.whatsapp);
   if ('state' in body) set.state = leadState(body.state);
   if ('agentMode' in body) set.agent_mode = agentMode(body.agentMode);
   if ('agentGoal' in body) set.agent_goal = agentGoal(body.agentGoal);

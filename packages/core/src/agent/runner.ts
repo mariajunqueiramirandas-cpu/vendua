@@ -365,6 +365,9 @@ export async function runOnce(sql: Sql): Promise<boolean> {
           priorSpend,
         )
       : null;
+  // The restored balance must survive another crash: seed the NEW journal
+  // with it before the first persist, or a second reclaim restores zero.
+  if (priorSpend > 0) steps.push({ type: 'monid_spend', spentUsd: priorSpend });
   // Set when the row stops matching this execution: canceled via the API, or
   // reclaimed and re-queued after going stale. The loop unwinds at the next
   // boundary — in-flight tool calls finish but nothing else is persisted or

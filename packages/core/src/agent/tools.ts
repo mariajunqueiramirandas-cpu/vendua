@@ -580,6 +580,9 @@ export async function executeTool(
         payload.tags = tags;
       }
       const input = leadInsert(payload);
+      // Provenance column: explicit whatsapp (wa.me-normalized or raw) is
+      // verified; the mobile-derived fill stays unverified for the gate.
+      input.whatsapp_verified = Boolean(input.whatsapp) && !whatsappDerived;
       const res = await claimControl(sql, key, async (tx) => {
         // The research dossier lands on the timeline as a note — created with
         // the lead in the same claim so a lead can never exist without it.
@@ -738,18 +741,20 @@ export async function executeTool(
               set.fit_score = input.fit_score;
               merged.push('fit_score');
             }
+            // Provenance travels with the merge: a whatsapp landed this call
+            // is verified only when it wasn't auto-derived from a phone.
+            if ('whatsapp' in set) set.whatsapp_verified = !whatsappDerived;
             // An enriched dup clears the same gate a fresh lead would — but
             // only while the card is still untouched ('lead'), nobody
             // switched its agent off ('off' is a human veto, never override),
             // and no outreach is already live for it.
             const dupScore = (set.fit_score ?? dup.fit_score) as number | null;
-            // A derived whatsapp only filled a gap — it can't unlock the
-            // autocontact gate by itself; an existing verified one still can.
-            const dupWa = String(dup.whatsapp ?? '').trim()
-              ? String(dup.whatsapp).trim()
-              : whatsappDerived
-                ? ''
-                : String(set.whatsapp ?? '').trim();
+            // Only VERIFIED whatsapp unlocks autocontact: a stored value whose
+            // provenance flag is set, or a non-derived merge from this call.
+            const dupWa =
+              (dup.whatsapp_verified === true
+                ? String(dup.whatsapp ?? '').trim()
+                : '') || (whatsappDerived ? '' : String(set.whatsapp ?? '').trim());
             const dupContact =
               gateFires(dupScore, dupWa) &&
               dup.state === 'lead' &&
@@ -810,6 +815,11 @@ export async function executeTool(
         if (autoContact) input.agent_mode = 'auto';
         const created = await insertLeadTx(tx, input);
         await writeFindings(created.body.lead.id as string);
+        if (whatsappDerived) {
+          (created.body as Record<string, unknown>).whatsappUnverified = true;
+          (created.body as Record<string, unknown>).next =
+            'whatsapp derivado do celular — um wa.me/link-in-bio confirma de verdade (e destrava autocontato)';
+        }
         if (autoContact) {
           const contactRun = await queueOutreach(created.body.lead.id, newScore);
           return {
