@@ -1316,7 +1316,10 @@ export async function executeTool(
             merged[i] = s;
           }
         }
-        const next = merged.slice(0, 12);
+        // 'skip' frees its slot under the cap: skipped steps ride at the tail as
+        // history while there's room, evicted first once open items fill it.
+        const open = merged.filter((s) => s.status !== 'skip');
+        const next = open.concat(merged.filter((s) => s.status === 'skip')).slice(0, 12);
         await tx`update leads set agent_plan = ${tx.json(next)}, updated_at = now() where id = ${ctx.leadId!}`;
         return { status: 200 as const, body: { stored: true, plan: next } };
       });

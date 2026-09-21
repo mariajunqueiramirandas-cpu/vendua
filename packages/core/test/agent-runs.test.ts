@@ -153,6 +153,26 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('plan — lead-scoped checklist 
     ]);
   });
 
+  test('skip frees a slot under the 12-item cap', async () => {
+    await migrate(sql, join(import.meta.dir, '../db/migrations'));
+    const created = await controlTx(sql, (tx) =>
+      insertLeadTx(tx, { name: 'Cap Lead', agent_mode: 'auto' }),
+    );
+    const leadId = created.body.lead.id;
+    const c = replyCtx(leadId);
+
+    await executeTool(c, `c1-${leadId}`, 'plan', {
+      items: Array.from({ length: 12 }, (_, i) => ({ step: `etapa ${i + 1}` })),
+    });
+    await executeTool(c, `c2-${leadId}`, 'plan', {
+      items: [{ step: 'etapa 1', status: 'skip' }, { step: 'commit' }],
+    });
+    const detail = await getLeadDetail(sql, leadId);
+    expect(detail!.agentPlan).toHaveLength(12);
+    expect(detail!.agentPlan.map((s) => s.step)).toContain('commit');
+    expect(detail!.agentPlan.map((s) => s.step)).not.toContain('etapa 1');
+  });
+
   test('discovery still uses run-scoped memory', async () => {
     const c = { ...replyCtx('unused'), runKind: 'discovery' as const, leadId: null };
     const out = (await executeTool(c, 'p', 'plan', { content: 'campaign' })) as {
