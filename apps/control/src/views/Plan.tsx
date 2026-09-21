@@ -18,8 +18,8 @@ const RUN_KIND: Record<string, string> = {
 // Buckets by when the agent's next move lands: an overdue nextActionAt means
 // the sweep is behind; future nextActionAt or a queued run means scheduled;
 // the rest carry a plan with no timer armed.
-function bucket(l: LeadListItem, runs: AgentRun[]): string {
-  if (l.nextActionAt && new Date(l.nextActionAt) <= new Date()) return 'agora';
+function bucket(l: LeadListItem, runs: AgentRun[], now: number): string {
+  if (l.nextActionAt && new Date(l.nextActionAt).getTime() <= now) return 'agora';
   if (l.nextActionAt || runs.length) return 'agendadas';
   return 'sem horário';
 }
@@ -28,15 +28,39 @@ const ORDER = ['agora', 'agendadas', 'sem horário'];
 export default function Plan() {
   const [leads, setLeads] = useState<LeadListItem[]>([]);
   const [runs, setRuns] = useState<AgentRun[]>([]);
-  const [loaded, setLoaded] = useState(false);
+  const [state, setState] = useState<'loading' | 'ok' | 'error'>('loading');
+  const [now, setNow] = useState(() => Date.now());
 
-  useEffect(() => {
+  const load = () => {
+    setState('loading');
+    // Follow the keyset cursor — a partial page would silently hide plans.
+    const all: LeadListItem[] = [];
+    const page = (cursor?: string): Promise<void> =>
+      api.leads({ limit: '200', ...(cursor ? { cursor } : {}) }).then((r) => {
+        all.push(...r.leads);
+        return r.nextCursor ? page(r.nextCursor) : undefined;
+      });
+    // Queued runs have no cursor (ordered created_at desc, cap 200) — the set
+    // of runs waiting on run_at is small, but the bound is a real limit.
     void Promise.all([
-      api.leads({ limit: '200' }).then((r) => setLeads(r.leads)),
+      page(),
       api
-        .runs({ status: 'queued' })
+        .runs({ status: 'queued', limit: '200' })
         .then((r) => setRuns(r.runs.filter((x) => x.run_at && x.lead_id))),
-    ]).finally(() => setLoaded(true));
+    ])
+      .then(() => {
+        setLeads(all);
+        setState('ok');
+      })
+      .catch(() => setState('error'));
+  };
+  useEffect(load, []);
+
+  // Re-bucket on the minute so an action crossing its deadline moves to agora
+  // without a manual reload.
+  useEffect(() => {
+    const t = setInterval(() => setNow(Date.now()), 60_000);
+    return () => clearInterval(t);
   }, []);
 
   const runsByLead = new Map<string, AgentRun[]>();
@@ -52,7 +76,7 @@ export default function Plan() {
   );
   const groups = new Map<string, LeadListItem[]>();
   for (const l of active) {
-    const b = bucket(l, runsByLead.get(l.id) ?? []);
+    const b = bucket(l, runsByLead.get(l.id) ?? [], now);
     groups.set(b, [...(groups.get(b) ?? []), l]);
   }
   for (const arr of groups.values())
@@ -63,7 +87,18 @@ export default function Plan() {
       title="Planos do agente"
       sub={`${active.length} ${active.length === 1 ? 'lead sob plano' : 'leads sob plano'}`}
     >
-      {loaded && !active.length && (
+      {state === 'error' && (
+        <Empty
+          title="não deu pra carregar"
+          hint="a lista de leads ou de runs falhou — tenta de novo"
+        />
+      )}
+      {state === 'error' && (
+        <button className="btn" onClick={load}>
+          tentar de novo
+        </button>
+      )}
+      {state === 'ok' && !active.length && (
         <Empty
           title="nenhum plano ainda"
           hint="o agente monta um plano por lead no primeiro contato — metas, objeções e próxima ação aparecem aqui"
@@ -87,7 +122,7 @@ export default function Plan() {
 
 function LeadPlanCard({ lead, runs }: { lead: LeadListItem; runs: AgentRun[] }) {
   const done = lead.agentPlan.filter((s) => s.status === 'done').length;
-  const late = lead.nextActionAt && new Date(lead.nextActionAt) < new Date();
+  const late = lead.nextActionAt && new Date(lead.nextActionAt).getTime() < Date.now();
   return (
     <div className="card" style={{ padding: 16 }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>
