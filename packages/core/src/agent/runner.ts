@@ -432,7 +432,9 @@ export async function runOnce(sql: Sql): Promise<boolean> {
               ? ` Já tentado — NÃO repita: buscas ${[...triedQueries]
                   .slice(0, 8)
                   .map((q) => `"${q}"`)
-                  .join(', ')}${readUrls.size ? `; leituras ${[...readUrls].slice(0, 8).join(', ')}` : ''}.`
+                  .join(
+                    ', ',
+                  )}${readUrls.size ? `; leituras ${[...readUrls].slice(0, 8).join(', ')}` : ''}.`
               : '';
           const nudge =
             !created.length && !merged
