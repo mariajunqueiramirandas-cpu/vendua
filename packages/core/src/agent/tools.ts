@@ -54,11 +54,15 @@ export interface ToolContext {
   book: Map<string, BookEntry>;
   plan: string | null;
   /** monid.ai spend guard — enrichment calls charge against a per-run cap
-   *  (`params.monidCapUsd`, default 0.25) so a live balance can't loop-drain. */
+   *  (`params.monidCapUsd`; the runner's default is per-kind) so a live
+   *  balance can't loop-drain. Never null in a real run. */
   monid: import('./channels/monid.ts').MonidBudget | null;
   /** Contact values already banked this run (book channels + enrichment
    *  hits) — a repeated phone/email isn't progress, only a fresh one is. */
   seenContacts: Set<string>;
+  /** Staff-assist runs (params.draftOnly): send_message may only compose —
+   *  a suggestion goes to the approvals queue, never on the wire. */
+  draftOnly: boolean;
 }
 
 /** One prospect in the agent's ledger — what it found and which moves it
@@ -285,7 +289,9 @@ const REGISTRY: { def: AgentTool; toolsets: string[] }[] = [
     },
   },
   {
-    toolsets: ['discovery'],
+    // triage/reply too — a fresh lead (inbound sender, staff-created card)
+    // gets researched before the agent writes anything.
+    toolsets: ['triage', 'reply', 'discovery'],
     def: {
       name: 'web_search',
       description:
@@ -301,7 +307,9 @@ const REGISTRY: { def: AgentTool; toolsets: string[] }[] = [
     },
   },
   {
-    toolsets: ['discovery'],
+    // triage reads deep (site/perfil do prospect); reply stays light —
+    // a live conversation can't afford a page-reading rabbit hole.
+    toolsets: ['triage', 'discovery'],
     def: {
       name: 'read_pages',
       description:
@@ -364,7 +372,9 @@ const REGISTRY: { def: AgentTool; toolsets: string[] }[] = [
     },
   },
   {
-    toolsets: ['discovery'],
+    // triage: a staff-created card with a business name + city resolves
+    // contacts here before the first-contact draft.
+    toolsets: ['triage', 'discovery'],
     def: {
       name: 'maps_lookup',
       description:
@@ -381,7 +391,7 @@ const REGISTRY: { def: AgentTool; toolsets: string[] }[] = [
     },
   },
   {
-    toolsets: ['discovery'],
+    toolsets: ['triage', 'discovery'],
     def: {
       name: 'instagram_profile',
       description:
@@ -396,7 +406,7 @@ const REGISTRY: { def: AgentTool; toolsets: string[] }[] = [
     },
   },
   {
-    toolsets: ['discovery'],
+    toolsets: ['triage', 'reply', 'discovery'],
     def: {
       name: 'serp',
       description:
@@ -1010,7 +1020,9 @@ export async function executeTool(
           body: String(args.body),
           subject: (args.subject as string) ?? undefined,
           author: 'agent',
-          status: verdict.forceDraft ? 'draft' : 'queued',
+          // draftOnly (staff assist) composes like firstContactDraftOnly —
+          // the guardrail verdict stays the same, the send just never leaves.
+          status: verdict.forceDraft || ctx.draftOnly ? 'draft' : 'queued',
           agentRunId: ctx.runId,
         });
         return {
@@ -1022,12 +1034,12 @@ export async function executeTool(
       if (out.blocked) return { blocked: true, reason: out.reason, use: out.use };
       // dispatchMessage no-ops unless the row is still 'queued' — safe when
       // this response replays.
-      if (!res.replayed && out.verdict.forceDraft === false) {
+      if (!res.replayed && out.verdict.forceDraft === false && !ctx.draftOnly) {
         await dispatchMessage(sql, out.composed.body.message.id);
       }
       return {
         ...out.composed.body,
-        draftFallback: out.verdict.forceDraft,
+        draftFallback: out.verdict.forceDraft || ctx.draftOnly,
         channel: out.pick.channel,
         via: out.pick.via,
         switchedFrom:

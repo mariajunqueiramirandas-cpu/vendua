@@ -72,15 +72,18 @@ import {
   type Channel,
 } from './modules/threads.ts';
 import {
+  DEFAULT_GUARDRAILS,
   getGuardrails,
   getIntegration,
   getPitch,
+  getSettingTx,
   integrationKind,
   listIntegrations,
   listSettings,
   putSetting,
   upsertIntegration,
   validateSetting,
+  type Guardrails,
   type IntegrationKind,
 } from './modules/integrations.ts';
 import { claimControl, controlTx } from './modules/control.ts';
@@ -826,7 +829,7 @@ export function createApp({ sql, sessionSecret, controlSecret }: AppDeps) {
     controlGate(c);
     // Lead + its triage run share ONE claim: a retried POST replays the
     // stored body (lead + runId) instead of creating a second lead.
-    const res = await claimControl<{ lead: Lead; runId?: string }>(
+    const res = await claimControl<{ lead: Lead; runId?: string; contactRunId?: string }>(
       sql,
       requireIdemKey(c),
       async (tx) => {
@@ -836,7 +839,28 @@ export function createApp({ sql, sessionSecret, controlSecret }: AppDeps) {
             kind: 'triage',
             leadId: created.body.lead.id,
           });
-          return { status: created.status, body: { ...created.body, runId } };
+          // guardrails.firstContactDelayMin: a hand-created card gets the
+          // agent's first touch scheduled on its own — the run waits out
+          // the delay in 'queued' (cancelable in Runs), and the send itself
+          // still obeys agent_mode + firstContactDraftOnly.
+          const g = await getSettingTx<Partial<Guardrails>>(tx, 'guardrails', {});
+          const delay = g.firstContactDelayMin ?? DEFAULT_GUARDRAILS.firstContactDelayMin;
+          const contactRunId =
+            delay > 0
+              ? await insertRun(tx, {
+                  kind: 'outreach',
+                  leadId: created.body.lead.id,
+                  runAt: new Date(Date.now() + delay * 60_000),
+                  params: {
+                    auto: 'first-contact',
+                    focus: 'primeiro contato — lead recém-criado pela equipe',
+                  },
+                })
+              : undefined;
+          return {
+            status: created.status,
+            body: { ...created.body, runId, ...(contactRunId ? { contactRunId } : {}) },
+          };
         }
         return created;
       },
@@ -1368,7 +1392,7 @@ export function createApp({ sql, sessionSecret, controlSecret }: AppDeps) {
     const rows = await controlTx(sql, (tx) =>
       tx.unsafe(
         `select r.id, r.kind, r.status, r.lead_id, r.thread_id, r.tokens_in, r.tokens_out,
-                r.cost_cents, r.error, r.created_at, r.started_at, r.finished_at,
+                r.cost_cents, r.error, r.created_at, r.started_at, r.finished_at, r.run_at,
                 l.name as lead_name
          from agent_runs r left join leads l on l.id = r.lead_id
          where ${where.join(' and ')}
