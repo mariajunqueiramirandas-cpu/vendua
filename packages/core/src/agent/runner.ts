@@ -350,7 +350,7 @@ export async function runOnce(sql: Sql): Promise<boolean> {
   // finishRun can fold monid spend into the run's stored cost. A reclaimed
   // run rebuilds from the journal's monid_spend markers — the provider
   // re-bills whether or not the local counter survived the crash.
-  const priorSpend = (run.steps ?? []).reduce((acc, s) => {
+  const priorSpend = (run.steps ?? []).reduce<number>((acc, s) => {
     const e = s as { type?: string; spentUsd?: number } | null;
     return e?.type === 'monid_spend' && typeof e.spentUsd === 'number' ? e.spentUsd : acc;
   }, 0);

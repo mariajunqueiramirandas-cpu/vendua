@@ -744,6 +744,20 @@ export async function executeTool(
             // Provenance travels with the merge: a whatsapp landed this call
             // is verified only when it wasn't auto-derived from a phone.
             if ('whatsapp' in set) set.whatsapp_verified = !whatsappDerived;
+            // Confirmation upgrade: an explicit whatsapp that digit-matches a
+            // stored UNVERIFIED value confirms it (e.g. wa.me found for a
+            // mobile we derived earlier) — the column was already filled, so
+            // the fill loop alone would never flip the flag.
+            if (
+              !whatsappDerived &&
+              input.whatsapp &&
+              dup.whatsapp &&
+              dup.whatsapp_verified !== true &&
+              digits(String(dup.whatsapp)) === digits(String(input.whatsapp))
+            ) {
+              set.whatsapp_verified = true;
+              if (!merged.includes('whatsapp_verified')) merged.push('whatsapp_verified');
+            }
             // An enriched dup clears the same gate a fresh lead would — but
             // only while the card is still untouched ('lead'), nobody
             // switched its agent off ('off' is a human veto, never override),
@@ -752,7 +766,9 @@ export async function executeTool(
             // Only VERIFIED whatsapp unlocks autocontact: a stored value whose
             // provenance flag is set, or a non-derived merge from this call.
             const dupWa =
-              (dup.whatsapp_verified === true ? String(dup.whatsapp ?? '').trim() : '') ||
+              (dup.whatsapp_verified === true || set.whatsapp_verified === true
+                ? String(dup.whatsapp ?? '').trim()
+                : '') ||
               (whatsappDerived ? '' : String(set.whatsapp ?? '').trim());
             const dupContact =
               gateFires(dupScore, dupWa) &&

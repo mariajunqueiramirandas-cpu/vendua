@@ -27,6 +27,8 @@ export interface LeadRow {
   business_name: string | null;
   phone: string | null;
   whatsapp: string | null;
+  /** false = auto-derived from a mobile phone; true = real whatsapp evidence. */
+  whatsapp_verified: boolean;
   email: string | null;
   instagram: string | null;
   website: string | null;
@@ -58,6 +60,7 @@ export interface Lead {
   businessName: string | null;
   phone: string | null;
   whatsapp: string | null;
+  whatsappVerified: boolean;
   email: string | null;
   instagram: string | null;
   website: string | null;
@@ -98,6 +101,7 @@ export function leadJson(row: LeadRow): Lead {
     businessName: row.business_name,
     phone: row.phone,
     whatsapp: row.whatsapp,
+    whatsappVerified: row.whatsapp_verified,
     email: row.email,
     instagram: row.instagram,
     website: row.website,
@@ -244,6 +248,10 @@ export function leadInsert(body: Record<string, unknown>): Record<string, unknow
   if (!out.name?.toString().trim()) {
     throw new HttpError(422, 'INVALID_LEAD', 'name is required', { field: 'name' });
   }
+  // Every path through here is an explicit whatsapp write — the setter is
+  // asserting real evidence, so the provenance flag rides with the value.
+  // Discovery overrides this to false right after for its mobile-derived fill.
+  out.whatsapp_verified = Boolean(out.whatsapp);
   if ('tags' in body) out.tags = tagsValue(body.tags);
   if ('dealValueCents' in body) out.deal_value_cents = dealValue(body.dealValueCents);
   if ('nextActionAt' in body)

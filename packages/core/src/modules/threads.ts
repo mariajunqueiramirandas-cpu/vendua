@@ -310,7 +310,12 @@ export async function addInboundMessage(
         discovered_via: input.channel,
       };
       if (input.channel === 'email') fields.email = from;
-      else fields.whatsapp = from;
+      else {
+        // An inbound whatsapp number is self-evidencing — they messaged us
+        // from it — so the provenance flag lands with the value.
+        fields.whatsapp = from;
+        fields.whatsapp_verified = true;
+      }
       const lead = (
         await tx<
           { id: string; deal_value_cents: number | null }[]
