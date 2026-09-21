@@ -309,7 +309,7 @@ export async function addInboundMessage(
             whatsapp = coalesce(nullif(whatsapp, ''), ${from}),
             whatsapp_verified = whatsapp_verified
               or whatsapp is null or whatsapp = ''
-              or regexp_replace(whatsapp, '\D', '', 'g') = ${digits}
+              or regexp_replace(whatsapp, '\\D', '', 'g') = ${digits}
           where id = ${leadId}
         `;
       }
