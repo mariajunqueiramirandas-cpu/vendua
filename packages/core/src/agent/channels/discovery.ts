@@ -613,7 +613,9 @@ export function navLinks(links: string[], pageUrl: string): string[] {
       } else if (isBizMapUrl(u)) {
         // a google-business/maps pointer on any page — the profile it lands
         // on carries phone + address; same contact-pointer class as a hub.
-        push(`${u.protocol}//${u.host}${u.pathname.replace(/\/+$/, '')}`);
+        // Keep the query: /maps/search?q=<name> encodes the business IN the
+        // params — strip it and the pointer loses the entity entirely.
+        push(`${u.protocol}//${u.host}${u.pathname.replace(/\/+$/, '')}${u.search}`);
       }
     }
   }
@@ -988,7 +990,7 @@ export async function resolveMapPointer(url: string): Promise<ReadPage | null> {
       // A captcha'd redirect wraps the real target: /sorry/?continue=<url>.
       const inner = t.searchParams.get('continue');
       if (inner) return nameFrom(decodeURIComponent(inner));
-      const q = t.searchParams.get('q');
+      const q = t.searchParams.get('q') ?? t.searchParams.get('query');
       if (q && !/\//.test(q) && q.length < 80) return q.replace(/\+/g, ' ');
       const m = /\/maps\/place\/([^/]+)/.exec(t.pathname);
       return m ? decodeURIComponent(m[1]!).replace(/\+/g, ' ') : null;
@@ -997,31 +999,52 @@ export async function resolveMapPointer(url: string): Promise<ReadPage | null> {
     }
   };
   // Direct google.com/maps/place/<name> links carry the name already — only
-  // shortlinks (g.co/kgs, maps.app.goo.gl) need the 302 resolved.
+  // shortlinks (g.co/kgs, maps.app.goo.gl) need the 302 resolved. Redirects
+  // are followed only while the target stays in the shortlink/google family:
+  // an arbitrary Location never gets fetched, and a non-google final target
+  // never reaches the model as a follow-up url.
+  const SHORTLINK_HOST = /^(g\.co|maps\.app\.goo\.gl|.*\.goo\.gl|bit\.ly|tinyurl\.com|t\.co)$/i;
+  const GOOGLE_HOST = /^((www|maps|m)\.)?google\.[a-z]{2,}(\.[a-z]{2})?$/i;
   let location: string | null = nameFrom(url) ? url : null;
   let name = nameFrom(url);
-  if (!location) {
+  let next: string | null = url;
+  for (let hops = 0; !location && next && hops < 3; hops++) {
+    let redirect: string | null = null;
     try {
-      const res = await fetch(url, {
+      const res = await fetch(next, {
         redirect: 'manual',
         signal: AbortSignal.timeout(8_000),
         headers: { 'user-agent': 'Mozilla/5.0' },
       });
-      location = res.headers.get('location');
+      redirect = res.headers.get('location');
     } catch {
-      return null;
+      break;
     }
-    if (!location) return null;
-    name = nameFrom(location);
+    if (!redirect) break;
+    let t: URL;
+    try {
+      t = new URL(redirect, next);
+    } catch {
+      break;
+    }
+    name = nameFrom(t.toString()) ?? name;
+    if (GOOGLE_HOST.test(t.hostname)) {
+      location = t.toString();
+      break;
+    }
+    // keep chasing only while the chain stays on shortlink hosts — a foreign
+    // target is never fetched, and its url never reaches the model.
+    next = SHORTLINK_HOST.test(t.hostname) ? t.toString() : null;
   }
+  if (!location && !name) return null;
   return {
     url,
-    finalUrl: location,
+    finalUrl: location ?? url,
     title: name ? `Google Business: ${name}` : 'Google Business/maps',
     description: null,
     text: name
       ? `Perfil de negócio no Google de "${name}" — google.com/maps/search bloqueia fetch de bot, mas o telefone consta no perfil. web_search "${name}" + cidade + telefone expõe o número via diretórios e o próprio painel.`
-      : `Link de Google Business/maps (${location}) — fetch de bot bloqueado por captcha; busque o negócio por nome + cidade + telefone.`,
+      : `Link de Google Business/maps — fetch de bot bloqueado por captcha; busque o negócio por nome + cidade + telefone.`,
     nav: [],
     foundContacts: {
       phones: [],

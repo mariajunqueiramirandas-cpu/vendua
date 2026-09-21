@@ -358,10 +358,13 @@ export async function runOnce(sql: Sql): Promise<boolean> {
     // run would end without producing: either a no-op ("ok", zero calls, the
     // classic lite-model shrug) or leads boarded without a whatsapp. The
     // prompt asks for the follow-up already; this is the enforcement point
-    // the prompt can't be talked around.
+    // the prompt can't be talked around. It borrows its own step allowance
+    // (nudgeSteps) so firing on the last normal iteration can't strand the
+    // run in 'max steps reached'.
     let nudged = false;
+    let nudgeSteps = 0;
 
-    for (let i = 0; i < STEP_BUDGET[run.kind] && !lost; i++) {
+    for (let i = 0; i < STEP_BUDGET[run.kind] + nudgeSteps && !lost; i++) {
       const res = await provider.chat({ system, messages, tools });
       tokensIn += res.tokensIn;
       tokensOut += res.tokensOut;
@@ -381,12 +384,20 @@ export async function runOnce(sql: Sql): Promise<boolean> {
                 typeof (s as { out?: { lead?: { id?: string } } }).out?.lead?.id === 'string',
             )
             .map((s) => (s as { out: { lead: Record<string, unknown> } }).out.lead);
+          // A duplicate merge isn't a create — but it did merge contacts +
+          // findings into an existing lead, so a merge-only run produced
+          // work and escapes the zero-lead nudge.
+          const merged = steps.some(
+            (s) =>
+              typeof s === 'object' &&
+              s !== null &&
+              (s as { name?: string }).name === 'create_lead' &&
+              (s as { out?: { duplicate?: boolean } }).out?.duplicate === true,
+          );
           const missingWa = created.filter(
             (l) => !(typeof l.whatsapp === 'string' && l.whatsapp.trim()),
           );
-          // A duplicate merge isn't a create — but a run that only merged
-          // still produced, so only zero-creates and wa-less creates nudge.
-          const nudge = !created.length
+          const nudge = !created.length && !merged
             ? 'Nenhum lead entrou no CRM ainda — descoberta só conta quando o lead é criado. Se ainda há sabor não tentado, segue: web_search com outra variação do segmento/cidade, ou read_pages no prospect fraco (o diretório que citar o nome é onde telefone mora).'
             : missingWa.length
               ? `${missingWa.length} lead(s) sem whatsapp: ${missingWa
@@ -398,6 +409,10 @@ export async function runOnce(sql: Sql): Promise<boolean> {
               : null;
           if (nudge) {
             nudged = true;
+            // Room for search + read + create_lead + a closing turn after
+            // the nudge — without it, a nudge on the last budgeted step is
+            // dead on arrival (the run fails at 'max steps' unprocessed).
+            nudgeSteps = 4;
             messages.push({ role: 'assistant', content: res.text ?? 'ok' });
             messages.push({ role: 'user', content: nudge });
             steps.push({ type: 'nudge', content: nudge });
