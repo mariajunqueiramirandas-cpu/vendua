@@ -397,16 +397,17 @@ export async function runOnce(sql: Sql): Promise<boolean> {
           const missingWa = created.filter(
             (l) => !(typeof l.whatsapp === 'string' && l.whatsapp.trim()),
           );
-          const nudge = !created.length && !merged
-            ? 'Nenhum lead entrou no CRM ainda — descoberta só conta quando o lead é criado. Se ainda há sabor não tentado, segue: web_search com outra variação do segmento/cidade, ou read_pages no prospect fraco (o diretório que citar o nome é onde telefone mora).'
-            : missingWa.length
-              ? `${missingWa.length} lead(s) sem whatsapp: ${missingWa
-                  .map((l) => String(l.name ?? '?'))
-                  .slice(0, 6)
-                  .join(
-                    ', ',
-                  )}. Uma rodada por nome antes de encerrar: web_search "<nome> <cidade>" telefone/whatsapp; e no resultado que citar o nome — mesmo diretório/guia local — read_pages vale (é onde telefone e endereço moram).`
-              : null;
+          const nudge =
+            !created.length && !merged
+              ? 'Nenhum lead entrou no CRM ainda — descoberta só conta quando o lead é criado. Se ainda há sabor não tentado, segue: web_search com outra variação do segmento/cidade, ou read_pages no prospect fraco (o diretório que citar o nome é onde telefone mora).'
+              : missingWa.length
+                ? `${missingWa.length} lead(s) sem whatsapp: ${missingWa
+                    .map((l) => String(l.name ?? '?'))
+                    .slice(0, 6)
+                    .join(
+                      ', ',
+                    )}. Uma rodada por nome antes de encerrar: web_search "<nome> <cidade>" telefone/whatsapp; e no resultado que citar o nome — mesmo diretório/guia local — read_pages vale (é onde telefone e endereço moram).`
+                : null;
           if (nudge) {
             nudged = true;
             // Room for search + read + create_lead + a closing turn after
