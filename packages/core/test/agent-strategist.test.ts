@@ -127,17 +127,27 @@ describe('monid enrichment tools', () => {
   test('maps_lookup anchors bare city on Brasil and hints phone-less candidates', async () => {
     let sent = '';
     stubMonid(
-      [{ name: 'Padaria X', phone: '+55 22 3343-4882', address: 'Rua A' }, { title: 'Doceria Y' }],
+      [
+        { name: 'Padaria X', phone: '+55 22 99987-3674', address: 'Rua A' },
+        { name: 'Padaria Fixa', phone: '+55 22 3343-4882' },
+        { title: 'Doceria Y' },
+      ],
       (body) => (sent = body),
     );
     const c = ctx();
     const out = (await executeTool(c, 'm', 'maps_lookup', {
       query: 'padaria',
       city: 'Saquarema',
-      limit: 2,
-    })) as { candidates: { name: string | null; phone: string | null }[]; next: string[] };
+      limit: 3,
+    })) as {
+      candidates: { name: string | null; phone: string | null; whatsappLikely: boolean }[];
+      next: string[];
+    };
     expect(sent).toContain('"location":"Saquarema, Brasil"');
-    expect(out.candidates[0]!.phone).toBe('+55 22 3343-4882');
+    expect(out.candidates[0]!.phone).toBe('+55 22 99987-3674');
+    // BR mobile = whatsapp line; landline (…3343-xxxx) is not
+    expect(out.candidates[0]!.whatsappLikely).toBe(true);
+    expect(out.candidates[1]!.whatsappLikely).toBe(false);
     expect(out.next[0]).toContain('Doceria Y');
     expect(out.next[0]).toContain('serp');
   });

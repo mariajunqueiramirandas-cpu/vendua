@@ -339,7 +339,7 @@ const REGISTRY: { def: AgentTool; toolsets: string[] }[] = [
     def: {
       name: 'book',
       description:
-        "Your prospect ledger — working memory. 'upsert' a prospect when it enters the radar: name, channels found (whatsapp/phone/instagram/email/site), the move tags you already spent on it (tried: 'maps','ig','hub','serp','dir'), status open|resolved|dead, and a short note. 'list' dumps it. The harness injects the ledger into reflection ticks and the finish gate — a prospect marked dead must have earned it.",
+        "Your prospect ledger — working memory. 'upsert' the moment a prospect enters the radar, BEFORE the next move on it: name, channels found (whatsapp/phone/instagram/email/site with values), the move tags already spent (tried: 'maps','ig','hub','serp','dir'), status open|resolved|dead, and a short note. 'list' dumps it. The harness injects the ledger into reflection ticks and the finish gate — dead must be earned with spent moves, and an abandoned book is what the reflection shows you back.",
       parameters: {
         type: 'object',
         properties: {
@@ -367,7 +367,7 @@ const REGISTRY: { def: AgentTool; toolsets: string[] }[] = [
     def: {
       name: 'maps_lookup',
       description:
-        "Google Maps business lookup via monid (~$0.0045/result against the run's monid cap). query='what' + city='where' → structured candidates: name, phone, address, website, rating, category — phones often arrive free. The strongest open for physical segments; the agent picks when.",
+        "Google Maps business lookup via monid (~$0.0045/result against the run's monid cap). query='what' + city='where' → structured candidates: name, phone, whatsappLikely (true when the phone is a BR mobile — that number IS the whatsapp, carry it into the lead's whatsapp field), address, website, rating, category. The strongest open for physical segments; the agent picks when.",
       parameters: {
         type: 'object',
         properties: {
@@ -496,7 +496,9 @@ export async function executeTool(
         // (path-segment aware, so a wa.me/message code or a ?text= full of
         // digits can't masquerade as a phone) or drop it BEFORE the channel
         // gate counts it, or a link-only card would slip through as reachable.
-        const { contactFromUrl, phoneFromText } = await import('./channels/discovery.ts');
+        const { contactFromUrl, phoneFromText, isBrMobilePhone } = await import(
+          './channels/discovery.ts'
+        );
         for (const f of ['phone', 'whatsapp'] as const) {
           const v = payload[f];
           if (typeof v === 'string' && /wa\.me|whatsapp\.com/i.test(v)) {
@@ -539,6 +541,16 @@ export async function executeTool(
             payload.instagram = m ? `@${m[1]}` : undefined;
           }
         }
+        // A BR mobile IS whatsapp-reachable — maps listings and directories
+        // print "phone" for what is the whatsapp line. Fill the channel when
+        // the model left it empty instead of shipping a wa-less lead that the
+        // finish gate then has to recover.
+        if (
+          !payload.whatsapp &&
+          typeof payload.phone === 'string' &&
+          isBrMobilePhone(payload.phone)
+        )
+          payload.whatsapp = payload.phone;
         // The bar for a discovered lead, enforced where the prompt can't be
         // talked around: it must carry a research dossier AND a reachable
         // channel — a name-only row is a dead card on the board.
@@ -1221,7 +1233,7 @@ export async function executeTool(
     case 'instagram_profile':
     case 'serp': {
       const { monidRun } = await import('./channels/monid.ts');
-      const { contactsFromText, contactFromUrl, isProfileHubUrl } =
+      const { contactsFromText, contactFromUrl, isProfileHubUrl, isBrMobilePhone } =
         await import('./channels/discovery.ts');
       const apiKey = process.env.MONID_API_KEY;
       if (!apiKey) return { error: 'MONID_API_KEY não configurada — use web_search/read_pages' };
@@ -1263,16 +1275,22 @@ export async function executeTool(
           apiKey,
         );
         ctx.monid?.reconcile(est, res.costUsd || 0.0045 * res.output.length);
-        const candidates = res.output.map((r) => ({
-          name: str(r.name ?? r.title),
-          phone: str(r.phone ?? r.phoneNumber ?? r.phone_number ?? r.telefone),
-          address: str(r.address ?? r.fullAddress ?? r.street),
-          website: str(r.website),
-          instagram: igFrom(r),
-          rating:
-            typeof (r.rating ?? r.totalScore) === 'number' ? (r.rating ?? r.totalScore) : null,
-          category: str(r.categoryName ?? r.category),
-        }));
+        const candidates = res.output.map((r) => {
+          const phone = str(r.phone ?? r.phoneNumber ?? r.phone_number ?? r.telefone);
+          return {
+            name: str(r.name ?? r.title),
+            phone,
+            // a BR mobile is the whatsapp line — flag it so create_lead can
+            // carry it straight into the whatsapp field
+            whatsappLikely: phone ? isBrMobilePhone(phone) : false,
+            address: str(r.address ?? r.fullAddress ?? r.street),
+            website: str(r.website),
+            instagram: igFrom(r),
+            rating:
+              typeof (r.rating ?? r.totalScore) === 'number' ? (r.rating ?? r.totalScore) : null,
+            category: str(r.categoryName ?? r.category),
+          };
+        });
         return {
           candidates,
           newContacts: freshContacts(candidates.map((c) => c.phone)),

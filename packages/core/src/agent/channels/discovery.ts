@@ -504,6 +504,15 @@ export function phoneFromText(raw: string): string | null {
   return null;
 }
 
+/** BR mobile = whatsapp-reachable by definition: 11-digit local form with a
+ *  leading 9 on the subscriber number (+55 DD 9xxxx-xxxx). Landlines
+ *  (2-4/30xx-4xxx starts) are not whatsapp. */
+export function isBrMobilePhone(phone: string): boolean {
+  const d = digits(phone);
+  const local = d.startsWith('55') && (d.length === 12 || d.length === 13) ? d.slice(2) : d;
+  return local.length === 11 && local[2] === '9';
+}
+
 function isHubHost(host: string): boolean {
   // subdomain-aware: carrd.co sites are <name>.carrd.co — an exact-match set
   // would drop every one of them out of the hub path.

@@ -4,6 +4,7 @@ import {
   annotateResults,
   chaseLinks,
   contactFromUrl,
+  isBrMobilePhone,
   contactsFromLinks,
   contactsFromText,
   navLinks,
@@ -410,5 +411,21 @@ describe('annotateResults', () => {
     const { results } = annotateResults([r('https://www.youtube.com/watch?v=x')]);
     expect(results.length).toBe(1);
     expect(results[0]!.kind).toBe('listing');
+  });
+});
+
+describe('isBrMobilePhone', () => {
+  test('BR mobile (+55 DD 9xxxx-xxxx) is the whatsapp line', () => {
+    expect(isBrMobilePhone('+55 22 99987-3674')).toBe(true);
+    expect(isBrMobilePhone('+5522999873674')).toBe(true);
+    expect(isBrMobilePhone('22999873674')).toBe(true);
+  });
+  test('landline is not whatsapp', () => {
+    expect(isBrMobilePhone('+55 22 3343-4882')).toBe(false);
+    expect(isBrMobilePhone('+552233434882')).toBe(false);
+  });
+  test('short/international non-BR not whatsapp', () => {
+    expect(isBrMobilePhone('+1 415 555 0132')).toBe(false);
+    expect(isBrMobilePhone('99999')).toBe(false);
   });
 });
