@@ -24,11 +24,16 @@ interface Pending {
   late: boolean;
 }
 
-// Mission-clock countdown: T− until fire, T+ once overdue.
+// Countdown to fire: T− until, T+ once overdue.
 function tMinus(at: string, now: number): string {
   const d = new Date(at).getTime() - now;
   const m = Math.abs(Math.round(d / 60000));
-  const v = m >= 60 ? `${Math.floor(m / 60)}h${String(m % 60).padStart(2, '0')}` : `${m}m`;
+  const v =
+    m >= 1440
+      ? `${Math.floor(m / 1440)}d${String(Math.floor((m % 1440) / 60)).padStart(2, '0')}h`
+      : m >= 60
+        ? `${Math.floor(m / 60)}h${String(m % 60).padStart(2, '0')}m`
+        : `${m}m`;
   return d <= 0 ? `T+${v}` : `T−${v}`;
 }
 
@@ -40,7 +45,7 @@ export default function Plan() {
 
   const loadingRef = useRef(false);
 
-  // silent refresh keeps the queue honest without flickering the deck —
+  // silent refresh keeps the queue honest without flickering the page —
   // a completed run disappears on the next tick instead of lingering overdue.
   const load = (silent = false) => {
     if (loadingRef.current) return;
@@ -130,81 +135,115 @@ export default function Plan() {
         a.agentPlan.filter((s) => s.status !== 'todo').length / a.agentPlan.length,
     );
 
-  const clock = new Date(now).toLocaleTimeString('pt-BR', {
-    hour: '2-digit',
-    minute: '2-digit',
-  });
+  const late = pending.filter((p) => p.late).length;
+  const next = pending[0];
 
   return (
     <Page
       title="Planos do agente"
-      sub={`${pending.length} ${pending.length === 1 ? 'ação marcada' : 'ações marcadas'} · ${planned.length} ${planned.length === 1 ? 'plano' : 'planos'}`}
+      sub="o que o agente vai fazer a seguir e como cada negociação está andando"
     >
-      <div className="deck">
-        <div className="deck-head">
-          <span className="deck-live">
-            <span className="deck-dot" />
-            console do agente
-          </span>
-          <span className="deck-clock">{clock}</span>
-        </div>
-
-        {state === 'error' && (
-          <>
-            <Empty
-              title="não deu pra carregar"
-              hint="a lista de leads ou de runs falhou — tenta de novo"
-            />
-            <button className="btn" onClick={() => load()} style={{ marginTop: 10 }}>
-              tentar de novo
-            </button>
-          </>
-        )}
-        {state === 'ok' && !pending.length && !planned.length && (
+      {state === 'error' && (
+        <>
           <Empty
-            title="nenhum plano ainda"
-            hint="o agente monta um plano por lead no primeiro contato — metas, objeções e próxima ação aparecem aqui"
+            title="não deu pra carregar"
+            hint="a lista de leads ou de runs falhou — tenta de novo"
           />
-        )}
+          <button className="btn" onClick={() => load()} style={{ marginTop: 10 }}>
+            tentar de novo
+          </button>
+        </>
+      )}
+      {state === 'ok' && !pending.length && !planned.length && (
+        <Empty
+          title="nenhum plano ainda"
+          hint="o agente monta um plano por lead no primeiro contato — metas, objeções e próxima ação aparecem aqui"
+        />
+      )}
 
-        {state === 'ok' && pending.length > 0 && (
-          <>
-            <div className="k" style={{ margin: '4px 2px 8px' }}>
-              próximas ações
+      {state === 'ok' && (pending.length > 0 || planned.length > 0) && (
+        <>
+          <div className="grid4" style={{ marginBottom: 16 }}>
+            <div className="stat card">
+              <div className="v" style={{ color: next?.late ? 'var(--red-400)' : undefined }}>
+                {next ? tMinus(next.at, now) : '—'}
+              </div>
+              <div className="k">próxima ação</div>
+              {next && (
+                <div
+                  style={{
+                    fontSize: 'var(--t-2xs)',
+                    color: 'var(--muted)',
+                    marginTop: 4,
+                    overflow: 'hidden',
+                    textOverflow: 'ellipsis',
+                    whiteSpace: 'nowrap',
+                  }}
+                >
+                  {next.what} ·{' '}
+                  <Link to={`/leads/${next.leadId}`} style={{ textDecoration: 'underline' }}>
+                    {next.leadName}
+                  </Link>
+                </div>
+              )}
             </div>
-            <table className="tbl deck-tbl">
-              <tbody>
-                {pending.map((p, i) => (
-                  <tr key={i}>
-                    <td className="deck-idx">{String(i + 1).padStart(2, '0')}</td>
-                    <td className="deck-t">
-                      <span className={p.late ? 'deck-t late' : 'deck-t on'}>
-                        {tMinus(p.at, now)}
-                      </span>
-                    </td>
-                    <td className="deck-abs">{fmtDateTime(p.at)}</td>
-                    <td style={{ color: 'var(--muted)' }}>{p.what}</td>
-                    <td>
-                      <Link to={`/leads/${p.leadId}`}>{p.leadName}</Link>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </>
-        )}
+            <div className="stat card">
+              <div className="v">{pending.length}</div>
+              <div className="k">na fila</div>
+            </div>
+            <div className="stat card">
+              <div className="v">{planned.length}</div>
+              <div className="k">planos em curso</div>
+            </div>
+            <div className="stat card">
+              <div className="v" style={{ color: late ? 'var(--red-400)' : 'var(--muted)' }}>
+                {late}
+              </div>
+              <div className="k">atrasadas</div>
+            </div>
+          </div>
 
-        {state === 'ok' && planned.length > 0 && (
-          <>
-            <div className="k" style={{ margin: '18px 2px 8px' }}>
-              planos em curso
-            </div>
-            {planned.map((l) => (
-              <PlanRow key={l.id} lead={l} />
-            ))}
-          </>
-        )}
-      </div>
+          <div className="grid2" style={{ alignItems: 'start' }}>
+            {pending.length > 0 && (
+              <section>
+                <div className="sec-t">fila</div>
+                <div className="card">
+                  <table className="tbl">
+                    <tbody>
+                      {pending.map((p, i) => (
+                        <tr key={i}>
+                          <td className="qidx">{String(i + 1).padStart(2, '0')}</td>
+                          <td className="qt">
+                            <span className={p.late ? 'qt late' : 'qt on'}>
+                              {tMinus(p.at, now)}
+                            </span>
+                          </td>
+                          <td className="qabs">{fmtDateTime(p.at)}</td>
+                          <td style={{ color: 'var(--muted)' }}>{p.what}</td>
+                          <td>
+                            <Link to={`/leads/${p.leadId}`}>{p.leadName}</Link>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </section>
+            )}
+
+            {planned.length > 0 && (
+              <section>
+                <div className="sec-t">planos em curso</div>
+                <div className="card" style={{ padding: '2px 14px' }}>
+                  {planned.map((l) => (
+                    <PlanRow key={l.id} lead={l} />
+                  ))}
+                </div>
+              </section>
+            )}
+          </div>
+        </>
+      )}
     </Page>
   );
 }
@@ -246,7 +285,7 @@ function PlanRow({ lead }: { lead: LeadListItem }) {
           >
             <span style={{ width: `${(resolved / total) * 100}%` }} />
           </span>
-          <span className="deck-mono">
+          <span className="qmono">
             {resolved}/{total}
           </span>
           <ChevronDown
@@ -266,7 +305,7 @@ function PlanRow({ lead }: { lead: LeadListItem }) {
               {s.status === 'done' ? (
                 <CheckCircle2
                   size={15}
-                  style={{ color: 'var(--accent)', flexShrink: 0, marginTop: 2 }}
+                  style={{ color: 'var(--forest-800)', flexShrink: 0, marginTop: 2 }}
                 />
               ) : s.status === 'skip' ? (
                 <SkipForward
