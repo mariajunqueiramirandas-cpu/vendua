@@ -406,7 +406,7 @@ export const api = {
   testIntegration: (kind: string) =>
     req<{ ok: boolean; detail: string }>(`/integrations/${kind}/test`, { method: 'POST' }),
 
-  runs: (q: { kind?: string; status?: string; lead_id?: string } = {}) => {
+  runs: (q: { kind?: string; status?: string; lead_id?: string; limit?: string } = {}) => {
     const params = new URLSearchParams(
       Object.entries(q).filter(([, v]) => v) as [string, string][],
     );
