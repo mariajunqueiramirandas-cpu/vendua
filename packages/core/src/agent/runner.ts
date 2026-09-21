@@ -171,6 +171,29 @@ async function contextFor(
       }
       if (run.kind === 'triage' || run.kind === 'reply' || run.kind === 'outreach') {
         parts.push(`GOAL: ${goal}`);
+        // The negotiation plan lives on the lead — surface it as its own block
+        // so the model ticks it instead of re-deriving strategy each run.
+        const plan = rows[0].j.agent_plan;
+        if (Array.isArray(plan) && plan.length) {
+          parts.push(`PLANO: ${JSON.stringify(plan)}`);
+        }
+        // Dossier: recent notes + research findings — the agent must know the
+        // business it's negotiating with, not just the raw lead row.
+        const dossier = await controlTx(
+          sql,
+          (tx) => tx<{ kind: string; body: string | null }[]>`
+            select kind, body from lead_activities
+            where lead_id = ${run.lead_id!} and kind = 'note'
+            order by at desc limit 6
+          `,
+        );
+        if (dossier.length) {
+          parts.push(
+            `DOSSIÊ (notes + research, newest first):\n${dossier
+              .map((a) => `- ${(a.body ?? '').slice(0, 800)}`)
+              .join('\n')}`,
+          );
+        }
         if (goal === 'meeting') {
           const meeting = await getSetting<{ bookingUrl?: string }>(sql, 'meeting', {});
           // CRM-native link: /agendar?t=<per-lead signed token>. The stored

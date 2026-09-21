@@ -389,6 +389,31 @@ curl -X POST localhost:8787/control/v1/agent/runs \
     {"text":"ok"}]}}'
 ```
 
+## Asserting run context (LEAD/GOAL/PLANO/DOSSIÊ/CANAIS)
+
+The context block is the first `user` message — `runOnce` journals only the
+`system_prompt` step, so context never appears in `agent_runs.steps` or the
+run-detail UI. To see what the model actually received, temp-instrument the
+provider's `chat()` in `src/agent/llm.ts` (mock AND the live driver being
+tested — `providerFor` picks one):
+
+```ts
+async chat(input) {           // gemini destructures; capture `{system,messages}`
+  const { appendFileSync } = await import('node:fs');
+  appendFileSync('/tmp/mock-ctx.jsonl', JSON.stringify(input) + '\n');
+```
+
+then `git checkout` the file after. One JSONL line per chat call; line 0 of a
+run carries `messages[0].content` = full context. DOSSIÊ fixture:
+`insert into lead_activities (lead_id,kind,body,created_by,at)` — the
+timestamp column is `at` (NOT `created_at`; ordering by created_at throws
+and fails the whole run at context build).
+
+Live-model caveat (gemini): the model may re-send `plan` items omitting
+`status`/`note` — the merge keeps stored values for omitted fields, so ticks
+survive, but assert the intended fields actually changed rather than only
+that the list exists.
+
 On a no-whatsapp lead the first tool step journals
 `{blocked:true, reason:'lead has no whatsapp', use:'email'}` and the
 second `{channel:'email', via:'requested', message:{status:'draft'}}` —

@@ -123,6 +123,10 @@ describe('leadJson', () => {
     state: 'contacted',
     agent_mode: 'draft',
     agent_goal: 'negotiation',
+    agent_plan: [
+      { step: 'contexto: o que vende', status: 'done', note: 'dossiê lido' },
+      { step: 'commit: enviar proposta', status: 'todo', note: null },
+    ],
     fit_score: null,
     fit_reason: null,
     email_bounced_at: null,
@@ -141,6 +145,10 @@ describe('leadJson', () => {
     expect(l.tags).toEqual(['vip']);
     expect(l.agentMode).toBe('draft');
     expect(l.dealValueCents).toBe(12000);
+    expect(l.agentPlan).toEqual([
+      { step: 'contexto: o que vende', status: 'done', note: 'dossiê lido' },
+      { step: 'commit: enviar proposta', status: 'todo', note: null },
+    ]);
   });
   test('null tags → empty array', () => {
     expect(leadJson({ ...row, tags: null }).tags).toEqual([]);

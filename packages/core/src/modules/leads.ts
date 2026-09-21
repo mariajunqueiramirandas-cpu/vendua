@@ -21,6 +21,17 @@ export type AgentMode = (typeof AGENT_MODES)[number];
 export const AGENT_GOALS = ['negotiation', 'meeting'] as const;
 export type AgentGoal = (typeof AGENT_GOALS)[number];
 
+/** One item of the lead's negotiation checklist — the agent writes it via
+ *  `plan` (lead kinds) and ticks `done` as stages complete. Persisted on the
+ *  lead so the plan survives across runs. */
+export const AGENT_PLAN_STATUSES = ['todo', 'done', 'skip'] as const;
+export type AgentPlanStatus = (typeof AGENT_PLAN_STATUSES)[number];
+export interface AgentPlanStep {
+  step: string;
+  status: AgentPlanStatus;
+  note: string | null;
+}
+
 export interface LeadRow {
   id: string;
   name: string;
@@ -41,6 +52,7 @@ export interface LeadRow {
   state: LeadState;
   agent_mode: AgentMode;
   agent_goal: AgentGoal;
+  agent_plan: AgentPlanStep[];
   fit_score: number | null;
   fit_reason: string | null;
   email_bounced_at: string | null;
@@ -73,6 +85,7 @@ export interface Lead {
   state: LeadState;
   agentMode: AgentMode;
   agentGoal: AgentGoal;
+  agentPlan: AgentPlanStep[];
   fitScore: number | null;
   fitReason: string | null;
   emailBouncedAt: string | null;
@@ -114,6 +127,7 @@ export function leadJson(row: LeadRow): Lead {
     state: row.state,
     agentMode: row.agent_mode,
     agentGoal: row.agent_goal,
+    agentPlan: row.agent_plan ?? [],
     fitScore: row.fit_score,
     fitReason: row.fit_reason,
     emailBouncedAt: row.email_bounced_at,
