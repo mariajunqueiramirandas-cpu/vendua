@@ -119,8 +119,8 @@ unsubscribed` if `unsubscribed_at` is set and `lead has no whatsapp` if
   `{draftOnly:true}`) — a stock `mock` run emits 'ok' and nothing happens.
   To make the mock call tools, set a script on the integration row, which
   applies to every run until removed: `PUT /control/v1/integrations/llm
-  {driver:'mock',enabled:true,config:{script:[{toolCalls:[{name:'send_message',
-  args:{leadId,channel:'email',body:'…'}}]},{text:'pronto'}]}}`. Disable it
+{driver:'mock',enabled:true,config:{script:[{toolCalls:[{name:'send_message',
+args:{leadId,channel:'email',body:'…'}}]},{text:'pronto'}]}}`. Disable it
   (`enabled:false`) before unrelated runs or they'll replay the same script.
 - To prove `draftOnly` (not `firstContactDraftOnly`) is what made a scripted
   send_message draft: the lead needs agent_mode='auto' AND a prior non-draft
