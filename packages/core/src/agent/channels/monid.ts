@@ -82,7 +82,9 @@ export async function monidRun(
 
   const output = Array.isArray(data.output)
     ? (data.output as Record<string, unknown>[])
-    : data.output && typeof data.output === 'object' && Array.isArray((data.output as { results?: unknown[] }).results)
+    : data.output &&
+        typeof data.output === 'object' &&
+        Array.isArray((data.output as { results?: unknown[] }).results)
       ? ((data.output as { results: Record<string, unknown>[] }).results ?? [])
       : data.output == null
         ? []

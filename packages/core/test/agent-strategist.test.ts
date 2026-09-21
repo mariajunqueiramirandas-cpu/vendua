@@ -31,10 +31,9 @@ afterEach(() => {
 const stubMonid = (output: unknown[], assert?: (body: string) => void) => {
   globalThis.fetch = (async (url: RequestInfo | URL, init?: RequestInit) => {
     assert?.(String(init?.body));
-    return new Response(
-      JSON.stringify({ output, cost: { value: 0.003, currency: 'USD' } }),
-      { status: 200 },
-    );
+    return new Response(JSON.stringify({ output, cost: { value: 0.003, currency: 'USD' } }), {
+      status: 200,
+    });
   }) as typeof fetch;
 };
 
@@ -115,10 +114,7 @@ describe('monid enrichment tools', () => {
   test('maps_lookup anchors bare city on Brasil and hints phone-less candidates', async () => {
     let sent = '';
     stubMonid(
-      [
-        { name: 'Padaria X', phone: '+55 22 3343-4882', address: 'Rua A' },
-        { title: 'Doceria Y' },
-      ],
+      [{ name: 'Padaria X', phone: '+55 22 3343-4882', address: 'Rua A' }, { title: 'Doceria Y' }],
       (body) => (sent = body),
     );
     const c = ctx();

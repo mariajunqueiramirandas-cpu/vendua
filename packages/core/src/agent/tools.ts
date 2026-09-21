@@ -324,7 +324,9 @@ const REGISTRY: { def: AgentTool; toolsets: string[] }[] = [
         "Write or rewrite your campaign plan — the strategist's map. Call it at the start of the run (segments/angles you'll try, which lane per prospect type, kill-criteria for a prospect that resists) and again whenever field results change the picture. The harness reflects it back at every reflection tick — write what you'd want to be reminded of mid-run. Not scored; your judgment is the point.",
       parameters: {
         type: 'object',
-        properties: { content: { type: 'string', description: 'the plan, free text (≤2000 chars)' } },
+        properties: {
+          content: { type: 'string', description: 'the plan, free text (≤2000 chars)' },
+        },
         required: ['content'],
       },
     },
@@ -1194,7 +1196,9 @@ export async function executeTool(
       }
       if (Array.isArray(args.tried)) {
         for (const t of args.tried) {
-          const tag = String(t ?? '').trim().slice(0, 24);
+          const tag = String(t ?? '')
+            .trim()
+            .slice(0, 24);
           if (tag && !e.tried.includes(tag)) e.tried.push(tag);
         }
       }
@@ -1206,9 +1210,8 @@ export async function executeTool(
     case 'instagram_profile':
     case 'serp': {
       const { monidRun } = await import('./channels/monid.ts');
-      const { contactsFromText, contactFromUrl, isProfileHubUrl } = await import(
-        './channels/discovery.ts'
-      );
+      const { contactsFromText, contactFromUrl, isProfileHubUrl } =
+        await import('./channels/discovery.ts');
       const apiKey = process.env.MONID_API_KEY;
       if (!apiKey) return { error: 'MONID_API_KEY não configurada — use web_search/read_pages' };
       const budget = () => ({ spentUsd: ctx.monid?.spent ?? 0, capUsd: ctx.monid?.cap() ?? 0 });
@@ -1243,7 +1246,8 @@ export async function executeTool(
           address: str(r.address ?? r.fullAddress ?? r.street),
           website: str(r.website),
           instagram: igFrom(r),
-          rating: typeof (r.rating ?? r.totalScore) === 'number' ? (r.rating ?? r.totalScore) : null,
+          rating:
+            typeof (r.rating ?? r.totalScore) === 'number' ? (r.rating ?? r.totalScore) : null,
           category: str(r.categoryName ?? r.category),
         }));
         return {
@@ -1260,7 +1264,9 @@ export async function executeTool(
         };
       }
       if (name === 'instagram_profile') {
-        const handle = String(args.handle ?? '').replace(/^@/, '').trim();
+        const handle = String(args.handle ?? '')
+          .replace(/^@/, '')
+          .trim();
         if (!handle) return { error: 'handle vazio' };
         ctx.monid?.assertHeadroom(0.003);
         const res = await monidRun(
@@ -1272,7 +1278,8 @@ export async function executeTool(
         const p = res.output[0];
         if (!p) return { error: `perfil @${handle} não encontrado`, ...budget() };
         const bio = str(p.biography) ?? '';
-        const externalUrl = str(p.externalUrl) ?? str((p.externalUrls as { url?: string }[])?.[0]?.url);
+        const externalUrl =
+          str(p.externalUrl) ?? str((p.externalUrls as { url?: string }[])?.[0]?.url);
         const contacts = contactsFromText(bio);
         if (externalUrl) {
           try {
@@ -1305,7 +1312,9 @@ export async function executeTool(
           );
         else if (externalUrl) next.push(`externalUrl="${externalUrl}" — read_pages vale`);
         if (contacts.phoneHints.length && !contacts.phones.length)
-          next.push(`phoneHints ${contacts.phoneHints.join(', ')} sem DDD — serp "${handle} ${contacts.phoneHints[0]}" ou "<nome> <cidade>" telefone resolve`);
+          next.push(
+            `phoneHints ${contacts.phoneHints.join(', ')} sem DDD — serp "${handle} ${contacts.phoneHints[0]}" ou "<nome> <cidade>" telefone resolve`,
+          );
         return {
           profile: {
             username: str(p.username) ?? handle,
@@ -1340,7 +1349,9 @@ export async function executeTool(
       return {
         results,
         ...budget(),
-        next: ['o resultado que citar o nome do prospect (mesmo diretório/guia) → read_pages — é onde telefone mora'],
+        next: [
+          'o resultado que citar o nome do prospect (mesmo diretório/guia) → read_pages — é onde telefone mora',
+        ],
       };
     }
     default:

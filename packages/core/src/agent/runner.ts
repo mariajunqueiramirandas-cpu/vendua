@@ -252,10 +252,7 @@ function mineAttempts(steps: unknown[]): { queries: Set<string>; urls: Set<strin
       args?: Record<string, unknown>;
       out?: { pages?: { url?: string }[] };
     };
-    if (
-      (st.name === 'web_search' || st.name === 'serp') &&
-      typeof st.args?.query === 'string'
-    )
+    if ((st.name === 'web_search' || st.name === 'serp') && typeof st.args?.query === 'string')
       queries.add(st.args.query);
     if (st.name === 'read_pages') {
       const seen = [
@@ -445,9 +442,7 @@ export async function runOnce(sql: Sql): Promise<boolean> {
       plan: null,
       monid:
         run.kind === 'discovery'
-          ? new MonidBudget(
-              Math.min(5, Math.max(0, Number(run.params.monidCapUsd) || 0.25)),
-            )
+          ? new MonidBudget(Math.min(5, Math.max(0, Number(run.params.monidCapUsd) || 0.25)))
           : null,
     };
 
@@ -623,8 +618,7 @@ export async function runOnce(sql: Sql): Promise<boolean> {
               if (Object.values(ch).some(Boolean)) return true;
             }
             const fc = out.foundContacts as
-              | { phones?: string[]; whatsappLinks?: string[] }
-              | undefined;
+              { phones?: string[]; whatsappLinks?: string[] } | undefined;
             if (fc && (fc.phones?.length || fc.whatsappLinks?.length)) return true;
             const cands = out.candidates as { phone?: string | null }[] | undefined;
             if (cands?.some((c) => c.phone)) return true;
@@ -635,7 +629,12 @@ export async function runOnce(sql: Sql): Promise<boolean> {
             const drift = i - lastProgress + 1;
             lastProgress = i;
             const { queries, urls } = mineAttempts(steps);
-            const reflection = `REFLEXÃO — ${drift} passos sem progresso (nenhum canal novo, lead criado ou merge).\nPlano atual: ${ctx.plan ?? '(nenhum — escreva um via plan)'}\nLivro:\n${bookDigest(ctx.book)}\nJá tentado: buscas ${[...queries].slice(0, 8).map((q) => `"${q}"`).join(', ') || 'nenhuma'}; leituras ${[...urls].slice(0, 8).join(', ') || 'nenhuma'}.\nPassos restantes: ~${Math.max(0, limit - i)}. Qual o próximo melhor movimento — novo ângulo de busca, maps_lookup, instagram_profile num @ que sobrou, ou fechar um prospect como dead? Responda e siga.`;
+            const reflection = `REFLEXÃO — ${drift} passos sem progresso (nenhum canal novo, lead criado ou merge).\nPlano atual: ${ctx.plan ?? '(nenhum — escreva um via plan)'}\nLivro:\n${bookDigest(ctx.book)}\nJá tentado: buscas ${
+              [...queries]
+                .slice(0, 8)
+                .map((q) => `"${q}"`)
+                .join(', ') || 'nenhuma'
+            }; leituras ${[...urls].slice(0, 8).join(', ') || 'nenhuma'}.\nPassos restantes: ~${Math.max(0, limit - i)}. Qual o próximo melhor movimento — novo ângulo de busca, maps_lookup, instagram_profile num @ que sobrou, ou fechar um prospect como dead? Responda e siga.`;
             steps.push({ type: 'reflection', content: reflection });
             messages.push({ role: 'user', content: reflection });
           }
