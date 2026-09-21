@@ -82,6 +82,16 @@ export default function App() {
 
   useEffect(() => setNavOpen(false), [loc.pathname]);
 
+  // The menu sheet is a phone affordance — if the viewport widens past the
+  // breakpoint while it's open (rotation, window drag), dismiss it rather
+  // than leave an unstyled overlay up.
+  useEffect(() => {
+    const mq = window.matchMedia('(min-width: 761px)');
+    const close = () => mq.matches && setNavOpen(false);
+    mq.addEventListener('change', close);
+    return () => mq.removeEventListener('change', close);
+  }, []);
+
   // PWA install offer — the browser only fires beforeinstallprompt when the
   // app is installable (manifest + sw), so the button is its own detection.
   useEffect(() => {

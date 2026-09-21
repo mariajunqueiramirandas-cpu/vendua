@@ -152,13 +152,59 @@ To mint a signed request locally:
   folded `.tbl`/snap board are `max-width`, but `.mv` stage select, always-on
   `.open`, and 40px targets are `any-pointer: coarse` — a resized desktop
   window will NOT show them. Emulate for real: Playwright
-  `isMobile:true + hasTouch:true` (headed works on DISPLAY :0) or DevTools
-  device toolbar set to "Mobile" — verify `matchMedia('(any-pointer: coarse)')`.
+  `isMobile:true + hasTouch:true` (headed works on DISPLAY :0), DevTools
+  device toolbar set to "Mobile", or CDP on the session Chrome (below) —
+  verify `matchMedia('(any-pointer: coarse)')`.
 - Fast path when the CSS is `max-width`-only (check the diff): just resize
   the real window — `wmctrl -r :ACTIVE: -e 0,x,y,W,H` uses real px; CSS
   innerWidth lands ~W−30 (e.g. W=805 → ~773px). Verify with a console
   matchMedia probe. No emulation needed; coarse-pointer features still
   require real emulation.
+
+### CDP-driving the session Chrome (in-page mobile emulation + PWA probes)
+
+The automation Chrome already runs with `--remote-debugging-port=29229` —
+no second browser needed, and everything stays in the recorded window.
+Drive it from bun's built-in WebSocket (no playwright):
+
+```js
+const t = (await (await fetch('http://localhost:29229/json')).json()).find(
+  (t) => t.type === 'page' && t.url.includes('/control'),
+);
+const ws = new WebSocket(t.webSocketDebuggerUrl); // then {id,method,params}
+```
+
+- `Emulation.setDeviceMetricsOverride {width:390,height:844,deviceScaleFactor:2,
+mobile:true}` → innerWidth 390. `any-pointer:coarse` needs BOTH
+  `Emulation.setTouchEmulationEnabled {enabled:true,maxTouchPoints:5}` and
+  `Emulation.setEmitTouchEventsForMouse {enabled:true}` —
+  `setEmulatedMedia({features:[{name:'any-pointer',value:'coarse'}]})` alone
+  does NOT flip it. Emulated page renders in the window's top-left region
+  (rest is dead space) — readable at dsf 2.
+- Software-keyboard surrogate: `Emulation.setPageScaleFactor {pageScaleFactor:2}`
+  shrinks `visualViewport` (844→422) while the layout viewport stays 844 —
+  fires the vv `resize` listener so `--vvh`/`--vvo` update; `.shell`/`.scrim`/
+  `.drawer`/`.login` shrink to the visible strip (the real test of the
+  keyboard-pinned viewport CSS — `100dvh` breakage would leave them
+  full-height and the tabbar would drop off-screen).
+- Overrides are sticky per-target and survive `clearDeviceMetricsOverride` on
+  standalone app windows — restore by re-setting desktop dims
+  `{width:~1568,height:~993,deviceScaleFactor:1,mobile:false}` first, then
+  clear, then reload.
+- PWA probes from the page: `reg = await navigator.serviceWorker
+.getRegistration('/control/'); await reg.update()` forces a byte-check of
+  sw.js (served `no-cache` → picks up rebuilds); `caches.keys()` shows the
+  per-deploy `vendua-control-<bundleHash>` generation. Offline proof:
+  `Network.emulateNetworkConditions {offline:true,...}` then `Page.reload` —
+  the SW serves the cached shell (login renders offline; API calls fail).
+- `beforeinstallprompt` fires on localhost Chrome once the SW controls the
+  page → 'instalar app' renders in rail-foot AND the msheet; clicking opens
+  the real install dialog → standalone window (`display-mode:standalone`).
+  Uninstall via the app window's ⋮ menu → 'Uninstall venduá · controle' to
+  make the button re-fire on next load.
+- `.msheet` is styled ONLY inside `@media (max-width:760px)` — a sheet left
+  open while the viewport widens past 760px renders unstyled until a scrim
+  click/route change (rotation edge case).
 - Full-screen `.drawer` at ≤760px covers the scrim entirely — scrim-tap close
   is untestable there (Escape/cancelar are the close paths); desktop keeps a
   visible scrim.
