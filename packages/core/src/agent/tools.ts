@@ -116,7 +116,8 @@ const REGISTRY: { def: AgentTool; toolsets: string[] }[] = [
     toolsets: ['triage', 'reply', 'outreach', 'discovery'],
     def: {
       name: 'search_leads',
-      description: 'Search leads by name/business/contact fields. Returns compact list.',
+      description:
+        'Search leads already registered — name/business/instagram/email/phone/whatsapp (phone digits match normalized numbers, formatting ignored). Free + instant: in discovery this is the pre-flight check BEFORE spending a paid call on a prospect — a hit means merge-or-skip, not a new hunt. Returns channel flags + whatsappVerified so you see exactly what the card already has.',
       parameters: {
         type: 'object',
         properties: {
@@ -465,7 +466,7 @@ export async function executeTool(
         ...(state ? { state } : {}),
         limit: 10,
       });
-      return leads.map((l) => ({
+      const matches = leads.map((l) => ({
         id: l.id,
         name: l.name,
         business: l.businessName,
@@ -473,7 +474,20 @@ export async function executeTool(
         score: l.score,
         city: l.city,
         segment: l.segment,
+        // Channel flags (not the raw values — get_lead has those) so the
+        // agent sees what the card ALREADY holds before deciding to hunt.
+        hasWhatsapp: Boolean(l.whatsapp),
+        whatsappVerified: l.whatsappVerified,
+        hasPhone: Boolean(l.phone),
+        hasInstagram: Boolean(l.instagram),
       }));
+      return {
+        matches,
+        count: matches.length,
+        next: matches.length
+          ? 'já registrado — canal novo a somar → create_lead (faz merge); nada novo → resolved no book e próximo prospect'
+          : 'campo livre — prospect provavelmente novo',
+      };
     }
     case 'get_lead':
       return getLeadDetail(sql, String(args.id ?? ''));

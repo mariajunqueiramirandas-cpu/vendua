@@ -373,6 +373,11 @@ export async function listLeads(
   const q = query.q?.trim();
   // \ is Postgres' default LIKE escape — user % and _ can't widen the match.
   const qEsc = q ? `%${q.replace(/[%_\\]/g, (ch) => `\\${ch}`)}%` : null;
+  // Phone-shaped queries match NORMALIZED digits, not the stored formatting —
+  // "997123470" must find "+55 22 99712-3470". ≥4 digits only, or short
+  // digit runs make every text search degenerate into a phone match.
+  const qDigits = q ? q.replace(/\D/g, '') : '';
+  const qDigitsLike = qDigits.length >= 4 ? `%${qDigits}%` : null;
 
   // Keyset pagination: (created_at, id) desc — stable under concurrent
   // inserts where a naive offset page can skip/dupe rows.
@@ -414,7 +419,13 @@ export async function listLeads(
         ? `(l.name ilike ${p(qEsc)} or l.business_name ilike ${p(qEsc)}
            or l.email ilike ${p(qEsc)} or l.phone ilike ${p(qEsc)}
            or l.whatsapp ilike ${p(qEsc)} or l.instagram ilike ${p(qEsc)}
-           or l.city ilike ${p(qEsc)})`
+           or l.city ilike ${p(qEsc)}
+           ${
+             qDigitsLike
+               ? `or regexp_replace(coalesce(l.phone,''),'\\D','','g') like ${p(qDigitsLike)}
+           or regexp_replace(coalesce(l.whatsapp,''),'\\D','','g') like ${p(qDigitsLike)}`
+               : ''
+           })`
         : 'true',
       cursorAt && cursorId ? `(l.created_at, l.id) < (${p(cursorAt)}, ${p(cursorId)})` : 'true',
     ];
