@@ -92,11 +92,17 @@ export default function Plan() {
 
   const byId = new Map(leads.map((l) => [l.id, l]));
 
+  // Mirrors claimRun's suppression predicate — off, archived, unsubscribed —
+  // so the queue only shows runs the worker can actually claim.
+  const live = (id: string) => {
+    const l = byId.get(id);
+    return !!l && l.agentMode !== 'off' && !l.archivedAt && !l.unsubscribedAt;
+  };
+
   // Flat timeline: every future agent move, soonest first.
   const pending: Pending[] = [
     ...runs
-      // claimRun skips leads with the agent off — the queue mirrors it here.
-      .filter((r) => byId.get(r.lead_id!)?.agentMode !== 'off')
+      .filter((r) => live(r.lead_id!))
       .map((r) => ({
         at: r.run_at!,
         what: `run ${RUN_KIND[r.kind] ?? r.kind}`,
@@ -105,7 +111,7 @@ export default function Plan() {
         late: new Date(r.run_at!).getTime() <= now,
       })),
     ...leads
-      .filter((l) => l.agentMode !== 'off' && l.nextActionAt)
+      .filter((l) => live(l.id) && l.nextActionAt)
       .map((l) => ({
         at: l.nextActionAt!,
         what: 'follow-up do agente',
@@ -117,7 +123,7 @@ export default function Plan() {
 
   // Leads carrying a plan, most-progressed first.
   const planned = leads
-    .filter((l) => l.agentMode !== 'off' && l.agentPlan.length > 0)
+    .filter((l) => live(l.id) && l.agentPlan.length > 0)
     .sort(
       (a, b) =>
         b.agentPlan.filter((s) => s.status !== 'todo').length / b.agentPlan.length -
