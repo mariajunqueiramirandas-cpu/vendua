@@ -95,7 +95,7 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('plan — lead-scoped checklist 
     const leadId = created.body.lead.id;
     const c = replyCtx(leadId);
 
-    const wrote = (await executeTool(c, 'p1', 'plan', {
+    const wrote = (await executeTool(c, `p1-${leadId}`, 'plan', {
       items: [
         { step: 'contexto: o que vende', status: 'done', note: 'dossiê lido' },
         { step: 'qualificação: quem decide', status: 'todo' },
@@ -111,8 +111,8 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('plan — lead-scoped checklist 
       { step: 'commit: enviar proposta', status: 'todo', note: null },
     ]);
 
-    // tick — whole-list replace flips statuses, keeps notes
-    await executeTool(c, 'p2', 'plan', {
+    // tick — merge by step flips statuses, keeps notes
+    await executeTool(c, `p2-${leadId}`, 'plan', {
       items: [
         { step: 'contexto: o que vende', status: 'done', note: 'dossiê lido' },
         { step: 'qualificação: quem decide', status: 'done', note: 'dona decide sozinha' },
@@ -125,6 +125,32 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('plan — lead-scoped checklist 
       status: 'done',
       note: 'dona decide sozinha',
     });
+  });
+
+  test('omitted steps survive a merge — only skip removes', async () => {
+    await migrate(sql, join(import.meta.dir, '../db/migrations'));
+    const created = await controlTx(sql, (tx) =>
+      insertLeadTx(tx, { name: 'Merge Lead', agent_mode: 'auto' }),
+    );
+    const leadId = created.body.lead.id;
+    const c = replyCtx(leadId);
+
+    await executeTool(c, `m1-${leadId}`, 'plan', {
+      items: [{ step: 'contexto', status: 'done' }, { step: 'qualificação' }],
+    });
+    // second call only mentions one step — the other must not be dropped
+    await executeTool(c, `m2-${leadId}`, 'plan', {
+      items: [
+        { step: 'qualificação', status: 'done', note: 'decisor é a dona' },
+        { step: 'commit' },
+      ],
+    });
+    const detail = await getLeadDetail(sql, leadId);
+    expect(detail!.agentPlan).toEqual([
+      { step: 'contexto', status: 'done', note: null },
+      { step: 'qualificação', status: 'done', note: 'decisor é a dona' },
+      { step: 'commit', status: 'todo', note: null },
+    ]);
   });
 
   test('discovery still uses run-scoped memory', async () => {

@@ -181,16 +181,16 @@ async function contextFor(
         // business it's negotiating with, not just the raw lead row.
         const dossier = await controlTx(
           sql,
-          (tx) => tx<{ kind: string; body: string }[]>`
+          (tx) => tx<{ kind: string; body: string | null }[]>`
             select kind, body from lead_activities
             where lead_id = ${run.lead_id!} and kind = 'note'
-            order by created_at desc limit 6
+            order by at desc limit 6
           `,
         );
         if (dossier.length) {
           parts.push(
             `DOSSIÊ (notes + research, newest first):\n${dossier
-              .map((a) => `- ${a.body.slice(0, 800)}`)
+              .map((a) => `- ${(a.body ?? '').slice(0, 800)}`)
               .join('\n')}`,
           );
         }

@@ -339,7 +339,7 @@ const REGISTRY: { def: AgentTool; toolsets: string[] }[] = [
     def: {
       name: 'plan',
       description:
-        "Your plan. Discovery: the campaign map for this run — call it at the start (segments/angles you'll try, kill-criteria) and again when results change the picture; run-scoped working memory. Lead kinds (triage/reply/outreach): the negotiation checklist for THIS lead — write it once you understand the business (methodology stages tailored to them, ending at the lead's GOAL), then rewrite it marking items done as they complete — it persists on the lead across runs and is your memory between messages. Whole-list replace each call (≤12 items).",
+        "Your plan. Discovery: the campaign map for this run — call it at the start (segments/angles you'll try, kill-criteria) and again when results change the picture; run-scoped working memory. Lead kinds (triage/reply/outreach): the negotiation checklist for THIS lead — write it once you understand the business (methodology stages tailored to them, ending at the lead's GOAL), then send it back marking items done as they complete — it persists on the lead across runs and is your memory between messages. Items merge by step: a step you omit is kept, so mark dead ends 'skip' instead of dropping them (≤12 items).",
       parameters: {
         type: 'object',
         properties: {
@@ -1272,30 +1272,53 @@ export async function executeTool(
         ctx.plan = String(args.content ?? '').slice(0, 2000);
         return { stored: true, plan: ctx.plan, book: bookDigest(ctx.book) };
       }
-      // Lead kinds: the negotiation checklist persists on the lead — whole-list
-      // replace each call, items tick to done/skip as stages complete.
+      // Lead kinds: the negotiation checklist persists on the lead. Writes merge
+      // by step under a row lock — 'skip' is how an item leaves the list; an
+      // omitted step survives (a concurrent run's ticks are never clobbered).
       if (!ctx.leadId) return { error: 'plan needs a run bound to a lead' };
       const raw = args.items;
       if (!Array.isArray(raw)) return { error: 'items must be an array' };
+      const norm = (it: unknown): { step: string; status: string; note: string | null } | null => {
+        if (typeof it !== 'object' || it === null) return null;
+        const o = it as Record<string, unknown>;
+        const step = String(o.step ?? '')
+          .trim()
+          .slice(0, 200);
+        if (!step) return null;
+        const status = o.status === 'done' || o.status === 'skip' ? o.status : 'todo';
+        const note =
+          typeof o.note === 'string' && o.note.trim() ? o.note.trim().slice(0, 200) : null;
+        return { step, status, note };
+      };
       const steps = raw
         .slice(0, 12)
-        .map((it) => {
-          if (typeof it !== 'object' || it === null) return null;
-          const o = it as Record<string, unknown>;
-          const step = String(o.step ?? '')
-            .trim()
-            .slice(0, 200);
-          if (!step) return null;
-          const status = o.status === 'done' || o.status === 'skip' ? o.status : 'todo';
-          const note =
-            typeof o.note === 'string' && o.note.trim() ? o.note.trim().slice(0, 200) : null;
-          return { step, status, note };
-        })
-        .filter((s): s is { step: string; status: string; note: string | null } => s !== null);
+        .map(norm)
+        .filter((s) => s !== null);
       if (!steps.length) return { error: 'plan needs ≥1 item with a step' };
       const res = await claimControl(sql, key, async (tx) => {
-        await tx`update leads set agent_plan = ${tx.json(steps)}, updated_at = now() where id = ${ctx.leadId!}`;
-        return { status: 200 as const, body: { stored: true, plan: steps } };
+        const cur = await tx<{ agent_plan: unknown }[]>`
+          select agent_plan from leads where id = ${ctx.leadId!} for update`;
+        const prev = Array.isArray(cur[0]?.agent_plan) ? cur[0].agent_plan : [];
+        const merged: { step: string; status: string; note: string | null }[] = [];
+        const index = new Map<string, number>();
+        for (const it of prev) {
+          const s = norm(it);
+          if (!s || index.has(s.step.toLowerCase())) continue;
+          index.set(s.step.toLowerCase(), merged.length);
+          merged.push(s);
+        }
+        for (const s of steps) {
+          const i = index.get(s.step.toLowerCase());
+          if (i === undefined) {
+            index.set(s.step.toLowerCase(), merged.length);
+            merged.push(s);
+          } else {
+            merged[i] = s;
+          }
+        }
+        const next = merged.slice(0, 12);
+        await tx`update leads set agent_plan = ${tx.json(next)}, updated_at = now() where id = ${ctx.leadId!}`;
+        return { status: 200 as const, body: { stored: true, plan: next } };
       });
       return res.body;
     }
