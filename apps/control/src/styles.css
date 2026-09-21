@@ -2982,10 +2982,95 @@ a.lcard:hover {
   margin-top: 5px;
 }
 
+/* Month grid — rendered only on phone-width screens (the view swaps to it
+   via matchMedia), so these rules don't need a media query. Monday-leading
+   cells with one dot per non-cancelled meeting; tapping a cell expands that
+   day's meetings in the card below. */
+.mgrid {
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+  gap: 4px;
+}
+.mgdow {
+  font-family: var(--font-mono);
+  font-size: var(--t-2xs);
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--muted);
+  text-align: center;
+  padding: 4px 0;
+}
+.mcell {
+  appearance: none;
+  font: inherit;
+  color: var(--ink);
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--r-sm);
+  min-height: 46px;
+  padding: 5px 2px 6px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  cursor: pointer;
+}
+.mcell .mnum {
+  font-family: var(--font-serif);
+  font-style: italic;
+  font-size: var(--t-sm);
+  line-height: 1;
+}
+.mcell.out {
+  opacity: 0.38;
+}
+.mcell.today .mnum {
+  background: var(--accent);
+  border-radius: 999px;
+  min-width: 1.6em;
+  font-style: normal;
+}
+.mcell.sel {
+  border-color: var(--forest-800);
+  box-shadow: 0 0 0 1px var(--forest-800) inset;
+}
+.mcell:active {
+  background: var(--surface-2);
+}
+.mdots {
+  display: flex;
+  gap: 2px;
+  min-height: 5px;
+  align-items: center;
+}
+.mdots i {
+  width: 5px;
+  height: 5px;
+  border-radius: 999px;
+  background: var(--forest-800);
+}
+/* Status colors mirror the .mtg card's left border. Lime is near-invisible
+   on cream at 5px, so done dots get a forest hairline. */
+.mdots i.st-done {
+  background: var(--lime-300);
+  box-shadow: inset 0 0 0 1px var(--forest-800);
+}
+.mdots i.st-no_show {
+  background: var(--amber-400);
+}
+.aday.msel {
+  margin-top: 10px;
+}
+.aday-free {
+  color: var(--muted);
+  font-size: var(--t-xs);
+  margin: 0;
+}
+
 @media (max-width: 760px) {
-  /* Agenda on phones: the 7-column week grid collapses to a stacked day
-     list — only days with meetings (plus today, as an anchor) render.
-     A week of empty boxes is pure scroll noise on a small screen. */
+  /* Agenda week grid is desktop-only — on phones the view renders the
+     month grid above instead, so .agenda only appears when the matchMedia
+     flips mid-session (e.g. rotating a small tablet). */
   .agenda {
     display: flex;
     flex-direction: column;
@@ -2996,13 +3081,8 @@ a.lcard:hover {
     min-height: 0;
     padding: 12px 14px;
   }
-  .aday:not(.today):not(:has(.mtg)) {
+  .agenda > .aday:not(.today):not(:has(.mtg)) {
     display: none;
-  }
-  .aday.today:not(:has(.mtg))::after {
-    content: 'livre hoje';
-    color: var(--muted);
-    font-size: var(--t-xs);
   }
   .mtg {
     padding: 10px 12px;
