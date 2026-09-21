@@ -92,22 +92,25 @@ export async function monidRun(
   return { output, costUsd: costOf(data, output.length) };
 }
 
-/** Per-run spend guard — holds the live balance inside ctx so tools charge
- *  before calling, never after. Throws a model-readable error over cap. */
+/** Per-run spend guard — tools RESERVE the estimate synchronously before the
+ *  remote call (parallel batches can't see a stale balance), then reconcile to
+ *  the reported cost after it settles. A failed call keeps the reservation:
+ *  monid may still bill an accepted run. */
 export class MonidBudget {
   spent = 0;
   constructor(private capUsd: number) {}
   cap(): number {
     return this.capUsd;
   }
-  charge(cost: number): void {
-    this.spent += cost;
-  }
-  assertHeadroom(estimateUsd: number): void {
+  reserve(estimateUsd: number): void {
     if (this.spent + estimateUsd > this.capUsd) {
       throw new Error(
         `monid budget: ${this.spent.toFixed(3)} spent of ${this.capUsd.toFixed(2)} cap — chamada recusada. Use web_search/read_pages (tinyfish, sem custo monid).`,
       );
     }
+    this.spent += estimateUsd;
+  }
+  reconcile(estimateUsd: number, actualUsd: number): void {
+    this.spent += actualUsd - estimateUsd;
   }
 }

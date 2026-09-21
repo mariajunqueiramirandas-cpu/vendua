@@ -17,6 +17,7 @@ const ctx = (): ToolContext => ({
   book: new Map(),
   plan: null,
   monid: new MonidBudget(0.25),
+  seenContacts: new Set(),
 });
 
 const realFetch = globalThis.fetch;
@@ -29,7 +30,7 @@ afterEach(() => {
 });
 
 const stubMonid = (output: unknown[], assert?: (body: string) => void) => {
-  globalThis.fetch = (async (url: RequestInfo | URL, init?: RequestInit) => {
+  globalThis.fetch = (async (_url: unknown, init?: RequestInit) => {
     assert?.(String(init?.body));
     return new Response(JSON.stringify({ output, cost: { value: 0.003, currency: 'USD' } }), {
       status: 200,
@@ -60,6 +61,15 @@ describe('book — working memory', () => {
     expect(e.tried).toEqual(['ig', 'hub']);
     expect(e.status).toBe('resolved');
     expect(bookDigest(c.book)).toContain('instagram+whatsapp');
+    // re-upserting the same channel is not progress — reflection must not
+    // count it, so the tool reports what actually landed
+    const again = (await executeTool(c, '3', 'book', {
+      action: 'upsert',
+      name: 'Padaria da Ponte',
+      channels: { instagram: '@apadariadaponte' },
+      tried: ['serp'],
+    })) as { addedChannels: string[] };
+    expect(again.addedChannels).toEqual([]);
   });
 });
 
@@ -77,9 +87,12 @@ describe('plan — self-authored campaign plan', () => {
 describe('MonidBudget', () => {
   test('refuses calls past the cap with a model-readable error', () => {
     const b = new MonidBudget(0.01);
-    b.charge(0.008);
-    expect(() => b.assertHeadroom(0.005)).toThrow(/monid budget/);
-    expect(() => b.assertHeadroom(0.002)).not.toThrow();
+    b.reserve(0.008);
+    expect(() => b.reserve(0.005)).toThrow(/monid budget/);
+    expect(() => b.reserve(0.002)).not.toThrow();
+    // parallel calls each reserve up-front — a stale balance can't double-spend
+    b.reconcile(0.002, 0.001);
+    expect(b.spent).toBeCloseTo(0.009);
   });
 });
 

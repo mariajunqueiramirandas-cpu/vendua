@@ -341,6 +341,18 @@ export async function runOnce(sql: Sql): Promise<boolean> {
   // accumulate fractional dollars — rounding to cents per step would zero out
   // sub-cent calls and skew the run total.
   let costUsd = 0;
+  // Paid-enrichment budget — hoisted beside costUsd so the catch-path
+  // finishRun can fold monid spend into the run's stored cost.
+  const monidBudget =
+    run.kind === 'discovery'
+      ? new MonidBudget(
+          // 0 is a real cap (free tools only) — only an absent/non-numeric
+          // param gets the default
+          run.params.monidCapUsd == null || !Number.isFinite(Number(run.params.monidCapUsd))
+            ? 0.25
+            : Math.min(5, Math.max(0, Number(run.params.monidCapUsd))),
+        )
+      : null;
   // Set when the row stops matching this execution: canceled via the API, or
   // reclaimed and re-queued after going stale. The loop unwinds at the next
   // boundary — in-flight tool calls finish but nothing else is persisted or
@@ -440,10 +452,8 @@ export async function runOnce(sql: Sql): Promise<boolean> {
       pageCache: new Map(),
       book: new Map(),
       plan: null,
-      monid:
-        run.kind === 'discovery'
-          ? new MonidBudget(Math.min(5, Math.max(0, Number(run.params.monidCapUsd) || 0.25)))
-          : null,
+      seenContacts: new Set(),
+      monid: monidBudget,
     };
 
     steps.push({ type: 'system_prompt', content: system });
@@ -554,7 +564,7 @@ export async function runOnce(sql: Sql): Promise<boolean> {
           steps,
           tokensIn,
           tokensOut,
-          costCents: Math.round(costUsd * 100),
+          costCents: Math.round((costUsd + (monidBudget?.spent ?? 0)) * 100),
         });
         return true;
       }
@@ -613,15 +623,12 @@ export async function runOnce(sql: Sql): Promise<boolean> {
             const out = s.out;
             if (!out) return false;
             if (s.name === 'create_lead' && (out.lead || out.duplicate)) return true;
-            if (s.name === 'book' && out.entry) {
-              const ch = (out.entry as { channels?: Record<string, string> }).channels ?? {};
-              if (Object.values(ch).some(Boolean)) return true;
-            }
-            const fc = out.foundContacts as
-              { phones?: string[]; whatsappLinks?: string[] } | undefined;
-            if (fc && (fc.phones?.length || fc.whatsappLinks?.length)) return true;
-            const cands = out.candidates as { phone?: string | null }[] | undefined;
-            if (cands?.some((c) => c.phone)) return true;
+            // book: only NEWLY added channels count — a repeat upsert of the
+            // same instagram isn't progress
+            if (s.name === 'book' && (out.addedChannels as string[] | undefined)?.length)
+              return true;
+            // enrichment: only contacts not already banked count
+            if (typeof out.newContacts === 'number' && out.newContacts > 0) return true;
             return false;
           });
           if (progressed) lastProgress = i;
@@ -680,7 +687,7 @@ export async function runOnce(sql: Sql): Promise<boolean> {
       steps,
       tokensIn,
       tokensOut,
-      costCents: Math.round(costUsd * 100),
+      costCents: Math.round((costUsd + (monidBudget?.spent ?? 0)) * 100),
       error: `max steps reached${created ? ` — ${created} lead(s) created` : ''}`,
     });
     return true;
@@ -690,7 +697,7 @@ export async function runOnce(sql: Sql): Promise<boolean> {
       steps,
       tokensIn,
       tokensOut,
-      costCents: Math.round(costUsd * 100),
+      costCents: Math.round((costUsd + (monidBudget?.spent ?? 0)) * 100),
       error: e instanceof Error ? e.message : String(e),
     });
     return true;

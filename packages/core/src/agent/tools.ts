@@ -56,6 +56,9 @@ export interface ToolContext {
   /** monid.ai spend guard — enrichment calls charge against a per-run cap
    *  (`params.monidCapUsd`, default 0.25) so a live balance can't loop-drain. */
   monid: import('./channels/monid.ts').MonidBudget | null;
+  /** Contact values already banked this run (book channels + enrichment
+   *  hits) — a repeated phone/email isn't progress, only a fresh one is. */
+  seenContacts: Set<string>;
 }
 
 /** One prospect in the agent's ledger — what it found and which moves it
@@ -1188,10 +1191,16 @@ export async function executeTool(
       if (typeof args.city === 'string' && args.city.trim()) e.city = args.city.trim();
       if (args.status === 'open' || args.status === 'resolved' || args.status === 'dead')
         e.status = args.status;
+      const addedChannels: string[] = [];
       if (args.channels && typeof args.channels === 'object') {
         for (const [k, v] of Object.entries(args.channels as Record<string, unknown>)) {
           const val = String(v ?? '').trim();
-          if (val) e.channels[k.toLowerCase().slice(0, 20)] = val.slice(0, 200);
+          const ck = k.toLowerCase().slice(0, 20);
+          if (val && e.channels[ck] !== val) {
+            e.channels[ck] = val.slice(0, 200);
+            addedChannels.push(ck);
+            ctx.seenContacts.add(val);
+          }
         }
       }
       if (Array.isArray(args.tried)) {
@@ -1204,7 +1213,7 @@ export async function executeTool(
       }
       if (typeof args.note === 'string' && args.note.trim()) e.note = args.note.slice(0, 200);
       ctx.book.set(key, e);
-      return { entry: e, book: bookDigest(ctx.book) };
+      return { entry: e, addedChannels, book: bookDigest(ctx.book) };
     }
     case 'maps_lookup':
     case 'instagram_profile':
@@ -1215,6 +1224,17 @@ export async function executeTool(
       const apiKey = process.env.MONID_API_KEY;
       if (!apiKey) return { error: 'MONID_API_KEY não configurada — use web_search/read_pages' };
       const budget = () => ({ spentUsd: ctx.monid?.spent ?? 0, capUsd: ctx.monid?.cap() ?? 0 });
+      // contact values that hadn't been banked yet — counts progress
+      const freshContacts = (vals: (string | null | undefined)[]): number => {
+        let n = 0;
+        for (const v of vals) {
+          if (v && !ctx.seenContacts.has(v)) {
+            ctx.seenContacts.add(v);
+            n++;
+          }
+        }
+        return n;
+      };
       const str = (v: unknown): string | null => {
         const s = String(v ?? '').trim();
         return s || null;
@@ -1225,7 +1245,8 @@ export async function executeTool(
       };
       if (name === 'maps_lookup') {
         const limit = Math.min(10, Math.max(1, Math.floor(Number(args.limit) || 8)));
-        ctx.monid?.assertHeadroom(0.0045 * limit);
+        const est = 0.0045 * limit;
+        ctx.monid?.reserve(est);
         const city = String(args.city ?? '').trim();
         const res = await monidRun(
           { provider: 'apify', endpoint: '/damilo/google-maps-scraper' },
@@ -1239,7 +1260,7 @@ export async function executeTool(
           },
           apiKey,
         );
-        ctx.monid?.charge(res.costUsd || 0.0045 * res.output.length);
+        ctx.monid?.reconcile(est, res.costUsd || 0.0045 * res.output.length);
         const candidates = res.output.map((r) => ({
           name: str(r.name ?? r.title),
           phone: str(r.phone ?? r.phoneNumber ?? r.phone_number ?? r.telefone),
@@ -1252,6 +1273,7 @@ export async function executeTool(
         }));
         return {
           candidates,
+          newContacts: freshContacts(candidates.map((c) => c.phone)),
           ...budget(),
           next: candidates
             .filter((c) => !c.phone)
@@ -1268,13 +1290,13 @@ export async function executeTool(
           .replace(/^@/, '')
           .trim();
         if (!handle) return { error: 'handle vazio' };
-        ctx.monid?.assertHeadroom(0.003);
+        ctx.monid?.reserve(0.003);
         const res = await monidRun(
           { provider: 'apify', endpoint: '/apify/instagram-profile-scraper' },
           { usernames: [handle] },
           apiKey,
         );
-        ctx.monid?.charge(res.costUsd || 0.003 * res.output.length);
+        ctx.monid?.reconcile(0.003, res.costUsd || 0.003 * res.output.length);
         const p = res.output[0];
         if (!p) return { error: `perfil @${handle} não encontrado`, ...budget() };
         const bio = str(p.biography) ?? '';
@@ -1325,18 +1347,23 @@ export async function executeTool(
             category: str(p.businessCategoryName),
           },
           foundContacts: contacts,
+          newContacts: freshContacts([
+            ...contacts.phones,
+            ...contacts.whatsappLinks,
+            ...contacts.emails,
+          ]),
           ...budget(),
           ...(next.length ? { next } : {}),
         };
       }
       // serp — one cheap google page for a named prospect
-      ctx.monid?.assertHeadroom(0.001);
+      ctx.monid?.reserve(0.001);
       const res = await monidRun(
         { provider: 'mrscraper', endpoint: '/serp/google' },
         { query: String(args.query ?? ''), region: 'br', language: 'pt' },
         apiKey,
       );
-      ctx.monid?.charge(res.costUsd || 0.001);
+      ctx.monid?.reconcile(0.001, res.costUsd || 0.001);
       const results = res.output.slice(0, 10).map((r) => {
         const snippet = str(r.snippet ?? r.description) ?? '';
         return {
@@ -1348,6 +1375,13 @@ export async function executeTool(
       });
       return {
         results,
+        newContacts: freshContacts(
+          results.flatMap((r) => [
+            ...(r.contacts.phones ?? []),
+            ...(r.contacts.whatsappLinks ?? []),
+            ...(r.contacts.emails ?? []),
+          ]),
+        ),
         ...budget(),
         next: [
           'o resultado que citar o nome do prospect (mesmo diretório/guia) → read_pages — é onde telefone mora',
