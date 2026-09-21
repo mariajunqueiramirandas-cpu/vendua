@@ -160,6 +160,14 @@ export default function Calendar() {
       });
   }, [weekStart, monthStart, mobile]);
   useEffect(load, [load]);
+  // patch() runs after the PATCH resolves — possibly after the user has
+  // navigated away. Calling the captured `load` would refetch the OLD
+  // window and (with a newer reqSeq) overwrite the current view. Always
+  // refresh through the ref so the reload targets the displayed period.
+  const loadRef = useRef(load);
+  useEffect(() => {
+    loadRef.current = load;
+  }, [load]);
 
   const byDay = useMemo(() => {
     const m = new Map<string, Meeting[]>();
@@ -190,7 +198,7 @@ export default function Calendar() {
   const patch = (id: string, body: { status?: string }) =>
     api
       .patchMeeting(id, body)
-      .then(load)
+      .then(() => loadRef.current())
       .catch((e) => setErr(e instanceof ApiError ? e.message : 'falha ao atualizar'));
 
   // Day-key → pt-BR label. A noon-UTC instant lands on the same calendar day
@@ -199,7 +207,18 @@ export default function Calendar() {
     new Date(Date.UTC(k.y, k.m - 1, k.d, 12)).toLocaleDateString('pt-BR', opts);
   const weekLabel = `${days[0]!.d} ${dayLabel(days[0]!, { month: 'short' })} – ${days[6]!.d} ${dayLabel(days[6]!, { month: 'short' })}`;
   const monthLabel = dayLabel(monthStart, { month: 'long', year: 'numeric' });
-  const sub = `${meetings.filter((m) => m.status === 'scheduled').length} calls · ${mobile ? monthLabel : weekLabel}`;
+  // Count only calls whose tz-local day has a visible cell — the fetch
+  // window is padded beyond the grid, so raw-length counts inflate.
+  const visibleKeys = useMemo(
+    () => new Set((mobile ? cells : days).map((d) => d.key)),
+    [mobile, cells, days],
+  );
+  const scheduledCount = meetings.filter(
+    (m) =>
+      m.status === 'scheduled' &&
+      visibleKeys.has(dayKeyOf(new Date(m.startsAt), tz).key),
+  ).length;
+  const sub = `${scheduledCount} calls · ${mobile ? monthLabel : weekLabel}`;
 
   const gotoToday = () => {
     const t = dayKeyOf(new Date(), tz);
@@ -362,7 +381,7 @@ export default function Calendar() {
                   className={`mcell${c.m !== monthStart.m ? ' out' : ''}${c.key === todayKey ? ' today' : ''}${isSel ? ' sel' : ''}`}
                   onClick={() => setSel(c)}
                   aria-pressed={isSel}
-                  aria-label={`${c.d} de ${monthLabel} — ${list.length ? `${list.length} call${list.length > 1 ? 's' : ''}` : 'livre'}`}
+                  aria-label={`${c.d} de ${dayLabel(c, { month: 'long', year: 'numeric' })} — ${list.length ? `${list.length} call${list.length > 1 ? 's' : ''}` : 'livre'}`}
                 >
                   <span className="mnum">{c.d}</span>
                   {!!list.length && (
