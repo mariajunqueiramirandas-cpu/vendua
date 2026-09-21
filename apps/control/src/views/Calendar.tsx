@@ -201,10 +201,14 @@ export default function Calendar() {
       .then(() => loadRef.current())
       .catch((e) => setErr(e instanceof ApiError ? e.message : 'falha ao atualizar'));
 
-  // Day-key → pt-BR label. A noon-UTC instant lands on the same calendar day
-  // in every tz from UTC-12 to UTC+12, so labels never roll a day over.
+  // Day-key → pt-BR label. The key is a calendar-day identity, not an
+  // instant — format in UTC or UTC+13/+14 browsers would read a month-
+  // boundary cell as the next day ("31 de fevereiro").
   const dayLabel = (k: DayKey, opts: Intl.DateTimeFormatOptions) =>
-    new Date(Date.UTC(k.y, k.m - 1, k.d, 12)).toLocaleDateString('pt-BR', opts);
+    new Date(Date.UTC(k.y, k.m - 1, k.d, 12)).toLocaleDateString('pt-BR', {
+      ...opts,
+      timeZone: 'UTC',
+    });
   const weekLabel = `${days[0]!.d} ${dayLabel(days[0]!, { month: 'short' })} – ${days[6]!.d} ${dayLabel(days[6]!, { month: 'short' })}`;
   const monthLabel = dayLabel(monthStart, { month: 'long', year: 'numeric' });
   // Count only calls whose tz-local day has a visible cell — the fetch
