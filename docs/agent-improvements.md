@@ -94,7 +94,8 @@ through the same queue and is cancelable in Runs).
 ### 9. Analyst loop that acts
 
 Auto-pause dead `discovery_briefs` in `sweepBriefs` — segmentStats already
-computes leads/contacted/replied per segment over 30d; a brief with 0 leads
+computes leads/contacted/replied/live per segment (all-time; only costCents
+is 30d-scoped); a brief with 0 leads
 over N runs should pause itself with a note, not keep burning runs.
 
 ### 10. Strategist run kind
