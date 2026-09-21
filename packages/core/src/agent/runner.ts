@@ -354,6 +354,13 @@ export async function runOnce(sql: Sql): Promise<boolean> {
     messages.push({ role: 'user', content: context });
     await persist();
 
+    // Discovery harness nudge — fired once at the finish boundary when the
+    // run would end without producing: either a no-op ("ok", zero calls, the
+    // classic lite-model shrug) or leads boarded without a whatsapp. The
+    // prompt asks for the follow-up already; this is the enforcement point
+    // the prompt can't be talked around.
+    let nudged = false;
+
     for (let i = 0; i < STEP_BUDGET[run.kind] && !lost; i++) {
       const res = await provider.chat({ system, messages, tools });
       tokensIn += res.tokensIn;
@@ -364,6 +371,40 @@ export async function runOnce(sql: Sql): Promise<boolean> {
       if (lost) break;
 
       if (!res.toolCalls.length) {
+        if (run.kind === 'discovery' && !nudged) {
+          const created = steps
+            .filter(
+              (s) =>
+                typeof s === 'object' &&
+                s !== null &&
+                (s as { name?: string }).name === 'create_lead' &&
+                typeof (s as { out?: { lead?: { id?: string } } }).out?.lead?.id === 'string',
+            )
+            .map((s) => (s as { out: { lead: Record<string, unknown> } }).out.lead);
+          const missingWa = created.filter(
+            (l) => !(typeof l.whatsapp === 'string' && l.whatsapp.trim()),
+          );
+          // A duplicate merge isn't a create — but a run that only merged
+          // still produced, so only zero-creates and wa-less creates nudge.
+          const nudge = !created.length
+            ? 'Nenhum lead entrou no CRM ainda — descoberta só conta quando o lead é criado. Se ainda há sabor não tentado, segue: web_search com outra variação do segmento/cidade, ou read_pages no prospect fraco (o diretório que citar o nome é onde telefone mora).'
+            : missingWa.length
+              ? `${missingWa.length} lead(s) sem whatsapp: ${missingWa
+                  .map((l) => String(l.name ?? '?'))
+                  .slice(0, 6)
+                  .join(
+                    ', ',
+                  )}. Uma rodada por nome antes de encerrar: web_search "<nome> <cidade>" telefone/whatsapp; e no resultado que citar o nome — mesmo diretório/guia local — read_pages vale (é onde telefone e endereço moram).`
+              : null;
+          if (nudge) {
+            nudged = true;
+            messages.push({ role: 'assistant', content: res.text ?? 'ok' });
+            messages.push({ role: 'user', content: nudge });
+            steps.push({ type: 'nudge', content: nudge });
+            await persist();
+            continue;
+          }
+        }
         await finishRun(sql, claim, {
           status: 'done',
           steps,

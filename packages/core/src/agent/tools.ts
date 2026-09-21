@@ -264,7 +264,7 @@ const REGISTRY: { def: AgentTool; toolsets: string[] }[] = [
     def: {
       name: 'read_pages',
       description:
-        "Read pages via the fetch provider — returns each page's markdown text (read it: contact channels hide in prose — 'chama a Ju no zap', '(22) 9xxxx-xxxx' in a bio, a footer mailto), foundContacts (the deterministic safety net: phone/whatsapp/email/socials parsed out of the page's links AND body text — a wa.me printed in an instagram bio counts), and nav (contact-ish follow-up reads: same-host pages + link-in-bio hubs like linktr.ee). Use it on every prospect's own pages AND instagram profiles: home + contato/sobre/cardápio + the profile's bio link, up to 6 urls per call. Facebook roots are login-walled. A repeated URL returns its cached output.",
+        "Read pages via the fetch provider — returns each page's markdown text (read it: contact channels hide in prose — 'chama a Ju no zap', '(22) 9xxxx-xxxx' in a bio, a footer mailto), foundContacts (the deterministic safety net: phone/whatsapp/email/socials parsed out of the page's links AND body text AND meta title/description + any redirect's final URL — a bit.ly that lands on wa.me gives the phone free; phoneHints = '9xxxx-xxxx' sem DDD, prova de whatsapp pra resolver via busca/diretório), and nav (contact-ish follow-up reads: same-host pages + link-in-bio hubs like linktr.ee). The provider also AUTO-CHASES one hop of the links that exist only to hold contacts — link-in-bio hubs and google-business/maps pointers come back as extra pages marked chasedFrom. A page flagged truncated:true was cut mid-render (instagram '…mais') — its contact line may be past the fold, resolve via web_search/diretório. Use it on every prospect's own pages AND instagram profiles: home + contato/sobre/cardápio + the profile's bio link, up to 6 urls per call. Facebook roots are login-walled. A repeated URL returns its cached output.",
       parameters: {
         type: 'object',
         properties: {
@@ -885,11 +885,14 @@ export async function executeTool(
       return {
         results,
         ...(droppedDupes ? { droppedDupes } : {}),
-        note: 'kind=contact já traz phone/whatsappLink da URL; kind=profile instagram vale read_pages (a bio entrega whatsapp + link-in-bio — facebook é login wall); kind=site é o que vale read_pages; listing = diretório/plataforma de pedido, evidência mais que fonte de contato. phone/email podem vir do snippet.',
+        note: 'kind=contact já traz phone/whatsappLink da URL; kind=profile instagram vale read_pages (a bio entrega whatsapp + link-in-bio — facebook é login wall); kind=site é o que vale read_pages; listing = diretório/plataforma de pedido — evidência mais que fonte, EXCETO quando o título cita o nome do prospect pesquisado: aí read_pages vale (diretório carrega telefone/endereço). phone/email podem vir do snippet.',
       };
     }
     case 'read_pages': {
-      const { discoveryFor, pageKey } = await import('./channels/discovery.ts');
+      const { chaseLinks, discoveryFor, isMapPointer, pageKey, resolveMapPointer } = await import(
+        './channels/discovery.ts'
+      );
+      type ReadPage = import('./channels/discovery.ts').ReadPage;
       const urls = (Array.isArray(args.urls) ? args.urls : [args.url])
         .map((u) => String(u ?? '').trim())
         .filter(Boolean)
@@ -958,6 +961,83 @@ export async function executeTool(
           pages.push({ ...out.page, ...(shared || fromCache ? { cached: true } : {}) });
         } else {
           errs.push({ url, error: out?.error ?? 'no result for url' });
+        }
+      }
+      // One free hop on the pointer-only links a page surfaces — link-in-bio
+      // hubs and google-business/maps entries exist solely to hold the real
+      // contact block. Chasing them inline keeps the profile → hub → wa.me
+      // path inside a single tool call instead of spending a model step on
+      // a read we already know pays off.
+      const chaseOf: { url: string; from: string }[] = [];
+      const chaseSeen = new Set<string>();
+      for (const pg of pages as ReadPage[]) {
+        for (const link of chaseLinks(pg)) {
+          const id = pageKey(link) ?? link;
+          if (ctx.pageCache.has(id) || chaseSeen.has(id)) continue;
+          chaseSeen.add(id);
+          chaseOf.push({ url: link, from: pg.url });
+        }
+      }
+      const chases = chaseOf.slice(0, 4);
+      const hubChases = chases.filter((c) => !isMapPointer(c.url));
+      const mapChases = chases.filter((c) => isMapPointer(c.url));
+      if (hubChases.length) {
+        const res = await provider
+          .readPages(
+            hubChases.map((c) => c.url),
+            goal,
+          )
+          .then(
+            (out) => out,
+            (e: unknown) => ({
+              pages: [] as ReadPage[],
+              errors: hubChases.map((c) => ({
+                url: c.url,
+                error: e instanceof Error ? e.message : String(e),
+              })),
+            }),
+          );
+        for (const c of hubChases) {
+          const key2 = pageKey(c.url);
+          const page = res.pages.find(
+            (pg) => pageKey(pg.url) === key2 || pageKey(pg.finalUrl ?? '') === key2,
+          );
+          if (page) {
+            pages.push({ ...page, chasedFrom: c.from });
+            if (key2) ctx.pageCache.set(key2, Promise.resolve({ page }));
+          } else {
+            const error =
+              res.errors.find((er) => pageKey(er.url) === key2)?.error ?? 'no result for url';
+            errs.push({ url: c.url, error });
+            if (key2) ctx.pageCache.set(key2, Promise.resolve({ page: null, error }));
+          }
+        }
+      }
+      // Maps/google-business pointers captcha the fetch provider — resolve the
+      // 302 in-process instead: the target URL names the business profile,
+      // which is the exact web_search query that exposes its phone. Second
+      // wave: chased hub pages surface these pointers too (instagram →
+      // linktr.ee → g.co/kgs), and in-process resolution is free, so map
+      // pointers on chased pages resolve as well (no extra provider call).
+      const mapWave = [...mapChases];
+      for (const pg of pages.filter((p) => (p as ReadPage).chasedFrom) as ReadPage[]) {
+        for (const link of chaseLinks(pg)) {
+          if (!isMapPointer(link)) continue;
+          const id = pageKey(link) ?? link;
+          if (ctx.pageCache.has(id) || chaseSeen.has(id)) continue;
+          if (mapWave.length >= 6) break;
+          chaseSeen.add(id);
+          mapWave.push({ url: link, from: pg.url });
+        }
+      }
+      for (const c of mapWave.slice(0, 6)) {
+        const key2 = pageKey(c.url);
+        const page = await resolveMapPointer(c.url).catch(() => null);
+        if (page) {
+          pages.push({ ...page, chasedFrom: c.from });
+          if (key2) ctx.pageCache.set(key2, Promise.resolve({ page }));
+        } else {
+          errs.push({ url: c.url, error: 'map pointer did not resolve' });
         }
       }
       return { pages, ...(errs.length ? { errors: errs } : {}) };
