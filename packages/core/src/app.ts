@@ -1396,7 +1396,11 @@ export function createApp({ sql, sessionSecret, controlSecret }: AppDeps) {
       kind ? `kind = ${p(kind)}` : 'true',
       status ? `status = ${p(status)}` : 'true',
       leadId ? `r.lead_id = ${p(leadId)}` : 'true',
+      // scheduled=1 → only delayed runs, soonest first — truncation can only
+      // drop farthest-future items, never the ones about to fire.
+      c.req.query('scheduled') ? 'r.run_at is not null' : 'true',
     ];
+    const order = c.req.query('scheduled') ? 'r.run_at asc' : 'r.created_at desc';
     const rows = await controlTx(sql, (tx) =>
       tx.unsafe(
         `select r.id, r.kind, r.status, r.lead_id, r.thread_id, r.tokens_in, r.tokens_out,
@@ -1404,7 +1408,7 @@ export function createApp({ sql, sessionSecret, controlSecret }: AppDeps) {
                 l.name as lead_name
          from agent_runs r left join leads l on l.id = r.lead_id
          where ${where.join(' and ')}
-         order by r.created_at desc limit ${p(limit)}`,
+         order by ${order} limit ${p(limit)}`,
         params as never[],
       ),
     );

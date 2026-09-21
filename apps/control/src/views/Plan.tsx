@@ -39,16 +39,19 @@ export default function Plan() {
         all.push(...r.leads);
         return r.nextCursor ? page(r.nextCursor) : undefined;
       });
-    // Queued runs have no cursor (created_at desc, cap 200) — the set waiting
-    // on run_at is small, but the bound is a real limit.
+    // scheduled=1 → run_at asc, so if the 200 cap ever truncates it drops the
+    // farthest-future rows, never the ones about to fire.
     void Promise.all([
       page(),
       api
-        .runs({ status: 'queued', limit: '200' })
-        .then((r) => setRuns(r.runs.filter((x) => x.run_at && x.lead_id))),
+        .runs({ status: 'queued', scheduled: '1', limit: '200' })
+        .then((r) => r.runs.filter((x) => x.lead_id)),
     ])
-      .then(() => {
+      .then(([, queued]) => {
+        // Commit both datasets together — a failed half can't render beside the
+        // error state as if it were complete.
         setLeads(all);
+        setRuns(queued);
         setState('ok');
       })
       .catch(() => setState('error'));
@@ -66,13 +69,16 @@ export default function Plan() {
 
   // Flat timeline: every future agent move, soonest first.
   const pending: Pending[] = [
-    ...runs.map((r) => ({
-      at: r.run_at!,
-      what: `run ${RUN_KIND[r.kind] ?? r.kind}`,
-      leadId: r.lead_id!,
-      leadName: byId.get(r.lead_id!)?.name ?? r.lead_name ?? 'lead',
-      late: new Date(r.run_at!).getTime() <= now,
-    })),
+    ...runs
+      // A lead with the agent off can't fire — its queued runs aren't upcoming.
+      .filter((r) => byId.get(r.lead_id!)?.agentMode !== 'off')
+      .map((r) => ({
+        at: r.run_at!,
+        what: `run ${RUN_KIND[r.kind] ?? r.kind}`,
+        leadId: r.lead_id!,
+        leadName: byId.get(r.lead_id!)?.name ?? r.lead_name ?? 'lead',
+        late: new Date(r.run_at!).getTime() <= now,
+      })),
     ...leads
       .filter((l) => l.agentMode !== 'off' && l.nextActionAt)
       .map((l) => ({
@@ -116,7 +122,7 @@ export default function Plan() {
         />
       )}
 
-      {pending.length > 0 && (
+      {state === 'ok' && pending.length > 0 && (
         <>
           <div className="k" style={{ margin: '0 4px 8px' }}>
             próximas ações
@@ -146,7 +152,7 @@ export default function Plan() {
         </>
       )}
 
-      {planned.length > 0 && (
+      {state === 'ok' && planned.length > 0 && (
         <>
           <div className="k" style={{ margin: '18px 4px 8px' }}>
             planos em curso
@@ -164,55 +170,60 @@ export default function Plan() {
 
 function PlanRow({ lead }: { lead: LeadListItem }) {
   const [open, setOpen] = useState(false);
-  const done = lead.agentPlan.filter((s) => s.status === 'done').length;
+  // A skipped step is settled, not pending — progress counts resolved steps.
+  const resolved = lead.agentPlan.filter((s) => s.status !== 'todo').length;
   const total = lead.agentPlan.length;
   return (
     <div className="planrow">
-      <button
-        className="btn ghost"
-        style={{
-          display: 'flex',
-          alignItems: 'center',
-          gap: 10,
-          width: '100%',
-          textAlign: 'left',
-          padding: '10px 2px',
-          fontWeight: 500,
-        }}
-        onClick={() => setOpen(!open)}
-        aria-expanded={open}
-      >
-        <Link
-          to={`/leads/${lead.id}`}
-          style={{ fontWeight: 600 }}
-          onClick={(e) => e.stopPropagation()}
-        >
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+        <Link to={`/leads/${lead.id}`} style={{ fontWeight: 600 }}>
           {lead.name}
         </Link>
-        <span className="chip agent" title="objetivo atual">
-          {GOAL_LABEL[lead.agentGoal] ?? lead.agentGoal}
-        </span>
-        <span className="planbar" title={`${done} de ${total} etapas`} style={{ flex: '0 0 64px' }}>
-          <span style={{ width: `${(done / total) * 100}%` }} />
-        </span>
-        <span
+        <button
+          className="btn ghost"
           style={{
-            color: 'var(--muted)',
-            fontSize: 'var(--t-2xs)',
-            fontFamily: 'var(--font-mono)',
+            display: 'flex',
+            alignItems: 'center',
+            gap: 10,
+            flex: 1,
+            minWidth: 0,
+            textAlign: 'left',
+            padding: '10px 2px',
+            fontWeight: 500,
           }}
+          onClick={() => setOpen(!open)}
+          aria-expanded={open}
+          aria-label={`plano de ${lead.name}`}
         >
-          {done}/{total}
-        </span>
-        <ChevronDown
-          size={14}
-          style={{
-            color: 'var(--muted)',
-            transform: open ? 'rotate(180deg)' : undefined,
-            transition: 'transform 150ms cubic-bezier(0.2, 0, 0, 1)',
-          }}
-        />
-      </button>
+          <span className="chip agent" title="objetivo atual">
+            {GOAL_LABEL[lead.agentGoal] ?? lead.agentGoal}
+          </span>
+          <span
+            className="planbar"
+            title={`${resolved} de ${total} etapas resolvidas`}
+            style={{ flex: '0 0 64px' }}
+          >
+            <span style={{ width: `${(resolved / total) * 100}%` }} />
+          </span>
+          <span
+            style={{
+              color: 'var(--muted)',
+              fontSize: 'var(--t-2xs)',
+              fontFamily: 'var(--font-mono)',
+            }}
+          >
+            {resolved}/{total}
+          </span>
+          <ChevronDown
+            size={14}
+            style={{
+              color: 'var(--muted)',
+              transform: open ? 'rotate(180deg)' : undefined,
+              transition: 'transform 150ms cubic-bezier(0.2, 0, 0, 1)',
+            }}
+          />
+        </button>
+      </div>
       {open && (
         <div style={{ paddingBottom: 10 }}>
           {lead.agentPlan.map((s, i) => (
