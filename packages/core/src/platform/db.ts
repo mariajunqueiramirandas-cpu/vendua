@@ -54,22 +54,28 @@ export async function migrate(sql: Sql, dir: string): Promise<string[]> {
     const applied = new Set(
       (await tx<MigrationRow[]>`select name from schema_migrations`).map((r) => r.name),
     );
-    // Baseline squash: 0000_baseline.sql carries the full schema covered by
-    // the numbered deltas. It runs ONLY on a fresh database (empty ledger) —
-    // an existing DB came up through those deltas, so the baseline is marked
-    // covered without executing (replaying it would collide with live tables).
-    const BASELINE = '0000_baseline.sql';
-    const hasBaseline = files.includes(BASELINE);
+    // Baseline squash: NNNN_baseline_thru_MMMM.sql carries the full schema
+    // through delta MMMM — the filename encodes the coverage bound so a file
+    // numbered past it (0018+) still runs normally on fresh installs. The
+    // baseline itself executes ONLY on a fresh database (empty ledger) — an
+    // existing DB came up through the deltas, so the baseline is marked
+    // covered without executing (replaying would collide with live tables).
+    const baselineFile = files.find((f) => /^(\d+)_baseline_thru_(\d+)\.sql$/.test(f));
+    const baselineThru = baselineFile
+      ? Number(baselineFile.match(/_thru_(\d+)\.sql$/)![1])
+      : -1;
     const freshDb = applied.size === 0;
     const ran: string[] = [];
     for (const file of files) {
       if (applied.has(file)) continue;
-      if (hasBaseline && file !== BASELINE && freshDb) {
-        // Covered by the baseline — ledger row only, the DDL already ran.
-        await tx`insert into schema_migrations (name) values (${file})`;
-        continue;
-      }
-      if (file === BASELINE && !freshDb) {
+      if (file !== baselineFile) {
+        const num = Number(file.match(/^(\d+)/)?.[1]);
+        if (baselineFile && freshDb && num <= baselineThru) {
+          // Covered by the baseline — ledger row only, the DDL already ran.
+          await tx`insert into schema_migrations (name) values (${file})`;
+          continue;
+        }
+      } else if (!freshDb) {
         // Existing DB: record the baseline as covered so it never replays.
         await tx`insert into schema_migrations (name) values (${file})`;
         continue;

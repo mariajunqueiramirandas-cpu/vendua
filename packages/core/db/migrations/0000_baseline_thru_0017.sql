@@ -1,4 +1,4 @@
--- 0000_baseline.sql — FRESH-INSTALL SCHEMA (covers 0001–0017).
+-- 0000_baseline_thru_0017.sql — FRESH-INSTALL SCHEMA (covers 0001–0017).
 -- migrate() runs this file ONLY when schema_migrations is empty and marks
 -- the covered deltas applied; existing databases never see it. Regenerate
 -- by concatenating the covered files when squashing further.
