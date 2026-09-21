@@ -768,8 +768,7 @@ export async function executeTool(
             const dupWa =
               (dup.whatsapp_verified === true || set.whatsapp_verified === true
                 ? String(dup.whatsapp ?? '').trim()
-                : '') ||
-              (whatsappDerived ? '' : String(set.whatsapp ?? '').trim());
+                : '') || (whatsappDerived ? '' : String(set.whatsapp ?? '').trim());
             const dupContact =
               gateFires(dupScore, dupWa) &&
               dup.state === 'lead' &&
