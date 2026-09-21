@@ -752,9 +752,8 @@ export async function executeTool(
             // Only VERIFIED whatsapp unlocks autocontact: a stored value whose
             // provenance flag is set, or a non-derived merge from this call.
             const dupWa =
-              (dup.whatsapp_verified === true
-                ? String(dup.whatsapp ?? '').trim()
-                : '') || (whatsappDerived ? '' : String(set.whatsapp ?? '').trim());
+              (dup.whatsapp_verified === true ? String(dup.whatsapp ?? '').trim() : '') ||
+              (whatsappDerived ? '' : String(set.whatsapp ?? '').trim());
             const dupContact =
               gateFires(dupScore, dupWa) &&
               dup.state === 'lead' &&
