@@ -790,6 +790,11 @@ export async function executeTool(
                 merged,
                 ...(contactRun ? { contactRun } : {}),
                 existing: { id: dup.id, name: dup.name, state: dup.state },
+                // A merge confirms an existing card — it does NOT advance the
+                // run's lead goal. Say so, or the model counts the same
+                // prospects as delivered and stops hunting new ones.
+                next:
+                  'duplicado — NÃO conta pra META; siga o plano e traga prospects novos',
               } as never,
             };
           }

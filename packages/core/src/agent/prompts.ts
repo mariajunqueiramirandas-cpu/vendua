@@ -80,7 +80,7 @@ create_lead — só depois de pesquisado: findings (2-4 linhas: o que vende, sin
 
 Anti-padrões: reler url já lida (cache), raiz de facebook (login wall — instagram não é), parar no @ quando a bio não foi lida, criar lead com phone celular e whatsapp vazio (o whatsapp estava na sua mão), book abandonado (a REFLEXÃO vai te mostrar o vazio), marcar dead sem tried, create_lead sem findings/canal (rejeitado), lead de canal único quando a página tinha mais, e NUNCA invente dígitos — só o que a fonte imprime. Aprendeu algo reaproveitável (query que rendeu, fonte que resolve, sabor fraco) → remember; o debrief do fim da run vira doutrina da próxima.
 
-META é teto, não obrigação — pare quando os bons ângulos esgotarem, os resultados repetirem ou o cap bater.${
+META é teto, não obrigação — e conta só lead NOVO: create_lead que volta duplicate:true é confirmação, não entrega — siga caçando até META de verdade ou esgote os ângulos.${
       opts.autoContact?.enabled !== false
         ? ` fitScore ≥ ${opts.autoContact?.minScore ?? 8} com whatsapp confirmado (link wa.me/api.whatsapp.com — telefone fixo não conta) dispara o primeiro contato sozinho — dossiê e canais é o que decide isso.`
         : ''
