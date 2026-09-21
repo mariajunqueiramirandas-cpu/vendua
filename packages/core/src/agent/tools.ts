@@ -177,6 +177,12 @@ const REGISTRY: { def: AgentTool; toolsets: string[] }[] = [
           id: leadIdArg,
           ...LEAD_FIELDS,
           agentMode: { type: 'string', enum: ['off', 'draft', 'auto'] },
+          agentGoal: {
+            type: 'string',
+            enum: ['negotiation', 'meeting'],
+            description:
+              'switch what the agent is driving toward — flip it when the lead signals the other goal (wants a call while on negotiation, wants to close in-thread while on meeting)',
+          },
         },
         required: ['id'],
       },
@@ -329,17 +335,32 @@ const REGISTRY: { def: AgentTool; toolsets: string[] }[] = [
     },
   },
   {
-    toolsets: ['discovery'],
+    toolsets: ['triage', 'reply', 'outreach', 'discovery'],
     def: {
       name: 'plan',
       description:
-        "Write or rewrite your campaign plan — the strategist's map. Call it at the start of the run (segments/angles you'll try, which lane per prospect type, kill-criteria for a prospect that resists) and again whenever field results change the picture. The harness reflects it back at every reflection tick — write what you'd want to be reminded of mid-run. Not scored; your judgment is the point.",
+        "Your plan. Discovery: the campaign map for this run — call it at the start (segments/angles you'll try, kill-criteria) and again when results change the picture; run-scoped working memory. Lead kinds (triage/reply/outreach): the negotiation checklist for THIS lead — write it once you understand the business (methodology stages tailored to them, ending at the lead's GOAL), then rewrite it marking items done as they complete — it persists on the lead across runs and is your memory between messages. Whole-list replace each call (≤12 items).",
       parameters: {
         type: 'object',
         properties: {
-          content: { type: 'string', description: 'the plan, free text (≤2000 chars)' },
+          content: {
+            type: 'string',
+            description: 'discovery only — the plan, free text (≤2000 chars)',
+          },
+          items: {
+            type: 'array',
+            description: 'lead kinds only — the full checklist, current state',
+            items: {
+              type: 'object',
+              properties: {
+                step: { type: 'string', description: 'what must happen' },
+                status: { type: 'string', enum: ['todo', 'done', 'skip'] },
+                note: { type: 'string', description: 'evidence/outcome, one line' },
+              },
+              required: ['step'],
+            },
+          },
         },
-        required: ['content'],
       },
     },
   },
@@ -1247,8 +1268,36 @@ export async function executeTool(
       return { pages, ...(errs.length ? { errors: errs } : {}) };
     }
     case 'plan': {
-      ctx.plan = String(args.content ?? '').slice(0, 2000);
-      return { stored: true, plan: ctx.plan, book: bookDigest(ctx.book) };
+      if (ctx.runKind === 'discovery') {
+        ctx.plan = String(args.content ?? '').slice(0, 2000);
+        return { stored: true, plan: ctx.plan, book: bookDigest(ctx.book) };
+      }
+      // Lead kinds: the negotiation checklist persists on the lead — whole-list
+      // replace each call, items tick to done/skip as stages complete.
+      if (!ctx.leadId) return { error: 'plan needs a run bound to a lead' };
+      const raw = args.items;
+      if (!Array.isArray(raw)) return { error: 'items must be an array' };
+      const steps = raw
+        .slice(0, 12)
+        .map((it) => {
+          if (typeof it !== 'object' || it === null) return null;
+          const o = it as Record<string, unknown>;
+          const step = String(o.step ?? '')
+            .trim()
+            .slice(0, 200);
+          if (!step) return null;
+          const status = o.status === 'done' || o.status === 'skip' ? o.status : 'todo';
+          const note =
+            typeof o.note === 'string' && o.note.trim() ? o.note.trim().slice(0, 200) : null;
+          return { step, status, note };
+        })
+        .filter((s): s is { step: string; status: string; note: string | null } => s !== null);
+      if (!steps.length) return { error: 'plan needs ≥1 item with a step' };
+      const res = await claimControl(sql, key, async (tx) => {
+        await tx`update leads set agent_plan = ${tx.json(steps)}, updated_at = now() where id = ${ctx.leadId!}`;
+        return { status: 200 as const, body: { stored: true, plan: steps } };
+      });
+      return res.body;
     }
     case 'book': {
       if (args.action === 'list') {

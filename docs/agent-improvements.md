@@ -20,35 +20,36 @@ manual add should be able to behave the same way.
 
 ### 2. New inbound leads should get a full profile automatically — partially done
 
-#65 gave `reply` `serp`/`web_search`, so an inbound-triggered run can enrich
-the sender — but the orientation pass is still missing. Remaining gap:
+#65 gave `reply` `serp`/`web_search`, and the negotiation prompt now
+instructs a research + `update_lead`/`add_note` pass on raw inbound senders —
+the profile-fill half is covered. Remaining gap:
 
-- `reply` lacks `read_pages`/`maps_lookup`/`instagram_profile` (triage has them)
-- No instruction to do triage's intake work on first sight: `add_note`
-  summary, `set_state`, `create_task`, fill missing profile fields
+- `reply` lacks `read_pages`/`maps_lookup`/`instagram_profile` (triage has
+  them) — deliberately, per the live-conversation latency tradeoff
+- No `set_state`/`create_task` intake instruction — a `triage` run alongside
+  the `reply` when `addInboundMessage` returns `leadCreated` is still the
+  clean fix if we want the full pass
 
-Cheapest close: prompt line in `reply` ("first time seeing this lead → note +
-fill fields first") — optionally a `triage` run alongside when
-`addInboundMessage` returns `leadCreated`.
-
-### 3. Reply/negotiation agent quality overhaul
+### 3. Reply/negotiation agent quality overhaul — mostly shipped
 
 The `reply`/`outreach` run kinds underperform discovery. #65 added the research
-kit and `draftOnly` copilot mode; the core gaps remain:
+kit and `draftOnly` copilot mode; the negotiation-SOTA PR adds the rest:
 
-- **Context management**: thread shows last 12 messages only; no durable
-  per-lead memory object (`agent_memory` facts are global, not lead-scoped).
-  Add a lead-scoped memory surface that runs read/write.
-- **Prompt engineering**: reply prompt is short and reactive — no negotiation
-  posture, objection handling, or goal-pressure guidance. Discovery got the
-  "field strategist" treatment (anti-patterns, finish gate); reply deserves
-  the same.
-- **Profile updating**: reply runs rarely write profile fields (fit, segment,
-  notes). Prompt + tool affordance to keep the card current after each
-  exchange.
-- **Goal updating**: `agent_goal` is set at dispatch and never revisited. A
-  lead who says "send me a proposal" while on goal=meeting should flip goals —
-  today nothing does that.
+- ~~**Context management**~~: `DOSSIÊ` block (recent notes + research
+  findings) and `PLANO` block inject into triage/reply/outreach context.
+  `leads.agent_plan` is the lead-scoped memory surface — a checklist the
+  agent writes and ticks across runs.
+- ~~**Prompt engineering**~~: reply/outreach prompts rewritten around the
+  proven staged sequence (contexto → qualificação → valor → objeções →
+  commit no OBJETIVO), with plan-write + tick discipline.
+- ~~**Profile updating**~~: prompt instructs `update_lead` on new business
+  info each exchange.
+- ~~**Goal updating**~~: `update_lead` now accepts `agentGoal` — the agent
+  flips the goal when the lead signals the other one.
+- Remaining: a deeper per-lead memory than notes+plan (structured facts
+  keyed to the lead), and a negotiation finish-gate/reflection like
+  discovery's (the run ends when the model stops, not when the checklist
+  says done).
 
 ## Worker robustness (from the run-reclaim review)
 
@@ -84,12 +85,12 @@ on a stale claim — a run reclaimed mid-`send_message` can send twice. Check
 ### 8. Follow-up cadence — primitive shipped, nothing feeds it
 
 #65 added `run_at` (delayed runs) and `firstContactDelayMin` /
-`inboundReplyDelayMin` pacing — but nothing yet schedules a _follow-up_ after a sent
-message that goes unanswered. `next_action_at` remains write-only via
-`update_lead`; `sweepOutreach` consumes it but nobody produces it. Two options:
-prompt the agent to set `nextActionAt` (existing machinery), or schedule a
-follow-up `outreach` run directly via `run_at` (probably cleaner — it flows
-through the same queue and is cancelable in Runs).
+`inboundReplyDelayMin` pacing, and the negotiation prompt now instructs
+`update_lead nextActionAt` when a sent message goes unanswered — the agent
+can produce it now. Remaining: a deterministic fallback so a cold lead gets a
+follow-up even when the model forgets to write the field — e.g. a default
+cadence stamped on send, or `run_at`-scheduled outreach instead of the lead
+column (cleaner: same queue, cancelable in Runs).
 
 ### 9. Analyst loop that acts
 
