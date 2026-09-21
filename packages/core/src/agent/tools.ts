@@ -496,9 +496,8 @@ export async function executeTool(
         // (path-segment aware, so a wa.me/message code or a ?text= full of
         // digits can't masquerade as a phone) or drop it BEFORE the channel
         // gate counts it, or a link-only card would slip through as reachable.
-        const { contactFromUrl, phoneFromText, isBrMobilePhone } = await import(
-          './channels/discovery.ts'
-        );
+        const { contactFromUrl, phoneFromText, isBrMobilePhone } =
+          await import('./channels/discovery.ts');
         for (const f of ['phone', 'whatsapp'] as const) {
           const v = payload[f];
           if (typeof v === 'string' && /wa\.me|whatsapp\.com/i.test(v)) {
