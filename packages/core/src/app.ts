@@ -1398,8 +1398,18 @@ export function createApp({ sql, sessionSecret, controlSecret }: AppDeps) {
     const cursor = c.req.query('cursor');
     let cursorCond = 'true';
     if (scheduled && cursor) {
-      const [ra, id] = cursor.split('|');
-      if (!ra || !id || !UUID_RE.test(id) || Number.isNaN(Date.parse(ra))) {
+      const parts = cursor.split('|');
+      const [ra, id] = parts;
+      const at = ra ? new Date(ra) : null;
+      if (
+        parts.length !== 2 ||
+        !ra ||
+        !id ||
+        !UUID_RE.test(id) ||
+        !at ||
+        Number.isNaN(at.getTime()) ||
+        at.toISOString() !== ra
+      ) {
         throw new HttpError(400, 'BAD_REQUEST', 'cursor must be "<run_at>|<run uuid>"');
       }
       cursorCond = `(r.run_at > ${p(ra)}::timestamptz or (r.run_at = ${p(ra)}::timestamptz and r.id > ${p(id)}::uuid))`;
