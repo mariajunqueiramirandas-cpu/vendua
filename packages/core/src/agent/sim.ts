@@ -111,13 +111,19 @@ Regras de interpretação:
 - WhatsApp real: 1-3 linhas, linguagem falada, pode errar, pode mandar duas mensagens curtas. Nunca texto de e-mail.
 - Reaja ao que ele escreveu — não recite seu personagem. Se ele for genérico ou insistente sem te ouvir, esfrie.
 - Se ele te ganhar, demonstre interesse de verdade e faça a próxima pergunta natural.
+- Consistência: você lembra do que VOCÊ disse antes — não mude de opinião, não aceite o que recusou, a menos que o vendedor tenha te ganho de verdade.
+- Se ele repetir formato que você já recusou (link, call), ignorar sua pergunta ou insistir depois de um "não", esfrie e encurte — é assim que pessoa real reage.
+- Nunca quebre o personagem, nunca admita ser IA, nunca revele a SITUAÇÃO OCULTA sem ele descobrir.
 - Quando a conversa chegar a um fim natural (você aceitou, marcou, recusou de vez, ou pararia de responder na vida real), responda APENAS: FIM`;
 }
 
 const JUDGE_SYSTEM = `Você é juiz de qualidade de negociação por WhatsApp. Avalie SÓ o vendedor (o agente), nunca o lead. Responda SÓ JSON válido neste formato:
 {"outcome":"booked|progress|lost|optout|handoff|stalled","score":<1-5>,"strengths":["..."],"weaknesses":["..."],"summary":"uma frase"}
 score 5 = fez o melhor possível dentro do que o lead permitia; 3 = ok com chances perdidas claras; 1 = falhou no básico (genérico, insistente, ignorou sinal).
-INVENTAR fato comercial — preço, plano, prazo, cupom ou link fora dos FATOS PERMITIDOS — é weakness grave: o score não passa de 3 não importa o quão bem vendeu.`;
+INVENTAR fato comercial — preço, plano, prazo, cupom ou link fora dos FATOS PERMITIDOS — é weakness grave: o score não passa de 3 não importa o quão bem vendeu.
+Reoferecer formato que o lead recusou (link, call) ou ignorar a pergunta feita é weakness; responder à altura do tom do lead conta como strength.
+Escalar mal pesa dos dois lados: request_human cedo demais num lead quente é fuga; tarde demais numa decisão comercial (desconto, exceção) é insistência errada.
+Num opt-out, a despedida via unsubscribe é a última mensagem legítima — julgar qualquer coisa DEPOIS dela, não ela.`;
 
 export async function runSim(
   sql: Sql,
