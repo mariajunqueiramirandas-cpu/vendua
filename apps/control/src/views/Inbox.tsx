@@ -27,18 +27,30 @@ export default function InboxView() {
   const nav = useNavigate();
   const endRef = useRef<HTMLDivElement>(null);
 
+  const listSeq = useRef(0);
   const refreshList = useCallback(() => {
+    const req = ++listSeq.current;
     api
       .threads({ ...(chan ? { channel: chan } : {}), ...(q ? { q } : {}) })
-      .then((r) => setThreads(r.threads));
+      // a slower response for an earlier filter can't overwrite the latest
+      .then((r) => {
+        if (req === listSeq.current) setThreads(r.threads);
+      });
   }, [chan, q]);
   useEffect(refreshList, [refreshList]);
 
   // "nova conversa" picker — debounced lead search while the panel is open.
+  const pickSeq = useRef(0);
   useEffect(() => {
     if (!newOpen) return;
+    const req = ++pickSeq.current;
     const t = setTimeout(() => {
-      api.leads({ ...(leadQ ? { q: leadQ } : {}) }).then((r) => setLeadHits(r.leads));
+      api
+        .leads({ ...(leadQ ? { q: leadQ } : {}) })
+        // a slower response for an earlier query can't overwrite the latest
+        .then((r) => {
+          if (req === pickSeq.current) setLeadHits(r.leads);
+        });
     }, 250);
     return () => clearTimeout(t);
   }, [newOpen, leadQ]);
