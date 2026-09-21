@@ -1121,64 +1121,64 @@ export async function executeTool(
         key + ':task',
       );
       // The handoff belongs on the lead's timeline too — staff reading the
-      // card sees why the agent stepped aside, not just a task title.
-      await controlTx(
-        sql,
-        (tx) => tx`
+      // card sees why the agent stepped aside, not just a task title. Claimed
+      // so a reclaimed run doesn't duplicate the note.
+      await claimControl(sql, key + ':note', async (tx) => {
+        await tx`
           insert into lead_activities (lead_id, kind, body, created_by)
           values (${leadId}, 'system', ${`Handoff para humano — ${reason}`}, 'agent')
-        `,
-      );
+        `;
+        return { status: 200, body: { noted: true } };
+      });
       return { handedOff: true };
     }
     case 'unsubscribe': {
       const leadId = String(args.leadId);
       const reason = typeof args.reason === 'string' ? args.reason.slice(0, 200) : null;
       const reply = typeof args.reply === 'string' ? args.reply.slice(0, 500) : null;
-      // The farewell goes out BEFORE unsubscribed_at lands — the send
-      // guardrail refuses unsubscribed leads, and this is the one message
-      // that must precede the flag. Claimed like send_message so a replay
-      // can't re-send the goodbye.
-      if (reply) {
-        type AckBody =
-          { sent: false; reason: string | undefined } | { sent: true; messageId: string };
-        const res = await claimControl<AckBody>(sql, key + ':ack', async (tx) => {
-          await tx`select pg_advisory_xact_lock(hashtext(${`send:${leadId}`}))`;
+      // The whole transition is ONE claimed tx holding the send:lead advisory
+      // lock: compose the farewell (lead still subscribed → guardrails pass
+      // it), stamp unsubscribed_at, write the note — all before the lock
+      // releases. A concurrent send serializes behind this claim and sees the
+      // lead already opted out; only the farewell (is_farewell) survives the
+      // dispatch suppression re-check. Replays return the recorded result.
+      type UnsubBody = { messageId: string | null; sendBlocked: string | null };
+      const res = await claimControl<UnsubBody>(sql, key, async (tx) => {
+        await tx`select pg_advisory_xact_lock(hashtext(${`send:${leadId}`}))`;
+        let messageId: string | null = null;
+        let sendBlocked: string | null = null;
+        if (reply) {
           const pick = await resolveChannelTx(tx, leadId, {
             requested: null,
             override: ctx.channelOverride,
             threadId: ctx.threadId,
           });
-          if (!pick.ok) return { status: 200, body: { sent: false as const, reason: pick.reason } };
-          const g = await getSettingTx(tx, 'guardrails', {} as Partial<Guardrails>);
-          const verdict = await checkSendAllowedTx(
-            tx,
-            { ...DEFAULT_GUARDRAILS, ...g },
-            leadId,
-            pick.channel,
-          );
-          if (!verdict.ok)
-            return { status: 200, body: { sent: false as const, reason: verdict.reason } };
-          const composed = await composeMessageTx(tx, {
-            leadId,
-            channel: pick.channel,
-            body: reply,
-            author: 'agent',
-            status: 'queued',
-            agentRunId: ctx.runId,
-          });
-          return {
-            status: 200,
-            body: { sent: true as const, messageId: composed.body.message.id },
-          };
-        });
-        if (res.body.sent && !res.replayed) {
-          await dispatchMessage(sql, res.body.messageId);
+          if (!pick.ok) {
+            sendBlocked = pick.reason ?? 'no channel';
+          } else {
+            const g = await getSettingTx(tx, 'guardrails', {} as Partial<Guardrails>);
+            const verdict = await checkSendAllowedTx(
+              tx,
+              { ...DEFAULT_GUARDRAILS, ...g },
+              leadId,
+              pick.channel,
+            );
+            if (!verdict.ok) {
+              sendBlocked = verdict.reason ?? 'guardrail';
+            } else {
+              const composed = await composeMessageTx(tx, {
+                leadId,
+                channel: pick.channel,
+                body: reply,
+                author: 'agent',
+                status: 'queued',
+                agentRunId: ctx.runId,
+                farewell: true,
+              });
+              messageId = composed.body.message.id;
+            }
+          }
         }
-      }
-      // Idempotent by construction — replays and double-fires are no-ops,
-      // and the note only writes on the transition.
-      await controlTx(sql, async (tx) => {
         const changed = await tx<{ id: string }[]>`
           update leads set unsubscribed_at = now(), updated_at = now()
           where id = ${leadId} and unsubscribed_at is null
@@ -1190,8 +1190,12 @@ export async function executeTool(
             values (${leadId}, 'system', ${`Pediu para sair — opt-out registrado${reason ? ` (${reason})` : ''}`}, 'agent')
           `;
         }
+        return { status: 200, body: { messageId, sendBlocked } };
       });
-      return { unsubscribed: true, farewellSent: !!reply };
+      if (!res.replayed && res.body.messageId) {
+        await dispatchMessage(sql, res.body.messageId);
+      }
+      return { unsubscribed: true, farewellSent: !!res.body.messageId };
     }
     case 'web_search': {
       const { discoveryFor, annotateResults } = await import('./channels/discovery.ts');

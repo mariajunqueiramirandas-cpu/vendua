@@ -271,9 +271,10 @@ export async function runSim(
   // Deterministic endings (db facts) beat the judge's guess; the judge only
   // refines the fuzzy ones (stalled/ended/progress).
   const PINNED = new Set(['optout', 'run_failed', 'booked', 'handoff']);
+  const JUDGED = new Set(['booked', 'progress', 'lost', 'optout', 'handoff', 'stalled']);
   const outcome = PINNED.has(terminal.outcome)
     ? terminal.outcome
-    : typeof judge.outcome === 'string' && judge.outcome
+    : typeof judge.outcome === 'string' && JUDGED.has(judge.outcome)
       ? judge.outcome
       : terminal.outcome;
   const score =

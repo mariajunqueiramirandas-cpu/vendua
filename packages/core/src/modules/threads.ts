@@ -47,6 +47,9 @@ export interface MessageRow {
   error: string | null;
   approved_by: string | null;
   approved_at: string | null;
+  /** Opt-out goodbye — the one message allowed to dispatch after
+   *  unsubscribed_at is set (0021). */
+  is_farewell: boolean;
   created_at: string;
 }
 
@@ -386,6 +389,9 @@ export async function composeMessage(
     /** the meeting this message belongs to — dispatch suppresses the send
      *  once that meeting is no longer 'scheduled'. */
     meetingId?: string;
+    /** Opt-out goodbye — exempt from the unsubscribed suppression at
+     *  dispatch. Only unsubscribe() sets this. */
+    farewell?: boolean;
   },
   idemKey: string,
 ): Promise<
@@ -414,6 +420,9 @@ export async function composeMessageTx(
     /** the meeting this message belongs to — dispatch suppresses the send
      *  once that meeting is no longer 'scheduled'. */
     meetingId?: string;
+    /** Opt-out goodbye — exempt from the unsubscribed suppression at
+     *  dispatch. Only unsubscribe() sets this. */
+    farewell?: boolean;
   },
 ): Promise<{
   status: number;
@@ -436,8 +445,8 @@ export async function composeMessageTx(
   const messageSubject = thread.subject;
   const message = (
     await tx<MessageRow[]>`
-      insert into lead_messages (thread_id, direction, author, body, status, agent_run_id, subject, meeting_id)
-      values (${thread.id}, 'out', ${input.author}, ${body}, ${input.status ?? 'draft'}, ${input.agentRunId ?? null}, ${messageSubject}, ${input.meetingId ?? null})
+      insert into lead_messages (thread_id, direction, author, body, status, agent_run_id, subject, meeting_id, is_farewell)
+      values (${thread.id}, 'out', ${input.author}, ${body}, ${input.status ?? 'draft'}, ${input.agentRunId ?? null}, ${messageSubject}, ${input.meetingId ?? null}, ${input.farewell ?? false})
       returning *
     `
   )[0]!;
