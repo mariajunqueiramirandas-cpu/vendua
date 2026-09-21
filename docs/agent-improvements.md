@@ -3,57 +3,61 @@
 Working list of improvements to the agent engine (`packages/core/src/agent/`),
 collected from a competitive review of Explee's AutoGTM and a walkthrough of
 our own worker. Ordered by theme; each item names the code it touches.
+Updated after the lead-pacing PR (#65): `run_at` delayed runs, reply/inbound
+pacing, research kit on triage/reply, and `draftOnly` copilot mode shipped —
+the remaining gaps are noted per item.
 
 ## Behavior changes (user-requested)
 
 ### 1. Triage on manual lead creation should be optional
 
 Today `POST /control/v1/leads` always queues a `triage` run when
-`agent_mode != 'off'` (app.ts — lead + run share one claim). Make it opt-in:
-a body flag (e.g. `triage: false`) or a guardrail setting defaulting to on/off.
-CSV import already creates leads with no run; manual add should be able to
-behave the same way.
+`agent_mode != 'off'` — and since #65 it _also_ queues a scheduled `outreach`
+run when `firstContactDelayMin > 0`. Make the automation opt-in: a body flag
+(`triage: false`) or guardrail settings covering both the triage run and the
+scheduled first-contact run. CSV import already creates leads with no run;
+manual add should be able to behave the same way.
 
-### 2. New inbound leads should get a full profile automatically
+### 2. New inbound leads should get a full profile automatically — partially done
 
-An inbound message from an unknown contact creates the lead and queues a
-`reply` run — but nothing does the orientation pass triage does on manual adds
-(`add_note` summary, `set_state`, `create_task`, profile fields). Options:
+#65 gave `reply` `serp`/`web_search`, so an inbound-triggered run can enrich
+the sender — but the orientation pass is still missing. Remaining gap:
 
-- Cheapest: teach the `reply` prompt — "first time seeing this lead →
-  `add_note` a one-line summary + fill missing profile fields first".
-- Stronger: when `addInboundMessage` returns `leadCreated: true`, enqueue a
-  `triage` run alongside the `reply` run (agent/inbound.ts).
+- `reply` lacks `read_pages`/`maps_lookup`/`instagram_profile` (triage has them)
+- No instruction to do triage's intake work on first sight: `add_note`
+  summary, `set_state`, `create_task`, fill missing profile fields
+
+Cheapest close: prompt line in `reply` ("first time seeing this lead → note +
+fill fields first") — optionally a `triage` run alongside when
+`addInboundMessage` returns `leadCreated`.
 
 ### 3. Reply/negotiation agent quality overhaul
 
-The `reply`/`outreach` run kinds underperform discovery. Concretely:
+The `reply`/`outreach` run kinds underperform discovery. #65 added the research
+kit and `draftOnly` copilot mode; the core gaps remain:
 
-- **Context management**: the run rebuilds context from scratch each turn —
-  thread shows last 12 messages only; no durable per-lead memory object
-  (agent_memory facts are global, not lead-scoped). Add a per-lead memory
-  surface (e.g. `lead_memory` or facts keyed by lead) that runs read/write.
-- **Prompt engineering**: reply prompt is short and reactive; it doesn't teach
-  negotiation posture, objection handling, or when to push the goal. Discovery
-  got the "field strategist" prompt with anti-patterns and a finish gate —
-  reply deserves the same treatment.
+- **Context management**: thread shows last 12 messages only; no durable
+  per-lead memory object (`agent_memory` facts are global, not lead-scoped).
+  Add a lead-scoped memory surface that runs read/write.
+- **Prompt engineering**: reply prompt is short and reactive — no negotiation
+  posture, objection handling, or goal-pressure guidance. Discovery got the
+  "field strategist" treatment (anti-patterns, finish gate); reply deserves
+  the same.
 - **Profile updating**: reply runs rarely write profile fields (fit, segment,
   notes). Prompt + tool affordance to keep the card current after each
   exchange.
 - **Goal updating**: `agent_goal` is set at dispatch and never revisited. A
   lead who says "send me a proposal" while on goal=meeting should flip goals —
   today nothing does that.
-- **Memory per lead**: see context item — today only global `agent_memory`
-  exists.
 
 ## Worker robustness (from the run-reclaim review)
 
 ### 4. Attempt cap + backoff for requeued runs
 
 `drain` requeues `running` runs past the 10-min lease forever — a poisoned run
-(bad params, deterministic provider crash) requeues ahead of healthy work
-(`claimRun` takes oldest first). Add `attempts`/`max_attempts` columns,
-`requeue_after = now() + 2^attempts`, then `failed`.
+requeues ahead of healthy work (`claimRun` takes oldest first). `run_at` (#65)
+is the natural primitive: add `attempts`/`max_attempts`, requeue with
+`run_at = now() + 2^attempts`, then `failed`.
 
 ### 5. Retry transient provider errors inside the run
 
@@ -63,11 +67,11 @@ the journal.
 
 ### 6. Resume from journal on reclaim
 
-A requeued run restarts from scratch: `steps` are written but never replayed
-into model context, so a reclaimed discovery run redoes the whole sweep and a
-reclaimed reply can double-contact (idempotency keys dedupe only if the model
-emits the identical call at the identical step). Replay journaled tool results
-into context on resume.
+A requeued run restarts from scratch: `steps` are kept for the monid spend
+rebuild but never replayed into model context, so a reclaimed run redoes the
+work and can double-contact (idempotency keys dedupe only if the model emits
+the identical call at the identical step). Replay journaled tool results into
+context on resume.
 
 ### 7. Fence side effects, not just journal writes
 
@@ -77,12 +81,15 @@ on a stale claim — a run reclaimed mid-`send_message` can send twice. Check
 
 ## Pipeline gaps (from the AutoGTM review)
 
-### 8. Feed `next_action_at` (follow-up cadence)
+### 8. Follow-up cadence — primitive shipped, nothing feeds it
 
-The column + `sweepOutreach` exist, but nothing writes it: no prompt tells the
-agent to schedule, no default cadence after a sent message. Add a prompt line
-("lead didn't respond → set nextActionAt") plus a per-guardrail default cadence
-after sends. This is what turns one-shot outreach into a sequence.
+#65 added `run_at` (delayed runs) and `firstContactDelayMin` /
+`inboundReplyDelayMin` pacing — but nothing yet schedules a _follow-up_ after a sent
+message that goes unanswered. `next_action_at` remains write-only via
+`update_lead`; `sweepOutreach` consumes it but nobody produces it. Two options:
+prompt the agent to set `nextActionAt` (existing machinery), or schedule a
+follow-up `outreach` run directly via `run_at` (probably cleaner — it flows
+through the same queue and is cancelable in Runs).
 
 ### 9. Analyst loop that acts
 
@@ -110,7 +117,7 @@ channel; alert (or pause sends) when the rate crosses a threshold.
 
 `fitScore` says ICP match, not buying intent. Score signals the tools already
 return (WhatsApp-active business with no ordering link, recent reviews,
-hiring posts) — vendua's high-intent tell — into a separate `intent_score`.
+hiring posts) into a separate `intent_score`.
 
 ### 14. Stale-draft regeneration
 
