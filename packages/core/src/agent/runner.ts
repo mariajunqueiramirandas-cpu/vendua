@@ -394,7 +394,9 @@ export async function runOnce(sql: Sql): Promise<boolean> {
     await controlTx(
       sql,
       (tx) => tx`
-        update agent_runs set steps = ${tx.json(steps as never[])}, finished_at = now()
+        update agent_runs set steps = ${tx.json(steps as never[])}, finished_at = now(),
+          tokens_in = ${tokensIn}, tokens_out = ${tokensOut},
+          cost_cents = ${Math.round((costUsd + (monidBudget?.spent ?? 0)) * 100)}
         where id = ${run.id} and status = 'canceled' and claim_token = ${run.claim_token}
       `,
     ).catch(() => undefined);

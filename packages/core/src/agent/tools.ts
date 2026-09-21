@@ -1194,10 +1194,12 @@ export async function executeTool(
       const addedChannels: string[] = [];
       if (args.channels && typeof args.channels === 'object') {
         for (const [k, v] of Object.entries(args.channels as Record<string, unknown>)) {
-          const val = String(v ?? '').trim();
+          const val = String(v ?? '')
+            .trim()
+            .slice(0, 200);
           const ck = k.toLowerCase().slice(0, 20);
           if (val && e.channels[ck] !== val) {
-            e.channels[ck] = val.slice(0, 200);
+            e.channels[ck] = val;
             addedChannels.push(ck);
             ctx.seenContacts.add(val);
           }
