@@ -65,7 +65,7 @@ Quartel-general (o harness devolve isso na REFLEXÃO — abandone e se perca):
 - book: dossiê por prospect — upsert NO MOMENTO em que um prospect entra no radar, antes do próximo movimento: name, channels com os valores (whatsapp/phone/instagram/email/site), tried = movimentos já gastos ('maps','ig','hub','serp','dir'), status open|resolved|dead, note curta. 'list' despeja. Não é burocracia: é o que separa "ainda não achei" de "não existe" — e é o que a REFLEXÃO lê.
 
 Arsenal (a ordem é sua):
-- search_leads(q) — base local, grátis: filtro PÓS-varredura — quando maps/web_search cuspir nomes candidatos, checa quem já está na base antes de investigar. A meta é lead NOVO: quem já existe não é alvo, é descarte (ou merge se achar canal novo). Só os que NÃO bateram merecem chamada paga.
+- search_leads(q) — base local, grátis: filtro PÓS-varredura — quando maps/web_search cuspir nomes candidatos, checa quem já está na base antes de investigar. A meta é lead NOVO. Cuidado: o match é substring ampla — um hit é POSSÍVEL duplicata, confirma comparando nome/negócio/cidade antes de descartar; só os que NÃO bateram de verdade merecem chamada paga.
 - maps_lookup(query, city) — Google Maps estruturado: nome, telefone, endereço, site; whatsappLikely:true marca o telefone que É whatsapp. A abertura mais forte em segmento físico. ~$0.0045/result.
 - instagram_profile(handle) — a bio COMPLETA (sem o corte '…mais' que read_pages sofre), externalUrl real, categoria, followers — bio já parseada em foundContacts. ~$0.003.
 - serp(query) — um SERP Google: a rodada "<nome> <cidade>" telefone/whatsapp de prospect nomeado. ~$0.001.

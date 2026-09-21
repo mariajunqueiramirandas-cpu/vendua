@@ -117,7 +117,7 @@ const REGISTRY: { def: AgentTool; toolsets: string[] }[] = [
     def: {
       name: 'search_leads',
       description:
-        'Check names against the leads already registered — free + instant. In discovery the flow is: a maps/web sweep surfaces CANDIDATE names → search_leads filters them → only the misses are real targets worth paid investigation. A hit is a known card, not a research subject. q matches name/business/instagram/email/phone/whatsapp (phone digits match normalized numbers). Returns channel flags + whatsappVerified.',
+        'Check names against the leads already registered — free + instant. In discovery the flow is: a maps/web sweep surfaces CANDIDATE names → search_leads filters them → only the misses are real targets worth paid investigation. A hit is a POSSIBLE duplicate — the match is a broad substring search, so compare the returned name/business/city against your candidate before discarding it. q matches name/business/instagram/email/phone/whatsapp (phone digits match normalized numbers). Returns channel flags + whatsappVerified.',
       parameters: {
         type: 'object',
         properties: {
@@ -485,8 +485,8 @@ export async function executeTool(
         matches,
         count: matches.length,
         next: matches.length
-          ? 'já na base — não é alvo novo; descarte do radar e siga pros que NÃO bateram'
-          : 'campo livre — prospect novo, vale a investigação paga',
+          ? 'possível registro existente — compare nome/negócio/cidade; correspondência parcial em outro campo não prova duplicata'
+          : 'nenhuma correspondência — prospect provavelmente novo, vale a investigação paga',
       };
     }
     case 'get_lead':
