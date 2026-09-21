@@ -54,6 +54,9 @@ interface RunRow {
   /** Minted at claim; every worker write is conditioned on it so a worker
    *  that loses its lease (reclaimed row) can't overwrite the new owner. */
   claim_token: string;
+  /** Journal from prior attempts — a reclaimed row keeps it; monid_spend
+   *  markers rebuild the enrichment budget so retries can't re-spend the cap. */
+  steps: unknown[];
 }
 
 /** Transaction-local insert — call inside an existing tx (e.g. claimControl's)
@@ -102,7 +105,7 @@ async function claimRun(sql: Sql): Promise<RunRow | null> {
         limit 1
         for update skip locked
       )
-      returning id, kind, lead_id, thread_id, params, claim_token
+      returning id, kind, lead_id, thread_id, params, claim_token, steps
     `;
     return rows[0] ?? null;
   });
@@ -344,7 +347,13 @@ export async function runOnce(sql: Sql): Promise<boolean> {
   // sub-cent calls and skew the run total.
   let costUsd = 0;
   // Paid-enrichment budget — hoisted beside costUsd so the catch-path
-  // finishRun can fold monid spend into the run's stored cost.
+  // finishRun can fold monid spend into the run's stored cost. A reclaimed
+  // run rebuilds from the journal's monid_spend markers — the provider
+  // re-bills whether or not the local counter survived the crash.
+  const priorSpend = (run.steps ?? []).reduce((acc, s) => {
+    const e = s as { type?: string; spentUsd?: number } | null;
+    return e?.type === 'monid_spend' && typeof e.spentUsd === 'number' ? e.spentUsd : acc;
+  }, 0);
   const monidBudget =
     run.kind === 'discovery'
       ? new MonidBudget(
@@ -353,6 +362,7 @@ export async function runOnce(sql: Sql): Promise<boolean> {
           run.params.monidCapUsd == null || !Number.isFinite(Number(run.params.monidCapUsd))
             ? 0.25
             : Math.min(5, Math.max(0, Number(run.params.monidCapUsd))),
+          priorSpend,
         )
       : null;
   // Set when the row stops matching this execution: canceled via the API, or
@@ -403,6 +413,15 @@ export async function runOnce(sql: Sql): Promise<boolean> {
       `,
     ).catch(() => undefined);
   };
+
+  // Every reserve/reconcile journals a monid_spend marker — a future
+  // retried attempt reads it back into the budget before it can re-spend.
+  if (monidBudget) {
+    monidBudget.onChange = (spent) => {
+      steps.push({ type: 'monid_spend', spentUsd: spent });
+      void persist();
+    };
+  }
 
   // A single tool/model call can outlive the 10-min lease on its own — the
   // timer keeps alive_at fresh through it, so reclaim means a dead worker,
@@ -475,8 +494,8 @@ export async function runOnce(sql: Sql): Promise<boolean> {
     let nudged = false;
     let limit = STEP_BUDGET[run.kind];
     // Last step index that produced something (lead/merge/new channel) —
-    // the reflection tick fires after enough drift past it.
-    let lastProgress = 0;
+    // starts at -1 so the first tick fires after 3 truly idle steps.
+    let lastProgress = -1;
 
     for (let i = 0; i < limit && !lost; i++) {
       const res = await provider.chat({ system, messages, tools });
@@ -558,24 +577,28 @@ export async function runOnce(sql: Sql): Promise<boolean> {
             continue;
           }
         }
-        if (run.kind === 'discovery') {
-          // debrief → agent_memory: the doctrine that makes the next run
-          // start smarter. Best-effort — never fail a finished run on it.
-          await writeDebrief(sql, run, ctx, steps).catch(() => undefined);
-        }
         // A cancel landing between the last persist and now leaves the row
         // 'canceled' — finishRun matches nothing; persistAborted's canceled-
-        // fence still stores the usage so the spend isn't lost.
+        // fence still stores the usage so the spend isn't lost. Debrief runs
+        // ONLY after a matched finish: work a staff member canceled must not
+        // leak into the next run's doctrine.
         if (
-          !(await finishRun(sql, claim, {
+          await finishRun(sql, claim, {
             status: 'done',
             steps,
             tokensIn,
             tokensOut,
             costCents: Math.round((costUsd + (monidBudget?.spent ?? 0)) * 100),
-          }))
-        )
+          })
+        ) {
+          if (run.kind === 'discovery') {
+            // debrief → agent_memory: the doctrine that makes the next run
+            // start smarter. Best-effort — never fail a finished run on it.
+            await writeDebrief(sql, run, ctx, steps).catch(() => undefined);
+          }
+        } else {
           await persistAborted();
+        }
         return true;
       }
 
@@ -643,7 +666,7 @@ export async function runOnce(sql: Sql): Promise<boolean> {
           });
           if (progressed) lastProgress = i;
           else if (i - lastProgress >= 3) {
-            const drift = i - lastProgress + 1;
+            const drift = i - lastProgress;
             lastProgress = i;
             const { queries, urls } = mineAttempts(steps);
             const reflection = `REFLEXÃO — ${drift} passos sem progresso (nenhum canal novo, lead criado ou merge).\nPlano atual: ${ctx.plan ?? '(nenhum — escreva um via plan)'}\nLivro:\n${bookDigest(ctx.book)}\nJá tentado: buscas ${
@@ -693,16 +716,21 @@ export async function runOnce(sql: Sql): Promise<boolean> {
         typeof (s as { out?: { lead?: { id?: string } } }).out?.lead?.id === 'string',
     ).length;
     if (
-      !(await finishRun(sql, claim, {
+      await finishRun(sql, claim, {
         status: 'failed',
         steps,
         tokensIn,
         tokensOut,
         costCents: Math.round((costUsd + (monidBudget?.spent ?? 0)) * 100),
         error: `max steps reached${created ? ` — ${created} lead(s) created` : ''}`,
-      }))
-    )
+      })
+    ) {
+      // A budget-exhausted run still taught the field something — its leads
+      // and dead ends belong in the doctrine too.
+      if (run.kind === 'discovery') await writeDebrief(sql, run, ctx, steps).catch(() => undefined);
+    } else {
       await persistAborted();
+    }
     return true;
   } catch (e) {
     if (

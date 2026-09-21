@@ -97,8 +97,16 @@ export async function monidRun(
  *  the reported cost after it settles. A failed call keeps the reservation:
  *  monid may still bill an accepted run. */
 export class MonidBudget {
-  spent = 0;
-  constructor(private capUsd: number) {}
+  spent: number;
+  /** Invoked whenever spend moves — the runner journals it so a reclaimed
+   *  run's next attempt rebuilds the balance instead of re-spending the cap. */
+  onChange?: (spent: number) => void;
+  constructor(
+    private capUsd: number,
+    startSpent = 0,
+  ) {
+    this.spent = startSpent;
+  }
   cap(): number {
     return this.capUsd;
   }
@@ -109,8 +117,10 @@ export class MonidBudget {
       );
     }
     this.spent += estimateUsd;
+    this.onChange?.(this.spent);
   }
   reconcile(estimateUsd: number, actualUsd: number): void {
     this.spent += actualUsd - estimateUsd;
+    this.onChange?.(this.spent);
   }
 }

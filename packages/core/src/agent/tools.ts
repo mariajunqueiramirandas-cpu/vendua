@@ -490,6 +490,10 @@ export async function executeTool(
       // leadInsert/leadPatch never see them.
       delete payload.findings;
       delete payload.sources;
+      // true when whatsapp was auto-filled from a mobile phone — reachable,
+      // but NOT verified whatsapp evidence; the autocontact gate must not
+      // treat it as a confirmed wa.me channel.
+      let whatsappDerived = false;
       if (ctx.runKind === 'discovery') {
         // A wa.me/whatsapp URL pasted into phone/whatsapp is a channel
         // mention, not a dialable number — resolve it through contactFromUrl
@@ -543,13 +547,14 @@ export async function executeTool(
         // A BR mobile IS whatsapp-reachable — maps listings and directories
         // print "phone" for what is the whatsapp line. Fill the channel when
         // the model left it empty instead of shipping a wa-less lead that the
-        // finish gate then has to recover.
-        if (
+        // finish gate then has to recover. Marked derived so the autocontact
+        // gate keeps requiring REAL whatsapp evidence (wa.me/api.whatsapp.com,
+        // or an explicit whatsapp arg) — a maps phone is eligible, not proven.
+        whatsappDerived =
           !payload.whatsapp &&
           typeof payload.phone === 'string' &&
-          isBrMobilePhone(payload.phone)
-        )
-          payload.whatsapp = payload.phone;
+          isBrMobilePhone(payload.phone);
+        if (whatsappDerived) payload.whatsapp = payload.phone;
         // The bar for a discovered lead, enforced where the prompt can't be
         // talked around: it must carry a research dossier AND a reachable
         // channel — a name-only row is a dead card on the board.
@@ -740,7 +745,13 @@ export async function executeTool(
             // switched its agent off ('off' is a human veto, never override),
             // and no outreach is already live for it.
             const dupScore = (set.fit_score ?? dup.fit_score) as number | null;
-            const dupWa = String(set.whatsapp ?? dup.whatsapp ?? '').trim();
+            // A derived whatsapp only filled a gap — it can't unlock the
+            // autocontact gate by itself; an existing verified one still can.
+            const dupWa = String(dup.whatsapp ?? '').trim()
+              ? String(dup.whatsapp).trim()
+              : whatsappDerived
+                ? ''
+                : String(set.whatsapp ?? '').trim();
             const dupContact =
               gateFires(dupScore, dupWa) &&
               dup.state === 'lead' &&
@@ -794,7 +805,10 @@ export async function executeTool(
         // + an outreach run queued in the same claim. The send still obeys
         // the messaging guardrails (firstContactDraftOnly → approval queue).
         const newScore = typeof input.fit_score === 'number' ? input.fit_score : null;
-        const autoContact = gateFires(newScore, String(input.whatsapp ?? '').trim());
+        const autoContact = gateFires(
+          newScore,
+          whatsappDerived ? '' : String(input.whatsapp ?? '').trim(),
+        );
         if (autoContact) input.agent_mode = 'auto';
         const created = await insertLeadTx(tx, input);
         await writeFindings(created.body.lead.id as string);
