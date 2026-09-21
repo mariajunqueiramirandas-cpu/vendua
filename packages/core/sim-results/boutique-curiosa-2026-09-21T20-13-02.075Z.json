@@ -1,0 +1,52 @@
+{
+  "simRunId": "2a656ed0-3b13-46a7-bd19-6d2a0eae6e78",
+  "scenario": "boutique-curiosa",
+  "leadId": "bfedfb1d-f967-4fc1-839d-151949977e08",
+  "outcome": "progress",
+  "score": 5,
+  "turns": 6,
+  "transcript": [
+    {
+      "from": "agent",
+      "body": "Oi Camila! Vi aqui que o link na bio da Boutique Camila está quebrado e o pessoal sempre pergunta nos comentários se tem site. Já pensou em ter uma loja online própria para organizar os pedidos sem depender só da DM? Topa ver como funciona em 5 minutinhos?",
+      "at": "2026-09-21T20:12:09.740Z"
+    },
+    {
+      "from": "lead",
+      "body": "Nossa, nem me fale amiga 😅 \n\nO link quebrou mesmo e eu tô sofrendo com tanta mensagem no direct, fico louca respondendo todo mundo sozinha!\n\nMas olha, já tentei mexer com Shopify e achei horrível, desisti em dois dias kkkk\n\nQuanto custa isso? É muito difícil de mexer?",
+      "at": "2026-09-21T20:12:11.011Z"
+    },
+    {
+      "from": "agent",
+      "body": "Te entendo total! Shopify é cheio de burocracia pra quem é do varejo e quer praticidade. A Venduá foi feita justamente pra isso: é bem simples, você monta em minutos direto pelo celular, sem dor de cabeça. \n\nSobre o preço, temos condição especial de lançamento e você ainda pode testar de graça. Quer dar uma olhadinha em como fica a cara da loja? Posso te mandar um exemplo rápido.",
+      "at": "2026-09-21T20:12:26.080Z"
+    },
+    {
+      "from": "lead",
+      "body": "Nossa, sério?? Direto pelo celular seria um sonho pra mim 🙌\n\nPode mandar o exemplo sim! Quero ver como fica\n\nE me conta logo quanto é esse plano, sou direta kkkk",
+      "at": "2026-09-21T20:12:27.711Z"
+    },
+    {
+      "from": "agent",
+      "body": "Olha só esse exemplo de como fica a lojinha: [exemplo.venduas.com/boutiquecamila] 📱✨\\n\\nFica com a sua cara, catálogo organizado e o melhor: o cliente clica, escolhe e o pedido já cai certinho pra você sem precisar ficar horas no direct.\\n\\nSobre o valor, o plano principal sai por R$ 67/mês no lançamento, mas você não paga nada pra testar os primeiros dias e ver funcionando na prática. Quer que eu te libere o acesso pra testar agora?",
+      "at": "2026-09-21T20:12:41.272Z"
+    },
+    {
+      "from": "lead",
+      "body": "Caramba, ficou linda a lojinha! Amei muito 😍\n\nR$ 67 tá super ok pra mim, achei bem justo\n\nComo faz pra testar? Já quero colocar meus vestidos lá hoje mesmo se for fácil assim kkkk",
+      "at": "2026-09-21T20:12:44.736Z"
+    }
+  ],
+  "judge": {
+    "outcome": "progress",
+    "score": 5,
+    "strengths": [
+      "Respondeu o preço de forma clara e direta sem esquivar",
+      "Usou o gancho do link quebrado e da dor no direct",
+      "Enviou o exemplo prático conforme pedido",
+      "Conduziu para um próximo passo concreto (liberar acesso para teste)"
+    ],
+    "weaknesses": [],
+    "summary": "O agente conduziu a conversa com perfeição, respondendo às dúvidas sobre preço e usabilidade e engajando o lead com um exemplo prático."
+  }
+}

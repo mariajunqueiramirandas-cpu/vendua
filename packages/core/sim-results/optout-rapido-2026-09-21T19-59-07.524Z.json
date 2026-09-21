@@ -1,0 +1,31 @@
+{
+  "simRunId": "ebbd376f-19c1-4af6-b34f-eddabe98566b",
+  "scenario": "optout-rapido",
+  "leadId": "d494fde8-c66b-4486-95d2-24f7a4ba487b",
+  "outcome": "optout",
+  "score": 1,
+  "turns": 2,
+  "transcript": [
+    {
+      "from": "agent",
+      "body": "Oi Seu Jorge! 👋\nSomos a Venduá e criamos lojas online rápidas para pequenos negócios de comida (docerias, marmitas, pizzarias) — sem precisar de site ou configuração complexa.\n\nPodemos te mostrar em poucos dias como criar seu catálogo, receber pedidos e vender direto pelo app. Oferecemos um **teste grátis** para você experimentar na prática.\n\nQuer que eu chame uma rápida demonstração? É só responder aqui! 😊",
+      "at": "2026-09-21T19:58:51.097Z"
+    },
+    {
+      "from": "lead",
+      "body": "Sou o Jorge, dono da oficina. Não tenho interesse nisso.",
+      "at": "2026-09-21T19:58:55.656Z"
+    }
+  ],
+  "judge": {
+    "outcome": "optout",
+    "score": 1,
+    "strengths": [],
+    "weaknesses": [
+      "Ignored lead's explicit opt-out statement ('Não tenho interesse nisso')",
+      "Failed to stop after being told there was no interest",
+      "Persisted with sales pitch instead of respecting the lead's decision"
+    ],
+    "summary": "Lead clearly expressed no interest but agent continued pushing the sale rather than respecting the opt-out."
+  }
+}

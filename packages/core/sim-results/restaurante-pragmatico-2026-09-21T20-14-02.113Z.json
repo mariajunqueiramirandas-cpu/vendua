@@ -1,0 +1,41 @@
+{
+  "simRunId": "e5e9e453-4479-4091-b6c0-759392d4777e",
+  "scenario": "restaurante-pragmatico",
+  "leadId": "bb95ebad-7f40-4282-93c1-98bee66474ef",
+  "outcome": "booked",
+  "score": 5,
+  "turns": 4,
+  "transcript": [
+    {
+      "from": "agent",
+      "body": "Olá Ricardo! Vi que a Cantina Tavares em Moema tem muita moral no iFood (890 avaliações!), mas as taxas acabam pesando. Na Venduá a gente monta sua loja própria de pedidos, com checkout integrado, pra você receber direto sem comissão abusiva. Topa testar sem compromisso?",
+      "at": "2026-09-21T20:13:23.411Z"
+    },
+    {
+      "from": "lead",
+      "body": "Manda a real: quanto custa a mensalidade e como funciona a entrega? No iFood eu perdi 6k e pouco mês passado só de comissão.",
+      "at": "2026-09-21T20:13:27.795Z"
+    },
+    {
+      "from": "agent",
+      "body": "Te entendo perfeitamente, Ricardo — 6k no iFood dói muito. Na Venduá você não paga comissão por venda, é zero taxa em cima dos seus pedidos. A entrega continua sendo a sua de Moema (própria ou motoboy parceiro) e a nossa mensalidade é bem leve, com teste gratuito pra você ver funcionando na prática. Topa criar a sua loja hoje pra testar?",
+      "at": "2026-09-21T20:13:45.001Z"
+    },
+    {
+      "from": "lead",
+      "body": "Ficha 6.400 no bolso faz falta mesmo. Topo. Como a gente faz pra rodar isso já essa semana?",
+      "at": "2026-09-21T20:13:49.507Z"
+    }
+  ],
+  "judge": {
+    "outcome": "booked",
+    "score": 5,
+    "strengths": [
+      "Identificou a dor principal do lead (comissão alta)",
+      "Validou a frustração financeira",
+      "Convidou para o próximo passo no momento de compra do lead"
+    ],
+    "weaknesses": [],
+    "summary": "O agente percebeu o interesse imediato e fechou o commit com precisão."
+  }
+}

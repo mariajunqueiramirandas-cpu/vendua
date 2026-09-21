@@ -49,6 +49,11 @@ async function req<T>(path: string, init: RequestInit = {}): Promise<T> {
 }
 
 // ---------- types ----------
+export interface AgentPlanStep {
+  step: string;
+  status: 'todo' | 'done' | 'skip';
+  note: string | null;
+}
 export interface Lead {
   id: string;
   name: string;
@@ -67,6 +72,7 @@ export interface Lead {
   state: 'lead' | 'contacted' | 'invited' | 'live';
   agentMode: 'off' | 'draft' | 'auto';
   agentGoal: 'negotiation' | 'meeting';
+  agentPlan: AgentPlanStep[];
   fitScore: number | null;
   fitReason: string | null;
   emailBouncedAt: string | null;

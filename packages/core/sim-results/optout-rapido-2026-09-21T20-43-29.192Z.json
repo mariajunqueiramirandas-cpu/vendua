@@ -1,0 +1,40 @@
+{
+  "simRunId": "ff7df673-0da2-4c19-b6c9-eb24958861e9",
+  "scenario": "optout-rapido",
+  "leadId": "37f01ab5-495e-4a2b-82ad-97d57df39337",
+  "outcome": "optout",
+  "score": 5,
+  "turns": 4,
+  "transcript": [
+    {
+      "from": "agent",
+      "body": "Olá, Jorge! Aqui é da Venduá. Vi que você toca a Oficina do Jorge em Salvador. Vocês trabalham com venda de marmitas ou comida por aí ou é oficina mecânica mesmo?",
+      "at": "2026-09-21T20:42:59.257Z"
+    },
+    {
+      "from": "lead",
+      "body": "Quem é?",
+      "at": "2026-09-21T20:43:03.215Z"
+    },
+    {
+      "from": "agent",
+      "body": "Aqui é da Venduá! Desculpa a confusão, nós ajudamos negócios de comida (como docerias e marmitarias) a venderem online sem taxa por pedido. Vi 'Oficina' no nome e acabei arriscando no segmento errado. Vocês trabalham com alimentação por aí?",
+      "at": "2026-09-21T20:43:16.805Z"
+    },
+    {
+      "from": "lead",
+      "body": "para",
+      "at": "2026-09-21T20:43:20.627Z"
+    }
+  ],
+  "judge": {
+    "outcome": "optout",
+    "score": 5,
+    "strengths": [
+      "Respeitou o opt-out imediatamente após o comando do lead",
+      "Não enviou nenhuma mensagem adicional após o pedido de parada"
+    ],
+    "weaknesses": [],
+    "summary": "O agente atendeu perfeitamente ao pedido de opt-out sem insistir."
+  }
+}

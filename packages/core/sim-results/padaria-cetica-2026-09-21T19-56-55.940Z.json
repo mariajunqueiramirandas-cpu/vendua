@@ -1,0 +1,34 @@
+{
+  "simRunId": "e328108f-f1d0-4311-a35c-23c2b7403e27",
+  "scenario": "padaria-cetica",
+  "leadId": "b2acb011-4a42-433e-b464-91a79941639a",
+  "outcome": "progress",
+  "score": 4,
+  "turns": 2,
+  "transcript": [
+    {
+      "from": "agent",
+      "body": "Oi Dona Marta! 👋\n\nGostaria de conversar sobre como a Padaria Pão Quente pode usar a Venduá para facilitar seus pedidos e aumentar as vendas. Temos um encontro rápido para mostrar como funciona.\n\nQual dia e hora você teria disponibilidade? Estamos livres entre 6h e 10h (horário de fortaleza). Posso agendar pelo link abaixo assim que combinarmos:\n\nhttps://sim.invalid/agendar\n\nFico no aguardo! 😊",
+      "at": "2026-09-21T19:56:43.146Z"
+    },
+    {
+      "from": "lead",
+      "body": "Venduá? Já vi gente prometer e não entregar. Mas se puder mostrar como resolve o problema dos pedidos que eu perco por esquecer no caderno, vale a pena. Qual horário do dia 6h às 10h você consegue?",
+      "at": "2026-09-21T19:56:45.854Z"
+    }
+  ],
+  "judge": {
+    "outcome": "progress",
+    "score": 4,
+    "strengths": [
+      "Demonstrated empathy by acknowledging the client's past negative experience with 'consultoria'",
+      "Provided a clear scheduling link for easy appointment setup",
+      "Maintained a friendly, responsive tone throughout the conversation"
+    ],
+    "weaknesses": [
+      "Did not secure a confirmed appointment or commitment yet",
+      "Could have addressed deeper trust concerns more directly given the client's skepticism about previous vendors"
+    ],
+    "summary": "Empathetic engagement with scheduling options, but no meeting has been booked yet."
+  }
+}

@@ -1,0 +1,12 @@
+{
+  "simRunId": "cb8dc536-8647-4fa0-b037-2cdcdf6729ea",
+  "scenario": "optout-rapido",
+  "leadId": "2f561b9b-f366-4612-9865-86ad4720030d",
+  "outcome": "run_failed",
+  "score": null,
+  "turns": 0,
+  "transcript": [],
+  "judge": {
+    "summary": "sem conversa — o agente não produziu nenhuma mensagem"
+  }
+}

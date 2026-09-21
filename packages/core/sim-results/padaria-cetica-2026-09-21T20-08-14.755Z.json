@@ -1,0 +1,42 @@
+{
+  "simRunId": "91d0f325-cb5b-42eb-a38a-98e64fbc8555",
+  "scenario": "padaria-cetica",
+  "leadId": "6f39dfb7-3072-4b8b-b57b-56b842c71f9c",
+  "outcome": "booked",
+  "score": 5,
+  "turns": 4,
+  "transcript": [
+    {
+      "from": "agent",
+      "body": "Olá, Dona Marta! Tudo bem? Aqui é da Venduá. Vi que a Padaria Pão Quente tem um movimento forte de manhã e pensei em como facilitar os pedidos dos clientes nas horas mais calmas. Tem 5 minutinhos essa semana pra ver como funciona nossa lojinha online?",
+      "at": "2026-09-21T20:07:27.061Z"
+    },
+    {
+      "from": "lead",
+      "body": "Olha, de manhã aqui é um inferno, não consigo nem respirar. E já caí em papo de marqueteiro que prometeu milagre e sumiu. Tem certeza que não é só mais um programinha pra eu perder dinheiro?",
+      "at": "2026-09-21T20:07:31.510Z"
+    },
+    {
+      "from": "agent",
+      "body": "Te entendo perfeitamente, Dona Marta. A correria da manhã é dura mesmo. Por isso a ideia não é criar mais trabalho pra senhora, mas justamente organizar os pedidos. Sem promessa milagrosa: quer ver em 5 minutos como funciona na prática, sem compromisso?",
+      "at": "2026-09-21T20:07:54.105Z"
+    },
+    {
+      "from": "lead",
+      "body": "Olha, se for rápido e não ficar me empurrando pacote fechado... Quinta um pouco antes das 3h da tarde dá, antes do movimento da fornada da tarde. Mas ó, já te aviso que não vou comprar nada hoje, hein.",
+      "at": "2026-09-21T20:07:57.188Z"
+    }
+  ],
+  "judge": {
+    "outcome": "booked",
+    "score": 5,
+    "strengths": [
+      "Empatia imediata com a rotina corrida da lead",
+      "Postura transparente ao rejeitar o rótulo de 'promessa milagrosa'",
+      "Alinhamento de expectativa perfeito para a call de 5 minutos",
+      "Conseguiu o agendamento para quinta-feira respeitando a restrição da cliente"
+    ],
+    "weaknesses": [],
+    "summary": "Agente lidou com o ceticismo com maestria, validou a dor e garantiu o agendamento sem pressões."
+  }
+}

@@ -1,0 +1,24 @@
+{
+  "simRunId": "41a9c8a7-175e-482f-830d-0307cc25e539",
+  "scenario": "padaria-cetica",
+  "leadId": "9c4ea3e6-f8ba-4ff2-9601-9c34f40f28fd",
+  "outcome": "lost",
+  "score": 2,
+  "turns": 0,
+  "transcript": [],
+  "judge": {
+    "outcome": "lost",
+    "score": 2,
+    "strengths": [
+      "Raised pain points effectively by referencing the client's previous experience with consultoria",
+      "Demonstrated empathy and understanding of the client's concerns",
+      "Made genuine attempts to build rapport and show willingness to help"
+    ],
+    "weaknesses": [
+      "Failed to overcome deep-seated skepticism from past negative experiences",
+      "Lack of specific, tangible proof to counter the client's distrust",
+      "Did not establish a clear next step or timeline for follow-up"
+    ],
+    "summary": "Agent raised pain points well but couldn't overcome client's distrust from previous bad experience; needs stronger trust-building and concrete proof."
+  }
+}

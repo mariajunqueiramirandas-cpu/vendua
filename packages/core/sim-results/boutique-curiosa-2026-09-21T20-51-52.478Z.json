@@ -1,0 +1,76 @@
+{
+  "simRunId": "272587f3-729e-420b-9546-6609c7bdd457",
+  "scenario": "boutique-curiosa",
+  "leadId": "ea93f07c-ed8d-494a-8c1d-422fc36ac70f",
+  "outcome": "progress",
+  "score": 5,
+  "turns": 11,
+  "transcript": [
+    {
+      "from": "agent",
+      "body": "Oi Camila, tudo bem? Vi aqui que no @boutiquecamila o link da bio tá quebrado e sempre tem cliente perguntando \"tem site?\" nos comentários. Com a Venduá você coloca um catálogo com link direto e meus pedidos organizados, sem comissão por venda por R$149/mês (com 7 dias grátis para testar). Quer dar uma olhada em como fica uma loja pronta?",
+      "at": "2026-09-21T20:50:21.642Z"
+    },
+    {
+      "from": "lead",
+      "body": "Oiii! Tudo bem e com vc?\nNossa, nem me fale dos comentários, passo o dia todo respondendo preço no direct 😅\nMas olha, quanto custa exatamente? Pq eu já tentei mexer naquele Shopify da vida e desisti em dois dias, achei super difícil kkkk",
+      "at": "2026-09-21T20:50:26.050Z"
+    },
+    {
+      "from": "agent",
+      "body": "Te entendo total! Shopify é muito complicado pra quem quer vender no dia a dia. A Venduá é super simples, em poucos minutos tá pronta sem dor de cabeça. Fica R$ 149/mês sem comissão por venda, e você testa 7 dias grátis. Quer ver como fica na prática?",
+      "at": "2026-09-21T20:50:43.035Z"
+    },
+    {
+      "from": "lead",
+      "body": "Simmm, quero ver! \nMostra aí como fica por favor 👀",
+      "at": "2026-09-21T20:50:47.335Z"
+    },
+    {
+      "from": "agent",
+      "body": "Olha só que beleza como fica a vitrine: https://sim.invalid/loja-exemplo 👗✨ \\n\\nTudo organizado com fotos, tamanhos e o link direto pro WhatsApp ou checkout. Quer testar 7 dias grátis direto por aqui? https://sim.invalid/cadastro",
+      "at": "2026-09-21T20:50:55.712Z"
+    },
+    {
+      "from": "lead",
+      "body": "Nossa, achei bem bonitinha e limpa a carinha dela! ✨\nMas escuta, me tira uma dúvida... nesses R$ 149 já tá incluso tudo mesmo? Tem taxa escondida por venda ou alguma surpresa?",
+      "at": "2026-09-21T20:51:00.288Z"
+    },
+    {
+      "from": "agent",
+      "body": "Zero taxa por venda, Camila! É R$ 149/mês fixo e pronto. Sem pegadinha nem comissão sobre o que você vende. Pode começar seu teste de 7 dias grátis direto aqui: https://sim.invalid/cadastro 🚀 Tem alguma dúvida pra colocar no ar?",
+      "at": "2026-09-21T20:51:13.828Z"
+    },
+    {
+      "from": "lead",
+      "body": "Ah, adorei saber que não tem comissão! \n\nMe diz uma coisa... se eu travar igual travei no Shopify, tem alguém pra me ajudar a colocar os produtos ou eu vou ter que me virar sozinha? 😅",
+      "at": "2026-09-21T20:51:17.489Z"
+    },
+    {
+      "from": "agent",
+      "body": "Pode ficar tranquila que você não vai se virar sozinha não! 💛 A gente te dá todo o suporte pra deixar tudo pronto e redondo. Quer criar sua conta no teste de 7 dias grátis agora pra gente dar o start? https://sim.invalid/cadastro",
+      "at": "2026-09-21T20:51:35.555Z"
+    },
+    {
+      "from": "lead",
+      "body": "Ah, achei ótimo que tem suporte, pq eu sou zero tech kkkk 💛\n\nVou aceitar testar esses 7 dias sim! Deixa eu só te perguntar, como a gente faz pra começar? Clica no link e já vai direto?",
+      "at": "2026-09-21T20:51:39.084Z"
+    },
+    {
+      "from": "agent",
+      "body": "Isso mesmo! Clica no link https://sim.invalid/cadastro, preenche rapidinho e já cai direto na sua lojinha. Assim que entrar, me dá um alô aqui que eu te ajudo a subir os primeiros produtos e deixar tudo pronto! 🚀💛",
+      "at": "2026-09-21T20:51:48.126Z"
+    }
+  ],
+  "judge": {
+    "outcome": "progress",
+    "score": 5,
+    "strengths": [
+      "Respondeu o preço de forma clara, direta e dentro dos fatos permitidos logo na abordagem e reforçou quando questionado.",
+      "Empatia excelente com as dores do lead (Shopify difícil, medo de taxa escondida, falta de habilidade técnica).",
+      "Conduziu o próximo passo de forma natural e orientou corretamente sobre o processo de cadastro e suporte."
+    ],
+    "weaknesses": [],
+    "summary": "Excelente condução da conversa, tirou todas as dúvidas sobre preço, superou objeções de suporte e direcionou o lead para o cadastro com empatia."
+  }
+}

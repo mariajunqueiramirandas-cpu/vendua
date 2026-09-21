@@ -1,0 +1,63 @@
+{
+  "simRunId": "a874fe61-847b-4a65-a9d9-8d89daed089e",
+  "scenario": "padaria-cetica",
+  "leadId": "0fde1c20-308a-46c0-83a7-a269d6f91669",
+  "outcome": "progress",
+  "score": 4,
+  "turns": 8,
+  "transcript": [
+    {
+      "from": "agent",
+      "body": "Olá, Dona Marta! Tudo bem? Aqui é da Venduá. Vi que a Padaria Pão Quente tem um movimento ótimo aí no Centro de Fortaleza. Como vocês estão lidando com encomendas e pedidos por WhatsApp ou delivery hoje em dia?",
+      "at": "2026-09-21T19:55:09.251Z"
+    },
+    {
+      "from": "lead",
+      "body": "Tudo bem corrido por aqui. Anoto tudo no caderno mesmo, whatsapp é só dor de cabeça com cliente mudando de ideia em cima da hora. O que vcs vendem?",
+      "at": "2026-09-21T19:55:09.971Z"
+    },
+    {
+      "from": "agent",
+      "body": "Imagino, Dona Marta! Caderno e WhatsApp tradicional dão um trabalho danado com alterações de última hora. A Venduá resolve justamente isso: a gente cria uma lojinha online própria para a Pão Quente, com cardápio organizado onde o cliente faz o pedido certinho, sem confusão. Posso te mostrar em 10 minutinhos como funciona? Temos horário livre essa semana.",
+      "at": "2026-09-21T19:55:16.022Z"
+    },
+    {
+      "from": "lead",
+      "body": "Outra lojinha online? Paguei um rapaz ano passado que sumiu depois que pegou o dinheiro. Não tenho tempo pra ficar mexendo em site não, aqui o balcão não para.",
+      "at": "2026-09-21T19:55:16.775Z"
+    },
+    {
+      "from": "agent",
+      "body": "Entendo perfeitamente, Dona Marta! É bem frustrante quando prometem algo e somem. A Venduá é bem diferente justamente porque a gente monta tudo para a senhora e dá todo o suporte, a senhora não mexe em código nem perde tempo. E como a senhora não pára no balcão, a demonstração leva só 10 minutinhos e a gente encaixa no horário que for melhor pra senhora, sem compromisso. Que tal amanhã no final da tarde, quando acalma um pouco?",
+      "at": "2026-09-21T19:55:22.152Z"
+    },
+    {
+      "from": "lead",
+      "body": "Amanhã no fim da tarde fecha o caixa, é hora de limpeza. Tem que ser bem cedo, antes das 7h, ou meio dia e meia. \n\nMas ó, não vou comprar nada hoje, hein? Meu filho enche o saco pra vender bolo por zap, mas tenho medo de me enrolar.",
+      "at": "2026-09-21T19:55:23.105Z"
+    },
+    {
+      "from": "agent",
+      "body": "Fique tranquila, Dona Marta! Sem compromisso nenhum, é só para conhecer sem pressão. Meio-dia e meia fica ótimo! Para garantir o horário certinho, é só escolher aqui: https://sim.invalid/agendar 🍞",
+      "at": "2026-09-21T19:55:27.290Z"
+    },
+    {
+      "from": "lead",
+      "body": "Não vou clicar em link. Me passa o zap direto que te chamo meio-dia e meia amanhã.",
+      "at": "2026-09-21T19:55:27.761Z"
+    }
+  ],
+  "judge": {
+    "outcome": "progress",
+    "score": 4,
+    "strengths": [
+      "Validou a dor do caderno e WhatsApp tradicional",
+      "Respondeu ao ceticismo com empatia e proposta prática de suporte",
+      "Flexibilizou o horário para atender a rotina da cliente"
+    ],
+    "weaknesses": [
+      "Insistiu em enviar link após a cliente demonstrar resistência em clicar"
+    ],
+    "summary": "Agente conduziu bem a conversa vencendo objeções, mas falhou ao enviar link após sinal de alerta da lead."
+  }
+}

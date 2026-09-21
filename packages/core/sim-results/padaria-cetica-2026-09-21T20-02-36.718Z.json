@@ -1,0 +1,53 @@
+{
+  "simRunId": "52295313-e8fd-4d66-89cb-6edf56de3241",
+  "scenario": "padaria-cetica",
+  "leadId": "190d7959-c78a-48e2-9e42-2b9171cdbb7d",
+  "outcome": "progress",
+  "score": 4,
+  "turns": 6,
+  "transcript": [
+    {
+      "from": "agent",
+      "body": "Olá, Dona Marta! Tudo bem? Aqui é da Venduá. Vi que a Pão Quente tem um movimento forte de manhã cedo no Centro de Fortaleza. Como estão as encomendas e pedidos à tarde por aí? Tem 10 minutinhos essa semana para conversarmos sobre como facilitar os pedidos no WhatsApp?",
+      "at": "2026-09-21T20:02:11.715Z"
+    },
+    {
+      "from": "lead",
+      "body": "olha moço, 10 minutos de manhã eu não tenho nem pra respirar. e marketing milagroso eu já paguei e levei golpe. o que vocês vendem afinal?",
+      "at": "2026-09-21T20:02:12.630Z"
+    },
+    {
+      "from": "agent",
+      "body": "Te entendo perfeitamente, Dona Marta! A gente não é agência de marketing, viu? O que a Venduá faz é montar uma paginazinha simples com o seu cardápio para os clientes escolherem e mandarem o pedido direto no seu WhatsApp sem bagunça. Sem mensalidade abusiva e sem promessa milagrosa. \\n\\nPara te mostrar como funciona na prática em 5 minutinhos (num horário mais calmo seu, claro), dá uma olhada aqui se algum horário dessa semana fica bom para a senhora: https://sim.invalid/agendar",
+      "at": "2026-09-21T20:02:18.677Z"
+    },
+    {
+      "from": "lead",
+      "body": "olha, link eu nem abro porque meu celular trava. e 5 minutos meu à tarde é pra limpar o balcão. \nmas me explica aqui mesmo: como é que isso evita de eu esquecer encomenda que o povo anota no caderno?",
+      "at": "2026-09-21T20:02:19.540Z"
+    },
+    {
+      "from": "agent",
+      "body": "Faz todo sentido, Dona Marta, o caderno acaba acumulando e confunde mesmo. \\n\\nFunciona assim: o cliente clica no seu cardápio online, escolhe o que quer (tipo os pães e bolos encomendados) e o pedido já chega organizado certinho no seu WhatsApp com o nome dele, horário e tudo anotado. Acaba aquela bagunça de ficar catando mensagem antiga ou perdendo anotação no papel. \\n\\nO que a senhora acha de ver isso funcionando num videozinho rápido direto aqui no WhatsApp, sem precisar de link nem de app pesado?",
+      "at": "2026-09-21T20:02:27.082Z"
+    },
+    {
+      "from": "lead",
+      "body": "ah, no whatsapp fica bom. meu filho fica no meu juízo pra eu começar a vender bolo de aniversário por aqui com pix adiantado, mas do jeito que tá é uma confusão só. \n\nmanda esse vídeo aí pra eu ver como é.",
+      "at": "2026-09-21T20:02:28.098Z"
+    }
+  ],
+  "judge": {
+    "outcome": "progress",
+    "score": 4,
+    "strengths": [
+      "Desarmou o ceticismo rapidamente explicando o que o produto faz sem promessas falsas",
+      "Adaptou-se à restrição da lead (recusa de links) oferecendo um vídeo direto no WhatsApp",
+      "Validou a dor do caderno e da desorganização de forma empática"
+    ],
+    "weaknesses": [
+      "Poderia ter validado a oportunidade do bolo de aniversário com PIX adiantado antes de encerrar"
+    ],
+    "summary": "O agente contornou o ceticismo e a recusa de links, adaptando-se para enviar um vídeo demonstrativo no WhatsApp."
+  }
+}

@@ -1,0 +1,76 @@
+{
+  "simRunId": "0f2199cf-a782-4ff4-b067-73626b602f81",
+  "scenario": "padaria-cetica",
+  "leadId": "4e4b56c7-5a33-4924-ba70-53c21d4bfdb1",
+  "outcome": "booked",
+  "score": 5,
+  "turns": 11,
+  "transcript": [
+    {
+      "from": "agent",
+      "body": "Olá, Dona Marta! Tudo bem? Vi que a Pão Quente tem um movimento ótimo em Fortaleza. Como a senhora tem lidado com os pedidos por WhatsApp e delivery no dia a dia?",
+      "at": "2026-09-21T20:48:17.304Z"
+    },
+    {
+      "from": "lead",
+      "body": "Uso o celular quando dá, fico no balcão o dia todo. Que que você quer vender?",
+      "at": "2026-09-21T20:48:21.563Z"
+    },
+    {
+      "from": "agent",
+      "body": "Imrego aqui da Venduá, Dona Marta! A gente ajuda padarias a terem uma lojinha própria com catálogo digital. Como a senhora fica no balcão o dia todo, os clientes conseguem fazer os pedidos sozinhos pelo link, sem travar o seu WhatsApp. Posso te mostrar rapidinho como funciona em 10 minutinhos?",
+      "at": "2026-09-21T20:48:39.641Z"
+    },
+    {
+      "from": "lead",
+      "body": "Já gastei dinheiro com esses negócio de internet que não adianta nada pra quem tá no balcão. E outra, o problema aqui não é cliente pedir, é o tanto de encomenda que se perde no caderno de manhã.",
+      "at": "2026-09-21T20:48:43.077Z"
+    },
+    {
+      "from": "agent",
+      "body": "Entendo perfeitamente, Dona Marta! O caderno é fogo de manhã cedo com a correria dos pães e encomendas. A ideia da Venduá não é complicar, mas justamente tirar o caderno da frente e organizar essas encomendas num painel simples que não deixa passar nada. Sem taxa por pedido. Topa ver rapidinho em 10 minutinhos como funciona? Dá uma olhada aqui se fizer sentido: https://sim.invalid/agendar",
+      "at": "2026-09-21T20:49:10.153Z"
+    },
+    {
+      "from": "lead",
+      "body": "Caderno me dá dor de cabeça mesmo, toda semana some encomenda. 10 minutinho só e sem enrolação? Quando pode ser?",
+      "at": "2026-09-21T20:49:12.968Z"
+    },
+    {
+      "from": "agent",
+      "body": "Com certeza, Dona Marta! Bem direto ao ponto, 10 minutinhos e pronto. Pode escolher o melhor horário por aqui: https://sim.invalid/agendar",
+      "at": "2026-09-21T20:49:25.935Z"
+    },
+    {
+      "from": "lead",
+      "body": "Não vou abrir link nenhum. Me fala logo dia e horário que você pode e pronto.",
+      "at": "2026-09-21T20:49:30.190Z"
+    },
+    {
+      "from": "agent",
+      "body": "Combinado, sem link! Que tal amanhã (terça-feira) às 14h ou quarta-feira às 10h? Fica bom para a senhora?",
+      "at": "2026-09-21T20:49:43.732Z"
+    },
+    {
+      "from": "lead",
+      "body": "Quarta às 10h tá bom. Mas ó, é só pra ver, não vou comprar nada hoje hein.",
+      "at": "2026-09-21T20:49:47.577Z"
+    },
+    {
+      "from": "agent",
+      "body": "Combinado, Dona Marta! Quarta-feira às 10h está marcado. Fique tranquila, é só uma demonstração rápida para a senhora conhecer, sem compromisso nenhum. Até lá!",
+      "at": "2026-09-21T20:49:55.891Z"
+    }
+  ],
+  "judge": {
+    "outcome": "booked",
+    "score": 5,
+    "strengths": [
+      "Identificou e validou a dor do caderno de encomendas citada pela cliente",
+      "Respondeu bem à resistência inicial sobre ferramentas de internet",
+      "Respeitou o limite da cliente ao recusar o link e ofereceu horários diretamente"
+    ],
+    "weaknesses": [],
+    "summary": "Conduziu a conversa com empatia, contornou o ceticismo da dona da padaria e garantiu o agendamento da demonstração."
+  }
+}
