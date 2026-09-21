@@ -32,8 +32,12 @@ const SIM_URL = process.env.SIM_DATABASE_URL ?? BASE_URL.replace(/\/[^/]+$/, '/v
 const cliLog = log.child({ mod: 'sim-cli' });
 
 async function ensureSimDb() {
-  // Honor SIM_DATABASE_URL's target db (same server as BASE_URL).
+  // Honor SIM_DATABASE_URL's target db (same server as BASE_URL). The name is
+  // interpolated into raw SQL, so restrict it to a bare identifier.
   const dbName = SIM_URL.replace(/\?.*$/, '').split('/').pop() ?? 'vendua_sim';
+  if (!/^[a-zA-Z_][a-zA-Z0-9_]*$/.test(dbName)) {
+    throw new Error(`SIM_DATABASE_URL has an invalid database name: '${dbName}'`);
+  }
   const admin = createSql(BASE_URL);
   try {
     await admin.unsafe(`create database ${dbName}`);
