@@ -131,9 +131,13 @@ export default function InboxView() {
               placeholder="buscar…"
               value={q}
               onChange={(e) => setQ(e.target.value)}
-              style={{ flex: 1 }}
+              style={{ flex: 1, minWidth: 0 }}
             />
-            <select value={chan} onChange={(e) => setChan(e.target.value)}>
+            <select
+              value={chan}
+              onChange={(e) => setChan(e.target.value)}
+              style={{ maxWidth: 118 }}
+            >
               <option value="">todos</option>
               <option value="whatsapp">whatsapp</option>
               <option value="email">email</option>
@@ -170,7 +174,7 @@ export default function InboxView() {
                   >
                     <div style={{ flex: 1, minWidth: 0 }}>
                       <b>{l.name}</b>
-                      {l.businessName && (
+                      {l.businessName && l.businessName !== l.name && (
                         <span style={{ color: 'var(--muted)' }}> · {l.businessName}</span>
                       )}
                     </div>
