@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { CheckCircle2, ChevronDown, Circle, SkipForward } from 'lucide-react';
 import { api, type AgentRun, type LeadListItem } from '../api.ts';
@@ -38,8 +38,14 @@ export default function Plan() {
   const [state, setState] = useState<'loading' | 'ok' | 'error'>('loading');
   const [now, setNow] = useState(() => Date.now());
 
-  const load = () => {
-    setState('loading');
+  const loadingRef = useRef(false);
+
+  // silent refresh keeps the queue honest without flickering the deck —
+  // a completed run disappears on the next tick instead of lingering overdue.
+  const load = (silent = false) => {
+    if (loadingRef.current) return;
+    loadingRef.current = true;
+    if (!silent) setState('loading');
     // Follow the keyset cursor — a partial page would silently hide plans.
     const all: LeadListItem[] = [];
     const page = (cursor?: string): Promise<void> =>
@@ -62,15 +68,26 @@ export default function Plan() {
         setRuns(queued);
         setState('ok');
       })
-      .catch(() => setState('error'));
+      .catch(() => {
+        // A silent refresh failure keeps the last good snapshot; only an
+        // explicit load error surfaces the error state.
+        if (!silent) setState('error');
+      })
+      .finally(() => {
+        loadingRef.current = false;
+      });
   };
-  useEffect(load, []);
+  useEffect(() => load(), []);
 
-  // Re-derive countdowns/lateness on the minute so a deadline crossing shows
-  // without a manual reload.
+  // Minute tick: re-derive countdowns and re-fetch while the tab is visible,
+  // so a claimed run drops off the queue without a manual reload.
   useEffect(() => {
-    const t = setInterval(() => setNow(Date.now()), 60_000);
+    const t = setInterval(() => {
+      setNow(Date.now());
+      if (document.visibilityState === 'visible') load(true);
+    }, 60_000);
     return () => clearInterval(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const byId = new Map(leads.map((l) => [l.id, l]));
@@ -132,7 +149,7 @@ export default function Plan() {
               title="não deu pra carregar"
               hint="a lista de leads ou de runs falhou — tenta de novo"
             />
-            <button className="btn" onClick={load} style={{ marginTop: 10 }}>
+            <button className="btn" onClick={() => load()} style={{ marginTop: 10 }}>
               tentar de novo
             </button>
           </>
