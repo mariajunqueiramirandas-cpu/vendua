@@ -54,9 +54,26 @@ export async function migrate(sql: Sql, dir: string): Promise<string[]> {
     const applied = new Set(
       (await tx<MigrationRow[]>`select name from schema_migrations`).map((r) => r.name),
     );
+    // Baseline squash: 0000_baseline.sql carries the full schema covered by
+    // the numbered deltas. It runs ONLY on a fresh database (empty ledger) —
+    // an existing DB came up through those deltas, so the baseline is marked
+    // covered without executing (replaying it would collide with live tables).
+    const BASELINE = '0000_baseline.sql';
+    const hasBaseline = files.includes(BASELINE);
+    const freshDb = applied.size === 0;
     const ran: string[] = [];
     for (const file of files) {
       if (applied.has(file)) continue;
+      if (hasBaseline && file !== BASELINE && freshDb) {
+        // Covered by the baseline — ledger row only, the DDL already ran.
+        await tx`insert into schema_migrations (name) values (${file})`;
+        continue;
+      }
+      if (file === BASELINE && !freshDb) {
+        // Existing DB: record the baseline as covered so it never replays.
+        await tx`insert into schema_migrations (name) values (${file})`;
+        continue;
+      }
       const body = await readFile(join(dir, file), 'utf8');
       // Migration files may create roles/policies that need the owner — run as
       // the connecting (migration) user, which is intentionally NOT vendua_app.
