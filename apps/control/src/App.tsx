@@ -9,6 +9,7 @@ import {
   Inbox,
   KanbanSquare,
   LayoutDashboard,
+  ListChecks,
   ListTodo,
   LogOut,
   Menu,
@@ -26,6 +27,7 @@ import InboxView from './views/Inbox.tsx';
 import Approvals from './views/Approvals.tsx';
 import Discovery from './views/Discovery.tsx';
 import Tasks from './views/Tasks.tsx';
+import Plan from './views/Plan.tsx';
 import Runs from './views/Runs.tsx';
 import Reports from './views/Reports.tsx';
 import Calendar from './views/Calendar.tsx';
@@ -41,6 +43,7 @@ const NAV = [
   { to: '/descoberta', label: 'Descoberta', icon: FlaskConical, k: 'e' },
   { to: '/tarefas', label: 'Tarefas', icon: ListTodo, k: 't', badge: 'tasks' },
   { to: '/agente', label: 'Agente', icon: Bot, k: 'g' },
+  { to: '/plano', label: 'Planos', icon: ListChecks, k: 'p' },
   { to: '/relatorios', label: 'Relatórios', icon: TrendingUp, k: 'r' },
   { to: '/config', label: 'Config', icon: SettingsIcon, k: 'c' },
 ] as const;
@@ -59,7 +62,7 @@ interface BeforeInstallPromptEvent extends Event {
 }
 
 const SHORTCUTS: [string, string][] = [
-  ['d f l i j a e t g r c', 'trocar de tela'],
+  ['d f l i j a e t g p r c', 'trocar de tela'],
   ['/', 'buscar (em leads)'],
   ['n', 'novo lead (em leads)'],
   ['ctrl + enter', 'enviar mensagem (no inbox)'],
@@ -228,6 +231,7 @@ export default function App() {
           <Route path="/tarefas" element={<Tasks />} />
           <Route path="/agente" element={<Runs />} />
           <Route path="/agente/runs/:id" element={<Runs />} />
+          <Route path="/plano" element={<Plan />} />
           <Route path="/relatorios" element={<Reports />} />
           <Route path="/config" element={<Settings />} />
           <Route path="*" element={<Navigate to="/" replace />} />

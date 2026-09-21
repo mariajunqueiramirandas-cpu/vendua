@@ -1,17 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
-import {
-  Archive,
-  Ban,
-  Bot,
-  CalendarClock,
-  CheckCircle2,
-  Circle,
-  Link2,
-  Plus,
-  SkipForward,
-  Video,
-} from 'lucide-react';
+import { Archive, Ban, Bot, Link2, Plus, Video } from 'lucide-react';
 import {
   api,
   type Activity,
@@ -115,8 +104,6 @@ export default function LeadDetail() {
 
   const patch = (p: Record<string, unknown>) => api.patchLead(lead.id, p).then(load);
   const siteHref = lead.website ? httpUrl(lead.website) : null;
-  const planDone = lead.agentPlan.filter((s) => s.status === 'done').length;
-  const nextActionLate = lead.nextActionAt && new Date(lead.nextActionAt) < new Date();
   const addNote = async () => {
     if (!note.trim()) return;
     await api.addActivity(lead.id, 'note', note);
@@ -282,93 +269,6 @@ export default function LeadDetail() {
             </div>
           </div>
 
-          {lead.agentMode !== 'off' && (
-            <div className="card" style={{ padding: 18, marginBottom: 14 }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>
-                <b>plano do agente</b>
-                <span className="chip agent" title="objetivo atual do agente">
-                  {lead.agentGoal === 'meeting' ? 'objetivo: reunião' : 'objetivo: negócio'}
-                </span>
-                {lead.agentPlan.length > 0 && (
-                  <span
-                    style={{
-                      marginLeft: 'auto',
-                      color: 'var(--muted)',
-                      fontSize: 'var(--t-2xs)',
-                      fontFamily: 'var(--font-mono)',
-                    }}
-                  >
-                    {planDone}/{lead.agentPlan.length}
-                  </span>
-                )}
-              </div>
-              {lead.agentPlan.map((s, i) => (
-                <div key={i} className="trow" style={{ alignItems: 'flex-start', gap: 8 }}>
-                  {s.status === 'done' ? (
-                    <CheckCircle2
-                      size={15}
-                      style={{ color: 'var(--forest-800)', flexShrink: 0, marginTop: 2 }}
-                    />
-                  ) : s.status === 'skip' ? (
-                    <SkipForward
-                      size={15}
-                      style={{ color: 'var(--muted)', flexShrink: 0, marginTop: 2 }}
-                    />
-                  ) : (
-                    <Circle
-                      size={15}
-                      style={{ color: 'var(--muted)', flexShrink: 0, marginTop: 2 }}
-                    />
-                  )}
-                  <span style={{ flex: 1, minWidth: 0 }}>
-                    <div
-                      style={{
-                        textDecoration: s.status === 'skip' ? 'line-through' : undefined,
-                        color: s.status === 'todo' ? undefined : 'var(--muted)',
-                      }}
-                    >
-                      {s.step}
-                    </div>
-                    {s.note && (
-                      <div style={{ color: 'var(--muted)', fontSize: 'var(--t-xs)', marginTop: 2 }}>
-                        {s.note}
-                      </div>
-                    )}
-                  </span>
-                </div>
-              ))}
-              {schedRuns.map((r) => (
-                <div key={r.id} className="trow">
-                  <span className="chip agent">{RUN_KIND[r.kind] ?? r.kind}</span>
-                  <span style={{ color: 'var(--muted)', fontSize: 'var(--t-xs)', flex: 1 }}>
-                    agenda {fmtDateTime(r.run_at)}
-                  </span>
-                  <button
-                    className="btn ghost"
-                    style={{ padding: '3px 8px' }}
-                    onClick={() => void api.cancelRun(r.id).then(load)}
-                  >
-                    cancelar
-                  </button>
-                </div>
-              ))}
-              {lead.nextActionAt && (
-                <div className="trow">
-                  <CalendarClock size={14} style={{ color: 'var(--muted)', flexShrink: 0 }} />
-                  <span style={{ color: 'var(--muted)', fontSize: 'var(--t-xs)', flex: 1 }}>
-                    próxima ação do agente · {fmtDateTime(lead.nextActionAt)}
-                  </span>
-                  {nextActionLate && <span className="chip warn">atrasada</span>}
-                </div>
-              )}
-              {!lead.agentPlan.length && !schedRuns.length && !lead.nextActionAt && (
-                <div style={{ color: 'var(--muted)', marginTop: 6 }}>
-                  sem plano ainda — o agente monta um no primeiro contato
-                </div>
-              )}
-            </div>
-          )}
-
           <div className="card" style={{ padding: 18, marginBottom: 14 }}>
             <b>conversas</b>
             {threads.map((t) => (
@@ -393,6 +293,21 @@ export default function LeadDetail() {
                 nenhuma conversa ainda — o agente cria uma ao primeiro contato
               </div>
             )}
+            {schedRuns.map((r) => (
+              <div key={r.id} className="trow">
+                <span className="chip">{RUN_KIND[r.kind] ?? r.kind}</span>
+                <span style={{ color: 'var(--muted)', fontSize: 'var(--t-xs)', flex: 1 }}>
+                  agenda {fmtDateTime(r.run_at)}
+                </span>
+                <button
+                  className="btn ghost"
+                  style={{ padding: '3px 8px' }}
+                  onClick={() => void api.cancelRun(r.id).then(load)}
+                >
+                  cancelar
+                </button>
+              </div>
+            ))}
             <div style={{ display: 'flex', gap: 6, marginTop: 10 }}>
               {(['whatsapp', 'email', 'manual'] as const)
                 .filter((ch) => !threads.some((t) => t.channel === ch))
