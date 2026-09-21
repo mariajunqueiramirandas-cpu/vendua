@@ -358,13 +358,14 @@ export async function runOnce(sql: Sql): Promise<boolean> {
     // run would end without producing: either a no-op ("ok", zero calls, the
     // classic lite-model shrug) or leads boarded without a whatsapp. The
     // prompt asks for the follow-up already; this is the enforcement point
-    // the prompt can't be talked around. It borrows its own step allowance
-    // (nudgeSteps) so firing on the last normal iteration can't strand the
-    // run in 'max steps reached'.
+    // the prompt can't be talked around. It sets its own absolute limit
+    // (i + 5 → four follow-up calls plus the finishing turn) so it can't
+    // strand a run in 'max steps reached' late NOR inflate an early finish
+    // into a full second budget.
     let nudged = false;
-    let nudgeSteps = 0;
+    let limit = STEP_BUDGET[run.kind];
 
-    for (let i = 0; i < STEP_BUDGET[run.kind] + nudgeSteps && !lost; i++) {
+    for (let i = 0; i < limit && !lost; i++) {
       const res = await provider.chat({ system, messages, tools });
       tokensIn += res.tokensIn;
       tokensOut += res.tokensOut;
@@ -410,10 +411,11 @@ export async function runOnce(sql: Sql): Promise<boolean> {
                 : null;
           if (nudge) {
             nudged = true;
-            // Room for search + read + create_lead + a closing turn after
-            // the nudge — without it, a nudge on the last budgeted step is
-            // dead on arrival (the run fails at 'max steps' unprocessed).
-            nudgeSteps = 4;
+            // Exactly four calls after this turn: search + read +
+            // create_lead + a closing response. Firing early shrinks the
+            // remaining budget to that allowance; firing on the last step
+            // extends it just enough to process the nudge.
+            limit = i + 5;
             messages.push({ role: 'assistant', content: res.text ?? 'ok' });
             messages.push({ role: 'user', content: nudge });
             steps.push({ type: 'nudge', content: nudge });
