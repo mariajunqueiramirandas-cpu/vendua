@@ -4,6 +4,7 @@ import {
   Bot,
   CalendarDays,
   CheckSquare,
+  Download,
   FlaskConical,
   Inbox,
   KanbanSquare,
@@ -50,6 +51,13 @@ const TAB_PATHS = new Set<string>(['/', '/funil', '/leads', '/inbox']);
 const TABS = NAV.filter((n) => TAB_PATHS.has(n.to));
 const MORE = NAV.filter((n) => !TAB_PATHS.has(n.to));
 
+// beforeinstallprompt isn't in lib.dom — Chrome/Android only; on iOS the
+// button simply never renders.
+interface BeforeInstallPromptEvent extends Event {
+  prompt(): Promise<void>;
+  userChoice: Promise<{ outcome: 'accepted' | 'dismissed' }>;
+}
+
 const SHORTCUTS: [string, string][] = [
   ['d f l i j a e t g r c', 'trocar de tela'],
   ['/', 'buscar (em leads)'],
@@ -68,10 +76,49 @@ export default function App() {
   const [llmDriver, setLlmDriver] = useState('');
   const [showHelp, setShowHelp] = useState(false);
   const [navOpen, setNavOpen] = useState(false);
+  const [installEvt, setInstallEvt] = useState<BeforeInstallPromptEvent | null>(null);
   const nav = useNavigate();
   const loc = useLocation();
 
   useEffect(() => setNavOpen(false), [loc.pathname]);
+
+  // The menu sheet is a phone affordance — if the viewport widens past the
+  // breakpoint while it's open (rotation, window drag), dismiss it rather
+  // than leave an unstyled overlay up. Observes the same max-width query
+  // the CSS uses so fractional widths (zoom, display scaling) can't leave
+  // the sheet in the gap between two breakpoints.
+  useEffect(() => {
+    const mq = window.matchMedia('(max-width: 760px)');
+    const close = () => {
+      if (!mq.matches) setNavOpen(false);
+    };
+    mq.addEventListener('change', close);
+    return () => mq.removeEventListener('change', close);
+  }, []);
+
+  // PWA install offer — the browser only fires beforeinstallprompt when the
+  // app is installable (manifest + sw), so the button is its own detection.
+  useEffect(() => {
+    const onPrompt = (e: Event) => {
+      e.preventDefault();
+      setInstallEvt(e as BeforeInstallPromptEvent);
+    };
+    const onDone = () => setInstallEvt(null);
+    window.addEventListener('beforeinstallprompt', onPrompt);
+    window.addEventListener('appinstalled', onDone);
+    return () => {
+      window.removeEventListener('beforeinstallprompt', onPrompt);
+      window.removeEventListener('appinstalled', onDone);
+    };
+  }, []);
+
+  const install = installEvt
+    ? () => {
+        const e = installEvt;
+        setInstallEvt(null); // one-shot: the event can't be prompted twice
+        void e.prompt();
+      }
+    : undefined;
 
   useEffect(() => {
     api
@@ -158,7 +205,12 @@ export default function App() {
             </NavLink>
           );
         })}
-        <RailFoot llmDriver={llmDriver} onHelp={() => setShowHelp(true)} onLogout={logout} />
+        <RailFoot
+          llmDriver={llmDriver}
+          onHelp={() => setShowHelp(true)}
+          onLogout={logout}
+          onInstall={install}
+        />
       </nav>
       <div className="main">
         <Routes key={loc.pathname}>
@@ -240,6 +292,7 @@ export default function App() {
                 setShowHelp(true);
               }}
               onLogout={logout}
+              onInstall={install}
             />
           </div>
         </div>
@@ -267,14 +320,25 @@ function RailFoot({
   llmDriver,
   onHelp,
   onLogout,
+  onInstall,
 }: {
   llmDriver: string;
   onHelp: () => void;
   onLogout: () => void;
+  onInstall: (() => void) | undefined;
 }) {
   return (
     <div className="rail-foot">
       <span>agente · {llmDriver || '…'}</span>
+      {onInstall && (
+        <button
+          className="btn ghost"
+          style={{ color: 'var(--rail-muted)', justifyContent: 'flex-start', padding: '4px 8px' }}
+          onClick={onInstall}
+        >
+          <Download size={14} /> instalar app
+        </button>
+      )}
       <button
         className="btn ghost"
         style={{

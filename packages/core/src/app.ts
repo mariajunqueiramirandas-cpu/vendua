@@ -1947,6 +1947,7 @@ export function createApp({ sql, sessionSecret, controlSecret }: AppDeps) {
     '.jpg': 'image/jpeg',
     '.webp': 'image/webp',
     '.ico': 'image/x-icon',
+    '.webmanifest': 'application/manifest+json',
     '.json': 'application/json',
     '.woff2': 'font/woff2',
     '.woff': 'font/woff',
@@ -1975,7 +1976,16 @@ export function createApp({ sql, sessionSecret, controlSecret }: AppDeps) {
     }
     const ext = extname(file);
     c.header('content-type', SPA_MIME[ext] ?? 'application/octet-stream');
-    c.header('cache-control', ext === '.html' ? 'no-store' : 'public, max-age=31536000, immutable');
+    // Only assets/ is content-hashed by vite — root files (sw.js, manifest,
+    // icons) must revalidate or PWA updates never roll out.
+    c.header(
+      'cache-control',
+      ext === '.html'
+        ? 'no-store'
+        : rel.startsWith('assets/')
+          ? 'public, max-age=31536000, immutable'
+          : 'no-cache',
+    );
     return c.body(await Bun.file(file).arrayBuffer());
   });
 
