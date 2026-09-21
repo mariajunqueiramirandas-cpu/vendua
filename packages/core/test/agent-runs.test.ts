@@ -1,6 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 import { join } from 'node:path';
 import postgres from 'postgres';
+import { claimRun, enqueueRun } from '../src/agent/runner.ts';
 import { executeTool, toolsFor, type ToolContext } from '../src/agent/tools.ts';
 import { DEFAULT_GUARDRAILS, validateSetting } from '../src/modules/integrations.ts';
 import { controlTx } from '../src/modules/control.ts';
@@ -190,3 +191,45 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('plan — lead-scoped checklist 
     ).toHaveProperty('error');
   });
 });
+
+// DB-backed — opt-in via TEST_DATABASE_URL (CI has no Postgres).
+describe.skipIf(!process.env.TEST_DATABASE_URL)(
+  'claimRun — suppressed leads hold their queue',
+  () => {
+    const sql = postgres(process.env.TEST_DATABASE_URL!);
+
+    test.each(['off', 'archived', 'unsubscribed'] as const)(
+      'a queued run on a %s lead is not claimed',
+      async (state) => {
+        await migrate(sql, join(import.meta.dir, '../db/migrations'));
+        await sql`update agent_runs set status = 'canceled' where status = 'queued'`;
+        const created = await controlTx(sql, (tx) =>
+          insertLeadTx(tx, { name: `Claim ${state} Lead`, agent_mode: 'auto' }),
+        );
+        const leadId = created.body.lead.id;
+        if (state === 'off') {
+          await sql`update leads set agent_mode = 'off' where id = ${leadId}`;
+        } else if (state === 'archived') {
+          await sql`update leads set archived_at = now() where id = ${leadId}`;
+        } else {
+          await sql`update leads set unsubscribed_at = now() where id = ${leadId}`;
+        }
+        await enqueueRun(sql, { kind: 'outreach', leadId });
+        expect(await claimRun(sql)).toBeNull();
+        const back = await sql<{ status: string }[]>`
+        select status from agent_runs where lead_id = ${leadId}`;
+        expect(back[0]!.status).toBe('queued');
+      },
+    );
+
+    test('a live lead still claims', async () => {
+      await migrate(sql, join(import.meta.dir, '../db/migrations'));
+      await sql`update agent_runs set status = 'canceled' where status = 'queued'`;
+      const created = await controlTx(sql, (tx) =>
+        insertLeadTx(tx, { name: 'Claim Live Lead', agent_mode: 'auto' }),
+      );
+      await enqueueRun(sql, { kind: 'outreach', leadId: created.body.lead.id });
+      expect(await claimRun(sql)).not.toBeNull();
+    });
+  },
+);

@@ -1452,6 +1452,68 @@ details.raw textarea {
   background: var(--forest-800);
 }
 
+/* planos queue — mono countdown cells on the standard cream card */
+.qidx {
+  width: 30px;
+  font-family: var(--font-mono);
+  font-size: var(--t-2xs);
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+.qt {
+  white-space: nowrap;
+  width: 64px;
+  font-family: var(--font-mono);
+  font-size: var(--t-xs);
+  font-variant-numeric: tabular-nums;
+}
+.qt.on {
+  color: var(--forest-800);
+}
+.qt.late {
+  color: var(--red-400);
+  font-weight: 600;
+}
+.qabs {
+  white-space: nowrap;
+  font-family: var(--font-mono);
+  font-size: var(--t-2xs);
+  color: var(--muted);
+}
+.qmono {
+  color: var(--muted);
+  font-size: var(--t-2xs);
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+}
+@media (max-width: 640px) {
+  .qabs {
+    display: none;
+  }
+}
+
+/* plan progress — same rail grammar as .scorebar, agent accent fill */
+.planbar {
+  display: inline-block;
+  width: 44px;
+  height: 4px;
+  border-radius: 999px;
+  background: var(--surface-2);
+  overflow: hidden;
+}
+.planbar > span {
+  display: block;
+  height: 100%;
+  border-radius: 999px;
+  background: var(--lime-300);
+}
+.planrow {
+  border-bottom: 1px solid var(--line);
+}
+.planrow:last-child {
+  border-bottom: 0;
+}
+
 /* nav badge — count of things waiting on you */
 .nav-item .nb {
   margin-left: auto;

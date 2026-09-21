@@ -1392,11 +1392,37 @@ export function createApp({ sql, sessionSecret, controlSecret }: AppDeps) {
       params.push(v);
       return `$${params.length}`;
     };
+    const scheduled = c.req.query('scheduled') === '1';
+    // Keyset pagination over (run_at, id) — scheduled mode only, so the queue
+    // can enumerate every delayed run regardless of queue size.
+    const cursor = c.req.query('cursor');
+    let cursorCond = 'true';
+    if (scheduled && cursor) {
+      const parts = cursor.split('|');
+      const [ra, id] = parts;
+      const at = ra ? new Date(ra) : null;
+      if (
+        parts.length !== 2 ||
+        !ra ||
+        !id ||
+        !UUID_RE.test(id) ||
+        !at ||
+        Number.isNaN(at.getTime()) ||
+        at.toISOString() !== ra
+      ) {
+        throw new HttpError(400, 'BAD_REQUEST', 'cursor must be "<run_at>|<run uuid>"');
+      }
+      cursorCond = `(r.run_at > ${p(ra)}::timestamptz or (r.run_at = ${p(ra)}::timestamptz and r.id > ${p(id)}::uuid))`;
+    }
     const where = [
       kind ? `kind = ${p(kind)}` : 'true',
       status ? `status = ${p(status)}` : 'true',
       leadId ? `r.lead_id = ${p(leadId)}` : 'true',
+      // scheduled=1 → only delayed runs, soonest first.
+      scheduled ? 'r.run_at is not null' : 'true',
+      cursorCond,
     ];
+    const order = scheduled ? 'r.run_at asc, r.id asc' : 'r.created_at desc';
     const rows = await controlTx(sql, (tx) =>
       tx.unsafe(
         `select r.id, r.kind, r.status, r.lead_id, r.thread_id, r.tokens_in, r.tokens_out,
@@ -1404,11 +1430,16 @@ export function createApp({ sql, sessionSecret, controlSecret }: AppDeps) {
                 l.name as lead_name
          from agent_runs r left join leads l on l.id = r.lead_id
          where ${where.join(' and ')}
-         order by r.created_at desc limit ${p(limit)}`,
+         order by ${order} limit ${p(limit)}`,
         params as never[],
       ),
     );
-    return c.json({ runs: rows });
+    const last = rows[rows.length - 1] as { run_at?: string | Date; id: string } | undefined;
+    const nextCursor =
+      scheduled && rows.length === limit && last
+        ? `${new Date(last.run_at as string | Date).toISOString()}|${last.id}`
+        : undefined;
+    return c.json({ runs: rows, ...(nextCursor ? { nextCursor } : {}) });
   });
 
   app.get('/control/v1/agent/runs/:id', async (c) => {

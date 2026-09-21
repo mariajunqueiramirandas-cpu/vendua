@@ -393,6 +393,11 @@ export default function LeadDetail() {
                   >
                     {t.title}
                   </span>
+                  {t.createdBy === 'agent' && (
+                    <span className="chip agent" title="tarefa criada pelo agente">
+                      agente
+                    </span>
+                  )}
                   <span className={`due${late ? ' bad' : ''}`}>
                     {late ? 'atrasada · ' : ''}
                     {fmtDateTime(t.dueAt)}

@@ -97,16 +97,26 @@ export async function enqueueRun(
   return controlTx(sql, (tx) => insertRun(tx, input));
 }
 
-async function claimRun(sql: Sql): Promise<RunRow | null> {
+export async function claimRun(sql: Sql): Promise<RunRow | null> {
   return controlTx(sql, async (tx) => {
     const rows = await tx<RunRow[]>`
       update agent_runs set status = 'running', started_at = now(), alive_at = now(),
         claim_token = gen_random_uuid()::text
       where id = (
-        select id from agent_runs
-        where status = 'queued'
-          and (run_at is null or run_at <= now())
-        order by created_at
+        select r.id from agent_runs r
+        where r.status = 'queued'
+          and (r.run_at is null or r.run_at <= now())
+          -- suppressed leads hold their queue: 'off' is a human veto, archived
+          -- and unsubscribed are suppressed everywhere else already. Runs stay
+          -- queued (pause semantics — they resume if the flag lifts).
+          and (r.lead_id is null or exists (
+            select 1 from leads l
+            where l.id = r.lead_id
+              and l.agent_mode <> 'off'
+              and l.archived_at is null
+              and l.unsubscribed_at is null
+          ))
+        order by r.created_at
         limit 1
         for update skip locked
       )
