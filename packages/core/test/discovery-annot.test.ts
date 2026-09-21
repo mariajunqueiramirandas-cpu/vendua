@@ -2,6 +2,7 @@ import { describe, expect, test } from 'bun:test';
 import {
   annotateResult,
   annotateResults,
+  chaseLinks,
   contactFromUrl,
   contactsFromLinks,
   contactsFromText,
@@ -36,6 +37,11 @@ describe('pageKey', () => {
     expect(pageKey('https://site.com.br/x?b=2&utm_source=gp&a=1')).toBe('site.com.br/x?a=1&b=2');
     expect(pageKey('https://site.com.br/x?a=1&b=2&fbclid=zzz')).toBe(
       pageKey('https://site.com.br/x?b=2&a=1'),
+    );
+  });
+  test('hl/igsh locale+share params dedupe the same profile read', () => {
+    expect(pageKey('https://www.instagram.com/ondadotrigo/?hl=pt')).toBe(
+      pageKey('https://instagram.com/ondadotrigo'),
     );
   });
 });
@@ -114,6 +120,26 @@ describe('contactFromUrl', () => {
   });
   test('unrelated urls return nothing', () => {
     expect(cfu('https://doceria.com.br')).toEqual({});
+  });
+  test('web.whatsapp.com/send?phone parses like api.whatsapp.com', () => {
+    expect(cfu('https://web.whatsapp.com/send?phone=5521999887766')).toEqual({
+      phone: '+5521999887766',
+      whatsappLink: 'https://web.whatsapp.com/send?phone=5521999887766',
+    });
+  });
+  test('chat.whatsapp.com invite is a whatsapp channel without a number', () => {
+    expect(cfu('https://chat.whatsapp.com/EqxAmP12H4dLqVbCdEfGhI')).toEqual({
+      whatsappLink: 'https://chat.whatsapp.com/EqxAmP12H4dLqVbCdEfGhI',
+    });
+    expect(cfu('https://chat.whatsapp.com/xx')).toEqual({});
+  });
+  test('wa.me/qr/<code> is a channel, never a phone', () => {
+    expect(cfu('https://wa.me/qr/7AVRCDFJIO2KL1')).toEqual({
+      whatsappLink: 'https://wa.me/qr/7AVRCDFJIO2KL1',
+    });
+    const digits = cfu('https://wa.me/qr/5522999998888');
+    expect(digits.phone).toBeUndefined();
+    expect(digits.whatsappLink).toBeDefined();
   });
 });
 
@@ -249,6 +275,16 @@ describe('contactsFromText', () => {
     const c = contactsFromText('peça pelo bit.ly/jodoces ou w.app/jodoces');
     expect(c.hubs).toEqual(['https://bit.ly/jodoces', 'https://w.app/jodoces']);
   });
+  test('bare 9xxxx-xxxx mobile is a phoneHint, not a phone', () => {
+    const c = contactsFromText('📲 pedidos no zap 99912-3456 ou 9 8812-0011');
+    expect(c.phones).toEqual([]);
+    expect(c.phoneHints).toEqual(['99912-3456', '9 8812-0011']);
+  });
+  test('hint never duplicates a full number already captured', () => {
+    const c = contactsFromText('WhatsApp (22) 99968-8525 e fixo 3344-1122');
+    expect(c.phones).toEqual(['+5522999688525']);
+    expect(c.phoneHints).toEqual([]);
+  });
 });
 
 describe('navLinks', () => {
@@ -306,6 +342,47 @@ describe('navLinks', () => {
       'https://linktr.ee/doceria85',
     );
     expect(nav).toContain('https://w.app/doceria85');
+  });
+  test('google-business/maps pointers surface cross-host from any page', () => {
+    const nav = navLinks(
+      [
+        'https://g.co/kgs/xm7tgsx',
+        'https://maps.app.goo.gl/AbC123',
+        'https://www.google.com/maps/place/Doceria',
+        'https://instagram.com/doceria85',
+      ],
+      'https://doceria85.com.br/',
+    );
+    expect(nav).toContain('https://g.co/kgs/xm7tgsx');
+    expect(nav).toContain('https://maps.app.goo.gl/AbC123');
+    expect(nav).toContain('https://www.google.com/maps/place/Doceria');
+  });
+});
+
+describe('chaseLinks', () => {
+  test('collects hubs + business-map links from nav, skips the rest', () => {
+    const chased = chaseLinks({
+      url: 'https://instagram.com/doceria85',
+      title: null,
+      description: null,
+      text: '',
+      nav: [
+        'https://linktr.ee/doceria85',
+        'https://g.co/kgs/xm7tgsx',
+        'https://doceria85.com.br/contato',
+        'https://instagram.com/outra',
+      ],
+      foundContacts: {
+        phones: [],
+        whatsappLinks: [],
+        emails: [],
+        instagram: [],
+        facebook: [],
+        tiktok: [],
+        phoneHints: [],
+      },
+    });
+    expect(chased).toEqual(['https://linktr.ee/doceria85', 'https://g.co/kgs/xm7tgsx']);
   });
 });
 

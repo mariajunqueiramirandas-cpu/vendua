@@ -354,7 +354,18 @@ export async function runOnce(sql: Sql): Promise<boolean> {
     messages.push({ role: 'user', content: context });
     await persist();
 
-    for (let i = 0; i < STEP_BUDGET[run.kind] && !lost; i++) {
+    // Discovery harness nudge — fired once at the finish boundary when the
+    // run would end without producing: either a no-op ("ok", zero calls, the
+    // classic lite-model shrug) or leads boarded without a whatsapp. The
+    // prompt asks for the follow-up already; this is the enforcement point
+    // the prompt can't be talked around. It sets its own absolute limit
+    // (i + 5 → four follow-up calls plus the finishing turn) so it can't
+    // strand a run in 'max steps reached' late NOR inflate an early finish
+    // into a full second budget.
+    let nudged = false;
+    let limit = STEP_BUDGET[run.kind];
+
+    for (let i = 0; i < limit && !lost; i++) {
       const res = await provider.chat({ system, messages, tools });
       tokensIn += res.tokensIn;
       tokensOut += res.tokensOut;
@@ -364,6 +375,92 @@ export async function runOnce(sql: Sql): Promise<boolean> {
       if (lost) break;
 
       if (!res.toolCalls.length) {
+        if (run.kind === 'discovery' && !nudged) {
+          const created = steps
+            .filter(
+              (s) =>
+                typeof s === 'object' &&
+                s !== null &&
+                (s as { name?: string }).name === 'create_lead' &&
+                typeof (s as { out?: { lead?: { id?: string } } }).out?.lead?.id === 'string',
+            )
+            .map((s) => (s as { out: { lead: Record<string, unknown> } }).out.lead);
+          // A duplicate merge isn't a create — but it did merge contacts +
+          // findings into an existing lead, so a merge-only run produced
+          // work and escapes the zero-lead nudge.
+          const merged = steps.some(
+            (s) =>
+              typeof s === 'object' &&
+              s !== null &&
+              (s as { name?: string }).name === 'create_lead' &&
+              (s as { out?: { duplicate?: boolean } }).out?.duplicate === true,
+          );
+          const missingWa = created.filter(
+            (l) => !(typeof l.whatsapp === 'string' && l.whatsapp.trim()),
+          );
+          // The journal knows every query fired and url read — feed it back
+          // so the extra round tries new angles instead of re-walking the
+          // dead ends that got the run here.
+          const triedQueries = new Set<string>();
+          const readUrls = new Set<string>();
+          for (const s of steps) {
+            if (typeof s !== 'object' || s === null) continue;
+            const st = s as {
+              name?: string;
+              args?: Record<string, unknown>;
+              out?: { pages?: { url?: string }[] };
+            };
+            if (st.name === 'web_search' && typeof st.args?.query === 'string')
+              triedQueries.add(st.args.query);
+            if (st.name === 'read_pages') {
+              const seen = [
+                ...(Array.isArray(st.args?.urls) ? st.args.urls : []),
+                ...(st.out?.pages ?? []).map((p) => p.url),
+              ];
+              for (const u of seen) {
+                try {
+                  const uu = new URL(String(u));
+                  readUrls.add(`${uu.hostname}${uu.pathname}`.replace(/\/+$/, ''));
+                } catch {
+                  readUrls.add(String(u));
+                }
+              }
+            }
+          }
+          const tried =
+            triedQueries.size || readUrls.size
+              ? ` Já tentado — NÃO repita: buscas ${[...triedQueries]
+                  .slice(0, 8)
+                  .map((q) => `"${q}"`)
+                  .join(
+                    ', ',
+                  )}${readUrls.size ? `; leituras ${[...readUrls].slice(0, 8).join(', ')}` : ''}.`
+              : '';
+          const nudge =
+            !created.length && !merged
+              ? `Nenhum lead entrou no CRM ainda — descoberta só conta quando o lead é criado.${tried} Siga por um sabor NÃO tentado — outra variação de segmento/modelo de negócio/cidade — ou read_pages no prospect fraco (o diretório que citar o nome é onde telefone mora).`
+              : missingWa.length
+                ? `${missingWa.length} lead(s) sem whatsapp: ${missingWa
+                    .map((l) => String(l.name ?? '?'))
+                    .slice(0, 6)
+                    .join(
+                      ', ',
+                    )}.${tried} Uma rodada por nome antes de encerrar: web_search "<nome> <cidade>" telefone/whatsapp (ângulo novo, não repita as buscas listadas); e no resultado que citar o nome — mesmo diretório/guia local — read_pages vale (é onde telefone e endereço moram).`
+                : null;
+          if (nudge) {
+            nudged = true;
+            // Exactly four calls after this turn: search + read +
+            // create_lead + a closing response. Firing early shrinks the
+            // remaining budget to that allowance; firing on the last step
+            // extends it just enough to process the nudge.
+            limit = i + 5;
+            messages.push({ role: 'assistant', content: res.text ?? 'ok' });
+            messages.push({ role: 'user', content: nudge });
+            steps.push({ type: 'nudge', content: nudge });
+            await persist();
+            continue;
+          }
+        }
         await finishRun(sql, claim, {
           status: 'done',
           steps,
