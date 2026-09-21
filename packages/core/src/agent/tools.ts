@@ -551,9 +551,7 @@ export async function executeTool(
         // gate keeps requiring REAL whatsapp evidence (wa.me/api.whatsapp.com,
         // or an explicit whatsapp arg) — a maps phone is eligible, not proven.
         whatsappDerived =
-          !payload.whatsapp &&
-          typeof payload.phone === 'string' &&
-          isBrMobilePhone(payload.phone);
+          !payload.whatsapp && typeof payload.phone === 'string' && isBrMobilePhone(payload.phone);
         if (whatsappDerived) payload.whatsapp = payload.phone;
         // The bar for a discovered lead, enforced where the prompt can't be
         // talked around: it must carry a research dossier AND a reachable
