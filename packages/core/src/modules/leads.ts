@@ -374,9 +374,10 @@ export async function listLeads(
   // \ is Postgres' default LIKE escape — user % and _ can't widen the match.
   const qEsc = q ? `%${q.replace(/[%_\\]/g, (ch) => `\\${ch}`)}%` : null;
   // Phone-shaped queries match NORMALIZED digits, not the stored formatting —
-  // "997123470" must find "+55 22 99712-3470". ≥4 digits only, or short
-  // digit runs make every text search degenerate into a phone match.
-  const qDigits = q ? q.replace(/\D/g, '') : '';
+  // "997123470" must find "+55 22 99712-3470". The query must be ALL phone
+  // characters, or a name like "Studio 54 2026" digit-matches strangers'
+  // numbers. ≥4 digits guards short runs like "Doces 22".
+  const qDigits = q && /^[+\d\s().-]+$/.test(q) ? q.replace(/\D/g, '') : '';
   const qDigitsLike = qDigits.length >= 4 ? `%${qDigits}%` : null;
 
   // Keyset pagination: (created_at, id) desc — stable under concurrent
