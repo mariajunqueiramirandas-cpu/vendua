@@ -339,7 +339,7 @@ const REGISTRY: { def: AgentTool; toolsets: string[] }[] = [
     def: {
       name: 'plan',
       description:
-        "Your plan. Discovery: the campaign map for this run — call it at the start (segments/angles you'll try, kill-criteria) and again when results change the picture; run-scoped working memory. Lead kinds (triage/reply/outreach): the negotiation checklist for THIS lead — write it once you understand the business (methodology stages tailored to them, ending at the lead's GOAL), then send it back marking items done as they complete — it persists on the lead across runs and is your memory between messages. Items merge by step: a step you omit is kept, so mark dead ends 'skip' instead of dropping them (≤12 items).",
+        "Your plan. Discovery: the campaign map for this run — call it at the start (segments/angles you'll try, kill-criteria) and again when results change the picture; run-scoped working memory. Lead kinds (triage/reply/outreach): the negotiation checklist for THIS lead — write it once you understand the business (methodology stages tailored to them, ending at the lead's GOAL), then send it back marking items done as they complete — it persists on the lead across runs and is your memory between messages. Items merge by step: a step you omit is kept — mark dead ends 'skip' instead of dropping them; on steps you do send, fields you omit keep their stored values (≤12 items).",
       parameters: {
         type: 'object',
         properties: {
@@ -1278,16 +1278,29 @@ export async function executeTool(
       if (!ctx.leadId) return { error: 'plan needs a run bound to a lead' };
       const raw = args.items;
       if (!Array.isArray(raw)) return { error: 'items must be an array' };
-      const norm = (it: unknown): { step: string; status: string; note: string | null } | null => {
+      // Patch-merge: status/note omitted by the writer keep their stored value —
+      // re-sending a bare step must not un-tick progress.
+      const norm = (
+        it: unknown,
+      ): {
+        step: string;
+        status: 'todo' | 'done' | 'skip' | null;
+        note: string | null | undefined;
+      } | null => {
         if (typeof it !== 'object' || it === null) return null;
         const o = it as Record<string, unknown>;
         const step = String(o.step ?? '')
           .trim()
           .slice(0, 200);
         if (!step) return null;
-        const status = o.status === 'done' || o.status === 'skip' ? o.status : 'todo';
+        const status =
+          o.status === 'todo' || o.status === 'done' || o.status === 'skip' ? o.status : null;
         const note =
-          typeof o.note === 'string' && o.note.trim() ? o.note.trim().slice(0, 200) : null;
+          typeof o.note === 'string'
+            ? o.note.trim()
+              ? o.note.trim().slice(0, 200)
+              : null
+            : undefined;
         return { step, status, note };
       };
       const steps = raw
@@ -1305,15 +1318,20 @@ export async function executeTool(
           const s = norm(it);
           if (!s || index.has(s.step.toLowerCase())) continue;
           index.set(s.step.toLowerCase(), merged.length);
-          merged.push(s);
+          merged.push({ step: s.step, status: s.status ?? 'todo', note: s.note ?? null });
         }
         for (const s of steps) {
           const i = index.get(s.step.toLowerCase());
           if (i === undefined) {
             index.set(s.step.toLowerCase(), merged.length);
-            merged.push(s);
+            merged.push({ step: s.step, status: s.status ?? 'todo', note: s.note ?? null });
           } else {
-            merged[i] = s;
+            const cur0 = merged[i]!;
+            merged[i] = {
+              step: s.step,
+              status: s.status ?? cur0.status,
+              note: s.note === undefined ? cur0.note : s.note,
+            };
           }
         }
         // 'skip' frees its slot under the cap: skipped steps ride at the tail as
