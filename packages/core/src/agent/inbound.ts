@@ -12,7 +12,8 @@ const agentLog = log.child({ mod: 'agent' });
  * Baileys socket handler or an email webhook) lands here. Opt-out intent is
  * the agent's call — the reply run reads the message and flips
  * unsubscribed_at via the `unsubscribe` tool; this file just queues the run
- * (and skips it entirely once the lead is already unsubscribed).
+ * (and skips it entirely once the lead is already unsubscribed). A bare
+ * "sair"/"cancelar" can be normal speech, so nothing is decided by regex.
  */
 
 export async function ingestInbound(

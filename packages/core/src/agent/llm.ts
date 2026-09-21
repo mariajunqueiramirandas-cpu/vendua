@@ -70,8 +70,12 @@ const RETRYABLE = /429|quota|rate.?limit|resource_exhausted|overload|temporarily
 function retryAfterMs(e: unknown): number | null {
   const headers = (e as { headers?: Headers }).headers;
   const raw = headers?.get?.('retry-after');
-  const secs = raw ? Number(raw) : NaN;
-  return Number.isFinite(secs) ? Math.min(secs * 1000, 90_000) : null;
+  if (!raw) return null;
+  const secs = Number(raw);
+  if (Number.isFinite(secs)) return Math.min(secs * 1000, 90_000);
+  // Retry-After also allows an HTTP-date.
+  const at = Date.parse(raw);
+  return Number.isFinite(at) ? Math.min(Math.max(at - Date.now(), 0), 90_000) : null;
 }
 
 /** Calls `fn` through the driver's slot chain, retrying provider-side 429/5xx
@@ -312,11 +316,15 @@ function geminiProvider(config: Record<string, unknown>, secretRef: string | nul
         );
       }
       const parts = cand.content?.parts ?? [];
-      // An empty STOP candidate means the model ended its turn with nothing
-      // to say — normal 'done' after tools ran, so return it and let the
-      // runner converge (throwing here marks a finished run 'failed').
-      // Abnormal finishes (SAFETY/RECITATION) still throw visibly.
-      if (!parts.some((p) => p.text || p.functionCall) && cand.finishReason !== 'STOP') {
+      // An empty STOP candidate is a legal 'done' ONLY mid-run, after the
+      // model already acted (tool results in history prove it). Empty STOP on
+      // the first turn means the model silently produced nothing — keep it a
+      // visible error so the run fails instead of ending a real conversation
+      // with no answer. Abnormal finishes (SAFETY/RECITATION) always throw.
+      if (
+        !parts.some((p) => p.text || p.functionCall) &&
+        !(cand.finishReason === 'STOP' && messages.some((m) => m.role === 'tool'))
+      ) {
         throw new Error(`gemini returned empty candidate — ${cand.finishReason ?? 'no reason'}`);
       }
       const text = parts.map((p) => p.text ?? '').join('') || null;

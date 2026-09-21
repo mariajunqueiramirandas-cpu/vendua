@@ -44,15 +44,16 @@ type Terminal = { outcome: string; why: string } | null;
 /** Wait until no queued/running agent run remains for the lead. ingestInbound
  *  kicks a floating drain of its own, so the reply run may already be claimed
  *  when our drain() returns — polling the row is the only honest signal. */
-async function settle(sql: Sql, leadId: string): Promise<void> {
+async function settle(sql: Sql, leadId: string): Promise<boolean> {
   for (let i = 0; i < 90; i++) {
     await drain(sql);
     const [p] = await sql<{ n: string }[]>`
       select count(*)::text as n from agent_runs
       where lead_id = ${leadId} and status in ('queued', 'running')`;
-    if (Number(p?.n ?? 0) === 0) return;
+    if (Number(p?.n ?? 0) === 0) return true;
     await new Promise((r) => setTimeout(r, 1500));
   }
+  return false;
 }
 
 async function terminalState(sql: Sql, leadId: string): Promise<Terminal> {
@@ -150,10 +151,12 @@ export async function runSim(
 
   // Turn 0: the agent makes first contact.
   await enqueueRun(sql, { kind: 'outreach', leadId });
-  await settle(sql, leadId);
+  const firstSettled = await settle(sql, leadId);
 
   let lastSeenId: string | null = null;
-  let terminal = await terminalState(sql, leadId);
+  let terminal =
+    (await terminalState(sql, leadId)) ??
+    (firstSettled ? null : { outcome: 'stalled', why: 'settle timeout — run still active' });
 
   while (!terminal && transcript.length < maxTurns * 2) {
     const out = await latestOutbound(sql, leadId, lastSeenId);
@@ -186,8 +189,10 @@ export async function runSim(
       body: reply,
       providerMessageId: `sim:${crypto.randomUUID()}`,
     });
-    await settle(sql, leadId);
-    terminal = await terminalState(sql, leadId);
+    const settled = await settle(sql, leadId);
+    terminal =
+      (await terminalState(sql, leadId)) ??
+      (settled ? null : { outcome: 'stalled', why: 'settle timeout — run still active' });
     if (terminal) {
       // A run can go terminal on the same step that sends (send_message +
       // set_state together) — harvest that closing message before ending, or

@@ -299,10 +299,14 @@ const REGISTRY: { def: AgentTool; toolsets: string[] }[] = [
     def: {
       name: 'unsubscribe',
       description:
-        'The sender asked to stop receiving messages / be removed — opts the lead out (unsubscribed_at). Never send anything after calling this.',
+        'The sender asked to stop receiving messages / be removed — opts the lead out (unsubscribed_at). `reply` is an optional one-line farewell sent as the final message; never send anything else after calling this.',
       parameters: {
         type: 'object',
-        properties: { leadId: leadIdArg, reason: { type: 'string' } },
+        properties: {
+          leadId: leadIdArg,
+          reason: { type: 'string' },
+          reply: { type: 'string' },
+        },
         required: ['leadId'],
       },
     },
@@ -1108,27 +1112,86 @@ export async function executeTool(
     }
     case 'request_human': {
       const leadId = String(args.leadId);
+      const reason = String(args.reason).slice(0, 500);
       if (ctx.threadId) await setThreadAgent(sql, ctx.threadId, false, key + ':thread');
       await createTask(
         sql,
         leadId,
-        { title: `[humano] ${String(args.reason).slice(0, 200)}`, createdBy: 'agent' },
+        { title: `[humano] ${reason.slice(0, 200)}`, createdBy: 'agent' },
         key + ':task',
+      );
+      // The handoff belongs on the lead's timeline too — staff reading the
+      // card sees why the agent stepped aside, not just a task title.
+      await controlTx(
+        sql,
+        (tx) => tx`
+          insert into lead_activities (lead_id, kind, body, created_by)
+          values (${leadId}, 'system', ${`Handoff para humano — ${reason}`}, 'agent')
+        `,
       );
       return { handedOff: true };
     }
     case 'unsubscribe': {
-      // Idempotent by construction — replays and double-fires are no-ops.
       const leadId = String(args.leadId);
       const reason = typeof args.reason === 'string' ? args.reason.slice(0, 200) : null;
-      return controlTx(sql, async (tx) => {
-        await tx`update leads set unsubscribed_at = now(), updated_at = now() where id = ${leadId} and unsubscribed_at is null`;
-        await tx`
-          insert into lead_activities (lead_id, kind, body, created_by)
-          values (${leadId}, 'system', ${`Pediu para sair — opt-out registrado${reason ? ` (${reason})` : ''}`}, 'agent')
+      const reply = typeof args.reply === 'string' ? args.reply.slice(0, 500) : null;
+      // The farewell goes out BEFORE unsubscribed_at lands — the send
+      // guardrail refuses unsubscribed leads, and this is the one message
+      // that must precede the flag. Claimed like send_message so a replay
+      // can't re-send the goodbye.
+      if (reply) {
+        type AckBody =
+          { sent: false; reason: string | undefined } | { sent: true; messageId: string };
+        const res = await claimControl<AckBody>(sql, key + ':ack', async (tx) => {
+          await tx`select pg_advisory_xact_lock(hashtext(${`send:${leadId}`}))`;
+          const pick = await resolveChannelTx(tx, leadId, {
+            requested: null,
+            override: ctx.channelOverride,
+            threadId: ctx.threadId,
+          });
+          if (!pick.ok) return { status: 200, body: { sent: false as const, reason: pick.reason } };
+          const g = await getSettingTx(tx, 'guardrails', {} as Partial<Guardrails>);
+          const verdict = await checkSendAllowedTx(
+            tx,
+            { ...DEFAULT_GUARDRAILS, ...g },
+            leadId,
+            pick.channel,
+          );
+          if (!verdict.ok)
+            return { status: 200, body: { sent: false as const, reason: verdict.reason } };
+          const composed = await composeMessageTx(tx, {
+            leadId,
+            channel: pick.channel,
+            body: reply,
+            author: 'agent',
+            status: 'queued',
+            agentRunId: ctx.runId,
+          });
+          return {
+            status: 200,
+            body: { sent: true as const, messageId: composed.body.message.id },
+          };
+        });
+        if (res.body.sent && !res.replayed) {
+          await dispatchMessage(sql, res.body.messageId);
+        }
+      }
+      // Idempotent by construction — replays and double-fires are no-ops,
+      // and the note only writes on the transition.
+      await controlTx(sql, async (tx) => {
+        const changed = await tx<{ id: string }[]>`
+          update leads set unsubscribed_at = now(), updated_at = now()
+          where id = ${leadId} and unsubscribed_at is null
+          returning id
         `;
-        return { unsubscribed: true };
+        if (changed.length) {
+          await tx`
+            insert into lead_activities (lead_id, kind, body, created_by)
+            values (${leadId}, 'system', ${`Pediu para sair — opt-out registrado${reason ? ` (${reason})` : ''}`}, 'agent')
+          `;
+        }
       });
+      return { unsubscribed: true, farewellSent: !!reply };
     }
     case 'web_search': {
       const { discoveryFor, annotateResults } = await import('./channels/discovery.ts');
