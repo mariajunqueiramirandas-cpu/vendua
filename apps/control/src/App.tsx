@@ -84,10 +84,14 @@ export default function App() {
 
   // The menu sheet is a phone affordance — if the viewport widens past the
   // breakpoint while it's open (rotation, window drag), dismiss it rather
-  // than leave an unstyled overlay up.
+  // than leave an unstyled overlay up. Observes the same max-width query
+  // the CSS uses so fractional widths (zoom, display scaling) can't leave
+  // the sheet in the gap between two breakpoints.
   useEffect(() => {
-    const mq = window.matchMedia('(min-width: 761px)');
-    const close = () => mq.matches && setNavOpen(false);
+    const mq = window.matchMedia('(max-width: 760px)');
+    const close = () => {
+      if (!mq.matches) setNavOpen(false);
+    };
     mq.addEventListener('change', close);
     return () => mq.removeEventListener('change', close);
   }, []);
