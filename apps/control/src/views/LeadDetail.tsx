@@ -123,7 +123,7 @@ export default function LeadDetail() {
       title={lead.name}
       sub={lead.businessName ?? undefined}
       actions={
-        <>
+        <div className="lead-acts">
           {lead.agentMode !== 'off' && (
             <>
               <select
@@ -162,12 +162,12 @@ export default function LeadDetail() {
           >
             <Archive size={14} /> arquivar
           </ConfirmBtn>
-        </>
+        </div>
       }
     >
-      <div className="grid2" style={{ alignItems: 'start' }}>
-        <div>
-          <div className="card" style={{ padding: 18, marginBottom: 14 }}>
+      <div className="lead-page">
+        <div className="lead-cols">
+          <div className="card" style={{ padding: 18 }}>
             <div className="seg-row">
               <span className="seg" title="estágio do lead">
                 {STATE_OPTS.map(([v, l]) => (
@@ -237,22 +237,15 @@ export default function LeadDetail() {
                   )}
                 </div>
               </div>
-            </div>
-            <div style={{ marginTop: 14, display: 'flex', gap: 12, alignItems: 'center' }}>
-              <div
-                className="k"
-                style={{
-                  fontSize: 'var(--t-2xs)',
-                  color: 'var(--muted)',
-                  textTransform: 'uppercase',
-                }}
-              >
-                valor
+              <div>
+                <div className="k">valor</div>
+                <div className="v">
+                  <MoneyEdit
+                    cents={lead.dealValueCents}
+                    onSave={(c) => void patch({ dealValueCents: c })}
+                  />
+                </div>
               </div>
-              <MoneyEdit
-                cents={lead.dealValueCents}
-                onSave={(c) => void patch({ dealValueCents: c })}
-              />
             </div>
             <div style={{ marginTop: 12 }}>
               <div
@@ -270,8 +263,44 @@ export default function LeadDetail() {
             </div>
           </div>
 
-          <div className="card" style={{ padding: 18, marginBottom: 14 }}>
-            <b>conversas</b>
+          <div className="card lead-timeline" style={{ padding: 18 }}>
+            <div className="sec-t">linha do tempo</div>
+            <div style={{ display: 'flex', gap: 8, margin: '2px 0 12px' }}>
+              <input
+                placeholder="anotar…"
+                value={note}
+                onChange={(e) => setNote(e.target.value)}
+                onKeyDown={(e) => e.key === 'Enter' && void addNote()}
+                style={{ flex: 1 }}
+              />
+              <button className="btn" onClick={() => void addNote()}>
+                <Plus size={14} />
+              </button>
+            </div>
+            <div className="steps">
+              {acts.map((a) => (
+                <div
+                  key={a.id}
+                  className={`step ${a.createdBy === 'agent' ? 'tool' : a.kind === 'state_change' ? 'model' : ''}`}
+                >
+                  <div className="who">
+                    {a.createdBy === 'agent' ? 'agente' : (KIND_LABEL[a.kind] ?? a.kind)} ·{' '}
+                    {fmtDateTime(a.at)}
+                  </div>
+                  <div>{a.body}</div>
+                </div>
+              ))}
+              {!acts.length && (
+                <Empty
+                  title="sem atividade"
+                  hint="notas, ligações e ações do agente aparecem aqui"
+                />
+              )}
+            </div>
+          </div>
+
+          <div className="card" style={{ padding: 18 }}>
+            <div className="sec-t">conversas</div>
             {threads.map((t) => (
               <div key={t.id} className="trow">
                 <span className="chip">{t.channel}</span>
@@ -325,9 +354,9 @@ export default function LeadDetail() {
             </div>
           </div>
 
-          <div className="card" style={{ padding: 18, marginBottom: 14 }}>
-            <div style={{ display: 'flex', alignItems: 'center', marginBottom: 6 }}>
-              <b>calls</b>
+          <div className="card" style={{ padding: 18 }}>
+            <div className="sec-t" style={{ display: 'flex', alignItems: 'center' }}>
+              calls
               <CopyLinkBtn leadId={lead.id} />
             </div>
             {meetings.map((m) => (
@@ -375,7 +404,7 @@ export default function LeadDetail() {
           </div>
 
           <div className="card" style={{ padding: 18 }}>
-            <b>tarefas</b>
+            <div className="sec-t">tarefas</div>
             {tasks.map((t) => {
               const late = t.dueAt && !t.doneAt && new Date(t.dueAt) < new Date();
               return (
@@ -418,39 +447,6 @@ export default function LeadDetail() {
                 <Plus size={14} />
               </button>
             </div>
-          </div>
-        </div>
-
-        <div className="card" style={{ padding: 18 }}>
-          <b>linha do tempo</b>
-          <div style={{ display: 'flex', gap: 8, margin: '10px 0 14px' }}>
-            <input
-              placeholder="anotar…"
-              value={note}
-              onChange={(e) => setNote(e.target.value)}
-              onKeyDown={(e) => e.key === 'Enter' && void addNote()}
-              style={{ flex: 1 }}
-            />
-            <button className="btn" onClick={() => void addNote()}>
-              <Plus size={14} />
-            </button>
-          </div>
-          <div className="steps">
-            {acts.map((a) => (
-              <div
-                key={a.id}
-                className={`step ${a.createdBy === 'agent' ? 'tool' : a.kind === 'state_change' ? 'model' : ''}`}
-              >
-                <div className="who">
-                  {a.createdBy === 'agent' ? 'agente' : (KIND_LABEL[a.kind] ?? a.kind)} ·{' '}
-                  {fmtDateTime(a.at)}
-                </div>
-                <div>{a.body}</div>
-              </div>
-            ))}
-            {!acts.length && (
-              <Empty title="sem atividade" hint="notas, ligações e ações do agente aparecem aqui" />
-            )}
           </div>
         </div>
       </div>

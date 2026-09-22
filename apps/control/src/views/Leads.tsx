@@ -131,7 +131,7 @@ export default function Leads() {
     <Page
       title="Leads"
       actions={
-        <>
+        <div className="leads-acts">
           <button className="btn" onClick={() => fileRef.current?.click()}>
             <Upload size={14} /> importar
           </button>
@@ -148,7 +148,7 @@ export default function Leads() {
           <button className="btn primary" onClick={() => setShowNew(true)}>
             <Plus size={14} /> novo <span className="kbd">n</span>
           </button>
-        </>
+        </div>
       }
     >
       <div className="toolbar">
@@ -171,25 +171,15 @@ export default function Leads() {
           <option value="only">arquivados</option>
           <option value="all">todos</option>
         </select>
-        {importMsg && <span className="sub">{importMsg}</span>}
+        {importMsg && <span className="leads-sub">{importMsg}</span>}
       </div>
 
       {sel.size > 0 && (
-        <div
-          className="card"
-          style={{
-            padding: '10px 14px',
-            marginBottom: 12,
-            display: 'flex',
-            gap: 10,
-            alignItems: 'center',
-            flexWrap: 'wrap',
-          }}
-        >
+        <div className="card leads-bulk">
           <b>
             {sel.size} selecionado{sel.size === 1 ? '' : 's'}
           </b>
-          <span className="sub">objetivo:</span>
+          <span className="leads-sub">objetivo:</span>
           <span className="seg">
             {GOAL_OPTS.map(([v, l]) => (
               <button key={v} className={goal === v ? 'sel' : ''} onClick={() => setGoal(v)}>
@@ -197,7 +187,7 @@ export default function Leads() {
               </button>
             ))}
           </span>
-          <span className="sub">canal:</span>
+          <span className="leads-sub">canal:</span>
           <span className="seg" title="auto = o agente escolhe o canal alcançável">
             {(['auto', 'whatsapp', 'email'] as const).map((v) => (
               <button key={v} className={channel === v ? 'sel' : ''} onClick={() => setChannel(v)}>
@@ -212,11 +202,7 @@ export default function Leads() {
       )}
       {/* Result lives outside the selection card — dispatch clears `sel`,
           which would unmount the message in the same render. */}
-      {dispatchMsg && (
-        <div className="sub" style={{ marginBottom: 12 }}>
-          {dispatchMsg}
-        </div>
-      )}
+      {dispatchMsg && <div className="leads-msg">{dispatchMsg}</div>}
 
       {loading ? (
         <Empty title="carregando…" />
@@ -226,11 +212,11 @@ export default function Leads() {
           hint={q ? 'busca sem resultados — limpe os filtros' : 'crie o primeiro (n)'}
         />
       ) : (
-        <div className="card">
-          <table className="tbl">
+        <div className="card leads-list">
+          <table className="tbl leads-tbl">
             <thead>
               <tr>
-                <th style={{ width: 24 }}>
+                <th className="l-cb">
                   <input
                     type="checkbox"
                     checked={leads.length > 0 && leads.every((l) => sel.has(l.id))}
@@ -243,29 +229,29 @@ export default function Leads() {
                     }
                   />
                 </th>
-                <th>nome</th>
-                <th>negócio</th>
-                <th>estágio</th>
-                <th>segmento</th>
-                <th>cidade</th>
-                <th>valor</th>
-                <th>fit</th>
-                <th>score</th>
-                <th>agente</th>
-                <th>últ. atividade</th>
+                <th className="l-name">nome</th>
+                <th className="l-biz">negócio</th>
+                <th className="l-stage">estágio</th>
+                <th className="l-opt">segmento</th>
+                <th className="l-opt">cidade</th>
+                <th className="l-val">valor</th>
+                <th className="l-opt">fit</th>
+                <th className="l-score">score</th>
+                <th className="l-agent">agente</th>
+                <th className="l-act">últ. atividade</th>
               </tr>
             </thead>
             <tbody>
               {leads.map((l) => (
                 <tr key={l.id} className="clickable" onClick={() => nav(`/leads/${l.id}`)}>
-                  <td onClick={(e) => e.stopPropagation()}>
+                  <td className="l-cb" onClick={(e) => e.stopPropagation()}>
                     <input
                       type="checkbox"
                       checked={sel.has(l.id)}
                       onChange={() => toggleSel(l.id)}
                     />
                   </td>
-                  <td>
+                  <td className="l-name">
                     <b>{l.name}</b>
                     {l.unsubscribedAt && (
                       <span className="chip bad" style={{ marginLeft: 6 }}>
@@ -278,14 +264,14 @@ export default function Leads() {
                       </span>
                     )}
                   </td>
-                  <td>{l.businessName ?? '—'}</td>
-                  <td>
+                  <td className="l-biz">{l.businessName ?? '—'}</td>
+                  <td className="l-stage">
                     <StateChip state={l.state} />
                   </td>
-                  <td>{l.segment ?? '—'}</td>
-                  <td>{l.city ?? '—'}</td>
-                  <td className="mono">{fmtMoney(l.dealValueCents)}</td>
-                  <td className="mono" title={l.fitReason ?? undefined}>
+                  <td className="l-opt">{l.segment ?? '—'}</td>
+                  <td className="l-opt">{l.city ?? '—'}</td>
+                  <td className="l-val mono">{fmtMoney(l.dealValueCents)}</td>
+                  <td className="l-opt mono" title={l.fitReason ?? undefined}>
                     {l.fitScore != null ? `${l.fitScore}/10` : '—'}
                     {l.intentScore != null && (
                       <span className="dim" title={l.intentReason ?? undefined}>
@@ -294,17 +280,17 @@ export default function Leads() {
                       </span>
                     )}
                   </td>
-                  <td>
+                  <td className="l-score">
                     <ScoreBar score={l.score} />
                   </td>
-                  <td>
+                  <td className="l-agent">
                     {l.agentMode !== 'off' ? (
                       <span className="chip agent">{l.agentMode}</span>
                     ) : (
                       <span className="chip">off</span>
                     )}
                   </td>
-                  <td className="mono">{rel(l.lastActivityAt ?? l.updatedAt)}</td>
+                  <td className="l-act mono">{rel(l.lastActivityAt ?? l.updatedAt)}</td>
                 </tr>
               ))}
             </tbody>
@@ -312,7 +298,7 @@ export default function Leads() {
         </div>
       )}
       {cursor && (
-        <div style={{ marginTop: 12, textAlign: 'center' }}>
+        <div className="leads-more">
           <button className="btn" onClick={() => load(cursor)}>
             mais
           </button>

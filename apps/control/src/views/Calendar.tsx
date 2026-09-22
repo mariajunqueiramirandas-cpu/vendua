@@ -400,7 +400,9 @@ export default function Calendar() {
           {dayCard(sel, WD[(sel.wd + 6) % 7] ?? '', ' msel')}
         </div>
       ) : (
-        <div className="agenda">{days.map((d, i) => dayCard(d, WD[i] ?? ''))}</div>
+        <div className="cal-scroll">
+          <div className="agenda">{days.map((d, i) => dayCard(d, WD[i] ?? ''))}</div>
+        </div>
       )}
     </Page>
   );
