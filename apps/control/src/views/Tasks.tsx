@@ -23,13 +23,20 @@ export default function Tasks() {
   const [tasks, setTasks] = useState<Task[]>([]);
   const [showDone, setShowDone] = useState(false);
 
-  // Last-issued load wins: the response carries the filter it was fetched
-  // under, so an older one shows the wrong `done` set — not just older data.
+  // A response is usable only for the filter it was fetched under: reject
+  // it when that filter is no longer displayed, but otherwise an older
+  // same-filter success still commits unless a newer success already did —
+  // a failed refresh never discards usable tasks.
   const reqSeq = useRef(0);
+  const okSeq = useRef(0);
+  const shownFilter = useRef(showDone);
   const load = useCallback(() => {
+    shownFilter.current = showDone;
     const seq = ++reqSeq.current;
-    api.tasks({ done: showDone ? undefined : 'false' } as { done?: string }).then((r) => {
-      if (seq !== reqSeq.current) return;
+    const f = showDone;
+    api.tasks({ done: f ? undefined : 'false' } as { done?: string }).then((r) => {
+      if (f !== shownFilter.current || seq <= okSeq.current) return;
+      okSeq.current = seq;
       setTasks(r.tasks);
     });
   }, [showDone]);
