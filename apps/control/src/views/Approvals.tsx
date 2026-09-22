@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { Bot, Check, Pencil, X } from 'lucide-react';
 import { api, type Draft } from '../api.ts';
@@ -11,8 +11,15 @@ export default function Approvals() {
   const [editBody, setEditBody] = useState('');
   const [results, setResults] = useState<Record<string, string>>({});
 
+  // Last-issued load wins — a stalled earlier response must not overwrite a
+  // newer result once events and the poll overlap requests.
+  const loadSeq = useRef(0);
   const load = useCallback(() => {
-    api.approvals().then((r) => setDrafts(r.drafts));
+    const seq = ++loadSeq.current;
+    api.approvals().then((r) => {
+      if (seq !== loadSeq.current) return;
+      setDrafts(r.drafts);
+    });
   }, []);
   useEffect(load, [load]);
   useEffect(() => onControlEvent('draft.change', load), [load]);

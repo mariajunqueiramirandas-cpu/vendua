@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { api, type Stats } from '../api.ts';
 import { onControlEvent } from '../events.ts';
@@ -23,11 +23,19 @@ export default function Dashboard() {
   const [s, setS] = useState<Stats | null>(null);
   const [err, setErr] = useState('');
 
+  const loadSeq = useRef(0);
   const load = useCallback(() => {
+    const seq = ++loadSeq.current;
     api
       .stats()
-      .then(setS)
-      .catch((e) => setErr(String(e)));
+      .then((stats) => {
+        if (seq !== loadSeq.current) return;
+        setS(stats);
+        setErr('');
+      })
+      .catch((e) => {
+        if (seq === loadSeq.current) setErr(String(e));
+      });
   }, []);
   useEffect(load, [load]);
   useEffect(() => onControlEvent(['lead.change', 'run.update', 'draft.change'], load), [load]);

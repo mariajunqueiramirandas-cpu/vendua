@@ -1,4 +1,4 @@
-import { Fragment, useCallback, useEffect, useState } from 'react';
+import { Fragment, useCallback, useEffect, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { api, type Task } from '../api.ts';
 import { onControlEvent } from '../events.ts';
@@ -23,10 +23,15 @@ export default function Tasks() {
   const [tasks, setTasks] = useState<Task[]>([]);
   const [showDone, setShowDone] = useState(false);
 
+  const loadSeq = useRef(0);
   const load = useCallback(() => {
+    const seq = ++loadSeq.current;
     api
       .tasks({ done: showDone ? undefined : 'false' } as { done?: string })
-      .then((r) => setTasks(r.tasks));
+      .then((r) => {
+        if (seq !== loadSeq.current) return;
+        setTasks(r.tasks);
+      });
   }, [showDone]);
   useEffect(load, [load]);
   useEffect(() => onControlEvent('lead.change', load), [load]);

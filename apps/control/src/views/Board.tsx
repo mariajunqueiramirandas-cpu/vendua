@@ -19,7 +19,9 @@ export default function BoardView() {
   const [over, setOver] = useState<string | null>(null);
   const nav = useNavigate();
 
+  const loadSeq = useRef(0);
   const load = useCallback(() => {
+    const seq = ++loadSeq.current;
     // Follow the keyset cursor — the board IS the pipeline, so a partial page
     // would silently hide leads and misreport column totals.
     const all: LeadListItem[] = [];
@@ -29,6 +31,7 @@ export default function BoardView() {
         return r.nextCursor ? page(r.nextCursor) : undefined;
       });
     void page().then(() => {
+      if (seq !== loadSeq.current) return;
       setLeads(all);
       setLoading(false);
     });

@@ -1,8 +1,9 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { Archive, Ban, Bot, Link2, Plus, Video } from 'lucide-react';
 import {
   api,
+  ApiError,
   type Activity,
   type AgentRun,
   type LeadListItem,
@@ -74,20 +75,42 @@ export default function LeadDetail() {
   const [actChannel, setActChannel] = useState<'auto' | 'whatsapp' | 'email'>('auto');
   const [notFound, setNotFound] = useState(false);
 
+  // Last-issued load wins across every fanned-out request, and only an
+  // explicit 404 is a missing lead — a transient refresh failure must not
+  // swap the loaded page for the not-found state.
+  const loadSeq = useRef(0);
   const load = useCallback(() => {
+    const seq = ++loadSeq.current;
     api
       .lead(id)
-      .then((r) => setLead(r.lead))
-      .catch(() => setNotFound(true));
-    api.activities(id).then((r) => setActs(r.activities));
-    api.tasks({ leadId: id }).then((r) => setTasks(r.tasks));
-    api.leadThreads(id).then((r) => setThreads(r.threads));
-    api.meetings({ leadId: id, scope: 'all' }).then((r) => setMeetings(r.meetings));
+      .then((r) => {
+        if (seq !== loadSeq.current) return;
+        setNotFound(false);
+        setLead(r.lead);
+      })
+      .catch((e) => {
+        if (seq === loadSeq.current && e instanceof ApiError && e.status === 404)
+          setNotFound(true);
+      });
+    api.activities(id).then((r) => {
+      if (seq === loadSeq.current) setActs(r.activities);
+    });
+    api.tasks({ leadId: id }).then((r) => {
+      if (seq === loadSeq.current) setTasks(r.tasks);
+    });
+    api.leadThreads(id).then((r) => {
+      if (seq === loadSeq.current) setThreads(r.threads);
+    });
+    api.meetings({ leadId: id, scope: 'all' }).then((r) => {
+      if (seq === loadSeq.current) setMeetings(r.meetings);
+    });
     // Queued runs with a run_at — the scheduled first contact (or a delayed
     // reply) staff would otherwise have to find on the Runs page.
     api
       .runs({ lead_id: id, status: 'queued' })
-      .then((r) => setSchedRuns(r.runs.filter((x) => x.run_at)));
+      .then((r) => {
+        if (seq === loadSeq.current) setSchedRuns(r.runs.filter((x) => x.run_at));
+      });
   }, [id]);
   useEffect(load, [load]);
   // The page renders lead, meetings, and queued runs — all three types map

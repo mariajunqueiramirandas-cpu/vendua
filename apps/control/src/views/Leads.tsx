@@ -63,19 +63,16 @@ export default function Leads() {
     setLoading(true);
     load();
   }, [load]);
-  // Skip the event refresh once staff paged past the first 100 — a page-1
-  // reload would collapse the expanded list; the floor poll covers it.
-  useEffect(
-    () =>
-      onControlEvent('lead.change', () => {
-        if (leads.length <= 100) load();
-      }),
-    [load, leads.length],
-  );
+  // Skip refresh once staff paged past the first 100 — a page-1 reload
+  // would collapse the expanded list (and drop selections on later pages).
+  const refresh = useCallback(() => {
+    if (leads.length <= 100) load();
+  }, [load, leads.length]);
+  useEffect(() => onControlEvent('lead.change', refresh), [refresh]);
   useEffect(() => {
-    const t = setInterval(load, 60_000);
+    const t = setInterval(refresh, 60_000);
     return () => clearInterval(t);
-  }, [load]);
+  }, [refresh]);
   // Filter changes swap the result set — drop hidden selections so dispatch
   // only ever acts on leads the staff can see selected. The generation bump
   // also invalidates an in-flight dispatch result, which would otherwise
