@@ -53,7 +53,7 @@ export default function Tasks() {
         />
       )}
       {ordered.length > 0 && (
-        <div className="card" style={{ maxWidth: 860 }}>
+        <div className="card" style={{ maxInlineSize: 860 }}>
           <table className="tbl">
             <tbody>
               {ordered.map((b) => (
@@ -86,14 +86,14 @@ export default function Tasks() {
                           <span style={{ color: 'var(--muted)' }}> · {t.businessName}</span>
                         )}
                       </td>
-                      <td style={{ textAlign: 'right' }}>
+                      <td className="end">
                         <span
                           className={`due${b === 'atrasadas' ? ' bad' : b === 'hoje' ? ' soon' : ''}`}
                         >
                           {t.doneAt ? `feita ${fmtDateTime(t.doneAt)}` : fmtDateTime(t.dueAt)}
                         </span>
                         {t.createdBy === 'agent' ? (
-                          <span className="chip agent" style={{ marginLeft: 8 }}>
+                          <span className="chip agent" style={{ marginInlineStart: 8 }}>
                             agente
                           </span>
                         ) : null}

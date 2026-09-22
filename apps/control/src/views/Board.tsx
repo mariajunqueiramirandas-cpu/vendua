@@ -146,7 +146,7 @@ export default function BoardView() {
                       <span className="chip warn">{l.pendingDrafts} rasc.</span>
                     )}
                     {l.openTasks > 0 && <span className="chip">{l.openTasks} tarefas</span>}
-                    <span className="score" style={{ marginLeft: 'auto' }}>
+                    <span className="score" style={{ marginInlineStart: 'auto' }}>
                       {rel(l.lastActivityAt ?? l.updatedAt)}
                     </span>
                     {/* touch can't HTML5-drag — the stage picker is the move affordance */}
