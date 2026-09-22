@@ -1,6 +1,7 @@
 import type { Sql } from '../platform/db.ts';
 import { HttpError, str } from '../platform/http.ts';
 import { claimControl, controlTx, type ClaimResult } from './control.ts';
+import { emitControlEvent } from './control-events.ts';
 import { LEAD_STATES, type LeadState } from './leads.ts';
 
 /**
@@ -160,7 +161,7 @@ export async function upsertIntegration(
       field: 'secretRef',
     });
   }
-  return claimControl(sql, idemKey, async (tx) => {
+  const res = await claimControl(sql, idemKey, async (tx) => {
     const rows = await tx<IntegrationRow[]>`
       insert into control_integrations (kind, driver, enabled, config, secret_ref)
       values (${kind}, ${driver}, ${input.enabled ?? false}, ${tx.json((input.config ?? {}) as never)}, ${secretRef})
@@ -186,6 +187,12 @@ export async function upsertIntegration(
     }
     return { status: 200, body: { integration: integrationJson(rows[0]!) } };
   });
+  // A driver/enable flip on a messaging channel changes what its health
+  // cards and the live socket should be doing — material, not per-counter.
+  if (!res.replayed && (kind === 'whatsapp' || kind === 'email')) {
+    emitControlEvent('channel.health', kind);
+  }
+  return res;
 }
 
 // ---------------------------------------------------------------------------
@@ -535,13 +542,17 @@ export async function putSetting(
   if (typeof value !== 'object' || value === null) {
     throw new HttpError(422, 'BAD_REQUEST', 'value must be an object');
   }
-  return claimControl(sql, idemKey, async (tx) => {
+  const res = await claimControl(sql, idemKey, async (tx) => {
     await tx`
       insert into control_settings (key, value) values (${key}, ${tx.json(value as never)})
       on conflict (key) do update set value = excluded.value
     `;
     return { status: 200, body: { key, value } };
   });
+  // Meeting windows/tz/slot changes alter the availability grid the
+  // meetings surface renders.
+  if (!res.replayed && key === 'meeting') emitControlEvent('meeting.change');
+  return res;
 }
 
 export async function listSettings(sql: Sql) {

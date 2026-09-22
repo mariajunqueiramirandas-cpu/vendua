@@ -1,6 +1,7 @@
 import type { Sql } from '../platform/db.ts';
 import { HttpError, str } from '../platform/http.ts';
 import { claimControl, controlTx, type ClaimResult } from './control.ts';
+import { emitControlEvent } from './control-events.ts';
 import { leadJson, type LeadRow } from './leads.ts';
 import { DEFAULT_GUARDRAILS, getSettingTx, type Guardrails } from './integrations.ts';
 
@@ -261,7 +262,7 @@ export async function addInboundMessage(
 ): Promise<InboundResult> {
   const body = str(input.body, 'body', 8000).trim();
   if (!body) throw new HttpError(422, 'BAD_REQUEST', 'body is required');
-  return controlTx(sql, async (tx) => {
+  const result = await controlTx(sql, async (tx) => {
     // Provider ids are namespaced per channel ('whatsapp:AB12…') — they share
     // no global namespace, so a raw id stored from one channel could suppress
     // a legitimate inbound on another.
@@ -377,6 +378,9 @@ export async function addInboundMessage(
 
     return { leadId, threadId: thread.id, messageId: message.id, leadCreated, alreadySeen: false };
   });
+  if (!result.alreadySeen) emitControlEvent('thread.message', result.threadId);
+  if (result.leadCreated) emitControlEvent('lead.change', result.leadId);
+  return result;
 }
 
 /** Staff/agent compose → status 'draft' when approval is required, 'queued'
@@ -407,7 +411,14 @@ export async function composeMessage(
 > {
   const body = str(input.body, 'body', 8000).trim();
   if (!body) throw new HttpError(422, 'BAD_REQUEST', 'body is required');
-  return claimControl(sql, idemKey, (tx) => composeMessageTx(tx, input));
+  const res = await claimControl(sql, idemKey, (tx) => composeMessageTx(tx, input));
+  if (!res.replayed) {
+    emitControlEvent('thread.message', res.body.thread.id);
+    if (res.body.message.status === 'draft') {
+      emitControlEvent('draft.change', res.body.thread.id);
+    }
+  }
+  return res;
 }
 
 /** Tx-local compose — the send_message tool calls this inside the same
@@ -470,7 +481,7 @@ export async function approveMessage(
 ): Promise<
   ClaimResult<{ message: ReturnType<typeof messageJson>; stale?: boolean; runId?: string }>
 > {
-  return claimControl<{
+  const res = await claimControl<{
     message: ReturnType<typeof messageJson>;
     stale?: boolean;
     runId?: string;
@@ -558,6 +569,12 @@ export async function approveMessage(
     if (!rows[0]) throw new HttpError(404, 'MESSAGE_NOT_FOUND', 'draft message not found');
     return { status: 200, body: { message: messageJson(rows[0]!) } };
   });
+  if (!res.replayed) {
+    emitControlEvent('draft.change', res.body.message.threadId);
+    emitControlEvent('thread.message', res.body.message.threadId);
+    if (res.body.runId) emitControlEvent('run.update', res.body.runId);
+  }
+  return res;
 }
 
 export async function rejectMessage(
@@ -565,7 +582,7 @@ export async function rejectMessage(
   messageId: string,
   idemKey: string,
 ): Promise<ClaimResult<{ message: ReturnType<typeof messageJson> }>> {
-  return claimControl(sql, idemKey, async (tx) => {
+  const res = await claimControl(sql, idemKey, async (tx) => {
     const rows = await tx<MessageRow[]>`
       update lead_messages set status = 'rejected'
       where id = ${messageId} and status = 'draft'
@@ -574,6 +591,11 @@ export async function rejectMessage(
     if (!rows[0]) throw new HttpError(404, 'MESSAGE_NOT_FOUND', 'draft message not found');
     return { status: 200, body: { message: messageJson(rows[0]!) } };
   });
+  if (!res.replayed) {
+    emitControlEvent('draft.change', res.body.message.threadId);
+    emitControlEvent('thread.message', res.body.message.threadId);
+  }
+  return res;
 }
 
 export async function setThreadAgent(
@@ -585,7 +607,7 @@ export async function setThreadAgent(
    *  live-claim check so a reclaimed run can't still mutate. */
   guard?: (tx: Sql) => Promise<void>,
 ): Promise<ClaimResult<{ thread: ReturnType<typeof threadJson> }>> {
-  return claimControl(sql, idemKey, async (tx) => {
+  const res = await claimControl(sql, idemKey, async (tx) => {
     await guard?.(tx);
     const rows = await tx<ThreadRow[]>`
       update lead_threads set agent_enabled = ${enabled} where id = ${threadId} returning *
@@ -593,6 +615,8 @@ export async function setThreadAgent(
     if (!rows[0]) throw new HttpError(404, 'THREAD_NOT_FOUND', 'thread not found');
     return { status: 200, body: { thread: threadJson(rows[0]!) } };
   });
+  if (!res.replayed) emitControlEvent('thread.message', threadId);
+  return res;
 }
 
 /** Pending drafts for the Approvals queue — joined to lead context so the

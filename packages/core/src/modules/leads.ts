@@ -1,6 +1,7 @@
 import type { Sql } from '../platform/db.ts';
 import { HttpError, str } from '../platform/http.ts';
 import { claimControl, controlTx, type ClaimResult } from './control.ts';
+import { emitControlEvent } from './control-events.ts';
 
 /**
  * leads module — the Founder CRM's merchant-intake pipeline (docs/roadmap.md,
@@ -518,7 +519,9 @@ export async function createLead(
   fields: Record<string, unknown>,
   idemKey: string,
 ): Promise<ClaimResult<{ lead: Lead }>> {
-  return claimControl(sql, idemKey, (tx) => insertLeadTx(tx, fields));
+  const res = await claimControl(sql, idemKey, (tx) => insertLeadTx(tx, fields));
+  if (!res.replayed) emitControlEvent('lead.change', res.body.lead.id);
+  return res;
 }
 
 /** Tx-local insert — callers combining lead creation with side effects in
@@ -546,7 +549,7 @@ export async function updateLead(
    *  live-claim check so a reclaimed run can't still mutate. */
   guard?: (tx: Sql) => Promise<void>,
 ): Promise<ClaimResult<{ lead: Lead }>> {
-  return claimControl(sql, idemKey, async (tx) => {
+  const res = await claimControl(sql, idemKey, async (tx) => {
     await guard?.(tx);
     const cur = (await tx<LeadRow[]>`select * from leads where id = ${id}`)[0];
     if (!cur) throw new HttpError(404, 'LEAD_NOT_FOUND', 'lead not found');
@@ -574,6 +577,8 @@ export async function updateLead(
     }
     return { status: 200, body: { lead: leadJson(rows[0]!) } };
   });
+  if (!res.replayed) emitControlEvent('lead.change', res.body.lead.id);
+  return res;
 }
 
 export async function deleteLead(
@@ -581,12 +586,14 @@ export async function deleteLead(
   id: string,
   idemKey: string,
 ): Promise<ClaimResult<{ ok: true }>> {
-  return claimControl(sql, idemKey, async (tx) => {
+  const res = await claimControl(sql, idemKey, async (tx) => {
     const rows =
       await tx`update leads set archived_at = now(), updated_at = now() where id = ${id} returning id`;
     if (!rows[0]) throw new HttpError(404, 'LEAD_NOT_FOUND', 'lead not found');
     return { status: 200, body: { ok: true as const } };
   });
+  if (!res.replayed) emitControlEvent('lead.change', id);
+  return res;
 }
 
 /** Opt-out signal — from an inbound "para/unsubscribe" or a staff action.
@@ -599,6 +606,7 @@ export async function unsubscribeLead(sql: Sql, id: string): Promise<void> {
       values (${id}, 'system', 'Descadastrado — sem novos envios', 'system')
     `;
   });
+  emitControlEvent('lead.change', id);
 }
 
 // ---------------------------------------------------------------------------
@@ -986,7 +994,7 @@ export async function importLeads(
   rows: Record<string, unknown>[],
   idemKey: string,
 ): Promise<ClaimResult<{ created: number; skipped: { reason: string; name?: string }[] }>> {
-  return claimControl(sql, idemKey, async (tx) => {
+  const res = await claimControl(sql, idemKey, async (tx) => {
     let created = 0;
     const skipped: { reason: string; name?: string }[] = [];
     for (const row of rows) {
@@ -1026,4 +1034,6 @@ export async function importLeads(
     }
     return { status: 200, body: { created, skipped } };
   });
+  if (!res.replayed && res.body.created > 0) emitControlEvent('lead.change');
+  return res;
 }
