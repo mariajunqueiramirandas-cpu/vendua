@@ -45,11 +45,17 @@ export default function Plan() {
   const [now, setNow] = useState(() => Date.now());
 
   const loadingRef = useRef(false);
+  // An event arriving mid-load can't be dropped — the in-flight pages may
+  // have read data older than the event, so queue one trailing refresh.
+  const pendingRef = useRef(false);
 
   // silent refresh keeps the queue honest without flickering the page —
   // a completed run disappears on the next tick instead of lingering overdue.
   const load = (silent = false) => {
-    if (loadingRef.current) return;
+    if (loadingRef.current) {
+      pendingRef.current = true;
+      return;
+    }
     loadingRef.current = true;
     if (!silent) setState('loading');
     // Follow the keyset cursor — a partial page would silently hide plans.
@@ -83,6 +89,10 @@ export default function Plan() {
       })
       .finally(() => {
         loadingRef.current = false;
+        if (pendingRef.current) {
+          pendingRef.current = false;
+          load(true);
+        }
       });
   };
   useEffect(() => load(), []);

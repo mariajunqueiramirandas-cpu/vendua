@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { api, type AgentRun } from '../api.ts';
 import { onControlEvent } from '../events.ts';
@@ -38,8 +38,15 @@ export default function Runs() {
   const load = useCallback(() => {
     api.runs({ ...(kind ? { kind } : {}) }).then((r) => setRuns(r.runs));
   }, [kind]);
+  // Events can overlap detail fetches — drop any response that isn't the
+  // newest request, or a stale 'running' snapshot can paint over 'done'.
+  const runSeq = useRef(0);
   const loadRun = useCallback(() => {
-    if (id) api.run(id).then((r) => setRun(r.run));
+    if (!id) return;
+    const req = ++runSeq.current;
+    api.run(id).then((r) => {
+      if (req === runSeq.current) setRun(r.run);
+    });
   }, [id]);
   useEffect(load, [load]);
   useEffect(() => {
