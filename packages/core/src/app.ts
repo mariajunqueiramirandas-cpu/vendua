@@ -1391,6 +1391,7 @@ export function createApp({ sql, sessionSecret, controlSecret, autoDrain }: AppD
     if (res.replayed) c.header('x-idempotent-replay', 'true');
     if (!res.replayed && res.body.created) {
       emitControlEvent('meeting.change', res.body.meeting.id);
+      if (res.body.meeting.leadId) emitControlEvent('lead.change', res.body.meeting.leadId);
     }
     // Post-commit effects run on fresh claims AND replays: room/gcal/email
     // happen after commit, so a crash between them leaves the replay (or the

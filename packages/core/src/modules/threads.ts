@@ -378,8 +378,10 @@ export async function addInboundMessage(
 
     return { leadId, threadId: thread.id, messageId: message.id, leadCreated, alreadySeen: false };
   });
-  if (!result.alreadySeen) emitControlEvent('thread.message', result.threadId);
-  if (result.leadCreated) emitControlEvent('lead.change', result.leadId);
+  if (!result.alreadySeen) {
+    emitControlEvent('thread.message', result.threadId);
+    emitControlEvent('lead.change', result.leadId);
+  }
   return result;
 }
 
@@ -573,6 +575,7 @@ export async function approveMessage(
     emitControlEvent('draft.change', res.body.message.threadId);
     emitControlEvent('thread.message', res.body.message.threadId);
     if (res.body.runId) emitControlEvent('run.update', res.body.runId);
+    if (res.body.stale) emitControlEvent('lead.change');
   }
   return res;
 }

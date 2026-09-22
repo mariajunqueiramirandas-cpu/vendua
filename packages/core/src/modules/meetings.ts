@@ -651,7 +651,10 @@ export async function bookMeeting(sql: Sql, input: BookInput): Promise<BookResul
   const now = new Date();
   const gcalBusy = await bookBusyWindows(bookInput.start);
   const txResult = await controlTx(sql, (tx) => bookMeetingTx(tx, bookInput, now, gcalBusy));
-  if (txResult.created) emitControlEvent('meeting.change', txResult.meeting.id);
+  if (txResult.created) {
+    emitControlEvent('meeting.change', txResult.meeting.id);
+    emitControlEvent('lead.change', txResult.lead.id);
+  }
   // Post-commit effects run for replays too — a crash between the insert
   // commit and here leaves room_url/gcal/confirmation unfinished, and a
   // retried request is the natural retry point. Each step fills only what's
@@ -974,7 +977,10 @@ export async function cancelByLead(
     );
     return { row: cancelled, fresh: true as const };
   });
-  if (out.fresh) emitControlEvent('meeting.change', out.row.id);
+  if (out.fresh) {
+    emitControlEvent('meeting.change', out.row.id);
+    if (out.row.lead_id) emitControlEvent('lead.change', out.row.lead_id);
+  }
   // Delete runs on replays too — a first attempt may have crashed before or
   // during it. gcal_event_id is only cleared on success so a failed delete
   // stays retryable on the next cancel attempt instead of leaking a busy
@@ -1252,7 +1258,10 @@ export async function patchMeeting(
     committed.prevGcalId = row.gcal_event_id;
     return { status: 200, body: { meeting: meetingJson(updated) } };
   });
-  if (committed.row) emitControlEvent('meeting.change', committed.row.id);
+  if (committed.row) {
+    emitControlEvent('meeting.change', committed.row.id);
+    if (committed.row.lead_id) emitControlEvent('lead.change', committed.row.lead_id);
+  }
 
   // Post-commit gcal/room sync — runs on replayed claims too: a crash
   // between claim commit and here leaves the calendar unsynced, and the
