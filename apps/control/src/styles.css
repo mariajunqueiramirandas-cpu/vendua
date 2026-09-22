@@ -3553,25 +3553,149 @@ a.lcard:hover {
 }
 
 /* ---- agenda (week view) -------------------------------------------------- */
-/* The week scrolls inside its own lane: the grid's min-width used to
-   overflow .content between ~1020-1180px with no scroller, clipping the
-   last day column entirely. */
+/* Real week grid: shared hour ruler on the leading edge, calls positioned
+   by start time and sized by duration, sticky day headers. The pane scrolls
+   in both axes inside its own lane — narrow weeks pan instead of clipping. */
 .cal-scroll {
-  overflow-x: auto;
-  padding-bottom: 4px;
+  overflow: auto;
+  max-height: calc(100dvh - 148px);
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+  background: var(--surface);
 }
-.agenda {
+.aggrid {
   display: grid;
-  grid-template-columns: repeat(7, minmax(130px, 1fr));
-  gap: 8px;
-  min-width: 958px;
+  grid-template-columns: 46px repeat(7, minmax(118px, 1fr));
 }
+.ag-corner {
+  position: sticky;
+  top: 0;
+  inset-inline-start: 0;
+  z-index: 5;
+  background: var(--surface);
+  border-bottom: 1px solid var(--line-strong);
+}
+.ag-dayhead {
+  position: sticky;
+  top: 0;
+  z-index: 3;
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  padding: 8px 10px;
+  background: var(--surface);
+  border-bottom: 1px solid var(--line-strong);
+  border-inline-start: 1px solid var(--line);
+}
+.ag-dayhead .dow {
+  font-family: var(--font-mono);
+  font-size: var(--t-2xs);
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+.ag-dayhead .dnum {
+  font-family: var(--font-serif);
+  font-style: italic;
+  font-size: var(--t-lg);
+}
+.ag-dayhead.today .dnum {
+  background: var(--accent);
+  border-radius: 999px;
+  min-width: 1.5em;
+  text-align: center;
+  font-style: normal;
+}
+.ag-times {
+  position: sticky;
+  inset-inline-start: 0;
+  z-index: 2;
+  background: var(--surface);
+  border-inline-end: 1px solid var(--line-strong);
+}
+.ag-times span {
+  position: absolute;
+  inset-inline: 6px;
+  font-family: var(--font-mono);
+  font-size: var(--t-2xs);
+  color: var(--muted);
+  transform: translateY(-0.55em);
+  text-align: end;
+  white-space: nowrap;
+}
+.ag-day {
+  position: relative;
+  border-inline-start: 1px solid var(--line);
+  background: repeating-linear-gradient(
+    to bottom,
+    color-mix(in srgb, var(--forest-900) 7%, transparent) 0,
+    color-mix(in srgb, var(--forest-900) 7%, transparent) 1px,
+    transparent 1px,
+    transparent var(--hh, 54px)
+  );
+}
+.ag-day.today {
+  background-color: color-mix(in srgb, var(--lime-300) 10%, transparent);
+}
+.ag-now {
+  position: absolute;
+  inset-inline: 0;
+  border-top: 2px solid var(--forest-800);
+  z-index: 1;
+}
+.ag-now::before {
+  content: '';
+  position: absolute;
+  top: -4px;
+  inset-inline-start: -4px;
+  width: 8px;
+  height: 8px;
+  border-radius: 999px;
+  background: var(--forest-800);
+}
+.ag-mtg {
+  position: absolute;
+  z-index: 1;
+  overflow: hidden;
+  background: var(--bg);
+  border: 1px solid var(--line);
+  border-inline-start: 3px solid var(--forest-800);
+  border-radius: var(--r-sm);
+  padding: 4px 6px;
+  font-size: var(--t-xs);
+  min-width: 0;
+}
+/* short calls clip their actions — hover/focus drops the card to natural
+   height above its neighbors so staff can always reach the buttons */
+.ag-mtg:hover,
+.ag-mtg:focus-within {
+  z-index: 4;
+  height: auto;
+  min-height: 22px;
+  overflow: visible;
+  box-shadow: 0 4px 14px color-mix(in srgb, var(--forest-900) 18%, transparent);
+}
+.ag-mtg.st-done {
+  border-inline-start-color: var(--lime-300);
+  opacity: 0.85;
+}
+.ag-mtg.st-no_show {
+  border-inline-start-color: var(--amber-400);
+}
+.ag-mtg.st-cancelled {
+  border-inline-start-color: var(--line-strong);
+  opacity: 0.55;
+}
+.ag-mtg.st-cancelled .mtg-time,
+.ag-mtg.st-cancelled .mtg-lead {
+  text-decoration: line-through;
+}
+/* day cards + meeting rows for the phone month view */
 .aday {
   background: var(--surface);
   border: 1px solid var(--line);
   border-radius: var(--r-md);
   padding: 10px;
-  min-height: 140px;
 }
 .aday.today {
   border-color: var(--forest-800);
@@ -3605,21 +3729,21 @@ a.lcard:hover {
 .mtg {
   background: var(--bg);
   border: 1px solid var(--line);
-  border-left: 3px solid var(--forest-800);
+  border-inline-start: 3px solid var(--forest-800);
   border-radius: var(--r-sm);
   padding: 7px 8px;
   margin-bottom: 6px;
   font-size: var(--t-xs);
 }
 .mtg.st-done {
-  border-left-color: var(--lime-300);
+  border-inline-start-color: var(--lime-300);
   opacity: 0.85;
 }
 .mtg.st-no_show {
-  border-left-color: var(--amber-400);
+  border-inline-start-color: var(--amber-400);
 }
 .mtg.st-cancelled {
-  border-left-color: var(--line-strong);
+  border-inline-start-color: var(--line-strong);
   opacity: 0.55;
 }
 .mtg.st-cancelled .mtg-time,
@@ -3751,21 +3875,14 @@ a.lcard:hover {
 }
 
 @media (max-width: 760px) {
-  /* Agenda week grid is desktop-only — on phones the view renders the
-     month grid above instead, so .agenda only appears when the matchMedia
-     flips mid-session (e.g. rotating a small tablet). */
-  .agenda {
-    display: flex;
-    flex-direction: column;
-    gap: 10px;
-    min-width: 0;
+  /* Week grid is desktop-only — phones render the month grid; the rules
+     below cover the transient state if the matchMedia flips mid-session
+     (e.g. rotating a small tablet): keep the grid pannable, not squished. */
+  .aggrid {
+    grid-template-columns: 40px repeat(7, minmax(96px, 1fr));
   }
   .aday {
-    min-height: 0;
     padding: 12px 14px;
-  }
-  .agenda > .aday:not(.today):not(:has(.mtg)) {
-    display: none;
   }
   .mtg {
     padding: 10px 12px;

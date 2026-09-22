@@ -79,6 +79,18 @@ const dayInstant = (k: DayKey) => new Date(Date.UTC(k.y, k.m - 1, k.d)).toISOStr
 const fmtTime = (iso: string, tz: string) =>
   new Date(iso).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit', timeZone: tz });
 
+/** Minutes since midnight in the meeting tz — the week grid's y-axis. */
+const dayMinutes = (iso: string, tz: string) => {
+  const p = new Intl.DateTimeFormat('en-GB', {
+    timeZone: tz,
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false,
+  }).formatToParts(new Date(iso));
+  const v = (t: string) => Number(p.find((x) => x.type === t)?.value ?? 0);
+  return Math.min(v('hour'), 23.99) * 60 + v('minute');
+};
+
 const STATUS_LABEL: Record<Meeting['status'], string> = {
   scheduled: 'marcada',
   done: 'feita',
@@ -127,6 +139,7 @@ export default function Calendar() {
   // Ignore late responses from superseded week requests — a slow previous
   // week must not overwrite the current one.
   const reqSeq = useRef(0);
+  const scrollRef = useRef<HTMLDivElement>(null);
 
   const load = useCallback(() => {
     const seq = ++reqSeq.current;
@@ -195,6 +208,56 @@ export default function Calendar() {
   }, [monthStart]);
   const todayKey = dayKeyOf(new Date(), tz).key;
 
+  // ---- week grid geometry (desktop): shared hour ruler + positioned lanes ----
+  const HOUR_PX = 54;
+  const PX_PER_MIN = HOUR_PX / 60;
+  const span = useMemo(() => {
+    let s = 8 * 60;
+    let e = 19 * 60;
+    for (const d of days) {
+      for (const m of byDay.get(d.key) ?? []) {
+        s = Math.min(s, dayMinutes(m.startsAt, tz) - 30);
+        e = Math.max(e, dayMinutes(m.endsAt, tz) + 30);
+      }
+    }
+    s = Math.max(0, Math.min(s, 20 * 60));
+    e = Math.min(24 * 60, Math.max(e, s + 4 * 60));
+    return { s, e, hours: (e - s) / 60 };
+  }, [days, byDay, tz]);
+  // Greedy lane assignment per day: overlapping calls sit side by side —
+  // every card keeps its own full lane instead of stacking illegibly.
+  const laneLayout = (list: Meeting[]) => {
+    const ends: number[] = [];
+    const laid = list.map((m) => {
+      const st = Math.min(Math.max(dayMinutes(m.startsAt, tz), span.s), span.e - 5);
+      const en = Math.min(Math.max(dayMinutes(m.endsAt, tz), st + 15), span.e);
+      let lane = ends.findIndex((x) => x <= st);
+      if (lane === -1) lane = ends.length;
+      ends[lane] = en;
+      return { m, st, en, lane };
+    });
+    return { laid, lanes: Math.max(ends.length, 1) };
+  };
+  // Anchor the pane on the interesting part of the day: 'now' when viewing
+  // the live week, otherwise the first call — so a 22:00 booking doesn't
+  // leave staff staring at an empty morning.
+  useEffect(() => {
+    if (mobile || loading) return;
+    const el = scrollRef.current;
+    if (!el) return;
+    const inWeek = days.some((d) => d.key === todayKey);
+    const nowMin = dayMinutes(new Date().toISOString(), tz);
+    const upcoming = days
+      .flatMap((d) => byDay.get(d.key) ?? [])
+      .filter((m) => m.status === 'scheduled' && dayMinutes(m.endsAt, tz) > nowMin)
+      .sort((a, b) => a.startsAt.localeCompare(b.startsAt))[0];
+    // 'now' normally anchors; an upcoming call earlier pulls the anchor up
+    // so it lands on screen too.
+    let target = inWeek ? nowMin - 90 : 0;
+    if (upcoming) target = Math.min(target, dayMinutes(upcoming.startsAt, tz) - 60);
+    el.scrollTop = Math.max(0, (target - span.s) * PX_PER_MIN);
+  }, [mobile, loading, days, byDay, tz, span.s, todayKey]);
+
   const patch = (id: string, body: { status?: string }) =>
     api
       .patchMeeting(id, body)
@@ -237,21 +300,8 @@ export default function Calendar() {
   const navBack = () => (mobile ? gotoMonth(-1) : setWeekStart((w) => shiftDay(w, -7)));
   const navFwd = () => (mobile ? gotoMonth(1) : setWeekStart((w) => shiftDay(w, 7)));
 
-  const mtgCard = (m: Meeting) => (
-    <article key={m.id} className={`mtg st-${m.status}`}>
-      <div className="mtg-time">
-        {fmtTime(m.startsAt, tz)}–{fmtTime(m.endsAt, tz)}
-      </div>
-      <div className="mtg-lead">
-        {m.leadId ? (
-          <Link to={`/leads/${m.leadId}`}>{m.leadName ?? m.bookerName ?? 'lead'}</Link>
-        ) : (
-          (m.bookerName ?? '—')
-        )}
-        <span className={`chip stc-${m.status}`}>{STATUS_LABEL[m.status]}</span>
-      </div>
-      {m.bookerContact && <div className="mtg-meta">{m.bookerContact}</div>}
-      <div className="mtg-acts">
+  const mtgActs = (m: Meeting) => (
+    <>
         {m.roomUrl && m.status === 'scheduled' && (
           <a
             className="icon-btn"
@@ -311,7 +361,24 @@ export default function Calendar() {
             <Check size={13} />
           </button>
         )}
+    </>
+  );
+
+  const mtgCard = (m: Meeting) => (
+    <article key={m.id} className={`mtg st-${m.status}`}>
+      <div className="mtg-time">
+        {fmtTime(m.startsAt, tz)}–{fmtTime(m.endsAt, tz)}
       </div>
+      <div className="mtg-lead">
+        {m.leadId ? (
+          <Link to={`/leads/${m.leadId}`}>{m.leadName ?? m.bookerName ?? 'lead'}</Link>
+        ) : (
+          (m.bookerName ?? '—')
+        )}
+        <span className={`chip stc-${m.status}`}>{STATUS_LABEL[m.status]}</span>
+      </div>
+      {m.bookerContact && <div className="mtg-meta">{m.bookerContact}</div>}
+      <div className="mtg-acts">{mtgActs(m)}</div>
     </article>
   );
 
@@ -400,8 +467,67 @@ export default function Calendar() {
           {dayCard(sel, WD[(sel.wd + 6) % 7] ?? '', ' msel')}
         </div>
       ) : (
-        <div className="cal-scroll">
-          <div className="agenda">{days.map((d, i) => dayCard(d, WD[i] ?? ''))}</div>
+        <div className="cal-scroll" ref={scrollRef}>
+          <div className="aggrid" style={{ ['--hh' as string]: `${HOUR_PX}px` }}>
+            <div className="ag-corner" aria-hidden />
+            {days.map((d, i) => (
+              <header key={d.key} className={`ag-dayhead${d.key === todayKey ? ' today' : ''}`}>
+                <span className="dow">{WD[i]}</span>
+                <span className="dnum">{d.d}</span>
+              </header>
+            ))}
+            <div className="ag-times" aria-hidden>
+              {Array.from({ length: span.hours }, (_, i) => (
+                <span key={i} style={{ top: `${i * HOUR_PX}px` }}>
+                  {`${String(Math.floor(span.s / 60) + i).padStart(2, '0')}:00`}
+                </span>
+              ))}
+            </div>
+            {days.map((d) => {
+              const { laid, lanes } = laneLayout(byDay.get(d.key) ?? []);
+              const isToday = d.key === todayKey;
+              const nowMin = isToday ? dayMinutes(new Date().toISOString(), tz) : null;
+              return (
+                <div
+                  key={d.key}
+                  className={`ag-day${isToday ? ' today' : ''}`}
+                  style={{ height: `${span.hours * HOUR_PX}px` }}
+                >
+                  {nowMin !== null && nowMin >= span.s && nowMin <= span.e && (
+                    <div className="ag-now" style={{ top: `${(nowMin - span.s) * PX_PER_MIN}px` }} />
+                  )}
+                  {laid.map(({ m, st, en, lane }) => (
+                    <article
+                      key={m.id}
+                      className={`ag-mtg st-${m.status}`}
+                      style={{
+                        top: `${(st - span.s) * PX_PER_MIN}px`,
+                        height: `${Math.max((en - st) * PX_PER_MIN, 22)}px`,
+                        insetInlineStart: `${(lane * 100) / lanes}%`,
+                        width: `${100 / lanes}%`,
+                      }}
+                    >
+                      <div className="mtg-time">
+                        {fmtTime(m.startsAt, tz)}–{fmtTime(m.endsAt, tz)}
+                      </div>
+                      <div className="mtg-lead">
+                        {m.leadId ? (
+                          <Link to={`/leads/${m.leadId}`}>
+                            {m.leadName ?? m.bookerName ?? 'lead'}
+                          </Link>
+                        ) : (
+                          (m.bookerName ?? '—')
+                        )}
+                        <span className={`chip stc-${m.status}`}>{STATUS_LABEL[m.status]}</span>
+                      </div>
+                      {m.bookerContact && <div className="mtg-meta">{m.bookerContact}</div>}
+                      <div className="mtg-acts">{mtgActs(m)}</div>
+                    </article>
+                  ))}
+                </div>
+              );
+            })}
+          </div>
         </div>
       )}
     </Page>
