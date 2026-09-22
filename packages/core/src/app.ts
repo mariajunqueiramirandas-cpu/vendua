@@ -989,12 +989,11 @@ export function createApp({ sql, sessionSecret, controlSecret }: AppDeps) {
     controlGate(c);
     const body = await bodyJson(c);
     const kind = str(body.kind, 'kind', 40);
-    if (!['triage', 'reply', 'outreach', 'discovery', 'strategist'].includes(kind)) {
-      throw new HttpError(
-        422,
-        'BAD_REQUEST',
-        'kind must be triage|reply|outreach|discovery|strategist',
-      );
+    // strategist stays out of the lead-scoped list — a suppressed lead would
+    // park the queued run and sweepStrategist would read its created_at as a
+    // filled cadence slot, skipping the real weekly review for 7 days
+    if (!['triage', 'reply', 'outreach', 'discovery'].includes(kind)) {
+      throw new HttpError(422, 'BAD_REQUEST', 'kind must be triage|reply|outreach|discovery');
     }
     const leadId = uuidParam(c, 'id');
     const threadId = body.threadId ? str(body.threadId, 'threadId', 64) : null;
@@ -1017,7 +1016,7 @@ export function createApp({ sql, sessionSecret, controlSecret }: AppDeps) {
         status: 201,
         body: {
           runId: await insertRun(tx, {
-            kind: kind as 'triage' | 'reply' | 'outreach' | 'discovery' | 'strategist',
+            kind: kind as 'triage' | 'reply' | 'outreach' | 'discovery',
             leadId,
             ...(threadId ? { threadId } : {}),
             params: (body.params as Record<string, unknown>) ?? {},
@@ -1519,6 +1518,12 @@ export function createApp({ sql, sessionSecret, controlSecret }: AppDeps) {
       ['threadId', threadId],
     ] as const) {
       if (v && !UUID_RE.test(v)) throw new HttpError(400, 'BAD_REQUEST', `${field} must be a uuid`);
+    }
+    // strategist reviews the board, not a lead — binding it to one would also
+    // let a suppressed lead park the queued row and eat the weekly cadence
+    // slot (sweepStrategist keys on created_at)
+    if (kind === 'strategist' && (leadId || threadId)) {
+      throw new HttpError(422, 'BAD_REQUEST', 'strategist runs take no leadId/threadId');
     }
     const res = await claimControl(sql, requireIdemKey(c), async (tx) => {
       // leadId and threadId aren't independent: a reply run bound to a thread

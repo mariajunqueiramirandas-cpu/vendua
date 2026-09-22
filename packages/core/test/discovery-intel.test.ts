@@ -320,6 +320,15 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('discovery intelligence (db)', (
     expect(dup.proposed).toBe(false);
     expect(dup.duplicate).toBe(true);
 
+    // a blank rationale can't land — staff approve on the note, so the tool
+    // requires the reason it stores there
+    const blank = (await executeTool(c, 'pb4', 'propose_brief', {
+      name: `blank-${uniq}`,
+      query: `blank q ${uniq}`,
+      reason: '   ',
+    })) as { error?: string };
+    expect(blank.error).toContain('reason');
+
     // toolset enforcement: a discovery run can't call it
     const denied = (await executeTool(mkCtx('discovery'), 'pb3', 'propose_brief', {
       name: 'sneaky',

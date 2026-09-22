@@ -364,7 +364,7 @@ async function contextFor(
             created_by: string;
           }[]
         >`select name, query, segment, city, target, enabled, created_by
-           from discovery_briefs order by created_at desc limit 30`,
+           from discovery_briefs order by created_at desc`,
     );
     parts.push(
       `BRIEFS ATUAIS (não re-proponha o que já existe):\n${
@@ -1070,9 +1070,13 @@ export async function sweepStrategist(sql: Sql): Promise<boolean> {
       select pg_try_advisory_xact_lock(hashtext('sweep:strategist')) as ok
     `;
     if (!locked[0]?.ok) return false;
+    // only board-scoped runs fill the cadence slot — a lead-bound strategist
+    // (rejected at the API, still possible via direct insertRun) can park in
+    // queue forever and must not suppress the weekly review
     const recent = await tx`
       select 1 from agent_runs
-      where kind = 'strategist' and created_at > now() - interval '7 days'
+      where kind = 'strategist' and lead_id is null
+        and created_at > now() - interval '7 days'
       limit 1
     `;
     if (recent.length) return false;

@@ -1153,9 +1153,10 @@ export async function executeTool(
       const reason = String(args.reason ?? '')
         .trim()
         .slice(0, 300);
-      if (!bname || !bquery) {
+      if (!bname || !bquery || !reason) {
         return {
-          error: 'propose_brief needs name + query (the search a discovery run would execute)',
+          error:
+            'propose_brief needs name + query + reason (staff approve on the rationale — a blank one lands a note-less draft)',
         };
       }
       const bsegment =
