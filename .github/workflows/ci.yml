@@ -102,6 +102,9 @@ jobs:
             docker compose -f packages/core/docker-compose.yml exec -T postgres pg_isready -h localhost -p 5432 -U vendua && break
             sleep 1
           done
+          # Assert readiness — a broken container must fail HERE, not as an
+          # indirect connection error inside the test step.
+          docker compose -f packages/core/docker-compose.yml exec -T postgres pg_isready -h localhost -p 5432 -U vendua
       - name: Core tests
         run: cd packages/core && TEST_DATABASE_URL=postgres://vendua:vendua@localhost:5433/vendua bun test
       - name: Isolation tools tests

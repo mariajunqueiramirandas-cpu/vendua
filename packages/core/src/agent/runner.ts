@@ -1447,13 +1447,15 @@ export async function sweepBriefs(sql: Sql): Promise<number> {
       // the run was enqueued with its params), not finished_at — a run
       // queued before the edit still carries the old definition even if it
       // finishes afterward, so its zero-yield isn't evidence against the
-      // new one.
+      // new one. Only 'done' counts as an observation: a 'failed' run can
+      // die before discovery ever evaluated the brief — provider outages
+      // must not masquerade as zero-yield.
       if (autoPauseRuns > 0) {
         const stat = (
           await tx<{ runs: number; with_leads: number }[]>`
             with recent as (
               select steps from agent_runs
-              where kind = 'discovery' and status in ('done', 'failed')
+              where kind = 'discovery' and status = 'done'
                 and params->>'briefId' = ${b.id}
                 and (${b.rearmed_at}::timestamptz is null
                      or created_at > ${b.rearmed_at}::timestamptz)

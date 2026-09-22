@@ -829,6 +829,11 @@ export function createApp({ sql, sessionSecret, controlSecret }: AppDeps) {
   app.post('/control/v1/leads', async (c) => {
     controlGate(c);
     const body = await bodyJson(c);
+    for (const field of ['automation', 'triage'] as const) {
+      if (body[field] !== undefined && typeof body[field] !== 'boolean') {
+        throw new HttpError(422, 'BAD_REQUEST', `${field} must be a boolean`, { field });
+      }
+    }
     // Automation is opt-out per request: `triage:false` skips only the
     // triage run; `automation:false` skips every run — the staff-managed
     // equivalent of a CSV-imported lead, which never queues agent work.

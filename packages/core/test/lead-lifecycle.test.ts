@@ -369,13 +369,16 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('lead lifecycle (db)', () => {
       const leadB = await controlTx(sql, (tx) =>
         insertLeadTx(tx, { name: 'Serial B', agent_mode: 'auto' }),
       ).then((r) => r.body.lead.id);
-      // Sequential txs — now() is tx-start time, so same-tx inserts share
-      // created_at and claim ordering would be nondeterministic.
       const mkRun = (leadId: string) =>
         controlTx(sql, (tx) => insertRun(tx, { kind: 'outreach', leadId }));
       const a1 = await mkRun(leadA);
       const a2 = await mkRun(leadA);
       const b1 = await mkRun(leadB);
+      // claimRun orders by created_at and back-to-back txs can share a
+      // millisecond — pin explicit offsets or the pick order is a coin toss.
+      await sql`update agent_runs set created_at = now() - interval '3 seconds' where id = ${a1}`;
+      await sql`update agent_runs set created_at = now() - interval '2 seconds' where id = ${b1}`;
+      await sql`update agent_runs set created_at = now() - interval '1 seconds' where id = ${a2}`;
       // A's first run claims; A's second is gated by the durable 'running'
       // owner; B's run is unaffected — a busy lead never starves the drain.
       expect((await claimRun(sql))!.id).toBe(a1);

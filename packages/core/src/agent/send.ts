@@ -208,6 +208,10 @@ export async function dispatchMessage(
     // follow-up. NULL-only fill: an agent- or staff-set value always wins,
     // and the suppression fields mirror claimRun's lead gate so the stamp
     // lands only on leads the sweeps would actually pick up.
+    // The not-exists closes the provider-call race: the lead can reply while
+    // Resend/Baileys is still on the wire — that inbound already ran its
+    // clearing update (nothing to clear yet), so finalization must not stamp
+    // a floor on an answered send.
     if (send.author === 'agent') {
       const g = await getSettingTx<Partial<Guardrails>>(tx, 'guardrails', {});
       const days = g.followupCadenceDays ?? DEFAULT_GUARDRAILS.followupCadenceDays;
@@ -220,6 +224,15 @@ export async function dispatchMessage(
             and archived_at is null
             and unsubscribed_at is null
             and agent_mode <> 'off'
+            and not exists (
+              select 1 from lead_messages im
+              join lead_threads it on it.id = im.thread_id
+              where it.lead_id = ${send.leadId}
+                and im.direction = 'in'
+                and im.created_at > (
+                  select om.created_at from lead_messages om where om.id = ${messageId}
+                )
+            )
         `;
       }
     }
