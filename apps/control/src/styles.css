@@ -1457,7 +1457,7 @@ details.raw textarea {
 }
 .cfg-win input[type='time'] {
   padding: 3px 5px;
-  width: 78px;
+  width: 104px;
 }
 .cfg-sep {
   color: var(--muted);
