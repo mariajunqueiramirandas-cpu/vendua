@@ -246,8 +246,12 @@ dbDescribe('worker robustness (db)', () => {
         error: string | null;
         finished_at: Date | null;
         steps: unknown[];
+        tokens_in: number;
+        tokens_out: number;
+        cost_cents: number;
       }[]
-    >`select status, attempts, max_attempts, run_at, claim_token, started_at, error, finished_at, steps
+    >`select status, attempts, max_attempts, run_at, claim_token, started_at, error, finished_at, steps,
+      tokens_in, tokens_out, cost_cents
       from agent_runs where id = ${id}`.then((r) => r[0]!);
 
   test('reclaim requeues with attempts+1 and a ~2min backoff', async () => {
@@ -477,5 +481,89 @@ dbDescribe('worker robustness (db)', () => {
       select body from lead_activities where lead_id = ${leadId} and kind = 'note'
     `;
     expect(notes.map((n) => n.body)).toEqual(['committed']);
+  });
+
+  test('request_human heals under its canonical claim key', async () => {
+    await migrate(sql, MIGRATIONS);
+    const lead = await controlTx(sql, (tx) => insertLeadTx(tx, { name: 'Handoff Lead' }));
+    const leadId = lead.body.lead.id;
+    await sql`delete from agent_runs where status = 'queued'`;
+    const runId = await enqueueRun(sql, { kind: 'reply', leadId });
+    const claimed = await claimRun(sql);
+    expect(claimed?.id).toBe(runId);
+    // Whole handoff commits under ONE claim keyed exactly like the journal
+    // entry — suffixed sub-keys would leave reconcile with nothing to find.
+    await executeTool(mkCtx(runId, claimed!.claim_token, leadId), 'h1', 'request_human', {
+      leadId,
+      reason: 'precisa de humano',
+    });
+    const priorJournal = [
+      {
+        type: 'model',
+        content: 'passando para humano',
+        toolCalls: [
+          { id: 'h1', name: 'request_human', args: { leadId, reason: 'precisa de humano' } },
+        ],
+      },
+      {
+        type: 'tool',
+        name: 'request_human',
+        args: { leadId, reason: 'precisa de humano' },
+        callId: 'h1',
+        step: 0,
+        pending: true,
+      },
+    ];
+    const stale = new Date(Date.now() - 11 * 60_000);
+    await sql`update agent_runs set started_at = ${stale}, alive_at = ${stale},
+      steps = ${sql.json(priorJournal as never[])} where id = ${runId}`;
+    await drain(sql, 0);
+    await sql`update agent_runs set run_at = now(),
+      params = ${sql.json({ script: [{ text: 'encerrado' }] } as never)} where id = ${runId}`;
+    await sql`delete from agent_runs where status = 'queued' and id <> ${runId}`;
+    expect(await runOnce(sql)).toBe(true);
+    const r = await getRun(runId);
+    expect(r.status).toBe('done');
+    const healed = r.steps.find(
+      (s) => (s as { type?: string; callId?: string }).callId === 'h1',
+    ) as { pending?: boolean; out?: { handedOff?: boolean } };
+    expect(healed.pending).toBeUndefined();
+    expect(healed.out?.handedOff).toBe(true);
+    const tasks = await sql`select 1 from lead_tasks where lead_id = ${leadId}`;
+    expect(tasks.length).toBe(1);
+    const notes = await sql`select 1 from lead_activities
+      where lead_id = ${leadId} and kind = 'system' and body like 'Handoff para humano%'`;
+    expect(notes.length).toBe(1);
+  });
+
+  test('resume carries prior-attempt usage into the stored counters', async () => {
+    await migrate(sql, MIGRATIONS);
+    // Attempt 1 paid for two model calls before dying — finishRun writes
+    // counters wholesale, so without the journal usage they'd be lost.
+    const id = await seedStaleRun([
+      {
+        type: 'model',
+        content: 'turno um',
+        toolCalls: [],
+        usage: { tokensIn: 100, tokensOut: 20, costUsd: 0.1 },
+      },
+      {
+        type: 'model',
+        content: 'turno dois',
+        toolCalls: [],
+        usage: { tokensIn: 40, tokensOut: 10, costUsd: 0.15 },
+      },
+    ]);
+    await drain(sql, 0);
+    await sql`update agent_runs set run_at = now(),
+      params = ${sql.json({ script: [{ text: 'encerrado' }] } as never)} where id = ${id}`;
+    await sql`delete from agent_runs where status = 'queued' and id <> ${id}`;
+    expect(await runOnce(sql)).toBe(true);
+    const r = await getRun(id);
+    expect(r.status).toBe('done');
+    // prior 140/30 + the mock driver's zeros — not reset to this attempt only.
+    expect(r.tokens_in).toBe(140);
+    expect(r.tokens_out).toBe(30);
+    expect(r.cost_cents).toBe(25);
   });
 });

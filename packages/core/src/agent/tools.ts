@@ -11,7 +11,7 @@ import {
   updateLead,
 } from '../modules/leads.ts';
 import { addActivity, createTask } from '../modules/activities.ts';
-import { composeMessageTx, setThreadAgent, channel } from '../modules/threads.ts';
+import { composeMessageTx, channel } from '../modules/threads.ts';
 import { DEFAULT_GUARDRAILS, getSettingTx, type Guardrails } from '../modules/integrations.ts';
 import { recordBlockedSendTx } from '../modules/channel-health.ts';
 import {
@@ -1259,24 +1259,33 @@ export async function executeTool(
     case 'request_human': {
       const leadId = String(args.leadId);
       const reason = String(args.reason).slice(0, 500);
-      if (ctx.threadId) await setThreadAgent(sql, ctx.threadId, false, key + ':thread', guard);
-      await createTask(
-        sql,
-        leadId,
-        { title: `[humano] ${reason.slice(0, 200)}`, createdBy: 'agent' },
-        key + ':task',
-        guard,
-      );
-      // The handoff belongs on the lead's timeline too — staff reading the
-      // card sees why the agent stepped aside, not just a task title. Claimed
-      // so a reclaimed run doesn't duplicate the note.
-      await claimControl(sql, key + ':note', async (tx) => {
+      // The whole handoff (pause thread + task + timeline note) commits under
+      // ONE claim keyed like the journal entry. Suffixed sub-claims would
+      // leave a crash mid-handoff half-committed, and resume-reconcile finds
+      // no `key` response — it would replay the call interrupted and a retry
+      // under a new step key would duplicate the task/note. The handoff also
+      // lands on the lead timeline so staff reading the card see why the
+      // agent stepped aside, not just a task title.
+      await claimControl(sql, key, async (tx) => {
         await assertRunClaimTx(tx, ctx);
+        const exists = await tx`select 1 from leads where id = ${leadId}`;
+        if (!exists[0]) throw new HttpError(404, 'LEAD_NOT_FOUND', 'lead not found');
+        if (ctx.threadId) {
+          const rows = await tx`
+            update lead_threads set agent_enabled = false where id = ${ctx.threadId}
+            returning id
+          `;
+          if (!rows[0]) throw new HttpError(404, 'THREAD_NOT_FOUND', 'thread not found');
+        }
+        await tx`
+          insert into lead_tasks (lead_id, title, due_at, created_by)
+          values (${leadId}, ${`[humano] ${reason.slice(0, 200)}`}, null, 'agent')
+        `;
         await tx`
           insert into lead_activities (lead_id, kind, body, created_by)
           values (${leadId}, 'system', ${`Handoff para humano — ${reason}`}, 'agent')
         `;
-        return { status: 200, body: { noted: true } };
+        return { status: 200, body: { handedOff: true } };
       });
       return { handedOff: true };
     }

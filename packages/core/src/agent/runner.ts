@@ -751,11 +751,26 @@ export async function runOnce(sql: Sql): Promise<boolean> {
     steps.push({ type: 'resumed', attempt: run.attempts, at: new Date().toISOString() });
   }
   const messages: AgentMessage[] = [];
+  // finishRun overwrites tokens_*/cost_cents wholesale, so a reclaimed run
+  // would lose everything its dead attempts already spent. Model entries
+  // journal per-call usage deltas — sum them back in before this attempt
+  // adds its own. Journals predating the usage field contribute 0.
   let tokensIn = 0;
   let tokensOut = 0;
   // accumulate fractional dollars — rounding to cents per step would zero out
   // sub-cent calls and skew the run total.
   let costUsd = 0;
+  for (const s of priorSteps) {
+    const e = s as {
+      type?: string;
+      usage?: { tokensIn?: number; tokensOut?: number; costUsd?: number };
+    } | null;
+    if (e?.type === 'model' && e.usage) {
+      tokensIn += e.usage.tokensIn ?? 0;
+      tokensOut += e.usage.tokensOut ?? 0;
+      costUsd += e.usage.costUsd ?? 0;
+    }
+  }
   // Paid-enrichment budget — hoisted beside costUsd so the catch-path
   // finishRun can fold monid spend into the run's stored cost. A reclaimed
   // run rebuilds from the journal's monid_spend markers — the provider
@@ -901,7 +916,12 @@ export async function runOnce(sql: Sql): Promise<boolean> {
     };
     // Resume state — the journal hands back the ledger + banked contacts so
     // the reflection tick and progress gates see the prior attempt's field.
-    for (const [k, e] of replay.book) ctx.book.set(k, e);
+    // Entries are cloned on the way in: the book tool mutates its stored
+    // entry in place, and without a copy that mutation would rewrite the
+    // earlier attempt's journaled out.entry (audit trail lying about when
+    // a channel/tried entry appeared).
+    for (const [k, e] of replay.book)
+      ctx.book.set(k, { ...e, channels: { ...e.channels }, tried: [...e.tried] });
     for (const v of replay.seenContacts) ctx.seenContacts.add(v);
 
     steps.push({ type: 'system_prompt', content: system });
@@ -938,7 +958,12 @@ export async function runOnce(sql: Sql): Promise<boolean> {
       // Full ToolCall objects, not just names: a resumed run replays this
       // turn verbatim into the conversation — ids pair with the tool results
       // and Gemini 3 400s without each call's thoughtSignature.
-      steps.push({ type: 'model', content: res.text, toolCalls: res.toolCalls });
+      steps.push({
+        type: 'model',
+        content: res.text,
+        toolCalls: res.toolCalls,
+        usage: { tokensIn: res.tokensIn, tokensOut: res.tokensOut, costUsd: res.costUsd ?? 0 },
+      });
       await persist();
       if (lost) break;
 
