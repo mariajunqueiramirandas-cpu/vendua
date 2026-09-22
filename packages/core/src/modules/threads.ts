@@ -475,6 +475,10 @@ export async function approveMessage(
       // week-old lead state. Supersede it and enqueue a draftOnly outreach
       // run — the recomposed draft lands back in this queue for a second
       // review. Staff drafts are exempt (staff owns their own cadence).
+      // The exists() mirrors claimRun's lead gate + the compose-time thread
+      // gate: a lead that can't run (off/archived/unsubscribed/disabled
+      // thread) falls through to a normal approve — the alternative is
+      // losing the draft to a run queued forever.
       const stale = await tx<MessageRow[]>`
         update lead_messages
         set status = 'rejected',
@@ -482,6 +486,15 @@ export async function approveMessage(
             updated_at = now()
         where id = ${messageId} and status = 'draft' and author = 'agent'
           and created_at < now() - make_interval(days => ${staleDays})
+          and exists (
+            select 1 from lead_threads t
+            join leads l on l.id = t.lead_id
+            where t.id = lead_messages.thread_id
+              and t.agent_enabled
+              and l.agent_mode <> 'off'
+              and l.archived_at is null
+              and l.unsubscribed_at is null
+          )
         returning *
       `;
       if (stale[0]) {
@@ -490,17 +503,32 @@ export async function approveMessage(
             select lead_id from lead_threads where id = ${stale[0].thread_id}
           `
         )[0]!;
-        const { insertRun } = await import('../agent/runner.ts');
-        const runId = await insertRun(tx, {
-          kind: 'outreach',
-          leadId: thread.lead_id,
-          threadId: stale[0].thread_id,
-          params: {
-            draftOnly: true,
-            auto: 'regenerate',
-            focus: `o rascunho anterior expirou (${staleDays}d sem envio) — reescreva a mesma intenção com o estado atual do lead. Texto anterior: ${stale[0].body.slice(0, 500)}`,
-          },
-        });
+        // Outreach is mutually exclusive per lead — sweepOutreach dedupes on
+        // queued/running; a queued regen must not stack a second composer on
+        // top of an outreach already in flight. An active run covers the
+        // regen intent, so point the response at it instead of inserting.
+        const active = await tx<{ id: string }[]>`
+          select id from agent_runs
+          where lead_id = ${thread.lead_id} and kind = 'outreach'
+            and status in ('queued', 'running')
+          order by created_at limit 1
+        `;
+        let runId: string;
+        if (active[0]) {
+          runId = active[0].id;
+        } else {
+          const { insertRun } = await import('../agent/runner.ts');
+          runId = await insertRun(tx, {
+            kind: 'outreach',
+            leadId: thread.lead_id,
+            threadId: stale[0].thread_id,
+            params: {
+              draftOnly: true,
+              auto: 'regenerate',
+              focus: `o rascunho anterior expirou (${staleDays}d sem envio) — reescreva a mesma intenção com o estado atual do lead. Texto anterior: ${stale[0].body.slice(0, 500)}`,
+            },
+          });
+        }
         await tx`
           insert into lead_activities (lead_id, kind, body, meta, created_by)
           values (${thread.lead_id}, 'system',

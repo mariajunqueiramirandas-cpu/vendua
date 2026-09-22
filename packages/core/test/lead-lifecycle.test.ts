@@ -3,6 +3,7 @@ import { join } from 'node:path';
 import postgres from 'postgres';
 import { createApp } from '../src/app.ts';
 import { dispatchMessage } from '../src/agent/send.ts';
+import { insertRun } from '../src/agent/runner.ts';
 import {
   DEFAULT_GUARDRAILS,
   validateSetting,
@@ -283,6 +284,47 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('lead lifecycle (db)', () => {
       const res = await approveMessage(sql, messageId, 'staff', key('a3-fresh'));
       expect(res.body.stale).toBeUndefined();
       expect(res.body.message.status).toBe('queued');
+    });
+
+    test('stale draft on a suppressed lead approves normally — no orphan regen', async () => {
+      await setup();
+      const leadId = await controlTx(sql, (tx) =>
+        insertLeadTx(tx, { name: 'Off Lead', agent_mode: 'off' }),
+      ).then((r) => r.body.lead.id);
+      const messageId = await mkDraft(leadId, 'agent', 8);
+      const res = await approveMessage(sql, messageId, 'staff', key('a3-suppressed'));
+      // claimRun's gate can't ever run the regen — fall through to a normal
+      // approve (dispatch's own suppression still applies at send time).
+      expect(res.body.stale).toBeUndefined();
+      expect(res.body.message.status).toBe('queued');
+      expect(await runsFor(leadId)).toHaveLength(0);
+    });
+
+    test('stale draft on an agent-disabled thread approves normally', async () => {
+      await setup();
+      const leadId = await controlTx(sql, (tx) =>
+        insertLeadTx(tx, { name: 'Thread Off', agent_mode: 'auto' }),
+      ).then((r) => r.body.lead.id);
+      const messageId = await mkDraft(leadId, 'agent', 8);
+      await sql`update lead_threads set agent_enabled = false
+                where id = (select thread_id from lead_messages where id = ${messageId})`;
+      const res = await approveMessage(sql, messageId, 'staff', key('a3-thread-off'));
+      expect(res.body.stale).toBeUndefined();
+      expect(res.body.message.status).toBe('queued');
+      expect(await runsFor(leadId)).toHaveLength(0);
+    });
+
+    test('stale draft reuses an already-active outreach run — never stacks two', async () => {
+      await setup();
+      const leadId = await controlTx(sql, (tx) =>
+        insertLeadTx(tx, { name: 'Busy Lead', agent_mode: 'auto' }),
+      ).then((r) => r.body.lead.id);
+      const existing = await controlTx(sql, (tx) => insertRun(tx, { kind: 'outreach', leadId }));
+      const messageId = await mkDraft(leadId, 'agent', 8);
+      const res = await approveMessage(sql, messageId, 'staff', key('a3-active-run'));
+      expect(res.body.stale).toBe(true);
+      expect(res.body.runId).toBe(existing);
+      expect(await runsFor(leadId)).toHaveLength(1);
     });
 
     test('stale STAFF draft still approves — staff owns its own cadence', async () => {
