@@ -287,6 +287,12 @@ export default function Leads() {
                   <td className="mono">{fmtMoney(l.dealValueCents)}</td>
                   <td className="mono" title={l.fitReason ?? undefined}>
                     {l.fitScore != null ? `${l.fitScore}/10` : '—'}
+                    {l.intentScore != null && (
+                      <span className="dim" title={l.intentReason ?? undefined}>
+                        {' '}
+                        · i{l.intentScore}
+                      </span>
+                    )}
                   </td>
                   <td>
                     <ScoreBar score={l.score} />

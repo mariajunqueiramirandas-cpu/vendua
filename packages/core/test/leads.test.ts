@@ -58,6 +58,7 @@ describe('leadInsert', () => {
       lost_reason: null,
       discovered_via: null,
       fit_reason: null,
+      intent_reason: null,
     });
   });
   test('non-string field → BAD_REQUEST', () => {
@@ -129,6 +130,8 @@ describe('leadJson', () => {
     ],
     fit_score: null,
     fit_reason: null,
+    intent_score: null,
+    intent_reason: null,
     email_bounced_at: null,
     next_action_at: null,
     lost_reason: null,

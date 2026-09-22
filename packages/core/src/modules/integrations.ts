@@ -219,6 +219,10 @@ export const DEFAULT_GUARDRAILS = {
    *  week-old copy — the draft is superseded and a draftOnly run recomposes
    *  it against current state. 0 = off (approve always sends). */
   staleDraftDays: 7,
+  /** discovery briefs: a brief whose last N finished runs produced zero
+   *  leads pauses itself (enabled=false + a note) instead of burning runs
+   *  forever. 0 = never auto-pause. */
+  briefAutoPauseRuns: 5,
 } as const;
 
 export type Guardrails = {
@@ -233,6 +237,7 @@ export type Guardrails = {
   firstContactDelayMin: number;
   followupCadenceDays: number;
   staleDraftDays: number;
+  briefAutoPauseRuns: number;
 };
 
 export const DEFAULT_PITCH = {
@@ -333,6 +338,7 @@ export function validateSetting(key: string, value: unknown): void {
     intField('firstContactDelayMin', 0, 10080);
     intField('followupCadenceDays', 0, 90);
     intField('staleDraftDays', 0, 90);
+    intField('briefAutoPauseRuns', 0, 100);
     for (const k of ['quietStart', 'quietEnd'] as const) {
       if (v[k] === undefined) continue;
       const t = v[k];

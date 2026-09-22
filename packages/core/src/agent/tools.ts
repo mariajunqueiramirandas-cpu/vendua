@@ -31,7 +31,7 @@ import { dispatchMessage } from './send.ts';
 export interface ToolContext {
   sql: Sql;
   runId: string;
-  runKind: 'triage' | 'reply' | 'outreach' | 'discovery';
+  runKind: 'triage' | 'reply' | 'outreach' | 'discovery' | 'strategist';
   leadId: string | null;
   threadId: string | null;
   /** tool call index within the run — seeds deterministic idempotency keys */
@@ -114,6 +114,12 @@ const LEAD_FIELDS = {
     description: '0–10 ICP fit — how well this business matches the target audience',
   },
   fitReason: { type: 'string', description: 'one line: why this fit score' },
+  intentScore: {
+    type: 'integer',
+    description:
+      '0–10 buying intent — what the research showed: whatsapp-active business with NO ordering link of its own (sells via iFood/WhatsApp only), recent reviews asking for menu/ordering, hiring or other growth signals',
+  },
+  intentReason: { type: 'string', description: 'one line: the intent signals observed' },
 } as const;
 
 const REGISTRY: { def: AgentTool; toolsets: string[] }[] = [
@@ -146,7 +152,7 @@ const REGISTRY: { def: AgentTool; toolsets: string[] }[] = [
     def: {
       name: 'create_lead',
       description:
-        'Create a new lead (state=lead) — only AFTER researching it. Required in discovery runs: findings (the 2-4 line dossier — what the business sells, size/channel signals, where each contact came from) and at least one contact channel. Pass fitScore/fitReason too — the ICP match judgment. Self-dedupes on name/phone/instagram — a duplicate merges your new contacts + findings into the existing lead and returns {duplicate, merged, existing}.',
+        'Create a new lead (state=lead) — only AFTER researching it. Required in discovery runs: findings (the 2-4 line dossier — what the business sells, size/channel signals, where each contact came from) and at least one contact channel. Pass fitScore/fitReason (the ICP match) and intentScore/intentReason (buying intent — wa-active without an ordering link, recent reviews, hiring posts). Self-dedupes on name/phone/instagram — a duplicate merges your new contacts + findings into the existing lead and returns {duplicate, merged, existing}.',
       parameters: {
         type: 'object',
         properties: {
@@ -271,7 +277,7 @@ const REGISTRY: { def: AgentTool; toolsets: string[] }[] = [
     },
   },
   {
-    toolsets: ['triage', 'reply', 'outreach', 'discovery'],
+    toolsets: ['triage', 'reply', 'outreach', 'discovery', 'strategist'],
     def: {
       name: 'remember',
       description:
@@ -280,6 +286,29 @@ const REGISTRY: { def: AgentTool; toolsets: string[] }[] = [
         type: 'object',
         properties: { fact: { type: 'string' } },
         required: ['fact'],
+      },
+    },
+  },
+  {
+    toolsets: ['strategist'],
+    def: {
+      name: 'propose_brief',
+      description:
+        'Propose a NEW discovery brief as a DISABLED draft — staff approves it on the board with one click; you never enable anything. Only propose gaps the BRIEFS list does not already cover: a segment that converts but lacks volume, a city/flavor with no brief, an angle memory says works. `reason` is the one-line justification staff reads before approving.',
+      parameters: {
+        type: 'object',
+        properties: {
+          name: { type: 'string', description: 'short slug — e.g. "docerias fortaleza"' },
+          query: { type: 'string', description: 'the search a discovery run would execute' },
+          segment: { type: 'string' },
+          city: { type: 'string' },
+          target: {
+            type: 'integer',
+            description: 'leads per run, 1–1000 (3–10 is normal)',
+          },
+          reason: { type: 'string', description: 'one line — why staff should approve' },
+        },
+        required: ['name', 'query', 'reason'],
       },
     },
   },
@@ -781,6 +810,7 @@ export async function executeTool(
               'source',
               'owner',
               'fit_reason',
+              'intent_reason',
             ] as const;
             const set: Record<string, unknown> = {};
             const merged: string[] = [];
@@ -796,14 +826,13 @@ export async function executeTool(
                 merged.push(col);
               }
             }
-            // fit_score isn't a text column — fill it separately when the
+            // The score columns aren't text — fill each separately when the
             // existing card never got scored.
-            if (
-              typeof input.fit_score === 'number' &&
-              (dup.fit_score === null || dup.fit_score === undefined)
-            ) {
-              set.fit_score = input.fit_score;
-              merged.push('fit_score');
+            for (const col of ['fit_score', 'intent_score'] as const) {
+              if (typeof input[col] === 'number' && (dup[col] === null || dup[col] === undefined)) {
+                set[col] = input[col];
+                merged.push(col);
+              }
             }
             // Provenance travels with the merge: a whatsapp landed this call
             // is verified only when it wasn't auto-derived from a phone.
@@ -1113,6 +1142,83 @@ export async function executeTool(
         return facts.length;
       });
       return { remembered: fact, total };
+    }
+    case 'propose_brief': {
+      const bname = String(args.name ?? '')
+        .trim()
+        .slice(0, 120);
+      const bquery = String(args.query ?? '')
+        .trim()
+        .slice(0, 500);
+      const reason = String(args.reason ?? '')
+        .trim()
+        .slice(0, 300);
+      if (!bname || !bquery || !reason) {
+        return {
+          error:
+            'propose_brief needs name + query + reason (staff approve on the rationale — a blank one lands a note-less draft)',
+        };
+      }
+      const bsegment =
+        String(args.segment ?? '')
+          .trim()
+          .slice(0, 80) || null;
+      const bcity =
+        String(args.city ?? '')
+          .trim()
+          .slice(0, 120) || null;
+      let btarget: number | null = null;
+      if (args.target !== undefined && args.target !== null && args.target !== '') {
+        const n = Number(args.target);
+        if (!Number.isInteger(n) || n < 1 || n > 1000) {
+          return { error: 'target must be an integer in [1, 1000]' };
+        }
+        btarget = n;
+      }
+      const res = await claimControl(
+        sql,
+        key,
+        async (tx): Promise<{ status: number; body: Record<string, unknown> }> => {
+          // claimControl only serializes THIS call's retries — two strategist
+          // runs carry different idempotency keys and can both pass the dup
+          // check before either insert commits. One shared advisory lock
+          // makes check+insert atomic across runs (same idiom as
+          // 'lead-dedupe' in create_lead).
+          await tx`select pg_advisory_xact_lock(hashtext('brief-proposals'))`;
+          // Proposing what already runs (or is already a draft) adds board
+          // noise, not options — name/query dupes come back as a skip.
+          const dup = (
+            await tx<{ id: string; name: string }[]>`
+              select id, name from discovery_briefs
+              where lower(name) = ${bname.toLowerCase()}
+                 or lower(query) = ${bquery.toLowerCase()}
+              limit 1
+            `
+          )[0];
+          if (dup) {
+            return {
+              status: 200,
+              body: { proposed: false, duplicate: true, existingName: dup.name },
+            };
+          }
+          const row = (
+            await tx<{ id: string; name: string }[]>`
+              insert into discovery_briefs (name, query, segment, city, target, enabled, created_by, note)
+              values (${bname}, ${bquery}, ${bsegment}, ${bcity}, ${btarget}, false, 'strategist', ${reason || null})
+              returning id, name
+            `
+          )[0]!;
+          return {
+            status: 200,
+            body: {
+              proposed: true,
+              brief: row,
+              next: 'rascunho desativado no quadro — staff aprova ou descarta; você nunca ativa',
+            },
+          };
+        },
+      );
+      return res.body;
     }
     case 'request_human': {
       const leadId = String(args.leadId);

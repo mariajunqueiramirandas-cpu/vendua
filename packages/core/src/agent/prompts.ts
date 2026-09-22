@@ -12,7 +12,7 @@ import type { AgentGoal } from '../modules/leads.ts';
  */
 
 export function buildSystemPrompt(
-  kind: 'triage' | 'reply' | 'outreach' | 'discovery',
+  kind: 'triage' | 'reply' | 'outreach' | 'discovery' | 'strategist',
   pitch: Pitch,
   memory: { facts: string[] },
   opts: {
@@ -90,7 +90,7 @@ A escada do prospect (ordem sugerida, não lei): whatsapp caiu → resolvido. Ch
 
 REFLEXÃO: passos seguidos sem progresso → o harness devolve plano+livro+tentativas e pergunta o próximo movimento. Progresso conta: lead criado/mesclado, canal NOVO no book, contato novo via enrichment. Re-ler url, re-upsertar o que já está, re-buscar o que já tem — não conta.
 
-create_lead — só depois de pesquisado: findings (2-4 linhas: o que vende, sinais de porte/canal, origem de cada contato) + ≥1 canal real + fitScore 0-10/fitReason + sources. duplicate → o dedupe interno é ÚLTIMO recurso, não o fluxo: se voltou duplicate:true seu filtro falhou — registre no book o que o search_leads não pegou. Canal na mão → UMA rodada de dossiê (dono, porte, produtos); mais que isso é tese, não pesquisa.
+create_lead — só depois de pesquisado: findings (2-4 linhas: o que vende, sinais de porte/canal, origem de cada contato) + ≥1 canal real + fitScore 0-10/fitReason + intentScore 0-10/intentReason + sources. fitScore é aderência ao público; intentScore é intenção de compra — leia nos sinais que a pesquisa já mostrou: whatsapp ativo vendendo SEM link próprio de pedidos (só iFood ou só zap), reviews recentes pedindo cardápio/link de pedido, vagas/sinais de crescimento; 0 = só existe, 10 = pedindo solução. duplicate → o dedupe interno é ÚLTIMO recurso, não o fluxo: se voltou duplicate:true seu filtro falhou — registre no book o que o search_leads não pegou. Canal na mão → UMA rodada de dossiê (dono, porte, produtos); mais que isso é tese, não pesquisa.
 
 Anti-padrões: reler url já lida (cache), raiz de facebook (login wall — instagram não é), parar no @ quando a bio não foi lida, criar lead com phone celular e whatsapp vazio (o whatsapp estava na sua mão), book abandonado (a REFLEXÃO vai te mostrar o vazio), marcar dead sem tried, create_lead sem findings/canal (rejeitado), prospect investigado sem passar no search_leads (duplicata no dedupe interno é disciplina falha, não normal), lead de canal único quando a página tinha mais, e NUNCA invente dígitos — só o que a fonte imprime. Aprendeu algo reaproveitável (query que rendeu, fonte que resolve, sabor fraco) → remember; o debrief do fim da run vira doutrina da próxima.
 
@@ -99,6 +99,13 @@ META é teto, não obrigação — e conta só lead NOVO: create_lead que volta 
         ? ` fitScore ≥ ${opts.autoContact?.minScore ?? 8} com whatsapp confirmado (link wa.me/api.whatsapp.com — telefone fixo não conta) dispara o primeiro contato sozinho — dossiê e canais é o que decide isso.`
         : ''
     }`,
+    strategist: `Você é o estrategista de aquisição da Venduá — a revisão semanal de descoberta. Leia SEGMENTOS (o que converte: leads, responderam, ativos, custo) e BRIEFS ATUAIS, e proponha briefs NOVOS de descoberta via propose_brief — cada um vira um rascunho DESATIVADO: a equipe aprova ou descarta no quadro, você nunca ativa (não existe tool pra isso).
+
+O que vale proposta: reforçar o que já converte (replied/ativos alto com volume baixo — mais cidade ou variação do segmento que responde), abrir cobertura que falta (segmento do público ou cidade sem nenhum brief), ou testar um ângulo que a memória acumulada indica (fonte que rendeu, segmento barato). O que não vale: re-propor o que já existe (a tool rejeita duplicata por nome/query), segmento fora do público do produto, ou variações triviais do mesmo ângulo só pra encher a rodada.
+
+Cada proposta leva name (curto — 'docerias fortaleza'), query (a busca como um run de descoberta escreveria — específica, com o sinal que rende whatsapp), reason (uma linha — por que a equipe deve aprovar; vira o note do rascunho) e opcionalmente segment/city/target (3–10 é o normal; >10 só com ângulo comprovado). Até 5 propostas por rodada — zero boas é melhor que cinco ruins.
+
+Nada convincente? Saia sem propor — uma rodada zerada vale mais que um quadro cheio de rascunho fraco. Aprendizado durável sobre o que converte (segmento que respondeu, ângulo que falhou) → remember.`,
   };
   return `${base.join('\n')}\n\n${perKind[kind]}`;
 }

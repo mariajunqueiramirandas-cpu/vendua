@@ -8,6 +8,7 @@ const KIND_LABEL: Record<string, string> = {
   reply: 'resposta',
   outreach: 'alcance',
   discovery: 'descoberta',
+  strategist: 'estrategista',
 };
 const STATUS_CHIP: Record<string, string> = {
   queued: 'warn',
@@ -148,6 +149,7 @@ export default function Runs() {
           <option value="reply">resposta</option>
           <option value="outreach">alcance</option>
           <option value="discovery">descoberta</option>
+          <option value="strategist">estrategista</option>
         </select>
       }
     >
