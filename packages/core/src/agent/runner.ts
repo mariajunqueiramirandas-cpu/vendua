@@ -366,20 +366,19 @@ async function contextFor(
         >`select name, query, segment, city, target, enabled, created_by
            from discovery_briefs order by created_at desc`,
     );
-    // Every brief contributes one compact signature line — name, query,
+    // Every brief contributes one complete signature line — name, query,
     // segment, and city are the fields overlap is judged on, so none can be
-    // dropped from old coverage. The whole section then fits a char budget
-    // (newest first): enough briefs render verbatim that the model sees real
-    // coverage; a huge board degrades to a count instead of blowing the
-    // context window. Exact dup checking stays deterministic in
-    // propose_brief's DB check.
+    // truncated (a shared 80-char prefix could hide a distinguishing suffix).
+    // The section itself fits a char budget, newest first: a board that
+    // outgrows it degrades to a count rather than overflowing the context
+    // window. Exact dup checking stays deterministic in propose_brief's DB
+    // check.
     const BRIEFS_BUDGET = 12_000;
     let budget = BRIEFS_BUDGET;
     const lines: string[] = [];
     let hidden = 0;
     for (const b of briefs) {
-      const q = b.query.length > 80 ? `${b.query.slice(0, 80)}…` : b.query;
-      const line = `- ${b.name} — "${q}"${b.segment ? ` · ${b.segment}` : ''}${b.city ? ` · ${b.city}` : ''}${b.target ? ` · ≤${b.target}` : ''} · ${b.enabled ? 'ativo' : b.created_by === 'strategist' ? 'rascunho (já proposto)' : 'pausado'}`;
+      const line = `- ${b.name} — "${b.query}"${b.segment ? ` · ${b.segment}` : ''}${b.city ? ` · ${b.city}` : ''}${b.target ? ` · ≤${b.target}` : ''} · ${b.enabled ? 'ativo' : b.created_by === 'strategist' ? 'rascunho (já proposto)' : 'pausado'}`;
       if (budget - line.length - 1 < 0) {
         hidden++;
         continue;
