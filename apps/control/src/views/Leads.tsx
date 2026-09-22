@@ -46,20 +46,18 @@ export default function Leads() {
   const load = useCallback(
     (cur?: string) => {
       const gen = ++loadGen.current;
-      api
-        .leads(params(cur))
-        .then((r) => {
-          if (gen !== loadGen.current) return; // superseded by a newer request
-          setLeads((ls) => (cur ? [...ls, ...r.leads] : r.leads));
-          setCursor(r.nextCursor);
-          setLoading(false);
-          if (!cur) {
-            // The visible set was replaced — keep only selections that
-            // survived, so dispatch never acts on leads staff can't see.
-            const ids = new Set(r.leads.map((l) => l.id));
-            setSel((s) => new Set([...s].filter((id) => ids.has(id))));
-          }
-        });
+      api.leads(params(cur)).then((r) => {
+        if (gen !== loadGen.current) return; // superseded by a newer request
+        setLeads((ls) => (cur ? [...ls, ...r.leads] : r.leads));
+        setCursor(r.nextCursor);
+        setLoading(false);
+        if (!cur) {
+          // The visible set was replaced — keep only selections that
+          // survived, so dispatch never acts on leads staff can't see.
+          const ids = new Set(r.leads.map((l) => l.id));
+          setSel((s) => new Set([...s].filter((id) => ids.has(id))));
+        }
+      });
     },
     [params],
   );
