@@ -100,10 +100,9 @@ export async function enqueueRun(
 export async function claimRun(sql: Sql): Promise<RunRow | null> {
   return controlTx(sql, async (tx) => {
     // Outreach is serial per lead: a 'running' outreach row is the durable
-    // ownership token — it outlives the claim tx and a queued same-lead
+    // ownership token — it outlives the claim tx, so a queued same-lead
     // outreach can only claim once the owner finishes (a crashed owner is
-    // reclaimed by lease first). Candidates the gate rejects are skipped
-    // for this pass so one busy lead can't starve a drain of other work.
+    // reclaimed by lease first).
     const rejected: string[] = [];
     for (let attempt = 0; attempt < 8; attempt++) {
       const cand = await tx<RunRow[]>`
@@ -121,6 +120,13 @@ export async function claimRun(sql: Sql): Promise<RunRow | null> {
               and l.archived_at is null
               and l.unsubscribed_at is null
           ))
+          -- the busy-lead exclusion lives in the scan itself so a durably
+          -- blocked lead never becomes a candidate — no queue-wide barrier
+          and (r.kind <> 'outreach' or r.lead_id is null or not exists (
+            select 1 from agent_runs x
+            where x.lead_id = r.lead_id and x.kind = 'outreach'
+              and x.status = 'running'
+          ))
           and not (r.id = any(${rejected}::uuid[]))
         order by r.created_at
         limit 1
@@ -129,11 +135,18 @@ export async function claimRun(sql: Sql): Promise<RunRow | null> {
       const run = cand[0];
       if (!run) return null;
       if (run.kind === 'outreach' && run.lead_id) {
-        // Claims on one lead are mutually exclusive via the lead row lock:
-        // a concurrent claim either committed already (visible below) or is
-        // waited out — SKIP LOCKED on the run alone can't order this, since
-        // each claim's snapshot predates the other's commit.
-        await tx`select id from leads where id = ${run.lead_id} for update`;
+        // Serialization point for concurrent claims on one lead: the scan's
+        // not-exists only sees committed owners — a claim still mid-flight
+        // would slip past it, so the decision is made atomic under a
+        // try-advisory (it never waits → no deadlock) and 'running' is
+        // re-checked under it on a fresh snapshot.
+        const got = await tx<{ got: boolean }[]>`
+          select pg_try_advisory_xact_lock(hashtext(${'claimrun:' + run.lead_id})) as got
+        `;
+        if (!got[0]!.got) {
+          rejected.push(run.id);
+          continue;
+        }
         const busy = await tx`
           select 1 from agent_runs
           where lead_id = ${run.lead_id} and kind = 'outreach'

@@ -355,13 +355,12 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('lead lifecycle (db)', () => {
       // assertions below only see this test's rows.
       await sql`update agent_runs set status = 'canceled', finished_at = now()
                 where status in ('queued', 'running')`;
-      const [leadA, leadB] = await Promise.all(
-        ['Serial A', 'Serial B'].map((name) =>
-          controlTx(sql, (tx) => insertLeadTx(tx, { name, agent_mode: 'auto' })).then(
-            (r) => r.body.lead.id,
-          ),
-        ),
-      );
+      const leadA = await controlTx(sql, (tx) =>
+        insertLeadTx(tx, { name: 'Serial A', agent_mode: 'auto' }),
+      ).then((r) => r.body.lead.id);
+      const leadB = await controlTx(sql, (tx) =>
+        insertLeadTx(tx, { name: 'Serial B', agent_mode: 'auto' }),
+      ).then((r) => r.body.lead.id);
       // Sequential txs — now() is tx-start time, so same-tx inserts share
       // created_at and claim ordering would be nondeterministic.
       const mkRun = (leadId: string) =>
@@ -377,6 +376,24 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('lead lifecycle (db)', () => {
       await sql`update agent_runs set status = 'done', finished_at = now() where id in (${a1}, ${b1})`;
       expect((await claimRun(sql))!.id).toBe(a2);
       await sql`update agent_runs set status = 'done', finished_at = now() where id = ${a2}`;
+    });
+
+    test('a durably-blocked lead does not starve later runnable work', async () => {
+      await setup();
+      await sql`update agent_runs set status = 'canceled', finished_at = now()
+                where status in ('queued', 'running')`;
+      const leadId = await controlTx(sql, (tx) =>
+        insertLeadTx(tx, { name: 'Blocked Lead', agent_mode: 'auto' }),
+      ).then((r) => r.body.lead.id);
+      const owner = await controlTx(sql, (tx) => insertRun(tx, { kind: 'outreach', leadId }));
+      expect((await claimRun(sql))!.id).toBe(owner); // takes the lead's ownership
+      // More queued same-lead outreach than the claim loop's attempt bound —
+      // the in-scan exclusion keeps them from ever becoming candidates.
+      for (let i = 0; i < 9; i++) {
+        await controlTx(sql, (tx) => insertRun(tx, { kind: 'outreach', leadId }));
+      }
+      const disc = await controlTx(sql, (tx) => insertRun(tx, { kind: 'discovery' }));
+      expect((await claimRun(sql))!.id).toBe(disc);
     });
 
     test('stale STAFF draft still approves — staff owns its own cadence', async () => {
