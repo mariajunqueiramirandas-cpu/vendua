@@ -826,6 +826,8 @@ function GuardrailsCard({
     discoveryContactMinScore: num(value.discoveryContactMinScore, 8),
     inboundReplyDelayMin: num(value.inboundReplyDelayMin, 0),
     firstContactDelayMin: num(value.firstContactDelayMin, 0),
+    followupCadenceDays: num(value.followupCadenceDays, 2),
+    staleDraftDays: num(value.staleDraftDays, 7),
   };
   const [edit, setEdit] = useState(cur);
   useEffect(() => setEdit(cur), [JSON.stringify(cur)]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -958,6 +960,36 @@ function GuardrailsCard({
           <div className="hint">
             0 = desligado; &gt;0 agenda um run de outreach esse tempo depois do lead ser criado
             (modo do lead decide rascunho vs. envio)
+          </div>
+        </div>
+      </div>
+      <div className="grid2" style={{ alignItems: 'end' }}>
+        <div className="field" style={{ marginBottom: 0 }}>
+          <label>cadência p/ retorno (dias)</label>
+          <input
+            type="number"
+            min={0}
+            max={90}
+            value={edit.followupCadenceDays}
+            onChange={(e) => setEdit({ ...edit, followupCadenceDays: Number(e.target.value) || 0 })}
+          />
+          <div className="hint">
+            envio do agente sem resposta agenda o próximo contato; 0 = desligado (nunca sobrescreve
+            uma data que o agente já marcou)
+          </div>
+        </div>
+        <div className="field" style={{ marginBottom: 0 }}>
+          <label>rascunho expira (dias)</label>
+          <input
+            type="number"
+            min={0}
+            max={90}
+            value={edit.staleDraftDays}
+            onChange={(e) => setEdit({ ...edit, staleDraftDays: Number(e.target.value) || 0 })}
+          />
+          <div className="hint">
+            aprovar rascunho do agente mais velho que isso não envia — regenera contra o estado
+            atual do lead; 0 = desligado
           </div>
         </div>
       </div>

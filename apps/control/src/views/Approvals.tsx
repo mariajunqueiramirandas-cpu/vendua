@@ -17,7 +17,14 @@ export default function Approvals() {
 
   const approve = async (d: Draft) => {
     const res = await api.approve(d.id);
-    setResults((r) => ({ ...r, [d.id]: res.sent.ok ? 'enviado' : `falhou: ${res.sent.reason}` }));
+    setResults((r) => ({
+      ...r,
+      [d.id]: res.stale
+        ? 'rascunho expirado — regenerando contra o estado atual'
+        : res.sent?.ok
+          ? 'enviado'
+          : `falhou: ${res.sent?.reason ?? 'desconhecido'}`,
+    }));
     load();
   };
   const reject = async (d: Draft) => {
@@ -43,7 +50,9 @@ export default function Approvals() {
       const res = await api.approve(replacement);
       setResults((r) => ({
         ...r,
-        [d.id]: res.sent.ok ? 'enviado (editado)' : `salvo, falhou ao enviar: ${res.sent.reason}`,
+        [d.id]: res.sent?.ok
+          ? 'enviado (editado)'
+          : `salvo, falhou ao enviar: ${res.sent?.reason ?? 'desconhecido'}`,
       }));
     } catch {
       setResults((r) => ({ ...r, [d.id]: 'salvo como rascunho — aprove na fila' }));

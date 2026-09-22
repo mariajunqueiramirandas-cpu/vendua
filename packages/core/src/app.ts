@@ -828,18 +828,25 @@ export function createApp({ sql, sessionSecret, controlSecret }: AppDeps) {
 
   app.post('/control/v1/leads', async (c) => {
     controlGate(c);
-    // Lead + its triage run share ONE claim: a retried POST replays the
-    // stored body (lead + runId) instead of creating a second lead.
+    const body = await bodyJson(c);
+    // Automation is opt-out per request: `triage:false` skips only the
+    // triage run; `automation:false` skips every run — the staff-managed
+    // equivalent of a CSV-imported lead, which never queues agent work.
     const res = await claimControl<{ lead: Lead; runId?: string; contactRunId?: string }>(
       sql,
       requireIdemKey(c),
       async (tx) => {
-        const created = await insertLeadTx(tx, leadInsert(await bodyJson(c)));
-        if (created.body.lead.agentMode !== 'off') {
-          const runId = await insertRun(tx, {
-            kind: 'triage',
-            leadId: created.body.lead.id,
-          });
+        // Lead + its runs share ONE claim: a retried POST replays the
+        // stored body (lead + runIds) instead of creating a second lead.
+        const created = await insertLeadTx(tx, leadInsert(body));
+        if (created.body.lead.agentMode !== 'off' && body.automation !== false) {
+          const runId =
+            body.triage === false
+              ? undefined
+              : await insertRun(tx, {
+                  kind: 'triage',
+                  leadId: created.body.lead.id,
+                });
           // guardrails.firstContactDelayMin: a hand-created card gets the
           // agent's first touch scheduled on its own — the run waits out
           // the delay in 'queued' (cancelable in Runs), and the send itself
@@ -860,7 +867,11 @@ export function createApp({ sql, sessionSecret, controlSecret }: AppDeps) {
               : undefined;
           return {
             status: created.status,
-            body: { ...created.body, runId, ...(contactRunId ? { contactRunId } : {}) },
+            body: {
+              ...created.body,
+              ...(runId ? { runId } : {}),
+              ...(contactRunId ? { contactRunId } : {}),
+            },
           };
         }
         return created;
@@ -1176,6 +1187,12 @@ export function createApp({ sql, sessionSecret, controlSecret }: AppDeps) {
     controlGate(c);
     const res = await approveMessage(sql, uuidParam(c, 'id'), 'staff', requireIdemKey(c));
     if (res.replayed) c.header('x-idempotent-replay', 'true');
+    // A stale draft is superseded inside the claim — nothing ships from the
+    // expired copy. Kick the drain so the regen run recomposes it promptly.
+    if (res.body.stale) {
+      void drain(sql).catch((e) => agentLog.error({ err: e }, 'drain failed'));
+      return c.json(res.body);
+    }
     const { dispatchMessage } = await import('./agent/send.ts');
     const sent = await dispatchMessage(sql, res.body.message.id);
     return c.json({ ...res.body, sent });

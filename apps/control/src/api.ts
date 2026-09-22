@@ -388,9 +388,13 @@ export const api = {
 
   approvals: () => req<{ drafts: Draft[] }>('/approvals'),
   approve: (id: string) =>
-    req<{ message: Message; sent: { ok: boolean; reason?: string } }>(`/messages/${id}/approve`, {
-      method: 'POST',
-    }),
+    req<{
+      message: Message;
+      /** set when the draft was stale — superseded + a regen run queued */
+      stale?: boolean;
+      runId?: string;
+      sent?: { ok: boolean; reason?: string };
+    }>(`/messages/${id}/approve`, { method: 'POST' }),
   reject: (id: string) => req<{ message: Message }>(`/messages/${id}/reject`, { method: 'POST' }),
 
   integrations: () => req<{ integrations: Integration[] }>('/integrations'),

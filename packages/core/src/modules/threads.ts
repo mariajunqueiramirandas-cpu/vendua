@@ -2,6 +2,7 @@ import type { Sql } from '../platform/db.ts';
 import { HttpError, str } from '../platform/http.ts';
 import { claimControl, controlTx, type ClaimResult } from './control.ts';
 import { leadJson, type LeadRow } from './leads.ts';
+import { DEFAULT_GUARDRAILS, getSettingTx, type Guardrails } from './integrations.ts';
 
 /**
  * threads module — the unified inbox. One thread per (lead, channel):
@@ -459,8 +460,86 @@ export async function approveMessage(
   messageId: string,
   approvedBy: string,
   idemKey: string,
-): Promise<ClaimResult<{ message: ReturnType<typeof messageJson> }>> {
-  return claimControl(sql, idemKey, async (tx) => {
+): Promise<
+  ClaimResult<{ message: ReturnType<typeof messageJson>; stale?: boolean; runId?: string }>
+> {
+  return claimControl<{
+    message: ReturnType<typeof messageJson>;
+    stale?: boolean;
+    runId?: string;
+  }>(sql, idemKey, async (tx) => {
+    const g = await getSettingTx<Partial<Guardrails>>(tx, 'guardrails', {});
+    const staleDays = g.staleDraftDays ?? DEFAULT_GUARDRAILS.staleDraftDays;
+    if (staleDays > 0) {
+      // A stale AGENT draft never ships: the copy was written against
+      // week-old lead state. Supersede it and enqueue a draftOnly outreach
+      // run — the recomposed draft lands back in this queue for a second
+      // review. Staff drafts are exempt (staff owns their own cadence).
+      // The exists() mirrors claimRun's lead gate + the compose-time thread
+      // gate: a lead that can't run (off/archived/unsubscribed/disabled
+      // thread) falls through to a normal approve — the alternative is
+      // losing the draft to a run queued forever.
+      const stale = await tx<MessageRow[]>`
+        update lead_messages
+        set status = 'rejected',
+            error = ${`rascunho expirado (>${staleDays}d) — regenerando`},
+            updated_at = now()
+        where id = ${messageId} and status = 'draft' and author = 'agent'
+          and created_at < now() - make_interval(days => ${staleDays})
+          and exists (
+            select 1 from lead_threads t
+            join leads l on l.id = t.lead_id
+            where t.id = lead_messages.thread_id
+              and t.agent_enabled
+              and l.agent_mode <> 'off'
+              and l.archived_at is null
+              and l.unsubscribed_at is null
+          )
+        returning *
+      `;
+      if (stale[0]) {
+        const thread = (
+          await tx<{ lead_id: string }[]>`
+            select lead_id from lead_threads where id = ${stale[0].thread_id}
+          `
+        )[0]!;
+        // Dedupe on the SAME intent only: an already-queued regen covers this
+        // one. A generic outreach run (first-contact/cadence sweep) does NOT —
+        // it lacks draftOnly + the expired-copy focus and may send or produce
+        // nothing reviewable, so the regen inserts beside it (runs serialize
+        // through claimRun; the regen only ever composes a draft).
+        const active = await tx<{ id: string }[]>`
+          select id from agent_runs
+          where lead_id = ${thread.lead_id} and kind = 'outreach'
+            and status in ('queued', 'running')
+            and params->>'auto' = 'regenerate'
+          order by created_at limit 1
+        `;
+        let runId: string;
+        if (active[0]) {
+          runId = active[0].id;
+        } else {
+          const { insertRun } = await import('../agent/runner.ts');
+          runId = await insertRun(tx, {
+            kind: 'outreach',
+            leadId: thread.lead_id,
+            threadId: stale[0].thread_id,
+            params: {
+              draftOnly: true,
+              auto: 'regenerate',
+              focus: `o rascunho anterior expirou (${staleDays}d sem envio) — reescreva a mesma intenção com o estado atual do lead. Texto anterior: ${stale[0].body.slice(0, 500)}`,
+            },
+          });
+        }
+        await tx`
+          insert into lead_activities (lead_id, kind, body, meta, created_by)
+          values (${thread.lead_id}, 'system',
+                  ${`rascunho expirado (${staleDays}d) — regenerando contra o estado atual`},
+                  ${tx.json({ messageId, runId } as never)}, 'system')
+        `;
+        return { status: 200, body: { message: messageJson(stale[0]), stale: true, runId } };
+      }
+    }
     const rows = await tx<MessageRow[]>`
       update lead_messages
       set status = 'queued', approved_by = ${approvedBy}, approved_at = now()

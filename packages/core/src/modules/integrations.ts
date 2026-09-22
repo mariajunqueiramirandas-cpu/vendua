@@ -211,6 +211,14 @@ export const DEFAULT_GUARDRAILS = {
    *  many minutes after creation — the agent makes first contact alone.
    *  0 = off: creation only enqueues triage (draft for approval). */
   firstContactDelayMin: 0,
+  /** cadence floor: after an agent send the lead waits at most this many
+   *  days for a reply before sweepOutreach picks it up — stamped only when
+   *  next_action_at is still NULL (an agent/staff-set value wins). 0 = off. */
+  followupCadenceDays: 2,
+  /** approving an agent draft older than this many days never sends the
+   *  week-old copy — the draft is superseded and a draftOnly run recomposes
+   *  it against current state. 0 = off (approve always sends). */
+  staleDraftDays: 7,
 } as const;
 
 export type Guardrails = {
@@ -223,6 +231,8 @@ export type Guardrails = {
   discoveryContactMinScore: number;
   inboundReplyDelayMin: number;
   firstContactDelayMin: number;
+  followupCadenceDays: number;
+  staleDraftDays: number;
 };
 
 export const DEFAULT_PITCH = {
@@ -321,6 +331,8 @@ export function validateSetting(key: string, value: unknown): void {
     intField('discoveryContactMinScore', 1, 10);
     intField('inboundReplyDelayMin', 0, 1440);
     intField('firstContactDelayMin', 0, 10080);
+    intField('followupCadenceDays', 0, 90);
+    intField('staleDraftDays', 0, 90);
     for (const k of ['quietStart', 'quietEnd'] as const) {
       if (v[k] === undefined) continue;
       const t = v[k];

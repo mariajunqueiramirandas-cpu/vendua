@@ -340,6 +340,7 @@ function NewLead({ onClose }: { onClose: (created: boolean) => void }) {
   });
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState('');
+  const [automation, setAutomation] = useState(true);
   const nav = useNavigate();
 
   const submit = async (e: React.FormEvent) => {
@@ -356,6 +357,7 @@ function NewLead({ onClose }: { onClose: (created: boolean) => void }) {
         segment: f.segment || null,
         source: f.source || null,
         dealValueCents: f.deal ? Math.round(Number(f.deal.replace(',', '.')) * 100) : null,
+        ...(automation ? {} : { automation: false }),
       });
       onClose(true);
       nav(`/leads/${res.lead.id}`);
@@ -405,6 +407,17 @@ function NewLead({ onClose }: { onClose: (created: boolean) => void }) {
             </div>
             {field('source', 'origem')}
             {field('deal', 'valor estimado (R$)')}
+            <label className="tgl">
+              <input
+                type="checkbox"
+                checked={automation}
+                onChange={(e) => setAutomation(e.target.checked)}
+              />
+              <span className="tk" />
+              <span className="lbl">
+                {automation ? 'agente acompanha' : 'sem agente — como import'}
+              </span>
+            </label>
             {err && <div style={{ color: 'var(--red-400)', fontSize: 'var(--t-xs)' }}>{err}</div>}
           </div>
           <div className="d-foot">

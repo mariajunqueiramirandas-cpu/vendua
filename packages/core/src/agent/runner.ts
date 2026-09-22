@@ -100,11 +100,15 @@ export async function enqueueRun(
 
 export async function claimRun(sql: Sql): Promise<RunRow | null> {
   return controlTx(sql, async (tx) => {
-    const rows = await tx<RunRow[]>`
-      update agent_runs set status = 'running', started_at = now(), alive_at = now(),
-        claim_token = gen_random_uuid()::text
-      where id = (
-        select r.id from agent_runs r
+    // Outreach is serial per lead: a 'running' outreach row is the durable
+    // ownership token — it outlives the claim tx, so a queued same-lead
+    // outreach can only claim once the owner finishes (a crashed owner is
+    // reclaimed by lease first).
+    const rejected: string[] = [];
+    for (let attempt = 0; attempt < 8; attempt++) {
+      const cand = await tx<RunRow[]>`
+        select r.id, r.kind, r.lead_id, r.thread_id, r.params, r.steps
+        from agent_runs r
         where r.status = 'queued'
           and (r.run_at is null or r.run_at <= now())
           -- suppressed leads hold their queue: 'off' is a human veto, archived
@@ -117,13 +121,54 @@ export async function claimRun(sql: Sql): Promise<RunRow | null> {
               and l.archived_at is null
               and l.unsubscribed_at is null
           ))
+          -- the busy-lead exclusion lives in the scan itself so a durably
+          -- blocked lead never becomes a candidate — no queue-wide barrier
+          and (r.kind <> 'outreach' or r.lead_id is null or not exists (
+            select 1 from agent_runs x
+            where x.lead_id = r.lead_id and x.kind = 'outreach'
+              and x.status = 'running'
+          ))
+          and not (r.id = any(${rejected}::uuid[]))
         order by r.created_at
         limit 1
         for update skip locked
-      )
-      returning id, kind, lead_id, thread_id, params, claim_token, steps
-    `;
-    return rows[0] ?? null;
+      `;
+      const run = cand[0];
+      if (!run) return null;
+      if (run.kind === 'outreach' && run.lead_id) {
+        // Serialization point for concurrent claims on one lead: the scan's
+        // not-exists only sees committed owners — a claim still mid-flight
+        // would slip past it, so the decision is made atomic under a
+        // try-advisory (it never waits → no deadlock) and 'running' is
+        // re-checked under it on a fresh snapshot.
+        const got = await tx<{ got: boolean }[]>`
+          select pg_try_advisory_xact_lock(hashtext(${'claimrun:' + run.lead_id})) as got
+        `;
+        if (!got[0]!.got) {
+          rejected.push(run.id);
+          continue;
+        }
+        const busy = await tx`
+          select 1 from agent_runs
+          where lead_id = ${run.lead_id} and kind = 'outreach'
+            and status = 'running' and id <> ${run.id}
+          limit 1
+        `;
+        if (busy.length) {
+          rejected.push(run.id);
+          continue;
+        }
+      }
+      const rows = await tx<RunRow[]>`
+        update agent_runs set status = 'running', started_at = now(), alive_at = now(),
+          claim_token = gen_random_uuid()::text
+        where id = ${run.id} and status = 'queued'
+        returning id, kind, lead_id, thread_id, params, claim_token, steps
+      `;
+      if (rows[0]) return rows[0];
+      rejected.push(run.id);
+    }
+    return null;
   });
 }
 
