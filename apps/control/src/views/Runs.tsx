@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { api, type AgentRun } from '../api.ts';
+import { onControlEvent } from '../events.ts';
 import { Empty, Page, fmtDateTime, fmtMoney, rel } from '../components.tsx';
 
 const KIND_LABEL: Record<string, string> = {
@@ -37,15 +38,37 @@ export default function Runs() {
   const load = useCallback(() => {
     api.runs({ ...(kind ? { kind } : {}) }).then((r) => setRuns(r.runs));
   }, [kind]);
+  const loadRun = useCallback(() => {
+    if (id) api.run(id).then((r) => setRun(r.run));
+  }, [id]);
   useEffect(load, [load]);
   useEffect(() => {
-    if (id) {
-      const t = setInterval(() => api.run(id).then((r) => setRun(r.run)), 2500);
-      api.run(id).then((r) => setRun(r.run));
-      return () => clearInterval(t);
+    if (!id) {
+      setRun(null);
+      return;
     }
-    setRun(null);
-  }, [id]);
+    loadRun();
+    return undefined;
+  }, [id, loadRun]);
+
+  // run.update accelerates the list and the open run — a ref naming another
+  // run still refreshes the list, only the detail refetch is skipped.
+  useEffect(
+    () =>
+      onControlEvent('run.update', (e) => {
+        load();
+        if (!e.ref || e.ref === id) loadRun();
+      }),
+    [load, loadRun, id],
+  );
+  // Floor while the stream is dead.
+  useEffect(() => {
+    const t = setInterval(() => {
+      load();
+      loadRun();
+    }, 60_000);
+    return () => clearInterval(t);
+  }, [load, loadRun]);
 
   if (id && run) {
     const steps = (run.steps ?? []) as Step[];

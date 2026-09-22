@@ -10,6 +10,7 @@ import {
   type LeadListItem,
   type SegmentStat,
 } from '../api.ts';
+import { onControlEvent } from '../events.ts';
 import { Empty, StateChip, fmtMoney, rel } from '../components.tsx';
 
 /* Descoberta — the launch pad AND the scoreboard. Idle is a dark hero:
@@ -169,14 +170,13 @@ export default function Discovery() {
   }, []);
   useEffect(load, [load]);
 
-  // Leads land in the table as the agent creates them — keep polling while
-  // any discovery run is live.
-  const anyActive = runs.some((r) => r.status === 'queued' || r.status === 'running');
+  // Leads land in the table as the agent creates them — run/lead events
+  // accelerate the refresh; the slow poll floors a dead stream.
+  useEffect(() => onControlEvent(['run.update', 'lead.change'], load), [load]);
   useEffect(() => {
-    if (!anyActive) return;
-    const t = setInterval(load, 3000);
+    const t = setInterval(load, 60_000);
     return () => clearInterval(t);
-  }, [anyActive, load]);
+  }, [load]);
 
   const liveRun = runs.find((r) => r.status === 'queued' || r.status === 'running');
 
@@ -199,19 +199,20 @@ export default function Discovery() {
     setRun(null);
     setRunMissing(false);
     let dead = false;
-    let t: ReturnType<typeof setInterval> | undefined;
-    // Overlapping polls resolve out of order — drop any response older than
-    // the newest seen, and latch terminal: a delayed 'running' snapshot can't
-    // resurrect a finished run after the interval is cleared.
+    // Overlapping fetches resolve out of order — drop any response older
+    // than the newest seen, and latch terminal: a delayed 'running'
+    // snapshot can't resurrect a finished run.
     let seq = 0;
     let seen = 0;
     let terminal = false;
     // 'canceled' lands on the row before the worker persists its final
-    // journal — keep polling through a short grace window so late tool
-    // results still land in the summary.
+    // journal — keep reading through a short grace window so late tool
+    // results still land in the summary. Bounded chain, not a standing poll.
     let cancelAt = 0;
     let cancelLen = -1;
-    const tick = () => {
+    const timers: ReturnType<typeof setTimeout>[] = [];
+    const tick = (): void => {
+      if (dead || terminal) return;
       const my = ++seq;
       api
         .run(runId)
@@ -227,36 +228,38 @@ export default function Discovery() {
               cancelAt = Date.now();
               cancelLen = len;
               latch = false;
+              const grace = () => {
+                if (dead || terminal) return;
+                tick();
+                timers.push(setTimeout(grace, 1300));
+              };
+              timers.push(setTimeout(grace, 1300));
             } else if (since < 2000 || (since < 6000 && len > cancelLen)) {
               cancelLen = Math.max(cancelLen, len);
               latch = false;
             }
           }
           setRun(r.run);
-          if (latch) {
-            terminal = true;
-            if (t) {
-              clearInterval(t);
-              t = undefined;
-            }
-          }
+          if (latch) terminal = true;
         })
         .catch((e) => {
-          // A 404 is permanent — stop polling instead of spinning on the
+          // A 404 is permanent — stop fetching instead of spinning on the
           // loading state forever.
           if (dead || !(e instanceof ApiError && e.status === 404)) return;
+          terminal = true;
           setRunMissing(true);
-          if (t) {
-            clearInterval(t);
-            t = undefined;
-          }
         });
     };
     void tick();
-    t = setInterval(tick, 1300);
+    const off = onControlEvent('run.update', (e) => {
+      if (!e.ref || e.ref === runId) tick();
+    });
+    const t = setInterval(tick, 60_000);
     return () => {
       dead = true;
-      if (t) clearInterval(t);
+      off();
+      clearInterval(t);
+      for (const h of timers) clearTimeout(h);
     };
   }, [runId]);
 

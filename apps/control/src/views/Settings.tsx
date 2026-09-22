@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState, type ChangeEvent } from 'react';
 import QRCode from 'qrcode';
 import { api, type ChannelHealth, type Integration, type MeetingStatus } from '../api.ts';
+import { onControlEvent } from '../events.ts';
 import { ConfirmBtn, Page } from '../components.tsx';
 
 /** Config — "sala de máquinas". Left column: provider cards. The card's
@@ -210,16 +211,19 @@ export default function Settings() {
       .catch(() => undefined);
   }, []);
   useEffect(load, [load]);
+  // channel.health accelerates the pairing read; the slow poll is the floor.
   useEffect(() => {
-    const t = setInterval(
-      () =>
-        api
-          .waQr()
-          .then((r) => setWa({ qr: r.qr, status: r.status, me: r.me }))
-          .catch(() => undefined),
-      4000,
-    );
-    return () => clearInterval(t);
+    const wa = () =>
+      api
+        .waQr()
+        .then((r) => setWa({ qr: r.qr, status: r.status, me: r.me }))
+        .catch(() => undefined);
+    const off = onControlEvent('channel.health', wa);
+    const t = setInterval(wa, 60_000);
+    return () => {
+      off();
+      clearInterval(t);
+    };
   }, []);
 
   const waLogout = async () => {
@@ -753,8 +757,12 @@ function ChannelHealthCard() {
         })
         .catch((e: unknown) => setErr(e instanceof Error ? e.message : String(e)));
     tick();
-    const t = setInterval(tick, 30_000);
-    return () => clearInterval(t);
+    const off = onControlEvent('channel.health', tick);
+    const t = setInterval(tick, 60_000);
+    return () => {
+      off();
+      clearInterval(t);
+    };
   }, []);
 
   if (err) return <div className="hint">{err}</div>;

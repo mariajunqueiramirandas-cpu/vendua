@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { CheckCircle2, ChevronDown, Circle, SkipForward } from 'lucide-react';
 import { api, type AgentRun, type LeadListItem } from '../api.ts';
+import { onControlEvent } from '../events.ts';
 import { Empty, Page, fmtDateTime } from '../components.tsx';
 
 const GOAL_LABEL: Record<string, string> = {
@@ -96,6 +97,16 @@ export default function Plan() {
     return () => clearInterval(t);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // The same silent refresh, accelerated — run/lead/draft events trigger it.
+  useEffect(
+    () =>
+      onControlEvent(['run.update', 'lead.change', 'draft.change'], () => {
+        if (document.visibilityState === 'visible') load(true);
+      }),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [],
+  );
 
   const byId = new Map(leads.map((l) => [l.id, l]));
 
