@@ -2,7 +2,8 @@ import { describe, expect, test } from 'bun:test';
 import { join } from 'node:path';
 import postgres from 'postgres';
 import { claimRun, drain, enqueueRun, replayJournal, runOnce } from '../src/agent/runner.ts';
-import { executeTool, type ToolContext } from '../src/agent/tools.ts';
+import { executeTool, assertRunClaimTx, type ToolContext } from '../src/agent/tools.ts';
+import { dispatchMessage } from '../src/agent/send.ts';
 import { controlTx } from '../src/modules/control.ts';
 import { insertLeadTx, getLeadDetail } from '../src/modules/leads.ts';
 import { migrate } from '../src/platform/db.ts';
@@ -151,6 +152,26 @@ describe('replayJournal', () => {
     expect(r.seenContacts.has('a@velho.br')).toBe(true);
     // conversation still bounded to the latest attempt
     expect(r.messages).toEqual([{ role: 'assistant', content: 'other work' }]);
+  });
+
+  test('an empty retry does not hide the last substantive attempt', () => {
+    // attempt 3 persisted its 'resumed' marker then died before the model —
+    // the boundary must fall back to attempt 2, not the empty tail.
+    const r = replayJournal([
+      { type: 'model', content: 'primeiro', toolCalls: [] },
+      { type: 'tool', name: 'add_note', args: {}, out: { activity: { id: '1' } } },
+      { type: 'resumed', attempt: 1 },
+      { type: 'model', content: 'segundo', toolCalls: [] },
+      {
+        type: 'tool',
+        name: 'send_message',
+        args: {},
+        out: { message: { id: 'm1', status: 'sent' } },
+      },
+      { type: 'resumed', attempt: 2 },
+    ]);
+    expect(r.messages.map((m) => m.role)).toEqual(['assistant', 'tool']);
+    expect(r.messages[0]!.content).toBe('segundo');
   });
 
   test('book entries and banked contacts rebuild harness state', () => {
@@ -565,5 +586,31 @@ dbDescribe('worker robustness (db)', () => {
     expect(r.tokens_in).toBe(140);
     expect(r.tokens_out).toBe(30);
     expect(r.cost_cents).toBe(25);
+  });
+
+  test('a stale claim fences dispatch — the queued message stays queued', async () => {
+    await migrate(sql, MIGRATIONS);
+    const lead = await controlTx(sql, (tx) => insertLeadTx(tx, { name: 'Dispatch Fence' }));
+    const leadId = lead.body.lead.id;
+    const [thread] = await sql<{ id: string }[]>`
+      insert into lead_threads (lead_id, channel) values (${leadId}, 'manual') returning id
+    `;
+    const [msg] = await sql<{ id: string }[]>`
+      insert into lead_messages (thread_id, direction, author, body, status)
+      values (${thread!.id}, 'out', 'agent', 'não envia', 'queued') returning id
+    `;
+    await sql`delete from agent_runs where status = 'queued'`;
+    const runId = await enqueueRun(sql, { kind: 'reply', leadId });
+    const claimed = await claimRun(sql);
+    const ctx = mkCtx(runId, claimed!.claim_token, leadId);
+    // cancel/reclaim lands between compose-commit and the dispatch tx
+    await sql`update agent_runs set status = 'canceled', claim_token = null where id = ${runId}`;
+    await expect(
+      dispatchMessage(sql, msg!.id, (tx) => assertRunClaimTx(tx, ctx)),
+    ).rejects.toMatchObject({ status: 409, code: 'STALE_CLAIM' });
+    const [m] = await sql<{ status: string }[]>`
+      select status from lead_messages where id = ${msg!.id}
+    `;
+    expect(m!.status).toBe('queued');
   });
 });

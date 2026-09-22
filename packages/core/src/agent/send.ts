@@ -28,9 +28,16 @@ import { applyDeliveryEventTx } from './channels/email-inbound.ts';
 export async function dispatchMessage(
   sql: Sql,
   messageId: string,
+  /** Optional fence run first inside the claim tx — agent-run dispatches
+   *  pass a live-claim check so a canceled/reclaimed run can't still push a
+   *  queued message to the provider. Staff approvals, meeting sends, and the
+   *  stranded-message recovery in drain() pass nothing: they legitimately
+   *  dispatch messages whose authoring run already finished. */
+  guard?: (tx: Sql) => Promise<void>,
 ): Promise<{ ok: boolean; reason?: string }> {
   // Phase 1: claim.
   const job = await controlTx(sql, async (tx) => {
+    await guard?.(tx);
     const msg = (
       await tx<
         {

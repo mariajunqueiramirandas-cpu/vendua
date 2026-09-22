@@ -1140,9 +1140,11 @@ export async function executeTool(
       const out = res.body;
       if (out.blocked) return { blocked: true, reason: out.reason, use: out.use };
       // dispatchMessage no-ops unless the row is still 'queued' — safe when
-      // this response replays.
+      // this response replays. The guard re-fences the live claim inside the
+      // dispatch tx: a cancel/reclaim between compose-commit and this send
+      // must stop the message, not slip through the gap.
       if (!res.replayed && out.verdict.forceDraft === false && !ctx.draftOnly) {
-        await dispatchMessage(sql, out.composed.body.message.id);
+        await dispatchMessage(sql, out.composed.body.message.id, guard);
       }
       return {
         ...out.composed.body,
@@ -1352,7 +1354,9 @@ export async function executeTool(
         return { status: 200, body: { messageId, sendBlocked } };
       });
       if (!res.replayed && res.body.messageId) {
-        await dispatchMessage(sql, res.body.messageId);
+        // Same compose→dispatch gap as send_message: the farewell must die
+        // with the run that queued it.
+        await dispatchMessage(sql, res.body.messageId, guard);
       }
       return { unsubscribed: true, farewellSent: !!res.body.messageId };
     }

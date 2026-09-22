@@ -519,12 +519,25 @@ export function replayJournal(prior: unknown[]): JournalReplay {
       bankOut((s as { out?: unknown }).out);
     }
   }
-  // Boundary = the last 'resumed' marker: replay only the latest attempt.
-  // Earlier attempts' effects are already in CRM state (fresh contextFor
-  // output) — replaying them too would just bloat context each retry.
+  // Boundary = the last 'resumed' marker whose attempt actually reached the
+  // model: replay only that attempt. Earlier attempts' effects are already
+  // in CRM state (fresh contextFor output) — replaying them too would just
+  // bloat context each retry. A 'resumed' marker with no 'model' after it is
+  // an attempt that died between claim and first chat — skipping past it
+  // would hide the last substantive attempt's journal entirely, so keep
+  // walking back to one that did work.
   let start = 0;
   for (let i = prior.length - 1; i >= 0; i--) {
-    if ((prior[i] as { type?: string } | null)?.type === 'resumed') {
+    if ((prior[i] as { type?: string } | null)?.type !== 'resumed') continue;
+    let substantive = false;
+    for (let j = i + 1; j < prior.length; j++) {
+      if ((prior[j] as { type?: string } | null)?.type === 'model') {
+        substantive = true;
+        break;
+      }
+      if ((prior[j] as { type?: string } | null)?.type === 'resumed') break;
+    }
+    if (substantive) {
       start = i + 1;
       break;
     }
