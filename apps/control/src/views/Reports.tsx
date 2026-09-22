@@ -76,8 +76,8 @@ export default function Reports() {
     >
       {err && <Empty title="não foi possível carregar" hint={err} />}
       {s && fc && (
-        <>
-          <div className="grid4" style={{ marginBottom: 18 }}>
+        <div className="stack">
+          <div className="grid4">
             <div className="card stat">
               <div className="v" style={{ color: 'var(--forest-800)' }}>
                 {fmtMoney(fc.weightedCents)}
@@ -101,40 +101,36 @@ export default function Reports() {
             </div>
           </div>
 
-          <div className="grid2" style={{ marginBottom: 18 }}>
-            <div className="card" style={{ padding: 18 }}>
-              <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 6 }}>
+          <div className="grid2">
+            <div className="card pad">
+              <div className="card-head">
                 <b>valor ponderado · últimos 30 snapshots</b>
-                <span className="legend mono">
+                <span className="legend">
                   <i className="sw" style={{ background: 'var(--forest-800)' }} /> ponderado
                   <i
                     className="sw"
-                    style={{ background: 'var(--sage-300)', marginLeft: 10 }}
+                    style={{ background: 'var(--sage-300)', marginInlineStart: 10 }}
                   />{' '}
                   pipeline
                 </span>
               </div>
               <TrendChart trend={fc.trend} />
             </div>
-            <div className="card" style={{ padding: 18 }}>
-              <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 6 }}>
+            <div className="card pad">
+              <div className="card-head">
                 <b>por estágio</b>
-                <Link
-                  to="/config"
-                  className="mono"
-                  style={{ fontSize: 'var(--t-2xs)', color: 'var(--muted)' }}
-                >
+                <Link to="/config" className="note">
                   probabilidades em config →
                 </Link>
               </div>
-              <table className="tbl" style={{ marginTop: 10 }}>
+              <table className="tbl">
                 <thead>
                   <tr>
                     <th>estágio</th>
-                    <th style={{ textAlign: 'right' }}>leads</th>
-                    <th style={{ textAlign: 'right' }}>valor</th>
-                    <th style={{ textAlign: 'right' }}>prob.</th>
-                    <th style={{ textAlign: 'right' }}>ponderado</th>
+                    <th className="num">leads</th>
+                    <th className="num">valor</th>
+                    <th className="num">prob.</th>
+                    <th className="num">ponderado</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -145,18 +141,10 @@ export default function Reports() {
                         <td>
                           <Link to="/funil">{STATE_LABEL[st]}</Link>
                         </td>
-                        <td className="mono" style={{ textAlign: 'right' }}>
-                          {b?.count ?? 0}
-                        </td>
-                        <td className="mono" style={{ textAlign: 'right' }}>
-                          {fmtMoney(b?.valueCents)}
-                        </td>
-                        <td className="mono" style={{ textAlign: 'right' }}>
-                          {b ? `${Math.round(b.probability * 100)}%` : '—'}
-                        </td>
-                        <td className="mono" style={{ textAlign: 'right' }}>
-                          {fmtMoney(b?.weightedCents)}
-                        </td>
+                        <td className="num">{b?.count ?? 0}</td>
+                        <td className="num">{fmtMoney(b?.valueCents)}</td>
+                        <td className="num">{b ? `${Math.round(b.probability * 100)}%` : '—'}</td>
+                        <td className="num">{fmtMoney(b?.weightedCents)}</td>
                       </tr>
                     );
                   })}
@@ -169,7 +157,7 @@ export default function Reports() {
             <ValueBars title="valor por origem" rows={s.bySource} />
             <ValueBars title="valor por segmento" rows={s.bySegment} />
           </div>
-        </>
+        </div>
       )}
       {!s && !err && <Empty title="carregando…" />}
     </Page>
@@ -268,8 +256,10 @@ function ValueBars({
   const ranked = [...rows].sort((a, b) => b.valueCents - a.valueCents).slice(0, 8);
   const max = Math.max(1, ...ranked.map((r) => r.valueCents));
   return (
-    <div className="card" style={{ padding: 18 }}>
-      <b>{title}</b>
+    <div className="card pad">
+      <div className="card-head">
+        <b>{title}</b>
+      </div>
       <div className="hbars">
         {ranked.map((r) => (
           <div className="row" key={r.key}>

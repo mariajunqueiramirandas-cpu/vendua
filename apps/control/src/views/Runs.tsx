@@ -63,7 +63,7 @@ export default function Runs() {
         }
       >
         <div className="grid2" style={{ alignItems: 'start' }}>
-          <div className="card" style={{ padding: 18 }}>
+          <div className="card pad">
             <div className="steps">
               {steps.map((s, i) => (
                 <div key={i} className={`step ${s.type}`}>
@@ -90,9 +90,11 @@ export default function Runs() {
               {!steps.length && <Empty title="sem passos ainda" />}
             </div>
           </div>
-          <div className="card" style={{ padding: 18 }}>
-            <b>detalhes</b>
-            <table className="tbl" style={{ marginTop: 10 }}>
+          <div className="card pad">
+            <div className="card-head">
+              <b>detalhes</b>
+            </div>
+            <table className="tbl">
               <tbody>
                 {(
                   [
@@ -121,7 +123,7 @@ export default function Runs() {
                   ] as [string, React.ReactNode][]
                 ).map(([k, v]) => (
                   <tr key={k}>
-                    <td style={{ color: 'var(--muted)' }}>{k}</td>
+                    <td className="k">{k}</td>
                     <td>{v}</td>
                   </tr>
                 ))}
@@ -164,9 +166,9 @@ export default function Runs() {
               <th>tipo</th>
               <th>status</th>
               <th>lead</th>
-              <th>tokens</th>
-              <th>custo</th>
-              <th>quando</th>
+              <th className="num">tokens</th>
+              <th className="num">custo</th>
+              <th className="num">quando</th>
             </tr>
           </thead>
           <tbody>
@@ -182,23 +184,31 @@ export default function Runs() {
                   <span className={`chip ${STATUS_CHIP[r.status] ?? ''}`}>{r.status}</span>
                   {r.status === 'queued' && r.run_at && (
                     <span
-                      style={{ color: 'var(--muted)', fontSize: 'var(--t-2xs)', marginLeft: 6 }}
+                      style={{
+                        color: 'var(--muted)',
+                        fontSize: 'var(--t-2xs)',
+                        marginInlineStart: 6,
+                      }}
                     >
                       agenda {fmtDateTime(r.run_at)}
                     </span>
                   )}
                   {r.error && (
                     <span
-                      style={{ color: 'var(--red-400)', fontSize: 'var(--t-2xs)', marginLeft: 6 }}
+                      style={{
+                        color: 'var(--red-400)',
+                        fontSize: 'var(--t-2xs)',
+                        marginInlineStart: 6,
+                      }}
                     >
                       {r.error.slice(0, 40)}
                     </span>
                   )}
                 </td>
                 <td>{r.lead_name ?? '—'}</td>
-                <td className="mono">{(r.tokens_in + r.tokens_out).toLocaleString('pt-BR')}</td>
-                <td className="mono">{fmtMoney(r.cost_cents)}</td>
-                <td className="mono">{rel(r.created_at)}</td>
+                <td className="num">{(r.tokens_in + r.tokens_out).toLocaleString('pt-BR')}</td>
+                <td className="num">{fmtMoney(r.cost_cents)}</td>
+                <td className="num">{rel(r.created_at)}</td>
               </tr>
             ))}
           </tbody>

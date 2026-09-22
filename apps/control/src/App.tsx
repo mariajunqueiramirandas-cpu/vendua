@@ -335,30 +335,14 @@ function RailFoot({
     <div className="rail-foot">
       <span>agente · {llmDriver || '…'}</span>
       {onInstall && (
-        <button
-          className="btn ghost"
-          style={{ color: 'var(--rail-muted)', justifyContent: 'flex-start', padding: '4px 8px' }}
-          onClick={onInstall}
-        >
+        <button className="btn ghost" onClick={onInstall}>
           <Download size={14} /> instalar app
         </button>
       )}
-      <button
-        className="btn ghost"
-        style={{
-          color: 'var(--rail-muted)',
-          justifyContent: 'flex-start',
-          padding: '4px 8px',
-        }}
-        onClick={onHelp}
-      >
+      <button className="btn ghost" onClick={onHelp}>
         <span className="kbd">?</span> atalhos
       </button>
-      <button
-        className="btn ghost"
-        style={{ color: 'var(--rail-muted)', justifyContent: 'flex-start', padding: '4px 8px' }}
-        onClick={onLogout}
-      >
+      <button className="btn ghost" onClick={onLogout}>
         <LogOut size={14} /> sair
       </button>
     </div>

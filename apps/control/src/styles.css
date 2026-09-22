@@ -191,7 +191,7 @@ input[type='checkbox'] {
   border-radius: var(--r-sm);
   color: var(--rail-muted);
   font-size: var(--t-sm);
-  border-left: 2px solid transparent;
+  border-inline-start: 2px solid transparent;
 }
 .nav-item:hover {
   background: var(--night-800);
@@ -200,7 +200,7 @@ input[type='checkbox'] {
 .nav-item.active {
   background: var(--night-800);
   color: var(--cream-50);
-  border-left-color: var(--lime-300);
+  border-inline-start-color: var(--lime-300);
 }
 .nav-item svg {
   width: 15px;
@@ -208,7 +208,7 @@ input[type='checkbox'] {
   opacity: 0.85;
 }
 .nav-item .kbd {
-  margin-left: auto;
+  margin-inline-start: auto;
   font-family: var(--font-mono);
   font-size: var(--t-2xs);
   opacity: 0.5;
@@ -223,6 +223,16 @@ input[type='checkbox'] {
   flex-direction: column;
   gap: 6px;
 }
+/* status line shares the buttons' leading edge; ghost buttons read as
+   one quiet control zone, not floating text */
+.rail-foot > span {
+  padding-inline: 8px;
+}
+.rail-foot .btn {
+  justify-content: flex-start;
+  padding: 4px 8px;
+  color: var(--rail-muted);
+}
 .main {
   flex: 1;
   display: flex;
@@ -232,10 +242,13 @@ input[type='checkbox'] {
 .topbar {
   display: flex;
   align-items: center;
-  gap: 14px;
+  gap: 8px 14px;
   padding: 12px 22px;
   border-bottom: 1px solid var(--line);
   background: var(--bg);
+  /* collapse late: the sub line wraps under the title instead of pushing
+     actions off the trailing edge */
+  flex-wrap: wrap;
 }
 .topbar h1 {
   font-family: var(--font-serif);
@@ -250,6 +263,15 @@ input[type='checkbox'] {
 }
 .topbar .spacer {
   flex: 1;
+}
+/* controls zone — stays grouped on the trailing edge, even when the
+   topbar wraps to two lines */
+.topbar .tb-acts {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-inline-start: auto;
 }
 .content {
   flex: 1;
@@ -369,6 +391,81 @@ input[type='checkbox'] {
   border: 1px solid var(--line);
   border-radius: var(--r-md);
 }
+.card.pad {
+  padding: 18px;
+}
+/* a card that is just a table: clip row backgrounds to the radius and
+   give the edge cells a little more inset than the inter-column gap */
+.card:has(> .tbl:only-child) {
+  overflow: hidden;
+}
+.card > .tbl:only-child {
+  --tbl-edge: 14px;
+}
+/* inside a padded card the table's outer cells drop their own inset so
+   column text shares the card content edge */
+.card.pad .tbl {
+  --tbl-edge: 0px;
+}
+/* card chrome — serif-bold head, quiet mono aside, footer action row */
+.card-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 6px 14px;
+  flex-wrap: wrap;
+  margin-bottom: 10px;
+}
+.card-head .note {
+  font-family: var(--font-mono);
+  font-size: var(--t-2xs);
+  color: var(--muted);
+}
+.card-head a.note:hover {
+  color: var(--ink);
+}
+.card-foot {
+  display: block;
+  border-top: 1px solid var(--line);
+  margin-top: 12px;
+  padding-top: 10px;
+}
+a.card-foot {
+  font-family: var(--font-mono);
+  font-size: var(--t-xs);
+  color: var(--muted);
+}
+a.card-foot b {
+  color: var(--forest-800);
+}
+a.card-foot:hover {
+  color: var(--ink);
+}
+
+/* uniform vertical rhythm between a page's sections */
+.stack {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+}
+
+/* mini stats inside a card — same grammar as .stat (mono value, caps key) */
+.mstats {
+  display: flex;
+  gap: 24px;
+  flex-wrap: wrap;
+}
+.mstats .v {
+  font-family: var(--font-mono);
+  font-size: var(--t-lg);
+}
+.mstats .k {
+  font-size: var(--t-2xs);
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
 .empty {
   padding: 42px 20px;
   text-align: center;
@@ -390,6 +487,9 @@ input[type='checkbox'] {
      — dragging into a short column would otherwise only hit the cards. */
   align-items: stretch;
   min-height: 100%;
+  /* below ~4 column widths the board scrolls its own track instead of
+     pushing the whole page sideways */
+  overflow-x: auto;
 }
 .board-col {
   flex: 1;
@@ -437,7 +537,7 @@ input[type='checkbox'] {
   color: var(--muted);
 }
 .board-col header .sum {
-  margin-left: auto;
+  margin-inline-start: auto;
   font-family: var(--font-mono);
   font-size: var(--t-2xs);
   color: var(--muted);
@@ -463,7 +563,7 @@ input[type='checkbox'] {
   opacity: 1;
 }
 .lead-card .open {
-  margin-left: auto;
+  margin-inline-start: auto;
   display: inline-flex;
   color: var(--muted);
   opacity: 0;
@@ -650,7 +750,7 @@ input[type='checkbox'] {
   border-collapse: collapse;
 }
 .tbl th {
-  text-align: left;
+  text-align: start;
   font-size: var(--t-2xs);
   text-transform: uppercase;
   letter-spacing: 0.08em;
@@ -664,11 +764,49 @@ input[type='checkbox'] {
   border-bottom: 1px solid var(--line);
   font-size: var(--t-sm);
 }
+/* a row's last line is the container's own edge — no extra rule line */
+.card .tbl > tbody > tr:last-child > td {
+  border-bottom: 0;
+}
 .tbl tr:hover td {
   background: var(--surface);
 }
 .tbl tr.clickable {
   cursor: pointer;
+}
+/* numeric cells share a trailing edge with tabular figures; .k is the
+   quiet key column of a detail table, .end a lone trailing cell */
+.tbl .num {
+  text-align: end;
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  font-size: 0.92em;
+}
+.tbl td.k {
+  color: var(--muted);
+}
+.tbl td.end {
+  text-align: end;
+  /* margin on table cells is ignored — it only takes effect when the
+     phone breakpoint turns rows into flex items */
+  margin-inline-start: auto;
+}
+@media (min-width: 761px) {
+  /* --tbl-edge: cells that touch the table's own edge take the card's
+     preferred inset (see .card rules); inner cells keep the 10px gap */
+  .tbl :is(th, td):first-child {
+    padding-inline-start: var(--tbl-edge, 10px);
+  }
+  .tbl :is(th, td):last-child {
+    padding-inline-end: var(--tbl-edge, 10px);
+  }
+}
+@media (max-width: 760px) {
+  /* stacked rows: a trailing numeric cell keeps the desktop's
+     right-edge habit */
+  .tbl td.num:last-child {
+    margin-inline-start: auto;
+  }
 }
 
 .field {
@@ -708,6 +846,13 @@ input[type='checkbox'] {
   grid-template-columns: repeat(4, 1fr);
   gap: 14px;
 }
+/* grid items may shrink below content size — otherwise a long value
+   overflows the track instead of wrapping */
+.grid2 > *,
+.grid3 > *,
+.grid4 > * {
+  min-width: 0;
+}
 @media (max-width: 1080px) {
   .grid3,
   .grid4 {
@@ -720,6 +865,7 @@ input[type='checkbox'] {
 .stat .v {
   font-family: var(--font-mono);
   font-size: var(--t-xl);
+  overflow-wrap: anywhere;
 }
 .stat .k {
   color: var(--muted);
@@ -757,6 +903,10 @@ input[type='checkbox'] {
 .funnel .lbl {
   font-size: var(--t-2xs);
   color: var(--muted);
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .funnel .n {
   font-family: var(--font-mono);
@@ -770,6 +920,7 @@ input[type='checkbox'] {
   fill: var(--muted);
 }
 .legend {
+  font-family: var(--font-mono);
   font-size: var(--t-2xs);
   color: var(--muted);
   display: inline-flex;
@@ -786,7 +937,7 @@ input[type='checkbox'] {
   display: flex;
   flex-direction: column;
   gap: 9px;
-  margin-top: 12px;
+  margin-top: 2px;
 }
 .hbars .row {
   display: flex;
@@ -795,8 +946,9 @@ input[type='checkbox'] {
   font-size: var(--t-xs);
 }
 .hbars .lb {
-  width: 104px;
-  flex-shrink: 0;
+  /* a label rail, not a fixed width: shrinks with the card before
+     clipping the track */
+  flex: 0 0 clamp(72px, 26%, 104px);
   color: var(--muted);
   overflow: hidden;
   text-overflow: ellipsis;
@@ -818,14 +970,14 @@ input[type='checkbox'] {
 .hbars .v {
   font-family: var(--font-mono);
   font-size: var(--t-xs);
-  text-align: right;
+  text-align: end;
 }
 .hbars .n {
   font-family: var(--font-mono);
   font-size: var(--t-2xs);
   color: var(--muted);
-  width: 2ch;
-  text-align: right;
+  min-width: 2ch;
+  text-align: end;
 }
 
 /* login — the only night-surface page */
@@ -898,12 +1050,12 @@ input[type='checkbox'] {
 .drawer {
   position: fixed;
   top: 0;
-  right: 0;
+  inset-inline-end: 0;
   bottom: 0;
   width: 560px;
   max-width: 92vw;
   background: var(--bg);
-  border-left: 1px solid var(--line-strong);
+  border-inline-start: 1px solid var(--line-strong);
   box-shadow: -20px 0 60px color-mix(in srgb, var(--night-950) 25%, transparent);
   z-index: 40;
   display: flex;
@@ -935,14 +1087,14 @@ input[type='checkbox'] {
 }
 .steps .step {
   padding: 8px 10px;
-  border-left: 2px solid var(--line);
+  border-inline-start: 2px solid var(--line);
   margin-bottom: 8px;
 }
 .steps .step.model {
-  border-left-color: var(--sage-300);
+  border-inline-start-color: var(--sage-300);
 }
 .steps .step.tool {
-  border-left-color: var(--lime-300);
+  border-inline-start-color: var(--lime-300);
 }
 .steps .step .who {
   color: var(--muted);
@@ -1516,7 +1668,7 @@ details.raw textarea {
 
 /* nav badge — count of things waiting on you */
 .nav-item .nb {
-  margin-left: auto;
+  margin-inline-start: auto;
   background: var(--amber-400);
   color: var(--night-900);
   font-family: var(--font-mono);
@@ -1531,7 +1683,7 @@ details.raw textarea {
   padding: 0 5px;
 }
 .nav-item .nb + .kbd {
-  margin-left: 4px;
+  margin-inline-start: 4px;
 }
 
 /* stat card as link */
@@ -1621,14 +1773,15 @@ details.raw textarea {
   line-height: 1.5;
 }
 
-/* task group header row inside the table */
+/* task group header row inside the table — inset matches the flush-card
+   table edge (--tbl-edge: 14px) so the band shares the cells' edge */
 .tgroup td {
   background: var(--surface-2) !important;
   font-size: var(--t-2xs);
   text-transform: uppercase;
   letter-spacing: 0.08em;
   color: var(--muted);
-  padding: 6px 10px !important;
+  padding: 6px 14px !important;
 }
 .due {
   font-family: var(--font-mono);
@@ -1647,7 +1800,7 @@ details.raw textarea {
   border: 1px solid var(--line-strong);
   border-radius: var(--r-md);
   padding: 20px 24px;
-  width: 360px;
+  width: min(360px, 92vw);
   box-shadow: 0 20px 60px color-mix(in srgb, var(--night-950) 28%, transparent);
   animation: drawer-in 160ms cubic-bezier(0.3, 0, 0.2, 1);
 }
@@ -1730,7 +1883,7 @@ details.raw textarea {
   }
   .lead-card .mv {
     display: block;
-    margin-left: auto;
+    margin-inline-start: auto;
     max-width: 122px;
     padding: 5px 6px;
     font-size: var(--t-xs);
@@ -1773,7 +1926,8 @@ details.raw textarea {
     font-size: var(--t-xl);
   }
   .content {
-    padding: 12px;
+    /* shares the topbar's 14px inline edges */
+    padding: 12px 14px;
   }
 
   /* login + overlays ride the visual viewport too: a modal or full-screen
@@ -1852,7 +2006,7 @@ details.raw textarea {
   .tab .nb {
     position: absolute;
     top: 3px;
-    left: calc(50% + 5px);
+    inset-inline-start: calc(50% + 5px);
     background: var(--amber-400);
     color: var(--night-900);
     font-family: var(--font-mono);
@@ -1880,7 +2034,7 @@ details.raw textarea {
     padding: 6px 14px calc(16px + env(safe-area-inset-bottom, 0px));
     box-shadow: 0 -20px 60px color-mix(in srgb, var(--night-950) 40%, transparent);
     animation: sheet-up 180ms cubic-bezier(0.3, 0, 0.2, 1);
-    max-height: 78vh;
+    max-height: 78dvh;
     overflow: auto;
   }
   .msheet-grip {
@@ -2025,12 +2179,16 @@ details.raw textarea {
   .drawer {
     width: 100%;
     max-width: 100%;
-    border-left: 0;
+    border-inline-start: 0;
     animation: sheet-up 180ms cubic-bezier(0.3, 0, 0.2, 1);
     padding-inline: env(safe-area-inset-left, 0px) env(safe-area-inset-right, 0px);
   }
-  .m-card {
-    width: min(360px, 92vw);
+  .card.pad {
+    padding: 14px;
+  }
+  .stat .v {
+    /* long pt-BR currency strings shrink before they overflow a 2-col grid */
+    font-size: clamp(1.05rem, 4.8vw, var(--t-xl));
   }
 
   .wa-pairrow {
