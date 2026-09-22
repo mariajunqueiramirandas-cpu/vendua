@@ -1,6 +1,7 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { api, type AgentRun } from '../api.ts';
+import { onControlEvent } from '../events.ts';
 import { Empty, Page, fmtDateTime, fmtMoney, rel } from '../components.tsx';
 
 const KIND_LABEL: Record<string, string> = {
@@ -34,18 +35,69 @@ export default function Runs() {
   const [run, setRun] = useState<AgentRun | null>(null);
   const [kind, setKind] = useState('');
 
+  // Newest-successful wins, scoped to the current filter — an older
+  // response may still paint when a newer request failed, but never one
+  // whose captured `kind` no longer matches what's displayed.
+  const listSeq = useRef(0);
+  const listOk = useRef(0);
+  const listKind = useRef('');
   const load = useCallback(() => {
-    api.runs({ ...(kind ? { kind } : {}) }).then((r) => setRuns(r.runs));
+    const req = ++listSeq.current;
+    const reqKind = kind;
+    listKind.current = kind;
+    api.runs({ ...(kind ? { kind } : {}) }).then((r) => {
+      if (reqKind === listKind.current && req > listOk.current) {
+        listOk.current = req;
+        setRuns(r.runs);
+      }
+    });
   }, [kind]);
+  // Same success-watermark for the detail — a failed newer fetch lets an
+  // older good response through, a stale 'running' snapshot still can't
+  // paint over 'done'.
+  const runSeq = useRef(0);
+  const runOk = useRef(0);
+  const runFor = useRef('');
+  const loadRun = useCallback(() => {
+    if (!id) return;
+    const req = ++runSeq.current;
+    const reqId = id;
+    runFor.current = id;
+    api.run(id).then((r) => {
+      if (reqId === runFor.current && req > runOk.current) {
+        runOk.current = req;
+        setRun(r.run);
+      }
+    });
+  }, [id]);
   useEffect(load, [load]);
   useEffect(() => {
-    if (id) {
-      const t = setInterval(() => api.run(id).then((r) => setRun(r.run)), 2500);
-      api.run(id).then((r) => setRun(r.run));
-      return () => clearInterval(t);
+    if (!id) {
+      setRun(null);
+      return;
     }
-    setRun(null);
-  }, [id]);
+    loadRun();
+    return undefined;
+  }, [id, loadRun]);
+
+  // run.update accelerates the list and the open run — a ref naming another
+  // run still refreshes the list, only the detail refetch is skipped.
+  useEffect(
+    () =>
+      onControlEvent('run.update', (e) => {
+        load();
+        if (!e.ref || e.ref === id) loadRun();
+      }),
+    [load, loadRun, id],
+  );
+  // Floor while the stream is dead.
+  useEffect(() => {
+    const t = setInterval(() => {
+      load();
+      loadRun();
+    }, 60_000);
+    return () => clearInterval(t);
+  }, [load, loadRun]);
 
   if (id && run) {
     const steps = (run.steps ?? []) as Step[];

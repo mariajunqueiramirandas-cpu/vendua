@@ -1,6 +1,7 @@
 import type { Sql } from '../platform/db.ts';
 import { HttpError, str } from '../platform/http.ts';
 import { claimControl, controlTx, type ClaimResult } from './control.ts';
+import { emitControlEvent } from './control-events.ts';
 
 /**
  * activities module — the lead timeline and follow-up tasks.
@@ -74,7 +75,7 @@ export async function addActivity(
   guard?: (tx: Sql) => Promise<void>,
 ): Promise<ClaimResult<{ activity: ReturnType<typeof activityJson> }>> {
   const body = input.body === undefined ? null : str(input.body, 'body', 4000).trim() || null;
-  return claimControl(sql, idemKey, async (tx) => {
+  const res = await claimControl(sql, idemKey, async (tx) => {
     await guard?.(tx);
     const exists = await tx`select 1 from leads where id = ${leadId}`;
     if (!exists[0]) throw new HttpError(404, 'LEAD_NOT_FOUND', 'lead not found');
@@ -87,6 +88,8 @@ export async function addActivity(
     await tx`update leads set updated_at = now() where id = ${leadId}`;
     return { status: 201, body: { activity: activityJson(rows[0]!) } };
   });
+  if (!res.replayed) emitControlEvent('lead.change', leadId);
+  return res;
 }
 
 // ---------------------------------------------------------------------------
@@ -162,7 +165,7 @@ export async function createTask(
     }
     dueAt = d.toISOString();
   }
-  return claimControl(sql, idemKey, async (tx) => {
+  const res = await claimControl(sql, idemKey, async (tx) => {
     await guard?.(tx);
     const exists = await tx`select 1 from leads where id = ${leadId}`;
     if (!exists[0]) throw new HttpError(404, 'LEAD_NOT_FOUND', 'lead not found');
@@ -173,6 +176,8 @@ export async function createTask(
     `;
     return { status: 201, body: { task: taskJson(rows[0]!) } };
   });
+  if (!res.replayed) emitControlEvent('lead.change', leadId);
+  return res;
 }
 
 export async function completeTask(
@@ -181,7 +186,7 @@ export async function completeTask(
   done: boolean,
   idemKey: string,
 ): Promise<ClaimResult<{ task: ReturnType<typeof taskJson> }>> {
-  return claimControl(sql, idemKey, async (tx) => {
+  const res = await claimControl(sql, idemKey, async (tx) => {
     const rows = await tx<TaskRow[]>`
       update lead_tasks set done_at = ${done ? new Date().toISOString() : null}
       where id = ${taskId} returning *
@@ -189,4 +194,6 @@ export async function completeTask(
     if (!rows[0]) throw new HttpError(404, 'TASK_NOT_FOUND', 'task not found');
     return { status: 200, body: { task: taskJson(rows[0]!) } };
   });
+  if (!res.replayed) emitControlEvent('lead.change', res.body.task.leadId);
+  return res;
 }

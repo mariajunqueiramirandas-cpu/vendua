@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Plus, Upload, Download, Send } from 'lucide-react';
 import { api, type LeadListItem } from '../api.ts';
+import { onControlEvent } from '../events.ts';
 import { Empty, Page, ScoreBar, StateChip, fmtMoney, rel } from '../components.tsx';
 
 const GOAL_OPTS = [
@@ -32,36 +33,67 @@ export default function Leads() {
   // set under the same filters (it would dispatch hidden leads from `sel`).
   const loadGen = useRef(0);
 
+  const params = useCallback(
+    (cur?: string) => ({
+      ...(q ? { q } : {}),
+      ...(state ? { state } : {}),
+      ...(archived ? { archived } : {}),
+      ...(cur ? { cursor: cur } : {}),
+      limit: '100',
+    }),
+    [q, state, archived],
+  );
   const load = useCallback(
     (cur?: string) => {
       const gen = ++loadGen.current;
-      api
-        .leads({
-          ...(q ? { q } : {}),
-          ...(state ? { state } : {}),
-          ...(archived ? { archived } : {}),
-          ...(cur ? { cursor: cur } : {}),
-          limit: '100',
-        })
-        .then((r) => {
-          if (gen !== loadGen.current) return; // superseded by a newer request
-          setLeads((ls) => (cur ? [...ls, ...r.leads] : r.leads));
-          setCursor(r.nextCursor);
-          setLoading(false);
-          if (!cur) {
-            // The visible set was replaced — keep only selections that
-            // survived, so dispatch never acts on leads staff can't see.
-            const ids = new Set(r.leads.map((l) => l.id));
-            setSel((s) => new Set([...s].filter((id) => ids.has(id))));
-          }
-        });
+      api.leads(params(cur)).then((r) => {
+        if (gen !== loadGen.current) return; // superseded by a newer request
+        setLeads((ls) => (cur ? [...ls, ...r.leads] : r.leads));
+        setCursor(r.nextCursor);
+        setLoading(false);
+        if (!cur) {
+          // The visible set was replaced — keep only selections that
+          // survived, so dispatch never acts on leads staff can't see.
+          const ids = new Set(r.leads.map((l) => l.id));
+          setSel((s) => new Set([...s].filter((id) => ids.has(id))));
+        }
+      });
     },
-    [q, state, archived],
+    [params],
   );
   useEffect(() => {
     setLoading(true);
     load();
   }, [load]);
+  // Refresh preserves the visible depth: pages are re-read from the top and
+  // swapped in atomically, so an expanded list refreshes in place instead
+  // of collapsing back to page one (and selections survive in the same
+  // way the plain load prunes them).
+  const refresh = useCallback(() => {
+    const depth = Math.max(1, Math.ceil(leads.length / 100));
+    const gen = ++loadGen.current;
+    const all: LeadListItem[] = [];
+    let next: string | null = null;
+    const pull = (cur?: string): Promise<void> =>
+      api.leads(params(cur)).then((r) => {
+        all.push(...r.leads);
+        next = r.nextCursor;
+        if (r.nextCursor && all.length < depth * 100) return pull(r.nextCursor);
+      });
+    void pull().then(() => {
+      if (gen !== loadGen.current) return;
+      setLeads(all);
+      setCursor(next);
+      setLoading(false);
+      const ids = new Set(all.map((l) => l.id));
+      setSel((s) => new Set([...s].filter((id) => ids.has(id))));
+    });
+  }, [params, leads.length]);
+  useEffect(() => onControlEvent('lead.change', refresh), [refresh]);
+  useEffect(() => {
+    const t = setInterval(refresh, 60_000);
+    return () => clearInterval(t);
+  }, [refresh]);
   // Filter changes swap the result set — drop hidden selections so dispatch
   // only ever acts on leads the staff can see selected. The generation bump
   // also invalidates an in-flight dispatch result, which would otherwise

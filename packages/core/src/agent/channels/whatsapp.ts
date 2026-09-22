@@ -1,6 +1,7 @@
 import type { Sql } from '../../platform/db.ts';
 import { getIntegration, type IntegrationRow } from '../../modules/integrations.ts';
 import { controlTx } from '../../modules/control.ts';
+import { emitControlEvent } from '../../modules/control-events.ts';
 import { log } from '../../platform/log.ts';
 
 const waLog = log.child({ mod: 'whatsapp' });
@@ -225,12 +226,13 @@ async function startSocket(sql: Sql, integration: IntegrationRow): Promise<Baile
     if (socket !== sock) return; // stale socket — a replacement owns globals
     if (u.qr) {
       connState = 'qr';
-      void persistQr(sql, accountId, u.qr, gen);
+      // Emit after the QR write lands — the refetch it triggers must read it.
+      void persistQr(sql, accountId, u.qr, gen).then(() => emitControlEvent('channel.health'));
     }
     if (u.connection === 'open') {
       connState = 'open';
       waMe = readIdentity(sock);
-      void persistQr(sql, accountId, null, gen);
+      void persistQr(sql, accountId, null, gen).then(() => emitControlEvent('channel.health'));
     }
     if (u.connection === 'close') {
       connState = 'off';
@@ -239,6 +241,7 @@ async function startSocket(sql: Sql, integration: IntegrationRow): Promise<Baile
       socketFingerprint = null;
       socketAccountId = null;
       waMe = null;
+      emitControlEvent('channel.health');
       // Baileys 401 = logged out — nothing to reconnect to until re-paired.
       // Otherwise the stream dropped: restart inbound delivery instead of
       // staying offline until an outbound send happens to reopen it.
@@ -335,6 +338,7 @@ export async function ensureSocket(
     connState = 'off';
     if (socketAccountId) void persistQr(sql, socketAccountId, null, nextWaGen());
     socketAccountId = null;
+    emitControlEvent('channel.health');
   }
   // A pending start for different config — or one already superseded (its
   // generation is stale even when the fingerprint matches again, e.g.

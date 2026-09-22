@@ -87,6 +87,8 @@ import {
   type IntegrationKind,
 } from './modules/integrations.ts';
 import { claimControl, controlTx } from './modules/control.ts';
+import { controlSse } from './modules/control-sse.ts';
+import { emitControlEvent } from './modules/control-events.ts';
 import { pipelineForecast, snapshotPipelineTx } from './modules/forecast.ts';
 import { channelHealth } from './modules/channel-health.ts';
 import {
@@ -813,6 +815,13 @@ export function createApp({ sql, sessionSecret, controlSecret, autoDrain }: AppD
     return c.json({ ok: true });
   });
 
+  // Thin triggers over SSE — the board refetches on each frame; the
+  // connect-time `sync` covers events missed while reconnecting.
+  app.get('/control/v1/events', (c) => {
+    controlGate(c);
+    return controlSse(c);
+  });
+
   // ---- leads --------------------------------------------------------------
   app.get('/control/v1/leads', async (c) => {
     controlGate(c);
@@ -890,6 +899,11 @@ export function createApp({ sql, sessionSecret, controlSecret, autoDrain }: AppD
       },
     );
     if (res.replayed) c.header('x-idempotent-replay', 'true');
+    if (!res.replayed) {
+      emitControlEvent('lead.change', res.body.lead.id);
+      if (res.body.runId) emitControlEvent('run.update', res.body.runId);
+      if (res.body.contactRunId) emitControlEvent('run.update', res.body.contactRunId);
+    }
     if (res.body.runId) kickDrain();
     return c.json(res.body, res.status as 200);
   });
@@ -945,6 +959,7 @@ export function createApp({ sql, sessionSecret, controlSecret, autoDrain }: AppD
       body: { snapshot: await snapshotPipelineTx(tx) },
     }));
     if (res.replayed) c.header('x-idempotent-replay', 'true');
+    if (!res.replayed) emitControlEvent('lead.change');
     return c.json(res.body, 201);
   });
 
@@ -978,6 +993,7 @@ export function createApp({ sql, sessionSecret, controlSecret, autoDrain }: AppD
   app.post('/control/v1/leads/:id/unsubscribe', async (c) => {
     controlGate(c);
     const id = uuidParam(c, 'id');
+    let transitioned = false;
     const res = await claimControl(sql, requireIdemKey(c), async (tx) => {
       const rows = await tx`
         update leads set unsubscribed_at = now(), updated_at = now()
@@ -986,6 +1002,7 @@ export function createApp({ sql, sessionSecret, controlSecret, autoDrain }: AppD
       const exists = rows[0] ?? (await tx`select id from leads where id = ${id}`)[0];
       if (!exists) throw new HttpError(404, 'LEAD_NOT_FOUND', 'lead not found');
       if (rows[0]) {
+        transitioned = true;
         await tx`
           insert into lead_activities (lead_id, kind, body, created_by)
           values (${id}, 'system', 'Descadastrado pela equipe', 'staff')
@@ -994,6 +1011,7 @@ export function createApp({ sql, sessionSecret, controlSecret, autoDrain }: AppD
       return { status: 200, body: { ok: true } };
     });
     if (res.replayed) c.header('x-idempotent-replay', 'true');
+    if (!res.replayed && transitioned) emitControlEvent('lead.change', id);
     return c.json(res.body);
   });
 
@@ -1037,6 +1055,7 @@ export function createApp({ sql, sessionSecret, controlSecret, autoDrain }: AppD
       };
     });
     if (res.replayed) c.header('x-idempotent-replay', 'true');
+    if (!res.replayed) emitControlEvent('run.update', res.body.runId);
     kickDrain();
     return c.json(res.body, res.status as 201);
   });
@@ -1081,6 +1100,7 @@ export function createApp({ sql, sessionSecret, controlSecret, autoDrain }: AppD
       return { status: 200, body: { thread } };
     });
     if (res.replayed) c.header('x-idempotent-replay', 'true');
+    if (!res.replayed) emitControlEvent('thread.message', res.body.thread.id);
     return c.json(res.body, res.status as 200);
   });
 
@@ -1366,9 +1386,13 @@ export function createApp({ sql, sessionSecret, controlSecret, autoDrain }: AppD
     const gcalBusy = await bookBusyWindows(input.start);
     const res = await claimControl(sql, key, async (tx) => {
       const out = await bookMeetingTx(tx, input, new Date(), gcalBusy);
-      return { status: 201, body: { meeting: meetingJson(out.meeting) } };
+      return { status: 201, body: { meeting: meetingJson(out.meeting), created: out.created } };
     });
     if (res.replayed) c.header('x-idempotent-replay', 'true');
+    if (!res.replayed && res.body.created) {
+      emitControlEvent('meeting.change', res.body.meeting.id);
+      if (res.body.meeting.leadId) emitControlEvent('lead.change', res.body.meeting.leadId);
+    }
     // Post-commit effects run on fresh claims AND replays: room/gcal/email
     // happen after commit, so a crash between them leaves the replay (or the
     // first request that died right here) as the retry point. Fills only
@@ -1492,6 +1516,7 @@ export function createApp({ sql, sessionSecret, controlSecret, autoDrain }: AppD
   app.post('/control/v1/agent/runs/:id/cancel', async (c) => {
     controlGate(c);
     const id = uuidParam(c, 'id');
+    let transitioned = false;
     const res = await claimControl(sql, requireIdemKey(c), async (tx) => {
       const rows = await tx`
         update agent_runs set status = 'canceled', finished_at = now(), error = 'cancelado'
@@ -1506,9 +1531,13 @@ export function createApp({ sql, sessionSecret, controlSecret, autoDrain }: AppD
         // already terminal — report it, don't error (cancel is idempotent)
         return { status: 200, body: { ok: true, status: cur.status } };
       }
+      transitioned = true;
       return { status: 200, body: { ok: true, status: 'canceled' } };
     });
     if (res.replayed) c.header('x-idempotent-replay', 'true');
+    if (!res.replayed && transitioned) {
+      emitControlEvent('run.update', id);
+    }
     return c.json(res.body);
   });
 
@@ -1565,6 +1594,7 @@ export function createApp({ sql, sessionSecret, controlSecret, autoDrain }: AppD
       };
     });
     if (res.replayed) c.header('x-idempotent-replay', 'true');
+    if (!res.replayed) emitControlEvent('run.update', res.body.runId);
     kickDrain();
     return c.json(res.body, res.status as 201);
   });
@@ -1648,6 +1678,10 @@ export function createApp({ sql, sessionSecret, controlSecret, autoDrain }: AppD
       return { status: 200, body: { enqueued, skipped } };
     });
     if (res.replayed) c.header('x-idempotent-replay', 'true');
+    if (!res.replayed && res.body.enqueued) {
+      emitControlEvent('lead.change');
+      emitControlEvent('run.update');
+    }
     if (res.body.enqueued) kickDrain();
     return c.json(res.body);
   });
@@ -1703,6 +1737,7 @@ export function createApp({ sql, sessionSecret, controlSecret, autoDrain }: AppD
       return { status: 201, body: { brief: row } };
     });
     if (res.replayed) c.header('x-idempotent-replay', 'true');
+    if (!res.replayed) emitControlEvent('run.update', res.body.brief.id);
     return c.json(res.body, res.status as 201);
   });
 
@@ -1778,6 +1813,7 @@ export function createApp({ sql, sessionSecret, controlSecret, autoDrain }: AppD
       return { status: 200, body: { brief: row } };
     });
     if (res.replayed) c.header('x-idempotent-replay', 'true');
+    if (!res.replayed) emitControlEvent('run.update', res.body.brief.id);
     return c.json(res.body);
   });
 
@@ -1791,6 +1827,7 @@ export function createApp({ sql, sessionSecret, controlSecret, autoDrain }: AppD
       return { status: 200, body: { ok: true } };
     });
     if (res.replayed) c.header('x-idempotent-replay', 'true');
+    if (!res.replayed) emitControlEvent('run.update', uuidParam(c, 'id'));
     return c.json(res.body);
   });
 
@@ -1843,6 +1880,7 @@ export function createApp({ sql, sessionSecret, controlSecret, autoDrain }: AppD
       }
     });
     if (res.replayed) c.header('x-idempotent-replay', 'true');
+    if (!res.replayed) emitControlEvent('channel.health', 'whatsapp');
     return c.json(res.body, res.status as 200);
   });
 
@@ -1863,6 +1901,7 @@ export function createApp({ sql, sessionSecret, controlSecret, autoDrain }: AppD
       return { status: 200, body: { ok: true } };
     });
     if (res.replayed) c.header('x-idempotent-replay', 'true');
+    if (!res.replayed) emitControlEvent('channel.health', 'whatsapp');
     return c.json(res.body, res.status as 200);
   });
 

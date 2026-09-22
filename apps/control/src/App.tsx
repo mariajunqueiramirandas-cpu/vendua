@@ -18,6 +18,7 @@ import {
   Users,
 } from 'lucide-react';
 import { api, ApiError } from './api.ts';
+import { onControlEvent } from './events.ts';
 import Login from './views/Login.tsx';
 import Dashboard from './views/Dashboard.tsx';
 import BoardView from './views/Board.tsx';
@@ -139,14 +140,18 @@ export default function App() {
         .then((s) => setBadges({ drafts: s.pendingDrafts, tasks: s.openTasks }))
         .catch(() => undefined);
     tick();
-    const t = setInterval(tick, 30_000);
+    const off = onControlEvent(['draft.change', 'lead.change'], tick);
+    const t = setInterval(tick, 60_000);
     api
       .integrations()
       .then((r) =>
         setLlmDriver(r.integrations.find((i) => i.kind === 'llm' && i.enabled)?.driver ?? 'off'),
       )
       .catch(() => undefined);
-    return () => clearInterval(t);
+    return () => {
+      off();
+      clearInterval(t);
+    };
   }, [authed]);
 
   // Keyboard-first: g+d/f/l/i/a/e/t/g/c navigate; only when not typing.

@@ -1,14 +1,16 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { Archive, Ban, Bot, Link2, Plus, Video } from 'lucide-react';
 import {
   api,
+  ApiError,
   type Activity,
   type AgentRun,
   type LeadListItem,
   type Meeting,
   type Task,
 } from '../api.ts';
+import { onControlEvent } from '../events.ts';
 import { ConfirmBtn, Empty, Page, ScoreBar, fmtDateTime, fmtMoney } from '../components.tsx';
 
 const KIND_LABEL: Record<string, string> = {
@@ -73,22 +75,64 @@ export default function LeadDetail() {
   const [actChannel, setActChannel] = useState<'auto' | 'whatsapp' | 'email'>('auto');
   const [notFound, setNotFound] = useState(false);
 
+  // Each endpoint keeps its own applied watermark — an older response still
+  // commits unless a newer SUCCESS for that same resource already landed,
+  // so one failed endpoint can't discard another's usable data. Only an
+  // explicit 404 is a missing lead — a transient refresh failure must not
+  // swap the page for the not-found state.
+  const reqSeq = useRef(0);
+  const okSeq = useRef<Record<string, number>>({});
   const load = useCallback(() => {
+    const seq = ++reqSeq.current;
+    const ok = (k: string) => {
+      if (seq < (okSeq.current[k] ?? 0)) return false;
+      okSeq.current[k] = seq;
+      return true;
+    };
     api
       .lead(id)
-      .then((r) => setLead(r.lead))
-      .catch(() => setNotFound(true));
-    api.activities(id).then((r) => setActs(r.activities));
-    api.tasks({ leadId: id }).then((r) => setTasks(r.tasks));
-    api.leadThreads(id).then((r) => setThreads(r.threads));
-    api.meetings({ leadId: id, scope: 'all' }).then((r) => setMeetings(r.meetings));
+      .then((r) => {
+        if (!ok('lead')) return;
+        setNotFound(false);
+        setLead(r.lead);
+      })
+      .catch((e) => {
+        if (seq >= (okSeq.current.lead ?? 0) && e instanceof ApiError && e.status === 404)
+          setNotFound(true);
+      });
+    api.activities(id).then((r) => {
+      if (ok('acts')) setActs(r.activities);
+    });
+    api.tasks({ leadId: id }).then((r) => {
+      if (ok('tasks')) setTasks(r.tasks);
+    });
+    api.leadThreads(id).then((r) => {
+      if (ok('threads')) setThreads(r.threads);
+    });
+    api.meetings({ leadId: id, scope: 'all' }).then((r) => {
+      if (ok('meetings')) setMeetings(r.meetings);
+    });
     // Queued runs with a run_at — the scheduled first contact (or a delayed
     // reply) staff would otherwise have to find on the Runs page.
-    api
-      .runs({ lead_id: id, status: 'queued' })
-      .then((r) => setSchedRuns(r.runs.filter((x) => x.run_at)));
+    api.runs({ lead_id: id, status: 'queued' }).then((r) => {
+      if (ok('runs')) setSchedRuns(r.runs.filter((x) => x.run_at));
+    });
   }, [id]);
   useEffect(load, [load]);
+  // The page renders lead, meetings, and queued runs — all three types map
+  // to the same load; a lead.change ref for another lead skips the reload.
+  useEffect(
+    () =>
+      onControlEvent(['lead.change', 'meeting.change', 'run.update'], (e) => {
+        if (e.type === 'lead.change' && e.ref && e.ref !== id) return;
+        load();
+      }),
+    [load, id],
+  );
+  useEffect(() => {
+    const t = setInterval(load, 60_000);
+    return () => clearInterval(t);
+  }, [load]);
 
   if (notFound)
     return (

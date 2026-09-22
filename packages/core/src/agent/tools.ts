@@ -2,6 +2,7 @@ import type { Sql } from '../platform/db.ts';
 import { HttpError } from '../platform/http.ts';
 import type { AgentTool } from './llm.ts';
 import { claimControl, controlTx } from '../modules/control.ts';
+import { emitControlEvent } from '../modules/control-events.ts';
 import {
   getLeadDetail,
   insertLeadTx,
@@ -970,6 +971,14 @@ export async function executeTool(
         }
         return created;
       });
+      if (!res.replayed) {
+        const leadId =
+          (res.body as { lead?: { id?: unknown } }).lead?.id ??
+          (res.body as { existing?: { id?: unknown } }).existing?.id;
+        if (typeof leadId === 'string') emitControlEvent('lead.change', leadId);
+        const contactRun = (res.body as { contactRun?: unknown }).contactRun;
+        if (typeof contactRun === 'string') emitControlEvent('run.update', contactRun);
+      }
       return res.body;
     }
     case 'update_lead': {
@@ -1045,6 +1054,10 @@ export async function executeTool(
           body: { ...composed.body, channel: pick.channel, via: pick.via },
         };
       });
+      if (!res.replayed && !('blocked' in res.body)) {
+        emitControlEvent('draft.change', res.body.thread.id);
+        emitControlEvent('thread.message', res.body.thread.id);
+      }
       return res.body;
     }
     case 'send_message': {
@@ -1139,6 +1152,11 @@ export async function executeTool(
       });
       const out = res.body;
       if (out.blocked) return { blocked: true, reason: out.reason, use: out.use };
+      if (!res.replayed) {
+        const tid = out.composed.body.thread.id;
+        emitControlEvent('thread.message', tid);
+        if (out.verdict.forceDraft || ctx.draftOnly) emitControlEvent('draft.change', tid);
+      }
       // dispatchMessage no-ops unless the row is still 'queued' — safe when
       // this response replays. Replayed and fresh both dispatch under THIS
       // attempt's claim: a replayed compose that never reached dispatch is
@@ -1259,6 +1277,9 @@ export async function executeTool(
           };
         },
       );
+      if (!res.replayed && res.body.proposed === true) {
+        emitControlEvent('draft.change', (res.body.brief as { id?: string } | undefined)?.id);
+      }
       return res.body;
     }
     case 'request_human': {
@@ -1304,11 +1325,17 @@ export async function executeTool(
       // releases. A concurrent send serializes behind this claim and sees the
       // lead already opted out; only the farewell (is_farewell) survives the
       // dispatch suppression re-check. Replays return the recorded result.
-      type UnsubBody = { messageId: string | null; sendBlocked: string | null };
+      type UnsubBody = {
+        messageId: string | null;
+        threadId: string | null;
+        sendBlocked: string | null;
+        changed: boolean;
+      };
       const res = await claimControl<UnsubBody>(sql, key, async (tx) => {
         await assertRunClaimTx(tx, ctx);
         await tx`select pg_advisory_xact_lock(hashtext(${`send:${leadId}`}))`;
         let messageId: string | null = null;
+        let threadId: string | null = null;
         let sendBlocked: string | null = null;
         if (reply) {
           const pick = await resolveChannelTx(tx, leadId, {
@@ -1340,6 +1367,7 @@ export async function executeTool(
                 farewell: true,
               });
               messageId = composed.body.message.id;
+              threadId = composed.body.thread.id;
             }
           }
         }
@@ -1354,8 +1382,15 @@ export async function executeTool(
             values (${leadId}, 'system', ${`Pediu para sair — opt-out registrado${reason ? ` (${reason})` : ''}`}, 'agent')
           `;
         }
-        return { status: 200, body: { messageId, sendBlocked } };
+        return {
+          status: 200,
+          body: { messageId, threadId, sendBlocked, changed: changed.length > 0 },
+        };
       });
+      if (!res.replayed) {
+        if (res.body.threadId) emitControlEvent('thread.message', res.body.threadId);
+        if (res.body.changed) emitControlEvent('lead.change', leadId);
+      }
       if (res.body.messageId) {
         // Same compose→dispatch gap as send_message: the farewell must die
         // with the run that queued it.
@@ -1602,6 +1637,7 @@ export async function executeTool(
         await tx`update leads set agent_plan = ${tx.json(next)}, updated_at = now() where id = ${ctx.leadId!}`;
         return { status: 200 as const, body: { stored: true, plan: next } };
       });
+      if (!res.replayed) emitControlEvent('lead.change', ctx.leadId ?? undefined);
       return res.body;
     }
     case 'book': {

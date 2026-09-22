@@ -20,6 +20,7 @@ import { MonidBudget } from './channels/monid.ts';
 import { dispatchMessage } from './send.ts';
 import { channelAvailabilityTx, whatsappReadyTx } from './guardrails.ts';
 import { bookingLinkForRunner, sweepMeetingReminders } from '../modules/meetings.ts';
+import { emitControlEvent } from '../modules/control-events.ts';
 
 const agentLog = log.child({ mod: 'agent' });
 
@@ -105,11 +106,13 @@ export async function enqueueRun(
     params?: Record<string, unknown>;
   },
 ): Promise<string> {
-  return controlTx(sql, (tx) => insertRun(tx, input));
+  const id = await controlTx(sql, (tx) => insertRun(tx, input));
+  emitControlEvent('run.update', id);
+  return id;
 }
 
 export async function claimRun(sql: Sql): Promise<RunRow | null> {
-  return controlTx(sql, async (tx) => {
+  const run = await controlTx(sql, async (tx) => {
     // Outreach is serial per lead: a 'running' outreach row is the durable
     // ownership token — it outlives the claim tx, so a queued same-lead
     // outreach can only claim once the owner finishes (a crashed owner is
@@ -180,6 +183,8 @@ export async function claimRun(sql: Sql): Promise<RunRow | null> {
     }
     return null;
   });
+  if (run) emitControlEvent('run.update', run.id);
+  return run;
 }
 
 async function finishRun(
@@ -209,6 +214,7 @@ async function finishRun(
     returning id
   `,
   );
+  if (rows.length) emitControlEvent('run.update', run.id);
   return rows.length > 0;
 }
 
@@ -846,6 +852,7 @@ export async function runOnce(sql: Sql): Promise<boolean> {
         `,
       );
       if (!rows.length) lost = true;
+      else emitControlEvent('run.update', run.id);
     });
     tail = p.catch(() => undefined);
     return p;
@@ -866,6 +873,7 @@ export async function runOnce(sql: Sql): Promise<boolean> {
         where id = ${run.id} and status = 'canceled' and claim_token = ${run.claim_token}
       `,
     ).catch(() => undefined);
+    emitControlEvent('run.update', run.id);
   };
 
   // Every reserve/reconcile journals a monid_spend marker — a future
@@ -1286,9 +1294,9 @@ export async function drain(sql: Sql, limit = 20): Promise<number> {
   // backoff (run_at = now + 2^attempts min) so a poisoned run stops jumping
   // ahead of healthy work, and the attempt that exhausts max_attempts lands
   // 'failed' — journal kept — instead of looping the lease forever.
-  await controlTx(
+  const reclaimed = await controlTx(
     sql,
-    (tx) => tx`
+    (tx) => tx<{ id: string }[]>`
       update agent_runs set
         attempts = attempts + 1,
         status = case when attempts + 1 >= max_attempts then 'failed' else 'queued' end,
@@ -1302,18 +1310,22 @@ export async function drain(sql: Sql, limit = 20): Promise<number> {
         alive_at = null,
         claim_token = null
       where status = 'running' and coalesce(alive_at, started_at) < now() - make_interval(mins => ${RUN_LEASE_MIN})
+      returning id
     `,
   );
+  for (const r of reclaimed) emitControlEvent('run.update', r.id);
   // 'sending' past the lease = worker died between provider call and status
   // write. Fail it visibly — staff redrafts — instead of silently requeuing
   // (at-most-once: the provider may already have accepted it).
-  await controlTx(
+  const failedSending = await controlTx(
     sql,
-    (tx) => tx`
+    (tx) => tx<{ thread_id: string }[]>`
       update lead_messages set status = 'failed', error = 'dispatch-interrupted', updated_at = now()
       where status = 'sending' and updated_at < now() - make_interval(mins => ${RUN_LEASE_MIN})
+      returning thread_id
     `,
   );
+  for (const m of failedSending) emitControlEvent('thread.message', m.thread_id);
   // Queued messages outlive the request that queued them — a crash between
   // approve/commit and dispatch must not strand one. The 20s grace lets the
   // inline request-path dispatch win first.
@@ -1322,9 +1334,9 @@ export async function drain(sql: Sql, limit = 20): Promise<number> {
   // — picking it up here unguarded would outflank the fence 20s later.
   // Staff-approved drafts are staff-owned (approved_by set) even though
   // they keep agent_run_id — approval is the explicit decision to send.
-  await controlTx(
+  const failedQueued = await controlTx(
     sql,
-    (tx) => tx`
+    (tx) => tx<{ thread_id: string }[]>`
       update lead_messages m set status = 'failed', updated_at = now(),
         error = 'authoring run no longer active'
       where m.status = 'queued' and m.agent_run_id is not null
@@ -1332,8 +1344,10 @@ export async function drain(sql: Sql, limit = 20): Promise<number> {
         and (
           select r.status from agent_runs r where r.id = m.agent_run_id
         ) in ('canceled', 'failed')
+      returning m.thread_id
     `,
   );
+  for (const m of failedQueued) emitControlEvent('thread.message', m.thread_id);
   const stranded = await controlTx(
     sql,
     (tx) =>
@@ -1410,7 +1424,8 @@ export function startAgentWorker(sql: Sql, intervalMs = 15_000) {
  *  not-exists check keeps a still-queued brief run from double-firing). Leads
  *  it creates land tagged 'descoberto' — contact dispatch stays manual. */
 export async function sweepBriefs(sql: Sql): Promise<number> {
-  return controlTx(sql, async (tx) => {
+  const queuedIds: string[] = [];
+  const fired = await controlTx(sql, async (tx) => {
     const due = await tx<
       {
         id: string;
@@ -1484,22 +1499,26 @@ export async function sweepBriefs(sql: Sql): Promise<number> {
           continue;
         }
       }
-      await insertRun(tx, {
-        kind: 'discovery',
-        params: {
-          query: b.query,
-          ...(b.segment ? { segment: b.segment } : {}),
-          ...(b.city ? { city: b.city } : {}),
-          ...(b.target ? { target: b.target } : {}),
-          briefId: b.id,
-          briefName: b.name,
-        },
-      });
+      queuedIds.push(
+        await insertRun(tx, {
+          kind: 'discovery',
+          params: {
+            query: b.query,
+            ...(b.segment ? { segment: b.segment } : {}),
+            ...(b.city ? { city: b.city } : {}),
+            ...(b.target ? { target: b.target } : {}),
+            briefId: b.id,
+            briefName: b.name,
+          },
+        }),
+      );
       await tx`update discovery_briefs set last_run_at = now() where id = ${b.id}`;
       fired++;
     }
     return fired;
   });
+  for (const id of queuedIds) emitControlEvent('run.update', id);
+  return fired;
 }
 
 /** Weekly strategist cadence: one 'strategist' run every 7 days, stamped by
@@ -1508,7 +1527,8 @@ export async function sweepBriefs(sql: Sql): Promise<number> {
  *  the row-lock equivalent on a sweep with no anchor row: two workers in the
  *  same tick can't both pass the emptiness check and double-fire. */
 export async function sweepStrategist(sql: Sql): Promise<boolean> {
-  return controlTx(sql, async (tx) => {
+  let queuedId: string | null = null;
+  const fired = await controlTx(sql, async (tx) => {
     const locked = await tx<{ ok: boolean }[]>`
       select pg_try_advisory_xact_lock(hashtext('sweep:strategist')) as ok
     `;
@@ -1523,14 +1543,17 @@ export async function sweepStrategist(sql: Sql): Promise<boolean> {
       limit 1
     `;
     if (recent.length) return false;
-    await insertRun(tx, { kind: 'strategist', params: { auto: 'weekly' } });
+    queuedId = await insertRun(tx, { kind: 'strategist', params: { auto: 'weekly' } });
     return true;
   });
+  if (queuedId) emitControlEvent('run.update', queuedId);
+  return fired;
 }
 
 /** Periodic sweep: leads due for a follow-up get an outreach run. */
 export async function sweepOutreach(sql: Sql): Promise<number> {
-  return controlTx(sql, async (tx) => {
+  const queuedIds: string[] = [];
+  const fired = await controlTx(sql, async (tx) => {
     // for update skip locked — concurrent sweeps on different replicas take
     // disjoint lead sets instead of both inserting a run for the same due
     // lead (the not-exists check alone only sees committed runs).
@@ -1548,12 +1571,18 @@ export async function sweepOutreach(sql: Sql): Promise<number> {
       for update skip locked
     `;
     for (const { id } of due) {
-      await tx`
+      const run = (
+        await tx<{ id: string }[]>`
         insert into agent_runs (kind, lead_id, params)
         values ('outreach', ${id}, '{}'::jsonb)
-      `;
+        returning id
+      `
+      )[0]!;
+      queuedIds.push(run.id);
       await tx`update leads set next_action_at = null, next_action_source = null where id = ${id}`;
     }
     return due.length;
   });
+  for (const id of queuedIds) emitControlEvent('run.update', id);
+  return fired;
 }

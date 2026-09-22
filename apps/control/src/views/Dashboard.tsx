@@ -1,6 +1,7 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { api, type Stats } from '../api.ts';
+import { onControlEvent } from '../events.ts';
 import { Empty, Page, fmtMoney } from '../components.tsx';
 
 const STATES = ['lead', 'contacted', 'invited', 'live'] as const;
@@ -22,12 +23,28 @@ export default function Dashboard() {
   const [s, setS] = useState<Stats | null>(null);
   const [err, setErr] = useState('');
 
-  useEffect(() => {
+  const reqSeq = useRef(0);
+  const okSeq = useRef(0);
+  const load = useCallback(() => {
+    const seq = ++reqSeq.current;
     api
       .stats()
-      .then(setS)
-      .catch((e) => setErr(String(e)));
+      .then((stats) => {
+        if (seq < okSeq.current) return;
+        okSeq.current = seq;
+        setS(stats);
+        setErr('');
+      })
+      .catch((e) => {
+        if (seq >= okSeq.current) setErr(String(e));
+      });
   }, []);
+  useEffect(load, [load]);
+  useEffect(() => onControlEvent(['lead.change', 'run.update', 'draft.change'], load), [load]);
+  useEffect(() => {
+    const t = setInterval(load, 60_000);
+    return () => clearInterval(t);
+  }, [load]);
 
   const maxState = Math.max(1, ...STATES.map((st) => s?.everReached[st] ?? 0));
 
