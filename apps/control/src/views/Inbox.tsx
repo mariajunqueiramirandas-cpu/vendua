@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { ArrowLeft, Bot, Plus, Send } from 'lucide-react';
 import { api, type LeadListItem, type ThreadItem, type ThreadView } from '../api.ts';
+import { onControlEvent } from '../events.ts';
 import { Avatar, Empty, Page, StateChip, rel } from '../components.tsx';
 
 const CH_LABEL: Record<string, string> = { email: 'email', whatsapp: 'whats', manual: 'manual' };
@@ -80,6 +81,25 @@ export default function InboxView() {
     });
   }, [threadId]);
   useEffect(loadThread, [loadThread]);
+
+  // thread.message accelerates both reads — a ref naming another thread
+  // still refreshes the row, only the open-thread refetch is skipped.
+  useEffect(
+    () =>
+      onControlEvent('thread.message', (e) => {
+        refreshList();
+        if (!e.ref || e.ref === threadId) loadThread();
+      }),
+    [refreshList, loadThread, threadId],
+  );
+  // Floor while the stream is dead — misses nothing, just slower.
+  useEffect(() => {
+    const t = setInterval(() => {
+      refreshList();
+      loadThread();
+    }, 60_000);
+    return () => clearInterval(t);
+  }, [refreshList, loadThread]);
 
   const send = async (asDraft: boolean) => {
     const target = view?.thread.id;

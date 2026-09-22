@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { CheckCircle2, ChevronDown, Circle, SkipForward } from 'lucide-react';
 import { api, type AgentRun, type LeadListItem } from '../api.ts';
+import { onControlEvent } from '../events.ts';
 import { Empty, Page, fmtDateTime } from '../components.tsx';
 
 const GOAL_LABEL: Record<string, string> = {
@@ -44,11 +45,17 @@ export default function Plan() {
   const [now, setNow] = useState(() => Date.now());
 
   const loadingRef = useRef(false);
+  // An event arriving mid-load can't be dropped — the in-flight pages may
+  // have read data older than the event, so queue one trailing refresh.
+  const pendingRef = useRef(false);
 
   // silent refresh keeps the queue honest without flickering the page —
   // a completed run disappears on the next tick instead of lingering overdue.
   const load = (silent = false) => {
-    if (loadingRef.current) return;
+    if (loadingRef.current) {
+      pendingRef.current = true;
+      return;
+    }
     loadingRef.current = true;
     if (!silent) setState('loading');
     // Follow the keyset cursor — a partial page would silently hide plans.
@@ -82,6 +89,10 @@ export default function Plan() {
       })
       .finally(() => {
         loadingRef.current = false;
+        if (pendingRef.current) {
+          pendingRef.current = false;
+          load(true);
+        }
       });
   };
   useEffect(() => load(), []);
@@ -96,6 +107,16 @@ export default function Plan() {
     return () => clearInterval(t);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // The same silent refresh, accelerated — run/lead/draft events trigger it.
+  useEffect(
+    () =>
+      onControlEvent(['run.update', 'lead.change', 'draft.change'], () => {
+        if (document.visibilityState === 'visible') load(true);
+      }),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [],
+  );
 
   const byId = new Map(leads.map((l) => [l.id, l]));
 
