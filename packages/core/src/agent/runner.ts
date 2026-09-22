@@ -366,16 +366,29 @@ async function contextFor(
         >`select name, query, segment, city, target, enabled, created_by
            from discovery_briefs order by created_at desc`,
     );
+    // Newest briefs render in full; older coverage collapses into a names
+    // roll-up — the model still sees what it would be duplicating, but an
+    // unbounded verbatim list would eventually overflow the context window.
+    // Exact dup checking stays deterministic in propose_brief's DB check.
+    const shown = briefs.slice(0, 40);
+    const rest = briefs.slice(40);
     parts.push(
       `BRIEFS ATUAIS (não re-proponha o que já existe):\n${
-        briefs.length
-          ? briefs
+        shown.length
+          ? shown
               .map(
                 (b) =>
                   `- ${b.name} — "${b.query}"${b.segment ? ` · ${b.segment}` : ''}${b.city ? ` · ${b.city}` : ''}${b.target ? ` · ≤${b.target}` : ''} · ${b.enabled ? 'ativo' : b.created_by === 'strategist' ? 'rascunho (já proposto)' : 'pausado'}`,
               )
               .join('\n')
           : '(nenhum)'
+      }${
+        rest.length
+          ? `\n+${rest.length} mais antigos: ${rest
+              .map((b) => b.name)
+              .join(', ')
+              .slice(0, 2000)}${rest.map((b) => b.name).join(', ').length > 2000 ? '…' : ''}`
+          : ''
       }`,
     );
   }
