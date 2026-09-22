@@ -464,27 +464,6 @@ visible at `#/agente/runs/:id`.
 - Chrome fires a Translate bubble over the page on first load — dismiss it
   before screenshots.
 
-## Shared-box interference (concurrent agent sessions)
-
-- `bun test` and the dev worker share the same docker Postgres — a parallel
-  session's test run writes fixtures into the DB your board reads
-  (`dead-/live-/fresh-/off-/prop-<suffix>` briefs; `Intent*/Empty Intent*`,
-  `Claim*`, `Null Win`, `Plan Lead` leads). They flood #/descoberta, #/leads
-  and #/agente mid-recording. For a clean board, back up + pattern-delete
-  (`create table _bak as select…; delete … where name ~ '^(dead|live|fresh|
-  off|prop)-'`; fixture leads all have `business_name is null`; clear
-  lead_activities/lead_state_history/agent_runs.lead_id children first).
-  Seeded `source='seed'` rows are never touched by the suites.
-- Rapid git ops (commit/rebase/checkout) under `bun --watch` + vite can leave
-  a stale transform: the served bundle briefly diverges from the file on
-  disk (e.g. a mid-rebase version of Runs.tsx). Symptom: UI loses a feature
-  that grep proves is in the file. Cure: restart the vite dev server, hard
-  reload; a transient request fail can bounce the control SPA to login —
-  re-login and continue, it is env noise, not a product bug.
-- When the lead lands commits mid-test, re-check `git log` before trusting
-  prior observations — and verify the running code covers the new commit
-  (migrations edited in place still need `bun run migrate`).
-
 ## CLI verification (shell-only)
 
 ```sh
