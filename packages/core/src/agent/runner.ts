@@ -1307,12 +1307,15 @@ export async function drain(sql: Sql, limit = 20): Promise<number> {
   // Agent-authored rows die with their run first: the tool path's claim
   // fence leaves a canceled/cap-exhausted run's message 'queued' on purpose
   // — picking it up here unguarded would outflank the fence 20s later.
+  // Staff-approved drafts are staff-owned (approved_by set) even though
+  // they keep agent_run_id — approval is the explicit decision to send.
   await controlTx(
     sql,
     (tx) => tx`
       update lead_messages m set status = 'failed', updated_at = now(),
         error = 'authoring run no longer active'
       where m.status = 'queued' and m.agent_run_id is not null
+        and m.approved_by is null
         and (
           select r.status from agent_runs r where r.id = m.agent_run_id
         ) in ('canceled', 'failed')
@@ -1321,8 +1324,8 @@ export async function drain(sql: Sql, limit = 20): Promise<number> {
   const stranded = await controlTx(
     sql,
     (tx) =>
-      tx<{ id: string; agent_run_id: string | null }[]>`
-        select id, agent_run_id from lead_messages
+      tx<{ id: string; agent_run_id: string | null; approved_by: string | null }[]>`
+        select id, agent_run_id, approved_by from lead_messages
         where status = 'queued' and created_at < now() - interval '20 seconds'
         order by created_at limit 10
       `,
@@ -1333,7 +1336,7 @@ export async function drain(sql: Sql, limit = 20): Promise<number> {
     // guard locks the run row inside the dispatch claim tx, serialized
     // against the cancel/reclaim's own UPDATE. A throw leaves the row
     // queued; the next drain's sweep marks it terminal.
-    const runId = m.agent_run_id;
+    const runId = m.approved_by ? null : m.agent_run_id;
     const guard = runId
       ? async (tx: Sql) => {
           const rows = await tx<{ status: string }[]>`

@@ -637,6 +637,13 @@ dbDescribe('worker robustness (db)', () => {
       values (${thread!.id}, 'out', 'staff', 'pode enviar', 'queued', now() - interval '30 seconds')
       returning id
     `;
+    // approved agent draft on the SAME terminal run: approved_by makes it
+    // staff-owned — the sweep must not fail it
+    const [approved] = await sql<{ id: string }[]>`
+      insert into lead_messages (thread_id, direction, author, body, status, agent_run_id, approved_by, approved_at, created_at)
+      values (${thread!.id}, 'out', 'agent', 'aprovado envia', 'queued', ${runId}, 'staff@x', now(), now() - interval '30 seconds')
+      returning id
+    `;
     await sql`update agent_runs set status = 'canceled', claim_token = null where id = ${runId}`;
     await drain(sql, 0);
     const [m] = await sql<{ status: string; error: string | null }[]>`
@@ -648,5 +655,9 @@ dbDescribe('worker robustness (db)', () => {
       select status from lead_messages where id = ${staffMsg!.id}
     `;
     expect(s!.status).toBe('sent');
+    const [a] = await sql<{ status: string }[]>`
+      select status from lead_messages where id = ${approved!.id}
+    `;
+    expect(a!.status).toBe('sent');
   });
 });
