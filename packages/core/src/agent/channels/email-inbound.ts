@@ -4,6 +4,7 @@ import type { Sql } from '../../platform/db.ts';
 import { HttpError, str } from '../../platform/http.ts';
 import { getIntegration } from '../../modules/integrations.ts';
 import { controlTx } from '../../modules/control.ts';
+import { emitControlEvent } from '../../modules/control-events.ts';
 import type { InboundResult } from '../../modules/threads.ts';
 import { ingestInbound } from '../inbound.ts';
 
@@ -119,14 +120,14 @@ export async function ingestResendEvent(
     const deliveryId = typeof event.data?.email_id === 'string' ? event.data.email_id : null;
     if (event.type === 'email.delivered' && deliveryId) {
       // The provider id stored on dispatch is channel-namespaced ('email:<id>').
-      await controlTx(sql, async (tx) => {
+      const threadIds = await controlTx(sql, async (tx) => {
         // Serialize with dispatch's finalize on the same advisory key — a
         // parked event can't slip between its pmid write and its drain.
         await tx`select pg_advisory_xact_lock(hashtext(${`pev:email:${deliveryId}`}))`;
-        const hit = await tx`
+        const hit = await tx<{ thread_id: string }[]>`
           update lead_messages set status = 'delivered', updated_at = now()
           where provider_message_id = ${`email:${deliveryId}`} and status = 'sent'
-          returning id`;
+          returning thread_id`;
         if (!hit.length) {
           // A retry after 'delivered' (or a failed send) also updates zero
           // rows — only park when NO message owns this pmid yet, i.e. the
@@ -138,7 +139,9 @@ export async function ingestResendEvent(
             await parkProviderEventTx(tx, deliveryId, 'email.delivered', {});
           }
         }
+        return hit;
       });
+      for (const h of threadIds) emitControlEvent('thread.message', h.thread_id);
       return { ok: true } as ResendWebhookResult;
     }
     if (
@@ -214,10 +217,11 @@ export async function applyDeliveryEventTx(
   type: 'email.bounced' | 'email.failed' | 'email.complained',
   emailId: string,
   to: string[] | string | undefined,
-): Promise<{ ok: true; leadId: string } | { ignored: string }> {
+): Promise<{ ok: true; leadId: string; threadIds: string[] } | { ignored: string }> {
   const recipients = (Array.isArray(to) ? to : typeof to === 'string' ? [to] : [])
     .map((t) => t.trim().toLowerCase())
     .filter(Boolean);
+  const threadIds: string[] = [];
   {
     // Serialize with dispatch's finalize on the same advisory key — the
     // pmid-existence check and the park must be atomic against its
@@ -255,10 +259,12 @@ export async function applyDeliveryEventTx(
 
     // Fail the sending row when the event names it — keeps message status
     // honest even for sends that predate the flag.
-    await tx`
+    const flagged = await tx<{ thread_id: string }[]>`
       update lead_messages set status = 'failed', error = ${type}, updated_at = now()
       where provider_message_id = ${`email:${emailId}`} and status in ('sent', 'queued', 'sending')
+      returning thread_id
     `;
+    for (const m of flagged) threadIds.push(m.thread_id);
 
     // A spam complaint is about the person, not the address — it applies even
     // if the email changed since the send. A bounce/fail, though, belongs to
@@ -275,7 +281,7 @@ export async function applyDeliveryEventTx(
         `
       )[0]?.email;
       if (!curEmail || (recipients.length > 0 && !recipients.includes(curEmail))) {
-        return { ok: true as const, leadId };
+        return { ok: true as const, leadId, threadIds };
       }
     }
 
@@ -307,14 +313,16 @@ export async function applyDeliveryEventTx(
         `;
       }
       // Nothing still queued should go out to a dead address.
-      await tx`
+      const purged = await tx<{ thread_id: string }[]>`
         update lead_messages m set status = 'failed', error = 'email bounced', updated_at = now()
         from lead_threads t
         where m.thread_id = t.id and t.lead_id = ${leadId}
           and t.channel = 'email' and m.status in ('queued', 'sending')
+        returning m.thread_id
       `;
+      for (const m of purged) threadIds.push(m.thread_id);
     }
-    return { ok: true as const, leadId };
+    return { ok: true as const, leadId, threadIds };
   }
 }
 
@@ -325,5 +333,10 @@ async function applyDeliveryEvent(
   emailId: string,
   to: string[] | string | undefined,
 ): Promise<{ ok: true; leadId: string } | { ignored: string }> {
-  return controlTx(sql, async (tx) => applyDeliveryEventTx(tx, type, emailId, to));
+  const res = await controlTx(sql, async (tx) => applyDeliveryEventTx(tx, type, emailId, to));
+  if ('leadId' in res) {
+    emitControlEvent('lead.change', res.leadId);
+    for (const t of res.threadIds) emitControlEvent('thread.message', t);
+  }
+  return res;
 }

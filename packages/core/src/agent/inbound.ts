@@ -1,5 +1,6 @@
 import type { Sql } from '../platform/db.ts';
 import { controlTx } from '../modules/control.ts';
+import { emitControlEvent } from '../modules/control-events.ts';
 import { getGuardrails } from '../modules/integrations.ts';
 import { addInboundMessage, type Channel, type InboundResult } from '../modules/threads.ts';
 import { drain, enqueueRun } from './runner.ts';
@@ -38,6 +39,8 @@ export async function ingestInbound(
 
   // Provider retry of an already-recorded message: no side effects again.
   if (res.alreadySeen) return res;
+  emitControlEvent('thread.message', res.threadId);
+  if (res.leadCreated) emitControlEvent('lead.change', res.leadId);
 
   const gate = (
     await controlTx(
