@@ -1745,8 +1745,16 @@ details.raw textarea {
     display: flex;
     flex-direction: column;
   }
+  /* .lead-left unboxes and every card ties at order:0 — assign the full
+     collapsed order: summary, timeline, then the side cards in DOM order */
   .lead-left {
     display: contents;
+  }
+  .lead-left > .card {
+    order: 2;
+  }
+  .lead-left > .lead-summary {
+    order: 0;
   }
   .lead-timeline {
     order: 1;

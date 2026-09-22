@@ -168,7 +168,7 @@ export default function LeadDetail() {
       <div className="lead-page">
         <div className="lead-cols">
           <div className="lead-left">
-            <div className="card" style={{ padding: 18 }}>
+            <div className="card lead-summary" style={{ padding: 18 }}>
               <div className="seg-row">
                 <span className="seg" title="estágio do lead">
                   {STATE_OPTS.map(([v, l]) => (
