@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { Bot, Check, Pencil, X } from 'lucide-react';
 import { api, type Draft } from '../api.ts';
+import { onControlEvent } from '../events.ts';
 import { Empty, Page, rel } from '../components.tsx';
 
 export default function Approvals() {
@@ -14,6 +15,11 @@ export default function Approvals() {
     api.approvals().then((r) => setDrafts(r.drafts));
   }, []);
   useEffect(load, [load]);
+  useEffect(() => onControlEvent('draft.change', load), [load]);
+  useEffect(() => {
+    const t = setInterval(load, 60_000);
+    return () => clearInterval(t);
+  }, [load]);
 
   const approve = async (d: Draft) => {
     const res = await api.approve(d.id);

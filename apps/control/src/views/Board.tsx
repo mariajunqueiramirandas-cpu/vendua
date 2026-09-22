@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { ArrowUpRight } from 'lucide-react';
 import { api, type LeadListItem } from '../api.ts';
+import { onControlEvent } from '../events.ts';
 import { Empty, Page, fmtMoney, rel } from '../components.tsx';
 
 const COLS: { key: LeadListItem['state']; label: string }[] = [
@@ -33,6 +34,11 @@ export default function BoardView() {
     });
   }, []);
   useEffect(load, [load]);
+  useEffect(() => onControlEvent('lead.change', load), [load]);
+  useEffect(() => {
+    const t = setInterval(load, 60_000);
+    return () => clearInterval(t);
+  }, [load]);
 
   // Refs, not state: in-flight checks must be synchronous — a move that lands
   // between the chain ending and a state flush would queue a write nothing

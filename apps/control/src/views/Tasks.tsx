@@ -1,6 +1,7 @@
 import { Fragment, useCallback, useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { api, type Task } from '../api.ts';
+import { onControlEvent } from '../events.ts';
 import { Empty, Page, fmtDateTime } from '../components.tsx';
 
 const DAY = 86_400_000;
@@ -28,6 +29,11 @@ export default function Tasks() {
       .then((r) => setTasks(r.tasks));
   }, [showDone]);
   useEffect(load, [load]);
+  useEffect(() => onControlEvent('lead.change', load), [load]);
+  useEffect(() => {
+    const t = setInterval(load, 60_000);
+    return () => clearInterval(t);
+  }, [load]);
 
   const groups = new Map<string, Task[]>();
   for (const t of tasks) {

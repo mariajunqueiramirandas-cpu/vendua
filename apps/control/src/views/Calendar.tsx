@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { Check, ChevronLeft, ChevronRight, Video, X } from 'lucide-react';
 import { api, ApiError, type Meeting } from '../api.ts';
+import { onControlEvent } from '../events.ts';
 import { ConfirmBtn, Empty, Page } from '../components.tsx';
 
 const DAY = 86_400_000;
@@ -181,6 +182,14 @@ export default function Calendar() {
   useEffect(() => {
     loadRef.current = load;
   }, [load]);
+
+  // meeting.change accelerates the reload — always through the ref so it
+  // targets the displayed window; the slow poll floors a dead stream.
+  useEffect(() => onControlEvent('meeting.change', () => loadRef.current()), []);
+  useEffect(() => {
+    const t = setInterval(() => loadRef.current(), 60_000);
+    return () => clearInterval(t);
+  }, []);
 
   const byDay = useMemo(() => {
     const m = new Map<string, Meeting[]>();

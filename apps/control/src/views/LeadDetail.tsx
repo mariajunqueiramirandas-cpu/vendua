@@ -9,6 +9,7 @@ import {
   type Meeting,
   type Task,
 } from '../api.ts';
+import { onControlEvent } from '../events.ts';
 import { ConfirmBtn, Empty, Page, ScoreBar, fmtDateTime, fmtMoney } from '../components.tsx';
 
 const KIND_LABEL: Record<string, string> = {
@@ -89,6 +90,20 @@ export default function LeadDetail() {
       .then((r) => setSchedRuns(r.runs.filter((x) => x.run_at)));
   }, [id]);
   useEffect(load, [load]);
+  // The page renders lead, meetings, and queued runs — all three types map
+  // to the same load; a lead.change ref for another lead skips the reload.
+  useEffect(
+    () =>
+      onControlEvent(['lead.change', 'meeting.change', 'run.update'], (e) => {
+        if (e.type === 'lead.change' && e.ref && e.ref !== id) return;
+        load();
+      }),
+    [load, id],
+  );
+  useEffect(() => {
+    const t = setInterval(load, 60_000);
+    return () => clearInterval(t);
+  }, [load]);
 
   if (notFound)
     return (

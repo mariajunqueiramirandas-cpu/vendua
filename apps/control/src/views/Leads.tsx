@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Plus, Upload, Download, Send } from 'lucide-react';
 import { api, type LeadListItem } from '../api.ts';
+import { onControlEvent } from '../events.ts';
 import { Empty, Page, ScoreBar, StateChip, fmtMoney, rel } from '../components.tsx';
 
 const GOAL_OPTS = [
@@ -61,6 +62,19 @@ export default function Leads() {
   useEffect(() => {
     setLoading(true);
     load();
+  }, [load]);
+  // Skip the event refresh once staff paged past the first 100 — a page-1
+  // reload would collapse the expanded list; the floor poll covers it.
+  useEffect(
+    () =>
+      onControlEvent('lead.change', () => {
+        if (leads.length <= 100) load();
+      }),
+    [load, leads.length],
+  );
+  useEffect(() => {
+    const t = setInterval(load, 60_000);
+    return () => clearInterval(t);
   }, [load]);
   // Filter changes swap the result set — drop hidden selections so dispatch
   // only ever acts on leads the staff can see selected. The generation bump
