@@ -55,4 +55,6 @@ void getIntegration(sql, 'whatsapp')
   .catch((e) => log.child({ mod: 'whatsapp' }).error({ err: e }, 'socket start failed'));
 
 log.info({ port }, 'listening');
-export default { port, fetch: app.fetch };
+// idleTimeout must clear the SSE heartbeat (20s): Bun's default 10s kills a
+// quiet event stream before the first `:ka`, looping clients forever.
+export default { port, fetch: app.fetch, idleTimeout: 60 };
