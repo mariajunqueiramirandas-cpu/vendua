@@ -30,10 +30,7 @@ export default function Dashboard() {
       .catch((e) => setErr(String(e)));
   }, []);
   useEffect(load, [load]);
-  useEffect(
-    () => onControlEvent(['lead.change', 'run.update', 'draft.change'], load),
-    [load],
-  );
+  useEffect(() => onControlEvent(['lead.change', 'run.update', 'draft.change'], load), [load]);
   useEffect(() => {
     const t = setInterval(load, 60_000);
     return () => clearInterval(t);
