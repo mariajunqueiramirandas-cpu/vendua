@@ -1,4 +1,5 @@
 import type { Sql } from '../platform/db.ts';
+import { HttpError } from '../platform/http.ts';
 import { log } from '../platform/log.ts';
 import { controlTx } from '../modules/control.ts';
 import {
@@ -1303,17 +1304,52 @@ export async function drain(sql: Sql, limit = 20): Promise<number> {
   // Queued messages outlive the request that queued them — a crash between
   // approve/commit and dispatch must not strand one. The 20s grace lets the
   // inline request-path dispatch win first.
+  // Agent-authored rows die with their run first: the tool path's claim
+  // fence leaves a canceled/cap-exhausted run's message 'queued' on purpose
+  // — picking it up here unguarded would outflank the fence 20s later.
+  await controlTx(
+    sql,
+    (tx) => tx`
+      update lead_messages m set status = 'failed', updated_at = now(),
+        error = 'authoring run no longer active'
+      where m.status = 'queued' and m.agent_run_id is not null
+        and (
+          select r.status from agent_runs r where r.id = m.agent_run_id
+        ) in ('canceled', 'failed')
+    `,
+  );
   const stranded = await controlTx(
     sql,
     (tx) =>
-      tx<{ id: string }[]>`
-        select id from lead_messages
+      tx<{ id: string; agent_run_id: string | null }[]>`
+        select id, agent_run_id from lead_messages
         where status = 'queued' and created_at < now() - interval '20 seconds'
         order by created_at limit 10
       `,
   );
   for (const m of stranded) {
-    await dispatchMessage(sql, m.id).catch((e) =>
+    // Atomic close for the mark→dispatch gap: a run canceled/reclaimed
+    // between the sweep above and this dispatch still can't send — the
+    // guard locks the run row inside the dispatch claim tx, serialized
+    // against the cancel/reclaim's own UPDATE. A throw leaves the row
+    // queued; the next drain's sweep marks it terminal.
+    const runId = m.agent_run_id;
+    const guard = runId
+      ? async (tx: Sql) => {
+          const rows = await tx<{ status: string }[]>`
+            select status from agent_runs where id = ${runId} for update
+          `;
+          const status = rows[0]?.status;
+          if (status !== 'running' && status !== 'queued' && status !== 'done') {
+            throw new HttpError(
+              409,
+              'STALE_CLAIM',
+              'authoring run no longer active — dispatch suppressed',
+            );
+          }
+        }
+      : undefined;
+    await dispatchMessage(sql, m.id, guard).catch((e) =>
       agentLog.error({ err: e, messageId: m.id }, 'dispatch failed'),
     );
   }

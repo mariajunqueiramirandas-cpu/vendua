@@ -613,4 +613,40 @@ dbDescribe('worker robustness (db)', () => {
     `;
     expect(m!.status).toBe('queued');
   });
+
+  test('stranded recovery fails agent messages whose run went terminal', async () => {
+    await migrate(sql, MIGRATIONS);
+    const lead = await controlTx(sql, (tx) => insertLeadTx(tx, { name: 'Stranded' }));
+    const leadId = lead.body.lead.id;
+    const [thread] = await sql<{ id: string }[]>`
+      insert into lead_threads (lead_id, channel) values (${leadId}, 'manual') returning id
+    `;
+    await sql`delete from agent_runs where status = 'queued'`;
+    const runId = await enqueueRun(sql, { kind: 'reply', leadId });
+    await claimRun(sql);
+    // agent-authored row whose run died before/after the guarded dispatch —
+    // created >20s ago so the stranded sweep owns it
+    const [msg] = await sql<{ id: string }[]>`
+      insert into lead_messages (thread_id, direction, author, body, status, agent_run_id, created_at)
+      values (${thread!.id}, 'out', 'agent', 'não envia', 'queued', ${runId}, now() - interval '30 seconds')
+      returning id
+    `;
+    // staff-authored control: agent_run_id null → recovery must still send
+    const [staffMsg] = await sql<{ id: string }[]>`
+      insert into lead_messages (thread_id, direction, author, body, status, created_at)
+      values (${thread!.id}, 'out', 'staff', 'pode enviar', 'queued', now() - interval '30 seconds')
+      returning id
+    `;
+    await sql`update agent_runs set status = 'canceled', claim_token = null where id = ${runId}`;
+    await drain(sql, 0);
+    const [m] = await sql<{ status: string; error: string | null }[]>`
+      select status, error from lead_messages where id = ${msg!.id}
+    `;
+    expect(m!.status).toBe('failed');
+    expect(m!.error).toBe('authoring run no longer active');
+    const [s] = await sql<{ status: string }[]>`
+      select status from lead_messages where id = ${staffMsg!.id}
+    `;
+    expect(s!.status).toBe('sent');
+  });
 });
