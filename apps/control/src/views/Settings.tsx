@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState, type ChangeEvent } from 'react';
+import { useCallback, useEffect, useRef, useState, type ChangeEvent } from 'react';
 import QRCode from 'qrcode';
 import { api, type ChannelHealth, type Integration, type MeetingStatus } from '../api.ts';
 import { onControlEvent } from '../events.ts';
@@ -179,12 +179,22 @@ export default function Settings() {
   const [notice, setNotice] = useState<Notice>(null);
   const [loading, setLoading] = useState(true);
 
+  // Independent fetches — a failed settings read must not discard a
+  // successful integrations response (it alone proves whatsapp state).
+  // Per-resource success watermarks: event-driven + floor loads overlap.
+  const loadSeq = useRef(0);
+  const loadOk = useRef<Record<string, number>>({});
   const load = useCallback(() => {
-    // Independent fetches — a failed settings read must not discard a
-    // successful integrations response (it alone proves whatsapp state).
+    const my = ++loadSeq.current;
+    const fresh = (key: string) => my > (loadOk.current[key] ?? 0);
     void api
       .integrations()
-      .then((i) => setIntegrations(i.integrations))
+      .then((i) => {
+        if (fresh('integrations')) {
+          loadOk.current['integrations'] = my;
+          setIntegrations(i.integrations);
+        }
+      })
       .catch((e: unknown) =>
         setNotice({
           kind: 'err',
@@ -194,9 +204,12 @@ export default function Settings() {
     void api
       .settings()
       .then((s) => {
-        const map: Record<string, unknown> = {};
-        for (const row of s.settings) map[row.key] = row.value;
-        setSettings(map);
+        if (fresh('settings')) {
+          loadOk.current['settings'] = my;
+          const map: Record<string, unknown> = {};
+          for (const row of s.settings) map[row.key] = row.value;
+          setSettings(map);
+        }
       })
       .catch((e: unknown) =>
         setNotice({
@@ -207,24 +220,25 @@ export default function Settings() {
       .finally(() => setLoading(false));
     api
       .waQr()
-      .then((r) => setWa({ qr: r.qr, status: r.status, me: r.me }))
+      .then((r) => {
+        if (fresh('wa')) {
+          loadOk.current['wa'] = my;
+          setWa({ qr: r.qr, status: r.status, me: r.me });
+        }
+      })
       .catch(() => undefined);
   }, []);
   useEffect(load, [load]);
-  // channel.health accelerates the pairing read; the slow poll is the floor.
+  // channel.health accelerates everything the card renders — integration
+  // rows flip on the same events as pairing state. The slow poll is the floor.
   useEffect(() => {
-    const wa = () =>
-      api
-        .waQr()
-        .then((r) => setWa({ qr: r.qr, status: r.status, me: r.me }))
-        .catch(() => undefined);
-    const off = onControlEvent('channel.health', wa);
-    const t = setInterval(wa, 60_000);
+    const off = onControlEvent('channel.health', load);
+    const t = setInterval(load, 60_000);
     return () => {
       off();
       clearInterval(t);
     };
-  }, []);
+  }, [load]);
 
   const waLogout = async () => {
     try {
