@@ -144,6 +144,8 @@ h1 {
   position: sticky;
   bottom: 10px;
   bottom: calc(10px + env(safe-area-inset-bottom));
+  max-height: calc(100dvh - 20px - env(safe-area-inset-bottom));
+  overflow-y: auto;
   background: var(--paper);
   border: 1px solid var(--line);
   border-radius: 12px;
