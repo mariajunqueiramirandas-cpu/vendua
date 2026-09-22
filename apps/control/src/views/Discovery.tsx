@@ -617,31 +617,33 @@ export default function Discovery() {
                     </span>
                   )}
                 </div>
-                {b.created_by === 'strategist' && (
-                  <span className="chip warn" title="proposta do estrategista">
-                    proposta
-                  </span>
-                )}
-                <button
-                  className={`btn mini ${b.enabled ? 'stage-go' : 'stage-ghost'}`}
-                  title={
-                    b.enabled
-                      ? 'ativa — clica pra pausar'
-                      : b.created_by === 'strategist'
-                        ? 'aprovar proposta — começa a rodar'
-                        : 'pausada'
-                  }
-                  onClick={() => void api.patchBrief(b.id, { enabled: !b.enabled }).then(load)}
-                >
-                  {b.enabled ? 'on' : b.created_by === 'strategist' ? 'aprovar' : 'off'}
-                </button>
-                <button
-                  className="btn mini stage-ghost"
-                  title="remover brief"
-                  onClick={() => void api.deleteBrief(b.id).then(load)}
-                >
-                  <Trash2 size={13} />
-                </button>
+                <div className="brow-ops">
+                  {b.created_by === 'strategist' && (
+                    <span className="chip warn" title="proposta do estrategista">
+                      proposta
+                    </span>
+                  )}
+                  <button
+                    className={`btn mini ${b.enabled ? 'stage-go' : 'stage-ghost'}`}
+                    title={
+                      b.enabled
+                        ? 'ativa — clica pra pausar'
+                        : b.created_by === 'strategist'
+                          ? 'aprovar proposta — começa a rodar'
+                          : 'pausada'
+                    }
+                    onClick={() => void api.patchBrief(b.id, { enabled: !b.enabled }).then(load)}
+                  >
+                    {b.enabled ? 'on' : b.created_by === 'strategist' ? 'aprovar' : 'off'}
+                  </button>
+                  <button
+                    className="btn mini stage-ghost"
+                    title="remover brief"
+                    onClick={() => void api.deleteBrief(b.id).then(load)}
+                  >
+                    <Trash2 size={13} />
+                  </button>
+                </div>
               </div>
             ))}
             {!briefs.length && <div className="brow-empty dim">nenhum brief ainda</div>}
@@ -828,8 +830,7 @@ export default function Discovery() {
                     <span className={`recent-status ${r.status}`}>{r.status}</span>
                     {(r.status === 'queued' || r.status === 'running') && (
                       <button
-                        className="btn mini stage-ghost"
-                        style={{ marginLeft: 8 }}
+                        className="btn mini stage-ghost disc-cancel"
                         onClick={() => void api.cancelRun(r.id).then(load)}
                       >
                         cancelar

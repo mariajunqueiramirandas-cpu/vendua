@@ -32,6 +32,7 @@ export default function Login({ onLogin }: { onLogin: () => void }) {
           placeholder="chave de acesso"
           value={key}
           onChange={(e) => setKey(e.target.value)}
+          autoComplete="current-password"
           autoFocus
         />
         <div className="err">{err}</div>
