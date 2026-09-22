@@ -3,20 +3,18 @@
 Working list of improvements to the agent engine (`packages/core/src/agent/`),
 collected from a competitive review of Explee's AutoGTM and a walkthrough of
 our own worker. Ordered by theme; each item names the code it touches.
-Updated after the lead-pacing PR (#65): `run_at` delayed runs, reply/inbound
-pacing, research kit on triage/reply, and `draftOnly` copilot mode shipped —
-the remaining gaps are noted per item.
+Updated after the `cool-fixes` batch (PRs #70–#73): every item below is now
+shipped except the remaining gaps noted inside items 2 and 3. `run_at`
+delayed runs, reply/inbound pacing, research kit, and `draftOnly` shipped in
+#65.
 
 ## Behavior changes (user-requested)
 
-### 1. Triage on manual lead creation should be optional
+### 1. Triage on manual lead creation should be optional — shipped (PR #70)
 
-Today `POST /control/v1/leads` always queues a `triage` run when
-`agent_mode != 'off'` — and since #65 it _also_ queues a scheduled `outreach`
-run when `firstContactDelayMin > 0`. Make the automation opt-in: a body flag
-(`triage: false`) or guardrail settings covering both the triage run and the
-scheduled first-contact run. CSV import already creates leads with no run;
-manual add should be able to behave the same way.
+`POST /control/v1/leads` accepts `automation`/`triage` opt-outs — no triage
+run and no scheduled first-contact run when disabled, matching CSV-import
+behavior. Board got a toggle alongside.
 
 ### 2. New inbound leads should get a full profile automatically — partially done
 
@@ -66,80 +64,71 @@ kit and `draftOnly` copilot mode; the negotiation-SOTA PR adds the rest:
 
 ## Worker robustness (from the run-reclaim review)
 
-### 4. Attempt cap + backoff for requeued runs
+### 4. Attempt cap + backoff for requeued runs — shipped (PR #72)
 
-`drain` requeues `running` runs past the 10-min lease forever — a poisoned run
-requeues ahead of healthy work (`claimRun` takes oldest first). `run_at` (#65)
-is the natural primitive: add `attempts`/`max_attempts`, requeue with
-`run_at = now() + 2^attempts`, then `failed`.
+`attempts`/`max_attempts` on `agent_runs`; reclaim requeues behind
+`run_at = now() + 2^attempts min` and lands `failed` at the cap.
 
-### 5. Retry transient provider errors inside the run
+### 5. Retry transient provider errors inside the run — shipped (PR #68)
 
-A Gemini 429/timeout fails the whole run permanently; staff redrafts by hand.
-Retry inside `provider.chat` (2–3 attempts, backoff) — most flakes never reach
-the journal.
+Gemini provider wraps calls in a process-wide 14-RPM slot chain plus retries
+that honor `Retry-After`; transient 429/5xx flakes no longer fail the run.
 
-### 6. Resume from journal on reclaim
+### 6. Resume from journal on reclaim — shipped (PR #72)
 
-A requeued run restarts from scratch: `steps` are kept for the monid spend
-rebuild but never replayed into model context, so a reclaimed run redoes the
-work and can double-contact (idempotency keys dedupe only if the model emits
-the identical call at the identical step). Replay journaled tool results into
-context on resume.
+`replayJournal` feeds journaled assistant/tool turns back into context on
+resume; `interrupted` markers close crashed calls so the model re-verifies
+instead of double-contacting.
 
-### 7. Fence side effects, not just journal writes
+### 7. Fence side effects, not just journal writes — shipped (PR #72)
 
-`claim_token` protects `persist()` writes; `executeTool` still runs mutations
-on a stale claim — a run reclaimed mid-`send_message` can send twice. Check
-`lost` (or the token) inside mutating tools.
+`assertRunClaimTx` fences every mutating tool (and `dispatchMessage`) first
+inside its claim transaction — a stale/canceled claim throws `STALE_CLAIM`
+before any write.
 
 ## Pipeline gaps (from the AutoGTM review)
 
-### 8. Follow-up cadence — primitive shipped, nothing feeds it
+### 8. Follow-up cadence — shipped (PR #70)
 
-#65 added `run_at` (delayed runs) and `firstContactDelayMin` /
-`inboundReplyDelayMin` pacing, and the negotiation prompt now instructs
-`update_lead nextActionAt` when a sent message goes unanswered — the agent
-can produce it now. Remaining: a deterministic fallback so a cold lead gets a
-follow-up even when the model forgets to write the field — e.g. a default
-cadence stamped on send, or `run_at`-scheduled outreach instead of the lead
-column (cleaner: same queue, cancelable in Runs).
+Deterministic floor landed: `followupCadenceDays` in `dispatchMessage`
+finalization stamps `next_action_at` on unanswered sends, never clobbering an
+agent-set value. Follow-up noted on the PR: provenance-aware cadence refresh
+(`next_action_source`).
 
-### 9. Analyst loop that acts
+### 9. Analyst loop that acts — shipped (PR #73)
 
-Auto-pause dead `discovery_briefs` in `sweepBriefs` — segmentStats already
-computes leads/contacted/replied/live per segment (all-time; only costCents
-is 30d-scoped); a brief with 0 leads
-over N runs should pause itself with a note, not keep burning runs.
+`briefAutoPauseRuns` guardrail (default 5, 0=off): a brief with 0 leads over N
+runs pauses itself via a journal-mined streak with a `rearmed_at` re-arm
+boundary.
 
-### 10. Strategist run kind
+### 10. Strategist run kind — shipped (PR #73)
 
-A weekly-cadence run that reads segmentStats + agent_memory and _proposes_
-new `discovery_briefs` for staff approval (draft rows, enabled=false) instead
-of staff writing them by hand.
+Weekly `strategist` run reads segmentStats + agent_memory and proposes
+disabled draft briefs (`propose_brief` tool); the board shows a `proposta`
+chip with one-click `aprovar`.
 
-### 11. Daily staff digest
+### 11. Daily staff digest — shipped (PR #71)
 
-One Resend email/day summarizing board state (new leads, replies, meetings,
-spend). Pure SQL → email; optional 1 LLM call if the model writes the summary.
+`sweepDigest` + atomic `digest_state` claim + `digest` settings key sends the
+once-a-day Resend summary (new leads, replies, meetings, spend).
 
-### 12. Channel health monitoring
+### 12. Channel health monitoring — shipped (PR #71)
 
-Deliverability analog: rollup of send failures/bounces/quiet-hours blocks per
-channel; alert (or pause sends) when the rate crosses a threshold.
+Blocked sends persist; `/control/v1/channels/health` rolls up
+failures/bounces/quiet-hours blocks per channel and the board shows an alert
+chip (surface-only, no auto-pause).
 
-### 13. Intent scoring beside fitScore
+### 13. Intent scoring beside fitScore — shipped (PR #73)
 
-`fitScore` says ICP match, not buying intent. Score signals the tools already
-return (WhatsApp-active business with no ordering link, recent reviews,
-hiring posts) into a separate `intent_score`.
+`intent_score`/`intent_reason` on leads, surfaced in harvest cards, the leads
+table, and `create_lead`.
 
-### 14. Stale-draft regeneration
+### 14. Stale-draft regeneration — shipped (PR #70)
 
-When staff approves a draft older than N days, regenerate it once against the
-current lead state instead of sending week-old copy.
+`staleDraftDays` guardrail: approving a draft older than N days supersedes it
+and regenerates once against current lead state instead of sending week-old
+copy.
 
-### 15. Per-segment cost-per-lead on the board
+### 15. Per-segment cost-per-lead on the board — shipped (PR #71)
 
-`segmentStats` already computes costCents — surface CPL per segment as a board
-column so staff sees which briefs pay.
+`cpl` column on the Descoberta segment table.
