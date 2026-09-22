@@ -1009,16 +1009,18 @@ export async function importLeads(
       const phone = fields.phone as string | null;
       const whatsapp = fields.whatsapp as string | null;
       const instagram = fields.instagram as string | null;
+      // ::text casts: a NULL param in a bare "is not null" has no inferable
+      // type — Postgres rejects the statement with 42P18.
       const dup = await tx<{ id: string }[]>`
         select id from leads where archived_at is null and (
-          (${email} is not null and lower(trim(email)) = lower(trim(${email})))
-          or (${phone} is not null
+          (${email}::text is not null and lower(trim(email)) = lower(trim(${email})))
+          or (${phone}::text is not null
               and length(regexp_replace(${phone}, '\\D', '', 'g')) >= 6
               and regexp_replace(coalesce(phone, ''), '\\D', '', 'g') = regexp_replace(${phone}, '\\D', '', 'g'))
-          or (${whatsapp} is not null
+          or (${whatsapp}::text is not null
               and length(regexp_replace(${whatsapp}, '\\D', '', 'g')) >= 6
               and regexp_replace(coalesce(whatsapp, ''), '\\D', '', 'g') = regexp_replace(${whatsapp}, '\\D', '', 'g'))
-          or (${instagram} is not null and lower(trim(instagram)) = lower(trim(${instagram})))
+          or (${instagram}::text is not null and lower(trim(instagram)) = lower(trim(${instagram})))
         ) limit 1
       `;
       if (dup[0]) {
