@@ -302,65 +302,65 @@ export default function Calendar() {
 
   const mtgActs = (m: Meeting) => (
     <>
-        {m.roomUrl && m.status === 'scheduled' && (
-          <a
-            className="icon-btn"
-            href={m.roomUrl}
-            target="_blank"
-            rel="noopener"
-            title="abrir sala"
-            aria-label="abrir sala"
-          >
-            <Video size={13} />
-          </a>
-        )}
-        {m.status === 'scheduled' && (
-          <>
-            <button
-              className="icon-btn"
-              title="marcar como feita"
-              aria-label="marcar como feita"
-              onClick={() => void patch(m.id, { status: 'done' })}
-            >
-              <Check size={13} />
-            </button>
-            <button
-              className="icon-btn"
-              title="no-show"
-              aria-label="no-show"
-              onClick={() => void patch(m.id, { status: 'no_show' })}
-            >
-              <X size={13} />
-            </button>
-            <ConfirmBtn
-              className="icon-btn"
-              confirm="cancelar?"
-              onConfirm={() => void patch(m.id, { status: 'cancelled' })}
-            >
-              ✕
-            </ConfirmBtn>
-          </>
-        )}
-        {m.status === 'done' && (
+      {m.roomUrl && m.status === 'scheduled' && (
+        <a
+          className="icon-btn"
+          href={m.roomUrl}
+          target="_blank"
+          rel="noopener"
+          title="abrir sala"
+          aria-label="abrir sala"
+        >
+          <Video size={13} />
+        </a>
+      )}
+      {m.status === 'scheduled' && (
+        <>
           <button
             className="icon-btn"
-            title="foi no-show"
-            aria-label="corrigir: foi no-show"
-            onClick={() => void patch(m.id, { status: 'no_show' })}
-          >
-            <X size={13} />
-          </button>
-        )}
-        {m.status === 'no_show' && (
-          <button
-            className="icon-btn"
-            title="foi realizada"
-            aria-label="corrigir: foi realizada"
+            title="marcar como feita"
+            aria-label="marcar como feita"
             onClick={() => void patch(m.id, { status: 'done' })}
           >
             <Check size={13} />
           </button>
-        )}
+          <button
+            className="icon-btn"
+            title="no-show"
+            aria-label="no-show"
+            onClick={() => void patch(m.id, { status: 'no_show' })}
+          >
+            <X size={13} />
+          </button>
+          <ConfirmBtn
+            className="icon-btn"
+            confirm="cancelar?"
+            onConfirm={() => void patch(m.id, { status: 'cancelled' })}
+          >
+            ✕
+          </ConfirmBtn>
+        </>
+      )}
+      {m.status === 'done' && (
+        <button
+          className="icon-btn"
+          title="foi no-show"
+          aria-label="corrigir: foi no-show"
+          onClick={() => void patch(m.id, { status: 'no_show' })}
+        >
+          <X size={13} />
+        </button>
+      )}
+      {m.status === 'no_show' && (
+        <button
+          className="icon-btn"
+          title="foi realizada"
+          aria-label="corrigir: foi realizada"
+          onClick={() => void patch(m.id, { status: 'done' })}
+        >
+          <Check size={13} />
+        </button>
+      )}
     </>
   );
 
@@ -494,7 +494,10 @@ export default function Calendar() {
                   style={{ height: `${span.hours * HOUR_PX}px` }}
                 >
                   {nowMin !== null && nowMin >= span.s && nowMin <= span.e && (
-                    <div className="ag-now" style={{ top: `${(nowMin - span.s) * PX_PER_MIN}px` }} />
+                    <div
+                      className="ag-now"
+                      style={{ top: `${(nowMin - span.s) * PX_PER_MIN}px` }}
+                    />
                   )}
                   {laid.map(({ m, st, en, lane }) => (
                     <article
