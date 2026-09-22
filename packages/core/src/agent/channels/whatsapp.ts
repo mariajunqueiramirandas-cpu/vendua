@@ -48,6 +48,12 @@ interface BaileysSocket {
 
 let socket: BaileysSocket | null = null;
 let starting: Promise<BaileysSocket> | null = null;
+/** Fingerprint of the config `starting` is building + its generation — a
+ *  ensureSocket call wanting something else bumps startGen so the in-flight
+ *  startSocket self-terminates before publishing globals for a stale config. */
+let startingFingerprint: string | null = null;
+let startingGen = 0;
+let startGen = 0;
 /** Last connection state the socket reported — 'off' when no socket is
  *  running or the session dropped/logged out. The Settings screen renders
  *  this instead of guessing from QR presence. */
@@ -137,9 +143,15 @@ function dbAuthState(
 }
 
 async function startSocket(sql: Sql, integration: IntegrationRow): Promise<BaileysSocket> {
+  const myGen = startGen;
   const baileys = (await import('baileys')) as unknown as {
     default: (opts: Record<string, unknown>) => BaileysSocket;
     initAuthCreds(): unknown;
+    fetchLatestWaWebVersion(opts?: RequestInit): Promise<{
+      version: [number, number, number];
+      isLatest: boolean;
+      error?: unknown;
+    }>;
     BufferJSON: {
       replacer(k: string, v: unknown): unknown;
       reviver(k: string, v: unknown): unknown;
@@ -148,8 +160,26 @@ async function startSocket(sql: Sql, integration: IntegrationRow): Promise<Baile
   const accountId = (integration.config.accountId as string) ?? 'default';
   const auth = dbAuthState(sql, accountId, baileys.BufferJSON);
 
+  // WhatsApp rejects stale client versions at link/login (405; phone shows
+  // "Couldn't link device") — the bundled version lags upstream, so fetch the
+  // live WA Web version. Bounded timeout: a hung fetch must not stall the
+  // socket. On failure baileys resolves with the bundled default + isLatest
+  // false — fall back to it silently-identical to today, just logged.
+  let version: [number, number, number] | undefined;
+  try {
+    const res = await baileys.fetchLatestWaWebVersion({ signal: AbortSignal.timeout(8_000) });
+    if (res.isLatest) {
+      version = res.version;
+    } else {
+      waLog.warn({ err: res.error }, 'wa web version lookup failed — using bundled default');
+    }
+  } catch (e) {
+    waLog.warn({ err: e }, 'wa web version fetch failed — using bundled default');
+  }
+
   const creds = (await auth.read('creds', 'main')) ?? baileys.initAuthCreds();
   const sock = baileys.default({
+    ...(version ? { version } : {}),
     auth: {
       creds,
       keys: {
@@ -174,6 +204,12 @@ async function startSocket(sql: Sql, integration: IntegrationRow): Promise<Baile
     logger: log.child({ mod: 'baileys' }, { level: process.env.BAILEYS_LOG_LEVEL ?? 'warn' }),
   });
 
+  // A newer ensureSocket superseded this start while we awaited — end the
+  // socket rather than publishing globals for a stale config.
+  if (myGen !== startGen) {
+    sock.end();
+    throw new Error('socket start superseded by newer config');
+  }
   // Claim module state synchronously — Baileys' first connection.update
   // fires on ws connect (always async, after this returns), so by then
   // `socket === sock` and every handler can identity-check against it. A
@@ -300,21 +336,40 @@ export async function ensureSocket(
     if (socketAccountId) void persistQr(sql, socketAccountId, null, nextWaGen());
     socketAccountId = null;
   }
+  // A pending start for different config — or one already superseded (its
+  // generation is stale even when the fingerprint matches again, e.g.
+  // disable→re-enable mid-start) — can't serve this request. Bump the
+  // generation so startSocket self-terminates before publishing globals,
+  // then reconcile once it settles (also kills a socket that raced to
+  // publish).
+  const startUsable =
+    starting !== null && startingFingerprint === wanted && startingGen === startGen;
+  if (starting !== null && !startUsable) {
+    startGen++;
+    return starting.then(
+      () => ensureSocket(sql, integration),
+      () => ensureSocket(sql, integration),
+    );
+  }
   if (!wanted) return null;
   if (loggingOut) throw new Error('whatsapp logout em andamento');
   if (socket) return socket;
   if (!starting) {
     connState = 'connecting';
+    startingFingerprint = wanted;
+    startingGen = startGen;
     starting = startSocket(sql, integration!).then(
       (s) => {
         // globals were assigned inside startSocket — only the flag clears
         starting = null;
+        startingFingerprint = null;
         return s;
       },
       (err) => {
         // a failed start must not poison the flag — clear it so the next
         // send/pair attempt can retry.
         starting = null;
+        startingFingerprint = null;
         connState = 'off';
         throw err;
       },
