@@ -1989,6 +1989,10 @@ details.raw textarea {
   .tbl tr.tgroup td {
     display: block;
   }
+  /* stacked rows fit the column; the min-width guard is desktop-only */
+  .tbl-scroll .tbl {
+    min-width: 0;
+  }
 
   .toolbar input[type='search'] {
     min-width: 0;
