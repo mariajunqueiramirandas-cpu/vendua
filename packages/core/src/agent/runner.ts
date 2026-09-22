@@ -524,7 +524,9 @@ export function replayJournal(prior: unknown[]): JournalReplay {
     if (t?.type !== 'tool') continue;
     bankOut(t.out);
     const p = t.out as { stored?: boolean; plan?: unknown } | null;
-    if (t.name === 'plan' && p?.stored === true && typeof p.plan === 'string' && p.plan) {
+    // Last stored plan wins — including an empty one: a cleared plan must
+    // clear, not resurrect the previous string.
+    if (t.name === 'plan' && p?.stored === true && typeof p.plan === 'string') {
       replay.plan = p.plan;
     }
   }

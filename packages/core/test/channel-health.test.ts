@@ -162,6 +162,17 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('segment CPL (db)', () => {
         insert into agent_runs (kind, params, status, cost_cents)
         values ('discovery', ${tx.json({ segment: seg } as never)}, 'done', 700)
       `;
+      // A replied lead outranks every unreplied segment in the top-12
+      // rollup (order: replied desc, leads desc) — a 1-lead segment
+      // otherwise ties last and falls off the limit once enough test
+      // segments accumulate.
+      const [t] = await tx<{ id: string }[]>`
+        insert into lead_threads (lead_id, channel) values (${l.body.lead.id}, 'manual') returning id
+      `;
+      await tx`
+        insert into lead_messages (thread_id, direction, author, body, status)
+        values (${t!.id}, 'in', 'lead', 'oi', 'received')
+      `;
       return l;
     });
     expect(lead.body.lead.id).toBeTruthy();
@@ -178,6 +189,14 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('segment CPL (db)', () => {
     await controlTx(sql, async (tx) => {
       const l = await insertLeadTx(tx, { name: 'Old Lead', segment: seg });
       await tx`update leads set created_at = now() - interval '60 days' where id = ${l.body.lead.id}`;
+      // same top-12 cutoff guard as the CPL case above
+      const [t] = await tx<{ id: string }[]>`
+        insert into lead_threads (lead_id, channel) values (${l.body.lead.id}, 'manual') returning id
+      `;
+      await tx`
+        insert into lead_messages (thread_id, direction, author, body, status)
+        values (${t!.id}, 'in', 'lead', 'oi', 'received')
+      `;
     });
     const row = (await segmentStats(sql)).find((s) => s.segment === seg)!;
     expect(row.leads30d).toBe(0);

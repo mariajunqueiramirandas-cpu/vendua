@@ -194,6 +194,13 @@ describe('replayJournal', () => {
       { type: 'model', content: 'continua', toolCalls: [] },
     ]);
     expect(r.plan).toBe('serp only now');
+    // a stored EMPTY plan clears — it must not resurrect the previous string
+    expect(
+      replayJournal([
+        { type: 'tool', name: 'plan', args: {}, out: { stored: true, plan: 'x' } },
+        { type: 'tool', name: 'plan', args: {}, out: { stored: true, plan: '' } },
+      ]).plan,
+    ).toBe('');
     // a journal with no stored plan leaves ctx.plan null
     expect(replayJournal([{ type: 'model', content: 'x', toolCalls: [] }]).plan).toBeNull();
   });
