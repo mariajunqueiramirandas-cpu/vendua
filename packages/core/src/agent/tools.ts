@@ -1219,6 +1219,7 @@ export async function executeTool(
         sql,
         key,
         async (tx): Promise<{ status: number; body: Record<string, unknown> }> => {
+          await assertRunClaimTx(tx, ctx);
           // claimControl only serializes THIS call's retries — two strategist
           // runs carry different idempotency keys and can both pass the dup
           // check before either insert commits. One shared advisory lock

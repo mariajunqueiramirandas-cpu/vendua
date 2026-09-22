@@ -254,10 +254,15 @@ dbDescribe('worker robustness (db)', () => {
   const sql = postgres(process.env.TEST_DATABASE_URL!);
   const MIGRATIONS = join(import.meta.dir, '../db/migrations');
 
-  const mkCtx = (runId: string, claimToken: string | null, leadId: string | null): ToolContext => ({
+  const mkCtx = (
+    runId: string,
+    claimToken: string | null,
+    leadId: string | null,
+    runKind: ToolContext['runKind'] = 'reply',
+  ): ToolContext => ({
     sql,
     runId,
-    runKind: 'reply',
+    runKind,
     leadId,
     threadId: null,
     step: 0,
@@ -411,6 +416,24 @@ dbDescribe('worker robustness (db)', () => {
       city: 'Rio',
     })) as { lead: { city: string | null } };
     expect(out.lead.city).toBe('Rio');
+  });
+
+  test('a stale strategist claim cannot land a proposed brief', async () => {
+    await migrate(sql, MIGRATIONS);
+    await sql`delete from agent_runs where status = 'queued'`;
+    const runId = await enqueueRun(sql, { kind: 'strategist' });
+    const claimed = await claimRun(sql);
+    expect(claimed?.id).toBe(runId);
+    await sql`update agent_runs set status='canceled', claim_token=null where id=${runId}`;
+    await expect(
+      executeTool(mkCtx(runId, claimed!.claim_token, null, 'strategist'), 's1', 'propose_brief', {
+        name: 'docerias fortaleza',
+        query: 'docerias em fortaleza',
+        reason: 'boa densidade',
+      }),
+    ).rejects.toMatchObject({ code: 'STALE_CLAIM' });
+    const briefs = await sql`select 1 from discovery_briefs where name = 'docerias fortaleza'`;
+    expect(briefs).toHaveLength(0);
   });
 
   test('a canceled run also fences its tools', async () => {
