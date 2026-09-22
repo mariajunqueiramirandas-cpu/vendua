@@ -147,25 +147,61 @@ export default function Discovery() {
   const [now, setNow] = useState(() => Date.now());
   const streamRef = useRef<HTMLDivElement>(null);
 
+  // Event-driven loads overlap the mount/floor ones — per-resource success
+  // watermarks drop a response that lands after a newer one already painted.
+  const loadSeq = useRef(0);
+  const seenSeq = useRef<Record<string, number>>({});
   const load = useCallback(() => {
-    api.runs({ kind: 'discovery' }).then((r) => setRuns(r.runs));
+    const my = ++loadSeq.current;
+    const fresh = (key: string) => my > (seenSeq.current[key] ?? 0);
+    api.runs({ kind: 'discovery' }).then((r) => {
+      if (fresh('runs')) {
+        seenSeq.current['runs'] = my;
+        setRuns(r.runs);
+      }
+    });
     api
       .leads({ tag: 'descoberto', limit: '50' })
-      .then((r) => setFound(r.leads))
+      .then((r) => {
+        if (fresh('leads')) {
+          seenSeq.current['leads'] = my;
+          setFound(r.leads);
+        }
+      })
       .catch(() =>
-        api.leads({ limit: '50' }).then((r) => setFound(r.leads.filter((l) => l.discoveredVia))),
+        api.leads({ limit: '50' }).then((r) => {
+          if (fresh('leads')) {
+            seenSeq.current['leads'] = my;
+            setFound(r.leads.filter((l) => l.discoveredVia));
+          }
+        }),
       );
     api
       .duplicates()
-      .then((r) => setDupes(r.groups))
+      .then((r) => {
+        if (fresh('dupes')) {
+          seenSeq.current['dupes'] = my;
+          setDupes(r.groups);
+        }
+      })
       .catch(() => undefined);
     api
       .briefs()
-      .then((r) => setBriefs(r.briefs))
+      .then((r) => {
+        if (fresh('briefs')) {
+          seenSeq.current['briefs'] = my;
+          setBriefs(r.briefs);
+        }
+      })
       .catch(() => undefined);
     api
       .segments()
-      .then((r) => setSegs(r.segments))
+      .then((r) => {
+        if (fresh('segs')) {
+          seenSeq.current['segs'] = my;
+          setSegs(r.segments);
+        }
+      })
       .catch(() => undefined);
   }, []);
   useEffect(load, [load]);

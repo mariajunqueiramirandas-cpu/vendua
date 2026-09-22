@@ -140,7 +140,7 @@ export default function App() {
         .then((s) => setBadges({ drafts: s.pendingDrafts, tasks: s.openTasks }))
         .catch(() => undefined);
     tick();
-    const off = onControlEvent('draft.change', tick);
+    const off = onControlEvent(['draft.change', 'lead.change'], tick);
     const t = setInterval(tick, 60_000);
     api
       .integrations()

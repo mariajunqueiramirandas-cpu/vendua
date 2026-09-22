@@ -35,8 +35,14 @@ export default function Runs() {
   const [run, setRun] = useState<AgentRun | null>(null);
   const [kind, setKind] = useState('');
 
+  // Same overlap guard as the detail fetch — an older list response must
+  // not paint over a newer event-driven one.
+  const listSeq = useRef(0);
   const load = useCallback(() => {
-    api.runs({ ...(kind ? { kind } : {}) }).then((r) => setRuns(r.runs));
+    const req = ++listSeq.current;
+    api.runs({ ...(kind ? { kind } : {}) }).then((r) => {
+      if (req === listSeq.current) setRuns(r.runs);
+    });
   }, [kind]);
   // Events can overlap detail fetches — drop any response that isn't the
   // newest request, or a stale 'running' snapshot can paint over 'done'.
