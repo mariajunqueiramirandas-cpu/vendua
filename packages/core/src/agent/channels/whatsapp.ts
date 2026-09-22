@@ -48,6 +48,11 @@ interface BaileysSocket {
 
 let socket: BaileysSocket | null = null;
 let starting: Promise<BaileysSocket> | null = null;
+/** Fingerprint of the config `starting` is building + its generation — a
+ *  ensureSocket call wanting something else bumps startGen so the in-flight
+ *  startSocket self-terminates before publishing globals for a stale config. */
+let startingFingerprint: string | null = null;
+let startGen = 0;
 /** Last connection state the socket reported — 'off' when no socket is
  *  running or the session dropped/logged out. The Settings screen renders
  *  this instead of guessing from QR presence. */
@@ -137,6 +142,7 @@ function dbAuthState(
 }
 
 async function startSocket(sql: Sql, integration: IntegrationRow): Promise<BaileysSocket> {
+  const myGen = startGen;
   const baileys = (await import('baileys')) as unknown as {
     default: (opts: Record<string, unknown>) => BaileysSocket;
     initAuthCreds(): unknown;
@@ -197,6 +203,12 @@ async function startSocket(sql: Sql, integration: IntegrationRow): Promise<Baile
     logger: log.child({ mod: 'baileys' }, { level: process.env.BAILEYS_LOG_LEVEL ?? 'warn' }),
   });
 
+  // A newer ensureSocket superseded this start while we awaited — end the
+  // socket rather than publishing globals for a stale config.
+  if (myGen !== startGen) {
+    sock.end();
+    throw new Error('socket start superseded by newer config');
+  }
   // Claim module state synchronously — Baileys' first connection.update
   // fires on ws connect (always async, after this returns), so by then
   // `socket === sock` and every handler can identity-check against it. A
@@ -323,21 +335,34 @@ export async function ensureSocket(
     if (socketAccountId) void persistQr(sql, socketAccountId, null, nextWaGen());
     socketAccountId = null;
   }
+  // A pending start for different config can't serve this request — bump the
+  // generation so startSocket self-terminates before publishing globals, then
+  // reconcile once it settles (also kills a socket that raced to publish).
+  if (starting && startingFingerprint !== wanted) {
+    startGen++;
+    return starting.then(
+      () => ensureSocket(sql, integration),
+      () => ensureSocket(sql, integration),
+    );
+  }
   if (!wanted) return null;
   if (loggingOut) throw new Error('whatsapp logout em andamento');
   if (socket) return socket;
   if (!starting) {
     connState = 'connecting';
+    startingFingerprint = wanted;
     starting = startSocket(sql, integration!).then(
       (s) => {
         // globals were assigned inside startSocket — only the flag clears
         starting = null;
+        startingFingerprint = null;
         return s;
       },
       (err) => {
         // a failed start must not poison the flag — clear it so the next
         // send/pair attempt can retry.
         starting = null;
+        startingFingerprint = null;
         connState = 'off';
         throw err;
       },
