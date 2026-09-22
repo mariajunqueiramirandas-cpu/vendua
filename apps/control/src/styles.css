@@ -397,7 +397,8 @@ input[type='checkbox'] {
 /* a card that is just a table: clip row backgrounds to the radius and
    give the edge cells a little more inset than the inter-column gap */
 .card:has(> .tbl:only-child) {
-  overflow: hidden;
+  overflow-x: auto;
+  overflow-y: hidden;
 }
 .card > .tbl:only-child {
   --tbl-edge: 14px;
