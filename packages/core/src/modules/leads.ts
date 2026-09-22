@@ -55,6 +55,8 @@ export interface LeadRow {
   agent_plan: AgentPlanStep[];
   fit_score: number | null;
   fit_reason: string | null;
+  intent_score: number | null;
+  intent_reason: string | null;
   email_bounced_at: string | null;
   next_action_at: string | null;
   lost_reason: string | null;
@@ -88,6 +90,8 @@ export interface Lead {
   agentPlan: AgentPlanStep[];
   fitScore: number | null;
   fitReason: string | null;
+  intentScore: number | null;
+  intentReason: string | null;
   emailBouncedAt: string | null;
   nextActionAt: string | null;
   lostReason: string | null;
@@ -130,6 +134,8 @@ export function leadJson(row: LeadRow): Lead {
     agentPlan: row.agent_plan ?? [],
     fitScore: row.fit_score,
     fitReason: row.fit_reason,
+    intentScore: row.intent_score,
+    intentReason: row.intent_reason,
     emailBouncedAt: row.email_bounced_at,
     nextActionAt: row.next_action_at,
     lostReason: row.lost_reason,
@@ -165,14 +171,15 @@ export function agentGoal(v: unknown): AgentGoal {
   return v as AgentGoal;
 }
 
-/** fitScore payload → int 0–10 or null. The model's ICP match — kept
- *  separate from the SQL completeness score. */
-function fitScoreValue(v: unknown): number | null {
+/** Score payload → int 0–10 or null. fitScore is the model's ICP match and
+ *  intentScore its read of buying intent — both stay separate from the SQL
+ *  completeness score. */
+function score010(v: unknown, field: 'fitScore' | 'intentScore'): number | null {
   if (v === null || v === undefined || v === '') return null;
   const n = Number(v);
   if (!Number.isInteger(n) || n < 0 || n > 10) {
-    throw new HttpError(422, 'BAD_REQUEST', 'fitScore must be an integer in [0, 10]', {
-      field: 'fitScore',
+    throw new HttpError(422, 'BAD_REQUEST', `${field} must be an integer in [0, 10]`, {
+      field,
     });
   }
   return n;
@@ -208,6 +215,7 @@ const LEAD_TEXT_FIELDS = {
   lostReason: ['lost_reason', 300],
   discoveredVia: ['discovered_via', 120],
   fitReason: ['fit_reason', 300],
+  intentReason: ['intent_reason', 300],
 } as const;
 
 type LeadTextField = keyof typeof LEAD_TEXT_FIELDS;
@@ -272,7 +280,8 @@ export function leadInsert(body: Record<string, unknown>): Record<string, unknow
     out.next_action_at = timestampValue(body.nextActionAt, 'nextActionAt');
   if ('agentMode' in body) out.agent_mode = agentMode(body.agentMode);
   if ('agentGoal' in body) out.agent_goal = agentGoal(body.agentGoal);
-  if ('fitScore' in body) out.fit_score = fitScoreValue(body.fitScore);
+  if ('fitScore' in body) out.fit_score = score010(body.fitScore, 'fitScore');
+  if ('intentScore' in body) out.intent_score = score010(body.intentScore, 'intentScore');
   if ('state' in body) out.state = leadState(body.state);
   return out;
 }
@@ -298,7 +307,8 @@ export function leadPatch(body: Record<string, unknown>): Record<string, unknown
   if ('state' in body) set.state = leadState(body.state);
   if ('agentMode' in body) set.agent_mode = agentMode(body.agentMode);
   if ('agentGoal' in body) set.agent_goal = agentGoal(body.agentGoal);
-  if ('fitScore' in body) set.fit_score = fitScoreValue(body.fitScore);
+  if ('fitScore' in body) set.fit_score = score010(body.fitScore, 'fitScore');
+  if ('intentScore' in body) set.intent_score = score010(body.intentScore, 'intentScore');
   if ('tags' in body) set.tags = tagsValue(body.tags);
   if ('dealValueCents' in body) set.deal_value_cents = dealValue(body.dealValueCents);
   if ('nextActionAt' in body)

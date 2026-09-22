@@ -989,8 +989,12 @@ export function createApp({ sql, sessionSecret, controlSecret }: AppDeps) {
     controlGate(c);
     const body = await bodyJson(c);
     const kind = str(body.kind, 'kind', 40);
-    if (!['triage', 'reply', 'outreach', 'discovery'].includes(kind)) {
-      throw new HttpError(422, 'BAD_REQUEST', 'kind must be triage|reply|outreach|discovery');
+    if (!['triage', 'reply', 'outreach', 'discovery', 'strategist'].includes(kind)) {
+      throw new HttpError(
+        422,
+        'BAD_REQUEST',
+        'kind must be triage|reply|outreach|discovery|strategist',
+      );
     }
     const leadId = uuidParam(c, 'id');
     const threadId = body.threadId ? str(body.threadId, 'threadId', 64) : null;
@@ -1013,7 +1017,7 @@ export function createApp({ sql, sessionSecret, controlSecret }: AppDeps) {
         status: 201,
         body: {
           runId: await insertRun(tx, {
-            kind: kind as 'triage' | 'reply' | 'outreach' | 'discovery',
+            kind: kind as 'triage' | 'reply' | 'outreach' | 'discovery' | 'strategist',
             leadId,
             ...(threadId ? { threadId } : {}),
             params: (body.params as Record<string, unknown>) ?? {},
@@ -1501,8 +1505,12 @@ export function createApp({ sql, sessionSecret, controlSecret }: AppDeps) {
     controlGate(c);
     const body = await bodyJson(c);
     const kind = str(body.kind, 'kind', 40);
-    if (!['triage', 'reply', 'outreach', 'discovery'].includes(kind)) {
-      throw new HttpError(422, 'BAD_REQUEST', 'kind must be triage|reply|outreach|discovery');
+    if (!['triage', 'reply', 'outreach', 'discovery', 'strategist'].includes(kind)) {
+      throw new HttpError(
+        422,
+        'BAD_REQUEST',
+        'kind must be triage|reply|outreach|discovery|strategist',
+      );
     }
     const leadId = body.leadId ? str(body.leadId, 'leadId', 64) : null;
     const threadId = body.threadId ? str(body.threadId, 'threadId', 64) : null;
@@ -1531,7 +1539,7 @@ export function createApp({ sql, sessionSecret, controlSecret }: AppDeps) {
         status: 201,
         body: {
           runId: await insertRun(tx, {
-            kind: kind as 'triage' | 'reply' | 'outreach' | 'discovery',
+            kind: kind as 'triage' | 'reply' | 'outreach' | 'discovery' | 'strategist',
             leadId,
             threadId,
             params: (body.params as Record<string, unknown>) ?? {},
@@ -1634,7 +1642,8 @@ export function createApp({ sql, sessionSecret, controlSecret }: AppDeps) {
     const rows = await controlTx(
       sql,
       (tx) =>
-        tx`select id, name, query, segment, city, target, enabled, last_run_at, created_at
+        tx`select id, name, query, segment, city, target, enabled, last_run_at, created_at,
+                  note, created_by
            from discovery_briefs order by created_at desc`,
     );
     return c.json({ briefs: rows });
@@ -1670,7 +1679,8 @@ export function createApp({ sql, sessionSecret, controlSecret }: AppDeps) {
         await tx`
           insert into discovery_briefs (name, query, segment, city, target, enabled)
           values (${name}, ${query}, ${segment}, ${city}, ${target}, ${enabled})
-          returning id, name, query, segment, city, target, enabled, last_run_at, created_at
+          returning id, name, query, segment, city, target, enabled, last_run_at, created_at,
+                    note, created_by
         `
       )[0]!;
       return { status: 201, body: { brief: row } };
@@ -1725,7 +1735,9 @@ export function createApp({ sql, sessionSecret, controlSecret }: AppDeps) {
       )[0];
       if (!cur) throw new HttpError(404, 'BRIEF_NOT_FOUND', 'brief not found');
       // A changed definition — or a paused brief switched back on — should
-      // refire promptly, not ride out the previous run's 23h cadence.
+      // refire promptly, not ride out the previous run's 23h cadence. The
+      // note (auto-pause reason or the strategist's rationale) is stale from
+      // that moment — clear it with the cadence stamp.
       if (
         'query' in set ||
         'segment' in set ||
@@ -1734,11 +1746,13 @@ export function createApp({ sql, sessionSecret, controlSecret }: AppDeps) {
         (set.enabled === true && !cur.enabled)
       ) {
         set.last_run_at = null;
+        set.note = null;
       }
       const row = (
         await tx`
           update discovery_briefs set ${tx(set)} where id = ${id}
-          returning id, name, query, segment, city, target, enabled, last_run_at, created_at
+          returning id, name, query, segment, city, target, enabled, last_run_at, created_at,
+                    note, created_by
         `
       )[0]!;
       return { status: 200, body: { brief: row } };

@@ -75,6 +75,8 @@ export interface Lead {
   agentPlan: AgentPlanStep[];
   fitScore: number | null;
   fitReason: string | null;
+  intentScore: number | null;
+  intentReason: string | null;
   emailBouncedAt: string | null;
   nextActionAt: string | null;
   lostReason: string | null;
@@ -242,6 +244,10 @@ export interface Brief {
   enabled: boolean;
   last_run_at: string | null;
   created_at: string;
+  /** Auto-pause reason or a strategist proposal's rationale — system-written. */
+  note: string | null;
+  /** 'strategist' = a proposed draft (starts disabled, staff approves). */
+  created_by: 'staff' | 'strategist';
 }
 export interface SegmentStat {
   segment: string;

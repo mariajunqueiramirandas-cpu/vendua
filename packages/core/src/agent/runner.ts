@@ -5,6 +5,7 @@ import {
   getIntegration,
   getPitch,
   getSetting,
+  getSettingTx,
   DEFAULT_GUARDRAILS,
   type Guardrails,
 } from '../modules/integrations.ts';
@@ -40,6 +41,9 @@ const STEP_BUDGET: Record<RunRow['kind'], number> = {
   // → dossier'd create. A step fans out into parallel calls, so this is
   // model turns, not tool calls.
   discovery: 30,
+  // The weekly brief review: reads the injected segment/brief tables and
+  // emits a handful of propose_brief calls — no tool fan-out needed.
+  strategist: 10,
 };
 const HEARTBEAT_MS = 20_000;
 /** Per-run lead ceiling for discovery runs launched without a meta — the
@@ -48,7 +52,7 @@ const DISCOVERY_LEAD_CAP = 20;
 
 interface RunRow {
   id: string;
-  kind: 'triage' | 'reply' | 'outreach' | 'discovery';
+  kind: 'triage' | 'reply' | 'outreach' | 'discovery' | 'strategist';
   lead_id: string | null;
   thread_id: string | null;
   params: Record<string, unknown>;
@@ -330,6 +334,50 @@ async function contextFor(
           .join('\n')}`,
       );
     }
+  }
+  if (run.kind === 'strategist') {
+    // The weekly review's inputs: what converts (same segment table
+    // discovery sees) plus every current brief — the model proposes only
+    // gaps, so it must read the coverage it would be duplicating.
+    const stats = await segmentStats(sql);
+    if (stats.length) {
+      parts.push(
+        `SEGMENTOS (leads · responderam · ativos · custo):\n${stats
+          .map(
+            (s) =>
+              `- ${s.segment}: ${s.leads} leads · ${s.replied} responderam · ${s.live} ativos · R$${(s.costCents / 100).toFixed(2)}`,
+          )
+          .join('\n')}`,
+      );
+    }
+    const briefs = await controlTx(
+      sql,
+      (tx) =>
+        tx<
+          {
+            name: string;
+            query: string;
+            segment: string | null;
+            city: string | null;
+            target: number | null;
+            enabled: boolean;
+            created_by: string;
+          }[]
+        >`select name, query, segment, city, target, enabled, created_by
+           from discovery_briefs order by created_at desc limit 30`,
+    );
+    parts.push(
+      `BRIEFS ATUAIS (não re-proponha o que já existe):\n${
+        briefs.length
+          ? briefs
+              .map(
+                (b) =>
+                  `- ${b.name} — "${b.query}"${b.segment ? ` · ${b.segment}` : ''}${b.city ? ` · ${b.city}` : ''}${b.target ? ` · ≤${b.target}` : ''} · ${b.enabled ? 'ativo' : b.created_by === 'strategist' ? 'rascunho (já proposto)' : 'pausado'}`,
+              )
+              .join('\n')
+          : '(nenhum)'
+      }`,
+    );
   }
   return { text: parts.join('\n\n') || '(no extra context)', goal, bookingUrl };
 }
@@ -904,6 +952,7 @@ export function startAgentWorker(sql: Sql, intervalMs = 15_000) {
     void drain(sql)
       .then(() => sweepOutreach(sql))
       .then(() => sweepBriefs(sql))
+      .then(() => sweepStrategist(sql))
       .then(() => sweepPipelineSnapshots(sql))
       .then(() => sweepMeetingReminders(sql))
       .then(() => sweepDigest(sql))
@@ -942,7 +991,47 @@ export async function sweepBriefs(sql: Sql): Promise<number> {
       limit 10
       for update of discovery_briefs skip locked
     `;
+    const g = await getSettingTx<Partial<Guardrails>>(tx, 'guardrails', {});
+    const autoPauseRuns = g.briefAutoPauseRuns ?? DEFAULT_GUARDRAILS.briefAutoPauseRuns;
+    let fired = 0;
     for (const b of due) {
+      // Dead-brief gate: a brief whose last N finished runs produced zero
+      // leads pauses itself (enabled=false + a note) instead of burning the
+      // daily run forever. The journal is the source of truth — a
+      // create_lead step with out.lead.id is what "produced" means (merge-
+      // only runs still count as dead: no NEW lead entered the board).
+      if (autoPauseRuns > 0) {
+        const stat = (
+          await tx<{ runs: number; with_leads: number }[]>`
+            with recent as (
+              select steps from agent_runs
+              where kind = 'discovery' and status in ('done', 'failed')
+                and params->>'briefId' = ${b.id}
+              order by finished_at desc
+              limit ${autoPauseRuns}
+            )
+            select count(*)::int as runs,
+              count(*) filter (where exists (
+                select 1 from jsonb_array_elements(steps) s
+                where s->>'name' = 'create_lead'
+                  and s->'out'->'lead'->>'id' is not null
+              ))::int as with_leads
+            from recent
+          `
+        )[0]!;
+        if (stat.runs >= autoPauseRuns && stat.with_leads === 0) {
+          const note = `auto-pausada — ${autoPauseRuns} runs seguidas sem lead`;
+          await tx`
+            update discovery_briefs set enabled = false, note = ${note}
+            where id = ${b.id}
+          `;
+          agentLog.info(
+            { briefId: b.id, runs: stat.runs },
+            'discovery brief auto-paused — dead streak',
+          );
+          continue;
+        }
+      }
       await insertRun(tx, {
         kind: 'discovery',
         params: {
@@ -955,8 +1044,31 @@ export async function sweepBriefs(sql: Sql): Promise<number> {
         },
       });
       await tx`update discovery_briefs set last_run_at = now() where id = ${b.id}`;
+      fired++;
     }
-    return due.length;
+    return fired;
+  });
+}
+
+/** Weekly strategist cadence: one 'strategist' run every 7 days, stamped by
+ *  the run's own created_at (a manual fire resets the clock — same enqueue-
+ *  stamp idiom sweepBriefs uses for its 23h cadence). The advisory lock is
+ *  the row-lock equivalent on a sweep with no anchor row: two workers in the
+ *  same tick can't both pass the emptiness check and double-fire. */
+export async function sweepStrategist(sql: Sql): Promise<boolean> {
+  return controlTx(sql, async (tx) => {
+    const locked = await tx<{ ok: boolean }[]>`
+      select pg_try_advisory_xact_lock(hashtext('sweep:strategist')) as ok
+    `;
+    if (!locked[0]?.ok) return false;
+    const recent = await tx`
+      select 1 from agent_runs
+      where kind = 'strategist' and created_at > now() - interval '7 days'
+      limit 1
+    `;
+    if (recent.length) return false;
+    await insertRun(tx, { kind: 'strategist', params: { auto: 'weekly' } });
+    return true;
   });
 }
 
