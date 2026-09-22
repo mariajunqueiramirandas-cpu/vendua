@@ -1002,8 +1002,11 @@ export async function sweepBriefs(sql: Sql): Promise<number> {
       // create_lead step with out.lead.id is what "produced" means (merge-
       // only runs still count as dead: no NEW lead entered the board).
       // rearmed_at bounds the window: staff re-enabling or editing the
-      // brief starts a fresh evaluation, so pre-revival zero-yield runs
-      // can't instantly re-pause it before the new definition is tested.
+      // brief starts a fresh evaluation. The bound is on created_at (when
+      // the run was enqueued with its params), not finished_at — a run
+      // queued before the edit still carries the old definition even if it
+      // finishes afterward, so its zero-yield isn't evidence against the
+      // new one.
       if (autoPauseRuns > 0) {
         const stat = (
           await tx<{ runs: number; with_leads: number }[]>`
@@ -1012,7 +1015,7 @@ export async function sweepBriefs(sql: Sql): Promise<number> {
               where kind = 'discovery' and status in ('done', 'failed')
                 and params->>'briefId' = ${b.id}
                 and (${b.rearmed_at}::timestamptz is null
-                     or finished_at > ${b.rearmed_at}::timestamptz)
+                     or created_at > ${b.rearmed_at}::timestamptz)
               order by finished_at desc
               limit ${autoPauseRuns}
             )

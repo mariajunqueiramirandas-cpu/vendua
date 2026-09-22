@@ -183,6 +183,46 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('discovery intelligence (db)', (
     ).not.toBeNull();
   });
 
+  test('C1: runs queued before a re-arm do not eat the fresh streak', async () => {
+    const stale = await mkBrief(`stale-${uniq}`);
+    // The boundary is created_at (enqueue = the params the run carries), not
+    // finished_at: these 5 runs were queued BEFORE the edit but finish
+    // AFTER it — under a finished_at bound they'd instantly re-pause.
+    await controlTx(sql, async (tx) => {
+      for (let i = 0; i < 5; i++) {
+        const id = await insertRun(tx, {
+          kind: 'discovery',
+          params: { briefId: stale, query: 'q' },
+        });
+        await tx`
+          update agent_runs set
+            status = 'done',
+            created_at = now() - interval '1 hour',
+            finished_at = now(),
+            steps = '[]'
+          where id = ${id}
+        `;
+      }
+      // rearmed strictly after the runs' created_at but strictly before
+      // their finished_at — the timeline the bug needs to reproduce
+      await tx`
+        update discovery_briefs set rearmed_at = now() - interval '30 minutes',
+          enabled = true
+        where id = ${stale}
+      `;
+    });
+
+    await sweepBriefs(sql);
+    expect((await briefRow(stale)).enabled).toBe(true);
+    expect(
+      (
+        await sql<{ last_run_at: string | null }[]>`
+          select last_run_at from discovery_briefs where id = ${stale}
+        `
+      )[0]!.last_run_at,
+    ).not.toBeNull();
+  });
+
   test('C1: under the threshold the brief still fires', async () => {
     const fresh = await mkBrief(`fresh-${uniq}`);
     for (let i = 0; i < 3; i++) await doneRun(fresh, false);
