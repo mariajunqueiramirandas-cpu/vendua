@@ -131,7 +131,20 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('discovery intelligence (db)', (
     for (let i = 0; i < 4; i++) await doneRun(live, false);
     await doneRun(live, true);
 
-    await sweepBriefs(sql);
+    // A dev environment's own worker (`bun run dev` starts the 15s sweep
+    // chain) can interleave between arrange and act: it may fire a queued
+    // run for the brief mid-test, which makes `not exists queued` skip it
+    // that sweep. Converge instead of asserting on one invocation — each
+    // iteration either pauses the brief or turns its queued run into a
+    // dead-finished journal row, so the streak always lands.
+    for (let i = 0; i < 12; i++) {
+      await sweepBriefs(sql);
+      if (!(await briefRow(dead)).enabled) break;
+      await sql`
+        update agent_runs set status = 'done', finished_at = now(), steps = '[]'
+        where kind = 'discovery' and status = 'queued' and params->>'briefId' = ${dead}
+      `;
+    }
 
     const d = await briefRow(dead);
     expect(d.enabled).toBe(false);
@@ -140,14 +153,34 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('discovery intelligence (db)', (
     const l = await briefRow(live);
     expect(l.enabled).toBe(true);
     expect(l.note).toBeNull();
-    // the live brief got its run
-    const run = await sql`
-      select 1 from agent_runs
-      where kind = 'discovery' and status = 'queued'
-        and params->>'briefId' = ${live}
-      limit 1
+    // the live brief fired — last_run_at is stamped at enqueue and stays
+    // even if the ambient worker already claimed the run
+    const liveRow = (
+      await sql<{ last_run_at: string | null }[]>`
+        select last_run_at from discovery_briefs where id = ${live}
+      `
+    )[0]!;
+    expect(liveRow.last_run_at).not.toBeNull();
+
+    // revival restarts the streak window (rearmed_at): staff flips the
+    // dead brief back on and the next sweep fires a fresh run instead of
+    // instantly re-pausing on the pre-revival zero-yield history
+    await sql`
+      update discovery_briefs set enabled = true, note = null, rearmed_at = now()
+      where id = ${dead}
     `;
-    expect(run.length).toBe(1);
+    await sweepBriefs(sql);
+    const revived = await briefRow(dead);
+    expect(revived.enabled).toBe(true);
+    // fired, not re-paused — last_run_at stamps at enqueue (queued rows can
+    // already be claimed by the ambient worker when we read)
+    expect(
+      (
+        await sql<{ last_run_at: string | null }[]>`
+          select last_run_at from discovery_briefs where id = ${dead}
+        `
+      )[0]!.last_run_at,
+    ).not.toBeNull();
   });
 
   test('C1: under the threshold the brief still fires', async () => {
@@ -158,14 +191,11 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('discovery intelligence (db)', (
     expect(f.enabled).toBe(true);
     expect(
       (
-        await sql`
-          select 1 from agent_runs
-          where kind = 'discovery' and status = 'queued'
-            and params->>'briefId' = ${fresh}
-          limit 1
+        await sql<{ last_run_at: string | null }[]>`
+          select last_run_at from discovery_briefs where id = ${fresh}
         `
-      ).length,
-    ).toBe(1);
+      )[0]!.last_run_at,
+    ).not.toBeNull();
   });
 
   test('C1: briefAutoPauseRuns=0 never pauses', async () => {
@@ -183,6 +213,13 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('discovery intelligence (db)', (
     );
     await sweepBriefs(sql);
     expect((await briefRow(off)).enabled).toBe(true);
+    expect(
+      (
+        await sql<{ last_run_at: string | null }[]>`
+          select last_run_at from discovery_briefs where id = ${off}
+        `
+      )[0]!.last_run_at,
+    ).not.toBeNull();
     // restore defaults for the other tests
     await controlTx(
       sql,

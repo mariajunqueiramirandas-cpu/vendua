@@ -978,9 +978,10 @@ export async function sweepBriefs(sql: Sql): Promise<number> {
         segment: string | null;
         city: string | null;
         target: number | null;
+        rearmed_at: string | null;
       }[]
     >`
-      select id, name, query, segment, city, target from discovery_briefs
+      select id, name, query, segment, city, target, rearmed_at from discovery_briefs
       where enabled
         and (last_run_at is null or last_run_at < now() - interval '23 hours')
         and not exists (
@@ -1000,6 +1001,9 @@ export async function sweepBriefs(sql: Sql): Promise<number> {
       // daily run forever. The journal is the source of truth — a
       // create_lead step with out.lead.id is what "produced" means (merge-
       // only runs still count as dead: no NEW lead entered the board).
+      // rearmed_at bounds the window: staff re-enabling or editing the
+      // brief starts a fresh evaluation, so pre-revival zero-yield runs
+      // can't instantly re-pause it before the new definition is tested.
       if (autoPauseRuns > 0) {
         const stat = (
           await tx<{ runs: number; with_leads: number }[]>`
@@ -1007,6 +1011,8 @@ export async function sweepBriefs(sql: Sql): Promise<number> {
               select steps from agent_runs
               where kind = 'discovery' and status in ('done', 'failed')
                 and params->>'briefId' = ${b.id}
+                and (${b.rearmed_at}::timestamptz is null
+                     or finished_at > ${b.rearmed_at}::timestamptz)
               order by finished_at desc
               limit ${autoPauseRuns}
             )

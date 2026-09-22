@@ -1737,7 +1737,9 @@ export function createApp({ sql, sessionSecret, controlSecret }: AppDeps) {
       // A changed definition — or a paused brief switched back on — should
       // refire promptly, not ride out the previous run's 23h cadence. The
       // note (auto-pause reason or the strategist's rationale) is stale from
-      // that moment — clear it with the cadence stamp.
+      // that moment — clear it with the cadence stamp. rearmed_at restarts
+      // the dead-streak window so the pre-revival zero-yield history can't
+      // instantly re-pause the brief before its new run is judged.
       if (
         'query' in set ||
         'segment' in set ||
@@ -1747,6 +1749,7 @@ export function createApp({ sql, sessionSecret, controlSecret }: AppDeps) {
       ) {
         set.last_run_at = null;
         set.note = null;
+        set.rearmed_at = new Date();
       }
       const row = (
         await tx`

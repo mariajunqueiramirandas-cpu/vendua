@@ -1178,6 +1178,12 @@ export async function executeTool(
         sql,
         key,
         async (tx): Promise<{ status: number; body: Record<string, unknown> }> => {
+          // claimControl only serializes THIS call's retries — two strategist
+          // runs carry different idempotency keys and can both pass the dup
+          // check before either insert commits. One shared advisory lock
+          // makes check+insert atomic across runs (same idiom as
+          // 'lead-dedupe' in create_lead).
+          await tx`select pg_advisory_xact_lock(hashtext('brief-proposals'))`;
           // Proposing what already runs (or is already a draft) adds board
           // noise, not options — name/query dupes come back as a skip.
           const dup = (
