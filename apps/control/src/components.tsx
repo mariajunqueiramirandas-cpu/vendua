@@ -18,7 +18,7 @@ export function Page({
         <h1>{title}</h1>
         {sub && <span className="sub">{sub}</span>}
         <div className="spacer" />
-        {actions}
+        {actions && <div className="tb-acts">{actions}</div>}
       </div>
       <div className="content">{children}</div>
     </>

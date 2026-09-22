@@ -62,30 +62,28 @@ export default function Approvals() {
   };
 
   return (
-    <Page title="Aprovações" sub={`${drafts.length} rascunhos do agente`}>
+    <Page
+      title="Aprovações"
+      sub={`${drafts.length} rascunho${drafts.length === 1 ? '' : 's'} do agente`}
+    >
       {!drafts.length && (
         <Empty title="fila limpa" hint="rascunhos do agente aparecem aqui para revisão" />
       )}
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 12, maxWidth: 780 }}>
+      <div className="appr-list">
         {drafts.map((d) => (
-          <div key={d.id} className="card" style={{ padding: 16 }}>
-            <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginBottom: 8 }}>
+          <div key={d.id} className="card appr-card">
+            <div className="appr-head">
               <span className="chip agent">
                 <Bot size={11} /> agente
               </span>
               <span className="chip">{d.channel}</span>
-              <Link to={`/leads/${d.leadId}`}>
+              <Link className="appr-lead" to={`/leads/${d.leadId}`}>
                 <b>{d.leadName}</b>
               </Link>
               {d.businessName && d.businessName !== d.leadName && (
-                <span style={{ color: 'var(--muted)' }}>{d.businessName}</span>
+                <span className="appr-biz">{d.businessName}</span>
               )}
-              <span
-                className="mono"
-                style={{ marginLeft: 'auto', fontSize: 'var(--t-2xs)', color: 'var(--muted)' }}
-              >
-                {rel(d.createdAt)}
-              </span>
+              <span className="appr-time mono">{rel(d.createdAt)}</span>
             </div>
             {editing === d.id ? (
               <textarea
@@ -98,11 +96,11 @@ export default function Approvals() {
               <div className="d-bubble">{d.body}</div>
             )}
             {results[d.id] && (
-              <div style={{ marginTop: 6, fontSize: 'var(--t-xs)', color: 'var(--muted)' }}>
+              <div className={`appr-res${/falhou/.test(results[d.id]!) ? ' bad' : ''}`}>
                 {results[d.id]}
               </div>
             )}
-            <div style={{ display: 'flex', gap: 8, marginTop: 12, flexWrap: 'wrap' }}>
+            <div className="appr-acts">
               {editing === d.id ? (
                 <>
                   <button className="btn primary" onClick={() => void saveEdit(d)}>
@@ -129,7 +127,7 @@ export default function Approvals() {
                   <button className="btn ghost danger" onClick={() => void reject(d)}>
                     <X size={14} /> rejeitar
                   </button>
-                  <Link to={`/inbox/${d.threadId}`} className="btn ghost">
+                  <Link to={`/inbox/${d.threadId}`} className="btn ghost appr-link">
                     ver thread
                   </Link>
                 </>

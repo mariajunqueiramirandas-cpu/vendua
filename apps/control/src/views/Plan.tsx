@@ -151,7 +151,7 @@ export default function Plan() {
             title="não deu pra carregar"
             hint="a lista de leads ou de runs falhou — tenta de novo"
           />
-          <button className="btn" onClick={() => load()} style={{ marginTop: 10 }}>
+          <button className="btn plan-retry" onClick={() => load()}>
             tentar de novo
           </button>
         </>
@@ -165,27 +165,15 @@ export default function Plan() {
 
       {state === 'ok' && (pending.length > 0 || planned.length > 0) && (
         <>
-          <div className="grid4" style={{ marginBottom: 16 }}>
+          <div className="grid4 plan-stats">
             <div className="stat card">
               <div className="v" style={{ color: next?.late ? 'var(--red-400)' : undefined }}>
                 {next ? tMinus(next.at, now) : '—'}
               </div>
               <div className="k">próxima ação</div>
               {next && (
-                <div
-                  style={{
-                    fontSize: 'var(--t-2xs)',
-                    color: 'var(--muted)',
-                    marginTop: 4,
-                    overflow: 'hidden',
-                    textOverflow: 'ellipsis',
-                    whiteSpace: 'nowrap',
-                  }}
-                >
-                  {next.what} ·{' '}
-                  <Link to={`/leads/${next.leadId}`} style={{ textDecoration: 'underline' }}>
-                    {next.leadName}
-                  </Link>
+                <div className="plan-next">
+                  {next.what} · <Link to={`/leads/${next.leadId}`}>{next.leadName}</Link>
                 </div>
               )}
             </div>
@@ -205,7 +193,7 @@ export default function Plan() {
             </div>
           </div>
 
-          <div className="grid2" style={{ alignItems: 'start' }}>
+          <div className="grid2 plan-cols">
             {pending.length > 0 && (
               <section>
                 <div className="sec-t">fila</div>
@@ -221,7 +209,7 @@ export default function Plan() {
                             </span>
                           </td>
                           <td className="qabs">{fmtDateTime(p.at)}</td>
-                          <td style={{ color: 'var(--muted)' }}>{p.what}</td>
+                          <td className="qwhat">{p.what}</td>
                           <td>
                             <Link to={`/leads/${p.leadId}`}>{p.leadName}</Link>
                           </td>
@@ -236,7 +224,7 @@ export default function Plan() {
             {planned.length > 0 && (
               <section>
                 <div className="sec-t">planos em curso</div>
-                <div className="card" style={{ padding: '2px 14px' }}>
+                <div className="card plan-card">
                   {planned.map((l) => (
                     <PlanRow key={l.id} lead={l} />
                   ))}
@@ -257,22 +245,12 @@ function PlanRow({ lead }: { lead: LeadListItem }) {
   const total = lead.agentPlan.length;
   return (
     <div className="planrow">
-      <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-        <Link to={`/leads/${lead.id}`} style={{ fontWeight: 600 }}>
+      <div className="planrow-head">
+        <Link to={`/leads/${lead.id}`} className="planrow-name">
           {lead.name}
         </Link>
         <button
-          className="btn ghost"
-          style={{
-            display: 'flex',
-            alignItems: 'center',
-            gap: 10,
-            flex: 1,
-            minWidth: 0,
-            textAlign: 'left',
-            padding: '10px 2px',
-            fontWeight: 500,
-          }}
+          className="btn ghost planrow-toggle"
           onClick={() => setOpen(!open)}
           aria-expanded={open}
           aria-label={`plano de ${lead.name}`}
@@ -280,57 +258,29 @@ function PlanRow({ lead }: { lead: LeadListItem }) {
           <span className="chip agent" title="objetivo atual">
             {GOAL_LABEL[lead.agentGoal] ?? lead.agentGoal}
           </span>
-          <span
-            className="planbar"
-            title={`${resolved} de ${total} etapas resolvidas`}
-            style={{ flex: '0 0 64px' }}
-          >
+          <span className="planbar planrow-bar" title={`${resolved} de ${total} etapas resolvidas`}>
             <span style={{ width: `${(resolved / total) * 100}%` }} />
           </span>
           <span className="qmono">
             {resolved}/{total}
           </span>
-          <ChevronDown
-            size={14}
-            style={{
-              color: 'var(--muted)',
-              transform: open ? 'rotate(180deg)' : undefined,
-              transition: 'transform 150ms cubic-bezier(0.2, 0, 0, 1)',
-            }}
-          />
+          <ChevronDown size={14} className="planrow-chev" />
         </button>
       </div>
       {open && (
-        <div style={{ paddingBottom: 10 }}>
+        <div className="planrow-steps">
           {lead.agentPlan.map((s, i) => (
-            <div key={i} className="trow" style={{ alignItems: 'flex-start', gap: 8 }}>
+            <div key={i} className={`trow planrow-step ${s.status}`}>
               {s.status === 'done' ? (
-                <CheckCircle2
-                  size={15}
-                  style={{ color: 'var(--forest-800)', flexShrink: 0, marginTop: 2 }}
-                />
+                <CheckCircle2 size={15} className="planrow-ico done" />
               ) : s.status === 'skip' ? (
-                <SkipForward
-                  size={15}
-                  style={{ color: 'var(--muted)', flexShrink: 0, marginTop: 2 }}
-                />
+                <SkipForward size={15} className="planrow-ico" />
               ) : (
-                <Circle size={15} style={{ color: 'var(--muted)', flexShrink: 0, marginTop: 2 }} />
+                <Circle size={15} className="planrow-ico" />
               )}
-              <span style={{ flex: 1, minWidth: 0 }}>
-                <div
-                  style={{
-                    textDecoration: s.status === 'skip' ? 'line-through' : undefined,
-                    color: s.status === 'todo' ? undefined : 'var(--muted)',
-                  }}
-                >
-                  {s.step}
-                </div>
-                {s.note && (
-                  <div style={{ color: 'var(--muted)', fontSize: 'var(--t-xs)', marginTop: 2 }}>
-                    {s.note}
-                  </div>
-                )}
+              <span className="planrow-step-txt">
+                <div className="planrow-step-t">{s.step}</div>
+                {s.note && <div className="planrow-note">{s.note}</div>}
               </span>
             </div>
           ))}

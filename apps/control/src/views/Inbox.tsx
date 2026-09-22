@@ -136,22 +136,11 @@ export default function InboxView() {
   return (
     <Page title="Inbox">
       {/* has-thread drives the mobile master/detail fold in styles.css */}
-      <div className={`inbox card${threadId ? ' has-thread' : ''}`} style={{ overflow: 'hidden' }}>
+      <div className={`inbox card${threadId ? ' has-thread' : ''}`}>
         <div className="thread-list">
-          <div
-            style={{ padding: 10, borderBottom: '1px solid var(--line)', display: 'flex', gap: 6 }}
-          >
-            <input
-              placeholder="buscar…"
-              value={q}
-              onChange={(e) => setQ(e.target.value)}
-              style={{ flex: 1, minWidth: 0 }}
-            />
-            <select
-              value={chan}
-              onChange={(e) => setChan(e.target.value)}
-              style={{ maxWidth: 118 }}
-            >
+          <div className="inbox-tools">
+            <input placeholder="buscar…" value={q} onChange={(e) => setQ(e.target.value)} />
+            <select value={chan} onChange={(e) => setChan(e.target.value)}>
               <option value="">todos</option>
               <option value="whatsapp">whatsapp</option>
               <option value="email">email</option>
@@ -167,36 +156,26 @@ export default function InboxView() {
             </button>
           </div>
           {newOpen && (
-            <div style={{ padding: 10, borderBottom: '1px solid var(--line)' }}>
+            <div className="inbox-new">
               <input
                 placeholder="buscar lead por nome, negócio ou contato…"
                 value={leadQ}
                 onChange={(e) => setLeadQ(e.target.value)}
                 autoFocus
               />
-              <div style={{ marginTop: 8 }}>
+              <div className="inbox-new-hits">
                 {leadHits.map((l) => (
-                  <div
-                    key={l.id}
-                    style={{
-                      display: 'flex',
-                      alignItems: 'center',
-                      gap: 8,
-                      padding: '6px 0',
-                      borderTop: '1px solid var(--line)',
-                    }}
-                  >
-                    <div style={{ flex: 1, minWidth: 0 }}>
+                  <div key={l.id} className="inbox-lead">
+                    <div className="inbox-lead-main">
                       <b>{l.name}</b>
                       {l.businessName && l.businessName !== l.name && (
-                        <span style={{ color: 'var(--muted)' }}> · {l.businessName}</span>
+                        <span className="inbox-biz"> · {l.businessName}</span>
                       )}
                     </div>
                     {CH_PICK.map(({ ch, has }) => (
                       <button
                         key={ch}
-                        className="btn ghost"
-                        style={{ padding: '2px 8px', fontSize: 'var(--t-2xs)' }}
+                        className="btn ghost inbox-chpick"
                         disabled={!has(l)}
                         title={has(l) ? `conversar via ${ch}` : `lead sem ${ch}`}
                         onClick={() => void openThread(l.id, ch)}
@@ -207,7 +186,7 @@ export default function InboxView() {
                   </div>
                 ))}
                 {!leadHits.length && (
-                  <div className="hint" style={{ padding: '8px 0' }}>
+                  <div className="hint inbox-lead-empty">
                     {leadQ ? 'nenhum lead com esse nome' : 'digite para buscar'}
                   </div>
                 )}
@@ -266,24 +245,16 @@ export default function InboxView() {
                 <ArrowLeft size={16} />
               </button>
               <Avatar name={view.lead.name} lg />
-              <div style={{ minWidth: 0 }}>
+              <div className="thread-id">
                 <Link to={`/leads/${view.thread.leadId}`}>
                   <b>{view.lead.name}</b>
                 </Link>
-                <div
-                  style={{
-                    fontSize: 'var(--t-2xs)',
-                    color: 'var(--muted)',
-                    overflow: 'hidden',
-                    textOverflow: 'ellipsis',
-                    whiteSpace: 'nowrap',
-                  }}
-                >
+                <div className="thread-sub">
                   {view.thread.subject ?? CH_LABEL[view.thread.channel]}
                 </div>
               </div>
               <StateChip state={view.lead.state} />
-              <label className="tgl" style={{ marginLeft: 'auto' }}>
+              <label className="tgl">
                 <input
                   type="checkbox"
                   checked={view.thread.agentEnabled}
@@ -314,18 +285,10 @@ export default function InboxView() {
                     <div className={`msg ${m.direction}`}>
                       {m.body}
                       <div className="m-meta">
-                        {m.author === 'agent' && (
-                          <span className="chip agent" style={{ fontSize: '0.85em' }}>
-                            agente
-                          </span>
-                        )}
+                        {m.author === 'agent' && <span className="chip agent">agente</span>}
                         {m.status === 'draft' && <span className="draft">rascunho</span>}
-                        {m.status === 'failed' && (
-                          <span style={{ color: 'var(--red-400)' }}>falhou</span>
-                        )}
-                        {m.status === 'rejected' && (
-                          <span style={{ color: 'var(--red-400)' }}>rejeitado</span>
-                        )}
+                        {m.status === 'failed' && <span className="m-bad">falhou</span>}
+                        {m.status === 'rejected' && <span className="m-bad">rejeitado</span>}
                         <span>{rel(m.createdAt)}</span>
                       </div>
                     </div>
