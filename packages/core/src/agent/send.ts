@@ -1,6 +1,12 @@
 import type { Sql } from '../platform/db.ts';
 import { controlTx } from '../modules/control.ts';
-import { getIntegrationTx, type IntegrationRow } from '../modules/integrations.ts';
+import {
+  DEFAULT_GUARDRAILS,
+  getIntegrationTx,
+  getSettingTx,
+  type Guardrails,
+  type IntegrationRow,
+} from '../modules/integrations.ts';
 import { markMessageFailed, markMessageSent, type Channel } from '../modules/threads.ts';
 import { sendEmail } from './channels/email.ts';
 import { sendWhatsApp } from './channels/whatsapp.ts';
@@ -33,10 +39,11 @@ export async function dispatchMessage(
           body: string;
           status: string;
           subject: string | null;
+          author: string;
           is_farewell: boolean;
           meeting_id: string | null;
         }[]
-      >`select id, thread_id, body, status, subject, is_farewell, meeting_id from lead_messages where id = ${messageId} for update`
+      >`select id, thread_id, body, status, author, subject, is_farewell, meeting_id from lead_messages where id = ${messageId} for update`
     )[0];
     if (!msg) return { fail: 'message not found' as const };
     // Terminal/in-flight states are honest outcomes, not errors — a replayed
@@ -143,6 +150,8 @@ export async function dispatchMessage(
         subject: msg.subject ?? thread.subject ?? 'Venduá',
         body: msg.body,
         integration,
+        leadId: thread.lead_id,
+        author: msg.author,
       },
     };
   });
@@ -187,6 +196,25 @@ export async function dispatchMessage(
       await tx`select pg_advisory_xact_lock(hashtext(${`pev:${send.channel}:${providerMessageId}`}))`;
     }
     await markMessageSent(tx, messageId, pmid);
+    // Cadence floor: an agent send leaves the lead awaiting a reply — stamp
+    // the default cadence so a run that forgot nextActionAt still gets a
+    // follow-up. NULL-only fill: an agent- or staff-set value always wins,
+    // and the suppression fields mirror claimRun's lead gate so the stamp
+    // lands only on leads the sweeps would actually pick up.
+    if (send.author === 'agent') {
+      const g = await getSettingTx<Partial<Guardrails>>(tx, 'guardrails', {});
+      const days = g.followupCadenceDays ?? DEFAULT_GUARDRAILS.followupCadenceDays;
+      if (days > 0) {
+        await tx`
+          update leads set next_action_at = now() + make_interval(days => ${days})
+          where id = ${send.leadId}
+            and next_action_at is null
+            and archived_at is null
+            and unsubscribed_at is null
+            and agent_mode <> 'off'
+        `;
+      }
+    }
     // A delivery event can beat this finalize — Resend emits it before our
     // send call returns the provider id. Webhook ingest parks those in
     // provider_events; now that the pmid exists, replay them in-order so the
