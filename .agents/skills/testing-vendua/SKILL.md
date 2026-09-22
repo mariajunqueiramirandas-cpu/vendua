@@ -544,9 +544,9 @@ configured, gcal.lastError}` — the Config "reunião" card's chips
 ## Control SSE channel (`/control/v1/events`)
 
 - Stream-verify with `curl -sN --max-time 50 -H "x-vendua-control: $CONTROL_SECRET"
-  http://localhost:8787/control/v1/events | ts '%H:%M:%S.%.S'` — expect `event:
-  sync` as the FIRST frame, `:ka` comment lines ~20.0s apart, and `event:
-  <type>` + `id:` + JSON `data` frames on mutations. Unauthed → 404 (not 401).
+http://localhost:8787/control/v1/events | ts '%H:%M:%S.%.S'` — expect `event:
+sync` as the FIRST frame, `:ka` comment lines ~20.0s apart, and `event:
+<type>` + `id:` + JSON `data` frames on mutations. Unauthed → 404 (not 401).
   Cookie auth: `POST /control/v1/login -c jar` then `curl -b jar` — the SPA
   EventSource path auths the same way.
 - Mutation→event map (app.ts emit sites): POST /leads → lead.change
