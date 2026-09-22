@@ -8,6 +8,7 @@ import {
   type IntegrationRow,
 } from '../modules/integrations.ts';
 import { markMessageFailed, markMessageSent, type Channel } from '../modules/threads.ts';
+import { emitControlEvent } from '../modules/control-events.ts';
 import { sendEmail } from './channels/email.ts';
 import { sendWhatsApp } from './channels/whatsapp.ts';
 import { applyDeliveryEventTx } from './channels/email-inbound.ts';
@@ -36,6 +37,7 @@ export async function dispatchMessage(
   guard?: (tx: Sql) => Promise<void>,
 ): Promise<{ ok: boolean; reason?: string }> {
   // Phase 1: claim.
+  let wroteTid: string | null = null;
   const job = await controlTx(sql, async (tx) => {
     await guard?.(tx);
     const msg = (
@@ -102,6 +104,7 @@ export async function dispatchMessage(
           : null;
     if (suppressed) {
       await markMessageFailed(tx, messageId, suppressed);
+      wroteTid = msg.thread_id;
       return { fail: suppressed };
     }
 
@@ -117,6 +120,7 @@ export async function dispatchMessage(
       )[0];
       if (!meeting || meeting.status !== 'scheduled') {
         await markMessageFailed(tx, messageId, 'meeting no longer scheduled');
+        wroteTid = msg.thread_id;
         return { fail: 'meeting no longer scheduled' };
       }
     }
@@ -130,6 +134,7 @@ export async function dispatchMessage(
       to = lead.email;
       if (!to) {
         await markMessageFailed(tx, messageId, 'lead has no email');
+        wroteTid = msg.thread_id;
         return { fail: 'lead has no email' };
       }
       integration = await getIntegrationTx(tx, 'email');
@@ -137,6 +142,7 @@ export async function dispatchMessage(
       to = lead.whatsapp ?? thread.external_id;
       if (!to) {
         await markMessageFailed(tx, messageId, 'lead has no whatsapp');
+        wroteTid = msg.thread_id;
         return { fail: 'lead has no whatsapp' };
       }
       integration = await getIntegrationTx(tx, 'whatsapp');
@@ -144,6 +150,7 @@ export async function dispatchMessage(
     if (thread.channel !== 'manual' && !integration) {
       const reason = `no enabled ${thread.channel} integration`;
       await markMessageFailed(tx, messageId, reason);
+      wroteTid = msg.thread_id;
       return { fail: reason };
     }
 
@@ -151,8 +158,10 @@ export async function dispatchMessage(
       update lead_messages set status = 'sending', updated_at = clock_timestamp()
       where id = ${messageId} returning updated_at as sending_at
     `;
+    wroteTid = thread.id;
     return {
       send: {
+        threadId: thread.id,
         // Dispatch boundary for the cadence race check: created_at marks
         // composition (drafts can sit for days); the 'sending' transition is
         // what an inbound must post-date to count as answering this send.
@@ -172,6 +181,7 @@ export async function dispatchMessage(
     };
   });
 
+  if (wroteTid) emitControlEvent('thread.message', wroteTid);
   if ('alreadySent' in job) return { ok: true, reason: 'already sent' };
   if ('inFlight' in job) return { ok: true, reason: 'dispatch in flight' };
   if ('fail' in job && job.fail != null) return { ok: false, reason: job.fail };
@@ -199,7 +209,9 @@ export async function dispatchMessage(
   // Phase 3: finalize. Provider ids are channel-namespaced — they share no
   // global namespace, so a Resend id must not collide with a Baileys id in
   // the dedupe index.
-  return controlTx(sql, async (tx) => {
+  const threadsTouched = new Set<string>();
+  const leadsTouched = new Set<string>();
+  const out = await controlTx(sql, async (tx) => {
     if (sendError) {
       await markMessageFailed(tx, messageId, sendError);
       return { ok: false, reason: sendError };
@@ -263,12 +275,16 @@ export async function dispatchMessage(
           ev.event === 'email.failed' ||
           ev.event === 'email.complained'
         ) {
-          await applyDeliveryEventTx(
+          const applied = await applyDeliveryEventTx(
             tx,
             ev.event as 'email.bounced' | 'email.failed' | 'email.complained',
             providerMessageId,
             ev.payload?.to,
           );
+          if ('leadId' in applied) {
+            leadsTouched.add(applied.leadId);
+            for (const t of applied.threadIds) threadsTouched.add(t);
+          }
         }
       }
       if (pending.length) {
@@ -279,4 +295,8 @@ export async function dispatchMessage(
     }
     return { ok: true };
   });
+  threadsTouched.add(send.threadId);
+  for (const t of threadsTouched) emitControlEvent('thread.message', t);
+  for (const l of leadsTouched) emitControlEvent('lead.change', l);
+  return out;
 }
