@@ -26,12 +26,10 @@ export default function Tasks() {
   const loadSeq = useRef(0);
   const load = useCallback(() => {
     const seq = ++loadSeq.current;
-    api
-      .tasks({ done: showDone ? undefined : 'false' } as { done?: string })
-      .then((r) => {
-        if (seq !== loadSeq.current) return;
-        setTasks(r.tasks);
-      });
+    api.tasks({ done: showDone ? undefined : 'false' } as { done?: string }).then((r) => {
+      if (seq !== loadSeq.current) return;
+      setTasks(r.tasks);
+    });
   }, [showDone]);
   useEffect(load, [load]);
   useEffect(() => onControlEvent('lead.change', load), [load]);

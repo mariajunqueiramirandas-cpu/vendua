@@ -89,8 +89,7 @@ export default function LeadDetail() {
         setLead(r.lead);
       })
       .catch((e) => {
-        if (seq === loadSeq.current && e instanceof ApiError && e.status === 404)
-          setNotFound(true);
+        if (seq === loadSeq.current && e instanceof ApiError && e.status === 404) setNotFound(true);
       });
     api.activities(id).then((r) => {
       if (seq === loadSeq.current) setActs(r.activities);
@@ -106,11 +105,9 @@ export default function LeadDetail() {
     });
     // Queued runs with a run_at — the scheduled first contact (or a delayed
     // reply) staff would otherwise have to find on the Runs page.
-    api
-      .runs({ lead_id: id, status: 'queued' })
-      .then((r) => {
-        if (seq === loadSeq.current) setSchedRuns(r.runs.filter((x) => x.run_at));
-      });
+    api.runs({ lead_id: id, status: 'queued' }).then((r) => {
+      if (seq === loadSeq.current) setSchedRuns(r.runs.filter((x) => x.run_at));
+    });
   }, [id]);
   useEffect(load, [load]);
   // The page renders lead, meetings, and queued runs — all three types map
