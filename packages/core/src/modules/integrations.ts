@@ -464,6 +464,33 @@ export function validateSetting(key: string, value: unknown): void {
     return;
   }
 
+  // 'digest' — daily staff email. `to` is the only staff-address field in the
+  // schema; the worker reads hour in the guardrails timezone.
+  if (key === 'digest') {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) {
+      throw bad('*', 'must be an object');
+    }
+    const v = value as Record<string, unknown>;
+    if (v.enabled !== undefined && typeof v.enabled !== 'boolean') {
+      throw bad('enabled', 'must be a boolean');
+    }
+    if (v.hour !== undefined) {
+      if (typeof v.hour !== 'number' || !Number.isInteger(v.hour) || v.hour < 0 || v.hour > 23) {
+        throw bad('hour', 'must be an integer 0–23');
+      }
+    }
+    if (v.to !== undefined) {
+      if (typeof v.to !== 'string' || v.to.length > 320) {
+        throw bad('to', 'must be a string (≤320 chars)');
+      }
+      const t = v.to.trim();
+      if (t && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(t)) {
+        throw bad('to', 'must be an email address');
+      }
+    }
+    return;
+  }
+
   if (key === 'agent_memory') {
     const v = value as { facts?: unknown } | null;
     if (!v || typeof v !== 'object' || !Array.isArray(v.facts)) {

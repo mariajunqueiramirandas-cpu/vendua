@@ -700,6 +700,7 @@ export default function Discovery() {
                   <th>responderam</th>
                   <th>ativos</th>
                   <th>custo 30d</th>
+                  <th>cpl</th>
                 </tr>
               </thead>
               <tbody>
@@ -719,6 +720,9 @@ export default function Discovery() {
                     </td>
                     <td className="mono">{s.live}</td>
                     <td className="mono">{fmtMoney(s.costCents)}</td>
+                    <td className="mono" title="custo 30d ÷ leads novos 30d">
+                      {s.cplCents == null ? '—' : fmtMoney(s.cplCents)}
+                    </td>
                   </tr>
                 ))}
               </tbody>

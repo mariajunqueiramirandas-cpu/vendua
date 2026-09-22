@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState, type ChangeEvent } from 'react';
 import QRCode from 'qrcode';
-import { api, type Integration, type MeetingStatus } from '../api.ts';
+import { api, type ChannelHealth, type Integration, type MeetingStatus } from '../api.ts';
 import { ConfirmBtn, Page } from '../components.tsx';
 
 /** Config — "sala de máquinas". Left column: provider cards. The card's
@@ -269,6 +269,7 @@ export default function Settings() {
   const pitch = (settings.pitch ?? {}) as Record<string, unknown>;
   const meeting = (settings.meeting ?? {}) as Record<string, unknown>;
   const forecast = (settings.forecast ?? {}) as Record<string, unknown>;
+  const digest = (settings.digest ?? {}) as Record<string, unknown>;
   const memory = (settings.agent_memory ?? { facts: [] }) as { facts: string[] };
 
   return (
@@ -310,6 +311,11 @@ export default function Settings() {
               />
             ))}
           </section>
+          <section className="set-sec">
+            <h2>saúde dos canais</h2>
+            <p className="sub">envios, falhas e bloqueios de guarda · últimos 30 dias</p>
+            <ChannelHealthCard />
+          </section>
         </div>
         <div>
           <section className="set-sec">
@@ -334,6 +340,11 @@ export default function Settings() {
               relatórios
             </p>
             <ForecastCard value={forecast} onSave={(v) => void saveSetting('forecast', v)} />
+          </section>
+          <section className="set-sec">
+            <h2>resumo diário</h2>
+            <p className="sub">um email por dia com leads novos, respostas, calls e custo</p>
+            <DigestCard value={digest} onSave={(v) => void saveSetting('digest', v)} />
           </section>
           <section className="set-sec">
             <h2>memória do agente</h2>
@@ -721,6 +732,78 @@ function ProviderCard({
         </div>
       </div>
     </div>
+  );
+}
+
+// ---------- channel health ----------
+
+/** 30d outbound rollup per channel. Alert = failureRate ≥ 20% on ≥5 resolved
+ *  sends — flags the problem on the board, never pauses sends on its own
+ *  (a global per-channel pause flag doesn't exist; staff stays in the loop). */
+function ChannelHealthCard() {
+  const [rows, setRows] = useState<ChannelHealth[] | null>(null);
+  const [err, setErr] = useState('');
+  useEffect(() => {
+    const tick = () =>
+      api
+        .channelHealth()
+        .then((r) => {
+          setRows(r.channels);
+          setErr('');
+        })
+        .catch((e: unknown) => setErr(e instanceof Error ? e.message : String(e)));
+    tick();
+    const t = setInterval(tick, 30_000);
+    return () => clearInterval(t);
+  }, []);
+
+  if (err) return <div className="hint">{err}</div>;
+  if (!rows) return <div className="hint">carregando…</div>;
+  return (
+    <table className="tbl">
+      <thead>
+        <tr>
+          <th>canal</th>
+          <th style={{ textAlign: 'right' }}>enviadas</th>
+          <th style={{ textAlign: 'right' }}>falhas</th>
+          <th style={{ textAlign: 'right' }}>bloqueios</th>
+          <th style={{ textAlign: 'right' }}>bounces</th>
+          <th></th>
+        </tr>
+      </thead>
+      <tbody>
+        {rows.map((r) => (
+          <tr key={r.channel}>
+            <td>{r.channel}</td>
+            <td className="mono" style={{ textAlign: 'right' }}>
+              {r.sent}
+            </td>
+            <td className="mono" style={{ textAlign: 'right' }}>
+              {r.failed}
+            </td>
+            <td
+              className="mono"
+              style={{ textAlign: 'right' }}
+              title={Object.entries(r.blockedByReason)
+                .map(([reason, n]) => `${reason}: ${n}`)
+                .join('\n')}
+            >
+              {r.blocked}
+            </td>
+            <td className="mono" style={{ textAlign: 'right' }}>
+              {r.bounced || '—'}
+            </td>
+            <td style={{ textAlign: 'right' }}>
+              {r.alert ? (
+                <span className="chip bad">falha {Math.round((r.failureRate ?? 0) * 100)}%</span>
+              ) : (
+                <span className="chip">ok</span>
+              )}
+            </td>
+          </tr>
+        ))}
+      </tbody>
+    </table>
   );
 }
 
@@ -1344,7 +1427,80 @@ function ForecastCard({
   );
 }
 
-// ---------- agent memory ----------
+// ---------- digest ----------
+
+function DigestCard({
+  value,
+  onSave,
+}: {
+  value: Record<string, unknown>;
+  onSave: (v: Record<string, unknown>) => void;
+}) {
+  const cur = {
+    enabled: value.enabled === true,
+    to: str(value.to, ''),
+    hour: num(value.hour, 8),
+  };
+  const [edit, setEdit] = useState(cur);
+  useEffect(() => setEdit(cur), [JSON.stringify(cur)]); // eslint-disable-line react-hooks/exhaustive-deps
+  const dirty = JSON.stringify(edit) !== JSON.stringify(cur);
+
+  return (
+    <div className="drv">
+      <div className="grid2" style={{ alignItems: 'end' }}>
+        <div className="field" style={{ marginBottom: 0 }}>
+          <label>enviar para</label>
+          <input
+            type="email"
+            placeholder="voce@empresa.com"
+            value={edit.to}
+            onChange={(e) => setEdit({ ...edit, to: e.target.value })}
+          />
+          <div className="hint">sai pelo driver de email ativo (resend em produção)</div>
+        </div>
+        <div className="field" style={{ marginBottom: 0 }}>
+          <label>a partir das</label>
+          <input
+            type="number"
+            min={0}
+            max={23}
+            value={edit.hour}
+            onChange={(e) => setEdit({ ...edit, hour: Number(e.target.value) || 0 })}
+          />
+          <div className="hint">hora local no fuso dos guardrails — dispara uma vez ao dia</div>
+        </div>
+      </div>
+      <div className="field" style={{ marginTop: 14, marginBottom: 0 }}>
+        <label className="tgl">
+          <input
+            type="checkbox"
+            checked={edit.enabled}
+            onChange={(e) => setEdit({ ...edit, enabled: e.target.checked })}
+          />
+          <span className="tk" />
+          <span className="lbl">{edit.enabled ? 'enviando todo dia' : 'desligado'}</span>
+        </label>
+      </div>
+      <div className="actions">
+        <button
+          className="btn primary"
+          disabled={!dirty}
+          onClick={() => onSave({ ...value, ...edit })}
+        >
+          salvar resumo
+        </button>
+        {dirty && (
+          <button className="btn ghost" onClick={() => setEdit(cur)}>
+            desfazer
+          </button>
+        )}
+      </div>
+      <RawJson value={value} onSave={onSave} />
+    </div>
+  );
+}
+
+// ---------- memory ----------
 
 function MemoryCard({ facts, onSave }: { facts: string[]; onSave: (facts: string[]) => void }) {
   return (
