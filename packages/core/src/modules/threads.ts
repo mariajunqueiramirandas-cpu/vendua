@@ -362,6 +362,13 @@ export async function addInboundMessage(
 
     await tx`update lead_threads set last_message_at = now() where id = ${thread.id}`;
     await tx`update leads set updated_at = now() where id = ${leadId}`;
+    // A reply retires the cadence floor — it only ever means "keep nudging
+    // an unanswered send". Agent- or staff-set dates survive: those were
+    // scheduled with intent (e.g. "me chama semana que vem").
+    await tx`
+      update leads set next_action_at = null, next_action_source = null
+      where id = ${leadId} and next_action_source = 'cadence'
+    `;
     await tx`
       insert into lead_activities (lead_id, kind, body, meta, created_by)
       values (${leadId}, 'agent', ${`Recebida via ${input.channel}`},
@@ -513,6 +520,7 @@ export async function approveMessage(
           where lead_id = ${thread.lead_id} and kind = 'outreach'
             and status in ('queued', 'running')
             and params->>'auto' = 'regenerate'
+            and params->>'src' = ${messageId}
           order by created_at limit 1
         `;
         let runId: string;
@@ -527,6 +535,7 @@ export async function approveMessage(
             params: {
               draftOnly: true,
               auto: 'regenerate',
+              src: messageId,
               focus: `o rascunho anterior expirou (${staleDays}d sem envio) — reescreva a mesma intenção com o estado atual do lead. Texto anterior: ${stale[0].body.slice(0, 500)}`,
             },
           });

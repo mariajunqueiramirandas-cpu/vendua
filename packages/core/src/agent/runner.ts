@@ -1550,7 +1550,7 @@ export async function sweepOutreach(sql: Sql): Promise<number> {
         insert into agent_runs (kind, lead_id, params)
         values ('outreach', ${id}, '{}'::jsonb)
       `;
-      await tx`update leads set next_action_at = null where id = ${id}`;
+      await tx`update leads set next_action_at = null, next_action_source = null where id = ${id}`;
     }
     return due.length;
   });

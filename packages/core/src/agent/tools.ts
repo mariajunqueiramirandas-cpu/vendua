@@ -974,7 +974,7 @@ export async function executeTool(
     }
     case 'update_lead': {
       const { id, ...rest } = args;
-      const res = await updateLead(sql, String(id), leadPatch(rest), key, 'agent', guard);
+      const res = await updateLead(sql, String(id), leadPatch(rest, 'agent'), key, 'agent', guard);
       return res.body;
     }
     case 'set_state': {

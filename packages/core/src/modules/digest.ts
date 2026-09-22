@@ -238,7 +238,15 @@ export async function sweepDigest(sql: Sql): Promise<boolean> {
   try {
     const report = await controlTx(sql, (tx) => digestReportTx(tx, date));
     const { subject, body } = digestText(report);
-    const pmid = await sendEmail(integration, { to: cfg.to, subject, body });
+    // Per-day key: a crash between provider-accept and the state write below
+    // leaves a stale claim that re-sends — the key makes the provider dedupe
+    // it, so reclaim retries are safe by construction.
+    const pmid = await sendEmail(integration, {
+      to: cfg.to,
+      subject,
+      body,
+      idemKey: `digest:${claimed.date}`,
+    });
     if (await setState({ date, status: 'sent' })) {
       digestLog.info({ to: cfg.to, pmid }, 'daily digest sent');
     }

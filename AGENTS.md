@@ -6,13 +6,17 @@ files apply to their own directory.
 
 ## Project snapshot
 
-- Venduá platform monorepo, **Phase 0 in flight**. The design docs in
-  `docs/` are normative and design-complete.
+- Venduá platform monorepo, **Phase 1 done — see `docs/roadmap.md` § Where we
+  are** for the live status table. The design docs in `docs/` are normative
+  and design-complete.
 - `site/` — `@vendua/site`, a SvelteKit teaser site. It is NOT a storefront
   and does not consume the Kernel (ADR 0002).
-- `packages/core` — `@vendua/core`: Bun + Hono + Postgres skeleton (tenancy,
-  catalog, settings/hours, server-side cart, checkout stub, orders). RLS on
-  every table from the first migration.
+- `apps/control` — the staff console: Founder CRM grown into the agent ops
+  board (leads, threads/approvals, Planos, discovery, digest).
+- `packages/core` — `@vendua/core`: Bun + Hono + Postgres (tenancy, catalog,
+  settings/hours, server-side cart, checkout, orders, leads CRM) plus the
+  outbound agent engine (`src/agent/`: run kinds, Gemini LLM, guardrails,
+  sweeps, sim harness). RLS on every table from the first migration.
 - `packages/kernel` — `@vendua/kernel`: React runtime — provider, hooks,
   headless primitives, `<SystemSurfaces />` generic notice renderer.
 - `storefronts/` — React spike storefronts consuming the Kernel. Storefronts
@@ -25,9 +29,10 @@ files apply to their own directory.
 
 ```
 site/            @vendua/site — SvelteKit teaser site
-packages/core    @vendua/core — Hono API + Postgres (tenant_id + RLS)
+apps/control     staff console — CRM board + agent ops (Vite/React, :5195, base /control/)
+packages/core    @vendua/core — Hono API + Postgres (tenant_id + RLS) + agent engine
 packages/kernel  @vendua/kernel — React runtime for storefronts
-packages/        other platform packages (Phase 1+)
+packages/        other platform packages (cli, conformance; Phase 4+ for the rest)
 storefronts/     one package per storefront (React + Kernel; `_examples/`, `_template/` reserved)
 tools/           repo-level CI utilities (empty; Phase 1)
 docs/            normative architecture, ADRs, roadmap — read before designing

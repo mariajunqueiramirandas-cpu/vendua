@@ -330,23 +330,31 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('lead lifecycle (db)', () => {
       expect(regen.params.auto).toBe('regenerate');
     });
 
-    test('an already-queued regen IS reused — one regen per lead', async () => {
+    test('queued regen dedupes per source draft — other drafts spawn their own', async () => {
       await setup();
       const leadId = await controlTx(sql, (tx) =>
         insertLeadTx(tx, { name: 'Regen Queued', agent_mode: 'auto' }),
       ).then((r) => r.body.lead.id);
+      const messageId = await mkDraft(leadId, 'agent', 8);
+      // A regen queued for THIS draft is reused…
       const existing = await controlTx(sql, (tx) =>
         insertRun(tx, {
           kind: 'outreach',
           leadId,
-          params: { auto: 'regenerate', draftOnly: true },
+          params: { auto: 'regenerate', draftOnly: true, src: messageId },
         }),
       );
-      const messageId = await mkDraft(leadId, 'agent', 8);
       const res = await approveMessage(sql, messageId, 'staff', key('a3-regen-queued'));
       expect(res.body.stale).toBe(true);
       expect(res.body.runId).toBe(existing);
       expect(await runsFor(leadId)).toHaveLength(1);
+      // …but a regen still pending on another draft must not swallow this
+      // one — concurrent stale drafts each get their own run.
+      const otherId = await mkDraft(leadId, 'agent', 8);
+      const res2 = await approveMessage(sql, otherId, 'staff', key('a3-regen-other'));
+      expect(res2.body.stale).toBe(true);
+      expect(res2.body.runId).not.toBe(existing);
+      expect(await runsFor(leadId)).toHaveLength(2);
     });
 
     test('claimRun serializes outreach per lead — a busy lead waits, others claim', async () => {

@@ -288,8 +288,12 @@ export function leadInsert(body: Record<string, unknown>): Record<string, unknow
 
 /** Patch payload → column map. Absent keys are skipped; explicit null clears.
  *  `archived: true|false` maps to archived_at = now()/null — archive is a
- *  flag, not a pipeline state. */
-export function leadPatch(body: Record<string, unknown>): Record<string, unknown> {
+ *  flag, not a pipeline state. `actor` stamps next_action_source when
+ *  nextActionAt is written — 'agent' for tool calls, 'staff' for the API. */
+export function leadPatch(
+  body: Record<string, unknown>,
+  actor: 'agent' | 'staff' = 'staff',
+): Record<string, unknown> {
   const set: Record<string, unknown> = {};
   for (const field of Object.keys(LEAD_TEXT_FIELDS) as LeadTextField[]) {
     if (!(field in body)) continue;
@@ -311,8 +315,12 @@ export function leadPatch(body: Record<string, unknown>): Record<string, unknown
   if ('intentScore' in body) set.intent_score = score010(body.intentScore, 'intentScore');
   if ('tags' in body) set.tags = tagsValue(body.tags);
   if ('dealValueCents' in body) set.deal_value_cents = dealValue(body.dealValueCents);
-  if ('nextActionAt' in body)
+  if ('nextActionAt' in body) {
     set.next_action_at = timestampValue(body.nextActionAt, 'nextActionAt');
+    // Provenance rides with the write so inbound replies only clear the
+    // cadence floor, never a deliberately scheduled follow-up.
+    set.next_action_source = set.next_action_at === null ? null : actor;
+  }
   if ('archived' in body)
     set.archived_at = body.archived === true ? new Date().toISOString() : null;
   if (Object.keys(set).length === 0) {
@@ -776,11 +784,15 @@ export async function segmentStats(sql: Sql): Promise<SegmentStat[]> {
         and l.archived_at is null
       group by 1
     `;
+    // Disjoint with the lead-bound query above: a lead-bound discovery run
+    // attributes through the lead join already — params.segment only carries
+    // lead-less runs, or every cost would double-count.
     const discovery = await tx<{ segment: string | null; cost_cents: number }[]>`
       select nullif(r.params->>'segment', '') as segment,
              coalesce(sum(r.cost_cents), 0)::int as cost_cents
       from agent_runs r
-      where r.kind = 'discovery' and r.created_at > now() - interval '30 days'
+      where r.kind = 'discovery' and r.lead_id is null
+        and r.created_at > now() - interval '30 days'
       group by 1
     `;
     const costBy = new Map(costs.map((c) => [c.segment, c.cost_cents]));

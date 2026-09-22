@@ -213,7 +213,8 @@ export async function dispatchMessage(
       const days = g.followupCadenceDays ?? DEFAULT_GUARDRAILS.followupCadenceDays;
       if (days > 0) {
         await tx`
-          update leads set next_action_at = now() + make_interval(days => ${days})
+          update leads set next_action_at = now() + make_interval(days => ${days}),
+                           next_action_source = 'cadence'
           where id = ${send.leadId}
             and next_action_at is null
             and archived_at is null

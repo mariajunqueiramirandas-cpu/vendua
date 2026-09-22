@@ -12,7 +12,7 @@ const mailLog = log.child({ mod: 'email' });
  */
 export async function sendEmail(
   integration: IntegrationRow,
-  msg: { to: string; subject: string; body: string },
+  msg: { to: string; subject: string; body: string; idemKey?: string },
 ): Promise<string | null> {
   const driver = integration.driver;
   const config = integration.config ?? {};
@@ -27,7 +27,13 @@ export async function sendEmail(
         : 'Venduá <agente@auto.vendua.com.br>';
     const res = await fetch('https://api.resend.com/emails', {
       method: 'POST',
-      headers: { 'content-type': 'application/json', authorization: `Bearer ${apiKey}` },
+      headers: {
+        'content-type': 'application/json',
+        authorization: `Bearer ${apiKey}`,
+        // Resend dedupes on this key — a reclaimed caller retrying the same
+        // logical send (e.g. the daily digest) can't double-deliver.
+        ...(msg.idemKey ? { 'idempotency-key': msg.idemKey } : {}),
+      },
       body: JSON.stringify({
         from,
         to: [msg.to],
