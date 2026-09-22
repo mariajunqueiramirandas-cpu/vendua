@@ -449,6 +449,9 @@ export interface JournalReplay {
    *  reflection/nudge read these; without them a resumed run re-walks. */
   book: Map<string, BookEntry>;
   seenContacts: Set<string>;
+  /** Latest stored discovery plan — lives only in ctx (no durable field), so
+   *  the journal's plan tool output is the only place it survives a crash. */
+  plan: string | null;
 }
 
 /** Replay a reclaimed run's journal into live conversation + harness state.
@@ -465,6 +468,7 @@ export function replayJournal(prior: unknown[]): JournalReplay {
     messages: [],
     book: new Map(),
     seenContacts: new Set(),
+    plan: null,
   };
   for (const s of prior) {
     if ((s as { type?: string } | null)?.type === 'model') replay.baseStep++;
@@ -516,8 +520,12 @@ export function replayJournal(prior: unknown[]): JournalReplay {
   // would re-bank a phone attempt 1 already found and reset the
   // no-progress detector.
   for (const s of prior) {
-    if ((s as { type?: string } | null)?.type === 'tool') {
-      bankOut((s as { out?: unknown }).out);
+    const t = s as { type?: string; name?: string; out?: unknown } | null;
+    if (t?.type !== 'tool') continue;
+    bankOut(t.out);
+    const p = t.out as { stored?: boolean; plan?: unknown } | null;
+    if (t.name === 'plan' && p?.stored === true && typeof p.plan === 'string' && p.plan) {
+      replay.plan = p.plan;
     }
   }
   // Boundary = the last 'resumed' marker whose attempt actually reached the
@@ -937,6 +945,9 @@ export async function runOnce(sql: Sql): Promise<boolean> {
     for (const [k, e] of replay.book)
       ctx.book.set(k, { ...e, channels: { ...e.channels }, tried: [...e.tried] });
     for (const v of replay.seenContacts) ctx.seenContacts.add(v);
+    // Discovery plan is harness state with no durable home — rebuild from the
+    // journal or reflection falsely reports '(nenhum)' after a resume.
+    if (replay.plan) ctx.plan = replay.plan;
 
     steps.push({ type: 'system_prompt', content: system });
     messages.push({ role: 'user', content: context });
@@ -1325,29 +1336,35 @@ export async function drain(sql: Sql, limit = 20): Promise<number> {
     sql,
     (tx) =>
       tx<{ id: string; agent_run_id: string | null; approved_by: string | null }[]>`
-        select id, agent_run_id, approved_by from lead_messages
-        where status = 'queued' and created_at < now() - interval '20 seconds'
-        order by created_at limit 10
+        select id, agent_run_id, approved_by from lead_messages m
+        where m.status = 'queued' and m.created_at < now() - interval '20 seconds'
+          and (
+            m.agent_run_id is null
+            or m.approved_by is not null
+            or (select r.status from agent_runs r where r.id = m.agent_run_id) = 'done'
+          )
+        order by m.created_at limit 10
       `,
   );
   for (const m of stranded) {
-    // Atomic close for the mark→dispatch gap: a run canceled/reclaimed
-    // between the sweep above and this dispatch still can't send — the
-    // guard locks the run row inside the dispatch claim tx, serialized
-    // against the cancel/reclaim's own UPDATE. A throw leaves the row
-    // queued; the next drain's sweep marks it terminal.
+    // Agent-authored rows only recover once the run is 'done': a 'queued' or
+    // 'running' run still owns its send — the owning attempt dispatches it
+    // under the new claim (a replayed compose re-runs dispatch with the new
+    // token, and an already-sent row no-ops on status). The terminal-mark
+    // above already failed canceled/failed runs; approved rows are staff-
+    // owned. The guard locks the run row inside the dispatch claim tx so a
+    // cancel landing in the mark→dispatch gap still can't send.
     const runId = m.approved_by ? null : m.agent_run_id;
     const guard = runId
       ? async (tx: Sql) => {
           const rows = await tx<{ status: string }[]>`
             select status from agent_runs where id = ${runId} for update
           `;
-          const status = rows[0]?.status;
-          if (status !== 'running' && status !== 'queued' && status !== 'done') {
+          if (rows[0]?.status !== 'done') {
             throw new HttpError(
               409,
               'STALE_CLAIM',
-              'authoring run no longer active — dispatch suppressed',
+              'authoring run still active — owner dispatches',
             );
           }
         }

@@ -174,6 +174,30 @@ describe('replayJournal', () => {
     expect(r.messages[0]!.content).toBe('segundo');
   });
 
+  test('the latest stored plan rebuilds ctx.plan — no durable field backs it', () => {
+    const r = replayJournal([
+      {
+        type: 'tool',
+        name: 'plan',
+        args: {},
+        out: { stored: true, plan: 'maps first, then SERP' },
+      },
+      { type: 'resumed', attempt: 1 },
+      {
+        type: 'tool',
+        name: 'plan',
+        args: {},
+        out: { stored: true, plan: 'serp only now' },
+      },
+      // a failed/non-plan out must not clobber the last stored plan
+      { type: 'tool', name: 'plan', args: {}, out: { error: 'plan needs content' } },
+      { type: 'model', content: 'continua', toolCalls: [] },
+    ]);
+    expect(r.plan).toBe('serp only now');
+    // a journal with no stored plan leaves ctx.plan null
+    expect(replayJournal([{ type: 'model', content: 'x', toolCalls: [] }]).plan).toBeNull();
+  });
+
   test('book entries and banked contacts rebuild harness state', () => {
     const r = replayJournal([
       {
@@ -659,5 +683,42 @@ dbDescribe('worker robustness (db)', () => {
       select status from lead_messages where id = ${approved!.id}
     `;
     expect(a!.status).toBe('sent');
+  });
+
+  test('stranded recovery defers to a live owner — only done runs dispatch', async () => {
+    await migrate(sql, MIGRATIONS);
+    const lead = await controlTx(sql, (tx) => insertLeadTx(tx, { name: 'Owners' }));
+    const leadId = lead.body.lead.id;
+    const [thread] = await sql<{ id: string }[]>`
+      insert into lead_threads (lead_id, channel) values (${leadId}, 'manual') returning id
+    `;
+    await sql`delete from agent_runs where status = 'queued'`;
+    // 'done' run: its committed send has no owner left — recovery delivers it
+    const doneRun = await enqueueRun(sql, { kind: 'reply', leadId });
+    const [doneMsg] = await sql<{ id: string }[]>`
+      insert into lead_messages (thread_id, direction, author, body, status, agent_run_id, created_at)
+      values (${thread!.id}, 'out', 'agent', 'done envia', 'queued', ${doneRun}, now() - interval '30 seconds')
+      returning id
+    `;
+    // 'queued' run: the next attempt owns the send — recovery must NOT dispatch
+    const queuedRun = await enqueueRun(sql, { kind: 'reply', leadId });
+    const [queuedMsg] = await sql<{ id: string }[]>`
+      insert into lead_messages (thread_id, direction, author, body, status, agent_run_id, created_at)
+      values (${thread!.id}, 'out', 'agent', 'ainda não', 'queued', ${queuedRun}, now() - interval '30 seconds')
+      returning id
+    `;
+    await sql`update agent_runs set status = 'done', claim_token = null where id = ${doneRun}`;
+    // run_at in the future keeps the queued run unclaimable — drain can't
+    // race it into 'running' mid-test
+    await sql`update agent_runs set run_at = now() + interval '1 hour' where id = ${queuedRun}`;
+    await drain(sql, 0);
+    const [d] = await sql<{ status: string }[]>`
+      select status from lead_messages where id = ${doneMsg!.id}
+    `;
+    expect(d!.status).toBe('sent');
+    const [q] = await sql<{ status: string }[]>`
+      select status from lead_messages where id = ${queuedMsg!.id}
+    `;
+    expect(q!.status).toBe('queued');
   });
 });

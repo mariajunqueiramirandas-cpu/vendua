@@ -1140,10 +1140,12 @@ export async function executeTool(
       const out = res.body;
       if (out.blocked) return { blocked: true, reason: out.reason, use: out.use };
       // dispatchMessage no-ops unless the row is still 'queued' — safe when
-      // this response replays. The guard re-fences the live claim inside the
-      // dispatch tx: a cancel/reclaim between compose-commit and this send
-      // must stop the message, not slip through the gap.
-      if (!res.replayed && out.verdict.forceDraft === false && !ctx.draftOnly) {
+      // this response replays. Replayed and fresh both dispatch under THIS
+      // attempt's claim: a replayed compose that never reached dispatch is
+      // the owning attempt finishing its own send (the stranded sweep defers
+      // to any run that isn't 'done'), and a cancel/reclaim between
+      // compose-commit and this send stops the message via the guard.
+      if (out.verdict.forceDraft === false && !ctx.draftOnly) {
         await dispatchMessage(sql, out.composed.body.message.id, guard);
       }
       return {
@@ -1353,7 +1355,7 @@ export async function executeTool(
         }
         return { status: 200, body: { messageId, sendBlocked } };
       });
-      if (!res.replayed && res.body.messageId) {
+      if (res.body.messageId) {
         // Same compose→dispatch gap as send_message: the farewell must die
         // with the run that queued it.
         await dispatchMessage(sql, res.body.messageId, guard);
