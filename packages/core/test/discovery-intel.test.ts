@@ -81,6 +81,7 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('discovery intelligence (db)', (
     monid: null,
     seenContacts: new Set(),
     draftOnly: false,
+    claimToken: null,
   });
 
   /** A finished discovery run for the brief — `lead` = it produced one. */

@@ -1,4 +1,5 @@
 import type { Sql } from '../platform/db.ts';
+import { HttpError } from '../platform/http.ts';
 import { log } from '../platform/log.ts';
 import { controlTx } from '../modules/control.ts';
 import {
@@ -12,9 +13,9 @@ import {
 import { segmentStats, type AgentGoal } from '../modules/leads.ts';
 import { sweepPipelineSnapshots } from '../modules/forecast.ts';
 import { sweepDigest } from '../modules/digest.ts';
-import { providerFor, type AgentMessage } from './llm.ts';
+import { providerFor, type AgentMessage, type ToolCall } from './llm.ts';
 import { buildSystemPrompt } from './prompts.ts';
-import { executeTool, toolsFor, bookDigest, type ToolContext } from './tools.ts';
+import { executeTool, toolsFor, bookDigest, type BookEntry, type ToolContext } from './tools.ts';
 import { MonidBudget } from './channels/monid.ts';
 import { dispatchMessage } from './send.ts';
 import { channelAvailabilityTx, whatsappReadyTx } from './guardrails.ts';
@@ -59,9 +60,14 @@ interface RunRow {
   /** Minted at claim; every worker write is conditioned on it so a worker
    *  that loses its lease (reclaimed row) can't overwrite the new owner. */
   claim_token: string;
-  /** Journal from prior attempts — a reclaimed row keeps it; monid_spend
-   *  markers rebuild the enrichment budget so retries can't re-spend the cap. */
+  /** Journal from prior attempts — a reclaimed row keeps it; the next
+   *  execution replays it into the conversation (see replayJournal) and
+   *  monid_spend markers rebuild the enrichment budget. */
   steps: unknown[];
+  /** Executions consumed — each drain() reclaim +1; at max_attempts the
+   *  reclaim lands 'failed' instead of requeuing. */
+  attempts: number;
+  max_attempts: number;
 }
 
 /** Transaction-local insert — call inside an existing tx (e.g. claimControl's)
@@ -167,7 +173,7 @@ export async function claimRun(sql: Sql): Promise<RunRow | null> {
         update agent_runs set status = 'running', started_at = now(), alive_at = now(),
           claim_token = gen_random_uuid()::text
         where id = ${run.id} and status = 'queued'
-        returning id, kind, lead_id, thread_id, params, claim_token, steps
+        returning id, kind, lead_id, thread_id, params, claim_token, steps, attempts, max_attempts
       `;
       if (rows[0]) return rows[0];
       rejected.push(run.id);
@@ -427,6 +433,272 @@ function mineAttempts(steps: unknown[]): { queries: Set<string>; urls: Set<strin
   return { queries, urls };
 }
 
+/** Max chars of a replayed tool result — the model needs the call's outcome
+ *  (contacts found, blocked reason, ids), not a full page dump. */
+const REPLAY_OUT_MAX = 3000;
+
+export interface JournalReplay {
+  /** Model turns across ALL prior attempts — seeds ctx.step so a resumed
+   *  run's idempotency keys (agent:run:step:name:callId) keep their per-step
+   *  uniqueness instead of colliding with the earlier attempt's step 0..k. */
+  baseStep: number;
+  /** Assistant/tool/user turns from the MOST RECENT attempt (entries after
+   *  the last 'resumed' marker), ready to append to the conversation. */
+  messages: AgentMessage[];
+  /** Prior attempt's prospect ledger + banked contacts — the discovery
+   *  reflection/nudge read these; without them a resumed run re-walks. */
+  book: Map<string, BookEntry>;
+  seenContacts: Set<string>;
+  /** Latest stored discovery plan — lives only in ctx (no durable field), so
+   *  the journal's plan tool output is the only place it survives a crash. */
+  plan: string | null;
+}
+
+/** Replay a reclaimed run's journal into live conversation + harness state.
+ *  A requeued run used to restart blind — the model redid the work and
+ *  could double-contact (idempotency keys only dedupe the identical call at
+ *  the identical step, which a fresh index sequence can't express). Entries
+ *  land verbatim: assistant turns keep their toolCalls (id + Gemini
+ *  thoughtSignature ride along), tool results replay truncated, and calls
+ *  that crashed mid-batch (pending, no out) close with an explicit
+ *  interrupted marker so the model re-checks state instead of assuming. */
+export function replayJournal(prior: unknown[]): JournalReplay {
+  const replay: JournalReplay = {
+    baseStep: 0,
+    messages: [],
+    book: new Map(),
+    seenContacts: new Set(),
+    plan: null,
+  };
+  for (const s of prior) {
+    if ((s as { type?: string } | null)?.type === 'model') replay.baseStep++;
+  }
+  const bank = (vals: unknown[]) => {
+    for (const v of vals) {
+      if (typeof v === 'string' && v) replay.seenContacts.add(v);
+    }
+  };
+  /** Every contact-bearing tool output shape — mirrors what the live tools
+   *  push through ctx.seenContacts (book channels, maps candidates,
+   *  instagram foundContacts, serp result contacts). */
+  const bankOut = (out: unknown) => {
+    if (typeof out !== 'object' || out === null) return;
+    const o = out as {
+      entry?: BookEntry;
+      foundContacts?: { phones?: string[]; whatsappLinks?: string[]; emails?: string[] };
+      candidates?: { phone?: string | null }[];
+      results?: {
+        contacts?: { phones?: string[]; whatsappLinks?: string[]; emails?: string[] };
+      }[];
+    };
+    const e = o.entry;
+    if (e && typeof e.name === 'string') {
+      replay.book.set(e.name.toLowerCase(), e);
+      bank(Object.values(e.channels ?? {}));
+    }
+    if (o.foundContacts) {
+      bank([
+        ...(o.foundContacts.phones ?? []),
+        ...(o.foundContacts.whatsappLinks ?? []),
+        ...(o.foundContacts.emails ?? []),
+      ]);
+    }
+    for (const c of o.candidates ?? []) bank([c.phone]);
+    for (const r of o.results ?? []) {
+      if (r?.contacts) {
+        bank([
+          ...(r.contacts.phones ?? []),
+          ...(r.contacts.whatsappLinks ?? []),
+          ...(r.contacts.emails ?? []),
+        ]);
+      }
+    }
+  };
+  // Harness reconstruction scans the WHOLE journal — unlike the
+  // conversation (bounded to the latest attempt below), the ledger and
+  // banked contacts accumulate across attempts. Skipping earlier attempts
+  // would re-bank a phone attempt 1 already found and reset the
+  // no-progress detector.
+  for (const s of prior) {
+    const t = s as { type?: string; name?: string; out?: unknown } | null;
+    if (t?.type !== 'tool') continue;
+    bankOut(t.out);
+    const p = t.out as { stored?: boolean; plan?: unknown } | null;
+    // Last stored plan wins — including an empty one: a cleared plan must
+    // clear, not resurrect the previous string.
+    if (t.name === 'plan' && p?.stored === true && typeof p.plan === 'string') {
+      replay.plan = p.plan;
+    }
+  }
+  // Boundary = the last 'resumed' marker whose attempt actually reached the
+  // model: replay only that attempt. Earlier attempts' effects are already
+  // in CRM state (fresh contextFor output) — replaying them too would just
+  // bloat context each retry. A 'resumed' marker with no 'model' after it is
+  // an attempt that died between claim and first chat — skipping past it
+  // would hide the last substantive attempt's journal entirely, so keep
+  // walking back to one that did work.
+  let start = 0;
+  for (let i = prior.length - 1; i >= 0; i--) {
+    if ((prior[i] as { type?: string } | null)?.type !== 'resumed') continue;
+    let substantive = false;
+    for (let j = i + 1; j < prior.length; j++) {
+      if ((prior[j] as { type?: string } | null)?.type === 'model') {
+        substantive = true;
+        break;
+      }
+      if ((prior[j] as { type?: string } | null)?.type === 'resumed') break;
+    }
+    if (substantive) {
+      start = i + 1;
+      break;
+    }
+  }
+  // Calls the last model turn announced that still lack a journaled result.
+  // Flushed at the next model entry / end: each gets an interrupted result.
+  let pending: ToolCall[] | null = null;
+  let consumed = 0;
+  const flush = () => {
+    if (!pending) return;
+    for (let i = consumed; i < pending.length; i++) {
+      replay.messages.push({
+        role: 'tool',
+        toolCallId: pending[i]!.id,
+        name: pending[i]!.name,
+        content: JSON.stringify({
+          interrupted: true,
+          error: 'attempt died before this call returned — outcome unknown, verify before re-doing',
+        }),
+      });
+    }
+    pending = null;
+    consumed = 0;
+  };
+  for (let i = start; i < prior.length; i++) {
+    const s = prior[i] as {
+      type?: string;
+      name?: string;
+      args?: Record<string, unknown>;
+      out?: unknown;
+      content?: string;
+      // journals before replay shipped names-only; current entries carry the
+      // full ToolCall (id + thoughtSignature keep Gemini replay verbatim).
+      toolCalls?: (string | ToolCall)[];
+      pending?: boolean;
+    } | null;
+    if (!s || typeof s !== 'object') continue;
+    if (s.type === 'model') {
+      flush();
+      const calls = (s.toolCalls ?? []).map((c, j): ToolCall =>
+        typeof c === 'string'
+          ? { id: `replayed-${replay.baseStep}-${i}-${j}`, name: c, args: {} }
+          : {
+              id: c.id,
+              name: c.name,
+              args: c.args ?? {},
+              ...(c.thoughtSignature ? { thoughtSignature: c.thoughtSignature } : {}),
+            },
+      );
+      pending = calls.length ? calls : null;
+      consumed = 0;
+      replay.messages.push({
+        role: 'assistant',
+        content: s.content ?? '',
+        ...(calls.length ? { toolCalls: calls } : {}),
+      });
+      continue;
+    }
+    if (s.type === 'tool') {
+      const call = pending ? pending[consumed] : undefined;
+      if (call && call.name === s.name) call.args = s.args ?? {};
+      consumed++;
+      const out =
+        s.pending || s.out === undefined
+          ? {
+              interrupted: true,
+              error:
+                'attempt died before this call returned — outcome unknown, verify before re-doing',
+            }
+          : s.out;
+      replay.messages.push({
+        role: 'tool',
+        toolCallId: call?.id ?? `replayed-${replay.baseStep}-${i}-x${consumed}`,
+        name: s.name ?? '?',
+        content:
+          typeof out === 'string'
+            ? out.slice(0, REPLAY_OUT_MAX)
+            : JSON.stringify(out).slice(0, REPLAY_OUT_MAX),
+      });
+      continue;
+    }
+    if (s.type === 'nudge' || s.type === 'reflection') {
+      flush();
+      replay.messages.push({ role: 'user', content: s.content ?? '' });
+      continue;
+    }
+    // 'system_prompt' / 'monid_spend' / 'resumed' — handled elsewhere.
+  }
+  flush();
+  return replay;
+}
+
+/** Reconcile journaled-but-unresolved tool calls against the durable claim
+ *  table. A mutation commits through claimControl under key
+ *  `agent:run:step:name:callId` BEFORE the runner can journal the result —
+ *  a worker that died inside that window left a real, applied effect marked
+ *  pending. The stored response IS the call's result: writing it into the
+ *  journal entry turns a would-be 'interrupted — verify before re-doing'
+ *  into the true outcome, which is stronger than dedupe (the model never
+ *  thinks the effect is missing, so it won't emit a fresh call at all). */
+export async function reconcileInterrupted(
+  sql: Sql,
+  runId: string,
+  steps: unknown[],
+): Promise<void> {
+  const pending = steps.filter(
+    (
+      s,
+    ): s is {
+      type: 'tool';
+      name: string;
+      callId: string;
+      step: number;
+      pending?: boolean;
+      out?: unknown;
+    } => {
+      const e = s as {
+        type?: string;
+        callId?: unknown;
+        step?: unknown;
+        pending?: unknown;
+        out?: unknown;
+      } | null;
+      return (
+        e?.type === 'tool' &&
+        typeof e.callId === 'string' &&
+        typeof e.step === 'number' &&
+        (e.pending === true || e.out === undefined)
+      );
+    },
+  );
+  if (!pending.length) return;
+  const keyOf = (p: (typeof pending)[number]) => `agent:${runId}:${p.step}:${p.name}:${p.callId}`;
+  const rows = await controlTx(
+    sql,
+    (tx) => tx<{ key: string; response: unknown }[]>`
+      select key, response from control_idempotency_keys
+      where key = any(${pending.map(keyOf)})
+    `,
+  );
+  const byKey = new Map(rows.map((r) => [r.key, r.response]));
+  for (const p of pending) {
+    const res = byKey.get(keyOf(p));
+    if (res !== undefined) {
+      delete p.pending;
+      p.out = res;
+    }
+  }
+}
+
 /** Doctrine write-back — a deterministic debrief line appended to
  *  agent_memory on a finished discovery run: what the segment/city yielded,
  *  which tools resolved whatsapp, which prospects dead-ended. Next run's
@@ -489,13 +761,40 @@ export async function runOnce(sql: Sql): Promise<boolean> {
   if (!run) return false;
   const claim = { id: run.id, claimToken: run.claim_token };
 
-  const steps: unknown[] = [];
+  // A reclaimed row carries its prior attempts' journal — keep it (the audit
+  // trail for the whole run, not just this attempt) and mark the boundary so
+  // the next resume replays only the latest attempt's entries.
+  const priorSteps = Array.isArray(run.steps) ? run.steps : [];
+  // Heal pending entries whose mutation actually committed before the
+  // worker died — the stored claim response is the real result, not an
+  // 'interrupted' guess. Best-effort: a failed lookup just leaves them
+  // pending and they replay as interrupted like before.
+  await reconcileInterrupted(sql, run.id, priorSteps).catch(() => undefined);
+  const steps: unknown[] = [...priorSteps];
+  if (priorSteps.length) {
+    steps.push({ type: 'resumed', attempt: run.attempts, at: new Date().toISOString() });
+  }
   const messages: AgentMessage[] = [];
+  // finishRun overwrites tokens_*/cost_cents wholesale, so a reclaimed run
+  // would lose everything its dead attempts already spent. Model entries
+  // journal per-call usage deltas — sum them back in before this attempt
+  // adds its own. Journals predating the usage field contribute 0.
   let tokensIn = 0;
   let tokensOut = 0;
   // accumulate fractional dollars — rounding to cents per step would zero out
   // sub-cent calls and skew the run total.
   let costUsd = 0;
+  for (const s of priorSteps) {
+    const e = s as {
+      type?: string;
+      usage?: { tokensIn?: number; tokensOut?: number; costUsd?: number };
+    } | null;
+    if (e?.type === 'model' && e.usage) {
+      tokensIn += e.usage.tokensIn ?? 0;
+      tokensOut += e.usage.tokensOut ?? 0;
+      costUsd += e.usage.costUsd ?? 0;
+    }
+  }
   // Paid-enrichment budget — hoisted beside costUsd so the catch-path
   // finishRun can fold monid spend into the run's stored cost. A reclaimed
   // run rebuilds from the journal's monid_spend markers — the provider
@@ -609,13 +908,18 @@ export async function runOnce(sql: Sql): Promise<boolean> {
       },
     });
     const tools = toolsFor(run.kind);
+    const replay = replayJournal(priorSteps);
     const ctx: ToolContext = {
       sql,
       runId: run.id,
       runKind: run.kind,
       leadId: run.lead_id,
       threadId: run.thread_id,
-      step: 0,
+      // Step numbering continues past the prior attempts' turn count — the
+      // idempotency key agent:run:step:name:callId can then never collide
+      // with a call the earlier attempts already committed under step 0..k.
+      step: replay.baseStep,
+      claimToken: run.claim_token,
       briefName: typeof run.params.briefName === 'string' ? run.params.briefName : null,
       leadCap: (() => {
         const t = Math.floor(Number(run.params.target));
@@ -634,9 +938,29 @@ export async function runOnce(sql: Sql): Promise<boolean> {
       // send_message degrades to a draft so a suggestion never ships.
       draftOnly: run.params.draftOnly === true,
     };
+    // Resume state — the journal hands back the ledger + banked contacts so
+    // the reflection tick and progress gates see the prior attempt's field.
+    // Entries are cloned on the way in: the book tool mutates its stored
+    // entry in place, and without a copy that mutation would rewrite the
+    // earlier attempt's journaled out.entry (audit trail lying about when
+    // a channel/tried entry appeared).
+    for (const [k, e] of replay.book)
+      ctx.book.set(k, { ...e, channels: { ...e.channels }, tried: [...e.tried] });
+    for (const v of replay.seenContacts) ctx.seenContacts.add(v);
+    // Discovery plan is harness state with no durable home — rebuild from the
+    // journal or reflection falsely reports '(nenhum)' after a resume.
+    if (replay.plan) ctx.plan = replay.plan;
 
     steps.push({ type: 'system_prompt', content: system });
     messages.push({ role: 'user', content: context });
+    if (replay.messages.length) {
+      messages.push(...replay.messages);
+      messages.push({
+        role: 'user',
+        content:
+          'RETOMADA: esta execução foi recuperada após o worker morrer — o histórico acima é seu próprio trabalho anterior nesta run (os efeitos já estão aplicados no CRM). Continue de onde parou; NÃO repita chamadas que já retornaram. Chamadas marcadas "interrupted" têm resultado desconhecido — verifique o estado antes de refazer.',
+      });
+    }
     await persist();
 
     // Discovery harness nudge — fired once at the finish boundary when the
@@ -658,7 +982,15 @@ export async function runOnce(sql: Sql): Promise<boolean> {
       tokensIn += res.tokensIn;
       tokensOut += res.tokensOut;
       if (res.costUsd != null) costUsd += res.costUsd;
-      steps.push({ type: 'model', content: res.text, toolCalls: res.toolCalls.map((t) => t.name) });
+      // Full ToolCall objects, not just names: a resumed run replays this
+      // turn verbatim into the conversation — ids pair with the tool results
+      // and Gemini 3 400s without each call's thoughtSignature.
+      steps.push({
+        type: 'model',
+        content: res.text,
+        toolCalls: res.toolCalls,
+        usage: { tokensIn: res.tokensIn, tokensOut: res.tokensOut, costUsd: res.costUsd ?? 0 },
+      });
       await persist();
       if (lost) break;
 
@@ -763,16 +1095,23 @@ export async function runOnce(sql: Sql): Promise<boolean> {
         content: res.text ?? '',
         toolCalls: res.toolCalls,
       });
-      ctx.step = i;
+      // Global step index across attempts — keeps idempotency keys unique
+      // (replay.baseStep counts the prior journal's model turns).
+      ctx.step = replay.baseStep + i;
 
       if (run.kind === 'discovery') {
         // Discovery tools are remote reads or idempotent inserts — a step's
         // calls run in parallel (one provider automation per call would make
         // a single iteration take minutes).
-        const batch: unknown[] = res.toolCalls.map((call) => ({
+        // Pending entries journal callId+step BEFORE execution — a crash
+        // mid-batch leaves entries reconcileInterrupted can resolve
+        // against the durable claim table (key agent:run:step:name:callId).
+        const batch: unknown[] = res.toolCalls.map((call, callIndex) => ({
           type: 'tool',
           name: call.name,
           args: call.args,
+          callId: call.id ?? String(callIndex),
+          step: ctx.step,
           pending: true,
         }));
         const toolMsgs: AgentMessage[] = new Array(res.toolCalls.length);
@@ -785,7 +1124,14 @@ export async function runOnce(sql: Sql): Promise<boolean> {
             } catch (e) {
               out = { error: e instanceof Error ? e.message : String(e) };
             }
-            batch[callIndex] = { type: 'tool', name: call.name, args: call.args, out };
+            batch[callIndex] = {
+              type: 'tool',
+              name: call.name,
+              args: call.args,
+              callId: call.id ?? String(callIndex),
+              step: ctx.step,
+              out,
+            };
             toolMsgs[callIndex] = {
               role: 'tool',
               toolCallId: call.id,
@@ -839,13 +1185,36 @@ export async function runOnce(sql: Sql): Promise<boolean> {
         // Messaging kinds stay sequential: tool calls in one response may
         // depend on each other's ordering (draft before send).
         for (const [callIndex, call] of res.toolCalls.entries()) {
+          const callId = call.id ?? String(callIndex);
+          // Journal the pending call BEFORE executing: a crash between the
+          // mutation's commit and the result's journal write leaves an
+          // entry the next attempt reconciles against the claim table.
+          const entry: {
+            type: 'tool';
+            name: string;
+            args: unknown;
+            callId: string;
+            step: number;
+            pending?: boolean;
+            out?: unknown;
+          } = {
+            type: 'tool',
+            name: call.name,
+            args: call.args,
+            callId,
+            step: ctx.step,
+            pending: true,
+          };
+          steps.push(entry);
+          await persist();
           let out: unknown;
           try {
-            out = await executeTool(ctx, call.id ?? String(callIndex), call.name, call.args);
+            out = await executeTool(ctx, callId, call.name, call.args);
           } catch (e) {
             out = { error: e instanceof Error ? e.message : String(e) };
           }
-          steps.push({ type: 'tool', name: call.name, args: call.args, out });
+          delete entry.pending;
+          entry.out = out;
           messages.push({
             role: 'tool',
             toolCallId: call.id,
@@ -913,10 +1282,25 @@ export async function runOnce(sql: Sql): Promise<boolean> {
 const RUN_LEASE_MIN = 10;
 
 export async function drain(sql: Sql, limit = 20): Promise<number> {
+  // Reclaim consumes an attempt: the row requeues behind an exponential
+  // backoff (run_at = now + 2^attempts min) so a poisoned run stops jumping
+  // ahead of healthy work, and the attempt that exhausts max_attempts lands
+  // 'failed' — journal kept — instead of looping the lease forever.
   await controlTx(
     sql,
     (tx) => tx`
-      update agent_runs set status = 'queued', started_at = null, alive_at = null, claim_token = null
+      update agent_runs set
+        attempts = attempts + 1,
+        status = case when attempts + 1 >= max_attempts then 'failed' else 'queued' end,
+        run_at = case when attempts + 1 >= max_attempts then run_at
+                      else now() + make_interval(mins => 1 << least(attempts + 1, 16)) end,
+        error = case when attempts + 1 >= max_attempts
+                     then 'attempt cap reached — run kept dying mid-execution'
+                     else error end,
+        finished_at = case when attempts + 1 >= max_attempts then now() else finished_at end,
+        started_at = null,
+        alive_at = null,
+        claim_token = null
       where status = 'running' and coalesce(alive_at, started_at) < now() - make_interval(mins => ${RUN_LEASE_MIN})
     `,
   );
@@ -933,17 +1317,61 @@ export async function drain(sql: Sql, limit = 20): Promise<number> {
   // Queued messages outlive the request that queued them — a crash between
   // approve/commit and dispatch must not strand one. The 20s grace lets the
   // inline request-path dispatch win first.
+  // Agent-authored rows die with their run first: the tool path's claim
+  // fence leaves a canceled/cap-exhausted run's message 'queued' on purpose
+  // — picking it up here unguarded would outflank the fence 20s later.
+  // Staff-approved drafts are staff-owned (approved_by set) even though
+  // they keep agent_run_id — approval is the explicit decision to send.
+  await controlTx(
+    sql,
+    (tx) => tx`
+      update lead_messages m set status = 'failed', updated_at = now(),
+        error = 'authoring run no longer active'
+      where m.status = 'queued' and m.agent_run_id is not null
+        and m.approved_by is null
+        and (
+          select r.status from agent_runs r where r.id = m.agent_run_id
+        ) in ('canceled', 'failed')
+    `,
+  );
   const stranded = await controlTx(
     sql,
     (tx) =>
-      tx<{ id: string }[]>`
-        select id from lead_messages
-        where status = 'queued' and created_at < now() - interval '20 seconds'
-        order by created_at limit 10
+      tx<{ id: string; agent_run_id: string | null; approved_by: string | null }[]>`
+        select id, agent_run_id, approved_by from lead_messages m
+        where m.status = 'queued' and m.created_at < now() - interval '20 seconds'
+          and (
+            m.agent_run_id is null
+            or m.approved_by is not null
+            or (select r.status from agent_runs r where r.id = m.agent_run_id) = 'done'
+          )
+        order by m.created_at limit 10
       `,
   );
   for (const m of stranded) {
-    await dispatchMessage(sql, m.id).catch((e) =>
+    // Agent-authored rows only recover once the run is 'done': a 'queued' or
+    // 'running' run still owns its send — the owning attempt dispatches it
+    // under the new claim (a replayed compose re-runs dispatch with the new
+    // token, and an already-sent row no-ops on status). The terminal-mark
+    // above already failed canceled/failed runs; approved rows are staff-
+    // owned. The guard locks the run row inside the dispatch claim tx so a
+    // cancel landing in the mark→dispatch gap still can't send.
+    const runId = m.approved_by ? null : m.agent_run_id;
+    const guard = runId
+      ? async (tx: Sql) => {
+          const rows = await tx<{ status: string }[]>`
+            select status from agent_runs where id = ${runId} for update
+          `;
+          if (rows[0]?.status !== 'done') {
+            throw new HttpError(
+              409,
+              'STALE_CLAIM',
+              'authoring run still active — owner dispatches',
+            );
+          }
+        }
+      : undefined;
+    await dispatchMessage(sql, m.id, guard).catch((e) =>
       agentLog.error({ err: e, messageId: m.id }, 'dispatch failed'),
     );
   }
