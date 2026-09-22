@@ -44,7 +44,9 @@ body {
   display: flex;
   flex-direction: column;
   align-items: center;
-  padding: 0 20px;
+  padding-inline: 20px;
+  padding-inline-start: max(20px, env(safe-area-inset-left));
+  padding-inline-end: max(20px, env(safe-area-inset-right));
 }
 .wordmark {
   font-family: var(--mono);
@@ -52,7 +54,7 @@ body {
   letter-spacing: .18em;
   text-transform: lowercase;
   color: var(--ink-2);
-  padding: 22px 0;
+  padding-block: 22px;
 }
 .wordmark b { color: var(--ink); font-weight: 500; }
 .card {
@@ -61,8 +63,9 @@ body {
   background: var(--paper);
   border: 1px solid var(--line);
   border-radius: 14px;
-  padding: 34px 30px 30px;
-  margin: 12px 0 40px;
+  padding-block: 34px 30px;
+  padding-inline: clamp(20px, 6vw, 30px);
+  margin-block: 12px 40px;
   position: relative;
 }
 .card::before {
@@ -95,25 +98,23 @@ h1 {
   font-family: var(--serif);
   font-style: italic;
   font-weight: 400;
-  font-size: 34px;
+  font-size: clamp(27px, 8.5vw, 34px);
   line-height: 1.12;
   letter-spacing: -.01em;
-  margin: 14px 0 8px;
+  margin-block: 14px 8px;
 }
 .sub { color: var(--ink-2); font-size: 14px; }
 /* day groups */
-.day { margin-top: 26px; }
+.day { margin-block-start: 30px; }
 .day-head {
   font-family: var(--mono);
   font-size: 11px;
   letter-spacing: .14em;
   text-transform: uppercase;
   color: var(--ink-2);
-  margin-bottom: 10px;
-  display: flex;
-  justify-content: space-between;
+  margin-block-end: 10px;
 }
-.slots { display: flex; flex-wrap: wrap; gap: 8px; }
+.slots { display: flex; flex-wrap: wrap; gap: 12px; }
 .slot {
   font-family: var(--sans);
   font-variant-numeric: tabular-nums;
@@ -123,7 +124,8 @@ h1 {
   background: transparent;
   border: 1px solid var(--line);
   border-radius: 8px;
-  padding: 9px 14px;
+  padding-block: 10px;
+  padding-inline: 15px;
   cursor: pointer;
   transition: transform .12s ease, background .12s ease, border-color .12s;
 }
@@ -134,10 +136,24 @@ h1 {
   border-color: var(--ink);
   transform: translateY(-1px);
 }
-/* details form */
-.details { margin-top: 26px; display: none; }
-.details.show { display: block; }
-.field { margin-bottom: 14px; }
+/* details form — revealed on slot pick; sticky so the confirm action is
+   never parked below the fold of the day list */
+.details { margin-block-start: 30px; display: none; }
+.details.show {
+  display: block;
+  position: sticky;
+  bottom: 10px;
+  bottom: calc(10px + env(safe-area-inset-bottom));
+  max-height: calc(100dvh - 20px - env(safe-area-inset-bottom));
+  overflow-y: auto;
+  background: var(--paper);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 18px;
+  box-shadow: 0 -12px 30px rgba(18, 60, 50, .12);
+}
+.details .eyebrow { margin-block-end: 16px; }
+.field { margin-block-end: 12px; }
 .field label {
   display: block;
   font-family: var(--mono);
@@ -145,24 +161,26 @@ h1 {
   letter-spacing: .14em;
   text-transform: uppercase;
   color: var(--ink-2);
-  margin-bottom: 6px;
+  margin-block-end: 6px;
 }
 .field input {
   width: 100%;
   font: inherit;
-  font-size: 15px;
+  font-size: 16px;
   color: var(--ink);
   background: transparent;
-  border: none;
-  border-bottom: 1px solid var(--line);
-  padding: 8px 2px;
-  border-radius: 0;
+  border: 1px solid var(--line);
+  padding-block: 9px;
+  padding-inline: 12px;
+  border-radius: 8px;
+  transition: border-color .12s ease;
 }
-.field input:focus { outline: none; border-bottom-color: var(--ink); }
+.field input:focus { outline: none; border-color: var(--ink); }
+.field input:focus-visible { outline: 2px solid var(--ink); outline-offset: 1px; }
 .field input::placeholder { color: color-mix(in srgb, var(--ink-2) 55%, transparent); }
 .confirm {
   width: 100%;
-  margin-top: 20px;
+  margin-block-start: 16px;
   font: inherit;
   font-size: 15px;
   font-weight: 600;
@@ -170,7 +188,8 @@ h1 {
   background: var(--ink);
   border: 1px solid var(--ink);
   border-radius: 10px;
-  padding: 13px 18px;
+  padding-block: 13px;
+  padding-inline: 18px;
   cursor: pointer;
   transition: background .12s ease;
 }
@@ -178,40 +197,33 @@ h1 {
 .confirm:disabled { opacity: .5; cursor: default; }
 .confirm .when { font-weight: 400; opacity: .75; }
 /* states */
-.state { text-align: center; padding: 30px 0 10px; }
-.state h1 { font-size: 30px; }
-.state p { color: var(--ink-2); font-size: 14px; margin-top: 10px; }
-.spin {
-  width: 22px; height: 22px;
-  border: 2px solid var(--line);
-  border-top-color: var(--ink);
-  border-radius: 50%;
-  margin: 26px auto 14px;
-  animation: spin .7s linear infinite;
-}
-@keyframes spin { to { transform: rotate(360deg); } }
+.state { padding-block: 30px 10px; }
+.state p { color: var(--ink-2); font-size: 14px; }
+.center { text-align: center; }
 .big-time {
   font-family: var(--serif);
   font-style: italic;
-  font-size: 30px;
+  font-size: clamp(24px, 8vw, 30px);
   line-height: 1.15;
-  margin: 14px 0 4px;
+  margin-block: 14px 4px;
 }
 .room {
   display: inline-block;
-  margin-top: 16px;
+  margin-block-start: 20px;
   font-size: 14px;
   font-weight: 600;
   color: var(--ink);
   background: var(--lime);
   border: 1px solid var(--ink);
   border-radius: 8px;
-  padding: 10px 16px;
+  padding-block: 10px;
+  padding-inline: 16px;
   text-decoration: none;
 }
 .cancel-link {
-  display: block;
-  margin-top: 18px;
+  display: inline-block;
+  margin-block-start: 24px;
+  padding-block: 4px;
   font-family: var(--mono);
   font-size: 11px;
   letter-spacing: .1em;
@@ -224,15 +236,27 @@ h1 {
 }
 .cancel-link:hover { color: var(--ink); }
 .err {
-  margin-top: 14px;
+  margin-block-start: 14px;
   font-size: 13px;
   color: #8a3b12;
   background: color-mix(in srgb, #d9a05b 18%, transparent);
   border: 1px solid color-mix(in srgb, #8a3b12 30%, transparent);
   border-radius: 8px;
-  padding: 10px 12px;
+  padding-block: 10px;
+  padding-inline: 12px;
 }
-.check { margin: 8px auto 4px; display: block; }
+.note {
+  margin-block-start: 16px;
+  font-size: 13px;
+  color: var(--ink);
+  background: color-mix(in srgb, var(--lime) 55%, transparent);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding-block: 10px;
+  padding-inline: 12px;
+}
+.note .cancel-link { margin-block-start: 0; padding-block: 0; }
+.check { margin-block: 8px 4px; margin-inline: auto; display: block; }
 .check circle { fill: var(--lime); stroke: var(--ink); }
 .check path {
   stroke: var(--ink);
@@ -246,12 +270,13 @@ footer {
   font-size: 10px;
   letter-spacing: .12em;
   color: var(--ink-2);
-  padding: 0 0 26px;
+  margin-block-start: auto;
+  padding-block-end: calc(26px + env(safe-area-inset-bottom));
   opacity: .75;
 }
-.skel { display:flex; flex-wrap:wrap; gap:8px; }
+.skel { display:flex; flex-wrap:wrap; gap:12px; }
 .skel i {
-  width: 68px; height: 36px; border-radius: 8px;
+  width: 68px; height: 40px; border-radius: 8px;
   background: var(--paper-2);
   animation: pulse 1.1s ease-in-out infinite;
 }
@@ -354,13 +379,13 @@ footer {
       '<p class="sub">calls de ' + esc(String(state.slotMinutes)) + 'min · videochamada · ' +
         (state.roomConfigured ? 'o link da sala vem na confirmação' : 'sem link de sala configurado') + '</p>';
     if (state.notice) {
-      html += '<div class="err" style="margin-top:16px;border-color:var(--line);background:var(--lime);color:var(--ink)">' + esc(state.notice) + '</div>';
+      html += '<div class="note">' + esc(state.notice) + '</div>';
       state.notice = null;
     }
     if (state.existing) {
-      html += '<div class="err" style="margin-top:16px">Você já tem uma call marcada para <b>' +
+      html += '<div class="note">Você já tem uma call marcada para <b>' +
         esc(fmtLong(state.existing.startsAt)) + '</b>.' +
-        ' <button class="cancel-link" style="display:inline;margin:0" id="goExisting">ver / cancelar</button></div>';
+        ' <button class="cancel-link" id="goExisting">ver / cancelar</button></div>';
     }
     if (!days.length) {
       html += '<div class="state"><p>Nenhum horário livre nas próximas duas semanas — responde a mensagem que a gente acha uma janela.</p></div>';
@@ -374,6 +399,7 @@ footer {
     });
     html +=
       '<div class="details" id="details">' +
+        '<div class="eyebrow">seus dados</div>' +
         '<div class="field"><label>seu nome</label><input id="fName" autocomplete="name" value="' + esc(state.name) + '" placeholder="como te chamamos?"></div>' +
         '<div class="field"><label>whatsapp (opcional)</label><input id="fContact" autocomplete="tel" inputmode="tel" value="' + esc(state.contact) + '" placeholder="pra te achar se precisar"></div>' +
         '<button class="confirm" id="confirm">confirmar <span class="when" id="when"></span></button>' +
@@ -403,7 +429,7 @@ footer {
       '<div class="big-time">' + esc(fmtLong(m.startsAt)) + '</div>' +
       '<p class="sub">' + esc(fmtTime(m.startsAt)) + ' – ' + esc(fmtTime(m.endsAt)) + ' · ' + esc(tzLabel()) + '</p>' +
       (roomUrl ? '<a class="room" href="' + esc(roomUrl) + '" target="_blank" rel="noopener">entrar na sala →</a>' : '') +
-      '<button class="cancel-link" id="doCancel">cancelar esta call</button>' +
+      '<div><button class="cancel-link" id="doCancel">cancelar esta call</button></div>' +
       '<div id="err"></div>';
     document.getElementById('doCancel').addEventListener('click', doCancel);
   }
@@ -411,19 +437,21 @@ footer {
   function renderSuccess(m) {
     var roomUrl = m.roomUrl || '';
     view.innerHTML =
+      '<div class="center">' +
       '<svg class="check" width="44" height="44" viewBox="0 0 44 44">' +
         '<circle cx="22" cy="22" r="21" stroke-width="1.5"/>' +
         '<path d="M14 22.5l5.5 5.5L30 17" stroke-width="2" fill="none" stroke-linecap="round"/>' +
       '</svg>' +
       '<div class="eyebrow" style="justify-content:center">marcado</div>' +
-      '<div class="big-time" style="text-align:center">' + esc(fmtLong(m.startsAt)) + '</div>' +
-      '<p class="sub" style="text-align:center">' +
+      '<div class="big-time">' + esc(fmtLong(m.startsAt)) + '</div>' +
+      '<p class="sub">' +
         'até ' + esc(fmtTime(m.endsAt)) + ' · ' + esc(tzLabel()) +
         (m.roomUrl ? '' : ' · a gente manda o link da sala antes') +
       '</p>' +
-      (m.roomUrl ? '<div style="text-align:center"><a class="room" href="' + esc(m.roomUrl) + '" target="_blank" rel="noopener">entrar na sala →</a></div>' : '') +
-      '<button class="cancel-link" id="doCancel">cancelar esta call</button>' +
-      '<div id="err"></div>';
+      (m.roomUrl ? '<a class="room" href="' + esc(m.roomUrl) + '" target="_blank" rel="noopener">entrar na sala →</a>' : '') +
+      '<div><button class="cancel-link" id="doCancel">cancelar esta call</button></div>' +
+      '<div id="err"></div>' +
+      '</div>';
     state.existing = m;
     document.getElementById('doCancel').addEventListener('click', doCancel);
   }
