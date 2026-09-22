@@ -483,10 +483,15 @@ export function validateSetting(key: string, value: unknown): void {
       if (typeof v.to !== 'string' || v.to.length > 320) {
         throw bad('to', 'must be a string (≤320 chars)');
       }
-      const t = v.to.trim();
-      if (t && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(t)) {
+      if (v.to !== v.to.trim()) {
+        throw bad('to', 'must not have surrounding whitespace');
+      }
+      if (v.to && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v.to)) {
         throw bad('to', 'must be an email address');
       }
+    }
+    if (v.enabled === true && !v.to) {
+      throw bad('to', 'is required when the digest is enabled');
     }
     return;
   }

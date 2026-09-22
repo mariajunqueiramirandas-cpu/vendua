@@ -33,6 +33,9 @@ describe('validateSetting digest', () => {
     expect(code(() => validateSetting('digest', { hour: -1 }))).toBe('BAD_REQUEST');
     expect(code(() => validateSetting('digest', { hour: 8.5 }))).toBe('BAD_REQUEST');
     expect(code(() => validateSetting('digest', { to: 'not-an-email' }))).toBe('BAD_REQUEST');
+    expect(code(() => validateSetting('digest', { to: ' pad@x.com ' }))).toBe('BAD_REQUEST');
+    expect(code(() => validateSetting('digest', { enabled: true }))).toBe('BAD_REQUEST');
+    expect(code(() => validateSetting('digest', { enabled: true, to: '' }))).toBe('BAD_REQUEST');
   });
 });
 

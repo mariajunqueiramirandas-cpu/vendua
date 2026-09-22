@@ -8,7 +8,8 @@ import { controlTx } from './control.ts';
  *  - lead_activities kind='blocked' — guardrail blocks recorded by
  *    recordBlockedSendTx with meta {channel, reason};
  *  - leads.email_bounced_at — provider-confirmed bounce markers.
- * 'manual' threads are excluded: staff sends aren't channel health.
+ * All authors count: a failing send is a channel problem whoever sent it.
+ * 'manual' threads are excluded — they're not a delivery channel.
  */
 
 export const HEALTH_WINDOW_DAYS = 30;
@@ -54,20 +55,20 @@ export async function channelHealth(sql: Sql): Promise<ChannelHealth[]> {
       from lead_messages m
       join lead_threads t on t.id = m.thread_id
       where m.direction = 'out' and t.channel in ('whatsapp', 'email')
-        and m.created_at > now() - interval '30 days'
+        and m.created_at > now() - make_interval(days => ${HEALTH_WINDOW_DAYS})
       group by 1
     `;
     const blocks = await tx<{ channel: string; reason: string; n: number }[]>`
       select meta->>'channel' as channel, meta->>'reason' as reason, count(*)::int as n
       from lead_activities
-      where kind = 'blocked' and at > now() - interval '30 days'
+      where kind = 'blocked' and at > now() - make_interval(days => ${HEALTH_WINDOW_DAYS})
         and meta->>'channel' in ('whatsapp', 'email')
       group by 1, 2
     `;
     const bounced = (
       await tx<{ n: number }[]>`
         select count(*)::int as n from leads
-        where email_bounced_at > now() - interval '30 days'
+        where email_bounced_at > now() - make_interval(days => ${HEALTH_WINDOW_DAYS})
       `
     )[0]!.n;
 
