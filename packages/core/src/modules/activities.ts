@@ -20,6 +20,7 @@ export const ACTIVITY_KINDS = [
   'meeting_done',
   'meeting_no_show',
   'meeting_cancelled',
+  'blocked',
 ] as const;
 export type ActivityKind = (typeof ACTIVITY_KINDS)[number];
 

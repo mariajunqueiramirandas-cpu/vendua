@@ -705,23 +705,41 @@ export async function leadStats(sql: Sql): Promise<LeadStats> {
 export interface SegmentStat {
   segment: string;
   leads: number;
+  /** leads created in the last 30d — the denominator that pairs with
+   *  costCents (also 30d) for an apples-to-apples CPL. */
+  leads30d: number;
   contacted: number;
   replied: number;
   live: number;
   costCents: number;
+  /** costCents / leads30d; null when the segment produced no lead in the
+   *  window — a spend with zero output is a worse signal than "—" implies,
+   *  but inventing a per-lead price would be fiction. */
+  cplCents: number | null;
 }
 
 /** Per-segment performance — leads found, contacts made, replies received,
  *  actives won, and 30d agent spend. Powers the Discovery panel and feeds
  *  each discovery run's context, so the agent leans into segments that
- *  convert instead of only following the brief's defaults. */
+ *  convert instead of only following the brief's defaults. costCents covers
+ *  BOTH lead-bound runs (triaged by the lead's segment) and discovery runs
+ *  carrying params.segment — discovery is the acquisition spend, so a CPL
+ *  without it would be fiction. */
 export async function segmentStats(sql: Sql): Promise<SegmentStat[]> {
   return controlTx(sql, async (tx) => {
     const rows = await tx<
-      { segment: string; leads: number; contacted: number; replied: number; live: number }[]
+      {
+        segment: string;
+        leads: number;
+        leads30d: number;
+        contacted: number;
+        replied: number;
+        live: number;
+      }[]
     >`
       select coalesce(nullif(l.segment, ''), '—') as segment,
              count(*)::int as leads,
+             count(*) filter (where l.created_at > now() - interval '30 days')::int as leads30d,
              count(*) filter (where exists (
                select 1 from lead_state_history h
                where h.lead_id = l.id and h.to_state <> 'lead'))::int as contacted,
@@ -733,7 +751,7 @@ export async function segmentStats(sql: Sql): Promise<SegmentStat[]> {
       from leads l
       where l.archived_at is null
       group by 1
-      order by 4 desc, 2 desc
+      order by 5 desc, 2 desc
       limit 12
     `;
     const costs = await tx<{ segment: string; cost_cents: number }[]>`
@@ -744,8 +762,21 @@ export async function segmentStats(sql: Sql): Promise<SegmentStat[]> {
         and l.archived_at is null
       group by 1
     `;
+    const discovery = await tx<{ segment: string | null; cost_cents: number }[]>`
+      select nullif(r.params->>'segment', '') as segment,
+             coalesce(sum(r.cost_cents), 0)::int as cost_cents
+      from agent_runs r
+      where r.kind = 'discovery' and r.created_at > now() - interval '30 days'
+      group by 1
+    `;
     const costBy = new Map(costs.map((c) => [c.segment, c.cost_cents]));
-    return rows.map((r) => ({ ...r, costCents: costBy.get(r.segment) ?? 0 }));
+    for (const d of discovery) {
+      if (d.segment) costBy.set(d.segment, (costBy.get(d.segment) ?? 0) + d.cost_cents);
+    }
+    return rows.map((r) => {
+      const costCents = costBy.get(r.segment) ?? 0;
+      return { ...r, costCents, cplCents: r.leads30d ? Math.round(costCents / r.leads30d) : null };
+    });
   });
 }
 

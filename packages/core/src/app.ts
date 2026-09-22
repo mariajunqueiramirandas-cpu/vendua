@@ -88,6 +88,7 @@ import {
 } from './modules/integrations.ts';
 import { claimControl, controlTx } from './modules/control.ts';
 import { pipelineForecast, snapshotPipelineTx } from './modules/forecast.ts';
+import { channelHealth } from './modules/channel-health.ts';
 import {
   availableSlots,
   bookBusyWindows,
@@ -1747,6 +1748,13 @@ export function createApp({ sql, sessionSecret, controlSecret }: AppDeps) {
   app.get('/control/v1/agent/segments', async (c) => {
     controlGate(c);
     return c.json({ segments: await segmentStats(sql) });
+  });
+
+  // Channel health — 30d rollup of sends/failures/guardrail-blocks/bounces
+  // per channel, surfaced on the Settings provider cards.
+  app.get('/control/v1/channels/health', async (c) => {
+    controlGate(c);
+    return c.json({ channels: await channelHealth(sql) });
   });
 
   // WhatsApp pairing state for the Settings screen (Baileys QR handshake).

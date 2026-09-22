@@ -246,10 +246,22 @@ export interface Brief {
 export interface SegmentStat {
   segment: string;
   leads: number;
+  leads30d: number;
   contacted: number;
   replied: number;
   live: number;
   costCents: number;
+  cplCents: number | null;
+}
+export interface ChannelHealth {
+  channel: 'whatsapp' | 'email';
+  sent: number;
+  failed: number;
+  blocked: number;
+  blockedByReason: Record<string, number>;
+  bounced: number;
+  failureRate: number | null;
+  alert: boolean;
 }
 export interface Meeting {
   id: string;
@@ -453,6 +465,7 @@ export const api = {
     req<{ brief: Brief }>(`/agent/briefs/${id}`, { method: 'PATCH', body: JSON.stringify(patch) }),
   deleteBrief: (id: string) => req<{ ok: true }>(`/agent/briefs/${id}`, { method: 'DELETE' }),
   segments: () => req<{ segments: SegmentStat[] }>('/agent/segments'),
+  channelHealth: () => req<{ channels: ChannelHealth[] }>('/channels/health'),
 
   meetings: (q: { scope?: string; leadId?: string; from?: string; to?: string } = {}) => {
     const params = new URLSearchParams(

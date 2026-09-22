@@ -13,6 +13,7 @@ import {
 import { addActivity, createTask } from '../modules/activities.ts';
 import { composeMessageTx, setThreadAgent, channel } from '../modules/threads.ts';
 import { DEFAULT_GUARDRAILS, getSettingTx, type Guardrails } from '../modules/integrations.ts';
+import { recordBlockedSendTx } from '../modules/channel-health.ts';
 import {
   checkSendAllowedTx,
   resolveChannelTx,
@@ -1051,6 +1052,9 @@ export async function executeTool(
         const g = await getSettingTx(tx, 'guardrails', {} as Partial<Guardrails>);
         const verdict = await checkSendAllowedTx(tx, { ...DEFAULT_GUARDRAILS, ...g }, leadId, chan);
         if (!verdict.ok) {
+          // Durable signal for the channel-health rollup — quiet hours and
+          // daily-cap blocks otherwise leave no record a rollup can count.
+          await recordBlockedSendTx(tx, leadId, chan, verdict.reason ?? 'guardrail');
           return { status: 200, body: { blocked: true as const, reason: verdict.reason } };
         }
         const composed = await composeMessageTx(tx, {
@@ -1165,6 +1169,7 @@ export async function executeTool(
             );
             if (!verdict.ok) {
               sendBlocked = verdict.reason ?? 'guardrail';
+              await recordBlockedSendTx(tx, leadId, pick.channel, sendBlocked);
             } else {
               const composed = await composeMessageTx(tx, {
                 leadId,

@@ -10,6 +10,7 @@ import {
 } from '../modules/integrations.ts';
 import { segmentStats, type AgentGoal } from '../modules/leads.ts';
 import { sweepPipelineSnapshots } from '../modules/forecast.ts';
+import { sweepDigest } from '../modules/digest.ts';
 import { providerFor, type AgentMessage } from './llm.ts';
 import { buildSystemPrompt } from './prompts.ts';
 import { executeTool, toolsFor, bookDigest, type ToolContext } from './tools.ts';
@@ -860,6 +861,7 @@ export function startAgentWorker(sql: Sql, intervalMs = 15_000) {
       .then(() => sweepBriefs(sql))
       .then(() => sweepPipelineSnapshots(sql))
       .then(() => sweepMeetingReminders(sql))
+      .then(() => sweepDigest(sql))
       .catch((e) => agentLog.error({ err: e }, 'worker failed'))
       .finally(() => {
         draining = false;
