@@ -147,9 +147,16 @@ export async function dispatchMessage(
       return { fail: reason };
     }
 
-    await tx`update lead_messages set status = 'sending', updated_at = now() where id = ${messageId}`;
+    const upd = await tx<{ sending_at: string }[]>`
+      update lead_messages set status = 'sending', updated_at = now()
+      where id = ${messageId} returning updated_at as sending_at
+    `;
     return {
       send: {
+        // Dispatch boundary for the cadence race check: created_at marks
+        // composition (drafts can sit for days); the 'sending' transition is
+        // what an inbound must post-date to count as answering this send.
+        sendingAt: upd[0]!.sending_at,
         channel: thread.channel,
         to,
         // The compose-time snapshot wins; the thread subject is only the
@@ -229,9 +236,7 @@ export async function dispatchMessage(
               join lead_threads it on it.id = im.thread_id
               where it.lead_id = ${send.leadId}
                 and im.direction = 'in'
-                and im.created_at > (
-                  select om.created_at from lead_messages om where om.id = ${messageId}
-                )
+                and im.created_at > ${send.sendingAt}::timestamptz
             )
         `;
       }
