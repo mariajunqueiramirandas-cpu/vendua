@@ -52,6 +52,7 @@ let starting: Promise<BaileysSocket> | null = null;
  *  ensureSocket call wanting something else bumps startGen so the in-flight
  *  startSocket self-terminates before publishing globals for a stale config. */
 let startingFingerprint: string | null = null;
+let startingGen = 0;
 let startGen = 0;
 /** Last connection state the socket reported — 'off' when no socket is
  *  running or the session dropped/logged out. The Settings screen renders
@@ -335,10 +336,15 @@ export async function ensureSocket(
     if (socketAccountId) void persistQr(sql, socketAccountId, null, nextWaGen());
     socketAccountId = null;
   }
-  // A pending start for different config can't serve this request — bump the
-  // generation so startSocket self-terminates before publishing globals, then
-  // reconcile once it settles (also kills a socket that raced to publish).
-  if (starting && startingFingerprint !== wanted) {
+  // A pending start for different config — or one already superseded (its
+  // generation is stale even when the fingerprint matches again, e.g.
+  // disable→re-enable mid-start) — can't serve this request. Bump the
+  // generation so startSocket self-terminates before publishing globals,
+  // then reconcile once it settles (also kills a socket that raced to
+  // publish).
+  const startUsable =
+    starting !== null && startingFingerprint === wanted && startingGen === startGen;
+  if (starting !== null && !startUsable) {
     startGen++;
     return starting.then(
       () => ensureSocket(sql, integration),
@@ -351,6 +357,7 @@ export async function ensureSocket(
   if (!starting) {
     connState = 'connecting';
     startingFingerprint = wanted;
+    startingGen = startGen;
     starting = startSocket(sql, integration!).then(
       (s) => {
         // globals were assigned inside startSocket — only the flag clears
