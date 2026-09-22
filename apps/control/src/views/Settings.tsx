@@ -758,52 +758,54 @@ function ChannelHealthCard() {
   }, []);
 
   if (err) return <div className="hint">{err}</div>;
-  if (!rows) return <div className="hint">carregando…</div>;
+  if (!rows) return <div className="hint">carregando…</div>
   return (
-    <table className="tbl">
-      <thead>
-        <tr>
-          <th>canal</th>
-          <th style={{ textAlign: 'right' }}>enviadas</th>
-          <th style={{ textAlign: 'right' }}>falhas</th>
-          <th style={{ textAlign: 'right' }}>bloqueios</th>
-          <th style={{ textAlign: 'right' }}>bounces</th>
-          <th></th>
-        </tr>
-      </thead>
-      <tbody>
-        {rows.map((r) => (
-          <tr key={r.channel}>
-            <td>{r.channel}</td>
-            <td className="mono" style={{ textAlign: 'right' }}>
-              {r.sent}
-            </td>
-            <td className="mono" style={{ textAlign: 'right' }}>
-              {r.failed}
-            </td>
-            <td
-              className="mono"
-              style={{ textAlign: 'right' }}
-              title={Object.entries(r.blockedByReason)
-                .map(([reason, n]) => `${reason}: ${n}`)
-                .join('\n')}
-            >
-              {r.blocked}
-            </td>
-            <td className="mono" style={{ textAlign: 'right' }}>
-              {r.bounced || '—'}
-            </td>
-            <td style={{ textAlign: 'right' }}>
-              {r.alert ? (
-                <span className="chip bad">falha {Math.round((r.failureRate ?? 0) * 100)}%</span>
-              ) : (
-                <span className="chip">ok</span>
-              )}
-            </td>
+    <div className="tbl-scroll">
+      <table className="tbl">
+        <thead>
+          <tr>
+            <th>canal</th>
+            <th style={{ textAlign: 'right' }}>enviadas</th>
+            <th style={{ textAlign: 'right' }}>falhas</th>
+            <th style={{ textAlign: 'right' }}>bloqueios</th>
+            <th style={{ textAlign: 'right' }}>bounces</th>
+            <th></th>
           </tr>
-        ))}
-      </tbody>
-    </table>
+        </thead>
+        <tbody>
+          {rows.map((r) => (
+            <tr key={r.channel}>
+              <td>{r.channel}</td>
+              <td className="mono" style={{ textAlign: 'right' }}>
+                {r.sent}
+              </td>
+              <td className="mono" style={{ textAlign: 'right' }}>
+                {r.failed}
+              </td>
+              <td
+                className="mono"
+                style={{ textAlign: 'right' }}
+                title={Object.entries(r.blockedByReason)
+                  .map(([reason, n]) => `${reason}: ${n}`)
+                  .join('\n')}
+              >
+                {r.blocked}
+              </td>
+              <td className="mono" style={{ textAlign: 'right' }}>
+                {r.bounced || '—'}
+              </td>
+              <td style={{ textAlign: 'right' }}>
+                {r.alert ? (
+                  <span className="chip bad">falha {Math.round((r.failureRate ?? 0) * 100)}%</span>
+                ) : (
+                  <span className="chip">ok</span>
+                )}
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
   );
 }
 
@@ -882,7 +884,7 @@ function GuardrailsCard({
             horário de silêncio{' '}
             {quietWrap && <em style={{ textTransform: 'none' }}>(vira o dia)</em>}
           </label>
-          <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+          <div className="cfg-times">
             <input
               type="time"
               value={edit.quietStart}
@@ -1042,12 +1044,7 @@ function PitchCard({
     <div className="drv">
       <div className="field">
         <label>produto</label>
-        <textarea
-          rows={3}
-          value={edit.product}
-          onChange={set('product')}
-          style={{ width: '100%' }}
-        />
+        <textarea rows={3} value={edit.product} onChange={set('product')} />
       </div>
       <div className="grid2">
         <div className="field">
@@ -1061,12 +1058,7 @@ function PitchCard({
       </div>
       <div className="field">
         <label>o que pode oferecer</label>
-        <textarea
-          rows={2}
-          value={edit.offerRange}
-          onChange={set('offerRange')}
-          style={{ width: '100%' }}
-        />
+        <textarea rows={2} value={edit.offerRange} onChange={set('offerRange')} />
       </div>
       <div className="field">
         <label>oferta concreta — fatos citáveis (preço, link de cadastro, loja exemplo)</label>
@@ -1074,7 +1066,6 @@ function PitchCard({
           rows={3}
           value={edit.offer}
           onChange={set('offer')}
-          style={{ width: '100%' }}
           placeholder="ex.: plano R$149/mês, sem comissão; 7 dias grátis; cadastro: https://...; exemplo: https://..."
         />
       </div>
@@ -1192,7 +1183,7 @@ function MeetingCard({
 
   return (
     <div className="drv">
-      <div style={{ display: 'flex', gap: 6, marginBottom: 12, flexWrap: 'wrap' }}>
+      <div className="cfg-chips">
         <span className={`chip ${status?.room.provider === 'daily' ? 'agent' : ''}`}>
           sala:{' '}
           {status ? (status.room.provider === 'daily' ? 'daily.co (por call)' : 'estática') : '…'}
@@ -1240,8 +1231,8 @@ function MeetingCard({
         />
       </div>
 
-      <div style={{ display: 'flex', gap: 8, margin: '12px 0' }}>
-        <div className="field" style={{ flex: 1, marginBottom: 0 }}>
+      <div className="grid3" style={{ margin: '12px 0' }}>
+        <div className="field" style={{ marginBottom: 0 }}>
           <label>duração (min)</label>
           <input
             type="number"
@@ -1251,7 +1242,7 @@ function MeetingCard({
             onChange={(e) => update({ ...edit, slotMinutes: Number(e.target.value) })}
           />
         </div>
-        <div className="field" style={{ flex: 1, marginBottom: 0 }}>
+        <div className="field" style={{ marginBottom: 0 }}>
           <label>intervalo (min)</label>
           <input
             type="number"
@@ -1261,7 +1252,7 @@ function MeetingCard({
             onChange={(e) => update({ ...edit, bufferMinutes: Number(e.target.value) })}
           />
         </div>
-        <div className="field" style={{ flex: 1, marginBottom: 0 }}>
+        <div className="field" style={{ marginBottom: 0 }}>
           <label>horizonte (dias)</label>
           <input
             type="number"
@@ -1276,15 +1267,10 @@ function MeetingCard({
       <div className="field">
         <label>disponibilidade semanal</label>
         {DAY_NAMES.map(([label, day]) => (
-          <div key={day} style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 4 }}>
-            <span
-              className="mono"
-              style={{ width: 30, color: 'var(--muted)', fontSize: 'var(--t-2xs)' }}
-            >
-              {label}
-            </span>
+          <div key={day} className="cfg-day">
+            <span className="mono cfg-day-lbl">{label}</span>
             {(edit.weekly[day] ?? []).map((w, i) => (
-              <span key={i} style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+              <span key={i} className="cfg-win">
                 <input
                   type="time"
                   value={w[0]}
@@ -1296,9 +1282,8 @@ function MeetingCard({
                       ),
                     )
                   }
-                  style={{ padding: '3px 5px', width: 78 }}
                 />
-                <span style={{ color: 'var(--muted)' }}>–</span>
+                <span className="cfg-sep">–</span>
                 <input
                   type="time"
                   value={w[1]}
@@ -1310,7 +1295,6 @@ function MeetingCard({
                       ),
                     )
                   }
-                  style={{ padding: '3px 5px', width: 78 }}
                 />
                 <button
                   className="icon-btn"

@@ -1004,7 +1004,7 @@ input[type='checkbox'] {
 .drv::before {
   content: '';
   position: absolute;
-  left: 0;
+  inset-inline-start: 0;
   top: 0;
   bottom: 0;
   width: 3px;
@@ -1077,7 +1077,7 @@ input[type='checkbox'] {
   width: 6px;
   height: 6px;
   border-radius: 50%;
-  margin-right: 5px;
+  margin-inline-end: 5px;
   vertical-align: 1px;
 }
 .seg .mk.live {
@@ -1108,6 +1108,7 @@ input[type='checkbox'] {
   display: flex;
   align-items: center;
   gap: 8px;
+  flex-wrap: wrap;
   margin-top: 12px;
 }
 .drv .actions .st {
@@ -1122,6 +1123,7 @@ input[type='checkbox'] {
 .seg {
   display: inline-flex;
   gap: 2px;
+  flex-wrap: wrap;
   background: var(--surface-2);
   border: 1px solid var(--line);
   border-radius: 999px;
@@ -1174,7 +1176,7 @@ input[type='checkbox'] {
   content: '';
   position: absolute;
   top: 2px;
-  left: 2px;
+  inset-inline-start: 2px;
   width: 11px;
   height: 11px;
   border-radius: 50%;
@@ -1251,10 +1253,11 @@ input[type='checkbox'] {
 .lst-add {
   display: flex;
   gap: 8px;
+  flex-wrap: wrap;
   margin-top: 8px;
 }
 .lst-add input {
-  flex: 1;
+  flex: 1 1 150px;
 }
 .lst .none {
   padding: 14px 2px;
@@ -1305,9 +1308,10 @@ input[type='checkbox'] {
 .wa-pairrow {
   display: flex;
   gap: 8px;
+  flex-wrap: wrap;
 }
 .wa-pairrow input {
-  flex: 1;
+  flex: 1 1 150px;
 }
 .wa-paircode .hint {
   font-size: var(--t-2xs);
@@ -1349,7 +1353,7 @@ input[type='checkbox'] {
   color: var(--red-400);
 }
 .drv-off {
-  margin-left: auto;
+  margin-inline-start: auto;
 }
 .wa-pair .btn {
   margin-top: 10px;
@@ -1394,7 +1398,7 @@ details.raw summary {
 details.raw summary::before {
   content: '›';
   display: inline-block;
-  margin-right: 6px;
+  margin-inline-end: 6px;
   transition: transform var(--motion);
 }
 details.raw[open] summary::before {
@@ -1406,6 +1410,60 @@ details.raw textarea {
   margin-top: 8px;
   font-family: var(--font-mono);
   font-size: var(--t-xs);
+}
+
+/* settings layout bits — everything below stays page-scoped to /config */
+
+/* the health table is wider than a card column: scroll, don't clip
+   (.drv is overflow:hidden — the scrollbar is the disclosure cue) */
+.tbl-scroll {
+  overflow-x: auto;
+  max-width: 100%;
+}
+.tbl-scroll .tbl {
+  min-width: 460px;
+}
+
+/* guardrails quiet-hours pair + meeting status chips + weekly windows:
+   flex rows that wrap instead of overflowing the card */
+.cfg-times {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+.cfg-chips {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+  margin-bottom: 12px;
+}
+.cfg-day {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+  margin-top: 4px;
+}
+.cfg-day-lbl {
+  width: 30px;
+  color: var(--muted);
+  font-size: var(--t-2xs);
+}
+.cfg-win {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+.cfg-win input[type='time'] {
+  padding: 3px 5px;
+  width: 78px;
+}
+.cfg-sep {
+  color: var(--muted);
+}
+.drv .field textarea {
+  width: 100%;
 }
 
 /* ---------- upgrade: shared atoms ---------- */
