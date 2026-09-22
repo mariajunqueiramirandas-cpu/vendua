@@ -220,8 +220,10 @@ export default function Calendar() {
         e = Math.max(e, dayMinutes(m.endsAt, tz) + 30);
       }
     }
-    s = Math.max(0, Math.min(s, 20 * 60));
-    e = Math.min(24 * 60, Math.max(e, s + 4 * 60));
+    // Snap to whole hours — the ruler labels each hour row, so a partial
+    // start would offset every label below it.
+    s = Math.max(0, Math.floor(Math.min(s, 20 * 60) / 60) * 60);
+    e = Math.min(24 * 60, Math.ceil(Math.max(e, s + 4 * 60) / 60) * 60);
     return { s, e, hours: (e - s) / 60 };
   }, [days, byDay, tz]);
   // Greedy lane assignment per day: overlapping calls sit side by side —
@@ -246,10 +248,11 @@ export default function Calendar() {
     const el = scrollRef.current;
     if (!el) return;
     const inWeek = days.some((d) => d.key === todayKey);
-    const nowMin = dayMinutes(new Date().toISOString(), tz);
+    const now = new Date();
+    const nowMin = dayMinutes(now.toISOString(), tz);
     const upcoming = days
       .flatMap((d) => byDay.get(d.key) ?? [])
-      .filter((m) => m.status === 'scheduled' && dayMinutes(m.endsAt, tz) > nowMin)
+      .filter((m) => m.status === 'scheduled' && new Date(m.endsAt).getTime() > now.getTime())
       .sort((a, b) => a.startsAt.localeCompare(b.startsAt))[0];
     // 'now' normally anchors; an upcoming call earlier pulls the anchor up
     // so it lands on screen too.
