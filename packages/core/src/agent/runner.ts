@@ -99,11 +99,16 @@ export async function enqueueRun(
 
 export async function claimRun(sql: Sql): Promise<RunRow | null> {
   return controlTx(sql, async (tx) => {
-    const rows = await tx<RunRow[]>`
-      update agent_runs set status = 'running', started_at = now(), alive_at = now(),
-        claim_token = gen_random_uuid()::text
-      where id = (
-        select r.id from agent_runs r
+    // Outreach is serial per lead: a 'running' outreach row is the durable
+    // ownership token — it outlives the claim tx and a queued same-lead
+    // outreach can only claim once the owner finishes (a crashed owner is
+    // reclaimed by lease first). Candidates the gate rejects are skipped
+    // for this pass so one busy lead can't starve a drain of other work.
+    const rejected: string[] = [];
+    for (let attempt = 0; attempt < 8; attempt++) {
+      const cand = await tx<RunRow[]>`
+        select r.id, r.kind, r.lead_id, r.thread_id, r.params, r.steps
+        from agent_runs r
         where r.status = 'queued'
           and (r.run_at is null or r.run_at <= now())
           -- suppressed leads hold their queue: 'off' is a human veto, archived
@@ -116,13 +121,40 @@ export async function claimRun(sql: Sql): Promise<RunRow | null> {
               and l.archived_at is null
               and l.unsubscribed_at is null
           ))
+          and not (r.id = any(${rejected}::uuid[]))
         order by r.created_at
         limit 1
         for update skip locked
-      )
-      returning id, kind, lead_id, thread_id, params, claim_token, steps
-    `;
-    return rows[0] ?? null;
+      `;
+      const run = cand[0];
+      if (!run) return null;
+      if (run.kind === 'outreach' && run.lead_id) {
+        // Claims on one lead are mutually exclusive via the lead row lock:
+        // a concurrent claim either committed already (visible below) or is
+        // waited out — SKIP LOCKED on the run alone can't order this, since
+        // each claim's snapshot predates the other's commit.
+        await tx`select id from leads where id = ${run.lead_id} for update`;
+        const busy = await tx`
+          select 1 from agent_runs
+          where lead_id = ${run.lead_id} and kind = 'outreach'
+            and status = 'running' and id <> ${run.id}
+          limit 1
+        `;
+        if (busy.length) {
+          rejected.push(run.id);
+          continue;
+        }
+      }
+      const rows = await tx<RunRow[]>`
+        update agent_runs set status = 'running', started_at = now(), alive_at = now(),
+          claim_token = gen_random_uuid()::text
+        where id = ${run.id} and status = 'queued'
+        returning id, kind, lead_id, thread_id, params, claim_token, steps
+      `;
+      if (rows[0]) return rows[0];
+      rejected.push(run.id);
+    }
+    return null;
   });
 }
 

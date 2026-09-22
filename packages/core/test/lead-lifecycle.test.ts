@@ -3,7 +3,7 @@ import { join } from 'node:path';
 import postgres from 'postgres';
 import { createApp } from '../src/app.ts';
 import { dispatchMessage } from '../src/agent/send.ts';
-import { insertRun } from '../src/agent/runner.ts';
+import { claimRun, insertRun } from '../src/agent/runner.ts';
 import {
   DEFAULT_GUARDRAILS,
   validateSetting,
@@ -347,6 +347,36 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('lead lifecycle (db)', () => {
       expect(res.body.stale).toBe(true);
       expect(res.body.runId).toBe(existing);
       expect(await runsFor(leadId)).toHaveLength(1);
+    });
+
+    test('claimRun serializes outreach per lead — a busy lead waits, others claim', async () => {
+      await setup();
+      // Earlier tests leave queued runs claimable — drain the slate so the
+      // assertions below only see this test's rows.
+      await sql`update agent_runs set status = 'canceled', finished_at = now()
+                where status in ('queued', 'running')`;
+      const [leadA, leadB] = await Promise.all(
+        ['Serial A', 'Serial B'].map((name) =>
+          controlTx(sql, (tx) => insertLeadTx(tx, { name, agent_mode: 'auto' })).then(
+            (r) => r.body.lead.id,
+          ),
+        ),
+      );
+      // Sequential txs — now() is tx-start time, so same-tx inserts share
+      // created_at and claim ordering would be nondeterministic.
+      const mkRun = (leadId: string) =>
+        controlTx(sql, (tx) => insertRun(tx, { kind: 'outreach', leadId }));
+      const a1 = await mkRun(leadA);
+      const a2 = await mkRun(leadA);
+      const b1 = await mkRun(leadB);
+      // A's first run claims; A's second is gated by the durable 'running'
+      // owner; B's run is unaffected — a busy lead never starves the drain.
+      expect((await claimRun(sql))!.id).toBe(a1);
+      expect((await claimRun(sql))!.id).toBe(b1);
+      expect(await claimRun(sql)).toBeNull();
+      await sql`update agent_runs set status = 'done', finished_at = now() where id in (${a1}, ${b1})`;
+      expect((await claimRun(sql))!.id).toBe(a2);
+      await sql`update agent_runs set status = 'done', finished_at = now() where id = ${a2}`;
     });
 
     test('stale STAFF draft still approves — staff owns its own cadence', async () => {
