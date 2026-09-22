@@ -23,18 +23,20 @@ export default function Dashboard() {
   const [s, setS] = useState<Stats | null>(null);
   const [err, setErr] = useState('');
 
-  const loadSeq = useRef(0);
+  const reqSeq = useRef(0);
+  const okSeq = useRef(0);
   const load = useCallback(() => {
-    const seq = ++loadSeq.current;
+    const seq = ++reqSeq.current;
     api
       .stats()
       .then((stats) => {
-        if (seq !== loadSeq.current) return;
+        if (seq < okSeq.current) return;
+        okSeq.current = seq;
         setS(stats);
         setErr('');
       })
       .catch((e) => {
-        if (seq === loadSeq.current) setErr(String(e));
+        if (seq >= okSeq.current) setErr(String(e));
       });
   }, []);
   useEffect(load, [load]);

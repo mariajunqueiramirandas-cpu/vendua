@@ -11,13 +11,15 @@ export default function Approvals() {
   const [editBody, setEditBody] = useState('');
   const [results, setResults] = useState<Record<string, string>>({});
 
-  // Last-issued load wins — a stalled earlier response must not overwrite a
-  // newer result once events and the poll overlap requests.
-  const loadSeq = useRef(0);
+  // Newest applied load wins — a stalled earlier response still commits
+  // unless a newer SUCCESS already landed; a failed refresh loses nothing.
+  const reqSeq = useRef(0);
+  const okSeq = useRef(0);
   const load = useCallback(() => {
-    const seq = ++loadSeq.current;
+    const seq = ++reqSeq.current;
     api.approvals().then((r) => {
-      if (seq !== loadSeq.current) return;
+      if (seq < okSeq.current) return;
+      okSeq.current = seq;
       setDrafts(r.drafts);
     });
   }, []);

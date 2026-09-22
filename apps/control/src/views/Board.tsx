@@ -19,9 +19,12 @@ export default function BoardView() {
   const [over, setOver] = useState<string | null>(null);
   const nav = useNavigate();
 
-  const loadSeq = useRef(0);
+  // Newest applied load wins: an older response commits unless a newer
+  // SUCCESS already landed — a failed refresh never discards good data.
+  const reqSeq = useRef(0);
+  const okSeq = useRef(0);
   const load = useCallback(() => {
-    const seq = ++loadSeq.current;
+    const seq = ++reqSeq.current;
     // Follow the keyset cursor — the board IS the pipeline, so a partial page
     // would silently hide leads and misreport column totals.
     const all: LeadListItem[] = [];
@@ -31,7 +34,8 @@ export default function BoardView() {
         return r.nextCursor ? page(r.nextCursor) : undefined;
       });
     void page().then(() => {
-      if (seq !== loadSeq.current) return;
+      if (seq < okSeq.current) return;
+      okSeq.current = seq;
       setLeads(all);
       setLoading(false);
     });

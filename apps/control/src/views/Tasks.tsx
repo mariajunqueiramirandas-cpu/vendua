@@ -23,11 +23,13 @@ export default function Tasks() {
   const [tasks, setTasks] = useState<Task[]>([]);
   const [showDone, setShowDone] = useState(false);
 
-  const loadSeq = useRef(0);
+  const reqSeq = useRef(0);
+  const okSeq = useRef(0);
   const load = useCallback(() => {
-    const seq = ++loadSeq.current;
+    const seq = ++reqSeq.current;
     api.tasks({ done: showDone ? undefined : 'false' } as { done?: string }).then((r) => {
-      if (seq !== loadSeq.current) return;
+      if (seq < okSeq.current) return;
+      okSeq.current = seq;
       setTasks(r.tasks);
     });
   }, [showDone]);
