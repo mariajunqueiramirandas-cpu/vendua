@@ -314,14 +314,36 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('lead lifecycle (db)', () => {
       expect(await runsFor(leadId)).toHaveLength(0);
     });
 
-    test('stale draft reuses an already-active outreach run — never stacks two', async () => {
+    test('a generic queued outreach does NOT block the regen — it lacks the regen params', async () => {
       await setup();
       const leadId = await controlTx(sql, (tx) =>
         insertLeadTx(tx, { name: 'Busy Lead', agent_mode: 'auto' }),
       ).then((r) => r.body.lead.id);
-      const existing = await controlTx(sql, (tx) => insertRun(tx, { kind: 'outreach', leadId }));
+      await controlTx(sql, (tx) => insertRun(tx, { kind: 'outreach', leadId }));
       const messageId = await mkDraft(leadId, 'agent', 8);
       const res = await approveMessage(sql, messageId, 'staff', key('a3-active-run'));
+      expect(res.body.stale).toBe(true);
+      const runs = await runsFor(leadId);
+      expect(runs).toHaveLength(2);
+      const regen = runs.find((r) => r.id === res.body.runId)!;
+      expect(regen.params.draftOnly).toBe(true);
+      expect(regen.params.auto).toBe('regenerate');
+    });
+
+    test('an already-queued regen IS reused — one regen per lead', async () => {
+      await setup();
+      const leadId = await controlTx(sql, (tx) =>
+        insertLeadTx(tx, { name: 'Regen Queued', agent_mode: 'auto' }),
+      ).then((r) => r.body.lead.id);
+      const existing = await controlTx(sql, (tx) =>
+        insertRun(tx, {
+          kind: 'outreach',
+          leadId,
+          params: { auto: 'regenerate', draftOnly: true },
+        }),
+      );
+      const messageId = await mkDraft(leadId, 'agent', 8);
+      const res = await approveMessage(sql, messageId, 'staff', key('a3-regen-queued'));
       expect(res.body.stale).toBe(true);
       expect(res.body.runId).toBe(existing);
       expect(await runsFor(leadId)).toHaveLength(1);

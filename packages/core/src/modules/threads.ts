@@ -503,14 +503,16 @@ export async function approveMessage(
             select lead_id from lead_threads where id = ${stale[0].thread_id}
           `
         )[0]!;
-        // Outreach is mutually exclusive per lead — sweepOutreach dedupes on
-        // queued/running; a queued regen must not stack a second composer on
-        // top of an outreach already in flight. An active run covers the
-        // regen intent, so point the response at it instead of inserting.
+        // Dedupe on the SAME intent only: an already-queued regen covers this
+        // one. A generic outreach run (first-contact/cadence sweep) does NOT —
+        // it lacks draftOnly + the expired-copy focus and may send or produce
+        // nothing reviewable, so the regen inserts beside it (runs serialize
+        // through claimRun; the regen only ever composes a draft).
         const active = await tx<{ id: string }[]>`
           select id from agent_runs
           where lead_id = ${thread.lead_id} and kind = 'outreach'
             and status in ('queued', 'running')
+            and params->>'auto' = 'regenerate'
           order by created_at limit 1
         `;
         let runId: string;
