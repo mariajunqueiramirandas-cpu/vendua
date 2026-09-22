@@ -1722,9 +1722,10 @@ details.raw textarea {
   flex-wrap: wrap;
   justify-content: flex-end;
 }
-/* flat card grid: summary + side cards in the leading column, the timeline
-   spanning the trailing one. DOM order (resumo → timeline → conversas →
-   calls → tarefas) is the collapsed reading order — most important first. */
+/* two independent column flows — a shared grid would let a long timeline
+   stretch the left column's row tracks and scatter its cards. .lead-left
+   unboxes itself when collapsed so the collapsed reading order is resumo →
+   timeline → conversas → calls → tarefas (most important first). */
 .lead-page {
   container-type: inline-size;
 }
@@ -1734,22 +1735,21 @@ details.raw textarea {
   gap: 14px;
   align-items: start;
 }
-.lead-cols > .card {
-  grid-column: 1;
-}
-.lead-cols > .lead-timeline {
-  grid-column: 2;
-  /* four leading-column cards — one row each */
-  grid-row: 1 / span 4;
+.lead-left {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
 }
 @container (max-width: 620px) {
   .lead-cols {
-    grid-template-columns: minmax(0, 1fr);
+    display: flex;
+    flex-direction: column;
   }
-  .lead-cols > .card,
-  .lead-cols > .lead-timeline {
-    grid-column: 1;
-    grid-row: auto;
+  .lead-left {
+    display: contents;
+  }
+  .lead-timeline {
+    order: 1;
   }
 }
 

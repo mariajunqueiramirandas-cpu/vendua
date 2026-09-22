@@ -167,99 +167,253 @@ export default function LeadDetail() {
     >
       <div className="lead-page">
         <div className="lead-cols">
-          <div className="card" style={{ padding: 18 }}>
-            <div className="seg-row">
-              <span className="seg" title="estágio do lead">
-                {STATE_OPTS.map(([v, l]) => (
-                  <button
-                    key={v}
-                    className={lead.state === v ? 'sel' : ''}
-                    onClick={() => void patch({ state: v })}
-                  >
-                    {l}
-                  </button>
-                ))}
-              </span>
-              <span className="seg" title="modo do agente">
-                {AGENT_OPTS.map(([v, l]) => (
-                  <button
-                    key={v}
-                    className={lead.agentMode === v ? 'sel' : ''}
-                    onClick={() => void patch({ agentMode: v })}
-                  >
-                    {l}
-                  </button>
-                ))}
-              </span>
-              {lead.agentMode !== 'off' && (
-                <span className="seg" title="objetivo do agente">
-                  {GOAL_OPTS.map(([v, l]) => (
+          <div className="lead-left">
+            <div className="card" style={{ padding: 18 }}>
+              <div className="seg-row">
+                <span className="seg" title="estágio do lead">
+                  {STATE_OPTS.map(([v, l]) => (
                     <button
                       key={v}
-                      className={lead.agentGoal === v ? 'sel' : ''}
-                      onClick={() => void patch({ agentGoal: v })}
+                      className={lead.state === v ? 'sel' : ''}
+                      onClick={() => void patch({ state: v })}
                     >
                       {l}
                     </button>
                   ))}
                 </span>
-              )}
-              <span style={{ marginLeft: 'auto' }}>
-                <ScoreBar score={lead.score} />
-              </span>
+                <span className="seg" title="modo do agente">
+                  {AGENT_OPTS.map(([v, l]) => (
+                    <button
+                      key={v}
+                      className={lead.agentMode === v ? 'sel' : ''}
+                      onClick={() => void patch({ agentMode: v })}
+                    >
+                      {l}
+                    </button>
+                  ))}
+                </span>
+                {lead.agentMode !== 'off' && (
+                  <span className="seg" title="objetivo do agente">
+                    {GOAL_OPTS.map(([v, l]) => (
+                      <button
+                        key={v}
+                        className={lead.agentGoal === v ? 'sel' : ''}
+                        onClick={() => void patch({ agentGoal: v })}
+                      >
+                        {l}
+                      </button>
+                    ))}
+                  </span>
+                )}
+                <span style={{ marginLeft: 'auto' }}>
+                  <ScoreBar score={lead.score} />
+                </span>
+              </div>
+              <div className="kv">
+                {(
+                  [
+                    ['whatsapp', lead.whatsapp],
+                    ['email', lead.email],
+                    ['instagram', lead.instagram],
+                    ['cidade', lead.city],
+                    ['segmento', lead.segment],
+                    ['origem', lead.source],
+                    ['descoberto via', lead.discoveredVia],
+                  ] as [string, string | null][]
+                ).map(([k, v]) => (
+                  <div key={k}>
+                    <div className="k">{k}</div>
+                    <div className="v">{v ?? '—'}</div>
+                  </div>
+                ))}
+                <div>
+                  <div className="k">site</div>
+                  <div className="v">
+                    {siteHref ? (
+                      <a href={siteHref} target="_blank" rel="noreferrer">
+                        {lead.website!.replace(/^https?:\/\//i, '')}
+                      </a>
+                    ) : (
+                      (lead.website ?? '—')
+                    )}
+                  </div>
+                </div>
+                <div>
+                  <div className="k">valor</div>
+                  <div className="v">
+                    <MoneyEdit
+                      cents={lead.dealValueCents}
+                      onSave={(c) => void patch({ dealValueCents: c })}
+                    />
+                  </div>
+                </div>
+              </div>
+              <div style={{ marginTop: 12 }}>
+                <div
+                  className="k"
+                  style={{
+                    fontSize: 'var(--t-2xs)',
+                    color: 'var(--muted)',
+                    textTransform: 'uppercase',
+                    marginBottom: 4,
+                  }}
+                >
+                  tags
+                </div>
+                <TagEditor tags={lead.tags} onSave={(tags) => void patch({ tags })} />
+              </div>
             </div>
-            <div className="kv">
-              {(
-                [
-                  ['whatsapp', lead.whatsapp],
-                  ['email', lead.email],
-                  ['instagram', lead.instagram],
-                  ['cidade', lead.city],
-                  ['segmento', lead.segment],
-                  ['origem', lead.source],
-                  ['descoberto via', lead.discoveredVia],
-                ] as [string, string | null][]
-              ).map(([k, v]) => (
-                <div key={k}>
-                  <div className="k">{k}</div>
-                  <div className="v">{v ?? '—'}</div>
+
+            <div className="card" style={{ padding: 18 }}>
+              <div className="sec-t">conversas</div>
+              {threads.map((t) => (
+                <div key={t.id} className="trow">
+                  <span className="chip">{t.channel}</span>
+                  <Link to={`/inbox/${t.id}`} className="btn ghost" style={{ padding: '3px 8px' }}>
+                    abrir
+                  </Link>
+                  <label className="tgl" style={{ marginLeft: 'auto' }}>
+                    <input
+                      type="checkbox"
+                      checked={t.agentEnabled}
+                      onChange={(e) => void api.setThreadAgent(t.id, e.target.checked).then(load)}
+                    />
+                    <span className="tk" />
+                    <span className="lbl">agente</span>
+                  </label>
                 </div>
               ))}
-              <div>
-                <div className="k">site</div>
-                <div className="v">
-                  {siteHref ? (
-                    <a href={siteHref} target="_blank" rel="noreferrer">
-                      {lead.website!.replace(/^https?:\/\//i, '')}
-                    </a>
-                  ) : (
-                    (lead.website ?? '—')
-                  )}
+              {!threads.length && (
+                <div style={{ color: 'var(--muted)', marginTop: 6 }}>
+                  nenhuma conversa ainda — o agente cria uma ao primeiro contato
                 </div>
-              </div>
-              <div>
-                <div className="k">valor</div>
-                <div className="v">
-                  <MoneyEdit
-                    cents={lead.dealValueCents}
-                    onSave={(c) => void patch({ dealValueCents: c })}
-                  />
+              )}
+              {schedRuns.map((r) => (
+                <div key={r.id} className="trow">
+                  <span className="chip">{RUN_KIND[r.kind] ?? r.kind}</span>
+                  <span style={{ color: 'var(--muted)', fontSize: 'var(--t-xs)', flex: 1 }}>
+                    agenda {fmtDateTime(r.run_at)}
+                  </span>
+                  <button
+                    className="btn ghost"
+                    style={{ padding: '3px 8px' }}
+                    onClick={() => void api.cancelRun(r.id).then(load)}
+                  >
+                    cancelar
+                  </button>
                 </div>
+              ))}
+              <div style={{ display: 'flex', gap: 6, marginTop: 10 }}>
+                {(['whatsapp', 'email', 'manual'] as const)
+                  .filter((ch) => !threads.some((t) => t.channel === ch))
+                  .map((ch) => (
+                    <button
+                      key={ch}
+                      className="btn ghost"
+                      style={{ fontSize: 'var(--t-xs)' }}
+                      onClick={() => void api.newThread(id, ch).then(load)}
+                    >
+                      + {ch}
+                    </button>
+                  ))}
               </div>
             </div>
-            <div style={{ marginTop: 12 }}>
-              <div
-                className="k"
-                style={{
-                  fontSize: 'var(--t-2xs)',
-                  color: 'var(--muted)',
-                  textTransform: 'uppercase',
-                  marginBottom: 4,
-                }}
-              >
-                tags
+
+            <div className="card" style={{ padding: 18 }}>
+              <div className="sec-t" style={{ display: 'flex', alignItems: 'center' }}>
+                calls
+                <CopyLinkBtn leadId={lead.id} />
               </div>
-              <TagEditor tags={lead.tags} onSave={(tags) => void patch({ tags })} />
+              {meetings.map((m) => (
+                <div key={m.id} className="trow">
+                  <span style={{ flex: 1 }}>
+                    {fmtDateTime(m.startsAt)}
+                    <span className={`chip stc-${m.status}`} style={{ marginLeft: 8 }}>
+                      {m.status === 'no_show'
+                        ? 'no-show'
+                        : m.status === 'done'
+                          ? 'feita'
+                          : m.status === 'cancelled'
+                            ? 'cancelada'
+                            : 'marcada'}
+                    </span>
+                  </span>
+                  {m.roomUrl && m.status === 'scheduled' && (
+                    <a
+                      className="icon-btn"
+                      href={m.roomUrl}
+                      target="_blank"
+                      rel="noopener"
+                      title="abrir sala"
+                      aria-label="abrir sala"
+                    >
+                      <Video size={13} />
+                    </a>
+                  )}
+                  {m.status === 'scheduled' && (
+                    <button
+                      className="btn ghost"
+                      style={{ padding: '2px 8px', fontSize: 'var(--t-2xs)' }}
+                      onClick={() =>
+                        void api.patchMeeting(m.id, { status: 'cancelled' }).then(load)
+                      }
+                    >
+                      cancelar
+                    </button>
+                  )}
+                </div>
+              ))}
+              {!meetings.length && (
+                <div style={{ color: 'var(--muted)', marginTop: 6 }}>
+                  nenhuma call ainda — copie o link e mande pro lead
+                </div>
+              )}
+            </div>
+
+            <div className="card" style={{ padding: 18 }}>
+              <div className="sec-t">tarefas</div>
+              {tasks.map((t) => {
+                const late = t.dueAt && !t.doneAt && new Date(t.dueAt) < new Date();
+                return (
+                  <div key={t.id} className="trow">
+                    <input
+                      type="checkbox"
+                      checked={!!t.doneAt}
+                      onChange={(e) => void api.setTaskDone(t.id, e.target.checked).then(load)}
+                    />
+                    <span
+                      style={{
+                        flex: 1,
+                        textDecoration: t.doneAt ? 'line-through' : undefined,
+                        color: t.doneAt ? 'var(--muted)' : undefined,
+                      }}
+                    >
+                      {t.title}
+                    </span>
+                    {t.createdBy === 'agent' && (
+                      <span className="chip agent" title="tarefa criada pelo agente">
+                        agente
+                      </span>
+                    )}
+                    <span className={`due${late ? ' bad' : ''}`}>
+                      {late ? 'atrasada · ' : ''}
+                      {fmtDateTime(t.dueAt)}
+                    </span>
+                  </div>
+                );
+              })}
+              <div style={{ display: 'flex', gap: 8, marginTop: 8 }}>
+                <input
+                  placeholder="nova tarefa…"
+                  value={taskTitle}
+                  onChange={(e) => setTaskTitle(e.target.value)}
+                  onKeyDown={(e) => e.key === 'Enter' && void addTask()}
+                  style={{ flex: 1 }}
+                />
+                <button className="btn" onClick={() => void addTask()}>
+                  <Plus size={14} />
+                </button>
+              </div>
             </div>
           </div>
 
@@ -296,156 +450,6 @@ export default function LeadDetail() {
                   hint="notas, ligações e ações do agente aparecem aqui"
                 />
               )}
-            </div>
-          </div>
-
-          <div className="card" style={{ padding: 18 }}>
-            <div className="sec-t">conversas</div>
-            {threads.map((t) => (
-              <div key={t.id} className="trow">
-                <span className="chip">{t.channel}</span>
-                <Link to={`/inbox/${t.id}`} className="btn ghost" style={{ padding: '3px 8px' }}>
-                  abrir
-                </Link>
-                <label className="tgl" style={{ marginLeft: 'auto' }}>
-                  <input
-                    type="checkbox"
-                    checked={t.agentEnabled}
-                    onChange={(e) => void api.setThreadAgent(t.id, e.target.checked).then(load)}
-                  />
-                  <span className="tk" />
-                  <span className="lbl">agente</span>
-                </label>
-              </div>
-            ))}
-            {!threads.length && (
-              <div style={{ color: 'var(--muted)', marginTop: 6 }}>
-                nenhuma conversa ainda — o agente cria uma ao primeiro contato
-              </div>
-            )}
-            {schedRuns.map((r) => (
-              <div key={r.id} className="trow">
-                <span className="chip">{RUN_KIND[r.kind] ?? r.kind}</span>
-                <span style={{ color: 'var(--muted)', fontSize: 'var(--t-xs)', flex: 1 }}>
-                  agenda {fmtDateTime(r.run_at)}
-                </span>
-                <button
-                  className="btn ghost"
-                  style={{ padding: '3px 8px' }}
-                  onClick={() => void api.cancelRun(r.id).then(load)}
-                >
-                  cancelar
-                </button>
-              </div>
-            ))}
-            <div style={{ display: 'flex', gap: 6, marginTop: 10 }}>
-              {(['whatsapp', 'email', 'manual'] as const)
-                .filter((ch) => !threads.some((t) => t.channel === ch))
-                .map((ch) => (
-                  <button
-                    key={ch}
-                    className="btn ghost"
-                    style={{ fontSize: 'var(--t-xs)' }}
-                    onClick={() => void api.newThread(id, ch).then(load)}
-                  >
-                    + {ch}
-                  </button>
-                ))}
-            </div>
-          </div>
-
-          <div className="card" style={{ padding: 18 }}>
-            <div className="sec-t" style={{ display: 'flex', alignItems: 'center' }}>
-              calls
-              <CopyLinkBtn leadId={lead.id} />
-            </div>
-            {meetings.map((m) => (
-              <div key={m.id} className="trow">
-                <span style={{ flex: 1 }}>
-                  {fmtDateTime(m.startsAt)}
-                  <span className={`chip stc-${m.status}`} style={{ marginLeft: 8 }}>
-                    {m.status === 'no_show'
-                      ? 'no-show'
-                      : m.status === 'done'
-                        ? 'feita'
-                        : m.status === 'cancelled'
-                          ? 'cancelada'
-                          : 'marcada'}
-                  </span>
-                </span>
-                {m.roomUrl && m.status === 'scheduled' && (
-                  <a
-                    className="icon-btn"
-                    href={m.roomUrl}
-                    target="_blank"
-                    rel="noopener"
-                    title="abrir sala"
-                    aria-label="abrir sala"
-                  >
-                    <Video size={13} />
-                  </a>
-                )}
-                {m.status === 'scheduled' && (
-                  <button
-                    className="btn ghost"
-                    style={{ padding: '2px 8px', fontSize: 'var(--t-2xs)' }}
-                    onClick={() => void api.patchMeeting(m.id, { status: 'cancelled' }).then(load)}
-                  >
-                    cancelar
-                  </button>
-                )}
-              </div>
-            ))}
-            {!meetings.length && (
-              <div style={{ color: 'var(--muted)', marginTop: 6 }}>
-                nenhuma call ainda — copie o link e mande pro lead
-              </div>
-            )}
-          </div>
-
-          <div className="card" style={{ padding: 18 }}>
-            <div className="sec-t">tarefas</div>
-            {tasks.map((t) => {
-              const late = t.dueAt && !t.doneAt && new Date(t.dueAt) < new Date();
-              return (
-                <div key={t.id} className="trow">
-                  <input
-                    type="checkbox"
-                    checked={!!t.doneAt}
-                    onChange={(e) => void api.setTaskDone(t.id, e.target.checked).then(load)}
-                  />
-                  <span
-                    style={{
-                      flex: 1,
-                      textDecoration: t.doneAt ? 'line-through' : undefined,
-                      color: t.doneAt ? 'var(--muted)' : undefined,
-                    }}
-                  >
-                    {t.title}
-                  </span>
-                  {t.createdBy === 'agent' && (
-                    <span className="chip agent" title="tarefa criada pelo agente">
-                      agente
-                    </span>
-                  )}
-                  <span className={`due${late ? ' bad' : ''}`}>
-                    {late ? 'atrasada · ' : ''}
-                    {fmtDateTime(t.dueAt)}
-                  </span>
-                </div>
-              );
-            })}
-            <div style={{ display: 'flex', gap: 8, marginTop: 8 }}>
-              <input
-                placeholder="nova tarefa…"
-                value={taskTitle}
-                onChange={(e) => setTaskTitle(e.target.value)}
-                onKeyDown={(e) => e.key === 'Enter' && void addTask()}
-                style={{ flex: 1 }}
-              />
-              <button className="btn" onClick={() => void addTask()}>
-                <Plus size={14} />
-              </button>
             </div>
           </div>
         </div>
