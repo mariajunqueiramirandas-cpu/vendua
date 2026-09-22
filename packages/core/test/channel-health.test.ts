@@ -73,6 +73,7 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('channel health (db)', () => {
       leadId,
       threadId: null,
       step: 0,
+      claimToken: null,
       pageCache: new Map(),
       briefName: null,
       leadCap: 20,

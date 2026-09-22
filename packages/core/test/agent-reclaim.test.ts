@@ -103,6 +103,56 @@ describe('replayJournal', () => {
     expect(r.messages).toEqual([{ role: 'assistant', content: 'attempt2' }]);
   });
 
+  test('harness state accumulates across ALL attempts — not just the replayed one', () => {
+    const r = replayJournal([
+      // attempt 1: a maps hit and a serp contact — then the worker died
+      {
+        type: 'tool',
+        name: 'maps_lookup',
+        args: {},
+        out: {
+          candidates: [
+            { name: 'A', phone: '+55111' },
+            { name: 'B', phone: null },
+          ],
+        },
+      },
+      {
+        type: 'tool',
+        name: 'serp',
+        args: {},
+        out: {
+          results: [{ contacts: { phones: ['+55222'], whatsappLinks: ['wa.me/1'], emails: [] } }],
+        },
+      },
+      {
+        type: 'tool',
+        name: 'book',
+        args: {},
+        out: {
+          entry: {
+            name: 'Café Velho',
+            city: null,
+            status: 'open',
+            channels: { email: 'a@velho.br' },
+            tried: ['maps'],
+            note: null,
+          },
+        },
+      },
+      { type: 'resumed', attempt: 1 },
+      // attempt 2 replays only its own conversation — but the field state holds
+      { type: 'model', content: 'other work', toolCalls: [] },
+    ]);
+    expect(r.seenContacts.has('+55111')).toBe(true);
+    expect(r.seenContacts.has('+55222')).toBe(true);
+    expect(r.seenContacts.has('wa.me/1')).toBe(true);
+    expect(r.book.get('café velho')?.tried).toEqual(['maps']);
+    expect(r.seenContacts.has('a@velho.br')).toBe(true);
+    // conversation still bounded to the latest attempt
+    expect(r.messages).toEqual([{ role: 'assistant', content: 'other work' }]);
+  });
+
   test('book entries and banked contacts rebuild harness state', () => {
     const r = replayJournal([
       {
@@ -375,5 +425,57 @@ dbDescribe('worker robustness (db)', () => {
       select body from lead_activities where lead_id = ${leadId} and kind = 'note'
     `;
     expect(notes.map((n) => n.body)).toContain('segundo');
+  });
+
+  test('reconcile heals a pending entry whose mutation committed pre-crash', async () => {
+    await migrate(sql, MIGRATIONS);
+    const lead = await controlTx(sql, (tx) => insertLeadTx(tx, { name: 'Reconcile Lead' }));
+    const leadId = lead.body.lead.id;
+    await sql`delete from agent_runs where status = 'queued'`;
+    const runId = await enqueueRun(sql, { kind: 'reply', leadId });
+    const claimed = await claimRun(sql);
+    expect(claimed?.id).toBe(runId);
+    // The mutation commits through claimControl under key agent:run:step:name:callId —
+    // then the worker "dies" before the result reaches the journal.
+    await executeTool(mkCtx(runId, claimed!.claim_token, leadId), 'n1', 'add_note', {
+      leadId,
+      body: 'committed',
+    });
+    const priorJournal = [
+      {
+        type: 'model',
+        content: 'vou anotar',
+        toolCalls: [{ id: 'n1', name: 'add_note', args: { leadId, body: 'committed' } }],
+      },
+      {
+        type: 'tool',
+        name: 'add_note',
+        args: { leadId, body: 'committed' },
+        callId: 'n1',
+        step: 0,
+        pending: true,
+      },
+    ];
+    const stale = new Date(Date.now() - 11 * 60_000);
+    await sql`update agent_runs set started_at = ${stale}, alive_at = ${stale},
+      steps = ${sql.json(priorJournal as never[])} where id = ${runId}`;
+    await drain(sql, 0);
+    await sql`update agent_runs set run_at = now(),
+      params = ${sql.json({ script: [{ text: 'encerrado' }] } as never)} where id = ${runId}`;
+    await sql`delete from agent_runs where status = 'queued' and id <> ${runId}`;
+    expect(await runOnce(sql)).toBe(true);
+    const r = await getRun(runId);
+    expect(r.status).toBe('done');
+    // the pending entry healed to the stored claim response — not 'interrupted'
+    const healed = r.steps.find(
+      (s) => (s as { type?: string; callId?: string }).callId === 'n1',
+    ) as { pending?: boolean; out?: { activity?: unknown } };
+    expect(healed.pending).toBeUndefined();
+    expect(healed.out?.activity).toBeTruthy();
+    // and no duplicate: the committed note is the only one on the lead
+    const notes = await sql<{ body: string }[]>`
+      select body from lead_activities where lead_id = ${leadId} and kind = 'note'
+    `;
+    expect(notes.map((n) => n.body)).toEqual(['committed']);
   });
 });

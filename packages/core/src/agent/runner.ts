@@ -468,6 +468,57 @@ export function replayJournal(prior: unknown[]): JournalReplay {
   for (const s of prior) {
     if ((s as { type?: string } | null)?.type === 'model') replay.baseStep++;
   }
+  const bank = (vals: unknown[]) => {
+    for (const v of vals) {
+      if (typeof v === 'string' && v) replay.seenContacts.add(v);
+    }
+  };
+  /** Every contact-bearing tool output shape — mirrors what the live tools
+   *  push through ctx.seenContacts (book channels, maps candidates,
+   *  instagram foundContacts, serp result contacts). */
+  const bankOut = (out: unknown) => {
+    if (typeof out !== 'object' || out === null) return;
+    const o = out as {
+      entry?: BookEntry;
+      foundContacts?: { phones?: string[]; whatsappLinks?: string[]; emails?: string[] };
+      candidates?: { phone?: string | null }[];
+      results?: {
+        contacts?: { phones?: string[]; whatsappLinks?: string[]; emails?: string[] };
+      }[];
+    };
+    const e = o.entry;
+    if (e && typeof e.name === 'string') {
+      replay.book.set(e.name.toLowerCase(), e);
+      bank(Object.values(e.channels ?? {}));
+    }
+    if (o.foundContacts) {
+      bank([
+        ...(o.foundContacts.phones ?? []),
+        ...(o.foundContacts.whatsappLinks ?? []),
+        ...(o.foundContacts.emails ?? []),
+      ]);
+    }
+    for (const c of o.candidates ?? []) bank([c.phone]);
+    for (const r of o.results ?? []) {
+      if (r?.contacts) {
+        bank([
+          ...(r.contacts.phones ?? []),
+          ...(r.contacts.whatsappLinks ?? []),
+          ...(r.contacts.emails ?? []),
+        ]);
+      }
+    }
+  };
+  // Harness reconstruction scans the WHOLE journal — unlike the
+  // conversation (bounded to the latest attempt below), the ledger and
+  // banked contacts accumulate across attempts. Skipping earlier attempts
+  // would re-bank a phone attempt 1 already found and reset the
+  // no-progress detector.
+  for (const s of prior) {
+    if ((s as { type?: string } | null)?.type === 'tool') {
+      bankOut((s as { out?: unknown }).out);
+    }
+  }
   // Boundary = the last 'resumed' marker: replay only the latest attempt.
   // Earlier attempts' effects are already in CRM state (fresh contextFor
   // output) — replaying them too would just bloat context each retry.
@@ -497,11 +548,6 @@ export function replayJournal(prior: unknown[]): JournalReplay {
     }
     pending = null;
     consumed = 0;
-  };
-  const bank = (vals: unknown[]) => {
-    for (const v of vals) {
-      if (typeof v === 'string' && v) replay.seenContacts.add(v);
-    }
   };
   for (let i = start; i < prior.length; i++) {
     const s = prior[i] as {
@@ -558,23 +604,6 @@ export function replayJournal(prior: unknown[]): JournalReplay {
             ? out.slice(0, REPLAY_OUT_MAX)
             : JSON.stringify(out).slice(0, REPLAY_OUT_MAX),
       });
-      // harness state rebuild — the book entry and any contacts a prior call
-      // already banked (a "new" contact on replay isn't progress).
-      if (s.name === 'book') {
-        const e = (s.out as { entry?: BookEntry } | null)?.entry;
-        if (e && typeof e.name === 'string') {
-          replay.book.set(e.name.toLowerCase(), e);
-          bank(Object.values(e.channels ?? {}));
-        }
-      }
-      const fc = (s.out as { foundContacts?: Record<string, unknown> } | null)?.foundContacts;
-      if (fc) {
-        bank([
-          ...((fc.phones as string[]) ?? []),
-          ...((fc.whatsappLinks as string[]) ?? []),
-          ...((fc.emails as string[]) ?? []),
-        ]);
-      }
       continue;
     }
     if (s.type === 'nudge' || s.type === 'reflection') {
@@ -586,6 +615,64 @@ export function replayJournal(prior: unknown[]): JournalReplay {
   }
   flush();
   return replay;
+}
+
+/** Reconcile journaled-but-unresolved tool calls against the durable claim
+ *  table. A mutation commits through claimControl under key
+ *  `agent:run:step:name:callId` BEFORE the runner can journal the result —
+ *  a worker that died inside that window left a real, applied effect marked
+ *  pending. The stored response IS the call's result: writing it into the
+ *  journal entry turns a would-be 'interrupted — verify before re-doing'
+ *  into the true outcome, which is stronger than dedupe (the model never
+ *  thinks the effect is missing, so it won't emit a fresh call at all). */
+export async function reconcileInterrupted(
+  sql: Sql,
+  runId: string,
+  steps: unknown[],
+): Promise<void> {
+  const pending = steps.filter(
+    (
+      s,
+    ): s is {
+      type: 'tool';
+      name: string;
+      callId: string;
+      step: number;
+      pending?: boolean;
+      out?: unknown;
+    } => {
+      const e = s as {
+        type?: string;
+        callId?: unknown;
+        step?: unknown;
+        pending?: unknown;
+        out?: unknown;
+      } | null;
+      return (
+        e?.type === 'tool' &&
+        typeof e.callId === 'string' &&
+        typeof e.step === 'number' &&
+        (e.pending === true || e.out === undefined)
+      );
+    },
+  );
+  if (!pending.length) return;
+  const keyOf = (p: (typeof pending)[number]) => `agent:${runId}:${p.step}:${p.name}:${p.callId}`;
+  const rows = await controlTx(
+    sql,
+    (tx) => tx<{ key: string; response: unknown }[]>`
+      select key, response from control_idempotency_keys
+      where key = any(${pending.map(keyOf)})
+    `,
+  );
+  const byKey = new Map(rows.map((r) => [r.key, r.response]));
+  for (const p of pending) {
+    const res = byKey.get(keyOf(p));
+    if (res !== undefined) {
+      delete p.pending;
+      p.out = res;
+    }
+  }
 }
 
 /** Doctrine write-back — a deterministic debrief line appended to
@@ -654,6 +741,11 @@ export async function runOnce(sql: Sql): Promise<boolean> {
   // trail for the whole run, not just this attempt) and mark the boundary so
   // the next resume replays only the latest attempt's entries.
   const priorSteps = Array.isArray(run.steps) ? run.steps : [];
+  // Heal pending entries whose mutation actually committed before the
+  // worker died — the stored claim response is the real result, not an
+  // 'interrupted' guess. Best-effort: a failed lookup just leaves them
+  // pending and they replay as interrupted like before.
+  await reconcileInterrupted(sql, run.id, priorSteps).catch(() => undefined);
   const steps: unknown[] = [...priorSteps];
   if (priorSteps.length) {
     steps.push({ type: 'resumed', attempt: run.attempts, at: new Date().toISOString() });
@@ -959,10 +1051,15 @@ export async function runOnce(sql: Sql): Promise<boolean> {
         // Discovery tools are remote reads or idempotent inserts — a step's
         // calls run in parallel (one provider automation per call would make
         // a single iteration take minutes).
-        const batch: unknown[] = res.toolCalls.map((call) => ({
+        // Pending entries journal callId+step BEFORE execution — a crash
+        // mid-batch leaves entries reconcileInterrupted can resolve
+        // against the durable claim table (key agent:run:step:name:callId).
+        const batch: unknown[] = res.toolCalls.map((call, callIndex) => ({
           type: 'tool',
           name: call.name,
           args: call.args,
+          callId: call.id ?? String(callIndex),
+          step: ctx.step,
           pending: true,
         }));
         const toolMsgs: AgentMessage[] = new Array(res.toolCalls.length);
@@ -975,7 +1072,14 @@ export async function runOnce(sql: Sql): Promise<boolean> {
             } catch (e) {
               out = { error: e instanceof Error ? e.message : String(e) };
             }
-            batch[callIndex] = { type: 'tool', name: call.name, args: call.args, out };
+            batch[callIndex] = {
+              type: 'tool',
+              name: call.name,
+              args: call.args,
+              callId: call.id ?? String(callIndex),
+              step: ctx.step,
+              out,
+            };
             toolMsgs[callIndex] = {
               role: 'tool',
               toolCallId: call.id,
@@ -1029,13 +1133,36 @@ export async function runOnce(sql: Sql): Promise<boolean> {
         // Messaging kinds stay sequential: tool calls in one response may
         // depend on each other's ordering (draft before send).
         for (const [callIndex, call] of res.toolCalls.entries()) {
+          const callId = call.id ?? String(callIndex);
+          // Journal the pending call BEFORE executing: a crash between the
+          // mutation's commit and the result's journal write leaves an
+          // entry the next attempt reconciles against the claim table.
+          const entry: {
+            type: 'tool';
+            name: string;
+            args: unknown;
+            callId: string;
+            step: number;
+            pending?: boolean;
+            out?: unknown;
+          } = {
+            type: 'tool',
+            name: call.name,
+            args: call.args,
+            callId,
+            step: ctx.step,
+            pending: true,
+          };
+          steps.push(entry);
+          await persist();
           let out: unknown;
           try {
-            out = await executeTool(ctx, call.id ?? String(callIndex), call.name, call.args);
+            out = await executeTool(ctx, callId, call.name, call.args);
           } catch (e) {
             out = { error: e instanceof Error ? e.message : String(e) };
           }
-          steps.push({ type: 'tool', name: call.name, args: call.args, out });
+          delete entry.pending;
+          entry.out = out;
           messages.push({
             role: 'tool',
             toolCallId: call.id,
