@@ -140,6 +140,7 @@ async function startSocket(sql: Sql, integration: IntegrationRow): Promise<Baile
   const baileys = (await import('baileys')) as unknown as {
     default: (opts: Record<string, unknown>) => BaileysSocket;
     initAuthCreds(): unknown;
+    fetchLatestWaWebVersion(): Promise<{ version: [number, number, number]; isLatest: boolean }>;
     BufferJSON: {
       replacer(k: string, v: unknown): unknown;
       reviver(k: string, v: unknown): unknown;
@@ -148,8 +149,19 @@ async function startSocket(sql: Sql, integration: IntegrationRow): Promise<Baile
   const accountId = (integration.config.accountId as string) ?? 'default';
   const auth = dbAuthState(sql, accountId, baileys.BufferJSON);
 
+  // WhatsApp rejects stale client versions at link/login (405; phone shows
+  // "Couldn't link device") — the bundled version lags upstream, so fetch the
+  // live WA Web version. Fall back to the library default when unreachable.
+  let version: [number, number, number] | undefined;
+  try {
+    version = (await baileys.fetchLatestWaWebVersion()).version;
+  } catch (e) {
+    waLog.warn({ err: e }, 'wa web version fetch failed — using bundled default');
+  }
+
   const creds = (await auth.read('creds', 'main')) ?? baileys.initAuthCreds();
   const sock = baileys.default({
+    ...(version ? { version } : {}),
     auth: {
       creds,
       keys: {
