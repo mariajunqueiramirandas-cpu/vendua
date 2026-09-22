@@ -758,7 +758,7 @@ function ChannelHealthCard() {
   }, []);
 
   if (err) return <div className="hint">{err}</div>;
-  if (!rows) return <div className="hint">carregando…</div>
+  if (!rows) return <div className="hint">carregando…</div>;
   return (
     <div className="tbl-scroll">
       <table className="tbl">
