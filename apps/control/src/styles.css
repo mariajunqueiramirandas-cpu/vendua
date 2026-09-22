@@ -500,30 +500,79 @@ input[type='checkbox'] {
 /* ---------- inbox ---------- */
 .inbox {
   display: grid;
-  grid-template-columns: 320px 1fr;
+  grid-template-columns: 320px minmax(0, 1fr);
+  /* the single row must stay inside the card — an auto row would grow to
+     the thread's content and clip head/composer under overflow:hidden */
+  grid-template-rows: minmax(0, 1fr);
   gap: 0;
   height: 100%;
+  overflow: hidden;
+}
+.inbox-tools {
+  display: flex;
+  gap: 8px;
+  padding: 10px;
+  border-bottom: 1px solid var(--line);
+}
+.inbox-tools input {
+  flex: 1;
+  min-width: 0;
+}
+.inbox-tools select {
+  max-width: 118px;
+}
+.inbox-new {
+  padding: 10px;
+  border-bottom: 1px solid var(--line);
+}
+.inbox-new-hits {
+  margin-top: 8px;
+}
+.inbox-lead {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 0;
+  border-top: 1px solid var(--line);
+}
+.inbox-lead-main {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.inbox-biz {
+  color: var(--muted);
+}
+.inbox-chpick {
+  padding: 4px 8px;
+  font-size: var(--t-2xs);
+}
+.inbox-lead-empty {
+  padding: 8px 0;
 }
 .thread-list {
-  border-right: 1px solid var(--line);
+  border-inline-end: 1px solid var(--line);
   overflow: auto;
+  min-height: 0;
 }
 .thread-row {
   display: flex;
   gap: 10px;
   width: 100%;
-  text-align: left;
+  text-align: start;
   padding: 11px 14px;
   border-bottom: 1px solid var(--line);
   background: transparent;
-  border-left: 2px solid transparent;
+  border-inline-start: 2px solid transparent;
 }
 .thread-row:hover {
   background: var(--surface);
 }
 .thread-row.active {
   background: var(--surface);
-  border-left-color: var(--lime-300);
+  border-inline-start-color: var(--lime-300);
 }
 .thread-row .tr-main {
   flex: 1;
@@ -541,7 +590,7 @@ input[type='checkbox'] {
   white-space: nowrap;
 }
 .thread-row .tr-top time {
-  margin-left: auto;
+  margin-inline-start: auto;
   font-family: var(--font-mono);
   font-size: var(--t-2xs);
   color: var(--muted);
@@ -567,6 +616,22 @@ input[type='checkbox'] {
   display: flex;
   flex-direction: column;
   height: 100%;
+  /* min-height:auto would report the message list's full height and blow
+     past the fixed grid row — shrink to the row and scroll inside instead */
+  min-height: 0;
+}
+.thread-id {
+  min-width: 0;
+}
+.thread-sub {
+  font-size: var(--t-2xs);
+  color: var(--muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.thread-head .tgl {
+  margin-inline-start: auto;
 }
 .thread-head {
   padding: 12px 18px;
@@ -577,6 +642,9 @@ input[type='checkbox'] {
 }
 .thread-msgs {
   flex: 1;
+  /* same fix as .thread-view — a flex child needs min-height:0 to scroll
+     inside its parent instead of stretching it past the card */
+  min-height: 0;
   overflow: auto;
   padding: 18px;
   display: flex;
@@ -594,13 +662,13 @@ input[type='checkbox'] {
   align-self: flex-start;
   background: var(--surface);
   border: 1px solid var(--line);
-  border-bottom-left-radius: 3px;
+  border-end-start-radius: 3px;
 }
 .msg.out {
   align-self: flex-end;
   background: var(--forest-900);
   color: var(--cream-50);
-  border-bottom-right-radius: 3px;
+  border-end-end-radius: 3px;
 }
 .day-sep {
   display: flex;
@@ -629,6 +697,12 @@ input[type='checkbox'] {
 .msg .m-meta .draft {
   color: var(--amber-400);
   opacity: 1;
+}
+.msg .m-meta .chip {
+  font-size: 0.85em;
+}
+.msg .m-meta .m-bad {
+  color: var(--red-400);
 }
 .composer {
   border-top: 1px solid var(--line);
@@ -847,6 +921,10 @@ input[type='checkbox'] {
   font-style: italic;
   font-size: 2.2rem;
   color: var(--cream-50);
+  /* brand is its own group — keep it clearly separated from the field
+     cluster (inter-group > 2x the 12px intra-group gap) */
+  margin-bottom: 14px;
+  line-height: 1;
 }
 .login .mark em {
   font-style: normal;
@@ -1513,6 +1591,95 @@ details.raw textarea {
 .planrow:last-child {
   border-bottom: 0;
 }
+.plan-stats {
+  margin-bottom: 16px;
+}
+.plan-cols {
+  align-items: start;
+}
+.plan-card {
+  padding: 2px 14px;
+}
+.plan-retry {
+  margin-top: 10px;
+}
+.plan-next {
+  font-size: var(--t-2xs);
+  color: var(--muted);
+  margin-top: 4px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.plan-next a {
+  text-decoration: underline;
+}
+.qwhat {
+  color: var(--muted);
+  /* the labels are a closed vocabulary ('run X', 'follow-up do agente') —
+     keep them on one line so the row's content stays readable */
+  white-space: nowrap;
+}
+.planrow-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.planrow-name {
+  font-weight: 600;
+}
+.planrow-toggle {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex: 1;
+  min-width: 0;
+  text-align: start;
+  padding: 10px 2px;
+  font-weight: 500;
+}
+.planrow-bar {
+  flex: 0 0 64px;
+}
+.planrow-chev {
+  color: var(--muted);
+  flex-shrink: 0;
+  transition: transform 150ms cubic-bezier(0.2, 0, 0, 1);
+}
+.planrow-toggle[aria-expanded='true'] .planrow-chev {
+  transform: rotate(180deg);
+}
+.planrow-steps {
+  padding-bottom: 10px;
+}
+.planrow-step {
+  align-items: flex-start;
+  gap: 8px;
+}
+.planrow-ico {
+  flex-shrink: 0;
+  margin-top: 2px;
+  color: var(--muted);
+}
+.planrow-ico.done {
+  color: var(--forest-800);
+}
+.planrow-step-txt {
+  flex: 1;
+  min-width: 0;
+}
+.planrow-step.done .planrow-step-t,
+.planrow-step.skip .planrow-step-t {
+  color: var(--muted);
+}
+.planrow-step.skip .planrow-step-t {
+  text-decoration: line-through;
+}
+.planrow-note {
+  color: var(--muted);
+  font-size: var(--t-xs);
+  margin-top: 2px;
+}
 
 /* nav badge — count of things waiting on you */
 .nav-item .nb {
@@ -1975,8 +2142,7 @@ details.raw textarea {
   }
   .m-back {
     display: inline-flex;
-    padding-left: 6px;
-    padding-right: 6px;
+    padding-inline: 6px;
   }
   .thread-msgs {
     padding: 12px;
@@ -1991,9 +2157,6 @@ details.raw textarea {
   }
   .composer textarea {
     flex: 1 1 100%;
-  }
-  .thread-list select {
-    max-width: 118px;
   }
   .lst-add {
     flex-wrap: wrap;
@@ -2247,6 +2410,11 @@ details.raw textarea {
   align-content: center;
   justify-content: center;
 }
+/* an empty rail is dead space — collapse its column so the brief keeps
+   the whole hero width (e.g. fresh account, no briefs and no runs) */
+.stage-hero:has(> .hrail:empty) {
+  grid-template-columns: minmax(0, 1fr);
+}
 .hcard {
   background: color-mix(in srgb, var(--night-800) 62%, transparent);
   border: 1px solid color-mix(in srgb, var(--cream-100) 9%, transparent);
@@ -2260,7 +2428,10 @@ details.raw textarea {
   margin-bottom: 14px;
   display: flex;
   align-items: baseline;
-  gap: 10px;
+  flex-wrap: wrap;
+  /* the sub drops to its own line instead of squeezing the title */
+  column-gap: 10px;
+  row-gap: 2px;
 }
 .hcard-sub {
   font-weight: 400;
@@ -2274,7 +2445,7 @@ details.raw textarea {
   border-color: color-mix(in srgb, var(--lime-300) 35%, transparent);
   color: var(--cream-50);
   width: 100%;
-  text-align: left;
+  text-align: start;
   font: inherit;
   transition: border-color var(--motion);
 }
@@ -2289,9 +2460,16 @@ details.raw textarea {
 .brow {
   display: flex;
   align-items: center;
+  flex-wrap: wrap;
   gap: 10px;
   padding: 10px 0;
   border-top: 1px solid color-mix(in srgb, var(--cream-100) 8%, transparent);
+}
+.brow-ops {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-inline-start: auto;
 }
 .brow-main {
   flex: 1;
@@ -2314,6 +2492,9 @@ details.raw textarea {
 .brow-meta {
   color: color-mix(in srgb, var(--sage-300) 75%, transparent);
   font-size: var(--t-2xs);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .brow-note {
   color: var(--amber-400);
@@ -2338,16 +2519,23 @@ details.raw textarea {
   font-size: var(--t-md);
   padding: 11px 13px;
 }
+/* constraint row wraps — seg/cidade keep ~120px, the + submits on its
+   own full row so no field or label is squeezed out of the card */
 .bnew-row {
   display: flex;
+  flex-wrap: wrap;
   gap: 8px;
 }
 .bnew-row input {
-  flex: 1;
+  flex: 1 1 120px;
   min-width: 0;
 }
 .bnew-row input[type='number'] {
-  flex: 0 0 64px;
+  flex: 1 1 72px;
+}
+.bnew-row .btn {
+  flex: 1 1 100%;
+  justify-content: center;
 }
 .recent-row {
   display: grid;
@@ -2360,7 +2548,7 @@ details.raw textarea {
   background: transparent;
   color: var(--cream-100);
   font-size: var(--t-sm);
-  text-align: left;
+  text-align: start;
   transition: background var(--motion);
   width: 100%;
 }
@@ -2414,7 +2602,7 @@ details.raw textarea {
   border-collapse: collapse;
 }
 .dtbl th {
-  text-align: left;
+  text-align: start;
   font-size: var(--t-2xs);
   letter-spacing: 0.14em;
   text-transform: uppercase;
@@ -2471,6 +2659,9 @@ a.lcard:hover {
 }
 .drow-links a {
   color: var(--lime-300);
+}
+.disc-cancel {
+  margin-inline-start: 8px;
 }
 .stage .empty {
   color: var(--sage-300);
@@ -2598,7 +2789,7 @@ a.lcard:hover {
 .think-calls {
   color: var(--sage-300);
   font-size: var(--t-2xs);
-  margin-left: 10px;
+  margin-inline-start: 10px;
   min-width: 0;
 }
 .blink {
@@ -2609,8 +2800,8 @@ a.lcard:hover {
   display: flex;
   flex-direction: column;
   gap: 14px;
-  border-left: 1px solid color-mix(in srgb, var(--cream-100) 10%, transparent);
-  padding-left: 32px;
+  border-inline-start: 1px solid color-mix(in srgb, var(--cream-100) 10%, transparent);
+  padding-inline-start: 32px;
 }
 .stage-count {
   font-size: 3rem;
@@ -2620,7 +2811,7 @@ a.lcard:hover {
 }
 .stage-count-of {
   font-size: var(--t-sm);
-  margin-left: 8px;
+  margin-inline-start: 8px;
 }
 .stage-prog {
   height: 4px;
@@ -2817,7 +3008,7 @@ a.lcard:hover {
     font-size: var(--t-sm);
   }
   .stage-head .btn {
-    margin-left: auto;
+    margin-inline-start: auto;
     padding: 6px 14px;
     font-size: var(--t-sm);
   }
@@ -2862,7 +3053,7 @@ a.lcard:hover {
   }
   .think-calls {
     flex-basis: 100%;
-    margin-left: 0;
+    margin-inline-start: 0;
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
@@ -2886,7 +3077,7 @@ a.lcard:hover {
   }
   .stage-brief input,
   .stage-brief textarea {
-    text-align: left;
+    text-align: start;
   }
   /* label-above-input: the 130px rail would squeeze the field at 360px */
   .brief-row {
@@ -2914,20 +3105,6 @@ a.lcard:hover {
   }
   .hcard {
     padding: 16px;
-  }
-  .bnew-row {
-    flex-wrap: wrap;
-  }
-  .bnew-row input {
-    flex: 1 1 120px;
-  }
-  .bnew-row input[type='number'] {
-    flex: 1 1 64px;
-  }
-  /* the add-brief button gets its own full-width row */
-  .bnew-row .btn {
-    flex: 1 1 100%;
-    justify-content: center;
   }
   .recent-row {
     grid-template-columns: 64px 1fr auto;
