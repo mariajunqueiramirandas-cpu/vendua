@@ -140,7 +140,11 @@ async function startSocket(sql: Sql, integration: IntegrationRow): Promise<Baile
   const baileys = (await import('baileys')) as unknown as {
     default: (opts: Record<string, unknown>) => BaileysSocket;
     initAuthCreds(): unknown;
-    fetchLatestWaWebVersion(): Promise<{ version: [number, number, number]; isLatest: boolean }>;
+    fetchLatestWaWebVersion(opts?: RequestInit): Promise<{
+      version: [number, number, number];
+      isLatest: boolean;
+      error?: unknown;
+    }>;
     BufferJSON: {
       replacer(k: string, v: unknown): unknown;
       reviver(k: string, v: unknown): unknown;
@@ -151,10 +155,17 @@ async function startSocket(sql: Sql, integration: IntegrationRow): Promise<Baile
 
   // WhatsApp rejects stale client versions at link/login (405; phone shows
   // "Couldn't link device") — the bundled version lags upstream, so fetch the
-  // live WA Web version. Fall back to the library default when unreachable.
+  // live WA Web version. Bounded timeout: a hung fetch must not stall the
+  // socket. On failure baileys resolves with the bundled default + isLatest
+  // false — fall back to it silently-identical to today, just logged.
   let version: [number, number, number] | undefined;
   try {
-    version = (await baileys.fetchLatestWaWebVersion()).version;
+    const res = await baileys.fetchLatestWaWebVersion({ signal: AbortSignal.timeout(8_000) });
+    if (res.isLatest) {
+      version = res.version;
+    } else {
+      waLog.warn({ err: res.error }, 'wa web version lookup failed — using bundled default');
+    }
   } catch (e) {
     waLog.warn({ err: e }, 'wa web version fetch failed — using bundled default');
   }
