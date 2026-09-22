@@ -75,45 +75,47 @@ export default function LeadDetail() {
   const [actChannel, setActChannel] = useState<'auto' | 'whatsapp' | 'email'>('auto');
   const [notFound, setNotFound] = useState(false);
 
-  // Per endpoint, newest applied response wins — an older one still commits
-  // unless a newer SUCCESS landed, so one failed endpoint can't discard
-  // another's usable data. Only an explicit 404 is a missing lead — a
-  // transient refresh failure must not swap the page for the not-found state.
+  // Each endpoint keeps its own applied watermark — an older response still
+  // commits unless a newer SUCCESS for that same resource already landed,
+  // so one failed endpoint can't discard another's usable data. Only an
+  // explicit 404 is a missing lead — a transient refresh failure must not
+  // swap the page for the not-found state.
   const reqSeq = useRef(0);
-  const okSeq = useRef(0);
+  const okSeq = useRef<Record<string, number>>({});
   const load = useCallback(() => {
     const seq = ++reqSeq.current;
-    const ok = () => {
-      if (seq < okSeq.current) return false;
-      okSeq.current = seq;
+    const ok = (k: string) => {
+      if (seq < (okSeq.current[k] ?? 0)) return false;
+      okSeq.current[k] = seq;
       return true;
     };
     api
       .lead(id)
       .then((r) => {
-        if (!ok()) return;
+        if (!ok('lead')) return;
         setNotFound(false);
         setLead(r.lead);
       })
       .catch((e) => {
-        if (seq >= okSeq.current && e instanceof ApiError && e.status === 404) setNotFound(true);
+        if (seq >= (okSeq.current.lead ?? 0) && e instanceof ApiError && e.status === 404)
+          setNotFound(true);
       });
     api.activities(id).then((r) => {
-      if (ok()) setActs(r.activities);
+      if (ok('acts')) setActs(r.activities);
     });
     api.tasks({ leadId: id }).then((r) => {
-      if (ok()) setTasks(r.tasks);
+      if (ok('tasks')) setTasks(r.tasks);
     });
     api.leadThreads(id).then((r) => {
-      if (ok()) setThreads(r.threads);
+      if (ok('threads')) setThreads(r.threads);
     });
     api.meetings({ leadId: id, scope: 'all' }).then((r) => {
-      if (ok()) setMeetings(r.meetings);
+      if (ok('meetings')) setMeetings(r.meetings);
     });
     // Queued runs with a run_at — the scheduled first contact (or a delayed
     // reply) staff would otherwise have to find on the Runs page.
     api.runs({ lead_id: id, status: 'queued' }).then((r) => {
-      if (ok()) setSchedRuns(r.runs.filter((x) => x.run_at));
+      if (ok('runs')) setSchedRuns(r.runs.filter((x) => x.run_at));
     });
   }, [id]);
   useEffect(load, [load]);

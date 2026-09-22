@@ -23,13 +23,13 @@ export default function Tasks() {
   const [tasks, setTasks] = useState<Task[]>([]);
   const [showDone, setShowDone] = useState(false);
 
+  // Last-issued load wins: the response carries the filter it was fetched
+  // under, so an older one shows the wrong `done` set — not just older data.
   const reqSeq = useRef(0);
-  const okSeq = useRef(0);
   const load = useCallback(() => {
     const seq = ++reqSeq.current;
     api.tasks({ done: showDone ? undefined : 'false' } as { done?: string }).then((r) => {
-      if (seq < okSeq.current) return;
-      okSeq.current = seq;
+      if (seq !== reqSeq.current) return;
       setTasks(r.tasks);
     });
   }, [showDone]);
