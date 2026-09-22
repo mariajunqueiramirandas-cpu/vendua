@@ -87,6 +87,7 @@ import {
   type IntegrationKind,
 } from './modules/integrations.ts';
 import { claimControl, controlTx } from './modules/control.ts';
+import { controlSse } from './modules/control-sse.ts';
 import { pipelineForecast, snapshotPipelineTx } from './modules/forecast.ts';
 import { channelHealth } from './modules/channel-health.ts';
 import {
@@ -811,6 +812,13 @@ export function createApp({ sql, sessionSecret, controlSecret, autoDrain }: AppD
   app.get('/control/v1/session', (c) => {
     controlGate(c);
     return c.json({ ok: true });
+  });
+
+  // Thin triggers over SSE — the board refetches on each frame; the
+  // connect-time `sync` covers events missed while reconnecting.
+  app.get('/control/v1/events', (c) => {
+    controlGate(c);
+    return controlSse(c);
   });
 
   // ---- leads --------------------------------------------------------------
