@@ -78,6 +78,21 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('lead lifecycle (db)', () => {
       `,
     );
 
+  // claimRun scans the whole queue — rows left queued by earlier tests (or
+  // requeued by a reclaim mid-test) share the created_at ordering, so the
+  // drain can't fully isolate a test's picks. Cancel any candidate outside
+  // `ids` so assertions only see this test's runs; returns null once the
+  // queue holds nothing outside the gated-by-busy-lead rejections.
+  const claimAmong = async (ids: string[]): Promise<string | null> => {
+    const allowed = new Set(ids);
+    for (;;) {
+      const r = await claimRun(sql);
+      if (!r) return null;
+      if (allowed.delete(r.id)) return r.id;
+      await sql`update agent_runs set status = 'canceled', finished_at = now() where id = ${r.id}`;
+    }
+  };
+
   describe('A1 — POST /leads automation opt-out', () => {
     test('automation:false creates the lead with no agent runs', async () => {
       await setup();
@@ -381,21 +396,12 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('lead lifecycle (db)', () => {
       await sql`update agent_runs set created_at = now() - interval '1 seconds' where id = ${a2}`;
       // A's first run claims; A's second is gated by the durable 'running'
       // owner; B's run is unaffected — a busy lead never starves the drain.
-      const first = await claimRun(sql);
-      if (first?.id !== a1) {
-        // Flake forensics: surface the queue snapshot so the winning row's
-        // provenance is visible instead of a bare uuid mismatch.
-        const rows = await sql`
-          select id, kind, status, lead_id, created_at, run_at, attempts
-          from agent_runs order by created_at desc limit 12
-        `;
-        expect({ got: first?.id, rows }, `expected a1=${a1}`).toEqual({ got: a1, rows });
-      }
-      expect(first?.id).toBe(a1);
-      expect((await claimRun(sql))!.id).toBe(b1);
-      expect(await claimRun(sql)).toBeNull();
+      const ours = [a1, a2, b1];
+      expect(await claimAmong(ours)).toBe(a1);
+      expect(await claimAmong(ours)).toBe(b1);
+      expect(await claimAmong(ours)).toBeNull();
       await sql`update agent_runs set status = 'done', finished_at = now() where id in (${a1}, ${b1})`;
-      expect((await claimRun(sql))!.id).toBe(a2);
+      expect(await claimAmong(ours)).toBe(a2);
       await sql`update agent_runs set status = 'done', finished_at = now() where id = ${a2}`;
     });
 
@@ -407,14 +413,14 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('lead lifecycle (db)', () => {
         insertLeadTx(tx, { name: 'Blocked Lead', agent_mode: 'auto' }),
       ).then((r) => r.body.lead.id);
       const owner = await controlTx(sql, (tx) => insertRun(tx, { kind: 'outreach', leadId }));
-      expect((await claimRun(sql))!.id).toBe(owner); // takes the lead's ownership
+      expect(await claimAmong([owner])).toBe(owner); // takes the lead's ownership
       // More queued same-lead outreach than the claim loop's attempt bound —
       // the in-scan exclusion keeps them from ever becoming candidates.
       for (let i = 0; i < 9; i++) {
         await controlTx(sql, (tx) => insertRun(tx, { kind: 'outreach', leadId }));
       }
       const disc = await controlTx(sql, (tx) => insertRun(tx, { kind: 'discovery' }));
-      expect((await claimRun(sql))!.id).toBe(disc);
+      expect(await claimAmong([disc])).toBe(disc);
     });
 
     test('stale STAFF draft still approves — staff owns its own cadence', async () => {
