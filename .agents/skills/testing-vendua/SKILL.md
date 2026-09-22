@@ -540,3 +540,37 @@ configured, gcal.lastError}` — the Config "reunião" card's chips
   real data you're already logged in — do NOT re-run a blind login script
   that fills "the first input on the page" (it lands in a config field
   and waits forever for a login response that never comes).
+
+## Control SSE channel (`/control/v1/events`)
+
+- Stream-verify with `curl -sN --max-time 50 -H "x-vendua-control: $CONTROL_SECRET"
+  http://localhost:8787/control/v1/events | ts '%H:%M:%S.%.S'` — expect `event:
+  sync` as the FIRST frame, `:ka` comment lines ~20.0s apart, and `event:
+  <type>` + `id:` + JSON `data` frames on mutations. Unauthed → 404 (not 401).
+  Cookie auth: `POST /control/v1/login -c jar` then `curl -b jar` — the SPA
+  EventSource path auths the same way.
+- Mutation→event map (app.ts emit sites): POST /leads → lead.change
+  (+run.update only if a triage run spawns — pass `automation:false` for a
+  clean single emit); POST /leads/:id/tasks, PATCH /tasks/:id → lead.change;
+  POST/PATCH /meetings → meeting.change (+lead.change; a second meeting.change
+  comes from ensureMeetingEffects — duplicates are expected); POST
+  /leads/:id/threads + POST /threads/:id/messages {send:false} → thread.message
+  (+draft.change on draft writes); POST /leads/:id/run → run.update bursts;
+  PUT /integrations/:kind → channel.health ONLY for whatsapp|email.
+- channel.health has TWO emit paths distinguishable by `ref`: PUT-path frames
+  carry `ref:"whatsapp"|"email"`; Baileys socket-path frames (qr persist/open
+  via persistQr commit, close immediate, ensureSocket teardown) carry NO ref.
+  Enable/disable the BAILEYS driver to hit the teardown emit; per-driver rows
+  coexist — disabling the `log` row leaves a live baileys socket (no teardown).
+- Sync-vs-floor discriminator: while core is DOWN, `psql insert` a row it
+  could never emit; on restart the EventSource retries → server sends `sync`
+  → the row must paint WITHOUT reload. If it only appears at the 60s floor,
+  sync refetch is broken.
+- Settings channel.health subscribers refetch ONLY waQr + channelHealth — the
+  provider-card `load()` (integrations rows) has no subscription and no floor:
+  external PUTs leave the card stale until remount (in-UI saves self-refresh).
+- Footguns: `pkill -f "src/index.ts"` inside an exec command matches the
+  shell's own cmdline → kills the shell mid-script; kill by PID or use a
+  pattern that can't self-match. In devtools Network, the dot LEFT of the ⊘
+  clear icon is record/stop — clicking it pauses capture; a frozen panel then
+  looks like "zero requests" while the page still updates (verify via DOM).
