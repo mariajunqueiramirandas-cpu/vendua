@@ -572,8 +572,12 @@ export async function setThreadAgent(
   threadId: string,
   enabled: boolean,
   idemKey: string,
+  /** Optional fence run first inside the claim tx — agent tool calls pass a
+   *  live-claim check so a reclaimed run can't still mutate. */
+  guard?: (tx: Sql) => Promise<void>,
 ): Promise<ClaimResult<{ thread: ReturnType<typeof threadJson> }>> {
   return claimControl(sql, idemKey, async (tx) => {
+    await guard?.(tx);
     const rows = await tx<ThreadRow[]>`
       update lead_threads set agent_enabled = ${enabled} where id = ${threadId} returning *
     `;

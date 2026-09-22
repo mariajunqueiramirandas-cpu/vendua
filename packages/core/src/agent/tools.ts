@@ -36,6 +36,11 @@ export interface ToolContext {
   threadId: string | null;
   /** tool call index within the run — seeds deterministic idempotency keys */
   step: number;
+  /** The worker's live claim on agent_runs — mutating tools fence on it
+   *  (assertRunClaimTx): a run reclaimed or canceled mid-tool turns the
+   *  call into an aborted no-op instead of a duplicate effect. Null outside
+   *  a real claim (tests, sims) — no fence there. */
+  claimToken: string | null;
   /** In-flight/finished read_pages calls by page identity — a repeat read
    *  (same step's batch or a later step) shares the same provider call
    *  instead of paying for the identical page twice. */
@@ -494,6 +499,27 @@ export function toolsFor(kind: string): AgentTool[] {
   return REGISTRY.filter((t) => t.toolsets.includes(kind)).map((t) => t.def);
 }
 
+/** Side-effect fence on the live claim. claim_token already guards the
+ *  journal/finish writes, but a worker that lost the row (reclaimed past the
+ *  lease, or canceled mid-flight) could still land a mutating tool — the
+ *  classic double-send. Run FIRST inside the mutation's own claim tx: the
+ *  FOR UPDATE on the run row serializes against drain()'s reclaim UPDATE, so
+ *  the mutation either commits strictly before the reclaim (the resumed
+ *  attempt's dedupe then absorbs it) or throws before writing anything.
+ *  Throws (never returns) so the claim rolls back un-stored — a recorded
+ *  'stale' response would replay-poison the next attempt's identical key. */
+export async function assertRunClaimTx(tx: Sql, ctx: ToolContext): Promise<void> {
+  if (!ctx.claimToken) return;
+  const row = (
+    await tx<{ status: string; claim_token: string | null }[]>`
+      select status, claim_token from agent_runs where id = ${ctx.runId} for update
+    `
+  )[0];
+  if (row?.status !== 'running' || row.claim_token !== ctx.claimToken) {
+    throw new HttpError(409, 'STALE_CLAIM', 'run claim lost — tool effects suppressed');
+  }
+}
+
 export async function executeTool(
   ctx: ToolContext,
   callId: string,
@@ -504,6 +530,9 @@ export async function executeTool(
   // deterministic per call — a retried call replays, a batched second call
   // with the same name in one step gets its own key.
   const key = `agent:${runId}:${step}:${name}:${callId}`;
+  // Forwarded to module-level mutations (updateLead/createTask/...) so their
+  // own claim transaction fences on the live claim before writing.
+  const guard = (tx: Sql) => assertRunClaimTx(tx, ctx);
 
   // toolsFor() only decides what the model is TOLD about — nothing stops it
   // emitting another name. Enforce the toolset here too, or a discovery run
@@ -677,6 +706,7 @@ export async function executeTool(
       // verified; the mobile-derived fill stays unverified for the gate.
       input.whatsapp_verified = Boolean(input.whatsapp) && !whatsappDerived;
       const res = await claimControl(sql, key, async (tx) => {
+        await assertRunClaimTx(tx, ctx);
         // The research dossier lands on the timeline as a note — created with
         // the lead in the same claim so a lead can never exist without it.
         let guardrails: Partial<Guardrails> = {};
@@ -944,7 +974,7 @@ export async function executeTool(
     }
     case 'update_lead': {
       const { id, ...rest } = args;
-      const res = await updateLead(sql, String(id), leadPatch(rest), key, 'agent');
+      const res = await updateLead(sql, String(id), leadPatch(rest), key, 'agent', guard);
       return res.body;
     }
     case 'set_state': {
@@ -954,6 +984,7 @@ export async function executeTool(
         leadPatch({ state: args.state }),
         key,
         'agent',
+        guard,
       );
       return res.body;
     }
@@ -963,6 +994,7 @@ export async function executeTool(
         String(args.leadId),
         { kind: 'note', body: String(args.body), createdBy: 'agent' },
         key,
+        guard,
       );
       return res.body;
     }
@@ -972,6 +1004,7 @@ export async function executeTool(
         String(args.leadId),
         { title: String(args.title), dueAt: (args.dueAt as string) ?? null, createdBy: 'agent' },
         key,
+        guard,
       );
       return res.body;
     }
@@ -987,6 +1020,7 @@ export async function executeTool(
             via: string;
           });
       const res = await claimControl<DraftBody>(sql, key, async (tx) => {
+        await assertRunClaimTx(tx, ctx);
         const pick = await resolveChannelTx(tx, leadId, {
           requested: args.channel ? channel(args.channel) : null,
           override: ctx.channelOverride,
@@ -1028,6 +1062,7 @@ export async function executeTool(
             pick: Extract<Awaited<ReturnType<typeof resolveChannelTx>>, { ok: true }>;
           };
       const res = await claimControl<SendBody>(sql, key, async (tx) => {
+        await assertRunClaimTx(tx, ctx);
         await tx`select pg_advisory_xact_lock(hashtext(${`send:${leadId}`}))`;
         // Run-scoped dedupe: a run reclaimed after a mid-send crash re-executes
         // the whole conversation — the model may emit a different callId, so
@@ -1125,6 +1160,7 @@ export async function executeTool(
       // Row lock on the settings row makes the read-modify-write atomic —
       // concurrent remembers serialize instead of clobbering each other.
       const total = await controlTx(sql, async (tx) => {
+        await assertRunClaimTx(tx, ctx);
         await tx`
           insert into control_settings (key, value)
           values ('agent_memory', ${tx.json({ facts: [] } as never)})
@@ -1223,17 +1259,19 @@ export async function executeTool(
     case 'request_human': {
       const leadId = String(args.leadId);
       const reason = String(args.reason).slice(0, 500);
-      if (ctx.threadId) await setThreadAgent(sql, ctx.threadId, false, key + ':thread');
+      if (ctx.threadId) await setThreadAgent(sql, ctx.threadId, false, key + ':thread', guard);
       await createTask(
         sql,
         leadId,
         { title: `[humano] ${reason.slice(0, 200)}`, createdBy: 'agent' },
         key + ':task',
+        guard,
       );
       // The handoff belongs on the lead's timeline too — staff reading the
       // card sees why the agent stepped aside, not just a task title. Claimed
       // so a reclaimed run doesn't duplicate the note.
       await claimControl(sql, key + ':note', async (tx) => {
+        await assertRunClaimTx(tx, ctx);
         await tx`
           insert into lead_activities (lead_id, kind, body, created_by)
           values (${leadId}, 'system', ${`Handoff para humano — ${reason}`}, 'agent')
@@ -1254,6 +1292,7 @@ export async function executeTool(
       // dispatch suppression re-check. Replays return the recorded result.
       type UnsubBody = { messageId: string | null; sendBlocked: string | null };
       const res = await claimControl<UnsubBody>(sql, key, async (tx) => {
+        await assertRunClaimTx(tx, ctx);
         await tx`select pg_advisory_xact_lock(hashtext(${`send:${leadId}`}))`;
         let messageId: string | null = null;
         let sendBlocked: string | null = null;
@@ -1514,6 +1553,7 @@ export async function executeTool(
         .filter((s) => s !== null);
       if (!steps.length) return { error: 'plan needs ≥1 item with a step' };
       const res = await claimControl(sql, key, async (tx) => {
+        await assertRunClaimTx(tx, ctx);
         const cur = await tx<{ agent_plan: unknown }[]>`
           select agent_plan from leads where id = ${ctx.leadId!} for update`;
         const prev = Array.isArray(cur[0]?.agent_plan) ? cur[0].agent_plan : [];

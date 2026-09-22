@@ -534,8 +534,12 @@ export async function updateLead(
   set: Record<string, unknown>,
   idemKey: string,
   actor: 'staff' | 'agent' | 'system' = 'staff',
+  /** Optional fence run first inside the claim tx — agent tool calls pass a
+   *  live-claim check so a reclaimed run can't still mutate. */
+  guard?: (tx: Sql) => Promise<void>,
 ): Promise<ClaimResult<{ lead: Lead }>> {
   return claimControl(sql, idemKey, async (tx) => {
+    await guard?.(tx);
     const cur = (await tx<LeadRow[]>`select * from leads where id = ${id}`)[0];
     if (!cur) throw new HttpError(404, 'LEAD_NOT_FOUND', 'lead not found');
     // The bounce marker describes the stored address — a patch that swaps in
