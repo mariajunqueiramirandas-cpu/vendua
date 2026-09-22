@@ -1,7 +1,8 @@
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { RefreshCw } from 'lucide-react';
 import { api, type Stats } from '../api.ts';
+import { onControlEvent } from '../events.ts';
 import { Empty, Page, fmtDay, fmtMoney } from '../components.tsx';
 
 const STATES = ['lead', 'contacted', 'invited', 'live'] as const;
@@ -30,7 +31,7 @@ export default function Reports() {
   // write s/err, else a slow mount response masks a failed refresh.
   const loadSeq = useRef(0);
 
-  const load = () => {
+  const load = useCallback(() => {
     const seq = ++loadSeq.current;
     api
       .stats()
@@ -42,8 +43,13 @@ export default function Reports() {
       .catch((e) => {
         if (seq === loadSeq.current) setErr(String(e));
       });
-  };
-  useEffect(() => load(), []);
+  }, []);
+  useEffect(load, [load]);
+  useEffect(() => onControlEvent(['lead.change', 'run.update'], load), [load]);
+  useEffect(() => {
+    const t = setInterval(load, 60_000);
+    return () => clearInterval(t);
+  }, [load]);
 
   const snapNow = async () => {
     setSnapping(true);

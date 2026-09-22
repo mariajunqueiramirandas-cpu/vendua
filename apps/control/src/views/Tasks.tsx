@@ -1,6 +1,7 @@
-import { Fragment, useCallback, useEffect, useState } from 'react';
+import { Fragment, useCallback, useEffect, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { api, type Task } from '../api.ts';
+import { onControlEvent } from '../events.ts';
 import { Empty, Page, fmtDateTime } from '../components.tsx';
 
 const DAY = 86_400_000;
@@ -22,12 +23,29 @@ export default function Tasks() {
   const [tasks, setTasks] = useState<Task[]>([]);
   const [showDone, setShowDone] = useState(false);
 
+  // A response is usable only for the filter it was fetched under: reject
+  // it when that filter is no longer displayed, but otherwise an older
+  // same-filter success still commits unless a newer success already did —
+  // a failed refresh never discards usable tasks.
+  const reqSeq = useRef(0);
+  const okSeq = useRef(0);
+  const shownFilter = useRef(showDone);
   const load = useCallback(() => {
-    api
-      .tasks({ done: showDone ? undefined : 'false' } as { done?: string })
-      .then((r) => setTasks(r.tasks));
+    shownFilter.current = showDone;
+    const seq = ++reqSeq.current;
+    const f = showDone;
+    api.tasks({ done: f ? undefined : 'false' } as { done?: string }).then((r) => {
+      if (f !== shownFilter.current || seq <= okSeq.current) return;
+      okSeq.current = seq;
+      setTasks(r.tasks);
+    });
   }, [showDone]);
   useEffect(load, [load]);
+  useEffect(() => onControlEvent('lead.change', load), [load]);
+  useEffect(() => {
+    const t = setInterval(load, 60_000);
+    return () => clearInterval(t);
+  }, [load]);
 
   const groups = new Map<string, Task[]>();
   for (const t of tasks) {

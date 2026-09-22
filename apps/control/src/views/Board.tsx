@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { ArrowUpRight } from 'lucide-react';
 import { api, type LeadListItem } from '../api.ts';
+import { onControlEvent } from '../events.ts';
 import { Empty, Page, fmtMoney, rel } from '../components.tsx';
 
 const COLS: { key: LeadListItem['state']; label: string }[] = [
@@ -18,7 +19,12 @@ export default function BoardView() {
   const [over, setOver] = useState<string | null>(null);
   const nav = useNavigate();
 
+  // Newest applied load wins: an older response commits unless a newer
+  // SUCCESS already landed — a failed refresh never discards good data.
+  const reqSeq = useRef(0);
+  const okSeq = useRef(0);
   const load = useCallback(() => {
+    const seq = ++reqSeq.current;
     // Follow the keyset cursor — the board IS the pipeline, so a partial page
     // would silently hide leads and misreport column totals.
     const all: LeadListItem[] = [];
@@ -28,11 +34,18 @@ export default function BoardView() {
         return r.nextCursor ? page(r.nextCursor) : undefined;
       });
     void page().then(() => {
+      if (seq < okSeq.current) return;
+      okSeq.current = seq;
       setLeads(all);
       setLoading(false);
     });
   }, []);
   useEffect(load, [load]);
+  useEffect(() => onControlEvent('lead.change', load), [load]);
+  useEffect(() => {
+    const t = setInterval(load, 60_000);
+    return () => clearInterval(t);
+  }, [load]);
 
   // Refs, not state: in-flight checks must be synchronous — a move that lands
   // between the chain ending and a state flush would queue a write nothing
