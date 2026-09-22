@@ -2,10 +2,7 @@ import { describe, expect, test } from 'bun:test';
 import { Hono } from 'hono';
 import postgres from 'postgres';
 import { createApp } from '../src/app.ts';
-import {
-  controlEventListenerCount,
-  emitControlEvent,
-} from '../src/modules/control-events.ts';
+import { controlEventListenerCount, emitControlEvent } from '../src/modules/control-events.ts';
 import { controlSse } from '../src/modules/control-sse.ts';
 
 // The events stream never touches sql — a lazy client (postgres.js only
