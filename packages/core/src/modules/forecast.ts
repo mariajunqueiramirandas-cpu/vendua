@@ -1,5 +1,6 @@
 import type { Sql } from '../platform/db.ts';
 import { controlTx } from './control.ts';
+import { emitControlEvent } from './control-events.ts';
 import { getForecastConfigTx } from './integrations.ts';
 import { LEAD_STATES, pipelineByStateTx, type StateBucket } from './leads.ts';
 
@@ -99,12 +100,14 @@ export async function snapshotPipelineTx(tx: Sql): Promise<Snapshot> {
 
 /** Once-a-day cadence for the worker tick — no-op once today's row exists. */
 export async function sweepPipelineSnapshots(sql: Sql): Promise<boolean> {
-  return controlTx(sql, async (tx) => {
+  const taken = await controlTx(sql, async (tx) => {
     const done = await tx`select 1 from pipeline_snapshots where taken_on = current_date`;
     if (done.length) return false;
     await snapshotPipelineTx(tx);
     return true;
   });
+  if (taken) emitControlEvent('lead.change');
+  return taken;
 }
 
 /** The forecast slice of /control/v1/stats — composed by the route so this
