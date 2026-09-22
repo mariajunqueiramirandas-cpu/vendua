@@ -124,6 +124,9 @@ export interface AppDeps {
    *  shared staff key never doubles as the shopper-session signing key.
    *  Falls back to sessionSecret in dev when unset. */
   controlSecret?: string | undefined;
+  /** Endpoint enqueues kick a fire-and-forget queue drain by default. Tests
+   *  pass false — a background claim mid-assertion races the expectation. */
+  autoDrain?: boolean | undefined;
 }
 
 async function loadSettings(
@@ -260,7 +263,11 @@ async function testIntegration(
   }
 }
 
-export function createApp({ sql, sessionSecret, controlSecret }: AppDeps) {
+export function createApp({ sql, sessionSecret, controlSecret, autoDrain }: AppDeps) {
+  const kickDrain =
+    autoDrain === false
+      ? () => {}
+      : () => void drain(sql).catch((e) => agentLog.error({ err: e }, 'drain failed'));
   const resolver = new TenantResolver(sql);
   const app = new Hono<{ Variables: { tenant: Tenant } }>();
 
@@ -883,7 +890,7 @@ export function createApp({ sql, sessionSecret, controlSecret }: AppDeps) {
       },
     );
     if (res.replayed) c.header('x-idempotent-replay', 'true');
-    if (res.body.runId) void drain(sql).catch((e) => agentLog.error({ err: e }, 'drain failed'));
+    if (res.body.runId) kickDrain();
     return c.json(res.body, res.status as 200);
   });
 
@@ -1030,7 +1037,7 @@ export function createApp({ sql, sessionSecret, controlSecret }: AppDeps) {
       };
     });
     if (res.replayed) c.header('x-idempotent-replay', 'true');
-    void drain(sql).catch((e) => agentLog.error({ err: e }, 'drain failed'));
+    kickDrain();
     return c.json(res.body, res.status as 201);
   });
 
@@ -1198,7 +1205,7 @@ export function createApp({ sql, sessionSecret, controlSecret }: AppDeps) {
     // A stale draft is superseded inside the claim — nothing ships from the
     // expired copy. Kick the drain so the regen run recomposes it promptly.
     if (res.body.stale) {
-      void drain(sql).catch((e) => agentLog.error({ err: e }, 'drain failed'));
+      kickDrain();
       return c.json(res.body);
     }
     const { dispatchMessage } = await import('./agent/send.ts');
@@ -1558,7 +1565,7 @@ export function createApp({ sql, sessionSecret, controlSecret }: AppDeps) {
       };
     });
     if (res.replayed) c.header('x-idempotent-replay', 'true');
-    void drain(sql).catch((e) => agentLog.error({ err: e }, 'drain failed'));
+    kickDrain();
     return c.json(res.body, res.status as 201);
   });
 
@@ -1641,7 +1648,7 @@ export function createApp({ sql, sessionSecret, controlSecret }: AppDeps) {
       return { status: 200, body: { enqueued, skipped } };
     });
     if (res.replayed) c.header('x-idempotent-replay', 'true');
-    if (res.body.enqueued) void drain(sql).catch((e) => agentLog.error({ err: e }, 'drain failed'));
+    if (res.body.enqueued) kickDrain();
     return c.json(res.body);
   });
 

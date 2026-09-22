@@ -39,7 +39,9 @@ describe('guardrails — cadence + stale-draft knobs', () => {
 // DB-backed — opt-in via TEST_DATABASE_URL (CI has no Postgres).
 describe.skipIf(!process.env.TEST_DATABASE_URL)('lead lifecycle (db)', () => {
   const sql = postgres(process.env.TEST_DATABASE_URL!);
-  const app = createApp({ sql, sessionSecret: 's', controlSecret: 'ctl-secret' });
+  // autoDrain off: endpoint enqueues kick a fire-and-forget drain that would
+  // claim queued runs mid-assertion — the claim ordering below is the test.
+  const app = createApp({ sql, sessionSecret: 's', controlSecret: 'ctl-secret', autoDrain: false });
   // Claims are durable across `bun test` runs — keys must be fresh per
   // invocation or the second run replays the stored response instead of
   // executing the work being asserted.
