@@ -33,6 +33,8 @@ interface FoundLead {
   city: string | null;
   segment: string | null;
   fitScore: number | null;
+  intentScore: number | null;
+  intentReason: string | null;
   contact: string[];
   duplicate: boolean;
   existingState?: string | undefined;
@@ -279,6 +281,8 @@ export default function Discovery() {
         city: typeof a.city === 'string' ? a.city : null,
         segment: typeof a.segment === 'string' ? a.segment : null,
         fitScore: typeof a.fitScore === 'number' ? a.fitScore : null,
+        intentScore: typeof a.intentScore === 'number' ? a.intentScore : null,
+        intentReason: typeof a.intentReason === 'string' ? a.intentReason : null,
         contact,
         duplicate: dup,
         existingState: dup
@@ -457,6 +461,11 @@ export default function Discovery() {
                     <div className="lcard-top">
                       <div className="lcard-name">{l.name}</div>
                       {l.fitScore != null && <span className="lcard-fit mono">{l.fitScore}</span>}
+                      {l.intentScore != null && (
+                        <span className="lcard-fit intent mono" title={l.intentReason ?? undefined}>
+                          i{l.intentScore}
+                        </span>
+                      )}
                     </div>
                     <div className="lcard-meta">
                       {[l.segment, l.city].filter(Boolean).join(' · ') || '—'}
@@ -602,13 +611,29 @@ export default function Discovery() {
                     {[b.segment, b.city].filter(Boolean).join(' · ') || '—'}
                     {b.target ? ` · ≤${b.target}` : ''} · {rel(b.last_run_at)}
                   </span>
+                  {b.note && (
+                    <span className="brow-note mono" title={b.note}>
+                      {b.note}
+                    </span>
+                  )}
                 </div>
+                {b.created_by === 'strategist' && (
+                  <span className="chip warn" title="proposta do estrategista">
+                    proposta
+                  </span>
+                )}
                 <button
                   className={`btn mini ${b.enabled ? 'stage-go' : 'stage-ghost'}`}
-                  title={b.enabled ? 'ativa — clica pra pausar' : 'pausada'}
+                  title={
+                    b.enabled
+                      ? 'ativa — clica pra pausar'
+                      : b.created_by === 'strategist'
+                        ? 'aprovar proposta — começa a rodar'
+                        : 'pausada'
+                  }
                   onClick={() => void api.patchBrief(b.id, { enabled: !b.enabled }).then(load)}
                 >
-                  {b.enabled ? 'on' : 'off'}
+                  {b.enabled ? 'on' : b.created_by === 'strategist' ? 'aprovar' : 'off'}
                 </button>
                 <button
                   className="btn mini stage-ghost"
@@ -700,6 +725,7 @@ export default function Discovery() {
                   <th>responderam</th>
                   <th>ativos</th>
                   <th>custo 30d</th>
+                  <th>cpl</th>
                 </tr>
               </thead>
               <tbody>
@@ -719,6 +745,9 @@ export default function Discovery() {
                     </td>
                     <td className="mono">{s.live}</td>
                     <td className="mono">{fmtMoney(s.costCents)}</td>
+                    <td className="mono" title="custo 30d ÷ leads novos 30d">
+                      {s.cplCents == null ? '—' : fmtMoney(s.cplCents)}
+                    </td>
                   </tr>
                 ))}
               </tbody>
@@ -740,6 +769,11 @@ export default function Discovery() {
                     {l.fitScore != null && (
                       <span className="lcard-fit mono" title={l.fitReason ?? undefined}>
                         {l.fitScore}
+                      </span>
+                    )}
+                    {l.intentScore != null && (
+                      <span className="lcard-fit intent mono" title={l.intentReason ?? undefined}>
+                        i{l.intentScore}
                       </span>
                     )}
                   </div>

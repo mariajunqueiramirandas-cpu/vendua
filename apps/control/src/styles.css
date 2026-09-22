@@ -2315,6 +2315,13 @@ details.raw textarea {
   color: color-mix(in srgb, var(--sage-300) 75%, transparent);
   font-size: var(--t-2xs);
 }
+.brow-note {
+  color: var(--amber-400);
+  font-size: var(--t-2xs);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 .brow-empty {
   font-size: var(--t-xs);
   padding: 6px 0 10px;
@@ -2666,6 +2673,13 @@ a.lcard:hover {
   font-weight: 600;
   padding: 2px 9px;
   flex-shrink: 0;
+}
+/* intent sits next to the ICP chip — same pill shape, outline instead of
+   fill so the two scores never read as one number. */
+.lcard-fit.intent {
+  background: transparent;
+  color: var(--forest-600);
+  border: 1px solid color-mix(in srgb, var(--forest-600) 45%, transparent);
 }
 .lcard-meta {
   color: var(--forest-600);

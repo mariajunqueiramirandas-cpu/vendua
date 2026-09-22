@@ -211,6 +211,18 @@ export const DEFAULT_GUARDRAILS = {
    *  many minutes after creation — the agent makes first contact alone.
    *  0 = off: creation only enqueues triage (draft for approval). */
   firstContactDelayMin: 0,
+  /** cadence floor: after an agent send the lead waits at most this many
+   *  days for a reply before sweepOutreach picks it up — stamped only when
+   *  next_action_at is still NULL (an agent/staff-set value wins). 0 = off. */
+  followupCadenceDays: 2,
+  /** approving an agent draft older than this many days never sends the
+   *  week-old copy — the draft is superseded and a draftOnly run recomposes
+   *  it against current state. 0 = off (approve always sends). */
+  staleDraftDays: 7,
+  /** discovery briefs: a brief whose last N finished runs produced zero
+   *  leads pauses itself (enabled=false + a note) instead of burning runs
+   *  forever. 0 = never auto-pause. */
+  briefAutoPauseRuns: 5,
 } as const;
 
 export type Guardrails = {
@@ -223,6 +235,9 @@ export type Guardrails = {
   discoveryContactMinScore: number;
   inboundReplyDelayMin: number;
   firstContactDelayMin: number;
+  followupCadenceDays: number;
+  staleDraftDays: number;
+  briefAutoPauseRuns: number;
 };
 
 export const DEFAULT_PITCH = {
@@ -321,6 +336,9 @@ export function validateSetting(key: string, value: unknown): void {
     intField('discoveryContactMinScore', 1, 10);
     intField('inboundReplyDelayMin', 0, 1440);
     intField('firstContactDelayMin', 0, 10080);
+    intField('followupCadenceDays', 0, 90);
+    intField('staleDraftDays', 0, 90);
+    intField('briefAutoPauseRuns', 0, 100);
     for (const k of ['quietStart', 'quietEnd'] as const) {
       if (v[k] === undefined) continue;
       const t = v[k];
@@ -460,6 +478,38 @@ export function validateSetting(key: string, value: unknown): void {
       if (typeof n !== 'number' || !Number.isFinite(n) || n < 0 || n > 1) {
         throw bad(`probabilities.${k}`, 'must be a number in [0, 1]');
       }
+    }
+    return;
+  }
+
+  // 'digest' — daily staff email. `to` is the only staff-address field in the
+  // schema; the worker reads hour in the guardrails timezone.
+  if (key === 'digest') {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) {
+      throw bad('*', 'must be an object');
+    }
+    const v = value as Record<string, unknown>;
+    if (v.enabled !== undefined && typeof v.enabled !== 'boolean') {
+      throw bad('enabled', 'must be a boolean');
+    }
+    if (v.hour !== undefined) {
+      if (typeof v.hour !== 'number' || !Number.isInteger(v.hour) || v.hour < 0 || v.hour > 23) {
+        throw bad('hour', 'must be an integer 0–23');
+      }
+    }
+    if (v.to !== undefined) {
+      if (typeof v.to !== 'string' || v.to.length > 320) {
+        throw bad('to', 'must be a string (≤320 chars)');
+      }
+      if (v.to !== v.to.trim()) {
+        throw bad('to', 'must not have surrounding whitespace');
+      }
+      if (v.to && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v.to)) {
+        throw bad('to', 'must be an email address');
+      }
+    }
+    if (v.enabled === true && !v.to) {
+      throw bad('to', 'is required when the digest is enabled');
     }
     return;
   }

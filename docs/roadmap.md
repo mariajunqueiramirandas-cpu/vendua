@@ -1,6 +1,40 @@
 # Roadmap
 
-> Status: Proposed · Last reviewed: 2026-09-19
+> Status: In progress · Last reviewed: 2026-09-22
+
+## Where we are
+
+| Phase                         | State   | Notes                                                                                                                      |
+| ----------------------------- | ------- | -------------------------------------------------------------------------------------------------------------------------- |
+| 0 — Foundations               | ✅ Done | Monorepo, Core skeleton, Kernel, 3 spike storefronts, Contract v1 drafted                                                  |
+| 1 — Storefront factory        | ✅ Done | Contract frozen, conformance, CLI, fleet isolation, Founder CRM — which has since grown well past its v0 scope (see below) |
+| 2 — Commerce completeness     | ⬜ Open | Order lifecycle, catalog depth, growth surfaces — all unchecked                                                            |
+| 3 — Payments + merchant admin | ⬜ Open | The "buy a plan → provisioned store" self-serve path lives here; top product priority                                      |
+| 4 — First tenant operated     | ⬜ Open | Edge, Control Plane v0, provisioner — the other half of the 1-hour signup→store promise                                    |
+| 5–8 — Fleet loop → scale      | ⬜ Open | Blocked on 2–4 having a fleet to operate                                                                                   |
+
+**Ahead of the roadmap:** the Founder CRM (`apps/control`) grew into the agent
+ops surface, and the sales-side agent engine shipped on `packages/core` —
+the same `agent_runs` machinery the Phase-6 generation pipeline will reuse:
+
+- **Outbound negotiation loop** — triage / reply / outreach / discovery /
+  strategist run kinds; per-lead negotiation checklist (`leads.agent_plan`),
+  dossier + intent/goal fields, agent-driven `unsubscribe` with a farewell,
+  `request_human` escalation, quotable-facts offer (`pitch.offer`).
+- **Simulation harness** — `bun run sim` drives the real pipeline against
+  persona-LLM leads and an LLM judge; results persist to `sim_runs`.
+- **Worker robustness** — attempt caps + backoff, journal replay/resume,
+  claim-fenced mutating tools, stranded-run recovery, per-lead serialization.
+- **Ops surfaces** — Planos board (queued actions + plan checklists), daily
+  digest email, channel-health chip, CPL per segment, stale-draft regen,
+  cadence follow-ups with provenance (`next_action_source`).
+- **Backlog** — [`agent-improvements.md`](agent-improvements.md) is the
+  maintained list; nearly all items shipped as of the `cool-fixes` batch.
+
+The product bet in the Phase 3/4 gap: the sales agent above is the
+acquisition engine, and "ad → paid plan → agent-built store live in ~1 hour"
+is the pipeline those two phases must close — intake exists, money and
+provisioning do not.
 
 **Organizing principle: the fleet is the product.** This roadmap is not "build
 the platform, then learn to operate 1000 stores". Every phase must leave the
@@ -56,7 +90,7 @@ layout, not a scratch project.
 Exit met: Contract v1 drafted from observed needs; spike code lives in the
 monorepo layout it keeps.
 
-## Phase 1 — The storefront factory (weeks 4–8)
+## Phase 1 — The storefront factory (weeks 4–8) ✅
 
 Goal: storefronts are _produced_, not hand-built — and the repo enforces it.
 
@@ -78,6 +112,9 @@ Goal: storefronts are _produced_, not hand-built — and the repo enforces it.
       conversations start before the fleet exists, and tracking them in a
       spreadsheet is exactly the manual-ops debt this roadmap avoids. Phase 4
       merges it into the Control Plane's provisioner states.
+      **Grown far past v0** — `apps/control` is now the agent ops console
+      (threads + approvals, Planos board, discovery segments + CPL, digest
+      settings); see [Where we are](#where-we-are).
 
 Exit: `vendua scaffold && vendua build && vendua qa` is green on a fresh
 storefront without any custom code — and a storefront PR physically cannot

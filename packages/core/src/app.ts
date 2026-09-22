@@ -88,6 +88,7 @@ import {
 } from './modules/integrations.ts';
 import { claimControl, controlTx } from './modules/control.ts';
 import { pipelineForecast, snapshotPipelineTx } from './modules/forecast.ts';
+import { channelHealth } from './modules/channel-health.ts';
 import {
   availableSlots,
   bookBusyWindows,
@@ -827,18 +828,30 @@ export function createApp({ sql, sessionSecret, controlSecret }: AppDeps) {
 
   app.post('/control/v1/leads', async (c) => {
     controlGate(c);
-    // Lead + its triage run share ONE claim: a retried POST replays the
-    // stored body (lead + runId) instead of creating a second lead.
+    const body = await bodyJson(c);
+    for (const field of ['automation', 'triage'] as const) {
+      if (body[field] !== undefined && typeof body[field] !== 'boolean') {
+        throw new HttpError(422, 'BAD_REQUEST', `${field} must be a boolean`, { field });
+      }
+    }
+    // Automation is opt-out per request: `triage:false` skips only the
+    // triage run; `automation:false` skips every run — the staff-managed
+    // equivalent of a CSV-imported lead, which never queues agent work.
     const res = await claimControl<{ lead: Lead; runId?: string; contactRunId?: string }>(
       sql,
       requireIdemKey(c),
       async (tx) => {
-        const created = await insertLeadTx(tx, leadInsert(await bodyJson(c)));
-        if (created.body.lead.agentMode !== 'off') {
-          const runId = await insertRun(tx, {
-            kind: 'triage',
-            leadId: created.body.lead.id,
-          });
+        // Lead + its runs share ONE claim: a retried POST replays the
+        // stored body (lead + runIds) instead of creating a second lead.
+        const created = await insertLeadTx(tx, leadInsert(body));
+        if (created.body.lead.agentMode !== 'off' && body.automation !== false) {
+          const runId =
+            body.triage === false
+              ? undefined
+              : await insertRun(tx, {
+                  kind: 'triage',
+                  leadId: created.body.lead.id,
+                });
           // guardrails.firstContactDelayMin: a hand-created card gets the
           // agent's first touch scheduled on its own — the run waits out
           // the delay in 'queued' (cancelable in Runs), and the send itself
@@ -859,7 +872,11 @@ export function createApp({ sql, sessionSecret, controlSecret }: AppDeps) {
               : undefined;
           return {
             status: created.status,
-            body: { ...created.body, runId, ...(contactRunId ? { contactRunId } : {}) },
+            body: {
+              ...created.body,
+              ...(runId ? { runId } : {}),
+              ...(contactRunId ? { contactRunId } : {}),
+            },
           };
         }
         return created;
@@ -977,6 +994,9 @@ export function createApp({ sql, sessionSecret, controlSecret }: AppDeps) {
     controlGate(c);
     const body = await bodyJson(c);
     const kind = str(body.kind, 'kind', 40);
+    // strategist stays out of the lead-scoped list — a suppressed lead would
+    // park the queued run and sweepStrategist would read its created_at as a
+    // filled cadence slot, skipping the real weekly review for 7 days
     if (!['triage', 'reply', 'outreach', 'discovery'].includes(kind)) {
       throw new HttpError(422, 'BAD_REQUEST', 'kind must be triage|reply|outreach|discovery');
     }
@@ -1175,6 +1195,12 @@ export function createApp({ sql, sessionSecret, controlSecret }: AppDeps) {
     controlGate(c);
     const res = await approveMessage(sql, uuidParam(c, 'id'), 'staff', requireIdemKey(c));
     if (res.replayed) c.header('x-idempotent-replay', 'true');
+    // A stale draft is superseded inside the claim — nothing ships from the
+    // expired copy. Kick the drain so the regen run recomposes it promptly.
+    if (res.body.stale) {
+      void drain(sql).catch((e) => agentLog.error({ err: e }, 'drain failed'));
+      return c.json(res.body);
+    }
     const { dispatchMessage } = await import('./agent/send.ts');
     const sent = await dispatchMessage(sql, res.body.message.id);
     return c.json({ ...res.body, sent });
@@ -1483,8 +1509,12 @@ export function createApp({ sql, sessionSecret, controlSecret }: AppDeps) {
     controlGate(c);
     const body = await bodyJson(c);
     const kind = str(body.kind, 'kind', 40);
-    if (!['triage', 'reply', 'outreach', 'discovery'].includes(kind)) {
-      throw new HttpError(422, 'BAD_REQUEST', 'kind must be triage|reply|outreach|discovery');
+    if (!['triage', 'reply', 'outreach', 'discovery', 'strategist'].includes(kind)) {
+      throw new HttpError(
+        422,
+        'BAD_REQUEST',
+        'kind must be triage|reply|outreach|discovery|strategist',
+      );
     }
     const leadId = body.leadId ? str(body.leadId, 'leadId', 64) : null;
     const threadId = body.threadId ? str(body.threadId, 'threadId', 64) : null;
@@ -1493,6 +1523,12 @@ export function createApp({ sql, sessionSecret, controlSecret }: AppDeps) {
       ['threadId', threadId],
     ] as const) {
       if (v && !UUID_RE.test(v)) throw new HttpError(400, 'BAD_REQUEST', `${field} must be a uuid`);
+    }
+    // strategist reviews the board, not a lead — binding it to one would also
+    // let a suppressed lead park the queued row and eat the weekly cadence
+    // slot (sweepStrategist keys on created_at)
+    if (kind === 'strategist' && (leadId || threadId)) {
+      throw new HttpError(422, 'BAD_REQUEST', 'strategist runs take no leadId/threadId');
     }
     const res = await claimControl(sql, requireIdemKey(c), async (tx) => {
       // leadId and threadId aren't independent: a reply run bound to a thread
@@ -1513,7 +1549,7 @@ export function createApp({ sql, sessionSecret, controlSecret }: AppDeps) {
         status: 201,
         body: {
           runId: await insertRun(tx, {
-            kind: kind as 'triage' | 'reply' | 'outreach' | 'discovery',
+            kind: kind as 'triage' | 'reply' | 'outreach' | 'discovery' | 'strategist',
             leadId,
             threadId,
             params: (body.params as Record<string, unknown>) ?? {},
@@ -1616,7 +1652,8 @@ export function createApp({ sql, sessionSecret, controlSecret }: AppDeps) {
     const rows = await controlTx(
       sql,
       (tx) =>
-        tx`select id, name, query, segment, city, target, enabled, last_run_at, created_at
+        tx`select id, name, query, segment, city, target, enabled, last_run_at, created_at,
+                  note, created_by
            from discovery_briefs order by created_at desc`,
     );
     return c.json({ briefs: rows });
@@ -1652,7 +1689,8 @@ export function createApp({ sql, sessionSecret, controlSecret }: AppDeps) {
         await tx`
           insert into discovery_briefs (name, query, segment, city, target, enabled)
           values (${name}, ${query}, ${segment}, ${city}, ${target}, ${enabled})
-          returning id, name, query, segment, city, target, enabled, last_run_at, created_at
+          returning id, name, query, segment, city, target, enabled, last_run_at, created_at,
+                    note, created_by
         `
       )[0]!;
       return { status: 201, body: { brief: row } };
@@ -1707,7 +1745,11 @@ export function createApp({ sql, sessionSecret, controlSecret }: AppDeps) {
       )[0];
       if (!cur) throw new HttpError(404, 'BRIEF_NOT_FOUND', 'brief not found');
       // A changed definition — or a paused brief switched back on — should
-      // refire promptly, not ride out the previous run's 23h cadence.
+      // refire promptly, not ride out the previous run's 23h cadence. The
+      // note (auto-pause reason or the strategist's rationale) is stale from
+      // that moment — clear it with the cadence stamp. rearmed_at restarts
+      // the dead-streak window so the pre-revival zero-yield history can't
+      // instantly re-pause the brief before its new run is judged.
       if (
         'query' in set ||
         'segment' in set ||
@@ -1716,11 +1758,14 @@ export function createApp({ sql, sessionSecret, controlSecret }: AppDeps) {
         (set.enabled === true && !cur.enabled)
       ) {
         set.last_run_at = null;
+        set.note = null;
+        set.rearmed_at = new Date();
       }
       const row = (
         await tx`
           update discovery_briefs set ${tx(set)} where id = ${id}
-          returning id, name, query, segment, city, target, enabled, last_run_at, created_at
+          returning id, name, query, segment, city, target, enabled, last_run_at, created_at,
+                    note, created_by
         `
       )[0]!;
       return { status: 200, body: { brief: row } };
@@ -1747,6 +1792,13 @@ export function createApp({ sql, sessionSecret, controlSecret }: AppDeps) {
   app.get('/control/v1/agent/segments', async (c) => {
     controlGate(c);
     return c.json({ segments: await segmentStats(sql) });
+  });
+
+  // Channel health — 30d rollup of sends/failures/guardrail-blocks/bounces
+  // per channel, surfaced on the Settings provider cards.
+  app.get('/control/v1/channels/health', async (c) => {
+    controlGate(c);
+    return c.json({ channels: await channelHealth(sql) });
   });
 
   // WhatsApp pairing state for the Settings screen (Baileys QR handshake).

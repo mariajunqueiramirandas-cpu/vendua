@@ -22,6 +22,7 @@ const KIND_LABEL: Record<string, string> = {
   state_change: 'estágio',
   agent: 'agente',
   system: 'sistema',
+  blocked: 'envio bloqueado',
 };
 const RUN_KIND: Record<string, string> = {
   triage: 'triagem',

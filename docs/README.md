@@ -4,9 +4,14 @@ This directory is the design documentation for the Venduá platform: a multi-ten
 system that produces and operates bespoke, code-generated storefronts on top of a
 shared backend ("Venduá Core") and a shared frontend runtime ("the Kernel").
 
-**Status of everything in this directory: Proposed.** No platform code exists yet.
-The repository currently contains only the Venduá marketing site (SvelteKit, at
-[`../site/`](../site/)), which is unrelated to the storefront framework choice.
+**Status of this directory: the docs remain normative, and real code now
+implements part of them.** Phase 0–1 landed — Core, Kernel, the storefront
+factory, and `apps/control` (the Founder CRM grown into an agent ops console)
+all exist, plus the sales-side agent engine on `packages/core`. The
+[Where we are](roadmap.md#where-we-are) table in the roadmap is the
+current-state ledger; per conventions below, once a package exists, the
+package wins. The Venduá marketing site lives at [`../site/`](../site/) and
+is unrelated to the storefront framework choice.
 
 Documentation language is English so it can be consumed directly by coding agents
 and future hires. Customer-facing copy remains pt-BR.

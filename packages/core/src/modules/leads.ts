@@ -55,6 +55,8 @@ export interface LeadRow {
   agent_plan: AgentPlanStep[];
   fit_score: number | null;
   fit_reason: string | null;
+  intent_score: number | null;
+  intent_reason: string | null;
   email_bounced_at: string | null;
   next_action_at: string | null;
   lost_reason: string | null;
@@ -88,6 +90,8 @@ export interface Lead {
   agentPlan: AgentPlanStep[];
   fitScore: number | null;
   fitReason: string | null;
+  intentScore: number | null;
+  intentReason: string | null;
   emailBouncedAt: string | null;
   nextActionAt: string | null;
   lostReason: string | null;
@@ -130,6 +134,8 @@ export function leadJson(row: LeadRow): Lead {
     agentPlan: row.agent_plan ?? [],
     fitScore: row.fit_score,
     fitReason: row.fit_reason,
+    intentScore: row.intent_score,
+    intentReason: row.intent_reason,
     emailBouncedAt: row.email_bounced_at,
     nextActionAt: row.next_action_at,
     lostReason: row.lost_reason,
@@ -165,14 +171,15 @@ export function agentGoal(v: unknown): AgentGoal {
   return v as AgentGoal;
 }
 
-/** fitScore payload → int 0–10 or null. The model's ICP match — kept
- *  separate from the SQL completeness score. */
-function fitScoreValue(v: unknown): number | null {
+/** Score payload → int 0–10 or null. fitScore is the model's ICP match and
+ *  intentScore its read of buying intent — both stay separate from the SQL
+ *  completeness score. */
+function score010(v: unknown, field: 'fitScore' | 'intentScore'): number | null {
   if (v === null || v === undefined || v === '') return null;
   const n = Number(v);
   if (!Number.isInteger(n) || n < 0 || n > 10) {
-    throw new HttpError(422, 'BAD_REQUEST', 'fitScore must be an integer in [0, 10]', {
-      field: 'fitScore',
+    throw new HttpError(422, 'BAD_REQUEST', `${field} must be an integer in [0, 10]`, {
+      field,
     });
   }
   return n;
@@ -208,6 +215,7 @@ const LEAD_TEXT_FIELDS = {
   lostReason: ['lost_reason', 300],
   discoveredVia: ['discovered_via', 120],
   fitReason: ['fit_reason', 300],
+  intentReason: ['intent_reason', 300],
 } as const;
 
 type LeadTextField = keyof typeof LEAD_TEXT_FIELDS;
@@ -272,15 +280,20 @@ export function leadInsert(body: Record<string, unknown>): Record<string, unknow
     out.next_action_at = timestampValue(body.nextActionAt, 'nextActionAt');
   if ('agentMode' in body) out.agent_mode = agentMode(body.agentMode);
   if ('agentGoal' in body) out.agent_goal = agentGoal(body.agentGoal);
-  if ('fitScore' in body) out.fit_score = fitScoreValue(body.fitScore);
+  if ('fitScore' in body) out.fit_score = score010(body.fitScore, 'fitScore');
+  if ('intentScore' in body) out.intent_score = score010(body.intentScore, 'intentScore');
   if ('state' in body) out.state = leadState(body.state);
   return out;
 }
 
 /** Patch payload → column map. Absent keys are skipped; explicit null clears.
  *  `archived: true|false` maps to archived_at = now()/null — archive is a
- *  flag, not a pipeline state. */
-export function leadPatch(body: Record<string, unknown>): Record<string, unknown> {
+ *  flag, not a pipeline state. `actor` stamps next_action_source when
+ *  nextActionAt is written — 'agent' for tool calls, 'staff' for the API. */
+export function leadPatch(
+  body: Record<string, unknown>,
+  actor: 'agent' | 'staff' = 'staff',
+): Record<string, unknown> {
   const set: Record<string, unknown> = {};
   for (const field of Object.keys(LEAD_TEXT_FIELDS) as LeadTextField[]) {
     if (!(field in body)) continue;
@@ -298,11 +311,16 @@ export function leadPatch(body: Record<string, unknown>): Record<string, unknown
   if ('state' in body) set.state = leadState(body.state);
   if ('agentMode' in body) set.agent_mode = agentMode(body.agentMode);
   if ('agentGoal' in body) set.agent_goal = agentGoal(body.agentGoal);
-  if ('fitScore' in body) set.fit_score = fitScoreValue(body.fitScore);
+  if ('fitScore' in body) set.fit_score = score010(body.fitScore, 'fitScore');
+  if ('intentScore' in body) set.intent_score = score010(body.intentScore, 'intentScore');
   if ('tags' in body) set.tags = tagsValue(body.tags);
   if ('dealValueCents' in body) set.deal_value_cents = dealValue(body.dealValueCents);
-  if ('nextActionAt' in body)
+  if ('nextActionAt' in body) {
     set.next_action_at = timestampValue(body.nextActionAt, 'nextActionAt');
+    // Provenance rides with the write so inbound replies only clear the
+    // cadence floor, never a deliberately scheduled follow-up.
+    set.next_action_source = set.next_action_at === null ? null : actor;
+  }
   if ('archived' in body)
     set.archived_at = body.archived === true ? new Date().toISOString() : null;
   if (Object.keys(set).length === 0) {
@@ -524,8 +542,12 @@ export async function updateLead(
   set: Record<string, unknown>,
   idemKey: string,
   actor: 'staff' | 'agent' | 'system' = 'staff',
+  /** Optional fence run first inside the claim tx — agent tool calls pass a
+   *  live-claim check so a reclaimed run can't still mutate. */
+  guard?: (tx: Sql) => Promise<void>,
 ): Promise<ClaimResult<{ lead: Lead }>> {
   return claimControl(sql, idemKey, async (tx) => {
+    await guard?.(tx);
     const cur = (await tx<LeadRow[]>`select * from leads where id = ${id}`)[0];
     if (!cur) throw new HttpError(404, 'LEAD_NOT_FOUND', 'lead not found');
     // The bounce marker describes the stored address — a patch that swaps in
@@ -705,23 +727,41 @@ export async function leadStats(sql: Sql): Promise<LeadStats> {
 export interface SegmentStat {
   segment: string;
   leads: number;
+  /** leads created in the last 30d — the denominator that pairs with
+   *  costCents (also 30d) for an apples-to-apples CPL. */
+  leads30d: number;
   contacted: number;
   replied: number;
   live: number;
   costCents: number;
+  /** costCents / leads30d; null when the segment produced no lead in the
+   *  window — a spend with zero output is a worse signal than "—" implies,
+   *  but inventing a per-lead price would be fiction. */
+  cplCents: number | null;
 }
 
 /** Per-segment performance — leads found, contacts made, replies received,
  *  actives won, and 30d agent spend. Powers the Discovery panel and feeds
  *  each discovery run's context, so the agent leans into segments that
- *  convert instead of only following the brief's defaults. */
+ *  convert instead of only following the brief's defaults. costCents covers
+ *  BOTH lead-bound runs (triaged by the lead's segment) and discovery runs
+ *  carrying params.segment — discovery is the acquisition spend, so a CPL
+ *  without it would be fiction. */
 export async function segmentStats(sql: Sql): Promise<SegmentStat[]> {
   return controlTx(sql, async (tx) => {
     const rows = await tx<
-      { segment: string; leads: number; contacted: number; replied: number; live: number }[]
+      {
+        segment: string;
+        leads: number;
+        leads30d: number;
+        contacted: number;
+        replied: number;
+        live: number;
+      }[]
     >`
       select coalesce(nullif(l.segment, ''), '—') as segment,
              count(*)::int as leads,
+             count(*) filter (where l.created_at > now() - interval '30 days')::int as leads30d,
              count(*) filter (where exists (
                select 1 from lead_state_history h
                where h.lead_id = l.id and h.to_state <> 'lead'))::int as contacted,
@@ -733,7 +773,7 @@ export async function segmentStats(sql: Sql): Promise<SegmentStat[]> {
       from leads l
       where l.archived_at is null
       group by 1
-      order by 4 desc, 2 desc
+      order by 5 desc, 2 desc
       limit 12
     `;
     const costs = await tx<{ segment: string; cost_cents: number }[]>`
@@ -744,8 +784,25 @@ export async function segmentStats(sql: Sql): Promise<SegmentStat[]> {
         and l.archived_at is null
       group by 1
     `;
+    // Disjoint with the lead-bound query above: a lead-bound discovery run
+    // attributes through the lead join already — params.segment only carries
+    // lead-less runs, or every cost would double-count.
+    const discovery = await tx<{ segment: string | null; cost_cents: number }[]>`
+      select nullif(r.params->>'segment', '') as segment,
+             coalesce(sum(r.cost_cents), 0)::int as cost_cents
+      from agent_runs r
+      where r.kind = 'discovery' and r.lead_id is null
+        and r.created_at > now() - interval '30 days'
+      group by 1
+    `;
     const costBy = new Map(costs.map((c) => [c.segment, c.cost_cents]));
-    return rows.map((r) => ({ ...r, costCents: costBy.get(r.segment) ?? 0 }));
+    for (const d of discovery) {
+      if (d.segment) costBy.set(d.segment, (costBy.get(d.segment) ?? 0) + d.cost_cents);
+    }
+    return rows.map((r) => {
+      const costCents = costBy.get(r.segment) ?? 0;
+      return { ...r, costCents, cplCents: r.leads30d ? Math.round(costCents / r.leads30d) : null };
+    });
   });
 }
 

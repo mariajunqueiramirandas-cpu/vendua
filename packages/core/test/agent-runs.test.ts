@@ -77,6 +77,7 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('plan — lead-scoped checklist 
     leadId,
     threadId: null,
     step: 0,
+    claimToken: null,
     pageCache: new Map(),
     briefName: null,
     leadCap: 20,

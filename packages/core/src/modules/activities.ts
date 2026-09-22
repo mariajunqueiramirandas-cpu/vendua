@@ -20,6 +20,7 @@ export const ACTIVITY_KINDS = [
   'meeting_done',
   'meeting_no_show',
   'meeting_cancelled',
+  'blocked',
 ] as const;
 export type ActivityKind = (typeof ACTIVITY_KINDS)[number];
 
@@ -68,9 +69,13 @@ export async function addActivity(
     createdBy?: 'staff' | 'agent' | 'system';
   },
   idemKey: string,
+  /** Optional fence run first inside the claim tx — agent tool calls pass a
+   *  live-claim check so a reclaimed run can't still mutate. */
+  guard?: (tx: Sql) => Promise<void>,
 ): Promise<ClaimResult<{ activity: ReturnType<typeof activityJson> }>> {
   const body = input.body === undefined ? null : str(input.body, 'body', 4000).trim() || null;
   return claimControl(sql, idemKey, async (tx) => {
+    await guard?.(tx);
     const exists = await tx`select 1 from leads where id = ${leadId}`;
     if (!exists[0]) throw new HttpError(404, 'LEAD_NOT_FOUND', 'lead not found');
     const rows = await tx<ActivityRow[]>`
@@ -141,6 +146,9 @@ export async function createTask(
   leadId: string,
   input: { title: string; dueAt?: string | null; createdBy?: 'staff' | 'agent' },
   idemKey: string,
+  /** Optional fence run first inside the claim tx — agent tool calls pass a
+   *  live-claim check so a reclaimed run can't still mutate. */
+  guard?: (tx: Sql) => Promise<void>,
 ): Promise<ClaimResult<{ task: ReturnType<typeof taskJson> }>> {
   const title = str(input.title, 'title', 300).trim();
   if (!title) throw new HttpError(422, 'BAD_REQUEST', 'title is required', { field: 'title' });
@@ -155,6 +163,7 @@ export async function createTask(
     dueAt = d.toISOString();
   }
   return claimControl(sql, idemKey, async (tx) => {
+    await guard?.(tx);
     const exists = await tx`select 1 from leads where id = ${leadId}`;
     if (!exists[0]) throw new HttpError(404, 'LEAD_NOT_FOUND', 'lead not found');
     const rows = await tx<TaskRow[]>`

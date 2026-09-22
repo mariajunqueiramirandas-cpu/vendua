@@ -75,6 +75,8 @@ export interface Lead {
   agentPlan: AgentPlanStep[];
   fitScore: number | null;
   fitReason: string | null;
+  intentScore: number | null;
+  intentReason: string | null;
   emailBouncedAt: string | null;
   nextActionAt: string | null;
   lostReason: string | null;
@@ -242,14 +244,30 @@ export interface Brief {
   enabled: boolean;
   last_run_at: string | null;
   created_at: string;
+  /** Auto-pause reason or a strategist proposal's rationale — system-written. */
+  note: string | null;
+  /** 'strategist' = a proposed draft (starts disabled, staff approves). */
+  created_by: 'staff' | 'strategist';
 }
 export interface SegmentStat {
   segment: string;
   leads: number;
+  leads30d: number;
   contacted: number;
   replied: number;
   live: number;
   costCents: number;
+  cplCents: number | null;
+}
+export interface ChannelHealth {
+  channel: 'whatsapp' | 'email';
+  sent: number;
+  failed: number;
+  blocked: number;
+  blockedByReason: Record<string, number>;
+  bounced: number;
+  failureRate: number | null;
+  alert: boolean;
 }
 export interface Meeting {
   id: string;
@@ -376,9 +394,13 @@ export const api = {
 
   approvals: () => req<{ drafts: Draft[] }>('/approvals'),
   approve: (id: string) =>
-    req<{ message: Message; sent: { ok: boolean; reason?: string } }>(`/messages/${id}/approve`, {
-      method: 'POST',
-    }),
+    req<{
+      message: Message;
+      /** set when the draft was stale — superseded + a regen run queued */
+      stale?: boolean;
+      runId?: string;
+      sent?: { ok: boolean; reason?: string };
+    }>(`/messages/${id}/approve`, { method: 'POST' }),
   reject: (id: string) => req<{ message: Message }>(`/messages/${id}/reject`, { method: 'POST' }),
 
   integrations: () => req<{ integrations: Integration[] }>('/integrations'),
@@ -453,6 +475,7 @@ export const api = {
     req<{ brief: Brief }>(`/agent/briefs/${id}`, { method: 'PATCH', body: JSON.stringify(patch) }),
   deleteBrief: (id: string) => req<{ ok: true }>(`/agent/briefs/${id}`, { method: 'DELETE' }),
   segments: () => req<{ segments: SegmentStat[] }>('/agent/segments'),
+  channelHealth: () => req<{ channels: ChannelHealth[] }>('/channels/health'),
 
   meetings: (q: { scope?: string; leadId?: string; from?: string; to?: string } = {}) => {
     const params = new URLSearchParams(

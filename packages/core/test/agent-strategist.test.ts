@@ -10,6 +10,7 @@ const ctx = (): ToolContext => ({
   leadId: null,
   threadId: null,
   step: 0,
+  claimToken: null,
   pageCache: new Map(),
   briefName: null,
   leadCap: 20,
