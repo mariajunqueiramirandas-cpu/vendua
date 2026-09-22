@@ -366,30 +366,31 @@ async function contextFor(
         >`select name, query, segment, city, target, enabled, created_by
            from discovery_briefs order by created_at desc`,
     );
-    // Newest briefs render in full; older coverage collapses into a names
-    // roll-up — the model still sees what it would be duplicating, but an
-    // unbounded verbatim list would eventually overflow the context window.
-    // Exact dup checking stays deterministic in propose_brief's DB check.
-    const shown = briefs.slice(0, 40);
-    const rest = briefs.slice(40);
+    // Every brief contributes one compact signature line — name, query,
+    // segment, and city are the fields overlap is judged on, so none can be
+    // dropped from old coverage. The whole section then fits a char budget
+    // (newest first): enough briefs render verbatim that the model sees real
+    // coverage; a huge board degrades to a count instead of blowing the
+    // context window. Exact dup checking stays deterministic in
+    // propose_brief's DB check.
+    const BRIEFS_BUDGET = 12_000;
+    let budget = BRIEFS_BUDGET;
+    const lines: string[] = [];
+    let hidden = 0;
+    for (const b of briefs) {
+      const q = b.query.length > 80 ? `${b.query.slice(0, 80)}…` : b.query;
+      const line = `- ${b.name} — "${q}"${b.segment ? ` · ${b.segment}` : ''}${b.city ? ` · ${b.city}` : ''}${b.target ? ` · ≤${b.target}` : ''} · ${b.enabled ? 'ativo' : b.created_by === 'strategist' ? 'rascunho (já proposto)' : 'pausado'}`;
+      if (budget - line.length - 1 < 0) {
+        hidden++;
+        continue;
+      }
+      lines.push(line);
+      budget -= line.length + 1;
+    }
     parts.push(
       `BRIEFS ATUAIS (não re-proponha o que já existe):\n${
-        shown.length
-          ? shown
-              .map(
-                (b) =>
-                  `- ${b.name} — "${b.query}"${b.segment ? ` · ${b.segment}` : ''}${b.city ? ` · ${b.city}` : ''}${b.target ? ` · ≤${b.target}` : ''} · ${b.enabled ? 'ativo' : b.created_by === 'strategist' ? 'rascunho (já proposto)' : 'pausado'}`,
-              )
-              .join('\n')
-          : '(nenhum)'
-      }${
-        rest.length
-          ? `\n+${rest.length} mais antigos: ${rest
-              .map((b) => b.name)
-              .join(', ')
-              .slice(0, 2000)}${rest.map((b) => b.name).join(', ').length > 2000 ? '…' : ''}`
-          : ''
-      }`,
+        lines.length ? lines.join('\n') : '(nenhum)'
+      }${hidden ? `\n+${hidden} mais antigos além do orçamento de contexto` : ''}`,
     );
   }
   return { text: parts.join('\n\n') || '(no extra context)', goal, bookingUrl };
