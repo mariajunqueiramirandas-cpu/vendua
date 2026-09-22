@@ -381,7 +381,17 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('lead lifecycle (db)', () => {
       await sql`update agent_runs set created_at = now() - interval '1 seconds' where id = ${a2}`;
       // A's first run claims; A's second is gated by the durable 'running'
       // owner; B's run is unaffected — a busy lead never starves the drain.
-      expect((await claimRun(sql))!.id).toBe(a1);
+      const first = await claimRun(sql);
+      if (first?.id !== a1) {
+        // Flake forensics: surface the queue snapshot so the winning row's
+        // provenance is visible instead of a bare uuid mismatch.
+        const rows = await sql`
+          select id, kind, status, lead_id, created_at, run_at, attempts
+          from agent_runs order by created_at desc limit 12
+        `;
+        expect({ got: first?.id, rows }, `expected a1=${a1}`).toEqual({ got: a1, rows });
+      }
+      expect(first?.id).toBe(a1);
       expect((await claimRun(sql))!.id).toBe(b1);
       expect(await claimRun(sql)).toBeNull();
       await sql`update agent_runs set status = 'done', finished_at = now() where id in (${a1}, ${b1})`;
