@@ -148,7 +148,7 @@ export async function dispatchMessage(
     }
 
     const upd = await tx<{ sending_at: string }[]>`
-      update lead_messages set status = 'sending', updated_at = now()
+      update lead_messages set status = 'sending', updated_at = clock_timestamp()
       where id = ${messageId} returning updated_at as sending_at
     `;
     return {
@@ -156,6 +156,8 @@ export async function dispatchMessage(
         // Dispatch boundary for the cadence race check: created_at marks
         // composition (drafts can sit for days); the 'sending' transition is
         // what an inbound must post-date to count as answering this send.
+        // clock_timestamp() above — now() freezes at tx start and a waiting
+        // claim would misdate the boundary.
         sendingAt: upd[0]!.sending_at,
         channel: thread.channel,
         to,
