@@ -35,23 +35,39 @@ export default function Runs() {
   const [run, setRun] = useState<AgentRun | null>(null);
   const [kind, setKind] = useState('');
 
-  // Same overlap guard as the detail fetch — an older list response must
-  // not paint over a newer event-driven one.
+  // Newest-successful wins, scoped to the current filter — an older
+  // response may still paint when a newer request failed, but never one
+  // whose captured `kind` no longer matches what's displayed.
   const listSeq = useRef(0);
+  const listOk = useRef(0);
+  const listKind = useRef('');
   const load = useCallback(() => {
     const req = ++listSeq.current;
+    const reqKind = kind;
+    listKind.current = kind;
     api.runs({ ...(kind ? { kind } : {}) }).then((r) => {
-      if (req === listSeq.current) setRuns(r.runs);
+      if (reqKind === listKind.current && req > listOk.current) {
+        listOk.current = req;
+        setRuns(r.runs);
+      }
     });
   }, [kind]);
-  // Events can overlap detail fetches — drop any response that isn't the
-  // newest request, or a stale 'running' snapshot can paint over 'done'.
+  // Same success-watermark for the detail — a failed newer fetch lets an
+  // older good response through, a stale 'running' snapshot still can't
+  // paint over 'done'.
   const runSeq = useRef(0);
+  const runOk = useRef(0);
+  const runFor = useRef('');
   const loadRun = useCallback(() => {
     if (!id) return;
     const req = ++runSeq.current;
+    const reqId = id;
+    runFor.current = id;
     api.run(id).then((r) => {
-      if (req === runSeq.current) setRun(r.run);
+      if (reqId === runFor.current && req > runOk.current) {
+        runOk.current = req;
+        setRun(r.run);
+      }
     });
   }, [id]);
   useEffect(load, [load]);
