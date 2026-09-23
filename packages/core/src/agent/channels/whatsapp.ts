@@ -443,10 +443,7 @@ async function startSocket(sql: Sql, integration: IntegrationRow): Promise<Baile
  *  wants), `alias` is the complementary address when the stanza carried one
  *  (remoteJid '…@lid' ↔ remoteJidAlt PN). A lid-only message still lands —
  *  group/broadcast/newsletter JIDs match neither form and are rejected. */
-function dmJid(
-  remoteJid?: string,
-  remoteJidAlt?: string,
-): { jid: string; alias?: string } | null {
+function dmJid(remoteJid?: string, remoteJidAlt?: string): { jid: string; alias?: string } | null {
   const dm = (j?: string) =>
     j && (j.endsWith('@s.whatsapp.net') || j.endsWith('@lid')) ? j : null;
   const a = dm(remoteJid);
