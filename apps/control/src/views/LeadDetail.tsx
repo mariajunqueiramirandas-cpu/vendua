@@ -608,12 +608,15 @@ function EditableText({
 }) {
   const [editing, setEditing] = useState(false);
   const [v, setV] = useState('');
+  // blur on unmount must not commit an Escape-cancelled edit.
+  const cancelled = useRef(false);
   if (!editing) {
     return (
       <button
         className="edv"
         title="clique para editar"
         onClick={() => {
+          cancelled.current = false;
           setV(value ?? '');
           setEditing(true);
         }}
@@ -632,9 +635,15 @@ function EditableText({
           onSave(v.trim() || null);
           setEditing(false);
         }
-        if (e.key === 'Escape') setEditing(false);
+        if (e.key === 'Escape') {
+          cancelled.current = true;
+          setEditing(false);
+        }
       }}
-      onBlur={() => setEditing(false)}
+      onBlur={() => {
+        if (!cancelled.current) onSave(v.trim() || null);
+        setEditing(false);
+      }}
     />
   );
 }
@@ -648,18 +657,28 @@ function MoneyEdit({
   onSave: (cents: number | null) => void;
 }) {
   const [editing, setEditing] = useState(false);
+  const cancelled = useRef(false);
   if (!editing) {
     return (
       <button
         className="btn ghost"
         style={{ padding: '2px 8px' }}
         title="clique para editar"
-        onClick={() => setEditing(true)}
+        onClick={() => {
+          cancelled.current = false;
+          setEditing(true);
+        }}
       >
         <span className="money-v">{fmtMoney(cents)}</span>
       </button>
     );
   }
+  const commit = (raw: string) => {
+    const v = Number(raw.replace(/\./g, '').replace(',', '.'));
+    if (raw === '') onSave(null);
+    else if (!Number.isNaN(v)) onSave(Math.round(v * 100));
+    setEditing(false);
+  };
   return (
     <input
       autoFocus
@@ -667,15 +686,15 @@ function MoneyEdit({
       placeholder="R$"
       style={{ width: 130 }}
       onKeyDown={(e) => {
-        if (e.key === 'Escape') setEditing(false);
-        if (e.key !== 'Enter') return;
-        const raw = (e.target as HTMLInputElement).value.trim();
-        const v = Number(raw.replace(/\./g, '').replace(',', '.'));
-        if (raw === '') onSave(null);
-        else if (!Number.isNaN(v)) onSave(Math.round(v * 100));
-        setEditing(false);
+        if (e.key === 'Escape') {
+          cancelled.current = true;
+          setEditing(false);
+        }
+        if (e.key === 'Enter') commit((e.target as HTMLInputElement).value.trim());
       }}
-      onBlur={() => setEditing(false)}
+      onBlur={(e) => {
+        if (!cancelled.current) commit(e.target.value.trim());
+      }}
     />
   );
 }

@@ -606,13 +606,21 @@ function NewLead({
       setDupes([]);
       return;
     }
+    // cleanup marks the probe stale — a late response must not overwrite
+    // matches for a newer term or re-fill after the fields were cleared.
+    let stale = false;
     const t = setTimeout(() => {
       api
         .leads({ q: term, limit: '5' })
-        .then((r) => setDupes(r.leads))
+        .then((r) => {
+          if (!stale) setDupes(r.leads);
+        })
         .catch(() => {});
     }, 350);
-    return () => clearTimeout(t);
+    return () => {
+      stale = true;
+      clearTimeout(t);
+    };
   }, [f.name, f.whatsapp, f.email, f.instagram]);
 
   useEffect(() => {

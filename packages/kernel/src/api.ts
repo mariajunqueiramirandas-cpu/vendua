@@ -448,6 +448,7 @@ export const ERROR_CODES = [
   // control-plane (staff) API codes — leads module
   'INVALID_STATE',
   'INVALID_LEAD',
+  'INVALID_SORT',
   'LEAD_NOT_FOUND',
   'THREAD_NOT_FOUND',
   'MESSAGE_NOT_FOUND',

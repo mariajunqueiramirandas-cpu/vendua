@@ -60,7 +60,7 @@ export default function Runs() {
         .runs({
           ...(kind ? { kind } : {}),
           ...(view && view !== 'scheduled' ? { status: view } : {}),
-          ...(view === 'scheduled' ? { scheduled: '1', limit: '200' } : {}),
+          ...(view === 'scheduled' ? { scheduled: '1', status: 'queued', limit: '200' } : {}),
           ...(cur ? { cursor: cur } : {}),
         })
         .then((r) => {
