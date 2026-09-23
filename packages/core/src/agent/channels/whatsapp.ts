@@ -59,6 +59,26 @@ let startGen = 0;
  *  running or the session dropped/logged out. The Settings screen renders
  *  this instead of guessing from QR presence. */
 let connState: 'off' | 'connecting' | 'qr' | 'open' = 'off';
+/** One-shot waiters resolved on every connState transition — pairCode parks
+ *  on them until the reg stream is live. */
+const connWaiters = new Set<() => void>();
+function notifyConnWaiters() {
+  for (const w of connWaiters) w();
+  connWaiters.clear();
+}
+function waitForConnChange(ms: number): Promise<void> {
+  return new Promise((resolve) => {
+    const t = setTimeout(() => {
+      connWaiters.delete(onFire);
+      resolve();
+    }, ms);
+    const onFire = () => {
+      clearTimeout(t);
+      resolve();
+    };
+    connWaiters.add(onFire);
+  });
+}
 /** The paired account once the socket is `open` — lets the Config screen
  *  say WHO is connected instead of implying enabled == working. */
 let waMe: { phone: string | null; name: string | null } | null = null;
@@ -147,6 +167,7 @@ async function startSocket(sql: Sql, integration: IntegrationRow): Promise<Baile
   const myGen = startGen;
   const baileys = (await import('baileys')) as unknown as {
     default: (opts: Record<string, unknown>) => BaileysSocket;
+    Browsers: { ubuntu(browser: string): [string, string, string] };
     initAuthCreds(): unknown;
     fetchLatestWaWebVersion(opts?: RequestInit): Promise<{
       version: [number, number, number];
@@ -178,7 +199,17 @@ async function startSocket(sql: Sql, integration: IntegrationRow): Promise<Baile
     waLog.warn({ err: e }, 'wa web version fetch failed — using bundled default');
   }
 
-  const creds = (await auth.read('creds', 'main')) ?? baileys.initAuthCreds();
+  // An unregistered `me` only ever came from a pending requestPairingCode —
+  // Baileys sets it as a claim before the server acks. Persisting it makes
+  // every later start take the LOGIN branch (creds.me set → generateLoginNode)
+  // for an account that was never registered → 401 → dead socket, no QR. An
+  // identity only counts once the server confirms it (registered: true), so
+  // strip any stale claim at load AND keep it out of writes below.
+  const creds = ((await auth.read('creds', 'main')) ?? baileys.initAuthCreds()) as {
+    registered?: boolean;
+    me?: unknown;
+  };
+  if (!creds.registered) delete creds.me;
   const sock = baileys.default({
     ...(version ? { version } : {}),
     auth: {
@@ -201,7 +232,11 @@ async function startSocket(sql: Sql, integration: IntegrationRow): Promise<Baile
       },
     },
     printQRInTerminal: false,
-    browser: ['Venduá', 'Chrome', '1.0.0'],
+    // Canonical OS label — WhatsApp validates companion_platform_display
+    // strictly in the pairing-code IQ (400 bad-request, and the un-awaited
+    // sendNode still returns a dead code). QR tolerates custom labels; the
+    // code path doesn't. Custom branding here is what got us dead codes.
+    browser: baileys.Browsers.ubuntu('Chrome'),
     logger: log.child({ mod: 'baileys' }, { level: process.env.BAILEYS_LOG_LEVEL ?? 'warn' }),
   });
 
@@ -221,21 +256,28 @@ async function startSocket(sql: Sql, integration: IntegrationRow): Promise<Baile
   socketAccountId = accountId;
   const gen = nextWaGen();
 
-  sock.ev.on('creds.update', () => void auth.write('creds', 'main', creds));
+  sock.ev.on('creds.update', () => {
+    const snapshot = { ...creds };
+    if (!snapshot.registered) delete snapshot.me;
+    void auth.write('creds', 'main', snapshot);
+  });
   sock.ev.on('connection.update', (u) => {
     if (socket !== sock) return; // stale socket — a replacement owns globals
     if (u.qr) {
       connState = 'qr';
+      notifyConnWaiters();
       // Emit after the QR write lands — the refetch it triggers must read it.
       void persistQr(sql, accountId, u.qr, gen).then(() => emitControlEvent('channel.health'));
     }
     if (u.connection === 'open') {
       connState = 'open';
+      notifyConnWaiters();
       waMe = readIdentity(sock);
       void persistQr(sql, accountId, null, gen).then(() => emitControlEvent('channel.health'));
     }
     if (u.connection === 'close') {
       connState = 'off';
+      notifyConnWaiters();
       socket = null;
       starting = null;
       socketFingerprint = null;
@@ -382,6 +424,13 @@ export async function ensureSocket(
   return starting;
 }
 
+/** Concurrent pair requests for the same number must share one in-flight
+ *  call — each requestPairingCode overwrites creds.pairingCode, so an
+ *  overlapping call would silently kill the code the first caller is
+ *  already typing. Different numbers proceed: last request wins is what a
+ *  deliberate "novo código" click means. */
+let pairInFlight: { phone: string; p: Promise<string> } | null = null;
+
 /** Pairing-code alternative to scanning the QR — staff enters their number
  *  and types the returned code in WhatsApp → aparelhos conectados →
  *  "conectar com número". Only works while the socket is unregistered. */
@@ -390,10 +439,27 @@ export async function pairCode(sql: Sql, phone: string): Promise<string> {
   if (digits.length < 10 || digits.length > 15) {
     throw new Error('número inválido — DDI+DDD+número, só dígitos');
   }
-  const sock = await ensureSocket(sql, await getIntegration(sql, 'whatsapp'));
-  if (!sock) throw new Error('driver baileys não está ativo');
-  if (connState === 'open') throw new Error('whatsapp já está conectado');
-  return sock.requestPairingCode(digits);
+  if (pairInFlight && pairInFlight.phone === digits) return pairInFlight.p;
+  const p = (async () => {
+    const sock = await ensureSocket(sql, await getIntegration(sql, 'whatsapp'));
+    if (!sock) throw new Error('driver baileys não está ativo');
+    // The link_code iq only registers while the server-side reg stream is
+    // live — signaled by the first pair-device (connState 'qr'). Before that
+    // the send races the handshake and dies. Wait out 'connecting' instead
+    // of issuing a code WhatsApp never received.
+    for (let i = 0; i < 2 && connState !== 'qr' && connState !== 'open'; i++) {
+      await waitForConnChange(10_000);
+    }
+    if (connState === 'open') throw new Error('whatsapp já está conectado');
+    if (connState !== 'qr') {
+      throw new Error('whatsapp ainda conectando — tente de novo em alguns segundos');
+    }
+    return sock.requestPairingCode(digits);
+  })().finally(() => {
+    if (pairInFlight?.p === p) pairInFlight = null;
+  });
+  pairInFlight = { phone: digits, p };
+  return p;
 }
 
 /** Unpair the linked device and wipe stored auth state — the QR/pair flow

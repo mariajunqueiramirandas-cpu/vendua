@@ -444,8 +444,10 @@ function ProviderCard({
     };
   }, [wa.qr]);
   useEffect(() => {
-    // A stale code survives logout otherwise — re-pairing must start clean.
-    if (wa.status === 'open') setPairCode(null);
+    // 'open': paired — the code is spent. 'off': the socket died and its
+    // pending registration died with it — a shown code can never complete,
+    // so clear it instead of leaving a dead one on screen.
+    if (wa.status === 'open' || wa.status === 'off') setPairCode(null);
   }, [wa.status]);
 
   const drv = kind.drivers.find((x) => x.d === driver) ?? kind.drivers[0];
@@ -611,7 +613,10 @@ function ProviderCard({
                   </div>
                   {wa.qr && qrImg && <img className="wa-qr" src={qrImg} alt="QR do whatsapp" />}
                   <div className="wa-paircode">
-                    <span className="hint">ou conectar com código:</span>
+                    <span className="hint">
+                      ou conectar com código — o número precisa ser o da conta whatsapp no aparelho
+                      que vai parear:
+                    </span>
                     {pairCode && <code className="wa-code">{pairCode}</code>}
                     <span className="wa-pairrow">
                       <input
@@ -633,7 +638,7 @@ function ProviderCard({
                     {pairErr && <div className="hint">{pairErr}</div>}
                   </div>
                   <div className="foot">
-                    o QR expira rápido — esta tela atualiza sozinha a cada 4s
+                    QR e código expiram rápido — esta tela atualiza sozinha a cada 4s
                   </div>
                 </>
               )}
