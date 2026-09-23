@@ -14,17 +14,21 @@ Dokploy → **Compose** → point at this repo → compose file path
 
 Copy `.env.example` into the service's environment and fill it in:
 
-| Variable                 | Purpose                                                         |
-| ------------------------ | --------------------------------------------------------------- |
-| `POSTGRES_PASSWORD`      | Postgres superuser (migrations run as it)                       |
-| `VENDUA_APP_DB_PASSWORD` | `vendua_app` app role — rotated on migrate                      |
-| `SESSION_SECRET`         | signs `vst.*` session tokens — required, stable across restarts |
-| `CONTROL_SECRET`         | staff login key for the CRM at `/control/` — keep distinct      |
-| `SEED_DEMO`              | `1` seeds the three demo tenants on boot; `0` = empty platform  |
-| `SEED_DOMAINS`           | `slug:public-domain` per storefront — registers real domains    |
-| `VENDUA_PROXY_HOPS`      | XFF trusted suffix length — `1` for the Traefik→nginx chain     |
-| `RESEND_API_KEY`         | email driver — sending + fetching received bodies               |
-| `RESEND_WEBHOOK_SECRET`  | svix signing secret of the inbound webhook (see below)          |
+| Variable                                   | Purpose                                                         |
+| ------------------------------------------ | --------------------------------------------------------------- |
+| `POSTGRES_PASSWORD`                        | Postgres superuser (migrations run as it)                       |
+| `VENDUA_APP_DB_PASSWORD`                   | `vendua_app` app role — rotated on migrate                      |
+| `SESSION_SECRET`                           | signs `vst.*` session tokens — required, stable across restarts |
+| `CONTROL_SECRET`                           | staff login key for the CRM at `/control/` — keep distinct      |
+| `SEED_DEMO`                                | `1` seeds the three demo tenants on boot; `0` = empty platform  |
+| `SEED_DOMAINS`                             | `slug:public-domain` per storefront — registers real domains    |
+| `VENDUA_PROXY_HOPS`                        | XFF trusted suffix length — `1` for the Traefik→nginx chain     |
+| `RESEND_API_KEY`                           | email driver — sending + fetching received bodies               |
+| `RESEND_WEBHOOK_SECRET`                    | svix signing secret of the inbound webhook (see below)          |
+| `MONID_API_KEY`                            | monid.ai gateway for the agent's paid enrichment tools          |
+| `GOOGLE_CALENDAR_SERVICE_ACCOUNT_JSON_B64` | service-account key, base64'd — meeting → gcal sync (optional)  |
+| `GOOGLE_CALENDAR_ID`                       | target calendar id for the gcal sync                            |
+| `DAILY_API_KEY`                            | daily.co per-meeting video rooms (unset → static roomUrl)       |
 
 Generate secrets with `openssl rand -hex 32`.
 

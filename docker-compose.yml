@@ -61,6 +61,17 @@ services:
       RESEND_WEBHOOK_SECRET: ${RESEND_WEBHOOK_SECRET:-}
       TINYFISH_API_KEY: ${TINYFISH_API_KEY:-}
       VENDUA_WEBHOOK_SECRET: ${VENDUA_WEBHOOK_SECRET:-}
+      # monid.ai gateway for the agent's paid enrichment tools
+      # (maps_lookup/instagram_profile/serp) — read directly, not via a
+      # control_integrations row. Unset = those three tools report missing.
+      MONID_API_KEY: ${MONID_API_KEY:-}
+      # Meeting integrations — optional. B64 variant = whole service-account
+      # key base64'd (deploy-friendly); plain JSON for local dev. Unset =
+      # gcal sync off (warn-logged at boot); DAILY unset = static roomUrl.
+      GOOGLE_CALENDAR_SERVICE_ACCOUNT_JSON_B64: ${GOOGLE_CALENDAR_SERVICE_ACCOUNT_JSON_B64:-}
+      GOOGLE_CALENDAR_SERVICE_ACCOUNT_JSON: ${GOOGLE_CALENDAR_SERVICE_ACCOUNT_JSON:-}
+      GOOGLE_CALENDAR_ID: ${GOOGLE_CALENDAR_ID:-}
+      DAILY_API_KEY: ${DAILY_API_KEY:-}
       # pino level for core itself / the Baileys socket logger.
       LOG_LEVEL: ${LOG_LEVEL:-info}
       BAILEYS_LOG_LEVEL: ${BAILEYS_LOG_LEVEL:-warn}
