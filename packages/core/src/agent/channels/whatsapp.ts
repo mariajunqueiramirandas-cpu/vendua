@@ -59,6 +59,11 @@ let startGen = 0;
  *  running or the session dropped/logged out. The Settings screen renders
  *  this instead of guessing from QR presence. */
 let connState: 'off' | 'connecting' | 'qr' | 'open' = 'off';
+/** The socket that currently owns a live reg stream — set with connState
+ *  'qr', cleared on open/close/replace. pairCode binds its readiness to
+ *  this identity: a 'qr' that belonged to a dead predecessor must not arm
+ *  a code on the connecting replacement. */
+let qrSocket: BaileysSocket | null = null;
 /** One-shot waiters resolved on every connState transition — pairCode parks
  *  on them until the reg stream is live. */
 const connWaiters = new Set<() => void>();
@@ -265,18 +270,21 @@ async function startSocket(sql: Sql, integration: IntegrationRow): Promise<Baile
     if (socket !== sock) return; // stale socket — a replacement owns globals
     if (u.qr) {
       connState = 'qr';
+      qrSocket = sock;
       notifyConnWaiters();
       // Emit after the QR write lands — the refetch it triggers must read it.
       void persistQr(sql, accountId, u.qr, gen).then(() => emitControlEvent('channel.health'));
     }
     if (u.connection === 'open') {
       connState = 'open';
+      qrSocket = null;
       notifyConnWaiters();
       waMe = readIdentity(sock);
       void persistQr(sql, accountId, null, gen).then(() => emitControlEvent('channel.health'));
     }
     if (u.connection === 'close') {
       connState = 'off';
+      qrSocket = null;
       notifyConnWaiters();
       socket = null;
       starting = null;
@@ -378,6 +386,7 @@ export async function ensureSocket(
     // owns globals) — reset state here or waStatus()/wa_qr keep reporting
     // a socket that no longer exists.
     connState = 'off';
+    qrSocket = null;
     if (socketAccountId) void persistQr(sql, socketAccountId, null, nextWaGen());
     socketAccountId = null;
     emitControlEvent('channel.health');
@@ -402,6 +411,7 @@ export async function ensureSocket(
   if (socket) return socket;
   if (!starting) {
     connState = 'connecting';
+    qrSocket = null;
     startingFingerprint = wanted;
     startingGen = startGen;
     starting = startSocket(sql, integration!).then(
@@ -417,6 +427,7 @@ export async function ensureSocket(
         starting = null;
         startingFingerprint = null;
         connState = 'off';
+        qrSocket = null;
         throw err;
       },
     );
@@ -442,26 +453,24 @@ export async function pairCode(sql: Sql, phone: string): Promise<string> {
   const pending = pairInFlight.get(digits);
   if (pending) return pending;
   const p = (async () => {
-    const integration = await getIntegration(sql, 'whatsapp');
-    let sock = await ensureSocket(sql, integration);
-    if (!sock) throw new Error('driver baileys não está ativo');
-    // The link_code iq only registers while the server-side reg stream is
-    // live — signaled by the first pair-device (connState 'qr'). Before that
-    // the send races the handshake and dies. Wait out 'connecting' instead
-    // of issuing a code WhatsApp never received.
-    for (let i = 0; i < 2 && connState !== 'qr' && connState !== 'open'; i++) {
-      await waitForConnChange(10_000);
+    const deadline = Date.now() + 20_000;
+    for (;;) {
+      // Re-read config and socket every pass — settings can change mid-wait
+      // (a stale integration row would revive the old account), and the
+      // socket resolved last pass may have been replaced since.
+      const integration = await getIntegration(sql, 'whatsapp');
+      const sock = await ensureSocket(sql, integration);
+      if (!sock) throw new Error('driver baileys não está ativo');
+      if (connState === 'open') throw new Error('whatsapp já está conectado');
+      // The link_code iq only registers while the server-side reg stream is
+      // live on THIS socket — signaled by its own first pair-device (qr).
+      // Before that the send races the handshake and dies.
+      if (qrSocket === sock) return sock.requestPairingCode(digits);
+      if (Date.now() >= deadline) {
+        throw new Error('whatsapp ainda conectando — tente de novo em alguns segundos');
+      }
+      await waitForConnChange(Math.max(1, deadline - Date.now()));
     }
-    if (connState === 'open') throw new Error('whatsapp já está conectado');
-    if (connState !== 'qr') {
-      throw new Error('whatsapp ainda conectando — tente de novo em alguns segundos');
-    }
-    // The socket captured before the wait may have died mid-wait — the 'qr'
-    // that satisfied it can belong to the reconnect's replacement. Re-resolve
-    // so the code is issued on whatever owns the live reg stream.
-    sock = await ensureSocket(sql, integration);
-    if (!sock) throw new Error('driver baileys não está ativo');
-    return sock.requestPairingCode(digits);
   })().finally(() => {
     if (pairInFlight.get(digits) === p) pairInFlight.delete(digits);
   });
@@ -497,6 +506,7 @@ export async function logoutWa(sql: Sql, accountId: string): Promise<void> {
     socketFingerprint = null;
     socketAccountId = null;
     connState = 'off';
+    qrSocket = null;
     waMe = null;
   }
   starting = null;
