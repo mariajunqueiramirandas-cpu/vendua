@@ -1555,7 +1555,10 @@ export async function meetingsStatus(sql: Sql) {
       weekly: weeklyToJson(cfg.weekly),
       bookingUrl: cfg.bookingUrl,
     },
-    room: { provider: rooms.dailyConfigured() ? ('daily' as const) : ('static' as const) },
+    room: {
+      provider: rooms.dailyConfigured() ? ('daily' as const) : ('static' as const),
+      lastError: rooms.roomLastError(),
+    },
     gcal: gcal.gcalStatus(),
   };
 }

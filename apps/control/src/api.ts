@@ -311,7 +311,7 @@ export interface MeetingStatus {
     weekly: Record<string, [string, string][]>;
     bookingUrl: string | null;
   };
-  room: { provider: 'daily' | 'static' };
+  room: { provider: 'daily' | 'static'; lastError: string | null };
   gcal: {
     configured: boolean;
     calendarId: string | null;

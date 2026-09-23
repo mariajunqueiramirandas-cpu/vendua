@@ -1,15 +1,19 @@
 import { useCallback, useEffect, useRef, useState, type ChangeEvent } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import QRCode from 'qrcode';
 import { api, type ChannelHealth, type Integration, type MeetingStatus } from '../api.ts';
 import { onControlEvent } from '../events.ts';
 import { ConfirmBtn, LEAD_STATES, Page } from '../components.tsx';
 
-/** Config — "sala de máquinas". Left column: provider cards. The card's
- *  state is the REAL runtime state, not the saved config: 'enabled' is a
- *  fact about the row, 'live' means the driver can actually work right now
- *  (secret present; for baileys, socket open). Right column: guardrails,
- *  pitch and agent memory as structured editors (raw JSON under a toggle
- *  for the long tail of keys). */
+/** Config — "sala de máquinas". An index rail splits the wall into named
+ *  areas ('conexões' = provider cards, 'regras' = guardrails, etc.) shown
+ *  one at a time and deep-linked via ?s=. The landing area, 'visão geral',
+ *  is a readiness checklist: one line per piece the agent needs, each line
+ *  a jump into the area that fixes it. Card state is the REAL runtime
+ *  state, not the saved config: 'enabled' is a fact about the row, 'live'
+ *  means the driver can actually work right now (secret present; for
+ *  baileys, socket open). Raw JSON stays under a toggle for the long tail
+ *  of setting keys. */
 
 type Driver = {
   d: string;
@@ -201,18 +205,55 @@ const fmtPhone = (digits: string) => {
   return `+${digits}`;
 };
 
+/** The index rail. Order follows how you'd bring the machine up:
+ *  check it → wire it → teach it → bound it → book it → report it. */
+const SECTIONS = [
+  { key: 'visao', label: 'visão geral', sub: 'o que falta' },
+  { key: 'conexoes', label: 'conexões', sub: 'canais' },
+  { key: 'agente', label: 'agente', sub: 'voz e memória' },
+  { key: 'regras', label: 'regras', sub: 'limites' },
+  { key: 'agenda', label: 'agenda', sub: 'reuniões' },
+  { key: 'relatorios', label: 'relatórios', sub: 'previsão e resumo' },
+] as const;
+type SectionKey = (typeof SECTIONS)[number]['key'];
+
+/** One checklist row on visão geral — a piece, its live state, where to fix it. */
+type Check = {
+  key: string;
+  label: string;
+  state: string;
+  tone: ProvTone;
+  to: SectionKey;
+  /** anchor inside the target area (provider card id) */
+  p?: string;
+};
+
 export default function Settings() {
   const [integrations, setIntegrations] = useState<Integration[]>([]);
   const [settings, setSettings] = useState<Record<string, unknown>>({});
   const [wa, setWa] = useState<WaState>(WA_IDLE);
   const [notice, setNotice] = useState<Notice>(null);
   const [loading, setLoading] = useState(true);
+  const [searchParams, setSearchParams] = useSearchParams();
+  // 'err' = the status probe itself failed — the checklist says so instead
+  // of guessing at the wiring from the settings map.
+  const [mStatus, setMStatus] = useState<MeetingStatus | 'err' | null>(null);
 
   // Independent fetches — a failed settings read must not discard a
   // successful integrations response (it alone proves whatsapp state).
   // Per-resource success watermarks: event-driven + floor loads overlap.
   const loadSeq = useRef(0);
   const loadOk = useRef<Record<string, number>>({});
+  // The checklist reads integrations + settings + meetingsStatus — until
+  // they answer once, empty defaults would read as real "não configurado"
+  // states. A failed first read still ungates, but the rows then show
+  // 'falha ao ler' instead of fake states (loadErr bitmask).
+  const settled = useRef(0);
+  const [loadErr, setLoadErr] = useState(0);
+  const settle = (bit: number) => {
+    settled.current |= bit;
+    if (settled.current === 0b111) setLoading(false);
+  };
   const load = useCallback(() => {
     const my = ++loadSeq.current;
     const fresh = (key: string) => my > (loadOk.current[key] ?? 0);
@@ -222,14 +263,22 @@ export default function Settings() {
         if (fresh('integrations')) {
           loadOk.current['integrations'] = my;
           setIntegrations(i.integrations);
+          setLoadErr((m) => m & ~0b001);
         }
       })
-      .catch((e: unknown) =>
+      .catch((e: unknown) => {
+        // Failure is the newer outcome — record it so an older in-flight
+        // success can't overwrite it with stale data afterwards.
+        if (fresh('integrations')) {
+          loadOk.current['integrations'] = my;
+          setLoadErr((m) => m | 0b001);
+        }
         setNotice({
           kind: 'err',
           text: `falha ao carregar: ${e instanceof Error ? e.message : e}`,
-        }),
-      );
+        });
+      })
+      .finally(() => settle(0b001));
     void api
       .settings()
       .then((s) => {
@@ -238,15 +287,20 @@ export default function Settings() {
           const map: Record<string, unknown> = {};
           for (const row of s.settings) map[row.key] = row.value;
           setSettings(map);
+          setLoadErr((m) => m & ~0b010);
         }
       })
-      .catch((e: unknown) =>
+      .catch((e: unknown) => {
+        if (fresh('settings')) {
+          loadOk.current['settings'] = my;
+          setLoadErr((m) => m | 0b010);
+        }
         setNotice({
           kind: 'err',
           text: `falha ao carregar: ${e instanceof Error ? e.message : e}`,
-        }),
-      )
-      .finally(() => setLoading(false));
+        });
+      })
+      .finally(() => settle(0b010));
     api
       .waQr()
       .then((r) => {
@@ -255,7 +309,24 @@ export default function Settings() {
           setWa({ qr: r.qr, status: r.status, me: r.me });
         }
       })
-      .catch(() => undefined);
+      .catch(() => {
+        if (fresh('wa')) loadOk.current['wa'] = my;
+      });
+    api
+      .meetingsStatus()
+      .then((s) => {
+        if (fresh('mstatus')) {
+          loadOk.current['mstatus'] = my;
+          setMStatus(s);
+        }
+      })
+      .catch(() => {
+        if (fresh('mstatus')) {
+          loadOk.current['mstatus'] = my;
+          setMStatus('err');
+        }
+      })
+      .finally(() => settle(0b100));
   }, []);
   useEffect(load, [load]);
   // channel.health accelerates everything the card renders — integration
@@ -319,88 +390,320 @@ export default function Settings() {
   const digest = (settings.digest ?? {}) as Record<string, unknown>;
   const memory = (settings.agent_memory ?? { facts: [] }) as { facts: string[] };
 
-  return (
-    <Page title="Config" sub="sala de máquinas — provedores, guardrails e a voz do agente">
-      {notice && <div className={`notice ${notice.kind}`}>{notice.text}</div>}
-      <div className="set-grid">
-        <div>
-          <section className="set-sec">
-            <h2>provedores</h2>
-            <p className="sub">
-              um driver ativo por tipo —{' '}
-              {
-                KINDS.filter(
-                  (k) =>
-                    providerStatus(
-                      k.key,
-                      integrations.filter((i) => i.kind === k.key),
-                      k.key === 'whatsapp' ? wa : WA_IDLE,
-                    ).tone === 'live',
-                ).length
+  // ---------- section selection (?s=) + provider anchor scroll (?p=) ----------
+  const section: SectionKey = SECTIONS.find((s) => s.key === searchParams.get('s'))?.key ?? 'visao';
+  const anchor = searchParams.get('p');
+  const go = (s: SectionKey, p?: string) => {
+    const next = new URLSearchParams(searchParams);
+    if (s === 'visao') next.delete('s');
+    else next.set('s', s);
+    if (p) next.set('p', p);
+    else next.delete('p');
+    setSearchParams(next);
+  };
+  useEffect(() => {
+    if (!anchor) return;
+    // after the area renders — the card may not exist in the DOM yet on the
+    // same tick the search param flips
+    const t = setTimeout(
+      () => document.getElementById(`prov-${anchor}`)?.scrollIntoView({ block: 'start' }),
+      30,
+    );
+    return () => clearTimeout(t);
+  }, [section, anchor]);
+
+  // ---------- checklist: one line per piece, read off live state ----------
+  const integErr = (loadErr & 0b001) !== 0;
+  const setErr = (loadErr & 0b010) !== 0;
+  const provCheck = (k: (typeof KINDS)[number]): Check => {
+    if (integErr)
+      return {
+        key: k.key,
+        label: k.label,
+        state: 'falha ao ler',
+        tone: 'warn',
+        to: 'conexoes',
+        p: k.key,
+      };
+    const rows = integrations.filter((i) => i.kind === k.key);
+    const st = providerStatus(k.key, rows, k.key === 'whatsapp' ? wa : WA_IDLE);
+    const cur = rows.find((r) => r.enabled);
+    return {
+      key: k.key,
+      label: k.label,
+      state: cur ? `${st.text} · ${cur.driver}` : st.text,
+      tone: st.tone,
+      to: 'conexoes',
+      p: k.key,
+    };
+  };
+  const provTones = KINDS.map(
+    (k) =>
+      providerStatus(
+        k.key,
+        integrations.filter((i) => i.kind === k.key),
+        k.key === 'whatsapp' ? wa : WA_IDLE,
+      ).tone,
+  );
+  const provLive = provTones.filter((t) => t === 'live').length;
+
+  const weekDays =
+    mStatus && mStatus !== 'err'
+      ? Object.values(mStatus.cfg.weekly).filter((w) => w.length > 0).length
+      : 0;
+  const agendaCheck: Check =
+    mStatus === null
+      ? { key: 'agenda', label: 'agenda', state: 'lendo status…', tone: 'off', to: 'agenda' }
+      : mStatus === 'err'
+        ? {
+            key: 'agenda',
+            label: 'agenda',
+            state: 'falha ao ler status do serviço',
+            tone: 'warn',
+            to: 'agenda',
+          }
+        : weekDays === 0
+          ? {
+              key: 'agenda',
+              label: 'agenda',
+              state: 'sem horários abertos',
+              tone: 'off',
+              to: 'agenda',
+            }
+          : // booking needs somewhere to meet — Daily room or the static
+            // link; google is an optional sync layer, not the readiness gate
+            mStatus.room.provider === 'daily' && mStatus.room.lastError
+            ? {
+                key: 'agenda',
+                label: 'agenda',
+                state: mStatus.cfg.roomUrl
+                  ? 'daily falhou — salvando na sala fixa'
+                  : 'daily falhou — a call sai sem link',
+                tone: 'warn',
+                to: 'agenda',
               }
-              /{KINDS.length} prontos
-            </p>
-            {loading && !integrations.length && (
-              <div className="empty">
-                <div className="serif" style={{ fontSize: 'var(--t-lg)' }}>
-                  carregando…
+            : !(mStatus.room.provider === 'daily' || mStatus.cfg.roomUrl)
+              ? {
+                  key: 'agenda',
+                  label: 'agenda',
+                  state: 'sem sala — a call sai sem link',
+                  tone: 'warn',
+                  to: 'agenda',
+                }
+              : mStatus.gcal.configured && mStatus.gcal.lastError
+                ? {
+                    key: 'agenda',
+                    label: 'agenda',
+                    state: `${weekDays}d/semana · google falhou`,
+                    tone: 'warn',
+                    to: 'agenda',
+                  }
+                : {
+                    key: 'agenda',
+                    label: 'agenda',
+                    state:
+                      `${weekDays}d/semana · ${
+                        mStatus.room.provider === 'daily' ? 'sala daily.co' : 'sala fixa'
+                      }` + (mStatus.gcal.configured ? ' · google conectada' : ''),
+                    tone: 'live',
+                    to: 'agenda',
+                  };
+
+  const essential: Check[] = [...KINDS.map(provCheck), agendaCheck];
+  const g = guardrails;
+  const routine: Check[] = setErr
+    ? (
+        [
+          { key: 'voz', label: 'voz do agente', to: 'agente' },
+          { key: 'regras', label: 'regras', to: 'regras' },
+          { key: 'resumo', label: 'resumo diário', to: 'relatorios' },
+        ] as const
+      ).map((c): Check => ({ ...c, state: 'falha ao ler', tone: 'warn' }))
+    : [
+        {
+          key: 'voz',
+          label: 'voz do agente',
+          state: str(pitch.product, '') ? 'definida' : 'vazia — o agente improvisa',
+          tone: str(pitch.product, '') ? 'live' : 'off',
+          to: 'agente',
+        },
+        {
+          key: 'regras',
+          label: 'regras',
+          state: `silêncio ${str(g.quietStart, '21:00')}–${str(g.quietEnd, '08:00')} · ${str(
+            g.timezone,
+            'America/Sao_Paulo',
+          )}`,
+          tone: 'live',
+          to: 'regras',
+        },
+        {
+          key: 'resumo',
+          label: 'resumo diário',
+          state: digest.enabled === true ? `todo dia às ${num(digest.hour, 8)}h` : 'desligado',
+          tone: digest.enabled === true ? 'live' : 'off',
+          to: 'relatorios',
+        },
+      ];
+  const ready = essential.filter((c) => c.tone === 'live').length;
+  const attn = [...essential, ...routine].filter((c) => c.tone === 'warn').length;
+
+  // index-rail trailing marks — only where live state exists to report
+  const connMark: ProvTone = integErr
+    ? 'warn'
+    : provTones.includes('warn')
+      ? 'warn'
+      : provLive === KINDS.length
+        ? 'live'
+        : 'off';
+  const marks: Partial<Record<SectionKey, ProvTone>> = {};
+  if (mStatus && agendaCheck.tone !== 'live') marks.agenda = agendaCheck.tone;
+  if (!str(pitch.product, '')) marks.agente = 'warn';
+
+  return (
+    <Page title="Config" sub="sala de máquinas — uma área por vez">
+      {notice && <div className={`notice ${notice.kind}`}>{notice.text}</div>}
+      <div className="set-wrap">
+        <nav className="set-idx" aria-label="áreas da config">
+          {SECTIONS.map((s) => (
+            <button
+              key={s.key}
+              className={`idx${section === s.key ? ' sel' : ''}`}
+              aria-current={section === s.key ? 'page' : undefined}
+              onClick={() => go(s.key)}
+            >
+              <span className="idx-l">{s.label}</span>
+              <span className="idx-s">{s.sub}</span>
+              {s.key === 'conexoes' ? (
+                <span className={`idx-n st-${connMark}`}>
+                  {integErr ? '—' : `${provLive}/${KINDS.length}`}
+                </span>
+              ) : (
+                marks[s.key] && <i className={`mk ${marks[s.key]}`} />
+              )}
+            </button>
+          ))}
+        </nav>
+        {/* Areas stay mounted — switching sections hides, not unmounts, so
+            unsaved edits inside a card survive a round trip on the rail. */}
+        <div className="set-panel">
+          <div hidden={section !== 'visao'}>
+            <section className="set-sec">
+              <h2>
+                {loading
+                  ? 'lendo a máquina…'
+                  : ready === essential.length && attn === 0
+                    ? 'máquina inteira no ar'
+                    : `${ready} de ${essential.length} essenciais no ar`}
+              </h2>
+              <p className="sub">
+                uma linha por peça — clique para abrir a área que resolve
+                {attn > 0 && <span className="attn"> · {attn} pedindo atenção</span>}
+              </p>
+              {loading ? (
+                <div className="empty">
+                  <div className="serif" style={{ fontSize: 'var(--t-lg)' }}>
+                    carregando…
+                  </div>
                 </div>
-              </div>
-            )}
-            {KINDS.map((k) => (
-              <ProviderCard
-                key={k.key}
-                kind={k}
-                rows={integrations.filter((i) => i.kind === k.key)}
-                wa={k.key === 'whatsapp' ? wa : WA_IDLE}
-                onWaLogout={k.key === 'whatsapp' ? () => void waLogout() : undefined}
-                onSave={(d, enable) => void saveIntegration(k.key, d, enable)}
+              ) : (
+                <div className="ovl">
+                  <div className="ovl-g">essencial — o agente não roda sem isso</div>
+                  {essential.map((c) => (
+                    <CheckRow key={c.key} c={c} onGo={go} />
+                  ))}
+                  <div className="ovl-g">rotina — ajusta o dia a dia</div>
+                  {routine.map((c) => (
+                    <CheckRow key={c.key} c={c} onGo={go} />
+                  ))}
+                </div>
+              )}
+            </section>
+            <section className="set-sec">
+              <h2>saúde dos canais</h2>
+              <p className="sub">envios, falhas e bloqueios de guarda · últimos 30 dias</p>
+              <ChannelHealthCard />
+            </section>
+          </div>
+          <div hidden={section !== 'conexoes'}>
+            <section className="set-sec">
+              <h2>provedores</h2>
+              <p className="sub">
+                um driver ativo por tipo — {provLive}/{KINDS.length} prontos
+              </p>
+              {loading && !integrations.length && (
+                <div className="empty">
+                  <div className="serif" style={{ fontSize: 'var(--t-lg)' }}>
+                    carregando…
+                  </div>
+                </div>
+              )}
+              {KINDS.map((k) => (
+                <div className="prov-anchor" id={`prov-${k.key}`} key={k.key}>
+                  <ProviderCard
+                    kind={k}
+                    rows={integrations.filter((i) => i.kind === k.key)}
+                    wa={k.key === 'whatsapp' ? wa : WA_IDLE}
+                    onWaLogout={k.key === 'whatsapp' ? () => void waLogout() : undefined}
+                    onSave={(d, enable) => void saveIntegration(k.key, d, enable)}
+                  />
+                </div>
+              ))}
+            </section>
+          </div>
+          <div hidden={section !== 'agente'}>
+            <section className="set-sec">
+              <h2>voz do agente</h2>
+              <p className="sub">o pitch inteiro que o modelo recebe no system prompt</p>
+              <PitchCard value={pitch} onSave={(v) => void saveSetting('pitch', v)} />
+            </section>
+            <section className="set-sec">
+              <h2>memória do agente</h2>
+              <p className="sub">fatos que ele guardou via `remember` — ou que você escreve</p>
+              <MemoryCard
+                facts={memory.facts}
+                onSave={(facts) => void saveSetting('agent_memory', { facts })}
               />
-            ))}
-          </section>
-          <section className="set-sec">
-            <h2>saúde dos canais</h2>
-            <p className="sub">envios, falhas e bloqueios de guarda · últimos 30 dias</p>
-            <ChannelHealthCard />
-          </section>
-        </div>
-        <div>
-          <section className="set-sec">
-            <h2>guardrails</h2>
-            <p className="sub">regras duras — o código impõe, não o prompt</p>
-            <GuardrailsCard value={guardrails} onSave={(v) => void saveSetting('guardrails', v)} />
-          </section>
-          <section className="set-sec">
-            <h2>voz do agente</h2>
-            <p className="sub">o pitch inteiro que o modelo recebe no system prompt</p>
-            <PitchCard value={pitch} onSave={(v) => void saveSetting('pitch', v)} />
-          </section>
-          <section className="set-sec">
-            <h2>reunião</h2>
-            <p className="sub">objetivo 'reunião' — o link que o agente envia quando o lead topa</p>
-            <MeetingCard value={meeting} onSave={(v) => void saveSetting('meeting', v)} />
-          </section>
-          <section className="set-sec">
-            <h2>previsão do pipeline</h2>
-            <p className="sub">
-              probabilidade de fechar por estágio — multiplica o valor do lead na previsão de
-              relatórios
-            </p>
-            <ForecastCard value={forecast} onSave={(v) => void saveSetting('forecast', v)} />
-          </section>
-          <section className="set-sec">
-            <h2>resumo diário</h2>
-            <p className="sub">um email por dia com leads novos, respostas, calls e custo</p>
-            <DigestCard value={digest} onSave={(v) => void saveSetting('digest', v)} />
-          </section>
-          <section className="set-sec">
-            <h2>memória do agente</h2>
-            <p className="sub">fatos que ele guardou via `remember` — ou que você escreve</p>
-            <MemoryCard
-              facts={memory.facts}
-              onSave={(facts) => void saveSetting('agent_memory', { facts })}
-            />
-          </section>
+            </section>
+          </div>
+          <div hidden={section !== 'regras'}>
+            <section className="set-sec">
+              <h2>guardrails</h2>
+              <p className="sub">regras duras — o código impõe, não o prompt</p>
+              <GuardrailsCard
+                value={guardrails}
+                onSave={(v) => void saveSetting('guardrails', v)}
+              />
+            </section>
+          </div>
+          <div hidden={section !== 'agenda'}>
+            <section className="set-sec">
+              <h2>reunião</h2>
+              <p className="sub">
+                objetivo 'reunião' — o link que o agente envia quando o lead topa
+              </p>
+              <MeetingCard
+                value={meeting}
+                status={mStatus === 'err' ? null : mStatus}
+                onSave={(v) => void saveSetting('meeting', v)}
+              />
+            </section>
+          </div>
+          <div hidden={section !== 'relatorios'}>
+            <section className="set-sec">
+              <h2>previsão do pipeline</h2>
+              <p className="sub">
+                probabilidade de fechar por estágio — multiplica o valor do lead na previsão de
+                relatórios
+              </p>
+              <ForecastCard value={forecast} onSave={(v) => void saveSetting('forecast', v)} />
+            </section>
+            <section className="set-sec">
+              <h2>resumo diário</h2>
+              <p className="sub">um email por dia com leads novos, respostas, calls e custo</p>
+              <DigestCard value={digest} onSave={(v) => void saveSetting('digest', v)} />
+            </section>
+          </div>
         </div>
       </div>
       {/* shared by the guardrails + meeting tz pickers */}
@@ -410,6 +713,20 @@ export default function Settings() {
         ))}
       </datalist>
     </Page>
+  );
+}
+
+/** Checklist row on visão geral — the whole line is the jump into its area. */
+function CheckRow({ c, onGo }: { c: Check; onGo: (s: SectionKey, p?: string) => void }) {
+  return (
+    <button className={`ck ${c.tone}`} onClick={() => onGo(c.to, c.p)}>
+      <i className="dot" aria-hidden />
+      <span className="ck-l">{c.label}</span>
+      <span className="ck-s">{c.state}</span>
+      <span className="ck-go" aria-hidden>
+        ›
+      </span>
+    </button>
   );
 }
 
@@ -1219,22 +1536,17 @@ const DAY_NAMES: [string, string][] = [
 /** Availability used by /agendar + the agent's booking link. Weekly windows
  *  per weekday (lists of HH:MM–HH:MM pairs), slot grid, buffer, horizon; the
  *  roomUrl is the static video room unless DAILY_API_KEY mints per-meeting
- *  rooms; status chips report the gcal + room wiring from the status API. */
+ *  rooms; status chips report the gcal + room wiring — the page owns that
+ *  fetch so the checklist and the card read the same snapshot. */
 function MeetingCard({
   value,
+  status,
   onSave,
 }: {
   value: Record<string, unknown>;
+  status: MeetingStatus | null;
   onSave: (v: Record<string, unknown>) => void;
 }) {
-  const [status, setStatus] = useState<MeetingStatus | null>(null);
-  useEffect(() => {
-    api
-      .meetingsStatus()
-      .then(setStatus)
-      .catch(() => undefined);
-  }, []);
-
   type Weekly = Record<string, [string, string][]>;
   const normWeekly = (w: unknown): Weekly => {
     const out: Weekly = {};

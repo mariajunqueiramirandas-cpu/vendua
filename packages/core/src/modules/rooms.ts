@@ -32,6 +32,14 @@ export interface RoomResult {
   error?: string;
 }
 
+/** Last provisioning failure — lets meetingsStatus tell "Daily configured"
+ *  from "Daily actually working". Cleared on the next successful create. */
+let lastRoomError: string | null = null;
+
+export function roomLastError(): string | null {
+  return lastRoomError;
+}
+
 /**
  * Provision a room for a freshly booked meeting. `fallback` is the static
  * meeting.roomUrl — returned whenever Daily is unset or errors.
@@ -66,20 +74,27 @@ export async function createRoom(
       // it but failed before the URL reached the meeting row — recover it.
       if (res.status === 400) {
         const existing = await fetchRoom(`vendua-${meetingId}`);
-        if (existing) return { url: existing, provider: 'daily' };
+        if (existing) {
+          lastRoomError = null;
+          return { url: existing, provider: 'daily' };
+        }
       }
       rlog.warn({ status: res.status, err: text }, 'daily room create failed');
-      return { url: fallback, provider: 'static', error: `daily ${res.status}` };
+      lastRoomError = `daily ${res.status}`;
+      return { url: fallback, provider: 'static', error: lastRoomError };
     }
     const room = (await res.json()) as { url?: string };
     if (!room.url) {
       rlog.warn('daily room create: no url in response');
-      return { url: fallback, provider: 'static', error: 'daily: no url' };
+      lastRoomError = 'daily: no url';
+      return { url: fallback, provider: 'static', error: lastRoomError };
     }
+    lastRoomError = null;
     return { url: room.url, provider: 'daily' };
   } catch (e) {
     const err = e instanceof Error ? e.message : String(e);
     rlog.warn({ err }, 'daily room create failed');
+    lastRoomError = err;
     return { url: fallback, provider: 'static', error: err };
   }
 }
