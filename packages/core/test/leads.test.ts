@@ -1,5 +1,10 @@
 import { describe, expect, test } from 'bun:test';
+import { join } from 'node:path';
+import postgres from 'postgres';
+import { createApp } from '../src/app.ts';
+import { controlTx } from '../src/modules/control.ts';
 import {
+  insertLeadTx,
   LEAD_STATES,
   leadInsert,
   leadJson,
@@ -7,6 +12,7 @@ import {
   leadState,
   type LeadRow,
 } from '../src/modules/leads.ts';
+import { migrate } from '../src/platform/db.ts';
 
 const code = (fn: () => unknown) => {
   try {
@@ -156,5 +162,112 @@ describe('leadJson', () => {
   });
   test('null tags → empty array', () => {
     expect(leadJson({ ...row, tags: null }).tags).toEqual([]);
+  });
+});
+
+// DB-backed — opt-in via TEST_DATABASE_URL (CI has no Postgres).
+describe.skipIf(!process.env.TEST_DATABASE_URL)('lead list sort (db)', () => {
+  const sql = postgres(process.env.TEST_DATABASE_URL!);
+  const app = createApp({ sql, sessionSecret: 's', controlSecret: 'ctl-secret', autoDrain: false });
+  // A q-scoped prefix keeps the assertions blind to other suites' leads.
+  const nonce = crypto.randomUUID().slice(0, 8);
+  const pfx = `zzsrt-${nonce}`;
+  let migrated = false;
+  const setup = async () => {
+    if (migrated) return;
+    await migrate(sql, join(import.meta.dir, '../db/migrations'));
+    // Alpha=3000, Bravo=null, Charlie=1000 — every sort has a distinct order.
+    await controlTx(sql, async (tx) => {
+      const mk = async (name: string, deal: number | null) =>
+        (await insertLeadTx(tx, { name: `${pfx} ${name}`, deal_value_cents: deal })).body.lead.id;
+      const a = await mk('Alpha', 3000);
+      const b = await mk('Bravo', null);
+      const c = await mk('Charlie', 1000);
+      // now() is transaction-time — same-tx inserts share created_at, so the
+      // 'new' walk would fall to the uuid tiebreak. Stagger them explicitly.
+      await tx`update leads set created_at = now() - interval '3 days' where id = ${a}`;
+      await tx`update leads set created_at = now() - interval '2 days' where id = ${b}`;
+      await tx`update leads set created_at = now() - interval '1 days' where id = ${c}`;
+      // Explicit activity recency: Charlie newest, Alpha old, Bravo none.
+      await tx`insert into lead_activities (lead_id, kind, body, at)
+               values (${a}, 'note', 'x', now() - interval '5 days'),
+                      (${c}, 'note', 'x', now())`;
+      return [a, b, c];
+    });
+    migrated = true;
+  };
+
+  const list = async (qs: string) => {
+    const res = await app.request(`/control/v1/leads?${qs}`, {
+      headers: { 'x-vendua-control': 'ctl-secret' },
+    });
+    const body = (await res.json()) as {
+      leads?: { id: string; name: string; score?: number }[];
+      nextCursor?: string | null;
+      error?: { code?: string };
+    };
+    return { status: res.status, body };
+  };
+  const order = async (sort: string) =>
+    ((await list(`q=${pfx}&sort=${sort}`)).body.leads ?? []).map((l) => l.name.split(' ').pop());
+  test('sort=name asc', async () => {
+    await setup();
+    expect(await order('name')).toEqual(['Alpha', 'Bravo', 'Charlie']);
+  });
+  test('sort=new is created_at desc', async () => {
+    await setup();
+    expect(await order('new')).toEqual(['Charlie', 'Bravo', 'Alpha']);
+  });
+  test('sort=value desc, nulls last', async () => {
+    await setup();
+    expect(await order('value')).toEqual(['Alpha', 'Charlie', 'Bravo']);
+  });
+  test('sort=activity — recent first, no-activity last', async () => {
+    await setup();
+    expect(await order('activity')).toEqual(['Charlie', 'Alpha', 'Bravo']);
+  });
+  test('sort=score desc — monotonically non-increasing', async () => {
+    await setup();
+    const { body } = await list(`q=${pfx}&sort=score`);
+    const scores = (body.leads ?? []).map((l) => Number(l.score));
+    expect(scores).toEqual([...scores].sort((a, b) => b - a));
+  });
+  test('keyset walk — limit=1 pages all three, no repeats', async () => {
+    await setup();
+    const seen: string[] = [];
+    let cursor: string | null = null;
+    for (let i = 0; i < 4; i++) {
+      const qs = `q=${pfx}&sort=name&limit=1${cursor ? `&cursor=${cursor}` : ''}`;
+      const { status, body } = await list(qs);
+      expect(status).toBe(200);
+      seen.push(...(body.leads ?? []).map((l) => l.name));
+      cursor = body.nextCursor ?? null;
+      if (!cursor) break;
+    }
+    expect(seen).toEqual([`${pfx} Alpha`, `${pfx} Bravo`, `${pfx} Charlie`]);
+    // The activity walk also survives its null-key boundary (Bravo has none).
+    cursor = null;
+    const acts: string[] = [];
+    for (let i = 0; i < 4; i++) {
+      const qs = `q=${pfx}&sort=activity&limit=1${cursor ? `&cursor=${cursor}` : ''}`;
+      const { body } = await list(qs);
+      acts.push(...(body.leads ?? []).map((l) => l.name));
+      cursor = body.nextCursor ?? null;
+      if (!cursor) break;
+    }
+    expect(acts).toEqual([`${pfx} Charlie`, `${pfx} Alpha`, `${pfx} Bravo`]);
+  });
+  test('a cursor minted under one sort 400s under another', async () => {
+    await setup();
+    const first = await list(`q=${pfx}&sort=name&limit=1`);
+    expect(first.body.nextCursor).toBeTruthy();
+    const bad = await list(`q=${pfx}&sort=value&cursor=${first.body.nextCursor}`);
+    expect(bad.status).toBe(400);
+  });
+  test('sort=bogus → INVALID_SORT', async () => {
+    await setup();
+    const { status, body } = await list(`q=${pfx}&sort=bogus`);
+    expect(status).toBe(422);
+    expect(body.error?.code).toBe('INVALID_SORT');
   });
 });

@@ -13,9 +13,11 @@ import {
 import { onControlEvent } from '../events.ts';
 import {
   AGENT_GOALS,
+  AGENT_MODES,
   ConfirmBtn,
   Empty,
   LEAD_STATES,
+  LEAD_STATE_LABEL,
   MEETING_STATUS_LABEL,
   Page,
   RUN_KIND_LABEL,
@@ -37,11 +39,23 @@ const KIND_LABEL: Record<string, string> = {
   system: 'sistema',
   blocked: 'envio bloqueado',
 };
-const AGENT_OPTS: [string, string][] = [
-  ['off', 'off'],
-  ['draft', 'rascunho'],
-  ['auto', 'auto'],
+
+// Timeline groups — a kind label exists per event, but the filter answers
+// the staff question ("o que o agente fez?", "quando mudou de estágio?").
+const ACT_GROUPS: [string, (a: Activity) => boolean][] = [
+  ['tudo', () => true],
+  ['notas', (a) => a.kind === 'note'],
+  ['calls', (a) => a.kind === 'call' || a.kind.startsWith('meeting')],
+  ['estágio', (a) => a.kind === 'state_change'],
+  ['agente', (a) => a.kind === 'agent' || a.createdBy === 'agent'],
+  ['sistema', (a) => a.kind === 'system' || a.kind === 'blocked'],
 ];
+
+const MODE_NOTE: Record<string, string> = {
+  off: 'a equipe toca o lead — o agente não tria nem fala com ele',
+  draft: 'o agente prepara mensagens — você aprova cada envio no inbox',
+  auto: 'o agente conversa sozinho, dentro das guardrails',
+};
 
 // stored websites are free text — linkify only values that normalize to an
 // absolute http(s) URL; anything else renders as plain text
@@ -68,6 +82,7 @@ export default function LeadDetail() {
   const [note, setNote] = useState('');
   const [taskTitle, setTaskTitle] = useState('');
   const [actChannel, setActChannel] = useState<'auto' | 'whatsapp' | 'email'>('auto');
+  const [actGroup, setActGroup] = useState('tudo');
   const [notFound, setNotFound] = useState(false);
 
   // Each endpoint keeps its own applied watermark — an older response still
@@ -144,6 +159,13 @@ export default function LeadDetail() {
 
   const patch = (p: Record<string, unknown>) => api.patchLead(lead.id, p).then(load);
   const siteHref = lead.website ? httpUrl(lead.website) : null;
+  const stageIdx = Math.max(
+    0,
+    LEAD_STATES.findIndex(([v]) => v === lead.state),
+  );
+  const filteredActs = acts.filter(
+    ACT_GROUPS.find(([g]) => g === actGroup)?.[1] ?? (() => true),
+  );
   const addNote = async () => {
     if (!note.trim()) return;
     await api.addActivity(lead.id, 'note', note);
@@ -163,43 +185,6 @@ export default function LeadDetail() {
       sub={lead.businessName ?? undefined}
       actions={
         <div className="lead-acts">
-          {lead.agentMode !== 'off' && !lead.unsubscribedAt && !lead.agentPausedAt && (
-            <>
-              <select
-                value={actChannel}
-                onChange={(e) => setActChannel(e.target.value as typeof actChannel)}
-                title="canal do disparo — auto = o agente escolhe o canal alcançável"
-              >
-                <option value="auto">canal: auto</option>
-                <option value="whatsapp">canal: whatsapp</option>
-                <option value="email">canal: email</option>
-              </select>
-              <button
-                className="btn agent"
-                title="rodar o agente agora"
-                onClick={() =>
-                  void api
-                    .runOnLead(
-                      lead.id,
-                      'outreach',
-                      actChannel === 'auto' ? {} : { channel: actChannel },
-                    )
-                    .then(load)
-                }
-              >
-                <Bot size={14} /> agir
-              </button>
-            </>
-          )}
-          {lead.agentPausedAt && (
-            <button
-              className="btn ghost"
-              title="handoff do agente — retomar libera o agente neste lead de novo"
-              onClick={() => void api.patchLead(lead.id, { agentPaused: false }).then(load)}
-            >
-              <Bot size={14} /> retomar agente
-            </button>
-          )}
           {lead.unsubscribedAt ? (
             <span
               className="chip warn"
@@ -226,20 +211,116 @@ export default function LeadDetail() {
         <div className="lead-cols">
           <div className="lead-left">
             <div className="card lead-summary" style={{ padding: 18 }}>
-              <div className="seg-row">
-                <span className="seg" title="estágio do lead">
-                  {LEAD_STATES.map(([v, l]) => (
-                    <button
-                      key={v}
-                      className={lead.state === v ? 'sel' : ''}
-                      onClick={() => void patch({ state: v })}
-                    >
-                      {l}
-                    </button>
-                  ))}
+              <div className="stepper" role="group" aria-label="estágio do lead">
+                {LEAD_STATES.map(([v, l], i) => (
+                  <button
+                    key={v}
+                    className={`stp${i <= stageIdx ? ' done' : ''}${lead.state === v ? ' cur' : ''}`}
+                    title={`mover para ${LEAD_STATE_LABEL[v]}`}
+                    onClick={() => void patch({ state: v })}
+                  >
+                    <i />
+                    {l}
+                  </button>
+                ))}
+                <span style={{ marginInlineStart: 'auto' }}>
+                  <ScoreBar score={lead.score} />
                 </span>
+              </div>
+              <div className="kv">
+                <div>
+                  <div className="k">whatsapp</div>
+                  <div className="v">
+                    <EditableText
+                      value={lead.whatsapp}
+                      ph="+55 85 9…"
+                      onSave={(v) => void patch({ whatsapp: v })}
+                    />
+                    {lead.whatsapp && !lead.whatsappVerified && (
+                      <span
+                        style={{ color: 'var(--muted)', fontSize: 'var(--t-2xs)' }}
+                        title="derivado do telefone — envio pode falhar"
+                      >
+                        {' · não verificado'}
+                      </span>
+                    )}
+                  </div>
+                </div>
+                {(
+                  [
+                    ['email', 'email', lead.email, 'email'],
+                    ['instagram', 'instagram', lead.instagram, '@perfil'],
+                    ['cidade', 'city', lead.city, 'cidade'],
+                    ['segmento', 'segment', lead.segment, 'segmento'],
+                    ['origem', 'source', lead.source, 'origem'],
+                  ] as [string, string, string | null, string][]
+                ).map(([label, fieldName, v, ph]) => (
+                  <div key={fieldName}>
+                    <div className="k">{label}</div>
+                    <div className="v">
+                      <EditableText
+                        value={v}
+                        ph={ph}
+                        onSave={(nv) => void patch({ [fieldName]: nv })}
+                      />
+                    </div>
+                  </div>
+                ))}
+                <div>
+                  <div className="k">site</div>
+                  <div className="v">
+                    <EditableText
+                      value={lead.website}
+                      ph="https://…"
+                      onSave={(v) => void patch({ website: v })}
+                    />
+                    {siteHref && (
+                      <>
+                        {' '}
+                        <a href={siteHref} target="_blank" rel="noreferrer" title="abrir site">
+                          ↗
+                        </a>
+                      </>
+                    )}
+                  </div>
+                </div>
+                <div>
+                  <div className="k">valor</div>
+                  <div className="v">
+                    <MoneyEdit
+                      cents={lead.dealValueCents}
+                      onSave={(c) => void patch({ dealValueCents: c })}
+                    />
+                  </div>
+                </div>
+                {lead.discoveredVia && (
+                  <div>
+                    <div className="k">descoberto via</div>
+                    <div className="v">{lead.discoveredVia}</div>
+                  </div>
+                )}
+              </div>
+              <div style={{ marginTop: 12 }}>
+                <div
+                  className="k"
+                  style={{
+                    fontSize: 'var(--t-2xs)',
+                    color: 'var(--muted)',
+                    textTransform: 'uppercase',
+                    marginBottom: 4,
+                  }}
+                >
+                  tags
+                </div>
+                <TagEditor tags={lead.tags} onSave={(tags) => void patch({ tags })} />
+              </div>
+            </div>
+
+            <div className="card" style={{ padding: 18 }}>
+              <div className="sec-t">agente</div>
+              <div className="seg-row">
                 <span className="seg" title="modo do agente">
-                  {AGENT_OPTS.map(([v, l]) => (
+                  {AGENT_MODES.map(([v, l]) => (
                     <button
                       key={v}
                       className={lead.agentMode === v ? 'sel' : ''}
@@ -262,76 +343,67 @@ export default function LeadDetail() {
                     ))}
                   </span>
                 )}
-                <span style={{ marginLeft: 'auto' }}>
-                  <ScoreBar score={lead.score} />
-                </span>
               </div>
-              <div className="kv">
-                <div>
-                  <div className="k">whatsapp</div>
-                  <div className="v">
-                    {lead.whatsapp ?? '—'}
-                    {lead.whatsapp && !lead.whatsappVerified && (
-                      <span
-                        style={{ color: 'var(--muted)', fontSize: 'var(--t-2xs)' }}
-                        title="derivado do telefone — envio pode falhar"
-                      >
-                        {' · não verificado'}
-                      </span>
-                    )}
-                  </div>
+              <div className="nl-note">{MODE_NOTE[lead.agentMode]}</div>
+              {lead.agentPausedAt && (
+                <div className="trow">
+                  <span className="chip warn">pausado</span>
+                  <span style={{ color: 'var(--muted)', fontSize: 'var(--t-xs)', flex: 1 }}>
+                    handoff da equipe — o agente segura este lead
+                  </span>
+                  <button
+                    className="btn ghost"
+                    style={{ padding: '3px 8px' }}
+                    title="retomar libera o agente neste lead de novo"
+                    onClick={() => void api.patchLead(lead.id, { agentPaused: false }).then(load)}
+                  >
+                    retomar
+                  </button>
                 </div>
-                {(
-                  [
-                    ['email', lead.email],
-                    ['instagram', lead.instagram],
-                    ['cidade', lead.city],
-                    ['segmento', lead.segment],
-                    ['origem', lead.source],
-                    ['descoberto via', lead.discoveredVia],
-                  ] as [string, string | null][]
-                ).map(([k, v]) => (
-                  <div key={k}>
-                    <div className="k">{k}</div>
-                    <div className="v">{v ?? '—'}</div>
-                  </div>
-                ))}
-                <div>
-                  <div className="k">site</div>
-                  <div className="v">
-                    {siteHref ? (
-                      <a href={siteHref} target="_blank" rel="noreferrer">
-                        {lead.website!.replace(/^https?:\/\//i, '')}
-                      </a>
-                    ) : (
-                      (lead.website ?? '—')
-                    )}
-                  </div>
+              )}
+              {schedRuns.map((r) => (
+                <div key={r.id} className="trow">
+                  <span className="chip">{RUN_KIND_LABEL[r.kind] ?? r.kind}</span>
+                  <span style={{ color: 'var(--muted)', fontSize: 'var(--t-xs)', flex: 1 }}>
+                    agenda {fmtDateTime(r.run_at)}
+                  </span>
+                  <button
+                    className="btn ghost"
+                    style={{ padding: '3px 8px' }}
+                    onClick={() => void api.cancelRun(r.id).then(load)}
+                  >
+                    cancelar
+                  </button>
                 </div>
-                <div>
-                  <div className="k">valor</div>
-                  <div className="v">
-                    <MoneyEdit
-                      cents={lead.dealValueCents}
-                      onSave={(c) => void patch({ dealValueCents: c })}
-                    />
-                  </div>
+              ))}
+              {lead.agentMode !== 'off' && !lead.unsubscribedAt && !lead.agentPausedAt && (
+                <div style={{ display: 'flex', gap: 8, marginTop: 10 }}>
+                  <select
+                    value={actChannel}
+                    onChange={(e) => setActChannel(e.target.value as typeof actChannel)}
+                    title="canal do disparo — auto = o agente escolhe o canal alcançável"
+                  >
+                    <option value="auto">canal: auto</option>
+                    <option value="whatsapp">canal: whatsapp</option>
+                    <option value="email">canal: email</option>
+                  </select>
+                  <button
+                    className="btn agent"
+                    title="rodar o agente agora"
+                    onClick={() =>
+                      void api
+                        .runOnLead(
+                          lead.id,
+                          'outreach',
+                          actChannel === 'auto' ? {} : { channel: actChannel },
+                        )
+                        .then(load)
+                    }
+                  >
+                    <Bot size={14} /> agir agora
+                  </button>
                 </div>
-              </div>
-              <div style={{ marginTop: 12 }}>
-                <div
-                  className="k"
-                  style={{
-                    fontSize: 'var(--t-2xs)',
-                    color: 'var(--muted)',
-                    textTransform: 'uppercase',
-                    marginBottom: 4,
-                  }}
-                >
-                  tags
-                </div>
-                <TagEditor tags={lead.tags} onSave={(tags) => void patch({ tags })} />
-              </div>
+              )}
             </div>
 
             <div className="card" style={{ padding: 18 }}>
@@ -358,21 +430,6 @@ export default function LeadDetail() {
                   nenhuma conversa ainda — o agente cria uma ao primeiro contato
                 </div>
               )}
-              {schedRuns.map((r) => (
-                <div key={r.id} className="trow">
-                  <span className="chip">{RUN_KIND_LABEL[r.kind] ?? r.kind}</span>
-                  <span style={{ color: 'var(--muted)', fontSize: 'var(--t-xs)', flex: 1 }}>
-                    agenda {fmtDateTime(r.run_at)}
-                  </span>
-                  <button
-                    className="btn ghost"
-                    style={{ padding: '3px 8px' }}
-                    onClick={() => void api.cancelRun(r.id).then(load)}
-                  >
-                    cancelar
-                  </button>
-                </div>
-              ))}
               <div style={{ display: 'flex', gap: 6, marginTop: 10 }}>
                 {(['whatsapp', 'email', 'manual'] as const)
                   .filter((ch) => !threads.some((t) => t.channel === ch))
@@ -495,8 +552,23 @@ export default function LeadDetail() {
                 <Plus size={14} />
               </button>
             </div>
+            {acts.length > 0 && (
+              <div className="fchips" style={{ marginBottom: 10 }}>
+                {ACT_GROUPS.filter(
+                  ([g, f]) => g === 'tudo' || acts.some((a) => f(a)),
+                ).map(([g]) => (
+                  <button
+                    key={g}
+                    className={actGroup === g ? 'sel' : ''}
+                    onClick={() => setActGroup(g)}
+                  >
+                    {g}
+                  </button>
+                ))}
+              </div>
+            )}
             <div className="steps">
-              {acts.map((a) => (
+              {filteredActs.map((a) => (
                 <div
                   key={a.id}
                   className={`step ${a.createdBy === 'agent' ? 'tool' : a.kind === 'state_change' ? 'model' : ''}`}
@@ -514,11 +586,58 @@ export default function LeadDetail() {
                   hint="notas, ligações e ações do agente aparecem aqui"
                 />
               )}
+              {acts.length > 0 && !filteredActs.length && (
+                <Empty title="nada neste grupo" hint="troque o filtro acima" />
+              )}
             </div>
           </div>
         </div>
       </div>
     </Page>
+  );
+}
+
+/** Click-to-edit text — reads as a value, opens an input on click. Enter or
+ *  blur-out commits via onSave; Escape cancels. Empty commits null. */
+function EditableText({
+  value,
+  onSave,
+  ph = '—',
+}: {
+  value: string | null;
+  onSave: (v: string | null) => void;
+  ph?: string;
+}) {
+  const [editing, setEditing] = useState(false);
+  const [v, setV] = useState('');
+  if (!editing) {
+    return (
+      <button
+        className="edv"
+        title="clique para editar"
+        onClick={() => {
+          setV(value ?? '');
+          setEditing(true);
+        }}
+      >
+        {value ?? <span className="dim">{ph}</span>}
+      </button>
+    );
+  }
+  return (
+    <input
+      autoFocus
+      value={v}
+      onChange={(e) => setV(e.target.value)}
+      onKeyDown={(e) => {
+        if (e.key === 'Enter') {
+          onSave(v.trim() || null);
+          setEditing(false);
+        }
+        if (e.key === 'Escape') setEditing(false);
+      }}
+      onBlur={() => setEditing(false)}
+    />
   );
 }
 

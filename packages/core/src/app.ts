@@ -40,6 +40,7 @@ import {
   insertLeadTx,
   leadInsert,
   leadPatch,
+  leadSort,
   leadState,
   leadStats,
   listLeads,
@@ -831,6 +832,7 @@ export function createApp({ sql, sessionSecret, controlSecret, autoDrain }: AppD
     const limit = c.req.query('limit');
     const q = c.req.query('q');
     const cursor = c.req.query('cursor');
+    const sort = c.req.query('sort');
     const { leads, nextCursor } = await listLeads(sql, {
       ...(q ? { q } : {}),
       ...(state ? { state: leadState(state) } : {}),
@@ -838,6 +840,7 @@ export function createApp({ sql, sessionSecret, controlSecret, autoDrain }: AppD
       ...(archived === 'only' || archived === 'all' ? { archived } : {}),
       ...(limit ? { limit: Math.min(Math.max(Number(limit) || 50, 1), 200) } : {}),
       ...(cursor ? { cursor } : {}),
+      ...(sort ? { sort: leadSort(sort) } : {}),
     });
     return c.json({ leads, nextCursor });
   });

@@ -1,5 +1,5 @@
 import type { Sql } from '../platform/db.ts';
-import { HttpError, str } from '../platform/http.ts';
+import { HttpError, str, UUID_RE } from '../platform/http.ts';
 import { claimControl, controlTx, type ClaimResult } from './control.ts';
 import { emitControlEvent } from './control-events.ts';
 
@@ -358,6 +358,20 @@ export interface ListLeadsQuery {
   limit?: number;
   /** Opaque cursor from a previous page's nextCursor. */
   cursor?: string;
+  /** Keyset order — 'new' (default) walks created_at desc. */
+  sort?: LeadSort;
+}
+
+export const LEAD_SORTS = ['new', 'activity', 'score', 'value', 'name'] as const;
+export type LeadSort = (typeof LEAD_SORTS)[number];
+
+export function leadSort(v: unknown): LeadSort {
+  if (typeof v !== 'string' || !(LEAD_SORTS as readonly string[]).includes(v)) {
+    throw new HttpError(422, 'INVALID_SORT', `sort must be one of: ${LEAD_SORTS.join(', ')}`, {
+      field: 'sort',
+    });
+  }
+  return v as LeadSort;
 }
 
 /**
@@ -406,6 +420,62 @@ interface LeadListRow extends LeadRow {
   last_activity_at: string | null;
 }
 
+/** Per-sort keyset contract: the key expression used in the cursor WHERE
+ *  (select aliases aren't visible there), the ORDER BY fragment (which may
+ *  reference the alias), the walk direction, and whether the key is
+ *  nullable — nullable keys page after all values on a desc walk. */
+const LEAD_SORT_SPEC: Record<
+  LeadSort,
+  {
+    key: string;
+    /** wraps the bound cursor value — e.g. 'lower' so a name cursor
+     *  compares lower(name) on both sides. */
+    cwrap?: string;
+    order: string;
+    desc: boolean;
+    nullable: boolean;
+  }
+> = {
+  new: { key: 'l.created_at', order: 'l.created_at desc, l.id desc', desc: true, nullable: false },
+  activity: {
+    key: 'act.last_at',
+    order: 'act.last_at desc nulls last, l.id desc',
+    desc: true,
+    nullable: true,
+  },
+  // 'score' keys on the computed expression — the alias only exists in
+  // ORDER BY, WHERE needs the expression itself.
+  score: { key: `(${LEAD_SCORE_SQL})`, order: 'score desc, l.id desc', desc: true, nullable: false },
+  value: {
+    key: 'l.deal_value_cents',
+    order: 'l.deal_value_cents desc nulls last, l.id desc',
+    desc: true,
+    nullable: true,
+  },
+  name: {
+    key: 'lower(l.name)',
+    cwrap: 'lower',
+    order: 'lower(l.name) asc, l.id asc',
+    desc: false,
+    nullable: false,
+  },
+};
+/** The row's sort key as a JSON cursor value (null for absent keys). */
+function sortKeyOf(sort: LeadSort, row: LeadListRow): string | number | null {
+  switch (sort) {
+    case 'activity':
+      return row.last_activity_at ? new Date(row.last_activity_at).toISOString() : null;
+    case 'score':
+      return Number(row.score);
+    case 'value':
+      return row.deal_value_cents;
+    case 'name':
+      return row.name;
+    case 'new':
+      return new Date(row.created_at).toISOString();
+  }
+}
+
 function listItemJson(row: LeadListRow): LeadListItem {
   return {
     ...leadJson(row),
@@ -432,23 +502,35 @@ export async function listLeads(
   const qDigits = q && /^[+\d\s().-]+$/.test(q) ? q.replace(/\D/g, '') : '';
   const qDigitsLike = qDigits.length >= 4 ? `%${qDigits}%` : null;
 
-  // Keyset pagination: (created_at, id) desc — stable under concurrent
-  // inserts where a naive offset page can skip/dupe rows.
-  let cursorAt: string | null = null;
-  let cursorId: string | null = null;
+  // Keyset pagination: (sort key, id) — stable under concurrent inserts
+  // where a naive offset page can skip/dupe rows. The cursor is an opaque
+  // base64url JSON triple [sort, keyValue, id]; a cursor minted under one
+  // sort is rejected under another (its predicate wouldn't line up).
+  const sort = query.sort ?? 'new';
+  const spec = LEAD_SORT_SPEC[sort];
+  let curVal: string | number | null = null;
+  let curId: string | null = null;
   if (query.cursor) {
     try {
-      const decoded = Buffer.from(query.cursor, 'base64url').toString('utf8');
-      const sep = decoded.lastIndexOf('|');
-      if (sep <= 0 || sep === decoded.length - 1) throw new Error('shape');
-      cursorAt = decoded.slice(0, sep);
-      cursorId = decoded.slice(sep + 1);
-      if (Number.isNaN(new Date(cursorAt).getTime())) throw new Error('shape');
+      const [s, v, i] = JSON.parse(
+        Buffer.from(query.cursor, 'base64url').toString('utf8'),
+      ) as [string, string | number | null, string];
+      if (s !== sort) throw new Error('shape');
       // Postgres would reject a malformed uuid mid-query with a 500 — check
-      // the shape here so bad cursors get the BAD_REQUEST above instead.
-      if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(cursorId)) {
-        throw new Error('shape');
+      // the shape here so bad cursors get the BAD_REQUEST below instead.
+      if (typeof i !== 'string' || !UUID_RE.test(i)) throw new Error('shape');
+      if (v === null) {
+        if (!spec.nullable) throw new Error('shape');
+      } else if (sort === 'score' || sort === 'value') {
+        if (typeof v !== 'number' || !Number.isFinite(v)) throw new Error('shape');
+      } else if (sort === 'new' || sort === 'activity') {
+        if (typeof v !== 'string' || Number.isNaN(new Date(v).getTime()))
+          throw new Error('shape');
+      } else {
+        if (typeof v !== 'string') throw new Error('shape');
       }
+      curVal = v;
+      curId = i;
     } catch {
       throw new HttpError(400, 'BAD_REQUEST', 'invalid cursor');
     }
@@ -480,7 +562,20 @@ export async function listLeads(
                : ''
            })`
         : 'true',
-      cursorAt && cursorId ? `(l.created_at, l.id) < (${p(cursorAt)}, ${p(cursorId)})` : 'true',
+      // Cursor predicate: strictly past the last emitted key, then the id
+      // tiebreak in the same direction. A null-keyed cursor only walks
+      // further null keys (they page last on desc walks).
+      curId
+        ? curVal === null
+          ? `(${spec.key} is null and l.id ${spec.desc ? '<' : '>'} ${p(curId)}::uuid)`
+          : (() => {
+              const kv = spec.cwrap ? `${spec.cwrap}(${p(curVal)})` : p(curVal);
+              const op = spec.desc ? '<' : '>';
+              return `(${spec.key} ${op} ${kv} or ` +
+                `(${spec.key} = ${kv} and l.id ${op} ${p(curId)}::uuid)` +
+                `${spec.nullable ? ` or ${spec.key} is null` : ''})`;
+            })()
+        : 'true',
     ];
     return tx.unsafe(
       `select l.*, ${LEAD_SCORE_SQL} as score,
@@ -489,7 +584,7 @@ export async function listLeads(
               act.last_at as last_activity_at
        ${LEAD_LIST_FROM}
        where ${clauses.join('\n         and ')}
-       order by l.created_at desc, l.id desc
+       order by ${spec.order}
        limit ${limit + 1}`,
       params as never[],
     ) as Promise<LeadListRow[]>;
@@ -502,7 +597,9 @@ export async function listLeads(
     leads: items,
     nextCursor:
       overflow && last
-        ? Buffer.from(`${last.created_at}|${last.id}`, 'utf8').toString('base64url')
+        ? Buffer.from(JSON.stringify([sort, sortKeyOf(sort, last), last.id]), 'utf8').toString(
+            'base64url',
+          )
         : null,
   };
 }

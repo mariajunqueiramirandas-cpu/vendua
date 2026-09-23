@@ -1,8 +1,9 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
+import { PauseCircle, XCircle } from 'lucide-react';
 import { api, type AgentRun } from '../api.ts';
 import { onControlEvent } from '../events.ts';
-import { Empty, Page, RUN_KIND_LABEL, fmtDateTime, fmtMoney, rel } from '../components.tsx';
+import { Empty, Page, RUN_KIND_LABEL, fmtDateTime, fmtMoney, rel, relDue } from '../components.tsx';
 
 const STATUS_CHIP: Record<string, string> = {
   queued: 'warn',
@@ -11,6 +12,18 @@ const STATUS_CHIP: Record<string, string> = {
   failed: 'bad',
   canceled: 'bad',
 };
+
+// Filter strip — 'agendados' is the delayed queue (scheduled=1), not a status:
+// it flips the endpoint to run_at ordering and its own pagination cursor.
+const VIEWS = [
+  ['', 'todos'],
+  ['queued', 'na fila'],
+  ['running', 'rodando'],
+  ['scheduled', 'agendados'],
+  ['done', 'feitos'],
+  ['failed', 'falhas'],
+  ['canceled', 'cancelados'],
+] as const;
 
 interface Step {
   type: string;
@@ -26,26 +39,40 @@ export default function Runs() {
   const { id } = useParams();
   const nav = useNavigate();
   const [runs, setRuns] = useState<AgentRun[]>([]);
+  const [cursor, setCursor] = useState<string | null>(null);
   const [run, setRun] = useState<AgentRun | null>(null);
   const [kind, setKind] = useState('');
+  const [view, setView] = useState('');
+  const [cancelledIds, setCancelledIds] = useState<Set<string>>(new Set());
 
   // Newest-successful wins, scoped to the current filter — an older
   // response may still paint when a newer request failed, but never one
-  // whose captured `kind` no longer matches what's displayed.
+  // whose captured filter no longer matches what's displayed.
   const listSeq = useRef(0);
   const listOk = useRef(0);
-  const listKind = useRef('');
-  const load = useCallback(() => {
-    const req = ++listSeq.current;
-    const reqKind = kind;
-    listKind.current = kind;
-    api.runs({ ...(kind ? { kind } : {}) }).then((r) => {
-      if (reqKind === listKind.current && req > listOk.current) {
-        listOk.current = req;
-        setRuns(r.runs);
-      }
-    });
-  }, [kind]);
+  const listView = useRef('');
+  const load = useCallback(
+    (cur?: string) => {
+      const req = ++listSeq.current;
+      const reqView = `${kind}|${view}`;
+      listView.current = reqView;
+      api
+        .runs({
+          ...(kind ? { kind } : {}),
+          ...(view && view !== 'scheduled' ? { status: view } : {}),
+          ...(view === 'scheduled' ? { scheduled: '1', limit: '200' } : {}),
+          ...(cur ? { cursor: cur } : {}),
+        })
+        .then((r) => {
+          if (reqView === listView.current && req > listOk.current) {
+            listOk.current = req;
+            setRuns((rs) => (cur ? [...rs, ...r.runs] : r.runs));
+            setCursor(r.nextCursor ?? null);
+          }
+        });
+    },
+    [kind, view],
+  );
   // Same success-watermark for the detail — a failed newer fetch lets an
   // older good response through, a stale 'running' snapshot still can't
   // paint over 'done'.
@@ -64,7 +91,7 @@ export default function Runs() {
       }
     });
   }, [id]);
-  useEffect(load, [load]);
+  useEffect(() => load(), [load]);
   useEffect(() => {
     if (!id) {
       setRun(null);
@@ -93,17 +120,26 @@ export default function Runs() {
     return () => clearInterval(t);
   }, [load, loadRun]);
 
+  const cancel = (rid: string) =>
+    void api.cancelRun(rid).then(() => {
+      setCancelledIds((s) => new Set(s).add(rid));
+      load();
+      loadRun();
+    });
+
   if (id && run) {
     const steps = (run.steps ?? []) as Step[];
-    const active = run.status === 'queued' || run.status === 'running';
+    const active =
+      (run.status === 'queued' || run.status === 'running') && !cancelledIds.has(run.id);
+    const params = Object.entries(run.params ?? {});
     return (
       <Page
         title={`run ${run.id.slice(0, 8)}`}
         sub={`${RUN_KIND_LABEL[run.kind] ?? run.kind} · ${run.status}`}
         actions={
           active ? (
-            <button className="btn ghost" onClick={() => void api.cancelRun(run.id)}>
-              cancelar
+            <button className="btn ghost" onClick={() => cancel(run.id)}>
+              <XCircle size={14} /> cancelar
             </button>
           ) : undefined
         }
@@ -160,6 +196,16 @@ export default function Runs() {
                         '—'
                       ),
                     ],
+                    [
+                      'conversa',
+                      run.thread_id ? (
+                        <Link key="t" to={`/inbox/${run.thread_id}`}>
+                          abrir thread
+                        </Link>
+                      ) : (
+                        '—'
+                      ),
+                    ],
                     ['tokens', `${run.tokens_in} in · ${run.tokens_out} out`],
                     ['custo', fmtMoney(run.cost_cents)],
                     ...(run.run_at ? [['agendado p/', fmtDateTime(run.run_at)] as const] : []),
@@ -175,6 +221,25 @@ export default function Runs() {
                 ))}
               </tbody>
             </table>
+            {params.length > 0 && (
+              <>
+                <div className="sec-t" style={{ marginTop: 14 }}>
+                  parâmetros
+                </div>
+                <table className="tbl">
+                  <tbody>
+                    {params.map(([k, v]) => (
+                      <tr key={k}>
+                        <td className="k">{k}</td>
+                        <td className="mono" style={{ overflowWrap: 'anywhere' }}>
+                          {typeof v === 'string' ? v : JSON.stringify(v)}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </>
+            )}
             <div style={{ marginTop: 14 }}>
               <Link to="/agente" className="btn ghost">
                 ← todos os runs
@@ -201,61 +266,112 @@ export default function Runs() {
         </select>
       }
     >
-      {!runs.length && (
-        <Empty title="nenhum run" hint="runs aparecem quando o agente tria, responde ou descobre" />
-      )}
-      <div className="card">
-        <table className="tbl">
-          <thead>
-            <tr>
-              <th>run</th>
-              <th>tipo</th>
-              <th>status</th>
-              <th>lead</th>
-              <th className="num">tokens</th>
-              <th className="num">custo</th>
-              <th className="num">quando</th>
-            </tr>
-          </thead>
-          <tbody>
-            {runs.map((r) => (
-              <tr key={r.id} className="clickable" onClick={() => nav(`/agente/runs/${r.id}`)}>
-                <td className="mono">{r.id.slice(0, 8)}</td>
-                <td>{RUN_KIND_LABEL[r.kind] ?? r.kind}</td>
-                <td>
-                  <span className={`chip ${STATUS_CHIP[r.status] ?? ''}`}>{r.status}</span>
-                  {r.status === 'queued' && r.run_at && (
-                    <span
-                      style={{
-                        color: 'var(--muted)',
-                        fontSize: 'var(--t-2xs)',
-                        marginInlineStart: 6,
-                      }}
-                    >
-                      agenda {fmtDateTime(r.run_at)}
-                    </span>
-                  )}
-                  {r.error && (
-                    <span
-                      style={{
-                        color: 'var(--red-400)',
-                        fontSize: 'var(--t-2xs)',
-                        marginInlineStart: 6,
-                      }}
-                    >
-                      {r.error.slice(0, 40)}
-                    </span>
-                  )}
-                </td>
-                <td>{r.lead_name ?? '—'}</td>
-                <td className="num">{(r.tokens_in + r.tokens_out).toLocaleString('pt-BR')}</td>
-                <td className="num">{fmtMoney(r.cost_cents)}</td>
-                <td className="num">{rel(r.created_at)}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
+      <div className="fchips">
+        {VIEWS.map(([v, l]) => (
+          <button key={v} className={view === v ? 'sel' : ''} onClick={() => setView(v)}>
+            {l}
+          </button>
+        ))}
       </div>
+      {!runs.length && (
+        <Empty
+          title="nenhum run"
+          hint={
+            view === 'scheduled'
+              ? 'nada agendado — contatos adiados e follow-ups aparecem aqui'
+              : 'runs aparecem quando o agente tria, responde ou descobre'
+          }
+        />
+      )}
+      {runs.length > 0 && (
+        <div className="card">
+          <table className="tbl">
+            <thead>
+              <tr>
+                <th>run</th>
+                <th>tipo</th>
+                <th>status</th>
+                <th>lead</th>
+                <th className="num">tokens</th>
+                <th className="num">custo</th>
+                <th className="num">quando</th>
+                <th className="r-act" />
+              </tr>
+            </thead>
+            <tbody>
+              {runs.map((r) => {
+                const paused =
+                  (r.status === 'queued' || r.status === 'running') &&
+                  r.thread_agent_enabled === false;
+                const active =
+                  (r.status === 'queued' || r.status === 'running') && !cancelledIds.has(r.id);
+                return (
+                  <tr key={r.id} className="clickable" onClick={() => nav(`/agente/runs/${r.id}`)}>
+                    <td className="mono">{r.id.slice(0, 8)}</td>
+                    <td>{RUN_KIND_LABEL[r.kind] ?? r.kind}</td>
+                    <td>
+                      <span className={`chip ${STATUS_CHIP[r.status] ?? ''}`}>{r.status}</span>
+                      {paused && (
+                        <span
+                          className="chip warn"
+                          style={{ marginInlineStart: 6 }}
+                          title="a conversa está pausada — o run fica na fila até o agente ser reativado nela"
+                        >
+                          <PauseCircle size={10} /> pausado
+                        </span>
+                      )}
+                      {r.status === 'queued' && r.run_at && !paused && (
+                        <span
+                          style={{
+                            color: 'var(--muted)',
+                            fontSize: 'var(--t-2xs)',
+                            marginInlineStart: 6,
+                          }}
+                        >
+                          {relDue(r.run_at)}
+                        </span>
+                      )}
+                      {r.error && (
+                        <span
+                          style={{
+                            color: 'var(--red-400)',
+                            fontSize: 'var(--t-2xs)',
+                            marginInlineStart: 6,
+                          }}
+                        >
+                          {r.error.slice(0, 40)}
+                        </span>
+                      )}
+                    </td>
+                    <td>{r.lead_name ?? '—'}</td>
+                    <td className="num">{(r.tokens_in + r.tokens_out).toLocaleString('pt-BR')}</td>
+                    <td className="num">{fmtMoney(r.cost_cents)}</td>
+                    <td className="num">{rel(r.created_at)}</td>
+                    <td className="r-act" onClick={(e) => e.stopPropagation()}>
+                      {active && (
+                        <button
+                          className="icon-btn"
+                          title="cancelar run"
+                          onClick={() => cancel(r.id)}
+                        >
+                          <XCircle size={14} />
+                        </button>
+                      )}
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      )}
+      {cursor && (
+        <div className="leads-more">
+          <button className="btn" onClick={() => load(cursor)}>
+            mais
+          </button>
+        </div>
+      )}
     </Page>
   );
 }

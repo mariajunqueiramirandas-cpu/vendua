@@ -18,6 +18,13 @@ export const AGENT_GOALS = [
 ] as const;
 export const AGENT_GOAL_LABEL: Record<string, string> = Object.fromEntries(AGENT_GOALS);
 
+export const AGENT_MODES = [
+  ['off', 'off'],
+  ['draft', 'rascunho'],
+  ['auto', 'auto'],
+] as const;
+export const AGENT_MODE_LABEL: Record<string, string> = Object.fromEntries(AGENT_MODES);
+
 export const RUN_KIND_LABEL: Record<string, string> = {
   triage: 'triagem',
   reply: 'resposta',
@@ -167,3 +174,17 @@ export const rel = (iso: string | null | undefined) => {
   if (s < 86400) return `${Math.floor(s / 3600)}h`;
   return `${Math.floor(s / 86400)}d`;
 };
+
+/** Signed distance for a scheduled action: 'em X' upcoming, 'há X' overdue. */
+export const relDue = (iso: string | null | undefined) => {
+  if (!iso) return '—';
+  const ms = new Date(iso).getTime() - Date.now();
+  const a = Math.abs(ms) / 1000;
+  const v =
+    a < 60 ? 'agora' : a < 3600 ? `${Math.floor(a / 60)}min` : a < 86400 ? `${Math.floor(a / 3600)}h` : `${Math.floor(a / 86400)}d`;
+  return ms < 0 ? `há ${v}` : `em ${v}`;
+};
+
+/** True when the timestamp is in the past — pairs with .due.bad styling. */
+export const isLate = (iso: string | null | undefined) =>
+  !!iso && new Date(iso).getTime() < Date.now();

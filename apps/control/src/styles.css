@@ -1980,6 +1980,82 @@ details.raw textarea {
   font-size: var(--t-lg);
 }
 
+/* pipeline stepper — the lead's journey rendered as progress, not a select */
+.stepper {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex-wrap: wrap;
+  margin-bottom: 14px;
+}
+.stepper .stp {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  border: 0;
+  background: transparent;
+  padding: 4px 8px;
+  border-radius: var(--r-sm);
+  font-family: var(--font-mono);
+  font-size: var(--t-xs);
+  color: var(--muted);
+  cursor: pointer;
+  transition:
+    background var(--motion),
+    color var(--motion);
+}
+.stepper .stp:hover {
+  background: var(--surface-2);
+  color: var(--ink);
+}
+.stepper .stp i {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  border: 1px solid var(--muted);
+  background: transparent;
+  flex-shrink: 0;
+}
+.stepper .stp.done {
+  color: var(--ink);
+}
+.stepper .stp.done i {
+  background: var(--lime-300);
+  border-color: var(--lime-300);
+}
+.stepper .stp.cur {
+  font-weight: 600;
+}
+.stepper .stp.cur i {
+  background: var(--forest-900);
+  border-color: var(--forest-900);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--forest-900) 15%, transparent);
+}
+
+/* click-to-edit value — reads as plain text, reveals the affordance on hover */
+.edv {
+  display: block;
+  width: 100%;
+  text-align: start;
+  border: 0;
+  background: transparent;
+  padding: 0;
+  font: inherit;
+  color: inherit;
+  border-bottom: 1px dashed transparent;
+  cursor: text;
+  transition: border-color var(--motion);
+  overflow-wrap: anywhere;
+}
+.edv:hover {
+  border-bottom-color: var(--line-strong);
+}
+.kv .v input {
+  width: 100%;
+  font: inherit;
+  padding: 2px 6px;
+}
+
 /* generic row inside a card (threads, tasks) */
 .trow {
   display: flex;
@@ -2038,18 +2114,156 @@ details.raw textarea {
   font-size: var(--t-xs);
   color: var(--muted);
 }
-/* bulk-dispatch bar — only rendered while a selection exists */
+/* bulk-dispatch bar — only rendered while a selection exists. Pinned to the
+   bottom edge of the .content scrollport so the dispatch controls ride with
+   a long list instead of scrolling off the top. */
 .leads-bulk {
+  position: sticky;
+  bottom: 8px;
+  z-index: 6;
   padding: 10px 14px;
-  margin-bottom: 14px;
+  margin-top: 14px;
   display: flex;
   gap: 10px;
   align-items: center;
   flex-wrap: wrap;
+  box-shadow: 0 10px 30px color-mix(in srgb, var(--night-950) 16%, transparent);
 }
 /* the dispatch is the bar's outcome: trailing edge, after the options it consumes */
 .leads-bulk > .btn:last-child {
   margin-inline-start: auto;
+}
+
+/* pipeline filter chips — the stage select, promoted to a countable strip */
+.fchips {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+  margin-bottom: 10px;
+}
+.fchips button {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 6px;
+  padding: 4px 11px;
+  border: 1px solid var(--line-strong);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--ink);
+  font-size: var(--t-xs);
+  cursor: pointer;
+  transition:
+    background var(--motion),
+    border-color var(--motion);
+}
+.fchips button:hover {
+  background: var(--surface);
+}
+.fchips button b {
+  font-family: var(--font-mono);
+  font-weight: 500;
+  font-size: var(--t-2xs);
+  color: var(--muted);
+}
+.fchips button.sel {
+  background: var(--forest-900);
+  border-color: var(--forest-900);
+  color: var(--cream-50);
+}
+.fchips button.sel b {
+  color: var(--lime-300);
+}
+
+/* per-channel reachability — lit = reachable, dim = missing, amber = suspect */
+.l-chan {
+  white-space: nowrap;
+}
+.chan {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px;
+  color: var(--line-strong);
+}
+.chan.on {
+  color: var(--forest-800);
+}
+.chan.warn {
+  color: var(--amber-400);
+}
+.chan.bad {
+  color: var(--red-400);
+}
+
+/* lead cell — avatar + two-line name/business read */
+.leads-tbl td.l-name {
+  min-width: 0;
+}
+.leads-tbl td.l-name .who {
+  display: inline-flex;
+  flex-direction: column;
+  vertical-align: middle;
+  margin-inline-start: 8px;
+  min-width: 0;
+  max-width: 260px;
+}
+.leads-tbl .nm {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  min-width: 0;
+}
+.leads-tbl .nm b {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.leads-tbl .biz {
+  font-size: var(--t-2xs);
+  color: var(--muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.leads-tbl td.l-agent .chip + .chip {
+  margin-inline-start: 4px;
+}
+.ltag {
+  width: 110px;
+}
+
+/* new-lead drawer — section rhythm + inline advisories */
+.nl-sec {
+  font-size: var(--t-2xs);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--muted);
+  margin: 16px 0 8px;
+  padding-top: 12px;
+  border-top: 1px solid var(--line);
+}
+.nl-sec:first-child {
+  margin-top: 0;
+  padding-top: 0;
+  border-top: 0;
+}
+.nl-warn {
+  font-size: var(--t-xs);
+  color: #7a5b12;
+  margin: 2px 0 10px;
+}
+.nl-warn a {
+  text-decoration: underline;
+}
+.nl-note {
+  font-size: var(--t-xs);
+  color: var(--muted);
+  margin: -2px 0 10px;
+}
+.empty-acts {
+  display: flex;
+  gap: 8px;
+  justify-content: center;
+  margin-top: 14px;
 }
 .leads-msg {
   margin-bottom: 14px;
@@ -2067,7 +2281,7 @@ details.raw textarea {
    recency on top, status/score chips below; secondary columns defer to the
    detail page the row opens (tap = disclosure affordance) */
 @media (max-width: 760px) {
-  .leads-tbl :is(.l-opt, .l-biz) {
+  .leads-tbl :is(.l-chan, .l-fit, .l-next) {
     display: none;
   }
   .leads-tbl td.l-name {

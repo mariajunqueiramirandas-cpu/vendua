@@ -1,15 +1,71 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
-import { Plus, Upload, Download, Send } from 'lucide-react';
-import { api, type LeadListItem } from '../api.ts';
+import { Link, useNavigate } from 'react-router-dom';
+import {
+  Download,
+  Instagram,
+  Mail,
+  MessageCircle,
+  PencilLine,
+  Plus,
+  Send,
+  Upload,
+  X,
+} from 'lucide-react';
+import { api, type LeadListItem, type Stats } from '../api.ts';
 import { onControlEvent } from '../events.ts';
-import { AGENT_GOALS, Empty, Page, ScoreBar, StateChip, fmtMoney, rel } from '../components.tsx';
+import {
+  AGENT_GOALS,
+  AGENT_MODE_LABEL,
+  AGENT_MODES,
+  Avatar,
+  Empty,
+  LEAD_STATES,
+  Page,
+  ScoreBar,
+  StateChip,
+  fmtMoney,
+  isLate,
+  rel,
+  relDue,
+} from '../components.tsx';
+
+const SORTS = [
+  ['new', 'recentes'],
+  ['activity', 'últ. atividade'],
+  ['score', 'score'],
+  ['value', 'valor'],
+  ['name', 'nome'],
+] as const;
+type LeadSort = (typeof SORTS)[number][0];
+
+/** Reachability glyph — lit when the channel exists, amber when the value is
+ *  suspect (unverified whatsapp), red when it has failed (email bounce). */
+function Chan({
+  on,
+  tone,
+  title,
+  icon: Icon,
+}: {
+  on: boolean;
+  tone?: 'warn' | 'bad' | undefined;
+  title: string;
+  icon: typeof Mail;
+}) {
+  return (
+    <span className={`chan${on ? ' on' : ''}${tone ? ` ${tone}` : ''}`} title={title}>
+      <Icon size={13} />
+    </span>
+  );
+}
 
 export default function Leads() {
   const [leads, setLeads] = useState<LeadListItem[]>([]);
+  const [stats, setStats] = useState<Stats | null>(null);
   const [cursor, setCursor] = useState<string | null>(null);
   const [q, setQ] = useState('');
   const [state, setState] = useState('');
+  const [tag, setTag] = useState('');
+  const [sort, setSort] = useState<LeadSort>('new');
   const [archived, setArchived] = useState('');
   const [loading, setLoading] = useState(true);
   const [showNew, setShowNew] = useState(false);
@@ -32,11 +88,13 @@ export default function Leads() {
     (cur?: string) => ({
       ...(q ? { q } : {}),
       ...(state ? { state } : {}),
+      ...(tag ? { tag } : {}),
       ...(archived ? { archived } : {}),
+      ...(sort !== 'new' ? { sort } : {}),
       ...(cur ? { cursor: cur } : {}),
       limit: '100',
     }),
-    [q, state, archived],
+    [q, state, tag, archived, sort],
   );
   const load = useCallback(
     (cur?: string) => {
@@ -60,6 +118,14 @@ export default function Leads() {
     setLoading(true);
     load();
   }, [load]);
+  // Stage counts come from stats — pipeline-wide, not just the loaded page.
+  const loadStats = useCallback(() => {
+    api
+      .stats()
+      .then(setStats)
+      .catch(() => {});
+  }, []);
+  useEffect(loadStats, [loadStats]);
   // Refresh preserves the visible depth: pages are re-read from the top and
   // swapped in atomically, so an expanded list refreshes in place instead
   // of collapsing back to page one (and selections survive in the same
@@ -83,7 +149,8 @@ export default function Leads() {
       const ids = new Set(all.map((l) => l.id));
       setSel((s) => new Set([...s].filter((id) => ids.has(id))));
     });
-  }, [params, leads.length]);
+    loadStats();
+  }, [params, leads.length, loadStats]);
   useEffect(() => onControlEvent('lead.change', refresh), [refresh]);
   useEffect(() => {
     const t = setInterval(refresh, 60_000);
@@ -97,13 +164,13 @@ export default function Leads() {
     filterGen.current++;
     setSel(new Set());
     setDispatchMsg('');
-  }, [q, state, archived]);
+  }, [q, state, tag, sort, archived]);
 
   // `/` focuses search, `n` opens new-lead — list-view keys.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       const el = e.target as HTMLElement;
-      if (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA') return;
+      if (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.tagName === 'SELECT') return;
       if (e.key === '/') {
         e.preventDefault();
         document.getElementById('lead-q')?.focus();
@@ -121,6 +188,7 @@ export default function Leads() {
     const res = await api.importCsv(csv);
     setImportMsg(`${res.created} criados · ${res.skipped.length} ignorados`);
     load();
+    loadStats();
   };
 
   const toggleSel = (id: string) =>
@@ -154,9 +222,37 @@ export default function Leads() {
     }
   };
 
+  const filtered = !!(q || state || tag || archived);
+  const clearFilters = () => {
+    setQ('');
+    setState('');
+    setTag('');
+    setArchived('');
+  };
+  // Values the new-lead datalists offer — what's already in the pipe.
+  const knownSegments = [
+    ...new Set([
+      ...leads.map((l) => l.segment ?? ''),
+      ...(stats?.bySegment.map((s) => s.key) ?? []),
+    ]),
+  ]
+    .filter(Boolean)
+    .sort();
+  const knownSources = [
+    ...new Set([
+      ...leads.map((l) => l.source ?? ''),
+      ...(stats?.bySource.map((s) => s.key) ?? []),
+    ]),
+  ]
+    .filter(Boolean)
+    .sort();
+  const knownTags = [...new Set(leads.flatMap((l) => l.tags))].sort();
+  const totalCount = Object.values(stats?.byState ?? {}).reduce((a, s) => a + s.count, 0);
+
   return (
     <Page
       title="Leads"
+      sub={stats ? `${totalCount} no pipeline` : undefined}
       actions={
         <div className="leads-acts">
           <button className="btn" onClick={() => fileRef.current?.click()}>
@@ -178,6 +274,20 @@ export default function Leads() {
         </div>
       }
     >
+      <div className="fchips">
+        <button className={!state ? 'sel' : ''} onClick={() => setState('')}>
+          todos <b>{stats ? totalCount : '·'}</b>
+        </button>
+        {LEAD_STATES.map(([v, l]) => (
+          <button
+            key={v}
+            className={state === v ? 'sel' : ''}
+            onClick={() => setState((s) => (s === v ? '' : v))}
+          >
+            {l} <b>{stats?.byState[v]?.count ?? '·'}</b>
+          </button>
+        ))}
+      </div>
       <div className="toolbar">
         <input
           id="lead-q"
@@ -186,26 +296,227 @@ export default function Leads() {
           value={q}
           onChange={(e) => setQ(e.target.value)}
         />
-        <select value={state} onChange={(e) => setState(e.target.value)}>
-          <option value="">todos os estágios</option>
-          <option value="lead">lead</option>
-          <option value="contacted">contatado</option>
-          <option value="invited">convidado</option>
-          <option value="live">ativo</option>
+        <input
+          className="ltag"
+          list="lead-tags"
+          placeholder="tag…"
+          title="filtrar por tag"
+          value={tag}
+          onChange={(e) => setTag(e.target.value)}
+        />
+        <datalist id="lead-tags">
+          {knownTags.map((t) => (
+            <option key={t} value={t} />
+          ))}
+        </datalist>
+        <select value={sort} onChange={(e) => setSort(e.target.value as LeadSort)} title="ordenar">
+          {SORTS.map(([v, l]) => (
+            <option key={v} value={v}>
+              {l}
+            </option>
+          ))}
         </select>
-        <select value={archived} onChange={(e) => setArchived(e.target.value)}>
+        <select value={archived} onChange={(e) => setArchived(e.target.value)} title="arquivados">
           <option value="">ativos</option>
           <option value="only">arquivados</option>
           <option value="all">todos</option>
         </select>
+        {filtered && (
+          <button className="btn ghost" onClick={clearFilters} title="limpar filtros">
+            <X size={13} /> limpar
+          </button>
+        )}
         {importMsg && <span className="leads-sub">{importMsg}</span>}
       </div>
 
+      {dispatchMsg && <div className="leads-msg">{dispatchMsg}</div>}
+
+      {loading ? (
+        <Empty title="carregando…" />
+      ) : !leads.length ? (
+        <div className="empty">
+          <span className="serif">{filtered ? 'nada aqui' : 'nenhum lead ainda'}</span>
+          <div>
+            {filtered
+              ? 'nenhum lead corresponde aos filtros'
+              : 'importe uma planilha ou cadastre o primeiro'}
+          </div>
+          <div className="empty-acts">
+            {filtered ? (
+              <button className="btn" onClick={clearFilters}>
+                limpar filtros
+              </button>
+            ) : (
+              <>
+                <button className="btn" onClick={() => fileRef.current?.click()}>
+                  <Upload size={14} /> importar csv
+                </button>
+                <button className="btn primary" onClick={() => setShowNew(true)}>
+                  <Plus size={14} /> novo lead
+                </button>
+              </>
+            )}
+          </div>
+        </div>
+      ) : (
+        <div className="card leads-list">
+          <table className="tbl leads-tbl">
+            <thead>
+              <tr>
+                <th className="l-cb">
+                  <input
+                    type="checkbox"
+                    checked={leads.length > 0 && leads.every((l) => sel.has(l.id))}
+                    onChange={() =>
+                      setSel((s) =>
+                        leads.every((l) => s.has(l.id))
+                          ? new Set()
+                          : new Set(leads.map((l) => l.id)),
+                      )
+                    }
+                  />
+                </th>
+                <th className="l-name">lead</th>
+                <th className="l-stage">estágio</th>
+                <th className="l-chan" title="canais de contato cadastrados">
+                  canais
+                </th>
+                <th className="l-agent">agente</th>
+                <th className="l-score">score</th>
+                <th className="l-fit">fit</th>
+                <th className="l-val">valor</th>
+                <th className="l-next">próx. ação</th>
+                <th className="l-act">últ. atividade</th>
+              </tr>
+            </thead>
+            <tbody>
+              {leads.map((l) => (
+                <tr key={l.id} className="clickable" onClick={() => nav(`/leads/${l.id}`)}>
+                  <td className="l-cb" onClick={(e) => e.stopPropagation()}>
+                    <input
+                      type="checkbox"
+                      checked={sel.has(l.id)}
+                      onChange={() => toggleSel(l.id)}
+                    />
+                  </td>
+                  <td className="l-name">
+                    <Avatar name={l.name} />
+                    <span className="who">
+                      <span className="nm">
+                        <b>{l.name}</b>
+                        {l.unsubscribedAt && <span className="chip bad">descadastrado</span>}
+                        {l.tags.slice(0, 2).map((t) => (
+                          <span key={t} className="chip">
+                            {t}
+                          </span>
+                        ))}
+                      </span>
+                      <span className="biz">{l.businessName ?? ''}</span>
+                    </span>
+                  </td>
+                  <td className="l-stage">
+                    <StateChip state={l.state} />
+                  </td>
+                  <td className="l-chan">
+                    <Chan
+                      on={!!l.whatsapp}
+                      tone={l.whatsapp && !l.whatsappVerified ? 'warn' : undefined}
+                      title={
+                        l.whatsapp
+                          ? `whatsapp ${l.whatsapp}${l.whatsappVerified ? '' : ' — não verificado'}`
+                          : 'sem whatsapp'
+                      }
+                      icon={MessageCircle}
+                    />
+                    <Chan
+                      on={!!l.email}
+                      tone={l.emailBouncedAt ? 'bad' : undefined}
+                      title={
+                        l.emailBouncedAt
+                          ? `email ${l.email} — bounce`
+                          : l.email
+                            ? `email ${l.email}`
+                            : 'sem email'
+                      }
+                      icon={Mail}
+                    />
+                    <Chan
+                      on={!!l.instagram}
+                      title={l.instagram ? `instagram ${l.instagram}` : 'sem instagram'}
+                      icon={Instagram}
+                    />
+                  </td>
+                  <td className="l-agent">
+                    {l.agentPausedAt ? (
+                      <span className="chip warn" title="agente pausado — handoff da equipe">
+                        pausado
+                      </span>
+                    ) : l.agentMode === 'off' ? (
+                      <span className="chip">off</span>
+                    ) : (
+                      <span
+                        className="chip agent"
+                        title={`agente ${AGENT_MODE_LABEL[l.agentMode]} · ${AGENT_GOALS.find(([v]) => v === l.agentGoal)?.[1]}`}
+                      >
+                        {AGENT_MODE_LABEL[l.agentMode]}
+                      </span>
+                    )}
+                    {l.pendingDrafts > 0 && (
+                      <span className="chip warn" title="rascunhos aguardando aprovação no inbox">
+                        <PencilLine size={10} />
+                        {l.pendingDrafts}
+                      </span>
+                    )}
+                  </td>
+                  <td className="l-score">
+                    <ScoreBar score={l.score} />
+                  </td>
+                  <td className="l-fit mono" title={l.fitReason ?? undefined}>
+                    {l.fitScore != null ? `${l.fitScore}/10` : '—'}
+                    {l.intentScore != null && (
+                      <span className="dim" title={l.intentReason ?? undefined}>
+                        {' '}
+                        · i{l.intentScore}
+                      </span>
+                    )}
+                  </td>
+                  <td className="l-val mono">{fmtMoney(l.dealValueCents)}</td>
+                  <td className="l-next">
+                    <span className={`due${isLate(l.nextActionAt) ? ' bad' : ''}`}>
+                      {relDue(l.nextActionAt)}
+                    </span>
+                    {l.openTasks > 0 && (
+                      <span className="dim" title={`${l.openTasks} tarefa(s) aberta(s)`}>
+                        {' '}
+                        · {l.openTasks} tar.
+                      </span>
+                    )}
+                  </td>
+                  <td className="l-act mono">{rel(l.lastActivityAt ?? l.updatedAt)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+      {cursor && (
+        <div className="leads-more">
+          <button className="btn" onClick={() => load(cursor)}>
+            mais
+          </button>
+        </div>
+      )}
+
+      {/* Sticky bottom of the scrollport: pinned while a selection exists, so
+          the dispatch controls ride with a long list instead of scrolling away. */}
       {sel.size > 0 && (
         <div className="card leads-bulk">
           <b>
             {sel.size} selecionado{sel.size === 1 ? '' : 's'}
           </b>
+          <button className="icon-btn" title="limpar seleção" onClick={() => setSel(new Set())}>
+            <X size={13} />
+          </button>
           <span className="leads-sub">objetivo:</span>
           <span className="seg">
             {AGENT_GOALS.map(([v, l]) => (
@@ -227,116 +538,20 @@ export default function Leads() {
           </button>
         </div>
       )}
-      {/* Result lives outside the selection card — dispatch clears `sel`,
-          which would unmount the message in the same render. */}
-      {dispatchMsg && <div className="leads-msg">{dispatchMsg}</div>}
 
-      {loading ? (
-        <Empty title="carregando…" />
-      ) : !leads.length ? (
-        <Empty
-          title="nenhum lead"
-          hint={q ? 'busca sem resultados — limpe os filtros' : 'crie o primeiro (n)'}
-        />
-      ) : (
-        <div className="card leads-list">
-          <table className="tbl leads-tbl">
-            <thead>
-              <tr>
-                <th className="l-cb">
-                  <input
-                    type="checkbox"
-                    checked={leads.length > 0 && leads.every((l) => sel.has(l.id))}
-                    onChange={() =>
-                      setSel((s) =>
-                        leads.every((l) => s.has(l.id))
-                          ? new Set()
-                          : new Set(leads.map((l) => l.id)),
-                      )
-                    }
-                  />
-                </th>
-                <th className="l-name">nome</th>
-                <th className="l-biz">negócio</th>
-                <th className="l-stage">estágio</th>
-                <th className="l-opt">segmento</th>
-                <th className="l-opt">cidade</th>
-                <th className="l-val">valor</th>
-                <th className="l-opt">fit</th>
-                <th className="l-score">score</th>
-                <th className="l-agent">agente</th>
-                <th className="l-act">últ. atividade</th>
-              </tr>
-            </thead>
-            <tbody>
-              {leads.map((l) => (
-                <tr key={l.id} className="clickable" onClick={() => nav(`/leads/${l.id}`)}>
-                  <td className="l-cb" onClick={(e) => e.stopPropagation()}>
-                    <input
-                      type="checkbox"
-                      checked={sel.has(l.id)}
-                      onChange={() => toggleSel(l.id)}
-                    />
-                  </td>
-                  <td className="l-name">
-                    <b>{l.name}</b>
-                    {l.unsubscribedAt && (
-                      <span className="chip bad" style={{ marginLeft: 6 }}>
-                        descadastrado
-                      </span>
-                    )}
-                    {l.emailBouncedAt && (
-                      <span className="chip warn" style={{ marginLeft: 4 }}>
-                        email bounce
-                      </span>
-                    )}
-                  </td>
-                  <td className="l-biz">{l.businessName ?? '—'}</td>
-                  <td className="l-stage">
-                    <StateChip state={l.state} />
-                  </td>
-                  <td className="l-opt">{l.segment ?? '—'}</td>
-                  <td className="l-opt">{l.city ?? '—'}</td>
-                  <td className="l-val mono">{fmtMoney(l.dealValueCents)}</td>
-                  <td className="l-opt mono" title={l.fitReason ?? undefined}>
-                    {l.fitScore != null ? `${l.fitScore}/10` : '—'}
-                    {l.intentScore != null && (
-                      <span className="dim" title={l.intentReason ?? undefined}>
-                        {' '}
-                        · i{l.intentScore}
-                      </span>
-                    )}
-                  </td>
-                  <td className="l-score">
-                    <ScoreBar score={l.score} />
-                  </td>
-                  <td className="l-agent">
-                    {l.agentMode !== 'off' ? (
-                      <span className="chip agent">{l.agentMode}</span>
-                    ) : (
-                      <span className="chip">off</span>
-                    )}
-                  </td>
-                  <td className="l-act mono">{rel(l.lastActivityAt ?? l.updatedAt)}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      )}
-      {cursor && (
-        <div className="leads-more">
-          <button className="btn" onClick={() => load(cursor)}>
-            mais
-          </button>
-        </div>
-      )}
       {showNew && (
         <NewLead
+          segments={knownSegments}
+          sources={knownSources}
+          onCreated={() => {
+            load();
+            loadStats();
+          }}
           onClose={(created) => {
             setShowNew(false);
             if (created) {
               load();
+              loadStats();
             }
           }}
         />
@@ -345,58 +560,61 @@ export default function Leads() {
   );
 }
 
-function NewLead({ onClose }: { onClose: (created: boolean) => void }) {
-  const [f, setF] = useState({
-    name: '',
-    businessName: '',
-    whatsapp: '',
-    email: '',
-    instagram: '',
-    city: '',
-    segment: '',
-    source: '',
-    deal: '',
-  });
+const MODE_NOTE: Record<string, string> = {
+  off: 'a equipe toca o lead — o agente não tria nem fala com ele',
+  draft: 'o agente tria e prepara mensagens — você aprova cada envio no inbox',
+  auto: 'o agente tria e conversa sozinho, dentro das guardrails',
+};
+
+const EMPTY_FORM = {
+  name: '',
+  businessName: '',
+  whatsapp: '',
+  email: '',
+  instagram: '',
+  city: '',
+  segment: '',
+  source: '',
+  deal: '',
+};
+
+function NewLead({
+  segments,
+  sources,
+  onCreated,
+  onClose,
+}: {
+  segments: string[];
+  sources: string[];
+  onCreated: () => void;
+  onClose: (created: boolean) => void;
+}) {
+  const [f, setF] = useState(EMPTY_FORM);
+  const [mode, setMode] = useState<'off' | 'draft' | 'auto'>('draft');
+  const [goal, setGoal] = useState<'negotiation' | 'meeting'>('negotiation');
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState('');
-  const [automation, setAutomation] = useState(true);
+  const [createdMsg, setCreatedMsg] = useState('');
+  const [dupes, setDupes] = useState<LeadListItem[]>([]);
   const nav = useNavigate();
 
-  const submit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setBusy(true);
-    try {
-      const res = await api.createLead({
-        name: f.name,
-        businessName: f.businessName || null,
-        whatsapp: f.whatsapp || null,
-        email: f.email || null,
-        instagram: f.instagram || null,
-        city: f.city || null,
-        segment: f.segment || null,
-        source: f.source || null,
-        dealValueCents: f.deal ? Math.round(Number(f.deal.replace(',', '.')) * 100) : null,
-        ...(automation ? {} : { automation: false }),
-      });
-      onClose(true);
-      nav(`/leads/${res.lead.id}`);
-    } catch (e) {
-      setErr(e instanceof Error ? e.message : 'erro');
-      setBusy(false);
+  // Soft duplicate guard — any channel or the name itself is probed against
+  // the same q-search the list uses.
+  useEffect(() => {
+    const probe = [f.whatsapp, f.email, f.instagram].map((v) => v.trim()).find((v) => v.length >= 4);
+    const term = probe ?? (f.name.trim().length >= 4 ? f.name.trim() : '');
+    if (!term) {
+      setDupes([]);
+      return;
     }
-  };
-
-  const field = (k: keyof typeof f, label: string, ph = '') => (
-    <div className="field">
-      <label>{label}</label>
-      <input
-        value={f[k]}
-        placeholder={ph}
-        onChange={(e) => setF({ ...f, [k]: e.target.value })}
-        autoFocus={k === 'name'}
-      />
-    </div>
-  );
+    const t = setTimeout(() => {
+      api
+        .leads({ q: term, limit: '5' })
+        .then((r) => setDupes(r.leads))
+        .catch(() => {});
+    }, 350);
+    return () => clearTimeout(t);
+  }, [f.name, f.whatsapp, f.email, f.instagram]);
 
   useEffect(() => {
     const onEsc = (e: KeyboardEvent) => {
@@ -406,42 +624,166 @@ function NewLead({ onClose }: { onClose: (created: boolean) => void }) {
     return () => window.removeEventListener('keydown', onEsc);
   }, [onClose]);
 
+  const noChannel = !f.whatsapp.trim() && !f.email.trim() && !f.instagram.trim();
+
+  const submit = async (openAfter: boolean) => {
+    if (!f.name.trim()) return;
+    setBusy(true);
+    setErr('');
+    try {
+      const wa = f.whatsapp.replace(/[^\d+]/g, '');
+      const res = await api.createLead({
+        name: f.name,
+        businessName: f.businessName || null,
+        whatsapp: wa || null,
+        email: f.email || null,
+        instagram: f.instagram.replace(/^@/, '') || null,
+        city: f.city || null,
+        segment: f.segment || null,
+        source: f.source || null,
+        dealValueCents: f.deal ? Math.round(Number(f.deal.replace(',', '.')) * 100) : null,
+        agentMode: mode,
+        ...(mode === 'off' ? { automation: false } : { agentGoal: goal }),
+      });
+      if (openAfter) {
+        onClose(true);
+        nav(`/leads/${res.lead.id}`);
+      } else {
+        // "criar + outro" — the parent reloads the list while this drawer
+        // stays open on a blank form.
+        onCreated();
+        setF(EMPTY_FORM);
+        setCreatedMsg('lead criado — cadastre o próximo');
+        setDupes([]);
+      }
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : 'erro');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const field = (k: keyof typeof f, label: string, ph = '', list?: string) => (
+    <div className="field">
+      <label>{label}</label>
+      <input
+        value={f[k]}
+        placeholder={ph}
+        {...(list ? { list } : {})}
+        onChange={(e) => {
+          setF({ ...f, [k]: e.target.value });
+          setCreatedMsg('');
+        }}
+        autoFocus={k === 'name'}
+      />
+    </div>
+  );
+
   return (
     <>
       <div className="scrim" onClick={() => onClose(false)} />
       <div className="drawer" role="dialog" aria-label="novo lead">
         <div className="d-head">
           <b>novo lead</b>
+          <span className="spacer" style={{ flex: 1 }} />
+          {createdMsg && <span className="chip agent">{createdMsg}</span>}
         </div>
-        <form onSubmit={submit} style={{ display: 'contents' }}>
+        <form
+          onSubmit={(e) => {
+            e.preventDefault();
+            void submit(true);
+          }}
+          style={{ display: 'contents' }}
+        >
           <div className="d-body">
+            <div className="nl-sec">identidade</div>
             {field('name', 'nome *')}
             {field('businessName', 'negócio')}
+
+            <div className="nl-sec">contato</div>
             {field('whatsapp', 'whatsapp', '+55 85 9…')}
             {field('email', 'email')}
             {field('instagram', 'instagram', '@perfil')}
+            {noChannel && (
+              <div className="nl-warn">sem canal — o agente não consegue falar com este lead</div>
+            )}
+            {dupes.length > 0 && (
+              <div className="nl-warn">
+                possível duplicata:{' '}
+                {dupes.slice(0, 3).map((d, i) => (
+                  <span key={d.id}>
+                    {i > 0 && ' · '}
+                    <Link to={`/leads/${d.id}`}>{d.name}</Link>
+                  </span>
+                ))}
+              </div>
+            )}
+
+            <div className="nl-sec">contexto</div>
             <div className="grid2">
               {field('city', 'cidade')}
-              {field('segment', 'segmento')}
+              {field('segment', 'segmento', '', 'lead-segs')}
             </div>
-            {field('source', 'origem')}
+            {field('source', 'origem', 'instagram, indicação, lista…', 'lead-srcs')}
             {field('deal', 'valor estimado (R$)')}
-            <label className="tgl">
-              <input
-                type="checkbox"
-                checked={automation}
-                onChange={(e) => setAutomation(e.target.checked)}
-              />
-              <span className="tk" />
-              <span className="lbl">
-                {automation ? 'agente acompanha' : 'sem agente — como import'}
+            <datalist id="lead-segs">
+              {segments.map((s) => (
+                <option key={s} value={s} />
+              ))}
+            </datalist>
+            <datalist id="lead-srcs">
+              {sources.map((s) => (
+                <option key={s} value={s} />
+              ))}
+            </datalist>
+
+            <div className="nl-sec">agente</div>
+            <div className="field">
+              <label>modo</label>
+              <span className="seg">
+                {AGENT_MODES.map(([v, l]) => (
+                  <button
+                    key={v}
+                    type="button"
+                    className={mode === v ? 'sel' : ''}
+                    onClick={() => setMode(v)}
+                  >
+                    {l}
+                  </button>
+                ))}
               </span>
-            </label>
+            </div>
+            {mode !== 'off' && (
+              <div className="field">
+                <label>objetivo</label>
+                <span className="seg">
+                  {AGENT_GOALS.map(([v, l]) => (
+                    <button
+                      key={v}
+                      type="button"
+                      className={goal === v ? 'sel' : ''}
+                      onClick={() => setGoal(v)}
+                    >
+                      {l}
+                    </button>
+                  ))}
+                </span>
+              </div>
+            )}
+            <div className="nl-note">{MODE_NOTE[mode]}</div>
             {err && <div style={{ color: 'var(--red-400)', fontSize: 'var(--t-xs)' }}>{err}</div>}
           </div>
           <div className="d-foot">
             <button className="btn primary" disabled={busy || !f.name.trim()}>
-              criar
+              criar e abrir
+            </button>
+            <button
+              className="btn"
+              type="button"
+              disabled={busy || !f.name.trim()}
+              onClick={() => void submit(false)}
+            >
+              criar + outro
             </button>
             <button className="btn ghost" type="button" onClick={() => onClose(false)}>
               cancelar
