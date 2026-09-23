@@ -112,7 +112,7 @@ unsubscribed` if `unsubscribed_at` is set and `lead has no whatsapp` if
   the `mock` llm driver, which replies "ok" unless params carry `script`).
   Staff-card POST /leads queues exactly ONE `outreach` run (never a
   `triage`) — params `{auto:'first-contact', focus:'primeiro contato —
-  lead recém-criado pela equipe'}` plus `draftOnly:true` when
+lead recém-criado pela equipe'}` plus `draftOnly:true` when
   `firstContactDelayMin`=0; `triage` survives only via manual dispatch
   (POST /leads/:id/run or /agent/runs). Assert run shape via
   `GET /control/v1/agent/runs?lead_id=<uuid>` or psql, not the UI —
