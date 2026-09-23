@@ -109,11 +109,11 @@ export default function Plan() {
 
   const byId = new Map(leads.map((l) => [l.id, l]));
 
-  // Mirrors claimRun's suppression predicate — off, archived, unsubscribed —
-  // so the queue only shows runs the worker can actually claim.
+  // Mirrors claimRun's suppression predicate — off, archived, unsubscribed,
+  // lead-wide handoff — so the queue only shows runs the worker can claim.
   const live = (id: string) => {
     const l = byId.get(id);
-    return !!l && l.agentMode !== 'off' && !l.archivedAt && !l.unsubscribedAt;
+    return !!l && l.agentMode !== 'off' && !l.archivedAt && !l.unsubscribedAt && !l.agentPausedAt;
   };
 
   // Flat timeline: every future agent move, soonest first.

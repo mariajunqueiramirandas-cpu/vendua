@@ -1044,9 +1044,15 @@ export function createApp({ sql, sessionSecret, controlSecret, autoDrain }: AppD
       // could still insert a zombie run after the opt-out's cancel pass.
       const lead = (
         await tx<
-          { agent_mode: string; archived_at: string | null; unsubscribed_at: string | null }[]
+          {
+            agent_mode: string;
+            archived_at: string | null;
+            unsubscribed_at: string | null;
+            agent_paused_at: string | null;
+          }[]
         >`
-          select agent_mode, archived_at, unsubscribed_at from leads where id = ${leadId}
+          select agent_mode, archived_at, unsubscribed_at, agent_paused_at from leads
+          where id = ${leadId}
           for update
         `
       )[0];
@@ -1055,9 +1061,11 @@ export function createApp({ sql, sessionSecret, controlSecret, autoDrain }: AppD
         ? 'lead archived'
         : lead.unsubscribed_at
           ? 'lead unsubscribed'
-          : lead.agent_mode === 'off'
-            ? 'agent off'
-            : null;
+          : lead.agent_paused_at
+            ? 'agent paused'
+            : lead.agent_mode === 'off'
+              ? 'agent off'
+              : null;
       if (suppressed) throw new HttpError(422, 'LEAD_SUPPRESSED', suppressed);
       if (threadId) {
         const th = (
@@ -1626,9 +1634,15 @@ export function createApp({ sql, sessionSecret, controlSecret, autoDrain }: AppD
       if (effLeadId) {
         const lead = (
           await tx<
-            { agent_mode: string; archived_at: string | null; unsubscribed_at: string | null }[]
+            {
+              agent_mode: string;
+              archived_at: string | null;
+              unsubscribed_at: string | null;
+              agent_paused_at: string | null;
+            }[]
           >`
-            select agent_mode, archived_at, unsubscribed_at from leads where id = ${effLeadId}
+            select agent_mode, archived_at, unsubscribed_at, agent_paused_at from leads
+            where id = ${effLeadId}
             for update
           `
         )[0];
@@ -1637,9 +1651,11 @@ export function createApp({ sql, sessionSecret, controlSecret, autoDrain }: AppD
           ? 'lead archived'
           : lead.unsubscribed_at
             ? 'lead unsubscribed'
-            : lead.agent_mode === 'off'
-              ? 'agent off'
-              : null;
+            : lead.agent_paused_at
+              ? 'agent paused'
+              : lead.agent_mode === 'off'
+                ? 'agent off'
+                : null;
         if (suppressed) throw new HttpError(422, 'LEAD_SUPPRESSED', suppressed);
       }
       return {
@@ -1696,9 +1712,10 @@ export function createApp({ sql, sessionSecret, controlSecret, autoDrain }: AppD
               archived_at: string | null;
               unsubscribed_at: string | null;
               agent_mode: string;
+              agent_paused_at: string | null;
             }[]
           >`
-            select archived_at, unsubscribed_at, agent_mode from leads
+            select archived_at, unsubscribed_at, agent_mode, agent_paused_at from leads
             where id = ${id} for update
           `
         )[0];
@@ -1710,9 +1727,11 @@ export function createApp({ sql, sessionSecret, controlSecret, autoDrain }: AppD
           ? 'lead archived'
           : lead.unsubscribed_at
             ? 'lead unsubscribed'
-            : lead.agent_mode === 'off'
-              ? 'agent off'
-              : null;
+            : lead.agent_paused_at
+              ? 'agent paused'
+              : lead.agent_mode === 'off'
+                ? 'agent off'
+                : null;
         if (reason) {
           skipped.push({ id, reason });
           continue;

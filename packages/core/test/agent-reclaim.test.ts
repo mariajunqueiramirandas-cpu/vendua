@@ -260,12 +260,13 @@ dbDescribe('worker robustness (db)', () => {
     claimToken: string | null,
     leadId: string | null,
     runKind: ToolContext['runKind'] = 'reply',
+    threadId: string | null = null,
   ): ToolContext => ({
     sql,
     runId,
     runKind,
     leadId,
-    threadId: null,
+    threadId,
     step: 0,
     claimToken,
     pageCache: new Map(),
@@ -596,6 +597,9 @@ dbDescribe('worker robustness (db)', () => {
     await drain(sql, 0);
     await sql`update agent_runs set run_at = now(),
       params = ${sql.json({ script: [{ text: 'encerrado' }] } as never)} where id = ${runId}`;
+    // The handoff's own lead-wide marker parks the requeued run at claim —
+    // staff resuming the lead (clearing the flag) releases it to heal.
+    await sql`update leads set agent_paused_at = null where id = ${leadId}`;
     await sql`delete from agent_runs where status = 'queued' and id <> ${runId}`;
     expect(await runOnce(sql)).toBe(true);
     const r = await getRun(runId);
@@ -803,7 +807,7 @@ dbDescribe('worker robustness (db)', () => {
     expect(q!.status).toBe('queued');
   });
 
-  test('request_human on an unbound run pauses every thread of the lead', async () => {
+  test('request_human on an unbound run sets the lead-wide pause marker', async () => {
     await migrate(sql, MIGRATIONS);
     const lead = await controlTx(sql, (tx) => insertLeadTx(tx, { name: 'Unbound Handoff' }));
     const leadId = lead.body.lead.id;
@@ -820,13 +824,59 @@ dbDescribe('worker robustness (db)', () => {
       reason: 'lead pediu humano',
     })) as { handedOff?: boolean };
     expect(out.handedOff).toBe(true);
-    const paused = await sql<{ n: number }[]>`
-      select count(*)::int as n from lead_threads
-      where lead_id = ${leadId} and agent_enabled = false
+    const [l] = await sql<{ agent_paused_at: string | null }[]>`
+      select agent_paused_at from leads where id = ${leadId}
     `;
-    expect(paused[0]!.n).toBe(2);
+    expect(l!.agent_paused_at).not.toBeNull();
+    // per-thread toggles stay untouched — resuming must not resurrect a
+    // thread staff had already paused before the handoff
+    const enabled = await sql<{ n: number }[]>`
+      select count(*)::int as n from lead_threads
+      where lead_id = ${leadId} and agent_enabled = true
+    `;
+    expect(enabled[0]!.n).toBe(2);
     const tasks = await sql`select 1 from lead_tasks where lead_id = ${leadId}`;
     expect(tasks.length).toBe(1);
+    // output on every channel is blocked while the flag stands — even on the
+    // channels whose threads were never individually paused ('manual' always
+    // resolves, so the pause check is what blocks)
+    const draft = (await executeTool(mkCtx('ghost-unbound', null, leadId), 'd1', 'draft_message', {
+      leadId,
+      channel: 'manual',
+      body: 'não deve compor',
+    })) as { blocked?: boolean; reason?: string };
+    expect(draft.blocked).toBe(true);
+    expect(draft.reason).toContain('paused');
+  });
+
+  test('request_human on a bound run pauses only that thread — other channels stay free', async () => {
+    await migrate(sql, MIGRATIONS);
+    const lead = await controlTx(sql, (tx) => insertLeadTx(tx, { name: 'Bound Handoff' }));
+    const leadId = lead.body.lead.id;
+    const [thread] = await sql<{ id: string }[]>`
+      insert into lead_threads (lead_id, channel) values (${leadId}, 'whatsapp') returning id
+    `;
+    await sql`delete from agent_runs where status = 'queued'`;
+    const runId = await enqueueRun(sql, { kind: 'reply', leadId, threadId: thread!.id });
+    const claimed = await claimRun(sql);
+    const ctx = mkCtx(runId, claimed!.claim_token, leadId, 'reply', thread!.id);
+    const out = (await executeTool(ctx, 'h1', 'request_human', {
+      leadId,
+      reason: 'falar com humano',
+    })) as { handedOff?: boolean };
+    expect(out.handedOff).toBe(true);
+    // thread-scoped handoff: the single paused thread is NOT a lead-wide
+    // signal — the flag must stay clear so a channel hop keeps working
+    const [l] = await sql<{ agent_paused_at: string | null }[]>`
+      select agent_paused_at from leads where id = ${leadId}
+    `;
+    expect(l!.agent_paused_at).toBeNull();
+    const draft = (await executeTool(mkCtx('ghost-bound', null, leadId), 'd1', 'draft_message', {
+      leadId,
+      channel: 'manual',
+      body: 'canal novo deve compor',
+    })) as { blocked?: boolean };
+    expect(draft.blocked).toBeUndefined();
   });
 
   test('update_lead cannot self-promote agent_mode or unarchive', async () => {
@@ -886,17 +936,17 @@ dbDescribe('worker robustness (db)', () => {
     const lead = await controlTx(sql, (tx) => insertLeadTx(tx, { name: 'Channel Hop' }));
     const leadId = lead.body.lead.id;
     await sql`
-      insert into lead_threads (lead_id, channel, agent_enabled)
-      values (${leadId}, 'whatsapp', false)
+      insert into lead_threads (lead_id, channel) values (${leadId}, 'whatsapp')
     `;
-    // ensureThread on a channel with no thread: every conversation of this
-    // lead is paused, so the fresh thread must not resurrect the agent.
+    await sql`update leads set agent_paused_at = now() where id = ${leadId}`;
+    // ensureThread on a channel with no thread: the lead-wide pause marker
+    // must keep the fresh thread from resurrecting the agent.
     const fresh = await controlTx(sql, (tx) => ensureThread(tx, leadId, 'email'));
     expect(fresh.agent_enabled).toBe(false);
     // and the send-side check blocks before composing on that channel at all
-    const out = (await executeTool(mkCtx('ghost-run', null, leadId), 'd1', 'draft_message', {
+    const out = (await executeTool(mkCtx('ghost-hop', null, leadId), 'd1', 'draft_message', {
       leadId,
-      channel: 'email',
+      channel: 'manual',
       body: 'não deve compor',
     })) as { blocked?: boolean; reason?: string };
     expect(out.blocked).toBe(true);
@@ -905,6 +955,24 @@ dbDescribe('worker robustness (db)', () => {
     const lead2 = await controlTx(sql, (tx) => insertLeadTx(tx, { name: 'Fresh Lead' }));
     const fresh2 = await controlTx(sql, (tx) => ensureThread(tx, lead2.body.lead.id, 'manual'));
     expect(fresh2.agent_enabled).toBe(true);
+  });
+
+  test('a lead-paused run parks at claim and resumes when the flag lifts', async () => {
+    await migrate(sql, MIGRATIONS);
+    const lead = await controlTx(sql, (tx) => insertLeadTx(tx, { name: 'Parked Lead' }));
+    const leadId = lead.body.lead.id;
+    await sql`update leads set agent_paused_at = now() where id = ${leadId}`;
+    await sql`delete from agent_runs where status = 'queued'`;
+    const runId = await enqueueRun(sql, { kind: 'outreach', leadId });
+    const claimed = await claimRun(sql);
+    expect(claimed?.id ?? null).not.toBe(runId);
+    const [r] = await sql<{ status: string }[]>`
+      select status from agent_runs where id = ${runId}
+    `;
+    expect(r!.status).toBe('queued');
+    await sql`update leads set agent_paused_at = null where id = ${leadId}`;
+    const resumed = await claimRun(sql);
+    expect(resumed?.id).toBe(runId);
   });
 
   test('unsubscribe cancels the lead’s queued runs — they could never claim', async () => {

@@ -137,6 +137,7 @@ describe('leadJson', () => {
     lost_reason: null,
     archived_at: null,
     unsubscribed_at: null,
+    agent_paused_at: null,
     discovered_via: null,
     created_at: '2026-09-18T00:00:00.000Z',
     updated_at: '2026-09-19T00:00:00.000Z',

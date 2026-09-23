@@ -63,6 +63,7 @@ export interface LeadRow {
   lost_reason: string | null;
   archived_at: string | null;
   unsubscribed_at: string | null;
+  agent_paused_at: string | null;
   discovered_via: string | null;
   created_at: string;
   updated_at: string;
@@ -98,6 +99,7 @@ export interface Lead {
   lostReason: string | null;
   archivedAt: string | null;
   unsubscribedAt: string | null;
+  agentPausedAt: string | null;
   discoveredVia: string | null;
   createdAt: string;
   updatedAt: string;
@@ -142,6 +144,7 @@ export function leadJson(row: LeadRow): Lead {
     lostReason: row.lost_reason,
     archivedAt: row.archived_at,
     unsubscribedAt: row.unsubscribed_at,
+    agentPausedAt: row.agent_paused_at,
     discoveredVia: row.discovered_via,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
@@ -324,6 +327,10 @@ export function leadPatch(
   }
   if ('archived' in body)
     set.archived_at = body.archived === true ? new Date().toISOString() : null;
+  // Staff-side resume after an unbound request_human handoff — the lead-wide
+  // pause marker gates every channel until cleared.
+  if ('agentPaused' in body)
+    set.agent_paused_at = body.agentPaused === true ? new Date().toISOString() : null;
   if (Object.keys(set).length === 0) {
     throw new HttpError(422, 'BAD_REQUEST', 'no updatable fields in body');
   }

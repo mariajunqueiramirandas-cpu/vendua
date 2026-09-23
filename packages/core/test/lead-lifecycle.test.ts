@@ -478,10 +478,13 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('lead lifecycle (db)', () => {
       await setup();
       const offId = await mkLeadApi({ name: 'Run Off', agentMode: 'off' }, key('a4-off-lead'));
       const unsubId = await mkLeadApi({ name: 'Run Unsub' }, key('a4-unsub-lead'));
+      const pausedId = await mkLeadApi({ name: 'Run Paused Lead' }, key('a4-pause-lead'));
       await sql`update leads set unsubscribed_at = now() where id = ${unsubId}`;
+      await sql`update leads set agent_paused_at = now() where id = ${pausedId}`;
       for (const [leadId, tag] of [
         [offId, 'off'],
         [unsubId, 'unsub'],
+        [pausedId, 'paused'],
       ] as const) {
         const res = await post(
           `/control/v1/leads/${leadId}/run`,

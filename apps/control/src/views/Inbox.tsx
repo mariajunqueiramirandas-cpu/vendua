@@ -347,11 +347,13 @@ export default function InboxView() {
               <button
                 className="btn ghost"
                 onClick={suggest}
-                disabled={assistBusy || !view.thread.agentEnabled}
+                disabled={assistBusy || !view.thread.agentEnabled || !!view.lead.agentPausedAt}
                 title={
-                  view.thread.agentEnabled
-                    ? 'o agente lê a conversa e deixa um rascunho — nada é enviado'
-                    : 'agente pausado nesta conversa — reative o toggle acima para pedir sugestão'
+                  view.lead.agentPausedAt
+                    ? 'agente pausado neste lead (handoff) — retome no card do lead'
+                    : view.thread.agentEnabled
+                      ? 'o agente lê a conversa e deixa um rascunho — nada é enviado'
+                      : 'agente pausado nesta conversa — reative o toggle acima para pedir sugestão'
                 }
               >
                 <Bot size={14} /> {assistBusy ? 'escrevendo…' : 'agente sugere'}

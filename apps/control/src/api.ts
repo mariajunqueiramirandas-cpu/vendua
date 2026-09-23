@@ -82,6 +82,7 @@ export interface Lead {
   lostReason: string | null;
   archivedAt: string | null;
   unsubscribedAt: string | null;
+  agentPausedAt: string | null;
   discoveredVia: string | null;
   createdAt: string;
   updatedAt: string;

@@ -163,7 +163,7 @@ export default function LeadDetail() {
       sub={lead.businessName ?? undefined}
       actions={
         <div className="lead-acts">
-          {lead.agentMode !== 'off' && !lead.unsubscribedAt && (
+          {lead.agentMode !== 'off' && !lead.unsubscribedAt && !lead.agentPausedAt && (
             <>
               <select
                 value={actChannel}
@@ -190,6 +190,15 @@ export default function LeadDetail() {
                 <Bot size={14} /> agir
               </button>
             </>
+          )}
+          {lead.agentPausedAt && (
+            <button
+              className="btn ghost"
+              title="handoff do agente — retomar libera o agente neste lead de novo"
+              onClick={() => void api.patchLead(lead.id, { agentPaused: false }).then(load)}
+            >
+              <Bot size={14} /> retomar agente
+            </button>
           )}
           {lead.unsubscribedAt ? (
             <span

@@ -134,6 +134,9 @@ export async function claimRun(sql: Sql): Promise<RunRow | null> {
               and l.agent_mode <> 'off'
               and l.archived_at is null
               and l.unsubscribed_at is null
+              -- lead-wide handoff (unbound request_human): parked like the
+              -- other suppressions — claims resume when staff lifts the flag.
+              and l.agent_paused_at is null
           ))
           -- a staff-paused thread suppresses the same way — revalidated here
           -- on a fresh snapshot so a pause landing after enqueue still holds

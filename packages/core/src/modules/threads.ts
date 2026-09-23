@@ -224,11 +224,12 @@ export async function ensureThread(
   const rows = await tx<ThreadRow[]>`
     insert into lead_threads (lead_id, channel, subject, external_id, agent_enabled)
     select ${leadId}, ${chan}, ${fields.subject ?? null}, ${fields.externalId ?? null},
-      -- A fresh thread inherits the lead's state: paused when EVERY existing
-      -- conversation is agent-disabled (a lead-wide handoff must survive a
-      -- channel hop), enabled otherwise — including for a threadless lead.
-      exists(select 1 from lead_threads where lead_id = ${leadId} and agent_enabled)
-      or not exists(select 1 from lead_threads where lead_id = ${leadId})
+      -- A fresh thread inherits the lead's handoff state: a lead-wide pause
+      -- must survive a channel hop, so new channels come up already paused.
+      coalesce(
+        (select agent_paused_at is null from leads where id = ${leadId}),
+        true
+      )
     on conflict (lead_id, channel)
     do update set
       subject = coalesce(lead_threads.subject, excluded.subject),
@@ -539,6 +540,7 @@ export async function approveMessage(
               and l.agent_mode <> 'off'
               and l.archived_at is null
               and l.unsubscribed_at is null
+              and l.agent_paused_at is null
           )
         returning *
       `;
@@ -641,6 +643,14 @@ export async function setThreadAgent(
       update lead_threads set agent_enabled = ${enabled} where id = ${threadId} returning *
     `;
     if (!rows[0]) throw new HttpError(404, 'THREAD_NOT_FOUND', 'thread not found');
+    // Re-enabling any conversation is staff's resume signal — a lead-wide
+    // handoff marker set by an unbound request_human clears with it.
+    if (enabled) {
+      await tx`
+        update leads set agent_paused_at = null, updated_at = now()
+        where id = ${rows[0].lead_id} and agent_paused_at is not null
+      `;
+    }
     return { status: 200, body: { thread: threadJson(rows[0]!) } };
   });
   if (!res.replayed) emitControlEvent('thread.message', threadId);

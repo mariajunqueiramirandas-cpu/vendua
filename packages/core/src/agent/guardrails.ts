@@ -159,17 +159,22 @@ export async function resolveChannelTx(
   };
 }
 
-/** Whether agent output is paused for (lead, channel): an existing paused
- *  thread blocks; a missing thread blocks only when the lead HAS threads and
- *  every one is disabled — that pattern marks a lead-wide handoff
- *  (request_human on an unbound run, or staff toggling every conversation),
- *  and a fresh channel must not resurrect the agent past it. A lead with
- *  zero threads is fresh — not paused. */
+/** Whether agent output is paused for (lead, channel): the lead-wide
+ *  handoff flag (`leads.agent_paused_at`, set by an unbound request_human)
+ *  blocks every channel — including ones with no thread yet; otherwise a
+ *  paused destination thread blocks. Missing thread + no lead flag = fresh
+ *  channel, allowed. */
 export async function agentPausedForChannelTx(
   tx: Sql,
   leadId: string,
   channel: Channel,
 ): Promise<boolean> {
+  const lead = (
+    await tx<{ agent_paused_at: string | null }[]>`
+      select agent_paused_at from leads where id = ${leadId} for update
+    `
+  )[0];
+  if (lead?.agent_paused_at) return true;
   const dest = (
     await tx<{ agent_enabled: boolean }[]>`
       select agent_enabled from lead_threads
@@ -177,15 +182,7 @@ export async function agentPausedForChannelTx(
       for update
     `
   )[0];
-  if (dest) return !dest.agent_enabled;
-  const counts = (
-    await tx<{ total: number; enabled: number }[]>`
-      select count(*)::int as total,
-             count(*) filter (where agent_enabled)::int as enabled
-      from lead_threads where lead_id = ${leadId}
-    `
-  )[0]!;
-  return counts.total > 0 && counts.enabled === 0;
+  return !!dest && !dest.agent_enabled;
 }
 
 export interface SendVerdict {
@@ -211,13 +208,16 @@ export async function checkSendAllowedTx(
           agent_mode: string;
           archived_at: string | null;
           unsubscribed_at: string | null;
+          agent_paused_at: string | null;
           email_bounced_at: string | null;
         }[]
-      >`select agent_mode, archived_at, unsubscribed_at, email_bounced_at from leads where id = ${leadId}`
+      >`select agent_mode, archived_at, unsubscribed_at, agent_paused_at, email_bounced_at from leads where id = ${leadId}`
     )[0];
     if (!lead) return { ok: false, forceDraft: false, reason: 'lead not found' };
     if (lead.archived_at) return { ok: false, forceDraft: false, reason: 'lead archived' };
     if (lead.unsubscribed_at) return { ok: false, forceDraft: false, reason: 'lead unsubscribed' };
+    if (lead.agent_paused_at)
+      return { ok: false, forceDraft: false, reason: 'agent paused for lead' };
     if (lead.agent_mode === 'off')
       return { ok: false, forceDraft: false, reason: 'agent off for lead' };
     // A bounced address is a dead address — Resend told us so. Blocking here

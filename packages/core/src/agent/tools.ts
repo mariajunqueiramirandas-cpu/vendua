@@ -994,17 +994,21 @@ export async function executeTool(
     case 'update_lead': {
       const { id, ...rest } = args;
       // The staff-set autonomy knobs are write-only-above for the model:
-      // agent_mode='auto' would self-promote past the approval gates, and
-      // archived:false would resurrect a suppressed lead. archived:true
-      // stays — the prompts use it to bin off-ICP leads.
+      // agent_mode='auto' would self-promote past the approval gates,
+      // archived:false would resurrect a suppressed lead, and agentPaused
+      // is staff's resume switch — the model hands off via request_human,
+      // it never lifts a handoff itself. archived:true stays — the prompts
+      // use it to bin off-ICP leads.
       delete rest.agentMode;
+      delete rest.agentPaused;
       if (rest.archived === false) delete rest.archived;
       // A patch reduced to nothing shouldn't 422 back at the model — say
       // what was refused instead of erroring the tool call.
       if (Object.keys(rest).length === 0) {
         return {
           ignored: true,
-          reason: 'agentMode and unarchiving are staff-managed; nothing else to update',
+          reason:
+            'agentMode, agentPaused and unarchiving are staff-managed; nothing else to update',
         };
       }
       const res = await updateLead(sql, String(id), leadPatch(rest, 'agent'), key, 'agent', guard);
@@ -1331,8 +1335,14 @@ export async function executeTool(
           if (!rows[0]) throw new HttpError(404, 'THREAD_NOT_FOUND', 'thread not found');
         } else {
           // Unbound run (outreach/triage): there is no "this thread" — the
-          // handoff is for the lead, so every conversation it has pauses.
-          await tx`update lead_threads set agent_enabled = false where lead_id = ${leadId}`;
+          // handoff is for the lead. The explicit marker blocks output on
+          // every channel (and parks queued runs at claim) until staff lifts
+          // it; per-thread toggles stay untouched, so resuming never
+          // resurrects a thread staff had already paused.
+          await tx`
+            update leads set agent_paused_at = now(), updated_at = now()
+            where id = ${leadId} and agent_paused_at is null
+          `;
         }
         await tx`
           insert into lead_tasks (lead_id, title, due_at, created_by)
