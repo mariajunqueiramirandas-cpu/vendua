@@ -21,6 +21,7 @@ import {
 } from '../modules/integrations.ts';
 import { recordBlockedSendTx } from '../modules/channel-health.ts';
 import {
+  agentPausedForChannelTx,
   checkSendAllowedTx,
   resolveChannelTx,
   whatsappReadyTx,
@@ -1066,14 +1067,7 @@ export async function executeTool(
         }
         // Same per-(lead, channel) pause check send_message enforces — a
         // staff-paused thread gets no agent output at all, drafts included.
-        const destThread = (
-          await tx<{ agent_enabled: boolean }[]>`
-            select agent_enabled from lead_threads
-            where lead_id = ${leadId} and channel = ${pick.channel}
-            for update
-          `
-        )[0];
-        if (destThread && !destThread.agent_enabled) {
+        if (await agentPausedForChannelTx(tx, leadId, pick.channel)) {
           return {
             status: 200,
             body: { blocked: true as const, reason: 'thread paused for agent' },
@@ -1149,16 +1143,11 @@ export async function executeTool(
         const chan = pick.channel;
         // Pause applies per (lead, channel) — staff disabling the DESTINATION
         // thread (or request_human earlier in this same run) must stop sends
-        // even when the lead's agent_mode still allows them. No thread yet =
-        // ensureThread creates it enabled, so only an existing paused one blocks.
-        const destThread = (
-          await tx<{ agent_enabled: boolean }[]>`
-            select agent_enabled from lead_threads
-            where lead_id = ${leadId} and channel = ${chan}
-            for update
-          `
-        )[0];
-        if (destThread && !destThread.agent_enabled) {
+        // even when the lead's agent_mode still allows them. A missing thread
+        // also blocks when every conversation of the lead is paused — that
+        // lead-wide handoff survives a channel hop (ensureThread then creates
+        // the fresh channel already paused).
+        if (await agentPausedForChannelTx(tx, leadId, chan)) {
           return {
             status: 200,
             body: { blocked: true as const, reason: 'thread paused for agent' },

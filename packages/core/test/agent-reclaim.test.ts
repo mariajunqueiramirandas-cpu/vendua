@@ -6,6 +6,7 @@ import { executeTool, assertRunClaimTx, type ToolContext } from '../src/agent/to
 import { dispatchMessage } from '../src/agent/send.ts';
 import { controlTx } from '../src/modules/control.ts';
 import { insertLeadTx, getLeadDetail } from '../src/modules/leads.ts';
+import { ensureThread } from '../src/modules/threads.ts';
 import { migrate } from '../src/platform/db.ts';
 
 // ---------------------------------------------------------------------------
@@ -878,6 +879,32 @@ dbDescribe('worker robustness (db)', () => {
     const msgs = await sql`select 1 from lead_messages m join lead_threads t on t.id = m.thread_id
       where t.lead_id = ${leadId}`;
     expect(msgs).toHaveLength(0);
+  });
+
+  test('a lead-wide handoff survives a channel hop — fresh threads inherit the pause', async () => {
+    await migrate(sql, MIGRATIONS);
+    const lead = await controlTx(sql, (tx) => insertLeadTx(tx, { name: 'Channel Hop' }));
+    const leadId = lead.body.lead.id;
+    await sql`
+      insert into lead_threads (lead_id, channel, agent_enabled)
+      values (${leadId}, 'whatsapp', false)
+    `;
+    // ensureThread on a channel with no thread: every conversation of this
+    // lead is paused, so the fresh thread must not resurrect the agent.
+    const fresh = await controlTx(sql, (tx) => ensureThread(tx, leadId, 'email'));
+    expect(fresh.agent_enabled).toBe(false);
+    // and the send-side check blocks before composing on that channel at all
+    const out = (await executeTool(mkCtx('ghost-run', null, leadId), 'd1', 'draft_message', {
+      leadId,
+      channel: 'email',
+      body: 'não deve compor',
+    })) as { blocked?: boolean; reason?: string };
+    expect(out.blocked).toBe(true);
+    expect(out.reason).toContain('paused');
+    // a lead with zero threads is fresh — not paused
+    const lead2 = await controlTx(sql, (tx) => insertLeadTx(tx, { name: 'Fresh Lead' }));
+    const fresh2 = await controlTx(sql, (tx) => ensureThread(tx, lead2.body.lead.id, 'manual'));
+    expect(fresh2.agent_enabled).toBe(true);
   });
 
   test('unsubscribe cancels the lead’s queued runs — they could never claim', async () => {

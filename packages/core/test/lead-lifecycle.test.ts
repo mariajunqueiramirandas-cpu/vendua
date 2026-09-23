@@ -547,5 +547,35 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('lead lifecycle (db)', () => {
       expect((await errCode(suppressed)).code).toBe('LEAD_SUPPRESSED');
       expect(await runsFor(leadId)).toHaveLength(0);
     });
+
+    test('POST /agent/runs thread-only adopts the thread’s lead — suppression applies', async () => {
+      await setup();
+      const leadId = await mkLeadApi({ name: 'Thread Only' }, key('a4-tol-lead'));
+      const [thread] = await sql<{ id: string }[]>`
+        insert into lead_threads (lead_id, channel)
+        values (${leadId}, 'manual') returning id
+      `;
+      // suppressed owner: the run must not bypass the lead gate via lead_id null
+      await sql`update leads set agent_mode = 'off' where id = ${leadId}`;
+      const suppressed = await post(
+        '/control/v1/agent/runs',
+        { kind: 'reply', threadId: thread!.id },
+        key('a4-tol-off'),
+      );
+      expect(suppressed.status).toBe(422);
+      expect((await errCode(suppressed)).code).toBe('LEAD_SUPPRESSED');
+      // live owner: the run inserts with lead_id bound, not null
+      await sql`update leads set agent_mode = 'draft' where id = ${leadId}`;
+      const ok = await post(
+        '/control/v1/agent/runs',
+        { kind: 'reply', threadId: thread!.id },
+        key('a4-tol-ok'),
+      );
+      expect(ok.status).toBe(201);
+      const [run] = await sql<{ lead_id: string | null }[]>`
+        select lead_id from agent_runs where lead_id = ${leadId}
+      `;
+      expect(run!.lead_id?.toLowerCase()).toBe(leadId.toLowerCase());
+    });
   });
 });

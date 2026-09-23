@@ -159,6 +159,35 @@ export async function resolveChannelTx(
   };
 }
 
+/** Whether agent output is paused for (lead, channel): an existing paused
+ *  thread blocks; a missing thread blocks only when the lead HAS threads and
+ *  every one is disabled — that pattern marks a lead-wide handoff
+ *  (request_human on an unbound run, or staff toggling every conversation),
+ *  and a fresh channel must not resurrect the agent past it. A lead with
+ *  zero threads is fresh — not paused. */
+export async function agentPausedForChannelTx(
+  tx: Sql,
+  leadId: string,
+  channel: Channel,
+): Promise<boolean> {
+  const dest = (
+    await tx<{ agent_enabled: boolean }[]>`
+      select agent_enabled from lead_threads
+      where lead_id = ${leadId} and channel = ${channel}
+      for update
+    `
+  )[0];
+  if (dest) return !dest.agent_enabled;
+  const counts = (
+    await tx<{ total: number; enabled: number }[]>`
+      select count(*)::int as total,
+             count(*) filter (where agent_enabled)::int as enabled
+      from lead_threads where lead_id = ${leadId}
+    `
+  )[0]!;
+  return counts.total > 0 && counts.enabled === 0;
+}
+
 export interface SendVerdict {
   ok: boolean;
   /** true → send_message degrades to a draft for the approvals queue. */
