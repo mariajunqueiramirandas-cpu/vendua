@@ -90,10 +90,22 @@ function waitForConnChange(ms: number): Promise<void> {
 /** The paired account once the socket is `open` — lets the Config screen
  *  say WHO is connected instead of implying enabled == working. */
 let waMe: { phone: string | null; name: string | null } | null = null;
-/** While logout() is in flight its own close event clears the globals —
- *  this flag stops ensureSocket from installing a replacement the logout
- *  cleanup would then orphan (alive but identity-gated out of events). */
+/** Held for the whole logoutWa window: ensureSocket refuses to install a
+ *  replacement the wipe would orphan, and auth writes are no-ops — nothing
+ *  may commit after the table delete and resurrect the wiped session. */
 let loggingOut = false;
+/** Every write issued through `auth` lands here so logoutWa can drain
+ *  in-flight commits before wiping: a write queued before `loggingOut`
+ *  went up could otherwise commit after the delete. */
+const pendingAuthWrites = new Set<Promise<unknown>>();
+function trackAuthWrite<T>(p: Promise<T>): Promise<T> {
+  pendingAuthWrites.add(p);
+  void p.then(
+    () => pendingAuthWrites.delete(p),
+    () => pendingAuthWrites.delete(p),
+  );
+  return p;
+}
 export function waStatus(): string {
   return connState;
 }
@@ -163,20 +175,29 @@ function dbAuthState(
       return JSON.parse(JSON.stringify(raw), bufferJSON.reviver);
     },
     write: async (category: string, name: string, data: unknown) => {
+      // During logoutWa the table delete must be the last write — a commit
+      // landing after it resurrects the dead session, so writes are a no-op
+      // for the window and the ones already in flight get drained there.
+      if (loggingOut) return;
       const serialized = JSON.parse(JSON.stringify(data, bufferJSON.replacer));
-      await controlTx(
-        sql,
-        (tx) =>
-          tx`insert into wa_auth_state (account_id, category, name, data)
-             values (${accountId}, ${category}, ${name}, ${tx.json(serialized as never)})
-             on conflict (account_id, category, name) do update set data = excluded.data`,
+      await trackAuthWrite(
+        controlTx(
+          sql,
+          (tx) =>
+            tx`insert into wa_auth_state (account_id, category, name, data)
+               values (${accountId}, ${category}, ${name}, ${tx.json(serialized as never)})
+               on conflict (account_id, category, name) do update set data = excluded.data`,
+        ),
       );
     },
     delete: async (category: string, name: string) => {
-      await controlTx(
-        sql,
-        (tx) =>
-          tx`delete from wa_auth_state where account_id = ${accountId} and category = ${category} and name = ${name}`,
+      if (loggingOut) return;
+      await trackAuthWrite(
+        controlTx(
+          sql,
+          (tx) =>
+            tx`delete from wa_auth_state where account_id = ${accountId} and category = ${category} and name = ${name}`,
+        ),
       );
     },
   };
@@ -291,9 +312,8 @@ async function startSocket(sql: Sql, integration: IntegrationRow): Promise<Baile
   const gen = nextWaGen();
 
   sock.ev.on('creds.update', () => {
-    // logoutWa owns the wipe — persisting mid-logout can commit after its
-    // delete and resurrect rows.
-    if (loggingOut) return;
+    if (socket !== sock) return; // stale socket — a replacement owns globals
+    if (loggingOut) return; // logoutWa owns the wipe — nothing persists
     const snapshot = { ...creds };
     if (!pairingConfirmed(snapshot)) delete snapshot.me;
     void auth.write('creds', 'main', snapshot);
@@ -566,43 +586,47 @@ export async function logoutWa(sql: Sql, accountId: string): Promise<void> {
   const s = socket;
   // Remote unlink while the socket is still tracked — if logout() rejects,
   // `socket` stays owned and `wa_auth_state` survives, so a retry retries
-  // the unlink on the same live socket. `loggingOut` serializes the window:
-  // s's own close event clears globals mid-await, and without the flag a
-  // concurrent ensureSocket could install a replacement this cleanup then
-  // detaches. A socket that wasn't tracked (null) just wipes local state.
-  if (s) {
-    loggingOut = true;
-    try {
-      await s.logout();
-    } finally {
-      loggingOut = false;
-    }
-  }
-  // Clear only what's still owned by s — its close event may already have
-  // done it (idempotent), and nothing else could install a replacement
-  // while the flag was held.
-  if (socket === s) {
-    socket = null;
-    socketFingerprint = null;
-    socketAccountId = null;
-    connState = 'off';
-    qrSocket = null;
-    notifyConnWaiters();
-    waMe = null;
-  }
-  starting = null;
+  // the unlink on the same live socket. The flag covers the whole wipe:
+  // s's own close event clears globals mid-await, ensureSocket can't
+  // install a replacement this cleanup would then detach, and auth writes
+  // no-op — a commit after the delete would resurrect the dead session. A
+  // socket that wasn't tracked (null) just wipes local state.
+  loggingOut = true;
   try {
-    s?.end();
-  } catch {
-    /* already closed */
+    if (s) {
+      await s.logout();
+    }
+    // Clear only what's still owned by s — its close event may already have
+    // done it (idempotent), and nothing else could install a replacement
+    // while the flag was held.
+    if (socket === s) {
+      socket = null;
+      socketFingerprint = null;
+      socketAccountId = null;
+      connState = 'off';
+      qrSocket = null;
+      notifyConnWaiters();
+      waMe = null;
+    }
+    starting = null;
+    try {
+      s?.end();
+    } catch {
+      /* already closed */
+    }
+    // Writes queued before the flag went up can still be in flight — drain
+    // so none commits after the wipe.
+    await Promise.allSettled([...pendingAuthWrites]);
+    await controlTx(sql, async (tx) => {
+      await tx`delete from wa_auth_state where account_id = ${accountId}`;
+    });
+    // Clear through the gen-guarded path — a plain delete could be followed
+    // by a stale in-flight QR write that re-creates the row.
+    await persistQr(sql, accountId, null, nextWaGen());
+    waLog.info({ accountId }, 'logged out — auth state wiped');
+  } finally {
+    loggingOut = false;
   }
-  await controlTx(sql, async (tx) => {
-    await tx`delete from wa_auth_state where account_id = ${accountId}`;
-  });
-  // Clear through the gen-guarded path — a plain delete could be followed
-  // by a stale in-flight QR write that re-creates the row.
-  await persistQr(sql, accountId, null, nextWaGen());
-  waLog.info({ accountId }, 'logged out — auth state wiped');
 }
 
 export async function sendWhatsApp(
