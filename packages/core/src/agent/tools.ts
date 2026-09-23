@@ -1159,8 +1159,22 @@ export async function executeTool(
             body: { blocked: true as const, reason: 'thread paused for agent' },
           };
         }
-        const g = await getSettingTx(tx, 'guardrails', {} as Partial<Guardrails>);
-        const verdict = await checkSendAllowedTx(tx, { ...DEFAULT_GUARDRAILS, ...g }, leadId, chan);
+        // Draft-only runs compose like draft_message: everything inside
+        // checkSendAllowedTx exists to stop a message leaving the building,
+        // and a draft never does — the approval click is where those gates
+        // apply. Running the verdict anyway lets quiet hours eat the draft
+        // the run was queued to write.
+        const verdict = ctx.draftOnly
+          ? ({ ok: true, forceDraft: false } as const)
+          : await checkSendAllowedTx(
+              tx,
+              {
+                ...DEFAULT_GUARDRAILS,
+                ...(await getSettingTx<Partial<Guardrails>>(tx, 'guardrails', {})),
+              },
+              leadId,
+              chan,
+            );
         if (!verdict.ok) {
           // Durable signal for the channel-health rollup — quiet hours and
           // daily-cap blocks otherwise leave no record a rollup can count.
@@ -1174,7 +1188,7 @@ export async function executeTool(
           subject: (args.subject as string) ?? undefined,
           author: 'agent',
           // draftOnly (staff assist) composes like firstContactDraftOnly —
-          // the guardrail verdict stays the same, the send just never leaves.
+          // the send just never leaves.
           status: verdict.forceDraft || ctx.draftOnly ? 'draft' : 'queued',
           agentRunId: ctx.runId,
         });
