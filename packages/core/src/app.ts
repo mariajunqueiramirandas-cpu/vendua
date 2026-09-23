@@ -1539,8 +1539,7 @@ export function createApp({ sql, sessionSecret, controlSecret, autoDrain }: AppD
       ),
     );
     const last = rows[rows.length - 1] as
-      | { id: string; created_at_ts: string; run_at_ts: string | null }
-      | undefined;
+      { id: string; created_at_ts: string; run_at_ts: string | null } | undefined;
     const nextCursor =
       rows.length === limit && last
         ? `${scheduled ? 'run_at' : 'created_at'}:${(scheduled ? last.run_at_ts : last.created_at_ts) ?? last.created_at_ts}|${last.id}`
