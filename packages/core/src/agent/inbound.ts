@@ -45,14 +45,27 @@ export async function ingestInbound(
   const gate = (
     await controlTx(
       sql,
-      (tx) => tx<{ agent_enabled: boolean; agent_mode: string; unsubscribed_at: string | null }[]>`
-        select t.agent_enabled, l.agent_mode, l.unsubscribed_at
+      (tx) => tx<
+        {
+          agent_enabled: boolean;
+          agent_mode: string;
+          unsubscribed_at: string | null;
+          archived_at: string | null;
+        }[]
+      >`
+        select t.agent_enabled, l.agent_mode, l.unsubscribed_at, l.archived_at
         from lead_threads t join leads l on l.id = t.lead_id
         where t.id = ${res.threadId}
       `,
     )
   )[0];
-  if (gate && gate.agent_enabled && gate.agent_mode !== 'off' && !gate.unsubscribed_at) {
+  if (
+    gate &&
+    gate.agent_enabled &&
+    gate.agent_mode !== 'off' &&
+    !gate.unsubscribed_at &&
+    !gate.archived_at
+  ) {
     // guardrails.inboundReplyDelayMin paces the answer — the run sits queued
     // with a future run_at instead of replying while the lead is still typing.
     const { inboundReplyDelayMin } = await getGuardrails(sql);

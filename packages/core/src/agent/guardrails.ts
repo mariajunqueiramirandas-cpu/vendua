@@ -1,10 +1,5 @@
 import type { Sql } from '../platform/db.ts';
-import {
-  DEFAULT_GUARDRAILS,
-  getIntegrationTx,
-  getSettingTx,
-  type Guardrails,
-} from '../modules/integrations.ts';
+import { getIntegrationTx, type Guardrails } from '../modules/integrations.ts';
 import type { Channel } from '../modules/threads.ts';
 import { waStatus } from './channels/whatsapp.ts';
 
@@ -248,9 +243,4 @@ export async function checkSendAllowedTx(
     if (lead.agent_mode === 'draft') return { ok: true, forceDraft: true };
     return { ok: true, forceDraft: false };
   }
-}
-
-async function guardrailsTx(tx: Sql): Promise<Guardrails> {
-  const stored = await getSettingTx(tx, 'guardrails', {} as Partial<Guardrails>);
-  return { ...DEFAULT_GUARDRAILS, ...stored };
 }
