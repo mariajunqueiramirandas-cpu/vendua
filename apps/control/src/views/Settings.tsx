@@ -244,12 +244,15 @@ export default function Settings() {
   // Per-resource success watermarks: event-driven + floor loads overlap.
   const loadSeq = useRef(0);
   const loadOk = useRef<Record<string, number>>({});
-  // The checklist reads integrations + settings — until both answer once,
-  // empty defaults would read as real "não configurado" states.
+  // The checklist reads integrations + settings + meetingsStatus — until
+  // they answer once, empty defaults would read as real "não configurado"
+  // states. A failed first read still ungates, but the rows then show
+  // 'falha ao ler' instead of fake states (loadErr bitmask).
   const settled = useRef(0);
+  const [loadErr, setLoadErr] = useState(0);
   const settle = (bit: number) => {
     settled.current |= bit;
-    if (settled.current === 0b11) setLoading(false);
+    if (settled.current === 0b111) setLoading(false);
   };
   const load = useCallback(() => {
     const my = ++loadSeq.current;
@@ -260,15 +263,17 @@ export default function Settings() {
         if (fresh('integrations')) {
           loadOk.current['integrations'] = my;
           setIntegrations(i.integrations);
+          setLoadErr((m) => m & ~0b001);
         }
       })
-      .catch((e: unknown) =>
+      .catch((e: unknown) => {
+        if (fresh('integrations')) setLoadErr((m) => m | 0b001);
         setNotice({
           kind: 'err',
           text: `falha ao carregar: ${e instanceof Error ? e.message : e}`,
-        }),
-      )
-      .finally(() => settle(0b01));
+        });
+      })
+      .finally(() => settle(0b001));
     void api
       .settings()
       .then((s) => {
@@ -277,15 +282,17 @@ export default function Settings() {
           const map: Record<string, unknown> = {};
           for (const row of s.settings) map[row.key] = row.value;
           setSettings(map);
+          setLoadErr((m) => m & ~0b010);
         }
       })
-      .catch((e: unknown) =>
+      .catch((e: unknown) => {
+        if (fresh('settings')) setLoadErr((m) => m | 0b010);
         setNotice({
           kind: 'err',
           text: `falha ao carregar: ${e instanceof Error ? e.message : e}`,
-        }),
-      )
-      .finally(() => settle(0b10));
+        });
+      })
+      .finally(() => settle(0b010));
     api
       .waQr()
       .then((r) => {
@@ -308,7 +315,8 @@ export default function Settings() {
           loadOk.current['mstatus'] = my;
           setMStatus('err');
         }
-      });
+      })
+      .finally(() => settle(0b100));
   }, []);
   useEffect(load, [load]);
   // channel.health accelerates everything the card renders — integration
@@ -395,7 +403,18 @@ export default function Settings() {
   }, [section, anchor]);
 
   // ---------- checklist: one line per piece, read off live state ----------
+  const integErr = (loadErr & 0b001) !== 0;
+  const setErr = (loadErr & 0b010) !== 0;
   const provCheck = (k: (typeof KINDS)[number]): Check => {
+    if (integErr)
+      return {
+        key: k.key,
+        label: k.label,
+        state: 'falha ao ler',
+        tone: 'warn',
+        to: 'conexoes',
+        p: k.key,
+      };
     const rows = integrations.filter((i) => i.kind === k.key);
     const st = providerStatus(k.key, rows, k.key === 'whatsapp' ? wa : WA_IDLE);
     const cur = rows.find((r) => r.enabled);
@@ -441,72 +460,92 @@ export default function Settings() {
               tone: 'off',
               to: 'agenda',
             }
-          : // booking needs somewhere to meet — Daily room or the static link;
-            // google is an optional sync layer, not the readiness gate
-            !(mStatus.room.provider === 'daily' || mStatus.cfg.roomUrl)
+          : // booking needs somewhere to meet — Daily room or the static
+            // link; google is an optional sync layer, not the readiness gate
+            mStatus.room.provider === 'daily' && mStatus.room.lastError
             ? {
                 key: 'agenda',
                 label: 'agenda',
-                state: 'sem sala — a call sai sem link',
+                state: mStatus.cfg.roomUrl
+                  ? 'daily falhou — salvando na sala fixa'
+                  : 'daily falhou — a call sai sem link',
                 tone: 'warn',
                 to: 'agenda',
               }
-            : mStatus.gcal.configured && mStatus.gcal.lastError
+            : !(mStatus.room.provider === 'daily' || mStatus.cfg.roomUrl)
               ? {
                   key: 'agenda',
                   label: 'agenda',
-                  state: `${weekDays}d/semana · google falhou`,
+                  state: 'sem sala — a call sai sem link',
                   tone: 'warn',
                   to: 'agenda',
                 }
-              : {
-                  key: 'agenda',
-                  label: 'agenda',
-                  state:
-                    `${weekDays}d/semana · ${
-                      mStatus.room.provider === 'daily' ? 'sala daily.co' : 'sala fixa'
-                    }` + (mStatus.gcal.configured ? ' · google conectada' : ''),
-                  tone: 'live',
-                  to: 'agenda',
-                };
+              : mStatus.gcal.configured && mStatus.gcal.lastError
+                ? {
+                    key: 'agenda',
+                    label: 'agenda',
+                    state: `${weekDays}d/semana · google falhou`,
+                    tone: 'warn',
+                    to: 'agenda',
+                  }
+                : {
+                    key: 'agenda',
+                    label: 'agenda',
+                    state:
+                      `${weekDays}d/semana · ${
+                        mStatus.room.provider === 'daily' ? 'sala daily.co' : 'sala fixa'
+                      }` + (mStatus.gcal.configured ? ' · google conectada' : ''),
+                    tone: 'live',
+                    to: 'agenda',
+                  };
 
   const essential: Check[] = [...KINDS.map(provCheck), agendaCheck];
   const g = guardrails;
-  const routine: Check[] = [
-    {
-      key: 'voz',
-      label: 'voz do agente',
-      state: str(pitch.product, '') ? 'definida' : 'vazia — o agente improvisa',
-      tone: str(pitch.product, '') ? 'live' : 'off',
-      to: 'agente',
-    },
-    {
-      key: 'regras',
-      label: 'regras',
-      state: `silêncio ${str(g.quietStart, '21:00')}–${str(g.quietEnd, '08:00')} · ${str(
-        g.timezone,
-        'America/Sao_Paulo',
-      )}`,
-      tone: 'live',
-      to: 'regras',
-    },
-    {
-      key: 'resumo',
-      label: 'resumo diário',
-      state: digest.enabled === true ? `todo dia às ${num(digest.hour, 8)}h` : 'desligado',
-      tone: digest.enabled === true ? 'live' : 'off',
-      to: 'relatorios',
-    },
-  ];
+  const routine: Check[] = setErr
+    ? (
+        [
+          { key: 'voz', label: 'voz do agente', to: 'agente' },
+          { key: 'regras', label: 'regras', to: 'regras' },
+          { key: 'resumo', label: 'resumo diário', to: 'relatorios' },
+        ] as const
+      ).map((c): Check => ({ ...c, state: 'falha ao ler', tone: 'warn' }))
+    : [
+        {
+          key: 'voz',
+          label: 'voz do agente',
+          state: str(pitch.product, '') ? 'definida' : 'vazia — o agente improvisa',
+          tone: str(pitch.product, '') ? 'live' : 'off',
+          to: 'agente',
+        },
+        {
+          key: 'regras',
+          label: 'regras',
+          state: `silêncio ${str(g.quietStart, '21:00')}–${str(g.quietEnd, '08:00')} · ${str(
+            g.timezone,
+            'America/Sao_Paulo',
+          )}`,
+          tone: 'live',
+          to: 'regras',
+        },
+        {
+          key: 'resumo',
+          label: 'resumo diário',
+          state: digest.enabled === true ? `todo dia às ${num(digest.hour, 8)}h` : 'desligado',
+          tone: digest.enabled === true ? 'live' : 'off',
+          to: 'relatorios',
+        },
+      ];
   const ready = essential.filter((c) => c.tone === 'live').length;
   const attn = [...essential, ...routine].filter((c) => c.tone === 'warn').length;
 
   // index-rail trailing marks — only where live state exists to report
-  const connMark: ProvTone = provTones.includes('warn')
+  const connMark: ProvTone = integErr
     ? 'warn'
-    : provLive === KINDS.length
-      ? 'live'
-      : 'off';
+    : provTones.includes('warn')
+      ? 'warn'
+      : provLive === KINDS.length
+        ? 'live'
+        : 'off';
   const marks: Partial<Record<SectionKey, ProvTone>> = {};
   if (mStatus && agendaCheck.tone !== 'live') marks.agenda = agendaCheck.tone;
   if (!str(pitch.product, '')) marks.agente = 'warn';
@@ -527,7 +566,7 @@ export default function Settings() {
               <span className="idx-s">{s.sub}</span>
               {s.key === 'conexoes' ? (
                 <span className={`idx-n st-${connMark}`}>
-                  {provLive}/{KINDS.length}
+                  {integErr ? '—' : `${provLive}/${KINDS.length}`}
                 </span>
               ) : (
                 marks[s.key] && <i className={`mk ${marks[s.key]}`} />
