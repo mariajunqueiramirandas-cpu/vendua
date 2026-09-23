@@ -230,6 +230,10 @@ export const DEFAULT_GUARDRAILS = {
    *  leads pauses itself (enabled=false + a note) instead of burning runs
    *  forever. 0 = never auto-pause. */
   briefAutoPauseRuns: 5,
+  /** staff/founder numbers the agent must never touch: inbound/history
+   *  from one of these drops silently (no lead minted), outbound sends and
+   *  queued runs to a matching lead are suppressed. Compared on digits. */
+  ignoredPhones: [] as string[],
 } as const;
 
 export type Guardrails = {
@@ -245,7 +249,27 @@ export type Guardrails = {
   followupCadenceDays: number;
   staleDraftDays: number;
   briefAutoPauseRuns: number;
+  ignoredPhones: string[];
 };
+
+/** Phone digits match: strip everything non-digit on both sides; an entry
+ *  needs ≥6 digits to be meaningful (shorter runs are noise). */
+export function phoneDigits(v: string): string {
+  return v.replace(/\D/g, '');
+}
+
+export function phoneIsIgnored(
+  ignored: readonly string[],
+  ...candidates: (string | undefined | null)[]
+): boolean {
+  const set = new Set(ignored.map(phoneDigits).filter((d) => d.length >= 6));
+  if (set.size === 0) return false;
+  return candidates.some((c) => {
+    if (!c) return false;
+    const d = phoneDigits(c);
+    return d.length >= 6 && set.has(d);
+  });
+}
 
 export const DEFAULT_PITCH = {
   product:
@@ -373,6 +397,17 @@ export function validateSetting(key: string, value: unknown): void {
     }
     if (v.discoveryAutoContact !== undefined && typeof v.discoveryAutoContact !== 'boolean') {
       throw bad('discoveryAutoContact', 'must be a boolean');
+    }
+    if (v.ignoredPhones !== undefined) {
+      if (!Array.isArray(v.ignoredPhones) || v.ignoredPhones.length > 100) {
+        throw bad('ignoredPhones', 'must be an array of ≤100 phone numbers');
+      }
+      for (const p of v.ignoredPhones) {
+        const d = typeof p === 'string' ? p.replace(/\D/g, '') : '';
+        if (typeof p !== 'string' || p.length > 40 || d.length < 6 || d.length > 15) {
+          throw bad('ignoredPhones', 'each entry must be a phone number (6–15 digits)');
+        }
+      }
     }
     return;
   }

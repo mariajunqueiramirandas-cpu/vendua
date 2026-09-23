@@ -4,6 +4,7 @@ import {
   DEFAULT_GUARDRAILS,
   getIntegrationTx,
   getSettingTx,
+  phoneIsIgnored,
   type Guardrails,
   type IntegrationRow,
 } from '../modules/integrations.ts';
@@ -83,13 +84,14 @@ export async function dispatchMessage(
           id: string;
           email: string | null;
           whatsapp: string | null;
+          phone: string | null;
           unsubscribed_at: string | null;
           archived_at: string | null;
           agent_paused_at: string | null;
           email_bounced_at: string | null;
         }[]
       >`
-        select id, email, whatsapp, unsubscribed_at, archived_at, agent_paused_at, email_bounced_at from leads where id = ${thread.lead_id}
+        select id, email, whatsapp, phone, unsubscribed_at, archived_at, agent_paused_at, email_bounced_at from leads where id = ${thread.lead_id}
       `
     )[0]!;
 
@@ -149,6 +151,15 @@ export async function dispatchMessage(
         await markMessageFailed(tx, messageId, 'lead has no whatsapp');
         wroteTid = msg.thread_id;
         return { fail: 'lead has no whatsapp' };
+      }
+      // Staff/founder numbers never receive agent traffic — ingest drops
+      // them before a lead exists, this is the net for leads created before
+      // the list (or reached through the phone column).
+      const g = await getSettingTx<Partial<Guardrails>>(tx, 'guardrails', {});
+      if (phoneIsIgnored(g.ignoredPhones ?? [], to, lead.whatsapp, lead.phone)) {
+        await markMessageFailed(tx, messageId, 'número ignorado');
+        wroteTid = msg.thread_id;
+        return { fail: 'número ignorado' };
       }
       integration = await getIntegrationTx(tx, 'whatsapp');
     }

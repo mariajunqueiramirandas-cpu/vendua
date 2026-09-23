@@ -898,12 +898,18 @@ function GuardrailsCard({
     followupCadenceDays: num(value.followupCadenceDays, 2),
     staleDraftDays: num(value.staleDraftDays, 7),
     briefAutoPauseRuns: num(value.briefAutoPauseRuns, 5),
+    ignoredPhones: Array.isArray(value.ignoredPhones) ? (value.ignoredPhones as string[]) : [],
   };
   const [edit, setEdit] = useState(cur);
   useEffect(() => setEdit(cur), [JSON.stringify(cur)]); // eslint-disable-line react-hooks/exhaustive-deps
   const dirty = JSON.stringify(edit) !== JSON.stringify(cur);
   const quietWrap = edit.quietStart > edit.quietEnd;
-  const invalid = !tzValid(edit.timezone);
+  const invalid =
+    !tzValid(edit.timezone) ||
+    edit.ignoredPhones.some((p) => {
+      const d = p.replace(/\D/g, '');
+      return d.length < 6 || d.length > 15;
+    });
 
   return (
     <div className="drv">
@@ -1075,6 +1081,19 @@ function GuardrailsCard({
           <div className="hint">
             runs seguidas do mesmo brief sem lead novo pausam ele sozinho; 0 = nunca pausa
           </div>
+        </div>
+      </div>
+      <div className="field">
+        <label>números ignorados (equipe / founders)</label>
+        <ListEditor
+          items={edit.ignoredPhones}
+          placeholder="+55 11 99999-0000"
+          max={100}
+          maxLen={40}
+          onChange={(ignoredPhones) => setEdit({ ...edit, ignoredPhones })}
+        />
+        <div className="hint">
+          mensagem desses números não vira lead e nada sai para eles — whatsapp ou phone do lead
         </div>
       </div>
       <div className="actions">

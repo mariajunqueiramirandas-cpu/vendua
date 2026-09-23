@@ -9,6 +9,8 @@ import {
   getSettingTx,
   AGENT_MEMORY_MAX_FACTS,
   DEFAULT_GUARDRAILS,
+  phoneDigits,
+  phoneIsIgnored,
   type Guardrails,
 } from '../modules/integrations.ts';
 import { segmentStats, type AgentGoal } from '../modules/leads.ts';
@@ -114,6 +116,11 @@ export async function enqueueRun(
 
 export async function claimRun(sql: Sql): Promise<RunRow | null> {
   const run = await controlTx(sql, async (tx) => {
+    // Staff/founder numbers never run — ingest already refuses to mint
+    // them, this covers leads created before the list existed.
+    const ignoredPhones =
+      (await getSettingTx<Partial<Guardrails>>(tx, 'guardrails', {})).ignoredPhones ?? [];
+    const ignoredDigits = ignoredPhones.map(phoneDigits).filter((d) => d.length >= 6);
     // Outreach is serial per lead: a 'running' outreach row is the durable
     // ownership token — it outlives the claim tx, so a queued same-lead
     // outreach can only claim once the owner finishes (a crashed owner is
@@ -137,6 +144,13 @@ export async function claimRun(sql: Sql): Promise<RunRow | null> {
               -- lead-wide handoff (unbound request_human): parked like the
               -- other suppressions — claims resume when staff lifts the flag.
               and l.agent_paused_at is null
+              -- ignored numbers park in the scan itself — rejected rows
+              -- would still consume the 8-attempt loop and a parked prefix
+              -- could starve the whole queue.
+              and (l.whatsapp is null or
+                regexp_replace(l.whatsapp, '\D', '', 'g') <> all(${ignoredDigits}::text[]))
+              and (l.phone is null or
+                regexp_replace(l.phone, '\D', '', 'g') <> all(${ignoredDigits}::text[]))
           ))
           -- a staff-paused thread suppresses the same way — revalidated here
           -- on a fresh snapshot so a pause landing after enqueue still holds
@@ -188,6 +202,8 @@ export async function claimRun(sql: Sql): Promise<RunRow | null> {
               archived_at: string | null;
               unsubscribed_at: string | null;
               agent_paused_at: string | null;
+              whatsapp: string | null;
+              phone: string | null;
             }
           | undefined;
         try {
@@ -198,9 +214,11 @@ export async function claimRun(sql: Sql): Promise<RunRow | null> {
                 archived_at: string | null;
                 unsubscribed_at: string | null;
                 agent_paused_at: string | null;
+                whatsapp: string | null;
+                phone: string | null;
               }[]
             >`
-              select agent_mode, archived_at, unsubscribed_at, agent_paused_at
+              select agent_mode, archived_at, unsubscribed_at, agent_paused_at, whatsapp, phone
               from leads where id = ${run.lead_id} for update nowait
             `
           )[0];
@@ -213,7 +231,8 @@ export async function claimRun(sql: Sql): Promise<RunRow | null> {
           lead.agent_mode === 'off' ||
           lead.archived_at ||
           lead.unsubscribed_at ||
-          lead.agent_paused_at
+          lead.agent_paused_at ||
+          phoneIsIgnored(ignoredPhones, lead.whatsapp, lead.phone)
         ) {
           rejected.push(run.id);
           continue;

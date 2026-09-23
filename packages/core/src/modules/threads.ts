@@ -262,10 +262,21 @@ export async function addInboundMessage(
     body: string;
     providerMessageId?: string;
     externalThreadId?: string;
+    /** 'out' = the account's own copy of a sent message (history echo / a
+     *  reply typed on the phone) — recorded as staff context, never
+     *  treated as a fresh inbound. */
+    direction?: 'in' | 'out';
+    /** provider timestamp — history import preserves it in created_at and
+     *  last_message_at; live ingest leaves it unset for now(). */
+    sentAt?: Date;
+    /** history import: context-only record — no activity row, no
+     *  cadence-floor clear, and ingestInbound never queues a reply. */
+    historical?: boolean;
   },
 ): Promise<InboundResult> {
   const body = str(input.body, 'body', 8000).trim();
   if (!body) throw new HttpError(422, 'BAD_REQUEST', 'body is required');
+  const direction = input.direction ?? 'in';
   const result = await controlTx(sql, async (tx) => {
     // Provider ids are namespaced per channel ('whatsapp:AB12…') — they share
     // no global namespace, so a raw id stored from one channel could suppress
@@ -373,28 +384,42 @@ export async function addInboundMessage(
       externalId: input.externalThreadId ?? null,
     });
 
+    const author = direction === 'in' ? 'lead' : 'staff';
+    const status = direction === 'in' ? 'received' : 'sent';
     const message = (
       await tx<MessageRow[]>`
-        insert into lead_messages (thread_id, direction, author, body, status, provider_message_id)
-        values (${thread.id}, 'in', 'lead', ${body}, 'received', ${pmid})
+        insert into lead_messages (thread_id, direction, author, body, status, provider_message_id, created_at)
+        values (${thread.id}, ${direction}, ${author}, ${body}, ${status}, ${pmid}, ${input.sentAt ?? new Date()})
         returning *
       `
     )[0]!;
 
-    await tx`update lead_threads set last_message_at = now() where id = ${thread.id}`;
+    // greatest(): history chunks arrive out of order — an older timestamp
+    // must not walk last_message_at backwards past a live message.
+    await tx`
+      update lead_threads set last_message_at = greatest(last_message_at, ${input.sentAt ?? new Date()})
+      where id = ${thread.id}
+    `;
     await tx`update leads set updated_at = now() where id = ${leadId}`;
-    // A reply retires the cadence floor — it only ever means "keep nudging
-    // an unanswered send". Agent- or staff-set dates survive: those were
-    // scheduled with intent (e.g. "me chama semana que vem").
-    await tx`
-      update leads set next_action_at = null, next_action_source = null
-      where id = ${leadId} and next_action_source = 'cadence'
-    `;
-    await tx`
-      insert into lead_activities (lead_id, kind, body, meta, created_by)
-      values (${leadId}, 'agent', ${`Recebida via ${input.channel}`},
-              ${tx.json({ channel: input.channel, messageId: message.id } as never)}, 'system')
-    `;
+    if (direction === 'in' && !input.historical) {
+      // A reply retires the cadence floor — it only ever means "keep nudging
+      // an unanswered send". Agent- or staff-set dates survive: those were
+      // scheduled with intent (e.g. "me chama semana que vem").
+      await tx`
+        update leads set next_action_at = null, next_action_source = null
+        where id = ${leadId} and next_action_source = 'cadence'
+      `;
+    }
+    // History import would flood the activity feed with one row per old
+    // message — the messages themselves already live in lead_messages.
+    if (!input.historical) {
+      await tx`
+        insert into lead_activities (lead_id, kind, body, meta, created_by)
+        values (${leadId}, 'agent',
+                ${direction === 'in' ? `Recebida via ${input.channel}` : `Enviada via ${input.channel}`},
+                ${tx.json({ channel: input.channel, messageId: message.id } as never)}, 'system')
+      `;
+    }
 
     return { leadId, threadId: thread.id, messageId: message.id, leadCreated, alreadySeen: false };
   });

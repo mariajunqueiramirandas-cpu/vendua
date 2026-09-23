@@ -4,7 +4,7 @@ import { createSql, migrate } from './platform/db.ts';
 import { join } from 'node:path';
 import { ingestInbound } from './agent/inbound.ts';
 import { startAgentWorker } from './agent/runner.ts';
-import { ensureSocket, onInboundMessage } from './agent/channels/whatsapp.ts';
+import { ensureSocket, onHistoryMessage, onInboundMessage } from './agent/channels/whatsapp.ts';
 import { getIntegration } from './modules/integrations.ts';
 import { setBookingSecret } from './modules/meetings.ts';
 
@@ -50,6 +50,23 @@ onInboundMessage(async (jid, text, providerId, pushName, altJid) => {
     ...(altJid ? { fromAlias: altJid } : {}),
     body: text,
     providerMessageId: providerId,
+  });
+});
+// Pairing-time history sync: the bounded slice WhatsApp pushes when the
+// device links. Landed as context only (historical — never queues a reply)
+// in both directions: fromMe echoes surface the replies staff typed on the
+// phone itself.
+onHistoryMessage(async (m) => {
+  await ingestInbound(sql, {
+    channel: 'whatsapp',
+    from: m.jid,
+    direction: m.fromMe ? 'out' : 'in',
+    ...(m.pushName ? { fromName: m.pushName } : {}),
+    ...(m.altJid ? { fromAlias: m.altJid } : {}),
+    ...(m.sentAt ? { sentAt: m.sentAt } : {}),
+    body: m.text,
+    providerMessageId: m.providerId,
+    historical: true,
   });
 });
 void getIntegration(sql, 'whatsapp')
