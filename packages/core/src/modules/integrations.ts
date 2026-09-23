@@ -214,9 +214,10 @@ export const DEFAULT_GUARDRAILS = {
   /** pacing before the agent answers an inbound message — the reply run is
    *  queued with run_at = now() + this many minutes. 0 = answer at once. */
   inboundReplyDelayMin: 0,
-  /** staff-created lead (POST /leads) gets an outreach run scheduled this
-   *  many minutes after creation — the agent makes first contact alone.
-   *  0 = off: creation only enqueues triage (draft for approval). */
+  /** staff-created lead (POST /leads) gets the outreach run scheduled this
+   *  many minutes after creation — one run does research → dossier → first
+   *  contact. 0 = approval path: the run fires at once but draft-only, so
+   *  the work still lands while nothing can send unreviewed. */
   firstContactDelayMin: 0,
   /** cadence floor: after an agent send the lead waits at most this many
    *  days for a reply before sweepOutreach picks it up — stamped only when

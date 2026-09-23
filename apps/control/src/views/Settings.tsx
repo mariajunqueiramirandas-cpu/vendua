@@ -1035,8 +1035,8 @@ function GuardrailsCard({
             }
           />
           <div className="hint">
-            0 = desligado; &gt;0 agenda um run de outreach esse tempo depois do lead ser criado
-            (modo do lead decide rascunho vs. envio)
+            0 = roda na hora, só rascunho (pesquisa + 1º contato pra aprovar); &gt;0 agenda o run
+            esse tempo depois do lead ser criado (modo do lead decide rascunho vs. envio)
           </div>
         </div>
       </div>

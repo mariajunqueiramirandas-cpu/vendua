@@ -8,7 +8,7 @@ import { controlTx } from '../src/modules/control.ts';
 import { getLeadDetail, insertLeadTx } from '../src/modules/leads.ts';
 import { migrate } from '../src/platform/db.ts';
 
-describe('toolsets — research reaches triage/reply, not outreach', () => {
+describe('toolsets — research reaches the lead kinds, lightly for reply', () => {
   const names = (kind: string) => toolsFor(kind).map((t) => t.name);
 
   test('triage gets the research kit', () => {
@@ -34,12 +34,15 @@ describe('toolsets — research reaches triage/reply, not outreach', () => {
     expect(r).toContain('plan');
   });
 
-  test('outreach is untouched', () => {
+  test('outreach carries the fresh-card research kit', () => {
+    // The merged staff-card path: one run researches → dossiers → contacts.
     const o = names('outreach');
-    expect(o).not.toContain('web_search');
-    expect(o).not.toContain('serp');
+    for (const t_ of ['web_search', 'read_pages', 'serp', 'maps_lookup', 'instagram_profile']) {
+      expect(o).toContain(t_);
+    }
     expect(o).toContain('send_message');
     expect(o).toContain('plan');
+    expect(o).not.toContain('book');
   });
 });
 

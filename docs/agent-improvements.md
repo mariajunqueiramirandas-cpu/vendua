@@ -10,23 +10,28 @@ delayed runs, reply/inbound pacing, research kit, and `draftOnly` shipped in
 
 ## Behavior changes (user-requested)
 
-### 1. Triage on manual lead creation should be optional — shipped (PR #70)
+### 1. Triage folded into the contact run — shipped
 
-`POST /control/v1/leads` accepts `automation`/`triage` opt-outs — no triage
-run and no scheduled first-contact run when disabled, matching CSV-import
-behavior. Board got a toggle alongside.
+`POST /control/v1/leads` no longer fans out a `triage` run plus a scheduled
+`outreach`: one outreach run does the card's whole job — research → dossier →
+first contact. `firstContactDelayMin` still paces the send; `0` stays the
+approval path (the run fires at once but draft-only). `automation:false`
+skips agent work entirely, matching CSV-import behavior; the `triage` body
+flag is gone. The `triage` run kind survives for manual re-research via the
+dispatch API.
 
-### 2. New inbound leads should get a full profile automatically — partially done
+### 2. New inbound leads qualify in-conversation, not via sidecar — shipped
 
-#65 gave `reply` `serp`/`web_search`, and the negotiation prompt now
-instructs a research + `update_lead`/`add_note` pass on raw inbound senders —
-the profile-fill half is covered. Remaining gap:
-
-- `reply` lacks `read_pages`/`maps_lookup`/`instagram_profile` (triage has
-  them) — deliberately, per the live-conversation latency tradeoff
-- No `set_state`/`create_task` intake instruction — a `triage` run alongside
-  the `reply` when `addInboundMessage` returns `leadCreated` is still the
-  clean fix if we want the full pass
+Inbound (`addInboundMessage`) queues only the `reply` run — no triage
+sidecar, and that direction was explicitly rejected (user call): a separate
+research agent on a live inbound is dumb — the person is right there, so the
+reply run ASKS the qualifying questions (the qualification step already lives
+in its negotiation plan). `serp`/`web_search` stay in reply's kit as fallback
+only — when the thread can't produce the fact (verifying a named business,
+a request that needs a lookup). Profile fill rides the same `update_lead`/
+`add_note` discipline — from what the person reveals, not silent research.
+`reply` still lacks `read_pages`/`maps_lookup`/`instagram_profile` —
+deliberately, per the live-conversation latency tradeoff.
 
 ### 3. Reply/negotiation agent quality overhaul — mostly shipped
 

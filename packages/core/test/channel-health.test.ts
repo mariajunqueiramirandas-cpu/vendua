@@ -143,6 +143,82 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('channel health (db)', () => {
       });
     }
   });
+
+  test('send_message with draftOnly composes a draft even under quiet hours', async () => {
+    await migrate(sql, join(import.meta.dir, '../db/migrations'));
+    // Delivery gates exist to stop a message leaving the building — a draft
+    // never does, so draft-only runs compose straight through them (the
+    // approval click is where quiet hours/caps apply).
+    const ctx = (leadId: string): ToolContext => ({
+      sql,
+      runId: '00000000-0000-4000-8000-000000000002',
+      runKind: 'outreach',
+      leadId,
+      threadId: null,
+      step: 0,
+      claimToken: null,
+      pageCache: new Map(),
+      briefName: null,
+      leadCap: 20,
+      channelOverride: null,
+      book: new Map(),
+      plan: null,
+      monid: null,
+      seenContacts: new Set(),
+      draftOnly: true,
+    });
+    const h =
+      Number(
+        new Intl.DateTimeFormat('en-US', {
+          timeZone: 'America/Sao_Paulo',
+          hour: '2-digit',
+          hour12: false,
+        }).format(new Date()),
+      ) % 24;
+    const hh = (n: number) => String(n).padStart(2, '0');
+    const prev = await controlTx(sql, async (tx) => {
+      const cur = (
+        await tx<{ value: unknown }[]>`select value from control_settings where key = 'guardrails'`
+      )[0]?.value;
+      await tx`
+        insert into control_integrations (kind, driver, enabled)
+        values ('email', 'log', true)
+        on conflict (kind, driver) do update set enabled = true
+      `;
+      await tx`
+        insert into control_settings (key, value)
+        values ('guardrails',
+                ${tx.json({ quietStart: `${hh((h + 23) % 24)}:00`, quietEnd: `${hh((h + 1) % 24)}:59`, firstContactDraftOnly: false } as never)})
+        on conflict (key) do update set value = excluded.value
+      `;
+      return cur ?? null;
+    });
+    try {
+      const lead = await controlTx(sql, (tx) =>
+        insertLeadTx(tx, { name: 'Quiet Draft Lead', email: 'quiet-draft@test.dev' }),
+      );
+      const leadId = lead.body.lead.id;
+      const out = (await executeTool(ctx(leadId), `qhd-${leadId}`, 'send_message', {
+        leadId,
+        body: 'oi',
+      })) as { message: { status: string } };
+      expect(out.message.status).toBe('draft');
+      const acts = await controlTx(
+        sql,
+        (tx) =>
+          tx<{ kind: string }[]>`
+            select kind from lead_activities where lead_id = ${leadId} and kind = 'blocked'
+          `,
+      );
+      expect(acts.length).toBe(0);
+    } finally {
+      await controlTx(sql, async (tx) => {
+        if (prev === null) await tx`delete from control_settings where key = 'guardrails'`;
+        else
+          await tx`update control_settings set value = ${tx.json(prev as never)} where key = 'guardrails'`;
+      });
+    }
+  });
 });
 
 describe.skipIf(!process.env.TEST_DATABASE_URL)('segment CPL (db)', () => {
