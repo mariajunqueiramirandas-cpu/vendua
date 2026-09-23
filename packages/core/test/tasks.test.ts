@@ -55,6 +55,14 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('tasks (db)', () => {
     expect(all.tasks.map((t) => t.id).sort()).toEqual([done, open].sort());
   });
 
+  test('a malformed leadId is a 400, not a 22P02 500', async () => {
+    await setup();
+    const res = await app.request('/control/v1/tasks?leadId=not-a-uuid&done=false', {
+      headers: { 'x-vendua-control': 'ctl-secret' },
+    });
+    expect(res.status).toBe(400);
+  });
+
   test('the done filter still scopes the lead-less list', async () => {
     await setup();
     const leadId = await mkLead();
