@@ -1,5 +1,5 @@
 import type { Sql } from '../platform/db.ts';
-import { HttpError, str } from '../platform/http.ts';
+import { HttpError, str, UUID_RE } from '../platform/http.ts';
 import { claimControl, controlTx, type ClaimResult } from './control.ts';
 import { emitControlEvent } from './control-events.ts';
 
@@ -358,6 +358,20 @@ export interface ListLeadsQuery {
   limit?: number;
   /** Opaque cursor from a previous page's nextCursor. */
   cursor?: string;
+  /** Keyset order — 'new' (default) walks created_at desc. */
+  sort?: LeadSort;
+}
+
+export const LEAD_SORTS = ['new', 'activity', 'score', 'value', 'name'] as const;
+export type LeadSort = (typeof LEAD_SORTS)[number];
+
+export function leadSort(v: unknown): LeadSort {
+  if (typeof v !== 'string' || !(LEAD_SORTS as readonly string[]).includes(v)) {
+    throw new HttpError(422, 'INVALID_SORT', `sort must be one of: ${LEAD_SORTS.join(', ')}`, {
+      field: 'sort',
+    });
+  }
+  return v as LeadSort;
 }
 
 /**
@@ -404,6 +418,114 @@ interface LeadListRow extends LeadRow {
   open_tasks: number;
   pending_drafts: number;
   last_activity_at: string | null;
+  /** cursor-minting columns — ::text keeps microseconds JS Date would drop. */
+  created_at_ts: string;
+  last_at_ts: string | null;
+}
+
+/** `timestamptz::text` shape AND calendar sanity, e.g.
+ *  `2026-09-23 21:36:35.31372+00` — '2026-99-99 25:61:61+99' matches a
+ *  loose regex but Postgres' cast rejects it (a 500 if it reached the
+ *  query). Offset ≤15 mirrors Postgres' bound; day ≤ month length
+ *  catches Feb 30. */
+const TS_TEXT_RE = /^(\d{4})-(\d{2})-(\d{2}) (\d{2}):(\d{2}):(\d{2})(?:\.\d+)?[+-](\d{2})$/;
+function tsTextOk(ts: string): boolean {
+  const m = TS_TEXT_RE.exec(ts);
+  if (!m) return false;
+  const [y, mo, d, h, mi, s, oh] = m.slice(1).map(Number) as [
+    number,
+    number,
+    number,
+    number,
+    number,
+    number,
+    number,
+  ];
+  const days = [
+    31,
+    y % 4 === 0 && (y % 100 !== 0 || y % 400 === 0) ? 29 : 28,
+    31,
+    30,
+    31,
+    30,
+    31,
+    31,
+    30,
+    31,
+    30,
+    31,
+  ];
+  return (
+    mo >= 1 &&
+    mo <= 12 &&
+    d >= 1 &&
+    d <= days[mo - 1]! &&
+    h <= 23 &&
+    mi <= 59 &&
+    s <= 59 &&
+    oh <= 15
+  );
+}
+
+/** Per-sort keyset contract: the key expression used in the cursor WHERE
+ *  (select aliases aren't visible there), the ORDER BY fragment (which may
+ *  reference the alias), the walk direction, and whether the key is
+ *  nullable — nullable keys page after all values on a desc walk. */
+const LEAD_SORT_SPEC: Record<
+  LeadSort,
+  {
+    key: string;
+    /** wraps the bound cursor value — e.g. 'lower' so a name cursor
+     *  compares lower(name) on both sides. */
+    cwrap?: string;
+    order: string;
+    desc: boolean;
+    nullable: boolean;
+  }
+> = {
+  new: { key: 'l.created_at', order: 'l.created_at desc, l.id desc', desc: true, nullable: false },
+  activity: {
+    key: 'act.last_at',
+    order: 'act.last_at desc nulls last, l.id desc',
+    desc: true,
+    nullable: true,
+  },
+  // 'score' keys on the computed expression — the alias only exists in
+  // ORDER BY, WHERE needs the expression itself.
+  score: {
+    key: `(${LEAD_SCORE_SQL})`,
+    order: 'score desc, l.id desc',
+    desc: true,
+    nullable: false,
+  },
+  value: {
+    key: 'l.deal_value_cents',
+    order: 'l.deal_value_cents desc nulls last, l.id desc',
+    desc: true,
+    nullable: true,
+  },
+  name: {
+    key: 'lower(l.name)',
+    cwrap: 'lower',
+    order: 'lower(l.name) asc, l.id asc',
+    desc: false,
+    nullable: false,
+  },
+};
+/** The row's sort key as a JSON cursor value (null for absent keys). */
+function sortKeyOf(sort: LeadSort, row: LeadListRow): string | number | null {
+  switch (sort) {
+    case 'activity':
+      return row.last_at_ts ?? null;
+    case 'score':
+      return Number(row.score);
+    case 'value':
+      return row.deal_value_cents;
+    case 'name':
+      return row.name;
+    case 'new':
+      return row.created_at_ts;
+  }
 }
 
 function listItemJson(row: LeadListRow): LeadListItem {
@@ -432,23 +554,37 @@ export async function listLeads(
   const qDigits = q && /^[+\d\s().-]+$/.test(q) ? q.replace(/\D/g, '') : '';
   const qDigitsLike = qDigits.length >= 4 ? `%${qDigits}%` : null;
 
-  // Keyset pagination: (created_at, id) desc — stable under concurrent
-  // inserts where a naive offset page can skip/dupe rows.
-  let cursorAt: string | null = null;
-  let cursorId: string | null = null;
+  // Keyset pagination: (sort key, id) — stable under concurrent inserts
+  // where a naive offset page can skip/dupe rows. The cursor is an opaque
+  // base64url JSON triple [sort, keyValue, id]; a cursor minted under one
+  // sort is rejected under another (its predicate wouldn't line up).
+  const sort = query.sort ?? 'new';
+  const spec = LEAD_SORT_SPEC[sort];
+  let curVal: string | number | null = null;
+  let curId: string | null = null;
   if (query.cursor) {
     try {
-      const decoded = Buffer.from(query.cursor, 'base64url').toString('utf8');
-      const sep = decoded.lastIndexOf('|');
-      if (sep <= 0 || sep === decoded.length - 1) throw new Error('shape');
-      cursorAt = decoded.slice(0, sep);
-      cursorId = decoded.slice(sep + 1);
-      if (Number.isNaN(new Date(cursorAt).getTime())) throw new Error('shape');
+      const [s, v, i] = JSON.parse(Buffer.from(query.cursor, 'base64url').toString('utf8')) as [
+        string,
+        string | number | null,
+        string,
+      ];
+      if (s !== sort) throw new Error('shape');
       // Postgres would reject a malformed uuid mid-query with a 500 — check
-      // the shape here so bad cursors get the BAD_REQUEST above instead.
-      if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(cursorId)) {
-        throw new Error('shape');
+      // the shape here so bad cursors get the BAD_REQUEST below instead.
+      if (typeof i !== 'string' || !UUID_RE.test(i)) throw new Error('shape');
+      if (v === null) {
+        if (!spec.nullable) throw new Error('shape');
+      } else if (sort === 'score' || sort === 'value') {
+        if (typeof v !== 'number' || !Number.isFinite(v)) throw new Error('shape');
+      } else if (sort === 'new' || sort === 'activity') {
+        // cursor ts is minted from timestamptz::text — microseconds included.
+        if (typeof v !== 'string' || !tsTextOk(v)) throw new Error('shape');
+      } else {
+        if (typeof v !== 'string') throw new Error('shape');
       }
+      curVal = v;
+      curId = i;
     } catch {
       throw new HttpError(400, 'BAD_REQUEST', 'invalid cursor');
     }
@@ -480,16 +616,41 @@ export async function listLeads(
                : ''
            })`
         : 'true',
-      cursorAt && cursorId ? `(l.created_at, l.id) < (${p(cursorAt)}, ${p(cursorId)})` : 'true',
+      // Cursor predicate: strictly past the last emitted key, then the id
+      // tiebreak in the same direction. A null-keyed cursor only walks
+      // further null keys (they page last on desc walks).
+      curId
+        ? curVal === null
+          ? `(${spec.key} is null and l.id ${spec.desc ? '<' : '>'} ${p(curId)}::uuid)`
+          : (() => {
+              // timestamp keys bind as text and cast server-side — binding a
+              // timestamp-shaped string directly makes the driver serialize
+              // it through a JS Date and drop microseconds.
+              const kv =
+                sort === 'new' || sort === 'activity'
+                  ? `${p(curVal)}::text::timestamptz`
+                  : spec.cwrap
+                    ? `${spec.cwrap}(${p(curVal)})`
+                    : p(curVal);
+              const op = spec.desc ? '<' : '>';
+              return (
+                `(${spec.key} ${op} ${kv} or ` +
+                `(${spec.key} = ${kv} and l.id ${op} ${p(curId)}::uuid)` +
+                `${spec.nullable ? ` or ${spec.key} is null` : ''})`
+              );
+            })()
+        : 'true',
     ];
     return tx.unsafe(
       `select l.*, ${LEAD_SCORE_SQL} as score,
               coalesce(tk.n, 0)::int as open_tasks,
               coalesce(dr.n, 0)::int as pending_drafts,
-              act.last_at as last_activity_at
+              act.last_at as last_activity_at,
+              l.created_at::text as created_at_ts,
+              act.last_at::text as last_at_ts
        ${LEAD_LIST_FROM}
        where ${clauses.join('\n         and ')}
-       order by l.created_at desc, l.id desc
+       order by ${spec.order}
        limit ${limit + 1}`,
       params as never[],
     ) as Promise<LeadListRow[]>;
@@ -502,7 +663,9 @@ export async function listLeads(
     leads: items,
     nextCursor:
       overflow && last
-        ? Buffer.from(`${last.created_at}|${last.id}`, 'utf8').toString('base64url')
+        ? Buffer.from(JSON.stringify([sort, sortKeyOf(sort, last), last.id]), 'utf8').toString(
+            'base64url',
+          )
         : null,
   };
 }
