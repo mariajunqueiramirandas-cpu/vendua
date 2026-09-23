@@ -1498,7 +1498,25 @@ export function createApp({ sql, sessionSecret, controlSecret, autoDrain }: AppD
     // survive the round trip; JS Date/ISO would truncate to ms and re-match
     // the boundary row. The key prefix keeps a cursor pinned to its view.
     const cursor = c.req.query('cursor');
-    const TS_RE = /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}(\.\d+)?[+-]\d{2}$/;
+    const TS_RE = /^(\d{4})-(\d{2})-(\d{2}) (\d{2}):(\d{2}):(\d{2})(?:\.\d+)?[+-](\d{2})$/;
+    // Shape AND calendar sanity — '2026-99-99 25:61:61+99' would survive a
+    // loose regex and blow up Postgres' timestamptz cast with a 500. Offset
+    // ≤15 mirrors Postgres' own bound; day ≤ month length catches Feb 30.
+    const tsOk = (ts: string) => {
+      const m = TS_RE.exec(ts);
+      if (!m) return false;
+      const [y, mo, d, h, mi, s, oh] = m.slice(1).map(Number) as [
+        number, number, number, number, number, number, number,
+      ];
+      const days = [
+        31,
+        y % 4 === 0 && (y % 100 !== 0 || y % 400 === 0) ? 29 : 28,
+        31, 30, 31, 30, 31, 31, 30, 31, 30, 31,
+      ];
+      return (
+        mo >= 1 && mo <= 12 && d >= 1 && d <= days[mo - 1]! && h <= 23 && mi <= 59 && s <= 59 && oh <= 15
+      );
+    };
     let cursorCond = 'true';
     if (cursor) {
       const sep = cursor.indexOf('|');
@@ -1506,7 +1524,7 @@ export function createApp({ sql, sessionSecret, controlSecret, autoDrain }: AppD
       const ts = sep > 0 ? cursor.slice(cursor.indexOf(':') + 1, sep) : '';
       const id = sep > 0 ? cursor.slice(sep + 1) : '';
       const want = scheduled ? 'run_at' : 'created_at';
-      if (key !== want || !TS_RE.test(ts) || !UUID_RE.test(id)) {
+      if (key !== want || !tsOk(ts) || !UUID_RE.test(id)) {
         throw new HttpError(400, 'BAD_REQUEST', `cursor must be "${want}:<ts>|<run uuid>"`);
       }
       // Bind as text and cast server-side — a timestamptz-inferred param is

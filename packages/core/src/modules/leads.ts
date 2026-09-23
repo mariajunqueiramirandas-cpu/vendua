@@ -423,8 +423,27 @@ interface LeadListRow extends LeadRow {
   last_at_ts: string | null;
 }
 
-/** `timestamptz::text` shape, e.g. `2026-09-23 21:36:35.31372+00`. */
-const TS_TEXT_RE = /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}(\.\d+)?[+-]\d{2}$/;
+/** `timestamptz::text` shape AND calendar sanity, e.g.
+ *  `2026-09-23 21:36:35.31372+00` — '2026-99-99 25:61:61+99' matches a
+ *  loose regex but Postgres' cast rejects it (a 500 if it reached the
+ *  query). Offset ≤15 mirrors Postgres' bound; day ≤ month length
+ *  catches Feb 30. */
+const TS_TEXT_RE = /^(\d{4})-(\d{2})-(\d{2}) (\d{2}):(\d{2}):(\d{2})(?:\.\d+)?[+-](\d{2})$/;
+function tsTextOk(ts: string): boolean {
+  const m = TS_TEXT_RE.exec(ts);
+  if (!m) return false;
+  const [y, mo, d, h, mi, s, oh] = m.slice(1).map(Number) as [
+    number, number, number, number, number, number, number,
+  ];
+  const days = [
+    31,
+    y % 4 === 0 && (y % 100 !== 0 || y % 400 === 0) ? 29 : 28,
+    31, 30, 31, 30, 31, 31, 30, 31, 30, 31,
+  ];
+  return (
+    mo >= 1 && mo <= 12 && d >= 1 && d <= days[mo - 1]! && h <= 23 && mi <= 59 && s <= 59 && oh <= 15
+  );
+}
 
 /** Per-sort keyset contract: the key expression used in the cursor WHERE
  *  (select aliases aren't visible there), the ORDER BY fragment (which may
@@ -538,7 +557,7 @@ export async function listLeads(
         if (typeof v !== 'number' || !Number.isFinite(v)) throw new Error('shape');
       } else if (sort === 'new' || sort === 'activity') {
         // cursor ts is minted from timestamptz::text — microseconds included.
-        if (typeof v !== 'string' || !TS_TEXT_RE.test(v)) throw new Error('shape');
+        if (typeof v !== 'string' || !tsTextOk(v)) throw new Error('shape');
       } else {
         if (typeof v !== 'string') throw new Error('shape');
       }
