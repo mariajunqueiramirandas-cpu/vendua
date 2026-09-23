@@ -3,18 +3,7 @@ import { Link } from 'react-router-dom';
 import { CheckCircle2, ChevronDown, Circle, SkipForward } from 'lucide-react';
 import { api, type AgentRun, type LeadListItem } from '../api.ts';
 import { onControlEvent } from '../events.ts';
-import { Empty, Page, fmtDateTime } from '../components.tsx';
-
-const GOAL_LABEL: Record<string, string> = {
-  negotiation: 'negócio',
-  meeting: 'reunião',
-};
-const RUN_KIND: Record<string, string> = {
-  triage: 'triagem',
-  reply: 'resposta',
-  outreach: 'alcance',
-  discovery: 'descoberta',
-};
+import { AGENT_GOAL_LABEL, Empty, Page, RUN_KIND_LABEL, fmtDateTime } from '../components.tsx';
 
 // One upcoming event: a queued run's run_at, or the lead's next_action_at.
 interface Pending {
@@ -133,7 +122,7 @@ export default function Plan() {
       .filter((r) => live(r.lead_id!))
       .map((r) => ({
         at: r.run_at!,
-        what: `run ${RUN_KIND[r.kind] ?? r.kind}`,
+        what: `run ${RUN_KIND_LABEL[r.kind] ?? r.kind}`,
         leadId: r.lead_id!,
         leadName: byId.get(r.lead_id!)?.name ?? r.lead_name ?? 'lead',
         late: new Date(r.run_at!).getTime() <= now,
@@ -277,7 +266,7 @@ function PlanRow({ lead }: { lead: LeadListItem }) {
           aria-label={`plano de ${lead.name}`}
         >
           <span className="chip agent" title="objetivo atual">
-            {GOAL_LABEL[lead.agentGoal] ?? lead.agentGoal}
+            {AGENT_GOAL_LABEL[lead.agentGoal] ?? lead.agentGoal}
           </span>
           <span className="planbar planrow-bar" title={`${resolved} de ${total} etapas resolvidas`}>
             <span style={{ width: `${(resolved / total) * 100}%` }} />

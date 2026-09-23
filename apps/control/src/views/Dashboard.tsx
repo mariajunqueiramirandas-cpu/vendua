@@ -2,15 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { api, type Stats } from '../api.ts';
 import { onControlEvent } from '../events.ts';
-import { Empty, Page, fmtMoney } from '../components.tsx';
-
-const STATES = ['lead', 'contacted', 'invited', 'live'] as const;
-const STATE_LABEL: Record<string, string> = {
-  lead: 'lead',
-  contacted: 'contatado',
-  invited: 'convidado',
-  live: 'ativo',
-};
+import { Empty, LEAD_STATES, LEAD_STATE_LABEL, Page, fmtMoney } from '../components.tsx';
 // Funnel reads left→right as deepening commitment: one hue, rising density.
 const FILL: Record<string, string> = {
   lead: 'color-mix(in srgb, var(--forest-800) 26%, var(--surface-2))',
@@ -46,7 +38,7 @@ export default function Dashboard() {
     return () => clearInterval(t);
   }, [load]);
 
-  const maxState = Math.max(1, ...STATES.map((st) => s?.everReached[st] ?? 0));
+  const maxState = Math.max(1, ...LEAD_STATES.map(([st]) => s?.everReached[st] ?? 0));
 
   return (
     <Page title="Painel" sub={s ? `${s.total} leads` : 'carregando…'}>
@@ -84,7 +76,7 @@ export default function Dashboard() {
                 <span className="note">alcançaram cada estado</span>
               </div>
               <div className="funnel">
-                {STATES.map((st) => (
+                {LEAD_STATES.map(([st]) => (
                   <div className="bar" key={st}>
                     <span className="n">{s.everReached[st] ?? 0}</span>
                     <div className="track">
@@ -96,7 +88,7 @@ export default function Dashboard() {
                         }}
                       />
                     </div>
-                    <span className="lbl">{STATE_LABEL[st]}</span>
+                    <span className="lbl">{LEAD_STATE_LABEL[st]}</span>
                   </div>
                 ))}
               </div>
@@ -177,10 +169,10 @@ export default function Dashboard() {
               </div>
               <table className="tbl">
                 <tbody>
-                  {STATES.map((st) => (
+                  {LEAD_STATES.map(([st]) => (
                     <tr key={st}>
                       <td>
-                        <Link to="/funil">{STATE_LABEL[st]}</Link>
+                        <Link to="/funil">{LEAD_STATE_LABEL[st]}</Link>
                       </td>
                       <td className="num">{s.byState[st]?.count ?? 0}</td>
                       <td className="num">{fmtMoney(s.byState[st]?.valueCents)}</td>

@@ -3,14 +3,12 @@ import { Link, useNavigate } from 'react-router-dom';
 import { ArrowUpRight } from 'lucide-react';
 import { api, type LeadListItem } from '../api.ts';
 import { onControlEvent } from '../events.ts';
-import { Empty, Page, fmtMoney, rel } from '../components.tsx';
+import { Empty, LEAD_STATES, Page, fmtMoney, rel } from '../components.tsx';
 
-const COLS: { key: LeadListItem['state']; label: string }[] = [
-  { key: 'lead', label: 'lead' },
-  { key: 'contacted', label: 'contatado' },
-  { key: 'invited', label: 'convidado' },
-  { key: 'live', label: 'ativo' },
-];
+const COLS: { key: LeadListItem['state']; label: string }[] = LEAD_STATES.map(([key, label]) => ({
+  key,
+  label,
+}));
 
 export default function BoardView() {
   const [leads, setLeads] = useState<LeadListItem[]>([]);

@@ -1,4 +1,37 @@
 import { useEffect, useState, type ReactNode } from 'react';
+import type { Meeting } from './api.ts';
+
+/** Canonical entity labels — one source so a copy change lands once. Pairs
+ *  keep pipeline order for selects/columns; the Record serves chips and
+ *  inline text. */
+export const LEAD_STATES = [
+  ['lead', 'lead'],
+  ['contacted', 'contatado'],
+  ['invited', 'convidado'],
+  ['live', 'ativo'],
+] as const;
+export const LEAD_STATE_LABEL: Record<string, string> = Object.fromEntries(LEAD_STATES);
+
+export const AGENT_GOALS = [
+  ['negotiation', 'fechar negócio'],
+  ['meeting', 'marcar reunião'],
+] as const;
+export const AGENT_GOAL_LABEL: Record<string, string> = Object.fromEntries(AGENT_GOALS);
+
+export const RUN_KIND_LABEL: Record<string, string> = {
+  triage: 'triagem',
+  reply: 'resposta',
+  outreach: 'alcance',
+  discovery: 'descoberta',
+  strategist: 'estrategista',
+};
+
+export const MEETING_STATUS_LABEL: Record<Meeting['status'], string> = {
+  scheduled: 'marcada',
+  done: 'feita',
+  no_show: 'no-show',
+  cancelled: 'cancelada',
+};
 
 /** Page chrome — serif display title + count/context line + actions. */
 export function Page({
@@ -35,13 +68,7 @@ export function Empty({ title, hint }: { title: string; hint?: string | undefine
 }
 
 export function StateChip({ state }: { state: string }) {
-  const label: Record<string, string> = {
-    lead: 'lead',
-    contacted: 'contatado',
-    invited: 'convidado',
-    live: 'ativo',
-  };
-  return <span className={`chip state-${state}`}>{label[state] ?? state}</span>;
+  return <span className={`chip state-${state}`}>{LEAD_STATE_LABEL[state] ?? state}</span>;
 }
 
 /** Monogram puck — marks a person/thread across the app. */
