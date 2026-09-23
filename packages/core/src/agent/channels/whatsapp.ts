@@ -226,7 +226,17 @@ async function startSocket(sql: Sql, integration: IntegrationRow): Promise<Baile
     registered?: boolean;
     account?: unknown;
     me?: unknown;
+    platform?: unknown;
+    signalIdentities?: unknown;
   };
+  // `account` without `me` is residue from rows persisted before QR
+  // pair-success kept its `me` — it never accompanies a live session (the
+  // two are written atomically). Dropped, or it would falsely confirm the
+  // next provisional claim into the same 401 loop it just escaped.
+  if (!creds.registered && creds.account && !creds.me) {
+    waLog.warn('dropping orphaned creds.account — legacy incomplete QR state');
+    delete creds.account;
+  }
   if (!pairingConfirmed(creds)) {
     if (creds.me) {
       waLog.warn('dropping unconfirmed creds.me — would force a 401 login');
@@ -325,6 +335,18 @@ async function startSocket(sql: Sql, integration: IntegrationRow): Promise<Baile
       const statusCode = u.lastDisconnect?.error?.output?.statusCode;
       if (statusCode === 401) {
         waLog.warn({ statusCode }, 'socket closed by whatsapp (logged out) — re-pair required');
+        // The persisted identity is dead: drop the server-granted fields so
+        // the next start takes the registration branch and can offer a QR —
+        // otherwise every reconnect re-runs login → 401 and re-pairing is
+        // impossible without a logout() wipe. Crypto keys stay; only the
+        // identity whatsapp granted that session goes.
+        const tombstone = { ...creds };
+        delete tombstone.me;
+        delete tombstone.registered;
+        delete tombstone.account;
+        delete tombstone.platform;
+        delete tombstone.signalIdentities;
+        void auth.write('creds', 'main', tombstone);
       } else {
         waLog.info({ statusCode }, 'socket closed — reconnecting in 5s');
       }
