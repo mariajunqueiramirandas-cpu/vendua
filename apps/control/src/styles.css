@@ -809,8 +809,12 @@ a.card-foot:hover {
   border-top: 1px solid var(--line);
   padding: 12px 18px;
   display: flex;
+  flex-wrap: wrap;
   gap: 8px;
   align-items: flex-end;
+}
+.composer .subj {
+  flex: 1 1 100%;
 }
 .composer textarea {
   flex: 1;

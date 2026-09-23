@@ -60,6 +60,9 @@ export interface Lead {
   businessName: string | null;
   phone: string | null;
   whatsapp: string | null;
+  /** proven evidence the number carries whatsapp (inbound/explicit write);
+   *  false = discovery-derived from `phone` — send may not reach. */
+  whatsappVerified: boolean;
   email: string | null;
   instagram: string | null;
   website: string | null;
@@ -136,6 +139,11 @@ export interface Message {
   body: string;
   status: string;
   providerMessageId: string | null;
+  agentRunId: string | null;
+  /** compose-time subject snapshot — what actually dispatches (email) */
+  subject: string | null;
+  /** failure/rejection reason — 'falhou'/'rejeitado' rows carry it */
+  error: string | null;
   approvedBy: string | null;
   approvedAt: string | null;
   createdAt: string;
@@ -386,10 +394,10 @@ export const api = {
   thread: (id: string) => req<ThreadView>(`/threads/${id}`),
   setThreadAgent: (id: string, enabled: boolean) =>
     req(`/threads/${id}/agent`, { method: 'POST', body: JSON.stringify({ enabled }) }),
-  sendThreadMessage: (id: string, body: string, send: boolean) =>
+  sendThreadMessage: (id: string, body: string, send: boolean, subject?: string) =>
     req<{ message: Message; sent?: { ok: boolean; reason?: string } }>(`/threads/${id}/messages`, {
       method: 'POST',
-      body: JSON.stringify({ body, send }),
+      body: JSON.stringify({ body, send, ...(subject ? { subject } : {}) }),
     }),
 
   approvals: () => req<{ drafts: Draft[] }>('/approvals'),
