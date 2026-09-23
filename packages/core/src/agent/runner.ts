@@ -179,6 +179,8 @@ export async function claimRun(sql: Sql): Promise<RunRow | null> {
         // lead row lock. nowait: the suppression writers hold the lead row
         // and then touch run rows, so waiting here could AB-BA deadlock —
         // contention just means "about to be suppressed", reject instead.
+        // The savepoint is load-bearing: a 55P03 outside it would abort the
+        // whole claim tx, failing every later statement with 25P02.
         let lead:
           | {
               agent_mode: string;
@@ -188,19 +190,22 @@ export async function claimRun(sql: Sql): Promise<RunRow | null> {
             }
           | undefined;
         try {
-          lead = (
-            await tx<
-              {
-                agent_mode: string;
-                archived_at: string | null;
-                unsubscribed_at: string | null;
-                agent_paused_at: string | null;
-              }[]
-            >`
-              select agent_mode, archived_at, unsubscribed_at, agent_paused_at
-              from leads where id = ${run.lead_id} for update nowait
-            `
-          )[0];
+          lead = await tx.savepoint(
+            async (sp) =>
+              (
+                await sp<
+                  {
+                    agent_mode: string;
+                    archived_at: string | null;
+                    unsubscribed_at: string | null;
+                    agent_paused_at: string | null;
+                  }[]
+                >`
+                  select agent_mode, archived_at, unsubscribed_at, agent_paused_at
+                  from leads where id = ${run.lead_id} for update nowait
+                `
+              )[0],
+          );
         } catch (e) {
           if ((e as { code?: string }).code !== '55P03') throw e;
         }
