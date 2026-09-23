@@ -845,54 +845,43 @@ export function createApp({ sql, sessionSecret, controlSecret, autoDrain }: AppD
   app.post('/control/v1/leads', async (c) => {
     controlGate(c);
     const body = await bodyJson(c);
-    for (const field of ['automation', 'triage'] as const) {
-      if (body[field] !== undefined && typeof body[field] !== 'boolean') {
-        throw new HttpError(422, 'BAD_REQUEST', `${field} must be a boolean`, { field });
-      }
+    if (body.automation !== undefined && typeof body.automation !== 'boolean') {
+      throw new HttpError(422, 'BAD_REQUEST', 'automation must be a boolean', {
+        field: 'automation',
+      });
     }
-    // Automation is opt-out per request: `triage:false` skips only the
-    // triage run; `automation:false` skips every run — the staff-managed
-    // equivalent of a CSV-imported lead, which never queues agent work.
-    const res = await claimControl<{ lead: Lead; runId?: string; contactRunId?: string }>(
+    // Automation is opt-out per request: `automation:false` skips the run —
+    // the staff-managed equivalent of a CSV-imported lead, which never queues
+    // agent work. One outreach run does the new card's whole job: research →
+    // dossier → first contact.
+    const res = await claimControl<{ lead: Lead; runId?: string }>(
       sql,
       requireIdemKey(c),
       async (tx) => {
-        // Lead + its runs share ONE claim: a retried POST replays the
-        // stored body (lead + runIds) instead of creating a second lead.
+        // Lead + its run share ONE claim: a retried POST replays the
+        // stored body (lead + runId) instead of creating a second lead.
         const created = await insertLeadTx(tx, leadInsert(body));
         if (created.body.lead.agentMode !== 'off' && body.automation !== false) {
-          const runId =
-            body.triage === false
-              ? undefined
-              : await insertRun(tx, {
-                  kind: 'triage',
-                  leadId: created.body.lead.id,
-                });
-          // guardrails.firstContactDelayMin: a hand-created card gets the
-          // agent's first touch scheduled on its own — the run waits out
-          // the delay in 'queued' (cancelable in Runs), and the send itself
-          // still obeys agent_mode + firstContactDraftOnly.
+          // guardrails.firstContactDelayMin paces the contact — the run waits
+          // out the delay in 'queued' (cancelable in Runs), and the send still
+          // obeys agent_mode + firstContactDraftOnly. 0 = approval path: the
+          // run fires at once but draftOnly, so it still researches and
+          // drafts while nothing can send unreviewed.
           const g = await getSettingTx<Partial<Guardrails>>(tx, 'guardrails', {});
           const delay = g.firstContactDelayMin ?? DEFAULT_GUARDRAILS.firstContactDelayMin;
-          const contactRunId =
-            delay > 0
-              ? await insertRun(tx, {
-                  kind: 'outreach',
-                  leadId: created.body.lead.id,
-                  runAt: new Date(Date.now() + delay * 60_000),
-                  params: {
-                    auto: 'first-contact',
-                    focus: 'primeiro contato — lead recém-criado pela equipe',
-                  },
-                })
-              : undefined;
+          const runId = await insertRun(tx, {
+            kind: 'outreach',
+            leadId: created.body.lead.id,
+            ...(delay > 0 ? { runAt: new Date(Date.now() + delay * 60_000) } : {}),
+            params: {
+              auto: 'first-contact',
+              focus: 'primeiro contato — lead recém-criado pela equipe',
+              ...(delay > 0 ? {} : { draftOnly: true }),
+            },
+          });
           return {
             status: created.status,
-            body: {
-              ...created.body,
-              ...(runId ? { runId } : {}),
-              ...(contactRunId ? { contactRunId } : {}),
-            },
+            body: { ...created.body, runId },
           };
         }
         return created;
@@ -902,7 +891,6 @@ export function createApp({ sql, sessionSecret, controlSecret, autoDrain }: AppD
     if (!res.replayed) {
       emitControlEvent('lead.change', res.body.lead.id);
       if (res.body.runId) emitControlEvent('run.update', res.body.runId);
-      if (res.body.contactRunId) emitControlEvent('run.update', res.body.contactRunId);
     }
     if (res.body.runId) kickDrain();
     return c.json(res.body, res.status as 200);

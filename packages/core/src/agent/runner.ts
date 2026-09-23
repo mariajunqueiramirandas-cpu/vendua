@@ -881,8 +881,9 @@ export async function runOnce(sql: Sql): Promise<boolean> {
     return e?.type === 'monid_spend' && typeof e.spentUsd === 'number' ? e.spentUsd : acc;
   }, 0);
   // Every kind gets a cap — research tools aren't discovery-only anymore
-  // (triage/reply enrich fresh leads), so a null budget would silently mean
-  // uncapped monid calls. Discovery prospecting keeps the bigger default.
+  // (triage/outreach enrich fresh cards, reply falls back to them), so a
+  // null budget would silently mean uncapped monid calls. Discovery
+  // prospecting keeps the bigger default.
   const monidBudget = new MonidBudget(
     // 0 is a real cap (free tools only) — only an absent/non-numeric
     // param gets the default

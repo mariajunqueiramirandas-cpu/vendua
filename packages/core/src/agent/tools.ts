@@ -358,9 +358,11 @@ const REGISTRY: { def: AgentTool; toolsets: string[] }[] = [
     },
   },
   {
-    // triage/reply too — a fresh lead (inbound sender, staff-created card)
-    // gets researched before the agent writes anything.
-    toolsets: ['triage', 'reply', 'discovery'],
+    // Staff cards and inbound senders get researched before the agent writes
+    // anything — outreach carries that job on fresh cards, triage on manual
+    // re-research. Reply keeps it as a fallback only: in a live conversation
+    // asking beats searching.
+    toolsets: ['triage', 'reply', 'outreach', 'discovery'],
     def: {
       name: 'web_search',
       description:
@@ -376,9 +378,9 @@ const REGISTRY: { def: AgentTool; toolsets: string[] }[] = [
     },
   },
   {
-    // triage reads deep (site/perfil do prospect); reply stays light —
+    // triage/outreach read deep (site/perfil do prospect); reply stays light —
     // a live conversation can't afford a page-reading rabbit hole.
-    toolsets: ['triage', 'discovery'],
+    toolsets: ['triage', 'outreach', 'discovery'],
     def: {
       name: 'read_pages',
       description:
@@ -456,9 +458,9 @@ const REGISTRY: { def: AgentTool; toolsets: string[] }[] = [
     },
   },
   {
-    // triage: a staff-created card with a business name + city resolves
-    // contacts here before the first-contact draft.
-    toolsets: ['triage', 'discovery'],
+    // A fresh card (staff-created or manual triage) with a business name +
+    // city resolves contacts here before the first-contact draft.
+    toolsets: ['triage', 'outreach', 'discovery'],
     def: {
       name: 'maps_lookup',
       description:
@@ -475,7 +477,7 @@ const REGISTRY: { def: AgentTool; toolsets: string[] }[] = [
     },
   },
   {
-    toolsets: ['triage', 'discovery'],
+    toolsets: ['triage', 'outreach', 'discovery'],
     def: {
       name: 'instagram_profile',
       description:
@@ -490,7 +492,7 @@ const REGISTRY: { def: AgentTool; toolsets: string[] }[] = [
     },
   },
   {
-    toolsets: ['triage', 'reply', 'discovery'],
+    toolsets: ['triage', 'reply', 'outreach', 'discovery'],
     def: {
       name: 'serp',
       description:

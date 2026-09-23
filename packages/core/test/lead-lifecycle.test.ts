@@ -18,6 +18,7 @@ describe('guardrails — cadence + stale-draft knobs', () => {
   test('defaults', () => {
     expect(DEFAULT_GUARDRAILS.followupCadenceDays).toBe(2);
     expect(DEFAULT_GUARDRAILS.staleDraftDays).toBe(7);
+    expect(DEFAULT_GUARDRAILS.firstContactDelayMin).toBe(0);
   });
 
   test('validateSetting accepts the new keys in range', () => {
@@ -112,33 +113,34 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('lead lifecycle (db)', () => {
         };
         expect(lead.id).toBeTruthy();
         expect(lead.agentMode).not.toBe('off');
-        // automation:false covers BOTH the triage run and the delayed
-        // first-contact run — the staff-managed CSV-import path.
+        // automation:false skips the card's single run — the staff-managed
+        // CSV-import path, no agent work at all.
         expect(await runsFor(lead.id)).toHaveLength(0);
       } finally {
         await setGuardrails({});
       }
     });
 
-    test('triage:false skips only the triage run — scheduled contact still queues', async () => {
+    test('firstContactDelayMin > 0 schedules the single contact run', async () => {
       await setup();
       await setGuardrails({ firstContactDelayMin: 60 });
       try {
         const res = await postLead(
-          { name: 'No Triage', whatsapp: '+55 85 90000-0002', triage: false },
-          key('a1-triage-off'),
+          { name: 'Delayed Contact', whatsapp: '+55 85 90000-0002' },
+          key('a1-delayed'),
         );
         expect(res.status).toBe(201);
         const { lead } = (await res.json()) as { lead: { id: string } };
         const runs = await runsFor(lead.id);
         expect(runs).toHaveLength(1);
         expect(runs[0]!.kind).toBe('outreach');
+        expect(runs[0]!.params.draftOnly).toBeUndefined();
       } finally {
         await setGuardrails({});
       }
     });
 
-    test('default behavior unchanged — triage run queues', async () => {
+    test('default — one outreach run, draft-only approval path', async () => {
       await setup();
       const res = await postLead(
         { name: 'Default Automation', whatsapp: '+55 85 90000-0003' },
@@ -152,7 +154,11 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('lead lifecycle (db)', () => {
       expect(runId).toBeTruthy();
       const runs = await runsFor(lead.id);
       expect(runs).toHaveLength(1);
-      expect(runs[0]!.kind).toBe('triage');
+      expect(runs[0]!.kind).toBe('outreach');
+      // firstContactDelayMin = 0 → the merged run researches and drafts but
+      // never sends — the approval path triage used to carry.
+      expect(runs[0]!.params.draftOnly).toBe(true);
+      expect(runs[0]!.params.auto).toBe('first-contact');
     });
   });
 
