@@ -387,6 +387,7 @@ export async function ensureSocket(
     // a socket that no longer exists.
     connState = 'off';
     qrSocket = null;
+    notifyConnWaiters();
     if (socketAccountId) void persistQr(sql, socketAccountId, null, nextWaGen());
     socketAccountId = null;
     emitControlEvent('channel.health');
@@ -412,6 +413,7 @@ export async function ensureSocket(
   if (!starting) {
     connState = 'connecting';
     qrSocket = null;
+    notifyConnWaiters();
     startingFingerprint = wanted;
     startingGen = startGen;
     starting = startSocket(sql, integration!).then(
@@ -428,6 +430,7 @@ export async function ensureSocket(
         startingFingerprint = null;
         connState = 'off';
         qrSocket = null;
+        notifyConnWaiters();
         throw err;
       },
     );
@@ -507,6 +510,7 @@ export async function logoutWa(sql: Sql, accountId: string): Promise<void> {
     socketAccountId = null;
     connState = 'off';
     qrSocket = null;
+    notifyConnWaiters();
     waMe = null;
   }
   starting = null;
