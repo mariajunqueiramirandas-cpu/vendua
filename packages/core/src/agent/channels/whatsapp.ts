@@ -208,6 +208,14 @@ export function onHistoryMessage(fn: HistoryHandler) {
   historyHandlers.push(fn);
 }
 
+/** One queue for every socket's history chunks — Baileys emits several
+ *  messaging-history.set events per pairing, each with up to thousands of
+ *  stanzas, and a reconnect spawns a fresh socket while old chunks may still
+ *  be draining. Serializing through a single tail is what keeps two
+ *  concurrent drains carrying the same unknown contact from both missing
+ *  the lookup and minting duplicate leads. */
+let historyTail: Promise<void> = Promise.resolve();
+
 /** DB-backed auth state. Baileys v7's initAuthCreds() +
  * SignalKeyStore-style read/write map onto our wa_auth_state rows. Creds and
  * signal keys carry Buffers — round-trip through BufferJSON so binary data
@@ -478,12 +486,6 @@ async function startSocket(sql: Sql, integration: IntegrationRow): Promise<Baile
       }
     }
   });
-  // Chunks chain through this socket's tail — Baileys emits several
-  // messaging-history.set events per pairing and each carries thousands of
-  // stanzas. Serializing across chunks (not just within one) is what keeps
-  // two chunks carrying the same unknown contact from both missing the
-  // lookup and minting duplicate leads.
-  let historyTail: Promise<void> = Promise.resolve();
   sock.ev.on(
     'messaging-history.set',
     ({ messages, contacts, lidPnMappings, progress, isLatest }) => {
@@ -512,10 +514,12 @@ async function startSocket(sql: Sql, integration: IntegrationRow): Promise<Baile
         { msgs: messages?.length ?? 0, progress, isLatest },
         'history sync chunk received',
       );
+      // The accepted chunk joins the module tail and always drains — the
+      // payload is already in-process and ingest needs no creds (it's
+      // jid-attributed CRM writes), so teardown can't corrupt it, only lose
+      // it. Disconnects and re-pairs never drop received history.
       historyTail = historyTail
         .then(async () => {
-          // Detached between enqueue and drain — a replaced socket stops mid-queue.
-          if (socket !== sock) return;
           for (const m of messages ?? []) {
             try {
               const key = m.key;
@@ -543,7 +547,13 @@ async function startSocket(sql: Sql, integration: IntegrationRow): Promise<Baile
                 ...(sentAt ? { sentAt } : {}),
               };
               for (const fn of historyHandlers) {
-                await fn(entry);
+                // Isolated per subscriber — one rejecting consumer must not
+                // skip the entry for the rest.
+                try {
+                  await fn(entry);
+                } catch (e) {
+                  waLog.warn({ err: e, id: m.key?.id }, 'history message ingest failed');
+                }
               }
             } catch (e) {
               waLog.warn({ err: e, id: m.key?.id }, 'history message ingest failed');
