@@ -253,6 +253,10 @@ export async function addInboundMessage(
     channel: Channel;
     /** sender's address/jid as the provider reports it */
     from: string;
+    /** the sender's complementary provider address when the channel carried
+     *  one — whatsapp LID ↔ phone-number jid pairs — matched as an alias so
+     *  a contact first seen under the other form doesn't re-mint a lead */
+    fromAlias?: string;
     fromName?: string;
     subject?: string;
     body: string;
@@ -295,10 +299,17 @@ export async function addInboundMessage(
       leadId = rows[0]?.id ?? null;
     } else {
       const digits = from.replace(/\D/g, '');
-      if (digits.length >= 6) {
+      // `fromAlias` is the same sender's complementary provider address —
+      // whatsapp stanzas carry LID ↔ phone-number jid pairs. `whatsapp`
+      // matches on either alias so a contact first seen under its lid isn't
+      // re-minted when a stanza later arrives PN-addressed; `phone` stays
+      // primary-only since the lid is not a phone number.
+      const altDigits = input.fromAlias?.replace(/\D/g, '') ?? '';
+      const whatsappDigits = [digits, altDigits].filter((d) => d.length >= 6);
+      if (whatsappDigits.length) {
         const rows = await tx`
           select id from leads where archived_at is null and (
-            regexp_replace(coalesce(whatsapp, ''), '\\D', '', 'g') = ${digits}
+            regexp_replace(coalesce(whatsapp, ''), '\\D', '', 'g') = any(${whatsappDigits})
             or regexp_replace(coalesce(phone, ''), '\\D', '', 'g') = ${digits}
           ) order by created_at desc limit 1
         `;
@@ -307,14 +318,23 @@ export async function addInboundMessage(
       // The sender number is proven for a matched lead too: an empty
       // whatsapp (e.g. phone-only match) takes it verified; a digit-matching
       // stored value gets verified; a different stored value keeps its own
-      // provenance — inbound proves `from`, not that other number.
+      // provenance — inbound proves `from`, not that other number. The one
+      // exception: when the stored value is the message's own alias, the
+      // provider proved both addresses are this contact — canonicalize to
+      // `from` so later messages converge instead of splitting the lead.
       if (leadId && input.channel === 'whatsapp') {
+        const hasAlt = altDigits.length >= 6;
         await tx`
           update leads set
-            whatsapp = coalesce(nullif(whatsapp, ''), ${from}),
+            whatsapp = case
+              when whatsapp is null or whatsapp = '' then ${from}
+              when ${hasAlt} and regexp_replace(whatsapp, '\\D', '', 'g') = ${altDigits} then ${from}
+              else whatsapp
+            end,
             whatsapp_verified = whatsapp_verified
               or whatsapp is null or whatsapp = ''
               or regexp_replace(whatsapp, '\\D', '', 'g') = ${digits}
+              or (${hasAlt} and regexp_replace(whatsapp, '\\D', '', 'g') = ${altDigits})
           where id = ${leadId}
         `;
       }

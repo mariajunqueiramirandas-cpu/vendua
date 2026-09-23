@@ -154,6 +154,10 @@ type MessageHandler = (
   text: string,
   providerId: string | null,
   pushName?: string,
+  /** The sender's complementary address (the LID when `jid` is the PN form,
+   *  or vice versa) so persistence can converge a contact it first saw
+   *  under the other alias. */
+  altJid?: string,
 ) => Promise<void>;
 
 const handlers: MessageHandler[] = [];
@@ -418,29 +422,39 @@ async function startSocket(sql: Sql, integration: IntegrationRow): Promise<Baile
       // for every participant and reply into the group. DMs increasingly
       // arrive addressed by LID ('…@lid'): the phone-number jid then rides
       // in remoteJidAlt, which is the form lead digit-matching needs.
-      const jid = key ? dmJid(key.remoteJid, key.remoteJidAlt) : null;
-      if (!key || key.fromMe || !jid) continue;
+      const dm = key ? dmJid(key.remoteJid, key.remoteJidAlt) : null;
+      if (!key || key.fromMe || !dm) continue;
       // No provider id = nothing to dedupe a retry on — skip rather than
       // insert a message we may see again.
       if (!key.id) continue;
       const text = extractText(baileys.normalizeMessageContent(m.message) ?? m.message);
       if (!text) continue;
-      waLog.info({ from: maskPhone(jid), type }, 'inbound message');
+      waLog.info({ from: maskPhone(dm.jid), type }, 'inbound message');
       for (const fn of handlers) {
-        void fn(jid, text, key.id, m.pushName);
+        void fn(dm.jid, text, key.id, m.pushName, dm.alias);
       }
     }
   });
   return sock;
 }
 
-/** The direct-chat jid for an inbound message. Prefers the phone-number
- *  form (@s.whatsapp.net); falls back to the LID remoteJid so lid-addressed
- *  messages still land instead of being dropped — group/broadcast/newsletter
- *  JIDs match neither and are rejected. */
-function dmJid(remoteJid?: string, remoteJidAlt?: string): string | null {
-  const pn = (j?: string) => (j?.endsWith('@s.whatsapp.net') ? j : null);
-  return pn(remoteJid) ?? pn(remoteJidAlt) ?? (remoteJid?.endsWith('@lid') ? remoteJid : null);
+/** The direct-chat jid pair for an inbound message: `jid` prefers the
+ *  phone-number form (@s.whatsapp.net — the shape lead digit-matching
+ *  wants), `alias` is the complementary address when the stanza carried one
+ *  (remoteJid '…@lid' ↔ remoteJidAlt PN). A lid-only message still lands —
+ *  group/broadcast/newsletter JIDs match neither form and are rejected. */
+function dmJid(
+  remoteJid?: string,
+  remoteJidAlt?: string,
+): { jid: string; alias?: string } | null {
+  const dm = (j?: string) =>
+    j && (j.endsWith('@s.whatsapp.net') || j.endsWith('@lid')) ? j : null;
+  const a = dm(remoteJid);
+  const b = dm(remoteJidAlt);
+  const jid = a?.endsWith('@s.whatsapp.net') ? a : (b ?? a);
+  if (!jid) return null;
+  const alias = jid === a ? b : a;
+  return alias && alias !== jid ? { jid, alias } : { jid };
 }
 
 /** Phone digits → '55…9988' for logs — correlatable without full PII. */
