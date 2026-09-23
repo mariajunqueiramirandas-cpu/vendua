@@ -30,6 +30,9 @@ interface BaileysSocket {
       cb: (u: {
         connection?: string;
         qr?: string;
+        /** QR pairing confirmed server-side — whatsapp drops the stream
+         *  with a 515 right after, and the reconnect must log in. */
+        isNewLogin?: boolean;
         lastDisconnect?: { error?: { output?: { statusCode?: number } } };
       }) => void,
     ): void;
@@ -87,10 +90,23 @@ function waitForConnChange(ms: number): Promise<void> {
 /** The paired account once the socket is `open` — lets the Config screen
  *  say WHO is connected instead of implying enabled == working. */
 let waMe: { phone: string | null; name: string | null } | null = null;
-/** While logout() is in flight its own close event clears the globals —
- *  this flag stops ensureSocket from installing a replacement the logout
- *  cleanup would then orphan (alive but identity-gated out of events). */
+/** Held while any logoutWa call is queued or running: ensureSocket refuses
+ *  to install a replacement the wipe would orphan, and auth writes are
+ *  no-ops — nothing may commit after the table delete and resurrect the
+ *  wiped session. Managed by the logoutDepth refcount inside logoutWa. */
 let loggingOut = false;
+/** Every write issued through `auth` lands here so logoutWa can drain
+ *  in-flight commits before wiping: a write queued before `loggingOut`
+ *  went up could otherwise commit after the delete. */
+const pendingAuthWrites = new Set<Promise<unknown>>();
+function trackAuthWrite<T>(p: Promise<T>): Promise<T> {
+  pendingAuthWrites.add(p);
+  void p.then(
+    () => pendingAuthWrites.delete(p),
+    () => pendingAuthWrites.delete(p),
+  );
+  return p;
+}
 export function waStatus(): string {
   return connState;
 }
@@ -114,6 +130,17 @@ function nextWaGen(): number {
 
 function fingerprintOf(integration: IntegrationRow): string {
   return `${integration.id}:${(integration.config.accountId as string) ?? 'default'}:${integration.updated_at}`;
+}
+
+/** A `me` only counts once the pairing is server-confirmed — baileys marks
+ *  that two ways: `registered` flips true on the link-code notification
+ *  path, `account` is decoded out of the QR pair-success stanza (rc14 never
+ *  sets `registered` for QR pairs). A `me` with neither is a pending
+ *  requestPairingCode claim: persisting it makes the next start take the
+ *  LOGIN branch (creds.me → generateLoginNode) for an account that was
+ *  never registered → 401 → dead socket, no QR. */
+function pairingConfirmed(creds: { registered?: boolean; account?: unknown }): boolean {
+  return !!creds.registered || !!creds.account;
 }
 
 type MessageHandler = (jid: string, text: string, providerId: string | null) => Promise<void>;
@@ -149,20 +176,29 @@ function dbAuthState(
       return JSON.parse(JSON.stringify(raw), bufferJSON.reviver);
     },
     write: async (category: string, name: string, data: unknown) => {
+      // During logoutWa the table delete must be the last write — a commit
+      // landing after it resurrects the dead session, so writes are a no-op
+      // for the window and the ones already in flight get drained there.
+      if (loggingOut) return;
       const serialized = JSON.parse(JSON.stringify(data, bufferJSON.replacer));
-      await controlTx(
-        sql,
-        (tx) =>
-          tx`insert into wa_auth_state (account_id, category, name, data)
-             values (${accountId}, ${category}, ${name}, ${tx.json(serialized as never)})
-             on conflict (account_id, category, name) do update set data = excluded.data`,
+      await trackAuthWrite(
+        controlTx(
+          sql,
+          (tx) =>
+            tx`insert into wa_auth_state (account_id, category, name, data)
+               values (${accountId}, ${category}, ${name}, ${tx.json(serialized as never)})
+               on conflict (account_id, category, name) do update set data = excluded.data`,
+        ),
       );
     },
     delete: async (category: string, name: string) => {
-      await controlTx(
-        sql,
-        (tx) =>
-          tx`delete from wa_auth_state where account_id = ${accountId} and category = ${category} and name = ${name}`,
+      if (loggingOut) return;
+      await trackAuthWrite(
+        controlTx(
+          sql,
+          (tx) =>
+            tx`delete from wa_auth_state where account_id = ${accountId} and category = ${category} and name = ${name}`,
+        ),
       );
     },
   };
@@ -204,19 +240,28 @@ async function startSocket(sql: Sql, integration: IntegrationRow): Promise<Baile
     waLog.warn({ err: e }, 'wa web version fetch failed — using bundled default');
   }
 
-  // An unregistered `me` only ever came from a pending requestPairingCode —
-  // Baileys sets it as a claim before the server acks. Persisting it makes
-  // every later start take the LOGIN branch (creds.me set → generateLoginNode)
-  // for an account that was never registered → 401 → dead socket, no QR. An
-  // identity only counts once the server confirms it (registered: true), so
-  // strip any stale claim at load AND keep it out of writes below.
+  // Strip an unconfirmed `me` claim at load AND keep it out of the writes
+  // below — see pairingConfirmed(). A QR-confirmed `me` (account present)
+  // survives: that is what lets the post-pairing 515 restart come back
+  // through the LOGIN branch instead of re-emitting a QR.
   const creds = ((await auth.read('creds', 'main')) ?? baileys.initAuthCreds()) as {
     registered?: boolean;
+    account?: unknown;
     me?: unknown;
+    platform?: unknown;
+    signalIdentities?: unknown;
   };
-  if (!creds.registered) {
+  // `account` without `me` is residue from rows persisted before QR
+  // pair-success kept its `me` — it never accompanies a live session (the
+  // two are written atomically). Dropped, or it would falsely confirm the
+  // next provisional claim into the same 401 loop it just escaped.
+  if (!creds.registered && creds.account && !creds.me) {
+    waLog.warn('dropping orphaned creds.account — legacy incomplete QR state');
+    delete creds.account;
+  }
+  if (!pairingConfirmed(creds)) {
     if (creds.me) {
-      waLog.warn('dropping stale unregistered creds.me — would force a 401 login');
+      waLog.warn('dropping unconfirmed creds.me — would force a 401 login');
     }
     delete creds.me;
   }
@@ -268,8 +313,10 @@ async function startSocket(sql: Sql, integration: IntegrationRow): Promise<Baile
   const gen = nextWaGen();
 
   sock.ev.on('creds.update', () => {
+    if (socket !== sock) return; // stale socket — a replacement owns globals
+    if (loggingOut) return; // logoutWa owns the wipe — nothing persists
     const snapshot = { ...creds };
-    if (!snapshot.registered) delete snapshot.me;
+    if (!pairingConfirmed(snapshot)) delete snapshot.me;
     void auth.write('creds', 'main', snapshot);
   });
   sock.ev.on('connection.update', (u) => {
@@ -281,6 +328,12 @@ async function startSocket(sql: Sql, integration: IntegrationRow): Promise<Baile
       notifyConnWaiters();
       // Emit after the QR write lands — the refetch it triggers must read it.
       void persistQr(sql, accountId, u.qr, gen).then(() => emitControlEvent('channel.health'));
+    }
+    if (u.isNewLogin) {
+      // The 515 that follows is the expected post-pairing restart, not a
+      // failure — say so in the log and drop the now-dead QR from the UI.
+      waLog.info('pairing confirmed — whatsapp will restart the socket (515)');
+      void persistQr(sql, accountId, null, gen).then(() => emitControlEvent('channel.health'));
     }
     if (u.connection === 'open') {
       connState = 'open';
@@ -306,6 +359,21 @@ async function startSocket(sql: Sql, integration: IntegrationRow): Promise<Baile
       const statusCode = u.lastDisconnect?.error?.output?.statusCode;
       if (statusCode === 401) {
         waLog.warn({ statusCode }, 'socket closed by whatsapp (logged out) — re-pair required');
+        // The persisted identity is dead: drop the server-granted fields so
+        // the next start takes the registration branch and can offer a QR —
+        // otherwise every reconnect re-runs login → 401 and re-pairing is
+        // impossible without a logout() wipe. Crypto keys stay; only the
+        // identity whatsapp granted that session goes. Skipped during
+        // logoutWa — it deletes the whole table itself.
+        if (!loggingOut) {
+          const tombstone = { ...creds };
+          delete tombstone.me;
+          delete tombstone.registered;
+          delete tombstone.account;
+          delete tombstone.platform;
+          delete tombstone.signalIdentities;
+          void auth.write('creds', 'main', tombstone);
+        }
       } else {
         waLog.info({ statusCode }, 'socket closed — reconnecting in 5s');
       }
@@ -511,25 +579,42 @@ export async function pairCode(sql: Sql, phone: string): Promise<string> {
   return p;
 }
 
+// Logouts serialize on a chain: two concurrent calls must never interleave
+// their wipes, and loggingOut has to stay held while ANY call is queued or
+// running — a queued call still owns the window, so a replacement socket or
+// auth write in that gap would be wiped mid-flight.
+let logoutDepth = 0;
+let logoutChain: Promise<unknown> = Promise.resolve();
+
 /** Unpair the linked device and wipe stored auth state — the QR/pair flow
  *  can then pair a different number from scratch. logout() tells WhatsApp
  *  the device is gone (its close event is a 401, which the reconnect logic
  *  already leaves dead). */
-export async function logoutWa(sql: Sql, accountId: string): Promise<void> {
+export function logoutWa(sql: Sql, accountId: string): Promise<void> {
+  logoutDepth += 1;
+  loggingOut = true;
+  const run = logoutChain.then(() => logoutOnce(sql, accountId));
+  // Swallow for the chain — the caller still gets their own `run` result,
+  // but a failed logout must not poison later calls' serialization.
+  logoutChain = run.then(
+    () => undefined,
+    () => undefined,
+  );
+  return run.finally(() => {
+    logoutDepth -= 1;
+    if (logoutDepth === 0) loggingOut = false;
+  });
+}
+
+async function logoutOnce(sql: Sql, accountId: string): Promise<void> {
   const s = socket;
   // Remote unlink while the socket is still tracked — if logout() rejects,
   // `socket` stays owned and `wa_auth_state` survives, so a retry retries
-  // the unlink on the same live socket. `loggingOut` serializes the window:
-  // s's own close event clears globals mid-await, and without the flag a
-  // concurrent ensureSocket could install a replacement this cleanup then
-  // detaches. A socket that wasn't tracked (null) just wipes local state.
+  // the unlink on the same live socket. s's own close event clears globals
+  // mid-await; loggingOut is held for the whole wipe so its close can't
+  // resurrect anything. A socket that wasn't tracked (null) just wipes.
   if (s) {
-    loggingOut = true;
-    try {
-      await s.logout();
-    } finally {
-      loggingOut = false;
-    }
+    await s.logout();
   }
   // Clear only what's still owned by s — its close event may already have
   // done it (idempotent), and nothing else could install a replacement
@@ -549,6 +634,9 @@ export async function logoutWa(sql: Sql, accountId: string): Promise<void> {
   } catch {
     /* already closed */
   }
+  // Writes queued before the flag went up can still be in flight — drain
+  // so none commits after the wipe.
+  await Promise.allSettled([...pendingAuthWrites]);
   await controlTx(sql, async (tx) => {
     await tx`delete from wa_auth_state where account_id = ${accountId}`;
   });
