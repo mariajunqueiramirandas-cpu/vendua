@@ -163,9 +163,7 @@ export default function LeadDetail() {
     0,
     LEAD_STATES.findIndex(([v]) => v === lead.state),
   );
-  const filteredActs = acts.filter(
-    ACT_GROUPS.find(([g]) => g === actGroup)?.[1] ?? (() => true),
-  );
+  const filteredActs = acts.filter(ACT_GROUPS.find(([g]) => g === actGroup)?.[1] ?? (() => true));
   const addNote = async () => {
     if (!note.trim()) return;
     await api.addActivity(lead.id, 'note', note);
@@ -554,17 +552,17 @@ export default function LeadDetail() {
             </div>
             {acts.length > 0 && (
               <div className="fchips" style={{ marginBottom: 10 }}>
-                {ACT_GROUPS.filter(
-                  ([g, f]) => g === 'tudo' || acts.some((a) => f(a)),
-                ).map(([g]) => (
-                  <button
-                    key={g}
-                    className={actGroup === g ? 'sel' : ''}
-                    onClick={() => setActGroup(g)}
-                  >
-                    {g}
-                  </button>
-                ))}
+                {ACT_GROUPS.filter(([g, f]) => g === 'tudo' || acts.some((a) => f(a))).map(
+                  ([g]) => (
+                    <button
+                      key={g}
+                      className={actGroup === g ? 'sel' : ''}
+                      onClick={() => setActGroup(g)}
+                    >
+                      {g}
+                    </button>
+                  ),
+                )}
               </div>
             )}
             <div className="steps">

@@ -445,7 +445,12 @@ const LEAD_SORT_SPEC: Record<
   },
   // 'score' keys on the computed expression — the alias only exists in
   // ORDER BY, WHERE needs the expression itself.
-  score: { key: `(${LEAD_SCORE_SQL})`, order: 'score desc, l.id desc', desc: true, nullable: false },
+  score: {
+    key: `(${LEAD_SCORE_SQL})`,
+    order: 'score desc, l.id desc',
+    desc: true,
+    nullable: false,
+  },
   value: {
     key: 'l.deal_value_cents',
     order: 'l.deal_value_cents desc nulls last, l.id desc',
@@ -512,9 +517,11 @@ export async function listLeads(
   let curId: string | null = null;
   if (query.cursor) {
     try {
-      const [s, v, i] = JSON.parse(
-        Buffer.from(query.cursor, 'base64url').toString('utf8'),
-      ) as [string, string | number | null, string];
+      const [s, v, i] = JSON.parse(Buffer.from(query.cursor, 'base64url').toString('utf8')) as [
+        string,
+        string | number | null,
+        string,
+      ];
       if (s !== sort) throw new Error('shape');
       // Postgres would reject a malformed uuid mid-query with a 500 — check
       // the shape here so bad cursors get the BAD_REQUEST below instead.
@@ -524,8 +531,7 @@ export async function listLeads(
       } else if (sort === 'score' || sort === 'value') {
         if (typeof v !== 'number' || !Number.isFinite(v)) throw new Error('shape');
       } else if (sort === 'new' || sort === 'activity') {
-        if (typeof v !== 'string' || Number.isNaN(new Date(v).getTime()))
-          throw new Error('shape');
+        if (typeof v !== 'string' || Number.isNaN(new Date(v).getTime())) throw new Error('shape');
       } else {
         if (typeof v !== 'string') throw new Error('shape');
       }
@@ -571,9 +577,11 @@ export async function listLeads(
           : (() => {
               const kv = spec.cwrap ? `${spec.cwrap}(${p(curVal)})` : p(curVal);
               const op = spec.desc ? '<' : '>';
-              return `(${spec.key} ${op} ${kv} or ` +
+              return (
+                `(${spec.key} ${op} ${kv} or ` +
                 `(${spec.key} = ${kv} and l.id ${op} ${p(curId)}::uuid)` +
-                `${spec.nullable ? ` or ${spec.key} is null` : ''})`;
+                `${spec.nullable ? ` or ${spec.key} is null` : ''})`
+              );
             })()
         : 'true',
     ];

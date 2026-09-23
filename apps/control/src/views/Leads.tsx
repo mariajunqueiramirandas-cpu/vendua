@@ -239,10 +239,7 @@ export default function Leads() {
     .filter(Boolean)
     .sort();
   const knownSources = [
-    ...new Set([
-      ...leads.map((l) => l.source ?? ''),
-      ...(stats?.bySource.map((s) => s.key) ?? []),
-    ]),
+    ...new Set([...leads.map((l) => l.source ?? ''), ...(stats?.bySource.map((s) => s.key) ?? [])]),
   ]
     .filter(Boolean)
     .sort();
@@ -601,7 +598,9 @@ function NewLead({
   // Soft duplicate guard — any channel or the name itself is probed against
   // the same q-search the list uses.
   useEffect(() => {
-    const probe = [f.whatsapp, f.email, f.instagram].map((v) => v.trim()).find((v) => v.length >= 4);
+    const probe = [f.whatsapp, f.email, f.instagram]
+      .map((v) => v.trim())
+      .find((v) => v.length >= 4);
     const term = probe ?? (f.name.trim().length >= 4 ? f.name.trim() : '');
     if (!term) {
       setDupes([]);

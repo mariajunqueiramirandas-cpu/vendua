@@ -181,7 +181,13 @@ export const relDue = (iso: string | null | undefined) => {
   const ms = new Date(iso).getTime() - Date.now();
   const a = Math.abs(ms) / 1000;
   const v =
-    a < 60 ? 'agora' : a < 3600 ? `${Math.floor(a / 60)}min` : a < 86400 ? `${Math.floor(a / 3600)}h` : `${Math.floor(a / 86400)}d`;
+    a < 60
+      ? 'agora'
+      : a < 3600
+        ? `${Math.floor(a / 60)}min`
+        : a < 86400
+          ? `${Math.floor(a / 3600)}h`
+          : `${Math.floor(a / 86400)}d`;
   return ms < 0 ? `há ${v}` : `em ${v}`;
 };
 
