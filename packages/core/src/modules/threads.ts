@@ -649,7 +649,7 @@ export async function listDrafts(sql: Sql) {
     sql,
     (tx) =>
       tx.unsafe(
-        `select m.id, m.thread_id, m.body, m.author, m.status, m.created_at,
+        `select m.id, m.thread_id, m.body, m.author, m.status, m.subject, m.created_at,
               t.channel, t.lead_id, l.name as lead_name, l.business_name, l.state as lead_state
        from lead_messages m
        join lead_threads t on t.id = m.thread_id
@@ -663,6 +663,7 @@ export async function listDrafts(sql: Sql) {
           body: string;
           author: string;
           status: string;
+          subject: string | null;
           created_at: string;
           channel: Channel;
           lead_id: string;
@@ -682,6 +683,7 @@ export async function listDrafts(sql: Sql) {
       channel: r.channel,
       body: r.body,
       author: r.author,
+      subject: r.subject,
       createdAt: r.created_at,
     })),
   );

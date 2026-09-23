@@ -171,6 +171,8 @@ export interface Draft {
   leadState: string;
   channel: string;
   body: string;
+  /** compose-time subject snapshot — editing keeps the reviewed subject */
+  subject: string | null;
   author: string;
   createdAt: string;
 }
