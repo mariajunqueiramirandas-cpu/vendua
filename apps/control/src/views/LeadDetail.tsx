@@ -608,15 +608,15 @@ function EditableText({
 }) {
   const [editing, setEditing] = useState(false);
   const [v, setV] = useState('');
-  // blur on unmount must not commit an Escape-cancelled edit.
-  const cancelled = useRef(false);
+  // Enter/Escape already resolved the edit — an unmount blur must not save again.
+  const settled = useRef(false);
   if (!editing) {
     return (
       <button
         className="edv"
         title="clique para editar"
         onClick={() => {
-          cancelled.current = false;
+          settled.current = false;
           setV(value ?? '');
           setEditing(true);
         }}
@@ -632,16 +632,17 @@ function EditableText({
       onChange={(e) => setV(e.target.value)}
       onKeyDown={(e) => {
         if (e.key === 'Enter') {
+          settled.current = true;
           onSave(v.trim() || null);
           setEditing(false);
         }
         if (e.key === 'Escape') {
-          cancelled.current = true;
+          settled.current = true;
           setEditing(false);
         }
       }}
       onBlur={() => {
-        if (!cancelled.current) onSave(v.trim() || null);
+        if (!settled.current) onSave(v.trim() || null);
         setEditing(false);
       }}
     />
@@ -657,7 +658,7 @@ function MoneyEdit({
   onSave: (cents: number | null) => void;
 }) {
   const [editing, setEditing] = useState(false);
-  const cancelled = useRef(false);
+  const settled = useRef(false);
   if (!editing) {
     return (
       <button
@@ -665,7 +666,7 @@ function MoneyEdit({
         style={{ padding: '2px 8px' }}
         title="clique para editar"
         onClick={() => {
-          cancelled.current = false;
+          settled.current = false;
           setEditing(true);
         }}
       >
@@ -674,6 +675,8 @@ function MoneyEdit({
     );
   }
   const commit = (raw: string) => {
+    if (settled.current) return;
+    settled.current = true;
     const v = Number(raw.replace(/\./g, '').replace(',', '.'));
     if (raw === '') onSave(null);
     else if (!Number.isNaN(v)) onSave(Math.round(v * 100));
@@ -687,14 +690,12 @@ function MoneyEdit({
       style={{ width: 130 }}
       onKeyDown={(e) => {
         if (e.key === 'Escape') {
-          cancelled.current = true;
+          settled.current = true;
           setEditing(false);
         }
         if (e.key === 'Enter') commit((e.target as HTMLInputElement).value.trim());
       }}
-      onBlur={(e) => {
-        if (!cancelled.current) commit(e.target.value.trim());
-      }}
+      onBlur={(e) => commit(e.target.value.trim())}
     />
   );
 }
