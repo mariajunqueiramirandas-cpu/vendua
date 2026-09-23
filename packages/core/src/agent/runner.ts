@@ -134,6 +134,9 @@ export async function claimRun(sql: Sql): Promise<RunRow | null> {
               and l.agent_mode <> 'off'
               and l.archived_at is null
               and l.unsubscribed_at is null
+              -- lead-wide handoff (unbound request_human): parked like the
+              -- other suppressions — claims resume when staff lifts the flag.
+              and l.agent_paused_at is null
           ))
           -- a staff-paused thread suppresses the same way — revalidated here
           -- on a fresh snapshot so a pause landing after enqueue still holds
@@ -165,6 +168,53 @@ export async function claimRun(sql: Sql): Promise<RunRow | null> {
           select agent_enabled from lead_threads where id = ${run.thread_id} for update
         `;
         if (!enabled[0]?.agent_enabled) {
+          rejected.push(run.id);
+          continue;
+        }
+      }
+      if (run.lead_id) {
+        // The lead suppression predicate has the same snapshot gap as the
+        // thread leg above — a handoff/unsubscribe committing between the
+        // scan and the status flip would still claim. Revalidate under the
+        // lead row lock. nowait: the suppression writers hold the lead row
+        // and then touch run rows, so waiting here could AB-BA deadlock —
+        // contention just means "about to be suppressed", reject instead.
+        // The savepoint is load-bearing: a 55P03 outside it would abort the
+        // whole claim tx, failing every later statement with 25P02.
+        await tx`savepoint lead_check`;
+        let lead:
+          | {
+              agent_mode: string;
+              archived_at: string | null;
+              unsubscribed_at: string | null;
+              agent_paused_at: string | null;
+            }
+          | undefined;
+        try {
+          lead = (
+            await tx<
+              {
+                agent_mode: string;
+                archived_at: string | null;
+                unsubscribed_at: string | null;
+                agent_paused_at: string | null;
+              }[]
+            >`
+              select agent_mode, archived_at, unsubscribed_at, agent_paused_at
+              from leads where id = ${run.lead_id} for update nowait
+            `
+          )[0];
+        } catch (e) {
+          if ((e as { code?: string }).code !== '55P03') throw e;
+          await tx`rollback to savepoint lead_check`;
+        }
+        if (
+          !lead ||
+          lead.agent_mode === 'off' ||
+          lead.archived_at ||
+          lead.unsubscribed_at ||
+          lead.agent_paused_at
+        ) {
           rejected.push(run.id);
           continue;
         }

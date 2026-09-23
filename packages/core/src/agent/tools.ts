@@ -21,6 +21,7 @@ import {
 } from '../modules/integrations.ts';
 import { recordBlockedSendTx } from '../modules/channel-health.ts';
 import {
+  agentPausedForChannelTx,
   checkSendAllowedTx,
   resolveChannelTx,
   whatsappReadyTx,
@@ -188,13 +189,12 @@ const REGISTRY: { def: AgentTool; toolsets: string[] }[] = [
     toolsets: ['triage', 'reply', 'outreach', 'discovery'],
     def: {
       name: 'update_lead',
-      description: 'Patch lead fields (contact info, tags, deal value, next action, agent mode).',
+      description: 'Patch lead fields (contact info, tags, deal value, next action, goal).',
       parameters: {
         type: 'object',
         properties: {
           id: leadIdArg,
           ...LEAD_FIELDS,
-          agentMode: { type: 'string', enum: ['off', 'draft', 'auto'] },
           archived: {
             type: 'boolean',
             description:
@@ -993,6 +993,24 @@ export async function executeTool(
     }
     case 'update_lead': {
       const { id, ...rest } = args;
+      // The staff-set autonomy knobs are write-only-above for the model:
+      // agent_mode='auto' would self-promote past the approval gates,
+      // archived:false would resurrect a suppressed lead, and agentPaused
+      // is staff's resume switch — the model hands off via request_human,
+      // it never lifts a handoff itself. archived:true stays — the prompts
+      // use it to bin off-ICP leads.
+      delete rest.agentMode;
+      delete rest.agentPaused;
+      if (rest.archived === false) delete rest.archived;
+      // A patch reduced to nothing shouldn't 422 back at the model — say
+      // what was refused instead of erroring the tool call.
+      if (Object.keys(rest).length === 0) {
+        return {
+          ignored: true,
+          reason:
+            'agentMode, agentPaused and unarchiving are staff-managed; nothing else to update',
+        };
+      }
       const res = await updateLead(sql, String(id), leadPatch(rest, 'agent'), key, 'agent', guard);
       return res.body;
     }
@@ -1049,6 +1067,14 @@ export async function executeTool(
           return {
             status: 200,
             body: { blocked: true as const, reason: pick.reason, use: pick.available[0] ?? null },
+          };
+        }
+        // Same per-(lead, channel) pause check send_message enforces — a
+        // staff-paused thread gets no agent output at all, drafts included.
+        if (await agentPausedForChannelTx(tx, leadId, pick.channel)) {
+          return {
+            status: 200,
+            body: { blocked: true as const, reason: 'thread paused for agent' },
           };
         }
         const composed = await composeMessageTx(tx, {
@@ -1121,16 +1147,11 @@ export async function executeTool(
         const chan = pick.channel;
         // Pause applies per (lead, channel) — staff disabling the DESTINATION
         // thread (or request_human earlier in this same run) must stop sends
-        // even when the lead's agent_mode still allows them. No thread yet =
-        // ensureThread creates it enabled, so only an existing paused one blocks.
-        const destThread = (
-          await tx<{ agent_enabled: boolean }[]>`
-            select agent_enabled from lead_threads
-            where lead_id = ${leadId} and channel = ${chan}
-            for update
-          `
-        )[0];
-        if (destThread && !destThread.agent_enabled) {
+        // even when the lead's agent_mode still allows them. A missing thread
+        // also blocks when every conversation of the lead is paused — that
+        // lead-wide handoff survives a channel hop (ensureThread then creates
+        // the fresh channel already paused).
+        if (await agentPausedForChannelTx(tx, leadId, chan)) {
           return {
             status: 200,
             body: { blocked: true as const, reason: 'thread paused for agent' },
@@ -1312,6 +1333,16 @@ export async function executeTool(
             returning id
           `;
           if (!rows[0]) throw new HttpError(404, 'THREAD_NOT_FOUND', 'thread not found');
+        } else {
+          // Unbound run (outreach/triage): there is no "this thread" — the
+          // handoff is for the lead. The explicit marker blocks output on
+          // every channel (and parks queued runs at claim) until staff lifts
+          // it; per-thread toggles stay untouched, so resuming never
+          // resurrects a thread staff had already paused.
+          await tx`
+            update leads set agent_paused_at = now(), updated_at = now()
+            where id = ${leadId} and agent_paused_at is null
+          `;
         }
         await tx`
           insert into lead_tasks (lead_id, title, due_at, created_by)
@@ -1387,6 +1418,12 @@ export async function executeTool(
           returning id
         `;
         if (changed.length) {
+          // Opt-out never lifts — runs still queued for this lead can never
+          // claim again, so die now instead of parking as zombies forever.
+          await tx`
+            update agent_runs set status = 'canceled', finished_at = now(), error = 'descadastrado'
+            where lead_id = ${leadId} and status = 'queued'
+          `;
           await tx`
             insert into lead_activities (lead_id, kind, body, created_by)
             values (${leadId}, 'system', ${`Pediu para sair — opt-out registrado${reason ? ` (${reason})` : ''}`}, 'agent')

@@ -63,6 +63,7 @@ export interface LeadRow {
   lost_reason: string | null;
   archived_at: string | null;
   unsubscribed_at: string | null;
+  agent_paused_at: string | null;
   discovered_via: string | null;
   created_at: string;
   updated_at: string;
@@ -98,6 +99,7 @@ export interface Lead {
   lostReason: string | null;
   archivedAt: string | null;
   unsubscribedAt: string | null;
+  agentPausedAt: string | null;
   discoveredVia: string | null;
   createdAt: string;
   updatedAt: string;
@@ -142,6 +144,7 @@ export function leadJson(row: LeadRow): Lead {
     lostReason: row.lost_reason,
     archivedAt: row.archived_at,
     unsubscribedAt: row.unsubscribed_at,
+    agentPausedAt: row.agent_paused_at,
     discoveredVia: row.discovered_via,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
@@ -322,8 +325,24 @@ export function leadPatch(
     // cadence floor, never a deliberately scheduled follow-up.
     set.next_action_source = set.next_action_at === null ? null : actor;
   }
-  if ('archived' in body)
-    set.archived_at = body.archived === true ? new Date().toISOString() : null;
+  if ('archived' in body) {
+    if (typeof body.archived !== 'boolean') {
+      throw new HttpError(422, 'BAD_REQUEST', 'archived must be a boolean', {
+        field: 'archived',
+      });
+    }
+    set.archived_at = body.archived ? new Date().toISOString() : null;
+  }
+  // Staff-side resume after an unbound request_human handoff — the lead-wide
+  // pause marker gates every channel until cleared.
+  if ('agentPaused' in body) {
+    if (typeof body.agentPaused !== 'boolean') {
+      throw new HttpError(422, 'BAD_REQUEST', 'agentPaused must be a boolean', {
+        field: 'agentPaused',
+      });
+    }
+    set.agent_paused_at = body.agentPaused ? new Date().toISOString() : null;
+  }
   if (Object.keys(set).length === 0) {
     throw new HttpError(422, 'BAD_REQUEST', 'no updatable fields in body');
   }
@@ -607,6 +626,12 @@ export async function unsubscribeLead(sql: Sql, id: string): Promise<void> {
     const exists = rows[0] ?? (await tx`select id from leads where id = ${id}`)[0];
     if (!exists) throw new HttpError(404, 'LEAD_NOT_FOUND', 'lead not found');
     if (!rows[0]) return false;
+    // Queued runs on an opted-out lead can never claim — cancel them like
+    // the staff endpoint and the unsubscribe tool both do.
+    await tx`
+      update agent_runs set status = 'canceled', error = 'descadastrado', finished_at = now()
+      where lead_id = ${id} and status = 'queued'
+    `;
     await tx`
       insert into lead_activities (lead_id, kind, body, created_by)
       values (${id}, 'system', 'Descadastrado — sem novos envios', 'system')

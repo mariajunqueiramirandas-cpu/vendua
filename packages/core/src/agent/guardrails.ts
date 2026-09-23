@@ -159,6 +159,32 @@ export async function resolveChannelTx(
   };
 }
 
+/** Whether agent output is paused for (lead, channel): the lead-wide
+ *  handoff flag (`leads.agent_paused_at`, set by an unbound request_human)
+ *  blocks every channel — including ones with no thread yet; otherwise a
+ *  paused destination thread blocks. Missing thread + no lead flag = fresh
+ *  channel, allowed. */
+export async function agentPausedForChannelTx(
+  tx: Sql,
+  leadId: string,
+  channel: Channel,
+): Promise<boolean> {
+  const lead = (
+    await tx<{ agent_paused_at: string | null }[]>`
+      select agent_paused_at from leads where id = ${leadId} for update
+    `
+  )[0];
+  if (lead?.agent_paused_at) return true;
+  const dest = (
+    await tx<{ agent_enabled: boolean }[]>`
+      select agent_enabled from lead_threads
+      where lead_id = ${leadId} and channel = ${channel}
+      for update
+    `
+  )[0];
+  return !!dest && !dest.agent_enabled;
+}
+
 export interface SendVerdict {
   ok: boolean;
   /** true → send_message degrades to a draft for the approvals queue. */
@@ -182,13 +208,16 @@ export async function checkSendAllowedTx(
           agent_mode: string;
           archived_at: string | null;
           unsubscribed_at: string | null;
+          agent_paused_at: string | null;
           email_bounced_at: string | null;
         }[]
-      >`select agent_mode, archived_at, unsubscribed_at, email_bounced_at from leads where id = ${leadId}`
+      >`select agent_mode, archived_at, unsubscribed_at, agent_paused_at, email_bounced_at from leads where id = ${leadId}`
     )[0];
     if (!lead) return { ok: false, forceDraft: false, reason: 'lead not found' };
     if (lead.archived_at) return { ok: false, forceDraft: false, reason: 'lead archived' };
     if (lead.unsubscribed_at) return { ok: false, forceDraft: false, reason: 'lead unsubscribed' };
+    if (lead.agent_paused_at)
+      return { ok: false, forceDraft: false, reason: 'agent paused for lead' };
     if (lead.agent_mode === 'off')
       return { ok: false, forceDraft: false, reason: 'agent off for lead' };
     // A bounced address is a dead address — Resend told us so. Blocking here

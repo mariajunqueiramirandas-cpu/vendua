@@ -58,8 +58,8 @@ async function settle(sql: Sql, leadId: string): Promise<boolean> {
 
 async function terminalState(sql: Sql, leadId: string): Promise<Terminal> {
   const [lead] = await sql<
-    { unsubscribed_at: string | null; state: string }[]
-  >`select unsubscribed_at, state from leads where id = ${leadId}`;
+    { unsubscribed_at: string | null; state: string; agent_paused_at: string | null }[]
+  >`select unsubscribed_at, state, agent_paused_at from leads where id = ${leadId}`;
   const [failed] = await sql<{ status: string }[]>`
     select status from agent_runs where lead_id = ${leadId}
     order by created_at desc limit 1`;
@@ -70,8 +70,10 @@ async function terminalState(sql: Sql, leadId: string): Promise<Terminal> {
   if (meeting) return { outcome: 'booked', why: 'meeting scheduled' };
   const [thread] = await sql<{ agent_enabled: boolean }[]>`
     select agent_enabled from lead_threads where lead_id = ${leadId} limit 1`;
-  // request_human flips agent_enabled off — the agent stopped itself.
-  if (thread && !thread.agent_enabled) return { outcome: 'handoff', why: 'request_human' };
+  // request_human either pauses the current thread (bound run) or sets the
+  // lead-wide handoff flag (unbound run) — both mean the agent stopped itself.
+  if (lead?.agent_paused_at || (thread && !thread.agent_enabled))
+    return { outcome: 'handoff', why: 'request_human' };
   if (lead?.state === 'live' || lead?.state === 'invited')
     return { outcome: 'progress', why: `state ${lead.state}` };
   return null;

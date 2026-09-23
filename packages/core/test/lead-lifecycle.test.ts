@@ -452,4 +452,133 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('lead lifecycle (db)', () => {
       }
     });
   });
+
+  describe('A4 — enqueue endpoints mirror the claim gate', () => {
+    const post = (path: string, body: Record<string, unknown>, idem: string) =>
+      app.request(path, {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+          'x-vendua-control': 'ctl-secret',
+          'idempotency-key': idem,
+        },
+        body: JSON.stringify(body),
+      });
+    const errCode = async (res: Response) =>
+      ((await res.json()) as { error?: { code?: string } }).error ?? {};
+    const mkLeadApi = async (body: Record<string, unknown>, idem: string) => {
+      // automation:false keeps the lead clean — the assertions below count
+      // only the runs the gated endpoints themselves (don't) enqueue.
+      const res = await post('/control/v1/leads', { automation: false, ...body }, idem);
+      expect(res.status).toBe(201);
+      return ((await res.json()) as { lead: { id: string } }).lead.id;
+    };
+
+    test('POST /leads/:id/run rejects a suppressed lead — queued run could never claim', async () => {
+      await setup();
+      const offId = await mkLeadApi({ name: 'Run Off', agentMode: 'off' }, key('a4-off-lead'));
+      const unsubId = await mkLeadApi({ name: 'Run Unsub' }, key('a4-unsub-lead'));
+      const pausedId = await mkLeadApi({ name: 'Run Paused Lead' }, key('a4-pause-lead'));
+      await sql`update leads set unsubscribed_at = now() where id = ${unsubId}`;
+      await sql`update leads set agent_paused_at = now() where id = ${pausedId}`;
+      for (const [leadId, tag] of [
+        [offId, 'off'],
+        [unsubId, 'unsub'],
+        [pausedId, 'paused'],
+      ] as const) {
+        const res = await post(
+          `/control/v1/leads/${leadId}/run`,
+          { kind: 'outreach' },
+          key(`a4-${tag}`),
+        );
+        expect(res.status).toBe(422);
+        expect((await errCode(res)).code).toBe('LEAD_SUPPRESSED');
+        expect(await runsFor(leadId)).toHaveLength(0);
+      }
+    });
+
+    test('POST /leads/:id/run rejects a staff-paused thread — 422 THREAD_PAUSED', async () => {
+      await setup();
+      const leadId = await mkLeadApi({ name: 'Run Paused' }, key('a4-paused-lead'));
+      const [thread] = await sql<{ id: string }[]>`
+        insert into lead_threads (lead_id, channel, agent_enabled)
+        values (${leadId}, 'manual', false) returning id
+      `;
+      const res = await post(
+        `/control/v1/leads/${leadId}/run`,
+        { kind: 'reply', threadId: thread!.id },
+        key('a4-paused'),
+      );
+      expect(res.status).toBe(422);
+      expect((await errCode(res)).code).toBe('THREAD_PAUSED');
+      expect(await runsFor(leadId)).toHaveLength(0);
+    });
+
+    test('POST /leads/:id/unsubscribe cancels queued runs along with the flag', async () => {
+      await setup();
+      const leadId = await mkLeadApi({ name: 'Unsub Queue' }, key('a4-unsub-lead2'));
+      const queued = await controlTx(sql, (tx) => insertRun(tx, { kind: 'outreach', leadId }));
+      const res = await post(`/control/v1/leads/${leadId}/unsubscribe`, {}, key('a4-unsub'));
+      expect(res.status).toBe(200);
+      const [r] = await sql<{ status: string }[]>`
+        select status from agent_runs where id = ${queued}
+      `;
+      expect(r!.status).toBe('canceled');
+    });
+
+    test('POST /agent/runs applies the same gates for lead- and thread-scoped calls', async () => {
+      await setup();
+      const leadId = await mkLeadApi({ name: 'Runs Paused' }, key('a4-aruns-lead'));
+      const [thread] = await sql<{ id: string }[]>`
+        insert into lead_threads (lead_id, channel, agent_enabled)
+        values (${leadId}, 'manual', false) returning id
+      `;
+      const paused = await post(
+        '/control/v1/agent/runs',
+        { kind: 'reply', threadId: thread!.id },
+        key('a4-aruns-paused'),
+      );
+      expect(paused.status).toBe(422);
+      expect((await errCode(paused)).code).toBe('THREAD_PAUSED');
+      await sql`update leads set agent_mode = 'off' where id = ${leadId}`;
+      const suppressed = await post(
+        '/control/v1/agent/runs',
+        { kind: 'triage', leadId },
+        key('a4-aruns-off'),
+      );
+      expect(suppressed.status).toBe(422);
+      expect((await errCode(suppressed)).code).toBe('LEAD_SUPPRESSED');
+      expect(await runsFor(leadId)).toHaveLength(0);
+    });
+
+    test('POST /agent/runs thread-only adopts the thread’s lead — suppression applies', async () => {
+      await setup();
+      const leadId = await mkLeadApi({ name: 'Thread Only' }, key('a4-tol-lead'));
+      const [thread] = await sql<{ id: string }[]>`
+        insert into lead_threads (lead_id, channel)
+        values (${leadId}, 'manual') returning id
+      `;
+      // suppressed owner: the run must not bypass the lead gate via lead_id null
+      await sql`update leads set agent_mode = 'off' where id = ${leadId}`;
+      const suppressed = await post(
+        '/control/v1/agent/runs',
+        { kind: 'reply', threadId: thread!.id },
+        key('a4-tol-off'),
+      );
+      expect(suppressed.status).toBe(422);
+      expect((await errCode(suppressed)).code).toBe('LEAD_SUPPRESSED');
+      // live owner: the run inserts with lead_id bound, not null
+      await sql`update leads set agent_mode = 'draft' where id = ${leadId}`;
+      const ok = await post(
+        '/control/v1/agent/runs',
+        { kind: 'reply', threadId: thread!.id },
+        key('a4-tol-ok'),
+      );
+      expect(ok.status).toBe(201);
+      const [run] = await sql<{ lead_id: string | null }[]>`
+        select lead_id from agent_runs where lead_id = ${leadId}
+      `;
+      expect(run!.lead_id?.toLowerCase()).toBe(leadId.toLowerCase());
+    });
+  });
 });

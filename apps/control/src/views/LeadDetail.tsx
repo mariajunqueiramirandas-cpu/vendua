@@ -163,7 +163,7 @@ export default function LeadDetail() {
       sub={lead.businessName ?? undefined}
       actions={
         <div className="lead-acts">
-          {lead.agentMode !== 'off' && (
+          {lead.agentMode !== 'off' && !lead.unsubscribedAt && !lead.agentPausedAt && (
             <>
               <select
                 value={actChannel}
@@ -191,9 +191,27 @@ export default function LeadDetail() {
               </button>
             </>
           )}
-          <ConfirmBtn onConfirm={() => void api.unsubscribe(lead.id).then(load)}>
-            <Ban size={14} /> descadastrar
-          </ConfirmBtn>
+          {lead.agentPausedAt && (
+            <button
+              className="btn ghost"
+              title="handoff do agente — retomar libera o agente neste lead de novo"
+              onClick={() => void api.patchLead(lead.id, { agentPaused: false }).then(load)}
+            >
+              <Bot size={14} /> retomar agente
+            </button>
+          )}
+          {lead.unsubscribedAt ? (
+            <span
+              className="chip warn"
+              title="descadastrado — o agente não fala mais com este lead"
+            >
+              <Ban size={12} /> descadastrado
+            </span>
+          ) : (
+            <ConfirmBtn onConfirm={() => void api.unsubscribe(lead.id).then(load)}>
+              <Ban size={14} /> descadastrar
+            </ConfirmBtn>
+          )}
           <ConfirmBtn
             className="danger"
             confirm="arquivar mesmo?"

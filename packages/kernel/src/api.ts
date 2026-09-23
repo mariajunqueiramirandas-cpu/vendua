@@ -456,6 +456,8 @@ export const ERROR_CODES = [
   'BRIEF_NOT_FOUND',
   'UNKNOWN_TOOL',
   'INVALID_AGENT_GOAL',
+  'LEAD_SUPPRESSED',
+  'THREAD_PAUSED',
   'NOTE_LIMIT',
   // meetings module (booking surface + control meetings API)
   'MEETING_NOT_FOUND',

@@ -1003,6 +1003,12 @@ export function createApp({ sql, sessionSecret, controlSecret, autoDrain }: AppD
       if (!exists) throw new HttpError(404, 'LEAD_NOT_FOUND', 'lead not found');
       if (rows[0]) {
         transitioned = true;
+        // Opt-out never lifts — queued runs for this lead are dead weight
+        // the claim gate can never pick up, so cancel them now.
+        await tx`
+          update agent_runs set status = 'canceled', finished_at = now(), error = 'descadastrado'
+          where lead_id = ${id} and status = 'queued'
+        `;
         await tx`
           insert into lead_activities (lead_id, kind, body, created_by)
           values (${id}, 'system', 'Descadastrado pela equipe', 'staff')
@@ -1031,16 +1037,47 @@ export function createApp({ sql, sessionSecret, controlSecret, autoDrain }: AppD
       throw new HttpError(400, 'BAD_REQUEST', 'threadId must be a uuid');
     }
     const res = await claimControl(sql, requireIdemKey(c), async (tx) => {
+      // Mirror the claim gate's suppression predicate: a run queued for a
+      // suppressed lead/thread can never claim — it would park 'queued'
+      // forever. Reject with the reason like dispatch reports it. The row
+      // lock serializes with a concurrent unsubscribe — otherwise this tx
+      // could still insert a zombie run after the opt-out's cancel pass.
+      const lead = (
+        await tx<
+          {
+            agent_mode: string;
+            archived_at: string | null;
+            unsubscribed_at: string | null;
+            agent_paused_at: string | null;
+          }[]
+        >`
+          select agent_mode, archived_at, unsubscribed_at, agent_paused_at from leads
+          where id = ${leadId}
+          for update
+        `
+      )[0];
+      if (!lead) throw new HttpError(404, 'LEAD_NOT_FOUND', 'lead not found');
+      const suppressed = lead.archived_at
+        ? 'lead archived'
+        : lead.unsubscribed_at
+          ? 'lead unsubscribed'
+          : lead.agent_paused_at
+            ? 'agent paused'
+            : lead.agent_mode === 'off'
+              ? 'agent off'
+              : null;
+      if (suppressed) throw new HttpError(422, 'LEAD_SUPPRESSED', suppressed);
       if (threadId) {
         const th = (
-          await tx<{ lead_id: string }[]>`
-            select lead_id from lead_threads where id = ${threadId}
+          await tx<{ lead_id: string; agent_enabled: boolean }[]>`
+            select lead_id, agent_enabled from lead_threads where id = ${threadId}
           `
         )[0];
         if (!th) throw new HttpError(404, 'THREAD_NOT_FOUND', 'thread not found');
         if (th.lead_id.toLowerCase() !== leadId.toLowerCase()) {
           throw new HttpError(422, 'BAD_REQUEST', 'threadId does not belong to leadId');
         }
+        if (!th.agent_enabled) throw new HttpError(422, 'THREAD_PAUSED', 'thread paused for agent');
       }
       return {
         status: 201,
@@ -1487,8 +1524,10 @@ export function createApp({ sql, sessionSecret, controlSecret, autoDrain }: AppD
       tx.unsafe(
         `select r.id, r.kind, r.status, r.lead_id, r.thread_id, r.tokens_in, r.tokens_out,
                 r.cost_cents, r.error, r.created_at, r.started_at, r.finished_at, r.run_at,
-                l.name as lead_name
-         from agent_runs r left join leads l on l.id = r.lead_id
+                l.name as lead_name, t.agent_enabled as thread_agent_enabled
+         from agent_runs r
+         left join leads l on l.id = r.lead_id
+         left join lead_threads t on t.id = r.thread_id
          where ${where.join(' and ')}
          order by ${order} limit ${p(limit)}`,
         params as never[],
@@ -1572,24 +1611,59 @@ export function createApp({ sql, sessionSecret, controlSecret, autoDrain }: AppD
     const res = await claimControl(sql, requireIdemKey(c), async (tx) => {
       // leadId and threadId aren't independent: a reply run bound to a thread
       // must belong to that thread's lead, or thread content could be
-      // answered to the wrong lead's channel.
-      if (leadId && threadId) {
+      // answered to the wrong lead's channel. A thread-only call adopts the
+      // thread's owner — claimRun gates on lead_id, so inserting null would
+      // skip suppression entirely.
+      let effLeadId = leadId;
+      if (threadId) {
         const th = (
-          await tx<{ lead_id: string }[]>`
-            select lead_id from lead_threads where id = ${threadId}
+          await tx<{ lead_id: string; agent_enabled: boolean }[]>`
+            select lead_id, agent_enabled from lead_threads where id = ${threadId}
           `
         )[0];
         if (!th) throw new HttpError(404, 'THREAD_NOT_FOUND', 'thread not found');
-        if (th.lead_id.toLowerCase() !== leadId.toLowerCase()) {
+        if (leadId && th.lead_id.toLowerCase() !== leadId.toLowerCase()) {
           throw new HttpError(422, 'BAD_REQUEST', 'threadId does not belong to leadId');
         }
+        if (!th.agent_enabled) throw new HttpError(422, 'THREAD_PAUSED', 'thread paused for agent');
+        effLeadId = th.lead_id;
+      }
+      // Same suppression mirror as the lead-scoped enqueue: a run queued
+      // under a suppressed lead can never claim — report instead of parking.
+      // The row lock serializes with a concurrent unsubscribe.
+      if (effLeadId) {
+        const lead = (
+          await tx<
+            {
+              agent_mode: string;
+              archived_at: string | null;
+              unsubscribed_at: string | null;
+              agent_paused_at: string | null;
+            }[]
+          >`
+            select agent_mode, archived_at, unsubscribed_at, agent_paused_at from leads
+            where id = ${effLeadId}
+            for update
+          `
+        )[0];
+        if (!lead) throw new HttpError(404, 'LEAD_NOT_FOUND', 'lead not found');
+        const suppressed = lead.archived_at
+          ? 'lead archived'
+          : lead.unsubscribed_at
+            ? 'lead unsubscribed'
+            : lead.agent_paused_at
+              ? 'agent paused'
+              : lead.agent_mode === 'off'
+                ? 'agent off'
+                : null;
+        if (suppressed) throw new HttpError(422, 'LEAD_SUPPRESSED', suppressed);
       }
       return {
         status: 201,
         body: {
           runId: await insertRun(tx, {
             kind: kind as 'triage' | 'reply' | 'outreach' | 'discovery' | 'strategist',
-            leadId,
+            leadId: effLeadId,
             threadId,
             params: (body.params as Record<string, unknown>) ?? {},
           }),
@@ -1638,9 +1712,10 @@ export function createApp({ sql, sessionSecret, controlSecret, autoDrain }: AppD
               archived_at: string | null;
               unsubscribed_at: string | null;
               agent_mode: string;
+              agent_paused_at: string | null;
             }[]
           >`
-            select archived_at, unsubscribed_at, agent_mode from leads
+            select archived_at, unsubscribed_at, agent_mode, agent_paused_at from leads
             where id = ${id} for update
           `
         )[0];
@@ -1652,9 +1727,11 @@ export function createApp({ sql, sessionSecret, controlSecret, autoDrain }: AppD
           ? 'lead archived'
           : lead.unsubscribed_at
             ? 'lead unsubscribed'
-            : lead.agent_mode === 'off'
-              ? 'agent off'
-              : null;
+            : lead.agent_paused_at
+              ? 'agent paused'
+              : lead.agent_mode === 'off'
+                ? 'agent off'
+                : null;
         if (reason) {
           skipped.push({ id, reason });
           continue;

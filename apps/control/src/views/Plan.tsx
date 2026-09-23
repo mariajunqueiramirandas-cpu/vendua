@@ -109,17 +109,19 @@ export default function Plan() {
 
   const byId = new Map(leads.map((l) => [l.id, l]));
 
-  // Mirrors claimRun's suppression predicate — off, archived, unsubscribed —
-  // so the queue only shows runs the worker can actually claim.
+  // Mirrors claimRun's suppression predicate — off, archived, unsubscribed,
+  // lead-wide handoff — so the queue only shows runs the worker can claim.
   const live = (id: string) => {
     const l = byId.get(id);
-    return !!l && l.agentMode !== 'off' && !l.archivedAt && !l.unsubscribedAt;
+    return !!l && l.agentMode !== 'off' && !l.archivedAt && !l.unsubscribedAt && !l.agentPausedAt;
   };
 
   // Flat timeline: every future agent move, soonest first.
   const pending: Pending[] = [
     ...runs
-      .filter((r) => live(r.lead_id!))
+      // thread-bound runs also hold on a staff pause — the second half of
+      // claimRun's gate the lead-level live() can't see.
+      .filter((r) => live(r.lead_id!) && r.thread_agent_enabled !== false)
       .map((r) => ({
         at: r.run_at!,
         what: `run ${RUN_KIND_LABEL[r.kind] ?? r.kind}`,

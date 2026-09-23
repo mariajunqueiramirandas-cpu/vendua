@@ -295,6 +295,12 @@ export async function applyDeliveryEventTx(
         returning id
       `;
       if (upd.length) {
+        // Opt-out never lifts — queued runs for this lead are dead weight
+        // the claim gate can never pick up, so cancel them now.
+        await tx`
+          update agent_runs set status = 'canceled', finished_at = now(), error = 'descadastrado'
+          where lead_id = ${leadId} and status = 'queued'
+        `;
         await tx`
           insert into lead_activities (lead_id, kind, body, created_by)
           values (${leadId}, 'system', 'Reclamação de spam (${type}) — descadastrado', 'system')
