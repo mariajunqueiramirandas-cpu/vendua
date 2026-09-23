@@ -354,7 +354,8 @@ export default function Settings() {
           ))}
         </nav>
         <div className="set-body">
-          {section === 'comportamento' && (
+          {/* every card stays mounted so its unsaved draft survives a section switch */}
+          <div hidden={section !== 'comportamento'}>
             <section className="set-sec">
               <h2>guardrails</h2>
               <p className="sub">regras duras — o código impõe, não o prompt</p>
@@ -363,68 +364,64 @@ export default function Settings() {
                 onSave={(v) => void saveSetting('guardrails', v)}
               />
             </section>
-          )}
-          {section === 'voz' && (
-            <>
-              <section className="set-sec">
-                <h2>voz do agente</h2>
-                <p className="sub">o pitch inteiro que o modelo recebe no system prompt</p>
-                <PitchCard value={pitch} onSave={(v) => void saveSetting('pitch', v)} />
-              </section>
-              <section className="set-sec">
-                <h2>memória do agente</h2>
-                <p className="sub">fatos que ele guardou via `remember` — ou que você escreve</p>
-                <MemoryCard
-                  facts={memory.facts}
-                  onSave={(facts) => void saveSetting('agent_memory', { facts })}
-                />
-              </section>
-            </>
-          )}
-          {section === 'canais' && (
-            <>
-              <section className="set-sec">
-                <h2>provedores</h2>
-                <p className="sub">
-                  um driver ativo por tipo —{' '}
-                  {
-                    KINDS.filter(
-                      (k) =>
-                        providerStatus(
-                          k.key,
-                          integrations.filter((i) => i.kind === k.key),
-                          k.key === 'whatsapp' ? wa : WA_IDLE,
-                        ).tone === 'live',
-                    ).length
-                  }
-                  /{KINDS.length} prontos
-                </p>
-                {loading && !integrations.length && (
-                  <div className="empty">
-                    <div className="serif" style={{ fontSize: 'var(--t-lg)' }}>
-                      carregando…
-                    </div>
+          </div>
+          <div hidden={section !== 'voz'}>
+            <section className="set-sec">
+              <h2>voz do agente</h2>
+              <p className="sub">o pitch inteiro que o modelo recebe no system prompt</p>
+              <PitchCard value={pitch} onSave={(v) => void saveSetting('pitch', v)} />
+            </section>
+            <section className="set-sec">
+              <h2>memória do agente</h2>
+              <p className="sub">fatos que ele guardou via `remember` — ou que você escreve</p>
+              <MemoryCard
+                facts={memory.facts}
+                onSave={(facts) => void saveSetting('agent_memory', { facts })}
+              />
+            </section>
+          </div>
+          <div hidden={section !== 'canais'}>
+            <section className="set-sec">
+              <h2>provedores</h2>
+              <p className="sub">
+                um driver ativo por tipo —{' '}
+                {
+                  KINDS.filter(
+                    (k) =>
+                      providerStatus(
+                        k.key,
+                        integrations.filter((i) => i.kind === k.key),
+                        k.key === 'whatsapp' ? wa : WA_IDLE,
+                      ).tone === 'live',
+                  ).length
+                }
+                /{KINDS.length} prontos
+              </p>
+              {loading && !integrations.length && (
+                <div className="empty">
+                  <div className="serif" style={{ fontSize: 'var(--t-lg)' }}>
+                    carregando…
                   </div>
-                )}
-                {KINDS.map((k) => (
-                  <ProviderCard
-                    key={k.key}
-                    kind={k}
-                    rows={integrations.filter((i) => i.kind === k.key)}
-                    wa={k.key === 'whatsapp' ? wa : WA_IDLE}
-                    onWaLogout={k.key === 'whatsapp' ? () => void waLogout() : undefined}
-                    onSave={(d, enable) => void saveIntegration(k.key, d, enable)}
-                  />
-                ))}
-              </section>
-              <section className="set-sec">
-                <h2>saúde dos canais</h2>
-                <p className="sub">envios, falhas e bloqueios de guarda · últimos 30 dias</p>
-                <ChannelHealthCard />
-              </section>
-            </>
-          )}
-          {section === 'calls' && (
+                </div>
+              )}
+              {KINDS.map((k) => (
+                <ProviderCard
+                  key={k.key}
+                  kind={k}
+                  rows={integrations.filter((i) => i.kind === k.key)}
+                  wa={k.key === 'whatsapp' ? wa : WA_IDLE}
+                  onWaLogout={k.key === 'whatsapp' ? () => void waLogout() : undefined}
+                  onSave={(d, enable) => void saveIntegration(k.key, d, enable)}
+                />
+              ))}
+            </section>
+            <section className="set-sec">
+              <h2>saúde dos canais</h2>
+              <p className="sub">envios, falhas e bloqueios de guarda · últimos 30 dias</p>
+              <ChannelHealthCard />
+            </section>
+          </div>
+          <div hidden={section !== 'calls'}>
             <section className="set-sec">
               <h2>reunião</h2>
               <p className="sub">
@@ -432,24 +429,22 @@ export default function Settings() {
               </p>
               <MeetingCard value={meeting} onSave={(v) => void saveSetting('meeting', v)} />
             </section>
-          )}
-          {section === 'relatorios' && (
-            <>
-              <section className="set-sec">
-                <h2>previsão do pipeline</h2>
-                <p className="sub">
-                  probabilidade de fechar por estágio — multiplica o valor do lead na previsão de
-                  relatórios
-                </p>
-                <ForecastCard value={forecast} onSave={(v) => void saveSetting('forecast', v)} />
-              </section>
-              <section className="set-sec">
-                <h2>resumo diário</h2>
-                <p className="sub">um email por dia com leads novos, respostas, calls e custo</p>
-                <DigestCard value={digest} onSave={(v) => void saveSetting('digest', v)} />
-              </section>
-            </>
-          )}
+          </div>
+          <div hidden={section !== 'relatorios'}>
+            <section className="set-sec">
+              <h2>previsão do pipeline</h2>
+              <p className="sub">
+                probabilidade de fechar por estágio — multiplica o valor do lead na previsão de
+                relatórios
+              </p>
+              <ForecastCard value={forecast} onSave={(v) => void saveSetting('forecast', v)} />
+            </section>
+            <section className="set-sec">
+              <h2>resumo diário</h2>
+              <p className="sub">um email por dia com leads novos, respostas, calls e custo</p>
+              <DigestCard value={digest} onSave={(v) => void saveSetting('digest', v)} />
+            </section>
+          </div>
         </div>
       </div>
       {/* shared by the guardrails + meeting tz pickers */}
