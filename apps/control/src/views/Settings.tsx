@@ -638,7 +638,7 @@ function ProviderCard({
                     {pairErr && <div className="hint">{pairErr}</div>}
                   </div>
                   <div className="foot">
-                    QR e código expiram rápido — esta tela atualiza sozinha a cada 4s
+                    QR e código expiram rápido — esta tela atualiza sozinha
                   </div>
                 </>
               )}
