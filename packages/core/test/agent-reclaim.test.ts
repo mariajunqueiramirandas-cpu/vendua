@@ -801,4 +801,104 @@ dbDescribe('worker robustness (db)', () => {
     `;
     expect(q!.status).toBe('queued');
   });
+
+  test('request_human on an unbound run pauses every thread of the lead', async () => {
+    await migrate(sql, MIGRATIONS);
+    const lead = await controlTx(sql, (tx) => insertLeadTx(tx, { name: 'Unbound Handoff' }));
+    const leadId = lead.body.lead.id;
+    await sql`
+      insert into lead_threads (lead_id, channel) values (${leadId}, 'whatsapp'), (${leadId}, 'email')
+    `;
+    await sql`delete from agent_runs where status = 'queued'`;
+    const runId = await enqueueRun(sql, { kind: 'outreach', leadId });
+    const claimed = await claimRun(sql);
+    // outreach runs carry no threadId — the handoff is for the lead itself
+    const ctx = mkCtx(runId, claimed!.claim_token, leadId, 'outreach');
+    const out = (await executeTool(ctx, 'h1', 'request_human', {
+      leadId,
+      reason: 'lead pediu humano',
+    })) as { handedOff?: boolean };
+    expect(out.handedOff).toBe(true);
+    const paused = await sql<{ n: number }[]>`
+      select count(*)::int as n from lead_threads
+      where lead_id = ${leadId} and agent_enabled = false
+    `;
+    expect(paused[0]!.n).toBe(2);
+    const tasks = await sql`select 1 from lead_tasks where lead_id = ${leadId}`;
+    expect(tasks.length).toBe(1);
+  });
+
+  test('update_lead cannot self-promote agent_mode or unarchive', async () => {
+    await migrate(sql, MIGRATIONS);
+    const lead = await controlTx(sql, (tx) => insertLeadTx(tx, { name: 'Gate Lead' }));
+    const leadId = lead.body.lead.id;
+    await sql`delete from agent_runs where status = 'queued'`;
+    const runId = await enqueueRun(sql, { kind: 'reply', leadId });
+    const claimed = await claimRun(sql);
+    const ctx = mkCtx(runId, claimed!.claim_token, leadId);
+    // draft → auto would bypass every approval gate staff configured
+    await executeTool(ctx, 'u1', 'update_lead', { id: leadId, agentMode: 'auto' });
+    let [l] = await sql<
+      { agent_mode: string }[]
+    >`select agent_mode from leads where id = ${leadId}`;
+    expect(l!.agent_mode).toBe('draft');
+    // 'off' is the human veto — lifting it back to draft is staff's call
+    await sql`update leads set agent_mode = 'off' where id = ${leadId}`;
+    await executeTool(ctx, 'u2', 'update_lead', { id: leadId, agentMode: 'draft' });
+    [l] = await sql<{ agent_mode: string }[]>`select agent_mode from leads where id = ${leadId}`;
+    expect(l!.agent_mode).toBe('off');
+    // archived:false would resurrect a suppressed lead — stripped the same way
+    await sql`update leads set archived_at = now() where id = ${leadId}`;
+    await executeTool(ctx, 'u3', 'update_lead', { id: leadId, archived: false });
+    const [a] = await sql<{ archived_at: string | null }[]>`
+      select archived_at from leads where id = ${leadId}
+    `;
+    expect(a!.archived_at).not.toBeNull();
+    // the rest of the patch still applies — stripping is surgical, not a veto
+    await executeTool(ctx, 'u4', 'update_lead', { id: leadId, city: 'Sobral' });
+    const [c] = await sql<{ city: string | null }[]>`select city from leads where id = ${leadId}`;
+    expect(c!.city).toBe('Sobral');
+  });
+
+  test('draft_message honors a staff-paused thread like send_message does', async () => {
+    await migrate(sql, MIGRATIONS);
+    const lead = await controlTx(sql, (tx) => insertLeadTx(tx, { name: 'Paused Draft' }));
+    const leadId = lead.body.lead.id;
+    await sql`
+      insert into lead_threads (lead_id, channel, agent_enabled)
+      values (${leadId}, 'manual', false)
+    `;
+    const out = (await executeTool(mkCtx('ghost-run', null, leadId), 'd1', 'draft_message', {
+      leadId,
+      channel: 'manual',
+      body: 'não deve compor',
+    })) as { blocked?: boolean; reason?: string };
+    expect(out.blocked).toBe(true);
+    expect(out.reason).toContain('paused');
+    const msgs = await sql`select 1 from lead_messages m join lead_threads t on t.id = m.thread_id
+      where t.lead_id = ${leadId}`;
+    expect(msgs).toHaveLength(0);
+  });
+
+  test('unsubscribe cancels the lead’s queued runs — they could never claim', async () => {
+    await migrate(sql, MIGRATIONS);
+    const lead = await controlTx(sql, (tx) => insertLeadTx(tx, { name: 'OptOut Lead' }));
+    const leadId = lead.body.lead.id;
+    await sql`delete from agent_runs where status = 'queued'`;
+    const replyRun = await enqueueRun(sql, { kind: 'reply', leadId });
+    const claimed = await claimRun(sql);
+    expect(claimed?.id).toBe(replyRun);
+    const queuedRun = await enqueueRun(sql, { kind: 'outreach', leadId });
+    const ctx = mkCtx(replyRun, claimed!.claim_token, leadId);
+    await executeTool(ctx, 'u1', 'unsubscribe', { leadId, reason: 'pediu para sair' });
+    const [dead] = await sql<{ status: string }[]>`
+      select status from agent_runs where id = ${queuedRun}
+    `;
+    expect(dead!.status).toBe('canceled');
+    // the running run doing the unsubscribe finishes normally
+    const [live] = await sql<{ status: string }[]>`
+      select status from agent_runs where id = ${replyRun}
+    `;
+    expect(live!.status).toBe('running');
+  });
 });

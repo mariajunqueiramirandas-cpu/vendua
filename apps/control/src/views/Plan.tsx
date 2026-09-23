@@ -119,7 +119,9 @@ export default function Plan() {
   // Flat timeline: every future agent move, soonest first.
   const pending: Pending[] = [
     ...runs
-      .filter((r) => live(r.lead_id!))
+      // thread-bound runs also hold on a staff pause — the second half of
+      // claimRun's gate the lead-level live() can't see.
+      .filter((r) => live(r.lead_id!) && r.thread_agent_enabled !== false)
       .map((r) => ({
         at: r.run_at!,
         what: `run ${RUN_KIND_LABEL[r.kind] ?? r.kind}`,

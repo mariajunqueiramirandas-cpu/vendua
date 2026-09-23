@@ -195,6 +195,8 @@ export interface AgentRun {
   /** queued rows only — the earliest-start the run is waiting on */
   run_at?: string | null;
   lead_name?: string | null;
+  /** thread-bound runs only — staff pause holds the run queued */
+  thread_agent_enabled?: boolean | null;
   steps?: unknown[];
   params?: Record<string, unknown>;
 }
