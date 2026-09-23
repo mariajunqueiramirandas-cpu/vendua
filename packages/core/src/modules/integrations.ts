@@ -269,6 +269,10 @@ export const DEFAULT_PITCH = {
 
 export type Pitch = typeof DEFAULT_PITCH;
 
+/** agent_memory.facts bound — validateSetting, the `remember` tool and the
+ *  discovery debrief all truncate to this; keep the three readers in sync. */
+export const AGENT_MEMORY_MAX_FACTS = 100;
+
 /** Stage close-probabilities that turn pipeline value into a forecast —
  *  the 'forecast' setting stores overrides under `probabilities`. */
 export const DEFAULT_FORECAST_PROBABILITIES: Record<LeadState, number> = {
@@ -435,10 +439,15 @@ export function validateSetting(key: string, value: unknown): void {
       return n;
     };
     const slotMinutes = intField('slotMinutes');
-    intField('bufferMinutes');
+    const bufferMinutes = intField('bufferMinutes');
     const horizonDays = intField('horizonDays');
     if (slotMinutes !== undefined && (slotMinutes < 5 || slotMinutes > 120)) {
       throw bad('slotMinutes', 'must be 5–120');
+    }
+    // normalizeMeetingConfig clamps to [0,180] — a wider stored value would
+    // silently read back different, so validation must not accept it
+    if (bufferMinutes !== undefined && bufferMinutes > 180) {
+      throw bad('bufferMinutes', 'must be 0–180');
     }
     if (horizonDays !== undefined && (horizonDays < 1 || horizonDays > 60)) {
       throw bad('horizonDays', 'must be 1–60');
@@ -526,8 +535,11 @@ export function validateSetting(key: string, value: unknown): void {
     if (!v || typeof v !== 'object' || !Array.isArray(v.facts)) {
       throw bad('facts', 'must be { facts: string[] }');
     }
-    if (v.facts.length > 100 || v.facts.some((f) => typeof f !== 'string' || f.length > 500)) {
-      throw bad('facts', 'must be ≤100 strings of ≤500 chars');
+    if (
+      v.facts.length > AGENT_MEMORY_MAX_FACTS ||
+      v.facts.some((f) => typeof f !== 'string' || f.length > 500)
+    ) {
+      throw bad('facts', `must be ≤${AGENT_MEMORY_MAX_FACTS} strings of ≤500 chars`);
     }
   }
 }

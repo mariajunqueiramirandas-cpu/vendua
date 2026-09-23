@@ -22,7 +22,14 @@ type Driver = {
   // placeholder doubles as the driver's runtime default — the head chip shows
   // it as the effective value when the field is unset, so keep it in sync with
   // the `?? 'default'` in packages/core (llm.ts, channels/*).
-  fields?: { key: string; label: string; placeholder: string; hint?: string }[];
+  fields?: {
+    key: string;
+    label: string;
+    placeholder: string;
+    hint?: string;
+    /** stored as a JSON number — the driver reads `typeof config.x === 'number'` */
+    number?: boolean;
+  }[];
 };
 
 const KINDS: { key: string; label: string; sub: string; drivers: Driver[] }[] = [
@@ -37,7 +44,16 @@ const KINDS: { key: string; label: string; sub: string; drivers: Driver[] }[] = 
         hint: 'google ai studio — acesso direto',
         secret: true,
         secretName: 'GEMINI_API_KEY',
-        fields: [{ key: 'model', label: 'modelo', placeholder: 'gemini-3.5-flash-lite' }],
+        fields: [
+          { key: 'model', label: 'modelo', placeholder: 'gemini-3.5-flash-lite' },
+          {
+            key: 'rpm',
+            label: 'req/min',
+            placeholder: '14',
+            number: true,
+            hint: 'teto de chamadas por minuto — tier gratuito ≤15',
+          },
+        ],
       },
       {
         d: 'openrouter',
@@ -116,6 +132,19 @@ const KINDS: { key: string; label: string; sub: string; drivers: Driver[] }[] = 
         hint: 'busca e extrai negócios reais na web',
         secret: true,
         secretName: 'TINYFISH_API_KEY',
+        fields: [
+          {
+            key: 'searchUrl',
+            label: 'url de busca',
+            placeholder: 'https://api.search.tinyfish.ai',
+          },
+          {
+            key: 'fetchUrl',
+            label: 'url de leitura',
+            placeholder: 'https://api.fetch.tinyfish.ai',
+            hint: 'o driver só aceita https://*.tinyfish.ai — outro host derruba o run',
+          },
+        ],
       },
       { d: 'mock', label: 'mock', hint: 'prospects enlatados — dev e testes' },
     ],
@@ -252,7 +281,7 @@ export default function Settings() {
 
   const saveIntegration = async (
     kind: string,
-    d: { driver: string; secretRef: string; config: Record<string, string> },
+    d: { driver: string; secretRef: string; config: Record<string, string | number> },
     enable = true,
   ) => {
     try {
@@ -374,6 +403,12 @@ export default function Settings() {
           </section>
         </div>
       </div>
+      {/* shared by the guardrails + meeting tz pickers */}
+      <datalist id="tz-list">
+        {TZ_SUGGESTIONS.map((t) => (
+          <option key={t} value={t} />
+        ))}
+      </datalist>
     </Page>
   );
 }
@@ -392,7 +427,7 @@ function ProviderCard({
   wa: WaState;
   onWaLogout: (() => void) | undefined;
   onSave: (
-    d: { driver: string; secretRef: string; config: Record<string, string> },
+    d: { driver: string; secretRef: string; config: Record<string, string | number> },
     enable: boolean,
   ) => void;
 }) {
@@ -403,11 +438,11 @@ function ProviderCard({
   const baseline = {
     driver: baseRow?.driver ?? kind.drivers[0]?.d ?? '',
     secretRef: baseRow?.secretRef ?? '',
-    config: (baseRow?.config ?? {}) as Record<string, string>,
+    config: (baseRow?.config ?? {}) as Record<string, string | number>,
   };
   const [driver, setDriver] = useState(baseline.driver);
   const [secretRef, setSecretRef] = useState(baseline.secretRef);
-  const [config, setConfig] = useState<Record<string, string>>(baseline.config);
+  const [config, setConfig] = useState<Record<string, string | number>>(baseline.config);
   const [test, setTest] = useState<{ ok: boolean; detail: string } | null>(null);
   const [testing, setTesting] = useState(false);
   const [pairPhone, setPairPhone] = useState('');
@@ -484,9 +519,7 @@ function ProviderCard({
       // Preload that driver's own saved row — not the live one's leftovers.
       const row = rows.find((r) => r.driver === dd.d);
       setSecretRef(row?.secretRef ?? dd.secretName ?? '');
-      setConfig(
-        Object.fromEntries(Object.entries(row?.config ?? {}).map(([k, v]) => [k, String(v)])),
-      );
+      setConfig({ ...(row?.config ?? {}) } as Record<string, string | number>);
     }
   };
   const reset = () => {
@@ -685,9 +718,16 @@ function ProviderCard({
               <div className="field" style={{ marginBottom: 0 }} key={f.key}>
                 <label>{f.label}</label>
                 <input
+                  type={f.number ? 'number' : undefined}
                   value={config[f.key] ?? ''}
                   placeholder={f.placeholder}
-                  onChange={(e) => setConfig({ ...config, [f.key]: e.target.value })}
+                  onChange={(e) =>
+                    setConfig({
+                      ...config,
+                      [f.key]:
+                        f.number && e.target.value !== '' ? Number(e.target.value) : e.target.value,
+                    })
+                  }
                 />
                 {f.hint && <div className="hint">{f.hint}</div>}
               </div>
@@ -857,11 +897,13 @@ function GuardrailsCard({
     firstContactDelayMin: num(value.firstContactDelayMin, 0),
     followupCadenceDays: num(value.followupCadenceDays, 2),
     staleDraftDays: num(value.staleDraftDays, 7),
+    briefAutoPauseRuns: num(value.briefAutoPauseRuns, 5),
   };
   const [edit, setEdit] = useState(cur);
   useEffect(() => setEdit(cur), [JSON.stringify(cur)]); // eslint-disable-line react-hooks/exhaustive-deps
   const dirty = JSON.stringify(edit) !== JSON.stringify(cur);
   const quietWrap = edit.quietStart > edit.quietEnd;
+  const invalid = !tzValid(edit.timezone);
 
   return (
     <div className="drv">
@@ -871,7 +913,7 @@ function GuardrailsCard({
           <input
             type="number"
             min={1}
-            max={50}
+            max={100}
             value={edit.maxOutboundPerLeadPerDay}
             onChange={(e) =>
               setEdit({ ...edit, maxOutboundPerLeadPerDay: Number(e.target.value) || 1 })
@@ -898,11 +940,11 @@ function GuardrailsCard({
             value={edit.timezone}
             onChange={(e) => setEdit({ ...edit, timezone: e.target.value })}
           />
-          <datalist id="tz-list">
-            {TZ_SUGGESTIONS.map((t) => (
-              <option key={t} value={t} />
-            ))}
-          </datalist>
+          {!tzValid(edit.timezone) && (
+            <div className="hint" style={{ color: 'var(--red-400)' }}>
+              fuso IANA inválido
+            </div>
+          )}
         </div>
       </div>
       <div className="grid2" style={{ alignItems: 'end' }}>
@@ -992,7 +1034,7 @@ function GuardrailsCard({
           </div>
         </div>
       </div>
-      <div className="grid2" style={{ alignItems: 'end' }}>
+      <div className="grid3" style={{ alignItems: 'end' }}>
         <div className="field" style={{ marginBottom: 0 }}>
           <label>cadência p/ retorno (dias)</label>
           <input
@@ -1021,13 +1063,26 @@ function GuardrailsCard({
             atual do lead; 0 = desligado
           </div>
         </div>
+        <div className="field" style={{ marginBottom: 0 }}>
+          <label>auto-pausa de brief (runs)</label>
+          <input
+            type="number"
+            min={0}
+            max={100}
+            value={edit.briefAutoPauseRuns}
+            onChange={(e) => setEdit({ ...edit, briefAutoPauseRuns: Number(e.target.value) || 0 })}
+          />
+          <div className="hint">
+            runs seguidas do mesmo brief sem lead novo pausam ele sozinho; 0 = nunca pausa
+          </div>
+        </div>
       </div>
       <div className="actions">
         {/* merge over `value` — PUT replaces the whole setting and unknown
             keys managed via raw JSON would otherwise be silently dropped */}
         <button
           className="btn primary"
-          disabled={!dirty}
+          disabled={!dirty || invalid}
           onClick={() => onSave({ ...value, ...edit })}
         >
           salvar guardrails
@@ -1071,40 +1126,43 @@ function PitchCard({
     <div className="drv">
       <div className="field">
         <label>produto</label>
-        <textarea rows={3} value={edit.product} onChange={set('product')} />
+        <textarea rows={3} value={edit.product} maxLength={4000} onChange={set('product')} />
       </div>
       <div className="grid2">
         <div className="field">
           <label>público</label>
-          <input value={edit.audience} onChange={set('audience')} />
+          <input value={edit.audience} maxLength={4000} onChange={set('audience')} />
         </div>
         <div className="field">
           <label>tom</label>
-          <input value={edit.tone} onChange={set('tone')} />
+          <input value={edit.tone} maxLength={4000} onChange={set('tone')} />
         </div>
       </div>
       <div className="field">
         <label>o que pode oferecer</label>
-        <textarea rows={2} value={edit.offerRange} onChange={set('offerRange')} />
+        <textarea rows={2} value={edit.offerRange} maxLength={4000} onChange={set('offerRange')} />
       </div>
       <div className="field">
         <label>oferta concreta — fatos citáveis (preço, link de cadastro, loja exemplo)</label>
         <textarea
           rows={3}
           value={edit.offer}
+          maxLength={4000}
           onChange={set('offer')}
           placeholder="ex.: plano R$149/mês, sem comissão; 7 dias grátis; cadastro: https://...; exemplo: https://..."
         />
       </div>
       <div className="field">
         <label>objetivo da conversa</label>
-        <input value={edit.goal} onChange={set('goal')} />
+        <input value={edit.goal} maxLength={4000} onChange={set('goal')} />
       </div>
       <div className="field" style={{ marginBottom: 0 }}>
-        <label>regras duras ({edit.hardRules.length})</label>
+        <label>regras duras ({edit.hardRules.length}/50)</label>
         <ListEditor
           items={edit.hardRules}
           placeholder="ex.: nunca prometa data de entrega"
+          max={50}
+          maxLen={500}
           onChange={(hardRules) => setEdit({ ...edit, hardRules })}
         />
       </div>
@@ -1192,6 +1250,11 @@ function MeetingCard({
     setEdit(next);
   };
   const dirty = JSON.stringify(edit) !== JSON.stringify(cur);
+  // mirrors validateSetting('meeting'): IANA tz, ≤6 windows/day, open < close
+  const badWin = Object.values(edit.weekly).some(
+    (ws) => ws.length > 6 || ws.some(([a, b]) => !a || !b || a >= b),
+  );
+  const invalid = !tzValid(edit.tz) || badWin;
   useEffect(() => {
     if (status && !touched) {
       setEdit({ ...cur, weekly: normWeekly(value.weekly ?? status.cfg.weekly) });
@@ -1234,6 +1297,7 @@ function MeetingCard({
         <input
           value={edit.roomUrl}
           placeholder="https://meet.google.com/…"
+          maxLength={500}
           onChange={(e) => update({ ...edit, roomUrl: e.target.value })}
         />
         <div className="hint">
@@ -1245,6 +1309,7 @@ function MeetingCard({
         <input
           value={edit.publicBaseUrl}
           placeholder="https://crm.vendua.com.br"
+          maxLength={500}
           onChange={(e) => update({ ...edit, publicBaseUrl: e.target.value })}
         />
         <div className="hint">prefixo do link de agendamento — /agendar?t=…</div>
@@ -1254,11 +1319,12 @@ function MeetingCard({
         <input
           value={edit.bookingUrl}
           placeholder="https://calendar.google.com/calendar/appointments/…"
+          maxLength={500}
           onChange={(e) => update({ ...edit, bookingUrl: e.target.value })}
         />
       </div>
 
-      <div className="grid3" style={{ margin: '12px 0' }}>
+      <div className="grid4" style={{ margin: '12px 0' }}>
         <div className="field" style={{ marginBottom: 0 }}>
           <label>duração (min)</label>
           <input
@@ -1274,7 +1340,7 @@ function MeetingCard({
           <input
             type="number"
             min={0}
-            max={240}
+            max={180}
             value={edit.bufferMinutes}
             onChange={(e) => update({ ...edit, bufferMinutes: Number(e.target.value) })}
           />
@@ -1289,7 +1355,20 @@ function MeetingCard({
             onChange={(e) => update({ ...edit, horizonDays: Number(e.target.value) })}
           />
         </div>
+        <div className="field" style={{ marginBottom: 0 }}>
+          <label>fuso</label>
+          <input
+            list="tz-list"
+            value={edit.tz}
+            onChange={(e) => update({ ...edit, tz: e.target.value })}
+          />
+        </div>
       </div>
+      {!tzValid(edit.tz) && (
+        <div className="hint" style={{ color: 'var(--red-400)', marginBottom: 8 }}>
+          fuso IANA inválido
+        </div>
+      )}
 
       <div className="field">
         <label>disponibilidade semanal</label>
@@ -1344,20 +1423,30 @@ function MeetingCard({
             )}
             <button
               className="icon-btn"
-              title="adicionar janela"
+              title={
+                (edit.weekly[day] ?? []).length >= 6 ? 'máx 6 janelas/dia' : 'adicionar janela'
+              }
+              disabled={(edit.weekly[day] ?? []).length >= 6}
               onClick={() => setDay(day, [...(edit.weekly[day] ?? []), ['09:00', '12:00']])}
             >
               +
             </button>
           </div>
         ))}
-        <div className="hint">janelas no horário de Brasília — fora delas nenhum slot aparece</div>
+        <div className="hint">
+          janelas no fuso {edit.tz || '…'} — fora delas nenhum slot aparece
+        </div>
+        {badWin && (
+          <div className="hint" style={{ color: 'var(--red-400)' }}>
+            janela com abertura depois do fechamento não salva
+          </div>
+        )}
       </div>
 
       <div className="actions">
         <button
           className="btn primary"
-          disabled={!dirty}
+          disabled={!dirty || invalid}
           onClick={() => onSave({ ...value, ...edit })}
         >
           salvar agenda
@@ -1374,6 +1463,7 @@ function MeetingCard({
           </button>
         )}
       </div>
+      <RawJson value={value} onSave={onSave} />
     </div>
   );
 }
@@ -1481,6 +1571,8 @@ function DigestCard({
   const [edit, setEdit] = useState(cur);
   useEffect(() => setEdit(cur), [JSON.stringify(cur)]); // eslint-disable-line react-hooks/exhaustive-deps
   const dirty = JSON.stringify(edit) !== JSON.stringify(cur);
+  // backend rejects enabled-without-to — block the same way client-side
+  const invalid = edit.enabled && !edit.to.trim();
 
   return (
     <div className="drv">
@@ -1491,9 +1583,16 @@ function DigestCard({
             type="email"
             placeholder="voce@empresa.com"
             value={edit.to}
+            maxLength={320}
             onChange={(e) => setEdit({ ...edit, to: e.target.value })}
           />
-          <div className="hint">sai pelo driver de email ativo (resend em produção)</div>
+          {invalid ? (
+            <div className="hint" style={{ color: 'var(--red-400)' }}>
+              ligado precisa de um email de destino
+            </div>
+          ) : (
+            <div className="hint">sai pelo driver de email ativo (resend em produção)</div>
+          )}
         </div>
         <div className="field" style={{ marginBottom: 0 }}>
           <label>a partir das</label>
@@ -1521,8 +1620,8 @@ function DigestCard({
       <div className="actions">
         <button
           className="btn primary"
-          disabled={!dirty}
-          onClick={() => onSave({ ...value, ...edit })}
+          disabled={!dirty || invalid}
+          onClick={() => onSave({ ...value, ...edit, to: edit.to.trim() })}
         >
           salvar resumo
         </button>
@@ -1546,11 +1645,13 @@ function MemoryCard({ facts, onSave }: { facts: string[]; onSave: (facts: string
         items={facts}
         placeholder="grave um fato — ex.: a Lia sempre indica leads quentes"
         addLabel="lembrar"
+        max={100}
+        maxLen={500}
         onChange={onSave}
       />
       <div className="hint" style={{ marginTop: 8 }}>
         {facts.length} fato{facts.length === 1 ? '' : 's'} — o agente edita esta lista com a tool
-        `remember`; remover aqui apaga da memória dele.
+        `remember` (guarda até 100); remover aqui apaga da memória dele.
       </div>
     </div>
   );
@@ -1562,17 +1663,24 @@ function ListEditor({
   items,
   placeholder,
   addLabel = 'adicionar',
+  max,
+  maxLen,
   onChange,
 }: {
   items: string[];
   placeholder: string;
   addLabel?: string;
+  /** item-count ceiling — matches the backend cap (hardRules 50, facts 100) */
+  max?: number;
+  /** per-item char cap — backend rejects longer strings */
+  maxLen?: number;
   onChange: (items: string[]) => void;
 }) {
   const [draft, setDraft] = useState('');
+  const atMax = max !== undefined && items.length >= max;
   const add = () => {
     const v = draft.trim();
-    if (!v) return;
+    if (!v || atMax) return;
     onChange([...items, v]);
     setDraft('');
   };
@@ -1597,11 +1705,17 @@ function ListEditor({
       <div className="lst-add">
         <input
           value={draft}
-          placeholder={placeholder}
+          placeholder={atMax && max !== undefined ? `máx ${max} — remova um item` : placeholder}
+          maxLength={maxLen}
           onChange={(e) => setDraft(e.target.value)}
           onKeyDown={(e) => e.key === 'Enter' && add()}
         />
-        <button className="btn" onClick={add} disabled={!draft.trim()}>
+        <button
+          className="btn"
+          onClick={add}
+          disabled={!draft.trim() || atMax}
+          title={atMax && max !== undefined ? `máx ${max} itens` : undefined}
+        >
           {addLabel}
         </button>
       </div>
@@ -1658,3 +1772,12 @@ function RawJson({
 
 const num = (v: unknown, d: number) => (typeof v === 'number' && Number.isFinite(v) ? v : d);
 const str = (v: unknown, d: string) => (typeof v === 'string' ? v : d);
+// same check validateSetting applies server-side — saves a 422 round-trip
+const tzValid = (tz: string) => {
+  try {
+    new Intl.DateTimeFormat('en', { timeZone: tz });
+    return true;
+  } catch {
+    return false;
+  }
+};

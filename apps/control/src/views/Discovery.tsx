@@ -635,7 +635,7 @@ export default function Discovery() {
           <div className="hcard">
             <div className="hcard-t">
               rotina diária
-              <span className="mono dim hcard-sub">1x/dia · contato continua manual</span>
+              <span className="mono dim hcard-sub">1x/dia · autocontato conforme guardrails</span>
             </div>
             {briefs.map((b) => (
               <div className="brow" key={b.id}>
