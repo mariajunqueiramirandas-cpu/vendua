@@ -7,6 +7,7 @@ import {
   getPitch,
   getSetting,
   getSettingTx,
+  AGENT_MEMORY_MAX_FACTS,
   DEFAULT_GUARDRAILS,
   type Guardrails,
 } from '../modules/integrations.ts';
@@ -776,7 +777,7 @@ async function writeDebrief(
     `;
     const cur = Array.isArray(rows[0]?.value?.facts) ? (rows[0]!.value.facts as string[]) : [];
     await tx`
-      update control_settings set value = ${tx.json({ facts: [...cur, fact.slice(0, 500)].slice(-40) } as never)}
+      update control_settings set value = ${tx.json({ facts: [...cur, fact.slice(0, 500)].slice(-AGENT_MEMORY_MAX_FACTS) } as never)}
       where key = 'agent_memory'
     `;
   });

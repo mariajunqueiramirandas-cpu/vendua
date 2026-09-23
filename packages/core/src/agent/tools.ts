@@ -13,7 +13,12 @@ import {
 } from '../modules/leads.ts';
 import { addActivity, createTask } from '../modules/activities.ts';
 import { composeMessageTx, channel } from '../modules/threads.ts';
-import { DEFAULT_GUARDRAILS, getSettingTx, type Guardrails } from '../modules/integrations.ts';
+import {
+  AGENT_MEMORY_MAX_FACTS,
+  DEFAULT_GUARDRAILS,
+  getSettingTx,
+  type Guardrails,
+} from '../modules/integrations.ts';
 import { recordBlockedSendTx } from '../modules/channel-health.ts';
 import {
   checkSendAllowedTx,
@@ -1197,9 +1202,7 @@ export async function executeTool(
           select value from control_settings where key = 'agent_memory' for update
         `;
         const cur = Array.isArray(rows[0]?.value?.facts) ? (rows[0]!.value.facts as string[]) : [];
-        // bound = validateSetting's ≤100 — a smaller slice would silently drop
-        // staff-curated facts saved through the control panel
-        const facts = [...cur.filter((f) => f !== fact), fact].slice(-100);
+        const facts = [...cur.filter((f) => f !== fact), fact].slice(-AGENT_MEMORY_MAX_FACTS);
         await tx`
           update control_settings set value = ${tx.json({ facts } as never)}
           where key = 'agent_memory'

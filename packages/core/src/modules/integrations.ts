@@ -269,6 +269,10 @@ export const DEFAULT_PITCH = {
 
 export type Pitch = typeof DEFAULT_PITCH;
 
+/** agent_memory.facts bound — validateSetting, the `remember` tool and the
+ *  discovery debrief all truncate to this; keep the three readers in sync. */
+export const AGENT_MEMORY_MAX_FACTS = 100;
+
 /** Stage close-probabilities that turn pipeline value into a forecast —
  *  the 'forecast' setting stores overrides under `probabilities`. */
 export const DEFAULT_FORECAST_PROBABILITIES: Record<LeadState, number> = {
@@ -531,8 +535,11 @@ export function validateSetting(key: string, value: unknown): void {
     if (!v || typeof v !== 'object' || !Array.isArray(v.facts)) {
       throw bad('facts', 'must be { facts: string[] }');
     }
-    if (v.facts.length > 100 || v.facts.some((f) => typeof f !== 'string' || f.length > 500)) {
-      throw bad('facts', 'must be ≤100 strings of ≤500 chars');
+    if (
+      v.facts.length > AGENT_MEMORY_MAX_FACTS ||
+      v.facts.some((f) => typeof f !== 'string' || f.length > 500)
+    ) {
+      throw bad('facts', `must be ≤${AGENT_MEMORY_MAX_FACTS} strings of ≤500 chars`);
     }
   }
 }
