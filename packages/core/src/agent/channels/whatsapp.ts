@@ -53,6 +53,28 @@ interface BaileysSocket {
         }[];
       }) => void,
     ): void;
+    on(
+      event: 'messaging-history.set',
+      cb: (m: {
+        chats?: unknown[];
+        contacts?: { id?: string; name?: string; notify?: string; verifiedName?: string }[];
+        messages?: {
+          key?: {
+            remoteJid?: string;
+            remoteJidAlt?: string;
+            id?: string;
+            fromMe?: boolean;
+          };
+          message?: unknown;
+          messageTimestamp?: number | string | { toNumber(): number };
+          pushName?: string;
+        }[];
+        lidPnMappings?: { lid?: string; pn?: string }[];
+        isLatest?: boolean;
+        progress?: number;
+        syncType?: number;
+      }) => void,
+    ): void;
   };
 }
 
@@ -163,6 +185,27 @@ type MessageHandler = (
 const handlers: MessageHandler[] = [];
 export function onInboundMessage(fn: MessageHandler) {
   handlers.push(fn);
+}
+
+/** One message out of a `messaging-history.set` chunk — already filtered to
+ *  DM text the same way the live upsert path filters. `fromMe` marks the
+ *  account's own copy (recorded as an outbound echo, never answered). */
+export interface HistoryMessage {
+  jid: string;
+  text: string;
+  providerId: string;
+  fromMe: boolean;
+  pushName?: string;
+  altJid?: string;
+  sentAt?: Date;
+}
+type HistoryHandler = (m: HistoryMessage) => Promise<void>;
+const historyHandlers: HistoryHandler[] = [];
+/** Subscribed once per history event — the pairing-time sync is the ONLY
+ *  source of pre-socket messages; chunks arrive a few times per account
+ *  lifetime and each is deduped by providerMessageId downstream. */
+export function onHistoryMessage(fn: HistoryHandler) {
+  historyHandlers.push(fn);
 }
 
 /** DB-backed auth state. Baileys v7's initAuthCreds() +
@@ -435,7 +478,83 @@ async function startSocket(sql: Sql, integration: IntegrationRow): Promise<Baile
       }
     }
   });
+  sock.ev.on(
+    'messaging-history.set',
+    ({ messages, contacts, lidPnMappings, progress, isLatest }) => {
+      // A detached socket (replaced or post-logout) must not keep importing —
+      // its creds may already be wiped.
+      if (socket !== sock) return;
+      // contact map → fromName fallback when the stanza carries no pushName.
+      const names = new Map<string, string>();
+      for (const c of contacts ?? []) {
+        const n = c.name ?? c.notify ?? c.verifiedName;
+        if (c.id && n) names.set(c.id, n);
+      }
+      // LID ↔ PN pairs from the sync itself — an alias when the stanza didn't
+      // carry remoteJidAlt.
+      const lidPn = new Map<string, string>();
+      for (const m of lidPnMappings ?? []) {
+        if (m.lid && m.pn) {
+          lidPn.set(m.lid, m.pn);
+          lidPn.set(m.pn, m.lid);
+        }
+      }
+      const ownDigits = waMe?.phone ?? null;
+      waLog.info(
+        { msgs: messages?.length ?? 0, progress, isLatest },
+        'history sync chunk received',
+      );
+      // Sequential per chunk — a chunk can carry thousands of messages and
+      // the ingest tx per message is not free. Ordering is preserved by
+      // sentAt anyway; providerMessageId dedupes re-delivered chunks.
+      void (async () => {
+        for (const m of messages ?? []) {
+          const key = m.key;
+          const dm = key ? dmJid(key.remoteJid, key.remoteJidAlt) : null;
+          if (!key?.id || !dm) continue;
+          // Self-chat ("mensagens para você mesmo") is the account's own
+          // number — never a lead.
+          if (ownDigits && dm.jid.replace(/\D/g, '') === ownDigits) continue;
+          const text = extractText(baileys.normalizeMessageContent(m.message) ?? m.message);
+          if (!text) continue;
+          // pushName on a fromMe stanza is OUR account name — a lead minted
+          // from it would be named after the sender, not the contact.
+          const pushName = key.fromMe
+            ? names.get(key.remoteJid ?? '')
+            : (m.pushName ?? names.get(key.remoteJid ?? ''));
+          const altJid = dm.alias ?? lidPn.get(dm.jid);
+          const sentAt = messageTs(m.messageTimestamp);
+          const entry: HistoryMessage = {
+            jid: dm.jid,
+            text,
+            providerId: key.id,
+            fromMe: !!key.fromMe,
+            ...(pushName ? { pushName } : {}),
+            ...(altJid ? { altJid } : {}),
+            ...(sentAt ? { sentAt } : {}),
+          };
+          for (const fn of historyHandlers) {
+            try {
+              await fn(entry);
+            } catch (e) {
+              waLog.warn({ err: e, id: key.id }, 'history message ingest failed');
+            }
+          }
+        }
+        waLog.info({ progress, isLatest }, 'history sync chunk ingested');
+      })().catch((e) => waLog.error({ err: e }, 'history sync processing failed'));
+    },
+  );
   return sock;
+}
+
+/** proto uint64 seconds → Date; tolerates Long-ish objects and a stray ms
+ *  value (anything past 1e12 is already milliseconds). */
+function messageTs(ts: number | string | { toNumber(): number } | undefined): Date | undefined {
+  const n =
+    typeof ts === 'number' ? ts : typeof ts === 'string' ? Number(ts) : (ts?.toNumber?.() ?? NaN);
+  if (!Number.isFinite(n) || n <= 0) return undefined;
+  return new Date(n > 1e12 ? n : n * 1000);
 }
 
 /** The direct-chat jid pair for an inbound message: `jid` prefers the

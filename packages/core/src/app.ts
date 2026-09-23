@@ -2061,7 +2061,7 @@ export function createApp({ sql, sessionSecret, controlSecret, autoDrain }: AppD
       body: str(body.text ?? body.body ?? body.html, 'body', 8000),
       providerMessageId: str(rawMsgId, 'messageId', 200),
     });
-    return c.json(res, 201);
+    return c.json(res, 'ignored' in res ? 200 : 201);
   });
 
   // ---- public booking surface --------------------------------------------------

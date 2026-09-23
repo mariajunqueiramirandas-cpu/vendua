@@ -4,6 +4,7 @@ import {
   DEFAULT_GUARDRAILS,
   getIntegrationTx,
   getSettingTx,
+  phoneIsIgnored,
   type Guardrails,
   type IntegrationRow,
 } from '../modules/integrations.ts';
@@ -149,6 +150,15 @@ export async function dispatchMessage(
         await markMessageFailed(tx, messageId, 'lead has no whatsapp');
         wroteTid = msg.thread_id;
         return { fail: 'lead has no whatsapp' };
+      }
+      // Staff/founder numbers never receive agent traffic — ingest drops
+      // them before a lead exists, this is the net for leads created before
+      // the list (or reached through the phone column).
+      const g = await getSettingTx<Partial<Guardrails>>(tx, 'guardrails', {});
+      if (phoneIsIgnored(g.ignoredPhones ?? [], to, lead.whatsapp)) {
+        await markMessageFailed(tx, messageId, 'número ignorado');
+        wroteTid = msg.thread_id;
+        return { fail: 'número ignorado' };
       }
       integration = await getIntegrationTx(tx, 'whatsapp');
     }

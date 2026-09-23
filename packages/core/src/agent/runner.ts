@@ -9,6 +9,7 @@ import {
   getSettingTx,
   AGENT_MEMORY_MAX_FACTS,
   DEFAULT_GUARDRAILS,
+  phoneIsIgnored,
   type Guardrails,
 } from '../modules/integrations.ts';
 import { segmentStats, type AgentGoal } from '../modules/leads.ts';
@@ -114,6 +115,10 @@ export async function enqueueRun(
 
 export async function claimRun(sql: Sql): Promise<RunRow | null> {
   const run = await controlTx(sql, async (tx) => {
+    // Staff/founder numbers never run — ingest already refuses to mint
+    // them, this covers leads created before the list existed.
+    const ignoredPhones =
+      (await getSettingTx<Partial<Guardrails>>(tx, 'guardrails', {})).ignoredPhones ?? [];
     // Outreach is serial per lead: a 'running' outreach row is the durable
     // ownership token — it outlives the claim tx, so a queued same-lead
     // outreach can only claim once the owner finishes (a crashed owner is
@@ -188,6 +193,8 @@ export async function claimRun(sql: Sql): Promise<RunRow | null> {
               archived_at: string | null;
               unsubscribed_at: string | null;
               agent_paused_at: string | null;
+              whatsapp: string | null;
+              phone: string | null;
             }
           | undefined;
         try {
@@ -198,9 +205,11 @@ export async function claimRun(sql: Sql): Promise<RunRow | null> {
                 archived_at: string | null;
                 unsubscribed_at: string | null;
                 agent_paused_at: string | null;
+                whatsapp: string | null;
+                phone: string | null;
               }[]
             >`
-              select agent_mode, archived_at, unsubscribed_at, agent_paused_at
+              select agent_mode, archived_at, unsubscribed_at, agent_paused_at, whatsapp, phone
               from leads where id = ${run.lead_id} for update nowait
             `
           )[0];
@@ -213,7 +222,8 @@ export async function claimRun(sql: Sql): Promise<RunRow | null> {
           lead.agent_mode === 'off' ||
           lead.archived_at ||
           lead.unsubscribed_at ||
-          lead.agent_paused_at
+          lead.agent_paused_at ||
+          phoneIsIgnored(ignoredPhones, lead.whatsapp, lead.phone)
         ) {
           rejected.push(run.id);
           continue;

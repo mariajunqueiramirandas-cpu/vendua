@@ -1,7 +1,7 @@
 import type { Sql } from '../platform/db.ts';
 import { controlTx } from '../modules/control.ts';
 import { emitControlEvent } from '../modules/control-events.ts';
-import { getGuardrails } from '../modules/integrations.ts';
+import { getGuardrails, phoneIsIgnored } from '../modules/integrations.ts';
 import { addInboundMessage, type Channel, type InboundResult } from '../modules/threads.ts';
 import { drain, insertRun } from './runner.ts';
 import { log } from '../platform/log.ts';
@@ -24,6 +24,8 @@ type ReplyGate = {
  * "sair"/"cancelar" can be normal speech, so nothing is decided by regex.
  */
 
+export type IngestResult = InboundResult | { ignored: string };
+
 export async function ingestInbound(
   sql: Sql,
   input: {
@@ -37,8 +39,21 @@ export async function ingestInbound(
     subject?: string;
     body: string;
     providerMessageId?: string | null;
+    /** 'out' = account's own copy of a sent message — context, never an
+     *  inbound to answer. */
+    direction?: 'in' | 'out';
+    /** provider timestamp for history import */
+    sentAt?: Date;
+    /** history import: record for context only — never queues a reply run. */
+    historical?: boolean;
   },
-): Promise<InboundResult> {
+): Promise<IngestResult> {
+  const { ignoredPhones, inboundReplyDelayMin } = await getGuardrails(sql);
+  // Staff/founder numbers drop before a lead is ever minted — the agent
+  // must never see them as leads, in either direction.
+  if (phoneIsIgnored(ignoredPhones, input.from, input.fromAlias)) {
+    return { ignored: `número ignorado: ${input.from}` };
+  }
   const res = await addInboundMessage(sql, {
     channel: input.channel,
     from: input.from,
@@ -47,6 +62,9 @@ export async function ingestInbound(
     ...(input.subject ? { subject: input.subject } : {}),
     body: input.body,
     ...(input.providerMessageId ? { providerMessageId: input.providerMessageId } : {}),
+    ...(input.direction ? { direction: input.direction } : {}),
+    ...(input.sentAt ? { sentAt: input.sentAt } : {}),
+    ...(input.historical ? { historical: input.historical } : {}),
   });
 
   // Provider retry of an already-recorded message: no side effects again.
@@ -54,9 +72,10 @@ export async function ingestInbound(
   emitControlEvent('thread.message', res.threadId);
   if (res.leadCreated) emitControlEvent('lead.change', res.leadId);
 
-  // guardrails.inboundReplyDelayMin paces the answer — the run sits queued
-  // with a future run_at instead of replying while the lead is still typing.
-  const { inboundReplyDelayMin } = await getGuardrails(sql);
+  // History and own-account echoes are context only — an old message must
+  // not turn into a live reply, and the agent never answers a message the
+  // account itself sent.
+  if (input.historical || input.direction === 'out') return res;
   // Gate check and run insert in one tx: `for update of l, t` serializes
   // with both suppression writers — archive/unsubscribe land on `leads`,
   // the staff pause toggle on `lead_threads` — so a suppression committed
