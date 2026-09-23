@@ -599,14 +599,21 @@ export async function deleteLead(
 /** Opt-out signal — from an inbound "para/unsubscribe" or a staff action.
  *  Once set, the agent guardrail blocks every outbound on this lead. */
 export async function unsubscribeLead(sql: Sql, id: string): Promise<void> {
-  await controlTx(sql, async (tx) => {
-    await tx`update leads set unsubscribed_at = now(), updated_at = now() where id = ${id} and unsubscribed_at is null`;
+  const transitioned = await controlTx(sql, async (tx) => {
+    const rows = await tx`
+      update leads set unsubscribed_at = now(), updated_at = now()
+      where id = ${id} and unsubscribed_at is null returning id
+    `;
+    const exists = rows[0] ?? (await tx`select id from leads where id = ${id}`)[0];
+    if (!exists) throw new HttpError(404, 'LEAD_NOT_FOUND', 'lead not found');
+    if (!rows[0]) return false;
     await tx`
       insert into lead_activities (lead_id, kind, body, created_by)
       values (${id}, 'system', 'Descadastrado — sem novos envios', 'system')
     `;
+    return true;
   });
-  emitControlEvent('lead.change', id);
+  if (transitioned) emitControlEvent('lead.change', id);
 }
 
 // ---------------------------------------------------------------------------
