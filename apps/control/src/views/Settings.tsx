@@ -267,7 +267,12 @@ export default function Settings() {
         }
       })
       .catch((e: unknown) => {
-        if (fresh('integrations')) setLoadErr((m) => m | 0b001);
+        // Failure is the newer outcome — record it so an older in-flight
+        // success can't overwrite it with stale data afterwards.
+        if (fresh('integrations')) {
+          loadOk.current['integrations'] = my;
+          setLoadErr((m) => m | 0b001);
+        }
         setNotice({
           kind: 'err',
           text: `falha ao carregar: ${e instanceof Error ? e.message : e}`,
@@ -286,7 +291,10 @@ export default function Settings() {
         }
       })
       .catch((e: unknown) => {
-        if (fresh('settings')) setLoadErr((m) => m | 0b010);
+        if (fresh('settings')) {
+          loadOk.current['settings'] = my;
+          setLoadErr((m) => m | 0b010);
+        }
         setNotice({
           kind: 'err',
           text: `falha ao carregar: ${e instanceof Error ? e.message : e}`,
@@ -301,7 +309,9 @@ export default function Settings() {
           setWa({ qr: r.qr, status: r.status, me: r.me });
         }
       })
-      .catch(() => undefined);
+      .catch(() => {
+        if (fresh('wa')) loadOk.current['wa'] = my;
+      });
     api
       .meetingsStatus()
       .then((s) => {
