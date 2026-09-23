@@ -1506,15 +1506,37 @@ export function createApp({ sql, sessionSecret, controlSecret, autoDrain }: AppD
       const m = TS_RE.exec(ts);
       if (!m) return false;
       const [y, mo, d, h, mi, s, oh] = m.slice(1).map(Number) as [
-        number, number, number, number, number, number, number,
+        number,
+        number,
+        number,
+        number,
+        number,
+        number,
+        number,
       ];
       const days = [
         31,
         y % 4 === 0 && (y % 100 !== 0 || y % 400 === 0) ? 29 : 28,
-        31, 30, 31, 30, 31, 31, 30, 31, 30, 31,
+        31,
+        30,
+        31,
+        30,
+        31,
+        31,
+        30,
+        31,
+        30,
+        31,
       ];
       return (
-        mo >= 1 && mo <= 12 && d >= 1 && d <= days[mo - 1]! && h <= 23 && mi <= 59 && s <= 59 && oh <= 15
+        mo >= 1 &&
+        mo <= 12 &&
+        d >= 1 &&
+        d <= days[mo - 1]! &&
+        h <= 23 &&
+        mi <= 59 &&
+        s <= 59 &&
+        oh <= 15
       );
     };
     let cursorCond = 'true';
