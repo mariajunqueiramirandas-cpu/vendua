@@ -905,7 +905,11 @@ function GuardrailsCard({
   const dirty = JSON.stringify(edit) !== JSON.stringify(cur);
   const quietWrap = edit.quietStart > edit.quietEnd;
   const invalid =
-    !tzValid(edit.timezone) || edit.ignoredPhones.some((p) => p.replace(/\D/g, '').length < 6);
+    !tzValid(edit.timezone) ||
+    edit.ignoredPhones.some((p) => {
+      const d = p.replace(/\D/g, '');
+      return d.length < 6 || d.length > 15;
+    });
 
   return (
     <div className="drv">

@@ -478,6 +478,12 @@ async function startSocket(sql: Sql, integration: IntegrationRow): Promise<Baile
       }
     }
   });
+  // Chunks chain through this socket's tail — Baileys emits several
+  // messaging-history.set events per pairing and each carries thousands of
+  // stanzas. Serializing across chunks (not just within one) is what keeps
+  // two chunks carrying the same unknown contact from both missing the
+  // lookup and minting duplicate leads.
+  let historyTail: Promise<void> = Promise.resolve();
   sock.ev.on(
     'messaging-history.set',
     ({ messages, contacts, lidPnMappings, progress, isLatest }) => {
@@ -499,50 +505,53 @@ async function startSocket(sql: Sql, integration: IntegrationRow): Promise<Baile
           lidPn.set(m.pn, m.lid);
         }
       }
-      const ownDigits = waMe?.phone ?? null;
+      // Identity comes off the live socket, not the module cache — history
+      // can arrive before connState 'open' populates waMe.
+      const ownDigits = readIdentity(sock).phone;
       waLog.info(
         { msgs: messages?.length ?? 0, progress, isLatest },
         'history sync chunk received',
       );
-      // Sequential per chunk — a chunk can carry thousands of messages and
-      // the ingest tx per message is not free. Ordering is preserved by
-      // sentAt anyway; providerMessageId dedupes re-delivered chunks.
-      void (async () => {
-        for (const m of messages ?? []) {
-          const key = m.key;
-          const dm = key ? dmJid(key.remoteJid, key.remoteJidAlt) : null;
-          if (!key?.id || !dm) continue;
-          // Self-chat ("mensagens para você mesmo") is the account's own
-          // number — never a lead.
-          if (ownDigits && dm.jid.replace(/\D/g, '') === ownDigits) continue;
-          const text = extractText(baileys.normalizeMessageContent(m.message) ?? m.message);
-          if (!text) continue;
-          // pushName on a fromMe stanza is OUR account name — a lead minted
-          // from it would be named after the sender, not the contact.
-          const pushName = key.fromMe
-            ? names.get(key.remoteJid ?? '')
-            : (m.pushName ?? names.get(key.remoteJid ?? ''));
-          const altJid = dm.alias ?? lidPn.get(dm.jid);
-          const sentAt = messageTs(m.messageTimestamp);
-          const entry: HistoryMessage = {
-            jid: dm.jid,
-            text,
-            providerId: key.id,
-            fromMe: !!key.fromMe,
-            ...(pushName ? { pushName } : {}),
-            ...(altJid ? { altJid } : {}),
-            ...(sentAt ? { sentAt } : {}),
-          };
-          for (const fn of historyHandlers) {
+      historyTail = historyTail
+        .then(async () => {
+          // Detached between enqueue and drain — a replaced socket stops mid-queue.
+          if (socket !== sock) return;
+          for (const m of messages ?? []) {
             try {
-              await fn(entry);
+              const key = m.key;
+              const dm = key ? dmJid(key.remoteJid, key.remoteJidAlt) : null;
+              if (!key?.id || !dm) continue;
+              // Self-chat ("mensagens para você mesmo") is the account's own
+              // number — never a lead.
+              if (ownDigits && dm.jid.replace(/\D/g, '') === ownDigits) continue;
+              const text = extractText(baileys.normalizeMessageContent(m.message) ?? m.message);
+              if (!text) continue;
+              // pushName on a fromMe stanza is OUR account name — a lead minted
+              // from it would be named after the sender, not the contact.
+              const pushName = key.fromMe
+                ? names.get(key.remoteJid ?? '')
+                : (m.pushName ?? names.get(key.remoteJid ?? ''));
+              const altJid = dm.alias ?? lidPn.get(dm.jid);
+              const sentAt = messageTs(m.messageTimestamp);
+              const entry: HistoryMessage = {
+                jid: dm.jid,
+                text,
+                providerId: key.id,
+                fromMe: !!key.fromMe,
+                ...(pushName ? { pushName } : {}),
+                ...(altJid ? { altJid } : {}),
+                ...(sentAt ? { sentAt } : {}),
+              };
+              for (const fn of historyHandlers) {
+                await fn(entry);
+              }
             } catch (e) {
-              waLog.warn({ err: e, id: key.id }, 'history message ingest failed');
+              waLog.warn({ err: e, id: m.key?.id }, 'history message ingest failed');
             }
           }
-        }
-        waLog.info({ progress, isLatest }, 'history sync chunk ingested');
-      })().catch((e) => waLog.error({ err: e }, 'history sync processing failed'));
+          waLog.info({ progress, isLatest }, 'history sync chunk ingested');
+        })
+        .catch((e) => waLog.error({ err: e }, 'history sync processing failed'));
     },
   );
   return sock;

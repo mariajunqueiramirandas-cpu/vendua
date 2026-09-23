@@ -179,6 +179,25 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('whatsapp history + ignore list 
     expect(r!.status).toBe('queued');
   });
 
+  test('a parked ignored prefix cannot starve the claim queue', async () => {
+    await migrate(sql, MIGRATIONS);
+    await setIgnored(['5511999776600']);
+    // More ignored-lead runs than the claim loop's 8-attempt budget — they
+    // must be filtered in the scan, not rejected one at a time.
+    for (let i = 0; i < 10; i++) {
+      const lead = await controlTx(sql, (tx) =>
+        insertLeadTx(tx, { name: `Parked ${i}`, whatsapp: '5511999776600' }),
+      );
+      await enqueueRun(sql, { kind: 'outreach', leadId: lead.body.lead.id });
+    }
+    const valid = await controlTx(sql, (tx) =>
+      insertLeadTx(tx, { name: 'Valid', whatsapp: '5511900001111' }),
+    );
+    const runId = await enqueueRun(sql, { kind: 'outreach', leadId: valid.body.lead.id });
+    const claimed = await claimRun(sql);
+    expect(claimed?.id).toBe(runId);
+  });
+
   test('dispatchMessage fails a queued send to an ignored number', async () => {
     await migrate(sql, MIGRATIONS);
     await setIgnored(['5511999665544']);
@@ -202,5 +221,31 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('whatsapp history + ignore list 
     `;
     expect(m!.status).toBe('failed');
     expect(m!.error).toBe('número ignorado');
+  });
+
+  test('dispatchMessage also blocks when the ignored digits sit in lead.phone', async () => {
+    await migrate(sql, MIGRATIONS);
+    await setIgnored(['5511955554444']);
+    // whatsapp differs from phone — the send would reach `whatsapp` while the
+    // ignored `phone` marks this lead as staff/founder.
+    const lead = await controlTx(sql, (tx) =>
+      insertLeadTx(tx, {
+        name: 'Phone Only',
+        whatsapp: '5511900002222',
+        phone: '5511955554444',
+      }),
+    );
+    const composed = await controlTx(sql, (tx) =>
+      composeMessageTx(tx, {
+        leadId: lead.body.lead.id,
+        channel: 'whatsapp',
+        body: 'nunca sai',
+        author: 'staff',
+        status: 'queued',
+      }),
+    );
+    const out = await dispatchMessage(sql, composed.body.message.id);
+    expect(out.ok).toBe(false);
+    expect(out.reason).toBe('número ignorado');
   });
 });
