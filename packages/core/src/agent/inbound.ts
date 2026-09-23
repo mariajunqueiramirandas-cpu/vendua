@@ -3,10 +3,17 @@ import { controlTx } from '../modules/control.ts';
 import { emitControlEvent } from '../modules/control-events.ts';
 import { getGuardrails } from '../modules/integrations.ts';
 import { addInboundMessage, type Channel, type InboundResult } from '../modules/threads.ts';
-import { drain, enqueueRun } from './runner.ts';
+import { drain, insertRun } from './runner.ts';
 import { log } from '../platform/log.ts';
 
 const agentLog = log.child({ mod: 'agent' });
+
+type ReplyGate = {
+  agent_enabled: boolean;
+  agent_mode: string;
+  unsubscribed_at: string | null;
+  archived_at: string | null;
+};
 
 /**
  * agent/inbound — the shared inbound path: a message from any channel (the
@@ -47,21 +54,33 @@ export async function ingestInbound(
   emitControlEvent('thread.message', res.threadId);
   if (res.leadCreated) emitControlEvent('lead.change', res.leadId);
 
-  const gate = (
-    await controlTx(
-      sql,
-      (tx) => tx<{ agent_enabled: boolean; agent_mode: string; unsubscribed_at: string | null }[]>`
-        select t.agent_enabled, l.agent_mode, l.unsubscribed_at
-        from lead_threads t join leads l on l.id = t.lead_id
-        where t.id = ${res.threadId}
-      `,
-    )
-  )[0];
-  if (gate && gate.agent_enabled && gate.agent_mode !== 'off' && !gate.unsubscribed_at) {
-    // guardrails.inboundReplyDelayMin paces the answer — the run sits queued
-    // with a future run_at instead of replying while the lead is still typing.
-    const { inboundReplyDelayMin } = await getGuardrails(sql);
-    await enqueueRun(sql, {
+  // guardrails.inboundReplyDelayMin paces the answer — the run sits queued
+  // with a future run_at instead of replying while the lead is still typing.
+  const { inboundReplyDelayMin } = await getGuardrails(sql);
+  // Gate check and run insert in one tx: `for update of l, t` serializes
+  // with both suppression writers — archive/unsubscribe land on `leads`,
+  // the staff pause toggle on `lead_threads` — so a suppression committed
+  // between the message insert and now is seen here instead of stranding a
+  // queued reply on a suppressed thread/lead.
+  const runId = await controlTx(sql, async (tx) => {
+    const gateRows = await tx<ReplyGate[]>`
+      select t.agent_enabled, l.agent_mode, l.unsubscribed_at, l.archived_at
+      from lead_threads t join leads l on l.id = t.lead_id
+      where t.id = ${res.threadId}
+      for update of l, t
+    `;
+    const gate = gateRows[0];
+
+    if (
+      !gate ||
+      !gate.agent_enabled ||
+      gate.agent_mode === 'off' ||
+      gate.unsubscribed_at ||
+      gate.archived_at
+    ) {
+      return null;
+    }
+    return insertRun(tx, {
       kind: 'reply',
       leadId: res.leadId,
       threadId: res.threadId,
@@ -69,6 +88,9 @@ export async function ingestInbound(
         ? { runAt: new Date(Date.now() + inboundReplyDelayMin * 60_000) }
         : {}),
     });
+  });
+  if (runId) {
+    emitControlEvent('run.update', runId);
     // Kick the queue now — don't wait up to the poll interval for a reply
     // (a delayed run_at is simply not due yet; the worker tick picks it up).
     void drain(sql).catch((e) => agentLog.error({ err: e }, 'drain failed'));

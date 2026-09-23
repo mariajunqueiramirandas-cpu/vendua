@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState, type ChangeEvent } from 'reac
 import QRCode from 'qrcode';
 import { api, type ChannelHealth, type Integration, type MeetingStatus } from '../api.ts';
 import { onControlEvent } from '../events.ts';
-import { ConfirmBtn, Page } from '../components.tsx';
+import { ConfirmBtn, LEAD_STATES, Page } from '../components.tsx';
 
 /** Config — "sala de máquinas". Left column: provider cards. The card's
  *  state is the REAL runtime state, not the saved config: 'enabled' is a
@@ -1380,14 +1380,8 @@ function MeetingCard({
 
 // ---------- forecast ----------
 
-const FORECAST_STATES = [
-  ['lead', 'lead'],
-  ['contacted', 'contatado'],
-  ['invited', 'convidado'],
-  ['live', 'ativo'],
-] as const;
 /** Percent defaults mirrored from DEFAULT_FORECAST_PROBABILITIES (core). */
-const FORECAST_DEFAULT_PCT: Record<(typeof FORECAST_STATES)[number][0], number> = {
+const FORECAST_DEFAULT_PCT: Record<(typeof LEAD_STATES)[number][0], number> = {
   lead: 5,
   contacted: 20,
   invited: 60,
@@ -1406,22 +1400,22 @@ function ForecastCard({
   // ×10000/100 keeps two decimal places so a hand-set 55.5% isn't silently
   // rounded to 56 on the next save of an untouched field.
   const cur = Object.fromEntries(
-    FORECAST_STATES.map(([k]) => [
+    LEAD_STATES.map(([k]) => [
       k,
       Math.round(num(stored[k], FORECAST_DEFAULT_PCT[k] / 100) * 10000) / 100,
     ]),
-  ) as Record<(typeof FORECAST_STATES)[number][0], number>;
+  ) as Record<(typeof LEAD_STATES)[number][0], number>;
   const [edit, setEdit] = useState(cur);
   useEffect(() => setEdit(cur), [JSON.stringify(cur)]); // eslint-disable-line react-hooks/exhaustive-deps
   const dirty = JSON.stringify(edit) !== JSON.stringify(cur);
-  const invalid = FORECAST_STATES.some(
+  const invalid = LEAD_STATES.some(
     ([k]) => !Number.isFinite(edit[k]) || edit[k] < 0 || edit[k] > 100,
   );
 
   return (
     <div className="drv">
       <div className="grid4">
-        {FORECAST_STATES.map(([k, label]) => (
+        {LEAD_STATES.map(([k, label]) => (
           <div className="field" key={k}>
             <label>{label}</label>
             <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
@@ -1453,7 +1447,7 @@ function ForecastCard({
           onClick={() =>
             onSave({
               ...value,
-              probabilities: Object.fromEntries(FORECAST_STATES.map(([k]) => [k, edit[k] / 100])),
+              probabilities: Object.fromEntries(LEAD_STATES.map(([k]) => [k, edit[k] / 100])),
             })
           }
         >

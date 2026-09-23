@@ -121,19 +121,24 @@ export async function listTasks(
   filter: { leadId?: string; done?: boolean } = {},
 ): Promise<(ReturnType<typeof taskJson> & { leadName: string; businessName: string | null })[]> {
   const rows = await controlTx(sql, (tx) => {
+    const doneCond =
+      filter.done === undefined
+        ? tx`true`
+        : filter.done
+          ? tx`t.done_at is not null`
+          : tx`t.done_at is null`;
     if (filter.leadId) {
       return tx<(TaskRow & { lead_name: string; business_name: string | null })[]>`
         select t.*, l.name as lead_name, l.business_name
         from lead_tasks t join leads l on l.id = t.lead_id
-        where t.lead_id = ${filter.leadId}
+        where t.lead_id = ${filter.leadId} and ${doneCond}
         order by t.done_at is not null, t.due_at asc nulls last, t.created_at desc
       `;
     }
     return tx<(TaskRow & { lead_name: string; business_name: string | null })[]>`
       select t.*, l.name as lead_name, l.business_name
       from lead_tasks t join leads l on l.id = t.lead_id
-      where l.archived_at is null
-        and (${filter.done === undefined ? true : filter.done ? tx`t.done_at is not null` : tx`t.done_at is null`})
+      where l.archived_at is null and ${doneCond}
       order by t.done_at is not null, t.due_at asc nulls last, t.created_at desc
     `;
   });

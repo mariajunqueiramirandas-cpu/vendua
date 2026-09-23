@@ -3,12 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { Plus, Upload, Download, Send } from 'lucide-react';
 import { api, type LeadListItem } from '../api.ts';
 import { onControlEvent } from '../events.ts';
-import { Empty, Page, ScoreBar, StateChip, fmtMoney, rel } from '../components.tsx';
-
-const GOAL_OPTS = [
-  ['negotiation', 'fechar negócio'],
-  ['meeting', 'marcar reunião'],
-] as const;
+import { AGENT_GOALS, Empty, Page, ScoreBar, StateChip, fmtMoney, rel } from '../components.tsx';
 
 export default function Leads() {
   const [leads, setLeads] = useState<LeadListItem[]>([]);
@@ -213,7 +208,7 @@ export default function Leads() {
           </b>
           <span className="leads-sub">objetivo:</span>
           <span className="seg">
-            {GOAL_OPTS.map(([v, l]) => (
+            {AGENT_GOALS.map(([v, l]) => (
               <button key={v} className={goal === v ? 'sel' : ''} onClick={() => setGoal(v)}>
                 {l}
               </button>

@@ -1125,6 +1125,9 @@ export function createApp({ sql, sessionSecret, controlSecret, autoDrain }: AppD
     controlGate(c);
     const done = c.req.query('done');
     const leadId = c.req.query('leadId');
+    if (leadId && !UUID_RE.test(leadId)) {
+      throw new HttpError(400, 'BAD_REQUEST', 'leadId must be a uuid');
+    }
     return c.json({
       tasks: await listTasks(sql, {
         ...(leadId ? { leadId } : {}),

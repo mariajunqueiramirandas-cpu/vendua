@@ -488,8 +488,6 @@ export const api = {
   meetingsStatus: () => req<MeetingStatus>('/meetings/status'),
   bookingLink: (leadId: string) =>
     req<{ url: string }>(`/meetings/link?lead_id=${encodeURIComponent(leadId)}`),
-  createMeeting: (body: { leadId: string; start: string; durationMin?: number }) =>
-    req<{ meeting: Meeting }>('/meetings', { method: 'POST', body: JSON.stringify(body) }),
   patchMeeting: (id: string, patch: { status?: string; startsAt?: string; endsAt?: string }) =>
     req<{ meeting: Meeting }>(`/meetings/${id}`, { method: 'PATCH', body: JSON.stringify(patch) }),
 };

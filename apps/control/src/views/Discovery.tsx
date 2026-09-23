@@ -38,7 +38,6 @@ interface FoundLead {
   intentReason: string | null;
   contact: string[];
   duplicate: boolean;
-  existingState?: string | undefined;
 }
 
 const TARGETS = [3, 5, 10, 15];
@@ -324,9 +323,6 @@ export default function Discovery() {
         intentReason: typeof a.intentReason === 'string' ? a.intentReason : null,
         contact,
         duplicate: dup,
-        existingState: dup
-          ? ((s.out?.existing as { state?: string } | undefined)?.state ?? undefined)
-          : undefined,
       });
     }
     return out;
@@ -804,7 +800,7 @@ export default function Discovery() {
           {found.length ? (
             <div className="harvest">
               {found.map((l) => (
-                <a key={l.id} href={`#/leads/${l.id}`} className="lcard">
+                <Link key={l.id} to={`/leads/${l.id}`} className="lcard">
                   <div className="lcard-top">
                     <div className="lcard-name">{l.name}</div>
                     {l.fitScore != null && (
@@ -827,7 +823,7 @@ export default function Discovery() {
                     </span>
                     <span className="lcard-dup mono">{rel(l.createdAt)}</span>
                   </div>
-                </a>
+                </Link>
               ))}
             </div>
           ) : (
@@ -843,9 +839,9 @@ export default function Discovery() {
                   <span className="mono">{g.value}</span>
                   <div className="drow-links">
                     {g.leads.map((l) => (
-                      <a key={l.id} href={`#/leads/${l.id}`}>
+                      <Link key={l.id} to={`/leads/${l.id}`}>
                         {l.name}
-                      </a>
+                      </Link>
                     ))}
                   </div>
                 </div>

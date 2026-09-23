@@ -5,7 +5,7 @@ import { api, type LeadListItem, type ThreadItem, type ThreadView } from '../api
 import { onControlEvent } from '../events.ts';
 import { Avatar, Empty, Page, StateChip, rel } from '../components.tsx';
 
-const CH_LABEL: Record<string, string> = { email: 'email', whatsapp: 'whats', manual: 'manual' };
+const CH_LABEL: Record<string, string> = { email: 'email', whatsapp: 'whatsapp', manual: 'manual' };
 /** Channels a fresh conversation can start on — gated by what the lead card
  *  actually carries (manual is always available: it never dispatches). */
 const CH_PICK: { ch: string; has: (l: LeadListItem) => boolean }[] = [
@@ -28,15 +28,21 @@ export default function InboxView() {
   const nav = useNavigate();
   const endRef = useRef<HTMLDivElement>(null);
 
+  // Newest-successful wins, scoped to the current filter — an older
+  // response still commits unless a newer success already landed, but never
+  // one whose captured filter is no longer displayed.
   const listSeq = useRef(0);
+  const listOk = useRef(0);
+  const listFor = useRef('');
   const refreshList = useCallback(() => {
+    const f = `${chan}|${q}`;
+    listFor.current = f;
     const req = ++listSeq.current;
-    api
-      .threads({ ...(chan ? { channel: chan } : {}), ...(q ? { q } : {}) })
-      // a slower response for an earlier filter can't overwrite the latest
-      .then((r) => {
-        if (req === listSeq.current) setThreads(r.threads);
-      });
+    api.threads({ ...(chan ? { channel: chan } : {}), ...(q ? { q } : {}) }).then((r) => {
+      if (f !== listFor.current || req <= listOk.current) return;
+      listOk.current = req;
+      setThreads(r.threads);
+    });
   }, [chan, q]);
   useEffect(refreshList, [refreshList]);
 
@@ -64,18 +70,24 @@ export default function InboxView() {
     nav(`/inbox/${r.thread.id}`);
   };
 
+  // Same success-watermark scoped to the URL's thread — a stale response
+  // commits only while its thread is still the open one and no newer
+  // success landed, so the composer can never send to threadId while the
+  // screen shows another conversation.
   const reqSeq = useRef(0);
+  const okSeq = useRef(0);
+  const viewFor = useRef<string | undefined>(threadId);
   const loadThread = useCallback(() => {
+    viewFor.current = threadId;
     if (!threadId) {
       setView(null);
       return;
     }
+    const t = threadId;
     const req = ++reqSeq.current;
-    api.thread(threadId).then((v) => {
-      // Drop stale responses — a slower earlier request must never paint
-      // over the thread the URL now names (composer would send to threadId
-      // while the screen shows another conversation).
-      if (req !== reqSeq.current || v.thread.id !== threadId) return;
+    api.thread(t).then((v) => {
+      if (t !== viewFor.current || req <= okSeq.current) return;
+      okSeq.current = req;
       setView(v);
       setTimeout(() => endRef.current?.scrollIntoView({ behavior: 'smooth' }), 30);
     });

@@ -103,8 +103,12 @@ async function fetchRoom(name: string): Promise<string | null> {
  *  when the room isn't a Daily room or the key is gone. */
 export async function bumpRoomExpiry(roomUrl: string | null, endsAt: Date): Promise<void> {
   if (!roomUrl || !dailyConfigured()) return;
-  const m = /\/([a-z0-9-]+)$/i.exec(new URL(roomUrl).pathname);
-  const name = m?.[1];
+  let name: string | undefined;
+  try {
+    name = /\/([a-z0-9-]+)$/i.exec(new URL(roomUrl).pathname)?.[1];
+  } catch {
+    return; // not a parseable URL — certainly not a Daily room
+  }
   if (!name || !name.startsWith('vendua-')) return;
   try {
     const res = await fetch(`${DAILY_API}/rooms/${encodeURIComponent(name)}`, {

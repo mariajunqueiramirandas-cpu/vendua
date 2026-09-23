@@ -11,7 +11,18 @@ import {
   type Task,
 } from '../api.ts';
 import { onControlEvent } from '../events.ts';
-import { ConfirmBtn, Empty, Page, ScoreBar, fmtDateTime, fmtMoney } from '../components.tsx';
+import {
+  AGENT_GOALS,
+  ConfirmBtn,
+  Empty,
+  LEAD_STATES,
+  MEETING_STATUS_LABEL,
+  Page,
+  RUN_KIND_LABEL,
+  ScoreBar,
+  fmtDateTime,
+  fmtMoney,
+} from '../components.tsx';
 
 const KIND_LABEL: Record<string, string> = {
   note: 'nota',
@@ -26,26 +37,10 @@ const KIND_LABEL: Record<string, string> = {
   system: 'sistema',
   blocked: 'envio bloqueado',
 };
-const RUN_KIND: Record<string, string> = {
-  triage: 'triagem',
-  reply: 'resposta',
-  outreach: 'alcance',
-  discovery: 'descoberta',
-};
-const STATE_OPTS: [string, string][] = [
-  ['lead', 'lead'],
-  ['contacted', 'contatado'],
-  ['invited', 'convidado'],
-  ['live', 'ativo'],
-];
 const AGENT_OPTS: [string, string][] = [
   ['off', 'off'],
   ['draft', 'rascunho'],
   ['auto', 'auto'],
-];
-const GOAL_OPTS: [string, string][] = [
-  ['negotiation', 'negócio'],
-  ['meeting', 'reunião'],
 ];
 
 // stored websites are free text — linkify only values that normalize to an
@@ -215,7 +210,7 @@ export default function LeadDetail() {
             <div className="card lead-summary" style={{ padding: 18 }}>
               <div className="seg-row">
                 <span className="seg" title="estágio do lead">
-                  {STATE_OPTS.map(([v, l]) => (
+                  {LEAD_STATES.map(([v, l]) => (
                     <button
                       key={v}
                       className={lead.state === v ? 'sel' : ''}
@@ -238,7 +233,7 @@ export default function LeadDetail() {
                 </span>
                 {lead.agentMode !== 'off' && (
                   <span className="seg" title="objetivo do agente">
-                    {GOAL_OPTS.map(([v, l]) => (
+                    {AGENT_GOALS.map(([v, l]) => (
                       <button
                         key={v}
                         className={lead.agentGoal === v ? 'sel' : ''}
@@ -334,7 +329,7 @@ export default function LeadDetail() {
               )}
               {schedRuns.map((r) => (
                 <div key={r.id} className="trow">
-                  <span className="chip">{RUN_KIND[r.kind] ?? r.kind}</span>
+                  <span className="chip">{RUN_KIND_LABEL[r.kind] ?? r.kind}</span>
                   <span style={{ color: 'var(--muted)', fontSize: 'var(--t-xs)', flex: 1 }}>
                     agenda {fmtDateTime(r.run_at)}
                   </span>
@@ -373,13 +368,7 @@ export default function LeadDetail() {
                   <span style={{ flex: 1 }}>
                     {fmtDateTime(m.startsAt)}
                     <span className={`chip stc-${m.status}`} style={{ marginLeft: 8 }}>
-                      {m.status === 'no_show'
-                        ? 'no-show'
-                        : m.status === 'done'
-                          ? 'feita'
-                          : m.status === 'cancelled'
-                            ? 'cancelada'
-                            : 'marcada'}
+                      {MEETING_STATUS_LABEL[m.status]}
                     </span>
                   </span>
                   {m.roomUrl && m.status === 'scheduled' && (

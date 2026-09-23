@@ -17,7 +17,7 @@ import {
   TrendingUp,
   Users,
 } from 'lucide-react';
-import { api, ApiError } from './api.ts';
+import { api } from './api.ts';
 import { onControlEvent } from './events.ts';
 import Login from './views/Login.tsx';
 import Dashboard from './views/Dashboard.tsx';
@@ -154,7 +154,7 @@ export default function App() {
     };
   }, [authed]);
 
-  // Keyboard-first: g+d/f/l/i/a/e/t/g/c navigate; only when not typing.
+  // Keyboard-first: bare d/f/l/i/j/a/e/t/g/p/r/c navigate; only when not typing.
   const onKey = useCallback(
     (e: KeyboardEvent) => {
       const el = e.target as HTMLElement;
@@ -353,5 +353,3 @@ function RailFoot({
     </div>
   );
 }
-
-export { ApiError };
