@@ -15,10 +15,12 @@ on:
     inputs:
       # The PR's base, forwarded by the format job — github.base_ref doesn't
       # exist under workflow_dispatch and without it the Builds step would
-      # rebuild the whole storefront fleet on every autofix.
+      # rebuild the whole storefront fleet on every autofix. Empty means a
+      # main-push autofix: there is no stable base behind the new commit, so
+      # Builds keeps the push semantics of building every storefront.
       base_ref:
         type: string
-        default: 'main'
+        default: ''
 
 permissions:
   contents: read
@@ -71,7 +73,7 @@ jobs:
         # under workflow_dispatch; format skips (tree is already clean) and
         # storefront-isolation skips (the autofix never changes the path
         # set — the earlier synchronize already vetted boundaries).
-        run: gh workflow run ci.yml --ref "${{ github.head_ref || github.ref_name }}" -f base_ref="${{ github.base_ref || 'main' }}"
+        run: gh workflow run ci.yml --ref "${{ github.head_ref || github.ref_name }}" -f base_ref="${{ github.base_ref }}"
 
   # Storefront write-scope boundary (docs/architecture/06-monorepo.md): a PR
   # labelled `storefront:<slug>` may only touch `storefronts/<slug>/**`. No
@@ -143,10 +145,10 @@ jobs:
           # against the PR base; a push to main builds every storefront.
           if [ "${{ github.event_name }}" = "pull_request" ]; then
             affected="$(bun tools/affected.mjs --base "origin/${{ github.base_ref }}")"
-          elif [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            # format-job autofix retrigger: the base comes through the input,
-            # not github.base_ref — keep the same affected scoping as the PR run.
-            affected="$(bun tools/affected.mjs --base "origin/${{ github.event.inputs.base_ref || 'main' }}")"
+          elif [ "${{ github.event_name }}" = "workflow_dispatch" ] && [ -n "${{ github.event.inputs.base_ref }}" ]; then
+            # PR autofix retrigger: the base comes through the input, not
+            # github.base_ref — keep the same affected scoping as the PR run.
+            affected="$(bun tools/affected.mjs --base "origin/${{ github.event.inputs.base_ref }}")"
           else
             affected='{"packages":["site"],"allStorefronts":true}'
           fi
