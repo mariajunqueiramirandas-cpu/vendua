@@ -134,6 +134,13 @@ export async function claimRun(sql: Sql): Promise<RunRow | null> {
               and l.archived_at is null
               and l.unsubscribed_at is null
           ))
+          -- a staff-paused thread suppresses the same way — revalidated here
+          -- on a fresh snapshot so a pause landing after enqueue still holds
+          -- the run (the enqueue gate can't close the post-insert window).
+          and (r.thread_id is null or exists (
+            select 1 from lead_threads t
+            where t.id = r.thread_id and t.agent_enabled
+          ))
           -- the busy-lead exclusion lives in the scan itself so a durably
           -- blocked lead never becomes a candidate — no queue-wide barrier
           and (r.kind <> 'outreach' or r.lead_id is null or not exists (
@@ -148,6 +155,19 @@ export async function claimRun(sql: Sql): Promise<RunRow | null> {
       `;
       const run = cand[0];
       if (!run) return null;
+      // The scan predicate reads t.agent_enabled on the select snapshot — a
+      // pause committed between it and the status flip below would still
+      // claim. Lock the thread row before deciding: an in-flight pause
+      // blocks this FOR UPDATE, then the re-read sees the committed value.
+      if (run.thread_id) {
+        const enabled = await tx<{ agent_enabled: boolean }[]>`
+          select agent_enabled from lead_threads where id = ${run.thread_id} for update
+        `;
+        if (!enabled[0]?.agent_enabled) {
+          rejected.push(run.id);
+          continue;
+        }
+      }
       if (run.kind === 'outreach' && run.lead_id) {
         // Serialization point for concurrent claims on one lead: the scan's
         // not-exists only sees committed owners — a claim still mid-flight
