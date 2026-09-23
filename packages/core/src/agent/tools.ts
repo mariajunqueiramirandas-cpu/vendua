@@ -190,6 +190,11 @@ const REGISTRY: { def: AgentTool; toolsets: string[] }[] = [
           id: leadIdArg,
           ...LEAD_FIELDS,
           agentMode: { type: 'string', enum: ['off', 'draft', 'auto'] },
+          archived: {
+            type: 'boolean',
+            description:
+              "true archives the lead — off the board (staff sees it under 'arquivados'), suppressed from every agent gate; the kill switch for off-ICP/dead leads",
+          },
           agentGoal: {
             type: 'string',
             enum: ['negotiation', 'meeting'],

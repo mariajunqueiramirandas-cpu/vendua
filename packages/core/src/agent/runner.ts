@@ -899,6 +899,15 @@ export async function runOnce(sql: Sql): Promise<boolean> {
 
   try {
     const integration = await getIntegration(sql, 'llm');
+    // A missing/disabled llm row falls back to the mock provider — the run
+    // produces synthetic 'ok' text instead of erroring. Loud, not silent:
+    // a deploy misconfiguration shows up in the log instead of as fake runs.
+    if (!integration) {
+      agentLog.warn(
+        { runId: run.id, kind: run.kind },
+        'no enabled llm integration — run falls back to mock provider',
+      );
+    }
     const provider = providerFor(integration, run.params);
     const pitch = await getPitch(sql);
     const memory = await getSetting<{ facts: string[] }>(sql, 'agent_memory', { facts: [] });
