@@ -227,39 +227,48 @@ export default function LeadDetail() {
           <div className="lead-left">
             <div className="card lead-summary" style={{ padding: 18 }}>
               <div className="seg-row">
-                <span className="seg" title="estágio do lead">
-                  {LEAD_STATES.map(([v, l]) => (
-                    <button
-                      key={v}
-                      className={lead.state === v ? 'sel' : ''}
-                      onClick={() => void patch({ state: v })}
-                    >
-                      {l}
-                    </button>
-                  ))}
-                </span>
-                <span className="seg" title="modo do agente">
-                  {AGENT_OPTS.map(([v, l]) => (
-                    <button
-                      key={v}
-                      className={lead.agentMode === v ? 'sel' : ''}
-                      onClick={() => void patch({ agentMode: v })}
-                    >
-                      {l}
-                    </button>
-                  ))}
-                </span>
-                {lead.agentMode !== 'off' && (
-                  <span className="seg" title="objetivo do agente">
-                    {AGENT_GOALS.map(([v, l]) => (
+                <span className="knob">
+                  <span className="knob-t">estágio</span>
+                  <span className="seg">
+                    {LEAD_STATES.map(([v, l]) => (
                       <button
                         key={v}
-                        className={lead.agentGoal === v ? 'sel' : ''}
-                        onClick={() => void patch({ agentGoal: v })}
+                        className={lead.state === v ? 'sel' : ''}
+                        onClick={() => void patch({ state: v })}
                       >
                         {l}
                       </button>
                     ))}
+                  </span>
+                </span>
+                <span className="knob">
+                  <span className="knob-t">agente</span>
+                  <span className="seg">
+                    {AGENT_OPTS.map(([v, l]) => (
+                      <button
+                        key={v}
+                        className={lead.agentMode === v ? 'sel' : ''}
+                        onClick={() => void patch({ agentMode: v })}
+                      >
+                        {l}
+                      </button>
+                    ))}
+                  </span>
+                </span>
+                {lead.agentMode !== 'off' && (
+                  <span className="knob">
+                    <span className="knob-t">objetivo</span>
+                    <span className="seg">
+                      {AGENT_GOALS.map(([v, l]) => (
+                        <button
+                          key={v}
+                          className={lead.agentGoal === v ? 'sel' : ''}
+                          onClick={() => void patch({ agentGoal: v })}
+                        >
+                          {l}
+                        </button>
+                      ))}
+                    </span>
                   </span>
                 )}
                 <span style={{ marginLeft: 'auto' }}>

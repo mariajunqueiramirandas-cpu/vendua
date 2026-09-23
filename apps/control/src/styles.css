@@ -1200,19 +1200,96 @@ a.card-foot:hover {
    lime = driver can work now, amber = enabled but not ready (missing key,
    unscanned QR), plain line = off. Agent-owned surface → night mono
    details, lime accents. */
-.set-grid {
+/* section index + focused body — the wall of sections became a TOC */
+.set-wrap {
   display: grid;
-  grid-template-columns: minmax(340px, 5fr) minmax(340px, 6fr);
-  gap: 22px;
+  grid-template-columns: 216px minmax(0, 1fr);
+  gap: 26px;
   align-items: start;
 }
+.set-nav {
+  position: sticky;
+  top: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.set-tab {
+  display: block;
+  padding: 8px 10px;
+  border-radius: var(--r-sm);
+  border-inline-start: 2px solid transparent;
+}
+.set-tab b {
+  display: block;
+  font-size: var(--t-sm);
+  font-weight: 600;
+  color: var(--ink);
+}
+.set-tab-sub {
+  display: block;
+  font-size: var(--t-2xs);
+  color: var(--muted);
+  margin-top: 1px;
+}
+.set-tab:hover {
+  background: var(--surface-2);
+}
+.set-tab.active {
+  background: var(--surface);
+  border-inline-start-color: var(--accent);
+}
 @media (max-width: 1080px) {
-  .set-grid {
+  .set-wrap {
     grid-template-columns: minmax(0, 1fr);
+    gap: 16px;
+  }
+  .set-nav {
+    position: static;
+    flex-direction: row;
+    gap: 6px;
+    overflow-x: auto;
+    padding-bottom: 4px;
+    /* the next pill peeking past the edge is the scroll cue */
+    scrollbar-width: none;
+  }
+  .set-tab {
+    border-inline-start: 0;
+    border: 1px solid var(--line);
+    border-radius: 999px;
+    padding: 6px 13px;
+    white-space: nowrap;
+    flex-shrink: 0;
+  }
+  .set-tab-sub {
+    display: none;
+  }
+  .set-tab.active {
+    background: var(--forest-900);
+    border-color: var(--forest-900);
+  }
+  .set-tab.active b {
+    color: var(--cream-50);
   }
 }
 .set-sec {
   margin-bottom: 30px;
+}
+/* field groups inside a card — space carries the grouping, the label
+   carries the landmark (guardrails went from one wall to named clusters) */
+.fgrp {
+  margin-bottom: 18px;
+}
+.fgrp:last-of-type {
+  margin-bottom: 6px;
+}
+.fgrp-t {
+  font-family: var(--font-mono);
+  font-size: var(--t-2xs);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--muted);
+  margin-bottom: 9px;
 }
 .set-sec > h2 {
   font-family: var(--font-serif);
@@ -1971,9 +2048,23 @@ details.raw textarea {
 .seg-row {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 14px;
   flex-wrap: wrap;
   margin-bottom: 14px;
+}
+/* captioned control — the seg alone read as three identical pills */
+.knob {
+  display: inline-flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.knob-t {
+  font-family: var(--font-mono);
+  font-size: var(--t-2xs);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--muted);
+  padding-inline-start: 10px;
 }
 .money-v {
   font-family: var(--font-mono);

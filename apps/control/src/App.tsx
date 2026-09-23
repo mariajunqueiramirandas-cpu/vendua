@@ -239,6 +239,7 @@ export default function App() {
           <Route path="/plano" element={<Plan />} />
           <Route path="/relatorios" element={<Reports />} />
           <Route path="/config" element={<Settings />} />
+          <Route path="/config/:sec" element={<Settings />} />
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>
       </div>

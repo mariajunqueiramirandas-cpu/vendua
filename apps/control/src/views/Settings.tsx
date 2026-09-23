@@ -1,15 +1,25 @@
 import { useCallback, useEffect, useRef, useState, type ChangeEvent } from 'react';
+import { Navigate, NavLink, useParams } from 'react-router-dom';
 import QRCode from 'qrcode';
 import { api, type ChannelHealth, type Integration, type MeetingStatus } from '../api.ts';
 import { onControlEvent } from '../events.ts';
 import { ConfirmBtn, LEAD_STATES, Page } from '../components.tsx';
 
-/** Config — "sala de máquinas". Left column: provider cards. The card's
- *  state is the REAL runtime state, not the saved config: 'enabled' is a
- *  fact about the row, 'live' means the driver can actually work right now
- *  (secret present; for baileys, socket open). Right column: guardrails,
- *  pitch and agent memory as structured editors (raw JSON under a toggle
- *  for the long tail of keys). */
+/** Config — "sala de máquinas", split into sections behind a side index
+ *  so a single knob is one click away instead of one long scroll away.
+ *  Provider card state is the REAL runtime state, not the saved config:
+ *  'enabled' is a fact about the row, 'live' means the driver can actually
+ *  work right now (secret present; for baileys, socket open). Structured
+ *  editors everywhere else, with raw JSON under a toggle for the long tail
+ *  of keys. */
+const SECTIONS = [
+  { key: 'comportamento', label: 'comportamento', sub: 'o que o agente pode fazer' },
+  { key: 'voz', label: 'voz e memória', sub: 'como o agente fala — e o que guarda' },
+  { key: 'canais', label: 'canais', sub: 'modelo, email, whatsapp, descoberta' },
+  { key: 'calls', label: 'calls', sub: 'agendamento, salas, agenda' },
+  { key: 'relatorios', label: 'relatórios', sub: 'previsão e resumo diário' },
+] as const;
+type SectionKey = (typeof SECTIONS)[number]['key'];
 
 type Driver = {
   d: string;
@@ -202,6 +212,7 @@ const fmtPhone = (digits: string) => {
 };
 
 export default function Settings() {
+  const { sec = '' } = useParams();
   const [integrations, setIntegrations] = useState<Integration[]>([]);
   const [settings, setSettings] = useState<Record<string, unknown>>({});
   const [wa, setWa] = useState<WaState>(WA_IDLE);
@@ -319,88 +330,126 @@ export default function Settings() {
   const digest = (settings.digest ?? {}) as Record<string, unknown>;
   const memory = (settings.agent_memory ?? { facts: [] }) as { facts: string[] };
 
+  // Unknown or bare /config lands on the first section — the index doubles
+  // as the page's TOC.
+  const section = (SECTIONS as readonly { key: string }[]).some((s) => s.key === sec)
+    ? (sec as SectionKey)
+    : null;
+  if (!section) return <Navigate to="/config/comportamento" replace />;
+
   return (
     <Page title="Config" sub="sala de máquinas — provedores, guardrails e a voz do agente">
       {notice && <div className={`notice ${notice.kind}`}>{notice.text}</div>}
-      <div className="set-grid">
-        <div>
-          <section className="set-sec">
-            <h2>provedores</h2>
-            <p className="sub">
-              um driver ativo por tipo —{' '}
-              {
-                KINDS.filter(
-                  (k) =>
-                    providerStatus(
-                      k.key,
-                      integrations.filter((i) => i.kind === k.key),
-                      k.key === 'whatsapp' ? wa : WA_IDLE,
-                    ).tone === 'live',
-                ).length
-              }
-              /{KINDS.length} prontos
-            </p>
-            {loading && !integrations.length && (
-              <div className="empty">
-                <div className="serif" style={{ fontSize: 'var(--t-lg)' }}>
-                  carregando…
-                </div>
-              </div>
-            )}
-            {KINDS.map((k) => (
-              <ProviderCard
-                key={k.key}
-                kind={k}
-                rows={integrations.filter((i) => i.kind === k.key)}
-                wa={k.key === 'whatsapp' ? wa : WA_IDLE}
-                onWaLogout={k.key === 'whatsapp' ? () => void waLogout() : undefined}
-                onSave={(d, enable) => void saveIntegration(k.key, d, enable)}
+      <div className="set-wrap">
+        <nav className="set-nav" aria-label="seções de config">
+          {SECTIONS.map((s) => (
+            <NavLink
+              key={s.key}
+              to={`/config/${s.key}`}
+              className={({ isActive }) => `set-tab${isActive ? ' active' : ''}`}
+            >
+              <b>{s.label}</b>
+              <span className="set-tab-sub">{s.sub}</span>
+            </NavLink>
+          ))}
+        </nav>
+        <div className="set-body">
+          {section === 'comportamento' && (
+            <section className="set-sec">
+              <h2>guardrails</h2>
+              <p className="sub">regras duras — o código impõe, não o prompt</p>
+              <GuardrailsCard
+                value={guardrails}
+                onSave={(v) => void saveSetting('guardrails', v)}
               />
-            ))}
-          </section>
-          <section className="set-sec">
-            <h2>saúde dos canais</h2>
-            <p className="sub">envios, falhas e bloqueios de guarda · últimos 30 dias</p>
-            <ChannelHealthCard />
-          </section>
-        </div>
-        <div>
-          <section className="set-sec">
-            <h2>guardrails</h2>
-            <p className="sub">regras duras — o código impõe, não o prompt</p>
-            <GuardrailsCard value={guardrails} onSave={(v) => void saveSetting('guardrails', v)} />
-          </section>
-          <section className="set-sec">
-            <h2>voz do agente</h2>
-            <p className="sub">o pitch inteiro que o modelo recebe no system prompt</p>
-            <PitchCard value={pitch} onSave={(v) => void saveSetting('pitch', v)} />
-          </section>
-          <section className="set-sec">
-            <h2>reunião</h2>
-            <p className="sub">objetivo 'reunião' — o link que o agente envia quando o lead topa</p>
-            <MeetingCard value={meeting} onSave={(v) => void saveSetting('meeting', v)} />
-          </section>
-          <section className="set-sec">
-            <h2>previsão do pipeline</h2>
-            <p className="sub">
-              probabilidade de fechar por estágio — multiplica o valor do lead na previsão de
-              relatórios
-            </p>
-            <ForecastCard value={forecast} onSave={(v) => void saveSetting('forecast', v)} />
-          </section>
-          <section className="set-sec">
-            <h2>resumo diário</h2>
-            <p className="sub">um email por dia com leads novos, respostas, calls e custo</p>
-            <DigestCard value={digest} onSave={(v) => void saveSetting('digest', v)} />
-          </section>
-          <section className="set-sec">
-            <h2>memória do agente</h2>
-            <p className="sub">fatos que ele guardou via `remember` — ou que você escreve</p>
-            <MemoryCard
-              facts={memory.facts}
-              onSave={(facts) => void saveSetting('agent_memory', { facts })}
-            />
-          </section>
+            </section>
+          )}
+          {section === 'voz' && (
+            <>
+              <section className="set-sec">
+                <h2>voz do agente</h2>
+                <p className="sub">o pitch inteiro que o modelo recebe no system prompt</p>
+                <PitchCard value={pitch} onSave={(v) => void saveSetting('pitch', v)} />
+              </section>
+              <section className="set-sec">
+                <h2>memória do agente</h2>
+                <p className="sub">fatos que ele guardou via `remember` — ou que você escreve</p>
+                <MemoryCard
+                  facts={memory.facts}
+                  onSave={(facts) => void saveSetting('agent_memory', { facts })}
+                />
+              </section>
+            </>
+          )}
+          {section === 'canais' && (
+            <>
+              <section className="set-sec">
+                <h2>provedores</h2>
+                <p className="sub">
+                  um driver ativo por tipo —{' '}
+                  {
+                    KINDS.filter(
+                      (k) =>
+                        providerStatus(
+                          k.key,
+                          integrations.filter((i) => i.kind === k.key),
+                          k.key === 'whatsapp' ? wa : WA_IDLE,
+                        ).tone === 'live',
+                    ).length
+                  }
+                  /{KINDS.length} prontos
+                </p>
+                {loading && !integrations.length && (
+                  <div className="empty">
+                    <div className="serif" style={{ fontSize: 'var(--t-lg)' }}>
+                      carregando…
+                    </div>
+                  </div>
+                )}
+                {KINDS.map((k) => (
+                  <ProviderCard
+                    key={k.key}
+                    kind={k}
+                    rows={integrations.filter((i) => i.kind === k.key)}
+                    wa={k.key === 'whatsapp' ? wa : WA_IDLE}
+                    onWaLogout={k.key === 'whatsapp' ? () => void waLogout() : undefined}
+                    onSave={(d, enable) => void saveIntegration(k.key, d, enable)}
+                  />
+                ))}
+              </section>
+              <section className="set-sec">
+                <h2>saúde dos canais</h2>
+                <p className="sub">envios, falhas e bloqueios de guarda · últimos 30 dias</p>
+                <ChannelHealthCard />
+              </section>
+            </>
+          )}
+          {section === 'calls' && (
+            <section className="set-sec">
+              <h2>reunião</h2>
+              <p className="sub">
+                objetivo 'reunião' — o link que o agente envia quando o lead topa
+              </p>
+              <MeetingCard value={meeting} onSave={(v) => void saveSetting('meeting', v)} />
+            </section>
+          )}
+          {section === 'relatorios' && (
+            <>
+              <section className="set-sec">
+                <h2>previsão do pipeline</h2>
+                <p className="sub">
+                  probabilidade de fechar por estágio — multiplica o valor do lead na previsão de
+                  relatórios
+                </p>
+                <ForecastCard value={forecast} onSave={(v) => void saveSetting('forecast', v)} />
+              </section>
+              <section className="set-sec">
+                <h2>resumo diário</h2>
+                <p className="sub">um email por dia com leads novos, respostas, calls e custo</p>
+                <DigestCard value={digest} onSave={(v) => void saveSetting('digest', v)} />
+              </section>
+            </>
+          )}
         </div>
       </div>
       {/* shared by the guardrails + meeting tz pickers */}
@@ -907,173 +956,191 @@ function GuardrailsCard({
 
   return (
     <div className="drv">
-      <div className="grid3">
-        <div className="field">
-          <label>msgs/dia por lead</label>
-          <input
-            type="number"
-            min={1}
-            max={100}
-            value={edit.maxOutboundPerLeadPerDay}
-            onChange={(e) =>
-              setEdit({ ...edit, maxOutboundPerLeadPerDay: Number(e.target.value) || 1 })
-            }
-          />
-        </div>
-        <div className="field">
-          <label>nota p/ autocontato</label>
-          <input
-            type="number"
-            min={1}
-            max={10}
-            value={edit.discoveryContactMinScore}
-            onChange={(e) =>
-              setEdit({ ...edit, discoveryContactMinScore: Number(e.target.value) || 1 })
-            }
-          />
-          <div className="hint">fitScore mínimo p/ o agente chamar no whatsapp sozinho</div>
-        </div>
-        <div className="field">
-          <label>fuso</label>
-          <input
-            list="tz-list"
-            value={edit.timezone}
-            onChange={(e) => setEdit({ ...edit, timezone: e.target.value })}
-          />
-          {!tzValid(edit.timezone) && (
-            <div className="hint" style={{ color: 'var(--red-400)' }}>
-              fuso IANA inválido
+      <div className="fgrp">
+        <div className="fgrp-t">alcance — quanto o agente fala</div>
+        <div className="grid2" style={{ alignItems: 'end' }}>
+          <div className="field" style={{ marginBottom: 0 }}>
+            <label>msgs/dia por lead</label>
+            <input
+              type="number"
+              min={1}
+              max={100}
+              value={edit.maxOutboundPerLeadPerDay}
+              onChange={(e) =>
+                setEdit({ ...edit, maxOutboundPerLeadPerDay: Number(e.target.value) || 1 })
+              }
+            />
+          </div>
+          <div className="field" style={{ marginBottom: 0 }}>
+            <label>resposta do agente (min)</label>
+            <input
+              type="number"
+              min={0}
+              max={1440}
+              value={edit.inboundReplyDelayMin}
+              onChange={(e) =>
+                setEdit({ ...edit, inboundReplyDelayMin: Number(e.target.value) || 0 })
+              }
+            />
+            <div className="hint">
+              0 = responde na hora; &gt;0 o agente espera esse tempo depois da mensagem chegar
             </div>
-          )}
-        </div>
-      </div>
-      <div className="grid2" style={{ alignItems: 'end' }}>
-        <div className="field" style={{ marginBottom: 0 }}>
-          <label>
-            horário de silêncio{' '}
-            {quietWrap && <em style={{ textTransform: 'none' }}>(vira o dia)</em>}
-          </label>
-          <div className="cfg-times">
-            <input
-              type="time"
-              value={edit.quietStart}
-              onChange={(e) => setEdit({ ...edit, quietStart: e.target.value })}
-            />
-            <span className="hint">até</span>
-            <input
-              type="time"
-              value={edit.quietEnd}
-              onChange={(e) => setEdit({ ...edit, quietEnd: e.target.value })}
-            />
           </div>
-          <div className="hint">o agente não envia nada dentro dessa janela</div>
-        </div>
-        <div className="field" style={{ marginBottom: 0 }}>
-          <label>primeiro contato</label>
-          <label className="tgl">
+          <div className="field" style={{ marginBottom: 0 }}>
+            <label>1º contato automático (min)</label>
             <input
-              type="checkbox"
-              checked={edit.firstContactDraftOnly}
-              onChange={(e) => setEdit({ ...edit, firstContactDraftOnly: e.target.checked })}
+              type="number"
+              min={0}
+              max={10080}
+              value={edit.firstContactDelayMin}
+              onChange={(e) =>
+                setEdit({ ...edit, firstContactDelayMin: Number(e.target.value) || 0 })
+              }
             />
-            <span className="tk" />
-            <span className="lbl">
-              {edit.firstContactDraftOnly ? 'sempre vira rascunho' : 'agente pode enviar direto'}
-            </span>
-          </label>
-          <div className="hint">quem nunca recebeu mensagem nossa passa pela fila de aprovação</div>
-        </div>
-        <div className="field" style={{ marginBottom: 0 }}>
-          <label>autocontato no discovery</label>
-          <label className="tgl">
+            <div className="hint">
+              0 = desligado; &gt;0 agenda um run de outreach esse tempo depois do lead ser criado
+              (modo do lead decide rascunho vs. envio)
+            </div>
+          </div>
+          <div className="field" style={{ marginBottom: 0 }}>
+            <label>cadência p/ retorno (dias)</label>
             <input
-              type="checkbox"
-              checked={edit.discoveryAutoContact}
-              onChange={(e) => setEdit({ ...edit, discoveryAutoContact: e.target.checked })}
+              type="number"
+              min={0}
+              max={90}
+              value={edit.followupCadenceDays}
+              onChange={(e) =>
+                setEdit({ ...edit, followupCadenceDays: Number(e.target.value) || 0 })
+              }
             />
-            <span className="tk" />
-            <span className="lbl">
-              {edit.discoveryAutoContact ? 'nota alta chama no whatsapp' : 'só cria o card'}
-            </span>
-          </label>
-          <div className="hint">
-            lead descoberto com fitScore ≥ o mínimo ganha um run de outreach na hora
+            <div className="hint">
+              envio do agente sem resposta agenda o próximo contato; 0 = desligado (nunca
+              sobrescreve uma data que o agente já marcou)
+            </div>
           </div>
         </div>
       </div>
-      <div className="grid2" style={{ alignItems: 'end' }}>
-        <div className="field" style={{ marginBottom: 0 }}>
-          <label>resposta do agente (min)</label>
-          <input
-            type="number"
-            min={0}
-            max={1440}
-            value={edit.inboundReplyDelayMin}
-            onChange={(e) =>
-              setEdit({ ...edit, inboundReplyDelayMin: Number(e.target.value) || 0 })
-            }
-          />
-          <div className="hint">
-            0 = responde na hora; &gt;0 o agente espera esse tempo depois da mensagem chegar
+      <div className="fgrp">
+        <div className="fgrp-t">janelas — quando ele pode falar</div>
+        <div className="grid2" style={{ alignItems: 'end' }}>
+          <div className="field" style={{ marginBottom: 0 }}>
+            <label>
+              horário de silêncio{' '}
+              {quietWrap && <em style={{ textTransform: 'none' }}>(vira o dia)</em>}
+            </label>
+            <div className="cfg-times">
+              <input
+                type="time"
+                value={edit.quietStart}
+                onChange={(e) => setEdit({ ...edit, quietStart: e.target.value })}
+              />
+              <span className="hint">até</span>
+              <input
+                type="time"
+                value={edit.quietEnd}
+                onChange={(e) => setEdit({ ...edit, quietEnd: e.target.value })}
+              />
+            </div>
+            <div className="hint">o agente não envia nada dentro dessa janela</div>
           </div>
-        </div>
-        <div className="field" style={{ marginBottom: 0 }}>
-          <label>1º contato automático (min)</label>
-          <input
-            type="number"
-            min={0}
-            max={10080}
-            value={edit.firstContactDelayMin}
-            onChange={(e) =>
-              setEdit({ ...edit, firstContactDelayMin: Number(e.target.value) || 0 })
-            }
-          />
-          <div className="hint">
-            0 = desligado; &gt;0 agenda um run de outreach esse tempo depois do lead ser criado
-            (modo do lead decide rascunho vs. envio)
+          <div className="field" style={{ marginBottom: 0 }}>
+            <label>fuso</label>
+            <input
+              list="tz-list"
+              value={edit.timezone}
+              onChange={(e) => setEdit({ ...edit, timezone: e.target.value })}
+            />
+            {!tzValid(edit.timezone) && (
+              <div className="hint" style={{ color: 'var(--red-400)' }}>
+                fuso IANA inválido
+              </div>
+            )}
           </div>
         </div>
       </div>
-      <div className="grid3" style={{ alignItems: 'end' }}>
-        <div className="field" style={{ marginBottom: 0 }}>
-          <label>cadência p/ retorno (dias)</label>
-          <input
-            type="number"
-            min={0}
-            max={90}
-            value={edit.followupCadenceDays}
-            onChange={(e) => setEdit({ ...edit, followupCadenceDays: Number(e.target.value) || 0 })}
-          />
-          <div className="hint">
-            envio do agente sem resposta agenda o próximo contato; 0 = desligado (nunca sobrescreve
-            uma data que o agente já marcou)
+      <div className="fgrp">
+        <div className="fgrp-t">autonomia — o que passa por você</div>
+        <div className="grid2" style={{ alignItems: 'end' }}>
+          <div className="field" style={{ marginBottom: 0 }}>
+            <label>primeiro contato</label>
+            <label className="tgl">
+              <input
+                type="checkbox"
+                checked={edit.firstContactDraftOnly}
+                onChange={(e) => setEdit({ ...edit, firstContactDraftOnly: e.target.checked })}
+              />
+              <span className="tk" />
+              <span className="lbl">
+                {edit.firstContactDraftOnly ? 'sempre vira rascunho' : 'agente pode enviar direto'}
+              </span>
+            </label>
+            <div className="hint">
+              quem nunca recebeu mensagem nossa passa pela fila de aprovação
+            </div>
+          </div>
+          <div className="field" style={{ marginBottom: 0 }}>
+            <label>rascunho expira (dias)</label>
+            <input
+              type="number"
+              min={0}
+              max={90}
+              value={edit.staleDraftDays}
+              onChange={(e) => setEdit({ ...edit, staleDraftDays: Number(e.target.value) || 0 })}
+            />
+            <div className="hint">
+              aprovar rascunho do agente mais velho que isso não envia — regenera contra o estado
+              atual do lead; 0 = desligado
+            </div>
           </div>
         </div>
-        <div className="field" style={{ marginBottom: 0 }}>
-          <label>rascunho expira (dias)</label>
-          <input
-            type="number"
-            min={0}
-            max={90}
-            value={edit.staleDraftDays}
-            onChange={(e) => setEdit({ ...edit, staleDraftDays: Number(e.target.value) || 0 })}
-          />
-          <div className="hint">
-            aprovar rascunho do agente mais velho que isso não envia — regenera contra o estado
-            atual do lead; 0 = desligado
+      </div>
+      <div className="fgrp">
+        <div className="fgrp-t">descoberta — leads que ele mesmo acha</div>
+        <div className="grid3" style={{ alignItems: 'end' }}>
+          <div className="field" style={{ marginBottom: 0 }}>
+            <label>autocontato no discovery</label>
+            <label className="tgl">
+              <input
+                type="checkbox"
+                checked={edit.discoveryAutoContact}
+                onChange={(e) => setEdit({ ...edit, discoveryAutoContact: e.target.checked })}
+              />
+              <span className="tk" />
+              <span className="lbl">
+                {edit.discoveryAutoContact ? 'nota alta chama no whatsapp' : 'só cria o card'}
+              </span>
+            </label>
+            <div className="hint">
+              lead descoberto com fitScore ≥ o mínimo ganha um run de outreach na hora
+            </div>
           </div>
-        </div>
-        <div className="field" style={{ marginBottom: 0 }}>
-          <label>auto-pausa de brief (runs)</label>
-          <input
-            type="number"
-            min={0}
-            max={100}
-            value={edit.briefAutoPauseRuns}
-            onChange={(e) => setEdit({ ...edit, briefAutoPauseRuns: Number(e.target.value) || 0 })}
-          />
-          <div className="hint">
-            runs seguidas do mesmo brief sem lead novo pausam ele sozinho; 0 = nunca pausa
+          <div className="field" style={{ marginBottom: 0 }}>
+            <label>nota p/ autocontato</label>
+            <input
+              type="number"
+              min={1}
+              max={10}
+              value={edit.discoveryContactMinScore}
+              onChange={(e) =>
+                setEdit({ ...edit, discoveryContactMinScore: Number(e.target.value) || 1 })
+              }
+            />
+            <div className="hint">fitScore mínimo p/ o agente chamar no whatsapp sozinho</div>
+          </div>
+          <div className="field" style={{ marginBottom: 0 }}>
+            <label>auto-pausa de brief (runs)</label>
+            <input
+              type="number"
+              min={0}
+              max={100}
+              value={edit.briefAutoPauseRuns}
+              onChange={(e) =>
+                setEdit({ ...edit, briefAutoPauseRuns: Number(e.target.value) || 0 })
+              }
+            />
+            <div className="hint">
+              runs seguidas do mesmo brief sem lead novo pausam ele sozinho; 0 = nunca pausa
+            </div>
           </div>
         </div>
       </div>
