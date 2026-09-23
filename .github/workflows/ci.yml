@@ -8,6 +8,10 @@ on:
     # stale — adding/removing a storefront: label changes what the check
     # enforces on the same head commit.
     types: [opened, synchronize, reopened, labeled, unlabeled]
+  # The format job self-dispatches after pushing an autofix commit:
+  # GITHUB_TOKEN pushes can't trigger synchronize, but workflow_dispatch IS
+  # in the exception — the dispatched run's checks attach to the fixed head.
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -22,6 +26,7 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: write
+      actions: write # self-dispatches ci after pushing the autofix commit
     if: >-
       github.event_name == 'push' ||
       (github.event.pull_request.head.repo.fork == false &&
@@ -36,16 +41,30 @@ jobs:
       - run: bun install --frozen-lockfile
       - run: bunx prettier --write . --log-level warn
       - name: Commit formatting fix
+        id: autofix
         run: |
           if [ -n "$(git status --porcelain)" ]; then
             git config user.name 'github-actions[bot]'
             git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
             git add -A
-            # No [skip ci] — the fix commit must retrigger the pipeline so the
-            # mergeable HEAD is never a commit that never saw CI.
+            # No [skip ci] — but GITHUB_TOKEN pushes can't trigger
+            # synchronize regardless; the dispatch below is what actually
+            # re-runs checks on the fixed head.
             git commit -m 'style: prettier auto-fix'
             git push
+            echo "pushed=true" >> "$GITHUB_OUTPUT"
           fi
+      - name: Retrigger checks on the fixed head
+        if: steps.autofix.outputs.pushed == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        # workflow_dispatch is the documented GITHUB_TOKEN exception — its
+        # run executes on the branch ref, so checks attach to the autofix
+        # commit and surface on the PR. check/conformance pass their `if`
+        # under workflow_dispatch; format skips (tree is already clean) and
+        # storefront-isolation skips (the autofix never changes the path
+        # set — the earlier synchronize already vetted boundaries).
+        run: gh workflow run ci.yml --ref "${{ github.head_ref || github.ref_name }}"
 
   # Storefront write-scope boundary (docs/architecture/06-monorepo.md): a PR
   # labelled `storefront:<slug>` may only touch `storefronts/<slug>/**`. No
