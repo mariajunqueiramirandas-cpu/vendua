@@ -12,6 +12,13 @@ on:
   # GITHUB_TOKEN pushes can't trigger synchronize, but workflow_dispatch IS
   # in the exception — the dispatched run's checks attach to the fixed head.
   workflow_dispatch:
+    inputs:
+      # The PR's base, forwarded by the format job — github.base_ref doesn't
+      # exist under workflow_dispatch and without it the Builds step would
+      # rebuild the whole storefront fleet on every autofix.
+      base_ref:
+        type: string
+        default: 'main'
 
 permissions:
   contents: read
@@ -64,7 +71,7 @@ jobs:
         # under workflow_dispatch; format skips (tree is already clean) and
         # storefront-isolation skips (the autofix never changes the path
         # set — the earlier synchronize already vetted boundaries).
-        run: gh workflow run ci.yml --ref "${{ github.head_ref || github.ref_name }}"
+        run: gh workflow run ci.yml --ref "${{ github.head_ref || github.ref_name }}" -f base_ref="${{ github.base_ref || 'main' }}"
 
   # Storefront write-scope boundary (docs/architecture/06-monorepo.md): a PR
   # labelled `storefront:<slug>` may only touch `storefronts/<slug>/**`. No
@@ -136,6 +143,10 @@ jobs:
           # against the PR base; a push to main builds every storefront.
           if [ "${{ github.event_name }}" = "pull_request" ]; then
             affected="$(bun tools/affected.mjs --base "origin/${{ github.base_ref }}")"
+          elif [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            # format-job autofix retrigger: the base comes through the input,
+            # not github.base_ref — keep the same affected scoping as the PR run.
+            affected="$(bun tools/affected.mjs --base "origin/${{ github.event.inputs.base_ref || 'main' }}")"
           else
             affected='{"packages":["site"],"allStorefronts":true}'
           fi
