@@ -418,7 +418,13 @@ interface LeadListRow extends LeadRow {
   open_tasks: number;
   pending_drafts: number;
   last_activity_at: string | null;
+  /** cursor-minting columns — ::text keeps microseconds JS Date would drop. */
+  created_at_ts: string;
+  last_at_ts: string | null;
 }
+
+/** `timestamptz::text` shape, e.g. `2026-09-23 21:36:35.31372+00`. */
+const TS_TEXT_RE = /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}(\.\d+)?[+-]\d{2}$/;
 
 /** Per-sort keyset contract: the key expression used in the cursor WHERE
  *  (select aliases aren't visible there), the ORDER BY fragment (which may
@@ -469,7 +475,7 @@ const LEAD_SORT_SPEC: Record<
 function sortKeyOf(sort: LeadSort, row: LeadListRow): string | number | null {
   switch (sort) {
     case 'activity':
-      return row.last_activity_at ? new Date(row.last_activity_at).toISOString() : null;
+      return row.last_at_ts ?? null;
     case 'score':
       return Number(row.score);
     case 'value':
@@ -477,7 +483,7 @@ function sortKeyOf(sort: LeadSort, row: LeadListRow): string | number | null {
     case 'name':
       return row.name;
     case 'new':
-      return new Date(row.created_at).toISOString();
+      return row.created_at_ts;
   }
 }
 
@@ -531,7 +537,8 @@ export async function listLeads(
       } else if (sort === 'score' || sort === 'value') {
         if (typeof v !== 'number' || !Number.isFinite(v)) throw new Error('shape');
       } else if (sort === 'new' || sort === 'activity') {
-        if (typeof v !== 'string' || Number.isNaN(new Date(v).getTime())) throw new Error('shape');
+        // cursor ts is minted from timestamptz::text — microseconds included.
+        if (typeof v !== 'string' || !TS_TEXT_RE.test(v)) throw new Error('shape');
       } else {
         if (typeof v !== 'string') throw new Error('shape');
       }
@@ -575,7 +582,15 @@ export async function listLeads(
         ? curVal === null
           ? `(${spec.key} is null and l.id ${spec.desc ? '<' : '>'} ${p(curId)}::uuid)`
           : (() => {
-              const kv = spec.cwrap ? `${spec.cwrap}(${p(curVal)})` : p(curVal);
+              // timestamp keys bind as text and cast server-side — binding a
+              // timestamp-shaped string directly makes the driver serialize
+              // it through a JS Date and drop microseconds.
+              const kv =
+                sort === 'new' || sort === 'activity'
+                  ? `${p(curVal)}::text::timestamptz`
+                  : spec.cwrap
+                    ? `${spec.cwrap}(${p(curVal)})`
+                    : p(curVal);
               const op = spec.desc ? '<' : '>';
               return (
                 `(${spec.key} ${op} ${kv} or ` +
@@ -589,7 +604,9 @@ export async function listLeads(
       `select l.*, ${LEAD_SCORE_SQL} as score,
               coalesce(tk.n, 0)::int as open_tasks,
               coalesce(dr.n, 0)::int as pending_drafts,
-              act.last_at as last_activity_at
+              act.last_at as last_activity_at,
+              l.created_at::text as created_at_ts,
+              act.last_at::text as last_at_ts
        ${LEAD_LIST_FROM}
        where ${clauses.join('\n         and ')}
        order by ${spec.order}

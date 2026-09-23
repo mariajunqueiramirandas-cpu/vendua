@@ -1493,26 +1493,27 @@ export function createApp({ sql, sessionSecret, controlSecret, autoDrain }: AppD
       return `$${params.length}`;
     };
     const scheduled = c.req.query('scheduled') === '1';
-    // Keyset pagination over (run_at, id) — scheduled mode only, so the queue
-    // can enumerate every delayed run regardless of queue size.
+    // Keyset pagination — scheduled walks (run_at, id) asc, the rest
+    // (created_at, id) desc. Cursors carry timestamptz::text so microseconds
+    // survive the round trip; JS Date/ISO would truncate to ms and re-match
+    // the boundary row. The key prefix keeps a cursor pinned to its view.
     const cursor = c.req.query('cursor');
+    const TS_RE = /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}(\.\d+)?[+-]\d{2}$/;
     let cursorCond = 'true';
-    if (scheduled && cursor) {
-      const parts = cursor.split('|');
-      const [ra, id] = parts;
-      const at = ra ? new Date(ra) : null;
-      if (
-        parts.length !== 2 ||
-        !ra ||
-        !id ||
-        !UUID_RE.test(id) ||
-        !at ||
-        Number.isNaN(at.getTime()) ||
-        at.toISOString() !== ra
-      ) {
-        throw new HttpError(400, 'BAD_REQUEST', 'cursor must be "<run_at>|<run uuid>"');
+    if (cursor) {
+      const sep = cursor.indexOf('|');
+      const key = sep > 0 ? cursor.slice(0, cursor.indexOf(':')) : '';
+      const ts = sep > 0 ? cursor.slice(cursor.indexOf(':') + 1, sep) : '';
+      const id = sep > 0 ? cursor.slice(sep + 1) : '';
+      const want = scheduled ? 'run_at' : 'created_at';
+      if (key !== want || !TS_RE.test(ts) || !UUID_RE.test(id)) {
+        throw new HttpError(400, 'BAD_REQUEST', `cursor must be "${want}:<ts>|<run uuid>"`);
       }
-      cursorCond = `(r.run_at > ${p(ra)}::timestamptz or (r.run_at = ${p(ra)}::timestamptz and r.id > ${p(id)}::uuid))`;
+      // Bind as text and cast server-side — a timestamptz-inferred param is
+      // serialized through a JS Date upstream and loses its microseconds.
+      cursorCond = scheduled
+        ? `(r.run_at > ${p(ts)}::text::timestamptz or (r.run_at = ${p(ts)}::text::timestamptz and r.id > ${p(id)}::uuid))`
+        : `(r.created_at < ${p(ts)}::text::timestamptz or (r.created_at = ${p(ts)}::text::timestamptz and r.id < ${p(id)}::uuid))`;
     }
     const where = [
       kind ? `kind = ${p(kind)}` : 'true',
@@ -1522,11 +1523,12 @@ export function createApp({ sql, sessionSecret, controlSecret, autoDrain }: AppD
       scheduled ? 'r.run_at is not null' : 'true',
       cursorCond,
     ];
-    const order = scheduled ? 'r.run_at asc, r.id asc' : 'r.created_at desc';
+    const order = scheduled ? 'r.run_at asc, r.id asc' : 'r.created_at desc, r.id desc';
     const rows = await controlTx(sql, (tx) =>
       tx.unsafe(
         `select r.id, r.kind, r.status, r.lead_id, r.thread_id, r.tokens_in, r.tokens_out,
                 r.cost_cents, r.error, r.created_at, r.started_at, r.finished_at, r.run_at,
+                r.created_at::text as created_at_ts, r.run_at::text as run_at_ts,
                 l.name as lead_name, t.agent_enabled as thread_agent_enabled
          from agent_runs r
          left join leads l on l.id = r.lead_id
@@ -1536,10 +1538,12 @@ export function createApp({ sql, sessionSecret, controlSecret, autoDrain }: AppD
         params as never[],
       ),
     );
-    const last = rows[rows.length - 1] as { run_at?: string | Date; id: string } | undefined;
+    const last = rows[rows.length - 1] as
+      | { id: string; created_at_ts: string; run_at_ts: string | null }
+      | undefined;
     const nextCursor =
-      scheduled && rows.length === limit && last
-        ? `${new Date(last.run_at as string | Date).toISOString()}|${last.id}`
+      rows.length === limit && last
+        ? `${scheduled ? 'run_at' : 'created_at'}:${(scheduled ? last.run_at_ts : last.created_at_ts) ?? last.created_at_ts}|${last.id}`
         : undefined;
     return c.json({ runs: rows, ...(nextCursor ? { nextCursor } : {}) });
   });
