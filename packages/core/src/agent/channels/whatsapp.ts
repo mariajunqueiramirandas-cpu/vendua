@@ -495,7 +495,8 @@ export async function pairCode(sql: Sql, phone: string): Promise<string> {
       // Before that the send races the handshake and dies.
       if (qrSocket === sock) {
         const code = await sock.requestPairingCode(digits);
-        waLog.info({ phone: maskPhone(digits), code }, 'pairing code issued');
+        // The code is a short-lived bearer credential — never log it.
+        waLog.info({ phone: maskPhone(digits) }, 'pairing code issued');
         return code;
       }
       if (Date.now() >= deadline) {
