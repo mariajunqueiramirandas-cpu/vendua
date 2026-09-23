@@ -291,6 +291,9 @@ async function startSocket(sql: Sql, integration: IntegrationRow): Promise<Baile
   const gen = nextWaGen();
 
   sock.ev.on('creds.update', () => {
+    // logoutWa owns the wipe — persisting mid-logout can commit after its
+    // delete and resurrect rows.
+    if (loggingOut) return;
     const snapshot = { ...creds };
     if (!pairingConfirmed(snapshot)) delete snapshot.me;
     void auth.write('creds', 'main', snapshot);
@@ -339,14 +342,17 @@ async function startSocket(sql: Sql, integration: IntegrationRow): Promise<Baile
         // the next start takes the registration branch and can offer a QR —
         // otherwise every reconnect re-runs login → 401 and re-pairing is
         // impossible without a logout() wipe. Crypto keys stay; only the
-        // identity whatsapp granted that session goes.
-        const tombstone = { ...creds };
-        delete tombstone.me;
-        delete tombstone.registered;
-        delete tombstone.account;
-        delete tombstone.platform;
-        delete tombstone.signalIdentities;
-        void auth.write('creds', 'main', tombstone);
+        // identity whatsapp granted that session goes. Skipped during
+        // logoutWa — it deletes the whole table itself.
+        if (!loggingOut) {
+          const tombstone = { ...creds };
+          delete tombstone.me;
+          delete tombstone.registered;
+          delete tombstone.account;
+          delete tombstone.platform;
+          delete tombstone.signalIdentities;
+          void auth.write('creds', 'main', tombstone);
+        }
       } else {
         waLog.info({ statusCode }, 'socket closed — reconnecting in 5s');
       }
