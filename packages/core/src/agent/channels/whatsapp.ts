@@ -214,7 +214,13 @@ async function startSocket(sql: Sql, integration: IntegrationRow): Promise<Baile
     registered?: boolean;
     me?: unknown;
   };
-  if (!creds.registered) delete creds.me;
+  if (!creds.registered) {
+    if (creds.me) {
+      waLog.warn('dropping stale unregistered creds.me — would force a 401 login');
+    }
+    delete creds.me;
+  }
+  waLog.info({ accountId, version: version?.join('.') ?? 'bundled' }, 'socket connecting');
   const sock = baileys.default({
     ...(version ? { version } : {}),
     auth: {
@@ -269,6 +275,7 @@ async function startSocket(sql: Sql, integration: IntegrationRow): Promise<Baile
   sock.ev.on('connection.update', (u) => {
     if (socket !== sock) return; // stale socket — a replacement owns globals
     if (u.qr) {
+      if (connState !== 'qr') waLog.info('qr emitted — awaiting scan or pairing code');
       connState = 'qr';
       qrSocket = sock;
       notifyConnWaiters();
@@ -280,6 +287,7 @@ async function startSocket(sql: Sql, integration: IntegrationRow): Promise<Baile
       qrSocket = null;
       notifyConnWaiters();
       waMe = readIdentity(sock);
+      waLog.info({ phone: waMe?.phone, name: waMe?.name }, 'socket open — account linked');
       void persistQr(sql, accountId, null, gen).then(() => emitControlEvent('channel.health'));
     }
     if (u.connection === 'close') {
@@ -295,8 +303,13 @@ async function startSocket(sql: Sql, integration: IntegrationRow): Promise<Baile
       // Baileys 401 = logged out — nothing to reconnect to until re-paired.
       // Otherwise the stream dropped: restart inbound delivery instead of
       // staying offline until an outbound send happens to reopen it.
-      const loggedOut = u.lastDisconnect?.error?.output?.statusCode === 401;
-      if (!loggedOut) {
+      const statusCode = u.lastDisconnect?.error?.output?.statusCode;
+      if (statusCode === 401) {
+        waLog.warn({ statusCode }, 'socket closed by whatsapp (logged out) — re-pair required');
+      } else {
+        waLog.info({ statusCode }, 'socket closed — reconnecting in 5s');
+      }
+      if (statusCode !== 401) {
         setTimeout(() => {
           // Re-read the integration instead of reconnecting with the config
           // captured at startSocket time — a disabled or re-pointed driver
@@ -324,12 +337,19 @@ async function startSocket(sql: Sql, integration: IntegrationRow): Promise<Baile
       if (!key.id) continue;
       const text = extractText(m.message);
       if (!text) continue;
+      waLog.info({ from: maskPhone(jid) }, 'inbound message');
       for (const fn of handlers) {
         void fn(jid, text, key.id);
       }
     }
   });
   return sock;
+}
+
+/** Phone digits → '55…9988' for logs — correlatable without full PII. */
+function maskPhone(digits: string): string {
+  const d = digits.replace(/\D/g, '');
+  return d.length > 6 ? `${d.slice(0, 2)}…${d.slice(-4)}` : '…';
 }
 
 /** '5511…:dev@s.whatsapp.net' / lid jids → bare digits for display. */
@@ -374,6 +394,10 @@ export async function ensureSocket(
   // Config changed or driver disabled — the live socket belongs to the old
   // config; close it instead of silently sending through the stale account.
   if (socket && socketFingerprint !== wanted) {
+    waLog.info(
+      { accountId: socketAccountId },
+      'socket stopped — config changed or driver disabled',
+    );
     try {
       socket.end();
     } catch {
@@ -431,6 +455,7 @@ export async function ensureSocket(
         connState = 'off';
         qrSocket = null;
         notifyConnWaiters();
+        waLog.error({ err }, 'socket start failed');
         throw err;
       },
     );
@@ -468,7 +493,11 @@ export async function pairCode(sql: Sql, phone: string): Promise<string> {
       // The link_code iq only registers while the server-side reg stream is
       // live on THIS socket — signaled by its own first pair-device (qr).
       // Before that the send races the handshake and dies.
-      if (qrSocket === sock) return sock.requestPairingCode(digits);
+      if (qrSocket === sock) {
+        const code = await sock.requestPairingCode(digits);
+        waLog.info({ phone: maskPhone(digits), code }, 'pairing code issued');
+        return code;
+      }
       if (Date.now() >= deadline) {
         throw new Error('whatsapp ainda conectando — tente de novo em alguns segundos');
       }
@@ -525,6 +554,7 @@ export async function logoutWa(sql: Sql, accountId: string): Promise<void> {
   // Clear through the gen-guarded path — a plain delete could be followed
   // by a stale in-flight QR write that re-creates the row.
   await persistQr(sql, accountId, null, nextWaGen());
+  waLog.info({ accountId }, 'logged out — auth state wiped');
 }
 
 export async function sendWhatsApp(
@@ -543,6 +573,7 @@ export async function sendWhatsApp(
     if (!sock) throw new Error('baileys socket not started');
     const jid = to.includes('@') ? to : `${to.replace(/\D/g, '')}@s.whatsapp.net`;
     const res = await sock.sendMessage(jid, { text });
+    waLog.info({ to: maskPhone(jid), id: res?.key?.id ?? null }, 'message sent');
     return res?.key?.id ?? null;
   }
   throw new Error(`unknown whatsapp driver: ${driver}`);

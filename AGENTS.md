@@ -79,7 +79,10 @@ Logging: `packages/core` logs JSON lines to stdout via pino
 (`src/platform/log.ts`) — `log.child({ mod: '<area>' })`, never `console.*`.
 `LOG_LEVEL` (default `info`), `BAILEYS_LOG_LEVEL` (default `warn`). Every
 request gets an `x-request-id` (echoed back, correlated in the `request`
-log line).
+log line). Request-log levels: mutations at `info`, 4xx `warn`, 5xx `error`;
+successful GET/HEAD/OPTIONS only at `debug` (the control UI polls every
+~4s — at `info` they bury everything). Domain events (socket lifecycle,
+pairing, sends) belong in the module's own log, not the request line.
 
 ## Commands
 

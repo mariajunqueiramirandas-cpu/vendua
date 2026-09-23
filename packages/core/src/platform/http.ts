@@ -45,6 +45,9 @@ export function errorJson(err: unknown, c: Context) {
  * createApp so every request (incl. CORS rejects) is counted. Incoming
  * x-request-id is echoed when plausible (<128 chars) so edge-generated ids
  * correlate end-to-end; anything else gets a fresh UUID.
+ * Levels: reads are quiet — successful GET/HEAD/OPTIONS poll at debug
+ * (the control UI refetches every few seconds; info would bury real
+ * events), mutations log at info, 4xx warn, 5xx error.
  */
 export function requestLogger(): MiddlewareHandler<{ Variables: { requestId: string } }> {
   return async (c, next) => {
@@ -63,8 +66,9 @@ export function requestLogger(): MiddlewareHandler<{ Variables: { requestId: str
       ms: Math.round(performance.now() - start),
       host: c.req.header('host'),
     };
-    if (c.req.path === '/healthz') httpLog.debug(fields, 'request');
-    else if (status >= 500) httpLog.error(fields, 'request');
+    if (status >= 500) httpLog.error(fields, 'request');
+    else if (status >= 400) httpLog.warn(fields, 'request');
+    else if (['GET', 'HEAD', 'OPTIONS'].includes(c.req.method)) httpLog.debug(fields, 'request');
     else httpLog.info(fields, 'request');
   };
 }
