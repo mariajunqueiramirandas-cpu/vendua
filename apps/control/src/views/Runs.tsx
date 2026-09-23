@@ -1,16 +1,9 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { Link, useParams } from 'react-router-dom';
+import { Link, useNavigate, useParams } from 'react-router-dom';
 import { api, type AgentRun } from '../api.ts';
 import { onControlEvent } from '../events.ts';
-import { Empty, Page, fmtDateTime, fmtMoney, rel } from '../components.tsx';
+import { Empty, Page, RUN_KIND_LABEL, fmtDateTime, fmtMoney, rel } from '../components.tsx';
 
-const KIND_LABEL: Record<string, string> = {
-  triage: 'triagem',
-  reply: 'resposta',
-  outreach: 'alcance',
-  discovery: 'descoberta',
-  strategist: 'estrategista',
-};
 const STATUS_CHIP: Record<string, string> = {
   queued: 'warn',
   running: 'warn',
@@ -31,6 +24,7 @@ interface Step {
 
 export default function Runs() {
   const { id } = useParams();
+  const nav = useNavigate();
   const [runs, setRuns] = useState<AgentRun[]>([]);
   const [run, setRun] = useState<AgentRun | null>(null);
   const [kind, setKind] = useState('');
@@ -105,7 +99,7 @@ export default function Runs() {
     return (
       <Page
         title={`run ${run.id.slice(0, 8)}`}
-        sub={`${KIND_LABEL[run.kind] ?? run.kind} · ${run.status}`}
+        sub={`${RUN_KIND_LABEL[run.kind] ?? run.kind} · ${run.status}`}
         actions={
           active ? (
             <button className="btn ghost" onClick={() => void api.cancelRun(run.id)}>
@@ -225,13 +219,9 @@ export default function Runs() {
           </thead>
           <tbody>
             {runs.map((r) => (
-              <tr
-                key={r.id}
-                className="clickable"
-                onClick={() => (location.hash = `#/agente/runs/${r.id}`)}
-              >
+              <tr key={r.id} className="clickable" onClick={() => nav(`/agente/runs/${r.id}`)}>
                 <td className="mono">{r.id.slice(0, 8)}</td>
-                <td>{KIND_LABEL[r.kind] ?? r.kind}</td>
+                <td>{RUN_KIND_LABEL[r.kind] ?? r.kind}</td>
                 <td>
                   <span className={`chip ${STATUS_CHIP[r.status] ?? ''}`}>{r.status}</span>
                   {r.status === 'queued' && r.run_at && (

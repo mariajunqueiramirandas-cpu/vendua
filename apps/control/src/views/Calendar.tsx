@@ -3,7 +3,7 @@ import { Link } from 'react-router-dom';
 import { Check, ChevronLeft, ChevronRight, Video, X } from 'lucide-react';
 import { api, ApiError, type Meeting } from '../api.ts';
 import { onControlEvent } from '../events.ts';
-import { ConfirmBtn, Empty, Page } from '../components.tsx';
+import { ConfirmBtn, Empty, MEETING_STATUS_LABEL, Page } from '../components.tsx';
 
 const DAY = 86_400_000;
 const WD = ['seg', 'ter', 'qua', 'qui', 'sex', 'sáb', 'dom'];
@@ -90,13 +90,6 @@ const dayMinutes = (iso: string, tz: string) => {
   }).formatToParts(new Date(iso));
   const v = (t: string) => Number(p.find((x) => x.type === t)?.value ?? 0);
   return Math.min(v('hour'), 23.99) * 60 + v('minute');
-};
-
-const STATUS_LABEL: Record<Meeting['status'], string> = {
-  scheduled: 'marcada',
-  done: 'feita',
-  no_show: 'no-show',
-  cancelled: 'cancelada',
 };
 
 const MOBILE_MQ = '(max-width: 760px)';
@@ -387,7 +380,7 @@ export default function Calendar() {
         ) : (
           (m.bookerName ?? '—')
         )}
-        <span className={`chip stc-${m.status}`}>{STATUS_LABEL[m.status]}</span>
+        <span className={`chip stc-${m.status}`}>{MEETING_STATUS_LABEL[m.status]}</span>
       </div>
       {m.bookerContact && <div className="mtg-meta">{m.bookerContact}</div>}
       <div className="mtg-acts">{mtgActs(m)}</div>
@@ -533,7 +526,9 @@ export default function Calendar() {
                         ) : (
                           (m.bookerName ?? '—')
                         )}
-                        <span className={`chip stc-${m.status}`}>{STATUS_LABEL[m.status]}</span>
+                        <span className={`chip stc-${m.status}`}>
+                          {MEETING_STATUS_LABEL[m.status]}
+                        </span>
                       </div>
                       {m.bookerContact && <div className="mtg-meta">{m.bookerContact}</div>}
                       <div className="mtg-acts">{mtgActs(m)}</div>

@@ -3,15 +3,7 @@ import { Link } from 'react-router-dom';
 import { RefreshCw } from 'lucide-react';
 import { api, type Stats } from '../api.ts';
 import { onControlEvent } from '../events.ts';
-import { Empty, Page, fmtDay, fmtMoney } from '../components.tsx';
-
-const STATES = ['lead', 'contacted', 'invited', 'live'] as const;
-const STATE_LABEL: Record<string, string> = {
-  lead: 'lead',
-  contacted: 'contatado',
-  invited: 'convidado',
-  live: 'ativo',
-};
+import { Empty, LEAD_STATES, LEAD_STATE_LABEL, Page, fmtDay, fmtMoney } from '../components.tsx';
 
 /** R$ compact for chart axis labels — "R$ 4,9 mil" fits where the full
  *  currency string wouldn't. */
@@ -27,21 +19,24 @@ export default function Reports() {
   const [s, setS] = useState<Stats | null>(null);
   const [err, setErr] = useState('');
   const [snapping, setSnapping] = useState(false);
-  // Loads overlap (mount + snapNow refresh) — only the newest request may
-  // write s/err, else a slow mount response masks a failed refresh.
-  const loadSeq = useRef(0);
+  // Loads overlap (mount + snapNow refresh) — newest-successful wins: an
+  // older response still commits unless a newer success already landed, so
+  // a failed refresh never discards good stats.
+  const reqSeq = useRef(0);
+  const okSeq = useRef(0);
 
   const load = useCallback(() => {
-    const seq = ++loadSeq.current;
+    const seq = ++reqSeq.current;
     api
       .stats()
       .then((stats) => {
-        if (seq !== loadSeq.current) return;
+        if (seq < okSeq.current) return;
+        okSeq.current = seq;
         setS(stats);
         setErr('');
       })
       .catch((e) => {
-        if (seq === loadSeq.current) setErr(String(e));
+        if (seq >= okSeq.current) setErr(String(e));
       });
   }, []);
   useEffect(load, [load]);
@@ -140,12 +135,12 @@ export default function Reports() {
                   </tr>
                 </thead>
                 <tbody>
-                  {STATES.map((st) => {
+                  {LEAD_STATES.map(([st]) => {
                     const b = fc.byState[st];
                     return (
                       <tr key={st}>
                         <td>
-                          <Link to="/funil">{STATE_LABEL[st]}</Link>
+                          <Link to="/funil">{LEAD_STATE_LABEL[st]}</Link>
                         </td>
                         <td className="num">{b?.count ?? 0}</td>
                         <td className="num">{fmtMoney(b?.valueCents)}</td>
