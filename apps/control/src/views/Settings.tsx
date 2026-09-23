@@ -244,6 +244,13 @@ export default function Settings() {
   // Per-resource success watermarks: event-driven + floor loads overlap.
   const loadSeq = useRef(0);
   const loadOk = useRef<Record<string, number>>({});
+  // The checklist reads integrations + settings — until both answer once,
+  // empty defaults would read as real "não configurado" states.
+  const settled = useRef(0);
+  const settle = (bit: number) => {
+    settled.current |= bit;
+    if (settled.current === 0b11) setLoading(false);
+  };
   const load = useCallback(() => {
     const my = ++loadSeq.current;
     const fresh = (key: string) => my > (loadOk.current[key] ?? 0);
@@ -260,7 +267,8 @@ export default function Settings() {
           kind: 'err',
           text: `falha ao carregar: ${e instanceof Error ? e.message : e}`,
         }),
-      );
+      )
+      .finally(() => settle(0b01));
     void api
       .settings()
       .then((s) => {
@@ -277,7 +285,7 @@ export default function Settings() {
           text: `falha ao carregar: ${e instanceof Error ? e.message : e}`,
         }),
       )
-      .finally(() => setLoading(false));
+      .finally(() => settle(0b10));
     api
       .waQr()
       .then((r) => {
@@ -433,21 +441,34 @@ export default function Settings() {
               tone: 'off',
               to: 'agenda',
             }
-          : mStatus.gcal.configured
+          : // booking needs somewhere to meet — Daily room or the static link;
+            // google is an optional sync layer, not the readiness gate
+            !(mStatus.room.provider === 'daily' || mStatus.cfg.roomUrl)
             ? {
                 key: 'agenda',
                 label: 'agenda',
-                state: `${weekDays}d/semana · google conectada`,
-                tone: 'live',
-                to: 'agenda',
-              }
-            : {
-                key: 'agenda',
-                label: 'agenda',
-                state: `${weekDays}d/semana · google desconectada`,
+                state: 'sem sala — a call sai sem link',
                 tone: 'warn',
                 to: 'agenda',
-              };
+              }
+            : mStatus.gcal.configured && mStatus.gcal.lastError
+              ? {
+                  key: 'agenda',
+                  label: 'agenda',
+                  state: `${weekDays}d/semana · google falhou`,
+                  tone: 'warn',
+                  to: 'agenda',
+                }
+              : {
+                  key: 'agenda',
+                  label: 'agenda',
+                  state:
+                    `${weekDays}d/semana · ${
+                      mStatus.room.provider === 'daily' ? 'sala daily.co' : 'sala fixa'
+                    }` + (mStatus.gcal.configured ? ' · google conectada' : ''),
+                  tone: 'live',
+                  to: 'agenda',
+                };
 
   const essential: Check[] = [...KINDS.map(provCheck), agendaCheck];
   const g = guardrails;
@@ -514,19 +535,29 @@ export default function Settings() {
             </button>
           ))}
         </nav>
+        {/* Areas stay mounted — switching sections hides, not unmounts, so
+            unsaved edits inside a card survive a round trip on the rail. */}
         <div className="set-panel">
-          {section === 'visao' && (
-            <>
-              <section className="set-sec">
-                <h2>
-                  {ready === essential.length && attn === 0
+          <div hidden={section !== 'visao'}>
+            <section className="set-sec">
+              <h2>
+                {loading
+                  ? 'lendo a máquina…'
+                  : ready === essential.length && attn === 0
                     ? 'máquina inteira no ar'
                     : `${ready} de ${essential.length} essenciais no ar`}
-                </h2>
-                <p className="sub">
-                  uma linha por peça — clique para abrir a área que resolve
-                  {attn > 0 && <span className="attn"> · {attn} pedindo atenção</span>}
-                </p>
+              </h2>
+              <p className="sub">
+                uma linha por peça — clique para abrir a área que resolve
+                {attn > 0 && <span className="attn"> · {attn} pedindo atenção</span>}
+              </p>
+              {loading ? (
+                <div className="empty">
+                  <div className="serif" style={{ fontSize: 'var(--t-lg)' }}>
+                    carregando…
+                  </div>
+                </div>
+              ) : (
                 <div className="ovl">
                   <div className="ovl-g">essencial — o agente não roda sem isso</div>
                   {essential.map((c) => (
@@ -537,15 +568,15 @@ export default function Settings() {
                     <CheckRow key={c.key} c={c} onGo={go} />
                   ))}
                 </div>
-              </section>
-              <section className="set-sec">
-                <h2>saúde dos canais</h2>
-                <p className="sub">envios, falhas e bloqueios de guarda · últimos 30 dias</p>
-                <ChannelHealthCard />
-              </section>
-            </>
-          )}
-          {section === 'conexoes' && (
+              )}
+            </section>
+            <section className="set-sec">
+              <h2>saúde dos canais</h2>
+              <p className="sub">envios, falhas e bloqueios de guarda · últimos 30 dias</p>
+              <ChannelHealthCard />
+            </section>
+          </div>
+          <div hidden={section !== 'conexoes'}>
             <section className="set-sec">
               <h2>provedores</h2>
               <p className="sub">
@@ -570,25 +601,23 @@ export default function Settings() {
                 </div>
               ))}
             </section>
-          )}
-          {section === 'agente' && (
-            <>
-              <section className="set-sec">
-                <h2>voz do agente</h2>
-                <p className="sub">o pitch inteiro que o modelo recebe no system prompt</p>
-                <PitchCard value={pitch} onSave={(v) => void saveSetting('pitch', v)} />
-              </section>
-              <section className="set-sec">
-                <h2>memória do agente</h2>
-                <p className="sub">fatos que ele guardou via `remember` — ou que você escreve</p>
-                <MemoryCard
-                  facts={memory.facts}
-                  onSave={(facts) => void saveSetting('agent_memory', { facts })}
-                />
-              </section>
-            </>
-          )}
-          {section === 'regras' && (
+          </div>
+          <div hidden={section !== 'agente'}>
+            <section className="set-sec">
+              <h2>voz do agente</h2>
+              <p className="sub">o pitch inteiro que o modelo recebe no system prompt</p>
+              <PitchCard value={pitch} onSave={(v) => void saveSetting('pitch', v)} />
+            </section>
+            <section className="set-sec">
+              <h2>memória do agente</h2>
+              <p className="sub">fatos que ele guardou via `remember` — ou que você escreve</p>
+              <MemoryCard
+                facts={memory.facts}
+                onSave={(facts) => void saveSetting('agent_memory', { facts })}
+              />
+            </section>
+          </div>
+          <div hidden={section !== 'regras'}>
             <section className="set-sec">
               <h2>guardrails</h2>
               <p className="sub">regras duras — o código impõe, não o prompt</p>
@@ -597,8 +626,8 @@ export default function Settings() {
                 onSave={(v) => void saveSetting('guardrails', v)}
               />
             </section>
-          )}
-          {section === 'agenda' && (
+          </div>
+          <div hidden={section !== 'agenda'}>
             <section className="set-sec">
               <h2>reunião</h2>
               <p className="sub">
@@ -610,24 +639,22 @@ export default function Settings() {
                 onSave={(v) => void saveSetting('meeting', v)}
               />
             </section>
-          )}
-          {section === 'relatorios' && (
-            <>
-              <section className="set-sec">
-                <h2>previsão do pipeline</h2>
-                <p className="sub">
-                  probabilidade de fechar por estágio — multiplica o valor do lead na previsão de
-                  relatórios
-                </p>
-                <ForecastCard value={forecast} onSave={(v) => void saveSetting('forecast', v)} />
-              </section>
-              <section className="set-sec">
-                <h2>resumo diário</h2>
-                <p className="sub">um email por dia com leads novos, respostas, calls e custo</p>
-                <DigestCard value={digest} onSave={(v) => void saveSetting('digest', v)} />
-              </section>
-            </>
-          )}
+          </div>
+          <div hidden={section !== 'relatorios'}>
+            <section className="set-sec">
+              <h2>previsão do pipeline</h2>
+              <p className="sub">
+                probabilidade de fechar por estágio — multiplica o valor do lead na previsão de
+                relatórios
+              </p>
+              <ForecastCard value={forecast} onSave={(v) => void saveSetting('forecast', v)} />
+            </section>
+            <section className="set-sec">
+              <h2>resumo diário</h2>
+              <p className="sub">um email por dia com leads novos, respostas, calls e custo</p>
+              <DigestCard value={digest} onSave={(v) => void saveSetting('digest', v)} />
+            </section>
+          </div>
         </div>
       </div>
       {/* shared by the guardrails + meeting tz pickers */}
