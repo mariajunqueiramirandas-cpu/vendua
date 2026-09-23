@@ -42,8 +42,14 @@ interface BaileysSocket {
       cb: (m: {
         type: string;
         messages: {
-          key?: { remoteJid?: string; id?: string; fromMe?: boolean };
+          key?: {
+            remoteJid?: string;
+            remoteJidAlt?: string;
+            id?: string;
+            fromMe?: boolean;
+          };
           message?: unknown;
+          pushName?: string;
         }[];
       }) => void,
     ): void;
@@ -143,7 +149,16 @@ function pairingConfirmed(creds: { registered?: boolean; account?: unknown }): b
   return !!creds.registered || !!creds.account;
 }
 
-type MessageHandler = (jid: string, text: string, providerId: string | null) => Promise<void>;
+type MessageHandler = (
+  jid: string,
+  text: string,
+  providerId: string | null,
+  pushName?: string,
+  /** The sender's complementary address (the LID when `jid` is the PN form,
+   *  or vice versa) so persistence can converge a contact it first saw
+   *  under the other alias. */
+  altJid?: string,
+) => Promise<void>;
 
 const handlers: MessageHandler[] = [];
 export function onInboundMessage(fn: MessageHandler) {
@@ -219,6 +234,9 @@ async function startSocket(sql: Sql, integration: IntegrationRow): Promise<Baile
       replacer(k: string, v: unknown): unknown;
       reviver(k: string, v: unknown): unknown;
     };
+    /** Unwraps ephemeral/viewOnce/edited/documentWithCaption envelopes to
+     *  the inner content — rc14 exports it from Utils/messages. */
+    normalizeMessageContent(content: unknown): unknown;
   };
   const accountId = (integration.config.accountId as string) ?? 'default';
   const auth = dbAuthState(sql, accountId, baileys.BufferJSON);
@@ -393,25 +411,47 @@ async function startSocket(sql: Sql, integration: IntegrationRow): Promise<Baile
     // A detached socket (replaced or post-logout) must not keep delivering
     // inbound messages — its creds may already be wiped.
     if (socket !== sock) return;
-    if (type !== 'notify') return;
+    // 'append' is real inbound too: whatsapp marks stanzas delivered while
+    // the socket was offline/still syncing `offline`, and baileys emits them
+    // as 'append' upserts. Replay safety comes from providerMessageId dedupe
+    // downstream — a notify-only filter silently eats those messages.
+    if (type !== 'notify' && type !== 'append') return;
     for (const m of messages) {
       const key = m.key;
-      const jid = key?.remoteJid;
       // Only direct chats — group (@g.us) and broadcast JIDs would mint leads
-      // for every participant and reply into the group.
-      if (!key || key.fromMe || !jid || !jid.endsWith('@s.whatsapp.net')) continue;
+      // for every participant and reply into the group. DMs increasingly
+      // arrive addressed by LID ('…@lid'): the phone-number jid then rides
+      // in remoteJidAlt, which is the form lead digit-matching needs.
+      const dm = key ? dmJid(key.remoteJid, key.remoteJidAlt) : null;
+      if (!key || key.fromMe || !dm) continue;
       // No provider id = nothing to dedupe a retry on — skip rather than
       // insert a message we may see again.
       if (!key.id) continue;
-      const text = extractText(m.message);
+      const text = extractText(baileys.normalizeMessageContent(m.message) ?? m.message);
       if (!text) continue;
-      waLog.info({ from: maskPhone(jid) }, 'inbound message');
+      waLog.info({ from: maskPhone(dm.jid), type }, 'inbound message');
       for (const fn of handlers) {
-        void fn(jid, text, key.id);
+        void fn(dm.jid, text, key.id, m.pushName, dm.alias);
       }
     }
   });
   return sock;
+}
+
+/** The direct-chat jid pair for an inbound message: `jid` prefers the
+ *  phone-number form (@s.whatsapp.net — the shape lead digit-matching
+ *  wants), `alias` is the complementary address when the stanza carried one
+ *  (remoteJid '…@lid' ↔ remoteJidAlt PN). A lid-only message still lands —
+ *  group/broadcast/newsletter JIDs match neither form and are rejected. */
+function dmJid(remoteJid?: string, remoteJidAlt?: string): { jid: string; alias?: string } | null {
+  const dm = (j?: string) =>
+    j && (j.endsWith('@s.whatsapp.net') || j.endsWith('@lid')) ? j : null;
+  const a = dm(remoteJid);
+  const b = dm(remoteJidAlt);
+  const jid = a?.endsWith('@s.whatsapp.net') ? a : (b ?? a);
+  if (!jid) return null;
+  const alias = jid === a ? b : a;
+  return alias && alias !== jid ? { jid, alias } : { jid };
 }
 
 /** Phone digits → '55…9988' for logs — correlatable without full PII. */

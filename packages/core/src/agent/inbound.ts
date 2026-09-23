@@ -29,6 +29,10 @@ export async function ingestInbound(
   input: {
     channel: Channel;
     from: string;
+    /** The sender's complementary provider address when the channel carried
+     *  one (whatsapp LID ↔ phone-number jid) — lets lead matching converge
+     *  on a contact first seen under the other alias. */
+    fromAlias?: string;
     fromName?: string;
     subject?: string;
     body: string;
@@ -38,6 +42,7 @@ export async function ingestInbound(
   const res = await addInboundMessage(sql, {
     channel: input.channel,
     from: input.from,
+    ...(input.fromAlias ? { fromAlias: input.fromAlias } : {}),
     ...(input.fromName ? { fromName: input.fromName } : {}),
     ...(input.subject ? { subject: input.subject } : {}),
     body: input.body,

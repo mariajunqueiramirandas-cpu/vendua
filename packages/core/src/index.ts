@@ -42,10 +42,12 @@ setBookingSecret(process.env.CONTROL_SECRET ?? sessionSecret);
 // Agent harness: in-process worker (durable Postgres queue — runs survive
 // restarts) + WhatsApp socket when the baileys driver is enabled.
 startAgentWorker(sql);
-onInboundMessage(async (jid, text, providerId) => {
+onInboundMessage(async (jid, text, providerId, pushName, altJid) => {
   await ingestInbound(sql, {
     channel: 'whatsapp',
     from: jid,
+    ...(pushName ? { fromName: pushName } : {}),
+    ...(altJid ? { fromAlias: altJid } : {}),
     body: text,
     providerMessageId: providerId,
   });
