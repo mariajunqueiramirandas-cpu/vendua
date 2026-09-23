@@ -292,7 +292,7 @@ const REGISTRY: { def: AgentTool; toolsets: string[] }[] = [
     def: {
       name: 'remember',
       description:
-        'Persist a durable learning (agent memory — e.g. "docerias respond better at night"). Bounded: keep ≤40 facts, consolidate instead of duplicating.',
+        'Persist a durable learning (agent memory — e.g. "docerias respond better at night"). Bounded: keep ≤100 facts, consolidate instead of duplicating.',
       parameters: {
         type: 'object',
         properties: { fact: { type: 'string' } },
@@ -1197,7 +1197,9 @@ export async function executeTool(
           select value from control_settings where key = 'agent_memory' for update
         `;
         const cur = Array.isArray(rows[0]?.value?.facts) ? (rows[0]!.value.facts as string[]) : [];
-        const facts = [...cur.filter((f) => f !== fact), fact].slice(-40);
+        // bound = validateSetting's ≤100 — a smaller slice would silently drop
+        // staff-curated facts saved through the control panel
+        const facts = [...cur.filter((f) => f !== fact), fact].slice(-100);
         await tx`
           update control_settings set value = ${tx.json({ facts } as never)}
           where key = 'agent_memory'

@@ -1451,7 +1451,8 @@ export function startAgentWorker(sql: Sql, intervalMs = 15_000) {
 /** Scheduled discovery: each enabled brief past its 23h cadence gets a
  *  discovery run carrying its query/segment/city/target + briefId (the
  *  not-exists check keeps a still-queued brief run from double-firing). Leads
- *  it creates land tagged 'descoberto' — contact dispatch stays manual. */
+ *  it creates land tagged 'descoberto' — whether they also get called now is
+ *  the guardrails.discoveryAutoContact gate in tools.ts. */
 export async function sweepBriefs(sql: Sql): Promise<number> {
   const queuedIds: string[] = [];
   const fired = await controlTx(sql, async (tx) => {

@@ -435,10 +435,15 @@ export function validateSetting(key: string, value: unknown): void {
       return n;
     };
     const slotMinutes = intField('slotMinutes');
-    intField('bufferMinutes');
+    const bufferMinutes = intField('bufferMinutes');
     const horizonDays = intField('horizonDays');
     if (slotMinutes !== undefined && (slotMinutes < 5 || slotMinutes > 120)) {
       throw bad('slotMinutes', 'must be 5–120');
+    }
+    // normalizeMeetingConfig clamps to [0,180] — a wider stored value would
+    // silently read back different, so validation must not accept it
+    if (bufferMinutes !== undefined && bufferMinutes > 180) {
+      throw bad('bufferMinutes', 'must be 0–180');
     }
     if (horizonDays !== undefined && (horizonDays < 1 || horizonDays > 60)) {
       throw bad('horizonDays', 'must be 1–60');
