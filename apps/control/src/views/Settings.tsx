@@ -133,7 +133,11 @@ const KINDS: { key: string; label: string; sub: string; drivers: Driver[] }[] = 
         secret: true,
         secretName: 'TINYFISH_API_KEY',
         fields: [
-          { key: 'searchUrl', label: 'url de busca', placeholder: 'https://api.search.tinyfish.ai' },
+          {
+            key: 'searchUrl',
+            label: 'url de busca',
+            placeholder: 'https://api.search.tinyfish.ai',
+          },
           {
             key: 'fetchUrl',
             label: 'url de leitura',
@@ -721,9 +725,7 @@ function ProviderCard({
                     setConfig({
                       ...config,
                       [f.key]:
-                        f.number && e.target.value !== ''
-                          ? Number(e.target.value)
-                          : e.target.value,
+                        f.number && e.target.value !== '' ? Number(e.target.value) : e.target.value,
                     })
                   }
                 />
@@ -1124,12 +1126,7 @@ function PitchCard({
     <div className="drv">
       <div className="field">
         <label>produto</label>
-        <textarea
-          rows={3}
-          value={edit.product}
-          maxLength={4000}
-          onChange={set('product')}
-        />
+        <textarea rows={3} value={edit.product} maxLength={4000} onChange={set('product')} />
       </div>
       <div className="grid2">
         <div className="field">
@@ -1143,12 +1140,7 @@ function PitchCard({
       </div>
       <div className="field">
         <label>o que pode oferecer</label>
-        <textarea
-          rows={2}
-          value={edit.offerRange}
-          maxLength={4000}
-          onChange={set('offerRange')}
-        />
+        <textarea rows={2} value={edit.offerRange} maxLength={4000} onChange={set('offerRange')} />
       </div>
       <div className="field">
         <label>oferta concreta — fatos citáveis (preço, link de cadastro, loja exemplo)</label>
