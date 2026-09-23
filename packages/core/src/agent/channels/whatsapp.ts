@@ -429,7 +429,7 @@ export async function ensureSocket(
  *  overlapping call would silently kill the code the first caller is
  *  already typing. Different numbers proceed: last request wins is what a
  *  deliberate "novo código" click means. */
-let pairInFlight: { phone: string; p: Promise<string> } | null = null;
+const pairInFlight = new Map<string, Promise<string>>();
 
 /** Pairing-code alternative to scanning the QR — staff enters their number
  *  and types the returned code in WhatsApp → aparelhos conectados →
@@ -439,9 +439,11 @@ export async function pairCode(sql: Sql, phone: string): Promise<string> {
   if (digits.length < 10 || digits.length > 15) {
     throw new Error('número inválido — DDI+DDD+número, só dígitos');
   }
-  if (pairInFlight && pairInFlight.phone === digits) return pairInFlight.p;
+  const pending = pairInFlight.get(digits);
+  if (pending) return pending;
   const p = (async () => {
-    const sock = await ensureSocket(sql, await getIntegration(sql, 'whatsapp'));
+    const integration = await getIntegration(sql, 'whatsapp');
+    let sock = await ensureSocket(sql, integration);
     if (!sock) throw new Error('driver baileys não está ativo');
     // The link_code iq only registers while the server-side reg stream is
     // live — signaled by the first pair-device (connState 'qr'). Before that
@@ -454,11 +456,16 @@ export async function pairCode(sql: Sql, phone: string): Promise<string> {
     if (connState !== 'qr') {
       throw new Error('whatsapp ainda conectando — tente de novo em alguns segundos');
     }
+    // The socket captured before the wait may have died mid-wait — the 'qr'
+    // that satisfied it can belong to the reconnect's replacement. Re-resolve
+    // so the code is issued on whatever owns the live reg stream.
+    sock = await ensureSocket(sql, integration);
+    if (!sock) throw new Error('driver baileys não está ativo');
     return sock.requestPairingCode(digits);
   })().finally(() => {
-    if (pairInFlight?.p === p) pairInFlight = null;
+    if (pairInFlight.get(digits) === p) pairInFlight.delete(digits);
   });
-  pairInFlight = { phone: digits, p };
+  pairInFlight.set(digits, p);
   return p;
 }
 
