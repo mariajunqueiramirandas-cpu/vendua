@@ -27,6 +27,7 @@ export default function InboxView() {
   const [assistBusy, setAssistBusy] = useState(false);
   const nav = useNavigate();
   const endRef = useRef<HTMLDivElement>(null);
+  const subjRef = useRef<HTMLInputElement>(null);
 
   // Newest-successful wins, scoped to the current filter — an older
   // response still commits unless a newer success already landed, but never
@@ -116,7 +117,12 @@ export default function InboxView() {
   const send = async (asDraft: boolean) => {
     const target = view?.thread.id;
     if (!target || target !== threadId || !draft.trim()) return;
-    await api.sendThreadMessage(target, draft, !asDraft);
+    await api.sendThreadMessage(
+      target,
+      draft,
+      !asDraft,
+      subjRef.current?.value.trim() || undefined,
+    );
     setDraft('');
     loadThread();
     // the row's last-message preview + rasc. chip go stale otherwise
@@ -209,7 +215,13 @@ export default function InboxView() {
                         key={ch}
                         className="btn ghost inbox-chpick"
                         disabled={!has(l)}
-                        title={has(l) ? `conversar via ${ch}` : `lead sem ${ch}`}
+                        title={
+                          has(l)
+                            ? ch === 'whatsapp' && !l.whatsappVerified
+                              ? 'whatsapp derivado do telefone — não verificado'
+                              : `conversar via ${ch}`
+                            : `lead sem ${ch}`
+                        }
                         onClick={() => void openThread(l.id, ch)}
                       >
                         {CH_LABEL[ch]}
@@ -319,8 +331,16 @@ export default function InboxView() {
                       <div className="m-meta">
                         {m.author === 'agent' && <span className="chip agent">agente</span>}
                         {m.status === 'draft' && <span className="draft">rascunho</span>}
-                        {m.status === 'failed' && <span className="m-bad">falhou</span>}
-                        {m.status === 'rejected' && <span className="m-bad">rejeitado</span>}
+                        {m.status === 'failed' && (
+                          <span className="m-bad" title={m.error ?? undefined}>
+                            falhou
+                          </span>
+                        )}
+                        {m.status === 'rejected' && (
+                          <span className="m-bad" title={m.error ?? undefined}>
+                            rejeitado
+                          </span>
+                        )}
                         <span>{rel(m.createdAt)}</span>
                       </div>
                     </div>
@@ -330,6 +350,17 @@ export default function InboxView() {
               <div ref={endRef} />
             </div>
             <div className="composer">
+              {view.thread.channel === 'email' && (
+                <input
+                  key={view.thread.id}
+                  ref={subjRef}
+                  className="subj"
+                  defaultValue={view.thread.subject ?? ''}
+                  placeholder="assunto do email"
+                  aria-label="assunto do email"
+                  maxLength={200}
+                />
+              )}
               <textarea
                 placeholder={`responder via ${CH_LABEL[view.thread.channel]}… (ctrl+enter envia, shift+ctrl+enter rascunha)`}
                 value={draft}

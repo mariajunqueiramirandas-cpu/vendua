@@ -52,7 +52,7 @@ export default function Approvals() {
     // The audit trail keeps both versions.
     let replacement: string;
     try {
-      const res = await api.sendThreadMessage(d.threadId, editBody, false);
+      const res = await api.sendThreadMessage(d.threadId, editBody, false, d.subject ?? undefined);
       replacement = res.message.id;
     } catch {
       setResults((r) => ({ ...r, [d.id]: 'falhou ao criar rascunho editado — original mantido' }));

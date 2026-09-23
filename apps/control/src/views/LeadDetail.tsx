@@ -249,9 +249,22 @@ export default function LeadDetail() {
                 </span>
               </div>
               <div className="kv">
+                <div>
+                  <div className="k">whatsapp</div>
+                  <div className="v">
+                    {lead.whatsapp ?? '—'}
+                    {lead.whatsapp && !lead.whatsappVerified && (
+                      <span
+                        style={{ color: 'var(--muted)', fontSize: 'var(--t-2xs)' }}
+                        title="derivado do telefone — envio pode falhar"
+                      >
+                        {' · não verificado'}
+                      </span>
+                    )}
+                  </div>
+                </div>
                 {(
                   [
-                    ['whatsapp', lead.whatsapp],
                     ['email', lead.email],
                     ['instagram', lead.instagram],
                     ['cidade', lead.city],
