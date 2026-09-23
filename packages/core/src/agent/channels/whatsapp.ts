@@ -30,6 +30,9 @@ interface BaileysSocket {
       cb: (u: {
         connection?: string;
         qr?: string;
+        /** QR pairing confirmed server-side — whatsapp drops the stream
+         *  with a 515 right after, and the reconnect must log in. */
+        isNewLogin?: boolean;
         lastDisconnect?: { error?: { output?: { statusCode?: number } } };
       }) => void,
     ): void;
@@ -114,6 +117,17 @@ function nextWaGen(): number {
 
 function fingerprintOf(integration: IntegrationRow): string {
   return `${integration.id}:${(integration.config.accountId as string) ?? 'default'}:${integration.updated_at}`;
+}
+
+/** A `me` only counts once the pairing is server-confirmed — baileys marks
+ *  that two ways: `registered` flips true on the link-code notification
+ *  path, `account` is decoded out of the QR pair-success stanza (rc14 never
+ *  sets `registered` for QR pairs). A `me` with neither is a pending
+ *  requestPairingCode claim: persisting it makes the next start take the
+ *  LOGIN branch (creds.me → generateLoginNode) for an account that was
+ *  never registered → 401 → dead socket, no QR. */
+function pairingConfirmed(creds: { registered?: boolean; account?: unknown }): boolean {
+  return !!creds.registered || !!creds.account;
 }
 
 type MessageHandler = (jid: string, text: string, providerId: string | null) => Promise<void>;
@@ -204,19 +218,18 @@ async function startSocket(sql: Sql, integration: IntegrationRow): Promise<Baile
     waLog.warn({ err: e }, 'wa web version fetch failed — using bundled default');
   }
 
-  // An unregistered `me` only ever came from a pending requestPairingCode —
-  // Baileys sets it as a claim before the server acks. Persisting it makes
-  // every later start take the LOGIN branch (creds.me set → generateLoginNode)
-  // for an account that was never registered → 401 → dead socket, no QR. An
-  // identity only counts once the server confirms it (registered: true), so
-  // strip any stale claim at load AND keep it out of writes below.
+  // Strip an unconfirmed `me` claim at load AND keep it out of the writes
+  // below — see pairingConfirmed(). A QR-confirmed `me` (account present)
+  // survives: that is what lets the post-pairing 515 restart come back
+  // through the LOGIN branch instead of re-emitting a QR.
   const creds = ((await auth.read('creds', 'main')) ?? baileys.initAuthCreds()) as {
     registered?: boolean;
+    account?: unknown;
     me?: unknown;
   };
-  if (!creds.registered) {
+  if (!pairingConfirmed(creds)) {
     if (creds.me) {
-      waLog.warn('dropping stale unregistered creds.me — would force a 401 login');
+      waLog.warn('dropping unconfirmed creds.me — would force a 401 login');
     }
     delete creds.me;
   }
@@ -269,7 +282,7 @@ async function startSocket(sql: Sql, integration: IntegrationRow): Promise<Baile
 
   sock.ev.on('creds.update', () => {
     const snapshot = { ...creds };
-    if (!snapshot.registered) delete snapshot.me;
+    if (!pairingConfirmed(snapshot)) delete snapshot.me;
     void auth.write('creds', 'main', snapshot);
   });
   sock.ev.on('connection.update', (u) => {
@@ -281,6 +294,12 @@ async function startSocket(sql: Sql, integration: IntegrationRow): Promise<Baile
       notifyConnWaiters();
       // Emit after the QR write lands — the refetch it triggers must read it.
       void persistQr(sql, accountId, u.qr, gen).then(() => emitControlEvent('channel.health'));
+    }
+    if (u.isNewLogin) {
+      // The 515 that follows is the expected post-pairing restart, not a
+      // failure — say so in the log and drop the now-dead QR from the UI.
+      waLog.info('pairing confirmed — whatsapp will restart the socket (515)');
+      void persistQr(sql, accountId, null, gen).then(() => emitControlEvent('channel.health'));
     }
     if (u.connection === 'open') {
       connState = 'open';
