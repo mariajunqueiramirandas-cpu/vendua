@@ -110,6 +110,13 @@ unsubscribed` if `unsubscribed_at` is set and `lead has no whatsapp` if
 - Agent: `agent_runs` is a durable queue; worker drains on 15s poll, but
   POST /leads and /leads/:id/run drain inline (runs finish ~instantly with
   the `mock` llm driver, which replies "ok" unless params carry `script`).
+  Staff-card POST /leads queues exactly ONE `outreach` run (never a
+  `triage`) — params `{auto:'first-contact', focus:'primeiro contato —
+  lead recém-criado pela equipe'}` plus `draftOnly:true` when
+  `firstContactDelayMin`=0; `triage` survives only via manual dispatch
+  (POST /leads/:id/run or /agent/runs). Assert run shape via
+  `GET /control/v1/agent/runs?lead_id=<uuid>` or psql, not the UI —
+  LeadDetail only chips queued runs that carry a `run_at`.
   Integration drivers live in `control_integrations` (llm/email/whatsapp/
   discovery); `mock`/`log` need no secrets. `agent_memory` in
   `control_settings` holds facts saved by the `remember` tool.
@@ -550,7 +557,7 @@ sync` as the FIRST frame, `:ka` comment lines ~20.0s apart, and `event:
   Cookie auth: `POST /control/v1/login -c jar` then `curl -b jar` — the SPA
   EventSource path auths the same way.
 - Mutation→event map (app.ts emit sites): POST /leads → lead.change
-  (+run.update only if a triage run spawns — pass `automation:false` for a
+  (+run.update when the card's outreach run spawns — pass `automation:false` for a
   clean single emit); POST /leads/:id/tasks, PATCH /tasks/:id → lead.change;
   POST/PATCH /meetings → meeting.change (+lead.change; a second meeting.change
   comes from ensureMeetingEffects — duplicates are expected); POST
