@@ -222,14 +222,8 @@ export async function ensureThread(
   fields: { subject?: string | null; externalId?: string | null } = {},
 ): Promise<ThreadRow> {
   const rows = await tx<ThreadRow[]>`
-    insert into lead_threads (lead_id, channel, subject, external_id, agent_enabled)
-    select ${leadId}, ${chan}, ${fields.subject ?? null}, ${fields.externalId ?? null},
-      -- A fresh thread inherits the lead's handoff state: a lead-wide pause
-      -- must survive a channel hop, so new channels come up already paused.
-      coalesce(
-        (select agent_paused_at is null from leads where id = ${leadId}),
-        true
-      )
+    insert into lead_threads (lead_id, channel, subject, external_id)
+    values (${leadId}, ${chan}, ${fields.subject ?? null}, ${fields.externalId ?? null})
     on conflict (lead_id, channel)
     do update set
       subject = coalesce(lead_threads.subject, excluded.subject),

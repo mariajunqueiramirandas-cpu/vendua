@@ -172,6 +172,49 @@ export async function claimRun(sql: Sql): Promise<RunRow | null> {
           continue;
         }
       }
+      if (run.lead_id) {
+        // The lead suppression predicate has the same snapshot gap as the
+        // thread leg above — a handoff/unsubscribe committing between the
+        // scan and the status flip would still claim. Revalidate under the
+        // lead row lock. nowait: the suppression writers hold the lead row
+        // and then touch run rows, so waiting here could AB-BA deadlock —
+        // contention just means "about to be suppressed", reject instead.
+        let lead:
+          | {
+              agent_mode: string;
+              archived_at: string | null;
+              unsubscribed_at: string | null;
+              agent_paused_at: string | null;
+            }
+          | undefined;
+        try {
+          lead = (
+            await tx<
+              {
+                agent_mode: string;
+                archived_at: string | null;
+                unsubscribed_at: string | null;
+                agent_paused_at: string | null;
+              }[]
+            >`
+              select agent_mode, archived_at, unsubscribed_at, agent_paused_at
+              from leads where id = ${run.lead_id} for update nowait
+            `
+          )[0];
+        } catch (e) {
+          if ((e as { code?: string }).code !== '55P03') throw e;
+        }
+        if (
+          !lead ||
+          lead.agent_mode === 'off' ||
+          lead.archived_at ||
+          lead.unsubscribed_at ||
+          lead.agent_paused_at
+        ) {
+          rejected.push(run.id);
+          continue;
+        }
+      }
       if (run.kind === 'outreach' && run.lead_id) {
         // Serialization point for concurrent claims on one lead: the scan's
         // not-exists only sees committed owners — a claim still mid-flight

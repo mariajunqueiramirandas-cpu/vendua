@@ -95,12 +95,14 @@ export async function dispatchMessage(
 
     // Re-check suppression at dispatch time — a draft approved after the lead
     // was archived, unsubscribed, handed to a human, or had its email bounce
-    // must not leave the building.
+    // must not leave the building. The handoff marker only mutes the AGENT:
+    // staff replies and system notices (meeting confirmations) still flow —
+    // a paused lead is a lead the human is working, not a dead lead.
     const suppressed = lead.archived_at
       ? 'lead archived'
       : lead.unsubscribed_at && !msg.is_farewell
         ? 'lead unsubscribed'
-        : lead.agent_paused_at
+        : lead.agent_paused_at && msg.author === 'agent'
           ? 'agent paused for lead'
           : thread.channel === 'email' && lead.email_bounced_at
             ? 'email bounced'

@@ -931,7 +931,7 @@ dbDescribe('worker robustness (db)', () => {
     expect(msgs).toHaveLength(0);
   });
 
-  test('a lead-wide handoff survives a channel hop — fresh threads inherit the pause', async () => {
+  test('a lead-wide handoff gates fresh channels via the flag — not a durable toggle', async () => {
     await migrate(sql, MIGRATIONS);
     const lead = await controlTx(sql, (tx) => insertLeadTx(tx, { name: 'Channel Hop' }));
     const leadId = lead.body.lead.id;
@@ -939,10 +939,11 @@ dbDescribe('worker robustness (db)', () => {
       insert into lead_threads (lead_id, channel) values (${leadId}, 'whatsapp')
     `;
     await sql`update leads set agent_paused_at = now() where id = ${leadId}`;
-    // ensureThread on a channel with no thread: the lead-wide pause marker
-    // must keep the fresh thread from resurrecting the agent.
+    // The flag alone carries the pause — a thread created during the handoff
+    // must NOT store agent_enabled=false, or clearing the flag would leave
+    // it permanently disabled (the pause marker blocks output regardless).
     const fresh = await controlTx(sql, (tx) => ensureThread(tx, leadId, 'email'));
-    expect(fresh.agent_enabled).toBe(false);
+    expect(fresh.agent_enabled).toBe(true);
     // and the send-side check blocks before composing on that channel at all
     const out = (await executeTool(mkCtx('ghost-hop', null, leadId), 'd1', 'draft_message', {
       leadId,
