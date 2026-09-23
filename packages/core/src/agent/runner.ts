@@ -134,6 +134,13 @@ export async function claimRun(sql: Sql): Promise<RunRow | null> {
               and l.archived_at is null
               and l.unsubscribed_at is null
           ))
+          -- a staff-paused thread suppresses the same way — revalidated here
+          -- on a fresh snapshot so a pause landing after enqueue still holds
+          -- the run (the enqueue gate can't close the post-insert window).
+          and (r.thread_id is null or exists (
+            select 1 from lead_threads t
+            where t.id = r.thread_id and t.agent_enabled
+          ))
           -- the busy-lead exclusion lives in the scan itself so a durably
           -- blocked lead never becomes a candidate — no queue-wide barrier
           and (r.kind <> 'outreach' or r.lead_id is null or not exists (

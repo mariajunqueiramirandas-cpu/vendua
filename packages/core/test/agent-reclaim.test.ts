@@ -668,6 +668,27 @@ dbDescribe('worker robustness (db)', () => {
     expect(m!.status).toBe('queued');
   });
 
+  test('a staff-paused thread holds its queued runs — claim resumes on unpause', async () => {
+    await migrate(sql, MIGRATIONS);
+    const lead = await controlTx(sql, (tx) => insertLeadTx(tx, { name: 'Paused Thread' }));
+    const leadId = lead.body.lead.id;
+    const [thread] = await sql<{ id: string }[]>`
+      insert into lead_threads (lead_id, channel, agent_enabled)
+      values (${leadId}, 'whatsapp', false) returning id
+    `;
+    await sql`delete from agent_runs where status = 'queued'`;
+    const runId = await enqueueRun(sql, { kind: 'reply', leadId, threadId: thread!.id });
+    const claimed = await claimRun(sql);
+    expect(claimed?.id ?? null).not.toBe(runId);
+    const [r] = await sql<{ status: string }[]>`
+      select status from agent_runs where id = ${runId}
+    `;
+    expect(r!.status).toBe('queued');
+    await sql`update lead_threads set agent_enabled = true where id = ${thread!.id}`;
+    const resumed = await claimRun(sql);
+    expect(resumed?.id).toBe(runId);
+  });
+
   test('stranded recovery fails agent messages whose run went terminal', async () => {
     await migrate(sql, MIGRATIONS);
     const lead = await controlTx(sql, (tx) => insertLeadTx(tx, { name: 'Stranded' }));

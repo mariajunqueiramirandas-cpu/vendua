@@ -57,16 +57,17 @@ export async function ingestInbound(
   // guardrails.inboundReplyDelayMin paces the answer — the run sits queued
   // with a future run_at instead of replying while the lead is still typing.
   const { inboundReplyDelayMin } = await getGuardrails(sql);
-  // Gate check and run insert in one tx: `for update of l` serializes with
-  // the lead row's own writers — archive/unsubscribe land on `leads`, so a
-  // suppression committed between the message insert and now is seen here
-  // instead of stranding a queued reply on a suppressed lead.
+  // Gate check and run insert in one tx: `for update of l, t` serializes
+  // with both suppression writers — archive/unsubscribe land on `leads`,
+  // the staff pause toggle on `lead_threads` — so a suppression committed
+  // between the message insert and now is seen here instead of stranding a
+  // queued reply on a suppressed thread/lead.
   const runId = await controlTx(sql, async (tx) => {
     const gateRows = await tx<ReplyGate[]>`
       select t.agent_enabled, l.agent_mode, l.unsubscribed_at, l.archived_at
       from lead_threads t join leads l on l.id = t.lead_id
       where t.id = ${res.threadId}
-      for update of l
+      for update of l, t
     `;
     const gate = gateRows[0];
 
