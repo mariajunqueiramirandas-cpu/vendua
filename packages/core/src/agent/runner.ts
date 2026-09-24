@@ -588,8 +588,14 @@ export async function contextFor(
         // Structured per-lead memory (memory v2): durable key/value facts
         // set by set_fact calls and staff PUTs — survives plan rewrites and
         // note churn. Low-confidence entries are marked so the model knows
-        // to re-verify before asserting them.
-        const facts = await controlTx(sql, (tx) => leadFactsTx(tx, run.lead_id!, 50));
+        // to re-verify before asserting them. Bounded + recent-first: a
+        // lead with >50 facts still surfaces the freshest ones. Pre-0035
+        // schemas have no table — omit the block, don't fail the run.
+        const facts = await controlTx(sql, async (tx) =>
+          (await hasMemoryTablesTx(tx))
+            ? leadFactsTx(tx, run.lead_id!, { limit: 50, order: 'recent' })
+            : [],
+        );
         if (facts.length) {
           parts.push(
             `FATOS (memória estruturada do lead — set_fact atualiza):\n${facts

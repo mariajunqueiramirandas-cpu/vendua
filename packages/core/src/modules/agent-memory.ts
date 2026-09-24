@@ -337,14 +337,25 @@ export async function memoryForRunTx(
   return rows.map((r) => r.content);
 }
 
-/** Structured per-lead facts — the agent's keyed dossier memory. */
-export async function leadFactsTx(tx: Sql, leadId: string, limit = 200): Promise<LeadFact[]> {
-  const rows = await tx<LeadFactRow[]>`
-    select * from lead_facts where lead_id = ${leadId} order by key limit ${Math.max(
-      1,
-      Math.min(Math.floor(limit), 1000),
-    )}
-  `;
+/** Structured per-lead facts — the agent's keyed dossier memory.
+ *  `order: 'key'` for the staff listing (stable alphabetical); 'recent' for
+ *  the prompt read — a bounded feed must prefer the freshest facts, or a
+ *  late-sorting key past the bound never reaches the agent. */
+export async function leadFactsTx(
+  tx: Sql,
+  leadId: string,
+  opts: { limit?: number; order?: 'key' | 'recent' } = {},
+): Promise<LeadFact[]> {
+  const limit = Math.max(1, Math.min(Math.floor(opts.limit ?? 200), 1000));
+  const rows =
+    opts.order === 'recent'
+      ? await tx<LeadFactRow[]>`
+          select * from lead_facts where lead_id = ${leadId}
+          order by updated_at desc, key limit ${limit}
+        `
+      : await tx<LeadFactRow[]>`
+          select * from lead_facts where lead_id = ${leadId} order by key limit ${limit}
+        `;
   return rows.map(leadFactJson);
 }
 
