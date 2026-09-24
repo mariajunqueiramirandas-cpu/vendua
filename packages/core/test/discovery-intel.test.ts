@@ -461,6 +461,27 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('discovery intelligence (db)', (
         await sql<{ agent_mode: string }[]>`select agent_mode from leads where id = ${open.id}`
       )[0]!;
       expect(openLead.agent_mode).toBe('auto');
+
+      // Fresh path — same invariant: 'auto' lands only with the run behind
+      // it. (A brand-new lead has no prior spend, so its insert can never
+      // refuse on the cap — the ordering still guards the invariant for any
+      // refusal source.)
+      const freshWa = `55119${String(Date.now()).slice(-7)}03`;
+      const fresh = (await executeTool(c, `cf-${freshWa.slice(-4)}`, 'create_lead', {
+        name: `Fresh Auto ${uniq}`,
+        city: 'Fortaleza',
+        findings: 'doceria nova com whatsapp verificado',
+        whatsapp: freshWa,
+        fitScore: 9,
+      })) as { lead: { id: string; agentMode?: string }; contactRun?: string };
+      expect(fresh.contactRun).toBeTruthy();
+      expect(fresh.lead.agentMode).toBe('auto');
+      const freshLead = (
+        await sql<
+          { agent_mode: string }[]
+        >`select agent_mode from leads where id = ${fresh.lead.id}`
+      )[0]!;
+      expect(freshLead.agent_mode).toBe('auto');
     } finally {
       await controlTx(
         sql,

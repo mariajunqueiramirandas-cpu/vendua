@@ -577,6 +577,7 @@ export async function refuseOnFresherInboundTx(tx: Sql, ctx: ToolContext): Promi
     select m.id from lead_messages m
     join lead_threads t on t.id = m.thread_id
     where t.lead_id = ${ctx.leadId} and m.direction = 'in' and not m.historical
+      and m.received_at <> m.created_at
       and m.received_at > ${run.started_at}::timestamptz
     limit 1
   `;
@@ -1053,7 +1054,6 @@ export async function executeTool(
           newScore,
           whatsappDerived ? '' : String(input.whatsapp ?? '').trim(),
         );
-        if (autoContact) input.agent_mode = 'auto';
         const created = await insertLeadTx(tx, input);
         await writeFindings(created.body.lead.id as string);
         if (whatsappDerived) {
@@ -1062,7 +1062,15 @@ export async function executeTool(
             'whatsapp derivado do celular — um wa.me/link-in-bio confirma de verdade (e destrava autocontato)';
         }
         if (autoContact) {
+          // agent_mode follows the admitted run, not the gate: a cap refusal
+          // (insertRun → null) must not leave 'auto' with no outreach behind
+          // it — same rule as the dup-merge promotion above.
           const contactRun = await queueOutreach(created.body.lead.id, newScore);
+          if (contactRun) {
+            await tx`update leads set agent_mode = 'auto', updated_at = now()
+              where id = ${created.body.lead.id as string}`;
+            created.body.lead.agentMode = 'auto';
+          }
           return {
             ...created,
             body: { ...created.body, contactRun } as never,
