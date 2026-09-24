@@ -111,7 +111,7 @@ import {
 } from './modules/meetings.ts';
 import { BOOKING_PAGE } from './modules/booking-page.ts';
 import * as rooms from './modules/rooms.ts';
-import { drain, insertRun } from './agent/runner.ts';
+import { drain, flagCappedLeads, insertRun } from './agent/runner.ts';
 import { ingestInbound } from './agent/inbound.ts';
 import { ingestResendEvent, svixHeaders, svixVerified } from './agent/channels/email-inbound.ts';
 import { LOADER_JS } from './loader.ts';
@@ -1352,6 +1352,10 @@ export function createApp({ sql, sessionSecret, controlSecret, autoDrain }: AppD
     validateSetting(key, body.value);
     const res = await putSetting(sql, key, body.value, requireIdemKey(c));
     if (res.replayed) c.header('x-idempotent-replay', 'true');
+    // A LOWERED cost cap strands already-over-cap leads (their queued runs
+    // park, no insert/finish ever fires the flag) — flag them now so staff
+    // sees the card instead of a silent stop. Deduped; await is fine.
+    if (key === 'guardrails' && !res.replayed) await flagCappedLeads(sql);
     return c.json(res.body);
   });
 

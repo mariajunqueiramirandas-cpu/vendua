@@ -167,6 +167,30 @@ export async function enqueueRun(
   return id;
 }
 
+/** Flags leads already over the lifetime cap whose crossing no insert or
+ *  finish will ever see (e.g. staff LOWERED leadLifetimeCostCapUsd below
+ *  existing spend): without this pass their queued runs park silently.
+ *  leadUnderCostCapTx dedupes per (lead, cap level) — re-runs are cheap.
+ *  Called after a committed guardrails write; returns leads flagged. */
+export async function flagCappedLeads(sql: Sql, limit = 200): Promise<number> {
+  return controlTx(sql, async (tx) => {
+    const g = await getSettingTx<Partial<Guardrails>>(tx, 'guardrails', {});
+    const capCents = Math.round(
+      (g.leadLifetimeCostCapUsd ?? DEFAULT_GUARDRAILS.leadLifetimeCostCapUsd) * 100,
+    );
+    if (capCents <= 0) return 0;
+    const capped = await tx<{ lead_id: string }[]>`
+      select lead_id from agent_runs
+      where lead_id is not null and cost_cents > 0
+      group by lead_id
+      having coalesce(sum(cost_cents), 0) >= ${capCents}
+      limit ${limit}
+    `;
+    for (const { lead_id } of capped) await leadUnderCostCapTx(tx, lead_id);
+    return capped.length;
+  });
+}
+
 export async function claimRun(sql: Sql): Promise<RunRow | null> {
   const run = await controlTx(sql, async (tx) => {
     // Staff/founder numbers never run — ingest already refuses to mint
@@ -398,7 +422,14 @@ async function finishRun(
     if (r?.lead_id) await leadUnderCostCapTx(tx, r.lead_id);
     return updated;
   });
-  if (rows.length) emitControlEvent('run.update', run.id);
+  if (rows.length) {
+    emitControlEvent('run.update', run.id);
+    // The [humano] task lands in the tx — the task list/badge refresh on
+    // lead.change, so mirror the event a real lead update would emit.
+    const r = rows[0];
+    if (r?.lead_id && result.status === 'failed')
+      emitControlEvent('lead.change', r.lead_id ?? undefined);
+  }
   return rows.length > 0;
 }
 
@@ -1930,9 +1961,16 @@ export async function sweepStrategist(sql: Sql): Promise<boolean> {
 export async function sweepOutreach(sql: Sql): Promise<number> {
   const queuedIds: string[] = [];
   const fired = await controlTx(sql, async (tx) => {
+    const g = await getSettingTx<Partial<Guardrails>>(tx, 'guardrails', {});
+    const capCents = Math.round(
+      (g.leadLifetimeCostCapUsd ?? DEFAULT_GUARDRAILS.leadLifetimeCostCapUsd) * 100,
+    );
     // for update skip locked — concurrent sweeps on different replicas take
     // disjoint lead sets instead of both inserting a run for the same due
-    // lead (the not-exists check alone only sees committed runs).
+    // lead (the not-exists check alone only sees committed runs). The cap
+    // predicate keeps over-cap leads OUT of the 20-row window — otherwise a
+    // wall of capped leads would starve every eligible lead behind them
+    // (their due dates stay untouched, so a raised cap resumes them).
     const due = await tx<{ id: string; next_action_source: string }[]>`
       select l.id, l.next_action_source from leads l
       where l.next_action_at is not null and l.next_action_at <= now()
@@ -1943,6 +1981,9 @@ export async function sweepOutreach(sql: Sql): Promise<number> {
           where r.lead_id = l.id and r.kind = 'outreach'
             and r.status in ('queued', 'running')
         )
+        and (${capCents} <= 0 or
+          coalesce((select sum(x.cost_cents) from agent_runs x
+                    where x.lead_id = l.id), 0) < ${capCents})
       limit 20
       for update skip locked
     `;
@@ -1967,7 +2008,7 @@ export async function sweepOutreach(sql: Sql): Promise<number> {
         await tx`update leads set next_action_at = null, next_action_source = null where id = ${id}`;
       }
     }
-    return due.length;
+    return queuedIds.length;
   });
   for (const id of queuedIds) emitControlEvent('run.update', id);
   return fired;
