@@ -99,6 +99,18 @@ export async function ingestInbound(
     ) {
       return null;
     }
+    // Burst coalescing: a still-queued reply reads the freshest thread
+    // state at claim anyway, so one parked run covers every message that
+    // lands before it starts — a WhatsApp burst must not fan out into
+    // parallel replies on the same lead. 'running' doesn't count: its
+    // context froze at claim, so a genuinely new message still earns a
+    // fresh run.
+    const parked = await tx`
+      select 1 from agent_runs
+      where kind = 'reply' and thread_id = ${res.threadId} and status = 'queued'
+      limit 1
+    `;
+    if (parked.length) return null;
     return insertRun(tx, {
       kind: 'reply',
       leadId: res.leadId,

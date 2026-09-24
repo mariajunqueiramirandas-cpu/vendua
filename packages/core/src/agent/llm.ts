@@ -67,6 +67,16 @@ async function takeSlot(key: string, minGapMs: number) {
 
 const RETRYABLE = /429|quota|rate.?limit|resource_exhausted|overload|temporarily|5\d\d/i;
 
+/** Hard bound on a single provider call — a hung socket would otherwise
+ *  stall forever while the heartbeat keeps alive_at fresh, so the run
+ *  could never reclaim. Provider config may override via `timeoutMs`. */
+const LLM_CALL_TIMEOUT_MS = 120_000;
+
+const configTimeoutMs = (config: Record<string, unknown>): number =>
+  typeof config.timeoutMs === 'number' && config.timeoutMs > 0
+    ? config.timeoutMs
+    : LLM_CALL_TIMEOUT_MS;
+
 function retryAfterMs(e: unknown): number | null {
   const headers = (e as { headers?: Headers }).headers;
   const raw = headers?.get?.('retry-after');
@@ -92,6 +102,9 @@ async function llmCall<T>(key: string, minGapMs: number, fn: () => Promise<T>): 
       const retryable =
         status === 429 ||
         (typeof status === 'number' && status >= 500) ||
+        // AbortSignal.timeout's DOMException — a hung provider socket is a
+        // transient fault like a 5xx, so retry instead of insta-failing.
+        (e as { name?: string }).name === 'TimeoutError' ||
         RETRYABLE.test(e instanceof Error ? e.message : String(e));
       if (!retryable || attempt >= maxAttempts - 1) throw e;
       await sleepMs(retryAfterMs(e) ?? Math.min(5_000 * 2 ** attempt, 60_000));
@@ -101,8 +114,13 @@ async function llmCall<T>(key: string, minGapMs: number, fn: () => Promise<T>): 
 
 /** fetch wrapper that throws a headers-carrying error on non-2xx so llmCall
  *  can read Retry-After. */
-async function llmFetch(url: string, init: RequestInit, label: string): Promise<Response> {
-  const res = await fetch(url, init);
+async function llmFetch(
+  url: string,
+  init: RequestInit,
+  label: string,
+  timeoutMs = LLM_CALL_TIMEOUT_MS,
+): Promise<Response> {
+  const res = await fetch(url, { ...init, signal: AbortSignal.timeout(timeoutMs) });
   if (!res.ok) {
     const e = new Error(`${label} ${res.status}: ${(await res.text()).slice(0, 300)}`) as Error & {
       headers?: Headers;
@@ -127,7 +145,7 @@ function openrouterProvider(
   }
   const model =
     typeof config.model === 'string' && config.model ? config.model : 'liquid/lfm-2.5-2.6b:free';
-  const client = new OpenRouter({ apiKey });
+  const client = new OpenRouter({ apiKey, timeoutMs: configTimeoutMs(config) });
   return {
     name: `openrouter:${model}`,
     async chat({ system, messages, tools }) {
@@ -289,6 +307,7 @@ function geminiProvider(config: Record<string, unknown>, secretRef: string | nul
             }),
           },
           'gemini',
+          configTimeoutMs(config),
         ),
       );
       const data = (await res.json()) as {
@@ -406,6 +425,7 @@ function anthropicProvider(config: Record<string, unknown>, secretRef: string | 
             }),
           },
           'anthropic',
+          configTimeoutMs(config),
         ),
       );
       const data = (await res.json()) as {
@@ -475,6 +495,7 @@ function openaiProvider(config: Record<string, unknown>, secretRef: string | nul
             }),
           },
           'openai',
+          configTimeoutMs(config),
         ),
       );
       const data = (await res.json()) as {
