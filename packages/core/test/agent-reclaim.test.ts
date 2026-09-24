@@ -9,6 +9,7 @@ import { controlTx } from '../src/modules/control.ts';
 import { subscribeControlEvents, type ControlEvent } from '../src/modules/control-events.ts';
 import { insertLeadTx, getLeadDetail } from '../src/modules/leads.ts';
 import { ensureThread } from '../src/modules/threads.ts';
+import { rememberTx } from '../src/modules/agent-memory.ts';
 import { migrate } from '../src/platform/db.ts';
 
 // ---------------------------------------------------------------------------
@@ -1372,19 +1373,24 @@ dbDescribe('worker robustness (db)', () => {
     expect(out.error).toContain('limite');
   });
 
-  test('remember returns the fact the ≤100 cap evicted', async () => {
+  test('remember writes an agent learning and returns cap evictions', async () => {
     await migrate(sql, MIGRATIONS);
-    const facts = Array.from({ length: 100 }, (_, i) => `fato ${i}`);
-    await sql`
-      insert into control_settings (key, value)
-      values ('agent_memory', ${sql.json({ facts })})
-      on conflict (key) do update set value = excluded.value
-    `;
+    const tag = `rem-${Date.now().toString(36)}`;
+    // v2 cap is 200 learnings — seeding them makes the 201st write evict.
+    await controlTx(sql, async (tx) => {
+      for (let i = 0; i < 200; i++) {
+        await rememberTx(tx, { scope: 'workspace', content: `${tag}-${i}`, source: 'agent' });
+      }
+    });
     const out = (await executeTool(mkCtx('mem', null, null, 'strategist'), 'm1', 'remember', {
-      fact: 'fato novo',
-    })) as { remembered: string; total: number; evicted?: string[] };
-    expect(out.total).toBe(100);
-    expect(out.evicted).toEqual(['fato 0']);
+      fact: `${tag}-novo`,
+    })) as { remembered: string; evicted?: string[] };
+    expect(out.remembered).toBe(`${tag}-novo`);
+    expect(out.evicted?.length).toBeGreaterThanOrEqual(1);
+    const row = await sql<{ source: string }[]>`
+      select source from agent_memory_items where content = ${`${tag}-novo`}
+    `;
+    expect(row[0]?.source).toBe('agent');
   });
 
   test('a consecutive identical call is suppressed and nudged — once', async () => {

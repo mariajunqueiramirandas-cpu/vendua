@@ -15,6 +15,7 @@ import {
   type Guardrails,
 } from '../modules/integrations.ts';
 import { segmentStats, type AgentGoal } from '../modules/leads.ts';
+import { appendDebriefTx, hasMemoryTablesTx, memoryForRunTx } from '../modules/agent-memory.ts';
 import { sweepPipelineSnapshots } from '../modules/forecast.ts';
 import { sweepDigest } from '../modules/digest.ts';
 import { estimateModelCostUsd, providerFor, type AgentMessage, type ToolCall } from './llm.ts';
@@ -46,7 +47,7 @@ const HEARTBEAT_MS = 20_000;
  *  safety bound the prompt can't talk past. Runs WITH a meta cap at it. */
 const DISCOVERY_LEAD_CAP = 20;
 
-interface RunRow {
+export interface RunRow {
   id: string;
   kind: 'triage' | 'reply' | 'outreach' | 'discovery' | 'strategist';
   lead_id: string | null;
@@ -1151,11 +1152,40 @@ export async function reconcileInterrupted(
   }
 }
 
+/** The run prompt's memory feed — memory v2: pinned learnings, learnings
+ *  matching the run's segment (the brief's `params.segment`, else the bound
+ *  lead's `segment`), workspace learnings, latest debriefs. A schema ahead
+ *  of the 0035 migration falls back to the legacy flat facts list.
+ *  Exported for tests. */
+export async function memoryForPrompt(sql: Sql, run: RunRow): Promise<string[]> {
+  return controlTx(sql, async (tx) => {
+    if (!(await hasMemoryTablesTx(tx))) {
+      const rows = await tx<{ value: { facts?: unknown } }[]>`
+        select value from control_settings where key = 'agent_memory'
+      `;
+      const cur = rows[0]?.value?.facts;
+      return Array.isArray(cur) ? (cur as string[]) : [];
+    }
+    const segment =
+      typeof run.params.segment === 'string' && run.params.segment
+        ? run.params.segment
+        : run.lead_id
+          ? ((
+              await tx<{ segment: string | null }[]>`
+              select segment from leads where id = ${run.lead_id}
+            `
+            )[0]?.segment ?? null)
+          : null;
+    return memoryForRunTx(tx, { segment });
+  });
+}
+
 /** Doctrine write-back — a deterministic debrief line appended to
- *  agent_memory on a finished discovery run: what the segment/city yielded,
+ *  agent memory on a finished discovery run: what the segment/city yielded,
  *  which tools resolved whatsapp, which prospects dead-ended. Next run's
- *  system prompt already loads agent_memory, so runs compound. */
-async function writeDebrief(
+ *  system prompt already loads the memory feed, so runs compound.
+ *  Exported for tests. */
+export async function writeDebrief(
   sql: Sql,
   run: RunRow,
   ctx: ToolContext,
@@ -1192,6 +1222,10 @@ async function writeDebrief(
     `${dead.length ? `; beco sem saída: ${dead.slice(0, 4).join(', ')}` : ''}` +
     `${ctx.monid?.spent ? `; monid $${ctx.monid.spent.toFixed(3)}` : ''}`;
   await controlTx(sql, async (tx) => {
+    if (await hasMemoryTablesTx(tx)) {
+      await appendDebriefTx(tx, { content: fact.slice(0, 500), sourceRunId: run.id });
+      return;
+    }
     await tx`
       insert into control_settings (key, value)
       values ('agent_memory', ${tx.json({ facts: [] } as never)})
@@ -1379,7 +1413,7 @@ export async function runOnce(sql: Sql): Promise<boolean> {
       run.params,
     );
     const pitch = await getPitch(sql);
-    const memory = await getSetting<{ facts: string[] }>(sql, 'agent_memory', { facts: [] });
+    const memory = { facts: await memoryForPrompt(sql, run) };
     const { text: context, goal, bookingUrl } = await contextFor(sql, run);
     const g = await getSetting<Partial<Guardrails>>(sql, 'guardrails', {});
     // The prompt only promises autocontact when it can actually happen —

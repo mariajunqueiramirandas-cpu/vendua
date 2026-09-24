@@ -60,6 +60,7 @@ export const TOOL_META: Record<string, ToolMeta> = {
     effect: 'write',
     playbooks: ['triage', 'reply', 'outreach', 'discovery', 'strategist'],
   },
+  set_fact: { effect: 'write', playbooks: LEAD_KINDS, leadBound: 'leadId' },
   propose_brief: { effect: 'mint', playbooks: ['strategist'] },
   request_human: {
     effect: 'mint',

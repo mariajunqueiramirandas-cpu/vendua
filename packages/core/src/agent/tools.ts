@@ -1,5 +1,5 @@
 import type { Sql } from '../platform/db.ts';
-import { HttpError } from '../platform/http.ts';
+import { HttpError, UUID_RE } from '../platform/http.ts';
 import type { AgentTool } from './llm.ts';
 import { claimControl, controlTx } from '../modules/control.ts';
 import { emitControlEvent } from '../modules/control-events.ts';
@@ -33,6 +33,12 @@ import { whatsappRegistered } from './channels/whatsapp.ts';
 import { leadBoundArg, toolAvailable } from './tool-meta.ts';
 import { parseWakeupAt, scheduleWakeupTx } from './wakeups.ts';
 import { automationAllowedTx, discoveryBudgetTx } from './policy.ts';
+import {
+  LEAD_FACT_KEY_RE,
+  hasMemoryTablesTx,
+  rememberTx,
+  upsertLeadFactTx,
+} from '../modules/agent-memory.ts';
 
 /**
  * agent/tools — the central tool registry (Hermes-style: one registry, gated
@@ -335,11 +341,32 @@ const REGISTRY: { def: AgentTool }[] = [
     def: {
       name: 'remember',
       description:
-        'Persist a durable learning (agent memory — e.g. "docerias respond better at night"). Bounded: keep ≤100 facts, consolidate instead of duplicating — when the cap drops an old fact the result returns it as `evicted`; fold it into a consolidated fact on a later call.',
+        'Persist a durable learning (agent memory — e.g. "docerias respond better at night"). scope: "workspace" (default — applies to every run) or "segment" + `segment` for a learning that only fits one niche. Deduped case-insensitively per scope/segment — repeating a learning refreshes it instead of duplicating. Cap 200 workspace+segment learnings (staff-pinned items never drop); when the cap drops an old learning the result returns it as `evicted` — fold it into a consolidated learning on a later call. For a structured fact about THIS lead, prefer `set_fact`.',
       parameters: {
         type: 'object',
-        properties: { fact: { type: 'string' } },
+        properties: {
+          fact: { type: 'string' },
+          scope: { type: 'string', enum: ['workspace', 'segment'] },
+          segment: { type: 'string', description: 'required when scope=segment' },
+        },
         required: ['fact'],
+      },
+    },
+  },
+  {
+    def: {
+      name: 'set_fact',
+      description:
+        'Record a structured fact about THIS lead (e.g. key "fleet_size" value "12", key "decision_maker" value "owner"). snake_case key ≤60, value ≤500, optional confidence 0..1. Upserts per lead+key — calling again updates value/confidence and marks you as the source. Facts persist across runs and show on the lead card — prefer this over `remember` for lead-specific durable state.',
+      parameters: {
+        type: 'object',
+        properties: {
+          leadId: { type: 'string' },
+          key: { type: 'string', description: 'snake_case ≤60' },
+          value: { type: 'string', description: '≤500 chars' },
+          confidence: { type: 'number', description: '0..1, default 1' },
+        },
+        required: ['leadId', 'key', 'value'],
       },
     },
   },
@@ -1417,10 +1444,28 @@ export async function executeTool(
     }
     case 'remember': {
       const fact = String(args.fact ?? '').slice(0, 500);
-      // Row lock on the settings row makes the read-modify-write atomic —
-      // concurrent remembers serialize instead of clobbering each other.
+      if (!fact) return { error: 'fact is required' };
+      const scope = args.scope === 'segment' ? 'segment' : 'workspace';
+      const segment = typeof args.segment === 'string' ? args.segment.trim() : '';
+      if (scope === 'segment' && !segment) {
+        return { error: 'scope=segment needs the `segment` arg' };
+      }
       const written = await controlTx(sql, async (tx) => {
         await assertRunClaimTx(tx, ctx);
+        if (await hasMemoryTablesTx(tx)) {
+          const res = await rememberTx(tx, {
+            scope,
+            ...(scope === 'segment' ? { segment } : {}),
+            content: fact,
+            source: 'agent',
+            // stamped only when the caller is a real claimed run — sims and
+            // tests carry synthetic run ids that have no agent_runs row
+            sourceRunId: UUID_RE.test(ctx.runId) ? ctx.runId : null,
+          });
+          return { evicted: res.evicted };
+        }
+        // Legacy flat-list fallback — the settings-row read-modify-write
+        // under FOR UPDATE for schemas ahead of the 0035 migration.
         await tx`
           insert into control_settings (key, value)
           values ('agent_memory', ${tx.json({ facts: [] } as never)})
@@ -1440,13 +1485,39 @@ export async function executeTool(
           update control_settings set value = ${tx.json({ facts } as never)}
           where key = 'agent_memory'
         `;
-        return { total: facts.length, evicted };
+        return { evicted };
       });
       return {
         remembered: fact,
-        total: written.total,
         ...(written.evicted.length ? { evicted: written.evicted } : {}),
       };
+    }
+    case 'set_fact': {
+      const leadId = String(args.leadId ?? '');
+      const key = String(args.key ?? '');
+      const value = String(args.value ?? '').slice(0, 500);
+      if (!LEAD_FACT_KEY_RE.test(key)) {
+        return { error: 'key must be snake_case — ^[a-z][a-z0-9_]{0,59}$' };
+      }
+      if (!value) return { error: 'value is required' };
+      const confidence = args.confidence === undefined ? null : Number(args.confidence);
+      if (
+        confidence !== null &&
+        (!Number.isFinite(confidence) || confidence < 0 || confidence > 1)
+      ) {
+        return { error: 'confidence must be a number in [0, 1]' };
+      }
+      const fact = await controlTx(sql, async (tx) => {
+        await assertRunClaimTx(tx, ctx);
+        return upsertLeadFactTx(tx, leadId, {
+          key,
+          value,
+          ...(confidence !== null ? { confidence } : {}),
+          source: 'agent',
+          sourceRunId: UUID_RE.test(ctx.runId) ? ctx.runId : null,
+        });
+      });
+      return { fact };
     }
     case 'propose_brief': {
       const bname = String(args.name ?? '')

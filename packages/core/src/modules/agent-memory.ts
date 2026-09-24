@@ -107,6 +107,14 @@ export function leadFactJson(row: LeadFactRow): LeadFact {
   };
 }
 
+/** True when the 0035 memory tables are deployed — a control box ahead of
+ *  its migrations falls back to the legacy `control_settings.agent_memory`
+ *  facts list instead of erroring on a missing relation. */
+export async function hasMemoryTablesTx(tx: Sql): Promise<boolean> {
+  const r = await tx<{ r: string | null }[]>`select to_regclass('agent_memory_items') as r`;
+  return r[0]!.r !== null;
+}
+
 const bad = (field: string, why: string) =>
   new HttpError(422, 'BAD_REQUEST', `${field} ${why}`, { field });
 
