@@ -385,6 +385,13 @@ export default function Settings() {
   // ---------- section selection (?s=) + provider anchor scroll (?p=) ----------
   const section: SectionKey = SECTIONS.find((s) => s.key === searchParams.get('s'))?.key ?? 'visao';
   const anchor = searchParams.get('p');
+  // retired sections moved to the Estúdio — old bookmarks follow them
+  const nav = useNavigate();
+  useEffect(() => {
+    const s = searchParams.get('s');
+    if (s === 'agente') nav('/estudio?s=voz', { replace: true });
+    else if (s === 'regras') nav('/estudio?s=regras', { replace: true });
+  }, [searchParams, nav]);
   const go = (s: SectionKey, p?: string) => {
     const next = new URLSearchParams(searchParams);
     if (s === 'visao') next.delete('s');

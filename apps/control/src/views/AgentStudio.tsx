@@ -155,10 +155,17 @@ export default function AgentStudio() {
 
   // settings map — pitch, guardrails, agent_memory, agent_playbooks,
   // agent_autonomy all live here; PUT /settings/:key is the write path.
-  const settings = useAgent(
-    () => api.settings().then((s) => Object.fromEntries(s.settings.map((r) => [r.key, r.value]))),
-    [],
-  );
+  // Each GET stamps the write version it was issued at (v0) — a response
+  // that predates a committed PUT is dropped instead of rolling the map
+  // back over a newer save.
+  const writeV = useRef(0);
+  const settings = useAgent(() => {
+    const v0 = writeV.current;
+    return api.settings().then((s) => ({
+      v0,
+      map: Object.fromEntries(s.settings.map((r) => [r.key, r.value])),
+    }));
+  }, []);
   const autonomy = useAgent(() => api.autonomy(), []);
   // section-scoped fetches stay dormant until their section is opened —
   // memory fans out to three calls, and a 404-per-visit per scope adds up
@@ -192,11 +199,15 @@ export default function AgentStudio() {
 
   // PUT /settings/:key sends the WHOLE value — a save must never build on a
   // pre-save map. Writes are serialized (saveQ) and merge off mapRef, which
-  // is the freshest local picture: synced from the last fetch and updated
-  // optimistically the moment a PUT lands, before the refetch resolves.
+  // is the freshest local picture: synced from the last accepted fetch and
+  // updated optimistically the moment a PUT lands, before the refetch.
+  // liveMap is what editors render — same freshness guarantee as mapRef.
   const mapRef = useRef<Record<string, unknown>>({});
+  const [liveMap, setLiveMap] = useState<Record<string, unknown> | null>(null);
   useEffect(() => {
-    if (settings.data) mapRef.current = settings.data;
+    if (!settings.data || settings.data.v0 < writeV.current) return;
+    mapRef.current = settings.data.map;
+    setLiveMap(settings.data.map);
   }, [settings.data]);
   const saveQ = useRef(Promise.resolve());
   const saveSetting = (
@@ -215,8 +226,9 @@ export default function AgentStudio() {
         settings.reload(); // resync — the local picture may be stale
         return;
       }
+      writeV.current += 1; // any GET issued before this write is now stale
       mapRef.current = { ...mapRef.current, [key]: v };
-      settings.write(mapRef.current);
+      setLiveMap(mapRef.current);
       setNotice({ kind: 'ok', text: `${key} salvo` });
       reload();
     });
@@ -224,19 +236,19 @@ export default function AgentStudio() {
     return task;
   };
 
-  // Editors that PUT a whole setting only render once settings.st === 'ok' —
+  // Editors that PUT a whole setting only render once the map is live —
   // before that the map is {} and a save would erase what's already stored.
-  const settingsOk = settings.st === 'ok';
+  const settingsOk = liveMap !== null;
   const settingsGate = (title: string) => (
     <EndpointCard
-      st={settings.st}
+      st={settings.st === 'ok' ? 'loading' : settings.st}
       title={title}
       missing="GET /settings ainda não chegou neste servidor — mexer aqui sem ler antes apagaria o que já está salvo."
       onRetry={settings.reload}
     />
   );
 
-  const map = settings.data ?? {};
+  const map = liveMap ?? {};
   const pitch = (map.pitch ?? {}) as Record<string, unknown>;
   const guardrails = (map.guardrails ?? {}) as Record<string, unknown>;
   const memoryV1 = (map.agent_memory ?? { facts: [] }) as { facts: string[] };
@@ -249,6 +261,27 @@ export default function AgentStudio() {
       else next[kind] = ov;
       return next;
     });
+
+  // v1 memory auto-saves each add/remove — two quick edits both build off
+  // the displayed list, so the write is a three-way merge: the editor's
+  // target vs what it showed at click time, applied to the freshest mapRef
+  // value inside the serialized queue. Rapid clicks accumulate.
+  const saveFacts = (next: string[]) => {
+    const base = memoryV1.facts;
+    void saveSetting('agent_memory', (cur: unknown) => {
+      const curObj = (cur ?? {}) as { facts?: string[] };
+      const curFacts = curObj.facts ?? [];
+      const added = next.filter((f) => !base.includes(f));
+      const removed = new Set(base.filter((f) => !next.includes(f)));
+      return {
+        ...curObj,
+        facts: [
+          ...curFacts.filter((f) => !removed.has(f)),
+          ...added.filter((a) => !curFacts.includes(a)),
+        ],
+      };
+    });
+  };
 
   const autonomyLevel = autonomy.data?.level;
   const marks: Partial<Record<SectionKey, 'off' | 'warn'>> = {};
@@ -362,10 +395,7 @@ export default function AgentStudio() {
               {!settingsOk ? (
                 settingsGate('memória clássica')
               ) : (
-                <MemoryCard
-                  facts={memoryV1.facts}
-                  onSave={(facts) => void saveSetting('agent_memory', { facts })}
-                />
+                <MemoryCard facts={memoryV1.facts} onSave={saveFacts} />
               )}
             </section>
           </div>
@@ -762,12 +792,16 @@ function MemoryPanel({
   const [editId, setEditId] = useState<string | null>(null);
   const [editText, setEditText] = useState('');
 
+  // resolves whether the write landed — callers clear their local edit
+  // state only on success so a failed save never discards typed text
   const run = async (fn: () => Promise<unknown>) => {
     try {
       await fn();
       onChanged();
+      return true;
     } catch (e) {
       onError(`memória: ${e instanceof Error ? e.message : e}`);
+      return false;
     }
   };
 
@@ -836,8 +870,9 @@ function MemoryPanel({
                 disabled={!editText.trim()}
                 onClick={() => {
                   const content = editText.trim();
-                  setEditId(null);
-                  void run(() => api.patchMemory(m.id, { content }));
+                  void run(() => api.patchMemory(m.id, { content })).then(
+                    (ok) => ok && setEditId(null),
+                  );
                 }}
               >
                 salvar
@@ -991,6 +1026,7 @@ function WakeupList({
     enabled,
   );
   useEffect(() => {
+    if (!enabled) return;
     const off = onControlEvent('run.update', res.reload);
     const t = setInterval(res.reload, 60_000);
     return () => {
@@ -998,7 +1034,7 @@ function WakeupList({
       clearInterval(t);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [status]);
+  }, [status, enabled]);
 
   const cancel = async (id: string) => {
     try {
