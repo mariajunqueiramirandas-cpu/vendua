@@ -202,7 +202,10 @@ export async function flagCappedLeads(sql: Sql, limit = 200): Promise<number> {
     }
     return fresh;
   });
-  for (const id of fresh) emitControlEvent('lead.change', id);
+  // Unscoped: the console coalesces a burst of events into one pending
+  // event and keeps a single ref — per-lead refs would drop intermediate
+  // cards' refreshes; one bare event refreshes every open card + the badge.
+  if (fresh.length) emitControlEvent('lead.change');
   return fresh.length;
 }
 
