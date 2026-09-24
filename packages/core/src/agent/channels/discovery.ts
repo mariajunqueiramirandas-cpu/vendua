@@ -174,6 +174,10 @@ function isBizMapUrl(u: URL): boolean {
     (/^google\.[a-z.]+$/.test(h) && /^\/maps/i.test(p))
   );
 }
+
+/** google.tld under any of its web subdomains — the family a map pointer's
+ *  redirect or name carrier can live on (www.google.com/search?q=…). */
+const GOOGLE_HOST = /^((www|maps|m)\.)?google\.[a-z]{2,}(\.[a-z]{2})?$/i;
 // instagram paths that aren't profiles — posts, help, auth.
 const PROFILE_STOP = new Set([
   'p',
@@ -992,7 +996,16 @@ export function chaseLinks(page: ReadPage): string[] {
 export function mapPointerName(raw: string): string | null {
   try {
     const t = new URL(raw);
-    // A captcha'd redirect wraps the real target: /sorry/?continue=<url>.
+    // Only the map-pointer/google family can carry a business name — an
+    // arbitrary host's ?q= is not a profile pointer and must not claim
+    // the free in-process resolution this name unlocks. The carrier must
+    // also be a fetchable page: an ftp://maps.google.com link is not a
+    // profile pointer either.
+    if (t.protocol !== 'http:' && t.protocol !== 'https:') return null;
+    if (!isBizMapUrl(t) && !GOOGLE_HOST.test(t.hostname)) return null;
+    // A captcha'd google redirect wraps the real target: /sorry/?continue=
+    // <url>. Only the validated family gets to unwrap — an arbitrary
+    // host's continue param can't smuggle a google name in.
     const inner = t.searchParams.get('continue');
     if (inner) return mapPointerName(decodeURIComponent(inner));
     const q = t.searchParams.get('q') ?? t.searchParams.get('query');
@@ -1017,7 +1030,6 @@ export async function resolveMapPointer(url: string): Promise<ReadPage | null> {
   // an arbitrary Location never gets fetched, and a non-google final target
   // never reaches the model as a follow-up url.
   const SHORTLINK_HOST = /^(g\.co|maps\.app\.goo\.gl|.*\.goo\.gl|bit\.ly|tinyurl\.com|t\.co)$/i;
-  const GOOGLE_HOST = /^((www|maps|m)\.)?google\.[a-z]{2,}(\.[a-z]{2})?$/i;
   let location: string | null = mapPointerName(url) ? url : null;
   let name = mapPointerName(url);
   let next: string | null = url;
