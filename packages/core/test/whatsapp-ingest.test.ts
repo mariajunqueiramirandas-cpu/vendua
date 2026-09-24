@@ -258,7 +258,8 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('whatsapp history + ignore list 
       body: 'oi de novo',
       providerMessageId: `${mid}-2`,
     });
-    const still = await sql`select id from agent_runs where thread_id = ${thread!.id} and status = 'queued'`;
+    const still =
+      await sql`select id from agent_runs where thread_id = ${thread!.id} and status = 'queued'`;
     expect(still).toHaveLength(2);
   });
 
