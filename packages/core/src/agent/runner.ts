@@ -8,6 +8,7 @@ import {
   getSetting,
   getSettingTx,
   AGENT_MEMORY_MAX_FACTS,
+  capCentsOf,
   DEFAULT_GUARDRAILS,
   phoneDigits,
   phoneIsIgnored,
@@ -16,7 +17,7 @@ import {
 import { segmentStats, type AgentGoal } from '../modules/leads.ts';
 import { sweepPipelineSnapshots } from '../modules/forecast.ts';
 import { sweepDigest } from '../modules/digest.ts';
-import { providerFor, type AgentMessage, type ToolCall } from './llm.ts';
+import { estimateModelCostUsd, providerFor, type AgentMessage, type ToolCall } from './llm.ts';
 import { buildSystemPrompt } from './prompts.ts';
 import { executeTool, toolsFor, bookDigest, type BookEntry, type ToolContext } from './tools.ts';
 import { MonidBudget } from './channels/monid.ts';
@@ -90,7 +91,7 @@ async function leadUnderCostCapTx(tx: Sql, leadId: string): Promise<boolean> {
       from agent_runs where lead_id = ${leadId}
     `
   )[0]!.cents;
-  if (spent < Math.round(capUsd * 100)) return true;
+  if (spent < capCentsOf(g)) return true;
   // First-flag decisions serialize on a try-advisory — never waits, so no
   // deadlock: a loser refuses its run while the winner writes the flag.
   const got = await tx<{ got: boolean }[]>`
@@ -177,28 +178,37 @@ export async function flagCappedLeads(sql: Sql, limit = 200): Promise<number> {
   const fresh = await controlTx(sql, async (tx) => {
     const g = await getSettingTx<Partial<Guardrails>>(tx, 'guardrails', {});
     const capUsd = g.leadLifetimeCostCapUsd ?? DEFAULT_GUARDRAILS.leadLifetimeCostCapUsd;
-    const capCents = Math.round(capUsd * 100);
+    const capCents = capCentsOf(g);
     if (capCents <= 0) return [] as string[];
-    const capped = await tx<{ lead_id: string; flagged: boolean }[]>`
-      select x.lead_id,
-             exists (
-               select 1 from lead_activities a
-               where a.lead_id = x.lead_id and a.kind = 'system'
-                 and a.meta->>'type' = 'cost-cap'
-                 and (a.meta->>'capUsd')::numeric = ${capUsd}
-             ) as flagged
-      from (
-        select lead_id, sum(cost_cents) s from agent_runs
-        where lead_id is not null and cost_cents > 0
-        group by lead_id
-      ) x
-      where x.s >= ${capCents}
-      limit ${limit}
-    `;
+    // Only UNFLAGGED-at-this-cap leads come back — flagging inside the same
+    // tx makes each next batch's not-exists see this batch's flags. Without
+    // the filter a window full of already-flagged leads would let every
+    // lead beyond `limit` park silently, pass after pass. Bounded at 10
+    // rounds so one settings write can't flag the whole board at once;
+    // callers re-invoke to continue a longer tail.
     const fresh: string[] = [];
-    for (const { lead_id, flagged } of capped) {
-      await leadUnderCostCapTx(tx, lead_id);
-      if (!flagged) fresh.push(lead_id);
+    for (let round = 0; round < 10; round++) {
+      const capped = await tx<{ lead_id: string }[]>`
+        select x.lead_id
+        from (
+          select lead_id, sum(cost_cents) s from agent_runs
+          where lead_id is not null and cost_cents > 0
+          group by lead_id
+        ) x
+        where x.s >= ${capCents}
+          and not exists (
+            select 1 from lead_activities a
+            where a.lead_id = x.lead_id and a.kind = 'system'
+              and a.meta->>'type' = 'cost-cap'
+              and (a.meta->>'capUsd')::numeric = ${capUsd}
+          )
+        limit ${limit}
+      `;
+      if (!capped.length) break;
+      for (const { lead_id } of capped) {
+        await leadUnderCostCapTx(tx, lead_id);
+        fresh.push(lead_id);
+      }
     }
     return fresh;
   });
@@ -220,9 +230,7 @@ export async function claimRun(sql: Sql): Promise<RunRow | null> {
     // so a prefix of parked capped runs can't monopolize the 8-attempt loop
     // and starve runnable leads queued behind them. The locked revalidation
     // below still catches spend landing between scan and claim.
-    const capCents = Math.round(
-      (g.leadLifetimeCostCapUsd ?? DEFAULT_GUARDRAILS.leadLifetimeCostCapUsd) * 100,
-    );
+    const capCents = capCentsOf(g);
     // Outreach is serial per lead: a 'running' outreach row is the durable
     // ownership token — it outlives the claim tx, so a queued same-lead
     // outreach can only claim once the owner finishes (a crashed owner is
@@ -1314,7 +1322,12 @@ export async function runOnce(sql: Sql): Promise<boolean> {
       const res = await provider.chat({ system, messages, tools });
       tokensIn += res.tokensIn;
       tokensOut += res.tokensOut;
-      if (res.costUsd != null) costUsd += res.costUsd;
+      // Provider-reported USD wins; when it reports none (gemini/anthropic/
+      // openai all return null), estimate from tokens × list rate — else a
+      // model-only lead never reaches the lifetime cost cap.
+      const callCostUsd =
+        res.costUsd ?? estimateModelCostUsd(provider.name, res.tokensIn, res.tokensOut);
+      costUsd += callCostUsd;
       // Full ToolCall objects, not just names: a resumed run replays this
       // turn verbatim into the conversation — ids pair with the tool results
       // and Gemini 3 400s without each call's thoughtSignature.
@@ -1322,7 +1335,7 @@ export async function runOnce(sql: Sql): Promise<boolean> {
         type: 'model',
         content: res.text,
         toolCalls: res.toolCalls,
-        usage: { tokensIn: res.tokensIn, tokensOut: res.tokensOut, costUsd: res.costUsd ?? 0 },
+        usage: { tokensIn: res.tokensIn, tokensOut: res.tokensOut, costUsd: callCostUsd },
       });
       await persist();
       if (lost) break;
@@ -1980,9 +1993,7 @@ export async function sweepOutreach(sql: Sql): Promise<number> {
   const queuedIds: string[] = [];
   const fired = await controlTx(sql, async (tx) => {
     const g = await getSettingTx<Partial<Guardrails>>(tx, 'guardrails', {});
-    const capCents = Math.round(
-      (g.leadLifetimeCostCapUsd ?? DEFAULT_GUARDRAILS.leadLifetimeCostCapUsd) * 100,
-    );
+    const capCents = capCentsOf(g);
     // for update skip locked — concurrent sweeps on different replicas take
     // disjoint lead sets instead of both inserting a run for the same due
     // lead (the not-exists check alone only sees committed runs). The cap

@@ -3,7 +3,12 @@ import { HttpError, str } from '../platform/http.ts';
 import { claimControl, controlTx, type ClaimResult } from './control.ts';
 import { emitControlEvent } from './control-events.ts';
 import { leadJson, type LeadRow } from './leads.ts';
-import { DEFAULT_GUARDRAILS, getSettingTx, type Guardrails } from './integrations.ts';
+import {
+  capCentsOf,
+  DEFAULT_GUARDRAILS,
+  getSettingTx,
+  type Guardrails,
+} from './integrations.ts';
 
 /**
  * threads module — the unified inbox. One thread per (lead, channel):
@@ -537,9 +542,7 @@ export async function approveMessage(
   }>(sql, idemKey, async (tx) => {
     const g = await getSettingTx<Partial<Guardrails>>(tx, 'guardrails', {});
     const staleDays = g.staleDraftDays ?? DEFAULT_GUARDRAILS.staleDraftDays;
-    const capCents = Math.round(
-      (g.leadLifetimeCostCapUsd ?? DEFAULT_GUARDRAILS.leadLifetimeCostCapUsd) * 100,
-    );
+    const capCents = capCentsOf(g);
     if (staleDays > 0) {
       // A stale AGENT draft never ships: the copy was written against
       // week-old lead state. Supersede it and enqueue a draftOnly outreach

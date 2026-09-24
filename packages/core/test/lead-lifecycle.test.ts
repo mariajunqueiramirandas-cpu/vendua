@@ -3,8 +3,10 @@ import { join } from 'node:path';
 import postgres from 'postgres';
 import { createApp } from '../src/app.ts';
 import { dispatchMessage } from '../src/agent/send.ts';
-import { claimRun, drain, flagCappedLeads, insertRun } from '../src/agent/runner.ts';
+import { claimRun, drain, flagCappedLeads, insertRun, runOnce } from '../src/agent/runner.ts';
+import { estimateModelCostUsd } from '../src/agent/llm.ts';
 import {
+  capCentsOf,
   DEFAULT_GUARDRAILS,
   validateSetting,
   type Guardrails,
@@ -852,6 +854,91 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('lead lifecycle (db)', () => {
         );
         expect(retry.status).toBe(201);
         expect(((await retry.json()) as { runId?: string }).runId).toBeTruthy();
+      } finally {
+        await setGuardrails({});
+      }
+    });
+
+    test('model spend estimates from tokens when the provider reports no USD', async () => {
+      await setup();
+      const leadId = await mkLead();
+      // Mock masquerading as the default Gemini driver: gemini/anthropic/
+      // openai all report costUsd:null, so runOnce prices journaled tokens
+      // at the provider's list rate — without it a model-only lead never
+      // reaches the cap. 1M in × $0.10 + 100k out × $0.40 = $0.14 → 14¢.
+      const runId = (await controlTx(sql, (tx) =>
+        insertRun(tx, {
+          kind: 'reply',
+          leadId,
+          params: {
+            providerName: 'gemini:gemini-3.5-flash-lite',
+            script: [{ text: 'ok', tokensIn: 1_000_000, tokensOut: 100_000 }],
+          },
+        }),
+      ))!;
+      await sql`delete from agent_runs where status = 'queued' and id <> ${runId}`;
+      expect(await runOnce(sql)).toBe(true);
+      const [r] = await sql<{ status: string; cost_cents: number }[]>`
+        select status, cost_cents from agent_runs where id = ${runId}`;
+      expect(r!.status).toBe('done');
+      expect(r!.cost_cents).toBe(14);
+    });
+
+    test('estimateModelCostUsd prices listed, free and unknown models', () => {
+      expect(estimateModelCostUsd('gemini:gemini-3.5-flash-lite', 1_000_000, 0)).toBeCloseTo(0.1);
+      expect(estimateModelCostUsd('openrouter:liquid/lfm-2.5-2.6b:free', 1_000_000, 1_000_000)).toBe(
+        0,
+      );
+      // Unknown models price at the mid-tier fallback — a cost cap must not
+      // treat an unrecognized driver as free spend.
+      expect(estimateModelCostUsd('gemini:gemini-future-pro', 500_000, 500_000)).toBeCloseTo(2.5);
+      expect(estimateModelCostUsd('mock', 0, 0)).toBe(0);
+    });
+
+    test('a positive sub-cent cap still binds — insert and scan agree', async () => {
+      await setup();
+      // capCentsOf ceils: 0.4¢ → 1¢. Rounding to 0 would refuse unspent
+      // leads at insert while the claim scan treated them as uncapped.
+      expect(capCentsOf({ leadLifetimeCostCapUsd: 0.004 })).toBe(1);
+      expect(capCentsOf({ leadLifetimeCostCapUsd: 0 })).toBe(0);
+      await setGuardrails({ leadLifetimeCostCapUsd: 0.004 });
+      try {
+        const leadId = await mkLead();
+        expect(
+          await controlTx(sql, (tx) => insertRun(tx, { kind: 'reply', leadId })),
+        ).toBeTruthy();
+        await sql`
+          insert into agent_runs (kind, lead_id, status, cost_cents, finished_at)
+          values ('reply', ${leadId}, 'done', 1, now())
+        `;
+        // 1¢ ≥ 1¢ — spent over the ceiled cap refuses.
+        expect(await controlTx(sql, (tx) => insertRun(tx, { kind: 'reply', leadId }))).toBeNull();
+      } finally {
+        await setGuardrails({});
+      }
+    });
+
+    test('flagCappedLeads batches past its window until every unflagged lead is flagged', async () => {
+      await setup();
+      await setGuardrails({ leadLifetimeCostCapUsd: 0.5 });
+      try {
+        const leadIds = [await mkLead(), await mkLead(), await mkLead()];
+        for (const leadId of leadIds) {
+          await sql`
+            insert into agent_runs (kind, lead_id, status, cost_cents, finished_at)
+            values ('reply', ${leadId}, 'done', 60, now())
+          `;
+        }
+        // Window of 1: only looping reaches all three — a single limited
+        // pass strands the rest behind already-flagged leads forever.
+        expect(await flagCappedLeads(sql, 1)).toBeGreaterThanOrEqual(3);
+        for (const leadId of leadIds) {
+          const flags = await sql`
+            select 1 from lead_activities
+            where lead_id = ${leadId} and kind = 'system' and meta->>'type' = 'cost-cap'
+          `;
+          expect(flags).toHaveLength(1);
+        }
       } finally {
         await setGuardrails({});
       }

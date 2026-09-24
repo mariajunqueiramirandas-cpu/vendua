@@ -242,6 +242,16 @@ export const DEFAULT_GUARDRAILS = {
   leadLifetimeCostCapUsd: 5,
 } as const;
 
+/** Canonical cap-usd → cap-cents conversion for every enforcement site
+ *  (insert gate, claim scan, sweep exclusion, flag pass, stale-draft
+ *  check). Ceil — never round-to-zero: a positive-but-sub-cent cap must
+ *  still bind (a run that spent ≥1¢ is over it), or the insert gate would
+ *  refuse leads the claim scan treats as uncapped. ≤0 stays ≤0 = uncapped. */
+export function capCentsOf(g: Partial<Guardrails>): number {
+  const usd = g.leadLifetimeCostCapUsd ?? DEFAULT_GUARDRAILS.leadLifetimeCostCapUsd;
+  return usd <= 0 ? 0 : Math.ceil(usd * 100);
+}
+
 export type Guardrails = {
   maxOutboundPerLeadPerDay: number;
   quietStart: string;
