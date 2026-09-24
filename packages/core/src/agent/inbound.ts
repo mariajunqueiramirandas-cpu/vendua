@@ -160,11 +160,13 @@ export async function ingestInbound(
     // already-claimed or already-overdue reply fires as-is, delay=0 needs
     // no write at all.
     if (coalescedId && inboundReplyDelayMin > 0) {
-      await sql`
-        update agent_runs
-        set run_at = greatest(run_at, ${new Date(Date.now() + inboundReplyDelayMin * 60_000)})
-        where id = ${coalescedId} and status = 'queued' and run_at > now()
-      `;
+      await controlTx(sql, async (tx) => {
+        await tx`
+          update agent_runs
+          set run_at = greatest(run_at, ${new Date(Date.now() + inboundReplyDelayMin * 60_000)})
+          where id = ${coalescedId} and status = 'queued' and run_at > now()
+        `;
+      });
     }
     emitControlEvent('run.update', enqueuedId);
     // Kick the queue now — don't wait up to the poll interval for a reply
