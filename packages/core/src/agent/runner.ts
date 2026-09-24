@@ -1901,7 +1901,7 @@ export async function runOnce(sql: Sql): Promise<boolean> {
         prevSigs = curSigs;
         if (allRepeat && !loopNudged && !lost) {
           loopNudged = true;
-          const nudge = `LOOP — você emitiu exatamente as mesmas chamadas com os mesmos argumentos duas vezes seguidas; o resultado já está no contexto e não muda. Pare de repetir: faça a próxima ação do plano ou encerre a run.`;
+          const nudge = `LOOP — você emitiu exatamente as mesmas chamadas com os mesmos argumentos duas vezes seguidas; os resultados mais recentes já estão no contexto. Repetir a mesma chamada não avança a run — faça a próxima ação do plano ou encerre.`;
           steps.push({ type: 'nudge', content: nudge });
           messages.push({ role: 'user', content: nudge });
           await persist();

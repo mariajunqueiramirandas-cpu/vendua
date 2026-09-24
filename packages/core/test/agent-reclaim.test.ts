@@ -1733,6 +1733,58 @@ dbDescribe('worker robustness (db)', () => {
     expect(rows).toHaveLength(1);
   });
 
+  test('a later pre-wire failure cannot mask an earlier attempted send', async () => {
+    await migrate(sql, MIGRATIONS);
+    // Two failed rows share the body: the OLDER reached 'sending'
+    // (dispatch_attempted_at stamped — maybe on the wire), the NEWER died
+    // pre-wire (e.g. a refused staff retry). If the lookup only inspected
+    // the newest row, the unstamped one would mask the stamped one and the
+    // retry would compose a third copy.
+    const lead = await controlTx(sql, (tx) =>
+      insertLeadTx(tx, {
+        name: 'Masked Send Lead',
+        email: 'masked@example.com',
+        agent_mode: 'auto',
+      }),
+    );
+    const leadId = lead.body.lead.id;
+    const thread = await controlTx(sql, (tx) => ensureThread(tx, leadId, 'email', {}));
+    await sql`delete from agent_runs where status = 'queued'`;
+    const runId = (await enqueueRun(sql, { kind: 'reply', leadId })!)!;
+    await sql`
+      insert into lead_messages (thread_id, direction, author, body, status, agent_run_id, dispatch_attempted_at, created_at)
+      values (${thread.id}, 'out', 'agent', 'olá', 'failed', ${runId}, now(), now() - interval '1 hour')
+    `;
+    await sql`
+      insert into lead_messages (thread_id, direction, author, body, status, agent_run_id)
+      values (${thread.id}, 'out', 'agent', 'olá', 'failed', ${runId})
+    `;
+    await sql`update agent_runs set
+      params = ${sql.json({
+        script: [
+          { toolCalls: [{ name: 'send_message', args: { leadId, body: 'olá' } }] },
+          { text: 'fim' },
+        ],
+      } as never)}
+      where id = ${runId}`;
+    expect(await runOnce(sql)).toBe(true);
+    const r = await getRun(runId);
+    expect(r.status).toBe('done');
+    const sends = r.steps.filter((s) => (s as { name?: string }).name === 'send_message') as {
+      out?: { blocked?: boolean; reason?: string };
+    }[];
+    expect(sends).toHaveLength(1);
+    // the older attempted copy still masks the retry — no third row
+    expect(sends[0]!.out?.blocked).toBe(true);
+    expect(sends[0]!.out?.reason).toBe('already dispatched by this run');
+    const rows = await sql<{ id: string }[]>`
+      select m.id from lead_messages m
+      join lead_threads t on t.id = m.thread_id
+      where t.lead_id = ${leadId} and m.agent_run_id = ${runId}
+    `;
+    expect(rows).toHaveLength(2);
+  });
+
   test('a pre-wire failed send stays retryable — the failure never left the building', async () => {
     await migrate(sql, MIGRATIONS);
     // A 'failed' row with no dispatch_attempted_at provably never reached
