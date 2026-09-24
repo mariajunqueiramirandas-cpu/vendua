@@ -1195,6 +1195,10 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('lead lifecycle (db)', () => {
       try {
         const leadId = await mkLead();
         expect(await controlTx(sql, (tx) => insertRun(tx, { kind: 'reply', leadId }))).toBeTruthy();
+        // The cap refusal binds a lead with NO active run — an active one
+        // owns the mail regardless (insertRun returns it before the cap
+        // check, since delivery into it costs nothing extra).
+        await sql`update agent_runs set status = 'done', finished_at = now() where lead_id = ${leadId}`;
         await sql`
           insert into agent_runs (kind, lead_id, status, cost_cents, finished_at)
           values ('reply', ${leadId}, 'done', 1, now())

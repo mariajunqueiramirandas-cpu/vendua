@@ -96,6 +96,11 @@ export interface ToolContext {
   /** Staff-assist runs (params.draftOnly): send_message may only compose —
    *  a suggestion goes to the approvals queue, never on the wire. */
   draftOnly: boolean;
+  /** Playbook kinds this run may call tools as — starts as {runKind};
+   *  drained inbox mail adds its requestedKind so a lead's mid-run intent
+   *  (e.g. an opt-out arriving as 'reply' mail inside an outreach run)
+   *  stays servable. The dispatcher gate reads this, not just runKind. */
+  toolKinds?: ReadonlySet<string>;
 }
 
 /** One prospect in the agent's ledger — what it found and which moves it
@@ -642,8 +647,12 @@ export async function executeTool(
 
   // toolsFor() only decides what the model is TOLD about — nothing stops it
   // emitting another name. Enforce the toolset here too, or a discovery run
-  // can emit send_message and reach the real dispatch path.
-  if (!toolAvailable(ctx.runKind, name) || !REGISTRY.some((t) => t.def.name === name)) {
+  // can emit send_message and reach the real dispatch path. Mail that
+  // drained mid-run widens the set through ctx.toolKinds (its requested
+  // kind joins) — the model only ever saw tools that union produces.
+  const kinds = ctx.toolKinds ?? new Set([ctx.runKind]);
+  const allowed = [...kinds].some((k) => toolAvailable(k, name));
+  if (!allowed || !REGISTRY.some((t) => t.def.name === name)) {
     return { error: `tool ${name} not available for ${ctx.runKind} runs` };
   }
 

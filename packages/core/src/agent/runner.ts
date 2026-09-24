@@ -167,6 +167,16 @@ export async function insertRun(
   cap?: { flagged?: boolean },
 ): Promise<string | null> {
   if (input.leadId) {
+    // An already-active run owns the mail regardless of the cap — delivery
+    // into it costs nothing extra, so the active row wins before the cap
+    // check (a refused verdict must not strand an enqueue site that could
+    // have delivered). Callers hold capfin — the read can't race a sibling.
+    const active = await tx<{ id: string }[]>`
+      select id from agent_runs
+      where lead_id = ${input.leadId} and status in ('queued', 'running')
+      order by created_at limit 1
+    `;
+    if (active.length) return active[0]!.id;
     const verdict = await leadUnderCostCapTx(tx, input.leadId);
     if (verdict !== 'under') {
       if (cap) cap.flagged = verdict === 'flagged';
@@ -544,6 +554,15 @@ async function finishRun(
     // task request_human writes; board-scoped failures have no card and roll
     // up into the daily digest counter instead.
     if (r?.lead_id && result.status === 'failed') {
+      // Consumed mail a dead run can no longer answer returns to pending —
+      // the orphan sweep respawns a run for it rather than stranding the
+      // intent in a failed journal. 'done'/'canceled' keep their mail: a
+      // finished run rendered it; a canceled one's suppression is handled
+      // by the canceling side (unsubscribe clears pending mail itself).
+      await tx`
+        update agent_inbox set consumed_at = null, consumed_by_run = null
+        where consumed_by_run = ${run.id}
+      `;
       const name =
         (await tx<{ name: string }[]>`select name from leads where id = ${r.lead_id}`)[0]?.name ??
         r.lead_id;
@@ -1337,6 +1356,11 @@ interface Attempt {
   provider: LlmProvider;
   system: string;
   tools: AgentTool[];
+  /** Playbook kinds whose toolsets this attempt may serve — seeded with
+   *  run.kind; drainInbox adds a drained item's requestedKind so mail
+   *  asking for another kind's work (a reply intent inside an outreach
+   *  run) keeps its tools — e.g. an opt-out needs reply's unsubscribe. */
+  toolKinds: Set<string>;
   /** kernel-loop state — res is the current chat() result. */
   i: number;
   res: LlmResult;
@@ -1507,6 +1531,11 @@ async function persistAborted(att: Attempt): Promise<void> {
  *  the claim. Returns the item count so finishGate can buy another turn. */
 async function drainInbox(att: Attempt): Promise<number> {
   if (att.lost || !att.run.lead_id) return 0;
+  // Draft-only mail rides only a draft-only run: delivering it to a
+  // send-capable run would let the reaction ship unreviewed, so it waits
+  // pending and the orphan sweep spawns its own draftOnly run once the
+  // lead is free (the request itself is new work, not run context).
+  const runDraftOnly = (att.run.params as { draftOnly?: unknown } | null)?.draftOnly === true;
   // Read-only select — consumption is fenced inside persist, so a stale
   // worker picking items here only fails later at the fence, never
   // swallows the mail.
@@ -1515,10 +1544,34 @@ async function drainInbox(att: Attempt): Promise<number> {
     (tx) => tx<InboxItem[]>`
       select id, kind, payload, created_at from agent_inbox
       where lead_id = ${att.run.lead_id!} and consumed_at is null
+        and (${runDraftOnly} or coalesce(payload->'params'->>'draftOnly', 'false') <> 'true')
       order by created_at limit 10
     `,
   );
   if (!items.length) return 0;
+  // The mail's requestedKind joins the run's tool kinds: an 'inbound'
+  // item inside an outreach run can need reply-only tools (unsubscribe
+  // honoring an opt-out). Widen both what the model is told (att.tools)
+  // and what dispatch permits (ctx.toolKinds — same set instance).
+  let grew = false;
+  for (const i of items) {
+    const k = i.payload?.requestedKind;
+    if (k && !att.toolKinds.has(k)) {
+      att.toolKinds.add(k);
+      grew = true;
+    }
+  }
+  if (grew) {
+    const seen = new Set(att.tools.map((t) => t.name));
+    for (const k of att.toolKinds) {
+      for (const t of toolsFor(k)) {
+        if (!seen.has(t.name)) {
+          seen.add(t.name);
+          att.tools.push(t);
+        }
+      }
+    }
+  }
   const content = renderInboxItems(items);
   att.steps.push({
     type: 'inbox',
@@ -1627,6 +1680,7 @@ async function openAttempt(sql: Sql, run: RunRow): Promise<Attempt> {
     provider: undefined as never,
     system: '',
     tools: [],
+    toolKinds: new Set([run.kind]),
     i: 0,
     res: undefined as never,
     nudged: false,
@@ -1731,6 +1785,7 @@ async function buildAttemptContext(att: Attempt): Promise<void> {
     // Staff assist runs (Inbox 'agente sugere') may only compose —
     // send_message degrades to a draft so a suggestion never ships.
     draftOnly: run.params.draftOnly === true,
+    toolKinds: att.toolKinds,
   };
   att.ctx = ctx;
   // Resume state — the journal hands back the ledger + banked contacts so
@@ -1879,8 +1934,10 @@ async function finishGate(att: Attempt): Promise<'end' | 'again'> {
   }
   // Mail that landed mid-attempt rides this run instead of a second one:
   // drain before finishing so the run answers what arrived while it
-  // worked, not just what it started with.
-  if (await drainInbox(att)) return 'again';
+  // worked, not just what it started with. Only when a turn remains —
+  // consuming mail with no model turn left strands it in a dead journal
+  // (pending items instead fall to the orphan sweep's respawned run).
+  if (att.i + 1 < att.limit && (await drainInbox(att))) return 'again';
   // A cancel landing between the last persist and now leaves the row
   // 'canceled' — finishRun matches nothing; persistAborted's canceled-
   // fence still stores the usage so the spend isn't lost. Debrief runs

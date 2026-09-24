@@ -47,6 +47,11 @@ export async function enqueueInboxTx(
   kind: InboxKind,
   payload: InboxPayload,
 ): Promise<string> {
+  // `text` is model-rendered — clamp defensively even though every producer
+  // already bounds its own copy.
+  if (typeof payload.text === 'string' && payload.text.length > 500) {
+    payload = { ...payload, text: payload.text.slice(0, 500) };
+  }
   return (
     await tx<{ id: string }[]>`
       insert into agent_inbox (lead_id, kind, payload)
@@ -74,10 +79,22 @@ export function renderInboxItems(items: InboxItem[]): string {
  *  cancels; pauses and mode 'off' park it — the next run drains the backlog
  *  once the lead can work again. */
 export async function sweepOrphanInbox(sql: Sql, limit = 10): Promise<number> {
+  // The window must reach leads it can actually serve — a skipped lead
+  // keeps its rows, so scanning parked (paused/off) or already-served
+  // (active run) leads here would re-pick them every tick and starve
+  // anything younger. Only exclusions that NEVER self-clear are filtered;
+  // unsubscribed/archived leads stay selectable so their mail still drops.
   const leads = await sql<{ lead_id: string }[]>`
-    select lead_id, min(created_at) as first_at from agent_inbox
-    where consumed_at is null
-    group by lead_id order by first_at limit ${limit}
+    select i.lead_id, min(i.created_at) as first_at
+    from agent_inbox i
+    join leads l on l.id = i.lead_id
+    where i.consumed_at is null
+      and l.agent_paused_at is null and l.agent_mode <> 'off'
+      and not exists (
+        select 1 from agent_runs r
+        where r.lead_id = i.lead_id and r.status in ('queued', 'running')
+      )
+    group by i.lead_id order by first_at limit ${limit}
   `;
   let served = 0;
   for (const { lead_id } of leads) {

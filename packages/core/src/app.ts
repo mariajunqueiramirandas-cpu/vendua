@@ -1107,6 +1107,11 @@ export function createApp({ sql, sessionSecret, controlSecret, autoDrain }: AppD
         ...((body.params as Record<string, unknown>) ?? {}),
         origin: 'staff',
       };
+      // Bound the params blob — it lands verbatim in agent_runs.params AND
+      // the inbox payload, so an unrestricted body would double-durable any
+      // size the caller sends.
+      if (JSON.stringify(params).length > 16_384)
+        throw new HttpError(422, 'PARAMS_TOO_LARGE', 'run params exceed 16 KiB');
       const runId = await insertRun(tx, {
         kind: kind as 'triage' | 'reply' | 'outreach' | 'discovery',
         leadId,
@@ -1867,6 +1872,8 @@ export function createApp({ sql, sessionSecret, controlSecret, autoDrain }: AppD
         ...((body.params as Record<string, unknown>) ?? {}),
         origin: 'staff',
       };
+      if (JSON.stringify(params).length > 16_384)
+        throw new HttpError(422, 'PARAMS_TOO_LARGE', 'run params exceed 16 KiB');
       const runId = await insertRun(tx, {
         kind: kind as 'triage' | 'reply' | 'outreach' | 'discovery' | 'strategist',
         leadId: effLeadId,

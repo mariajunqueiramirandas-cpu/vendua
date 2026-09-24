@@ -1,7 +1,14 @@
 import { describe, expect, test } from 'bun:test';
 import { join } from 'node:path';
 import postgres from 'postgres';
-import { claimRun, drain, enqueueRun, replayJournal, runOnce } from '../src/agent/runner.ts';
+import {
+  claimRun,
+  drain,
+  enqueueRun,
+  insertRun,
+  replayJournal,
+  runOnce,
+} from '../src/agent/runner.ts';
 import { enqueueInboxTx } from '../src/agent/inbox.ts';
 import { executeTool, assertRunClaimTx, type ToolContext } from '../src/agent/tools.ts';
 import { mapPointerName, pageKey } from '../src/agent/channels/discovery.ts';
@@ -2516,6 +2523,161 @@ dbDescribe('worker robustness (db)', () => {
       select consumed_by_run from agent_inbox where lead_id = ${leadId}
     `;
     expect(items[0]!.consumed_by_run).toBe(runId);
+  });
+
+  test('a mid-run opt-out lands — drained reply mail widens the toolset', async () => {
+    await migrate(sql, MIGRATIONS);
+    const lead = await controlTx(sql, (tx) =>
+      insertLeadTx(tx, { name: 'OptOut Mid-Run', whatsapp: '5511910000001' }),
+    );
+    const leadId = lead.body.lead.id;
+    await sql`delete from agent_runs where status = 'queued'`;
+    const runId = (await enqueueRun(sql, {
+      kind: 'outreach',
+      leadId,
+      params: {
+        auto: 'first-contact',
+        script: [
+          { toolCalls: [{ name: 'unsubscribe', args: { leadId, reason: 'pediu para sair' } }] },
+          { text: 'fim' },
+        ],
+      },
+    }))!;
+    // 'inbound' mail waits in the mailbox: the outreach toolset has no
+    // unsubscribe — draining the item must widen toolKinds or the opt-out
+    // bounces off the dispatch gate and the lead stays subscribed.
+    await controlTx(sql, (tx) =>
+      enqueueInboxTx(tx, leadId, 'inbound', {
+        text: 'para de me mandar mensagem',
+        requestedKind: 'reply',
+      }),
+    );
+    expect(await runOnce(sql)).toBe(true);
+    const r = await getRun(runId);
+    expect(r.status).toBe('done');
+    expect(r.steps.some((s) => (s as { name?: string }).name === 'unsubscribe')).toBe(true);
+    const [l] = await sql<{ unsubscribed_at: string | null }[]>`
+      select unsubscribed_at from leads where id = ${leadId}
+    `;
+    expect(l!.unsubscribed_at).not.toBeNull();
+  });
+
+  test('draft-only mail waits for its own run — it never ships through a send-capable one', async () => {
+    await migrate(sql, MIGRATIONS);
+    const lead = await controlTx(sql, (tx) =>
+      insertLeadTx(tx, { name: 'Draft Mail', whatsapp: '5511910000002' }),
+    );
+    const leadId = lead.body.lead.id;
+    await sql`delete from agent_runs where status = 'queued'`;
+    // A parked send-capable run owns the lead for the next hour.
+    const outreach = (await enqueueRun(sql, {
+      kind: 'outreach',
+      leadId,
+      runAt: new Date(Date.now() + 3600e3),
+    }))!;
+    // Staff draft request — draining it into the outreach run would let the
+    // reaction send unreviewed, so it must wait pending for its own
+    // draftOnly run (params carry the script the spawned run replays).
+    await controlTx(sql, (tx) =>
+      enqueueInboxTx(tx, leadId, 'staff', {
+        text: 'rascunho sugerido pela equipe',
+        requestedKind: 'reply',
+        params: {
+          draftOnly: true,
+          script: [
+            { toolCalls: [{ name: 'send_message', args: { leadId, body: 'oi, rascunho' } }] },
+            { text: 'ok' },
+          ],
+        },
+      }),
+    );
+    await drain(sql);
+    // Parked phase: item unconsumed, the outreach run untouched.
+    expect(
+      (await sql`select 1 from agent_inbox where lead_id = ${leadId} and consumed_at is null`)
+        .length,
+    ).toBe(1);
+    // Once the lead frees, the orphan sweep spawns the draftOnly run that
+    // serves the request — send_message degrades to an approval draft.
+    await sql`update agent_runs set status = 'done', finished_at = now() where id = ${outreach}`;
+    await drain(sql);
+    const [item] = await sql<{ consumed_by_run: string | null }[]>`
+      select consumed_by_run from agent_inbox where lead_id = ${leadId}
+    `;
+    expect(item!.consumed_by_run).not.toBeNull();
+    expect(item!.consumed_by_run).not.toBe(outreach);
+    const [spawned] = await sql<{ params: { draftOnly?: boolean } }[]>`
+      select params from agent_runs where id = ${item!.consumed_by_run!}
+    `;
+    expect(spawned!.params.draftOnly).toBe(true);
+    const [msg] = await sql<{ status: string }[]>`
+      select m.status from lead_messages m
+      join lead_threads t on t.id = m.thread_id
+      where t.lead_id = ${leadId} and m.direction = 'out' and m.author = 'agent'
+    `;
+    expect(msg!.status).toBe('draft');
+  });
+
+  test('the orphan sweep window reaches younger leads past parked mail', async () => {
+    await migrate(sql, MIGRATIONS);
+    await sql`delete from agent_runs where status = 'queued'`;
+    const paused = await controlTx(sql, (tx) =>
+      insertLeadTx(tx, { name: 'Parked Mail', whatsapp: '5511910000003' }),
+    );
+    const pausedId = paused.body.lead.id;
+    const fresh = await controlTx(sql, (tx) =>
+      insertLeadTx(tx, { name: 'Fresh Mail', whatsapp: '5511910000004' }),
+    );
+    const freshId = fresh.body.lead.id;
+    // Older pending mail on a paused lead must not occupy the sweep's
+    // bounded window — it parks forever and would starve anyone younger.
+    await controlTx(sql, (tx) =>
+      enqueueInboxTx(tx, pausedId, 'staff', { text: 'antigo', requestedKind: 'reply' }),
+    );
+    await sql`update leads set agent_paused_at = now() where id = ${pausedId}`;
+    await controlTx(sql, (tx) =>
+      enqueueInboxTx(tx, freshId, 'staff', {
+        text: 'novo',
+        requestedKind: 'reply',
+        params: { script: [{ text: 'ok' }] },
+      }),
+    );
+    await drain(sql);
+    const [run] = await sql<{ id: string }[]>`
+      select id from agent_runs where lead_id = ${freshId} order by created_at limit 1
+    `;
+    expect(run).toBeTruthy();
+    // The paused lead's mail is untouched — parked, not dropped.
+    expect(
+      (await sql`select 1 from agent_inbox where lead_id = ${pausedId} and consumed_at is null`)
+        .length,
+    ).toBe(1);
+  });
+
+  test('an active run keeps owning the mail after the lead crosses its cap', async () => {
+    await migrate(sql, MIGRATIONS);
+    await sql`delete from agent_runs where status = 'queued'`;
+    await sql`
+      insert into control_settings (key, value)
+      values ('guardrails', ${sql.json({ leadLifetimeCostCapUsd: 0.004 } as never)})
+      on conflict (key) do update set value = excluded.value
+    `;
+    try {
+      const lead = await controlTx(sql, (tx) =>
+        insertLeadTx(tx, { name: 'Capped Owner', whatsapp: '5511910000005' }),
+      );
+      const leadId = lead.body.lead.id;
+      const runId = (await enqueueRun(sql, { kind: 'outreach', leadId }))!;
+      // Spent 1¢ ≥ the ceiled 1¢ cap — but the active run still exists, and
+      // delivery into it is free: insertRun returns it before the cap check.
+      await sql`
+        insert into agent_runs (kind, lead_id, status, cost_cents, finished_at)
+        values ('reply', ${leadId}, 'done', 1, now())
+      `;
+      expect(await controlTx(sql, (tx) => insertRun(tx, { kind: 'reply', leadId }))).toBe(runId);
+    } finally {
+      await sql`delete from control_settings where key = 'guardrails'`;
+    }
   });
 
   test('a historical import does not self-cancel auto outreach', async () => {
