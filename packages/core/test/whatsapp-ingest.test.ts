@@ -212,6 +212,56 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('whatsapp history + ignore list 
     expect(all.filter((r) => r.status === 'queued')).toHaveLength(1);
   });
 
+  test('a staff-queued reply does not absorb a live inbound', async () => {
+    await migrate(sql, MIGRATIONS);
+    await sql`
+      insert into control_settings (key, value) values ('guardrails', ${sql.json({ inboundReplyDelayMin: 60 } as never)})
+      on conflict (key) do update set value = excluded.value
+    `;
+    // Staff can park a reply carrying its own intent (draftOnly) — the
+    // coalesce check must not treat it as an auto-created inbound run.
+    const digits = `55219${Math.floor(Math.random() * 1e8)}`;
+    const from = `${digits}@s.whatsapp.net`;
+    const created = await controlTx(sql, (tx) =>
+      insertLeadTx(tx, { name: 'Staff Draft', whatsapp: digits }),
+    );
+    const leadId = created.body.lead.id;
+    const [thread] = await sql<{ id: string }[]>`
+      insert into lead_threads (lead_id, channel) values (${leadId}, 'whatsapp') returning id
+    `;
+    await enqueueRun(sql, {
+      kind: 'reply',
+      leadId,
+      threadId: thread!.id,
+      params: { draftOnly: true },
+    });
+    const mid = crypto.randomUUID();
+    const first = await ingestInbound(sql, {
+      channel: 'whatsapp',
+      from,
+      body: 'oi',
+      providerMessageId: `${mid}-1`,
+    });
+    if ('ignored' in first) throw new Error('unexpected ignore');
+    const queued = await sql<{ params: { origin?: string } }[]>`
+      select params from agent_runs where thread_id = ${thread!.id} and status = 'queued'
+      order by created_at
+    `;
+    // The inbound run lands alongside the staff run instead of being
+    // swallowed by it — and a follow-up message coalesces onto the
+    // inbound one only.
+    expect(queued).toHaveLength(2);
+    expect(queued.map((q) => q.params.origin)).toEqual([undefined, 'inbound']);
+    await ingestInbound(sql, {
+      channel: 'whatsapp',
+      from,
+      body: 'oi de novo',
+      providerMessageId: `${mid}-2`,
+    });
+    const still = await sql`select id from agent_runs where thread_id = ${thread!.id} and status = 'queued'`;
+    expect(still).toHaveLength(2);
+  });
+
   test('claimRun skips a lead whose number is ignored', async () => {
     await migrate(sql, MIGRATIONS);
     await setIgnored(['5511999776655']);

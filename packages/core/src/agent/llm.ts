@@ -72,8 +72,14 @@ const RETRYABLE = /429|quota|rate.?limit|resource_exhausted|overload|temporarily
  *  could never reclaim. Provider config may override via `timeoutMs`. */
 const LLM_CALL_TIMEOUT_MS = 120_000;
 
+// AbortSignal.timeout takes an integer within its platform range — a
+// fractional or oversized integration config value would throw at every
+// fetch, so anything outside the valid shape falls back to the default.
 const configTimeoutMs = (config: Record<string, unknown>): number =>
-  typeof config.timeoutMs === 'number' && config.timeoutMs > 0
+  typeof config.timeoutMs === 'number' &&
+  Number.isInteger(config.timeoutMs) &&
+  config.timeoutMs > 0 &&
+  config.timeoutMs <= 2_147_483_647
     ? config.timeoutMs
     : LLM_CALL_TIMEOUT_MS;
 
@@ -283,8 +289,11 @@ function geminiProvider(config: Record<string, unknown>, secretRef: string | nul
         }
         contents.push({ role: 'user', parts: [{ text: m.content }] });
       }
-      const res = await llmCall('gemini', minGapMs, () =>
-        llmFetch(
+      const data = await llmCall('gemini', minGapMs, async () => {
+        // Body read stays inside the retry wrapper — the abort signal is
+        // armed until the deadline, so a stalled body must retry the same
+        // as a stalled request.
+        const res = await llmFetch(
           `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`,
           {
             method: 'POST',
@@ -308,26 +317,26 @@ function geminiProvider(config: Record<string, unknown>, secretRef: string | nul
           },
           'gemini',
           configTimeoutMs(config),
-        ),
-      );
-      const data = (await res.json()) as {
-        candidates?: {
-          content?: {
-            parts?: {
-              text?: string;
-              functionCall?: { name?: string; args?: unknown; id?: string };
-              thoughtSignature?: string;
-            }[];
+        );
+        return (await res.json()) as {
+          candidates?: {
+            content?: {
+              parts?: {
+                text?: string;
+                functionCall?: { name?: string; args?: unknown; id?: string };
+                thoughtSignature?: string;
+              }[];
+            };
+            finishReason?: string;
+          }[];
+          promptFeedback?: { blockReason?: string };
+          usageMetadata?: {
+            promptTokenCount?: number;
+            candidatesTokenCount?: number;
+            thoughtsTokenCount?: number;
           };
-          finishReason?: string;
-        }[];
-        promptFeedback?: { blockReason?: string };
-        usageMetadata?: {
-          promptTokenCount?: number;
-          candidatesTokenCount?: number;
-          thoughtsTokenCount?: number;
         };
-      };
+      });
       const cand = data.candidates?.[0];
       if (!cand) {
         throw new Error(
@@ -402,8 +411,8 @@ function anthropicProvider(config: Record<string, unknown>, secretRef: string | 
         }
         return { role: m.role, content: m.content };
       });
-      const res = await llmCall('anthropic', 0, () =>
-        llmFetch(
+      const data = await llmCall('anthropic', 0, async () => {
+        const res = await llmFetch(
           'https://api.anthropic.com/v1/messages',
           {
             method: 'POST',
@@ -426,12 +435,12 @@ function anthropicProvider(config: Record<string, unknown>, secretRef: string | 
           },
           'anthropic',
           configTimeoutMs(config),
-        ),
-      );
-      const data = (await res.json()) as {
-        content?: { type: string; text?: string; id?: string; name?: string; input?: unknown }[];
-        usage?: { input_tokens?: number; output_tokens?: number };
-      };
+        );
+        return (await res.json()) as {
+          content?: { type: string; text?: string; id?: string; name?: string; input?: unknown }[];
+          usage?: { input_tokens?: number; output_tokens?: number };
+        };
+      });
       const text = (data.content ?? [])
         .filter((b) => b.type === 'text')
         .map((b) => b.text ?? '')
@@ -479,8 +488,8 @@ function openaiProvider(config: Record<string, unknown>, secretRef: string | nul
               : { role: m.role, content: m.content },
         ),
       ];
-      const res = await llmCall('openai', 0, () =>
-        llmFetch(
+      const data = await llmCall('openai', 0, async () => {
+        const res = await llmFetch(
           'https://api.openai.com/v1/chat/completions',
           {
             method: 'POST',
@@ -496,17 +505,17 @@ function openaiProvider(config: Record<string, unknown>, secretRef: string | nul
           },
           'openai',
           configTimeoutMs(config),
-        ),
-      );
-      const data = (await res.json()) as {
-        choices?: {
-          message?: {
-            content?: string | null;
-            tool_calls?: { id: string; function: { name: string; arguments: string } }[];
-          };
-        }[];
-        usage?: { prompt_tokens?: number; completion_tokens?: number };
-      };
+        );
+        return (await res.json()) as {
+          choices?: {
+            message?: {
+              content?: string | null;
+              tool_calls?: { id: string; function: { name: string; arguments: string } }[];
+            };
+          }[];
+          usage?: { prompt_tokens?: number; completion_tokens?: number };
+        };
+      });
       const msg = data.choices?.[0]?.message;
       return {
         text: msg?.content ?? null,
