@@ -1225,6 +1225,31 @@ export async function executeTool(
           };
         }
         const chan = pick.channel;
+        // A retried send reuses this claim key, so `key` replays — but a
+        // NEW callId for the same logical send (same body) lands here — and
+        // channel fallback can move that send between rows: an attempted
+        // whatsapp failure followed by an email retry would dispatch a
+        // second copy of the same text. Match on the body across channels,
+        // like `already` above. ANY attempted copy masks the retry — a
+        // newer pre-wire failure must not hide an older maybe-sent one:
+        // composing again could put a second copy on the wire. A failure
+        // stamped pre-wire (no dispatch_attempted_at) provably never left
+        // and stays retryable.
+        const attemptedFailed = await tx<{ id: string }[]>`
+          select m.id from lead_messages m
+          join lead_threads t on t.id = m.thread_id
+          where t.lead_id = ${leadId}
+            and m.agent_run_id = ${ctx.runId} and m.status = 'failed'
+            and m.body = ${String(args.body).trim()}
+            and m.dispatch_attempted_at is not null
+          limit 1
+        `;
+        if (attemptedFailed[0]) {
+          return {
+            status: 200,
+            body: { blocked: true as const, reason: 'already dispatched by this run' },
+          };
+        }
         // Pause applies per (lead, channel) — staff disabling the DESTINATION
         // thread (or request_human earlier in this same run) must stop sends
         // even when the lead's agent_mode still allows them. A missing thread

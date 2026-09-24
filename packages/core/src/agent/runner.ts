@@ -801,6 +801,17 @@ const READ_TOOLS = new Set([
   'serp',
 ]);
 
+/** Local reads of mutable CRM state. `stateVersion` only counts THIS
+ *  run's writes, so suppressing an identical get_lead/search_leads on
+ *  that version alone would hide external edits (staff, inbound-driven
+ *  updates) made between turns. They're cheap and spend no remote
+ *  budget — exempt them from repeat-suppression (the repeat still
+ *  counts toward allRepeat, so a read-only loop trips the LOOP nudge).
+ *  Remote/budgeted reads (read_pages, web_search, serp, maps_lookup,
+ *  instagram_profile) keep suppression — that's what their spend caps
+ *  exist for. */
+const MUTABLE_READS = new Set(['get_lead', 'search_leads']);
+
 /** Writes that mint a NEW durable artifact per call — a duplicate can
  *  never be a state-restore, so an identical repeat is suppressed for
  *  the rest of the run (a run-wide landed-signature set, not the
@@ -1814,7 +1825,11 @@ export async function runOnce(sql: Sql): Promise<boolean> {
           // repeated write after an intervening mutation can be a
           // legitimate state-restore. Artifact-minters are the exception:
           // a duplicate is never legitimate, always suppressed.
-          const suppress = landedSigs.has(sig) || (prev?.ok === true && prev.v === stateVersion);
+          const repeatHit = landedSigs.has(sig) || (prev?.ok === true && prev.v === stateVersion);
+          // Mutable reads re-execute on a repeat so external edits stay
+          // visible — but they still count toward allRepeat, or a
+          // read-only loop would dodge the LOOP nudge entirely.
+          const suppress = !MUTABLE_READS.has(call.name) && repeatHit;
           const readsBefore = ctx.pageReads;
           // Let a read_pages call stamp each fetch reservation onto its
           // pending journal entry the moment it validates — a worker that
@@ -1835,7 +1850,9 @@ export async function runOnce(sql: Sql): Promise<boolean> {
                 'REPEAT — chamada idêntica à anterior já foi executada nesta run; o resultado já está no contexto e não muda. Faça algo diferente ou encerre.',
             };
           } else {
-            allRepeat = false;
+            // A proven repeat that isn't suppressed (a mutable read) still
+            // counts as a repeat for the loop nudge.
+            if (!repeatHit) allRepeat = false;
             try {
               out = await executeTool(ctx, callId, call.name, call.args);
             } catch (e) {
@@ -1884,7 +1901,7 @@ export async function runOnce(sql: Sql): Promise<boolean> {
         prevSigs = curSigs;
         if (allRepeat && !loopNudged && !lost) {
           loopNudged = true;
-          const nudge = `LOOP — você emitiu exatamente as mesmas chamadas com os mesmos argumentos duas vezes seguidas; o resultado já está no contexto e não muda. Pare de repetir: faça a próxima ação do plano ou encerre a run.`;
+          const nudge = `LOOP — você emitiu exatamente as mesmas chamadas com os mesmos argumentos duas vezes seguidas; os resultados mais recentes já estão no contexto. Repetir a mesma chamada não avança a run — faça a próxima ação do plano ou encerre.`;
           steps.push({ type: 'nudge', content: nudge });
           messages.push({ role: 'user', content: nudge });
           await persist();

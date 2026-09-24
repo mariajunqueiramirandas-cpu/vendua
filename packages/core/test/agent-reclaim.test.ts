@@ -1336,8 +1336,8 @@ dbDescribe('worker robustness (db)', () => {
     await sql`update agent_runs set
       params = ${sql.json({
         script: [
-          { toolCalls: [{ name: 'get_lead', args: { id: leadId } }] },
-          { toolCalls: [{ name: 'get_lead', args: { id: leadId } }] },
+          { toolCalls: [{ name: 'read_pages', args: { urls: ['https://x.co/catalogo'] } }] },
+          { toolCalls: [{ name: 'read_pages', args: { urls: ['https://x.co/catalogo'] } }] },
           { toolCalls: [{ name: 'request_human', args: { leadId, reason: 'travou' } }] },
           { text: 'fim' },
         ],
@@ -1346,7 +1346,7 @@ dbDescribe('worker robustness (db)', () => {
     expect(await runOnce(sql)).toBe(true);
     const r = await getRun(runId);
     expect(r.status).toBe('done');
-    const reads = r.steps.filter((s) => (s as { name?: string }).name === 'get_lead') as {
+    const reads = r.steps.filter((s) => (s as { name?: string }).name === 'read_pages') as {
       out?: { error?: string };
     }[];
     expect(reads).toHaveLength(2);
@@ -1557,6 +1557,379 @@ dbDescribe('worker robustness (db)', () => {
     expect(gets).toHaveLength(2);
     // the second read ran fresh — current profile, not a REPEAT artifact
     expect(JSON.stringify(gets[1]!.out)).toContain('Recife');
+  });
+
+  test('a repeated get_lead re-executes — external edits must not hide behind REPEAT', async () => {
+    await migrate(sql, MIGRATIONS);
+    // A clean get_lead stays reusable only because nothing MUTATED — but
+    // stateVersion counts this run's writes, not a staff edit between
+    // turns. Mutable-CRM reads are exempt from suppression outright —
+    // but still count as repeats for the LOOP nudge.
+    const lead = await controlTx(sql, (tx) => insertLeadTx(tx, { name: 'Fresh Read Lead' }));
+    const leadId = lead.body.lead.id;
+    await sql`delete from agent_runs where status = 'queued'`;
+    const runId = (await enqueueRun(sql, { kind: 'reply', leadId })!)!;
+    await sql`update agent_runs set
+      params = ${sql.json({
+        script: [
+          { toolCalls: [{ name: 'get_lead', args: { id: leadId } }] },
+          { toolCalls: [{ name: 'get_lead', args: { id: leadId } }] },
+          { toolCalls: [{ name: 'get_lead', args: { id: leadId } }] },
+          { toolCalls: [{ name: 'request_human', args: { leadId, reason: 'travou' } }] },
+          { text: 'fim' },
+        ],
+      } as never)}
+      where id = ${runId}`;
+    expect(await runOnce(sql)).toBe(true);
+    const r = await getRun(runId);
+    expect(r.status).toBe('done');
+    const gets = r.steps.filter((s) => (s as { name?: string }).name === 'get_lead') as {
+      out?: { error?: string };
+    }[];
+    expect(gets).toHaveLength(3);
+    // each ran fresh — no REPEAT on a mutable-state read
+    for (const g of gets) expect(g.out?.error ?? '').not.toMatch(/^REPEAT/);
+    expect(JSON.stringify(gets[2]!.out)).toContain('Fresh Read Lead');
+    // the read-only repeats still tripped the loop detector — once
+    const nudges = r.steps.filter((s) => (s as { type?: string }).type === 'nudge');
+    expect(nudges).toHaveLength(1);
+    expect((nudges[0] as { content?: string }).content).toContain('LOOP');
+  });
+
+  test('a retried send after a dispatch-stage failure adopts the failed row — no second compose', async () => {
+    await migrate(sql, MIGRATIONS);
+    // resend with no api key: the send composes, reaches 'sending', then
+    // the driver throws — the row is failed AND dispatch-attempted (the
+    // stamp is conservative: it can't tell whether the provider got the
+    // call), so an identical retry must adopt it, not compose a duplicate.
+    const prior = (
+      await sql<{ enabled: boolean; config: unknown; secret_ref: string | null }[]>`
+        select enabled, config, secret_ref from control_integrations
+        where kind = 'email' and driver = 'resend'
+      `
+    )[0];
+    await sql`
+      insert into control_integrations (kind, driver, enabled)
+      values ('email', 'resend', true)
+      on conflict (kind, driver) do update set enabled = true
+    `;
+    const priorGuardrails = (
+      await sql<{ value: unknown }[]>`
+        select value from control_settings where key = 'guardrails'
+      `
+    )[0];
+    try {
+      await sql`
+        insert into control_settings (key, value)
+        values ('guardrails',
+                ${sql.json({ firstContactDraftOnly: false, quietStart: '00:00', quietEnd: '00:00' } as never)})
+        on conflict (key) do update set value = excluded.value
+      `;
+      const lead = await controlTx(sql, (tx) =>
+        insertLeadTx(tx, {
+          name: 'Dup Send Lead',
+          email: 'dup@example.com',
+          agent_mode: 'auto',
+        }),
+      );
+      const leadId = lead.body.lead.id;
+      await sql`delete from agent_runs where status = 'queued'`;
+      const runId = (await enqueueRun(sql, { kind: 'reply', leadId })!)!;
+      await sql`update agent_runs set
+        params = ${sql.json({
+          script: [
+            { toolCalls: [{ name: 'send_message', args: { leadId, body: 'olá' } }] },
+            { toolCalls: [{ name: 'send_message', args: { leadId, body: 'olá' } }] },
+            { text: 'fim' },
+          ],
+        } as never)}
+        where id = ${runId}`;
+      expect(await runOnce(sql)).toBe(true);
+      const r = await getRun(runId);
+      expect(r.status).toBe('done');
+      const sends = r.steps.filter((s) => (s as { name?: string }).name === 'send_message') as {
+        out?: { error?: string; blocked?: boolean; reason?: string };
+      }[];
+      expect(sends).toHaveLength(2);
+      expect(sends[0]!.out?.error).toBeTruthy();
+      // the identical retry adopted the failed row — blocked, not re-composed
+      expect(sends[1]!.out?.blocked).toBe(true);
+      expect(sends[1]!.out?.reason).toBe('already dispatched by this run');
+      const rows = await sql<{ status: string; dispatch_attempted_at: string | null }[]>`
+        select m.status, m.dispatch_attempted_at from lead_messages m
+        join lead_threads t on t.id = m.thread_id
+        where t.lead_id = ${leadId} and m.agent_run_id = ${runId}
+      `;
+      expect(rows).toHaveLength(1);
+      expect(rows[0]!.status).toBe('failed');
+      expect(rows[0]!.dispatch_attempted_at).not.toBeNull();
+    } finally {
+      if (prior) {
+        await sql`
+          update control_integrations
+          set enabled = ${prior.enabled}, config = ${sql.json(prior.config as never)},
+              secret_ref = ${prior.secret_ref}
+          where kind = 'email' and driver = 'resend'
+        `;
+      } else {
+        await sql`delete from control_integrations where kind = 'email' and driver = 'resend'`;
+      }
+      if (priorGuardrails) {
+        await sql`
+          update control_settings set value = ${sql.json(priorGuardrails.value as never)}
+          where key = 'guardrails'
+        `;
+      } else {
+        await sql`delete from control_settings where key = 'guardrails'`;
+      }
+    }
+  });
+
+  test('a channel-hop retry after an attempted failure is still adopted', async () => {
+    await migrate(sql, MIGRATIONS);
+    // WhatsApp send attempted then failed; the channel died so the retry
+    // resolves email — the body match spans channels, or the lead would
+    // get the same text twice.
+    const lead = await controlTx(sql, (tx) =>
+      insertLeadTx(tx, {
+        name: 'Chan Hop Lead',
+        email: 'hop@example.com',
+        agent_mode: 'auto',
+      }),
+    );
+    const leadId = lead.body.lead.id;
+    const waThread = await controlTx(sql, (tx) => ensureThread(tx, leadId, 'whatsapp', {}));
+    // The fallback channel must actually resolve — enable the email log
+    // driver (restored below so it can't leak into other tests).
+    const priorLog = (
+      await sql<{ enabled: boolean; config: unknown; secret_ref: string | null }[]>`
+        select enabled, config, secret_ref from control_integrations
+        where kind = 'email' and driver = 'log'
+      `
+    )[0];
+    await sql`
+      insert into control_integrations (kind, driver, enabled)
+      values ('email', 'log', true)
+      on conflict (kind, driver) do update set enabled = true
+    `;
+    try {
+      await sql`delete from agent_runs where status = 'queued'`;
+      const runId = (await enqueueRun(sql, { kind: 'reply', leadId })!)!;
+      // The run's own earlier attempt on the now-dead channel: failed AFTER
+      // 'sending' — dispatch_attempted_at is stamped.
+      await sql`
+        insert into lead_messages (thread_id, direction, author, body, status, agent_run_id, dispatch_attempted_at)
+        values (${waThread.id}, 'out', 'agent', 'olá', 'failed', ${runId}, now())
+      `;
+      await sql`update agent_runs set
+        params = ${sql.json({
+          script: [
+            { toolCalls: [{ name: 'send_message', args: { leadId, body: 'olá' } }] },
+            { text: 'fim' },
+          ],
+        } as never)}
+        where id = ${runId}`;
+      expect(await runOnce(sql)).toBe(true);
+      const r = await getRun(runId);
+      expect(r.status).toBe('done');
+      const sends = r.steps.filter((s) => (s as { name?: string }).name === 'send_message') as {
+        out?: { blocked?: boolean; reason?: string };
+      }[];
+      expect(sends).toHaveLength(1);
+      // adopted on email too — no second copy on another wire
+      expect(sends[0]!.out?.blocked).toBe(true);
+      expect(sends[0]!.out?.reason).toBe('already dispatched by this run');
+      const rows = await sql<{ status: string }[]>`
+        select m.status from lead_messages m
+        join lead_threads t on t.id = m.thread_id
+        where t.lead_id = ${leadId} and m.agent_run_id = ${runId}
+      `;
+      expect(rows).toHaveLength(1);
+    } finally {
+      if (priorLog) {
+        await sql`
+          update control_integrations
+          set enabled = ${priorLog.enabled}, config = ${sql.json(priorLog.config as never)},
+              secret_ref = ${priorLog.secret_ref}
+          where kind = 'email' and driver = 'log'
+        `;
+      } else {
+        await sql`delete from control_integrations where kind = 'email' and driver = 'log'`;
+      }
+    }
+  });
+
+  test('a later pre-wire failure cannot mask an earlier attempted send', async () => {
+    await migrate(sql, MIGRATIONS);
+    // Two failed rows share the body: the OLDER reached 'sending'
+    // (dispatch_attempted_at stamped — maybe on the wire), the NEWER died
+    // pre-wire (e.g. a refused staff retry). If the lookup only inspected
+    // the newest row, the unstamped one would mask the stamped one and the
+    // retry would compose a third copy.
+    const lead = await controlTx(sql, (tx) =>
+      insertLeadTx(tx, {
+        name: 'Masked Send Lead',
+        email: 'masked@example.com',
+        agent_mode: 'auto',
+      }),
+    );
+    const leadId = lead.body.lead.id;
+    const thread = await controlTx(sql, (tx) => ensureThread(tx, leadId, 'email', {}));
+    const priorLog = (
+      await sql<{ enabled: boolean; config: unknown; secret_ref: string | null }[]>`
+        select enabled, config, secret_ref from control_integrations
+        where kind = 'email' and driver = 'log'
+      `
+    )[0];
+    await sql`
+      insert into control_integrations (kind, driver, enabled)
+      values ('email', 'log', true)
+      on conflict (kind, driver) do update set enabled = true
+    `;
+    try {
+      await sql`delete from agent_runs where status = 'queued'`;
+      const runId = (await enqueueRun(sql, { kind: 'reply', leadId })!)!;
+      await sql`
+        insert into lead_messages (thread_id, direction, author, body, status, agent_run_id, dispatch_attempted_at, created_at)
+        values (${thread.id}, 'out', 'agent', 'olá', 'failed', ${runId}, now(), now() - interval '1 hour')
+      `;
+      await sql`
+        insert into lead_messages (thread_id, direction, author, body, status, agent_run_id)
+        values (${thread.id}, 'out', 'agent', 'olá', 'failed', ${runId})
+      `;
+      await sql`update agent_runs set
+        params = ${sql.json({
+          script: [
+            { toolCalls: [{ name: 'send_message', args: { leadId, body: 'olá' } }] },
+            { text: 'fim' },
+          ],
+        } as never)}
+        where id = ${runId}`;
+      expect(await runOnce(sql)).toBe(true);
+      const r = await getRun(runId);
+      expect(r.status).toBe('done');
+      const sends = r.steps.filter((s) => (s as { name?: string }).name === 'send_message') as {
+        out?: { blocked?: boolean; reason?: string };
+      }[];
+      expect(sends).toHaveLength(1);
+      // the older attempted copy still masks the retry — no third row
+      expect(sends[0]!.out?.blocked).toBe(true);
+      expect(sends[0]!.out?.reason).toBe('already dispatched by this run');
+      const rows = await sql<{ id: string }[]>`
+        select m.id from lead_messages m
+        join lead_threads t on t.id = m.thread_id
+        where t.lead_id = ${leadId} and m.agent_run_id = ${runId}
+      `;
+      expect(rows).toHaveLength(2);
+    } finally {
+      if (priorLog) {
+        await sql`
+          update control_integrations
+          set enabled = ${priorLog.enabled}, config = ${sql.json(priorLog.config as never)},
+              secret_ref = ${priorLog.secret_ref}
+          where kind = 'email' and driver = 'log'
+        `;
+      } else {
+        await sql`delete from control_integrations where kind = 'email' and driver = 'log'`;
+      }
+    }
+  });
+
+  test('a pre-wire failed send stays retryable — the failure never left the building', async () => {
+    await migrate(sql, MIGRATIONS);
+    // A 'failed' row with no dispatch_attempted_at provably never reached
+    // 'sending' — a deterministic pre-wire refusal. An identical retried
+    // send must be allowed to compose a fresh attempt, not adopted.
+    const priorGuardrails = (
+      await sql<{ value: unknown }[]>`
+        select value from control_settings where key = 'guardrails'
+      `
+    )[0];
+    const priorLog = (
+      await sql<{ enabled: boolean; config: unknown; secret_ref: string | null }[]>`
+        select enabled, config, secret_ref from control_integrations
+        where kind = 'email' and driver = 'log'
+      `
+    )[0];
+    try {
+      // First-contact drafts must be off — the retry must compose 'queued'
+      // so it actually dispatches — and the email log driver must be
+      // reachable or the send dies at pick.
+      await sql`
+        insert into control_settings (key, value)
+        values ('guardrails',
+                ${sql.json({ firstContactDraftOnly: false, quietStart: '00:00', quietEnd: '00:00' } as never)})
+        on conflict (key) do update set value = excluded.value
+      `;
+      await sql`
+        insert into control_integrations (kind, driver, enabled)
+        values ('email', 'log', true)
+        on conflict (kind, driver) do update set enabled = true
+      `;
+      const lead = await controlTx(sql, (tx) =>
+        insertLeadTx(tx, {
+          name: 'Pre Wire Lead',
+          email: 'prewire@example.com',
+          agent_mode: 'auto',
+        }),
+      );
+      const leadId = lead.body.lead.id;
+      const thread = await controlTx(sql, (tx) => ensureThread(tx, leadId, 'email', {}));
+      await sql`delete from agent_runs where status = 'queued'`;
+      const runId = (await enqueueRun(sql, { kind: 'reply', leadId })!)!;
+      // The run's own earlier attempt: failed before the wire (no stamp).
+      await sql`
+        insert into lead_messages (thread_id, direction, author, body, status, agent_run_id)
+        values (${thread.id}, 'out', 'agent', 'olá', 'failed', ${runId})
+      `;
+      await sql`update agent_runs set
+        params = ${sql.json({
+          script: [
+            { toolCalls: [{ name: 'send_message', args: { leadId, body: 'olá' } }] },
+            { text: 'fim' },
+          ],
+        } as never)}
+        where id = ${runId}`;
+      expect(await runOnce(sql)).toBe(true);
+      const r = await getRun(runId);
+      expect(r.status).toBe('done');
+      const sends = r.steps.filter((s) => (s as { name?: string }).name === 'send_message') as {
+        out?: { error?: string; blocked?: boolean };
+      }[];
+      expect(sends).toHaveLength(1);
+      // the retry was allowed through — it composed and sent fresh
+      expect(sends[0]!.out?.blocked).not.toBe(true);
+      expect(sends[0]!.out?.error).toBeUndefined();
+      const rows = await sql<{ status: string; dispatch_attempted_at: string | null }[]>`
+        select m.status, m.dispatch_attempted_at from lead_messages m
+        join lead_threads t on t.id = m.thread_id
+        where t.lead_id = ${leadId} and m.agent_run_id = ${runId}
+        order by m.created_at
+      `;
+      expect(rows).toHaveLength(2);
+      expect(rows[0]!.status).toBe('failed');
+      expect(rows[0]!.dispatch_attempted_at).toBeNull();
+      expect(['sent', 'delivered']).toContain(rows[1]!.status);
+    } finally {
+      if (priorLog) {
+        await sql`
+          update control_integrations
+          set enabled = ${priorLog.enabled}, config = ${sql.json(priorLog.config as never)},
+              secret_ref = ${priorLog.secret_ref}
+          where kind = 'email' and driver = 'log'
+        `;
+      } else {
+        await sql`delete from control_integrations where kind = 'email' and driver = 'log'`;
+      }
+      if (priorGuardrails) {
+        await sql`
+          update control_settings set value = ${sql.json(priorGuardrails.value as never)}
+          where key = 'guardrails'
+        `;
+      } else {
+        await sql`delete from control_settings where key = 'guardrails'`;
+      }
+    }
   });
 
   test('a repeated write after an intervening write executes — but a duplicate artifact never does', async () => {
