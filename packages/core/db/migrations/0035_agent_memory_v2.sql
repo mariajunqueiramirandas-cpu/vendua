@@ -82,6 +82,17 @@ where s.key = 'agent_memory'
 order by e.ord
 on conflict do nothing;
 
+-- The old list could hold 100 strings — more than the 60 debrief cap.
+-- Apply it here too (newest first, same ordering as runtime eviction) so a
+-- migrated db doesn't carry an over-cap class into the first rememberTx.
+delete from agent_memory_items
+where id in (
+  select id from agent_memory_items
+  where scope = 'debrief'
+  order by created_at desc, id asc
+  offset 60
+);
+
 -- The settings row stays: the v1 readers still read it until the runner
 -- cutover lands (parent session removes them).
 

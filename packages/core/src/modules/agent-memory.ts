@@ -228,7 +228,20 @@ export async function rememberTx(
     insert into agent_memory_items (scope, segment, content, source, source_run_id, created_at, updated_at)
     values (${scope}, ${segment}, ${content}, ${input.source}, ${sourceRunId}, clock_timestamp(), clock_timestamp())
     on conflict (scope, (coalesce(segment, '')), (lower(content)))
-    do update set updated_at = clock_timestamp()
+    do update set
+      updated_at = clock_timestamp(),
+      -- Debriefs are an append log: a repeat means THIS run produced it —
+      -- restamp created_at (feeds and eviction order by it) and point at
+      -- the new run. Learnings keep their original created_at.
+      created_at = case
+        when agent_memory_items.scope = 'debrief' then clock_timestamp()
+        else agent_memory_items.created_at
+      end,
+      source_run_id = case
+        when agent_memory_items.scope = 'debrief'
+          then coalesce(excluded.source_run_id, agent_memory_items.source_run_id)
+        else agent_memory_items.source_run_id
+      end
     returning *
   `;
   const evicted = await enforceMemoryCapTx(tx, scope === 'debrief' ? 'debrief' : 'learning');

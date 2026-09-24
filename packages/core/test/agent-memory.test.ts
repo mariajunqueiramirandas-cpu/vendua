@@ -416,6 +416,33 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('agent memory v2 (db)', () => {
     expect(res2?.status).toBe(422);
   });
 
+  test('a repeated debrief re-stamps created_at and re-enters the feed', async () => {
+    await setup();
+    await sql`delete from agent_memory_items`;
+    const content = nm('run x: 5 leads');
+    const runId = await mkRun();
+    await controlTx(sql, (tx) => appendDebriefTx(tx, { content, sourceRunId: runId ?? null }));
+    // Age it out of the latest-8 window with 8 fresher debriefs.
+    await sql`update agent_memory_items set created_at = created_at - interval '1 day'`;
+    for (let i = 0; i < 8; i++) {
+      await controlTx(sql, (tx) =>
+        appendDebriefTx(tx, { content: nm(`run ${i}: 0 leads`), sourceRunId: runId ?? null }),
+      );
+    }
+    const before = await controlTx(sql, (tx) => memoryForRunTx(tx));
+    expect(before).not.toContain(content);
+    // A new run producing the same summary restamps it: feed + source_run_id.
+    const runId2 = await mkRun();
+    const { item } = await controlTx(sql, (tx) =>
+      appendDebriefTx(tx, { content, sourceRunId: runId2 ?? null }),
+    );
+    const after = await controlTx(sql, (tx) => memoryForRunTx(tx));
+    expect(after).toContain(content);
+    expect(item.sourceRunId).toBe(runId2);
+    const n = await sql<{ n: number }[]>`select count(*)::int as n from agent_memory_items`;
+    expect(n[0]!.n).toBe(9); // dedupe hit, not a second row
+  });
+
   // ---- migration backfill ---------------------------------------------------
 
   test('0035 backfill classifies agent_memory.facts into debrief vs workspace', async () => {
@@ -434,6 +461,9 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('agent memory v2 (db)', () => {
       await sql`
         insert into control_settings (key, value) values ('agent_memory', ${sql.json({
           facts: [
+            // 62 debriefs first so the class lands over the 60 cap — the
+            // migration itself must trim them (newest 60 kept).
+            ...Array.from({ length: 62 }, (_, i) => `run ${nonce}x${i}: ${i} leads`),
             `run ${nonce}a: 12 leads (3 c/ whatsapp)`,
             `run ${nonce}b/centro: 0 leads`,
             nm('plain learning'),
@@ -447,11 +477,19 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('agent memory v2 (db)', () => {
       const rows = await sql<
         { scope: string; source: string; content: string }[]
       >`\n        select scope, source, content from agent_memory_items order by created_at\n      `;
-      expect(rows.map((r) => [r.scope, r.source])).toEqual([
-        ['debrief', 'staff'],
-        ['debrief', 'staff'],
-        ['workspace', 'staff'],
-      ]);
+      const learning = rows.filter((r) => r.scope === 'workspace');
+      const debriefs = rows.filter((r) => r.scope === 'debrief');
+      expect(learning.map((r) => [r.content, r.source])).toEqual([[nm('plain learning'), 'staff']]);
+      // 64 debriefs backfilled (62 x + a + b) — migration trims to the
+      // newest 60: x0–x3 go, x4..x61 and a + b (newer, later ordinality)
+      // stay.
+      expect(debriefs).toHaveLength(60);
+      expect(debriefs.every((r) => r.source === 'staff')).toBe(true);
+      const dc = debriefs.map((r) => r.content);
+      expect(dc).toContain(`run ${nonce}a: 12 leads (3 c/ whatsapp)`);
+      expect(dc).toContain(`run ${nonce}b/centro: 0 leads`);
+      expect(dc).not.toContain(`run ${nonce}x3: 3 leads`);
+      expect(dc).toContain(`run ${nonce}x4: 4 leads`);
       // The old settings row is left untouched by the migration itself.
       const kept = await sql<
         { v: unknown }[]
