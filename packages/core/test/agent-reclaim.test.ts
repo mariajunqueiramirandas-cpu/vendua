@@ -1195,9 +1195,10 @@ dbDescribe('worker robustness (db)', () => {
     expect(await runOnce(sql)).toBe(true);
     const r = await getRun(runId);
     expect(r.status).toBe('done');
-    const reads = r.steps.filter(
-      (s) => (s as { name?: string }).name === 'read_pages',
-    ) as { readSpent?: boolean; out?: { error?: string } }[];
+    const reads = r.steps.filter((s) => (s as { name?: string }).name === 'read_pages') as {
+      readSpent?: boolean;
+      out?: { error?: string };
+    }[];
     expect(reads).toHaveLength(4);
     // every call executed — no REPEAT — but only the fetches spent
     expect(reads[0]!.readSpent).toBe(true);
