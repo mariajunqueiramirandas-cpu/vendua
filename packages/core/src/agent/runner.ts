@@ -240,8 +240,7 @@ export async function flagCappedLeads(sql: Sql, limit = 200): Promise<number> {
         const g = await getSettingTx<Partial<Guardrails>>(tx, 'guardrails', {});
         if (capCentsOf(g) <= 0) return 'under';
         if (await leadUnderCostCapTx(tx, leadId)) return 'under';
-        const capUsd =
-          g.leadLifetimeCostCapUsd ?? DEFAULT_GUARDRAILS.leadLifetimeCostCapUsd;
+        const capUsd = g.leadLifetimeCostCapUsd ?? DEFAULT_GUARDRAILS.leadLifetimeCostCapUsd;
         const flagged = (
           await tx`
             select 1 from lead_activities
@@ -259,7 +258,8 @@ export async function flagCappedLeads(sql: Sql, limit = 200): Promise<number> {
         await new Promise((r) => setTimeout(r, 50 * (attempt + 1)));
       }
     }
-    if (!done) agentLog.warn({ leadId }, 'cost-cap flag retry exhausted — lead still lock-contended');
+    if (!done)
+      agentLog.warn({ leadId }, 'cost-cap flag retry exhausted — lead still lock-contended');
   }
   // Unscoped: the console coalesces a burst of events into one pending
   // event and keeps a single ref — per-lead refs would drop intermediate
