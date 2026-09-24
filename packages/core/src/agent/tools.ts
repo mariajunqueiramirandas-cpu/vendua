@@ -1630,6 +1630,10 @@ export async function executeTool(
             );
             if (page) return { page };
             const err = res.errors.find((er) => pageKey(er.url) === key2);
+            // A failed fetch doesn't bank — a later retry must reissue it,
+            // not serve the error forever. Good pages in the same batch
+            // still cache.
+            if (key2) ctx.pageCache.delete(key2);
             return { page: null, error: err?.error ?? 'no result for url' };
           });
           missOut.set(url, p);
@@ -1752,7 +1756,7 @@ export async function executeTool(
             const error =
               res.errors.find((er) => pageKey(er.url) === key2)?.error ?? 'no result for url';
             errs.push({ url: c.url, error });
-            if (key2) ctx.pageCache.set(key2, Promise.resolve({ page: null, error }));
+            // chase failures don't bank either — a retry refetches
           }
         }
       }

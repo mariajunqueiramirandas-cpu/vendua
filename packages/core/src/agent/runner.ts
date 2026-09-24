@@ -882,7 +882,7 @@ export interface JournalReplay {
  *  thoughtSignature ride along), tool results replay truncated, and calls
  *  that crashed mid-batch (pending, no out) close with an explicit
  *  interrupted marker so the model re-checks state instead of assuming. */
-export function replayJournal(prior: unknown[]): JournalReplay {
+export function replayJournal(prior: unknown[], claimsUnverified = false): JournalReplay {
   const replay: JournalReplay = {
     baseStep: 0,
     messages: [],
@@ -956,14 +956,18 @@ export function replayJournal(prior: unknown[]): JournalReplay {
       // committed pendings into their stored responses upstream, so
       // they arrive here as clean outs too). Errored/blocked/ignored
       // minted nothing, and an unclaimed still-pending entry never
-      // executed — both stay retryable.
+      // executed — both stay retryable. Exception: when the claim
+      // lookup itself failed, an out-less entry might have committed —
+      // suppressing the re-emission beats a possible duplicate row.
       const o = t.out as { error?: unknown; blocked?: unknown; ignored?: unknown } | null;
       if (
-        typeof o === 'object' &&
-        o !== null &&
-        !o.error &&
-        o.blocked !== true &&
-        o.ignored !== true
+        o === undefined
+          ? claimsUnverified
+          : typeof o === 'object' &&
+            o !== null &&
+            !o.error &&
+            o.blocked !== true &&
+            o.ignored !== true
       ) {
         replay.landedSigs.add(JSON.stringify([t.name, t.args ?? {}]));
       }
@@ -1253,7 +1257,13 @@ export async function runOnce(sql: Sql): Promise<boolean> {
   // worker died — the stored claim response is the real result, not an
   // 'interrupted' guess. Best-effort: a failed lookup just leaves them
   // pending and they replay as interrupted like before.
-  await reconcileInterrupted(sql, run.id, priorSteps).catch(() => undefined);
+  // Whether the claim lookup actually ran — a swallowed failure means
+  // pending artifact-mints couldn't be verified, and replayJournal must
+  // suppress them conservatively rather than risk a duplicate row.
+  const claimsChecked = await reconcileInterrupted(sql, run.id, priorSteps).then(
+    () => true,
+    () => false,
+  );
   const steps: unknown[] = [...priorSteps];
   if (priorSteps.length) {
     steps.push({ type: 'resumed', attempt: run.attempts, at: new Date().toISOString() });
@@ -1412,7 +1422,7 @@ export async function runOnce(sql: Sql): Promise<boolean> {
       },
     });
     const tools = toolsFor(run.kind);
-    const replay = replayJournal(priorSteps);
+    const replay = replayJournal(priorSteps, !claimsChecked);
     const ctx: ToolContext = {
       sql,
       runId: run.id,
@@ -1838,13 +1848,18 @@ export async function runOnce(sql: Sql): Promise<boolean> {
             error?: unknown;
             blocked?: unknown;
             ignored?: unknown;
+            errors?: unknown;
           } | null;
+          // Per-url failures ride in errors[] (read_pages), not top-level
+          // error — a result that reports fetch failures isn't a clean
+          // prior result, so its retry must reissue, not suppress.
           const clean =
             typeof res_ === 'object' &&
             res_ !== null &&
             !res_.error &&
             res_.blocked !== true &&
-            res_.ignored !== true;
+            res_.ignored !== true &&
+            !(Array.isArray(res_.errors) && res_.errors.length > 0);
           // A suppressed call stands on its earlier clean result — its own
           // REPEAT error must not mark the signature retryable or the next
           // identical emission would execute again.

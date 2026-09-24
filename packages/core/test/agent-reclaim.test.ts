@@ -310,6 +310,33 @@ describe('replayJournal', () => {
     expect(r.landedSigs.size).toBe(1);
   });
 
+  test('an unverified claim lookup suppresses pending artifact-mints conservatively', () => {
+    const journal = [
+      // attempt 1 journaled the task then died — out-less. When the claim
+      // lookup fails, it may have committed — suppress the re-emission
+      {
+        type: 'tool',
+        name: 'create_task',
+        args: { leadId: 'l1', title: 'vip' },
+        callId: 'c1',
+        step: 0,
+        pending: true,
+      },
+    ];
+    // successful check (proven unclaimed): the entry stays retryable
+    expect(
+      replayJournal(journal).landedSigs.has(
+        JSON.stringify(['create_task', { leadId: 'l1', title: 'vip' }]),
+      ),
+    ).toBe(false);
+    // failed check (unverifiable): suppress rather than risk a duplicate
+    expect(
+      replayJournal(journal, true).landedSigs.has(
+        JSON.stringify(['create_task', { leadId: 'l1', title: 'vip' }]),
+      ),
+    ).toBe(true);
+  });
+
   test('the latest stored plan rebuilds ctx.plan — no durable field backs it', () => {
     const r = replayJournal([
       {
@@ -1692,6 +1719,57 @@ dbDescribe('worker robustness (db)', () => {
       (await sql`select id from lead_tasks where lead_id = ${leadId} and title = 'vip'`).length,
     ).toBe(before.length + 1);
     await sql`delete from control_idempotency_keys where key = ${`agent:${runB}:0:create_task:c1`}`;
+  });
+
+  test('a read_pages result with fetch failures stays retryable — errors[] is not clean', async () => {
+    await migrate(sql, MIGRATIONS);
+    const lead = await controlTx(sql, (tx) => insertLeadTx(tx, { name: 'Failed Fetch Lead' }));
+    const leadId = lead.body.lead.id;
+    await sql`delete from agent_runs where status = 'queued'`;
+    const runId = (await enqueueRun(sql, { kind: 'reply', leadId })!)!;
+    await sql`update agent_runs set
+      params = ${sql.json({
+        script: [
+          // mixed batch: a fetchable url + an unfetchable private host —
+          // the result carries errors[], which must not count as a clean
+          // prior result
+          {
+            toolCalls: [
+              {
+                name: 'read_pages',
+                args: { urls: ['https://shop.example/catalog', 'http://192.168.10.9/x'] },
+              },
+            ],
+          },
+          // identical retry — executes: the failed url re-validates, the
+          // good page comes back from the run cache for free
+          {
+            toolCalls: [
+              {
+                name: 'read_pages',
+                args: { urls: ['https://shop.example/catalog', 'http://192.168.10.9/x'] },
+              },
+            ],
+          },
+          { toolCalls: [{ name: 'request_human', args: { leadId, reason: 'travou' } }] },
+          { text: 'fim' },
+        ],
+      } as never)}
+      where id = ${runId}`;
+    expect(await runOnce(sql)).toBe(true);
+    const r = await getRun(runId);
+    const reads = r.steps.filter(
+      (s) => (s as { name?: string }).name === 'read_pages',
+    ) as { readSpent?: number; out?: { error?: string; errors?: unknown[]; pages?: { cached?: boolean }[] } }[];
+    expect(reads).toHaveLength(2);
+    // the retry was NOT suppressed — it reported the failure again
+    expect(reads[0]!.out?.error).toBeUndefined();
+    expect(reads[0]!.out?.errors).toHaveLength(1);
+    expect(reads[1]!.out?.error).toBeUndefined();
+    expect(reads[1]!.out?.errors).toHaveLength(1);
+    // the successful page stayed cached — the retry spent nothing on it
+    expect(reads[1]!.out?.pages?.[0]?.cached).toBe(true);
+    expect(reads[1]!.readSpent).toBe(0);
   });
 
   test('a cached re-read does not spend the reply page budget', async () => {
