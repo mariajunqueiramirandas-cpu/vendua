@@ -240,6 +240,30 @@ export async function dispatchMessage(
       await tx`select pg_advisory_xact_lock(hashtext(${`pev:${send.channel}:${providerMessageId}`}))`;
     }
     await markMessageSent(tx, messageId, pmid);
+    // Deterministic lead→contacted: a sent outbound IS first contact — the
+    // funnel can't wait on the model remembering set_state. Forward-only
+    // ('lead' rows only): invited/live states stay the agent's call and a
+    // staff-set state never demotes. History/activity land in the same tx,
+    // same writes updateLead's own transition makes.
+    const promoted = await tx<{ id: string }[]>`
+      update leads set state = 'contacted', updated_at = now()
+      where id = ${send.leadId} and state = 'lead'
+      returning id
+    `;
+    if (promoted[0]) {
+      const actor = send.author === 'agent' || send.author === 'staff' ? send.author : 'system';
+      await tx`
+        insert into lead_state_history (lead_id, from_state, to_state, actor, value_cents)
+        select ${send.leadId}, 'lead', 'contacted', ${actor}, deal_value_cents
+        from leads where id = ${send.leadId}
+      `;
+      await tx`
+        insert into lead_activities (lead_id, kind, body, meta, created_by)
+        values (${send.leadId}, 'state_change', 'lead → contacted',
+                ${tx.json({ from: 'lead', to: 'contacted' } as never)}, ${actor})
+      `;
+      leadsTouched.add(send.leadId);
+    }
     // Cadence floor: an agent send leaves the lead awaiting a reply — stamp
     // the default cadence so a run that forgot nextActionAt still gets a
     // follow-up. NULL-only fill: an agent- or staff-set value always wins,

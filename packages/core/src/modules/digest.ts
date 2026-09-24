@@ -33,6 +33,10 @@ export interface DigestReport {
   meetingsBooked: number;
   meetingsNext24h: number;
   agentRuns: number;
+  /** board-scoped runs (lead_id null — discovery/strategist) that landed
+   *  'failed' in the window — lead-bound failures already flag their cards
+   *  with [humano] tasks, these have no card so the digest carries them. */
+  failedBoardRuns: number;
   costCents: number;
   pendingDrafts: number;
   openTasks: number;
@@ -63,47 +67,62 @@ export async function digestConfigTx(tx: Sql): Promise<DigestConfig> {
  *  the email always describes "since yesterday's digest". */
 export async function digestReportTx(tx: Sql, date: string): Promise<DigestReport> {
   const one = async (q: Promise<{ n: number }[]>) => (await q)[0]!.n;
-  const [newLeads, repliesIn, meetingsBooked, meetingsNext24h, runs, pendingDrafts, openTasks] =
-    await Promise.all([
-      one(
-        tx<{ n: number }[]>`
+  const [
+    newLeads,
+    repliesIn,
+    meetingsBooked,
+    meetingsNext24h,
+    runs,
+    failedBoardRuns,
+    pendingDrafts,
+    openTasks,
+  ] = await Promise.all([
+    one(
+      tx<{ n: number }[]>`
           select count(*)::int as n from leads
           where created_at > now() - interval '24 hours' and archived_at is null
         `,
-      ),
-      one(
-        tx<{ n: number }[]>`
+    ),
+    one(
+      tx<{ n: number }[]>`
           select count(*)::int as n from lead_messages
           where direction = 'in' and created_at > now() - interval '24 hours'
         `,
-      ),
-      one(
-        tx<{ n: number }[]>`
+    ),
+    one(
+      tx<{ n: number }[]>`
           select count(*)::int as n from meetings
           where created_at > now() - interval '24 hours'
         `,
-      ),
-      one(
-        tx<{ n: number }[]>`
+    ),
+    one(
+      tx<{ n: number }[]>`
           select count(*)::int as n from meetings
           where status = 'scheduled' and starts_at between now() and now() + interval '24 hours'
         `,
-      ),
-      tx<{ runs: number; cost_cents: number }[]>`
+    ),
+    tx<{ runs: number; cost_cents: number }[]>`
         select count(*)::int as runs, coalesce(sum(cost_cents), 0)::int as cost_cents
         from agent_runs where created_at > now() - interval '24 hours'
       `.then((r) => r[0]!),
-      one(
-        tx<{ n: number }[]>`
+    one(
+      tx<{ n: number }[]>`
+          select count(*)::int as n from agent_runs
+          where status = 'failed' and lead_id is null
+            and finished_at > now() - interval '24 hours'
+        `,
+    ),
+    one(
+      tx<{ n: number }[]>`
           select count(*)::int as n from lead_messages where status = 'draft'
         `,
-      ),
-      one(
-        tx<{ n: number }[]>`
+    ),
+    one(
+      tx<{ n: number }[]>`
           select count(*)::int as n from lead_tasks where done_at is null
         `,
-      ),
-    ]);
+    ),
+  ]);
   return {
     date,
     newLeads,
@@ -111,6 +130,7 @@ export async function digestReportTx(tx: Sql, date: string): Promise<DigestRepor
     meetingsBooked,
     meetingsNext24h,
     agentRuns: runs.runs,
+    failedBoardRuns,
     costCents: runs.cost_cents,
     pendingDrafts,
     openTasks,
@@ -129,7 +149,7 @@ export function digestText(r: DigestReport): { subject: string; body: string } {
       `• leads novos: ${r.newLeads}`,
       `• respostas recebidas: ${r.repliesIn}`,
       `• calls marcadas: ${r.meetingsBooked} (próximas 24h: ${r.meetingsNext24h})`,
-      `• runs do agente: ${r.agentRuns} — custo ${fmtBrl(r.costCents)}`,
+      `• runs do agente: ${r.agentRuns} — custo ${fmtBrl(r.costCents)}${r.failedBoardRuns ? ` — ${r.failedBoardRuns} run(s) do board falharam` : ''}`,
       '',
       'Na fila agora:',
       `• rascunhos aguardando aprovação: ${r.pendingDrafts}`,

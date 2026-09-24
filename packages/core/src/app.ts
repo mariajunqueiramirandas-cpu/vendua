@@ -884,7 +884,9 @@ export function createApp({ sql, sessionSecret, controlSecret, autoDrain }: AppD
           });
           return {
             status: created.status,
-            body: { ...created.body, runId },
+            // null when the lifetime cost cap refused the run — the card's
+            // cost-cap flag is the explanation staff sees.
+            body: { ...created.body, ...(runId ? { runId } : {}) },
           };
         }
         return created;
@@ -1083,7 +1085,8 @@ export function createApp({ sql, sessionSecret, controlSecret, autoDrain }: AppD
       };
     });
     if (res.replayed) c.header('x-idempotent-replay', 'true');
-    if (!res.replayed) emitControlEvent('run.update', res.body.runId);
+    // runId null = the lifetime cost cap refused the insert (card flag explains).
+    if (!res.replayed && res.body.runId) emitControlEvent('run.update', res.body.runId);
     kickDrain();
     return c.json(res.body, res.status as 201);
   });
@@ -1705,7 +1708,8 @@ export function createApp({ sql, sessionSecret, controlSecret, autoDrain }: AppD
       };
     });
     if (res.replayed) c.header('x-idempotent-replay', 'true');
-    if (!res.replayed) emitControlEvent('run.update', res.body.runId);
+    // runId null = the lifetime cost cap refused the insert (card flag explains).
+    if (!res.replayed && res.body.runId) emitControlEvent('run.update', res.body.runId);
     kickDrain();
     return c.json(res.body, res.status as 201);
   });
@@ -1782,11 +1786,17 @@ export function createApp({ sql, sessionSecret, controlSecret, autoDrain }: AppD
           continue;
         }
         await tx`update leads set agent_goal = ${goal}, updated_at = now() where id = ${id}`;
-        await insertRun(tx, {
+        // null = lifetime cost cap refused the run — surface it like every
+        // other ineligibility instead of counting a phantom enqueue.
+        const runId = await insertRun(tx, {
           kind: 'outreach',
           leadId: id,
           params: { goal, ...(wantChannel ? { channel: wantChannel } : {}) },
         });
+        if (!runId) {
+          skipped.push({ id, reason: 'lead over its agent cost cap' });
+          continue;
+        }
         enqueued++;
       }
       return { status: 200, body: { enqueued, skipped } };

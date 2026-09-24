@@ -88,6 +88,18 @@ export async function ingestInbound(
       where t.id = ${res.threadId}
       for update of l, t
     `;
+    // A live inbound retires queued AUTO outreach — the lead already wrote,
+    // so a "reopening" message queued by cadence/discovery/first-contact/
+    // regen would arrive answering nothing. Only runs the automation itself
+    // queued (params->>'auto' set) are canceled: a staff-triggered run is an
+    // explicit decision and outranks the reply. Runs under the l,t lock —
+    // claimRun's lead revalidation can't slip a row through while we hold it.
+    await tx`
+      update agent_runs
+      set status = 'canceled', error = 'lead respondeu', finished_at = now()
+      where lead_id = ${res.leadId} and kind = 'outreach' and status = 'queued'
+        and params->>'auto' is not null
+    `;
     const gate = gateRows[0];
 
     if (

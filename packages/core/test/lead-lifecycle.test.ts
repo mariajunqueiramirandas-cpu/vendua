@@ -3,7 +3,7 @@ import { join } from 'node:path';
 import postgres from 'postgres';
 import { createApp } from '../src/app.ts';
 import { dispatchMessage } from '../src/agent/send.ts';
-import { claimRun, insertRun } from '../src/agent/runner.ts';
+import { claimRun, drain, insertRun } from '../src/agent/runner.ts';
 import {
   DEFAULT_GUARDRAILS,
   validateSetting,
@@ -360,13 +360,13 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('lead lifecycle (db)', () => {
       ).then((r) => r.body.lead.id);
       const messageId = await mkDraft(leadId, 'agent', 8);
       // A regen queued for THIS draft is reused…
-      const existing = await controlTx(sql, (tx) =>
+      const existing = (await controlTx(sql, (tx) =>
         insertRun(tx, {
           kind: 'outreach',
           leadId,
           params: { auto: 'regenerate', draftOnly: true, src: messageId },
         }),
-      );
+      ))!;
       const res = await approveMessage(sql, messageId, 'staff', key('a3-regen-queued'));
       expect(res.body.stale).toBe(true);
       expect(res.body.runId).toBe(existing);
@@ -393,7 +393,7 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('lead lifecycle (db)', () => {
         insertLeadTx(tx, { name: 'Serial B', agent_mode: 'auto' }),
       ).then((r) => r.body.lead.id);
       const mkRun = (leadId: string) =>
-        controlTx(sql, (tx) => insertRun(tx, { kind: 'outreach', leadId }));
+        controlTx(sql, async (tx) => (await insertRun(tx, { kind: 'outreach', leadId }))!);
       const a1 = await mkRun(leadA);
       const a2 = await mkRun(leadA);
       const b1 = await mkRun(leadB);
@@ -420,14 +420,14 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('lead lifecycle (db)', () => {
       const leadId = await controlTx(sql, (tx) =>
         insertLeadTx(tx, { name: 'Blocked Lead', agent_mode: 'auto' }),
       ).then((r) => r.body.lead.id);
-      const owner = await controlTx(sql, (tx) => insertRun(tx, { kind: 'outreach', leadId }));
+      const owner = (await controlTx(sql, (tx) => insertRun(tx, { kind: 'outreach', leadId })))!;
       expect(await claimAmong([owner])).toBe(owner); // takes the lead's ownership
       // More queued same-lead outreach than the claim loop's attempt bound —
       // the in-scan exclusion keeps them from ever becoming candidates.
       for (let i = 0; i < 9; i++) {
         await controlTx(sql, (tx) => insertRun(tx, { kind: 'outreach', leadId }));
       }
-      const disc = await controlTx(sql, (tx) => insertRun(tx, { kind: 'discovery' }));
+      const disc = (await controlTx(sql, (tx) => insertRun(tx, { kind: 'discovery' })))!;
       expect(await claimAmong([disc])).toBe(disc);
     });
 
@@ -523,7 +523,7 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('lead lifecycle (db)', () => {
     test('POST /leads/:id/unsubscribe cancels queued runs along with the flag', async () => {
       await setup();
       const leadId = await mkLeadApi({ name: 'Unsub Queue' }, key('a4-unsub-lead2'));
-      const queued = await controlTx(sql, (tx) => insertRun(tx, { kind: 'outreach', leadId }));
+      const queued = (await controlTx(sql, (tx) => insertRun(tx, { kind: 'outreach', leadId })))!;
       const res = await post(`/control/v1/leads/${leadId}/unsubscribe`, {}, key('a4-unsub'));
       expect(res.status).toBe(200);
       const [r] = await sql<{ status: string }[]>`
@@ -585,6 +585,118 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('lead lifecycle (db)', () => {
         select lead_id from agent_runs where lead_id = ${leadId}
       `;
       expect(run!.lead_id?.toLowerCase()).toBe(leadId.toLowerCase());
+    });
+  });
+
+  describe('A5 — agent business rules', () => {
+    const mkLead = (fields: Record<string, unknown> = {}) =>
+      controlTx(sql, (tx) =>
+        insertLeadTx(tx, { name: `A5 ${crypto.randomUUID()}`, agent_mode: 'auto', ...fields }),
+      ).then((r) => r.body.lead.id);
+
+    const compose = async (leadId: string, author: 'staff' | 'agent') =>
+      controlTx(sql, async (tx) => {
+        const r = await composeMessageTx(tx, {
+          leadId,
+          channel: 'manual',
+          body: 'oi',
+          author,
+          status: 'queued',
+        });
+        return r.body.message.id;
+      });
+
+    test('a sent outbound promotes lead → contacted and writes the transition trail', async () => {
+      await setup();
+      const leadId = await mkLead();
+      expect((await dispatchMessage(sql, await compose(leadId, 'agent'))).ok).toBe(true);
+      const lead = (
+        await sql<{ state: string }[]>`select state from leads where id = ${leadId}`
+      )[0]!;
+      expect(lead.state).toBe('contacted');
+      const hist = await sql`
+        select 1 from lead_state_history
+        where lead_id = ${leadId} and from_state = 'lead' and to_state = 'contacted'
+      `;
+      expect(hist).toHaveLength(1);
+      const act = await sql`
+        select 1 from lead_activities
+        where lead_id = ${leadId} and kind = 'state_change' and body = 'lead → contacted'
+      `;
+      expect(act).toHaveLength(1);
+    });
+
+    test('the transition is forward-only — an invited lead is never demoted', async () => {
+      await setup();
+      const leadId = await mkLead();
+      await sql`update leads set state = 'invited' where id = ${leadId}`;
+      expect((await dispatchMessage(sql, await compose(leadId, 'agent'))).ok).toBe(true);
+      const lead = (
+        await sql<{ state: string }[]>`select state from leads where id = ${leadId}`
+      )[0]!;
+      expect(lead.state).toBe('invited');
+    });
+
+    test('a run reclaimed into failed leaves a [humano] task on the lead', async () => {
+      await setup();
+      const leadId = await mkLead();
+      const runId = (await controlTx(sql, (tx) => insertRun(tx, { kind: 'outreach', leadId })))!;
+      // A worker that kept dying mid-flight: at the attempt cap the lease
+      // reclaim lands 'failed' — the task is the staff-visible trace.
+      await sql`
+        update agent_runs
+        set status = 'running', attempts = max_attempts - 1,
+            started_at = now() - interval '30 minutes',
+            alive_at = now() - interval '30 minutes'
+        where id = ${runId}
+      `;
+      await drain(sql);
+      const [run] = await sql<{ status: string }[]>`
+        select status from agent_runs where id = ${runId}
+      `;
+      expect(run!.status).toBe('failed');
+      const tasks = await sql<{ title: string }[]>`
+        select title from lead_tasks where lead_id = ${leadId}
+      `;
+      expect(tasks).toHaveLength(1);
+      expect(tasks[0]!.title).toContain('[humano]');
+      expect(tasks[0]!.title).toContain('outreach');
+    });
+
+    test('insertRun refuses a lead over its lifetime cost cap — flagged once', async () => {
+      await setup();
+      await setGuardrails({ leadLifetimeCostCapUsd: 0.5 });
+      try {
+        const leadId = await mkLead();
+        // Prior spend ≥ cap (50¢): the next lead-bound insertRun must refuse.
+        await sql`
+          insert into agent_runs (kind, lead_id, status, cost_cents, finished_at)
+          values ('reply', ${leadId}, 'done', 60, now())
+        `;
+        expect(
+          await controlTx(sql, (tx) => insertRun(tx, { kind: 'outreach', leadId })),
+        ).toBeNull();
+        // A second refusal reuses the same flag — no note/task spam.
+        expect(await controlTx(sql, (tx) => insertRun(tx, { kind: 'reply', leadId }))).toBeNull();
+        const flags = await sql`
+          select 1 from lead_activities
+          where lead_id = ${leadId} and kind = 'system' and meta->>'type' = 'cost-cap'
+        `;
+        expect(flags).toHaveLength(1);
+        const tasks = await sql`
+          select 1 from lead_tasks where lead_id = ${leadId} and title like '[humano]%'
+        `;
+        expect(tasks).toHaveLength(1);
+        // Board-scoped runs carry no lead — uncapped by definition.
+        expect(await controlTx(sql, (tx) => insertRun(tx, { kind: 'strategist' }))).toBeTruthy();
+        // A lead under the cap queues normally.
+        const other = await mkLead();
+        expect(
+          await controlTx(sql, (tx) => insertRun(tx, { kind: 'outreach', leadId: other })),
+        ).toBeTruthy();
+      } finally {
+        await setGuardrails({});
+      }
     });
   });
 });

@@ -235,6 +235,11 @@ export const DEFAULT_GUARDRAILS = {
    *  from one of these drops silently (no lead minted), outbound sends and
    *  queued runs to a matching lead are suppressed. Compared on digits. */
   ignoredPhones: [] as string[],
+  /** per-lead lifetime agent spend ceiling (USD): once a lead's runs
+   *  accumulate ≥ this in cost_cents, insertRun refuses new lead-bound
+   *  runs and flags the card — staff raises the cap or retires the lead.
+   *  0 = uncapped. */
+  leadLifetimeCostCapUsd: 5,
 } as const;
 
 export type Guardrails = {
@@ -251,6 +256,7 @@ export type Guardrails = {
   staleDraftDays: number;
   briefAutoPauseRuns: number;
   ignoredPhones: string[];
+  leadLifetimeCostCapUsd: number;
 };
 
 /** Phone digits match: strip everything non-digit on both sides; an entry
@@ -375,6 +381,14 @@ export function validateSetting(key: string, value: unknown): void {
     intField('followupCadenceDays', 0, 90);
     intField('staleDraftDays', 0, 90);
     intField('briefAutoPauseRuns', 0, 100);
+    const numField = (k: keyof Guardrails, min: number, max: number) => {
+      if (v[k] === undefined) return;
+      const n = v[k];
+      if (typeof n !== 'number' || !Number.isFinite(n) || n < min || n > max) {
+        throw bad(k, `must be a number in [${min}, ${max}]`);
+      }
+    };
+    numField('leadLifetimeCostCapUsd', 0, 1000);
     for (const k of ['quietStart', 'quietEnd'] as const) {
       if (v[k] === undefined) continue;
       const t = v[k];

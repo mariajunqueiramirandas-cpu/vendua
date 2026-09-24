@@ -582,11 +582,14 @@ export async function approveMessage(
             and params->>'src' = ${messageId}
           order by created_at limit 1
         `;
-        let runId: string;
+        let runId: string | null;
         if (active[0]) {
           runId = active[0].id;
         } else {
           const { insertRun } = await import('../agent/runner.ts');
+          // null when the lead's lifetime cost cap refused the run — the
+          // supersede still stands (the expired draft stays unusable) and
+          // the card's cost-cap flag explains why nothing requeued.
           runId = await insertRun(tx, {
             kind: 'outreach',
             leadId: thread.lead_id,
@@ -605,7 +608,10 @@ export async function approveMessage(
                   ${`rascunho expirado (${staleDays}d) — regenerando contra o estado atual`},
                   ${tx.json({ messageId, runId } as never)}, 'system')
         `;
-        return { status: 200, body: { message: messageJson(stale[0]), stale: true, runId } };
+        return {
+          status: 200,
+          body: { message: messageJson(stale[0]), stale: true, ...(runId ? { runId } : {}) },
+        };
       }
     }
     const rows = await tx<MessageRow[]>`

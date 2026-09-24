@@ -2,6 +2,7 @@ import { afterEach, describe, expect, test } from 'bun:test';
 import { join } from 'node:path';
 import postgres from 'postgres';
 import { ingestInbound } from '../src/agent/inbound.ts';
+import { whatsappRegistered } from '../src/agent/channels/whatsapp.ts';
 import { dispatchMessage } from '../src/agent/send.ts';
 import { claimRun, enqueueRun } from '../src/agent/runner.ts';
 import { composeMessageTx } from '../src/modules/threads.ts';
@@ -171,7 +172,7 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('whatsapp history + ignore list 
       insertLeadTx(tx, { name: 'Ignored Claim', whatsapp: '5511999776655' }),
     );
     const leadId = created.body.lead.id;
-    await enqueueRun(sql, { kind: 'outreach', leadId });
+    await enqueueRun(sql, { kind: 'outreach', leadId })!;
     expect(await claimRun(sql)).toBeNull();
     const [r] = await sql<{ status: string }[]>`
       select status from agent_runs where lead_id = ${leadId}
@@ -188,12 +189,12 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('whatsapp history + ignore list 
       const lead = await controlTx(sql, (tx) =>
         insertLeadTx(tx, { name: `Parked ${i}`, whatsapp: '5511999776600' }),
       );
-      await enqueueRun(sql, { kind: 'outreach', leadId: lead.body.lead.id });
+      await enqueueRun(sql, { kind: 'outreach', leadId: lead.body.lead.id })!;
     }
     const valid = await controlTx(sql, (tx) =>
       insertLeadTx(tx, { name: 'Valid', whatsapp: '5511900001111' }),
     );
-    const runId = await enqueueRun(sql, { kind: 'outreach', leadId: valid.body.lead.id });
+    const runId = (await enqueueRun(sql, { kind: 'outreach', leadId: valid.body.lead.id }))!;
     const claimed = await claimRun(sql);
     expect(claimed?.id).toBe(runId);
   });
@@ -247,5 +248,47 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('whatsapp history + ignore list 
     const out = await dispatchMessage(sql, composed.body.message.id);
     expect(out.ok).toBe(false);
     expect(out.reason).toBe('número ignorado');
+  });
+
+  test('whatsappRegistered degrades to null with no live socket', async () => {
+    // No baileys socket runs in tests — the probe must answer "can't tell",
+    // never crash and never a false negative that would un-verify a number.
+    expect(await whatsappRegistered('5511999990000')).toBeNull();
+  });
+
+  test('a fresh inbound cancels queued AUTO outreach — staff runs survive', async () => {
+    await migrate(sql, MIGRATIONS);
+    const lead = await controlTx(sql, (tx) =>
+      insertLeadTx(tx, { name: 'Replier', whatsapp: '5511955550001' }),
+    );
+    const leadId = lead.body.lead.id;
+    await sql`delete from agent_runs where status = 'queued'`;
+    // Automation-queued runs carry params.auto; a staff-dispatched run
+    // ({goal} only) is an explicit decision and must outrank the reply.
+    const autoRun = (await enqueueRun(sql, {
+      kind: 'outreach',
+      leadId,
+      params: { auto: 'cadence' },
+    }))!;
+    const staffRun = (await enqueueRun(sql, {
+      kind: 'outreach',
+      leadId,
+      params: { goal: 'negotiation' },
+    }))!;
+    const res = await ingestInbound(sql, {
+      channel: 'whatsapp',
+      from: '5511955550001@s.whatsapp.net',
+      body: 'oi, quero saber mais',
+      providerMessageId: `fx10-${crypto.randomUUID()}`,
+    });
+    if ('ignored' in res) throw new Error('unexpected ignore');
+    const rows = await sql<{ id: string; status: string }[]>`
+      select id, status from agent_runs where id in (${autoRun}, ${staffRun})
+    `;
+    const byId = Object.fromEntries(rows.map((r) => [r.id, r.status]));
+    expect(byId[autoRun]).toBe('canceled');
+    // ingest kicks a fire-and-forget drain that may already have claimed
+    // the staff run — 'running' or 'queued', the point is never 'canceled'.
+    expect(byId[staffRun]).not.toBe('canceled');
   });
 });

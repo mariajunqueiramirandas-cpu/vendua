@@ -282,7 +282,7 @@ dbDescribe('worker robustness (db)', () => {
 
   /** Seed a run the lease has already expired on — drain() must reclaim it. */
   const seedStaleRun = async (steps: unknown[] = []): Promise<string> => {
-    const id = await enqueueRun(sql, { kind: 'outreach' });
+    const id = (await enqueueRun(sql, { kind: 'outreach' }))!;
     const stale = new Date(Date.now() - 11 * 60_000); // past the 10-min lease
     await sql`
       update agent_runs set status = 'running', claim_token = 'stale-token',
@@ -376,7 +376,7 @@ dbDescribe('worker robustness (db)', () => {
     const lead = await controlTx(sql, (tx) => insertLeadTx(tx, { name: 'Fence Lead' }));
     const leadId = lead.body.lead.id;
     await sql`delete from agent_runs where status = 'queued'`;
-    const runId = await enqueueRun(sql, { kind: 'reply', leadId });
+    const runId = (await enqueueRun(sql, { kind: 'reply', leadId }))!;
     const claimed = await claimRun(sql);
     expect(claimed?.id).toBe(runId);
 
@@ -423,7 +423,7 @@ dbDescribe('worker robustness (db)', () => {
   test('a stale strategist claim cannot land a proposed brief', async () => {
     await migrate(sql, MIGRATIONS);
     await sql`delete from agent_runs where status = 'queued'`;
-    const runId = await enqueueRun(sql, { kind: 'strategist' });
+    const runId = (await enqueueRun(sql, { kind: 'strategist' }))!;
     const claimed = await claimRun(sql);
     expect(claimed?.id).toBe(runId);
     await sql`update agent_runs set status='canceled', claim_token=null where id=${runId}`;
@@ -443,7 +443,7 @@ dbDescribe('worker robustness (db)', () => {
     const lead = await controlTx(sql, (tx) => insertLeadTx(tx, { name: 'CancelLead' }));
     const leadId = lead.body.lead.id;
     await sql`delete from agent_runs where status = 'queued'`;
-    const runId = await enqueueRun(sql, { kind: 'reply', leadId });
+    const runId = (await enqueueRun(sql, { kind: 'reply', leadId }))!;
     const claimed = await claimRun(sql);
     await sql`update agent_runs set status='canceled' where id=${runId}`;
     await expect(
@@ -513,7 +513,7 @@ dbDescribe('worker robustness (db)', () => {
     const lead = await controlTx(sql, (tx) => insertLeadTx(tx, { name: 'Reconcile Lead' }));
     const leadId = lead.body.lead.id;
     await sql`delete from agent_runs where status = 'queued'`;
-    const runId = await enqueueRun(sql, { kind: 'reply', leadId });
+    const runId = (await enqueueRun(sql, { kind: 'reply', leadId }))!;
     const claimed = await claimRun(sql);
     expect(claimed?.id).toBe(runId);
     // The mutation commits through claimControl under key agent:run:step:name:callId —
@@ -565,7 +565,7 @@ dbDescribe('worker robustness (db)', () => {
     const lead = await controlTx(sql, (tx) => insertLeadTx(tx, { name: 'Handoff Lead' }));
     const leadId = lead.body.lead.id;
     await sql`delete from agent_runs where status = 'queued'`;
-    const runId = await enqueueRun(sql, { kind: 'reply', leadId });
+    const runId = (await enqueueRun(sql, { kind: 'reply', leadId }))!;
     const claimed = await claimRun(sql);
     expect(claimed?.id).toBe(runId);
     // Whole handoff commits under ONE claim keyed exactly like the journal
@@ -659,7 +659,7 @@ dbDescribe('worker robustness (db)', () => {
       values (${thread!.id}, 'out', 'agent', 'não envia', 'queued') returning id
     `;
     await sql`delete from agent_runs where status = 'queued'`;
-    const runId = await enqueueRun(sql, { kind: 'reply', leadId });
+    const runId = (await enqueueRun(sql, { kind: 'reply', leadId }))!;
     const claimed = await claimRun(sql);
     const ctx = mkCtx(runId, claimed!.claim_token, leadId);
     // cancel/reclaim lands between compose-commit and the dispatch tx
@@ -682,7 +682,7 @@ dbDescribe('worker robustness (db)', () => {
       values (${leadId}, 'whatsapp', false) returning id
     `;
     await sql`delete from agent_runs where status = 'queued'`;
-    const runId = await enqueueRun(sql, { kind: 'reply', leadId, threadId: thread!.id });
+    const runId = (await enqueueRun(sql, { kind: 'reply', leadId, threadId: thread!.id }))!;
     const claimed = await claimRun(sql);
     expect(claimed?.id ?? null).not.toBe(runId);
     const [r] = await sql<{ status: string }[]>`
@@ -702,7 +702,7 @@ dbDescribe('worker robustness (db)', () => {
       insert into lead_threads (lead_id, channel) values (${leadId}, 'whatsapp') returning id
     `;
     await sql`delete from agent_runs where status = 'queued'`;
-    const runId = await enqueueRun(sql, { kind: 'reply', leadId, threadId: thread!.id });
+    const runId = (await enqueueRun(sql, { kind: 'reply', leadId, threadId: thread!.id }))!;
     // A second connection holds an uncommitted pause — the claim's
     // select sees enabled (pre-pause snapshot) but its FOR UPDATE on the
     // thread row blocks until this commits and must re-read 'false'.
@@ -731,7 +731,7 @@ dbDescribe('worker robustness (db)', () => {
       insert into lead_threads (lead_id, channel) values (${leadId}, 'manual') returning id
     `;
     await sql`delete from agent_runs where status = 'queued'`;
-    const runId = await enqueueRun(sql, { kind: 'reply', leadId });
+    const runId = (await enqueueRun(sql, { kind: 'reply', leadId }))!;
     await claimRun(sql);
     // agent-authored row whose run died before/after the guarded dispatch —
     // created >20s ago so the stranded sweep owns it
@@ -779,14 +779,14 @@ dbDescribe('worker robustness (db)', () => {
     `;
     await sql`delete from agent_runs where status = 'queued'`;
     // 'done' run: its committed send has no owner left — recovery delivers it
-    const doneRun = await enqueueRun(sql, { kind: 'reply', leadId });
+    const doneRun = (await enqueueRun(sql, { kind: 'reply', leadId }))!;
     const [doneMsg] = await sql<{ id: string }[]>`
       insert into lead_messages (thread_id, direction, author, body, status, agent_run_id, created_at)
       values (${thread!.id}, 'out', 'agent', 'done envia', 'queued', ${doneRun}, now() - interval '30 seconds')
       returning id
     `;
     // 'queued' run: the next attempt owns the send — recovery must NOT dispatch
-    const queuedRun = await enqueueRun(sql, { kind: 'reply', leadId });
+    const queuedRun = (await enqueueRun(sql, { kind: 'reply', leadId }))!;
     const [queuedMsg] = await sql<{ id: string }[]>`
       insert into lead_messages (thread_id, direction, author, body, status, agent_run_id, created_at)
       values (${thread!.id}, 'out', 'agent', 'ainda não', 'queued', ${queuedRun}, now() - interval '30 seconds')
@@ -815,7 +815,7 @@ dbDescribe('worker robustness (db)', () => {
       insert into lead_threads (lead_id, channel) values (${leadId}, 'whatsapp'), (${leadId}, 'email')
     `;
     await sql`delete from agent_runs where status = 'queued'`;
-    const runId = await enqueueRun(sql, { kind: 'outreach', leadId });
+    const runId = (await enqueueRun(sql, { kind: 'outreach', leadId }))!;
     const claimed = await claimRun(sql);
     // outreach runs carry no threadId — the handoff is for the lead itself
     const ctx = mkCtx(runId, claimed!.claim_token, leadId, 'outreach');
@@ -857,7 +857,7 @@ dbDescribe('worker robustness (db)', () => {
       insert into lead_threads (lead_id, channel) values (${leadId}, 'whatsapp') returning id
     `;
     await sql`delete from agent_runs where status = 'queued'`;
-    const runId = await enqueueRun(sql, { kind: 'reply', leadId, threadId: thread!.id });
+    const runId = (await enqueueRun(sql, { kind: 'reply', leadId, threadId: thread!.id }))!;
     const claimed = await claimRun(sql);
     const ctx = mkCtx(runId, claimed!.claim_token, leadId, 'reply', thread!.id);
     const out = (await executeTool(ctx, 'h1', 'request_human', {
@@ -884,7 +884,7 @@ dbDescribe('worker robustness (db)', () => {
     const lead = await controlTx(sql, (tx) => insertLeadTx(tx, { name: 'Gate Lead' }));
     const leadId = lead.body.lead.id;
     await sql`delete from agent_runs where status = 'queued'`;
-    const runId = await enqueueRun(sql, { kind: 'reply', leadId });
+    const runId = (await enqueueRun(sql, { kind: 'reply', leadId }))!;
     const claimed = await claimRun(sql);
     const ctx = mkCtx(runId, claimed!.claim_token, leadId);
     // draft → auto would bypass every approval gate staff configured
@@ -964,7 +964,7 @@ dbDescribe('worker robustness (db)', () => {
     const leadId = lead.body.lead.id;
     await sql`update leads set agent_paused_at = now() where id = ${leadId}`;
     await sql`delete from agent_runs where status = 'queued'`;
-    const runId = await enqueueRun(sql, { kind: 'outreach', leadId });
+    const runId = (await enqueueRun(sql, { kind: 'outreach', leadId }))!;
     const claimed = await claimRun(sql);
     expect(claimed?.id ?? null).not.toBe(runId);
     const [r] = await sql<{ status: string }[]>`
@@ -981,10 +981,10 @@ dbDescribe('worker robustness (db)', () => {
     const lead = await controlTx(sql, (tx) => insertLeadTx(tx, { name: 'OptOut Lead' }));
     const leadId = lead.body.lead.id;
     await sql`delete from agent_runs where status = 'queued'`;
-    const replyRun = await enqueueRun(sql, { kind: 'reply', leadId });
+    const replyRun = (await enqueueRun(sql, { kind: 'reply', leadId }))!;
     const claimed = await claimRun(sql);
     expect(claimed?.id).toBe(replyRun);
-    const queuedRun = await enqueueRun(sql, { kind: 'outreach', leadId });
+    const queuedRun = (await enqueueRun(sql, { kind: 'outreach', leadId }))!;
     const ctx = mkCtx(replyRun, claimed!.claim_token, leadId);
     await executeTool(ctx, 'u1', 'unsubscribe', { leadId, reason: 'pediu para sair' });
     const [dead] = await sql<{ status: string }[]>`
