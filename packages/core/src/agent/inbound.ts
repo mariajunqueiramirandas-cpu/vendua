@@ -3,7 +3,7 @@ import { controlTx } from '../modules/control.ts';
 import { emitControlEvent } from '../modules/control-events.ts';
 import { getGuardrails, phoneIsIgnored } from '../modules/integrations.ts';
 import { addInboundMessage, type Channel, type InboundResult } from '../modules/threads.ts';
-import { drain, insertRun } from './runner.ts';
+import { capLockTx, drain, insertRun } from './runner.ts';
 import { log } from '../platform/log.ts';
 
 const agentLog = log.child({ mod: 'agent' });
@@ -82,6 +82,14 @@ export async function ingestInbound(
   // between the message insert and now is seen here instead of stranding a
   // queued reply on a suppressed thread/lead.
   const { runId, coalescedId, canceledIds } = await controlTx(sql, async (tx) => {
+    // 'capfin' first: the per-lead advisory serializes this whole gate
+    // against claims (claimRun only TRIES it — while we hold it every
+    // same-lead candidate rejects there, so the cancel below can never
+    // lose to a concurrent claim) AND against cap evaluators. It must
+    // come before the l,t lock — the advisory is this tx's first lock or
+    // a finisher holding it + waiting on our lead row would cycle (the
+    // flag insert's FK takes key-share on leads). See capLockTx.
+    await capLockTx(tx, res.leadId);
     const gateRows = await tx<ReplyGate[]>`
       select t.agent_enabled, l.agent_mode, l.unsubscribed_at, l.archived_at
       from lead_threads t join leads l on l.id = t.lead_id
@@ -96,10 +104,14 @@ export async function ingestInbound(
     // it's draftOnly composition work (staff approved the supersede); on
     // claim it recomposes against CURRENT state, so the fresh inbound makes
     // its draft more right, and canceling it would orphan the rejected
-    // draft with no replacement. Runs under the l,t lock — claimRun's lead
-    // revalidation can't slip a row through while we hold it.
-    // The ids come back so post-commit run.update emissions refresh the
-    // Runs view — without them canceled rows keep showing as 'queued'.
+    // draft with no replacement. The cancel stays 'queued'-only inside the
+    // gate: its row locks land AFTER the l,t lock, matching every other
+    // writer's leads→runs order (a 'running' predicate would wait on rows
+    // held by tool txs that took their run row + lead lock the other way).
+    // Runs claimed in the capfin-free window before this gate are flipped
+    // by the post-commit pass below. The ids come back so post-commit
+    // run.update emissions refresh the Runs view — without them canceled
+    // rows keep showing as 'queued'.
     const canceled = await tx<{ id: string }[]>`
       update agent_runs
       set status = 'canceled', error = 'lead respondeu', finished_at = now()
@@ -150,7 +162,34 @@ export async function ingestInbound(
     });
     return { runId: id, coalescedId: null, canceledIds };
   });
-  for (const id of canceledIds) emitControlEvent('run.update', id);
+  // A run claimed in the capfin-free window before the gate acquired the
+  // advisory legitimately owns its attempt — but its send would still go
+  // out answering nothing. Flip 'running' auto outreach in a separate
+  // post-commit pass. SKIP LOCKED keeps this tx from ever waiting on a row
+  // — its own flips are visited (and lock-evaluated) by suppression
+  // cancels, so a wait here could cycle back through a leads-holder. A
+  // skipped row is one mid-tool-call; the residual window is one tool
+  // tx's duration. The owner sees 'canceled' at its next step check and
+  // aborts through persistAborted; drain terminal-marks its queued sends.
+  const runningCanceled = await controlTx(sql, async (tx) => {
+    const rows = await tx<{ id: string }[]>`
+      update agent_runs
+      set status = 'canceled', error = 'lead respondeu', finished_at = now()
+      where id in (
+        select id from agent_runs
+        where lead_id = ${res.leadId} and kind = 'outreach' and status = 'running'
+          and params->>'auto' is not null and params->>'auto' <> 'regenerate'
+        for update skip locked
+      )
+      returning id
+    `;
+    return rows.map((r) => r.id);
+  }).catch((e) => {
+    // Best-effort pass — a failure here must not mask the committed ingest.
+    agentLog.warn({ err: e, leadId: res.leadId }, 'running-outreach cancel failed');
+    return [] as string[];
+  });
+  for (const id of [...canceledIds, ...runningCanceled]) emitControlEvent('run.update', id);
   const enqueuedId = runId ?? coalescedId;
   if (enqueuedId) {
     // The latest message earns its own quiet period: slide the parked run

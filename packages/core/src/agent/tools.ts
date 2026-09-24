@@ -884,6 +884,13 @@ export async function executeTool(
             `
           )[0];
           if (dup) {
+            // capfin first — this tx writes the lead row (merge update,
+            // findings FK insert) and may queueOutreach → insertRun, which
+            // takes the advisory itself. It must be the tx's first lock for
+            // the lead or an inbound gate holding it can cycle (see
+            // capLockTx's ordering rule).
+            const { capLockTx } = await import('./runner.ts');
+            await capLockTx(tx, dup.id as string);
             // Known prospect, new research: fill still-empty contact/profile
             // columns (never overwrite what a human or earlier run set) and
             // append the dossier to its timeline instead of dropping it.

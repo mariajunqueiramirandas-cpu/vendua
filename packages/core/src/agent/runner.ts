@@ -82,15 +82,35 @@ interface RunRow {
  *  the evaluation). The card is flagged once — a system activity plus the
  *  same '[humano] <reason>' task request_human writes — so staff sees why
  *  the agent went quiet and can raise the cap or retire the lead. */
-type CapVerdict = 'under' | 'flagged' | 'already' | 'contended';
+type CapVerdict = 'under' | 'flagged' | 'already';
+
+/** 'capfin' ordering rule: this blocking advisory must be a tx's FIRST
+ *  lock for a lead — before any lead_threads/leads FOR UPDATE or agent_runs
+ *  writes that target the same lead. A tx that takes it empty-handed can
+ *  never deadlock: its later row-lock waits (a finisher's flag insert takes
+ *  key-share on leads through the FK; an inbound's l,t lock is FOR UPDATE)
+ *  always resolve against holders that never wait on capfin themselves —
+ *  claims only TRY it, and every other evaluator holds it first too.
+ *  Conversely a tx that grabbed row locks first and then waits here CAN
+ *  cycle (inbound holds the lead → wants capfin; finisher holds capfin →
+ *  wants the lead's key-share). */
+export async function capLockTx(tx: Sql, leadId: string): Promise<void> {
+  await tx`select pg_advisory_xact_lock(hashtext(${'capfin:' + leadId}))`;
+}
 
 /** 'under' admits the run; the rest refuse it. Only 'flagged' means THIS
  *  call wrote the flag + staff task — 'already' saw the flag committed at
- *  this level, 'contended' lost the advisory race to another flag writer. */
+ *  this level. */
 async function leadUnderCostCapTx(tx: Sql, leadId: string): Promise<CapVerdict> {
   const g = await getSettingTx<Partial<Guardrails>>(tx, 'guardrails', {});
   const capUsd = g.leadLifetimeCostCapUsd ?? DEFAULT_GUARDRAILS.leadLifetimeCostCapUsd;
   if (capUsd <= 0) return 'under';
+  // Serialize same-lead cap decisions: two concurrent finishers each see
+  // the other's uncommitted cost_cents as absent — both under-cap, no
+  // flag, parked siblings with no task. The blocking xact advisory makes
+  // the second evaluator read the first's COMMITTED total (its own spend
+  // is visible to itself, committed or not).
+  await capLockTx(tx, leadId);
   const spent = (
     await tx<{ cents: number }[]>`
       select coalesce(sum(cost_cents), 0)::int as cents
@@ -98,12 +118,6 @@ async function leadUnderCostCapTx(tx: Sql, leadId: string): Promise<CapVerdict> 
     `
   )[0]!.cents;
   if (spent < capCentsOf(g)) return 'under';
-  // First-flag decisions serialize on a try-advisory — never waits, so no
-  // deadlock: a loser refuses its run while the winner writes the flag.
-  const got = await tx<{ got: boolean }[]>`
-    select pg_try_advisory_xact_lock(hashtext(${'cap:' + leadId})) as got
-  `;
-  if (!got[0]!.got) return 'contended';
   // Dedupe is per cap LEVEL — after staff raises the cap, hitting the new
   // ceiling flags again; re-crossing the same level doesn't re-alert.
   const flagged = await tx`
@@ -194,26 +208,29 @@ export async function enqueueRun(
  *  Called after a committed guardrails write; emits lead.change for leads
  *  that got a NEW flag so the task list refreshes at once. */
 export async function flagCappedLeads(sql: Sql, limit = 200): Promise<number> {
-  const { fresh, contended } = await controlTx(sql, async (tx) => {
-    const g = await getSettingTx<Partial<Guardrails>>(tx, 'guardrails', {});
-    const capUsd = g.leadLifetimeCostCapUsd ?? DEFAULT_GUARDRAILS.leadLifetimeCostCapUsd;
-    const capCents = capCentsOf(g);
-    if (capCents <= 0) return { fresh: [] as string[], contended: [] as string[] };
-    // Only UNFLAGGED-at-this-cap leads come back — flagging inside the same
-    // tx makes each next batch's not-exists see this batch's flags. Without
-    // the filter a window full of already-flagged leads would let every
-    // lead beyond `limit` park silently, pass after pass. No round cap: a
-    // settings write is the only trigger, so every unflagged over-cap lead
-    // must flag or it stays parked with no staff task. A lead whose flag
-    // write loses the try-advisory is SKIPPED for the rest of this sweep —
-    // the contender holding its lock is inside its own leadUnderCostCapTx
-    // and flags the lead itself — so contention can't stall the pass. An
-    // 'under' verdict (cap raised mid-sweep) is excluded the same way —
-    // the stale batch threshold would otherwise re-select it forever.
-    const fresh: string[] = [];
-    const contended: string[] = [];
-    const excluded: string[] = [];
-    for (;;) {
+  const fresh: string[] = [];
+  const excluded: string[] = [];
+  // One COMMITTED tx per batch: the xact-scoped 'capfin:' advisories
+  // leadUnderCostCapTx takes pile up until commit, so a single sweep tx on
+  // a populated DB would hold every flagged lead's lock for the whole
+  // request. Per-batch commits release them incrementally — and the
+  // not-exists dedupe makes chunking safe: a flag batch N wrote drops the
+  // lead out of batch N+1's fresh snapshot.
+  // Only UNFLAGGED-at-this-cap leads come back — without the filter a
+  // window full of already-flagged leads would let every lead beyond
+  // `limit` park silently, pass after pass. No round cap: a settings write
+  // is the only trigger, so every unflagged over-cap lead must flag or it
+  // stays parked with no staff task. Lead order is fixed (lead_id) so two
+  // concurrent sweeps take the per-lead advisories in the same order and
+  // can't cross-lock each other.
+  for (;;) {
+    const batch = await controlTx(sql, async (tx) => {
+      // Settings are re-read per batch — a cap write mid-sweep is honored
+      // on the next chunk instead of being masked by the stale threshold.
+      const g = await getSettingTx<Partial<Guardrails>>(tx, 'guardrails', {});
+      const capUsd = g.leadLifetimeCostCapUsd ?? DEFAULT_GUARDRAILS.leadLifetimeCostCapUsd;
+      const capCents = capCentsOf(g);
+      if (capCents <= 0) return { flagged: [] as string[], done: true };
       const capped = await tx<{ lead_id: string }[]>`
         select x.lead_id
         from (
@@ -229,50 +246,22 @@ export async function flagCappedLeads(sql: Sql, limit = 200): Promise<number> {
               and (a.meta->>'capUsd')::numeric = ${capUsd}
           )
           and not (x.lead_id = any(${excluded}::uuid[]))
+        order by x.lead_id
         limit ${limit}
       `;
-      if (!capped.length) break;
+      const flagged: string[] = [];
       for (const { lead_id } of capped) {
         const verdict = await leadUnderCostCapTx(tx, lead_id);
-        if (verdict === 'flagged') fresh.push(lead_id);
-        else if (verdict === 'contended') contended.push(lead_id);
-        // 'under' means the cap ROSE mid-sweep (each statement re-reads
-        // committed settings; the batch threshold is the stale one) —
-        // exclude it like a contended lead or every later batch re-selects
-        // it forever. Only 'contended' earns the post-commit retry: an
-        // 'under' lead needs nothing. 'already' drops out of the next
-        // batch's not-exists on its own.
-        if (verdict === 'contended' || verdict === 'under') excluded.push(lead_id);
+        if (verdict === 'flagged') flagged.push(lead_id);
+        // 'under' means the cap ROSE mid-sweep — exclude it or a later
+        // batch re-selects it. 'already' drops out of the next batch's
+        // not-exists on its own.
+        if (verdict === 'under') excluded.push(lead_id);
       }
-    }
-    return { fresh, contended };
-  });
-  // Lock contention isn't proof of a flag at THIS cap — the holder may
-  // flag at an older level or roll back. Its tx is brief, so retry each
-  // skipped lead in fresh short txs after commit (our own advisory locks
-  // are now released): a flag already at the CURRENT level was committed
-  // by the contender — complete, but not counted as ours; under-cap needs
-  // nothing; a still-blocked lock retries. A lead still contended after
-  // the attempts is logged and stays unflagged — flagCappedLeads only
-  // runs on settings writes, so the next write re-picks it.
-  for (const leadId of contended) {
-    let done = false;
-    for (let attempt = 0; attempt < 5 && !done; attempt++) {
-      const state = await controlTx(sql, async (tx) => {
-        const g = await getSettingTx<Partial<Guardrails>>(tx, 'guardrails', {});
-        if (capCentsOf(g) <= 0) return 'under';
-        const verdict = await leadUnderCostCapTx(tx, leadId);
-        return verdict === 'contended' ? 'blocked' : verdict;
-      });
-      if (state !== 'blocked') {
-        if (state === 'flagged') fresh.push(leadId);
-        done = true;
-      } else {
-        await new Promise((r) => setTimeout(r, 50 * (attempt + 1)));
-      }
-    }
-    if (!done)
-      agentLog.warn({ leadId }, 'cost-cap flag retry exhausted — lead still lock-contended');
+      return { flagged, done: capped.length < limit };
+    });
+    fresh.push(...batch.flagged);
+    if (batch.done) break;
   }
   // Unscoped: the console coalesces a burst of events into one pending
   // event and keeps a single ref — per-lead refs would drop intermediate
@@ -352,40 +341,57 @@ export async function claimRun(sql: Sql): Promise<RunRow | null> {
       `;
       const run = cand[0];
       if (!run) return null;
-      // The scan predicate reads t.agent_enabled on the select snapshot — a
-      // pause committed between it and the status flip below would still
-      // claim. Lock the thread row before deciding: an in-flight pause
-      // blocks this FOR UPDATE, then the re-read sees the committed value.
-      if (run.thread_id) {
-        const enabled = await tx<{ agent_enabled: boolean }[]>`
-          select agent_enabled from lead_threads where id = ${run.thread_id} for update
+      // 'capfin' must be a tx's first lock for a lead (see capLockTx) — a
+      // claim holding this row and BLOCKING on it would cycle against a
+      // finisher's key-share. Try-only: a live evaluator means "flagging
+      // or about to be capped" — parking this candidate is the right
+      // disposition anyway, so contention just means reject. It also
+      // serializes the claim against ingestInbound's gate (which holds
+      // capfin through its cancel): while the gate runs, every same-lead
+      // candidate rejects here and the queued cancel always wins.
+      if (run.lead_id) {
+        const capFree = await tx<{ got: boolean }[]>`
+          select pg_try_advisory_xact_lock(hashtext(${'capfin:' + run.lead_id})) as got
         `;
-        if (!enabled[0]?.agent_enabled) {
+        if (!capFree[0]!.got) {
           rejected.push(run.id);
           continue;
         }
       }
-      if (run.lead_id) {
-        // The lead suppression predicate has the same snapshot gap as the
-        // thread leg above — a handoff/unsubscribe committing between the
-        // scan and the status flip would still claim. Revalidate under the
-        // lead row lock. nowait: the suppression writers hold the lead row
-        // and then touch run rows, so waiting here could AB-BA deadlock —
-        // contention just means "about to be suppressed", reject instead.
-        // The savepoint is load-bearing: a 55P03 outside it would abort the
-        // whole claim tx, failing every later statement with 25P02.
-        await tx`savepoint lead_check`;
-        let lead:
-          | {
-              agent_mode: string;
-              archived_at: string | null;
-              unsubscribed_at: string | null;
-              agent_paused_at: string | null;
-              whatsapp: string | null;
-              phone: string | null;
-            }
-          | undefined;
-        try {
+      // Both row revalidations fail fast under one savepoint — a contended
+      // lock means the pause/suppression writer wins, so park instead of
+      // waiting (a blocking wait on rows while holding this candidate's
+      // lock is how claims and the inbound cancel deadlocked each other).
+      // The savepoint is load-bearing: a 55P03 outside it would abort the
+      // whole claim tx, failing every later statement with 25P02.
+      await tx`savepoint cand_check`;
+      let lockLost = false;
+      let lead:
+        | {
+            agent_mode: string;
+            archived_at: string | null;
+            unsubscribed_at: string | null;
+            agent_paused_at: string | null;
+            whatsapp: string | null;
+            phone: string | null;
+          }
+        | undefined;
+      try {
+        // The scan predicate reads t.agent_enabled on the select snapshot —
+        // a pause committed between it and the status flip below would
+        // still claim. Revalidate under the thread row lock — nowait for
+        // the same reason as the lead leg: contention is "about to be
+        // suppressed", so reject.
+        if (run.thread_id) {
+          const enabled = await tx<{ agent_enabled: boolean }[]>`
+            select agent_enabled from lead_threads where id = ${run.thread_id} for update nowait
+          `;
+          if (!enabled[0]?.agent_enabled) {
+            rejected.push(run.id);
+            continue;
+          }
+        }
+        if (run.lead_id) {
           lead = (
             await tx<
               {
@@ -401,10 +407,17 @@ export async function claimRun(sql: Sql): Promise<RunRow | null> {
               from leads where id = ${run.lead_id} for update nowait
             `
           )[0];
-        } catch (e) {
-          if ((e as { code?: string }).code !== '55P03') throw e;
-          await tx`rollback to savepoint lead_check`;
         }
+      } catch (e) {
+        if ((e as { code?: string }).code !== '55P03') throw e;
+        await tx`rollback to savepoint cand_check`;
+        lockLost = true;
+      }
+      if (lockLost) {
+        rejected.push(run.id);
+        continue;
+      }
+      if (run.lead_id) {
         if (
           !lead ||
           lead.agent_mode === 'off' ||
@@ -471,7 +484,7 @@ export async function claimRun(sql: Sql): Promise<RunRow | null> {
 
 async function finishRun(
   sql: Sql,
-  run: { id: string; claimToken: string },
+  run: { id: string; claimToken: string; leadId?: string | null },
   result: {
     status: 'done' | 'failed' | 'canceled';
     steps: unknown[];
@@ -482,6 +495,11 @@ async function finishRun(
   },
 ): Promise<boolean> {
   const out = await controlTx(sql, async (tx) => {
+    // capfin before the run-row update — the cap evaluator that takes it
+    // first can never deadlock (see capLockTx); grabbing it after locking
+    // the run row would invert against inbound's cancel predicate, which
+    // now covers 'running' auto rows too.
+    if (run.leadId) await capLockTx(tx, run.leadId);
     const updated = await tx<{ id: string; lead_id: string | null; kind: RunRow['kind'] }[]>`
     update agent_runs set
       status = ${result.status},
@@ -1195,7 +1213,7 @@ async function writeDebrief(
 export async function runOnce(sql: Sql): Promise<boolean> {
   const run = await claimRun(sql);
   if (!run) return false;
-  const claim = { id: run.id, claimToken: run.claim_token };
+  const claim = { id: run.id, claimToken: run.claim_token, leadId: run.lead_id };
 
   // A reclaimed row carries its prior attempts' journal — keep it (the audit
   // trail for the whole run, not just this attempt) and mark the boundary so
@@ -1295,16 +1313,24 @@ export async function runOnce(sql: Sql): Promise<boolean> {
    *  worker can't overwrite the newer execution's journal. */
   const persistAborted = async (): Promise<void> => {
     await tail.catch(() => undefined);
-    await controlTx(
-      sql,
-      (tx) => tx`
+    const cap = await controlTx(sql, async (tx) => {
+      // capfin before the run-row update — same first-lock ordering as
+      // finishRun (see capLockTx) so the wait can never cycle.
+      if (run.lead_id) await capLockTx(tx, run.lead_id);
+      const rows = await tx<{ id: string }[]>`
         update agent_runs set steps = ${tx.json(steps as never[])}, finished_at = now(),
           tokens_in = ${tokensIn}, tokens_out = ${tokensOut},
           cost_cents = ${Math.round((costUsd + monidBudget.spent) * 100)}
         where id = ${run.id} and status = 'canceled' and claim_token = ${run.claim_token}
-      `,
-    ).catch(() => undefined);
+        returning id
+      `;
+      // The persisted spend can itself push the lead over the cap — without
+      // this check the lead's queued siblings park silently with no task.
+      if (!rows.length || !run.lead_id) return 'under' as CapVerdict;
+      return leadUnderCostCapTx(tx, run.lead_id);
+    }).catch((): CapVerdict => 'under');
     emitControlEvent('run.update', run.id);
+    if (cap === 'flagged') emitControlEvent('lead.change');
   };
 
   // Every reserve/reconcile journals a monid_spend marker — a future
@@ -1457,6 +1483,43 @@ export async function runOnce(sql: Sql): Promise<boolean> {
       });
       await persist();
       if (lost) break;
+
+      // Inbound retires auto outreach: the gate flips queued rows and the
+      // post-commit pass flips 'running' ones SKIP-LOCKED — a row locked
+      // mid-tool-call escapes that pass and nothing revisits it. The
+      // marker the cancel keys on is the committed LIVE inbound itself:
+      // one newer than this attempt's claim means the lead already wrote —
+      // stop exactly like the API cancel (fenced flip → lost → unwind →
+      // persistAborted journals the trajectory). Historical imports are
+      // excluded: they store the provider's sentAt as created_at, so a
+      // re-imported old message (or a skewed provider clock) must not
+      // cancel live outreach — the same rule the ingest gate applies.
+      const autoSrc = (run.params as { auto?: string } | null)?.auto;
+      if (!lost && run.kind === 'outreach' && autoSrc != null && autoSrc !== 'regenerate') {
+        const replied = await controlTx(
+          sql,
+          (tx) => tx`
+            select 1 from lead_messages m
+            join lead_threads t on t.id = m.thread_id
+            where t.lead_id = ${run.lead_id} and m.direction = 'in' and not m.historical
+              and m.created_at > (select started_at from agent_runs where id = ${run.id})
+            limit 1
+          `,
+        );
+        if (replied.length) {
+          await controlTx(
+            sql,
+            (tx) => tx`
+              update agent_runs set status = 'canceled', error = 'lead respondeu',
+                finished_at = now()
+              where id = ${run.id} and status = 'running' and claim_token = ${run.claim_token}
+            `,
+          );
+          emitControlEvent('run.update', run.id);
+          lost = true;
+          break;
+        }
+      }
 
       if (!res.toolCalls.length) {
         if (run.kind === 'discovery' && !nudged) {
@@ -1838,45 +1901,92 @@ export async function drain(sql: Sql, limit = 20): Promise<number> {
   // backoff (run_at = now + 2^attempts min) so a poisoned run stops jumping
   // ahead of healthy work, and the attempt that exhausts max_attempts lands
   // 'failed' — journal kept — instead of looping the lease forever.
-  const reclaimed = await controlTx(sql, async (tx) => {
-    const rows = await tx<
-      { id: string; lead_id: string | null; kind: RunRow['kind']; status: string }[]
-    >`
+  const capFlaggedIds: string[] = [];
+  const { requeued, terminal } = await controlTx(sql, async (tx) => {
+    // Requeue below-cap attempts in one bulk pass — nothing else needs to
+    // commit with them (the retry's own finishRun folds its total spend).
+    const requeued = await tx<{ id: string }[]>`
       update agent_runs set
         attempts = attempts + 1,
-        status = case when attempts + 1 >= max_attempts then 'failed' else 'queued' end,
-        run_at = case when attempts + 1 >= max_attempts then run_at
-                      else now() + make_interval(mins => 1 << least(attempts + 1, 16)) end,
-        error = case when attempts + 1 >= max_attempts
-                     then 'attempt cap reached — run kept dying mid-execution'
-                     else error end,
-        finished_at = case when attempts + 1 >= max_attempts then now() else finished_at end,
+        status = 'queued',
+        run_at = now() + make_interval(mins => 1 << least(attempts + 1, 16)),
         started_at = null,
         alive_at = null,
         claim_token = null
-      where status = 'running' and coalesce(alive_at, started_at) < now() - make_interval(mins => ${RUN_LEASE_MIN})
-      returning id, lead_id, kind, status
+      where status = 'running' and attempts + 1 < max_attempts
+        and coalesce(alive_at, started_at) < now() - make_interval(mins => ${RUN_LEASE_MIN})
+      returning id
     `;
-    // Same failed-run visibility as finishRun's path — the bulk reclaim
-    // writes 'failed' without going through it, so its own task insert.
-    const failed = rows.filter((r) => r.status === 'failed' && r.lead_id);
-    if (failed.length) {
-      const names = await tx<{ id: string; name: string }[]>`
-        select id, name from leads where id = any(${failed.map((f) => f.lead_id!)})
-      `;
-      const nameOf = new Map(names.map((n) => [n.id, n.name]));
-      for (const f of failed) {
-        await tx`
-          insert into lead_tasks (lead_id, title, due_at, created_by)
-          values (${f.lead_id},
-                  ${`[humano] ${nameOf.get(f.lead_id!) ?? f.lead_id}: run ${f.kind} falhou — tentativas esgotadas, a run morria no meio`.slice(0, 300)},
-                  null, 'agent')
-        `;
-      }
-    }
-    return rows;
+    // Terminal rows are finalized one tx each below — the 'running' row
+    // itself is the pending marker: a crash between rows leaves the rest
+    // stale, and the next drain re-picks them (spend fold + task + cap
+    // check all retry with it). A bulk mark-then-finalize split would
+    // strand a 'failed' row with no spend and no task on restart.
+    const terminal = await tx<{ id: string; lead_id: string | null; kind: RunRow['kind'] }[]>`
+      select id, lead_id, kind from agent_runs
+      where status = 'running' and attempts + 1 >= max_attempts
+        and coalesce(alive_at, started_at) < now() - make_interval(mins => ${RUN_LEASE_MIN})
+    `;
+    return { requeued, terminal };
   });
-  for (const r of reclaimed) emitControlEvent('run.update', r.id);
+  for (const r of requeued) emitControlEvent('run.update', r.id);
+  for (const f of terminal) {
+    const flagged = await controlTx(sql, async (tx) => {
+      // capfin before the row write — the bulk pass holds every reclaimed
+      // row's lock, so a capfin wait in there could cycle against an
+      // inbound gate (see capLockTx); inside each small tx it's first.
+      if (f.lead_id) await capLockTx(tx, f.lead_id);
+      // The 'failed' transition, spend fold, staff task, and cap check are
+      // one commit — fenced on staleness so a row revived between the
+      // select and here skips the whole finalize instead of half of it.
+      const rows = await tx<{ id: string; lead_id: string | null }[]>`
+        update agent_runs set
+          attempts = attempts + 1,
+          status = 'failed',
+          error = 'attempt cap reached — run kept dying mid-execution',
+          finished_at = now(),
+          started_at = null,
+          alive_at = null,
+          claim_token = null,
+          cost_cents = round((
+            coalesce((select sum((e->'usage'->>'costUsd')::numeric)
+                      from jsonb_array_elements(steps) e
+                      where e->>'type' = 'model'), 0)
+            + coalesce((select (e.v->>'spentUsd')::numeric
+                        from jsonb_array_elements(steps) with ordinality as e(v, idx)
+                        where e.v->>'type' = 'monid_spend'
+                        order by idx desc limit 1), 0)
+          ) * 100)::int
+        where id = ${f.id} and status = 'running'
+          and coalesce(alive_at, started_at) < now() - make_interval(mins => ${RUN_LEASE_MIN})
+        returning id, lead_id
+      `;
+      const row = rows[0];
+      if (!row) return false;
+      // A dead attempt never reached finishRun — its spend lives only in
+      // the journal. Model entries are usage DELTAS (sum them); monid_spend
+      // markers carry the CUMULATIVE budget balance at each write — the
+      // fold above reads the LAST marker like runOnce's priorSpend, never
+      // a sum (summing cumulative balances would inflate cost_cents).
+      // Same failed-run visibility as finishRun's path.
+      if (!row.lead_id) return false;
+      const name =
+        (await tx<{ name: string }[]>`select name from leads where id = ${row.lead_id}`)[0]?.name ??
+        row.lead_id;
+      await tx`
+        insert into lead_tasks (lead_id, title, due_at, created_by)
+        values (${row.lead_id},
+                ${`[humano] ${name}: run ${f.kind} falhou — tentativas esgotadas, a run morria no meio`.slice(0, 300)},
+                null, 'agent')
+      `;
+      // And now that the spend persisted, run the same cap check every
+      // other terminal path does — dead-run spend can itself cross the cap.
+      return (await leadUnderCostCapTx(tx, row.lead_id)) === 'flagged';
+    }).catch(() => false);
+    if (flagged) capFlaggedIds.push(f.lead_id!);
+    emitControlEvent('run.update', f.id);
+  }
+  if (capFlaggedIds.length) emitControlEvent('lead.change');
   // Terminal suppressions strand queued runs forever — the claim gate's
   // pause semantics never lifts them. unsubscribe writers cancel inline,
   // archive doesn't, so this sweep is the catch-all for both (a writer
@@ -2161,6 +2271,16 @@ export async function sweepOutreach(sql: Sql): Promise<number> {
       for update skip locked
     `;
     for (const { id, next_action_source } of due) {
+      // The select's for-update already holds THIS lead's row lock, so a
+      // blocking capfin wait here would invert against ingestInbound's
+      // gate (capfin first, then the lead lock — see capLockTx). Try the
+      // advisory instead: a busy capfin means an inbound gate or a cost
+      // finalizer is serializing the lead right now — skip this pass; the
+      // due date stays for the next sweep.
+      const capFree = await tx<{ got: boolean }[]>`
+        select pg_try_advisory_xact_lock(hashtext(${'capfin:' + id})) as got
+      `;
+      if (!capFree[0]!.got) continue;
       // params.auto marks automation-scheduled work — a fresh inbound cancels
       // it (ingestInbound). 'cadence' AND 'agent' sources are the
       // automation's own nudges (the prompt writes nextActionAt as the

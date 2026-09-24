@@ -6,6 +6,7 @@ import { executeTool, assertRunClaimTx, type ToolContext } from '../src/agent/to
 import { mapPointerName, pageKey } from '../src/agent/channels/discovery.ts';
 import { dispatchMessage } from '../src/agent/send.ts';
 import { controlTx } from '../src/modules/control.ts';
+import { subscribeControlEvents, type ControlEvent } from '../src/modules/control-events.ts';
 import { insertLeadTx, getLeadDetail } from '../src/modules/leads.ts';
 import { ensureThread } from '../src/modules/threads.ts';
 import { migrate } from '../src/platform/db.ts';
@@ -484,6 +485,48 @@ dbDescribe('worker robustness (db)', () => {
     expect(r.attempts).toBe(3);
     expect(r.error).toContain('attempt cap');
     expect(r.finished_at).not.toBeNull();
+  });
+
+  test('a terminal reclaim persists journaled spend and fires the cap check', async () => {
+    await migrate(sql, MIGRATIONS);
+    const events: ControlEvent[] = [];
+    const unsub = subscribeControlEvents((e) => events.push(e));
+    const lead = await controlTx(sql, (tx) => insertLeadTx(tx, { name: 'Capped Dead Run' }));
+    const leadId = lead.body.lead.id;
+    await sql`
+      insert into control_settings (key, value)
+      values ('guardrails', ${sql.json({ leadLifetimeCostCapUsd: 0.2 } as never)})
+      on conflict (key) do update set value = excluded.value
+    `;
+    const id = (await enqueueRun(sql, { kind: 'outreach', leadId }))!;
+    const stale = new Date(Date.now() - 11 * 60_000);
+    // 15¢ of model usage + monid markers holding CUMULATIVE balances
+    // (3¢ then 10¢ — the budget's running total, not per-charge deltas):
+    // over the 20¢ cap, but only ever recorded in steps (the attempt died
+    // before finishRun). A sum would inflate to 28¢ — the fold must read
+    // the LAST marker like priorSpend does on resume.
+    await sql`
+      update agent_runs set status = 'running', claim_token = 'stale',
+        started_at = ${stale}, alive_at = ${stale}, max_attempts = 1,
+        steps = ${sql.json([
+          { type: 'model', content: 'a', usage: { tokensIn: 1, tokensOut: 1, costUsd: 0.15 } },
+          { type: 'monid_spend', spentUsd: 0.03 },
+          { type: 'monid_spend', spentUsd: 0.1 },
+        ] as never[])}
+      where id = ${id}
+    `;
+    await drain(sql, 0);
+    const r = await getRun(id);
+    expect(r.status).toBe('failed');
+    expect(r.cost_cents).toBe(25);
+    const flags = await sql`select 1 from lead_activities
+      where lead_id = ${leadId} and kind = 'system' and meta->>'type' = 'cost-cap'`;
+    expect(flags.length).toBe(1);
+    const tasks = await sql`select title from lead_tasks
+      where lead_id = ${leadId} and title like '%custo do agente%'`;
+    expect(tasks.length).toBe(1);
+    expect(events.some((e) => e.type === 'lead.change')).toBe(true);
+    unsub();
   });
 
   test('a requeued run claims once its backoff elapses — attempts intact', async () => {
@@ -1704,5 +1747,55 @@ dbDescribe('worker robustness (db)', () => {
     expect(reads[2]!.readSpent).toBe(0);
     expect(reads[2]!.out?.pages?.length).toBe(1);
     expect(reads[2]!.out?.errors?.map((e) => e.url)).toEqual(['ftp://shop.example/menu']);
+  });
+
+  test('auto outreach self-cancels when a fresher inbound exists mid-run', async () => {
+    await migrate(sql, MIGRATIONS);
+    const lead = await controlTx(sql, (tx) => insertLeadTx(tx, { name: 'Replied Mid-Run' }));
+    const leadId = lead.body.lead.id;
+    const [thread] = await sql<{ id: string }[]>`
+      insert into lead_threads (lead_id, channel) values (${leadId}, 'whatsapp') returning id
+    `;
+    await sql`delete from agent_runs where status = 'queued'`;
+    const runId = (await enqueueRun(sql, { kind: 'outreach', leadId }))!;
+    // params.auto is the marker the gate/post-commit cancel keys on; a
+    // 'running' row locked during that pass escapes it — the run must
+    // catch the committed inbound itself at the next step boundary.
+    await sql`update agent_runs set run_at = now(),
+      params = ${sql.json({ auto: 'first-contact', script: [{ text: 'oi' }, { text: 'outra' }] } as never)}
+      where id = ${runId}`;
+    // sentAt is provider time — clock skew can land it ahead of the
+    // claim stamp and it still counts as "arrived during this attempt"
+    await sql`insert into lead_messages (thread_id, direction, author, body, status, created_at)
+      values (${thread!.id}, 'in', 'lead', 'sim, quero', 'received', now() + interval '1 minute')`;
+    expect(await runOnce(sql)).toBe(true);
+    const r = await getRun(runId);
+    expect(r.status).toBe('canceled');
+    expect(r.error).toBe('lead respondeu');
+    // the second scripted turn never ran — the probe broke the loop
+    expect(r.steps.filter((s) => (s as { type?: string }).type === 'model')).toHaveLength(1);
+  });
+
+  test('a historical import does not self-cancel auto outreach', async () => {
+    await migrate(sql, MIGRATIONS);
+    const lead = await controlTx(sql, (tx) => insertLeadTx(tx, { name: 'History Sync' }));
+    const leadId = lead.body.lead.id;
+    const [thread] = await sql<{ id: string }[]>`
+      insert into lead_threads (lead_id, channel) values (${leadId}, 'whatsapp') returning id
+    `;
+    await sql`delete from agent_runs where status = 'queued'`;
+    const runId = (await enqueueRun(sql, { kind: 'outreach', leadId }))!;
+    await sql`update agent_runs set run_at = now(),
+      params = ${sql.json({ auto: 'first-contact', script: [{ text: 'oi' }] } as never)}
+      where id = ${runId}`;
+    // Re-imported context message stamped AFTER the claim — a provider
+    // clock ahead would land here too. historical=true means "context
+    // only": it never asked for a reply, so it must not cancel.
+    await sql`insert into lead_messages (thread_id, direction, author, body, status, created_at, historical)
+      values (${thread!.id}, 'in', 'lead', 'contexto antigo', 'received',
+              now() + interval '1 minute', true)`;
+    expect(await runOnce(sql)).toBe(true);
+    const r = await getRun(runId);
+    expect(r.status).toBe('done');
   });
 });

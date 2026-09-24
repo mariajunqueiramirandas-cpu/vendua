@@ -388,8 +388,8 @@ export async function addInboundMessage(
     const status = direction === 'in' ? 'received' : 'sent';
     const message = (
       await tx<MessageRow[]>`
-        insert into lead_messages (thread_id, direction, author, body, status, provider_message_id, created_at)
-        values (${thread.id}, ${direction}, ${author}, ${body}, ${status}, ${pmid}, ${input.sentAt ?? new Date()})
+        insert into lead_messages (thread_id, direction, author, body, status, provider_message_id, created_at, historical)
+        values (${thread.id}, ${direction}, ${author}, ${body}, ${status}, ${pmid}, ${input.sentAt ?? new Date()}, ${input.historical === true})
         returning *
       `
     )[0]!;
