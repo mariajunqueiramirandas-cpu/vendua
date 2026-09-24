@@ -14,6 +14,8 @@ import { log } from '../platform/log.ts';
  *   bun run sim -- --list                     names only
  *   --driver gemini|openrouter|anthropic|openai  (default gemini)
  *   --model <id>                               provider model override
+ *   --harness slimToolOutputs,staticSystem     opt into harness flags
+ *                                              (integration.config.harness)
  *
  * Runs against an isolated `vendua_sim` database (created + migrated on the
  * same docker postgres): the `whatsapp`/`email` drivers are `log` (messages
@@ -55,7 +57,7 @@ async function ensureSimDb() {
 
 async function seedSimEnv(
   sql: ReturnType<typeof createSql>,
-  llm: { driver: string; model?: string | undefined },
+  llm: { driver: string; model?: string | undefined; harness?: Record<string, boolean> },
 ) {
   const opts = [
     await upsertIntegration(
@@ -64,7 +66,12 @@ async function seedSimEnv(
         kind: 'llm',
         driver: llm.driver,
         enabled: true,
-        config: llm.model ? { model: llm.model } : {},
+        config: {
+          ...(llm.model ? { model: llm.model } : {}),
+          ...(llm.harness && Object.keys(llm.harness).length
+            ? { harness: llm.harness }
+            : {}),
+        },
       },
       `sim:llm:${llm.driver}:${llm.model ?? 'default'}:${process.pid}`,
     ),
@@ -111,6 +118,15 @@ const flag = (name: string) => {
 };
 const llmDriver = flag('--driver') ?? 'gemini';
 const llmModel = flag('--model');
+// --harness slimToolOutputs,staticSystem — flips the runner flags through
+// the same config.harness key the real integration row reads.
+const harnessFlags = Object.fromEntries(
+  (flag('--harness') ?? '')
+    .split(',')
+    .map((f) => f.trim())
+    .filter(Boolean)
+    .map((f) => [f, true]),
+);
 if (list) {
   for (const s of SIM_SCENARIOS) cliLog.info(`${s.name} — ${s.description}`);
   process.exit(0);
@@ -141,7 +157,7 @@ if (!wanted.length) {
 await ensureSimDb();
 const sql = createSql(SIM_URL);
 await migrate(sql, join(import.meta.dir, '../../db/migrations'));
-await seedSimEnv(sql, { driver: llmDriver, model: llmModel });
+await seedSimEnv(sql, { driver: llmDriver, model: llmModel, harness: harnessFlags });
 
 await mkdir(join(import.meta.dir, '../../sim-results'), { recursive: true });
 
