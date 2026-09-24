@@ -2608,4 +2608,46 @@ dbDescribe('worker robustness (db)', () => {
       expect(new Date(m!.received_at).getTime()).toBeGreaterThan(new Date(t0!.t0).getTime());
     });
   });
+
+  test('journal dual-writes into agent_run_steps — rows mirror the committed journal', async () => {
+    await migrate(sql, MIGRATIONS);
+    const lead = await controlTx(sql, (tx) => insertLeadTx(tx, { name: 'Journal Table' }));
+    const leadId = lead.body.lead.id;
+    await sql`delete from agent_runs where status = 'queued'`;
+    const runId = (await enqueueRun(sql, { kind: 'reply', leadId }))!;
+    await sql`update agent_runs set run_at = now(),
+      params = ${sql.json({
+        script: [
+          { toolCalls: [{ name: 'add_note', args: { leadId, body: 'oi' } }] },
+          { text: 'pronto' },
+        ],
+      } as never)}
+      where id = ${runId}`;
+    expect(await runOnce(sql)).toBe(true);
+    const r = await getRun(runId);
+    expect(r.status).toBe('done');
+    const rows = await sql<
+      {
+        seq: number;
+        kind: string;
+        name: string | null;
+        call_id: string | null;
+        step: number | null;
+        out: { ok?: boolean } | null;
+      }[]
+    >`
+      select seq, kind, name, call_id, step, out
+      from agent_run_steps where run_id = ${runId} order by seq
+    `;
+    // One row per journal entry, in journal order — replay still reads
+    // agent_runs.steps, so equality is the dual-write contract.
+    expect(rows.length).toBe(r.steps.length);
+    expect(rows.map((x) => x.seq)).toEqual(r.steps.map((_, i) => i));
+    expect(rows.map((x) => x.kind)).toEqual(r.steps.map((s) => (s as { type: string }).type));
+    const tool = rows.find((x) => x.name === 'add_note');
+    expect(tool?.call_id).toBeTruthy();
+    expect(tool?.step).toBe(0);
+    // The row was upserted to its resolved result, not left pending.
+    expect(tool?.out).toBeTruthy();
+  });
 });
