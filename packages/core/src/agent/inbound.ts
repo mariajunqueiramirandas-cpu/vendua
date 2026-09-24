@@ -121,20 +121,27 @@ export async function ingestInbound(
       returning id
     `;
     const canceledIds = canceled.map((c) => c.id);
-    // A canceled draftOnly run may have already committed a draft — a
-    // "first contact" answering nothing is exactly what the cancel is for,
-    // so its still-unapproved drafts die with it (same predicate as
-    // rejectMessage: status 'draft' only — queued/approved sends aren't
-    // touched, that's dispatch's business).
-    if (canceledIds.length) {
-      const drafts = await tx<{ thread_id: string }[]>`
-        update lead_messages
-        set status = 'rejected', error = 'lead respondeu', updated_at = now()
-        where agent_run_id = any(${canceledIds}) and status = 'draft'
-        returning thread_id
-      `;
-      supersededThreads.push(...drafts.map((d) => d.thread_id));
-    }
+    // Every still-unapproved draft an AUTO outreach run authored dies with
+    // the reply — a "first contact" answering nothing is exactly what the
+    // cancel is for, and a FINISHED draftOnly run leaves the same obsolete
+    // text parked in the approvals lane. The predicate keys on the run's
+    // own auto marker, not run status: queued just-canceled, running,
+    // done, failed — all supersede. 'regenerate' is exempt (same rule as
+    // the cancel: its recompose reads current state, so the fresh inbound
+    // makes its draft more right). Status 'draft' only — queued/approved
+    // sends aren't touched, that's dispatch's business.
+    const drafts = await tx<{ thread_id: string }[]>`
+      update lead_messages m
+      set status = 'rejected', error = 'lead respondeu', updated_at = now()
+      where m.status = 'draft'
+        and m.agent_run_id in (
+          select r.id from agent_runs r
+          where r.lead_id = ${res.leadId} and r.kind = 'outreach'
+            and r.params->>'auto' is not null and r.params->>'auto' <> 'regenerate'
+        )
+      returning m.thread_id
+    `;
+    supersededThreads.push(...drafts.map((d) => d.thread_id));
     const gate = gateRows[0];
 
     if (
