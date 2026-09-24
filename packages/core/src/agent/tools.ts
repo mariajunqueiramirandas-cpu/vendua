@@ -1728,15 +1728,13 @@ export async function executeTool(
             }
             return { page };
           })
-          .catch(
-            (e): PageResult => {
-              if (key2) ctx.pageCache.delete(key2);
-              return {
-                page: null,
-                error: e instanceof Error ? e.message : String(e),
-              };
-            },
-          );
+          .catch((e): PageResult => {
+            if (key2) ctx.pageCache.delete(key2);
+            return {
+              page: null,
+              error: e instanceof Error ? e.message : String(e),
+            };
+          });
         missOut.set(url, p);
         if (key2) ctx.pageCache.set(key2, p);
       }
