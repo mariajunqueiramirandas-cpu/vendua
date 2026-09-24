@@ -720,7 +720,8 @@ export async function contextFor(
         `SEGMENTOS (leads · responderam · ativos · custo):\n${stats
           .map(
             (s) =>
-              `- ${s.segment}: ${s.leads} leads · ${s.replied} responderam · ${s.live} ativos · R$${(s.costCents / 100).toFixed(2)}`,
+              // costCents is agent spend — metered in USD, unlike deal values.
+              `- ${s.segment}: ${s.leads} leads · ${s.replied} responderam · ${s.live} ativos · US$${(s.costCents / 100).toFixed(2)}`,
           )
           .join('\n')}`,
       );
@@ -736,7 +737,7 @@ export async function contextFor(
         `SEGMENTOS (leads · responderam · ativos · custo):\n${stats
           .map(
             (s) =>
-              `- ${s.segment}: ${s.leads} leads · ${s.replied} responderam · ${s.live} ativos · R$${(s.costCents / 100).toFixed(2)}`,
+              `- ${s.segment}: ${s.leads} leads · ${s.replied} responderam · ${s.live} ativos · US$${(s.costCents / 100).toFixed(2)}`,
           )
           .join('\n')}`,
       );

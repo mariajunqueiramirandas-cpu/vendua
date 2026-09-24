@@ -67,19 +67,24 @@ export function ListEditor({
     <div>
       <div className="lst">
         {items.length === 0 && <div className="none">nada por aqui ainda</div>}
-        {items.map((it, i) => (
-          <div className="row" key={`${i}-${it.slice(0, 12)}`}>
-            <span className="ix">{String(i + 1).padStart(2, '0')}</span>
-            <span className="tx">{it}</span>
-            <button
-              className="x"
-              title="remover"
-              onClick={() => onChange(items.filter((_, j) => j !== i))}
-            >
-              ×
-            </button>
-          </div>
-        ))}
+        {items.map((raw, i) => {
+          // Settings come back as untyped jsonb — a non-string entry (bad
+          // seed, legacy shape) must render instead of crashing the route.
+          const it = typeof raw === 'string' ? raw : JSON.stringify(raw);
+          return (
+            <div className="row" key={`${i}-${it.slice(0, 12)}`}>
+              <span className="ix">{String(i + 1).padStart(2, '0')}</span>
+              <span className="tx">{it}</span>
+              <button
+                className="x"
+                title="remover"
+                onClick={() => onChange(items.filter((_, j) => j !== i))}
+              >
+                ×
+              </button>
+            </div>
+          );
+        })}
       </div>
       <div className="lst-add">
         <input

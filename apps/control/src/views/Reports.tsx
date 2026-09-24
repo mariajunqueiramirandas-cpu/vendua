@@ -3,7 +3,15 @@ import { Link } from 'react-router-dom';
 import { RefreshCw } from 'lucide-react';
 import { api, type Stats } from '../api.ts';
 import { onControlEvent } from '../events.ts';
-import { Empty, LEAD_STATES, LEAD_STATE_LABEL, Page, fmtDay, fmtMoney } from '../components.tsx';
+import {
+  Empty,
+  LEAD_STATES,
+  LEAD_STATE_LABEL,
+  Page,
+  fmtDay,
+  fmtMoney,
+  fmtUsdCents,
+} from '../components.tsx';
 
 /** R$ compact for chart axis labels — "R$ 4,9 mil" fits where the full
  *  currency string wouldn't. */
@@ -97,7 +105,7 @@ export default function Reports() {
               </div>
             </div>
             <div className="card stat">
-              <div className="v">{fmtMoney(s.agent30d.costCents)}</div>
+              <div className="v">{fmtUsdCents(s.agent30d.costCents)}</div>
               <div className="k">custo do agente · 30d</div>
             </div>
           </div>
