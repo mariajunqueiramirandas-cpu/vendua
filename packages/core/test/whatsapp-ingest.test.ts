@@ -12,10 +12,7 @@ import {
   validateSetting,
 } from '../src/modules/integrations.ts';
 import { controlTx } from '../src/modules/control.ts';
-import {
-  subscribeControlEvents,
-  type ControlEvent,
-} from '../src/modules/control-events.ts';
+import { subscribeControlEvents, type ControlEvent } from '../src/modules/control-events.ts';
 import { insertLeadTx } from '../src/modules/leads.ts';
 import { migrate } from '../src/platform/db.ts';
 
