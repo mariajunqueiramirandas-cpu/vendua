@@ -380,7 +380,7 @@ export interface LeadFact {
 }
 
 // ---------- calls ----------
-export const api = {
+const apiBase = {
   login: (key: string) =>
     req<{ ok: true }>('/login', { method: 'POST', body: JSON.stringify({ key }) }),
   logout: () => req<{ ok: true }>('/logout', { method: 'POST' }),
@@ -585,3 +585,175 @@ export const api = {
   cancelWakeup: (id: string) =>
     req<{ wakeup: Wakeup }>(`/agent/wakeups/${id}/cancel`, { method: 'POST' }),
 };
+
+// ============================ agent v2 (ADR 0014) ============================
+// Every contract route/type of the CRM agent v2 lives in this section —
+// settings shapes (agent_playbooks, agent_autonomy), playbook catalog,
+// wakeups, memory v2, lead facts/autonomy, metrics. Shared types are
+// exported from here so the Studio and the lead panel read one contract.
+
+export const PLAYBOOK_KINDS = ['triage', 'reply', 'outreach', 'discovery', 'strategist'] as const;
+export type PlaybookKind = (typeof PLAYBOOK_KINDS)[number];
+
+/** Staff override per kind, stored in the `agent_playbooks` setting and
+ *  merged over the playbook's built-in defaults at insert time. */
+export interface PlaybookOverride {
+  /** false → insertRun refuses new runs of this kind */
+  enabled?: boolean;
+  /** integer 1..60 */
+  stepBudget?: number;
+  /** provider model id; null/absent = workspace llm default */
+  model?: string | null;
+  /** ≤4000 chars, appended to the system prompt */
+  instructions?: string;
+  /** 0..5 — default paid-enrichment cap for the kind */
+  monidCapUsd?: number;
+}
+export type AgentPlaybooksSetting = Partial<Record<PlaybookKind, PlaybookOverride>>;
+
+/** One entry of GET /agent/playbooks — catalog metadata + live override. */
+export interface AgentPlaybookInfo {
+  kind: PlaybookKind;
+  label: string;
+  description: string;
+  /** automatic enqueue paths the playbook owns */
+  triggers: string[];
+  defaults: { stepBudget: number; monidCapUsd: number };
+  tools: string[];
+  override: PlaybookOverride;
+}
+
+export const AUTONOMY_LEVELS = ['off', 'copilot', 'supervised', 'autopilot'] as const;
+export type AutonomyLevel = (typeof AUTONOMY_LEVELS)[number];
+
+/** The `agent_autonomy` setting — the workspace preset policy.ts reads. */
+export interface AgentAutonomySetting {
+  level: AutonomyLevel;
+  /** strategist self-approves proposed discovery briefs while trailing-7d
+   *  discovery spend stays under this cap. 0 = never. */
+  strategistAutoApproveUsd?: number;
+}
+
+/** GET /leads/:id/autonomy — the policy's answer for one lead, explained. */
+export interface LeadAutonomy {
+  /** workspace level after lead overrides */
+  level: AutonomyLevel;
+  /** automatic runs allowed right now */
+  canRun: boolean;
+  sendMode: 'auto' | 'draft' | 'blocked';
+  /** ordered — first is the decisive one */
+  reasons: { code: string; message: string }[];
+}
+
+export interface Wakeup {
+  id: string;
+  leadId: string | null;
+  leadName: string | null;
+  kind: PlaybookKind;
+  /** ISO */
+  at: string;
+  focus: string;
+  status: 'pending' | 'fired' | 'canceled';
+  /** staff/agent explicitly asked for this wake — a live inbound does NOT retire it */
+  requested: boolean;
+  createdBy: 'agent' | 'staff';
+  createdByRunId: string | null;
+  firedRunId: string | null;
+  cancelReason: string | null;
+  createdAt: string;
+}
+
+export type MemoryScope = 'workspace' | 'segment' | 'debrief';
+export interface MemoryItem {
+  id: string;
+  scope: MemoryScope;
+  segment: string | null;
+  /** ≤500 */
+  content: string;
+  pinned: boolean;
+  source: 'agent' | 'staff' | 'debrief';
+  sourceRunId: string | null;
+  uses: number;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface LeadFact {
+  /** snake_case ≤60 */
+  key: string;
+  /** ≤500 */
+  value: string;
+  /** 0..1 */
+  confidence: number;
+  source: 'agent' | 'staff';
+  sourceRunId: string | null;
+  updatedAt: string;
+}
+
+export interface AgentMetrics {
+  window: { from: string; to: string };
+  byKind: {
+    kind: PlaybookKind;
+    runs: number;
+    done: number;
+    failed: number;
+    canceled: number;
+    actedRate: number;
+    avgSteps: number;
+    costUsd: number;
+    avgCostUsd: number;
+  }[];
+  outbound: { sent: number; drafted: number; approved: number; rejected: number };
+  replies: { leadsContacted: number; leadsReplied: number; replyRate: number };
+  wakeups: { pending: number; fired: number } | null;
+}
+
+const agentV2 = {
+  playbooks: () => req<{ playbooks: AgentPlaybookInfo[] }>('/agent/playbooks'),
+
+  /** workspace preset — server always returns both fields (defaults
+   *  supervised/0 when unset); the Studio writes via putSetting. */
+  autonomy: () =>
+    req<{ level: AutonomyLevel; strategistAutoApproveUsd: number }>('/agent/autonomy'),
+
+  leadAutonomy: (leadId: string) => req<LeadAutonomy>(`/leads/${leadId}/autonomy`),
+
+  wakeups: (q: { lead_id?: string; status?: string; limit?: string } = {}) => {
+    const params = new URLSearchParams(
+      Object.entries(q).filter(([, v]) => v) as [string, string][],
+    );
+    return req<{ wakeups: Wakeup[] }>(`/agent/wakeups${params.size ? `?${params}` : ''}`);
+  },
+  cancelWakeup: (id: string) =>
+    req<{ wakeup: Wakeup }>(`/agent/wakeups/${id}/cancel`, { method: 'POST' }),
+
+  memory: (q: { scope?: MemoryScope; segment?: string } = {}) => {
+    const params = new URLSearchParams(
+      Object.entries(q).filter(([, v]) => v) as [string, string][],
+    );
+    return req<{ items: MemoryItem[] }>(`/agent/memory${params.size ? `?${params}` : ''}`);
+  },
+  createMemory: (b: { scope: MemoryScope; segment?: string; content: string }) =>
+    req<{ item: MemoryItem }>('/agent/memory', { method: 'POST', body: JSON.stringify(b) }),
+  patchMemory: (id: string, patch: { content?: string; pinned?: boolean }) =>
+    req<{ item: MemoryItem }>(`/agent/memory/${id}`, {
+      method: 'PATCH',
+      body: JSON.stringify(patch),
+    }),
+  deleteMemory: (id: string) => req<{ ok: true }>(`/agent/memory/${id}`, { method: 'DELETE' }),
+
+  leadFacts: (leadId: string) => req<{ facts: LeadFact[] }>(`/leads/${leadId}/facts`),
+  putLeadFact: (leadId: string, key: string, b: { value: string; confidence?: number }) =>
+    req<{ fact: LeadFact }>(`/leads/${leadId}/facts/${encodeURIComponent(key)}`, {
+      method: 'PUT',
+      body: JSON.stringify(b),
+    }),
+  deleteLeadFact: (leadId: string, key: string) =>
+    req<{ ok: true }>(`/leads/${leadId}/facts/${encodeURIComponent(key)}`, { method: 'DELETE' }),
+
+  metrics: (days: 7 | 30 = 7) => req<AgentMetrics>(`/agent/metrics?days=${days}`),
+};
+
+// one client — the v2 section merges in so callers keep a single import
+export const api = Object.assign(apiBase, agentV2);
+// ========================== end agent v2 (ADR 0014) ==========================
