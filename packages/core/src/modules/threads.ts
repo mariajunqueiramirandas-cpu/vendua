@@ -3,12 +3,7 @@ import { HttpError, str } from '../platform/http.ts';
 import { claimControl, controlTx, type ClaimResult } from './control.ts';
 import { emitControlEvent } from './control-events.ts';
 import { leadJson, type LeadRow } from './leads.ts';
-import {
-  capCentsOf,
-  DEFAULT_GUARDRAILS,
-  getSettingTx,
-  type Guardrails,
-} from './integrations.ts';
+import { capCentsOf, DEFAULT_GUARDRAILS, getSettingTx, type Guardrails } from './integrations.ts';
 
 /**
  * threads module — the unified inbox. One thread per (lead, channel):

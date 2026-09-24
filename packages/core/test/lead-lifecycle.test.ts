@@ -886,9 +886,9 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('lead lifecycle (db)', () => {
 
     test('estimateModelCostUsd prices listed, free and unknown models', () => {
       expect(estimateModelCostUsd('gemini:gemini-3.5-flash-lite', 1_000_000, 0)).toBeCloseTo(0.1);
-      expect(estimateModelCostUsd('openrouter:liquid/lfm-2.5-2.6b:free', 1_000_000, 1_000_000)).toBe(
-        0,
-      );
+      expect(
+        estimateModelCostUsd('openrouter:liquid/lfm-2.5-2.6b:free', 1_000_000, 1_000_000),
+      ).toBe(0);
       // Unknown models price at the mid-tier fallback — a cost cap must not
       // treat an unrecognized driver as free spend.
       expect(estimateModelCostUsd('gemini:gemini-future-pro', 500_000, 500_000)).toBeCloseTo(2.5);
@@ -904,9 +904,7 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('lead lifecycle (db)', () => {
       await setGuardrails({ leadLifetimeCostCapUsd: 0.004 });
       try {
         const leadId = await mkLead();
-        expect(
-          await controlTx(sql, (tx) => insertRun(tx, { kind: 'reply', leadId })),
-        ).toBeTruthy();
+        expect(await controlTx(sql, (tx) => insertRun(tx, { kind: 'reply', leadId }))).toBeTruthy();
         await sql`
           insert into agent_runs (kind, lead_id, status, cost_cents, finished_at)
           values ('reply', ${leadId}, 'done', 1, now())
