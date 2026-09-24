@@ -490,12 +490,16 @@ function anthropicProvider(config: Record<string, unknown>, secretRef: string | 
             body: JSON.stringify({
               model,
               max_tokens: 2048,
-              system,
+              // Explicit cache breakpoints: the prompt-caching prefix is
+              // tools → system → messages, so a breakpoint on the last tool
+              // and on the system block caches the whole static prefix.
+              system: [{ type: 'text', text: system, cache_control: { type: 'ephemeral' } }],
               messages: amMessages,
-              tools: tools.map((t) => ({
+              tools: tools.map((t, i) => ({
                 name: t.name,
                 description: t.description,
                 input_schema: t.parameters,
+                ...(i === tools.length - 1 ? { cache_control: { type: 'ephemeral' } } : {}),
               })),
             }),
           },
