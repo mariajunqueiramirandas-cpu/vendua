@@ -1096,7 +1096,12 @@ export function createApp({ sql, sessionSecret, controlSecret, autoDrain }: AppD
       return { status: 201, body: { runId } };
     });
     if (res.replayed) c.header('x-idempotent-replay', 'true');
-    if (!res.replayed) emitControlEvent('run.update', res.body.runId);
+    if (!res.replayed) {
+      emitControlEvent('run.update', res.body.runId);
+      // The refusal committed a cap flag + staff task — only lead.change
+      // refreshes the Tasks view/badge, so a run.update alone hides it.
+      if (res.status === 422) emitControlEvent('lead.change', leadId);
+    }
     kickDrain();
     return c.json(res.body, res.status as 201);
   });
@@ -1732,7 +1737,13 @@ export function createApp({ sql, sessionSecret, controlSecret, autoDrain }: AppD
       return { status: 201, body: { runId } };
     });
     if (res.replayed) c.header('x-idempotent-replay', 'true');
-    if (!res.replayed) emitControlEvent('run.update', res.body.runId);
+    if (!res.replayed) {
+      emitControlEvent('run.update', res.body.runId);
+      // Unscoped on a cap refusal: the effective lead can live behind a
+      // threadId, and one bare event refreshes every open card + the badge
+      // the flag+task write just changed.
+      if (res.status === 422) emitControlEvent('lead.change');
+    }
     kickDrain();
     return c.json(res.body, res.status as 201);
   });
@@ -1825,9 +1836,12 @@ export function createApp({ sql, sessionSecret, controlSecret, autoDrain }: AppD
       return { status: 200, body: { enqueued, skipped } };
     });
     if (res.replayed) c.header('x-idempotent-replay', 'true');
-    if (!res.replayed && res.body.enqueued) {
-      emitControlEvent('lead.change');
-      emitControlEvent('run.update');
+    if (!res.replayed) {
+      // Cap refusals committed flag+task writes for the skipped leads —
+      // lead.change is what refreshes the Tasks view/badge for them.
+      const capSkipped = res.body.skipped.some((s) => s.reason === 'lead over its agent cost cap');
+      if (res.body.enqueued || capSkipped) emitControlEvent('lead.change');
+      if (res.body.enqueued) emitControlEvent('run.update');
     }
     if (res.body.enqueued) kickDrain();
     return c.json(res.body);

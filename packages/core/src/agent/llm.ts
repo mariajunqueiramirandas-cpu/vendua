@@ -44,6 +44,36 @@ export interface LlmProvider {
 }
 
 // ---------------------------------------------------------------------------
+// cost estimation — every driver but OpenRouter reports costUsd: null, so a
+// model-only lead would never reach the lifetime cost cap. When the provider
+// reports no USD we estimate from journaled tokens × per-1M list prices,
+// keyed by the model id provider.name embeds (`driver:model`). Free-tier
+// models rate 0; an unmatched model gets a conservative mid-tier default —
+// a cost cap must err toward counting spend, not ignoring it.
+// ---------------------------------------------------------------------------
+const MODEL_USD_PER_1M: Record<string, { in: number; out: number }> = {
+  'gemini-3.5-flash-lite': { in: 0.1, out: 0.4 },
+  'claude-sonnet-4-5': { in: 3.0, out: 15.0 },
+  'gpt-4o-mini': { in: 0.15, out: 0.6 },
+};
+const FALLBACK_USD_PER_1M = { in: 1.0, out: 4.0 };
+
+export function estimateModelCostUsd(
+  providerName: string,
+  tokensIn: number,
+  tokensOut: number,
+): number {
+  // provider.name is `driver:model` (openrouter's model can itself contain
+  // a ':' — `liquid/lfm-2.5-2.6b:free` → strip the FIRST segment only).
+  const model = providerName.includes(':')
+    ? providerName.slice(providerName.indexOf(':') + 1)
+    : providerName;
+  const rate =
+    MODEL_USD_PER_1M[model] ?? (model.endsWith(':free') ? { in: 0, out: 0 } : FALLBACK_USD_PER_1M);
+  return (tokensIn * rate.in + tokensOut * rate.out) / 1_000_000;
+}
+
+// ---------------------------------------------------------------------------
 // rate limiting — providerFor builds a fresh provider per run, so the throttle
 // lives at module level and keys by driver: a shared slot chain spaces calls
 // to at most RPM, and every call retries 429/5xx honoring Retry-After. This is
@@ -544,12 +574,18 @@ export interface MockStep {
   /** Dev/demo pacing — sleep before this step lands, so scripted runs read
    *  live on the launch stage (and in recordings) instead of flashing past. */
   delayMs?: number;
+  /** Reported token usage (default 0) — lets tests exercise the token→USD
+   *  cost-estimation path without a live provider. costUsd stays null
+   *  unless set, like the real drivers. */
+  tokensIn?: number;
+  tokensOut?: number;
+  costUsd?: number | null;
 }
 
-export function mockProvider(script: MockStep[]): LlmProvider {
+export function mockProvider(script: MockStep[], name = 'mock'): LlmProvider {
   let calls = 0;
   return {
-    name: 'mock',
+    name,
     async chat() {
       const step = script[calls] ?? { text: 'ok' };
       calls++;
@@ -563,9 +599,9 @@ export function mockProvider(script: MockStep[]): LlmProvider {
           name: t.name,
           args: t.args ?? {},
         })),
-        tokensIn: 0,
-        tokensOut: 0,
-        costUsd: null,
+        tokensIn: step.tokensIn ?? 0,
+        tokensOut: step.tokensOut ?? 0,
+        costUsd: step.costUsd ?? null,
       };
     },
   };
@@ -592,7 +628,10 @@ export function providerFor(
       return openaiProvider(config, secretRef);
     case 'mock': {
       const script = (runParams.script ?? config.script ?? []) as MockStep[];
-      return mockProvider(script);
+      // Tests may masquerade the mock as a priced driver — provider.name is
+      // what the token-rate lookup keys on for cost estimation.
+      const name = (runParams.providerName ?? config.providerName) as string | undefined;
+      return mockProvider(script, name ?? 'mock');
     }
     default:
       throw new Error(`unknown llm driver: ${driver}`);
