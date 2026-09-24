@@ -2012,13 +2012,15 @@ dbDescribe('worker robustness (db)', () => {
     // 'running' row locked during that pass escapes it — the run must
     // catch the committed inbound itself at the next step boundary.
     await sql`update agent_runs set run_at = now(),
-      params = ${sql.json({ auto: 'first-contact', script: [{ text: 'oi' }, { text: 'outra' }] } as never)}
+      params = ${sql.json({ auto: 'first-contact', script: [{ text: 'oi', delayMs: 1500 }, { text: 'outra' }] } as never)}
       where id = ${runId}`;
-    // sentAt is provider time — clock skew can land it ahead of the
-    // claim stamp and it still counts as "arrived during this attempt"
+    // The probe keys on received_at (server ingest): the inbound must land
+    // AFTER the claim — fire the run, let claim+turn-1 start, then insert.
+    const running = runOnce(sql);
+    await new Promise((r) => setTimeout(r, 150));
     await sql`insert into lead_messages (thread_id, direction, author, body, status, created_at)
-      values (${thread!.id}, 'in', 'lead', 'sim, quero', 'received', now() + interval '1 minute')`;
-    expect(await runOnce(sql)).toBe(true);
+      values (${thread!.id}, 'in', 'lead', 'sim, quero', 'received', now())`;
+    expect(await running).toBe(true);
     const r = await getRun(runId);
     expect(r.status).toBe('canceled');
     expect(r.error).toBe('lead respondeu');
@@ -2047,5 +2049,76 @@ dbDescribe('worker robustness (db)', () => {
     expect(await runOnce(sql)).toBe(true);
     const r = await getRun(runId);
     expect(r.status).toBe('done');
+  });
+
+  test('a lagging provider stamp still self-cancels — the probe keys on ingest time', async () => {
+    await migrate(sql, MIGRATIONS);
+    const lead = await controlTx(sql, (tx) => insertLeadTx(tx, { name: 'Lag Inbound' }));
+    const leadId = lead.body.lead.id;
+    const [thread] = await sql<{ id: string }[]>`
+      insert into lead_threads (lead_id, channel) values (${leadId}, 'whatsapp') returning id
+    `;
+    await sql`delete from agent_runs where status = 'queued'`;
+    const runId = (await enqueueRun(sql, { kind: 'outreach', leadId }))!;
+    await sql`update agent_runs set run_at = now(),
+      params = ${sql.json({ auto: 'first-contact', script: [{ text: 'oi', delayMs: 1500 }, { text: 'outra' }] } as never)}
+      where id = ${runId}`;
+    // Provider clock an hour BEHIND: created_at predates the claim, but the
+    // message is ingested mid-run — received_at is what "arrived during
+    // this attempt" means.
+    const running = runOnce(sql);
+    await new Promise((r) => setTimeout(r, 150));
+    await sql`insert into lead_messages (thread_id, direction, author, body, status, created_at)
+      values (${thread!.id}, 'in', 'lead', 'sim, quero', 'received', now() - interval '1 hour')`;
+    expect(await running).toBe(true);
+    const r = await getRun(runId);
+    expect(r.status).toBe('canceled');
+    expect(r.error).toBe('lead respondeu');
+    expect(r.steps.filter((s) => (s as { type?: string }).type === 'model')).toHaveLength(1);
+  });
+
+  test('an auto send refused at dispatch — the inbound beat the probe window', async () => {
+    await migrate(sql, MIGRATIONS);
+    await sql`
+      insert into control_integrations (kind, driver, enabled)
+      values ('whatsapp', 'log', true)
+      on conflict (kind, driver) do update set enabled = true
+    `;
+    // The default first-contact draft-only gate would park the send in the
+    // approval queue before it ever reaches dispatch.
+    await sql`
+      insert into control_settings (key, value) values ('guardrails', ${sql.json({ firstContactDraftOnly: false, quietStart: '00:00', quietEnd: '00:00' } as never)})
+      on conflict (key) do update set value = excluded.value
+    `;
+    const lead = await controlTx(sql, (tx) =>
+      insertLeadTx(tx, { name: 'Send Boundary', whatsapp: '5511955550001', agent_mode: 'auto' }),
+    );
+    const leadId = lead.body.lead.id;
+    const [thread] = await sql<{ id: string }[]>`
+      insert into lead_threads (lead_id, channel) values (${leadId}, 'whatsapp') returning id
+    `;
+    await sql`delete from agent_runs where status = 'queued'`;
+    const runId = (await enqueueRun(sql, { kind: 'outreach', leadId }))!;
+    await sql`update agent_runs set run_at = now(),
+      params = ${sql.json({ auto: 'first-contact' } as never)}
+      where id = ${runId}`;
+    const claimed = await claimRun(sql);
+    expect(claimed?.id).toBe(runId);
+    // Live inbound committed AFTER the claim but before any step boundary —
+    // the probe hasn't run yet; the send-claim tx must refuse on its own.
+    await sql`insert into lead_messages (thread_id, direction, author, body, status)
+      values (${thread!.id}, 'in', 'lead', 'oi, quero', 'received')`;
+    const out = (await executeTool(
+      mkCtx(runId, claimed!.claim_token, leadId, 'outreach'),
+      's1',
+      'send_message',
+      { leadId, body: 'não deve enviar' },
+    )) as { error?: string };
+    expect(out.error).toBe('lead respondeu');
+    const msgs = await sql<{ status: string }[]>`
+      select status from lead_messages where thread_id = ${thread!.id} and direction = 'out'
+    `;
+    expect(msgs).toHaveLength(1);
+    expect(msgs[0]!.status).toBe('failed');
   });
 });

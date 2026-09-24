@@ -553,6 +553,31 @@ export async function assertRunClaimTx(tx: Sql, ctx: ToolContext): Promise<void>
   }
 }
 
+/** Auto outreach's dispatch-boundary recheck — the same predicate the
+ *  mid-run probe uses (live inbound ingested after this attempt's claim),
+ *  re-evaluated inside the send-claim tx under the capfin lead lock so
+ *  ingest and send serialize: a committed inbound can never be followed by
+ *  the auto nudge it already answered. Returns the refusal reason. */
+export async function refuseOnFresherInboundTx(tx: Sql, ctx: ToolContext): Promise<string | null> {
+  if (ctx.runKind !== 'outreach' || !ctx.leadId || !ctx.claimToken) return null;
+  const run = (
+    await tx<{ auto: string | null; started_at: string | null }[]>`
+      select params->>'auto' as auto, started_at from agent_runs where id = ${ctx.runId}
+    `
+  )[0];
+  if (!run?.started_at || run.auto == null || run.auto === 'regenerate') return null;
+  const { capLockTx } = await import('./runner.ts');
+  await capLockTx(tx, ctx.leadId);
+  const replied = await tx<{ id: string }[]>`
+    select m.id from lead_messages m
+    join lead_threads t on t.id = m.thread_id
+    where t.lead_id = ${ctx.leadId} and m.direction = 'in' and not m.historical
+      and m.received_at > ${run.started_at}::timestamptz
+    limit 1
+  `;
+  return replied.length ? 'lead respondeu' : null;
+}
+
 export async function executeTool(
   ctx: ToolContext,
   callId: string,
@@ -1265,7 +1290,14 @@ export async function executeTool(
       // compose-commit and this send stops the message via the guard.
       let sendError: string | undefined;
       if (out.verdict.forceDraft === false && !ctx.draftOnly) {
-        const sent = await dispatchMessage(sql, out.composed.body.message.id, guard);
+        const sent = await dispatchMessage(sql, out.composed.body.message.id, async (tx) => {
+          await assertRunClaimTx(tx, ctx);
+          // The probe only runs at step boundaries — an inbound committed
+          // between the last probe and this send would escape it, and the
+          // ingest gate can't see the locked run. Recheck under capfin so
+          // ingest and send serialize on the same lead lock.
+          return refuseOnFresherInboundTx(tx, ctx);
+        });
         // A composed-but-failed send must not count as a landed action —
         // surfacing the failure as {error} keeps runActed's finish gate
         // honest and tells the model the send didn't land.
