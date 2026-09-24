@@ -445,24 +445,28 @@ describe('mapPointerName', () => {
     ).toBe('Acme');
   });
 
-  test('a continue= chain is bounded — past the cap it resolves via fetch', () => {
-    // continue= points at another google url (or itself) — untrusted input;
-    // unbounded recursion would stack-overflow inside read_pages.
-    const self = 'https://www.google.com/sorry/?continue=' + encodeURIComponent('');
-    // a url whose continue points to itself, url-encoded per level
+  test('a continue= chain is bounded — past the cap, null hands off to the fetch path', () => {
+    // continue= wraps another google url (or itself) — untrusted input; an
+    // unbounded unwrap would stack-overflow inside read_pages. The contract
+    // under test is only the boundary: mapPointerName returning null is what
+    // hands the url to resolveMapPointer's per-hop fetch instead (that side
+    // needs live network).
+    // a wrapper chain that never reaches a name carrier — null, no crash
     let loop = 'https://www.google.com/sorry/';
     loop = `https://www.google.com/sorry/?continue=${encodeURIComponent(loop)}`;
     loop = `https://www.google.com/sorry/?continue=${encodeURIComponent(loop)}`;
     loop = `https://www.google.com/sorry/?continue=${encodeURIComponent(loop)}`;
-    expect(mapPointerName(self)).toBeNull();
     expect(mapPointerName(loop)).toBeNull();
-    // a legit 3-hop chain still resolves the name at the end
+    // a legit 3-hop chain still resolves the name at the end — in-process,
+    // no fetch spent
     let chain = 'https://www.google.com/search?q=Acme';
     for (let i = 0; i < 3; i++) {
       chain = `https://www.google.com/sorry/?continue=${encodeURIComponent(chain)}`;
     }
     expect(mapPointerName(chain)).toBe('Acme');
-    // …but 4 hops is past the cap — null, not a stack crash
+    // …but 4 hops is past the peel cap — null hands it to the fetch path,
+    // whose own hops keep peeling (and run assertFetchable), so the name is
+    // still recoverable with real spend instead of lost outright
     chain = `https://www.google.com/sorry/?continue=${encodeURIComponent(chain)}`;
     expect(mapPointerName(chain)).toBeNull();
   });
