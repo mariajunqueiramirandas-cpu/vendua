@@ -286,9 +286,11 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('agent v2 (db)', () => {
       expect(st[0]!.status).toBe('pending');
 
       // an enabled email integration must exist for the channel to be
-      // reachable — seed it: other files' cleanup can leave none behind
+      // reachable — seed it: other files' cleanup can leave none behind,
+      // or a disabled 'log' row may linger — upsert past both
       await sql`insert into control_integrations (kind, driver, enabled)
-                values ('email', 'log', true)`;
+                values ('email', 'log', true)
+                on conflict (kind, driver) do update set enabled = true`;
       await setSetting('agent_autonomy', { level: 'copilot' });
       const cp = await controlTx(sql, (tx) => explainAutonomyTx(tx, leadId));
       expect(cp!.sendMode).toBe('blocked'); // no channel on this lead

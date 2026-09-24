@@ -90,6 +90,14 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('agent evals — golden runs (db
         values ('guardrails', ${sql.json({ ...DEFAULT_GUARDRAILS, quietStart: '00:00', quietEnd: '00:00', ...patch } as never)})
         on conflict (key) do update set value = excluded.value`;
 
+  /** draftDecision also reads agent_autonomy: 'copilot' drafts every
+   *  outbound, 'autopilot' lifts firstContactDraftOnly. Pin the default so
+   *  sibling-file residue can't flip a send into a draft between runs. */
+  const pinAutonomy = () =>
+    sql`insert into control_settings (key, value)
+        values ('agent_autonomy', ${sql.json({ level: 'supervised' } as never)})
+        on conflict (key) do update set value = excluded.value`;
+
   const seedLead = async (whatsapp: string, fields: Record<string, unknown> = {}) => {
     const created = await controlTx(sql, (tx) =>
       insertLeadTx(tx, { name: 'Eval Lead', agent_mode: 'auto', whatsapp, ...fields }),
@@ -150,6 +158,7 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('agent evals — golden runs (db
     await cancelQueued();
     await seedChannel();
     await seedGuardrails({ firstContactDraftOnly: false });
+    await pinAutonomy();
     const wa = PHONE();
     const leadId = await seedLead(wa);
     const p = scriptedProvider([
@@ -176,6 +185,7 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('agent evals — golden runs (db
     await cancelQueued();
     await seedChannel();
     await seedGuardrails({ firstContactDraftOnly: true });
+    await pinAutonomy();
     const wa = PHONE();
     const leadId = await seedLead(wa);
     const p = scriptedProvider([
@@ -196,7 +206,10 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('agent evals — golden runs (db
     await migrate(sql, MIGRATIONS);
     await cancelQueued();
     await seedChannel();
-    await seedGuardrails();
+    // farewell must reach the wire, so first contact can't be forced to
+    // draft — the flag and the level both pin to send
+    await seedGuardrails({ firstContactDraftOnly: false });
+    await pinAutonomy();
     const wa = PHONE();
     const leadId = await seedLead(wa);
     const p = scriptedProvider([
@@ -250,6 +263,7 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('agent evals — golden runs (db
     await cancelQueued();
     await seedChannel();
     await seedGuardrails({ firstContactDraftOnly: false });
+    await pinAutonomy();
     const wa = PHONE();
     const leadId = await seedLead(wa);
     const call = { name: 'send_message', args: { leadId, body: 'Mesmo texto, de novo.' } };
@@ -270,6 +284,7 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('agent evals — golden runs (db
     await cancelQueued();
     await seedChannel();
     await seedGuardrails({ firstContactDraftOnly: false });
+    await pinAutonomy();
     const wa = PHONE();
     const leadId = await seedLead(wa);
     const p = scriptedProvider([
@@ -295,6 +310,7 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('agent evals — golden runs (db
     await cancelQueued();
     await seedChannel();
     await seedGuardrails({ firstContactDraftOnly: false, leadLifetimeCostCapUsd: 0.05 });
+    await pinAutonomy();
     const wa = PHONE();
     const leadId = await seedLead(wa);
     const p = scriptedProvider([
