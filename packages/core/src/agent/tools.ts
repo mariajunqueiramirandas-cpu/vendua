@@ -626,8 +626,15 @@ export async function refuseOnFresherInboundTx(tx: Sql, ctx: ToolContext): Promi
     where t.lead_id = ${ctx.leadId} and m.direction = 'in' and not m.historical
       and m.received_at is not null
       and m.received_at > ${run.started_at}::timestamptz
+      and not exists (
+        select 1 from agent_inbox i
+        where i.consumed_by_run = ${ctx.runId}
+          and i.payload->>'messageId' = m.id::text
+      )
     limit 1
   `;
+  // Mail this run already drained doesn't refuse its answer — the obsolete-
+  // auto guard still bites on any inbound that arrived unhandled.
   return replied.length ? 'lead respondeu' : null;
 }
 

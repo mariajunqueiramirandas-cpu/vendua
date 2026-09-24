@@ -2800,6 +2800,61 @@ dbDescribe('worker robustness (db)', () => {
     expect(msgs[0]!.status).toBe('failed');
   });
 
+  test('mail the run already drained does not refuse its answer', async () => {
+    await migrate(sql, MIGRATIONS);
+    await sql`
+      insert into control_integrations (kind, driver, enabled)
+      values ('whatsapp', 'log', true)
+      on conflict (kind, driver) do update set enabled = true
+    `;
+    await sql`
+      insert into control_settings (key, value) values ('guardrails', ${sql.json({ firstContactDraftOnly: false, quietStart: '00:00', quietEnd: '00:00' } as never)})
+      on conflict (key) do update set value = excluded.value
+    `;
+    const lead = await controlTx(sql, (tx) =>
+      insertLeadTx(tx, { name: 'Mail Answer', whatsapp: '5511955550002', agent_mode: 'auto' }),
+    );
+    const leadId = lead.body.lead.id;
+    const [thread] = await sql<{ id: string }[]>`
+      insert into lead_threads (lead_id, channel) values (${leadId}, 'whatsapp') returning id
+    `;
+    await sql`delete from agent_runs where status = 'queued'`;
+    const runId = (await enqueueRun(sql, { kind: 'outreach', leadId }))!;
+    await sql`update agent_runs set run_at = now(),
+      params = ${sql.json({ auto: 'first-contact' } as never)}
+      where id = ${runId}`;
+    const claimed = await claimRun(sql);
+    expect(claimed?.id).toBe(runId);
+    // Same shape as the refusal test above — inbound committed after the
+    // claim — except its inbox item was already consumed INTO this run.
+    const [msg] = await sql<{ id: string }[]>`
+      insert into lead_messages (thread_id, direction, author, body, status)
+      values (${thread!.id}, 'in', 'lead', 'oi, quero', 'received') returning id
+    `;
+    const itemId = await controlTx(sql, (tx) =>
+      enqueueInboxTx(tx, leadId, 'inbound', {
+        text: 'oi, quero',
+        requestedKind: 'reply',
+        messageId: msg!.id,
+      }),
+    );
+    await sql`
+      update agent_inbox set consumed_by_run = ${runId}, consumed_at = now() where id = ${itemId}
+    `;
+    const out = (await executeTool(
+      mkCtx(runId, claimed!.claim_token, leadId, 'outreach'),
+      's1',
+      'send_message',
+      { leadId, body: 'aqui vai a resposta' },
+    )) as { error?: string };
+    expect(out.error).toBeUndefined();
+    const msgs = await sql<{ status: string }[]>`
+      select status from lead_messages where thread_id = ${thread!.id} and direction = 'out'
+    `;
+    expect(msgs).toHaveLength(1);
+    expect(msgs[0]!.status).not.toBe('failed');
+  });
+
   test('received_at is wall-clock — an open inbound tx stamps insert time, not tx start', async () => {
     await migrate(sql, MIGRATIONS);
     const lead = await controlTx(sql, (tx) => insertLeadTx(tx, { name: 'Tx Clock' }));

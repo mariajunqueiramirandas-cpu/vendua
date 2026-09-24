@@ -239,6 +239,50 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('whatsapp history + ignore list 
     expect(pending).toHaveLength(4);
   });
 
+  test('a far-future parked run comes due for delivered mail', async () => {
+    await migrate(sql, MIGRATIONS);
+    await sql`
+      insert into control_settings (key, value) values ('guardrails', ${sql.json({ inboundReplyDelayMin: 60 } as never)})
+      on conflict (key) do update set value = excluded.value
+    `;
+    // The lead exists BEFORE the inbound so an outreach can own its run slot
+    // — parked a week out, the schedule must not hold the reply hostage.
+    const phone = `5511${Math.floor(Math.random() * 1e10)}`;
+    const mid = crypto.randomUUID();
+    const lead = await controlTx(sql, (tx) =>
+      insertLeadTx(tx, { name: 'Scheduled Lead', whatsapp: phone, agent_mode: 'auto' }),
+    );
+    const leadId = lead.body.lead.id;
+    await sql`delete from agent_runs where status = 'queued'`;
+    const parked = (await enqueueRun(sql, {
+      kind: 'outreach',
+      leadId,
+      runAt: new Date(Date.now() + 7 * 86_400_000),
+    }))!;
+    const res = await ingestInbound(sql, {
+      channel: 'whatsapp',
+      from: `${phone}@s.whatsapp.net`,
+      body: 'oi, tem horário amanhã?',
+      providerMessageId: `${mid}-1`,
+    });
+    if ('ignored' in res) throw new Error('unexpected ignore');
+    // The single active slot means the item belongs to the parked outreach —
+    // and its run_at slid INTO the reply quiet window instead of a week out.
+    const pending = await sql`
+      select 1 from agent_inbox where lead_id = ${leadId} and consumed_at is null
+    `;
+    expect(pending).toHaveLength(1);
+    const parkedRun = (
+      await sql<{ run_at: Date; status: string }[]>`
+        select run_at, status from agent_runs where id = ${parked}
+      `
+    )[0]!;
+    expect(parkedRun.status).toBe('queued');
+    const slideMs = parkedRun.run_at.getTime() - Date.now();
+    expect(slideMs).toBeGreaterThan(0);
+    expect(slideMs).toBeLessThanOrEqual(61 * 60_000);
+  });
+
   test('a staff-queued reply absorbs the inbound as mail — one run serves both', async () => {
     await migrate(sql, MIGRATIONS);
     await sql`

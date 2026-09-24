@@ -175,11 +175,15 @@ export async function ingestInbound(
     // made the old coalesced slide safe bound it here (a running or
     // already-due run is never rescheduled).
     if (inboundReplyDelayMin > 0) {
+      const due = new Date(Date.now() + inboundReplyDelayMin * 60_000);
       await controlTx(sql, async (tx) => {
         await tx`
           update agent_runs
-          set run_at = greatest(run_at, ${new Date(Date.now() + inboundReplyDelayMin * 60_000)})
-          where id = ${runId} and kind = 'reply' and status = 'queued' and run_at > now()
+          set run_at = case
+            when kind = 'reply' then greatest(run_at, ${due})
+            else least(run_at, ${due})
+          end
+          where id = ${runId} and status = 'queued' and run_at > now()
         `;
       });
     }
