@@ -1,4 +1,5 @@
 import type { Sql } from '../platform/db.ts';
+import { ACTION_TOOLS } from '../agent/tool-meta.ts';
 import { controlTx } from './control.ts';
 
 /**
@@ -12,18 +13,11 @@ import { controlTx } from './control.ts';
 export type MetricsKind = 'triage' | 'reply' | 'outreach' | 'discovery' | 'strategist';
 const KINDS: MetricsKind[] = ['triage', 'reply', 'outreach', 'discovery', 'strategist'];
 
-// Mirror of runner.ts's ACTION_TOOLS/runActed, expressed in SQL: a journaled
-// tool result counts as "acted" only when it landed a visible effect — a
-// result object carrying no `error`, `blocked !== true`, `ignored !== true`.
-const ACTION_TOOLS: string[] = [
-  'send_message',
-  'draft_message',
-  'request_human',
-  'unsubscribe',
-  'set_state',
-  'update_lead',
-  'create_task',
-];
+// runActed expressed in SQL against the journal: a tool result counts as
+// "acted" only when it landed a visible effect — a result object carrying
+// no `error`, `blocked !== true`, `ignored !== true`. The name set is
+// tool-meta's ACTION_TOOLS.
+const ACTION_TOOL_NAMES = [...ACTION_TOOLS];
 
 export interface KindMetrics {
   kind: MetricsKind;
@@ -80,7 +74,7 @@ export async function agentMetrics(sql: Sql, days: 7 | 30): Promise<AgentMetrics
           where status = 'done' and exists (
             select 1 from jsonb_array_elements(steps) e
             where e->>'type' = 'tool'
-              and e->>'name' = any(${ACTION_TOOLS})
+              and e->>'name' = any(${ACTION_TOOL_NAMES})
               and e->>'out' is not null
               and e->'out'->>'error' is null
               and coalesce(e->'out'->>'blocked', '') <> 'true'

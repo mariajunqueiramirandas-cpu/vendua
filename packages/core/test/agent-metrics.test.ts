@@ -78,8 +78,7 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('agentMetrics (db)', () => {
     }
     expect(m.outbound).toEqual({ sent: 0, drafted: 0, approved: 0, rejected: 0 });
     expect(m.replies).toEqual({ leadsContacted: 0, leadsReplied: 0, replyRate: 0 });
-    // agent_wakeups doesn't exist on this schema → null, never an error
-    expect(m.wakeups).toBeNull();
+    expect(m.wakeups).toEqual({ pending: 0, fired: 0 });
   });
 
   test('byKind counts statuses; actedRate mirrors runActed over the journal', async () => {
@@ -172,5 +171,23 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('agentMetrics (db)', () => {
     expect(m.replies).toEqual({ leadsContacted: 2, leadsReplied: 1, replyRate: 0.5 });
     const m30 = await agentMetrics(sql, 30);
     expect(m30.outbound.sent).toBe(5);
+  });
+
+  test('wakeups counts pending backlog and fired-in-window', async () => {
+    await migrate(sql, MIGRATIONS);
+    await sql`delete from agent_wakeups`;
+    const stale = new Date(Date.now() - 20 * 86_400_000);
+    await sql`
+      insert into agent_wakeups (kind, at, focus, status, created_by)
+      values
+        ('reply', now(), 'follow up', 'pending', 'agent'),
+        ('outreach', now() + interval '1 day', 'retry', 'pending', 'staff'),
+        ('reply', now(), 'follow up', 'fired', 'agent'),
+        ('reply', ${stale}, 'old fire', 'fired', 'agent'),
+        ('outreach', now(), 'gave up', 'canceled', 'staff')`;
+    const m = await agentMetrics(sql, 7);
+    expect(m.wakeups).toEqual({ pending: 2, fired: 1 });
+    const m30 = await agentMetrics(sql, 30);
+    expect(m30.wakeups).toEqual({ pending: 2, fired: 2 });
   });
 });
