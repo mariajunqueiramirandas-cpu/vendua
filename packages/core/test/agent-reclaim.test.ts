@@ -1442,9 +1442,7 @@ dbDescribe('worker robustness (db)', () => {
           { toolCalls: [{ name: 'read_pages', args: { urls: ['ftp://shop.example/menu'] } }] },
           // the https twin still fetches — the rejection never masked it
           {
-            toolCalls: [
-              { name: 'read_pages', args: { urls: ['https://shop.example/menu'] } },
-            ],
+            toolCalls: [{ name: 'read_pages', args: { urls: ['https://shop.example/menu'] } }],
           },
           // same-call twin: both urls share the fetched page's identity —
           // the read dedupes to the cached page, free
