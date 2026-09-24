@@ -3,7 +3,7 @@ import { controlTx } from '../modules/control.ts';
 import { emitControlEvent } from '../modules/control-events.ts';
 import { getGuardrails, phoneIsIgnored } from '../modules/integrations.ts';
 import { addInboundMessage, type Channel, type InboundResult } from '../modules/threads.ts';
-import { drain, insertRun } from './runner.ts';
+import { capLockTx, drain, insertRun } from './runner.ts';
 import { log } from '../platform/log.ts';
 
 const agentLog = log.child({ mod: 'agent' });
@@ -81,13 +81,76 @@ export async function ingestInbound(
   // the staff pause toggle on `lead_threads` — so a suppression committed
   // between the message insert and now is seen here instead of stranding a
   // queued reply on a suppressed thread/lead.
-  const runId = await controlTx(sql, async (tx) => {
+  const supersededThreads: string[] = [];
+  const { runId, coalescedId, canceledIds, capFlagged } = await controlTx(sql, async (tx) => {
+    // 'capfin' first: the per-lead advisory serializes this whole gate
+    // against claims (claimRun only TRIES it — while we hold it every
+    // same-lead candidate rejects there, so the cancel below can never
+    // lose to a concurrent claim) AND against cap evaluators. It must
+    // come before the l,t lock — the advisory is this tx's first lock or
+    // a finisher holding it + waiting on our lead row would cycle (the
+    // flag insert's FK takes key-share on leads). See capLockTx.
+    await capLockTx(tx, res.leadId);
     const gateRows = await tx<ReplyGate[]>`
       select t.agent_enabled, l.agent_mode, l.unsubscribed_at, l.archived_at
       from lead_threads t join leads l on l.id = t.lead_id
       where t.id = ${res.threadId}
       for update of l, t
     `;
+    // A live inbound retires queued AUTO outreach — the lead already wrote,
+    // so a "reopening" message queued by cadence/discovery/first-contact
+    // would arrive answering nothing. Only runs the automation itself
+    // queued (params->>'auto' set) are canceled: a staff-triggered run is an
+    // explicit decision and outranks the reply. 'regenerate' is exempt —
+    // it's draftOnly composition work (staff approved the supersede); on
+    // claim it recomposes against CURRENT state, so the fresh inbound makes
+    // its draft more right, and canceling it would orphan the rejected
+    // draft with no replacement. 'agent' is exempt too — the pre-'auto'
+    // sweep marker is the same unrecoverable mix as the column value
+    // (self-schedule OR lead-asked callback), so a run still carrying it
+    // is treated as a possible promise: never disposable. The cancel
+    // stays 'queued'-only inside the
+    // gate: its row locks land AFTER the l,t lock, matching every other
+    // writer's leads→runs order (a 'running' predicate would wait on rows
+    // held by tool txs that took their run row + lead lock the other way).
+    // Runs claimed in the capfin-free window before this gate are flipped
+    // by the post-commit pass below. The ids come back so post-commit
+    // run.update emissions refresh the Runs view — without them canceled
+    // rows keep showing as 'queued'.
+    const canceled = await tx<{ id: string }[]>`
+      update agent_runs
+      set status = 'canceled', error = 'lead respondeu', finished_at = now()
+      where lead_id = ${res.leadId} and kind = 'outreach' and status = 'queued'
+        and params->>'auto' is not null
+        and params->>'auto' not in ('regenerate', 'agent')
+      returning id
+    `;
+    const canceledIds = canceled.map((c) => c.id);
+    // Every still-unapproved draft an AUTO outreach run authored dies with
+    // the reply — a "first contact" answering nothing is exactly what the
+    // cancel is for, and a FINISHED draftOnly run leaves the same obsolete
+    // text parked in the approvals lane. The predicate keys on the run's
+    // own auto marker, not run status: queued just-canceled, running,
+    // done, failed — all supersede. 'regenerate' is exempt (same rule as
+    // the cancel: its recompose reads current state, so the fresh inbound
+    // makes its draft more right). 'agent' is exempt too — legacy marker
+    // from pre-'auto' sweeps, provenance unrecoverable → the run may be a
+    // promised callback, so it and its drafts are treated as preserved.
+    // Status 'draft' only — queued/approved sends aren't touched, that's
+    // dispatch's business.
+    const drafts = await tx<{ thread_id: string }[]>`
+      update lead_messages m
+      set status = 'rejected', error = 'lead respondeu', updated_at = now()
+      where m.status = 'draft'
+        and m.agent_run_id in (
+          select r.id from agent_runs r
+          where r.lead_id = ${res.leadId} and r.kind = 'outreach'
+            and r.params->>'auto' is not null
+            and r.params->>'auto' not in ('regenerate', 'agent')
+        )
+      returning m.thread_id
+    `;
+    supersededThreads.push(...drafts.map((d) => d.thread_id));
     const gate = gateRows[0];
 
     if (
@@ -97,19 +160,109 @@ export async function ingestInbound(
       gate.unsubscribed_at ||
       gate.archived_at
     ) {
-      return null;
+      return { runId: null, coalescedId: null, canceledIds, capFlagged: false };
     }
-    return insertRun(tx, {
-      kind: 'reply',
-      leadId: res.leadId,
-      threadId: res.threadId,
-      ...(inboundReplyDelayMin > 0
-        ? { runAt: new Date(Date.now() + inboundReplyDelayMin * 60_000) }
-        : {}),
-    });
+    // Burst coalescing: a still-queued reply reads the freshest thread
+    // state at claim anyway, so one parked run covers every message that
+    // lands before it starts — a WhatsApp burst must not fan out into
+    // parallel replies on the same lead. 'running' doesn't count: its
+    // context froze at claim, so a genuinely new message still earns a
+    // fresh run. The origin marker scopes the dedupe to auto-created
+    // inbound runs only — a params={} row is ambiguous (pre-marker auto
+    // run vs plain staff reply) and can't be told apart, so it never
+    // coalesces: a bounded one-time duplicate for rows parked across the
+    // marker deploy beats silently absorbing an inbound behind a staff
+    // run's intent or schedule.
+    const parked = await tx<{ id: string }[]>`
+      select id from agent_runs
+      where kind = 'reply' and thread_id = ${res.threadId} and status = 'queued'
+        and params->>'origin' = 'inbound'
+      limit 1
+    `;
+    if (parked.length)
+      return { runId: null, coalescedId: parked[0]!.id, canceledIds, capFlagged: false };
+    // null = the lifetime cost cap refused the run — nothing queued to
+    // announce or kick. The cap out-param reports a FRESH flag so the
+    // post-commit emit below refreshes Tasks views (its [humano] task
+    // committed inside this tx — the earlier lead.change from
+    // addInboundMessage predates it).
+    const cap: { flagged?: boolean } = {};
+    const id = await insertRun(
+      tx,
+      {
+        kind: 'reply',
+        leadId: res.leadId,
+        threadId: res.threadId,
+        params: { origin: 'inbound' },
+        ...(inboundReplyDelayMin > 0
+          ? { runAt: new Date(Date.now() + inboundReplyDelayMin * 60_000) }
+          : {}),
+      },
+      cap,
+    );
+    return { runId: id, coalescedId: null, canceledIds, capFlagged: cap.flagged === true };
   });
-  if (runId) {
-    emitControlEvent('run.update', runId);
+  // A run claimed in the capfin-free window before the gate acquired the
+  // advisory legitimately owns its attempt — but its send would still go
+  // out answering nothing. Flip 'running' auto outreach in a separate
+  // post-commit pass. SKIP LOCKED keeps this tx from ever waiting on a row
+  // — its own flips are visited (and lock-evaluated) by suppression
+  // cancels, so a wait here could cycle back through a leads-holder. A
+  // skipped row is one mid-tool-call; the residual window is one tool
+  // tx's duration. The owner sees 'canceled' at its next step check and
+  // aborts through persistAborted; drain terminal-marks its queued sends.
+  const runningCanceled = await controlTx(sql, async (tx) => {
+    const rows = await tx<{ id: string }[]>`
+      update agent_runs
+      set status = 'canceled', error = 'lead respondeu', finished_at = now()
+      where id in (
+        select id from agent_runs
+        where lead_id = ${res.leadId} and kind = 'outreach' and status = 'running'
+          and params->>'auto' is not null
+          and params->>'auto' not in ('regenerate', 'agent')
+        for update skip locked
+      )
+      returning id
+    `;
+    const ids = rows.map((r) => r.id);
+    // Same lifecycle as the gate's queued flips — a mid-compose draftOnly
+    // run's already-committed draft dies with the run.
+    if (ids.length) {
+      const drafts = await tx<{ thread_id: string }[]>`
+        update lead_messages
+        set status = 'rejected', error = 'lead respondeu', updated_at = now()
+        where agent_run_id = any(${ids}) and status = 'draft'
+        returning thread_id
+      `;
+      supersededThreads.push(...drafts.map((d) => d.thread_id));
+    }
+    return ids;
+  }).catch((e) => {
+    // Best-effort pass — a failure here must not mask the committed ingest.
+    agentLog.warn({ err: e, leadId: res.leadId }, 'running-outreach cancel failed');
+    return [] as string[];
+  });
+  for (const id of [...canceledIds, ...runningCanceled]) emitControlEvent('run.update', id);
+  for (const tid of new Set(supersededThreads)) emitControlEvent('draft.change', tid);
+  if (capFlagged) emitControlEvent('lead.change');
+  const enqueuedId = runId ?? coalescedId;
+  if (enqueuedId) {
+    // The latest message earns its own quiet period: slide the parked run
+    // forward to now+delay — done OUTSIDE the l,t tx because claimRun locks
+    // run→thread while the gate holds thread→run; a run write there can
+    // deadlock. The status/run_at guards keep it safe and narrow: an
+    // already-claimed or already-overdue reply fires as-is, delay=0 needs
+    // no write at all.
+    if (coalescedId && inboundReplyDelayMin > 0) {
+      await controlTx(sql, async (tx) => {
+        await tx`
+          update agent_runs
+          set run_at = greatest(run_at, ${new Date(Date.now() + inboundReplyDelayMin * 60_000)})
+          where id = ${coalescedId} and status = 'queued' and run_at > now()
+        `;
+      });
+    }
+    emitControlEvent('run.update', enqueuedId);
     // Kick the queue now — don't wait up to the poll interval for a reply
     // (a delayed run_at is simply not due yet; the worker tick picks it up).
     void drain(sql).catch((e) => agentLog.error({ err: e }, 'drain failed'));

@@ -32,15 +32,17 @@ export async function dispatchMessage(
   messageId: string,
   /** Optional fence run first inside the claim tx — agent-run dispatches
    *  pass a live-claim check so a canceled/reclaimed run can't still push a
-   *  queued message to the provider. Staff approvals, meeting sends, and the
-   *  stranded-message recovery in drain() pass nothing: they legitimately
-   *  dispatch messages whose authoring run already finished. */
-  guard?: (tx: Sql) => Promise<void>,
+   *  queued message to the provider; auto-outreach dispatches also return a
+   *  refusal reason when a live inbound postdates the claim (a string means
+   *  "mark the message failed and don't send"). Staff approvals, meeting
+   *  sends, and the stranded-message recovery in drain() pass nothing: they
+   *  legitimately dispatch messages whose authoring run already finished. */
+  guard?: (tx: Sql) => Promise<string | null | void>,
 ): Promise<{ ok: boolean; reason?: string }> {
   // Phase 1: claim.
   let wroteTid: string | null = null;
   const job = await controlTx(sql, async (tx) => {
-    await guard?.(tx);
+    const refused = (await guard?.(tx)) || null;
     const msg = (
       await tx<
         {
@@ -170,8 +172,21 @@ export async function dispatchMessage(
       return { fail: reason };
     }
 
+    // Caller-refused sends (a live inbound postdating an auto-outreach
+    // claim) fail durably like suppression — 'failed' also keeps the
+    // stranded-message recovery from resending the dead nudge.
+    if (refused) {
+      await markMessageFailed(tx, messageId, refused);
+      wroteTid = msg.thread_id;
+      return { fail: refused };
+    }
+
+    // 'sending' is the point of no return: the provider call follows, so a
+    // failure after this transition may already be on the wire — stamp the
+    // attempt durably so a later dedupe can tell it from a pre-wire refusal.
     const upd = await tx<{ sending_at: string }[]>`
-      update lead_messages set status = 'sending', updated_at = clock_timestamp()
+      update lead_messages set status = 'sending', dispatch_attempted_at = clock_timestamp(),
+        updated_at = clock_timestamp()
       where id = ${messageId} returning updated_at as sending_at
     `;
     wroteTid = thread.id;
@@ -248,7 +263,11 @@ export async function dispatchMessage(
     // The not-exists closes the provider-call race: the lead can reply while
     // Resend/Baileys is still on the wire — that inbound already ran its
     // clearing update (nothing to clear yet), so finalization must not stamp
-    // a floor on an answered send.
+    // a floor on an answered send. `historical` rows are context imports,
+    // never answers — a history sync mid-call must not suppress the floor.
+    // `received_at is not null` counts only real server-ingest stamps:
+    // 0034 NULLed the 0030 backfill — a real ingest always rides the
+    // clock_timestamp() default, so NULL is the legacy marker.
     if (send.author === 'agent') {
       const g = await getSettingTx<Partial<Guardrails>>(tx, 'guardrails', {});
       const days = g.followupCadenceDays ?? DEFAULT_GUARDRAILS.followupCadenceDays;
@@ -266,7 +285,9 @@ export async function dispatchMessage(
               join lead_threads it on it.id = im.thread_id
               where it.lead_id = ${send.leadId}
                 and im.direction = 'in'
-                and im.created_at > ${send.sendingAt}::timestamptz
+                and not im.historical
+                and im.received_at is not null
+                and im.received_at > ${send.sendingAt}::timestamptz
             )
         `;
       }
@@ -308,6 +329,41 @@ export async function dispatchMessage(
           delete from provider_events
           where channel = ${send.channel} and provider_id = ${providerMessageId}`;
       }
+    }
+    // Deterministic lead→contacted: a sent outbound IS first contact — the
+    // funnel can't wait on the model remembering set_state. Runs AFTER the
+    // parked-event replay above so a bounce that beat the send response
+    // can't promote: exists() admits only messages still standing 'sent' or
+    // 'delivered'. Forward-only ('lead' rows only): invited/live states stay
+    // the agent's call and a staff-set state never demotes. History/activity
+    // land in the same tx, same writes updateLead's own transition makes.
+    // 'manual' is excluded: it dispatches nothing — staff copies the text
+    // elsewhere — so it can't be treated as contact confirmed.
+    const promoted =
+      send.channel === 'manual'
+        ? []
+        : await tx<{ id: string }[]>`
+      update leads set state = 'contacted', updated_at = now()
+      where id = ${send.leadId} and state = 'lead'
+        and exists (
+          select 1 from lead_messages m
+          where m.id = ${messageId} and m.status in ('sent', 'delivered')
+        )
+      returning id
+    `;
+    if (promoted[0]) {
+      const actor = send.author === 'agent' || send.author === 'staff' ? send.author : 'system';
+      await tx`
+        insert into lead_state_history (lead_id, from_state, to_state, actor, value_cents)
+        select ${send.leadId}, 'lead', 'contacted', ${actor}, deal_value_cents
+        from leads where id = ${send.leadId}
+      `;
+      await tx`
+        insert into lead_activities (lead_id, kind, body, meta, created_by)
+        values (${send.leadId}, 'state_change', 'lead → contacted',
+                ${tx.json({ from: 'lead', to: 'contacted' } as never)}, ${actor})
+      `;
+      leadsTouched.add(send.leadId);
     }
     return { ok: true };
   });

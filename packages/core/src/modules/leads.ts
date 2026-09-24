@@ -293,10 +293,16 @@ export function leadInsert(body: Record<string, unknown>): Record<string, unknow
 /** Patch payload → column map. Absent keys are skipped; explicit null clears.
  *  `archived: true|false` maps to archived_at = now()/null — archive is a
  *  flag, not a pipeline state. `actor` stamps next_action_source when
- *  nextActionAt is written — 'agent' for tool calls, 'staff' for the API. */
+ *  nextActionAt is written — 'auto' for tool calls, 'staff' for the API
+ *  ('auto' because 'agent' is the legacy backfill value whose provenance
+ *  is unrecoverable — new writes must not reuse it). */
 export function leadPatch(
   body: Record<string, unknown>,
   actor: 'agent' | 'staff' = 'staff',
+  /** true marks the written nextActionAt as lead-requested ("me chama
+   *  terça") — provenance 'requested' survives an inbound reply, unlike
+   *  the automation's own 'cadence'/'auto' scheduling. */
+  nextActionRequested = false,
 ): Record<string, unknown> {
   const set: Record<string, unknown> = {};
   for (const field of Object.keys(LEAD_TEXT_FIELDS) as LeadTextField[]) {
@@ -322,8 +328,19 @@ export function leadPatch(
   if ('nextActionAt' in body) {
     set.next_action_at = timestampValue(body.nextActionAt, 'nextActionAt');
     // Provenance rides with the write so inbound replies only clear the
-    // cadence floor, never a deliberately scheduled follow-up.
-    set.next_action_source = set.next_action_at === null ? null : actor;
+    // automation's own scheduling ('cadence'/'auto'), never a deliberately
+    // promised follow-up — 'requested' survives exactly like 'staff'. The
+    // tool caller stamps 'auto', not 'agent': 'agent' is the legacy value
+    // 0025 backfilled onto every pre-existing date — provenance there is
+    // unrecoverable, so those rows stay preserved like a promise.
+    set.next_action_source =
+      set.next_action_at === null
+        ? null
+        : nextActionRequested
+          ? 'requested'
+          : actor === 'agent'
+            ? 'auto'
+            : actor;
   }
   if ('archived' in body) {
     if (typeof body.archived !== 'boolean') {

@@ -3,8 +3,10 @@ import { join } from 'node:path';
 import postgres from 'postgres';
 import { claimRun, drain, enqueueRun, replayJournal, runOnce } from '../src/agent/runner.ts';
 import { executeTool, assertRunClaimTx, type ToolContext } from '../src/agent/tools.ts';
+import { mapPointerName, pageKey } from '../src/agent/channels/discovery.ts';
 import { dispatchMessage } from '../src/agent/send.ts';
 import { controlTx } from '../src/modules/control.ts';
+import { subscribeControlEvents, type ControlEvent } from '../src/modules/control-events.ts';
 import { insertLeadTx, getLeadDetail } from '../src/modules/leads.ts';
 import { ensureThread } from '../src/modules/threads.ts';
 import { migrate } from '../src/platform/db.ts';
@@ -80,6 +82,96 @@ describe('replayJournal', () => {
     expect(JSON.parse(tools[0]!.content).interrupted).toBe(true);
     expect(JSON.parse(tools[1]!.content).interrupted).toBe(true);
     expect(tools[1]!.toolCallId).toBe('b');
+  });
+
+  test('read_pages replay restores the fetch spend each entry represents', () => {
+    const r = replayJournal([
+      // numeric marker: two real fetches charged
+      {
+        type: 'tool',
+        name: 'read_pages',
+        args: { urls: ['https://a.co/1', 'https://a.co/2'] },
+        readSpent: 2,
+        out: { pages: [] },
+      },
+      // a call served fully from cache spent nothing
+      {
+        type: 'tool',
+        name: 'read_pages',
+        args: { urls: ['https://a.co/1'] },
+        readSpent: 0,
+        out: { pages: [{ url: 'https://a.co/1', cached: true }] },
+      },
+      // legacy boolean marker: one call = one spend
+      {
+        type: 'tool',
+        name: 'read_pages',
+        args: { urls: ['https://a.co/3'] },
+        readSpent: true,
+        out: { pages: [] },
+      },
+      // pre-marker completed call: one spend
+      {
+        type: 'tool',
+        name: 'read_pages',
+        args: { urls: ['https://a.co/4'] },
+        out: { pages: [] },
+      },
+      // REPEAT suppression never reached the counter
+      {
+        type: 'tool',
+        name: 'read_pages',
+        args: { urls: ['https://a.co/4'] },
+        out: { error: 'REPEAT — chamada idêntica à anterior já foi executada nesta run' },
+      },
+      // a pending entry stamped its reservation before dying mid-batch —
+      // replay takes it at face value
+      {
+        type: 'tool',
+        name: 'read_pages',
+        args: { urls: ['https://a.co/5', 'https://a.co/6'] },
+        readSpent: 2,
+        pending: true,
+      },
+      // a pending entry stamped 0 died before validation — spent nothing
+      {
+        type: 'tool',
+        name: 'read_pages',
+        args: { urls: ['https://a.co/7'] },
+        readSpent: 0,
+        pending: true,
+      },
+      // a pending entry with NO marker can only be a legacy journal —
+      // whether its fetch issued is unknowable, so it conservatively
+      // reserves one spend (the safe side for a budget)
+      {
+        type: 'tool',
+        name: 'read_pages',
+        args: { urls: ['https://a.co/8', 'https://a.co/9'] },
+        pending: true,
+      },
+    ]);
+    // 2 + 0 + 1 + 1 + 0 + 2 + 0 + 1 = 7
+    expect(r.pageReads).toBe(7);
+  });
+
+  test('replay rebuilds pageCache from journaled read_pages results', async () => {
+    const r = replayJournal([
+      {
+        type: 'tool',
+        name: 'read_pages',
+        args: { urls: ['https://a.co/m'] },
+        out: {
+          pages: [{ url: 'https://a.co/m', finalUrl: 'https://a.co/menu', content: 'x' }],
+        },
+      },
+    ]);
+    for (const u of ['https://a.co/m', 'https://a.co/menu']) {
+      const hit = r.pageCache.get(pageKey(u)!);
+      expect(hit).toBeDefined();
+      const out = (await hit) as { page: { url: string } };
+      expect(out.page.url).toBe('https://a.co/m');
+    }
   });
 
   test('nudge/reflection entries replay as user turns', () => {
@@ -175,6 +267,76 @@ describe('replayJournal', () => {
     expect(r.messages[0]!.content).toBe('segundo');
   });
 
+  test('landed artifact-minting calls rebuild their signatures — unproven pendings stay out', () => {
+    const r = replayJournal([
+      // a send that landed before the crash — suppressing its re-emission
+      // beats a possible double-send
+      {
+        type: 'tool',
+        name: 'send_message',
+        args: { leadId: 'l1', body: 'olá' },
+        out: { message: { id: 'm1', status: 'sent' } },
+      },
+      // a task journaled but never resolved — reconcileInterrupted only
+      // fills out when the claim proves it committed; unproven means it
+      // never ran, so it must stay retryable (not suppressible)
+      {
+        type: 'tool',
+        name: 'create_task',
+        args: { leadId: 'l1', title: 'vip' },
+        callId: 'c1',
+        step: 0,
+        pending: true,
+      },
+      // failures minted nothing — they stay retryable
+      {
+        type: 'tool',
+        name: 'create_task',
+        args: { leadId: 'l1', title: 'x' },
+        out: { error: 'boom' },
+      },
+      {
+        type: 'tool',
+        name: 'send_message',
+        args: { leadId: 'l1', body: 'tchau' },
+        out: { blocked: true },
+      },
+      // state-writes never join the set
+      { type: 'tool', name: 'update_lead', args: { id: 'l1', city: 'Recife' }, out: { lead: {} } },
+    ]);
+    expect(r.landedSigs.has(JSON.stringify(['send_message', { leadId: 'l1', body: 'olá' }]))).toBe(
+      true,
+    );
+    expect(r.landedSigs.size).toBe(1);
+  });
+
+  test('an unverified claim lookup suppresses pending artifact-mints conservatively', () => {
+    const journal = [
+      // attempt 1 journaled the task then died — out-less. When the claim
+      // lookup fails, it may have committed — suppress the re-emission
+      {
+        type: 'tool',
+        name: 'create_task',
+        args: { leadId: 'l1', title: 'vip' },
+        callId: 'c1',
+        step: 0,
+        pending: true,
+      },
+    ];
+    // successful check (proven unclaimed): the entry stays retryable
+    expect(
+      replayJournal(journal).landedSigs.has(
+        JSON.stringify(['create_task', { leadId: 'l1', title: 'vip' }]),
+      ),
+    ).toBe(false);
+    // failed check (unverifiable): suppress rather than risk a duplicate
+    expect(
+      replayJournal(journal, true).landedSigs.has(
+        JSON.stringify(['create_task', { leadId: 'l1', title: 'vip' }]),
+      ),
+    ).toBe(true);
+  });
+
   test('the latest stored plan rebuilds ctx.plan — no durable field backs it', () => {
     const r = replayJournal([
       {
@@ -249,6 +411,101 @@ describe('replayJournal', () => {
 // DB-backed — opt-in via TEST_DATABASE_URL (CI has no Postgres).
 // ---------------------------------------------------------------------------
 
+describe('mapPointerName', () => {
+  test('reads the name a pointer already carries — else null (a redirect hop)', () => {
+    expect(mapPointerName('https://www.google.com/maps/place/Acme+Pizza')).toBe('Acme Pizza');
+    expect(mapPointerName('https://www.google.com/search?q=Padaria+Central')).toBe(
+      'Padaria Central',
+    );
+    expect(mapPointerName('https://g.co/kgs/abc123')).toBeNull();
+    expect(mapPointerName('https://maps.app.goo.gl/xyz')).toBeNull();
+    // a ?q= or /maps/place/ on any other host is not a profile pointer —
+    // it must not claim the free in-process resolution a name unlocks
+    expect(mapPointerName('https://evil.example/x?q=Acme+Pizza')).toBeNull();
+    expect(mapPointerName('https://evil.example/maps/place/Acme+Pizza')).toBeNull();
+    // a map-pointer host on an unfetchable scheme is not a pointer either
+    expect(mapPointerName('ftp://maps.google.com/maps?q=Acme+Pizza')).toBeNull();
+    // a continue param can't smuggle a google name through an invalid
+    // outer url — the outer host/scheme validates first
+    expect(
+      mapPointerName(
+        'https://unrelated.example/x?continue=https%3A%2F%2Fwww.google.com%2Fsearch%3Fq%3DAcme',
+      ),
+    ).toBeNull();
+    expect(
+      mapPointerName(
+        'ftp://maps.google.com/maps?continue=https%3A%2F%2Fwww.google.com%2Fsearch%3Fq%3DAcme',
+      ),
+    ).toBeNull();
+    // the real captcha-redirect shape still resolves
+    expect(
+      mapPointerName(
+        'https://www.google.com/sorry/?continue=https%3A%2F%2Fwww.google.com%2Fsearch%3Fq%3DAcme',
+      ),
+    ).toBe('Acme');
+  });
+
+  test('a continue= chain is bounded — past the cap, null hands off to the fetch path', () => {
+    // continue= wraps another google url (or itself) — untrusted input; the
+    // peel is iterative (no recursion) but still bounded work. The contract
+    // under test is only the boundary: mapPointerName returning null is
+    // what hands the url to resolveMapPointer's per-hop fetch instead
+    // (that side needs live network). The bound is 8 — a peel is cheap,
+    // so names up to that depth resolve in-process with no fetch spent.
+    const wrap = (u: string) => `https://www.google.com/sorry/?continue=${encodeURIComponent(u)}`;
+    // a wrapper chain that never reaches a name carrier — null, no crash
+    let loop = 'https://www.google.com/sorry/';
+    for (let i = 0; i < 4; i++) loop = wrap(loop);
+    expect(mapPointerName(loop)).toBeNull();
+    // an empty &continue= is not a wrapper — the url's own name still reads
+    expect(mapPointerName('https://www.google.com/search?q=Acme&continue=')).toBe('Acme');
+    // …but a duplicated continue= resolves at its first nonempty value —
+    // the wrapper's own ?q is never the destination's name
+    expect(
+      mapPointerName(
+        `https://www.google.com/sorry/?q=Wrong&continue=&continue=${encodeURIComponent('https://www.google.com/search?q=Acme')}`,
+      ),
+    ).toBe('Acme');
+    // a chain within the bound still resolves the name — in-process, free
+    let chain = 'https://www.google.com/search?q=Acme';
+    for (let i = 0; i < 7; i++) chain = wrap(chain);
+    expect(mapPointerName(chain)).toBe('Acme');
+    // …and exactly at it
+    chain = wrap(chain);
+    expect(mapPointerName(chain)).toBe('Acme');
+    // …but one more is past the bound — null hands it to the fetch path,
+    // whose own hops keep peeling (and run assertFetchable)
+    chain = wrap(chain);
+    expect(mapPointerName(chain)).toBeNull();
+    // a wrapper's own ?q is not the destination's name — if the peel cap
+    // leaves a leftover continue=, the carrier never resolved → null, not
+    // the wrapper's name
+    const tail = `https://www.google.com/sorry/?q=Wrong&continue=${encodeURIComponent('https://www.google.com/search?q=Acme')}`;
+    let deep = tail;
+    for (let i = 0; i < 8; i++) deep = wrap(deep);
+    expect(mapPointerName(deep)).toBeNull();
+    // a twice-encoded absolute target: get() leaves https%3A… — decode once
+    // more only because the result is a complete url
+    expect(mapPointerName(wrap(encodeURIComponent('https://www.google.com/search?q=Acme')))).toBe(
+      'Acme',
+    );
+    // the peel never crosses the pointer family — a continue= pointing at a
+    // foreign host keeps the wrapper (leftover continue → unresolved →
+    // null), so the foreign target never becomes a chase hop
+    expect(
+      mapPointerName(
+        `https://www.google.com/sorry/?continue=${encodeURIComponent('https://evil.example/x?q=Acme')}`,
+      ),
+    ).toBeNull();
+    // same for a non-http target smuggled through continue=
+    expect(
+      mapPointerName(
+        `https://www.google.com/sorry/?continue=${encodeURIComponent('javascript:alert(1)')}`,
+      ),
+    ).toBeNull();
+  });
+});
+
 const dbDescribe = describe.skipIf(!process.env.TEST_DATABASE_URL);
 
 dbDescribe('worker robustness (db)', () => {
@@ -277,12 +534,13 @@ dbDescribe('worker robustness (db)', () => {
     plan: null,
     monid: null,
     seenContacts: new Set(),
+    pageReads: 0,
     draftOnly: false,
   });
 
   /** Seed a run the lease has already expired on — drain() must reclaim it. */
   const seedStaleRun = async (steps: unknown[] = []): Promise<string> => {
-    const id = await enqueueRun(sql, { kind: 'outreach' });
+    const id = (await enqueueRun(sql, { kind: 'outreach' }))!;
     const stale = new Date(Date.now() - 11 * 60_000); // past the 10-min lease
     await sql`
       update agent_runs set status = 'running', claim_token = 'stale-token',
@@ -359,6 +617,75 @@ dbDescribe('worker robustness (db)', () => {
     expect(r.finished_at).not.toBeNull();
   });
 
+  test('a terminal reclaim persists journaled spend and fires the cap check', async () => {
+    await migrate(sql, MIGRATIONS);
+    const events: ControlEvent[] = [];
+    const unsub = subscribeControlEvents((e) => events.push(e));
+    const lead = await controlTx(sql, (tx) => insertLeadTx(tx, { name: 'Capped Dead Run' }));
+    const leadId = lead.body.lead.id;
+    await sql`
+      insert into control_settings (key, value)
+      values ('guardrails', ${sql.json({ leadLifetimeCostCapUsd: 0.2 } as never)})
+      on conflict (key) do update set value = excluded.value
+    `;
+    const id = (await enqueueRun(sql, { kind: 'outreach', leadId }))!;
+    const stale = new Date(Date.now() - 11 * 60_000);
+    // 15¢ of model usage + monid markers holding CUMULATIVE balances
+    // (3¢ then 10¢ — the budget's running total, not per-charge deltas):
+    // over the 20¢ cap, but only ever recorded in steps (the attempt died
+    // before finishRun). A sum would inflate to 28¢ — the fold must read
+    // the LAST marker like priorSpend does on resume.
+    await sql`
+      update agent_runs set status = 'running', claim_token = 'stale',
+        started_at = ${stale}, alive_at = ${stale}, max_attempts = 1,
+        steps = ${sql.json([
+          { type: 'model', content: 'a', usage: { tokensIn: 1, tokensOut: 1, costUsd: 0.15 } },
+          { type: 'monid_spend', spentUsd: 0.03 },
+          { type: 'monid_spend', spentUsd: 0.1 },
+        ] as never[])}
+      where id = ${id}
+    `;
+    await drain(sql, 0);
+    const r = await getRun(id);
+    expect(r.status).toBe('failed');
+    expect(r.cost_cents).toBe(25);
+    const flags = await sql`select 1 from lead_activities
+      where lead_id = ${leadId} and kind = 'system' and meta->>'type' = 'cost-cap'`;
+    expect(flags.length).toBe(1);
+    const tasks = await sql`select title from lead_tasks
+      where lead_id = ${leadId} and title like '%custo do agente%'`;
+    expect(tasks.length).toBe(1);
+    expect(events.some((e) => e.type === 'lead.change')).toBe(true);
+    unsub();
+  });
+
+  test('a terminal reclaim emits lead.change for the failed-run task — no cap needed', async () => {
+    await migrate(sql, MIGRATIONS);
+    const events: ControlEvent[] = [];
+    const unsub = subscribeControlEvents((e) => events.push(e));
+    const lead = await controlTx(sql, (tx) => insertLeadTx(tx, { name: 'Dead Run' }));
+    const leadId = lead.body.lead.id;
+    const id = (await enqueueRun(sql, { kind: 'outreach', leadId }))!;
+    const stale = new Date(Date.now() - 11 * 60_000);
+    await sql`
+      update agent_runs set status = 'running', claim_token = 'stale',
+        started_at = ${stale}, alive_at = ${stale}, max_attempts = 1
+      where id = ${id}
+    `;
+    await drain(sql, 0);
+    const r = await getRun(id);
+    expect(r.status).toBe('failed');
+    // ordinary failure, no cap — the [humano] task still needs the refresh
+    const tasks = await sql`select 1 from lead_tasks
+      where lead_id = ${leadId} and title like '%tentativas esgotadas%'`;
+    expect(tasks).toHaveLength(1);
+    const flags = await sql`select 1 from lead_activities
+      where lead_id = ${leadId} and kind = 'system' and meta->>'type' = 'cost-cap'`;
+    expect(flags).toHaveLength(0);
+    expect(events.some((e) => e.type === 'lead.change' && e.ref === undefined)).toBe(true);
+    unsub();
+  });
+
   test('a requeued run claims once its backoff elapses — attempts intact', async () => {
     await migrate(sql, MIGRATIONS);
     const id = await seedStaleRun();
@@ -376,7 +703,7 @@ dbDescribe('worker robustness (db)', () => {
     const lead = await controlTx(sql, (tx) => insertLeadTx(tx, { name: 'Fence Lead' }));
     const leadId = lead.body.lead.id;
     await sql`delete from agent_runs where status = 'queued'`;
-    const runId = await enqueueRun(sql, { kind: 'reply', leadId });
+    const runId = (await enqueueRun(sql, { kind: 'reply', leadId }))!;
     const claimed = await claimRun(sql);
     expect(claimed?.id).toBe(runId);
 
@@ -423,7 +750,7 @@ dbDescribe('worker robustness (db)', () => {
   test('a stale strategist claim cannot land a proposed brief', async () => {
     await migrate(sql, MIGRATIONS);
     await sql`delete from agent_runs where status = 'queued'`;
-    const runId = await enqueueRun(sql, { kind: 'strategist' });
+    const runId = (await enqueueRun(sql, { kind: 'strategist' }))!;
     const claimed = await claimRun(sql);
     expect(claimed?.id).toBe(runId);
     await sql`update agent_runs set status='canceled', claim_token=null where id=${runId}`;
@@ -443,7 +770,7 @@ dbDescribe('worker robustness (db)', () => {
     const lead = await controlTx(sql, (tx) => insertLeadTx(tx, { name: 'CancelLead' }));
     const leadId = lead.body.lead.id;
     await sql`delete from agent_runs where status = 'queued'`;
-    const runId = await enqueueRun(sql, { kind: 'reply', leadId });
+    const runId = (await enqueueRun(sql, { kind: 'reply', leadId }))!;
     const claimed = await claimRun(sql);
     await sql`update agent_runs set status='canceled' where id=${runId}`;
     await expect(
@@ -513,7 +840,7 @@ dbDescribe('worker robustness (db)', () => {
     const lead = await controlTx(sql, (tx) => insertLeadTx(tx, { name: 'Reconcile Lead' }));
     const leadId = lead.body.lead.id;
     await sql`delete from agent_runs where status = 'queued'`;
-    const runId = await enqueueRun(sql, { kind: 'reply', leadId });
+    const runId = (await enqueueRun(sql, { kind: 'reply', leadId }))!;
     const claimed = await claimRun(sql);
     expect(claimed?.id).toBe(runId);
     // The mutation commits through claimControl under key agent:run:step:name:callId —
@@ -565,7 +892,7 @@ dbDescribe('worker robustness (db)', () => {
     const lead = await controlTx(sql, (tx) => insertLeadTx(tx, { name: 'Handoff Lead' }));
     const leadId = lead.body.lead.id;
     await sql`delete from agent_runs where status = 'queued'`;
-    const runId = await enqueueRun(sql, { kind: 'reply', leadId });
+    const runId = (await enqueueRun(sql, { kind: 'reply', leadId }))!;
     const claimed = await claimRun(sql);
     expect(claimed?.id).toBe(runId);
     // Whole handoff commits under ONE claim keyed exactly like the journal
@@ -659,7 +986,7 @@ dbDescribe('worker robustness (db)', () => {
       values (${thread!.id}, 'out', 'agent', 'não envia', 'queued') returning id
     `;
     await sql`delete from agent_runs where status = 'queued'`;
-    const runId = await enqueueRun(sql, { kind: 'reply', leadId });
+    const runId = (await enqueueRun(sql, { kind: 'reply', leadId }))!;
     const claimed = await claimRun(sql);
     const ctx = mkCtx(runId, claimed!.claim_token, leadId);
     // cancel/reclaim lands between compose-commit and the dispatch tx
@@ -682,7 +1009,7 @@ dbDescribe('worker robustness (db)', () => {
       values (${leadId}, 'whatsapp', false) returning id
     `;
     await sql`delete from agent_runs where status = 'queued'`;
-    const runId = await enqueueRun(sql, { kind: 'reply', leadId, threadId: thread!.id });
+    const runId = (await enqueueRun(sql, { kind: 'reply', leadId, threadId: thread!.id }))!;
     const claimed = await claimRun(sql);
     expect(claimed?.id ?? null).not.toBe(runId);
     const [r] = await sql<{ status: string }[]>`
@@ -702,7 +1029,7 @@ dbDescribe('worker robustness (db)', () => {
       insert into lead_threads (lead_id, channel) values (${leadId}, 'whatsapp') returning id
     `;
     await sql`delete from agent_runs where status = 'queued'`;
-    const runId = await enqueueRun(sql, { kind: 'reply', leadId, threadId: thread!.id });
+    const runId = (await enqueueRun(sql, { kind: 'reply', leadId, threadId: thread!.id }))!;
     // A second connection holds an uncommitted pause — the claim's
     // select sees enabled (pre-pause snapshot) but its FOR UPDATE on the
     // thread row blocks until this commits and must re-read 'false'.
@@ -731,7 +1058,7 @@ dbDescribe('worker robustness (db)', () => {
       insert into lead_threads (lead_id, channel) values (${leadId}, 'manual') returning id
     `;
     await sql`delete from agent_runs where status = 'queued'`;
-    const runId = await enqueueRun(sql, { kind: 'reply', leadId });
+    const runId = (await enqueueRun(sql, { kind: 'reply', leadId }))!;
     await claimRun(sql);
     // agent-authored row whose run died before/after the guarded dispatch —
     // created >20s ago so the stranded sweep owns it
@@ -779,14 +1106,14 @@ dbDescribe('worker robustness (db)', () => {
     `;
     await sql`delete from agent_runs where status = 'queued'`;
     // 'done' run: its committed send has no owner left — recovery delivers it
-    const doneRun = await enqueueRun(sql, { kind: 'reply', leadId });
+    const doneRun = (await enqueueRun(sql, { kind: 'reply', leadId }))!;
     const [doneMsg] = await sql<{ id: string }[]>`
       insert into lead_messages (thread_id, direction, author, body, status, agent_run_id, created_at)
       values (${thread!.id}, 'out', 'agent', 'done envia', 'queued', ${doneRun}, now() - interval '30 seconds')
       returning id
     `;
     // 'queued' run: the next attempt owns the send — recovery must NOT dispatch
-    const queuedRun = await enqueueRun(sql, { kind: 'reply', leadId });
+    const queuedRun = (await enqueueRun(sql, { kind: 'reply', leadId }))!;
     const [queuedMsg] = await sql<{ id: string }[]>`
       insert into lead_messages (thread_id, direction, author, body, status, agent_run_id, created_at)
       values (${thread!.id}, 'out', 'agent', 'ainda não', 'queued', ${queuedRun}, now() - interval '30 seconds')
@@ -815,7 +1142,7 @@ dbDescribe('worker robustness (db)', () => {
       insert into lead_threads (lead_id, channel) values (${leadId}, 'whatsapp'), (${leadId}, 'email')
     `;
     await sql`delete from agent_runs where status = 'queued'`;
-    const runId = await enqueueRun(sql, { kind: 'outreach', leadId });
+    const runId = (await enqueueRun(sql, { kind: 'outreach', leadId }))!;
     const claimed = await claimRun(sql);
     // outreach runs carry no threadId — the handoff is for the lead itself
     const ctx = mkCtx(runId, claimed!.claim_token, leadId, 'outreach');
@@ -857,7 +1184,7 @@ dbDescribe('worker robustness (db)', () => {
       insert into lead_threads (lead_id, channel) values (${leadId}, 'whatsapp') returning id
     `;
     await sql`delete from agent_runs where status = 'queued'`;
-    const runId = await enqueueRun(sql, { kind: 'reply', leadId, threadId: thread!.id });
+    const runId = (await enqueueRun(sql, { kind: 'reply', leadId, threadId: thread!.id }))!;
     const claimed = await claimRun(sql);
     const ctx = mkCtx(runId, claimed!.claim_token, leadId, 'reply', thread!.id);
     const out = (await executeTool(ctx, 'h1', 'request_human', {
@@ -884,7 +1211,7 @@ dbDescribe('worker robustness (db)', () => {
     const lead = await controlTx(sql, (tx) => insertLeadTx(tx, { name: 'Gate Lead' }));
     const leadId = lead.body.lead.id;
     await sql`delete from agent_runs where status = 'queued'`;
-    const runId = await enqueueRun(sql, { kind: 'reply', leadId });
+    const runId = (await enqueueRun(sql, { kind: 'reply', leadId }))!;
     const claimed = await claimRun(sql);
     const ctx = mkCtx(runId, claimed!.claim_token, leadId);
     // draft → auto would bypass every approval gate staff configured
@@ -964,7 +1291,7 @@ dbDescribe('worker robustness (db)', () => {
     const leadId = lead.body.lead.id;
     await sql`update leads set agent_paused_at = now() where id = ${leadId}`;
     await sql`delete from agent_runs where status = 'queued'`;
-    const runId = await enqueueRun(sql, { kind: 'outreach', leadId });
+    const runId = (await enqueueRun(sql, { kind: 'outreach', leadId }))!;
     const claimed = await claimRun(sql);
     expect(claimed?.id ?? null).not.toBe(runId);
     const [r] = await sql<{ status: string }[]>`
@@ -976,15 +1303,53 @@ dbDescribe('worker robustness (db)', () => {
     expect(resumed?.id).toBe(runId);
   });
 
+  test('drain sweeps queued runs on terminally suppressed leads only', async () => {
+    await migrate(sql, MIGRATIONS);
+    const mkLead = async (name: string, flag: string) => {
+      const lead = await controlTx(sql, (tx) => insertLeadTx(tx, { name }));
+      await sql.unsafe(`update leads set ${flag} where id = '${lead.body.lead.id}'`);
+      return lead.body.lead.id;
+    };
+    // raw flag writes simulate a suppression writer that skipped the inline
+    // cancel (archive never had one) — the sweep is the catch-all.
+    const archived = await mkLead('Swept Archived', 'archived_at = now()');
+    const unsub = await mkLead('Swept Unsub', 'unsubscribed_at = now()');
+    const paused = await mkLead('Kept Paused', 'agent_paused_at = now()');
+    const off = await mkLead('Kept Off', `agent_mode = 'off'`);
+    const live = await mkLead('Kept Live', 'name = name');
+    await sql`delete from agent_runs where status = 'queued'`;
+    const runs: Record<string, string> = {};
+    for (const [k, id] of Object.entries({ archived, unsub, paused, off, live })) {
+      runs[k] = (await enqueueRun(sql, { kind: 'outreach', leadId: id }))!;
+    }
+    // a 'running' run on an archived lead is mid-flight — not the sweep's
+    const running = (await enqueueRun(sql, { kind: 'outreach', leadId: archived }))!;
+    await sql`update agent_runs set status = 'running', started_at = now(), alive_at = now(),
+      claim_token = 'tok' where id = ${running}`;
+    await drain(sql, 0);
+    const status = async (id: string) =>
+      (
+        await sql<{ status: string; error: string | null }[]>`
+        select status, error from agent_runs where id = ${id}`
+      )[0]!;
+    expect(await status(runs.archived!)).toMatchObject({ status: 'canceled', error: 'arquivado' });
+    expect(await status(runs.unsub!)).toMatchObject({ status: 'canceled', error: 'descadastrado' });
+    // paused/'off' lift — their parked runs must resume, never die
+    expect((await status(runs.paused!)).status).toBe('queued');
+    expect((await status(runs.off!)).status).toBe('queued');
+    expect((await status(runs.live!)).status).toBe('queued');
+    expect((await status(running)).status).toBe('running');
+  });
+
   test('unsubscribe cancels the lead’s queued runs — they could never claim', async () => {
     await migrate(sql, MIGRATIONS);
     const lead = await controlTx(sql, (tx) => insertLeadTx(tx, { name: 'OptOut Lead' }));
     const leadId = lead.body.lead.id;
     await sql`delete from agent_runs where status = 'queued'`;
-    const replyRun = await enqueueRun(sql, { kind: 'reply', leadId });
+    const replyRun = (await enqueueRun(sql, { kind: 'reply', leadId }))!;
     const claimed = await claimRun(sql);
     expect(claimed?.id).toBe(replyRun);
-    const queuedRun = await enqueueRun(sql, { kind: 'outreach', leadId });
+    const queuedRun = (await enqueueRun(sql, { kind: 'outreach', leadId }))!;
     const ctx = mkCtx(replyRun, claimed!.claim_token, leadId);
     await executeTool(ctx, 'u1', 'unsubscribe', { leadId, reason: 'pediu para sair' });
     const [dead] = await sql<{ status: string }[]>`
@@ -996,5 +1361,1245 @@ dbDescribe('worker robustness (db)', () => {
       select status from agent_runs where id = ${replyRun}
     `;
     expect(live!.status).toBe('running');
+  });
+
+  test('reply read_pages is bounded — the cap refuses the call before fetching', async () => {
+    const ctx = mkCtx('rp-cap', null, null, 'reply');
+    ctx.pageReads = 2;
+    const out = (await executeTool(ctx, 'x', 'read_pages', {
+      urls: ['https://x.co'],
+    })) as { error?: string };
+    expect(out.error).toContain('limite');
+  });
+
+  test('remember returns the fact the ≤100 cap evicted', async () => {
+    await migrate(sql, MIGRATIONS);
+    const facts = Array.from({ length: 100 }, (_, i) => `fato ${i}`);
+    await sql`
+      insert into control_settings (key, value)
+      values ('agent_memory', ${sql.json({ facts })})
+      on conflict (key) do update set value = excluded.value
+    `;
+    const out = (await executeTool(mkCtx('mem', null, null, 'strategist'), 'm1', 'remember', {
+      fact: 'fato novo',
+    })) as { remembered: string; total: number; evicted?: string[] };
+    expect(out.total).toBe(100);
+    expect(out.evicted).toEqual(['fato 0']);
+  });
+
+  test('a consecutive identical call is suppressed and nudged — once', async () => {
+    await migrate(sql, MIGRATIONS);
+    const lead = await controlTx(sql, (tx) => insertLeadTx(tx, { name: 'Loop Lead' }));
+    const leadId = lead.body.lead.id;
+    await sql`delete from agent_runs where status = 'queued'`;
+    const runId = (await enqueueRun(sql, { kind: 'reply', leadId })!)!;
+    await sql`update agent_runs set
+      params = ${sql.json({
+        script: [
+          { toolCalls: [{ name: 'read_pages', args: { urls: ['https://x.co/catalogo'] } }] },
+          { toolCalls: [{ name: 'read_pages', args: { urls: ['https://x.co/catalogo'] } }] },
+          { toolCalls: [{ name: 'request_human', args: { leadId, reason: 'travou' } }] },
+          { text: 'fim' },
+        ],
+      } as never)}
+      where id = ${runId}`;
+    expect(await runOnce(sql)).toBe(true);
+    const r = await getRun(runId);
+    expect(r.status).toBe('done');
+    const reads = r.steps.filter((s) => (s as { name?: string }).name === 'read_pages') as {
+      out?: { error?: string };
+    }[];
+    expect(reads).toHaveLength(2);
+    expect(reads[1]!.out?.error).toMatch(/^REPEAT/);
+    // ONE loop nudge — and since request_human acted, no finish nudge joins it
+    const nudges = r.steps.filter((s) => (s as { type?: string }).type === 'nudge');
+    expect(nudges).toHaveLength(1);
+    expect((nudges[0] as { content?: string }).content).toContain('LOOP');
+  });
+
+  test('a repeated call that errored is a retry, not a loop — it re-executes', async () => {
+    await migrate(sql, MIGRATIONS);
+    const lead = await controlTx(sql, (tx) => insertLeadTx(tx, { name: 'Retry Lead' }));
+    const leadId = lead.body.lead.id;
+    await sql`delete from agent_runs where status = 'queued'`;
+    const runId = (await enqueueRun(sql, { kind: 'reply', leadId })!)!;
+    await sql`update agent_runs set
+      params = ${sql.json({
+        script: [
+          { toolCalls: [{ name: 'read_pages', args: { urls: [] } }] },
+          { toolCalls: [{ name: 'read_pages', args: { urls: [] } }] },
+          { toolCalls: [{ name: 'request_human', args: { leadId, reason: 'travou' } }] },
+          { text: 'fim' },
+        ],
+      } as never)}
+      where id = ${runId}`;
+    expect(await runOnce(sql)).toBe(true);
+    const r = await getRun(runId);
+    expect(r.status).toBe('done');
+    const reads = r.steps.filter((s) => (s as { name?: string }).name === 'read_pages') as {
+      out?: { error?: string };
+    }[];
+    expect(reads).toHaveLength(2);
+    // both really ran — the second is the same validation error, not REPEAT
+    expect(reads[0]!.out?.error).toMatch(/^read_pages needs urls/);
+    expect(reads[1]!.out?.error).toMatch(/^read_pages needs urls/);
+    const nudges = r.steps.filter((s) => (s as { type?: string }).type === 'nudge');
+    expect(nudges).toHaveLength(0);
+  });
+
+  test('a reply run closing without a visible action gets one finish nudge', async () => {
+    await migrate(sql, MIGRATIONS);
+    const lead = await controlTx(sql, (tx) => insertLeadTx(tx, { name: 'Silent Lead' }));
+    const leadId = lead.body.lead.id;
+    await sql`delete from agent_runs where status = 'queued'`;
+    const runId = (await enqueueRun(sql, { kind: 'reply', leadId })!)!;
+    await sql`update agent_runs set
+      params = ${sql.json({ script: [{ text: 'ok' }] } as never)}
+      where id = ${runId}`;
+    expect(await runOnce(sql)).toBe(true);
+    const r = await getRun(runId);
+    expect(r.status).toBe('done');
+    const nudges = r.steps.filter((s) => (s as { type?: string }).type === 'nudge');
+    expect(nudges).toHaveLength(1);
+    expect((nudges[0] as { content?: string }).content).toContain('Ação pendente');
+  });
+
+  test('a composed-but-failed send is not a landed action — the finish nudge fires', async () => {
+    await migrate(sql, MIGRATIONS);
+    // An enabled resend integration with no api key: the send composes
+    // (email reachable), then the driver throws 'missing RESEND_API_KEY'.
+    // A pre-existing resend row is restored at the end — the shared test
+    // DB must not lose its configuration.
+    const prior = (
+      await sql<{ enabled: boolean; config: unknown; secret_ref: string | null }[]>`
+        select enabled, config, secret_ref from control_integrations
+        where kind = 'email' and driver = 'resend'
+      `
+    )[0];
+    await sql`
+      insert into control_integrations (kind, driver, enabled)
+      values ('email', 'resend', true)
+      on conflict (kind, driver) do update set enabled = true
+    `;
+    const priorGuardrails = (
+      await sql<{ value: unknown }[]>`
+        select value from control_settings where key = 'guardrails'
+      `
+    )[0];
+    try {
+      // First contact must not be draft-forced and quiet hours must be
+      // empty (start == end → never quiet) — the send has to reach the
+      // dispatch stage to fail.
+      await sql`
+        insert into control_settings (key, value)
+        values ('guardrails',
+                ${sql.json({ firstContactDraftOnly: false, quietStart: '00:00', quietEnd: '00:00' } as never)})
+        on conflict (key) do update set value = excluded.value
+      `;
+      const lead = await controlTx(sql, (tx) =>
+        insertLeadTx(tx, {
+          name: 'Unsendable Lead',
+          email: 'lead@example.com',
+          agent_mode: 'auto',
+        }),
+      );
+      const leadId = lead.body.lead.id;
+      await sql`delete from agent_runs where status = 'queued'`;
+      const runId = (await enqueueRun(sql, { kind: 'reply', leadId })!)!;
+      await sql`update agent_runs set
+        params = ${sql.json({
+          script: [
+            { toolCalls: [{ name: 'send_message', args: { leadId, body: 'olá' } }] },
+            { text: 'fim' },
+          ],
+        } as never)}
+        where id = ${runId}`;
+      expect(await runOnce(sql)).toBe(true);
+      const r = await getRun(runId);
+      expect(r.status).toBe('done');
+      const sends = r.steps.filter((s) => (s as { name?: string }).name === 'send_message') as {
+        out?: { error?: string };
+      }[];
+      expect(sends).toHaveLength(1);
+      expect(sends[0]!.out?.error).toBeTruthy();
+      const nudges = r.steps.filter((s) => (s as { type?: string }).type === 'nudge');
+      expect(nudges).toHaveLength(1);
+      expect((nudges[0] as { content?: string }).content).toContain('Ação pendente');
+    } finally {
+      // Don't leak the keyless resend row — the shared DB would let it win
+      // getIntegrationTx over other tests' enabled email drivers. Restore
+      // whatever was there before (or drop our row entirely).
+      if (prior) {
+        await sql`
+          update control_integrations
+          set enabled = ${prior.enabled}, config = ${sql.json(prior.config as never)},
+              secret_ref = ${prior.secret_ref}
+          where kind = 'email' and driver = 'resend'
+        `;
+      } else {
+        await sql`delete from control_integrations where kind = 'email' and driver = 'resend'`;
+      }
+      // Same for the guardrails row — later tests must not inherit
+      // disabled first-contact drafts or empty quiet hours.
+      if (priorGuardrails) {
+        await sql`
+          update control_settings set value = ${sql.json(priorGuardrails.value as never)}
+          where key = 'guardrails'
+        `;
+      } else {
+        await sql`delete from control_settings where key = 'guardrails'`;
+      }
+    }
+  });
+
+  test('a blocked send is not a reusable result — its retry re-executes', async () => {
+    await migrate(sql, MIGRATIONS);
+    const lead = await controlTx(sql, (tx) => insertLeadTx(tx, { name: 'Blocked Lead' }));
+    const leadId = lead.body.lead.id;
+    await sql`delete from agent_runs where status = 'queued'`;
+    const runId = (await enqueueRun(sql, { kind: 'reply', leadId })!)!;
+    await sql`update agent_runs set
+      params = ${sql.json({
+        script: [
+          // the send blocks (this lead has no channel); a write lands after it
+          {
+            toolCalls: [
+              { name: 'send_message', args: { leadId, body: 'olá' } },
+              { name: 'update_lead', args: { id: leadId, city: 'Recife' } },
+            ],
+          },
+          // an identical send next turn must execute, not return REPEAT
+          { toolCalls: [{ name: 'send_message', args: { leadId, body: 'olá' } }] },
+          { toolCalls: [{ name: 'request_human', args: { leadId, reason: 'travou' } }] },
+          { text: 'fim' },
+        ],
+      } as never)}
+      where id = ${runId}`;
+    expect(await runOnce(sql)).toBe(true);
+    const r = await getRun(runId);
+    expect(r.status).toBe('done');
+    const sends = r.steps.filter((s) => (s as { name?: string }).name === 'send_message') as {
+      out?: { error?: string; blocked?: boolean };
+    }[];
+    expect(sends).toHaveLength(2);
+    // still blocked (no channel ever appeared) — but it RAN, not REPEAT
+    expect(sends[1]!.out?.error ?? '').not.toMatch(/^REPEAT/);
+    expect(sends[1]!.out?.blocked).toBe(true);
+  });
+
+  test('a re-read after a mutation executes — the earlier result went stale', async () => {
+    await migrate(sql, MIGRATIONS);
+    const lead = await controlTx(sql, (tx) => insertLeadTx(tx, { name: 'Stale Read Lead' }));
+    const leadId = lead.body.lead.id;
+    await sql`delete from agent_runs where status = 'queued'`;
+    const runId = (await enqueueRun(sql, { kind: 'reply', leadId })!)!;
+    await sql`update agent_runs set
+      params = ${sql.json({
+        script: [
+          {
+            toolCalls: [
+              { name: 'get_lead', args: { id: leadId } },
+              { name: 'update_lead', args: { id: leadId, city: 'Recife' } },
+            ],
+          },
+          { toolCalls: [{ name: 'get_lead', args: { id: leadId } }] },
+          { toolCalls: [{ name: 'request_human', args: { leadId, reason: 'travou' } }] },
+          { text: 'fim' },
+        ],
+      } as never)}
+      where id = ${runId}`;
+    expect(await runOnce(sql)).toBe(true);
+    const r = await getRun(runId);
+    expect(r.status).toBe('done');
+    const gets = r.steps.filter((s) => (s as { name?: string }).name === 'get_lead') as {
+      out?: unknown;
+    }[];
+    expect(gets).toHaveLength(2);
+    // the second read ran fresh — current profile, not a REPEAT artifact
+    expect(JSON.stringify(gets[1]!.out)).toContain('Recife');
+  });
+
+  test('a repeated get_lead re-executes — external edits must not hide behind REPEAT', async () => {
+    await migrate(sql, MIGRATIONS);
+    // A clean get_lead stays reusable only because nothing MUTATED — but
+    // stateVersion counts this run's writes, not a staff edit between
+    // turns. Mutable-CRM reads are exempt from suppression outright —
+    // but still count as repeats for the LOOP nudge.
+    const lead = await controlTx(sql, (tx) => insertLeadTx(tx, { name: 'Fresh Read Lead' }));
+    const leadId = lead.body.lead.id;
+    await sql`delete from agent_runs where status = 'queued'`;
+    const runId = (await enqueueRun(sql, { kind: 'reply', leadId })!)!;
+    await sql`update agent_runs set
+      params = ${sql.json({
+        script: [
+          { toolCalls: [{ name: 'get_lead', args: { id: leadId } }] },
+          { toolCalls: [{ name: 'get_lead', args: { id: leadId } }] },
+          { toolCalls: [{ name: 'get_lead', args: { id: leadId } }] },
+          { toolCalls: [{ name: 'request_human', args: { leadId, reason: 'travou' } }] },
+          { text: 'fim' },
+        ],
+      } as never)}
+      where id = ${runId}`;
+    expect(await runOnce(sql)).toBe(true);
+    const r = await getRun(runId);
+    expect(r.status).toBe('done');
+    const gets = r.steps.filter((s) => (s as { name?: string }).name === 'get_lead') as {
+      out?: { error?: string };
+    }[];
+    expect(gets).toHaveLength(3);
+    // each ran fresh — no REPEAT on a mutable-state read
+    for (const g of gets) expect(g.out?.error ?? '').not.toMatch(/^REPEAT/);
+    expect(JSON.stringify(gets[2]!.out)).toContain('Fresh Read Lead');
+    // the read-only repeats still tripped the loop detector — once
+    const nudges = r.steps.filter((s) => (s as { type?: string }).type === 'nudge');
+    expect(nudges).toHaveLength(1);
+    expect((nudges[0] as { content?: string }).content).toContain('LOOP');
+  });
+
+  test('a retried send after a dispatch-stage failure adopts the failed row — no second compose', async () => {
+    await migrate(sql, MIGRATIONS);
+    // resend with no api key: the send composes, reaches 'sending', then
+    // the driver throws — the row is failed AND dispatch-attempted (the
+    // stamp is conservative: it can't tell whether the provider got the
+    // call), so an identical retry must adopt it, not compose a duplicate.
+    const prior = (
+      await sql<{ enabled: boolean; config: unknown; secret_ref: string | null }[]>`
+        select enabled, config, secret_ref from control_integrations
+        where kind = 'email' and driver = 'resend'
+      `
+    )[0];
+    await sql`
+      insert into control_integrations (kind, driver, enabled)
+      values ('email', 'resend', true)
+      on conflict (kind, driver) do update set enabled = true
+    `;
+    const priorGuardrails = (
+      await sql<{ value: unknown }[]>`
+        select value from control_settings where key = 'guardrails'
+      `
+    )[0];
+    try {
+      await sql`
+        insert into control_settings (key, value)
+        values ('guardrails',
+                ${sql.json({ firstContactDraftOnly: false, quietStart: '00:00', quietEnd: '00:00' } as never)})
+        on conflict (key) do update set value = excluded.value
+      `;
+      const lead = await controlTx(sql, (tx) =>
+        insertLeadTx(tx, {
+          name: 'Dup Send Lead',
+          email: 'dup@example.com',
+          agent_mode: 'auto',
+        }),
+      );
+      const leadId = lead.body.lead.id;
+      await sql`delete from agent_runs where status = 'queued'`;
+      const runId = (await enqueueRun(sql, { kind: 'reply', leadId })!)!;
+      await sql`update agent_runs set
+        params = ${sql.json({
+          script: [
+            { toolCalls: [{ name: 'send_message', args: { leadId, body: 'olá' } }] },
+            { toolCalls: [{ name: 'send_message', args: { leadId, body: 'olá' } }] },
+            { text: 'fim' },
+          ],
+        } as never)}
+        where id = ${runId}`;
+      expect(await runOnce(sql)).toBe(true);
+      const r = await getRun(runId);
+      expect(r.status).toBe('done');
+      const sends = r.steps.filter((s) => (s as { name?: string }).name === 'send_message') as {
+        out?: { error?: string; blocked?: boolean; reason?: string };
+      }[];
+      expect(sends).toHaveLength(2);
+      expect(sends[0]!.out?.error).toBeTruthy();
+      // the identical retry adopted the failed row — blocked, not re-composed
+      expect(sends[1]!.out?.blocked).toBe(true);
+      expect(sends[1]!.out?.reason).toBe('already dispatched by this run');
+      const rows = await sql<{ status: string; dispatch_attempted_at: string | null }[]>`
+        select m.status, m.dispatch_attempted_at from lead_messages m
+        join lead_threads t on t.id = m.thread_id
+        where t.lead_id = ${leadId} and m.agent_run_id = ${runId}
+      `;
+      expect(rows).toHaveLength(1);
+      expect(rows[0]!.status).toBe('failed');
+      expect(rows[0]!.dispatch_attempted_at).not.toBeNull();
+    } finally {
+      if (prior) {
+        await sql`
+          update control_integrations
+          set enabled = ${prior.enabled}, config = ${sql.json(prior.config as never)},
+              secret_ref = ${prior.secret_ref}
+          where kind = 'email' and driver = 'resend'
+        `;
+      } else {
+        await sql`delete from control_integrations where kind = 'email' and driver = 'resend'`;
+      }
+      if (priorGuardrails) {
+        await sql`
+          update control_settings set value = ${sql.json(priorGuardrails.value as never)}
+          where key = 'guardrails'
+        `;
+      } else {
+        await sql`delete from control_settings where key = 'guardrails'`;
+      }
+    }
+  });
+
+  test('a channel-hop retry after an attempted failure is still adopted', async () => {
+    await migrate(sql, MIGRATIONS);
+    // WhatsApp send attempted then failed; the channel died so the retry
+    // resolves email — the body match spans channels, or the lead would
+    // get the same text twice.
+    const lead = await controlTx(sql, (tx) =>
+      insertLeadTx(tx, {
+        name: 'Chan Hop Lead',
+        email: 'hop@example.com',
+        agent_mode: 'auto',
+      }),
+    );
+    const leadId = lead.body.lead.id;
+    const waThread = await controlTx(sql, (tx) => ensureThread(tx, leadId, 'whatsapp', {}));
+    // The fallback channel must actually resolve — enable the email log
+    // driver (restored below so it can't leak into other tests).
+    const priorLog = (
+      await sql<{ enabled: boolean; config: unknown; secret_ref: string | null }[]>`
+        select enabled, config, secret_ref from control_integrations
+        where kind = 'email' and driver = 'log'
+      `
+    )[0];
+    await sql`
+      insert into control_integrations (kind, driver, enabled)
+      values ('email', 'log', true)
+      on conflict (kind, driver) do update set enabled = true
+    `;
+    try {
+      await sql`delete from agent_runs where status = 'queued'`;
+      const runId = (await enqueueRun(sql, { kind: 'reply', leadId })!)!;
+      // The run's own earlier attempt on the now-dead channel: failed AFTER
+      // 'sending' — dispatch_attempted_at is stamped.
+      await sql`
+        insert into lead_messages (thread_id, direction, author, body, status, agent_run_id, dispatch_attempted_at)
+        values (${waThread.id}, 'out', 'agent', 'olá', 'failed', ${runId}, now())
+      `;
+      await sql`update agent_runs set
+        params = ${sql.json({
+          script: [
+            { toolCalls: [{ name: 'send_message', args: { leadId, body: 'olá' } }] },
+            { text: 'fim' },
+          ],
+        } as never)}
+        where id = ${runId}`;
+      expect(await runOnce(sql)).toBe(true);
+      const r = await getRun(runId);
+      expect(r.status).toBe('done');
+      const sends = r.steps.filter((s) => (s as { name?: string }).name === 'send_message') as {
+        out?: { blocked?: boolean; reason?: string };
+      }[];
+      expect(sends).toHaveLength(1);
+      // adopted on email too — no second copy on another wire
+      expect(sends[0]!.out?.blocked).toBe(true);
+      expect(sends[0]!.out?.reason).toBe('already dispatched by this run');
+      const rows = await sql<{ status: string }[]>`
+        select m.status from lead_messages m
+        join lead_threads t on t.id = m.thread_id
+        where t.lead_id = ${leadId} and m.agent_run_id = ${runId}
+      `;
+      expect(rows).toHaveLength(1);
+    } finally {
+      if (priorLog) {
+        await sql`
+          update control_integrations
+          set enabled = ${priorLog.enabled}, config = ${sql.json(priorLog.config as never)},
+              secret_ref = ${priorLog.secret_ref}
+          where kind = 'email' and driver = 'log'
+        `;
+      } else {
+        await sql`delete from control_integrations where kind = 'email' and driver = 'log'`;
+      }
+    }
+  });
+
+  test('a later pre-wire failure cannot mask an earlier attempted send', async () => {
+    await migrate(sql, MIGRATIONS);
+    // Two failed rows share the body: the OLDER reached 'sending'
+    // (dispatch_attempted_at stamped — maybe on the wire), the NEWER died
+    // pre-wire (e.g. a refused staff retry). If the lookup only inspected
+    // the newest row, the unstamped one would mask the stamped one and the
+    // retry would compose a third copy.
+    const lead = await controlTx(sql, (tx) =>
+      insertLeadTx(tx, {
+        name: 'Masked Send Lead',
+        email: 'masked@example.com',
+        agent_mode: 'auto',
+      }),
+    );
+    const leadId = lead.body.lead.id;
+    const thread = await controlTx(sql, (tx) => ensureThread(tx, leadId, 'email', {}));
+    const priorLog = (
+      await sql<{ enabled: boolean; config: unknown; secret_ref: string | null }[]>`
+        select enabled, config, secret_ref from control_integrations
+        where kind = 'email' and driver = 'log'
+      `
+    )[0];
+    await sql`
+      insert into control_integrations (kind, driver, enabled)
+      values ('email', 'log', true)
+      on conflict (kind, driver) do update set enabled = true
+    `;
+    try {
+      await sql`delete from agent_runs where status = 'queued'`;
+      const runId = (await enqueueRun(sql, { kind: 'reply', leadId })!)!;
+      await sql`
+        insert into lead_messages (thread_id, direction, author, body, status, agent_run_id, dispatch_attempted_at, created_at)
+        values (${thread.id}, 'out', 'agent', 'olá', 'failed', ${runId}, now(), now() - interval '1 hour')
+      `;
+      await sql`
+        insert into lead_messages (thread_id, direction, author, body, status, agent_run_id)
+        values (${thread.id}, 'out', 'agent', 'olá', 'failed', ${runId})
+      `;
+      await sql`update agent_runs set
+        params = ${sql.json({
+          script: [
+            { toolCalls: [{ name: 'send_message', args: { leadId, body: 'olá' } }] },
+            { text: 'fim' },
+          ],
+        } as never)}
+        where id = ${runId}`;
+      expect(await runOnce(sql)).toBe(true);
+      const r = await getRun(runId);
+      expect(r.status).toBe('done');
+      const sends = r.steps.filter((s) => (s as { name?: string }).name === 'send_message') as {
+        out?: { blocked?: boolean; reason?: string };
+      }[];
+      expect(sends).toHaveLength(1);
+      // the older attempted copy still masks the retry — no third row
+      expect(sends[0]!.out?.blocked).toBe(true);
+      expect(sends[0]!.out?.reason).toBe('already dispatched by this run');
+      const rows = await sql<{ id: string }[]>`
+        select m.id from lead_messages m
+        join lead_threads t on t.id = m.thread_id
+        where t.lead_id = ${leadId} and m.agent_run_id = ${runId}
+      `;
+      expect(rows).toHaveLength(2);
+    } finally {
+      if (priorLog) {
+        await sql`
+          update control_integrations
+          set enabled = ${priorLog.enabled}, config = ${sql.json(priorLog.config as never)},
+              secret_ref = ${priorLog.secret_ref}
+          where kind = 'email' and driver = 'log'
+        `;
+      } else {
+        await sql`delete from control_integrations where kind = 'email' and driver = 'log'`;
+      }
+    }
+  });
+
+  test('a pre-wire failed send stays retryable — the failure never left the building', async () => {
+    await migrate(sql, MIGRATIONS);
+    // A 'failed' row with no dispatch_attempted_at provably never reached
+    // 'sending' — a deterministic pre-wire refusal. An identical retried
+    // send must be allowed to compose a fresh attempt, not adopted.
+    const priorGuardrails = (
+      await sql<{ value: unknown }[]>`
+        select value from control_settings where key = 'guardrails'
+      `
+    )[0];
+    const priorLog = (
+      await sql<{ enabled: boolean; config: unknown; secret_ref: string | null }[]>`
+        select enabled, config, secret_ref from control_integrations
+        where kind = 'email' and driver = 'log'
+      `
+    )[0];
+    try {
+      // First-contact drafts must be off — the retry must compose 'queued'
+      // so it actually dispatches — and the email log driver must be
+      // reachable or the send dies at pick.
+      await sql`
+        insert into control_settings (key, value)
+        values ('guardrails',
+                ${sql.json({ firstContactDraftOnly: false, quietStart: '00:00', quietEnd: '00:00' } as never)})
+        on conflict (key) do update set value = excluded.value
+      `;
+      await sql`
+        insert into control_integrations (kind, driver, enabled)
+        values ('email', 'log', true)
+        on conflict (kind, driver) do update set enabled = true
+      `;
+      const lead = await controlTx(sql, (tx) =>
+        insertLeadTx(tx, {
+          name: 'Pre Wire Lead',
+          email: 'prewire@example.com',
+          agent_mode: 'auto',
+        }),
+      );
+      const leadId = lead.body.lead.id;
+      const thread = await controlTx(sql, (tx) => ensureThread(tx, leadId, 'email', {}));
+      await sql`delete from agent_runs where status = 'queued'`;
+      const runId = (await enqueueRun(sql, { kind: 'reply', leadId })!)!;
+      // The run's own earlier attempt: failed before the wire (no stamp).
+      await sql`
+        insert into lead_messages (thread_id, direction, author, body, status, agent_run_id)
+        values (${thread.id}, 'out', 'agent', 'olá', 'failed', ${runId})
+      `;
+      await sql`update agent_runs set
+        params = ${sql.json({
+          script: [
+            { toolCalls: [{ name: 'send_message', args: { leadId, body: 'olá' } }] },
+            { text: 'fim' },
+          ],
+        } as never)}
+        where id = ${runId}`;
+      expect(await runOnce(sql)).toBe(true);
+      const r = await getRun(runId);
+      expect(r.status).toBe('done');
+      const sends = r.steps.filter((s) => (s as { name?: string }).name === 'send_message') as {
+        out?: { error?: string; blocked?: boolean };
+      }[];
+      expect(sends).toHaveLength(1);
+      // the retry was allowed through — it composed and sent fresh
+      expect(sends[0]!.out?.blocked).not.toBe(true);
+      expect(sends[0]!.out?.error).toBeUndefined();
+      const rows = await sql<{ status: string; dispatch_attempted_at: string | null }[]>`
+        select m.status, m.dispatch_attempted_at from lead_messages m
+        join lead_threads t on t.id = m.thread_id
+        where t.lead_id = ${leadId} and m.agent_run_id = ${runId}
+        order by m.created_at
+      `;
+      expect(rows).toHaveLength(2);
+      expect(rows[0]!.status).toBe('failed');
+      expect(rows[0]!.dispatch_attempted_at).toBeNull();
+      expect(['sent', 'delivered']).toContain(rows[1]!.status);
+    } finally {
+      if (priorLog) {
+        await sql`
+          update control_integrations
+          set enabled = ${priorLog.enabled}, config = ${sql.json(priorLog.config as never)},
+              secret_ref = ${priorLog.secret_ref}
+          where kind = 'email' and driver = 'log'
+        `;
+      } else {
+        await sql`delete from control_integrations where kind = 'email' and driver = 'log'`;
+      }
+      if (priorGuardrails) {
+        await sql`
+          update control_settings set value = ${sql.json(priorGuardrails.value as never)}
+          where key = 'guardrails'
+        `;
+      } else {
+        await sql`delete from control_settings where key = 'guardrails'`;
+      }
+    }
+  });
+
+  test('a repeated write after an intervening write executes — but a duplicate artifact never does', async () => {
+    await migrate(sql, MIGRATIONS);
+    const lead = await controlTx(sql, (tx) => insertLeadTx(tx, { name: 'Restore Lead' }));
+    const leadId = lead.body.lead.id;
+    await sql`delete from agent_runs where status = 'queued'`;
+    const runId = (await enqueueRun(sql, { kind: 'reply', leadId })!)!;
+    await sql`update agent_runs set
+      params = ${sql.json({
+        script: [
+          {
+            toolCalls: [
+              { name: 'update_lead', args: { id: leadId, city: 'Recife' } },
+              { name: 'update_lead', args: { id: leadId, city: 'Natal' } },
+            ],
+          },
+          // restoring Recife is not a REPEAT — Natal landed since it ran
+          { toolCalls: [{ name: 'update_lead', args: { id: leadId, city: 'Recife' } }] },
+          {
+            toolCalls: [
+              { name: 'create_task', args: { leadId, title: 'vip' } },
+              // a write lands between the task and its repeat — a
+              // versioned write would look stale, but a duplicate task
+              // mints a second row: never a restore, always suppressed
+              { name: 'update_lead', args: { id: leadId, city: 'Olinda' } },
+            ],
+          },
+          { toolCalls: [{ name: 'create_task', args: { leadId, title: 'vip' } }] },
+          { toolCalls: [{ name: 'request_human', args: { leadId, reason: 'travou' } }] },
+          { text: 'fim' },
+        ],
+      } as never)}
+      where id = ${runId}`;
+    expect(await runOnce(sql)).toBe(true);
+    const r = await getRun(runId);
+    expect(r.status).toBe('done');
+    const writes = r.steps.filter((s) => (s as { name?: string }).name === 'update_lead') as {
+      out?: { error?: string };
+    }[];
+    const tasks = r.steps.filter((s) => (s as { name?: string }).name === 'create_task') as {
+      out?: { error?: string };
+    }[];
+    // all four writes really ran — the repeat-as-restore is not REPEAT'd
+    expect(writes).toHaveLength(4);
+    expect(writes.every((w) => !w.out?.error)).toBe(true);
+    // ...while the duplicate task was suppressed on the second emission
+    expect(tasks).toHaveLength(2);
+    expect(tasks[0]!.out?.error ?? '').not.toMatch(/^REPEAT/);
+    expect(tasks[1]!.out?.error).toMatch(/^REPEAT/);
+    const saved = await sql`select city from leads where id = ${leadId}`;
+    expect((saved[0] as { city?: string }).city).toBe('Olinda');
+  });
+
+  test('a repeated create_lead is suppressed — outside discovery the repeat inserts a second card', async () => {
+    await migrate(sql, MIGRATIONS);
+    const lead = await controlTx(sql, (tx) => insertLeadTx(tx, { name: 'Dup Source' }));
+    const leadId = lead.body.lead.id;
+    const before = await sql`select id from leads where name = 'Cafe Azul'`;
+    await sql`delete from agent_runs where status = 'queued'`;
+    const runId = (await enqueueRun(sql, { kind: 'triage', leadId })!)!;
+    await sql`update agent_runs set
+      params = ${sql.json({
+        script: [
+          {
+            toolCalls: [
+              { name: 'create_lead', args: { name: 'Cafe Azul' } },
+              // a write lands between the card and its repeat — a versioned
+              // write would look stale, but a second insert is never a restore
+              { name: 'update_lead', args: { id: leadId, city: 'Recife' } },
+            ],
+          },
+          { toolCalls: [{ name: 'create_lead', args: { name: 'Cafe Azul' } }] },
+          { text: 'fim' },
+        ],
+      } as never)}
+      where id = ${runId}`;
+    expect(await runOnce(sql)).toBe(true);
+    const r = await getRun(runId);
+    const creates = r.steps.filter((s) => (s as { name?: string }).name === 'create_lead') as {
+      out?: { error?: string };
+    }[];
+    expect(creates).toHaveLength(2);
+    expect(creates[0]!.out?.error ?? '').not.toMatch(/^REPEAT/);
+    expect(creates[1]!.out?.error).toMatch(/^REPEAT/);
+    // exactly one new Cafe Azul card — the repeat never reached insertLeadTx
+    const after = await sql`select id from leads where name = 'Cafe Azul'`;
+    expect(after.length).toBe(before.length + 1);
+  });
+
+  test('a duplicate artifact mint is suppressed across turns — the landed set is run-wide', async () => {
+    await migrate(sql, MIGRATIONS);
+    const lead = await controlTx(sql, (tx) => insertLeadTx(tx, { name: 'Gap Task Lead' }));
+    const leadId = lead.body.lead.id;
+    // title-scoped: the run's request_human ending also writes lead_tasks
+    const before = await sql`select id from lead_tasks where lead_id = ${leadId} and title = 'vip'`;
+    await sql`delete from agent_runs where status = 'queued'`;
+    const runId = (await enqueueRun(sql, { kind: 'reply', leadId })!)!;
+    await sql`update agent_runs set
+      params = ${sql.json({
+        script: [
+          { toolCalls: [{ name: 'create_task', args: { leadId, title: 'vip' } }] },
+          // a different turn's calls flush the one-turn sig map entirely —
+          // the artifact repeat must still be suppressed on the landed set
+          { toolCalls: [{ name: 'get_lead', args: { id: leadId } }] },
+          { toolCalls: [{ name: 'create_task', args: { leadId, title: 'vip' } }] },
+          { toolCalls: [{ name: 'request_human', args: { leadId, reason: 'travou' } }] },
+          { text: 'fim' },
+        ],
+      } as never)}
+      where id = ${runId}`;
+    expect(await runOnce(sql)).toBe(true);
+    const r = await getRun(runId);
+    expect(r.status).toBe('done');
+    const tasks = r.steps.filter((s) => (s as { name?: string }).name === 'create_task') as {
+      out?: { error?: string };
+    }[];
+    expect(tasks).toHaveLength(2);
+    expect(tasks[0]!.out?.error ?? '').not.toMatch(/^REPEAT/);
+    expect(tasks[1]!.out?.error).toMatch(/^REPEAT/);
+    const after = await sql`select id from lead_tasks where lead_id = ${leadId} and title = 'vip'`;
+    expect(after.length).toBe(before.length + 1);
+  });
+
+  test('a pending artifact-mint retries unless its claim row proves it landed', async () => {
+    await migrate(sql, MIGRATIONS);
+    const lead = await controlTx(sql, (tx) => insertLeadTx(tx, { name: 'Pending Task Lead' }));
+    const leadId = lead.body.lead.id;
+    const before = await sql`select id from lead_tasks where lead_id = ${leadId} and title = 'vip'`;
+    await sql`delete from agent_runs where status = 'queued'`;
+    const pendingJournal = () => [
+      // attempt 1 journaled the task then died — out-less = unproven
+      {
+        type: 'tool',
+        name: 'create_task',
+        args: { leadId, title: 'vip' },
+        callId: 'c1',
+        step: 0,
+        pending: true,
+      },
+      { type: 'resumed', attempt: 1 },
+    ];
+    const script = {
+      script: [
+        { toolCalls: [{ name: 'create_task', args: { leadId, title: 'vip' } }] },
+        { toolCalls: [{ name: 'request_human', args: { leadId, reason: 'travou' } }] },
+        { text: 'fim' },
+      ],
+    };
+    // Case 1: no claim row — the call never ran; the retry must execute
+    const runA = (await enqueueRun(sql, { kind: 'reply', leadId })!)!;
+    await sql`update agent_runs set
+      steps = ${sql.json(pendingJournal() as never[])},
+      params = ${sql.json(script as never)}
+      where id = ${runA}`;
+    expect(await runOnce(sql)).toBe(true);
+    const rA = await getRun(runA);
+    const taskA = rA.steps.find(
+      (s) =>
+        (s as { name?: string; callId?: string }).name === 'create_task' &&
+        (s as { callId?: string }).callId === 'mock-1-0',
+    ) as { out?: { error?: string } } | undefined;
+    expect(taskA?.out?.error ?? '').not.toMatch(/^REPEAT/);
+    expect(
+      (await sql`select id from lead_tasks where lead_id = ${leadId} and title = 'vip'`).length,
+    ).toBe(before.length + 1);
+    // request_human parked the lead — lift it so run B can claim
+    await sql`update leads set agent_paused_at = null where id = ${leadId}`;
+    // Case 2: a committed claim row proves the crashed call's work landed —
+    // the identical retry is suppressed or it would mint a second row
+    const runB = (await enqueueRun(sql, { kind: 'reply', leadId })!)!;
+    await sql`insert into control_idempotency_keys (key, response, status_code)
+      values (${`agent:${runB}:0:create_task:c1`}, '{}', 200)`;
+    await sql`update agent_runs set
+      steps = ${sql.json(pendingJournal() as never[])},
+      params = ${sql.json(script as never)}
+      where id = ${runB}`;
+    expect(await runOnce(sql)).toBe(true);
+    const rB = await getRun(runB);
+    const taskB = rB.steps.find(
+      (s) =>
+        (s as { name?: string; callId?: string }).name === 'create_task' &&
+        (s as { callId?: string }).callId === 'mock-1-0',
+    ) as { out?: { error?: string } } | undefined;
+    expect(taskB?.out?.error).toMatch(/^REPEAT/);
+    expect(
+      (await sql`select id from lead_tasks where lead_id = ${leadId} and title = 'vip'`).length,
+    ).toBe(before.length + 1);
+    await sql`delete from control_idempotency_keys where key = ${`agent:${runB}:0:create_task:c1`}`;
+  });
+
+  test('a read_pages result with fetch failures stays retryable — errors[] is not clean', async () => {
+    await migrate(sql, MIGRATIONS);
+    const lead = await controlTx(sql, (tx) => insertLeadTx(tx, { name: 'Failed Fetch Lead' }));
+    const leadId = lead.body.lead.id;
+    await sql`delete from agent_runs where status = 'queued'`;
+    const runId = (await enqueueRun(sql, { kind: 'reply', leadId })!)!;
+    await sql`update agent_runs set
+      params = ${sql.json({
+        script: [
+          // mixed batch: a fetchable url + an unfetchable private host —
+          // the result carries errors[], which must not count as a clean
+          // prior result
+          {
+            toolCalls: [
+              {
+                name: 'read_pages',
+                args: { urls: ['https://shop.example/catalog', 'http://192.168.10.9/x'] },
+              },
+            ],
+          },
+          // identical retry — executes: the failed url re-validates, the
+          // good page comes back from the run cache for free
+          {
+            toolCalls: [
+              {
+                name: 'read_pages',
+                args: { urls: ['https://shop.example/catalog', 'http://192.168.10.9/x'] },
+              },
+            ],
+          },
+          { toolCalls: [{ name: 'request_human', args: { leadId, reason: 'travou' } }] },
+          { text: 'fim' },
+        ],
+      } as never)}
+      where id = ${runId}`;
+    expect(await runOnce(sql)).toBe(true);
+    const r = await getRun(runId);
+    const reads = r.steps.filter((s) => (s as { name?: string }).name === 'read_pages') as {
+      readSpent?: number;
+      out?: { error?: string; errors?: unknown[]; pages?: { cached?: boolean }[] };
+    }[];
+    expect(reads).toHaveLength(2);
+    // the retry was NOT suppressed — it reported the failure again
+    expect(reads[0]!.out?.error).toBeUndefined();
+    expect(reads[0]!.out?.errors).toHaveLength(1);
+    expect(reads[1]!.out?.error).toBeUndefined();
+    expect(reads[1]!.out?.errors).toHaveLength(1);
+    // the successful page stayed cached — the retry spent nothing on it
+    expect(reads[1]!.out?.pages?.[0]?.cached).toBe(true);
+    expect(reads[1]!.readSpent).toBe(0);
+  });
+
+  test('a cached re-read does not spend the reply page budget', async () => {
+    await migrate(sql, MIGRATIONS);
+    const lead = await controlTx(sql, (tx) => insertLeadTx(tx, { name: 'Cached Page Lead' }));
+    const leadId = lead.body.lead.id;
+    await sql`delete from agent_runs where status = 'queued'`;
+    const runId = (await enqueueRun(sql, { kind: 'reply', leadId })!)!;
+    await sql`update agent_runs set
+      params = ${sql.json({
+        script: [
+          {
+            toolCalls: [
+              { name: 'read_pages', args: { urls: ['https://shop.example/catalog'] } },
+              { name: 'update_lead', args: { id: leadId, city: 'Recife' } },
+            ],
+          },
+          // same url again — served from pageCache, spends nothing
+          { toolCalls: [{ name: 'read_pages', args: { urls: ['https://shop.example/catalog'] } }] },
+          // a new url still fits the cap; the one after hits it
+          { toolCalls: [{ name: 'read_pages', args: { urls: ['https://shop.example/prices'] } }] },
+          { toolCalls: [{ name: 'read_pages', args: { urls: ['https://shop.example/about'] } }] },
+          { toolCalls: [{ name: 'request_human', args: { leadId, reason: 'travou' } }] },
+          { text: 'fim' },
+        ],
+      } as never)}
+      where id = ${runId}`;
+    expect(await runOnce(sql)).toBe(true);
+    const r = await getRun(runId);
+    expect(r.status).toBe('done');
+    const reads = r.steps.filter((s) => (s as { name?: string }).name === 'read_pages') as {
+      readSpent?: number;
+      out?: { error?: string };
+    }[];
+    expect(reads).toHaveLength(4);
+    // every call executed — no REPEAT — but only the fetches spent; a
+    // refusal issues no fetch and charges nothing
+    expect(reads[0]!.readSpent).toBe(1);
+    expect(reads[1]!.readSpent).toBe(0);
+    expect(reads[2]!.readSpent).toBe(1);
+    expect(reads[3]!.readSpent).toBe(0);
+    expect(reads[3]!.out?.error ?? '').toMatch(/^read_pages: limite/);
+  });
+
+  test('the reply page budget prices fetches, not calls', async () => {
+    await migrate(sql, MIGRATIONS);
+    const lead = await controlTx(sql, (tx) => insertLeadTx(tx, { name: 'Budget Lead' }));
+    const leadId = lead.body.lead.id;
+    await sql`delete from agent_runs where status = 'queued'`;
+    const runId = (await enqueueRun(sql, { kind: 'reply', leadId })!)!;
+    await sql`update agent_runs set
+      params = ${sql.json({
+        script: [
+          // a 3-url batch exceeds the 2-fetch cap outright — refused whole,
+          // nothing fetched, nothing charged
+          {
+            toolCalls: [
+              {
+                name: 'read_pages',
+                args: {
+                  urls: ['https://a.example/1', 'https://a.example/2', 'https://a.example/3'],
+                },
+              },
+            ],
+          },
+          // 2 urls fit exactly — both fetches issued and charged
+          {
+            toolCalls: [
+              {
+                name: 'read_pages',
+                args: { urls: ['https://a.example/1', 'https://a.example/2'] },
+              },
+            ],
+          },
+          // the same pair again — suppressed as a REPEAT (result still
+          // current); spends nothing either way
+          {
+            toolCalls: [
+              {
+                name: 'read_pages',
+                args: { urls: ['https://a.example/1', 'https://a.example/2'] },
+              },
+            ],
+          },
+          // any new url is over budget now
+          { toolCalls: [{ name: 'read_pages', args: { urls: ['https://a.example/3'] } }] },
+          { toolCalls: [{ name: 'request_human', args: { leadId, reason: 'travou' } }] },
+          { text: 'fim' },
+        ],
+      } as never)}
+      where id = ${runId}`;
+    expect(await runOnce(sql)).toBe(true);
+    const r = await getRun(runId);
+    expect(r.status).toBe('done');
+    const reads = r.steps.filter((s) => (s as { name?: string }).name === 'read_pages') as {
+      readSpent?: number;
+      out?: { error?: string };
+    }[];
+    expect(reads).toHaveLength(4);
+    expect(reads[0]!.readSpent).toBe(0);
+    expect(reads[0]!.out?.error ?? '').toMatch(/^read_pages: limite/);
+    expect(reads[1]!.readSpent).toBe(2);
+    expect(reads[1]!.out?.error ?? '').toBe('');
+    expect(reads[2]!.readSpent).toBe(0);
+    expect(reads[2]!.out?.error ?? '').toMatch(/^REPEAT/);
+    expect(reads[3]!.readSpent).toBe(0);
+    expect(reads[3]!.out?.error ?? '').toMatch(/^read_pages: limite/);
+  });
+
+  test('unfetchable urls never spend the reply page budget', async () => {
+    await migrate(sql, MIGRATIONS);
+    const lead = await controlTx(sql, (tx) => insertLeadTx(tx, { name: 'Bad Url Lead' }));
+    const leadId = lead.body.lead.id;
+    await sql`delete from agent_runs where status = 'queued'`;
+    const runId = (await enqueueRun(sql, { kind: 'reply', leadId })!)!;
+    await sql`update agent_runs set
+      params = ${sql.json({
+        script: [
+          // urls no provider could issue — rejected before the batch,
+          // spending nothing
+          {
+            toolCalls: [{ name: 'read_pages', args: { urls: ['not-a-url', 'also-garbage'] } }],
+          },
+          // the valid pair still fits the untouched budget
+          {
+            toolCalls: [
+              {
+                name: 'read_pages',
+                args: { urls: ['https://a.example/1', 'https://a.example/2'] },
+              },
+            ],
+          },
+          { toolCalls: [{ name: 'request_human', args: { leadId, reason: 'travou' } }] },
+          { text: 'fim' },
+        ],
+      } as never)}
+      where id = ${runId}`;
+    expect(await runOnce(sql)).toBe(true);
+    const r = await getRun(runId);
+    expect(r.status).toBe('done');
+    const reads = r.steps.filter((s) => (s as { name?: string }).name === 'read_pages') as {
+      readSpent?: number;
+      out?: { error?: string; errors?: { url: string; error: string }[] };
+    }[];
+    expect(reads).toHaveLength(2);
+    expect(reads[0]!.readSpent).toBe(0);
+    // both rejections reported through the normal per-url errors channel
+    expect(reads[0]!.out?.errors?.map((e) => e.url)).toEqual(['not-a-url', 'also-garbage']);
+    expect(reads[1]!.readSpent).toBe(2);
+  });
+
+  test('a rejected url cannot mask the fetchable page behind its pageKey', async () => {
+    await migrate(sql, MIGRATIONS);
+    const lead = await controlTx(sql, (tx) => insertLeadTx(tx, { name: 'Scheme Mask Lead' }));
+    const leadId = lead.body.lead.id;
+    await sql`delete from agent_runs where status = 'queued'`;
+    const runId = (await enqueueRun(sql, { kind: 'reply', leadId })!)!;
+    await sql`update agent_runs set
+      params = ${sql.json({
+        script: [
+          // ftp:// is rejected pre-validation — its error must not occupy
+          // the scheme-free pageKey slot 'shop.example/menu'
+          { toolCalls: [{ name: 'read_pages', args: { urls: ['ftp://shop.example/menu'] } }] },
+          // the https twin still fetches — the rejection never masked it
+          {
+            toolCalls: [{ name: 'read_pages', args: { urls: ['https://shop.example/menu'] } }],
+          },
+          // same-call twin: the ftp url must NOT inherit the https page
+          // behind its scheme-free pageKey — it reports its own rejection
+          {
+            toolCalls: [
+              {
+                name: 'read_pages',
+                args: { urls: ['ftp://shop.example/menu', 'https://shop.example/menu'] },
+              },
+            ],
+          },
+          { toolCalls: [{ name: 'request_human', args: { leadId, reason: 'travou' } }] },
+          { text: 'fim' },
+        ],
+      } as never)}
+      where id = ${runId}`;
+    expect(await runOnce(sql)).toBe(true);
+    const r = await getRun(runId);
+    expect(r.status).toBe('done');
+    const reads = r.steps.filter((s) => (s as { name?: string }).name === 'read_pages') as {
+      readSpent?: number;
+      out?: { error?: string; errors?: { url: string }[]; pages?: unknown[] };
+    }[];
+    expect(reads).toHaveLength(3);
+    expect(reads[0]!.readSpent).toBe(0);
+    expect(reads[0]!.out?.errors?.[0]?.url).toBe('ftp://shop.example/menu');
+    expect(reads[1]!.readSpent).toBe(1);
+    expect(reads[1]!.out?.pages?.length).toBeGreaterThan(0);
+    // the ftp url reports its rejection even behind a cached pageKey —
+    // the https twin still serves the cached page, free
+    expect(reads[2]!.readSpent).toBe(0);
+    expect(reads[2]!.out?.pages?.length).toBe(1);
+    expect(reads[2]!.out?.errors?.map((e) => e.url)).toEqual(['ftp://shop.example/menu']);
+  });
+
+  test('auto outreach self-cancels when a fresher inbound exists mid-run', async () => {
+    await migrate(sql, MIGRATIONS);
+    const lead = await controlTx(sql, (tx) => insertLeadTx(tx, { name: 'Replied Mid-Run' }));
+    const leadId = lead.body.lead.id;
+    const [thread] = await sql<{ id: string }[]>`
+      insert into lead_threads (lead_id, channel) values (${leadId}, 'whatsapp') returning id
+    `;
+    await sql`delete from agent_runs where status = 'queued'`;
+    const runId = (await enqueueRun(sql, { kind: 'outreach', leadId }))!;
+    // params.auto is the marker the gate/post-commit cancel keys on; a
+    // 'running' row locked during that pass escapes it — the run must
+    // catch the committed inbound itself at the next step boundary.
+    await sql`update agent_runs set run_at = now(),
+      params = ${sql.json({ auto: 'first-contact', script: [{ text: 'oi', delayMs: 1500 }, { text: 'outra' }] } as never)}
+      where id = ${runId}`;
+    // The probe keys on received_at (server ingest): the inbound must land
+    // AFTER the claim — fire the run, let claim+turn-1 start, then insert.
+    const running = runOnce(sql);
+    await new Promise((r) => setTimeout(r, 150));
+    await sql`insert into lead_messages (thread_id, direction, author, body, status, created_at)
+      values (${thread!.id}, 'in', 'lead', 'sim, quero', 'received', now())`;
+    expect(await running).toBe(true);
+    const r = await getRun(runId);
+    expect(r.status).toBe('canceled');
+    expect(r.error).toBe('lead respondeu');
+    // the second scripted turn never ran — the probe broke the loop
+    expect(r.steps.filter((s) => (s as { type?: string }).type === 'model')).toHaveLength(1);
+  });
+
+  test('a historical import does not self-cancel auto outreach', async () => {
+    await migrate(sql, MIGRATIONS);
+    const lead = await controlTx(sql, (tx) => insertLeadTx(tx, { name: 'History Sync' }));
+    const leadId = lead.body.lead.id;
+    const [thread] = await sql<{ id: string }[]>`
+      insert into lead_threads (lead_id, channel) values (${leadId}, 'whatsapp') returning id
+    `;
+    await sql`delete from agent_runs where status = 'queued'`;
+    const runId = (await enqueueRun(sql, { kind: 'outreach', leadId }))!;
+    await sql`update agent_runs set run_at = now(),
+      params = ${sql.json({ auto: 'first-contact', script: [{ text: 'oi' }] } as never)}
+      where id = ${runId}`;
+    // Re-imported context message stamped AFTER the claim — a provider
+    // clock ahead would land here too. historical=true means "context
+    // only": it never asked for a reply, so it must not cancel.
+    await sql`insert into lead_messages (thread_id, direction, author, body, status, created_at, historical)
+      values (${thread!.id}, 'in', 'lead', 'contexto antigo', 'received',
+              now() + interval '1 minute', true)`;
+    expect(await runOnce(sql)).toBe(true);
+    const r = await getRun(runId);
+    expect(r.status).toBe('done');
+  });
+
+  test('a pre-upgrade row with a skewed provider stamp does not self-cancel', async () => {
+    await migrate(sql, MIGRATIONS);
+    const lead = await controlTx(sql, (tx) => insertLeadTx(tx, { name: 'Legacy Import' }));
+    const leadId = lead.body.lead.id;
+    const [thread] = await sql<{ id: string }[]>`
+      insert into lead_threads (lead_id, channel) values (${leadId}, 'whatsapp') returning id
+    `;
+    await sql`delete from agent_runs where status = 'queued'`;
+    const runId = (await enqueueRun(sql, { kind: 'outreach', leadId }))!;
+    await sql`update agent_runs set run_at = now(),
+      params = ${sql.json({ auto: 'first-contact', script: [{ text: 'oi' }] } as never)}
+      where id = ${runId}`;
+    // Post-0034 legacy shape: received_at NULL marks a row no server ingested
+    // (0030's backfill is erased to NULL; historical = false). A provider
+    // clock ahead lands created_at past the claim — without the real-ingest
+    // discriminator this cancels outreach on a message that isn't a live
+    // reply.
+    await sql`insert into lead_messages (thread_id, direction, author, body, status, created_at, received_at)
+      values (${thread!.id}, 'in', 'lead', 'contexto antigo', 'received',
+              now() + interval '1 hour', null)`;
+    expect(await runOnce(sql)).toBe(true);
+    const r = await getRun(runId);
+    expect(r.status).toBe('done');
+  });
+
+  test('a lagging provider stamp still self-cancels — the probe keys on ingest time', async () => {
+    await migrate(sql, MIGRATIONS);
+    const lead = await controlTx(sql, (tx) => insertLeadTx(tx, { name: 'Lag Inbound' }));
+    const leadId = lead.body.lead.id;
+    const [thread] = await sql<{ id: string }[]>`
+      insert into lead_threads (lead_id, channel) values (${leadId}, 'whatsapp') returning id
+    `;
+    await sql`delete from agent_runs where status = 'queued'`;
+    const runId = (await enqueueRun(sql, { kind: 'outreach', leadId }))!;
+    await sql`update agent_runs set run_at = now(),
+      params = ${sql.json({ auto: 'first-contact', script: [{ text: 'oi', delayMs: 1500 }, { text: 'outra' }] } as never)}
+      where id = ${runId}`;
+    // Provider clock an hour BEHIND: created_at predates the claim, but the
+    // message is ingested mid-run — received_at is what "arrived during
+    // this attempt" means.
+    const running = runOnce(sql);
+    await new Promise((r) => setTimeout(r, 150));
+    await sql`insert into lead_messages (thread_id, direction, author, body, status, created_at)
+      values (${thread!.id}, 'in', 'lead', 'sim, quero', 'received', now() - interval '1 hour')`;
+    expect(await running).toBe(true);
+    const r = await getRun(runId);
+    expect(r.status).toBe('canceled');
+    expect(r.error).toBe('lead respondeu');
+    expect(r.steps.filter((s) => (s as { type?: string }).type === 'model')).toHaveLength(1);
+  });
+
+  test('an auto send refused at dispatch — the inbound beat the probe window', async () => {
+    await migrate(sql, MIGRATIONS);
+    await sql`
+      insert into control_integrations (kind, driver, enabled)
+      values ('whatsapp', 'log', true)
+      on conflict (kind, driver) do update set enabled = true
+    `;
+    // The default first-contact draft-only gate would park the send in the
+    // approval queue before it ever reaches dispatch.
+    await sql`
+      insert into control_settings (key, value) values ('guardrails', ${sql.json({ firstContactDraftOnly: false, quietStart: '00:00', quietEnd: '00:00' } as never)})
+      on conflict (key) do update set value = excluded.value
+    `;
+    const lead = await controlTx(sql, (tx) =>
+      insertLeadTx(tx, { name: 'Send Boundary', whatsapp: '5511955550001', agent_mode: 'auto' }),
+    );
+    const leadId = lead.body.lead.id;
+    const [thread] = await sql<{ id: string }[]>`
+      insert into lead_threads (lead_id, channel) values (${leadId}, 'whatsapp') returning id
+    `;
+    await sql`delete from agent_runs where status = 'queued'`;
+    const runId = (await enqueueRun(sql, { kind: 'outreach', leadId }))!;
+    await sql`update agent_runs set run_at = now(),
+      params = ${sql.json({ auto: 'first-contact' } as never)}
+      where id = ${runId}`;
+    const claimed = await claimRun(sql);
+    expect(claimed?.id).toBe(runId);
+    // Live inbound committed AFTER the claim but before any step boundary —
+    // the probe hasn't run yet; the send-claim tx must refuse on its own.
+    await sql`insert into lead_messages (thread_id, direction, author, body, status)
+      values (${thread!.id}, 'in', 'lead', 'oi, quero', 'received')`;
+    const out = (await executeTool(
+      mkCtx(runId, claimed!.claim_token, leadId, 'outreach'),
+      's1',
+      'send_message',
+      { leadId, body: 'não deve enviar' },
+    )) as { error?: string };
+    expect(out.error).toBe('lead respondeu');
+    const msgs = await sql<{ status: string }[]>`
+      select status from lead_messages where thread_id = ${thread!.id} and direction = 'out'
+    `;
+    expect(msgs).toHaveLength(1);
+    expect(msgs[0]!.status).toBe('failed');
+  });
+
+  test('received_at is wall-clock — an open inbound tx stamps insert time, not tx start', async () => {
+    await migrate(sql, MIGRATIONS);
+    const lead = await controlTx(sql, (tx) => insertLeadTx(tx, { name: 'Tx Clock' }));
+    const leadId = lead.body.lead.id;
+    const [thread] = await sql<{ id: string }[]>`
+      insert into lead_threads (lead_id, channel) values (${leadId}, 'whatsapp') returning id
+    `;
+    // now() freezes at tx start — a row inserted 50ms later must carry the
+    // wall-clock instant, or a started-before-claim tx would hide its
+    // inbound from every probe that compares on started_at.
+    await sql.begin(async (tx) => {
+      const [t0] = await tx<{ t0: string }[]>`select now() as t0`;
+      await tx`select pg_sleep(0.05)`;
+      const [m] = await tx<{ received_at: string }[]>`
+        insert into lead_messages (thread_id, direction, author, body, status)
+        values (${thread!.id}, 'in', 'lead', 'oi', 'received') returning received_at
+      `;
+      const [t1] = await tx<{ t1: string }[]>`select now() as t1`;
+      expect(new Date(t1!.t1).getTime()).toBe(new Date(t0!.t0).getTime());
+      expect(new Date(m!.received_at).getTime()).toBeGreaterThan(new Date(t0!.t0).getTime());
+    });
   });
 });

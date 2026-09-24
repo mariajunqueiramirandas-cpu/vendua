@@ -48,6 +48,7 @@ describe('digestText', () => {
       meetingsBooked: 1,
       meetingsNext24h: 1,
       agentRuns: 9,
+      failedBoardRuns: 0,
       costCents: 12345,
       pendingDrafts: 3,
       openTasks: 7,

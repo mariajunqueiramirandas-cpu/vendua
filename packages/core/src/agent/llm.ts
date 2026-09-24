@@ -44,6 +44,36 @@ export interface LlmProvider {
 }
 
 // ---------------------------------------------------------------------------
+// cost estimation — every driver but OpenRouter reports costUsd: null, so a
+// model-only lead would never reach the lifetime cost cap. When the provider
+// reports no USD we estimate from journaled tokens × per-1M list prices,
+// keyed by the model id provider.name embeds (`driver:model`). Free-tier
+// models rate 0; an unmatched model gets a conservative mid-tier default —
+// a cost cap must err toward counting spend, not ignoring it.
+// ---------------------------------------------------------------------------
+const MODEL_USD_PER_1M: Record<string, { in: number; out: number }> = {
+  'gemini-3.5-flash-lite': { in: 0.1, out: 0.4 },
+  'claude-sonnet-4-5': { in: 3.0, out: 15.0 },
+  'gpt-4o-mini': { in: 0.15, out: 0.6 },
+};
+const FALLBACK_USD_PER_1M = { in: 1.0, out: 4.0 };
+
+export function estimateModelCostUsd(
+  providerName: string,
+  tokensIn: number,
+  tokensOut: number,
+): number {
+  // provider.name is `driver:model` (openrouter's model can itself contain
+  // a ':' — `liquid/lfm-2.5-2.6b:free` → strip the FIRST segment only).
+  const model = providerName.includes(':')
+    ? providerName.slice(providerName.indexOf(':') + 1)
+    : providerName;
+  const rate =
+    MODEL_USD_PER_1M[model] ?? (model.endsWith(':free') ? { in: 0, out: 0 } : FALLBACK_USD_PER_1M);
+  return (tokensIn * rate.in + tokensOut * rate.out) / 1_000_000;
+}
+
+// ---------------------------------------------------------------------------
 // rate limiting — providerFor builds a fresh provider per run, so the throttle
 // lives at module level and keys by driver: a shared slot chain spaces calls
 // to at most RPM, and every call retries 429/5xx honoring Retry-After. This is
@@ -66,6 +96,22 @@ async function takeSlot(key: string, minGapMs: number) {
 }
 
 const RETRYABLE = /429|quota|rate.?limit|resource_exhausted|overload|temporarily|5\d\d/i;
+
+/** Hard bound on a single provider call — a hung socket would otherwise
+ *  stall forever while the heartbeat keeps alive_at fresh, so the run
+ *  could never reclaim. Provider config may override via `timeoutMs`. */
+const LLM_CALL_TIMEOUT_MS = 120_000;
+
+// AbortSignal.timeout takes an integer within its platform range — a
+// fractional or oversized integration config value would throw at every
+// fetch, so anything outside the valid shape falls back to the default.
+const configTimeoutMs = (config: Record<string, unknown>): number =>
+  typeof config.timeoutMs === 'number' &&
+  Number.isInteger(config.timeoutMs) &&
+  config.timeoutMs > 0 &&
+  config.timeoutMs <= 2_147_483_647
+    ? config.timeoutMs
+    : LLM_CALL_TIMEOUT_MS;
 
 function retryAfterMs(e: unknown): number | null {
   const headers = (e as { headers?: Headers }).headers;
@@ -92,6 +138,9 @@ async function llmCall<T>(key: string, minGapMs: number, fn: () => Promise<T>): 
       const retryable =
         status === 429 ||
         (typeof status === 'number' && status >= 500) ||
+        // AbortSignal.timeout's DOMException — a hung provider socket is a
+        // transient fault like a 5xx, so retry instead of insta-failing.
+        (e as { name?: string }).name === 'TimeoutError' ||
         RETRYABLE.test(e instanceof Error ? e.message : String(e));
       if (!retryable || attempt >= maxAttempts - 1) throw e;
       await sleepMs(retryAfterMs(e) ?? Math.min(5_000 * 2 ** attempt, 60_000));
@@ -101,8 +150,13 @@ async function llmCall<T>(key: string, minGapMs: number, fn: () => Promise<T>): 
 
 /** fetch wrapper that throws a headers-carrying error on non-2xx so llmCall
  *  can read Retry-After. */
-async function llmFetch(url: string, init: RequestInit, label: string): Promise<Response> {
-  const res = await fetch(url, init);
+async function llmFetch(
+  url: string,
+  init: RequestInit,
+  label: string,
+  timeoutMs = LLM_CALL_TIMEOUT_MS,
+): Promise<Response> {
+  const res = await fetch(url, { ...init, signal: AbortSignal.timeout(timeoutMs) });
   if (!res.ok) {
     const e = new Error(`${label} ${res.status}: ${(await res.text()).slice(0, 300)}`) as Error & {
       headers?: Headers;
@@ -127,7 +181,7 @@ function openrouterProvider(
   }
   const model =
     typeof config.model === 'string' && config.model ? config.model : 'liquid/lfm-2.5-2.6b:free';
-  const client = new OpenRouter({ apiKey });
+  const client = new OpenRouter({ apiKey, timeoutMs: configTimeoutMs(config) });
   return {
     name: `openrouter:${model}`,
     async chat({ system, messages, tools }) {
@@ -265,8 +319,11 @@ function geminiProvider(config: Record<string, unknown>, secretRef: string | nul
         }
         contents.push({ role: 'user', parts: [{ text: m.content }] });
       }
-      const res = await llmCall('gemini', minGapMs, () =>
-        llmFetch(
+      const data = await llmCall('gemini', minGapMs, async () => {
+        // Body read stays inside the retry wrapper — the abort signal is
+        // armed until the deadline, so a stalled body must retry the same
+        // as a stalled request.
+        const res = await llmFetch(
           `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`,
           {
             method: 'POST',
@@ -289,26 +346,27 @@ function geminiProvider(config: Record<string, unknown>, secretRef: string | nul
             }),
           },
           'gemini',
-        ),
-      );
-      const data = (await res.json()) as {
-        candidates?: {
-          content?: {
-            parts?: {
-              text?: string;
-              functionCall?: { name?: string; args?: unknown; id?: string };
-              thoughtSignature?: string;
-            }[];
+          configTimeoutMs(config),
+        );
+        return (await res.json()) as {
+          candidates?: {
+            content?: {
+              parts?: {
+                text?: string;
+                functionCall?: { name?: string; args?: unknown; id?: string };
+                thoughtSignature?: string;
+              }[];
+            };
+            finishReason?: string;
+          }[];
+          promptFeedback?: { blockReason?: string };
+          usageMetadata?: {
+            promptTokenCount?: number;
+            candidatesTokenCount?: number;
+            thoughtsTokenCount?: number;
           };
-          finishReason?: string;
-        }[];
-        promptFeedback?: { blockReason?: string };
-        usageMetadata?: {
-          promptTokenCount?: number;
-          candidatesTokenCount?: number;
-          thoughtsTokenCount?: number;
         };
-      };
+      });
       const cand = data.candidates?.[0];
       if (!cand) {
         throw new Error(
@@ -383,8 +441,8 @@ function anthropicProvider(config: Record<string, unknown>, secretRef: string | 
         }
         return { role: m.role, content: m.content };
       });
-      const res = await llmCall('anthropic', 0, () =>
-        llmFetch(
+      const data = await llmCall('anthropic', 0, async () => {
+        const res = await llmFetch(
           'https://api.anthropic.com/v1/messages',
           {
             method: 'POST',
@@ -406,12 +464,13 @@ function anthropicProvider(config: Record<string, unknown>, secretRef: string | 
             }),
           },
           'anthropic',
-        ),
-      );
-      const data = (await res.json()) as {
-        content?: { type: string; text?: string; id?: string; name?: string; input?: unknown }[];
-        usage?: { input_tokens?: number; output_tokens?: number };
-      };
+          configTimeoutMs(config),
+        );
+        return (await res.json()) as {
+          content?: { type: string; text?: string; id?: string; name?: string; input?: unknown }[];
+          usage?: { input_tokens?: number; output_tokens?: number };
+        };
+      });
       const text = (data.content ?? [])
         .filter((b) => b.type === 'text')
         .map((b) => b.text ?? '')
@@ -459,8 +518,8 @@ function openaiProvider(config: Record<string, unknown>, secretRef: string | nul
               : { role: m.role, content: m.content },
         ),
       ];
-      const res = await llmCall('openai', 0, () =>
-        llmFetch(
+      const data = await llmCall('openai', 0, async () => {
+        const res = await llmFetch(
           'https://api.openai.com/v1/chat/completions',
           {
             method: 'POST',
@@ -475,17 +534,18 @@ function openaiProvider(config: Record<string, unknown>, secretRef: string | nul
             }),
           },
           'openai',
-        ),
-      );
-      const data = (await res.json()) as {
-        choices?: {
-          message?: {
-            content?: string | null;
-            tool_calls?: { id: string; function: { name: string; arguments: string } }[];
-          };
-        }[];
-        usage?: { prompt_tokens?: number; completion_tokens?: number };
-      };
+          configTimeoutMs(config),
+        );
+        return (await res.json()) as {
+          choices?: {
+            message?: {
+              content?: string | null;
+              tool_calls?: { id: string; function: { name: string; arguments: string } }[];
+            };
+          }[];
+          usage?: { prompt_tokens?: number; completion_tokens?: number };
+        };
+      });
       const msg = data.choices?.[0]?.message;
       return {
         text: msg?.content ?? null,
@@ -514,12 +574,18 @@ export interface MockStep {
   /** Dev/demo pacing — sleep before this step lands, so scripted runs read
    *  live on the launch stage (and in recordings) instead of flashing past. */
   delayMs?: number;
+  /** Reported token usage (default 0) — lets tests exercise the token→USD
+   *  cost-estimation path without a live provider. costUsd stays null
+   *  unless set, like the real drivers. */
+  tokensIn?: number;
+  tokensOut?: number;
+  costUsd?: number | null;
 }
 
-export function mockProvider(script: MockStep[]): LlmProvider {
+export function mockProvider(script: MockStep[], name = 'mock'): LlmProvider {
   let calls = 0;
   return {
-    name: 'mock',
+    name,
     async chat() {
       const step = script[calls] ?? { text: 'ok' };
       calls++;
@@ -533,9 +599,9 @@ export function mockProvider(script: MockStep[]): LlmProvider {
           name: t.name,
           args: t.args ?? {},
         })),
-        tokensIn: 0,
-        tokensOut: 0,
-        costUsd: null,
+        tokensIn: step.tokensIn ?? 0,
+        tokensOut: step.tokensOut ?? 0,
+        costUsd: step.costUsd ?? null,
       };
     },
   };
@@ -562,7 +628,10 @@ export function providerFor(
       return openaiProvider(config, secretRef);
     case 'mock': {
       const script = (runParams.script ?? config.script ?? []) as MockStep[];
-      return mockProvider(script);
+      // Tests may masquerade the mock as a priced driver — provider.name is
+      // what the token-rate lookup keys on for cost estimation.
+      const name = (runParams.providerName ?? config.providerName) as string | undefined;
+      return mockProvider(script, name ?? 'mock');
     }
     default:
       throw new Error(`unknown llm driver: ${driver}`);

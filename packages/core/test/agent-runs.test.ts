@@ -24,12 +24,15 @@ describe('toolsets — research reaches the lead kinds, lightly for reply', () =
     expect(t).toContain('plan');
   });
 
-  test('reply gets light lookups only', () => {
+  test('reply gets light lookups only — read_pages included, capped', () => {
     const r = names('reply');
     expect(r).toContain('serp');
     expect(r).toContain('web_search');
-    expect(r).not.toContain('read_pages');
+    // a lead can send a link — reply reads it, but bounded (per-run call
+    // cap in executeTool); the heavy monid lookups stay out
+    expect(r).toContain('read_pages');
     expect(r).not.toContain('maps_lookup');
+    expect(r).not.toContain('instagram_profile');
     expect(r).toContain('send_message');
     expect(r).toContain('plan');
   });
@@ -89,6 +92,7 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('plan — lead-scoped checklist 
     plan: null,
     monid: null,
     seenContacts: new Set(),
+    pageReads: 0,
     draftOnly: false,
   });
 

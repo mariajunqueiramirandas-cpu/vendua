@@ -82,6 +82,7 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('channel health (db)', () => {
       plan: null,
       monid: null,
       seenContacts: new Set(),
+      pageReads: 0,
       draftOnly: false,
     });
     // A 3-hour quiet window centered on now (guardrails tz) — deterministic
@@ -165,6 +166,7 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('channel health (db)', () => {
       plan: null,
       monid: null,
       seenContacts: new Set(),
+      pageReads: 0,
       draftOnly: true,
     });
     const h =
@@ -226,6 +228,10 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('segment CPL (db)', () => {
 
   test('cplCents = 30d spend ÷ leads30d, including discovery-run spend', async () => {
     await migrate(sql, join(import.meta.dir, '../db/migrations'));
+    // The shared test DB keeps prior runs' cpl-seg rows — 12+ replied
+    // 1-lead segments squeeze this one out of the top-12 rollup
+    // nondeterministically. Drop the class (cascades) before seeding.
+    await sql`delete from leads where segment like 'cpl-seg-%' or segment like 'cpl-old-%'`;
     const seg = `cpl-seg-${Date.now()}`;
     const lead = await controlTx(sql, async (tx) => {
       const l = await insertLeadTx(tx, { name: 'CPL Lead', segment: seg });
@@ -261,6 +267,7 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('segment CPL (db)', () => {
 
   test('a segment with no leads in 30d reports cpl null, not 0', async () => {
     await migrate(sql, join(import.meta.dir, '../db/migrations'));
+    await sql`delete from leads where segment like 'cpl-seg-%' or segment like 'cpl-old-%'`;
     const seg = `cpl-old-${Date.now()}`;
     await controlTx(sql, async (tx) => {
       const l = await insertLeadTx(tx, { name: 'Old Lead', segment: seg });

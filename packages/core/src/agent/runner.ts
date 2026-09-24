@@ -8,6 +8,7 @@ import {
   getSetting,
   getSettingTx,
   AGENT_MEMORY_MAX_FACTS,
+  capCentsOf,
   DEFAULT_GUARDRAILS,
   phoneDigits,
   phoneIsIgnored,
@@ -16,10 +17,11 @@ import {
 import { segmentStats, type AgentGoal } from '../modules/leads.ts';
 import { sweepPipelineSnapshots } from '../modules/forecast.ts';
 import { sweepDigest } from '../modules/digest.ts';
-import { providerFor, type AgentMessage, type ToolCall } from './llm.ts';
+import { estimateModelCostUsd, providerFor, type AgentMessage, type ToolCall } from './llm.ts';
 import { buildSystemPrompt } from './prompts.ts';
 import { executeTool, toolsFor, bookDigest, type BookEntry, type ToolContext } from './tools.ts';
 import { MonidBudget } from './channels/monid.ts';
+import { pageKey } from './channels/discovery.ts';
 import { dispatchMessage } from './send.ts';
 import { channelAvailabilityTx, whatsappReadyTx } from './guardrails.ts';
 import { bookingLinkForRunner, sweepMeetingReminders } from '../modules/meetings.ts';
@@ -74,9 +76,78 @@ interface RunRow {
   max_attempts: number;
 }
 
+/** Per-lead lifetime spend ceiling (leadLifetimeCostCapUsd guardrail) —
+ *  enforced at insert, not claim: a capped lead must not even queue (the
+ *  row would park in 'queued' forever and every sweep tick would re-spend
+ *  the evaluation). The card is flagged once — a system activity plus the
+ *  same '[humano] <reason>' task request_human writes — so staff sees why
+ *  the agent went quiet and can raise the cap or retire the lead. */
+type CapVerdict = 'under' | 'flagged' | 'already';
+
+/** 'capfin' ordering rule: this blocking advisory must be a tx's FIRST
+ *  lock for a lead — before any lead_threads/leads FOR UPDATE or agent_runs
+ *  writes that target the same lead. A tx that takes it empty-handed can
+ *  never deadlock: its later row-lock waits (a finisher's flag insert takes
+ *  key-share on leads through the FK; an inbound's l,t lock is FOR UPDATE)
+ *  always resolve against holders that never wait on capfin themselves —
+ *  claims only TRY it, and every other evaluator holds it first too.
+ *  Conversely a tx that grabbed row locks first and then waits here CAN
+ *  cycle (inbound holds the lead → wants capfin; finisher holds capfin →
+ *  wants the lead's key-share). */
+export async function capLockTx(tx: Sql, leadId: string): Promise<void> {
+  await tx`select pg_advisory_xact_lock(hashtext(${'capfin:' + leadId}))`;
+}
+
+/** 'under' admits the run; the rest refuse it. Only 'flagged' means THIS
+ *  call wrote the flag + staff task — 'already' saw the flag committed at
+ *  this level. */
+export async function leadUnderCostCapTx(tx: Sql, leadId: string): Promise<CapVerdict> {
+  const g = await getSettingTx<Partial<Guardrails>>(tx, 'guardrails', {});
+  const capUsd = g.leadLifetimeCostCapUsd ?? DEFAULT_GUARDRAILS.leadLifetimeCostCapUsd;
+  if (capUsd <= 0) return 'under';
+  // Serialize same-lead cap decisions: two concurrent finishers each see
+  // the other's uncommitted cost_cents as absent — both under-cap, no
+  // flag, parked siblings with no task. The blocking xact advisory makes
+  // the second evaluator read the first's COMMITTED total (its own spend
+  // is visible to itself, committed or not).
+  await capLockTx(tx, leadId);
+  const spent = (
+    await tx<{ cents: number }[]>`
+      select coalesce(sum(cost_cents), 0)::int as cents
+      from agent_runs where lead_id = ${leadId}
+    `
+  )[0]!.cents;
+  if (spent < capCentsOf(g)) return 'under';
+  // Dedupe is per cap LEVEL — after staff raises the cap, hitting the new
+  // ceiling flags again; re-crossing the same level doesn't re-alert.
+  const flagged = await tx`
+    select 1 from lead_activities
+    where lead_id = ${leadId} and kind = 'system' and meta->>'type' = 'cost-cap'
+      and (meta->>'capUsd')::numeric = ${capUsd}
+    limit 1
+  `;
+  if (flagged[0]) return 'already';
+  const name =
+    (await tx<{ name: string }[]>`select name from leads where id = ${leadId}`)[0]?.name ?? leadId;
+  await tx`
+    insert into lead_activities (lead_id, kind, body, meta, created_by)
+    values (${leadId}, 'system',
+            ${`custo acumulado do agente atingiu o teto (US$ ${capUsd}) — novas runs suspensas`},
+            ${tx.json({ type: 'cost-cap', capUsd, spentCents: spent } as never)}, 'system')
+  `;
+  await tx`
+    insert into lead_tasks (lead_id, title, due_at, created_by)
+    values (${leadId},
+            ${`[humano] ${name}: custo do agente ≥ US$ ${capUsd} — suba o teto ou encerre a automação`.slice(0, 300)},
+            null, 'agent')
+  `;
+  return 'flagged';
+}
+
 /** Transaction-local insert — call inside an existing tx (e.g. claimControl's)
  *  to atomically pair a run with another write. postgres.js transaction
- *  handles have no .begin(), so callers holding one must not use enqueueRun. */
+ *  handles have no .begin(), so callers holding one must not use enqueueRun.
+ *  Returns null when the lead's lifetime cost cap refuses the run. */
 export async function insertRun(
   tx: Sql,
   input: {
@@ -88,7 +159,17 @@ export async function insertRun(
      *  (guardrails-configured pacing); null = claimable immediately. */
     runAt?: Date | null;
   },
-): Promise<string> {
+  /** Out-box for tx-owning callers: set when a refusal wrote a FRESH cap
+   *  flag, so they can emit lead.change post-commit for the task refresh. */
+  cap?: { flagged?: boolean },
+): Promise<string | null> {
+  if (input.leadId) {
+    const verdict = await leadUnderCostCapTx(tx, input.leadId);
+    if (verdict !== 'under') {
+      if (cap) cap.flagged = verdict === 'flagged';
+      return null;
+    }
+  }
   const row = (
     await tx<{ id: string }[]>`
       insert into agent_runs (kind, lead_id, thread_id, params, run_at)
@@ -108,19 +189,100 @@ export async function enqueueRun(
     runAt?: Date | null;
     params?: Record<string, unknown>;
   },
-): Promise<string> {
-  const id = await controlTx(sql, (tx) => insertRun(tx, input));
-  emitControlEvent('run.update', id);
+): Promise<string | null> {
+  const { id, capFlagged } = await controlTx(sql, async (tx) => {
+    const cap: { flagged?: boolean } = {};
+    return { id: await insertRun(tx, input, cap), capFlagged: cap.flagged === true };
+  });
+  if (id) emitControlEvent('run.update', id);
+  // A fresh flag committed a [humano] task — emit lead.change (unscoped;
+  // the coalescer drops middle refs on bursts) or Tasks stays stale.
+  if (capFlagged) emitControlEvent('lead.change');
   return id;
 }
 
+/** Flags leads already over the lifetime cap whose crossing no insert or
+ *  finish will ever see (e.g. staff LOWERED leadLifetimeCostCapUsd below
+ *  existing spend): without this pass their queued runs park silently.
+ *  leadUnderCostCapTx dedupes per (lead, cap level) — re-runs are cheap.
+ *  Called after a committed guardrails write; emits lead.change for leads
+ *  that got a NEW flag so the task list refreshes at once. */
+export async function flagCappedLeads(sql: Sql, limit = 200): Promise<number> {
+  const fresh: string[] = [];
+  const excluded: string[] = [];
+  // One COMMITTED tx per batch: the xact-scoped 'capfin:' advisories
+  // leadUnderCostCapTx takes pile up until commit, so a single sweep tx on
+  // a populated DB would hold every flagged lead's lock for the whole
+  // request. Per-batch commits release them incrementally — and the
+  // not-exists dedupe makes chunking safe: a flag batch N wrote drops the
+  // lead out of batch N+1's fresh snapshot.
+  // Only UNFLAGGED-at-this-cap leads come back — without the filter a
+  // window full of already-flagged leads would let every lead beyond
+  // `limit` park silently, pass after pass. No round cap: a settings write
+  // is the only trigger, so every unflagged over-cap lead must flag or it
+  // stays parked with no staff task. Lead order is fixed (lead_id) so two
+  // concurrent sweeps take the per-lead advisories in the same order and
+  // can't cross-lock each other.
+  for (;;) {
+    const batch = await controlTx(sql, async (tx) => {
+      // Settings are re-read per batch — a cap write mid-sweep is honored
+      // on the next chunk instead of being masked by the stale threshold.
+      const g = await getSettingTx<Partial<Guardrails>>(tx, 'guardrails', {});
+      const capUsd = g.leadLifetimeCostCapUsd ?? DEFAULT_GUARDRAILS.leadLifetimeCostCapUsd;
+      const capCents = capCentsOf(g);
+      if (capCents <= 0) return { flagged: [] as string[], done: true };
+      const capped = await tx<{ lead_id: string }[]>`
+        select x.lead_id
+        from (
+          select lead_id, sum(cost_cents) s from agent_runs
+          where lead_id is not null and cost_cents > 0
+          group by lead_id
+        ) x
+        where x.s >= ${capCents}
+          and not exists (
+            select 1 from lead_activities a
+            where a.lead_id = x.lead_id and a.kind = 'system'
+              and a.meta->>'type' = 'cost-cap'
+              and (a.meta->>'capUsd')::numeric = ${capUsd}
+          )
+          and not (x.lead_id = any(${excluded}::uuid[]))
+        order by x.lead_id
+        limit ${limit}
+      `;
+      const flagged: string[] = [];
+      for (const { lead_id } of capped) {
+        const verdict = await leadUnderCostCapTx(tx, lead_id);
+        if (verdict === 'flagged') flagged.push(lead_id);
+        // 'under' means the cap ROSE mid-sweep — exclude it or a later
+        // batch re-selects it. 'already' drops out of the next batch's
+        // not-exists on its own.
+        if (verdict === 'under') excluded.push(lead_id);
+      }
+      return { flagged, done: capped.length < limit };
+    });
+    fresh.push(...batch.flagged);
+    if (batch.done) break;
+  }
+  // Unscoped: the console coalesces a burst of events into one pending
+  // event and keeps a single ref — per-lead refs would drop intermediate
+  // cards' refreshes; one bare event refreshes every open card + the badge.
+  if (fresh.length) emitControlEvent('lead.change');
+  return fresh.length;
+}
+
 export async function claimRun(sql: Sql): Promise<RunRow | null> {
+  const capFlagged: string[] = [];
   const run = await controlTx(sql, async (tx) => {
     // Staff/founder numbers never run — ingest already refuses to mint
     // them, this covers leads created before the list existed.
-    const ignoredPhones =
-      (await getSettingTx<Partial<Guardrails>>(tx, 'guardrails', {})).ignoredPhones ?? [];
+    const g = await getSettingTx<Partial<Guardrails>>(tx, 'guardrails', {});
+    const ignoredPhones = g.ignoredPhones ?? [];
     const ignoredDigits = ignoredPhones.map(phoneDigits).filter((d) => d.length >= 6);
+    // Over-cap leads are excluded in the SCAN — not just rejected post-pick —
+    // so a prefix of parked capped runs can't monopolize the 8-attempt loop
+    // and starve runnable leads queued behind them. The locked revalidation
+    // below still catches spend landing between scan and claim.
+    const capCents = capCentsOf(g);
     // Outreach is serial per lead: a 'running' outreach row is the durable
     // ownership token — it outlives the claim tx, so a queued same-lead
     // outreach can only claim once the owner finishes (a crashed owner is
@@ -151,6 +313,12 @@ export async function claimRun(sql: Sql): Promise<RunRow | null> {
                 regexp_replace(l.whatsapp, '\D', '', 'g') <> all(${ignoredDigits}::text[]))
               and (l.phone is null or
                 regexp_replace(l.phone, '\D', '', 'g') <> all(${ignoredDigits}::text[]))
+              -- lifetime cost cap in the scan itself (0 = uncapped): a
+              -- capped lead never becomes a candidate, it parks until the
+              -- ceiling moves.
+              and (${capCents} <= 0 or
+                coalesce((select sum(x.cost_cents) from agent_runs x
+                          where x.lead_id = l.id), 0) < ${capCents})
           ))
           -- a staff-paused thread suppresses the same way — revalidated here
           -- on a fresh snapshot so a pause landing after enqueue still holds
@@ -173,40 +341,57 @@ export async function claimRun(sql: Sql): Promise<RunRow | null> {
       `;
       const run = cand[0];
       if (!run) return null;
-      // The scan predicate reads t.agent_enabled on the select snapshot — a
-      // pause committed between it and the status flip below would still
-      // claim. Lock the thread row before deciding: an in-flight pause
-      // blocks this FOR UPDATE, then the re-read sees the committed value.
-      if (run.thread_id) {
-        const enabled = await tx<{ agent_enabled: boolean }[]>`
-          select agent_enabled from lead_threads where id = ${run.thread_id} for update
+      // 'capfin' must be a tx's first lock for a lead (see capLockTx) — a
+      // claim holding this row and BLOCKING on it would cycle against a
+      // finisher's key-share. Try-only: a live evaluator means "flagging
+      // or about to be capped" — parking this candidate is the right
+      // disposition anyway, so contention just means reject. It also
+      // serializes the claim against ingestInbound's gate (which holds
+      // capfin through its cancel): while the gate runs, every same-lead
+      // candidate rejects here and the queued cancel always wins.
+      if (run.lead_id) {
+        const capFree = await tx<{ got: boolean }[]>`
+          select pg_try_advisory_xact_lock(hashtext(${'capfin:' + run.lead_id})) as got
         `;
-        if (!enabled[0]?.agent_enabled) {
+        if (!capFree[0]!.got) {
           rejected.push(run.id);
           continue;
         }
       }
-      if (run.lead_id) {
-        // The lead suppression predicate has the same snapshot gap as the
-        // thread leg above — a handoff/unsubscribe committing between the
-        // scan and the status flip would still claim. Revalidate under the
-        // lead row lock. nowait: the suppression writers hold the lead row
-        // and then touch run rows, so waiting here could AB-BA deadlock —
-        // contention just means "about to be suppressed", reject instead.
-        // The savepoint is load-bearing: a 55P03 outside it would abort the
-        // whole claim tx, failing every later statement with 25P02.
-        await tx`savepoint lead_check`;
-        let lead:
-          | {
-              agent_mode: string;
-              archived_at: string | null;
-              unsubscribed_at: string | null;
-              agent_paused_at: string | null;
-              whatsapp: string | null;
-              phone: string | null;
-            }
-          | undefined;
-        try {
+      // Both row revalidations fail fast under one savepoint — a contended
+      // lock means the pause/suppression writer wins, so park instead of
+      // waiting (a blocking wait on rows while holding this candidate's
+      // lock is how claims and the inbound cancel deadlocked each other).
+      // The savepoint is load-bearing: a 55P03 outside it would abort the
+      // whole claim tx, failing every later statement with 25P02.
+      await tx`savepoint cand_check`;
+      let lockLost = false;
+      let lead:
+        | {
+            agent_mode: string;
+            archived_at: string | null;
+            unsubscribed_at: string | null;
+            agent_paused_at: string | null;
+            whatsapp: string | null;
+            phone: string | null;
+          }
+        | undefined;
+      try {
+        // The scan predicate reads t.agent_enabled on the select snapshot —
+        // a pause committed between it and the status flip below would
+        // still claim. Revalidate under the thread row lock — nowait for
+        // the same reason as the lead leg: contention is "about to be
+        // suppressed", so reject.
+        if (run.thread_id) {
+          const enabled = await tx<{ agent_enabled: boolean }[]>`
+            select agent_enabled from lead_threads where id = ${run.thread_id} for update nowait
+          `;
+          if (!enabled[0]?.agent_enabled) {
+            rejected.push(run.id);
+            continue;
+          }
+        }
+        if (run.lead_id) {
           lead = (
             await tx<
               {
@@ -222,10 +407,17 @@ export async function claimRun(sql: Sql): Promise<RunRow | null> {
               from leads where id = ${run.lead_id} for update nowait
             `
           )[0];
-        } catch (e) {
-          if ((e as { code?: string }).code !== '55P03') throw e;
-          await tx`rollback to savepoint lead_check`;
         }
+      } catch (e) {
+        if ((e as { code?: string }).code !== '55P03') throw e;
+        await tx`rollback to savepoint cand_check`;
+        lockLost = true;
+      }
+      if (lockLost) {
+        rejected.push(run.id);
+        continue;
+      }
+      if (run.lead_id) {
         if (
           !lead ||
           lead.agent_mode === 'off' ||
@@ -234,6 +426,16 @@ export async function claimRun(sql: Sql): Promise<RunRow | null> {
           lead.agent_paused_at ||
           phoneIsIgnored(ignoredPhones, lead.whatsapp, lead.phone)
         ) {
+          rejected.push(run.id);
+          continue;
+        }
+        // Lifetime cost cap, re-checked at claim: runs queued while the lead
+        // was under budget must not sail past it — parked like the other
+        // suppressions so raising the cap resumes the queued work. The lead
+        // row lock above serializes this with same-lead claim decisions.
+        const capVerdict = await leadUnderCostCapTx(tx, run.lead_id);
+        if (capVerdict !== 'under') {
+          if (capVerdict === 'flagged') capFlagged.push(run.lead_id);
           rejected.push(run.id);
           continue;
         }
@@ -274,12 +476,15 @@ export async function claimRun(sql: Sql): Promise<RunRow | null> {
     return null;
   });
   if (run) emitControlEvent('run.update', run.id);
+  // Claim-time refusals commit fresh flags in the same tx — the task
+  // refresh rides lead.change, unscoped like the other flag emitters.
+  if (capFlagged.length) emitControlEvent('lead.change');
   return run;
 }
 
 async function finishRun(
   sql: Sql,
-  run: { id: string; claimToken: string },
+  run: { id: string; claimToken: string; leadId?: string | null },
   result: {
     status: 'done' | 'failed' | 'canceled';
     steps: unknown[];
@@ -289,9 +494,13 @@ async function finishRun(
     error?: string;
   },
 ): Promise<boolean> {
-  const rows = await controlTx(
-    sql,
-    (tx) => tx`
+  const out = await controlTx(sql, async (tx) => {
+    // capfin before the run-row update — the cap evaluator that takes it
+    // first can never deadlock (see capLockTx); grabbing it after locking
+    // the run row would invert against inbound's cancel predicate, which
+    // now covers 'running' auto rows too.
+    if (run.leadId) await capLockTx(tx, run.leadId);
+    const updated = await tx<{ id: string; lead_id: string | null; kind: RunRow['kind'] }[]>`
     update agent_runs set
       status = ${result.status},
       steps = ${tx.json(result.steps as never[])},
@@ -301,11 +510,47 @@ async function finishRun(
       error = ${result.error ?? null},
       finished_at = now()
     where id = ${run.id} and status = 'running' and claim_token = ${run.claimToken}
-    returning id
-  `,
-  );
-  if (rows.length) emitControlEvent('run.update', run.id);
-  return rows.length > 0;
+    returning id, lead_id, kind
+    `;
+    const r = updated[0];
+    // Failed-run visibility — a run dying here only ever showed in the Runs
+    // UI. Lead-bound failures flag the card with the same '[humano] <reason>'
+    // task request_human writes; board-scoped failures have no card and roll
+    // up into the daily digest counter instead.
+    if (r?.lead_id && result.status === 'failed') {
+      const name =
+        (await tx<{ name: string }[]>`select name from leads where id = ${r.lead_id}`)[0]?.name ??
+        r.lead_id;
+      await tx`
+        insert into lead_tasks (lead_id, title, due_at, created_by)
+        values (${r.lead_id},
+                ${`[humano] ${name}: run ${r.kind} falhou — ${(result.error ?? 'sem detalhe').slice(0, 200)}`.slice(0, 300)},
+                null, 'agent')
+      `;
+    }
+    // The run that CROSSES the cap is where the alert must land — queued
+    // siblings are scan-excluded and never reach the claim check, so this
+    // is the only flag write that covers "spent past the ceiling".
+    // A SUCCESSFUL crossing flags too — the verdict distinguishes "we
+    // wrote the flag" from "it already existed", which the post-commit
+    // emit needs.
+    const cap = r?.lead_id ? await leadUnderCostCapTx(tx, r.lead_id) : 'under';
+    return { updated, cap };
+  });
+  if (out.updated.length) {
+    emitControlEvent('run.update', run.id);
+    // The [humano] task lands in the tx — the task list/badge refresh on
+    // lead.change, so mirror the event a real lead update would emit. A
+    // fresh cap flag writes the same kind of task — emit on that too, or
+    // open Tasks views stay stale on a successful crossing. Fresh flags go
+    // UNSCOPED: the console coalesces a burst into one pending event with a
+    // single ref, so scoped emits would strand the middle leads' refreshes
+    // (the same reason flagCappedLeads emits bare).
+    const r = out.updated[0];
+    if (r?.lead_id && (result.status === 'failed' || out.cap === 'flagged'))
+      emitControlEvent('lead.change', out.cap === 'flagged' ? undefined : r.lead_id);
+  }
+  return out.updated.length > 0;
 }
 
 async function contextFor(
@@ -529,6 +774,84 @@ function mineAttempts(steps: unknown[]): { queries: Set<string>; urls: Set<strin
   return { queries, urls };
 }
 
+/** The playbook's finish gate for reply/outreach: every run must end on a
+ *  visible, lead-facing action — these are the calls that count. Research,
+ *  notes and plan ticks alone don't end a messaging run. */
+const ACTION_TOOLS = new Set([
+  'send_message',
+  'draft_message',
+  'request_human',
+  'unsubscribe',
+  'set_state',
+  'update_lead',
+  'create_task',
+]);
+
+/** Read-only tools — a result stays reusable only while no write has
+ *  landed since it ran (a mutation in between may have changed the state
+ *  the read described). Everything not in this set is a write for the
+ *  loop guard's staleness tracking. */
+const READ_TOOLS = new Set([
+  'search_leads',
+  'get_lead',
+  'web_search',
+  'read_pages',
+  'maps_lookup',
+  'instagram_profile',
+  'serp',
+]);
+
+/** Local reads of mutable CRM state. `stateVersion` only counts THIS
+ *  run's writes, so suppressing an identical get_lead/search_leads on
+ *  that version alone would hide external edits (staff, inbound-driven
+ *  updates) made between turns. They're cheap and spend no remote
+ *  budget — exempt them from repeat-suppression (the repeat still
+ *  counts toward allRepeat, so a read-only loop trips the LOOP nudge).
+ *  Remote/budgeted reads (read_pages, web_search, serp, maps_lookup,
+ *  instagram_profile) keep suppression — that's what their spend caps
+ *  exist for. */
+const MUTABLE_READS = new Set(['get_lead', 'search_leads']);
+
+/** Writes that mint a NEW durable artifact per call — a duplicate can
+ *  never be a state-restore, so an identical repeat is suppressed for
+ *  the rest of the run (a run-wide landed-signature set, not the
+ *  one-turn prevSigs window). State writes are different: a repeated
+ *  update_lead can legitimately restore a field another call changed.
+ *  send_message/draft_message mint a message row; create_task and
+ *  request_human mint task rows; unsubscribe mints a farewell message;
+ *  add_note mints an activity; create_lead inserts a lead card outside
+ *  discovery's merge path; propose_brief mints a discovery brief. */
+const NON_IDEMPOTENT = new Set([
+  'send_message',
+  'draft_message',
+  'request_human',
+  'unsubscribe',
+  'add_note',
+  'create_task',
+  'create_lead',
+  'propose_brief',
+]);
+
+/** True once this run's journal holds a landed action call — a result that
+ *  neither errored, came back {blocked} (a blocked send produced nothing
+ *  visible) nor {ignored} (an update_lead stripped of every field changed
+ *  nothing). */
+function runActed(steps: unknown[]): boolean {
+  return steps.some((s) => {
+    if (typeof s !== 'object' || s === null) return false;
+    const st = s as { type?: string; name?: string; out?: unknown };
+    if (st.type !== 'tool' || !st.name || !ACTION_TOOLS.has(st.name)) return false;
+    const out = st.out as { error?: unknown; blocked?: unknown; ignored?: unknown } | null;
+    return (
+      typeof out === 'object' &&
+      out !== null &&
+      !out.error &&
+      out.blocked !== true &&
+      out.ignored !== true
+    );
+  });
+}
+
 /** Max chars of a replayed tool result — the model needs the call's outcome
  *  (contacts found, blocked reason, ids), not a full page dump. */
 const REPLAY_OUT_MAX = 3000;
@@ -548,6 +871,18 @@ export interface JournalReplay {
   /** Latest stored discovery plan — lives only in ctx (no durable field), so
    *  the journal's plan tool output is the only place it survives a crash. */
   plan: string | null;
+  /** Reply's read_pages spend carries over — the cap is per RUN, not per
+   *  attempt, or a reclaim would hand back a fresh budget. */
+  pageReads: number;
+  /** Pages the journal already fetched — a reread after recovery hits the
+   *  rebuilt cache instead of spending against the cap twice. */
+  pageCache: Map<string, Promise<unknown>>;
+  /** Signatures of artifact-minting calls the journal proves landed
+   *  (clean result — pending entries whose durable claim proves they
+   *  committed are resolved into clean outs by reconcileInterrupted
+   *  before this runs; unclaimed pendings minted nothing and stay
+   *  retryable): a re-emitted one would mint a second row. */
+  landedSigs: Set<string>;
 }
 
 /** Replay a reclaimed run's journal into live conversation + harness state.
@@ -558,13 +893,16 @@ export interface JournalReplay {
  *  thoughtSignature ride along), tool results replay truncated, and calls
  *  that crashed mid-batch (pending, no out) close with an explicit
  *  interrupted marker so the model re-checks state instead of assuming. */
-export function replayJournal(prior: unknown[]): JournalReplay {
+export function replayJournal(prior: unknown[], claimsUnverified = false): JournalReplay {
   const replay: JournalReplay = {
     baseStep: 0,
     messages: [],
     book: new Map(),
     seenContacts: new Set(),
     plan: null,
+    pageReads: 0,
+    pageCache: new Map(),
+    landedSigs: new Set(),
   };
   for (const s of prior) {
     if ((s as { type?: string } | null)?.type === 'model') replay.baseStep++;
@@ -616,9 +954,74 @@ export function replayJournal(prior: unknown[]): JournalReplay {
   // would re-bank a phone attempt 1 already found and reset the
   // no-progress detector.
   for (const s of prior) {
-    const t = s as { type?: string; name?: string; out?: unknown } | null;
+    const t = s as {
+      type?: string;
+      name?: string;
+      args?: unknown;
+      out?: unknown;
+    } | null;
     if (t?.type !== 'tool') continue;
     bankOut(t.out);
+    if (NON_IDEMPOTENT.has(t.name ?? '')) {
+      // Clean result = definitely landed (reconcileInterrupted resolved
+      // committed pendings into their stored responses upstream, so
+      // they arrive here as clean outs too). Errored/blocked/ignored
+      // minted nothing, and an unclaimed still-pending entry never
+      // executed — both stay retryable. Exception: when the claim
+      // lookup itself failed, an out-less entry might have committed —
+      // suppressing the re-emission beats a possible duplicate row.
+      const o = t.out as { error?: unknown; blocked?: unknown; ignored?: unknown } | null;
+      if (
+        o === undefined
+          ? claimsUnverified
+          : typeof o === 'object' &&
+            o !== null &&
+            !o.error &&
+            o.blocked !== true &&
+            o.ignored !== true
+      ) {
+        replay.landedSigs.add(JSON.stringify([t.name, t.args ?? {}]));
+      }
+    }
+    if (t.name === 'read_pages') {
+      // The journaled marker is authoritative: it's the fetch spend the
+      // call charged (0 for a fully-cached read — the cap prices fetches,
+      // not calls). Current code stamps readSpent: 0 at journal time and
+      // increments it per reservation, so a dead pending entry carries
+      // its real spend — and one stamped 0 provably died before
+      // validation. Markerless entries are pre-marker legacy journals:
+      // completed calls count one spend (that era charged per call), and
+      // a still-pending/out-less entry reserves one too — the legacy
+      // runner may have died mid-fetch, and whether its fetch issued is
+      // unknowable from the journal; reserving is the conservative side
+      // for a spend cap (it can only under-fetch recovery, never breach
+      // the budget the entry's run was charged against). The two
+      // pre-check rejections (REPEAT suppression; a malformed 'needs
+      // urls' call) never reached the counter.
+      const spent = (t as { readSpent?: number | boolean }).readSpent;
+      if (typeof spent === 'number') {
+        replay.pageReads += spent;
+      } else if (spent === true) {
+        replay.pageReads++;
+      } else if (spent === undefined) {
+        const e = (t.out as { error?: unknown } | null)?.error;
+        const preCheck =
+          typeof e === 'string' &&
+          (e.startsWith('REPEAT') || e.startsWith('read_pages needs urls'));
+        if (!preCheck) replay.pageReads++;
+      }
+      // Re-bank fetched pages under both request and final url — a
+      // recovered run's reread then hits the rebuilt cache instead of
+      // paying for a page the run already holds.
+      const ro = t.out as { pages?: { url?: unknown; finalUrl?: unknown }[] } | null;
+      for (const pg of ro?.pages ?? []) {
+        const rec = Promise.resolve({ page: pg });
+        for (const u of [pg.url, pg.finalUrl]) {
+          const k = typeof u === 'string' ? pageKey(u) : null;
+          if (k && !replay.pageCache.has(k)) replay.pageCache.set(k, rec);
+        }
+      }
+    }
     const p = t.out as { stored?: boolean; plan?: unknown } | null;
     // Last stored plan wins — including an empty one: a cleared plan must
     // clear, not resurrect the previous string.
@@ -855,7 +1258,7 @@ async function writeDebrief(
 export async function runOnce(sql: Sql): Promise<boolean> {
   const run = await claimRun(sql);
   if (!run) return false;
-  const claim = { id: run.id, claimToken: run.claim_token };
+  const claim = { id: run.id, claimToken: run.claim_token, leadId: run.lead_id };
 
   // A reclaimed row carries its prior attempts' journal — keep it (the audit
   // trail for the whole run, not just this attempt) and mark the boundary so
@@ -865,7 +1268,13 @@ export async function runOnce(sql: Sql): Promise<boolean> {
   // worker died — the stored claim response is the real result, not an
   // 'interrupted' guess. Best-effort: a failed lookup just leaves them
   // pending and they replay as interrupted like before.
-  await reconcileInterrupted(sql, run.id, priorSteps).catch(() => undefined);
+  // Whether the claim lookup actually ran — a swallowed failure means
+  // pending artifact-mints couldn't be verified, and replayJournal must
+  // suppress them conservatively rather than risk a duplicate row.
+  const claimsChecked = await reconcileInterrupted(sql, run.id, priorSteps).then(
+    () => true,
+    () => false,
+  );
   const steps: unknown[] = [...priorSteps];
   if (priorSteps.length) {
     steps.push({ type: 'resumed', attempt: run.attempts, at: new Date().toISOString() });
@@ -955,16 +1364,24 @@ export async function runOnce(sql: Sql): Promise<boolean> {
    *  worker can't overwrite the newer execution's journal. */
   const persistAborted = async (): Promise<void> => {
     await tail.catch(() => undefined);
-    await controlTx(
-      sql,
-      (tx) => tx`
+    const cap = await controlTx(sql, async (tx) => {
+      // capfin before the run-row update — same first-lock ordering as
+      // finishRun (see capLockTx) so the wait can never cycle.
+      if (run.lead_id) await capLockTx(tx, run.lead_id);
+      const rows = await tx<{ id: string }[]>`
         update agent_runs set steps = ${tx.json(steps as never[])}, finished_at = now(),
           tokens_in = ${tokensIn}, tokens_out = ${tokensOut},
           cost_cents = ${Math.round((costUsd + monidBudget.spent) * 100)}
         where id = ${run.id} and status = 'canceled' and claim_token = ${run.claim_token}
-      `,
-    ).catch(() => undefined);
+        returning id
+      `;
+      // The persisted spend can itself push the lead over the cap — without
+      // this check the lead's queued siblings park silently with no task.
+      if (!rows.length || !run.lead_id) return 'under' as CapVerdict;
+      return leadUnderCostCapTx(tx, run.lead_id);
+    }).catch((): CapVerdict => 'under');
     emitControlEvent('run.update', run.id);
+    if (cap === 'flagged') emitControlEvent('lead.change');
   };
 
   // Every reserve/reconcile journals a monid_spend marker — a future
@@ -1016,7 +1433,7 @@ export async function runOnce(sql: Sql): Promise<boolean> {
       },
     });
     const tools = toolsFor(run.kind);
-    const replay = replayJournal(priorSteps);
+    const replay = replayJournal(priorSteps, !claimsChecked);
     const ctx: ToolContext = {
       sql,
       runId: run.id,
@@ -1037,10 +1454,11 @@ export async function runOnce(sql: Sql): Promise<boolean> {
         run.params.channel === 'whatsapp' || run.params.channel === 'email'
           ? run.params.channel
           : null,
-      pageCache: new Map(),
+      pageCache: replay.pageCache,
       book: new Map(),
       plan: null,
       seenContacts: new Set(),
+      pageReads: replay.pageReads,
       monid: monidBudget,
       // Staff assist runs (Inbox 'agente sugere') may only compose —
       // send_message degrades to a draft so a suggestion never ships.
@@ -1084,12 +1502,31 @@ export async function runOnce(sql: Sql): Promise<boolean> {
     // Last step index that produced something (lead/merge/new channel) —
     // starts at -1 so the first tick fires after 3 truly idle steps.
     let lastProgress = -1;
+    // Loop guard (messaging kinds): the previous turn's call signatures
+    // mapped to whether each returned a reusable result (no error, not
+    // blocked, not ignored) and the state version it ran at — a repeated
+    // call with a still-current clean prior result is a stuck model; a
+    // retry after failure or a re-read after a mutation executes.
+    let prevSigs = new Map<string, { ok: boolean; v: number }>();
+    // Artifact-minters get a run-wide window instead: a duplicate row is
+    // never a state-restore no matter how many turns passed, and the
+    // journal-seeded set survives reclaim.
+    const landedSigs = new Set(replay.landedSigs);
+    // Bumps on every landed write — read results recorded at an older
+    // version may describe stale state and must not suppress a re-read.
+    let stateVersion = 0;
+    let loopNudged = false;
 
     for (let i = 0; i < limit && !lost; i++) {
       const res = await provider.chat({ system, messages, tools });
       tokensIn += res.tokensIn;
       tokensOut += res.tokensOut;
-      if (res.costUsd != null) costUsd += res.costUsd;
+      // Provider-reported USD wins; when it reports none (gemini/anthropic/
+      // openai all return null), estimate from tokens × list rate — else a
+      // model-only lead never reaches the lifetime cost cap.
+      const callCostUsd =
+        res.costUsd ?? estimateModelCostUsd(provider.name, res.tokensIn, res.tokensOut);
+      costUsd += callCostUsd;
       // Full ToolCall objects, not just names: a resumed run replays this
       // turn verbatim into the conversation — ids pair with the tool results
       // and Gemini 3 400s without each call's thoughtSignature.
@@ -1097,10 +1534,75 @@ export async function runOnce(sql: Sql): Promise<boolean> {
         type: 'model',
         content: res.text,
         toolCalls: res.toolCalls,
-        usage: { tokensIn: res.tokensIn, tokensOut: res.tokensOut, costUsd: res.costUsd ?? 0 },
+        usage: { tokensIn: res.tokensIn, tokensOut: res.tokensOut, costUsd: callCostUsd },
       });
       await persist();
       if (lost) break;
+
+      // Inbound retires auto outreach: the gate flips queued rows and the
+      // post-commit pass flips 'running' ones SKIP-LOCKED — a row locked
+      // mid-tool-call escapes that pass and nothing revisits it. The
+      // marker the cancel keys on is the committed LIVE inbound itself:
+      // one ingested after this attempt's claim means the lead already
+      // wrote — stop exactly like the API cancel (fenced flip → lost →
+      // unwind → persistAborted journals the trajectory). The comparison
+      // runs on received_at (server ingestion time), not created_at:
+      // a delayed webhook or lagging provider clock can stamp a genuinely
+      // new inbound before the claim time and must still cancel.
+      // Historical imports stay excluded — context, not a live reply.
+      // `received_at is not null` is the "real server ingest" test: 0034
+      // NULLed the 0030 backfill (received_at = created_at), and a real
+      // ingest always rides the clock_timestamp() default — never NULL.
+      // The earlier `received_at <> created_at` fingerprint could
+      // false-negative a live reply whose app-clock ms and DB µs clocks
+      // happened to agree exactly.
+      const autoSrc = (run.params as { auto?: string } | null)?.auto;
+      // 'agent' exempt like 'regenerate': the pre-'auto' sweep marker mixes
+      // self-schedules with lead-asked callbacks — possibly a promise, so
+      // a reply doesn't self-cancel it.
+      if (
+        !lost &&
+        run.kind === 'outreach' &&
+        autoSrc != null &&
+        autoSrc !== 'regenerate' &&
+        autoSrc !== 'agent'
+      ) {
+        const replied = await controlTx(
+          sql,
+          (tx) => tx`
+            select 1 from lead_messages m
+            join lead_threads t on t.id = m.thread_id
+            where t.lead_id = ${run.lead_id} and m.direction = 'in' and not m.historical
+              and m.received_at is not null
+              and m.received_at > (select started_at from agent_runs where id = ${run.id})
+            limit 1
+          `,
+        );
+        if (replied.length) {
+          const superseded = await controlTx(sql, async (tx) => {
+            const flipped = await tx<{ id: string }[]>`
+              update agent_runs set status = 'canceled', error = 'lead respondeu',
+                finished_at = now()
+              where id = ${run.id} and status = 'running' and claim_token = ${run.claim_token}
+              returning id
+            `;
+            if (!flipped[0]) return [] as string[];
+            // The run's already-committed unapproved drafts die with it —
+            // same lifecycle as the ingest gate's cancels.
+            const drafts = await tx<{ thread_id: string }[]>`
+              update lead_messages
+              set status = 'rejected', error = 'lead respondeu', updated_at = now()
+              where agent_run_id = ${run.id} and status = 'draft'
+              returning thread_id
+            `;
+            return drafts.map((d) => d.thread_id);
+          });
+          for (const tid of new Set(superseded)) emitControlEvent('draft.change', tid);
+          emitControlEvent('run.update', run.id);
+          lost = true;
+          break;
+        }
+      }
 
       if (!res.toolCalls.length) {
         if (run.kind === 'discovery' && !nudged) {
@@ -1172,6 +1674,20 @@ export async function runOnce(sql: Sql): Promise<boolean> {
             await persist();
             continue;
           }
+        }
+        // Messaging finish gate — the playbook already requires every
+        // reply/outreach run to end on a visible action; a run trying to
+        // close having only researched gets ONE nudge (same i+5 allowance
+        // as discovery's), then ends on its own.
+        if (!nudged && (run.kind === 'reply' || run.kind === 'outreach') && !runActed(steps)) {
+          nudged = true;
+          limit = i + 5;
+          const nudge = `Ação pendente — a run ainda não teve efeito visível (send_message/draft, request_human, set_state, unsubscribe, update_lead, create_task). Pesquisar e sair sem agir deixa o lead falando sozinho — aja agora; se um guardrail ou canal morto trava a ação, request_human é a saída.`;
+          messages.push({ role: 'assistant', content: res.text ?? 'ok' });
+          messages.push({ role: 'user', content: nudge });
+          steps.push({ type: 'nudge', content: nudge });
+          await persist();
+          continue;
         }
         // A cancel landing between the last persist and now leaves the row
         // 'canceled' — finishRun matches nothing; persistAborted's canceled-
@@ -1292,6 +1808,14 @@ export async function runOnce(sql: Sql): Promise<boolean> {
       } else {
         // Messaging kinds stay sequential: tool calls in one response may
         // depend on each other's ordering (draft before send).
+        // Loop guard — re-emitting a call whose previous result was clean
+        // can't produce anything new, and re-running a side-effecting call
+        // would duplicate it (send_message has no cross-step dedupe — a
+        // re-emitted identical send literally re-sends). Suppress per call
+        // — each repeated call gets a "já executada" result — and when the
+        // whole turn repeated, nudge once: act differently or finish.
+        const curSigs = new Map<string, { ok: boolean; v: number }>();
+        let allRepeat = res.toolCalls.length > 0;
         for (const [callIndex, call] of res.toolCalls.entries()) {
           const callId = call.id ?? String(callIndex);
           // Journal the pending call BEFORE executing: a crash between the
@@ -1304,6 +1828,7 @@ export async function runOnce(sql: Sql): Promise<boolean> {
             callId: string;
             step: number;
             pending?: boolean;
+            readSpent?: number;
             out?: unknown;
           } = {
             type: 'tool',
@@ -1313,14 +1838,82 @@ export async function runOnce(sql: Sql): Promise<boolean> {
             step: ctx.step,
             pending: true,
           };
+          // read_pages carries its spend marker from birth — 0 until a
+          // reservation stamps it. A markerless entry in a replayed
+          // journal can therefore only be a pre-marker legacy read, which
+          // replay counts conservatively (that era charged per call).
+          if (call.name === 'read_pages') entry.readSpent = 0;
           steps.push(entry);
           await persist();
-          let out: unknown;
-          try {
-            out = await executeTool(ctx, callId, call.name, call.args);
-          } catch (e) {
-            out = { error: e instanceof Error ? e.message : String(e) };
+          const sig = JSON.stringify([call.name, call.args ?? {}]);
+          const prev = prevSigs.get(sig);
+          // Suppress only while NOTHING landed since the prior clean
+          // result — reads AND writes share the version check, since a
+          // repeated write after an intervening mutation can be a
+          // legitimate state-restore. Artifact-minters are the exception:
+          // a duplicate is never legitimate, always suppressed.
+          const repeatHit = landedSigs.has(sig) || (prev?.ok === true && prev.v === stateVersion);
+          // Mutable reads re-execute on a repeat so external edits stay
+          // visible — but they still count toward allRepeat, or a
+          // read-only loop would dodge the LOOP nudge entirely.
+          const suppress = !MUTABLE_READS.has(call.name) && repeatHit;
+          const readsBefore = ctx.pageReads;
+          // Let a read_pages call stamp each fetch reservation onto its
+          // pending journal entry the moment it validates — a worker that
+          // dies mid-batch leaves the real spend persisted, and an entry
+          // without one provably never reached validation.
+          if (call.name === 'read_pages') {
+            ctx.markReadSpent = async (delta: number) => {
+              entry.readSpent = (entry.readSpent ?? 0) + delta;
+              await persist();
+            };
+          } else {
+            delete ctx.markReadSpent;
           }
+          let out: unknown;
+          if (suppress) {
+            out = {
+              error:
+                'REPEAT — chamada idêntica à anterior já foi executada nesta run; o resultado já está no contexto e não muda. Faça algo diferente ou encerre.',
+            };
+          } else {
+            // A proven repeat that isn't suppressed (a mutable read) still
+            // counts as a repeat for the loop nudge.
+            if (!repeatHit) allRepeat = false;
+            try {
+              out = await executeTool(ctx, callId, call.name, call.args);
+            } catch (e) {
+              out = { error: e instanceof Error ? e.message : String(e) };
+            }
+          }
+          // Journal whether the call spent a read: the cap charges fetches,
+          // not calls, so a cached read_pages entry must not count on replay.
+          if (call.name === 'read_pages') entry.readSpent = ctx.pageReads - readsBefore;
+          const res_ = out as {
+            error?: unknown;
+            blocked?: unknown;
+            ignored?: unknown;
+            errors?: unknown;
+          } | null;
+          // Per-url failures ride in errors[] (read_pages), not top-level
+          // error — a result that reports fetch failures isn't a clean
+          // prior result, so its retry must reissue, not suppress.
+          const clean =
+            typeof res_ === 'object' &&
+            res_ !== null &&
+            !res_.error &&
+            res_.blocked !== true &&
+            res_.ignored !== true &&
+            !(Array.isArray(res_.errors) && res_.errors.length > 0);
+          // A suppressed call stands on its earlier clean result — its own
+          // REPEAT error must not mark the signature retryable or the next
+          // identical emission would execute again.
+          if (clean && !READ_TOOLS.has(call.name)) stateVersion++;
+          // Writes record the POST-call version — 'nothing landed since it
+          // ran' must not count the call's own write, or every repeated
+          // write would look stale to itself.
+          curSigs.set(sig, suppress ? prev! : { ok: clean, v: stateVersion });
+          if (clean && NON_IDEMPOTENT.has(call.name)) landedSigs.add(sig);
           delete entry.pending;
           entry.out = out;
           messages.push({
@@ -1331,6 +1924,14 @@ export async function runOnce(sql: Sql): Promise<boolean> {
           });
           await persist();
           if (lost) break;
+        }
+        prevSigs = curSigs;
+        if (allRepeat && !loopNudged && !lost) {
+          loopNudged = true;
+          const nudge = `LOOP — você emitiu exatamente as mesmas chamadas com os mesmos argumentos duas vezes seguidas; os resultados mais recentes já estão no contexto. Repetir a mesma chamada não avança a run — faça a próxima ação do plano ou encerre.`;
+          steps.push({ type: 'nudge', content: nudge });
+          messages.push({ role: 'user', content: nudge });
+          await persist();
         }
       }
     }
@@ -1394,26 +1995,120 @@ export async function drain(sql: Sql, limit = 20): Promise<number> {
   // backoff (run_at = now + 2^attempts min) so a poisoned run stops jumping
   // ahead of healthy work, and the attempt that exhausts max_attempts lands
   // 'failed' — journal kept — instead of looping the lease forever.
-  const reclaimed = await controlTx(
-    sql,
-    (tx) => tx<{ id: string }[]>`
+  const capFlaggedIds: string[] = [];
+  // Track task writes separately from cap flags — a normal failed run's
+  // [humano] task needs the same lead.change refresh a fresh flag earns.
+  let taskLanded = false;
+  const { requeued, terminal } = await controlTx(sql, async (tx) => {
+    // Requeue below-cap attempts in one bulk pass — nothing else needs to
+    // commit with them (the retry's own finishRun folds its total spend).
+    const requeued = await tx<{ id: string }[]>`
       update agent_runs set
         attempts = attempts + 1,
-        status = case when attempts + 1 >= max_attempts then 'failed' else 'queued' end,
-        run_at = case when attempts + 1 >= max_attempts then run_at
-                      else now() + make_interval(mins => 1 << least(attempts + 1, 16)) end,
-        error = case when attempts + 1 >= max_attempts
-                     then 'attempt cap reached — run kept dying mid-execution'
-                     else error end,
-        finished_at = case when attempts + 1 >= max_attempts then now() else finished_at end,
+        status = 'queued',
+        run_at = now() + make_interval(mins => 1 << least(attempts + 1, 16)),
         started_at = null,
         alive_at = null,
         claim_token = null
-      where status = 'running' and coalesce(alive_at, started_at) < now() - make_interval(mins => ${RUN_LEASE_MIN})
+      where status = 'running' and attempts + 1 < max_attempts
+        and coalesce(alive_at, started_at) < now() - make_interval(mins => ${RUN_LEASE_MIN})
       returning id
+    `;
+    // Terminal rows are finalized one tx each below — the 'running' row
+    // itself is the pending marker: a crash between rows leaves the rest
+    // stale, and the next drain re-picks them (spend fold + task + cap
+    // check all retry with it). A bulk mark-then-finalize split would
+    // strand a 'failed' row with no spend and no task on restart.
+    const terminal = await tx<{ id: string; lead_id: string | null; kind: RunRow['kind'] }[]>`
+      select id, lead_id, kind from agent_runs
+      where status = 'running' and attempts + 1 >= max_attempts
+        and coalesce(alive_at, started_at) < now() - make_interval(mins => ${RUN_LEASE_MIN})
+    `;
+    return { requeued, terminal };
+  });
+  for (const r of requeued) emitControlEvent('run.update', r.id);
+  for (const f of terminal) {
+    const flagged = await controlTx(sql, async (tx) => {
+      // capfin before the row write — the bulk pass holds every reclaimed
+      // row's lock, so a capfin wait in there could cycle against an
+      // inbound gate (see capLockTx); inside each small tx it's first.
+      if (f.lead_id) await capLockTx(tx, f.lead_id);
+      // The 'failed' transition, spend fold, staff task, and cap check are
+      // one commit — fenced on staleness so a row revived between the
+      // select and here skips the whole finalize instead of half of it.
+      const rows = await tx<{ id: string; lead_id: string | null }[]>`
+        update agent_runs set
+          attempts = attempts + 1,
+          status = 'failed',
+          error = 'attempt cap reached — run kept dying mid-execution',
+          finished_at = now(),
+          started_at = null,
+          alive_at = null,
+          claim_token = null,
+          cost_cents = round((
+            coalesce((select sum((e->'usage'->>'costUsd')::numeric)
+                      from jsonb_array_elements(steps) e
+                      where e->>'type' = 'model'), 0)
+            + coalesce((select (e.v->>'spentUsd')::numeric
+                        from jsonb_array_elements(steps) with ordinality as e(v, idx)
+                        where e.v->>'type' = 'monid_spend'
+                        order by idx desc limit 1), 0)
+          ) * 100)::int
+        where id = ${f.id} and status = 'running'
+          and coalesce(alive_at, started_at) < now() - make_interval(mins => ${RUN_LEASE_MIN})
+        returning id, lead_id
+      `;
+      const row = rows[0];
+      // A stale row revived between select and update skips the whole
+      // finalize — no task, no flag, no emit.
+      if (!row) return { task: false, cap: false };
+      // A dead attempt never reached finishRun — its spend lives only in
+      // the journal. Model entries are usage DELTAS (sum them); monid_spend
+      // markers carry the CUMULATIVE budget balance at each write — the
+      // fold above reads the LAST marker like runOnce's priorSpend, never
+      // a sum (summing cumulative balances would inflate cost_cents).
+      // Same failed-run visibility as finishRun's path; board-scoped
+      // failures roll into the digest instead — no task, no emit.
+      if (!row.lead_id) return { task: false, cap: false };
+      const name =
+        (await tx<{ name: string }[]>`select name from leads where id = ${row.lead_id}`)[0]?.name ??
+        row.lead_id;
+      await tx`
+        insert into lead_tasks (lead_id, title, due_at, created_by)
+        values (${row.lead_id},
+                ${`[humano] ${name}: run ${f.kind} falhou — tentativas esgotadas, a run morria no meio`.slice(0, 300)},
+                null, 'agent')
+      `;
+      // And now that the spend persisted, run the same cap check every
+      // other terminal path does — dead-run spend can itself cross the cap.
+      return {
+        task: true,
+        cap: (await leadUnderCostCapTx(tx, row.lead_id)) === 'flagged',
+      };
+    }).catch(() => ({ task: false, cap: false }));
+    if (flagged.cap) capFlaggedIds.push(f.lead_id!);
+    if (flagged.task) taskLanded = true;
+    emitControlEvent('run.update', f.id);
+  }
+  if (capFlaggedIds.length || taskLanded) emitControlEvent('lead.change');
+  // Terminal suppressions strand queued runs forever — the claim gate's
+  // pause semantics never lifts them. unsubscribe writers cancel inline,
+  // archive doesn't, so this sweep is the catch-all for both (a writer
+  // that forgets, or rows parked before the inline cancels existed).
+  // agent_paused_at and agent_mode='off' are NOT touched: those flags
+  // lift and their parked runs must resume.
+  const parked = await controlTx(
+    sql,
+    (tx) => tx<{ id: string }[]>`
+      update agent_runs r set status = 'canceled', finished_at = now(),
+        error = case when l.unsubscribed_at is not null then 'descadastrado' else 'arquivado' end
+      from leads l
+      where l.id = r.lead_id and r.status = 'queued'
+        and (l.unsubscribed_at is not null or l.archived_at is not null)
+      returning r.id
     `,
   );
-  for (const r of reclaimed) emitControlEvent('run.update', r.id);
+  for (const r of parked) emitControlEvent('run.update', r.id);
   // 'sending' past the lease = worker died between provider call and status
   // write. Fail it visibly — staff redrafts — instead of silently requeuing
   // (at-most-once: the provider may already have accepted it).
@@ -1501,10 +2196,19 @@ let draining = false;
  *  outreach sweep. Queue lives in Postgres, so queued runs survive reboots. */
 export function startAgentWorker(sql: Sql, intervalMs = 15_000) {
   if (workerTimer) return;
+  // Leads already over the cap before this deploy (or stranded by a
+  // direct-db spend write) park all queued work until flagged — the
+  // settings-write sweep can't reach them without a write. The boot pass
+  // covers the deploy case now; keeping it in the tick chain means a
+  // failed pass retries next interval instead of waiting for a restart.
+  void flagCappedLeads(sql).catch((e) => agentLog.error({ err: e }, 'boot cap flag failed'));
   workerTimer = setInterval(() => {
     if (draining) return;
     draining = true;
     void drain(sql)
+      .then(() =>
+        flagCappedLeads(sql).catch((e) => agentLog.error({ err: e }, 'cap flag sweep failed')),
+      )
       .then(() => sweepOutreach(sql))
       .then(() => sweepBriefs(sql))
       .then(() => sweepStrategist(sql))
@@ -1600,19 +2304,18 @@ export async function sweepBriefs(sql: Sql): Promise<number> {
           continue;
         }
       }
-      queuedIds.push(
-        await insertRun(tx, {
-          kind: 'discovery',
-          params: {
-            query: b.query,
-            ...(b.segment ? { segment: b.segment } : {}),
-            ...(b.city ? { city: b.city } : {}),
-            ...(b.target ? { target: b.target } : {}),
-            briefId: b.id,
-            briefName: b.name,
-          },
-        }),
-      );
+      const runId = await insertRun(tx, {
+        kind: 'discovery',
+        params: {
+          query: b.query,
+          ...(b.segment ? { segment: b.segment } : {}),
+          ...(b.city ? { city: b.city } : {}),
+          ...(b.target ? { target: b.target } : {}),
+          briefId: b.id,
+          briefName: b.name,
+        },
+      });
+      if (runId) queuedIds.push(runId);
       await tx`update discovery_briefs set last_run_at = now() where id = ${b.id}`;
       fired++;
     }
@@ -1654,12 +2357,18 @@ export async function sweepStrategist(sql: Sql): Promise<boolean> {
 /** Periodic sweep: leads due for a follow-up get an outreach run. */
 export async function sweepOutreach(sql: Sql): Promise<number> {
   const queuedIds: string[] = [];
+  const capFlagged: string[] = [];
   const fired = await controlTx(sql, async (tx) => {
+    const g = await getSettingTx<Partial<Guardrails>>(tx, 'guardrails', {});
+    const capCents = capCentsOf(g);
     // for update skip locked — concurrent sweeps on different replicas take
     // disjoint lead sets instead of both inserting a run for the same due
-    // lead (the not-exists check alone only sees committed runs).
-    const due = await tx<{ id: string }[]>`
-      select l.id from leads l
+    // lead (the not-exists check alone only sees committed runs). The cap
+    // predicate keeps over-cap leads OUT of the 20-row window — otherwise a
+    // wall of capped leads would starve every eligible lead behind them
+    // (their due dates stay untouched, so a raised cap resumes them).
+    const due = await tx<{ id: string; next_action_source: string }[]>`
+      select l.id, l.next_action_source from leads l
       where l.next_action_at is not null and l.next_action_at <= now()
         and l.archived_at is null and l.unsubscribed_at is null
         and l.agent_mode != 'off'
@@ -1668,22 +2377,62 @@ export async function sweepOutreach(sql: Sql): Promise<number> {
           where r.lead_id = l.id and r.kind = 'outreach'
             and r.status in ('queued', 'running')
         )
+        and (${capCents} <= 0 or
+          coalesce((select sum(x.cost_cents) from agent_runs x
+                    where x.lead_id = l.id), 0) < ${capCents})
       limit 20
       for update skip locked
     `;
-    for (const { id } of due) {
-      const run = (
-        await tx<{ id: string }[]>`
-        insert into agent_runs (kind, lead_id, params)
-        values ('outreach', ${id}, '{}'::jsonb)
-        returning id
-      `
-      )[0]!;
-      queuedIds.push(run.id);
-      await tx`update leads set next_action_at = null, next_action_source = null where id = ${id}`;
+    for (const { id, next_action_source } of due) {
+      // The select's for-update already holds THIS lead's row lock, so a
+      // blocking capfin wait here would invert against ingestInbound's
+      // gate (capfin first, then the lead lock — see capLockTx). Try the
+      // advisory instead: a busy capfin means an inbound gate or a cost
+      // finalizer is serializing the lead right now — skip this pass; the
+      // due date stays for the next sweep.
+      const capFree = await tx<{ got: boolean }[]>`
+        select pg_try_advisory_xact_lock(hashtext(${'capfin:' + id})) as got
+      `;
+      if (!capFree[0]!.got) continue;
+      // params.auto marks automation-scheduled work — a fresh inbound cancels
+      // it (ingestInbound). 'cadence' AND 'auto' sources are the
+      // automation's own nudges (the prompt writes nextActionAt as the
+      // "próxima cadência"): obsolete the moment the lead writes back — the
+      // reply run re-commits any still-wanted follow-up with fresh context.
+      // 'staff', 'requested' AND legacy 'agent' materialize UNMARKED like
+      // every staff-triggered run: a human's schedule and a lead-asked
+      // callback ("me chama terça") are promises a reply can't cancel —
+      // they outrank the reply exactly like an explicit staff decision.
+      // 'agent' is legacy-only: 0025 backfilled every pre-existing date to
+      // it (self-schedules AND asked callbacks, unrecoverably mixed), so it
+      // takes the preserved side like 'requested'. insertRun also
+      // applies the lifetime cost cap — a capped lead returns null and
+      // KEEPS its due action (claimRun parks it anyway, so no run executes
+      // over budget).
+      const cap: { flagged?: boolean } = {};
+      const runId = await insertRun(
+        tx,
+        {
+          kind: 'outreach',
+          leadId: id,
+          params:
+            next_action_source === 'staff' ||
+            next_action_source === 'requested' ||
+            next_action_source === 'agent'
+              ? {}
+              : { auto: next_action_source },
+        },
+        cap,
+      );
+      if (cap.flagged) capFlagged.push(id);
+      if (runId) {
+        queuedIds.push(runId);
+        await tx`update leads set next_action_at = null, next_action_source = null where id = ${id}`;
+      }
     }
-    return due.length;
+    return queuedIds.length;
   });
   for (const id of queuedIds) emitControlEvent('run.update', id);
+  if (capFlagged.length) emitControlEvent('lead.change');
   return fired;
 }
