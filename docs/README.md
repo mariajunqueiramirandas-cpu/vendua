@@ -56,6 +56,7 @@ Then per topic as needed:
 | DesignSpec → agent → deploy        | [14-agent-pipeline](architecture/14-agent-pipeline.md)                           |
 | Event taxonomy, funnels            | [15-analytics](architecture/15-analytics.md)                                     |
 | SLOs, incidents, kill switch       | [16-operations-and-incidents](architecture/16-operations-and-incidents.md)       |
+| Sales agent (CRM)                  | [17-sales-agent](architecture/17-sales-agent.md)                                 |
 
 ## ADRs
 
@@ -76,6 +77,7 @@ Significant decisions are recorded as ADRs in [`adr/`](adr/). Current index:
 | [0011](adr/0011-ring-based-fleet-releases.md)         | Ring-based fleet releases with artifact promotion         |
 | [0012](adr/0012-agent-agnostic-pipeline.md)           | Agent-agnostic generation pipeline, CI as judge           |
 | [0013](adr/0013-modular-monolith-core.md)             | Core is a modular monolith on Postgres                    |
+| [0014](adr/0014-lead-owning-sales-agent.md)           | A lead-owning sales agent with one autonomy policy        |
 
 ## Conventions
 
