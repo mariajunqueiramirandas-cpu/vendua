@@ -29,7 +29,7 @@ import {
   rel,
   relDue,
 } from '../components.tsx';
-import { ListEditor, RawJson, num, str, tzValid } from './settings-bits.tsx';
+import { ListEditor, RawJson, TzList, num, str, tzValid } from './settings-bits.tsx';
 
 /** Estúdio — everything the agent is made of, in one place: how far it
  *  decides (autonomia), how it talks (voz), the modes it works in
@@ -80,7 +80,9 @@ function useAgent<T>(fn: () => Promise<T>, deps: unknown[] = []) {
       });
   }, deps);
   useEffect(reload, [reload]);
-  return { data, st, reload };
+  // write lets a caller push a freshly-saved value into `data` ahead of the
+  // next fetch — closes the PUT→refetch window where a stale map shows.
+  return { data, st, reload, write: setData };
 }
 
 /** The card shown while an endpoint hasn't landed (404) or failed — the
@@ -166,15 +168,51 @@ export default function AgentStudio() {
     memory.reload();
   }, [settings, autonomy, playbooks, memory]);
 
-  const saveSetting = async (key: string, value: unknown) => {
-    try {
-      await api.putSetting(key, value);
+  // PUT /settings/:key sends the WHOLE value — a save must never build on a
+  // pre-save map. Writes are serialized (saveQ) and merge off mapRef, which
+  // is the freshest local picture: synced from the last fetch and updated
+  // optimistically the moment a PUT lands, before the refetch resolves.
+  const mapRef = useRef<Record<string, unknown>>({});
+  useEffect(() => {
+    if (settings.data) mapRef.current = settings.data;
+  }, [settings.data]);
+  const saveQ = useRef(Promise.resolve());
+  const saveSetting = (
+    key: string,
+    value: unknown | ((cur: unknown) => unknown),
+  ): Promise<void> => {
+    const task = saveQ.current.then(async () => {
+      const v =
+        typeof value === 'function'
+          ? (value as (cur: unknown) => unknown)(mapRef.current[key])
+          : value;
+      try {
+        await api.putSetting(key, v);
+      } catch (e) {
+        setNotice({ kind: 'err', text: `${key}: ${e instanceof Error ? e.message : e}` });
+        settings.reload(); // resync — the local picture may be stale
+        return;
+      }
+      mapRef.current = { ...mapRef.current, [key]: v };
+      settings.write(mapRef.current);
       setNotice({ kind: 'ok', text: `${key} salvo` });
       reload();
-    } catch (e) {
-      setNotice({ kind: 'err', text: `${key}: ${e instanceof Error ? e.message : e}` });
-    }
+    });
+    saveQ.current = task;
+    return task;
   };
+
+  // Editors that PUT a whole setting only render once settings.st === 'ok' —
+  // before that the map is {} and a save would erase what's already stored.
+  const settingsOk = settings.st === 'ok';
+  const settingsGate = (title: string) => (
+    <EndpointCard
+      st={settings.st}
+      title={title}
+      missing="GET /settings ainda não chegou neste servidor — mexer aqui sem ler antes apagaria o que já está salvo."
+      onRetry={settings.reload}
+    />
+  );
 
   const map = settings.data ?? {};
   const pitch = (map.pitch ?? {}) as Record<string, unknown>;
@@ -192,18 +230,19 @@ export default function AgentStudio() {
     setSearchParams(next);
   };
 
-  const savePlaybook = (kind: PlaybookKind, ov: PlaybookOverride | null) => {
-    const next = { ...pbSetting } as Record<string, PlaybookOverride>;
-    if (ov === null) delete next[kind];
-    else next[kind] = ov;
-    void saveSetting('agent_playbooks', next);
-  };
+  const savePlaybook = (kind: PlaybookKind, ov: PlaybookOverride | null) =>
+    void saveSetting('agent_playbooks', (cur: unknown) => {
+      const next = { ...((cur ?? {}) as Record<string, PlaybookOverride>) };
+      if (ov === null) delete next[kind];
+      else next[kind] = ov;
+      return next;
+    });
 
   const autonomyLevel = autonomy.data?.level;
   const marks: Partial<Record<SectionKey, 'off' | 'warn'>> = {};
   if (autonomyLevel === 'off') marks.autonomia = 'off';
   if (autonomyLevel === 'autopilot') marks.autonomia = 'warn';
-  if (!str(pitch.product, '')) marks.voz = 'warn';
+  if (settingsOk && !str(pitch.product, '')) marks.voz = 'warn';
 
   return (
     <Page title="Estúdio" sub="a bancada do agente — o que ele decide, fala, lembra e agenda">
@@ -234,18 +273,26 @@ export default function AgentStudio() {
               <p className="sub">
                 até onde o agente decide sozinho — a mesma régua vale pra todo run automático
               </p>
-              <AutonomyCard
-                server={autonomy.data}
-                saved={(map.agent_autonomy ?? {}) as Record<string, unknown>}
-                onSave={(v) => void saveSetting('agent_autonomy', v)}
-              />
+              {!settingsOk ? (
+                settingsGate('autonomia')
+              ) : (
+                <AutonomyCard
+                  server={autonomy.data}
+                  saved={(map.agent_autonomy ?? {}) as Record<string, unknown>}
+                  onSave={(v) => void saveSetting('agent_autonomy', v)}
+                />
+              )}
             </section>
           </div>
           <div hidden={section !== 'voz'}>
             <section className="set-sec">
               <h2>voz do agente</h2>
               <p className="sub">o pitch inteiro que o modelo recebe no system prompt</p>
-              <PitchCard value={pitch} onSave={(v) => void saveSetting('pitch', v)} />
+              {!settingsOk ? (
+                settingsGate('voz')
+              ) : (
+                <PitchCard value={pitch} onSave={(v) => void saveSetting('pitch', v)} />
+              )}
             </section>
           </div>
           <div hidden={section !== 'playbooks'}>
@@ -254,7 +301,9 @@ export default function AgentStudio() {
               <p className="sub">
                 os modos de trabalho — gatilhos, ferramentas e orçamento de cada um
               </p>
-              {playbooks.st !== 'ok' ? (
+              {!settingsOk ? (
+                settingsGate('playbooks')
+              ) : playbooks.st !== 'ok' ? (
                 <>
                   <EndpointCard
                     st={playbooks.st}
@@ -298,10 +347,14 @@ export default function AgentStudio() {
             <section className="set-sec">
               <h2>memória clássica (v1)</h2>
               <p className="sub">fatos guardados via tool `remember` — a v2 absorve</p>
-              <MemoryCard
-                facts={memoryV1.facts}
-                onSave={(facts) => void saveSetting('agent_memory', { facts })}
-              />
+              {!settingsOk ? (
+                settingsGate('memória clássica')
+              ) : (
+                <MemoryCard
+                  facts={memoryV1.facts}
+                  onSave={(facts) => void saveSetting('agent_memory', { facts })}
+                />
+              )}
             </section>
           </div>
           <div hidden={section !== 'agenda'}>
@@ -315,14 +368,20 @@ export default function AgentStudio() {
             <section className="set-sec">
               <h2>guardrails</h2>
               <p className="sub">regras duras — o código impõe, não o prompt</p>
-              <GuardrailsCard
-                value={guardrails}
-                onSave={(v) => void saveSetting('guardrails', v)}
-              />
+              {!settingsOk ? (
+                settingsGate('guardrails')
+              ) : (
+                <GuardrailsCard
+                  value={guardrails}
+                  onSave={(v) => void saveSetting('guardrails', v)}
+                />
+              )}
             </section>
           </div>
         </div>
       </div>
+      {/* timezone picker inside guardrails reads this datalist */}
+      <TzList />
     </Page>
   );
 }

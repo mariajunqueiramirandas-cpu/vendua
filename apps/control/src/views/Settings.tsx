@@ -4,7 +4,7 @@ import QRCode from 'qrcode';
 import { api, type ChannelHealth, type Integration, type MeetingStatus } from '../api.ts';
 import { onControlEvent } from '../events.ts';
 import { ConfirmBtn, LEAD_STATES, Page } from '../components.tsx';
-import { RawJson, num, str, tzValid } from './settings-bits.tsx';
+import { RawJson, TzList, num, str, tzValid } from './settings-bits.tsx';
 
 /** Config — "sala de máquinas". An index rail splits the wall into named
  *  areas ('conexões' = provider cards, 'regras' = guardrails, etc.) shown
@@ -154,16 +154,6 @@ const KINDS: { key: string; label: string; sub: string; drivers: Driver[] }[] = 
       { d: 'mock', label: 'mock', hint: 'prospects enlatados — dev e testes' },
     ],
   },
-];
-
-const TZ_SUGGESTIONS = [
-  'America/Sao_Paulo',
-  'America/Fortaleza',
-  'America/Recife',
-  'America/Bahia',
-  'America/Manaus',
-  'America/Belem',
-  'America/Rio_Branco',
 ];
 
 type Notice = { kind: 'ok' | 'err'; text: string } | null;
@@ -705,11 +695,7 @@ export default function Settings() {
         </div>
       </div>
       {/* shared by the guardrails + meeting tz pickers */}
-      <datalist id="tz-list">
-        {TZ_SUGGESTIONS.map((t) => (
-          <option key={t} value={t} />
-        ))}
-      </datalist>
+      <TzList />
     </Page>
   );
 }

@@ -4,6 +4,28 @@ import { useState } from 'react';
  *  editor, the raw-JSON escape hatch, and the coercion/validation helpers
  *  the cards use to mirror validateSetting. */
 
+const TZ_SUGGESTIONS = [
+  'America/Sao_Paulo',
+  'America/Fortaleza',
+  'America/Recife',
+  'America/Bahia',
+  'America/Manaus',
+  'America/Belem',
+  'America/Rio_Branco',
+];
+
+/** `<datalist id="tz-list">` for the timezone pickers (guardrails, meeting)
+ *  — render once per view that mounts a `list="tz-list"` input. */
+export function TzList() {
+  return (
+    <datalist id="tz-list">
+      {TZ_SUGGESTIONS.map((t) => (
+        <option key={t} value={t} />
+      ))}
+    </datalist>
+  );
+}
+
 export const num = (v: unknown, d: number) => (typeof v === 'number' && Number.isFinite(v) ? v : d);
 export const str = (v: unknown, d: string) => (typeof v === 'string' ? v : d);
 // same check validateSetting applies server-side — saves a 422 round-trip
