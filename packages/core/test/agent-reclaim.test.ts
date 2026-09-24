@@ -1661,7 +1661,8 @@ dbDescribe('worker robustness (db)', () => {
     expect(await runOnce(sql)).toBe(true);
     const rA = await getRun(runA);
     const taskA = rA.steps.find(
-      (s) => (s as { name?: string; callId?: string }).name === 'create_task' &&
+      (s) =>
+        (s as { name?: string; callId?: string }).name === 'create_task' &&
         (s as { callId?: string }).callId === 'mock-1-0',
     ) as { out?: { error?: string } } | undefined;
     expect(taskA?.out?.error ?? '').not.toMatch(/^REPEAT/);
@@ -1682,7 +1683,8 @@ dbDescribe('worker robustness (db)', () => {
     expect(await runOnce(sql)).toBe(true);
     const rB = await getRun(runB);
     const taskB = rB.steps.find(
-      (s) => (s as { name?: string; callId?: string }).name === 'create_task' &&
+      (s) =>
+        (s as { name?: string; callId?: string }).name === 'create_task' &&
         (s as { callId?: string }).callId === 'mock-1-0',
     ) as { out?: { error?: string } } | undefined;
     expect(taskB?.out?.error).toMatch(/^REPEAT/);
