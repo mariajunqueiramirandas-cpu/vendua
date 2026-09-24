@@ -80,6 +80,11 @@ export interface ToolContext {
    *  can't afford an unbounded page-reading rabbit hole. Counts fetches,
    *  not calls: each cache miss and every auto-chased hop spends one. */
   pageReads: number;
+  /** Reservation stamp — the runner binds this to the call's pending
+   *  journal entry so a read_pages reservation is persisted the moment
+   *  it validates, not only when the result does; a reclaim mid-batch
+   *  then replays real spend. Undefined outside a claimed run. */
+  markReadSpent?: (delta: number) => Promise<void>;
   /** Staff-assist runs (params.draftOnly): send_message may only compose —
    *  a suggestion goes to the approvals queue, never on the wire. */
   draftOnly: boolean;
@@ -1540,34 +1545,32 @@ export async function executeTool(
       if (!urls.length) return { error: 'read_pages needs urls: ["https://…"] (1–6)' };
       // Dedupe by page identity across the run cache AND this call — the
       // same page twice in one batch (https vs https://www, trailing slash)
-      // resolves to one fetch, not two.
-      const miss: string[] = [];
+      // resolves to one fetch, not two. The same assertFetchable guard
+      // the provider runs validates each miss before the reservation:
+      // a rejected url never batches, never spends, and never claims a
+      // page slot — pageKey drops the scheme, so caching an ftp://
+      // rejection would mask its fetchable https:// twin all run long.
+      type PageResult = { page: ReadPage | null; error?: string };
+      const missOut = new Map<string, Promise<PageResult>>(); // url → its slice
+      const fetchable: string[] = [];
       const queued = new Set<string>();
       for (const url of urls) {
         const id = pageKey(url) ?? url;
         if (ctx.pageCache.has(id) || queued.has(id)) continue;
-        queued.add(id);
-        miss.push(url);
-      }
-      type PageResult = { page: ReadPage | null; error?: string };
-      const missOut = new Map<string, Promise<PageResult>>(); // miss url → its slice
-      // A url no fetch provider can issue never becomes a fetch — the
-      // same assertFetchable guard the provider runs, applied before the
-      // reservation so a rejected url neither batches nor spends.
-      const fetchable: string[] = [];
-      for (const url of miss) {
         try {
           assertFetchable(url);
-          fetchable.push(url);
         } catch (e) {
-          const p: Promise<PageResult> = Promise.resolve({
-            page: null,
-            error: e instanceof Error ? e.message : String(e),
-          });
-          missOut.set(url, p);
-          const key2 = pageKey(url);
-          if (key2) ctx.pageCache.set(key2, p);
+          missOut.set(
+            url,
+            Promise.resolve({
+              page: null,
+              error: e instanceof Error ? e.message : String(e),
+            }),
+          );
+          continue;
         }
+        queued.add(id);
+        fetchable.push(url);
       }
       // Reply's bound prices fetches, not calls — one call can fetch up
       // to six pages, so the fetchable count itself is the spend. All-or-
@@ -1582,6 +1585,9 @@ export async function executeTool(
           };
         }
         ctx.pageReads += fetchable.length;
+        // Stamp the reservation on the pending journal entry — a reclaim
+        // mid-batch replays the spend the call already made, not a guess.
+        await ctx.markReadSpent?.(fetchable.length);
       }
       const provider = await discoveryFor(sql);
       const goal = String(args.goal ?? '');
@@ -1647,31 +1653,48 @@ export async function executeTool(
           chaseOf.push({ url: link, from: pg.url });
         }
       }
-      // Chases are fetches too and spend the same reply budget — a hub
-      // wave is truncated to what's left, each map pointer charged before
-      // its in-process resolve; the run simply stops chasing when spent.
-      const chases = chaseOf.slice(
-        0,
-        replyBound ? Math.max(0, REPLY_READ_PAGES_CAP - ctx.pageReads) : 4,
-      );
+      // Chases are fetches too and spend the same reply budget — paid
+      // candidates are bounded by what's left, but a named map pointer
+      // resolves in-process: free pointers neither spend nor displace
+      // spendable slots, and the run simply stops chasing paid hops
+      // when the budget's gone.
+      const chases: typeof chaseOf = [];
+      if (replyBound) {
+        let slots = Math.max(0, REPLY_READ_PAGES_CAP - ctx.pageReads);
+        for (const c of chaseOf) {
+          if (chases.length >= 4) break;
+          const free = mapPointerName(c.url) !== null;
+          if (!free) {
+            if (slots <= 0) continue;
+            slots--;
+          }
+          chases.push(c);
+        }
+      } else {
+        chases.push(...chaseOf.slice(0, 4));
+      }
       const hubChases = chases.filter((c) => !isMapPointer(c.url));
       const mapChases = chases.filter((c) => isMapPointer(c.url));
       // Same rule as the direct batch: un-fetchable chase urls spend
-      // nothing — they just report their rejection.
+      // nothing — they just report their rejection (and never occupy a
+      // page slot, same scheme-free masking concern as above).
       const fetchableHubs = hubChases.filter((c) => {
         try {
           assertFetchable(c.url);
           return true;
         } catch (e) {
-          const error = e instanceof Error ? e.message : String(e);
-          errs.push({ url: c.url, error });
-          const key2 = pageKey(c.url);
-          if (key2) ctx.pageCache.set(key2, Promise.resolve({ page: null, error }));
+          errs.push({
+            url: c.url,
+            error: e instanceof Error ? e.message : String(e),
+          });
           return false;
         }
       });
       if (fetchableHubs.length) {
-        if (replyBound) ctx.pageReads += fetchableHubs.length;
+        if (replyBound) {
+          ctx.pageReads += fetchableHubs.length;
+          await ctx.markReadSpent?.(fetchableHubs.length);
+        }
         const res = await provider
           .readPages(
             fetchableHubs.map((c) => c.url),
@@ -1723,10 +1746,12 @@ export async function executeTool(
       for (const c of mapWave.slice(0, 6)) {
         // A pointer that already names the place (?q=, /maps/place/) resolves
         // entirely in-process — no request, no spend. Only a shortlink's
-        // 302 chain costs a slot.
+        // 302 chain costs a slot, and an unaffordable one mustn't stop the
+        // wave's later free pointers.
         if (replyBound && mapPointerName(c.url) === null) {
-          if (ctx.pageReads >= REPLY_READ_PAGES_CAP) break;
+          if (ctx.pageReads >= REPLY_READ_PAGES_CAP) continue;
           ctx.pageReads++;
+          await ctx.markReadSpent?.(1);
         }
         const key2 = pageKey(c.url);
         const page = await resolveMapPointer(c.url).catch(() => null);

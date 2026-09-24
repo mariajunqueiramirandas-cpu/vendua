@@ -123,16 +123,26 @@ describe('replayJournal', () => {
         args: { urls: ['https://a.co/4'] },
         out: { error: 'REPEAT — chamada idêntica à anterior já foi executada nesta run' },
       },
-      // a pending entry died mid-batch — reserve per requested url
+      // a pending entry stamped its reservation before dying mid-batch —
+      // replay takes it at face value
       {
         type: 'tool',
         name: 'read_pages',
-        args: { urls: ['https://a.co/5', 'https://a.co/6', 'https://a.co/7'] },
+        args: { urls: ['https://a.co/5', 'https://a.co/6'] },
+        readSpent: 2,
+        pending: true,
+      },
+      // a pending entry with no stamp died before validation — it spent
+      // nothing, and guessing could lock the whole recovery budget
+      {
+        type: 'tool',
+        name: 'read_pages',
+        args: { urls: ['https://a.co/7', 'https://a.co/8', 'https://a.co/9'] },
         pending: true,
       },
     ]);
-    // 2 + 0 + 1 + 1 + 0 + 3 = 7
-    expect(r.pageReads).toBe(7);
+    // 2 + 0 + 1 + 1 + 0 + 2 + 0 = 6
+    expect(r.pageReads).toBe(6);
   });
 
   test('nudge/reflection entries replay as user turns', () => {
@@ -1416,5 +1426,56 @@ dbDescribe('worker robustness (db)', () => {
     // both rejections reported through the normal per-url errors channel
     expect(reads[0]!.out?.errors?.map((e) => e.url)).toEqual(['not-a-url', 'also-garbage']);
     expect(reads[1]!.readSpent).toBe(2);
+  });
+
+  test('a rejected url cannot mask the fetchable page behind its pageKey', async () => {
+    await migrate(sql, MIGRATIONS);
+    const lead = await controlTx(sql, (tx) => insertLeadTx(tx, { name: 'Scheme Mask Lead' }));
+    const leadId = lead.body.lead.id;
+    await sql`delete from agent_runs where status = 'queued'`;
+    const runId = (await enqueueRun(sql, { kind: 'reply', leadId })!)!;
+    await sql`update agent_runs set
+      params = ${sql.json({
+        script: [
+          // ftp:// is rejected pre-validation — its error must not occupy
+          // the scheme-free pageKey slot 'shop.example/menu'
+          { toolCalls: [{ name: 'read_pages', args: { urls: ['ftp://shop.example/menu'] } }] },
+          // the https twin still fetches — the rejection never masked it
+          {
+            toolCalls: [
+              { name: 'read_pages', args: { urls: ['https://shop.example/menu'] } },
+            ],
+          },
+          // same-call twin: both urls share the fetched page's identity —
+          // the read dedupes to the cached page, free
+          {
+            toolCalls: [
+              {
+                name: 'read_pages',
+                args: { urls: ['ftp://shop.example/menu', 'https://shop.example/menu'] },
+              },
+            ],
+          },
+          { toolCalls: [{ name: 'request_human', args: { leadId, reason: 'travou' } }] },
+          { text: 'fim' },
+        ],
+      } as never)}
+      where id = ${runId}`;
+    expect(await runOnce(sql)).toBe(true);
+    const r = await getRun(runId);
+    expect(r.status).toBe('done');
+    const reads = r.steps.filter((s) => (s as { name?: string }).name === 'read_pages') as {
+      readSpent?: number;
+      out?: { error?: string; errors?: { url: string }[]; pages?: unknown[] };
+    }[];
+    expect(reads).toHaveLength(3);
+    expect(reads[0]!.readSpent).toBe(0);
+    expect(reads[0]!.out?.errors?.[0]?.url).toBe('ftp://shop.example/menu');
+    expect(reads[1]!.readSpent).toBe(1);
+    expect(reads[1]!.out?.pages?.length).toBeGreaterThan(0);
+    // the twin dedupes onto the cached page — both urls serve it, free
+    expect(reads[2]!.readSpent).toBe(0);
+    expect(reads[2]!.out?.pages?.length).toBe(2);
+    expect(reads[2]!.out?.errors ?? []).toHaveLength(0);
   });
 });

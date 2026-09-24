@@ -816,12 +816,15 @@ export function replayJournal(prior: unknown[]): JournalReplay {
     if (t.name === 'read_pages') {
       // The journaled marker is authoritative: it's the fetch spend the
       // call charged (0 for a fully-cached read — the cap prices fetches,
-      // not calls). Journals from before the marker — an in-flight run
-      // reclaimed after a deploy — fall back to excluding the two
-      // pre-check rejections (REPEAT suppression; a malformed 'needs urls'
-      // call), which never incremented the counter; everything else
-      // counted as a spend — per-requested-url for an entry that died
-      // mid-execution, one for a completed call or a legacy boolean.
+      // not calls), stamped on the pending entry when the reservation
+      // validated — so a dead entry carrying one already holds its real
+      // spend, and a dead entry without one provably died before
+      // validation: it spent nothing, and charging it a guess could lock
+      // the recovery budget on a call the cap would have refused whole.
+      // Legacy journals — a run reclaimed across the marker deploy —
+      // fall back to excluding the two pre-check rejections (REPEAT
+      // suppression; a malformed 'needs urls' call) and counting one
+      // spend per completed call or legacy boolean marker.
       const spent = (t as { readSpent?: number | boolean }).readSpent;
       if (typeof spent === 'number') {
         replay.pageReads += spent;
@@ -832,16 +835,8 @@ export function replayJournal(prior: unknown[]): JournalReplay {
         const preCheck =
           typeof e === 'string' &&
           (e.startsWith('REPEAT') || e.startsWith('read_pages needs urls'));
-        if (!preCheck) {
-          // A still-pending (or out-less) entry died mid-execution — the
-          // reservation may already have charged one slot per requested
-          // url before the result ever journaled. Reserve what the call
-          // could have spent, not the single slot it recorded.
-          const dead = (t as { pending?: boolean }).pending === true || t.out === undefined;
-          const urls = (t as { args?: { urls?: unknown } }).args?.urls;
-          const argCount = Array.isArray(urls) ? Math.min(Math.max(urls.length, 1), 6) : 1;
-          replay.pageReads += dead ? argCount : 1;
-        }
+        const dead = (t as { pending?: boolean }).pending === true || t.out === undefined;
+        if (!preCheck && !dead) replay.pageReads++;
       }
     }
     const p = t.out as { stored?: boolean; plan?: unknown } | null;
@@ -1579,6 +1574,18 @@ export async function runOnce(sql: Sql): Promise<boolean> {
           const suppress =
             prev?.ok === true && (!READ_TOOLS.has(call.name) || prev.v === stateVersion);
           const readsBefore = ctx.pageReads;
+          // Let a read_pages call stamp each fetch reservation onto its
+          // pending journal entry the moment it validates — a worker that
+          // dies mid-batch leaves the real spend persisted, and an entry
+          // without one provably never reached validation.
+          if (call.name === 'read_pages') {
+            ctx.markReadSpent = async (delta: number) => {
+              entry.readSpent = (entry.readSpent ?? 0) + delta;
+              await persist();
+            };
+          } else {
+            delete ctx.markReadSpent;
+          }
           let out: unknown;
           if (suppress) {
             out = {
