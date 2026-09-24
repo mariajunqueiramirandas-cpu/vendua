@@ -352,6 +352,8 @@ describe('mapPointerName', () => {
     // it must not claim the free in-process resolution a name unlocks
     expect(mapPointerName('https://evil.example/x?q=Acme+Pizza')).toBeNull();
     expect(mapPointerName('https://evil.example/maps/place/Acme+Pizza')).toBeNull();
+    // a map-pointer host on an unfetchable scheme is not a pointer either
+    expect(mapPointerName('ftp://maps.google.com/maps?q=Acme+Pizza')).toBeNull();
   });
 });
 
@@ -1291,6 +1293,9 @@ dbDescribe('worker robustness (db)', () => {
     const nudges = r.steps.filter((s) => (s as { type?: string }).type === 'nudge');
     expect(nudges).toHaveLength(1);
     expect((nudges[0] as { content?: string }).content).toContain('Ação pendente');
+    // Don't leak the keyless resend row — the shared DB would let it win
+    // getIntegrationTx over other tests' enabled email drivers.
+    await sql`delete from control_integrations where kind = 'email' and driver = 'resend'`;
   });
 
   test('a blocked send is not a reusable result — its retry re-executes', async () => {

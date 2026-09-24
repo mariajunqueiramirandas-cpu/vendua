@@ -1001,7 +1001,10 @@ export function mapPointerName(raw: string): string | null {
     if (inner) return mapPointerName(decodeURIComponent(inner));
     // Only the map-pointer/google family can carry a business name — an
     // arbitrary host's ?q= is not a profile pointer and must not claim
-    // the free in-process resolution this name unlocks.
+    // the free in-process resolution this name unlocks. The carrier must
+    // also be a fetchable page: an ftp://maps.google.com link is not a
+    // profile pointer either.
+    if (t.protocol !== 'http:' && t.protocol !== 'https:') return null;
     if (!isBizMapUrl(t) && !GOOGLE_HOST.test(t.hostname)) return null;
     const q = t.searchParams.get('q') ?? t.searchParams.get('query');
     if (q && !/\//.test(q) && q.length < 80) return q.replace(/\+/g, ' ');
