@@ -81,7 +81,7 @@ export async function ingestInbound(
   // the staff pause toggle on `lead_threads` — so a suppression committed
   // between the message insert and now is seen here instead of stranding a
   // queued reply on a suppressed thread/lead.
-  const runId = await controlTx(sql, async (tx) => {
+  const enqueued = await controlTx(sql, async (tx) => {
     const gateRows = await tx<ReplyGate[]>`
       select t.agent_enabled, l.agent_mode, l.unsubscribed_at, l.archived_at
       from lead_threads t join leads l on l.id = t.lead_id
@@ -132,21 +132,10 @@ export async function ingestInbound(
         and params->>'origin' = 'inbound'
       limit 1
     `;
-    if (parked.length) {
-      // The latest message earns its own quiet period: slide the parked
-      // run forward to now+delay — greatest() never delays an already-
-      // overdue reply further (it fires on the next tick), and delay=0
-      // needs no write at all.
-      if (inboundReplyDelayMin > 0) {
-        await tx`
-          update agent_runs
-          set run_at = greatest(run_at, ${new Date(Date.now() + inboundReplyDelayMin * 60_000)})
-          where id = ${parked[0]!.id}
-        `;
-      }
-      return parked[0]!.id;
-    }
-    return insertRun(tx, {
+    if (parked.length) return { id: parked[0]!.id, coalesced: true };
+    // null = the lifetime cost cap refused the run — nothing queued to
+    // announce or kick.
+    const id = await insertRun(tx, {
       kind: 'reply',
       leadId: res.leadId,
       threadId: res.threadId,
@@ -155,9 +144,23 @@ export async function ingestInbound(
         ? { runAt: new Date(Date.now() + inboundReplyDelayMin * 60_000) }
         : {}),
     });
+    return id ? { id, coalesced: false } : null;
   });
-  if (runId) {
-    emitControlEvent('run.update', runId);
+  if (enqueued) {
+    // The latest message earns its own quiet period: slide the parked run
+    // forward to now+delay — done OUTSIDE the l,t tx because claimRun locks
+    // run→thread while the gate holds thread→run; a run write there can
+    // deadlock. The status/run_at guards keep it safe and narrow: an
+    // already-claimed or already-overdue reply fires as-is, delay=0 needs
+    // no write at all.
+    if (enqueued.coalesced && inboundReplyDelayMin > 0) {
+      await sql`
+        update agent_runs
+        set run_at = greatest(run_at, ${new Date(Date.now() + inboundReplyDelayMin * 60_000)})
+        where id = ${enqueued.id} and status = 'queued' and run_at > now()
+      `;
+    }
+    emitControlEvent('run.update', enqueued.id);
     // Kick the queue now — don't wait up to the poll interval for a reply
     // (a delayed run_at is simply not due yet; the worker tick picks it up).
     void drain(sql).catch((e) => agentLog.error({ err: e }, 'drain failed'));
