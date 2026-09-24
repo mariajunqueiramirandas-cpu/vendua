@@ -1263,56 +1263,59 @@ dbDescribe('worker robustness (db)', () => {
       values ('email', 'resend', true)
       on conflict (kind, driver) do update set enabled = true
     `;
-    // First contact must not be draft-forced and quiet hours must be
-    // empty (start == end → never quiet) — the send has to reach the
-    // dispatch stage to fail.
-    await sql`
-      insert into control_settings (key, value)
-      values ('guardrails',
-              ${sql.json({ firstContactDraftOnly: false, quietStart: '00:00', quietEnd: '00:00' } as never)})
-      on conflict (key) do update set value = excluded.value
-    `;
-    const lead = await controlTx(sql, (tx) =>
-      insertLeadTx(tx, {
-        name: 'Unsendable Lead',
-        email: 'lead@example.com',
-        agent_mode: 'auto',
-      }),
-    );
-    const leadId = lead.body.lead.id;
-    await sql`delete from agent_runs where status = 'queued'`;
-    const runId = (await enqueueRun(sql, { kind: 'reply', leadId })!)!;
-    await sql`update agent_runs set
-      params = ${sql.json({
-        script: [
-          { toolCalls: [{ name: 'send_message', args: { leadId, body: 'olá' } }] },
-          { text: 'fim' },
-        ],
-      } as never)}
-      where id = ${runId}`;
-    expect(await runOnce(sql)).toBe(true);
-    const r = await getRun(runId);
-    expect(r.status).toBe('done');
-    const sends = r.steps.filter((s) => (s as { name?: string }).name === 'send_message') as {
-      out?: { error?: string };
-    }[];
-    expect(sends).toHaveLength(1);
-    expect(sends[0]!.out?.error).toBeTruthy();
-    const nudges = r.steps.filter((s) => (s as { type?: string }).type === 'nudge');
-    expect(nudges).toHaveLength(1);
-    expect((nudges[0] as { content?: string }).content).toContain('Ação pendente');
-    // Don't leak the keyless resend row — the shared DB would let it win
-    // getIntegrationTx over other tests' enabled email drivers. Restore
-    // whatever was there before (or drop our row entirely).
-    if (prior) {
+    try {
+      // First contact must not be draft-forced and quiet hours must be
+      // empty (start == end → never quiet) — the send has to reach the
+      // dispatch stage to fail.
       await sql`
-        update control_integrations
-        set enabled = ${prior.enabled}, config = ${sql.json(prior.config as never)},
-            secret_ref = ${prior.secret_ref}
-        where kind = 'email' and driver = 'resend'
+        insert into control_settings (key, value)
+        values ('guardrails',
+                ${sql.json({ firstContactDraftOnly: false, quietStart: '00:00', quietEnd: '00:00' } as never)})
+        on conflict (key) do update set value = excluded.value
       `;
-    } else {
-      await sql`delete from control_integrations where kind = 'email' and driver = 'resend'`;
+      const lead = await controlTx(sql, (tx) =>
+        insertLeadTx(tx, {
+          name: 'Unsendable Lead',
+          email: 'lead@example.com',
+          agent_mode: 'auto',
+        }),
+      );
+      const leadId = lead.body.lead.id;
+      await sql`delete from agent_runs where status = 'queued'`;
+      const runId = (await enqueueRun(sql, { kind: 'reply', leadId })!)!;
+      await sql`update agent_runs set
+        params = ${sql.json({
+          script: [
+            { toolCalls: [{ name: 'send_message', args: { leadId, body: 'olá' } }] },
+            { text: 'fim' },
+          ],
+        } as never)}
+        where id = ${runId}`;
+      expect(await runOnce(sql)).toBe(true);
+      const r = await getRun(runId);
+      expect(r.status).toBe('done');
+      const sends = r.steps.filter((s) => (s as { name?: string }).name === 'send_message') as {
+        out?: { error?: string };
+      }[];
+      expect(sends).toHaveLength(1);
+      expect(sends[0]!.out?.error).toBeTruthy();
+      const nudges = r.steps.filter((s) => (s as { type?: string }).type === 'nudge');
+      expect(nudges).toHaveLength(1);
+      expect((nudges[0] as { content?: string }).content).toContain('Ação pendente');
+    } finally {
+      // Don't leak the keyless resend row — the shared DB would let it win
+      // getIntegrationTx over other tests' enabled email drivers. Restore
+      // whatever was there before (or drop our row entirely).
+      if (prior) {
+        await sql`
+          update control_integrations
+          set enabled = ${prior.enabled}, config = ${sql.json(prior.config as never)},
+              secret_ref = ${prior.secret_ref}
+          where kind = 'email' and driver = 'resend'
+        `;
+      } else {
+        await sql`delete from control_integrations where kind = 'email' and driver = 'resend'`;
+      }
     }
   });
 
