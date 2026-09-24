@@ -194,51 +194,85 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('agent v2 (db)', () => {
       on conflict (key) do update set value = excluded.value
     `;
   const clearSetting = (key: string) => sql`delete from control_settings where key = ${key}`;
+  // Shared-DB discipline: every test that reads workspace-global state
+  // (settings, integrations, budget inputs) pins what it reads and restores
+  // the prior rows in finally — never assumes defaults, never destroys
+  // another file's leftovers. suite order and accumulated state must not
+  // change the outcome.
+  const getSetting = async (key: string) =>
+    (await sql<{ value: unknown }[]>`select value from control_settings where key = ${key}`)[0]
+      ?.value;
+  const restoreSetting = async (key: string, v: unknown) => {
+    if (v === undefined) await clearSetting(key);
+    else await setSetting(key, v);
+  };
+  /** Pin the policy inputs every sweep/policy read consults. */
+  const pinPolicy = async () => ({
+    autonomy: await getSetting('agent_autonomy'),
+    playbooks: await getSetting('agent_playbooks'),
+    guardrails: await getSetting('guardrails'),
+  });
+  const unpinPolicy = async (s: { autonomy: unknown; playbooks: unknown; guardrails: unknown }) => {
+    await restoreSetting('agent_autonomy', s.autonomy);
+    await restoreSetting('agent_playbooks', s.playbooks);
+    await restoreSetting('guardrails', s.guardrails);
+  };
 
   test('schedule replaces the pending wakeup; sweep fires it as an auto outreach', async () => {
+    const prior = await pinPolicy();
     const leadId = await mkLead('wk');
     const soon = new Date(Date.now() + 20 * 60_000).toISOString();
-    const a = (await executeTool(mkCtx('reply', leadId, 'a'), 's1', 'schedule', {
-      leadId,
-      at: soon,
-      focus: 'perguntar sobre o teste',
-    })) as { scheduled: boolean; id: string };
-    expect(a.scheduled).toBe(true);
-    const b = (await executeTool(mkCtx('reply', leadId, 'b'), 's1', 'schedule', {
-      leadId,
-      at: soon,
-      focus: 'segunda tentativa',
-    })) as { scheduled: boolean; id: string; replaced: string };
-    expect(b.replaced).toBe(a.id);
-    const pending =
-      await sql`select id from agent_wakeups where lead_id = ${leadId} and status = 'pending'`;
-    expect(pending.map((r) => r.id)).toEqual([b.id]);
+    try {
+      // sweepWakeups gates on automationAllowedTx('outreach') — ambient
+      // autonomy/playbooks leftovers must not be able to hold the fire.
+      await setSetting('agent_autonomy', { level: 'supervised' });
+      await setSetting('agent_playbooks', { outreach: { enabled: true } });
+      await setSetting('guardrails', {});
+      const a = (await executeTool(mkCtx('reply', leadId, 'a'), 's1', 'schedule', {
+        leadId,
+        at: soon,
+        focus: 'perguntar sobre o teste',
+      })) as { scheduled: boolean; id: string };
+      expect(a.scheduled).toBe(true);
+      const b = (await executeTool(mkCtx('reply', leadId, 'b'), 's1', 'schedule', {
+        leadId,
+        at: soon,
+        focus: 'segunda tentativa',
+      })) as { scheduled: boolean; id: string; replaced: string };
+      expect(b.replaced).toBe(a.id);
+      const pending =
+        await sql`select id from agent_wakeups where lead_id = ${leadId} and status = 'pending'`;
+      expect(pending.map((r) => r.id)).toEqual([b.id]);
 
-    // lead-binding: a run bound to another lead can't schedule this one
-    const other = await mkLead('wk-other');
-    const denied = (await executeTool(mkCtx('reply', other, 'c'), 's1', 'schedule', {
-      leadId,
-      at: soon,
-      focus: 'x',
-    })) as { error?: string };
-    expect(denied.error).toBeTruthy();
+      // lead-binding: a run bound to another lead can't schedule this one
+      const other = await mkLead('wk-other');
+      const denied = (await executeTool(mkCtx('reply', other, 'c'), 's1', 'schedule', {
+        leadId,
+        at: soon,
+        focus: 'x',
+      })) as { error?: string };
+      expect(denied.error).toBeTruthy();
 
-    await sql`update agent_wakeups set at = now() - interval '1 minute' where id = ${b.id}`;
-    expect(await sweepWakeups(sql)).toBeGreaterThanOrEqual(1);
-    const w = (
-      await sql<{ status: string; fired_run_id: string }[]>`
+      await sql`update agent_wakeups set at = now() - interval '1 minute' where id = ${b.id}`;
+      expect(await sweepWakeups(sql)).toBeGreaterThanOrEqual(1);
+      const w = (
+        await sql<{ status: string; fired_run_id: string }[]>`
       select status, fired_run_id from agent_wakeups where id = ${b.id}
-    `
-    )[0]!;
-    expect(w.status).toBe('fired');
-    const run = (
-      await sql<{ kind: string; params: Record<string, unknown> }[]>`
+      `
+      )[0]!;
+      expect(w.status).toBe('fired');
+      const run = (
+        await sql<{ kind: string; params: Record<string, unknown> }[]>`
       select kind, params from agent_runs where id = ${w.fired_run_id}
-    `
-    )[0]!;
-    expect(run.kind).toBe('outreach');
-    expect(run.params.auto).toBe('wakeup');
-    expect(String(run.params.focus)).toContain('segunda tentativa');
+      `
+      )[0]!;
+      expect(run.kind).toBe('outreach');
+      expect(run.params.auto).toBe('wakeup');
+      expect(String(run.params.focus)).toContain('segunda tentativa');
+    } finally {
+      await sql`update agent_wakeups set status = 'canceled' where lead_id = ${leadId}`;
+      await unpinPolicy(prior);
+    }
   });
 
   test('inbound retires agent wakeups but keeps lead-requested ones', async () => {
@@ -261,6 +295,13 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('agent v2 (db)', () => {
   });
 
   test('autonomy off and disabled playbooks stop automation; explanation reflects level', async () => {
+    const prior = await pinPolicy();
+    const priorEmail = (
+      await sql<{ enabled: boolean }[]>`
+        select enabled from control_integrations
+        where kind = 'email' and driver = 'log'
+      `
+    )[0];
     const leadId = await mkLead('pol');
     try {
       await setSetting('agent_autonomy', { level: 'off' });
@@ -299,15 +340,41 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('agent v2 (db)', () => {
       expect(cp2!.sendMode).toBe('draft');
       expect(cp2!.reasons[0]!.code).toBe('workspace_copilot');
     } finally {
-      await clearSetting('agent_autonomy');
-      await clearSetting('agent_playbooks');
       await sql`update agent_wakeups set status = 'canceled' where lead_id = ${leadId}`;
-      await sql`delete from control_integrations where kind = 'email' and driver = 'log'`;
+      if (priorEmail) {
+        await sql`
+          update control_integrations set enabled = ${priorEmail.enabled}
+          where kind = 'email' and driver = 'log'
+        `;
+      } else {
+        await sql`delete from control_integrations where kind = 'email' and driver = 'log'`;
+      }
+      await unpinPolicy(prior);
     }
   });
 
   test('strategist auto-approve activates a proposal within the weekly budget', async () => {
+    const priorAuto = await getSetting('agent_autonomy');
+    // discoveryBudgetTx reads ambient numbers: trailing-7d discovery
+    // spend, queued/running discovery runs, unbacked enabled strategist
+    // briefs, and the mean of the last 20 done runs (no window on that
+    // one). On a shared test DB they accumulate past the $50 cap clamp,
+    // so snapshot + neutralize them for the assertion and restore after.
+    const prevCosts = await sql<{ id: string; cost_cents: number }[]>`
+      select id, cost_cents from agent_runs where kind = 'discovery' and cost_cents <> 0
+    `;
+    const prevOpen = await sql<{ id: string; status: string }[]>`
+      select id, status from agent_runs where kind = 'discovery' and status in ('queued', 'running')
+    `;
+    const prevBriefs = await sql<{ id: string }[]>`
+      select id from discovery_briefs where created_by = 'strategist' and enabled
+    `;
     try {
+      // Inside try so a mid-setup failure still runs the finally restore.
+      await sql`update agent_runs set cost_cents = 0 where kind = 'discovery' and cost_cents <> 0`;
+      await sql`update agent_runs set status = 'canceled'
+                where kind = 'discovery' and status in ('queued', 'running')`;
+      await sql`update discovery_briefs set enabled = false where created_by = 'strategist' and enabled`;
       await setSetting('agent_autonomy', { level: 'supervised', strategistAutoApproveUsd: 1000 });
       const out = (await executeTool(
         { ...mkCtx('strategist', '', 'f'), leadId: null },
@@ -318,7 +385,16 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('agent v2 (db)', () => {
       expect(out.enabled).toBe(true);
       await sql`update discovery_briefs set enabled = false where id = ${out.brief.id}`;
     } finally {
-      await clearSetting('agent_autonomy');
+      await restoreSetting('agent_autonomy', priorAuto);
+      for (const r of prevCosts) {
+        await sql`update agent_runs set cost_cents = ${r.cost_cents} where id = ${r.id}`;
+      }
+      for (const r of prevOpen) {
+        await sql`update agent_runs set status = ${r.status} where id = ${r.id}`;
+      }
+      for (const b of prevBriefs) {
+        await sql`update discovery_briefs set enabled = true where id = ${b.id}`;
+      }
     }
   });
 
@@ -368,6 +444,7 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('agent v2 (db)', () => {
         select value from control_settings where key = 'guardrails'
       `
     )[0];
+    const priorAutonomy = await getSetting('agent_autonomy');
     await sql`
       insert into control_integrations (kind, driver, enabled)
       values ('whatsapp', 'log', true)
@@ -421,45 +498,55 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('agent v2 (db)', () => {
       }
       if (priorGuardrails) await setSetting('guardrails', priorGuardrails.value);
       else await clearSetting('guardrails');
-      await clearSetting('agent_autonomy');
+      await restoreSetting('agent_autonomy', priorAutonomy);
     }
   });
 
   test('sweepOutreach folds a due agent wakeup into the cadence run — focus survives', async () => {
+    const prior = await pinPolicy();
     const leadId = await mkLead('fold');
-    await sql`
-      update leads set next_action_at = now() - interval '1 minute',
-                       next_action_source = 'cadence'
-      where id = ${leadId}
-    `;
-    const w = (
-      await sql<{ id: string }[]>`
+    try {
+      // sweepOutreach gates on automationAllowedTx('outreach').
+      await setSetting('agent_autonomy', { level: 'supervised' });
+      await setSetting('agent_playbooks', { outreach: { enabled: true } });
+      await setSetting('guardrails', {});
+      await sql`
+        update leads set next_action_at = now() - interval '1 minute',
+                         next_action_source = 'cadence'
+        where id = ${leadId}
+      `;
+      const w = (
+        await sql<{ id: string }[]>`
         insert into agent_wakeups (lead_id, at, focus)
         values (${leadId}, now() - interval '1 minute', 'cobrar o orçamento')
         returning id
       `
-    )[0]!;
-    await sweepOutreach(sql);
-    const fired = (
-      await sql<{ status: string; fired_run_id: string | null }[]>`
+      )[0]!;
+      await sweepOutreach(sql);
+      const fired = (
+        await sql<{ status: string; fired_run_id: string | null }[]>`
         select status, fired_run_id from agent_wakeups where id = ${w.id}
       `
-    )[0]!;
-    expect(fired.status).toBe('fired');
-    expect(fired.fired_run_id).toBeTruthy();
-    const run = (
-      await sql<{ kind: string; params: Record<string, unknown> }[]>`
+      )[0]!;
+      expect(fired.status).toBe('fired');
+      expect(fired.fired_run_id).toBeTruthy();
+      const run = (
+        await sql<{ kind: string; params: Record<string, unknown> }[]>`
         select kind, params from agent_runs where id = ${fired.fired_run_id!}
       `
-    )[0]!;
-    expect(run.kind).toBe('outreach');
-    expect(run.params.auto).toBe('cadence');
-    expect(String(run.params.focus)).toContain('cobrar o orçamento');
-    expect(run.params.wakeupId).toBe(w.id);
+      )[0]!;
+      expect(run.kind).toBe('outreach');
+      expect(run.params.auto).toBe('cadence');
+      expect(String(run.params.focus)).toContain('cobrar o orçamento');
+      expect(run.params.wakeupId).toBe(w.id);
+    } finally {
+      await sql`update agent_runs set status = 'canceled' where lead_id = ${leadId} and status = 'queued'`;
+      await unpinPolicy(prior);
+    }
   });
 
   test('sweepBriefs disables an over-budget strategist brief; a staff brief still fires', async () => {
-    await setSetting('agent_autonomy', { level: 'supervised', strategistAutoApproveUsd: 0.5 });
+    const priorPolicy = await pinPolicy();
     const strat = (
       await sql<{ id: string }[]>`
         insert into discovery_briefs (name, query, enabled, created_by, last_run_at)
@@ -478,7 +565,30 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('agent v2 (db)', () => {
     // ambient spend on the shared test DB.
     const prior = await controlTx(sql, (tx) => insertRun(tx, { kind: 'discovery' }));
     await sql`update agent_runs set status = 'done', cost_cents = 60 where id = ${prior!}`;
+    // The sweep also fires ambient due briefs and pauses ambient
+    // over-budget ones — snapshot both so finally touches only this run's
+    // own effect and undoes the rest.
+    const preQueued = new Set(
+      (
+        await sql<{ id: string }[]>`
+          select id from agent_runs where kind = 'discovery' and status = 'queued'
+        `
+      ).map((r) => r.id),
+    );
+    // Firing an ambient brief also advances its last_run_at (a canceled
+    // run doesn't roll the cadence back), so keep the stamp to restore.
+    const preEnabled = new Map(
+      (
+        await sql<{ id: string; last_run_at: string | null }[]>`
+          select id, last_run_at from discovery_briefs where enabled
+        `
+      ).map((r) => [r.id, r.last_run_at] as const),
+    );
     try {
+      // sweepBriefs gates on automationAllowedTx('discovery').
+      await setSetting('agent_autonomy', { level: 'supervised', strategistAutoApproveUsd: 0.5 });
+      await setSetting('agent_playbooks', { discovery: { enabled: true } });
+      await setSetting('guardrails', {});
       await sweepBriefs(sql);
       const rows = await sql<{ id: string; enabled: boolean; note: string | null }[]>`
         select id, enabled, note from discovery_briefs where id in (${strat.id}, ${staff.id})
@@ -492,13 +602,32 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('agent v2 (db)', () => {
       `;
       expect(staffRun).toHaveLength(1);
     } finally {
-      await sql`
-        update agent_runs set status = 'canceled'
-        where status = 'queued'
-          and (id = ${prior!} or params->>'briefId' in (${strat.id}, ${staff.id}))
-      `;
+      // Undo the seeded spend (a 'done' row keeps feeding spent/est reads)
+      // and every discovery run this sweep queued (feeds 'open' reads) —
+      // runs already queued before the test stay queued.
+      await sql`update agent_runs set status = 'canceled', cost_cents = 0 where id = ${prior!}`;
+      const spawned = (
+        await sql<{ id: string }[]>`
+          select id from agent_runs where kind = 'discovery' and status = 'queued'
+        `
+      )
+        .map((r) => r.id)
+        .filter((id) => !preQueued.has(id));
+      if (spawned.length) {
+        await sql`update agent_runs set status = 'canceled' where id in ${sql(spawned)}`;
+      }
+      // Re-enable ambient briefs the sweep auto-paused and roll their
+      // cadence stamp back (ours get deleted right after).
+      for (const [id, lastRunAt] of preEnabled) {
+        if (id === strat.id || id === staff.id) continue;
+        await sql`
+          update discovery_briefs
+          set enabled = true, last_run_at = ${lastRunAt}
+          where id = ${id} and (enabled = false or last_run_at is distinct from ${lastRunAt})
+        `;
+      }
       await sql`delete from discovery_briefs where id in (${strat.id}, ${staff.id})`;
-      await clearSetting('agent_autonomy');
+      await unpinPolicy(priorPolicy);
     }
   });
 
@@ -533,6 +662,7 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('agent v2 (db)', () => {
   });
 
   test('claim policy parks disabled playbooks and, at level off, automation rows only', async () => {
+    const prior = await pinPolicy();
     try {
       await setSetting('agent_autonomy', { level: 'off' });
       await setSetting('agent_playbooks', { discovery: { enabled: false } });
@@ -554,8 +684,7 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('agent v2 (db)', () => {
       expect(rows.map((r) => r.id)).toEqual([staff!]);
       await sql`update agent_runs set status = 'canceled' where id in (${auto!}, ${staff!})`;
     } finally {
-      await clearSetting('agent_autonomy');
-      await clearSetting('agent_playbooks');
+      await unpinPolicy(prior);
     }
   });
 });
