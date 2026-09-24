@@ -1300,12 +1300,20 @@ export async function executeTool(
         await tx`select pg_advisory_xact_lock(hashtext(${`send:${leadId}`}))`;
         // Run-scoped dedupe: a run reclaimed after a mid-send crash re-executes
         // the whole conversation — the model may emit a different callId, so
-        // `key` can't catch it. The run's own prior dispatch can.
+        // `key` can't catch it. The run's own prior dispatch can. Scoped to
+        // the latest delivered mail batch: a drained inbox batch re-arms the
+        // run for exactly one answer — without it a run that already sent
+        // could never reply to mail it just read, and replay still can't
+        // double-send (the consumed_at stamp predates the prior dispatch).
         const already = await tx`
           select 1 from lead_messages m
           join lead_threads t on t.id = m.thread_id
           where t.lead_id = ${leadId} and m.agent_run_id = ${ctx.runId}
             and m.status in ('queued', 'sending', 'sent', 'delivered')
+            and m.created_at > coalesce(
+              (select max(i.consumed_at) from agent_inbox i
+               where i.consumed_by_run = ${ctx.runId}),
+              '-infinity'::timestamptz)
           limit 1
         `;
         if (already[0]) {

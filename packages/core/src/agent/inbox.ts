@@ -84,18 +84,21 @@ export async function sweepOrphanInbox(sql: Sql, limit = 10): Promise<number> {
   // (active run) leads here would re-pick them every tick and starve
   // anything younger. Only exclusions that NEVER self-clear are filtered;
   // unsubscribed/archived leads stay selectable so their mail still drops.
-  const leads = await sql<{ lead_id: string }[]>`
-    select i.lead_id, min(i.created_at) as first_at
-    from agent_inbox i
-    join leads l on l.id = i.lead_id
-    where i.consumed_at is null
-      and l.agent_paused_at is null and l.agent_mode <> 'off'
-      and not exists (
-        select 1 from agent_runs r
-        where r.lead_id = i.lead_id and r.status in ('queued', 'running')
-      )
-    group by i.lead_id order by first_at limit ${limit}
-  `;
+  const leads = await controlTx(
+    sql,
+    (tx) => tx<{ lead_id: string }[]>`
+      select i.lead_id, min(i.created_at) as first_at
+      from agent_inbox i
+      join leads l on l.id = i.lead_id
+      where i.consumed_at is null
+        and l.agent_paused_at is null and l.agent_mode <> 'off'
+        and not exists (
+          select 1 from agent_runs r
+          where r.lead_id = i.lead_id and r.status in ('queued', 'running')
+        )
+      group by i.lead_id order by first_at limit ${limit}
+    `,
+  );
   let served = 0;
   for (const { lead_id } of leads) {
     const runId = await controlTx(sql, async (tx) => {

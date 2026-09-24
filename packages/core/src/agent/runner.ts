@@ -516,6 +516,24 @@ export async function claimRun(sql: Sql): Promise<RunRow | null> {
   return run;
 }
 
+/** Consumed mail a dead run can no longer answer returns to pending —
+ *  the orphan sweep respawns a run for it rather than stranding the
+ *  intent in a failed journal. Bounded: `deliveries` counts respawns,
+ *  and after 2 the item keeps its stamp — a permanently failing item
+ *  would otherwise respawn forever, and the failed run's staff task is
+ *  already the human path. Shared by finishRun's 'failed' branch and
+ *  the terminal-reclaim commit. */
+async function releaseInboxTx(tx: Sql, runId: string): Promise<void> {
+  await tx`
+    update agent_inbox
+    set consumed_at = null, consumed_by_run = null,
+        payload = payload || jsonb_build_object(
+          'deliveries', coalesce((payload->>'deliveries')::int, 0) + 1)
+    where consumed_by_run = ${runId}
+      and coalesce((payload->>'deliveries')::int, 0) < 2
+  `;
+}
+
 async function finishRun(
   sql: Sql,
   run: { id: string; claimToken: string; leadId?: string | null },
@@ -559,10 +577,7 @@ async function finishRun(
       // intent in a failed journal. 'done'/'canceled' keep their mail: a
       // finished run rendered it; a canceled one's suppression is handled
       // by the canceling side (unsubscribe clears pending mail itself).
-      await tx`
-        update agent_inbox set consumed_at = null, consumed_by_run = null
-        where consumed_by_run = ${run.id}
-      `;
+      await releaseInboxTx(tx, run.id);
       const name =
         (await tx<{ name: string }[]>`select name from leads where id = ${r.lead_id}`)[0]?.name ??
         r.lead_id;
@@ -1536,6 +1551,12 @@ async function drainInbox(att: Attempt): Promise<number> {
   // pending and the orphan sweep spawns its own draftOnly run once the
   // lead is free (the request itself is new work, not run context).
   const runDraftOnly = (att.run.params as { draftOnly?: unknown } | null)?.draftOnly === true;
+  // Channel-pinned mail likewise defers to a run pinned the same way — a
+  // delivered item can't re-point ctx.channelOverride mid-flight.
+  const runChannel =
+    att.run.params?.channel === 'whatsapp' || att.run.params?.channel === 'email'
+      ? att.run.params.channel
+      : '';
   // Read-only select — consumption is fenced inside persist, so a stale
   // worker picking items here only fails later at the fence, never
   // swallows the mail.
@@ -1545,6 +1566,7 @@ async function drainInbox(att: Attempt): Promise<number> {
       select id, kind, payload, created_at from agent_inbox
       where lead_id = ${att.run.lead_id!} and consumed_at is null
         and (${runDraftOnly} or coalesce(payload->'params'->>'draftOnly', 'false') <> 'true')
+        and coalesce(payload->'params'->>'channel', ${runChannel}) = ${runChannel}
       order by created_at limit 10
     `,
   );
@@ -2381,8 +2403,12 @@ export async function drain(sql: Sql, limit = 20): Promise<number> {
       `;
       const row = rows[0];
       // A stale row revived between select and update skips the whole
-      // finalize — no task, no flag, no emit.
+      // finalize — no task, no flag, no emit, and consumed mail stays
+      // stamped to the (still-living) run.
       if (!row) return { task: false, cap: false };
+      // Mail the dead run consumed goes back to pending in the same
+      // fenced commit — the inbox sweep respawns it.
+      await releaseInboxTx(tx, row.id);
       // A dead attempt never reached finishRun — its spend lives only in
       // the journal. Model entries are usage DELTAS (sum them); monid_spend
       // markers carry the CUMULATIVE budget balance at each write — the

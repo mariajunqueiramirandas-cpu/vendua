@@ -2864,4 +2864,195 @@ dbDescribe('worker robustness (db)', () => {
     // The row was upserted to its resolved result, not left pending.
     expect(tool?.out).toBeTruthy();
   });
+
+  test('a send lands once per mail batch — new mail re-arms the run exactly once', async () => {
+    await migrate(sql, MIGRATIONS);
+    const lead = await controlTx(sql, (tx) =>
+      insertLeadTx(tx, { name: 'Batch Sends', email: 'batch@example.com', agent_mode: 'auto' }),
+    );
+    const leadId = lead.body.lead.id;
+    await controlTx(sql, (tx) => ensureThread(tx, leadId, 'email', {}));
+    // Real dispatches need a live channel — without one every send lands
+    // 'draft' and the run-scoped guard never sees it. The 'log' email
+    // driver is the seam the neighboring send tests use.
+    const priorLog = (
+      await sql<{ enabled: boolean; config: unknown; secret_ref: string | null }[]>`
+        select enabled, config, secret_ref from control_integrations
+        where kind = 'email' and driver = 'log'
+      `
+    )[0];
+    await sql`
+      insert into control_integrations (kind, driver, enabled)
+      values ('email', 'log', true)
+      on conflict (kind, driver) do update set enabled = true
+    `;
+    try {
+      await sql`delete from agent_runs where status = 'queued'`;
+      const runId = (await enqueueRun(sql, {
+        kind: 'reply',
+        leadId,
+        params: {
+          script: [
+            { toolCalls: [{ name: 'send_message', args: { leadId, body: 'primeira' } }] },
+            // The delay rides the tool step — a delay-only turn returns
+            // nothing and ends the run.
+            {
+              delayMs: 120,
+              toolCalls: [{ name: 'send_message', args: { leadId, body: 'bloqueada um' } }],
+            },
+            { toolCalls: [{ name: 'send_message', args: { leadId, body: 'segunda' } }] },
+            { toolCalls: [{ name: 'send_message', args: { leadId, body: 'bloqueada dois' } }] },
+            { text: 'fim' },
+          ],
+        },
+      }))!;
+      // Deliver mail once the first send has landed — the duplicate-send
+      // guard is scoped to the latest consumed batch, so the drained item
+      // re-arms the run for exactly one more send.
+      const deliver = setInterval(() => {
+        void controlTx(
+          sql,
+          (tx) =>
+            tx`
+            select 1 from lead_messages m join lead_threads t on t.id = m.thread_id
+            where t.lead_id = ${leadId} and m.agent_run_id = ${runId}
+              and m.status in ('queued', 'sending', 'sent', 'delivered') limit 1
+          `,
+        ).then(async (rows) => {
+          if (!rows.length) return;
+          clearInterval(deliver);
+          await controlTx(sql, (tx) =>
+            enqueueInboxTx(tx, leadId, 'inbound', { text: 'e o frete?', requestedKind: 'reply' }),
+          );
+        });
+      }, 5);
+      try {
+        expect(await runOnce(sql)).toBe(true);
+      } finally {
+        clearInterval(deliver);
+      }
+      const r = await getRun(runId);
+      expect(r.status).toBe('done');
+      // The mail was drained and rendered.
+      expect(r.steps.some((s) => (s as { type?: string }).type === 'inbox')).toBe(true);
+      // Exactly one send landed after the batch — whichever call followed
+      // the drain — and every further attempt stayed blocked.
+      const msgs = await sql<{ body: string }[]>`
+        select m.body from lead_messages m join lead_threads t on t.id = m.thread_id
+        where t.lead_id = ${leadId} and m.direction = 'out' and m.author = 'agent'
+        order by m.created_at
+      `;
+      expect(msgs.length).toBe(2);
+      expect(msgs[0]!.body).toBe('primeira');
+      const blocked = r.steps.filter(
+        (s) =>
+          (s as { name?: string }).name === 'send_message' &&
+          (s as { out?: { blocked?: boolean } }).out?.blocked === true,
+      );
+      expect(blocked.length).toBe(2);
+    } finally {
+      if (priorLog) {
+        await sql`
+          update control_integrations
+          set enabled = ${priorLog.enabled}, config = ${sql.json(priorLog.config as never)},
+              secret_ref = ${priorLog.secret_ref}
+          where kind = 'email' and driver = 'log'
+        `;
+      } else {
+        await sql`delete from control_integrations where kind = 'email' and driver = 'log'`;
+      }
+    }
+  });
+
+  test('channel-pinned staff mail waits for a same-channel run', async () => {
+    await migrate(sql, MIGRATIONS);
+    const lead = await controlTx(sql, (tx) =>
+      insertLeadTx(tx, { name: 'Channel Mail', whatsapp: '5511910000007' }),
+    );
+    const leadId = lead.body.lead.id;
+    await sql`delete from agent_runs where status = 'queued'`;
+    // An active whatsapp run owns the lead — mail asking for email can't
+    // re-point ctx.channelOverride mid-flight, so it waits for its own.
+    const runId = (await enqueueRun(sql, {
+      kind: 'reply',
+      leadId,
+      params: { channel: 'whatsapp', script: [{ text: 'ok' }] },
+    }))!;
+    await controlTx(sql, (tx) =>
+      enqueueInboxTx(tx, leadId, 'staff', {
+        text: 'responde por email',
+        requestedKind: 'reply',
+        params: { channel: 'email', script: [{ text: 'ok' }] },
+      }),
+    );
+    expect(await runOnce(sql)).toBe(true);
+    expect((await getRun(runId)).status).toBe('done');
+    expect(
+      (await sql`select 1 from agent_inbox where lead_id = ${leadId} and consumed_at is null`)
+        .length,
+    ).toBe(1);
+    // Freed: the sweep spawns the email-pinned run the item asked for and
+    // the mail drains into it.
+    await drain(sql);
+    const [item] = await sql<{ consumed_by_run: string | null }[]>`
+      select consumed_by_run from agent_inbox where lead_id = ${leadId}
+    `;
+    expect(item!.consumed_by_run).not.toBeNull();
+    expect(item!.consumed_by_run).not.toBe(runId);
+    const [spawned] = await sql<{ params: { channel?: string } }[]>`
+      select params from agent_runs where id = ${item!.consumed_by_run!}
+    `;
+    expect(spawned!.params.channel).toBe('email');
+  });
+
+  test('failed-run mail release is bounded — the third death keeps the mail', async () => {
+    await migrate(sql, MIGRATIONS);
+    const lead = await controlTx(sql, (tx) =>
+      insertLeadTx(tx, { name: 'Dead Mail', whatsapp: '5511910000008' }),
+    );
+    const leadId = lead.body.lead.id;
+    await sql`delete from agent_runs where status = 'queued'`;
+    const itemId = await controlTx(sql, (tx) =>
+      enqueueInboxTx(tx, leadId, 'inbound', { text: 'oi', requestedKind: 'reply' }),
+    );
+    const stale = new Date(Date.now() - 11 * 60_000);
+    const mail = () =>
+      sql<{ consumed_at: string | null; consumed_by_run: string | null; deliveries: number }[]>`
+        select consumed_at, consumed_by_run,
+               coalesce((payload->>'deliveries')::int, 0) as deliveries
+        from agent_inbox where id = ${itemId}
+      `;
+    const killConsumed = async () => {
+      // A stale 'running' run holding the item — reconcile fails it through
+      // finishRun, whose release path decides the mail's fate.
+      const [r] = await sql<{ id: string }[]>`
+        insert into agent_runs (kind, lead_id, status, claim_token, attempts, max_attempts, started_at, alive_at)
+        values ('reply', ${leadId}, 'running', 'stale', 1, 1, ${stale}, ${stale})
+        returning id
+      `;
+      await sql`update agent_inbox set consumed_by_run = ${r!.id}, consumed_at = now()
+        where id = ${itemId}`;
+      await drain(sql, 0);
+      // The release re-pends the item, and the same drain's orphan sweep
+      // respawns a 'queued' run for it — remove that spawn so the next
+      // dead-run stamp keeps the lead's single active-run slot free.
+      await sql`delete from agent_runs where status = 'queued'`;
+      return r!.id;
+    };
+    await killConsumed();
+    let it = (await mail())[0]!;
+    expect(it.consumed_at).toBeNull(); // first death releases
+    expect(it.deliveries).toBe(1);
+    await killConsumed();
+    it = (await mail())[0]!;
+    expect(it.consumed_at).toBeNull(); // second release — still under the bound
+    expect(it.deliveries).toBe(2);
+    const dead3 = await killConsumed();
+    it = (await mail())[0]!;
+    // Third death: the bound holds — released mail would respawn a doomed
+    // run every tick otherwise, and the failure task is the human path.
+    expect(it.consumed_at).not.toBeNull();
+    expect(it.consumed_by_run).toBe(dead3);
+    expect(it.deliveries).toBe(2);
+  });
 });
