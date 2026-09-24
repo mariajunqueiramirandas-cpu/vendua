@@ -75,18 +75,18 @@ more, not less.
 
 ## 3. Ranked opportunities
 
-| #   | change                                                                  | est. saving                                                                            | quality risk                                                                                                  | status                    |
-| --- | ----------------------------------------------------------------------- | -------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------- | ------------------------- |
-| 1   | `slimToolOutputs`: bound model-facing tool results (journal stays full) | history-heavy runs: ~30–60% of input tokens (≈5x on resubmits even cached)             | medium — page tails may hide contacts (mitigated: foundContacts/nav/errors already extracted; re-read cached) | **flagged**               |
-| 2   | `staticSystem`: BOOKING_URL out of the system prompt                    | turn-1 static ~4–5.7K→~10% when cross-run cache hits; kills per-lead prompt uniqueness | low-medium — model must read the context field (it was already duplicated there)                              | **flagged**               |
-| 3   | cached/cost telemetry                                                   | prerequisite — no spend                                                                | none                                                                                                          | **done**                  |
-| 4   | anthropic cache_control breakpoints                                     | ~90% off static prefix when that driver runs                                           | none                                                                                                          | **done** (dormant driver) |
-| 5   | tool-description slimming (~1–2K/request)                               | ~20–40% of static prefix                                                               | medium — terse-than-trained descriptions risk misuse                                                          | proposal                  |
-| 6   | LEAD↔PLANO duplication (agent_plan twice in context)                    | ~0.3–0.5K/turn                                                                         | low                                                                                                           | proposal                  |
-| 7   | explicit Gemini cache                                                   | ~none — implicit already on; adds storage fee + ops                                    | —                                                                                                             | **not recommended**       |
-| 8   | model routing / thinkingBudget                                          | unknown — needs sim scores                                                             | high                                                                                                          | proposal only             |
-| 9   | in-run history compaction (summarize old outs)                          | beyond #1                                                                              | high — no read-back path                                                                                      | proposal only             |
-| 10  | OpenRouter reasoning_details replay                                     | correctness for reasoning models                                                       | —                                                                                                             | gap (below)               |
+| #   | change                                                                  | est. saving                                                                            | quality risk                                                                                                                             | status                    |
+| --- | ----------------------------------------------------------------------- | -------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------- | ------------------------- |
+| 1   | `slimToolOutputs`: bound model-facing tool results (journal stays full) | history-heavy runs: ~30–60% of input tokens (≈5x on resubmits even cached)             | medium — page tails may hide contacts (mitigated: foundContacts/nav/errors already extracted; `read_pages offset:` continuation is free) | **flagged**               |
+| 2   | `staticSystem`: BOOKING_URL out of the system prompt                    | turn-1 static ~4–5.7K→~10% when cross-run cache hits; kills per-lead prompt uniqueness | low-medium — model must read the context field (it was already duplicated there)                                                         | **flagged**               |
+| 3   | cached/cost telemetry                                                   | prerequisite — no spend                                                                | none                                                                                                                                     | **done**                  |
+| 4   | anthropic cache_control breakpoints                                     | ~90% off static prefix when that driver runs                                           | none                                                                                                                                     | **done** (dormant driver) |
+| 5   | tool-description slimming (~1–2K/request)                               | ~20–40% of static prefix                                                               | medium — terse-than-trained descriptions risk misuse                                                                                     | proposal                  |
+| 6   | LEAD↔PLANO duplication (agent_plan twice in context)                    | ~0.3–0.5K/turn                                                                         | low                                                                                                                                      | proposal                  |
+| 7   | explicit Gemini cache                                                   | ~none — implicit already on; adds storage fee + ops                                    | —                                                                                                                                        | **not recommended**       |
+| 8   | model routing / thinkingBudget                                          | unknown — needs sim scores                                                             | high                                                                                                                                     | proposal only             |
+| 9   | in-run history compaction (summarize old outs)                          | beyond #1                                                                              | high — no read-back path                                                                                                                 | proposal only             |
+| 10  | OpenRouter reasoning_details replay                                     | correctness for reasoning models                                                       | —                                                                                                                                        | gap (below)               |
 
 ## 4. Changes made (commits on this branch)
 
@@ -100,6 +100,17 @@ more, not less.
 3. `f326012` harness flags — `config.harness.slimToolOutputs` +
    `staticSystem`, both default OFF.
 4. `f987091` sim `--harness` flag — A/B path.
+5. review hardening on the flag path — `slimToolOut` now bounds the
+   WHOLE result (SLIM_TOTAL 24K across a read_pages batch, not just
+   per-page) and never slices mid-JSON: `slimValue` trims structurally
+   — later array records drop with a count marker, non-outcome keys
+   drop by name, outcome fields (`errors`, `next`, `foundContacts`,
+   `nav`, `newContacts`) always survive. Omitted tails are reachable:
+   `read_pages` gained an optional `offset` arg that slices the cached
+   page (free — run-local page cache), and slim markers print the
+   offset to continue from. `costUsdEstimated` rides the journal so
+   ops can tell table/config estimates from provider-reported cost
+   (OpenRouter only).
 
 ### System-prompt diff (staticSystem=on)
 
@@ -132,6 +143,10 @@ Rollback = flip the integration config JSON — no redeploy.
 ## 6. Gaps / notes
 
 - `tokens_cached` starts counting from this deploy — no historical hit rate.
+- `costUsd` mixes provider-reported (OpenRouter) and table/config estimates
+  elsewhere — journal `costUsdEstimated` marks the source per step; the
+  `cost_cents` column sums both (label reads as estimate unless an
+  OpenRouter integration runs).
 - Implicit-cache min for 3.5-flash-lite isn't published; 3.5-flash is 4096.
   Prefixes ~3.9–5.7K are likely eligible; telemetry will tell.
 - `thoughtsTokenCount` is billed as output — the journal records it inside

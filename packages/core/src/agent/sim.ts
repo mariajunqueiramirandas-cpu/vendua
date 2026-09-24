@@ -246,6 +246,7 @@ export async function runSim(
     cachedTokensIn: 0,
     cacheWriteTokensIn: 0,
     costUsd: 0,
+    costUsdEstimated: false,
   };
   if (transcript.length) {
     judgeRes = await llm.chat({

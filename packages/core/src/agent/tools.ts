@@ -394,6 +394,11 @@ const REGISTRY: { def: AgentTool; toolsets: string[] }[] = [
             description: '1–6 urls of the SAME prospect',
           },
           goal: { type: 'string', description: 'what you are looking for' },
+          offset: {
+            type: 'integer',
+            description:
+              "char offset into each page's text — continue a page past an earlier cut (the slim marker prints the offset to use); 0 = start",
+          },
         },
         required: ['urls'],
       },
@@ -1483,6 +1488,23 @@ export async function executeTool(
       if (!urls.length) return { error: 'read_pages needs urls: ["https://…"] (1–6)' };
       const provider = await discoveryFor(sql);
       const goal = String(args.goal ?? '');
+      // offset pages a page's tail — the cache keeps the full body so a
+      // continuation read costs nothing (slimmed reads print the offset).
+      const offset = Math.max(0, Math.min(10_000_000, Math.floor(Number(args.offset)) || 0));
+      const slicePage = (p: unknown): unknown => {
+        if (!offset || typeof p !== 'object' || p === null) return p;
+        const page = p as Record<string, unknown>;
+        const text = page.text;
+        if (typeof text !== 'string' || text.length <= offset) {
+          return {
+            ...page,
+            textChars: typeof text === 'string' ? text.length : 0,
+            offset,
+            text: '',
+          };
+        }
+        return { ...page, textChars: text.length, offset, text: text.slice(offset) };
+      };
       type PageResult = {
         page: import('./channels/discovery.ts').ReadPage | null;
         error?: string;
@@ -1623,7 +1645,10 @@ export async function executeTool(
           errs.push({ url: c.url, error: 'map pointer did not resolve' });
         }
       }
-      return { pages, ...(errs.length ? { errors: errs } : {}) };
+      return {
+        pages: pages.map(slicePage),
+        ...(errs.length ? { errors: errs } : {}),
+      };
     }
     case 'plan': {
       if (ctx.runKind === 'discovery') {

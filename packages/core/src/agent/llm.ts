@@ -47,6 +47,9 @@ export interface LlmResult {
    *  published-price estimate from the built-in table or config.pricing.
    *  Null when the model has no known price. */
   costUsd: number | null;
+  /** true when costUsd is the price-table/config estimate rather than a
+   *  provider-reported number — ops should read it as '~', not invoice. */
+  costUsdEstimated: boolean;
 }
 
 /** Published paid-tier USD per 1M tokens for the driver default models.
@@ -282,6 +285,7 @@ function openrouterProvider(
         ...u,
         costUsd:
           typeof res.usage?.cost === 'number' ? res.usage.cost : estimateCostUsd(model, config, u),
+        costUsdEstimated: typeof res.usage?.cost !== 'number',
       };
     },
   };
@@ -434,6 +438,7 @@ function geminiProvider(config: Record<string, unknown>, secretRef: string | nul
         toolCalls,
         ...u,
         costUsd: estimateCostUsd(model, config, u),
+        costUsdEstimated: true,
       };
     },
   };
@@ -539,6 +544,7 @@ function anthropicProvider(config: Record<string, unknown>, secretRef: string | 
         toolCalls,
         ...u,
         costUsd: estimateCostUsd(model, config, u),
+        costUsdEstimated: true,
       };
     },
   };
@@ -618,6 +624,7 @@ function openaiProvider(config: Record<string, unknown>, secretRef: string | nul
           cachedTokensIn: data.usage?.prompt_tokens_details?.cached_tokens ?? 0,
           cacheWriteTokensIn: 0,
         }),
+        costUsdEstimated: true,
       };
     },
   };
@@ -659,6 +666,7 @@ export function mockProvider(script: MockStep[]): LlmProvider {
         cachedTokensIn: 0,
         cacheWriteTokensIn: 0,
         costUsd: null,
+        costUsdEstimated: false,
       };
     },
   };

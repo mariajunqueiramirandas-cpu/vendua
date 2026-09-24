@@ -535,45 +535,113 @@ function mineAttempts(steps: unknown[]): { queries: Set<string>; urls: Set<strin
  *  (contacts found, blocked reason, ids), not a full page dump. */
 const REPLAY_OUT_MAX = 3000;
 
-/** Model-facing cap on a single read_pages page body (flag: slimToolOutputs).
- *  Page text is the run's dominant history driver — a 6-url call can exceed
- *  50K tokens and every later turn resubmits it. The journal keeps the full
- *  result; the model gets the head plus the extracted fields (contacts, nav,
- *  errors) and the char count so it knows a cached re-read serves more. */
+/** Model-facing caps for flagged tool-result slimming (slimToolOutputs).
+ *  Page text is the run's dominant history driver — a 6-url read_pages can
+ *  exceed 50K tokens and every later turn resubmits it. The journal keeps
+ *  the full result; the model gets bounded heads plus the extracted fields
+ *  (contacts, nav, errors) and an offset pointer for continuation. */
 const SLIM_PAGE_CHARS = 8_000;
-/** Envelope cap for any other tool result riding the conversation — big
- *  enough that ordinary results never touch it. */
-const SLIM_OUT_CHARS = 24_000;
+/** Shared text budget across a whole result — a batch never slips past the
+ *  cap by shipping many individually-capped bodies. */
+const SLIM_TOTAL_CHARS = 24_000;
+/** Cap on a single long string inside non-page results. */
+const SLIM_STR_CHARS = 4_000;
+/** Outcome fields a tool emits — guidance/errors/contacts that must survive
+ *  the budget even when everything else has been spent. */
+const OUTCOME_KEYS = new Set([
+  'error',
+  'errors',
+  'next',
+  'note',
+  'foundContacts',
+  'nav',
+  'newContacts',
+  'spentUsd',
+  'capUsd',
+  'truncated',
+  'cached',
+  'entry',
+  'lead',
+  'duplicate',
+]);
 
-function slimToolOut(name: string, out: unknown): unknown {
+/** Structure-preserving slim under a char budget — never slices mid-JSON:
+ *  long strings cap at SLIM_STR_CHARS, later array records drop with a
+ *  count marker, non-outcome keys drop by name, and OUTCOME_KEYS always
+ *  survive. Ordinary results pass through untouched (budget never spent). */
+function slimValue(v: unknown, b: { left: number }): unknown {
+  if (v === null || typeof v === 'number' || typeof v === 'boolean') return v;
+  if (typeof v === 'string') {
+    if (v.length <= SLIM_STR_CHARS) {
+      b.left -= v.length;
+      return v;
+    }
+    b.left -= SLIM_STR_CHARS;
+    return `${v.slice(0, SLIM_STR_CHARS)}\n…[${v.length - SLIM_STR_CHARS} chars omitted — journaled in full]`;
+  }
+  if (Array.isArray(v)) {
+    const out: unknown[] = [];
+    for (const item of v) {
+      if (b.left <= 0) {
+        out.push({ omitted: `+${v.length - out.length} records — journaled in full` });
+        return out;
+      }
+      out.push(slimValue(item, b));
+    }
+    return out;
+  }
+  if (typeof v !== 'object') return String(v);
+  const o = v as Record<string, unknown>;
+  const keys = Object.keys(o);
+  keys.sort((a, z) => Number(OUTCOME_KEYS.has(z)) - Number(OUTCOME_KEYS.has(a)));
+  const out: Record<string, unknown> = {};
+  const dropped: string[] = [];
+  for (const k of keys) {
+    if (b.left <= 0 && !OUTCOME_KEYS.has(k)) {
+      dropped.push(k);
+      continue;
+    }
+    out[k] = slimValue(o[k], b);
+  }
+  if (dropped.length) out.omittedKeys = dropped;
+  return out;
+}
+
+export function slimToolOut(name: string, out: unknown): unknown {
   if (name === 'read_pages' && typeof out === 'object' && out !== null) {
     const pages = (out as { pages?: unknown }).pages;
     if (Array.isArray(pages)) {
+      // Sequential text budget across the batch — every page keeps its
+      // metadata (url, foundContacts, nav, chasedFrom) while bodies share
+      // SLIM_TOTAL_CHARS head-first; an exhausted page reports its length
+      // and the continuation offset so read_pages(offset) can page the tail.
+      let left = SLIM_TOTAL_CHARS;
       return {
         ...(out as Record<string, unknown>),
         pages: pages.map((p) => {
           const page = p as Record<string, unknown>;
           const text = page.text;
-          if (typeof text !== 'string' || text.length <= SLIM_PAGE_CHARS) return p;
+          if (typeof text !== 'string') return p;
+          const base = typeof page.offset === 'number' ? page.offset : 0;
+          const total = typeof page.textChars === 'number' ? page.textChars : base + text.length;
+          const cap = Math.min(SLIM_PAGE_CHARS, Math.max(0, left));
+          if (text.length <= cap) {
+            left -= text.length;
+            return p;
+          }
+          left = Math.max(0, left - cap);
           return {
             ...page,
-            textChars: text.length,
-            text: `${text.slice(0, SLIM_PAGE_CHARS)}\n…[${
-              text.length - SLIM_PAGE_CHARS
-            } chars omitted — full result is journaled; read_pages is cached, a re-read is free]`,
+            textChars: total,
+            text: `${text.slice(0, cap)}\n…[${
+              total - base - cap
+            } chars omitted — continue with read_pages offset:${base + cap}; full result is journaled]`,
           };
         }),
       };
     }
   }
-  const json = JSON.stringify(out);
-  if (json.length <= SLIM_OUT_CHARS) return out;
-  return {
-    slimmedForModel: true,
-    totalChars: json.length,
-    head: `${json.slice(0, SLIM_OUT_CHARS)}…`,
-    note: 'result exceeded the conversation budget — full output is journaled under this tool call',
-  };
+  return slimValue(out, { left: SLIM_TOTAL_CHARS });
 }
 
 export interface JournalReplay {
@@ -1169,6 +1237,7 @@ export async function runOnce(sql: Sql): Promise<boolean> {
           cachedTokensIn: res.cachedTokensIn,
           cacheWriteTokensIn: res.cacheWriteTokensIn,
           costUsd: res.costUsd ?? 0,
+          costUsdEstimated: res.costUsdEstimated,
         },
       });
       await persist();
