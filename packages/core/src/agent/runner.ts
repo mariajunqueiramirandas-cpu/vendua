@@ -822,14 +822,15 @@ export function replayJournal(prior: unknown[]): JournalReplay {
       // The journaled marker is authoritative: it's the fetch spend the
       // call charged (0 for a fully-cached read — the cap prices fetches,
       // not calls). Current code stamps readSpent: 0 at journal time and
-      // increments it per reservation, so even a dead pending entry
-      // carries its real spend — and a dead entry stamped 0 provably
-      // died before validation. Markerless entries are necessarily
-      // pre-marker legacy journals, whose pending reads had already
-      // started a fetch under the old per-call charge: count one spend
-      // for them and for completed calls, excluding only the two
-      // pre-check rejections (REPEAT suppression; a malformed 'needs
-      // urls' call) that never reached the counter.
+      // increments it per reservation, so a dead pending entry carries
+      // its real spend — and one stamped 0 provably died before
+      // validation. Markerless entries are pre-marker legacy journals:
+      // a completed call counts one spend (that era charged per call),
+      // but a still-pending or output-less entry can't establish that
+      // its fetch ever issued, so it reserves nothing rather than lock
+      // the recovery budget on a call that fetched nothing. Either way
+      // the two pre-check rejections (REPEAT suppression; a malformed
+      // 'needs urls' call) never reached the counter.
       const spent = (t as { readSpent?: number | boolean }).readSpent;
       if (typeof spent === 'number') {
         replay.pageReads += spent;
@@ -840,10 +841,8 @@ export function replayJournal(prior: unknown[]): JournalReplay {
         const preCheck =
           typeof e === 'string' &&
           (e.startsWith('REPEAT') || e.startsWith('read_pages needs urls'));
-        // Markerless entries can only be legacy — current code stamps
-        // readSpent at journal time, so their pending reads did start a
-        // fetch (the old per-call charge) and count one spend.
-        if (!preCheck) replay.pageReads++;
+        const dead = (t as { pending?: boolean }).pending === true || t.out === undefined;
+        if (!preCheck && !dead) replay.pageReads++;
       }
       // Re-bank fetched pages under both request and final url — a
       // recovered run's reread then hits the rebuilt cache instead of

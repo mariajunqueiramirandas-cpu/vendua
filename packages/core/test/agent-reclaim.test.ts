@@ -140,9 +140,9 @@ describe('replayJournal', () => {
         readSpent: 0,
         pending: true,
       },
-      // a pending entry with NO marker can only be a legacy journal —
-      // its read had already started a fetch under the old per-call
-      // charge, so it conservatively counts one
+      // a pending entry with NO marker can't establish its fetch ever
+      // issued — it reserves nothing rather than lock the recovery
+      // budget on a call that may have fetched nothing
       {
         type: 'tool',
         name: 'read_pages',
@@ -150,8 +150,8 @@ describe('replayJournal', () => {
         pending: true,
       },
     ]);
-    // 2 + 0 + 1 + 1 + 0 + 2 + 0 + 1 = 7
-    expect(r.pageReads).toBe(7);
+    // 2 + 0 + 1 + 1 + 0 + 2 + 0 + 0 = 6
+    expect(r.pageReads).toBe(6);
   });
 
   test('replay rebuilds pageCache from journaled read_pages results', async () => {
