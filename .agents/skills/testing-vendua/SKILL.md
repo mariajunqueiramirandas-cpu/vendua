@@ -581,3 +581,42 @@ sync` as the FIRST frame, `:ka` comment lines ~20.0s apart, and `event:
   pattern that can't self-match. In devtools Network, the dot LEFT of the ⊘
   clear icon is record/stop — clicking it pauses capture; a frozen panel then
   looks like "zero requests" while the page still updates (verify via DOM).
+
+## Agent negotiation simulator (`bun run sim`)
+
+`cd packages/core && bun run sim -- --scenario <name>` (`--all`, `--list`,
+`--scenario` repeatable) drives real `runOnce` loops — Gemini plays BOTH the
+agent and a hidden lead persona over whatsapp `log` sends, then a judge scores
+it. Runs against an isolated `vendua_sim` DB on the same docker postgres
+(auto-created + migrated; seeds llm=gemini, whatsapp/email=log, loosened
+guardrails, pitch offer + meeting.bookingUrl). Needs `GEMINI_API_KEY` in env —
+secrets land in FRESH exec shells only, not reused `shell_id` sessions: a
+persistent shell created before secrets attached reports the key missing.
+Artifacts: `sim-results/<scenario>-<ts>.json` (transcript+judge, gitignored),
+a `sim_runs` row, and per-run `agent_runs` rows.
+
+No `psql` on the box — journal audit via
+`docker exec core-postgres-1 psql -U vendua -d vendua_sim -c "set
+vendua.control='1'; ..."` (RLS on leads/agent_runs requires the control GUC;
+skip it and every query returns 0 rows silently). `agent_runs.steps` jsonb
+entries: `{type:'system_prompt'|'model'|'tool'|'nudge'}` — tool entries carry
+`name,args,callId,step,out` (+`readSpent` on read_pages); nudges carry
+`content`. Count nudges/REPEAT errors/landed actions per run with a
+`jsonb_array_elements` lateral join; "acted" = a tool result with no `error`,
+`blocked!==true`, `ignored!==true`.
+
+Forcing guard paths the live model won't produce on demand: seed llm
+driver=`mock` in vendua_sim (upsertIntegration) and queue runs with
+`params.script` — `enqueueRun(sql,{kind:'reply',leadId,params:{script:[{toolCalls:[{name,args}]},{text:'done'}]}})` then `drain(sql)` — each chat()
+consumes the next script step deterministically through the REAL run loop +
+journal (this is how loop-guard REPEAT/LOOP, finish-gate 'Ação pendente',
+read_pages cap/cache and blocked/errored-retry semantics were verified e2e).
+Gotchas: `update_lead`/`get_lead` take arg `id`, `send_message`/`set_state`
+take `leadId`; a missing/mismatched leadId errors `LEAD_MISMATCH` (the model
+self-corrects next turn — expected noise, not a bug); one send_message per
+run per lead is deduped `{blocked:true, reason:'already dispatched by this
+run'}`; reply runs bind by `lead_id` alone (thread_id optional — send creates
+the thread). Crafted live inbounds work too: `ingestInbound` a body with
+links/injection text, then `drain` — but the live model is nondeterministic
+about calling read_pages (sometimes answers without fetching, once even
+refused the link) — scripted runs are the reliable trigger.
