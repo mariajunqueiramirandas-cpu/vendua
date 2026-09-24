@@ -1250,6 +1250,14 @@ dbDescribe('worker robustness (db)', () => {
     await migrate(sql, MIGRATIONS);
     // An enabled resend integration with no api key: the send composes
     // (email reachable), then the driver throws 'missing RESEND_API_KEY'.
+    // A pre-existing resend row is restored at the end — the shared test
+    // DB must not lose its configuration.
+    const prior = (
+      await sql<{ enabled: boolean; config: unknown; secret_ref: string | null }[]>`
+        select enabled, config, secret_ref from control_integrations
+        where kind = 'email' and driver = 'resend'
+      `
+    )[0];
     await sql`
       insert into control_integrations (kind, driver, enabled)
       values ('email', 'resend', true)
@@ -1294,8 +1302,18 @@ dbDescribe('worker robustness (db)', () => {
     expect(nudges).toHaveLength(1);
     expect((nudges[0] as { content?: string }).content).toContain('Ação pendente');
     // Don't leak the keyless resend row — the shared DB would let it win
-    // getIntegrationTx over other tests' enabled email drivers.
-    await sql`delete from control_integrations where kind = 'email' and driver = 'resend'`;
+    // getIntegrationTx over other tests' enabled email drivers. Restore
+    // whatever was there before (or drop our row entirely).
+    if (prior) {
+      await sql`
+        update control_integrations
+        set enabled = ${prior.enabled}, config = ${sql.json(prior.config as never)},
+            secret_ref = ${prior.secret_ref}
+        where kind = 'email' and driver = 'resend'
+      `;
+    } else {
+      await sql`delete from control_integrations where kind = 'email' and driver = 'resend'`;
+    }
   });
 
   test('a blocked send is not a reusable result — its retry re-executes', async () => {
