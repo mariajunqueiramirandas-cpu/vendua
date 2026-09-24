@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { Bot, Check, Pencil, X } from 'lucide-react';
-import { api, type Draft } from '../api.ts';
+import { api, ApiError, type Draft } from '../api.ts';
 import { onControlEvent } from '../events.ts';
 import { Empty, Page, rel } from '../components.tsx';
 
@@ -31,15 +31,27 @@ export default function Approvals() {
   }, [load]);
 
   const approve = async (d: Draft) => {
-    const res = await api.approve(d.id);
-    setResults((r) => ({
-      ...r,
-      [d.id]: res.stale
-        ? 'rascunho expirado — regenerando contra o estado atual'
-        : res.sent?.ok
-          ? 'enviado'
-          : `falhou: ${res.sent?.reason ?? 'desconhecido'}`,
-    }));
+    try {
+      const res = await api.approve(d.id);
+      setResults((r) => ({
+        ...r,
+        [d.id]: res.stale
+          ? 'rascunho expirado — regenerando contra o estado atual'
+          : res.sent?.ok
+            ? 'enviado'
+            : `falhou: ${res.sent?.reason ?? 'desconhecido'}`,
+      }));
+    } catch (e) {
+      // Refusals keep the draft pending — surface why so staff knows to
+      // edit or reject it instead of retrying a click that can never land.
+      setResults((r) => ({
+        ...r,
+        [d.id]:
+          e instanceof ApiError && e.code === 'LEAD_COST_CAP'
+            ? 'falhou: rascunho expirado e lead acima do teto de custo — edite ou rejeite'
+            : `falhou: ${e instanceof ApiError ? e.message : 'desconhecido'}`,
+      }));
+    }
     load();
   };
   const reject = async (d: Draft) => {
