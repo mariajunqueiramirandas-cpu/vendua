@@ -590,7 +590,13 @@ export async function approveMessage(
         let runId: string | null;
         const cap: { flagged?: boolean } = {};
         if (active[0]) {
-          runId = active[0].id;
+          // A queued regen is reusable only while it can still claim: if the
+          // lead crossed the cap AFTER queueing, claimRun parks it forever
+          // and rejecting this draft leaves nothing behind — refuse instead.
+          const { leadUnderCostCapTx } = await import('../agent/runner.ts');
+          const verdict = await leadUnderCostCapTx(tx, thread.lead_id);
+          cap.flagged = verdict === 'flagged';
+          runId = verdict === 'under' ? active[0].id : null;
         } else {
           const { insertRun } = await import('../agent/runner.ts');
           runId = await insertRun(

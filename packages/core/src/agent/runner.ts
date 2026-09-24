@@ -101,7 +101,7 @@ export async function capLockTx(tx: Sql, leadId: string): Promise<void> {
 /** 'under' admits the run; the rest refuse it. Only 'flagged' means THIS
  *  call wrote the flag + staff task — 'already' saw the flag committed at
  *  this level. */
-async function leadUnderCostCapTx(tx: Sql, leadId: string): Promise<CapVerdict> {
+export async function leadUnderCostCapTx(tx: Sql, leadId: string): Promise<CapVerdict> {
   const g = await getSettingTx<Partial<Guardrails>>(tx, 'guardrails', {});
   const capUsd = g.leadLifetimeCostCapUsd ?? DEFAULT_GUARDRAILS.leadLifetimeCostCapUsd;
   if (capUsd <= 0) return 'under';

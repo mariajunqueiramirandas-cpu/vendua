@@ -515,6 +515,38 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('lead lifecycle (db)', () => {
       }
     });
 
+    test('stale draft with a parked regen on a capped lead → same 422, draft preserved', async () => {
+      await setup();
+      await setGuardrails({ leadLifetimeCostCapUsd: 0.01 });
+      try {
+        const leadId = await controlTx(sql, (tx) =>
+          insertLeadTx(tx, { name: 'Capped Reuse', agent_mode: 'auto' }),
+        ).then((r) => r.body.lead.id);
+        const messageId = await mkDraft(leadId, 'agent', 8);
+        // The regen was queued BEFORE the lead crossed the cap — reusing it
+        // blind would reject the draft while claimRun parks the run forever.
+        await controlTx(sql, (tx) =>
+          insertRun(tx, {
+            kind: 'outreach',
+            leadId,
+            params: { auto: 'regenerate', draftOnly: true, src: messageId },
+          }),
+        );
+        await sql`
+          insert into agent_runs (kind, lead_id, status, cost_cents, finished_at)
+          values ('outreach', ${leadId}, 'done', 50, now())
+        `;
+        const res = await approveMessage(sql, messageId, 'staff', key('a3-cap-reuse'));
+        expect(res.status).toBe(422);
+        const [m] = await sql<{ status: string }[]>`
+          select status from lead_messages where id = ${messageId}
+        `;
+        expect(m!.status).toBe('draft');
+      } finally {
+        await setGuardrails({});
+      }
+    });
+
     test('staleDraftDays: 0 disables the gate', async () => {
       await setup();
       await setGuardrails({ staleDraftDays: 0 });
@@ -573,6 +605,48 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('lead lifecycle (db)', () => {
         expect(res.status).toBe(422);
         expect((await errCode(res)).code).toBe('LEAD_SUPPRESSED');
         expect(await runsFor(leadId)).toHaveLength(0);
+      }
+    });
+
+    test('POST /messages/:id/approve returns the cap refusal instead of a fake dispatch', async () => {
+      await setup();
+      await setGuardrails({ leadLifetimeCostCapUsd: 0.01 });
+      try {
+        const leadId = await mkLeadApi(
+          { name: 'Approve Cap', agentMode: 'auto' },
+          key('a4-cap-lead'),
+        );
+        const messageId = await controlTx(sql, async (tx) => {
+          const r = await composeMessageTx(tx, {
+            leadId,
+            channel: 'manual',
+            body: 'cópia velha',
+            author: 'agent',
+            status: 'draft',
+          });
+          await tx`update lead_messages set created_at = now() - interval '8 days'
+                   where id = ${r.body.message.id}`;
+          return r.body.message.id;
+        });
+        await sql`
+          insert into agent_runs (kind, lead_id, status, cost_cents, finished_at)
+          values ('outreach', ${leadId}, 'done', 50, now())
+        `;
+        const res = await post(
+          `/control/v1/messages/${messageId}/approve`,
+          {},
+          key('a4-cap-approve'),
+        );
+        // The refusal must reach staff as 422 — never masked as a 200 whose
+        // 'sent' blob quietly describes a no-op dispatch on a 'draft' row.
+        expect(res.status).toBe(422);
+        expect((await errCode(res)).code).toBe('LEAD_COST_CAP');
+        const [m] = await sql<{ status: string }[]>`
+          select status from lead_messages where id = ${messageId}
+        `;
+        expect(m!.status).toBe('draft');
+      } finally {
+        await setGuardrails({});
       }
     });
 
