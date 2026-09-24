@@ -1,9 +1,10 @@
-import { useCallback, useEffect, useRef, useState, type ChangeEvent } from 'react';
-import { useSearchParams } from 'react-router-dom';
+import { useCallback, useEffect, useRef, useState } from 'react';
+import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import QRCode from 'qrcode';
 import { api, type ChannelHealth, type Integration, type MeetingStatus } from '../api.ts';
 import { onControlEvent } from '../events.ts';
 import { ConfirmBtn, LEAD_STATES, Page } from '../components.tsx';
+import { RawJson, TzList, num, str, tzValid } from './settings-bits.tsx';
 
 /** Config — "sala de máquinas". An index rail splits the wall into named
  *  areas ('conexões' = provider cards, 'regras' = guardrails, etc.) shown
@@ -155,16 +156,6 @@ const KINDS: { key: string; label: string; sub: string; drivers: Driver[] }[] = 
   },
 ];
 
-const TZ_SUGGESTIONS = [
-  'America/Sao_Paulo',
-  'America/Fortaleza',
-  'America/Recife',
-  'America/Bahia',
-  'America/Manaus',
-  'America/Belem',
-  'America/Rio_Branco',
-];
-
 type Notice = { kind: 'ok' | 'err'; text: string } | null;
 type WaState = {
   qr: string | null;
@@ -206,12 +197,11 @@ const fmtPhone = (digits: string) => {
 };
 
 /** The index rail. Order follows how you'd bring the machine up:
- *  check it → wire it → teach it → bound it → book it → report it. */
+ *  check it → wire it → book it → report it. The agent itself (voz,
+ *  playbooks, memória, autonomia, guardrails) lives in the Estúdio. */
 const SECTIONS = [
   { key: 'visao', label: 'visão geral', sub: 'o que falta' },
   { key: 'conexoes', label: 'conexões', sub: 'canais' },
-  { key: 'agente', label: 'agente', sub: 'voz e memória' },
-  { key: 'regras', label: 'regras', sub: 'limites' },
   { key: 'agenda', label: 'agenda', sub: 'reuniões' },
   { key: 'relatorios', label: 'relatórios', sub: 'previsão e resumo' },
 ] as const;
@@ -223,9 +213,11 @@ type Check = {
   label: string;
   state: string;
   tone: ProvTone;
-  to: SectionKey;
+  to?: SectionKey;
   /** anchor inside the target area (provider card id) */
   p?: string;
+  /** cross-view jump — agent rows open the Estúdio, not an area here */
+  route?: string;
 };
 
 export default function Settings() {
@@ -388,11 +380,18 @@ export default function Settings() {
   const meeting = (settings.meeting ?? {}) as Record<string, unknown>;
   const forecast = (settings.forecast ?? {}) as Record<string, unknown>;
   const digest = (settings.digest ?? {}) as Record<string, unknown>;
-  const memory = (settings.agent_memory ?? { facts: [] }) as { facts: string[] };
+  const autonomy = (settings.agent_autonomy ?? {}) as Record<string, unknown>;
 
   // ---------- section selection (?s=) + provider anchor scroll (?p=) ----------
   const section: SectionKey = SECTIONS.find((s) => s.key === searchParams.get('s'))?.key ?? 'visao';
   const anchor = searchParams.get('p');
+  // retired sections moved to the Estúdio — old bookmarks follow them
+  const nav = useNavigate();
+  useEffect(() => {
+    const s = searchParams.get('s');
+    if (s === 'agente') nav('/estudio?s=voz', { replace: true });
+    else if (s === 'regras') nav('/estudio?s=regras', { replace: true });
+  }, [searchParams, nav]);
   const go = (s: SectionKey, p?: string) => {
     const next = new URLSearchParams(searchParams);
     if (s === 'visao') next.delete('s');
@@ -511,21 +510,39 @@ export default function Settings() {
 
   const essential: Check[] = [...KINDS.map(provCheck), agendaCheck];
   const g = guardrails;
+  // autonomy level reads like readiness: 'off' parks the agent, 'copilot'
+  // drafts everything (the queue backs up silently) — both worth a look.
+  const autoLevel = str(autonomy.level, 'supervised');
   const routine: Check[] = setErr
     ? (
         [
-          { key: 'voz', label: 'voz do agente', to: 'agente' },
-          { key: 'regras', label: 'regras', to: 'regras' },
+          { key: 'autonomia', label: 'autonomia', route: '/estudio' },
+          { key: 'voz', label: 'voz do agente', route: '/estudio?s=voz' },
+          { key: 'regras', label: 'regras', route: '/estudio?s=regras' },
           { key: 'resumo', label: 'resumo diário', to: 'relatorios' },
         ] as const
       ).map((c): Check => ({ ...c, state: 'falha ao ler', tone: 'warn' }))
     : [
         {
+          key: 'autonomia',
+          label: 'autonomia',
+          state:
+            autoLevel === 'off'
+              ? 'desligado — nada roda sozinho'
+              : autoLevel === 'copilot'
+                ? 'copiloto — tudo vira rascunho'
+                : autoLevel === 'autopilot'
+                  ? 'piloto automático — envia direto'
+                  : 'supervisionado',
+          tone: autoLevel === 'off' ? 'off' : autoLevel === 'copilot' ? 'warn' : 'live',
+          route: '/estudio',
+        },
+        {
           key: 'voz',
           label: 'voz do agente',
           state: str(pitch.product, '') ? 'definida' : 'vazia — o agente improvisa',
           tone: str(pitch.product, '') ? 'live' : 'off',
-          to: 'agente',
+          route: '/estudio?s=voz',
         },
         {
           key: 'regras',
@@ -535,7 +552,7 @@ export default function Settings() {
             'America/Sao_Paulo',
           )}`,
           tone: 'live',
-          to: 'regras',
+          route: '/estudio?s=regras',
         },
         {
           key: 'resumo',
@@ -558,7 +575,6 @@ export default function Settings() {
         : 'off';
   const marks: Partial<Record<SectionKey, ProvTone>> = {};
   if (mStatus && agendaCheck.tone !== 'live') marks.agenda = agendaCheck.tone;
-  if (!str(pitch.product, '')) marks.agente = 'warn';
 
   return (
     <Page title="Config" sub="sala de máquinas — uma área por vez">
@@ -583,6 +599,10 @@ export default function Settings() {
               )}
             </button>
           ))}
+          <Link className="idx out" to="/estudio">
+            <span className="idx-l">estúdio</span>
+            <span className="idx-s">o agente todo ›</span>
+          </Link>
         </nav>
         {/* Areas stay mounted — switching sections hides, not unmounts, so
             unsaved edits inside a card survive a round trip on the rail. */}
@@ -651,31 +671,6 @@ export default function Settings() {
               ))}
             </section>
           </div>
-          <div hidden={section !== 'agente'}>
-            <section className="set-sec">
-              <h2>voz do agente</h2>
-              <p className="sub">o pitch inteiro que o modelo recebe no system prompt</p>
-              <PitchCard value={pitch} onSave={(v) => void saveSetting('pitch', v)} />
-            </section>
-            <section className="set-sec">
-              <h2>memória do agente</h2>
-              <p className="sub">fatos que ele guardou via `remember` — ou que você escreve</p>
-              <MemoryCard
-                facts={memory.facts}
-                onSave={(facts) => void saveSetting('agent_memory', { facts })}
-              />
-            </section>
-          </div>
-          <div hidden={section !== 'regras'}>
-            <section className="set-sec">
-              <h2>guardrails</h2>
-              <p className="sub">regras duras — o código impõe, não o prompt</p>
-              <GuardrailsCard
-                value={guardrails}
-                onSave={(v) => void saveSetting('guardrails', v)}
-              />
-            </section>
-          </div>
           <div hidden={section !== 'agenda'}>
             <section className="set-sec">
               <h2>reunião</h2>
@@ -707,19 +702,20 @@ export default function Settings() {
         </div>
       </div>
       {/* shared by the guardrails + meeting tz pickers */}
-      <datalist id="tz-list">
-        {TZ_SUGGESTIONS.map((t) => (
-          <option key={t} value={t} />
-        ))}
-      </datalist>
+      <TzList />
     </Page>
   );
 }
 
-/** Checklist row on visão geral — the whole line is the jump into its area. */
+/** Checklist row on visão geral — the whole line jumps to where it's fixed
+ *  (an area here, or the Estúdio for agent pieces). */
 function CheckRow({ c, onGo }: { c: Check; onGo: (s: SectionKey, p?: string) => void }) {
+  const nav = useNavigate();
   return (
-    <button className={`ck ${c.tone}`} onClick={() => onGo(c.to, c.p)}>
+    <button
+      className={`ck ${c.tone}`}
+      onClick={() => (c.route ? nav(c.route) : c.to && onGo(c.to, c.p))}
+    >
       <i className="dot" aria-hidden />
       <span className="ck-l">{c.label}</span>
       <span className="ck-s">{c.state}</span>
@@ -1193,334 +1189,6 @@ function ChannelHealthCard() {
   );
 }
 
-// ---------- guardrails ----------
-
-function GuardrailsCard({
-  value,
-  onSave,
-}: {
-  value: Record<string, unknown>;
-  onSave: (v: Record<string, unknown>) => void;
-}) {
-  const cur = {
-    maxOutboundPerLeadPerDay: num(value.maxOutboundPerLeadPerDay, 3),
-    quietStart: str(value.quietStart, '21:00'),
-    quietEnd: str(value.quietEnd, '08:00'),
-    timezone: str(value.timezone, 'America/Sao_Paulo'),
-    firstContactDraftOnly: value.firstContactDraftOnly !== false,
-    discoveryAutoContact: value.discoveryAutoContact !== false,
-    discoveryContactMinScore: num(value.discoveryContactMinScore, 8),
-    inboundReplyDelayMin: num(value.inboundReplyDelayMin, 0),
-    firstContactDelayMin: num(value.firstContactDelayMin, 0),
-    followupCadenceDays: num(value.followupCadenceDays, 2),
-    staleDraftDays: num(value.staleDraftDays, 7),
-    briefAutoPauseRuns: num(value.briefAutoPauseRuns, 5),
-    ignoredPhones: Array.isArray(value.ignoredPhones) ? (value.ignoredPhones as string[]) : [],
-  };
-  const [edit, setEdit] = useState(cur);
-  useEffect(() => setEdit(cur), [JSON.stringify(cur)]); // eslint-disable-line react-hooks/exhaustive-deps
-  const dirty = JSON.stringify(edit) !== JSON.stringify(cur);
-  const quietWrap = edit.quietStart > edit.quietEnd;
-  const invalid =
-    !tzValid(edit.timezone) ||
-    edit.ignoredPhones.some((p) => {
-      const d = p.replace(/\D/g, '');
-      return d.length < 6 || d.length > 15;
-    });
-
-  return (
-    <div className="drv">
-      <div className="grid3">
-        <div className="field">
-          <label>msgs/dia por lead</label>
-          <input
-            type="number"
-            min={1}
-            max={100}
-            value={edit.maxOutboundPerLeadPerDay}
-            onChange={(e) =>
-              setEdit({ ...edit, maxOutboundPerLeadPerDay: Number(e.target.value) || 1 })
-            }
-          />
-        </div>
-        <div className="field">
-          <label>nota p/ autocontato</label>
-          <input
-            type="number"
-            min={1}
-            max={10}
-            value={edit.discoveryContactMinScore}
-            onChange={(e) =>
-              setEdit({ ...edit, discoveryContactMinScore: Number(e.target.value) || 1 })
-            }
-          />
-          <div className="hint">fitScore mínimo p/ o agente chamar no whatsapp sozinho</div>
-        </div>
-        <div className="field">
-          <label>fuso</label>
-          <input
-            list="tz-list"
-            value={edit.timezone}
-            onChange={(e) => setEdit({ ...edit, timezone: e.target.value })}
-          />
-          {!tzValid(edit.timezone) && (
-            <div className="hint" style={{ color: 'var(--red-400)' }}>
-              fuso IANA inválido
-            </div>
-          )}
-        </div>
-      </div>
-      <div className="grid2" style={{ alignItems: 'end' }}>
-        <div className="field" style={{ marginBottom: 0 }}>
-          <label>
-            horário de silêncio{' '}
-            {quietWrap && <em style={{ textTransform: 'none' }}>(vira o dia)</em>}
-          </label>
-          <div className="cfg-times">
-            <input
-              type="time"
-              value={edit.quietStart}
-              onChange={(e) => setEdit({ ...edit, quietStart: e.target.value })}
-            />
-            <span className="hint">até</span>
-            <input
-              type="time"
-              value={edit.quietEnd}
-              onChange={(e) => setEdit({ ...edit, quietEnd: e.target.value })}
-            />
-          </div>
-          <div className="hint">o agente não envia nada dentro dessa janela</div>
-        </div>
-        <div className="field" style={{ marginBottom: 0 }}>
-          <label>primeiro contato</label>
-          <label className="tgl">
-            <input
-              type="checkbox"
-              checked={edit.firstContactDraftOnly}
-              onChange={(e) => setEdit({ ...edit, firstContactDraftOnly: e.target.checked })}
-            />
-            <span className="tk" />
-            <span className="lbl">
-              {edit.firstContactDraftOnly ? 'sempre vira rascunho' : 'agente pode enviar direto'}
-            </span>
-          </label>
-          <div className="hint">quem nunca recebeu mensagem nossa passa pela fila de aprovação</div>
-        </div>
-        <div className="field" style={{ marginBottom: 0 }}>
-          <label>autocontato no discovery</label>
-          <label className="tgl">
-            <input
-              type="checkbox"
-              checked={edit.discoveryAutoContact}
-              onChange={(e) => setEdit({ ...edit, discoveryAutoContact: e.target.checked })}
-            />
-            <span className="tk" />
-            <span className="lbl">
-              {edit.discoveryAutoContact ? 'nota alta chama no whatsapp' : 'só cria o card'}
-            </span>
-          </label>
-          <div className="hint">
-            lead descoberto com fitScore ≥ o mínimo ganha um run de outreach na hora
-          </div>
-        </div>
-      </div>
-      <div className="grid2" style={{ alignItems: 'end' }}>
-        <div className="field" style={{ marginBottom: 0 }}>
-          <label>resposta do agente (min)</label>
-          <input
-            type="number"
-            min={0}
-            max={1440}
-            value={edit.inboundReplyDelayMin}
-            onChange={(e) =>
-              setEdit({ ...edit, inboundReplyDelayMin: Number(e.target.value) || 0 })
-            }
-          />
-          <div className="hint">
-            0 = responde na hora; &gt;0 o agente espera esse tempo depois da mensagem chegar
-          </div>
-        </div>
-        <div className="field" style={{ marginBottom: 0 }}>
-          <label>1º contato automático (min)</label>
-          <input
-            type="number"
-            min={0}
-            max={10080}
-            value={edit.firstContactDelayMin}
-            onChange={(e) =>
-              setEdit({ ...edit, firstContactDelayMin: Number(e.target.value) || 0 })
-            }
-          />
-          <div className="hint">
-            0 = roda na hora, só rascunho (pesquisa + 1º contato pra aprovar); &gt;0 agenda o run
-            esse tempo depois do lead ser criado (modo do lead decide rascunho vs. envio)
-          </div>
-        </div>
-      </div>
-      <div className="grid3" style={{ alignItems: 'end' }}>
-        <div className="field" style={{ marginBottom: 0 }}>
-          <label>cadência p/ retorno (dias)</label>
-          <input
-            type="number"
-            min={0}
-            max={90}
-            value={edit.followupCadenceDays}
-            onChange={(e) => setEdit({ ...edit, followupCadenceDays: Number(e.target.value) || 0 })}
-          />
-          <div className="hint">
-            envio do agente sem resposta agenda o próximo contato; 0 = desligado (nunca sobrescreve
-            uma data que o agente já marcou)
-          </div>
-        </div>
-        <div className="field" style={{ marginBottom: 0 }}>
-          <label>rascunho expira (dias)</label>
-          <input
-            type="number"
-            min={0}
-            max={90}
-            value={edit.staleDraftDays}
-            onChange={(e) => setEdit({ ...edit, staleDraftDays: Number(e.target.value) || 0 })}
-          />
-          <div className="hint">
-            aprovar rascunho do agente mais velho que isso não envia — regenera contra o estado
-            atual do lead; 0 = desligado
-          </div>
-        </div>
-        <div className="field" style={{ marginBottom: 0 }}>
-          <label>auto-pausa de brief (runs)</label>
-          <input
-            type="number"
-            min={0}
-            max={100}
-            value={edit.briefAutoPauseRuns}
-            onChange={(e) => setEdit({ ...edit, briefAutoPauseRuns: Number(e.target.value) || 0 })}
-          />
-          <div className="hint">
-            runs seguidas do mesmo brief sem lead novo pausam ele sozinho; 0 = nunca pausa
-          </div>
-        </div>
-      </div>
-      <div className="field">
-        <label>números ignorados (equipe / founders)</label>
-        <ListEditor
-          items={edit.ignoredPhones}
-          placeholder="+55 11 99999-0000"
-          max={100}
-          maxLen={40}
-          onChange={(ignoredPhones) => setEdit({ ...edit, ignoredPhones })}
-        />
-        <div className="hint">
-          mensagem desses números não vira lead e nada sai para eles — whatsapp ou phone do lead
-        </div>
-      </div>
-      <div className="actions">
-        {/* merge over `value` — PUT replaces the whole setting and unknown
-            keys managed via raw JSON would otherwise be silently dropped */}
-        <button
-          className="btn primary"
-          disabled={!dirty || invalid}
-          onClick={() => onSave({ ...value, ...edit })}
-        >
-          salvar guardrails
-        </button>
-        {dirty && (
-          <button className="btn ghost" onClick={() => setEdit(cur)}>
-            desfazer
-          </button>
-        )}
-      </div>
-      <RawJson value={value} onSave={onSave} />
-    </div>
-  );
-}
-
-// ---------- pitch ----------
-
-function PitchCard({
-  value,
-  onSave,
-}: {
-  value: Record<string, unknown>;
-  onSave: (v: Record<string, unknown>) => void;
-}) {
-  const cur = {
-    product: str(value.product, ''),
-    audience: str(value.audience, ''),
-    tone: str(value.tone, ''),
-    offerRange: str(value.offerRange, ''),
-    offer: str(value.offer, ''),
-    goal: str(value.goal, ''),
-    hardRules: Array.isArray(value.hardRules) ? (value.hardRules as string[]) : [],
-  };
-  const [edit, setEdit] = useState(cur);
-  useEffect(() => setEdit(cur), [JSON.stringify(cur)]); // eslint-disable-line react-hooks/exhaustive-deps
-  const dirty = JSON.stringify(edit) !== JSON.stringify(cur);
-  const set = (k: keyof typeof cur) => (e: ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) =>
-    setEdit({ ...edit, [k]: e.target.value });
-
-  return (
-    <div className="drv">
-      <div className="field">
-        <label>produto</label>
-        <textarea rows={3} value={edit.product} maxLength={4000} onChange={set('product')} />
-      </div>
-      <div className="grid2">
-        <div className="field">
-          <label>público</label>
-          <input value={edit.audience} maxLength={4000} onChange={set('audience')} />
-        </div>
-        <div className="field">
-          <label>tom</label>
-          <input value={edit.tone} maxLength={4000} onChange={set('tone')} />
-        </div>
-      </div>
-      <div className="field">
-        <label>o que pode oferecer</label>
-        <textarea rows={2} value={edit.offerRange} maxLength={4000} onChange={set('offerRange')} />
-      </div>
-      <div className="field">
-        <label>oferta concreta — fatos citáveis (preço, link de cadastro, loja exemplo)</label>
-        <textarea
-          rows={3}
-          value={edit.offer}
-          maxLength={4000}
-          onChange={set('offer')}
-          placeholder="ex.: plano R$149/mês, sem comissão; 7 dias grátis; cadastro: https://...; exemplo: https://..."
-        />
-      </div>
-      <div className="field">
-        <label>objetivo da conversa</label>
-        <input value={edit.goal} maxLength={4000} onChange={set('goal')} />
-      </div>
-      <div className="field" style={{ marginBottom: 0 }}>
-        <label>regras duras ({edit.hardRules.length}/50)</label>
-        <ListEditor
-          items={edit.hardRules}
-          placeholder="ex.: nunca prometa data de entrega"
-          max={50}
-          maxLen={500}
-          onChange={(hardRules) => setEdit({ ...edit, hardRules })}
-        />
-      </div>
-      <div className="actions">
-        <button
-          className="btn primary"
-          disabled={!dirty}
-          onClick={() => onSave({ ...value, ...edit })}
-        >
-          salvar voz
-        </button>
-        {dirty && (
-          <button className="btn ghost" onClick={() => setEdit(cur)}>
-            desfazer
-          </button>
-        )}
-      </div>
-      <RawJson value={value} onSave={onSave} />
-    </div>
-  );
-}
-
 // ---------- meeting ----------
 
 const DAY_NAMES: [string, string][] = [
@@ -1966,149 +1634,3 @@ function DigestCard({
     </div>
   );
 }
-
-// ---------- memory ----------
-
-function MemoryCard({ facts, onSave }: { facts: string[]; onSave: (facts: string[]) => void }) {
-  return (
-    <div className="drv">
-      <ListEditor
-        items={facts}
-        placeholder="grave um fato — ex.: a Lia sempre indica leads quentes"
-        addLabel="lembrar"
-        max={100}
-        maxLen={500}
-        onChange={onSave}
-      />
-      <div className="hint" style={{ marginTop: 8 }}>
-        {facts.length} fato{facts.length === 1 ? '' : 's'} — o agente edita esta lista com a tool
-        `remember` (guarda até 100); remover aqui apaga da memória dele.
-      </div>
-    </div>
-  );
-}
-
-// ---------- bits ----------
-
-function ListEditor({
-  items,
-  placeholder,
-  addLabel = 'adicionar',
-  max,
-  maxLen,
-  onChange,
-}: {
-  items: string[];
-  placeholder: string;
-  addLabel?: string;
-  /** item-count ceiling — matches the backend cap (hardRules 50, facts 100) */
-  max?: number;
-  /** per-item char cap — backend rejects longer strings */
-  maxLen?: number;
-  onChange: (items: string[]) => void;
-}) {
-  const [draft, setDraft] = useState('');
-  const atMax = max !== undefined && items.length >= max;
-  const add = () => {
-    const v = draft.trim();
-    if (!v || atMax) return;
-    onChange([...items, v]);
-    setDraft('');
-  };
-  return (
-    <div>
-      <div className="lst">
-        {items.length === 0 && <div className="none">nada por aqui ainda</div>}
-        {items.map((it, i) => (
-          <div className="row" key={`${i}-${it.slice(0, 12)}`}>
-            <span className="ix">{String(i + 1).padStart(2, '0')}</span>
-            <span className="tx">{it}</span>
-            <button
-              className="x"
-              title="remover"
-              onClick={() => onChange(items.filter((_, j) => j !== i))}
-            >
-              ×
-            </button>
-          </div>
-        ))}
-      </div>
-      <div className="lst-add">
-        <input
-          value={draft}
-          placeholder={atMax && max !== undefined ? `máx ${max} — remova um item` : placeholder}
-          maxLength={maxLen}
-          onChange={(e) => setDraft(e.target.value)}
-          onKeyDown={(e) => e.key === 'Enter' && add()}
-        />
-        <button
-          className="btn"
-          onClick={add}
-          disabled={!draft.trim() || atMax}
-          title={atMax && max !== undefined ? `máx ${max} itens` : undefined}
-        >
-          {addLabel}
-        </button>
-      </div>
-    </div>
-  );
-}
-
-/** Raw JSON escape hatch — the structured fields cover the known keys;
- *  this stays for anything else a future knob adds. */
-function RawJson({
-  value,
-  onSave,
-}: {
-  value: Record<string, unknown>;
-  onSave: (v: Record<string, unknown>) => void;
-}) {
-  const [raw, setRaw] = useState('');
-  const [err, setErr] = useState('');
-  const save = () => {
-    try {
-      const parsed = JSON.parse(raw) as unknown;
-      if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
-        setErr('precisa ser um objeto JSON');
-        return;
-      }
-      setErr('');
-      onSave(parsed as Record<string, unknown>);
-    } catch {
-      setErr('JSON inválido');
-    }
-  };
-  return (
-    <details
-      className="raw"
-      onToggle={(e) => {
-        if ((e.target as HTMLDetailsElement).open) setRaw(JSON.stringify(value, null, 2));
-      }}
-    >
-      <summary>json bruto</summary>
-      <textarea value={raw} onChange={(e) => setRaw(e.target.value)} spellCheck={false} />
-      {err && (
-        <div className="hint" style={{ color: 'var(--red-400)' }}>
-          {err}
-        </div>
-      )}
-      <div style={{ display: 'flex', gap: 6, marginTop: 6 }}>
-        <button className="btn" onClick={save}>
-          salvar json
-        </button>
-      </div>
-    </details>
-  );
-}
-
-const num = (v: unknown, d: number) => (typeof v === 'number' && Number.isFinite(v) ? v : d);
-const str = (v: unknown, d: string) => (typeof v === 'string' ? v : d);
-// same check validateSetting applies server-side — saves a 422 round-trip
-const tzValid = (tz: string) => {
-  try {
-    new Intl.DateTimeFormat('en', { timeZone: tz });
-    return true;
-  } catch {
-    return false;
-  }
-};

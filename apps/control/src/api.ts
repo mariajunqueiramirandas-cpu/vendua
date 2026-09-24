@@ -380,7 +380,7 @@ export interface LeadFact {
 }
 
 // ---------- calls ----------
-export const api = {
+const apiBase = {
   login: (key: string) =>
     req<{ ok: true }>('/login', { method: 'POST', body: JSON.stringify({ key }) }),
   logout: () => req<{ ok: true }>('/logout', { method: 'POST' }),
@@ -585,3 +585,96 @@ export const api = {
   cancelWakeup: (id: string) =>
     req<{ wakeup: Wakeup }>(`/agent/wakeups/${id}/cancel`, { method: 'POST' }),
 };
+
+// ============================ agent v2 (ADR 0014) ============================
+// CRM agent v2 contract — the Studio's surface: settings shapes
+// (agent_playbooks, agent_autonomy), playbook catalog, memory v2, metrics.
+// Shared domain types (AutonomyLevel, PlaybookKind, Wakeup, LeadFact,
+// AutonomyExplanation) and the lead-panel calls live in the
+// `// ---------- lead agent panel ----------` sections above — declared
+// once, re-used here.
+
+export const PLAYBOOK_KINDS = ['triage', 'reply', 'outreach', 'discovery', 'strategist'] as const;
+
+/** Staff override per kind, stored in the `agent_playbooks` setting and
+ *  merged over the playbook's built-in defaults at insert time. */
+export interface PlaybookOverride {
+  /** false → insertRun refuses new runs of this kind */
+  enabled?: boolean;
+  /** integer 1..60 */
+  stepBudget?: number;
+  /** provider model id; null/absent = workspace llm default */
+  model?: string | null;
+  /** ≤4000 chars, appended to the system prompt */
+  instructions?: string;
+  /** 0..5 — default paid-enrichment cap for the kind */
+  monidCapUsd?: number;
+}
+export type AgentPlaybooksSetting = Partial<Record<PlaybookKind, PlaybookOverride>>;
+
+/** One entry of GET /agent/playbooks — catalog metadata + live override. */
+export interface AgentPlaybookInfo {
+  kind: PlaybookKind;
+  label: string;
+  description: string;
+  /** automatic enqueue paths the playbook owns */
+  triggers: string[];
+  /** writes a doctrine debrief line to memory at run end (ADR 0014) */
+  debrief: boolean;
+  defaults: { stepBudget: number; monidCapUsd: number };
+  tools: string[];
+  override: PlaybookOverride;
+}
+
+export const AUTONOMY_LEVELS = ['off', 'copilot', 'supervised', 'autopilot'] as const;
+
+/** The `agent_autonomy` setting — the workspace preset policy.ts reads. */
+export interface AgentAutonomySetting {
+  level: AutonomyLevel;
+  /** strategist self-approves proposed discovery briefs while trailing-7d
+   *  discovery spend stays under this cap. 0 = never. */
+  strategistAutoApproveUsd?: number;
+}
+
+export type MemoryScope = 'workspace' | 'segment' | 'debrief';
+export interface MemoryItem {
+  id: string;
+  scope: MemoryScope;
+  segment: string | null;
+  /** ≤500 */
+  content: string;
+  pinned: boolean;
+  source: 'agent' | 'staff' | 'debrief';
+  sourceRunId: string | null;
+  uses: number;
+  createdAt: string;
+  updatedAt: string;
+}
+
+const agentV2 = {
+  playbooks: () => req<{ playbooks: AgentPlaybookInfo[] }>('/agent/playbooks'),
+
+  /** workspace preset — server always returns both fields (defaults
+   *  supervised/0 when unset); the Studio writes via putSetting. */
+  autonomy: () =>
+    req<{ level: AutonomyLevel; strategistAutoApproveUsd: number }>('/agent/autonomy'),
+
+  memory: (q: { scope?: MemoryScope; segment?: string } = {}) => {
+    const params = new URLSearchParams(
+      Object.entries(q).filter(([, v]) => v) as [string, string][],
+    );
+    return req<{ items: MemoryItem[] }>(`/agent/memory${params.size ? `?${params}` : ''}`);
+  },
+  createMemory: (b: { scope: MemoryScope; segment?: string; content: string }) =>
+    req<{ item: MemoryItem }>('/agent/memory', { method: 'POST', body: JSON.stringify(b) }),
+  patchMemory: (id: string, patch: { content?: string; pinned?: boolean }) =>
+    req<{ item: MemoryItem }>(`/agent/memory/${id}`, {
+      method: 'PATCH',
+      body: JSON.stringify(patch),
+    }),
+  deleteMemory: (id: string) => req<{ ok: true }>(`/agent/memory/${id}`, { method: 'DELETE' }),
+};
+
+// one client — the v2 section merges in so callers keep a single import
+export const api = Object.assign(apiBase, agentV2);
+// ========================== end agent v2 (ADR 0014) ==========================

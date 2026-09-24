@@ -14,6 +14,7 @@ import {
   LogOut,
   Menu,
   Settings as SettingsIcon,
+  SlidersHorizontal,
   TrendingUp,
   Users,
 } from 'lucide-react';
@@ -33,6 +34,7 @@ import Runs from './views/Runs.tsx';
 import Reports from './views/Reports.tsx';
 import Calendar from './views/Calendar.tsx';
 import Settings from './views/Settings.tsx';
+import AgentStudio from './views/AgentStudio.tsx';
 
 const NAV = [
   { to: '/', label: 'Painel', icon: LayoutDashboard, k: 'd' },
@@ -44,6 +46,7 @@ const NAV = [
   { to: '/descoberta', label: 'Descoberta', icon: FlaskConical, k: 'e' },
   { to: '/tarefas', label: 'Tarefas', icon: ListTodo, k: 't', badge: 'tasks' },
   { to: '/agente', label: 'Agente', icon: Bot, k: 'g' },
+  { to: '/estudio', label: 'Estúdio', icon: SlidersHorizontal, k: 's' },
   { to: '/plano', label: 'Planos', icon: ListChecks, k: 'p' },
   { to: '/relatorios', label: 'Relatórios', icon: TrendingUp, k: 'r' },
   { to: '/config', label: 'Config', icon: SettingsIcon, k: 'c' },
@@ -63,7 +66,7 @@ interface BeforeInstallPromptEvent extends Event {
 }
 
 const SHORTCUTS: [string, string][] = [
-  ['d f l i j a e t g p r c', 'trocar de tela'],
+  ['d f l i j a e t g s p r c', 'trocar de tela'],
   ['/', 'buscar (em leads)'],
   ['n', 'novo lead (em leads)'],
   ['ctrl + enter', 'enviar mensagem (no inbox)'],
@@ -236,6 +239,7 @@ export default function App() {
           <Route path="/tarefas" element={<Tasks />} />
           <Route path="/agente" element={<Runs />} />
           <Route path="/agente/runs/:id" element={<Runs />} />
+          <Route path="/estudio" element={<AgentStudio />} />
           <Route path="/plano" element={<Plan />} />
           <Route path="/relatorios" element={<Reports />} />
           <Route path="/config" element={<Settings />} />
