@@ -598,6 +598,38 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('lead lifecycle (db)', () => {
       `;
       expect(run!.lead_id?.toLowerCase()).toBe(leadId.toLowerCase());
     });
+
+    test('POST /agent/dispatch skips a capped lead without committing its goal', async () => {
+      await setup();
+      await setGuardrails({ leadLifetimeCostCapUsd: 0.5 });
+      try {
+        const leadId = await mkLeadApi({ name: 'Dispatch Capped' }, key('a4-dcap-lead'));
+        // Prior spend ≥ cap — the run insert refuses; the goal write must
+        // not survive the skip or every future run would read it.
+        await sql`
+          insert into agent_runs (kind, lead_id, status, cost_cents, finished_at)
+          values ('reply', ${leadId}, 'done', 60, now())
+        `;
+        const res = await post(
+          '/control/v1/agent/dispatch',
+          { leadIds: [leadId], goal: 'meeting' },
+          key('a4-dcap-post'),
+        );
+        expect(res.status).toBe(200);
+        const body = (await res.json()) as {
+          enqueued: number;
+          skipped: { id: string; reason: string }[];
+        };
+        expect(body.enqueued).toBe(0);
+        expect(body.skipped).toEqual([{ id: leadId, reason: 'lead over its agent cost cap' }]);
+        const [lead] = await sql<{ agent_goal: string }[]>`
+          select agent_goal from leads where id = ${leadId}
+        `;
+        expect(lead!.agent_goal).toBe('negotiation');
+      } finally {
+        await setGuardrails({});
+      }
+    });
   });
 
   describe('A5 — agent business rules', () => {
@@ -941,19 +973,28 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('lead lifecycle (db)', () => {
             leadId,
             params: {
               providerName: 'gemini:gemini-3.5-flash-lite',
-              // the delay gives the test a window to flip the row mid-run —
-              // the fenced persist then detects 'lost' and runs persistAborted
-              script: [{ text: 'ok', delayMs: 800, tokensIn: 1_000_000, tokensOut: 100_000 }],
+              // turn 1 must COMMIT before the cancel, or persistAborted
+              // legitimately journals 0¢ — 'running' alone proves only the
+              // claim landed. Turn 2's delay keeps the run in-flight while
+              // the flip propagates → the fenced persist detects 'lost'
+              // and persistAborted folds turn 1's spend.
+              script: [
+                { text: 'ok', delayMs: 50, tokensIn: 1_000_000, tokensOut: 100_000 },
+                { text: 'ok', delayMs: 2_000 },
+              ],
             },
           }),
         ))!;
         await sql`delete from agent_runs where status = 'queued' and id <> ${runId}`;
         const running = runOnce(sql);
-        // wait for the claim to land before canceling, or the flip fences nothing
-        for (let i = 0; i < 200; i++) {
-          const [s] = await sql<{ status: string }[]>`
-            select status from agent_runs where id = ${runId}`;
-          if (s?.status === 'running') break;
+        // wait for the first model turn to land in the journal — that is the
+        // deterministic point where the in-memory cost is already accrued
+        for (let i = 0; i < 400; i++) {
+          const [s] = await sql<{ m: boolean }[]>`
+            select exists(
+              select 1 from jsonb_array_elements(steps) e where e->>'type' = 'model'
+            ) as m from agent_runs where id = ${runId}`;
+          if (s?.m) break;
           await new Promise((r) => setTimeout(r, 10));
         }
         await sql`update agent_runs set status = 'canceled', finished_at = now() where id = ${runId}`;

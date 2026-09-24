@@ -81,7 +81,7 @@ export async function ingestInbound(
   // the staff pause toggle on `lead_threads` — so a suppression committed
   // between the message insert and now is seen here instead of stranding a
   // queued reply on a suppressed thread/lead.
-  const { runId, coalescedId, canceledIds } = await controlTx(sql, async (tx) => {
+  const { runId, coalescedId, canceledIds, capFlagged } = await controlTx(sql, async (tx) => {
     // 'capfin' first: the per-lead advisory serializes this whole gate
     // against claims (claimRun only TRIES it — while we hold it every
     // same-lead candidate rejects there, so the cancel below can never
@@ -129,7 +129,7 @@ export async function ingestInbound(
       gate.unsubscribed_at ||
       gate.archived_at
     ) {
-      return { runId: null, coalescedId: null, canceledIds };
+      return { runId: null, coalescedId: null, canceledIds, capFlagged: false };
     }
     // Burst coalescing: a still-queued reply reads the freshest thread
     // state at claim anyway, so one parked run covers every message that
@@ -148,19 +148,28 @@ export async function ingestInbound(
         and params->>'origin' = 'inbound'
       limit 1
     `;
-    if (parked.length) return { runId: null, coalescedId: parked[0]!.id, canceledIds };
+    if (parked.length)
+      return { runId: null, coalescedId: parked[0]!.id, canceledIds, capFlagged: false };
     // null = the lifetime cost cap refused the run — nothing queued to
-    // announce or kick.
-    const id = await insertRun(tx, {
-      kind: 'reply',
-      leadId: res.leadId,
-      threadId: res.threadId,
-      params: { origin: 'inbound' },
-      ...(inboundReplyDelayMin > 0
-        ? { runAt: new Date(Date.now() + inboundReplyDelayMin * 60_000) }
-        : {}),
-    });
-    return { runId: id, coalescedId: null, canceledIds };
+    // announce or kick. The cap out-param reports a FRESH flag so the
+    // post-commit emit below refreshes Tasks views (its [humano] task
+    // committed inside this tx — the earlier lead.change from
+    // addInboundMessage predates it).
+    const cap: { flagged?: boolean } = {};
+    const id = await insertRun(
+      tx,
+      {
+        kind: 'reply',
+        leadId: res.leadId,
+        threadId: res.threadId,
+        params: { origin: 'inbound' },
+        ...(inboundReplyDelayMin > 0
+          ? { runAt: new Date(Date.now() + inboundReplyDelayMin * 60_000) }
+          : {}),
+      },
+      cap,
+    );
+    return { runId: id, coalescedId: null, canceledIds, capFlagged: cap.flagged === true };
   });
   // A run claimed in the capfin-free window before the gate acquired the
   // advisory legitimately owns its attempt — but its send would still go
@@ -190,6 +199,7 @@ export async function ingestInbound(
     return [] as string[];
   });
   for (const id of [...canceledIds, ...runningCanceled]) emitControlEvent('run.update', id);
+  if (capFlagged) emitControlEvent('lead.change');
   const enqueuedId = runId ?? coalescedId;
   if (enqueuedId) {
     // The latest message earns its own quiet period: slide the parked run
