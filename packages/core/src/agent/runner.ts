@@ -1550,12 +1550,12 @@ export async function runOnce(sql: Sql): Promise<boolean> {
       // a delayed webhook or lagging provider clock can stamp a genuinely
       // new inbound before the claim time and must still cancel.
       // Historical imports stay excluded — context, not a live reply.
-      // `received_at <> created_at` is the "real server ingest" test: the
-      // 0030 backfill stamped legacy rows received_at = created_at exactly —
-      // equality is the legacy fingerprint, so inequality identifies rows
-      // this server actually ingested. It can't be a `>` ordering: created_at
-      // comes off the app clock and received_at off the DB clock, and skew
-      // runs both directions.
+      // `received_at is not null` is the "real server ingest" test: 0034
+      // NULLed the 0030 backfill (received_at = created_at), and a real
+      // ingest always rides the clock_timestamp() default — never NULL.
+      // The earlier `received_at <> created_at` fingerprint could
+      // false-negative a live reply whose app-clock ms and DB µs clocks
+      // happened to agree exactly.
       const autoSrc = (run.params as { auto?: string } | null)?.auto;
       // 'agent' exempt like 'regenerate': the pre-'auto' sweep marker mixes
       // self-schedules with lead-asked callbacks — possibly a promise, so
@@ -1573,7 +1573,7 @@ export async function runOnce(sql: Sql): Promise<boolean> {
             select 1 from lead_messages m
             join lead_threads t on t.id = m.thread_id
             where t.lead_id = ${run.lead_id} and m.direction = 'in' and not m.historical
-              and m.received_at <> m.created_at
+              and m.received_at is not null
               and m.received_at > (select started_at from agent_runs where id = ${run.id})
             limit 1
           `,

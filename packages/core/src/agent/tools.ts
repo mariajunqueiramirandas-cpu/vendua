@@ -581,7 +581,7 @@ export async function refuseOnFresherInboundTx(tx: Sql, ctx: ToolContext): Promi
     select m.id from lead_messages m
     join lead_threads t on t.id = m.thread_id
     where t.lead_id = ${ctx.leadId} and m.direction = 'in' and not m.historical
-      and m.received_at <> m.created_at
+      and m.received_at is not null
       and m.received_at > ${run.started_at}::timestamptz
     limit 1
   `;
@@ -1349,6 +1349,14 @@ export async function executeTool(
       let sendError: string | undefined;
       if (out.verdict.forceDraft === false && !ctx.draftOnly) {
         const sent = await dispatchMessage(sql, out.composed.body.message.id, async (tx) => {
+          // capfin BEFORE the claim fence: finishRun (and the inbound gate)
+          // take capfin first and touch run/message rows after — a run-row →
+          // capfin order here is the AB-BA the capfin-first rule exists to
+          // prevent, and a losing dispatch abort drops the send.
+          if (ctx.leadId) {
+            const { capLockTx } = await import('./runner.ts');
+            await capLockTx(tx, ctx.leadId);
+          }
           await assertRunClaimTx(tx, ctx);
           // The probe only runs at step boundaries — an inbound committed
           // between the last probe and this send would escape it, and the
