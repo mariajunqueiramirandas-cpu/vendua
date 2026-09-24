@@ -51,8 +51,9 @@ describe('slimToolOut', () => {
       ],
     };
     const slim = slimToolOut('read_pages', out) as { pages: Record<string, unknown>[] };
-    expect(String(slim.pages[0].text)).toContain('read_pages offset:16000');
-    expect(slim.pages[0].textChars).toBe(30_000);
+    const first = slim.pages[0]!;
+    expect(String(first.text)).toContain('read_pages offset:16000');
+    expect(first.textChars).toBe(30_000);
   });
 
   test('oversized structured results keep records whole, not mid-JSON', () => {
