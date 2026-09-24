@@ -177,6 +177,19 @@ const VIEWS = [
   ['canceled', 'cancelados'],
 ] as const;
 
+/** Journal step types that carry user-injected content rather than a tool
+ *  call or model turn — mail drained from the lead's inbox, engine nudges,
+ *  reflection ticks. They render with their own label so the mailbox reads
+ *  as what it is instead of an anonymous `tool · #N`. */
+const STEP_LABELS: Record<string, string> = {
+  system_prompt: 'prompt',
+  model: 'modelo',
+  inbox: 'caixa de entrada',
+  nudge: 'nudge',
+  reflection: 'reflexão',
+};
+const CONTENT_STEPS = new Set(['inbox', 'nudge', 'reflection']);
+
 interface Step {
   type: string;
   name?: string;
@@ -303,11 +316,7 @@ export default function Runs() {
               {steps.map((s, i) => (
                 <div key={i} className={`step ${s.type}`}>
                   <div className="who">
-                    {s.type === 'system_prompt'
-                      ? 'prompt'
-                      : s.type === 'model'
-                        ? 'modelo'
-                        : `tool · ${s.name ?? s.callId ?? `#${i}`}`}
+                    {STEP_LABELS[s.type] ?? `tool · ${s.name ?? s.callId ?? `#${i}`}`}
                   </div>
                   {s.type === 'model' && s.content != null && <pre>{String(s.content)}</pre>}
                   {s.type === 'model' && s.toolCalls?.length ? (
@@ -320,6 +329,7 @@ export default function Runs() {
                       <pre>{JSON.stringify(s.out, null, 1).slice(0, 3000)}</pre>
                     ))}
                   {s.type === 'system_prompt' && <pre>{String(s.content).slice(0, 1500)}</pre>}
+                  {CONTENT_STEPS.has(s.type) && s.content != null && <pre>{String(s.content)}</pre>}
                 </div>
               ))}
               {!steps.length && <Empty title="sem passos ainda" />}
