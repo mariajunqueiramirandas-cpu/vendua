@@ -183,11 +183,13 @@ export async function flagCappedLeads(sql: Sql, limit = 200): Promise<number> {
     // Only UNFLAGGED-at-this-cap leads come back — flagging inside the same
     // tx makes each next batch's not-exists see this batch's flags. Without
     // the filter a window full of already-flagged leads would let every
-    // lead beyond `limit` park silently, pass after pass. Bounded at 10
-    // rounds so one settings write can't flag the whole board at once;
-    // callers re-invoke to continue a longer tail.
+    // lead beyond `limit` park silently, pass after pass. No round cap: a
+    // settings write is the only trigger, so every unflagged over-cap lead
+    // must flag or it stays parked with no staff task. The stall guard
+    // covers the one non-progress path — a flag write that lost the
+    // try-advisory to a concurrent flagger.
     const fresh: string[] = [];
-    for (let round = 0; round < 10; round++) {
+    for (;;) {
       const capped = await tx<{ lead_id: string }[]>`
         select x.lead_id
         from (
@@ -205,10 +207,22 @@ export async function flagCappedLeads(sql: Sql, limit = 200): Promise<number> {
         limit ${limit}
       `;
       if (!capped.length) break;
+      const before = fresh.length;
       for (const { lead_id } of capped) {
         await leadUnderCostCapTx(tx, lead_id);
-        fresh.push(lead_id);
+        // The flag write can miss on a lost try-advisory — count only leads
+        // whose flag exists after the call so the stall guard sees it.
+        const flagged = (
+          await tx`
+            select 1 from lead_activities
+            where lead_id = ${lead_id} and kind = 'system' and meta->>'type' = 'cost-cap'
+              and (meta->>'capUsd')::numeric = ${capUsd}
+            limit 1
+          `
+        )[0];
+        if (flagged) fresh.push(lead_id);
       }
+      if (fresh.length === before) break;
     }
     return fresh;
   });
