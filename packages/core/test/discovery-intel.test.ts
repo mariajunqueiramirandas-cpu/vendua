@@ -80,6 +80,7 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('discovery intelligence (db)', (
     plan: null,
     monid: null,
     seenContacts: new Set(),
+    pageReads: 0,
     draftOnly: false,
     claimToken: null,
   });

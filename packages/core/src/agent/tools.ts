@@ -75,6 +75,10 @@ export interface ToolContext {
   /** Contact values already banked this run (book channels + enrichment
    *  hits) — a repeated phone/email isn't progress, only a fresh one is. */
   seenContacts: Set<string>;
+  /** read_pages calls spent this run — reply's bound (REPLY_READ_PAGES_CAP):
+   *  a lead can send a link the agent must read, but a live conversation
+   *  can't afford an unbounded page-reading rabbit hole. */
+  pageReads: number;
   /** Staff-assist runs (params.draftOnly): send_message may only compose —
    *  a suggestion goes to the approvals queue, never on the wire. */
   draftOnly: boolean;
@@ -108,6 +112,11 @@ export function bookDigest(book: Map<string, BookEntry>): string {
     })
     .join('\n');
 }
+
+/** Per-run read_pages budget for reply runs — enough to read the link a
+ *  lead sent (catálogo, site, perfil), never a research rabbit hole mid-
+ *  conversation. */
+const REPLY_READ_PAGES_CAP = 2;
 
 const leadIdArg = { type: 'string', description: 'lead uuid' } as const;
 const LEAD_FIELDS = {
@@ -299,7 +308,7 @@ const REGISTRY: { def: AgentTool; toolsets: string[] }[] = [
     def: {
       name: 'remember',
       description:
-        'Persist a durable learning (agent memory — e.g. "docerias respond better at night"). Bounded: keep ≤100 facts, consolidate instead of duplicating.',
+        'Persist a durable learning (agent memory — e.g. "docerias respond better at night"). Bounded: keep ≤100 facts, consolidate instead of duplicating — when the cap drops an old fact the result returns it as `evicted`; fold it into a consolidated fact on a later call.',
       parameters: {
         type: 'object',
         properties: { fact: { type: 'string' } },
@@ -380,9 +389,10 @@ const REGISTRY: { def: AgentTool; toolsets: string[] }[] = [
     },
   },
   {
-    // triage/outreach read deep (site/perfil do prospect); reply stays light —
-    // a live conversation can't afford a page-reading rabbit hole.
-    toolsets: ['triage', 'outreach', 'discovery'],
+    // triage/outreach read deep (site/perfil do prospect). Reply gets it too
+    // but capped (REPLY_READ_PAGES_CAP): a lead can send a link the agent
+    // must read — a live conversation still can't afford a rabbit hole.
+    toolsets: ['triage', 'reply', 'outreach', 'discovery'],
     def: {
       name: 'read_pages',
       description:
@@ -1256,7 +1266,7 @@ export async function executeTool(
       const fact = String(args.fact ?? '').slice(0, 500);
       // Row lock on the settings row makes the read-modify-write atomic —
       // concurrent remembers serialize instead of clobbering each other.
-      const total = await controlTx(sql, async (tx) => {
+      const written = await controlTx(sql, async (tx) => {
         await assertRunClaimTx(tx, ctx);
         await tx`
           insert into control_settings (key, value)
@@ -1267,14 +1277,23 @@ export async function executeTool(
           select value from control_settings where key = 'agent_memory' for update
         `;
         const cur = Array.isArray(rows[0]?.value?.facts) ? (rows[0]!.value.facts as string[]) : [];
-        const facts = [...cur.filter((f) => f !== fact), fact].slice(-AGENT_MEMORY_MAX_FACTS);
+        // The cap drops the OLDEST facts — surface them so the model can
+        // fold a dropped learning into a consolidated fact on a later call
+        // instead of losing it silently.
+        const next = [...cur.filter((f) => f !== fact), fact];
+        const evicted = next.slice(0, Math.max(0, next.length - AGENT_MEMORY_MAX_FACTS));
+        const facts = next.slice(-AGENT_MEMORY_MAX_FACTS);
         await tx`
           update control_settings set value = ${tx.json({ facts } as never)}
           where key = 'agent_memory'
         `;
-        return facts.length;
+        return { total: facts.length, evicted };
       });
-      return { remembered: fact, total };
+      return {
+        remembered: fact,
+        total: written.total,
+        ...(written.evicted.length ? { evicted: written.evicted } : {}),
+      };
     }
     case 'propose_brief': {
       const bname = String(args.name ?? '')
@@ -1509,12 +1528,6 @@ export async function executeTool(
         .filter(Boolean)
         .slice(0, 6);
       if (!urls.length) return { error: 'read_pages needs urls: ["https://…"] (1–6)' };
-      const provider = await discoveryFor(sql);
-      const goal = String(args.goal ?? '');
-      type PageResult = {
-        page: import('./channels/discovery.ts').ReadPage | null;
-        error?: string;
-      };
       // Dedupe by page identity across the run cache AND this call — the
       // same page twice in one batch (https vs https://www, trailing slash)
       // resolves to one fetch, not two.
@@ -1526,6 +1539,20 @@ export async function executeTool(
         queued.add(id);
         miss.push(url);
       }
+      // Reply's bound counts fetches, not calls: a repeat served entirely
+      // from the run's pageCache spends nothing — the cap is for pages the
+      // run actually has to go get, not results it already holds.
+      if (ctx.runKind === 'reply' && miss.length && ++ctx.pageReads > REPLY_READ_PAGES_CAP) {
+        return {
+          error: `read_pages: limite de ${REPLY_READ_PAGES_CAP} leituras por run de reply — pergunte na conversa o que ainda faltar`,
+        };
+      }
+      const provider = await discoveryFor(sql);
+      const goal = String(args.goal ?? '');
+      type PageResult = {
+        page: import('./channels/discovery.ts').ReadPage | null;
+        error?: string;
+      };
       const missOut = new Map<string, Promise<PageResult>>(); // miss url → its slice
       if (miss.length) {
         // One provider call for the whole miss batch — the Fetch API is

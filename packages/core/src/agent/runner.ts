@@ -623,6 +623,53 @@ function mineAttempts(steps: unknown[]): { queries: Set<string>; urls: Set<strin
   return { queries, urls };
 }
 
+/** The playbook's finish gate for reply/outreach: every run must end on a
+ *  visible, lead-facing action — these are the calls that count. Research,
+ *  notes and plan ticks alone don't end a messaging run. */
+const ACTION_TOOLS = new Set([
+  'send_message',
+  'draft_message',
+  'request_human',
+  'unsubscribe',
+  'set_state',
+  'update_lead',
+  'create_task',
+]);
+
+/** Read-only tools — a result stays reusable only while no write has
+ *  landed since it ran (a mutation in between may have changed the state
+ *  the read described). Everything not in this set is a write for the
+ *  loop guard's staleness tracking. */
+const READ_TOOLS = new Set([
+  'search_leads',
+  'get_lead',
+  'web_search',
+  'read_pages',
+  'maps_lookup',
+  'instagram_profile',
+  'serp',
+]);
+
+/** True once this run's journal holds a landed action call — a result that
+ *  neither errored, came back {blocked} (a blocked send produced nothing
+ *  visible) nor {ignored} (an update_lead stripped of every field changed
+ *  nothing). */
+function runActed(steps: unknown[]): boolean {
+  return steps.some((s) => {
+    if (typeof s !== 'object' || s === null) return false;
+    const st = s as { type?: string; name?: string; out?: unknown };
+    if (st.type !== 'tool' || !st.name || !ACTION_TOOLS.has(st.name)) return false;
+    const out = st.out as { error?: unknown; blocked?: unknown; ignored?: unknown } | null;
+    return (
+      typeof out === 'object' &&
+      out !== null &&
+      !out.error &&
+      out.blocked !== true &&
+      out.ignored !== true
+    );
+  });
+}
+
 /** Max chars of a replayed tool result — the model needs the call's outcome
  *  (contacts found, blocked reason, ids), not a full page dump. */
 const REPLAY_OUT_MAX = 3000;
@@ -642,6 +689,9 @@ export interface JournalReplay {
   /** Latest stored discovery plan — lives only in ctx (no durable field), so
    *  the journal's plan tool output is the only place it survives a crash. */
   plan: string | null;
+  /** Reply's read_pages spend carries over — the cap is per RUN, not per
+   *  attempt, or a reclaim would hand back a fresh budget. */
+  pageReads: number;
 }
 
 /** Replay a reclaimed run's journal into live conversation + harness state.
@@ -659,6 +709,7 @@ export function replayJournal(prior: unknown[]): JournalReplay {
     book: new Map(),
     seenContacts: new Set(),
     plan: null,
+    pageReads: 0,
   };
   for (const s of prior) {
     if ((s as { type?: string } | null)?.type === 'model') replay.baseStep++;
@@ -713,6 +764,26 @@ export function replayJournal(prior: unknown[]): JournalReplay {
     const t = s as { type?: string; name?: string; out?: unknown } | null;
     if (t?.type !== 'tool') continue;
     bankOut(t.out);
+    if (t.name === 'read_pages') {
+      // The journaled marker is authoritative: the cap charges fetches, not
+      // calls, so only an entry recorded as spent counts (a cached repeat
+      // doesn't). Entries from before the marker — an in-flight run
+      // reclaimed after a deploy — fall back to excluding the two
+      // pre-check rejections (REPEAT suppression; a malformed 'needs urls'
+      // call), which never incremented the counter; everything else,
+      // including a pending/out-less entry from a crash mid-execution,
+      // counted as a spend.
+      const spent = (t as { readSpent?: boolean }).readSpent;
+      if (spent === true) {
+        replay.pageReads++;
+      } else if (spent === undefined) {
+        const e = (t.out as { error?: unknown } | null)?.error;
+        const preCheck =
+          typeof e === 'string' &&
+          (e.startsWith('REPEAT') || e.startsWith('read_pages needs urls'));
+        if (!preCheck) replay.pageReads++;
+      }
+    }
     const p = t.out as { stored?: boolean; plan?: unknown } | null;
     // Last stored plan wins — including an empty one: a cleared plan must
     // clear, not resurrect the previous string.
@@ -1135,6 +1206,7 @@ export async function runOnce(sql: Sql): Promise<boolean> {
       book: new Map(),
       plan: null,
       seenContacts: new Set(),
+      pageReads: replay.pageReads,
       monid: monidBudget,
       // Staff assist runs (Inbox 'agente sugere') may only compose —
       // send_message degrades to a draft so a suggestion never ships.
@@ -1178,6 +1250,16 @@ export async function runOnce(sql: Sql): Promise<boolean> {
     // Last step index that produced something (lead/merge/new channel) —
     // starts at -1 so the first tick fires after 3 truly idle steps.
     let lastProgress = -1;
+    // Loop guard (messaging kinds): the previous turn's call signatures
+    // mapped to whether each returned a reusable result (no error, not
+    // blocked, not ignored) and the state version it ran at — a repeated
+    // call with a still-current clean prior result is a stuck model; a
+    // retry after failure or a re-read after a mutation executes.
+    let prevSigs = new Map<string, { ok: boolean; v: number }>();
+    // Bumps on every landed write — read results recorded at an older
+    // version may describe stale state and must not suppress a re-read.
+    let stateVersion = 0;
+    let loopNudged = false;
 
     for (let i = 0; i < limit && !lost; i++) {
       const res = await provider.chat({ system, messages, tools });
@@ -1266,6 +1348,20 @@ export async function runOnce(sql: Sql): Promise<boolean> {
             await persist();
             continue;
           }
+        }
+        // Messaging finish gate — the playbook already requires every
+        // reply/outreach run to end on a visible action; a run trying to
+        // close having only researched gets ONE nudge (same i+5 allowance
+        // as discovery's), then ends on its own.
+        if (!nudged && (run.kind === 'reply' || run.kind === 'outreach') && !runActed(steps)) {
+          nudged = true;
+          limit = i + 5;
+          const nudge = `Ação pendente — a run ainda não teve efeito visível (send_message/draft, request_human, set_state, unsubscribe, update_lead, create_task). Pesquisar e sair sem agir deixa o lead falando sozinho — aja agora; se um guardrail ou canal morto trava a ação, request_human é a saída.`;
+          messages.push({ role: 'assistant', content: res.text ?? 'ok' });
+          messages.push({ role: 'user', content: nudge });
+          steps.push({ type: 'nudge', content: nudge });
+          await persist();
+          continue;
         }
         // A cancel landing between the last persist and now leaves the row
         // 'canceled' — finishRun matches nothing; persistAborted's canceled-
@@ -1386,6 +1482,14 @@ export async function runOnce(sql: Sql): Promise<boolean> {
       } else {
         // Messaging kinds stay sequential: tool calls in one response may
         // depend on each other's ordering (draft before send).
+        // Loop guard — re-emitting a call whose previous result was clean
+        // can't produce anything new, and re-running a side-effecting call
+        // would duplicate it (send_message has no cross-step dedupe — a
+        // re-emitted identical send literally re-sends). Suppress per call
+        // — each repeated call gets a "já executada" result — and when the
+        // whole turn repeated, nudge once: act differently or finish.
+        const curSigs = new Map<string, { ok: boolean; v: number }>();
+        let allRepeat = res.toolCalls.length > 0;
         for (const [callIndex, call] of res.toolCalls.entries()) {
           const callId = call.id ?? String(callIndex);
           // Journal the pending call BEFORE executing: a crash between the
@@ -1398,6 +1502,7 @@ export async function runOnce(sql: Sql): Promise<boolean> {
             callId: string;
             step: number;
             pending?: boolean;
+            readSpent?: boolean;
             out?: unknown;
           } = {
             type: 'tool',
@@ -1409,12 +1514,44 @@ export async function runOnce(sql: Sql): Promise<boolean> {
           };
           steps.push(entry);
           await persist();
+          const sig = JSON.stringify([call.name, call.args ?? {}]);
+          const prev = prevSigs.get(sig);
+          const suppress =
+            prev?.ok === true && (!READ_TOOLS.has(call.name) || prev.v === stateVersion);
+          const readsBefore = ctx.pageReads;
           let out: unknown;
-          try {
-            out = await executeTool(ctx, callId, call.name, call.args);
-          } catch (e) {
-            out = { error: e instanceof Error ? e.message : String(e) };
+          if (suppress) {
+            out = {
+              error:
+                'REPEAT — chamada idêntica à anterior já foi executada nesta run; o resultado já está no contexto e não muda. Faça algo diferente ou encerre.',
+            };
+          } else {
+            allRepeat = false;
+            try {
+              out = await executeTool(ctx, callId, call.name, call.args);
+            } catch (e) {
+              out = { error: e instanceof Error ? e.message : String(e) };
+            }
           }
+          // Journal whether the call spent a read: the cap charges fetches,
+          // not calls, so a cached read_pages entry must not count on replay.
+          if (call.name === 'read_pages') entry.readSpent = ctx.pageReads > readsBefore;
+          const res_ = out as {
+            error?: unknown;
+            blocked?: unknown;
+            ignored?: unknown;
+          } | null;
+          const clean =
+            typeof res_ === 'object' &&
+            res_ !== null &&
+            !res_.error &&
+            res_.blocked !== true &&
+            res_.ignored !== true;
+          // A suppressed call stands on its earlier clean result — its own
+          // REPEAT error must not mark the signature retryable or the next
+          // identical emission would execute again.
+          curSigs.set(sig, suppress ? prev! : { ok: clean, v: stateVersion });
+          if (clean && !READ_TOOLS.has(call.name)) stateVersion++;
           delete entry.pending;
           entry.out = out;
           messages.push({
@@ -1425,6 +1562,14 @@ export async function runOnce(sql: Sql): Promise<boolean> {
           });
           await persist();
           if (lost) break;
+        }
+        prevSigs = curSigs;
+        if (allRepeat && !loopNudged && !lost) {
+          loopNudged = true;
+          const nudge = `LOOP — você emitiu exatamente as mesmas chamadas com os mesmos argumentos duas vezes seguidas; o resultado já está no contexto e não muda. Pare de repetir: faça a próxima ação do plano ou encerre a run.`;
+          steps.push({ type: 'nudge', content: nudge });
+          messages.push({ role: 'user', content: nudge });
+          await persist();
         }
       }
     }
