@@ -1831,9 +1831,10 @@ export function createApp({ sql, sessionSecret, controlSecret, autoDrain }: AppD
           skipped.push({ id, reason: 'outreach already queued' });
           continue;
         }
-        await tx`update leads set agent_goal = ${goal}, updated_at = now() where id = ${id}`;
         // null = lifetime cost cap refused the run — surface it like every
-        // other ineligibility instead of counting a phantom enqueue.
+        // other ineligibility instead of counting a phantom enqueue. The
+        // goal update stays AFTER the run insert: a refused lead must not
+        // keep a goal every future lead-bound run would still read.
         const runId = await insertRun(tx, {
           kind: 'outreach',
           leadId: id,
@@ -1843,6 +1844,7 @@ export function createApp({ sql, sessionSecret, controlSecret, autoDrain }: AppD
           skipped.push({ id, reason: 'lead over its agent cost cap' });
           continue;
         }
+        await tx`update leads set agent_goal = ${goal}, updated_at = now() where id = ${id}`;
         enqueued++;
       }
       return { status: 200, body: { enqueued, skipped } };

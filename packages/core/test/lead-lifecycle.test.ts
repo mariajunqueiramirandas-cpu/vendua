@@ -598,6 +598,38 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('lead lifecycle (db)', () => {
       `;
       expect(run!.lead_id?.toLowerCase()).toBe(leadId.toLowerCase());
     });
+
+    test('POST /agent/dispatch skips a capped lead without committing its goal', async () => {
+      await setup();
+      await setGuardrails({ leadLifetimeCostCapUsd: 0.5 });
+      try {
+        const leadId = await mkLeadApi({ name: 'Dispatch Capped' }, key('a4-dcap-lead'));
+        // Prior spend ≥ cap — the run insert refuses; the goal write must
+        // not survive the skip or every future run would read it.
+        await sql`
+          insert into agent_runs (kind, lead_id, status, cost_cents, finished_at)
+          values ('reply', ${leadId}, 'done', 60, now())
+        `;
+        const res = await post(
+          '/control/v1/agent/dispatch',
+          { leadIds: [leadId], goal: 'meeting' },
+          key('a4-dcap-post'),
+        );
+        expect(res.status).toBe(200);
+        const body = (await res.json()) as {
+          enqueued: number;
+          skipped: { id: string; reason: string }[];
+        };
+        expect(body.enqueued).toBe(0);
+        expect(body.skipped).toEqual([{ id: leadId, reason: 'lead over its agent cost cap' }]);
+        const [lead] = await sql<{ agent_goal: string }[]>`
+          select agent_goal from leads where id = ${leadId}
+        `;
+        expect(lead!.agent_goal).toBe('negotiation');
+      } finally {
+        await setGuardrails({});
+      }
+    });
   });
 
   describe('A5 — agent business rules', () => {
