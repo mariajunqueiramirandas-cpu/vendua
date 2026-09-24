@@ -910,8 +910,10 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('lead lifecycle (db)', () => {
         expect(r!.status).toBe('done');
         // finishRun committed the flag + staff task — Tasks views refresh
         // on lead.change, so a SUCCESSFUL crossing must emit it too (only
-        // the failed path emitted before).
-        expect(events.some((e) => e.type === 'lead.change' && e.ref === leadId)).toBe(true);
+        // the failed path emitted before). Fresh-flag emits are UNSCOPED —
+        // the client coalescer drops middle refs on bursts — so the event
+        // carries no ref.
+        expect(events.some((e) => e.type === 'lead.change' && e.ref === undefined)).toBe(true);
         const flags = await sql`
           select 1 from lead_activities
           where lead_id = ${leadId} and kind = 'system' and meta->>'type' = 'cost-cap'

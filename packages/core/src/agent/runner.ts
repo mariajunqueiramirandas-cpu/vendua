@@ -144,8 +144,17 @@ export async function insertRun(
      *  (guardrails-configured pacing); null = claimable immediately. */
     runAt?: Date | null;
   },
+  /** Out-box for tx-owning callers: set when a refusal wrote a FRESH cap
+   *  flag, so they can emit lead.change post-commit for the task refresh. */
+  cap?: { flagged?: boolean },
 ): Promise<string | null> {
-  if (input.leadId && (await leadUnderCostCapTx(tx, input.leadId)) !== 'under') return null;
+  if (input.leadId) {
+    const verdict = await leadUnderCostCapTx(tx, input.leadId);
+    if (verdict !== 'under') {
+      if (cap) cap.flagged = verdict === 'flagged';
+      return null;
+    }
+  }
   const row = (
     await tx<{ id: string }[]>`
       insert into agent_runs (kind, lead_id, thread_id, params, run_at)
@@ -166,8 +175,14 @@ export async function enqueueRun(
     params?: Record<string, unknown>;
   },
 ): Promise<string | null> {
-  const id = await controlTx(sql, (tx) => insertRun(tx, input));
+  const { id, capFlagged } = await controlTx(sql, async (tx) => {
+    const cap: { flagged?: boolean } = {};
+    return { id: await insertRun(tx, input, cap), capFlagged: cap.flagged === true };
+  });
   if (id) emitControlEvent('run.update', id);
+  // A fresh flag committed a [humano] task — emit lead.change (unscoped;
+  // the coalescer drops middle refs on bursts) or Tasks stays stale.
+  if (capFlagged) emitControlEvent('lead.change');
   return id;
 }
 
@@ -191,9 +206,12 @@ export async function flagCappedLeads(sql: Sql, limit = 200): Promise<number> {
     // must flag or it stays parked with no staff task. A lead whose flag
     // write loses the try-advisory is SKIPPED for the rest of this sweep —
     // the contender holding its lock is inside its own leadUnderCostCapTx
-    // and flags the lead itself — so contention can't stall the pass.
+    // and flags the lead itself — so contention can't stall the pass. An
+    // 'under' verdict (cap raised mid-sweep) is excluded the same way —
+    // the stale batch threshold would otherwise re-select it forever.
     const fresh: string[] = [];
     const contended: string[] = [];
+    const excluded: string[] = [];
     for (;;) {
       const capped = await tx<{ lead_id: string }[]>`
         select x.lead_id
@@ -209,7 +227,7 @@ export async function flagCappedLeads(sql: Sql, limit = 200): Promise<number> {
               and a.meta->>'type' = 'cost-cap'
               and (a.meta->>'capUsd')::numeric = ${capUsd}
           )
-          and not (x.lead_id = any(${contended}::uuid[]))
+          and not (x.lead_id = any(${excluded}::uuid[]))
         limit ${limit}
       `;
       if (!capped.length) break;
@@ -217,8 +235,13 @@ export async function flagCappedLeads(sql: Sql, limit = 200): Promise<number> {
         const verdict = await leadUnderCostCapTx(tx, lead_id);
         if (verdict === 'flagged') fresh.push(lead_id);
         else if (verdict === 'contended') contended.push(lead_id);
-        // 'already' — a flag committed at this cap since the batch select
-        // isn't ours; 'under' can't happen (the batch is spent >= cap).
+        // 'under' means the cap ROSE mid-sweep (each statement re-reads
+        // committed settings; the batch threshold is the stale one) —
+        // exclude it like a contended lead or every later batch re-selects
+        // it forever. Only 'contended' earns the post-commit retry: an
+        // 'under' lead needs nothing. 'already' drops out of the next
+        // batch's not-exists on its own.
+        if (verdict === 'contended' || verdict === 'under') excluded.push(lead_id);
       }
     }
     return { fresh, contended };
@@ -258,6 +281,7 @@ export async function flagCappedLeads(sql: Sql, limit = 200): Promise<number> {
 }
 
 export async function claimRun(sql: Sql): Promise<RunRow | null> {
+  const capFlagged: string[] = [];
   const run = await controlTx(sql, async (tx) => {
     // Staff/founder numbers never run — ingest already refuses to mint
     // them, this covers leads created before the list existed.
@@ -395,7 +419,9 @@ export async function claimRun(sql: Sql): Promise<RunRow | null> {
         // was under budget must not sail past it — parked like the other
         // suppressions so raising the cap resumes the queued work. The lead
         // row lock above serializes this with same-lead claim decisions.
-        if ((await leadUnderCostCapTx(tx, run.lead_id)) !== 'under') {
+        const capVerdict = await leadUnderCostCapTx(tx, run.lead_id);
+        if (capVerdict !== 'under') {
+          if (capVerdict === 'flagged') capFlagged.push(run.lead_id);
           rejected.push(run.id);
           continue;
         }
@@ -436,6 +462,9 @@ export async function claimRun(sql: Sql): Promise<RunRow | null> {
     return null;
   });
   if (run) emitControlEvent('run.update', run.id);
+  // Claim-time refusals commit fresh flags in the same tx — the task
+  // refresh rides lead.change, unscoped like the other flag emitters.
+  if (capFlagged.length) emitControlEvent('lead.change');
   return run;
 }
 
@@ -494,10 +523,13 @@ async function finishRun(
     // The [humano] task lands in the tx — the task list/badge refresh on
     // lead.change, so mirror the event a real lead update would emit. A
     // fresh cap flag writes the same kind of task — emit on that too, or
-    // open Tasks views stay stale on a successful crossing.
+    // open Tasks views stay stale on a successful crossing. Fresh flags go
+    // UNSCOPED: the console coalesces a burst into one pending event with a
+    // single ref, so scoped emits would strand the middle leads' refreshes
+    // (the same reason flagCappedLeads emits bare).
     const r = out.updated[0];
     if (r?.lead_id && (result.status === 'failed' || out.cap === 'flagged'))
-      emitControlEvent('lead.change', r.lead_id ?? undefined);
+      emitControlEvent('lead.change', out.cap === 'flagged' ? undefined : r.lead_id);
   }
   return out.updated.length > 0;
 }
@@ -2034,6 +2066,7 @@ export async function sweepStrategist(sql: Sql): Promise<boolean> {
 /** Periodic sweep: leads due for a follow-up get an outreach run. */
 export async function sweepOutreach(sql: Sql): Promise<number> {
   const queuedIds: string[] = [];
+  const capFlagged: string[] = [];
   const fired = await controlTx(sql, async (tx) => {
     const g = await getSettingTx<Partial<Guardrails>>(tx, 'guardrails', {});
     const capCents = capCentsOf(g);
@@ -2070,11 +2103,13 @@ export async function sweepOutreach(sql: Sql): Promise<number> {
       // every staff-triggered run. insertRun also applies the lifetime cost
       // cap — a capped lead returns null and KEEPS its due action (claimRun
       // parks it anyway, so no run executes over budget).
+      const cap: { flagged?: boolean } = {};
       const runId = await insertRun(tx, {
         kind: 'outreach',
         leadId: id,
         params: next_action_source === 'staff' ? {} : { auto: next_action_source },
-      });
+      }, cap);
+      if (cap.flagged) capFlagged.push(id);
       if (runId) {
         queuedIds.push(runId);
         await tx`update leads set next_action_at = null, next_action_source = null where id = ${id}`;
@@ -2083,5 +2118,6 @@ export async function sweepOutreach(sql: Sql): Promise<number> {
     return queuedIds.length;
   });
   for (const id of queuedIds) emitControlEvent('run.update', id);
+  if (capFlagged.length) emitControlEvent('lead.change');
   return fired;
 }
