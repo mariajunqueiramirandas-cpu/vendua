@@ -154,6 +154,35 @@ args:{leadId,channel:'email',body:'…'}}]},{text:'pronto'}]}}`. Disable it
 - Old notes: cookie-auth mutations need `x-vendua-staff: 1` (CSRF);
   Idempotency-Key required → replay → 200 + `x-idempotent-replay`.
 
+## Agent-v2 surfaces (Estúdio, Agente panel, runs metrics)
+
+- `#/estudio` sections via `?s=`: autonomia(default)/voz/playbooks/memoria/
+  agenda/regras — each is a settings editor bound to `control_settings`.
+  Settings contract: only `GET /control/v1/settings` (list) + `PUT
+  /control/v1/settings/:key` (whole value) exist — `GET /settings/:key`
+  404s; read state via the list, never per-key.
+- Tables for direct seeding: `agent_memory_items` (workspace/segment/debrief
+  memories), `agent_wakeups(lead_id,kind,at,focus,status,created_by)` —
+  `scheduleWakeupTx` is the only app insert path, but SQL INSERT works for
+  fixtures — `lead_facts(lead_id,key,value,confidence,source)`,
+  `agent_runs(...,cost_cents,run_at,attempts)`.
+- Runs cost cap: `POST /leads/:id/run` refuses with committed 422
+  `LEAD_COST_CAP` when `cost_cents` ≥ `guardrails.leadLifetimeCostCapUsd`
+  (default $0.05 → practically every lead with any history trips it). Lift
+  it via `PUT /control/v1/settings/guardrails` (send the FULL settings
+  object back, it replaces wholesale) before run-mutation tests.
+- Pending wakeups are canceled from EITHER the lead panel agenda row
+  (single-click `cancelar`) or the Estúdio agenda `desmarcar?` ConfirmBtn —
+  both land in `cancelados` with `motivo: cancelado pela equipe`. The runs
+  'leitura' card wakeup counter reflects it immediately.
+- Stale-auth trap after swapping backends: `App.tsx` gates once on `authed`
+  but keeps rendering nav when the session cookie outlives a mock/real
+  backend swap — every fetch 404s into `missing`/empty cards instead of
+  bouncing to login. Hard-reload to hit the Login gate, then re-login.
+- `agent_memory.facts` (v1 list editor) must be all strings — a non-string
+  entry crashes the whole Estúdio route (no error boundary). Repair via
+  `PUT /control/v1/settings/agent_memory`, not code.
+
 ## Email inbound webhook (Resend svix)
 
 `POST /control/v1/webhooks/email` takes two auth modes: the

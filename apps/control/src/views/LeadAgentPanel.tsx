@@ -82,6 +82,7 @@ export default function LeadAgentPanel({
   const [recentRuns, setRecentRuns] = useState<AgentRun[]>([]);
   const [actChannel, setActChannel] = useState<'auto' | 'whatsapp' | 'email'>('auto');
   const [actErr, setActErr] = useState('');
+  const [acting, setActing] = useState(false);
   const [factErr, setFactErr] = useState('');
 
   // Latest load wins — responses from before the newest load() (or for the
@@ -309,7 +310,9 @@ export default function LeadAgentPanel({
           <button
             className="btn agent"
             title="rodar o agente agora"
-            onClick={() =>
+            disabled={acting}
+            onClick={() => {
+              setActing(true);
               void api
                 .runOnLead(
                   lead.id,
@@ -321,7 +324,8 @@ export default function LeadAgentPanel({
                   onChanged();
                 })
                 .catch((e) => setActErr(e instanceof ApiError ? e.message : 'falha ao disparar'))
-            }
+                .finally(() => setActing(false));
+            }}
           >
             <Bot size={14} /> agir agora
           </button>
