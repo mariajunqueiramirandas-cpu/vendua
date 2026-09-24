@@ -478,6 +478,13 @@ describe('mapPointerName', () => {
       deep = `https://www.google.com/sorry/?continue=${encodeURIComponent(deep)}`;
     }
     expect(mapPointerName(deep)).toBeNull();
+    // a twice-encoded absolute target: get() leaves https%3A… — decode once
+    // more only because the result is a complete url
+    expect(
+      mapPointerName(
+        `https://www.google.com/sorry/?continue=${encodeURIComponent(encodeURIComponent('https://www.google.com/search?q=Acme'))}`,
+      ),
+    ).toBe('Acme');
   });
 });
 

@@ -1007,13 +1007,20 @@ function unwrapContinue(raw: string, max = 3): string {
     }
     if (t.protocol !== 'http:' && t.protocol !== 'https:') break;
     if (!isBizMapUrl(t) && !GOOGLE_HOST.test(t.hostname)) break;
-    // get() already decodes the value once — a second decode would collapse
-    // several nesting levels per peel and let an inner &continue= split off
-    // as its own param. One level per iteration keeps the bound honest.
+    // get() already decodes the value once — decoding *every* inner again
+    // would collapse several nesting levels per peel and let an inner
+    // &continue= split off as its own param. The narrow exception is a
+    // twice-encoded absolute target (get() leaves https%3A…): decode once
+    // more only when the result is itself a complete url.
     const inner = t.searchParams.get('continue');
     if (!inner) break;
     try {
-      cur = new URL(inner, cur).toString();
+      let target = inner;
+      if (!/^[a-z][a-z0-9+.-]*:/i.test(inner)) {
+        const dec = decodeURIComponent(inner);
+        if (/^https?:\/\//i.test(dec)) target = dec;
+      }
+      cur = new URL(target, cur).toString();
     } catch {
       break;
     }
