@@ -992,11 +992,12 @@ export function chaseLinks(page: ReadPage): string[] {
 
 /** Iteratively peel `continue=` wrappers off a google-family url — a
  *  captcha'd google redirect (/sorry/?continue=<url>) can nest. Every
- *  level re-validates the carrier family and scheme before unwrapping,
- *  and the peel is bounded: the chain is untrusted input, so a wrapper
- *  pointing at another google url (or itself) can't loop forever — the
- *  remainder resolves through the fetch path instead. */
-function unwrapContinue(raw: string, max = 3): string {
+ *  level re-validates the carrier family and scheme before unwrapping.
+ *  The bound guards WORK on untrusted input — it was the recursion that
+ *  had to go, not the depth; an iterative peel is cheap, so the window is
+ *  generous. Whatever remains past the bound resolves through the fetch
+ *  path instead. */
+function unwrapContinue(raw: string, max = 8): string {
   let cur = raw;
   for (let i = 0; i < max; i++) {
     let t: URL;
@@ -1041,10 +1042,11 @@ export function mapPointerName(raw: string): string | null {
     // profile pointer either.
     if (t.protocol !== 'http:' && t.protocol !== 'https:') return null;
     if (!isBizMapUrl(t) && !GOOGLE_HOST.test(t.hostname)) return null;
-    // A leftover continue= means the peel hit its bound mid-chain — this
-    // carrier never resolved, so its ?q=/place fields describe the
-    // wrapper, not the destination. Unresolved beats a false name.
-    if (t.searchParams.has('continue')) return null;
+    // A leftover (non-empty) continue= means the peel hit its bound
+    // mid-chain — this carrier never resolved, so its ?q=/place fields
+    // describe the wrapper, not the destination. Unresolved beats a false
+    // name. An empty `&continue=` isn't a wrapper and mustn't mask a name.
+    if (t.searchParams.get('continue')) return null;
     const q = t.searchParams.get('q') ?? t.searchParams.get('query');
     if (q && !/\//.test(q) && q.length < 80) return q.replace(/\+/g, ' ');
     const m = /\/maps\/place\/([^/]+)/.exec(t.pathname);
@@ -1113,6 +1115,11 @@ export async function resolveMapPointer(url: string): Promise<ReadPage | null> {
     }
     name = mapPointerName(peeled) ?? name;
     if (GOOGLE_HOST.test(t.hostname)) {
+      // A peeled target that still wraps a continue= isn't the
+      // destination — it's the captcha carrier itself. Don't hand it to
+      // the model as the resolved location, and don't spend a fetch on
+      // the wall.
+      if (t.searchParams.get('continue')) break;
       // The resolved location is handed to the model as a follow-up url —
       // it must pass the fetchable guard too, not just the family check.
       try {
