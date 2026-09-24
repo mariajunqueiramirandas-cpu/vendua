@@ -2104,11 +2104,15 @@ export async function sweepOutreach(sql: Sql): Promise<number> {
       // cap — a capped lead returns null and KEEPS its due action (claimRun
       // parks it anyway, so no run executes over budget).
       const cap: { flagged?: boolean } = {};
-      const runId = await insertRun(tx, {
-        kind: 'outreach',
-        leadId: id,
-        params: next_action_source === 'staff' ? {} : { auto: next_action_source },
-      }, cap);
+      const runId = await insertRun(
+        tx,
+        {
+          kind: 'outreach',
+          leadId: id,
+          params: next_action_source === 'staff' ? {} : { auto: next_action_source },
+        },
+        cap,
+      );
       if (cap.flagged) capFlagged.push(id);
       if (runId) {
         queuedIds.push(runId);
