@@ -1140,6 +1140,18 @@ export async function resolveMapPointer(
     }
     const p = mapPointerCarrier(peeled);
     name = p?.name ?? name;
+    // A named carrier IS the resolved destination — validate it and
+    // resolve now rather than spending another hop on the mid-chain
+    // wrapper's redirect.
+    if (p?.name) {
+      try {
+        assertFetchable(p.carrier.toString());
+        location = p.carrier.toString();
+      } catch {
+        /* fall through: keep whatever name we found, no location */
+      }
+      break;
+    }
     if (GOOGLE_HOST.test(t.hostname)) {
       // A peeled target that still wraps a continue= isn't the
       // destination — it's another captcha carrier. Never hand it to the
@@ -1151,13 +1163,12 @@ export async function resolveMapPointer(
       }
       // The resolved location is handed to the model as a follow-up url —
       // it must pass the fetchable guard too, not just the family check.
-      // A named carrier resolves deeper than t — prefer it.
       try {
-        assertFetchable(p?.name ? p.carrier.toString() : t.toString());
+        assertFetchable(t.toString());
       } catch {
         break;
       }
-      location = p?.name ? p.carrier.toString() : t.toString();
+      location = t.toString();
       break;
     }
     // keep chasing only while the chain stays on shortlink hosts — a foreign
