@@ -71,8 +71,7 @@ const PRICE_TABLE: { match: string; in: number; cached: number; write: number; o
 
 function pricingFor(model: string, config: Record<string, unknown>) {
   const c = config.pricing as
-    | { in?: unknown; cached?: unknown; write?: unknown; out?: unknown }
-    | undefined;
+    { in?: unknown; cached?: unknown; write?: unknown; out?: unknown } | undefined;
   if (c && typeof c.in === 'number' && typeof c.out === 'number') {
     return {
       in: c.in,
@@ -282,9 +281,7 @@ function openrouterProvider(
         toolCalls,
         ...u,
         costUsd:
-          typeof res.usage?.cost === 'number'
-            ? res.usage.cost
-            : estimateCostUsd(model, config, u),
+          typeof res.usage?.cost === 'number' ? res.usage.cost : estimateCostUsd(model, config, u),
       };
     },
   };

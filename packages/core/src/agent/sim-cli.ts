@@ -68,9 +68,7 @@ async function seedSimEnv(
         enabled: true,
         config: {
           ...(llm.model ? { model: llm.model } : {}),
-          ...(llm.harness && Object.keys(llm.harness).length
-            ? { harness: llm.harness }
-            : {}),
+          ...(llm.harness && Object.keys(llm.harness).length ? { harness: llm.harness } : {}),
         },
       },
       `sim:llm:${llm.driver}:${llm.model ?? 'default'}:${process.pid}`,

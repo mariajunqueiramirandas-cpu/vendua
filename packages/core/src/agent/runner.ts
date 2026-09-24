@@ -1317,9 +1317,7 @@ export async function runOnce(sql: Sql): Promise<boolean> {
               role: 'tool',
               toolCallId: call.id,
               name: call.name,
-              content: JSON.stringify(
-                FLAG.slimToolOutputs ? slimToolOut(call.name, out) : out,
-              ),
+              content: JSON.stringify(FLAG.slimToolOutputs ? slimToolOut(call.name, out) : out),
             };
             await persist(batch);
           }),
@@ -1402,9 +1400,7 @@ export async function runOnce(sql: Sql): Promise<boolean> {
             role: 'tool',
             toolCallId: call.id,
             name: call.name,
-            content: JSON.stringify(
-              FLAG.slimToolOutputs ? slimToolOut(call.name, out) : out,
-            ),
+            content: JSON.stringify(FLAG.slimToolOutputs ? slimToolOut(call.name, out) : out),
           });
           await persist();
           if (lost) break;

@@ -30,11 +30,14 @@ for (const kind of KINDS) {
     tools.map((t) => ({ name: t.name, description: t.description, parameters: t.parameters })),
   );
   const perTool = tools.map(
-    (t) => `    ${t.name}: ${JSON.stringify({ description: t.description, parameters: t.parameters }).length} chars`,
+    (t) =>
+      `    ${t.name}: ${JSON.stringify({ description: t.description, parameters: t.parameters }).length} chars`,
   );
   console.log(`\n=== ${kind} ===`);
   console.log(`  system_prompt: ${system.length} chars (~${Math.ceil(system.length / 3.5)} tok)`);
-  console.log(`  tool defs total: ${toolsJson.length} chars (~${Math.ceil(toolsJson.length / 3.5)} tok), ${tools.length} tools`);
+  console.log(
+    `  tool defs total: ${toolsJson.length} chars (~${Math.ceil(toolsJson.length / 3.5)} tok), ${tools.length} tools`,
+  );
   for (const l of perTool) console.log(l);
   console.log(`  STATIC PREFIX total: ${system.length + toolsJson.length} chars`);
 }
@@ -103,10 +106,20 @@ const bigPage = {
   description: 'doceria',
   text: 'A'.repeat(30000), // TinyFish markdown — unbounded today
   nav: ['https://prospect.example.br/contato'],
-  foundContacts: { phones: ['+5585999990001'], whatsappLinks: [], emails: [], instagram: [], facebook: [], tiktok: [], phoneHints: [] },
+  foundContacts: {
+    phones: ['+5585999990001'],
+    whatsappLinks: [],
+    emails: [],
+    instagram: [],
+    facebook: [],
+    tiktok: [],
+    phoneHints: [],
+  },
 };
 const readPagesOut = JSON.stringify({ pages: Array.from({ length: 6 }, () => bigPage) });
-console.log(`  read_pages 6-url worst case: ${readPagesOut.length} chars (~${Math.ceil(readPagesOut.length / 3.5)} tok) — resends EVERY later turn`);
+console.log(
+  `  read_pages 6-url worst case: ${readPagesOut.length} chars (~${Math.ceil(readPagesOut.length / 3.5)} tok) — resends EVERY later turn`,
+);
 
 // Gemini countTokens exactness pass (optional).
 const key = process.env.GEMINI_API_KEY;
@@ -144,7 +157,9 @@ if (key) {
       },
     );
     const data = (await res.json()) as { totalTokens?: number; error?: { message?: string } };
-    console.log(`  ${kind}: countTokens(system+tools+ctx) = ${data.totalTokens ?? data.error?.message ?? '?'}`);
+    console.log(
+      `  ${kind}: countTokens(system+tools+ctx) = ${data.totalTokens ?? data.error?.message ?? '?'}`,
+    );
   }
   // system-only and tools-only splits for the reply kind
   for (const part of ['system', 'tools'] as const) {
