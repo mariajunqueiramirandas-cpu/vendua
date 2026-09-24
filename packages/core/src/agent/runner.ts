@@ -21,6 +21,7 @@ import { estimateModelCostUsd, providerFor, type AgentMessage, type ToolCall } f
 import { buildSystemPrompt } from './prompts.ts';
 import { executeTool, toolsFor, bookDigest, type BookEntry, type ToolContext } from './tools.ts';
 import { MonidBudget } from './channels/monid.ts';
+import { pageKey } from './channels/discovery.ts';
 import { dispatchMessage } from './send.ts';
 import { channelAvailabilityTx, whatsappReadyTx } from './guardrails.ts';
 import { bookingLinkForRunner, sweepMeetingReminders } from '../modules/meetings.ts';
@@ -824,6 +825,9 @@ export interface JournalReplay {
   /** Reply's read_pages spend carries over — the cap is per RUN, not per
    *  attempt, or a reclaim would hand back a fresh budget. */
   pageReads: number;
+  /** Pages the journal already fetched — a reread after recovery hits the
+   *  rebuilt cache instead of spending against the cap twice. */
+  pageCache: Map<string, Promise<unknown>>;
 }
 
 /** Replay a reclaimed run's journal into live conversation + harness state.
@@ -842,6 +846,7 @@ export function replayJournal(prior: unknown[]): JournalReplay {
     seenContacts: new Set(),
     plan: null,
     pageReads: 0,
+    pageCache: new Map(),
   };
   for (const s of prior) {
     if ((s as { type?: string } | null)?.type === 'model') replay.baseStep++;
@@ -897,16 +902,24 @@ export function replayJournal(prior: unknown[]): JournalReplay {
     if (t?.type !== 'tool') continue;
     bankOut(t.out);
     if (t.name === 'read_pages') {
-      // The journaled marker is authoritative: the cap charges fetches, not
-      // calls, so only an entry recorded as spent counts (a cached repeat
-      // doesn't). Entries from before the marker — an in-flight run
-      // reclaimed after a deploy — fall back to excluding the two
-      // pre-check rejections (REPEAT suppression; a malformed 'needs urls'
-      // call), which never incremented the counter; everything else,
-      // including a pending/out-less entry from a crash mid-execution,
-      // counted as a spend.
-      const spent = (t as { readSpent?: boolean }).readSpent;
-      if (spent === true) {
+      // The journaled marker is authoritative: it's the fetch spend the
+      // call charged (0 for a fully-cached read — the cap prices fetches,
+      // not calls). Current code stamps readSpent: 0 at journal time and
+      // increments it per reservation, so a dead pending entry carries
+      // its real spend — and one stamped 0 provably died before
+      // validation. Markerless entries are pre-marker legacy journals:
+      // completed calls count one spend (that era charged per call), and
+      // a still-pending/out-less entry reserves one too — the legacy
+      // runner may have died mid-fetch, and whether its fetch issued is
+      // unknowable from the journal; reserving is the conservative side
+      // for a spend cap (it can only under-fetch recovery, never breach
+      // the budget the entry's run was charged against). The two
+      // pre-check rejections (REPEAT suppression; a malformed 'needs
+      // urls' call) never reached the counter.
+      const spent = (t as { readSpent?: number | boolean }).readSpent;
+      if (typeof spent === 'number') {
+        replay.pageReads += spent;
+      } else if (spent === true) {
         replay.pageReads++;
       } else if (spent === undefined) {
         const e = (t.out as { error?: unknown } | null)?.error;
@@ -914,6 +927,17 @@ export function replayJournal(prior: unknown[]): JournalReplay {
           typeof e === 'string' &&
           (e.startsWith('REPEAT') || e.startsWith('read_pages needs urls'));
         if (!preCheck) replay.pageReads++;
+      }
+      // Re-bank fetched pages under both request and final url — a
+      // recovered run's reread then hits the rebuilt cache instead of
+      // paying for a page the run already holds.
+      const ro = t.out as { pages?: { url?: unknown; finalUrl?: unknown }[] } | null;
+      for (const pg of ro?.pages ?? []) {
+        const rec = Promise.resolve({ page: pg });
+        for (const u of [pg.url, pg.finalUrl]) {
+          const k = typeof u === 'string' ? pageKey(u) : null;
+          if (k && !replay.pageCache.has(k)) replay.pageCache.set(k, rec);
+        }
       }
     }
     const p = t.out as { stored?: boolean; plan?: unknown } | null;
@@ -1334,7 +1358,7 @@ export async function runOnce(sql: Sql): Promise<boolean> {
         run.params.channel === 'whatsapp' || run.params.channel === 'email'
           ? run.params.channel
           : null,
-      pageCache: new Map(),
+      pageCache: replay.pageCache,
       book: new Map(),
       plan: null,
       seenContacts: new Set(),
@@ -1639,7 +1663,7 @@ export async function runOnce(sql: Sql): Promise<boolean> {
             callId: string;
             step: number;
             pending?: boolean;
-            readSpent?: boolean;
+            readSpent?: number;
             out?: unknown;
           } = {
             type: 'tool',
@@ -1649,6 +1673,11 @@ export async function runOnce(sql: Sql): Promise<boolean> {
             step: ctx.step,
             pending: true,
           };
+          // read_pages carries its spend marker from birth — 0 until a
+          // reservation stamps it. A markerless entry in a replayed
+          // journal can therefore only be a pre-marker legacy read, which
+          // replay counts conservatively (that era charged per call).
+          if (call.name === 'read_pages') entry.readSpent = 0;
           steps.push(entry);
           await persist();
           const sig = JSON.stringify([call.name, call.args ?? {}]);
@@ -1656,6 +1685,18 @@ export async function runOnce(sql: Sql): Promise<boolean> {
           const suppress =
             prev?.ok === true && (!READ_TOOLS.has(call.name) || prev.v === stateVersion);
           const readsBefore = ctx.pageReads;
+          // Let a read_pages call stamp each fetch reservation onto its
+          // pending journal entry the moment it validates — a worker that
+          // dies mid-batch leaves the real spend persisted, and an entry
+          // without one provably never reached validation.
+          if (call.name === 'read_pages') {
+            ctx.markReadSpent = async (delta: number) => {
+              entry.readSpent = (entry.readSpent ?? 0) + delta;
+              await persist();
+            };
+          } else {
+            delete ctx.markReadSpent;
+          }
           let out: unknown;
           if (suppress) {
             out = {
@@ -1672,7 +1713,7 @@ export async function runOnce(sql: Sql): Promise<boolean> {
           }
           // Journal whether the call spent a read: the cap charges fetches,
           // not calls, so a cached read_pages entry must not count on replay.
-          if (call.name === 'read_pages') entry.readSpent = ctx.pageReads > readsBefore;
+          if (call.name === 'read_pages') entry.readSpent = ctx.pageReads - readsBefore;
           const res_ = out as {
             error?: unknown;
             blocked?: unknown;
