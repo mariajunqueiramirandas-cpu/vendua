@@ -976,6 +976,44 @@ dbDescribe('worker robustness (db)', () => {
     expect(resumed?.id).toBe(runId);
   });
 
+  test('drain sweeps queued runs on terminally suppressed leads only', async () => {
+    await migrate(sql, MIGRATIONS);
+    const mkLead = async (name: string, flag: string) => {
+      const lead = await controlTx(sql, (tx) => insertLeadTx(tx, { name }));
+      await sql.unsafe(`update leads set ${flag} where id = '${lead.body.lead.id}'`);
+      return lead.body.lead.id;
+    };
+    // raw flag writes simulate a suppression writer that skipped the inline
+    // cancel (archive never had one) — the sweep is the catch-all.
+    const archived = await mkLead('Swept Archived', 'archived_at = now()');
+    const unsub = await mkLead('Swept Unsub', 'unsubscribed_at = now()');
+    const paused = await mkLead('Kept Paused', 'agent_paused_at = now()');
+    const off = await mkLead('Kept Off', `agent_mode = 'off'`);
+    const live = await mkLead('Kept Live', 'name = name');
+    await sql`delete from agent_runs where status = 'queued'`;
+    const runs: Record<string, string> = {};
+    for (const [k, id] of Object.entries({ archived, unsub, paused, off, live })) {
+      runs[k] = await enqueueRun(sql, { kind: 'outreach', leadId: id });
+    }
+    // a 'running' run on an archived lead is mid-flight — not the sweep's
+    const running = await enqueueRun(sql, { kind: 'outreach', leadId: archived });
+    await sql`update agent_runs set status = 'running', started_at = now(), alive_at = now(),
+      claim_token = 'tok' where id = ${running}`;
+    await drain(sql, 0);
+    const status = async (id: string) =>
+      (
+        await sql<{ status: string; error: string | null }[]>`
+        select status, error from agent_runs where id = ${id}`
+      )[0]!;
+    expect(await status(runs.archived!)).toMatchObject({ status: 'canceled', error: 'arquivado' });
+    expect(await status(runs.unsub!)).toMatchObject({ status: 'canceled', error: 'descadastrado' });
+    // paused/'off' lift — their parked runs must resume, never die
+    expect((await status(runs.paused!)).status).toBe('queued');
+    expect((await status(runs.off!)).status).toBe('queued');
+    expect((await status(runs.live!)).status).toBe('queued');
+    expect((await status(running)).status).toBe('running');
+  });
+
   test('unsubscribe cancels the lead’s queued runs — they could never claim', async () => {
     await migrate(sql, MIGRATIONS);
     const lead = await controlTx(sql, (tx) => insertLeadTx(tx, { name: 'OptOut Lead' }));

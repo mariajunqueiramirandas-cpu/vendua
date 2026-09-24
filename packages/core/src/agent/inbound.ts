@@ -111,10 +111,30 @@ export async function ingestInbound(
     ) {
       return null;
     }
+    // Burst coalescing: a still-queued reply reads the freshest thread
+    // state at claim anyway, so one parked run covers every message that
+    // lands before it starts — a WhatsApp burst must not fan out into
+    // parallel replies on the same lead. 'running' doesn't count: its
+    // context froze at claim, so a genuinely new message still earns a
+    // fresh run. The origin marker scopes the dedupe to auto-created
+    // inbound runs — a staff-queued reply (draftOnly, forced channel, goal
+    // override) carries its own intent and must not absorb a live inbound.
+    // Runs queued before the marker existed carry params = {} — with no
+    // staff-intent keys they behave exactly like an auto run, so they
+    // coalesce the same way.
+    const parked = await tx`
+      select 1 from agent_runs
+      where kind = 'reply' and thread_id = ${res.threadId} and status = 'queued'
+        and (params->>'origin' = 'inbound'
+          or not (params ?| array['draftOnly', 'channel', 'goal']))
+      limit 1
+    `;
+    if (parked.length) return null;
     return insertRun(tx, {
       kind: 'reply',
       leadId: res.leadId,
       threadId: res.threadId,
+      params: { origin: 'inbound' },
       ...(inboundReplyDelayMin > 0
         ? { runAt: new Date(Date.now() + inboundReplyDelayMin * 60_000) }
         : {}),
