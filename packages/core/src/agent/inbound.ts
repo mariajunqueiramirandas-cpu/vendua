@@ -81,7 +81,7 @@ export async function ingestInbound(
   // the staff pause toggle on `lead_threads` — so a suppression committed
   // between the message insert and now is seen here instead of stranding a
   // queued reply on a suppressed thread/lead.
-  const { runId, canceledIds } = await controlTx(sql, async (tx) => {
+  const { runId, coalescedId, canceledIds } = await controlTx(sql, async (tx) => {
     // 'capfin' first: the per-lead advisory serializes this whole gate
     // against claims (claimRun only TRIES it — while we hold it every
     // same-lead candidate rejects there, so the cancel below can never
@@ -129,7 +129,7 @@ export async function ingestInbound(
       gate.unsubscribed_at ||
       gate.archived_at
     ) {
-      return { runId: null, canceledIds };
+      return { runId: null, coalescedId: null, canceledIds };
     }
     // Burst coalescing: a still-queued reply reads the freshest thread
     // state at claim anyway, so one parked run covers every message that
@@ -137,31 +137,30 @@ export async function ingestInbound(
     // parallel replies on the same lead. 'running' doesn't count: its
     // context froze at claim, so a genuinely new message still earns a
     // fresh run. The origin marker scopes the dedupe to auto-created
-    // inbound runs — a staff-queued reply (draftOnly, forced channel, goal
-    // override) carries its own intent and must not absorb a live inbound.
-    // Runs queued before the marker existed carry params = {} — with no
-    // staff-intent keys they behave exactly like an auto run, so they
-    // coalesce the same way.
-    const parked = await tx`
-      select 1 from agent_runs
+    // inbound runs only — a params={} row is ambiguous (pre-marker auto
+    // run vs plain staff reply) and can't be told apart, so it never
+    // coalesces: a bounded one-time duplicate for rows parked across the
+    // marker deploy beats silently absorbing an inbound behind a staff
+    // run's intent or schedule.
+    const parked = await tx<{ id: string }[]>`
+      select id from agent_runs
       where kind = 'reply' and thread_id = ${res.threadId} and status = 'queued'
-        and (params->>'origin' = 'inbound'
-          or not (params ?| array['draftOnly', 'channel', 'goal']))
+        and params->>'origin' = 'inbound'
       limit 1
     `;
-    if (parked.length) return { runId: null, canceledIds };
-    return {
-      runId: await insertRun(tx, {
-        kind: 'reply',
-        leadId: res.leadId,
-        threadId: res.threadId,
-        params: { origin: 'inbound' },
-        ...(inboundReplyDelayMin > 0
-          ? { runAt: new Date(Date.now() + inboundReplyDelayMin * 60_000) }
-          : {}),
-      }),
-      canceledIds,
-    };
+    if (parked.length) return { runId: null, coalescedId: parked[0]!.id, canceledIds };
+    // null = the lifetime cost cap refused the run — nothing queued to
+    // announce or kick.
+    const id = await insertRun(tx, {
+      kind: 'reply',
+      leadId: res.leadId,
+      threadId: res.threadId,
+      params: { origin: 'inbound' },
+      ...(inboundReplyDelayMin > 0
+        ? { runAt: new Date(Date.now() + inboundReplyDelayMin * 60_000) }
+        : {}),
+    });
+    return { runId: id, coalescedId: null, canceledIds };
   });
   // A run claimed in the capfin-free window before the gate acquired the
   // advisory legitimately owns its attempt — but its send would still go
@@ -191,8 +190,24 @@ export async function ingestInbound(
     return [] as string[];
   });
   for (const id of [...canceledIds, ...runningCanceled]) emitControlEvent('run.update', id);
-  if (runId) {
-    emitControlEvent('run.update', runId);
+  const enqueuedId = runId ?? coalescedId;
+  if (enqueuedId) {
+    // The latest message earns its own quiet period: slide the parked run
+    // forward to now+delay — done OUTSIDE the l,t tx because claimRun locks
+    // run→thread while the gate holds thread→run; a run write there can
+    // deadlock. The status/run_at guards keep it safe and narrow: an
+    // already-claimed or already-overdue reply fires as-is, delay=0 needs
+    // no write at all.
+    if (coalescedId && inboundReplyDelayMin > 0) {
+      await controlTx(sql, async (tx) => {
+        await tx`
+          update agent_runs
+          set run_at = greatest(run_at, ${new Date(Date.now() + inboundReplyDelayMin * 60_000)})
+          where id = ${coalescedId} and status = 'queued' and run_at > now()
+        `;
+      });
+    }
+    emitControlEvent('run.update', enqueuedId);
     // Kick the queue now — don't wait up to the poll interval for a reply
     // (a delayed run_at is simply not due yet; the worker tick picks it up).
     void drain(sql).catch((e) => agentLog.error({ err: e }, 'drain failed'));

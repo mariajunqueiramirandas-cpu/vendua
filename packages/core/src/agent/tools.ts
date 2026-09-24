@@ -1256,11 +1256,17 @@ export async function executeTool(
       // the owning attempt finishing its own send (the stranded sweep defers
       // to any run that isn't 'done'), and a cancel/reclaim between
       // compose-commit and this send stops the message via the guard.
+      let sendError: string | undefined;
       if (out.verdict.forceDraft === false && !ctx.draftOnly) {
-        await dispatchMessage(sql, out.composed.body.message.id, guard);
+        const sent = await dispatchMessage(sql, out.composed.body.message.id, guard);
+        // A composed-but-failed send must not count as a landed action —
+        // surfacing the failure as {error} keeps runActed's finish gate
+        // honest and tells the model the send didn't land.
+        if (!sent.ok) sendError = sent.reason ?? 'send failed';
       }
       return {
         ...out.composed.body,
+        ...(sendError ? { error: sendError } : {}),
         draftFallback: out.verdict.forceDraft || ctx.draftOnly,
         channel: out.pick.channel,
         via: out.pick.via,
@@ -1556,7 +1562,9 @@ export async function executeTool(
       const queued = new Set<string>();
       for (const url of urls) {
         const id = pageKey(url) ?? url;
-        if (ctx.pageCache.has(id) || queued.has(id)) continue;
+        // Validation precedes the cache short-circuit — pageKey drops the
+        // scheme, so an ftp:// miss could otherwise inherit a cached
+        // https:// page it never earned.
         try {
           assertFetchable(url);
         } catch (e) {
@@ -1569,6 +1577,7 @@ export async function executeTool(
           );
           continue;
         }
+        if (ctx.pageCache.has(id) || queued.has(id)) continue;
         queued.add(id);
         fetchable.push(url);
       }
@@ -1624,9 +1633,12 @@ export async function executeTool(
       const errs: { url: string; error: string }[] = [];
       for (const url of urls) {
         const key2 = pageKey(url);
+        // This url's own slot first — a validation rejection must report
+        // its error even when a fetchable twin banked the same scheme-free
+        // pageKey, never inherit the twin's page.
         const p =
-          (key2 ? (ctx.pageCache.get(key2) as Promise<PageResult> | undefined) : undefined) ??
-          missOut.get(url);
+          missOut.get(url) ??
+          (key2 ? (ctx.pageCache.get(key2) as Promise<PageResult> | undefined) : undefined);
         const out = p ? await p : null;
         if (out?.page) {
           // fresh this call only when the url itself was queued — a shared
