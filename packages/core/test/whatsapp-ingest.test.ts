@@ -289,7 +289,8 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('whatsapp history + ignore list 
       body: 'oi',
       providerMessageId: `${mid}-1`,
     });
-    const queued = await sql`select id from agent_runs where thread_id = ${thread!.id} and status = 'queued'`;
+    const queued =
+      await sql`select id from agent_runs where thread_id = ${thread!.id} and status = 'queued'`;
     expect(queued).toHaveLength(1);
     await ingestInbound(sql, {
       channel: 'whatsapp',
