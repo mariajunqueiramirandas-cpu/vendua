@@ -1219,11 +1219,7 @@ export async function runOnce(sql: Sql): Promise<boolean> {
         // reply/outreach run to end on a visible action; a run trying to
         // close having only researched gets ONE nudge (same i+5 allowance
         // as discovery's), then ends on its own.
-        if (
-          !nudged &&
-          (run.kind === 'reply' || run.kind === 'outreach') &&
-          !runActed(steps)
-        ) {
+        if (!nudged && (run.kind === 'reply' || run.kind === 'outreach') && !runActed(steps)) {
           nudged = true;
           limit = i + 5;
           const nudge = `Ação pendente — a run ainda não teve efeito visível (send_message/draft, request_human, set_state, unsubscribe, update_lead, create_task). Pesquisar e sair sem agir deixa o lead falando sozinho — aja agora; se um guardrail ou canal morto trava a ação, request_human é a saída.`;
