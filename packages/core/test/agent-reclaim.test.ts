@@ -3,6 +3,7 @@ import { join } from 'node:path';
 import postgres from 'postgres';
 import { claimRun, drain, enqueueRun, replayJournal, runOnce } from '../src/agent/runner.ts';
 import { executeTool, assertRunClaimTx, type ToolContext } from '../src/agent/tools.ts';
+import { mapPointerName } from '../src/agent/channels/discovery.ts';
 import { dispatchMessage } from '../src/agent/send.ts';
 import { controlTx } from '../src/modules/control.ts';
 import { insertLeadTx, getLeadDetail } from '../src/modules/leads.ts';
@@ -80,6 +81,58 @@ describe('replayJournal', () => {
     expect(JSON.parse(tools[0]!.content).interrupted).toBe(true);
     expect(JSON.parse(tools[1]!.content).interrupted).toBe(true);
     expect(tools[1]!.toolCallId).toBe('b');
+  });
+
+  test('read_pages replay restores the fetch spend each entry represents', () => {
+    const r = replayJournal([
+      // numeric marker: two real fetches charged
+      {
+        type: 'tool',
+        name: 'read_pages',
+        args: { urls: ['https://a.co/1', 'https://a.co/2'] },
+        readSpent: 2,
+        out: { pages: [] },
+      },
+      // a call served fully from cache spent nothing
+      {
+        type: 'tool',
+        name: 'read_pages',
+        args: { urls: ['https://a.co/1'] },
+        readSpent: 0,
+        out: { pages: [{ url: 'https://a.co/1', cached: true }] },
+      },
+      // legacy boolean marker: one call = one spend
+      {
+        type: 'tool',
+        name: 'read_pages',
+        args: { urls: ['https://a.co/3'] },
+        readSpent: true,
+        out: { pages: [] },
+      },
+      // pre-marker completed call: one spend
+      {
+        type: 'tool',
+        name: 'read_pages',
+        args: { urls: ['https://a.co/4'] },
+        out: { pages: [] },
+      },
+      // REPEAT suppression never reached the counter
+      {
+        type: 'tool',
+        name: 'read_pages',
+        args: { urls: ['https://a.co/4'] },
+        out: { error: 'REPEAT — chamada idêntica à anterior já foi executada nesta run' },
+      },
+      // a pending entry died mid-batch — reserve per requested url
+      {
+        type: 'tool',
+        name: 'read_pages',
+        args: { urls: ['https://a.co/5', 'https://a.co/6', 'https://a.co/7'] },
+        pending: true,
+      },
+    ]);
+    // 2 + 0 + 1 + 1 + 0 + 3 = 7
+    expect(r.pageReads).toBe(7);
   });
 
   test('nudge/reflection entries replay as user turns', () => {
@@ -248,6 +301,17 @@ describe('replayJournal', () => {
 // ---------------------------------------------------------------------------
 // DB-backed — opt-in via TEST_DATABASE_URL (CI has no Postgres).
 // ---------------------------------------------------------------------------
+
+describe('mapPointerName', () => {
+  test('reads the name a pointer already carries — else null (a redirect hop)', () => {
+    expect(mapPointerName('https://www.google.com/maps/place/Acme+Pizza')).toBe('Acme Pizza');
+    expect(mapPointerName('https://www.google.com/search?q=Padaria+Central')).toBe(
+      'Padaria Central',
+    );
+    expect(mapPointerName('https://g.co/kgs/abc123')).toBeNull();
+    expect(mapPointerName('https://maps.app.goo.gl/xyz')).toBeNull();
+  });
+});
 
 const dbDescribe = describe.skipIf(!process.env.TEST_DATABASE_URL);
 
@@ -1310,5 +1374,49 @@ dbDescribe('worker robustness (db)', () => {
     expect(reads[2]!.out?.error ?? '').toMatch(/^REPEAT/);
     expect(reads[3]!.readSpent).toBe(0);
     expect(reads[3]!.out?.error ?? '').toMatch(/^read_pages: limite/);
+  });
+
+  test('unfetchable urls never spend the reply page budget', async () => {
+    await migrate(sql, MIGRATIONS);
+    const lead = await controlTx(sql, (tx) => insertLeadTx(tx, { name: 'Bad Url Lead' }));
+    const leadId = lead.body.lead.id;
+    await sql`delete from agent_runs where status = 'queued'`;
+    const runId = (await enqueueRun(sql, { kind: 'reply', leadId })!)!;
+    await sql`update agent_runs set
+      params = ${sql.json({
+        script: [
+          // urls no provider could issue — rejected before the batch,
+          // spending nothing
+          {
+            toolCalls: [
+              { name: 'read_pages', args: { urls: ['not-a-url', 'also-garbage'] } },
+            ],
+          },
+          // the valid pair still fits the untouched budget
+          {
+            toolCalls: [
+              {
+                name: 'read_pages',
+                args: { urls: ['https://a.example/1', 'https://a.example/2'] },
+              },
+            ],
+          },
+          { toolCalls: [{ name: 'request_human', args: { leadId, reason: 'travou' } }] },
+          { text: 'fim' },
+        ],
+      } as never)}
+      where id = ${runId}`;
+    expect(await runOnce(sql)).toBe(true);
+    const r = await getRun(runId);
+    expect(r.status).toBe('done');
+    const reads = r.steps.filter((s) => (s as { name?: string }).name === 'read_pages') as {
+      readSpent?: number;
+      out?: { error?: string; errors?: { url: string; error: string }[] };
+    }[];
+    expect(reads).toHaveLength(2);
+    expect(reads[0]!.readSpent).toBe(0);
+    // both rejections reported through the normal per-url errors channel
+    expect(reads[0]!.out?.errors?.map((e) => e.url)).toEqual(['not-a-url', 'also-garbage']);
+    expect(reads[1]!.readSpent).toBe(2);
   });
 });

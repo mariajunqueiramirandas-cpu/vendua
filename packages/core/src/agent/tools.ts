@@ -1523,8 +1523,15 @@ export async function executeTool(
       };
     }
     case 'read_pages': {
-      const { chaseLinks, discoveryFor, isMapPointer, pageKey, resolveMapPointer } =
-        await import('./channels/discovery.ts');
+      const {
+        assertFetchable,
+        chaseLinks,
+        discoveryFor,
+        isMapPointer,
+        mapPointerName,
+        pageKey,
+        resolveMapPointer,
+      } = await import('./channels/discovery.ts');
       type ReadPage = import('./channels/discovery.ts').ReadPage;
       const urls = (Array.isArray(args.urls) ? args.urls : [args.url])
         .map((u) => String(u ?? '').trim())
@@ -1542,43 +1549,58 @@ export async function executeTool(
         queued.add(id);
         miss.push(url);
       }
+      type PageResult = { page: ReadPage | null; error?: string };
+      const missOut = new Map<string, Promise<PageResult>>(); // miss url → its slice
+      // A url no fetch provider can issue never becomes a fetch — the
+      // same assertFetchable guard the provider runs, applied before the
+      // reservation so a rejected url neither batches nor spends.
+      const fetchable: string[] = [];
+      for (const url of miss) {
+        try {
+          assertFetchable(url);
+          fetchable.push(url);
+        } catch (e) {
+          const p: Promise<PageResult> = Promise.resolve({
+            page: null,
+            error: e instanceof Error ? e.message : String(e),
+          });
+          missOut.set(url, p);
+          const key2 = pageKey(url);
+          if (key2) ctx.pageCache.set(key2, p);
+        }
+      }
       // Reply's bound prices fetches, not calls — one call can fetch up
-      // to six pages, so the miss count itself is the spend. All-or-
+      // to six pages, so the fetchable count itself is the spend. All-or-
       // nothing, checked before any fetch issues: a call that doesn't
       // fit the remaining budget is refused whole, a call served fully
       // from the run's pageCache spends nothing.
       const replyBound = ctx.runKind === 'reply';
-      if (replyBound && miss.length) {
-        if (ctx.pageReads + miss.length > REPLY_READ_PAGES_CAP) {
+      if (replyBound && fetchable.length) {
+        if (ctx.pageReads + fetchable.length > REPLY_READ_PAGES_CAP) {
           return {
             error: `read_pages: limite de ${REPLY_READ_PAGES_CAP} leituras por run de reply — pergunte na conversa o que ainda faltar`,
           };
         }
-        ctx.pageReads += miss.length;
+        ctx.pageReads += fetchable.length;
       }
       const provider = await discoveryFor(sql);
       const goal = String(args.goal ?? '');
-      type PageResult = {
-        page: import('./channels/discovery.ts').ReadPage | null;
-        error?: string;
-      };
-      const missOut = new Map<string, Promise<PageResult>>(); // miss url → its slice
-      if (miss.length) {
+      if (fetchable.length) {
         // One provider call for the whole miss batch — the Fetch API is
         // natively batched, so N misses still cost a single HTTP round-trip.
         const batch: Promise<import('./channels/discovery.ts').ReadPagesResult> = provider
-          .readPages(miss, goal)
+          .readPages(fetchable, goal)
           .then(
             (out) => out,
             (e: unknown) => ({
               pages: [],
-              errors: miss.map((url) => ({
+              errors: fetchable.map((url) => ({
                 url,
                 error: e instanceof Error ? e.message : String(e),
               })),
             }),
           );
-        for (const url of miss) {
+        for (const url of fetchable) {
           const key2 = pageKey(url);
           const p: Promise<PageResult> = batch.then(async (res) => {
             const page = res.pages.find(
@@ -1634,24 +1656,38 @@ export async function executeTool(
       );
       const hubChases = chases.filter((c) => !isMapPointer(c.url));
       const mapChases = chases.filter((c) => isMapPointer(c.url));
-      if (hubChases.length) {
-        if (replyBound) ctx.pageReads += hubChases.length;
+      // Same rule as the direct batch: un-fetchable chase urls spend
+      // nothing — they just report their rejection.
+      const fetchableHubs = hubChases.filter((c) => {
+        try {
+          assertFetchable(c.url);
+          return true;
+        } catch (e) {
+          const error = e instanceof Error ? e.message : String(e);
+          errs.push({ url: c.url, error });
+          const key2 = pageKey(c.url);
+          if (key2) ctx.pageCache.set(key2, Promise.resolve({ page: null, error }));
+          return false;
+        }
+      });
+      if (fetchableHubs.length) {
+        if (replyBound) ctx.pageReads += fetchableHubs.length;
         const res = await provider
           .readPages(
-            hubChases.map((c) => c.url),
+            fetchableHubs.map((c) => c.url),
             goal,
           )
           .then(
             (out) => out,
             (e: unknown) => ({
               pages: [] as ReadPage[],
-              errors: hubChases.map((c) => ({
+              errors: fetchableHubs.map((c) => ({
                 url: c.url,
                 error: e instanceof Error ? e.message : String(e),
               })),
             }),
           );
-        for (const c of hubChases) {
+        for (const c of fetchableHubs) {
           const key2 = pageKey(c.url);
           const page = res.pages.find(
             (pg) => pageKey(pg.url) === key2 || pageKey(pg.finalUrl ?? '') === key2,
@@ -1685,7 +1721,10 @@ export async function executeTool(
         }
       }
       for (const c of mapWave.slice(0, 6)) {
-        if (replyBound) {
+        // A pointer that already names the place (?q=, /maps/place/) resolves
+        // entirely in-process — no request, no spend. Only a shortlink's
+        // 302 chain costs a slot.
+        if (replyBound && mapPointerName(c.url) === null) {
           if (ctx.pageReads >= REPLY_READ_PAGES_CAP) break;
           ctx.pageReads++;
         }

@@ -819,9 +819,9 @@ export function replayJournal(prior: unknown[]): JournalReplay {
       // not calls). Journals from before the marker — an in-flight run
       // reclaimed after a deploy — fall back to excluding the two
       // pre-check rejections (REPEAT suppression; a malformed 'needs urls'
-      // call), which never incremented the counter; everything else,
-      // including a pending/out-less entry from a crash mid-execution,
-      // counted as one spend. A legacy boolean marker also counts one.
+      // call), which never incremented the counter; everything else
+      // counted as a spend — per-requested-url for an entry that died
+      // mid-execution, one for a completed call or a legacy boolean.
       const spent = (t as { readSpent?: number | boolean }).readSpent;
       if (typeof spent === 'number') {
         replay.pageReads += spent;
@@ -832,7 +832,17 @@ export function replayJournal(prior: unknown[]): JournalReplay {
         const preCheck =
           typeof e === 'string' &&
           (e.startsWith('REPEAT') || e.startsWith('read_pages needs urls'));
-        if (!preCheck) replay.pageReads++;
+        if (!preCheck) {
+          // A still-pending (or out-less) entry died mid-execution — the
+          // reservation may already have charged one slot per requested
+          // url before the result ever journaled. Reserve what the call
+          // could have spent, not the single slot it recorded.
+          const dead =
+            (t as { pending?: boolean }).pending === true || t.out === undefined;
+          const urls = (t as { args?: { urls?: unknown } }).args?.urls;
+          const argCount = Array.isArray(urls) ? Math.min(Math.max(urls.length, 1), 6) : 1;
+          replay.pageReads += dead ? argCount : 1;
+        }
       }
     }
     const p = t.out as { stored?: boolean; plan?: unknown } | null;
