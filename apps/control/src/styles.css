@@ -1179,6 +1179,11 @@ a.card-foot:hover {
 .steps .step.tool {
   border-inline-start-color: var(--lime-300);
 }
+.steps .step.inbox,
+.steps .step.nudge,
+.steps .step.reflection {
+  border-inline-start-color: var(--amber-400);
+}
 .steps .step .who {
   color: var(--muted);
   font-size: var(--t-2xs);
