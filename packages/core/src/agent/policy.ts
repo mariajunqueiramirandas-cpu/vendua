@@ -173,7 +173,10 @@ export async function explainAutonomyTx(
   if (blockers.length) sendMode = 'blocked';
   else if (!waOk && !emailOk) {
     sendMode = 'blocked';
-    reasons.push({ code: 'no_channel', message: `sem canal utilizável (whatsapp: ${ch.whatsapp.ok ? 'ok' : ch.whatsapp.reason}; email: ${ch.email.ok ? 'ok' : ch.email.reason})` });
+    reasons.push({
+      code: 'no_channel',
+      message: `sem canal utilizável (whatsapp: ${ch.whatsapp.ok ? 'ok' : ch.whatsapp.reason}; email: ${ch.email.ok ? 'ok' : ch.email.reason})`,
+    });
   } else {
     const d = draftDecision({
       level,
