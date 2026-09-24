@@ -15,6 +15,9 @@ const waLog = log.child({ mod: 'whatsapp' });
 
 interface BaileysSocket {
   sendMessage(jid: string, content: { text: string }): Promise<{ key?: { id?: string } }>;
+  /** Server-side existence probe — [{jid, exists}] — free and sends
+   *  nothing; the autocontact gate verifies derived numbers through it. */
+  onWhatsApp(jid: string): Promise<{ jid: string; exists: boolean }[] | undefined>;
   end(err?: Error): void;
   /** 8-char pairing code as an alternative to scanning the QR — only valid
    *  while the socket is unregistered (pre-`open`). */
@@ -137,6 +140,32 @@ function trackAuthWrite<T>(p: Promise<T>): Promise<T> {
 }
 export function waStatus(): string {
   return connState;
+}
+
+/** Free "is this number on WhatsApp" probe over the live socket — a
+ *  registered answer upgrades a discovery-derived number to verified so
+ *  the autocontact gate can treat it like a real wa.me find. null = can't
+ *  tell (socket not open, probe failed): callers keep the number
+ *  unverified, never treat it as a negative. Never boots the socket — a
+ *  probe isn't worth a handshake. */
+export async function whatsappRegistered(phone: string): Promise<boolean | null> {
+  const digits = phone.replace(/\D/g, '');
+  if (digits.length < 10 || digits.length > 15) return false;
+  const sock = socket;
+  if (!sock || connState !== 'open') return null;
+  try {
+    // Bounded wait — baileys's own query timeout is ~60s, far too long to
+    // hold a discovery step hostage to an unresponsive socket.
+    const res = await Promise.race([
+      sock.onWhatsApp(`${digits}@s.whatsapp.net`),
+      new Promise<undefined>((r) => setTimeout(r, 8000)),
+    ]);
+    if (res === undefined) return null;
+    return Boolean(res[0]?.exists);
+  } catch (e) {
+    waLog.warn({ err: e }, 'onWhatsApp probe failed');
+    return null;
+  }
 }
 export function waIdentity(): { phone: string | null; name: string | null } | null {
   return waMe;

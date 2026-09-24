@@ -111,7 +111,7 @@ import {
 } from './modules/meetings.ts';
 import { BOOKING_PAGE } from './modules/booking-page.ts';
 import * as rooms from './modules/rooms.ts';
-import { drain, insertRun } from './agent/runner.ts';
+import { drain, flagCappedLeads, insertRun } from './agent/runner.ts';
 import { ingestInbound } from './agent/inbound.ts';
 import { ingestResendEvent, svixHeaders, svixVerified } from './agent/channels/email-inbound.ts';
 import { LOADER_JS } from './loader.ts';
@@ -884,7 +884,9 @@ export function createApp({ sql, sessionSecret, controlSecret, autoDrain }: AppD
           });
           return {
             status: created.status,
-            body: { ...created.body, runId },
+            // null when the lifetime cost cap refused the run — the card's
+            // cost-cap flag is the explanation staff sees.
+            body: { ...created.body, ...(runId ? { runId } : {}) },
           };
         }
         return created;
@@ -1070,17 +1072,28 @@ export function createApp({ sql, sessionSecret, controlSecret, autoDrain }: AppD
         }
         if (!th.agent_enabled) throw new HttpError(422, 'THREAD_PAUSED', 'thread paused for agent');
       }
-      return {
-        status: 201,
-        body: {
-          runId: await insertRun(tx, {
-            kind: kind as 'triage' | 'reply' | 'outreach' | 'discovery',
-            leadId,
-            ...(threadId ? { threadId } : {}),
-            params: (body.params as Record<string, unknown>) ?? {},
-          }),
-        },
-      };
+      const runId = await insertRun(tx, {
+        kind: kind as 'triage' | 'reply' | 'outreach' | 'discovery',
+        leadId,
+        ...(threadId ? { threadId } : {}),
+        params: (body.params as Record<string, unknown>) ?? {},
+      });
+      // A 422 body (not a throw): the claim tx COMMITS, so insertRun's
+      // cost-cap flag stays on the card and the stored refusal replays
+      // idempotently — a throw would roll the alert back with it.
+      if (!runId) {
+        return {
+          status: 422,
+          body: {
+            error: {
+              code: 'LEAD_COST_CAP',
+              message:
+                'lead over its agent cost cap — raise guardrails.leadLifetimeCostCapUsd or retire the lead',
+            },
+          } as never,
+        };
+      }
+      return { status: 201, body: { runId } };
     });
     if (res.replayed) c.header('x-idempotent-replay', 'true');
     if (!res.replayed) emitControlEvent('run.update', res.body.runId);
@@ -1339,6 +1352,10 @@ export function createApp({ sql, sessionSecret, controlSecret, autoDrain }: AppD
     validateSetting(key, body.value);
     const res = await putSetting(sql, key, body.value, requireIdemKey(c));
     if (res.replayed) c.header('x-idempotent-replay', 'true');
+    // A LOWERED cost cap strands already-over-cap leads (their queued runs
+    // park, no insert/finish ever fires the flag) — flag them now so staff
+    // sees the card instead of a silent stop. Deduped; await is fine.
+    if (key === 'guardrails' && !res.replayed) await flagCappedLeads(sql);
     return c.json(res.body);
   });
 
@@ -1692,17 +1709,27 @@ export function createApp({ sql, sessionSecret, controlSecret, autoDrain }: AppD
                 : null;
         if (suppressed) throw new HttpError(422, 'LEAD_SUPPRESSED', suppressed);
       }
-      return {
-        status: 201,
-        body: {
-          runId: await insertRun(tx, {
-            kind: kind as 'triage' | 'reply' | 'outreach' | 'discovery' | 'strategist',
-            leadId: effLeadId,
-            threadId,
-            params: (body.params as Record<string, unknown>) ?? {},
-          }),
-        },
-      };
+      const runId = await insertRun(tx, {
+        kind: kind as 'triage' | 'reply' | 'outreach' | 'discovery' | 'strategist',
+        leadId: effLeadId,
+        threadId,
+        params: (body.params as Record<string, unknown>) ?? {},
+      });
+      // Same cap refusal → error contract as /leads/:id/run (committed
+      // claim — the flag survives and the refusal replays).
+      if (!runId) {
+        return {
+          status: 422,
+          body: {
+            error: {
+              code: 'LEAD_COST_CAP',
+              message:
+                'lead over its agent cost cap — raise guardrails.leadLifetimeCostCapUsd or retire the lead',
+            },
+          } as never,
+        };
+      }
+      return { status: 201, body: { runId } };
     });
     if (res.replayed) c.header('x-idempotent-replay', 'true');
     if (!res.replayed) emitControlEvent('run.update', res.body.runId);
@@ -1782,11 +1809,17 @@ export function createApp({ sql, sessionSecret, controlSecret, autoDrain }: AppD
           continue;
         }
         await tx`update leads set agent_goal = ${goal}, updated_at = now() where id = ${id}`;
-        await insertRun(tx, {
+        // null = lifetime cost cap refused the run — surface it like every
+        // other ineligibility instead of counting a phantom enqueue.
+        const runId = await insertRun(tx, {
           kind: 'outreach',
           leadId: id,
           params: { goal, ...(wantChannel ? { channel: wantChannel } : {}) },
         });
+        if (!runId) {
+          skipped.push({ id, reason: 'lead over its agent cost cap' });
+          continue;
+        }
         enqueued++;
       }
       return { status: 200, body: { enqueued, skipped } };

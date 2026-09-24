@@ -309,6 +309,41 @@ export async function dispatchMessage(
           where channel = ${send.channel} and provider_id = ${providerMessageId}`;
       }
     }
+    // Deterministic lead→contacted: a sent outbound IS first contact — the
+    // funnel can't wait on the model remembering set_state. Runs AFTER the
+    // parked-event replay above so a bounce that beat the send response
+    // can't promote: exists() admits only messages still standing 'sent' or
+    // 'delivered'. Forward-only ('lead' rows only): invited/live states stay
+    // the agent's call and a staff-set state never demotes. History/activity
+    // land in the same tx, same writes updateLead's own transition makes.
+    // 'manual' is excluded: it dispatches nothing — staff copies the text
+    // elsewhere — so it can't be treated as contact confirmed.
+    const promoted =
+      send.channel === 'manual'
+        ? []
+        : await tx<{ id: string }[]>`
+      update leads set state = 'contacted', updated_at = now()
+      where id = ${send.leadId} and state = 'lead'
+        and exists (
+          select 1 from lead_messages m
+          where m.id = ${messageId} and m.status in ('sent', 'delivered')
+        )
+      returning id
+    `;
+    if (promoted[0]) {
+      const actor = send.author === 'agent' || send.author === 'staff' ? send.author : 'system';
+      await tx`
+        insert into lead_state_history (lead_id, from_state, to_state, actor, value_cents)
+        select ${send.leadId}, 'lead', 'contacted', ${actor}, deal_value_cents
+        from leads where id = ${send.leadId}
+      `;
+      await tx`
+        insert into lead_activities (lead_id, kind, body, meta, created_by)
+        values (${send.leadId}, 'state_change', 'lead → contacted',
+                ${tx.json({ from: 'lead', to: 'contacted' } as never)}, ${actor})
+      `;
+      leadsTouched.add(send.leadId);
+    }
     return { ok: true };
   });
   threadsTouched.add(send.threadId);

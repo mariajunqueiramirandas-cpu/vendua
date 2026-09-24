@@ -74,9 +74,61 @@ interface RunRow {
   max_attempts: number;
 }
 
+/** Per-lead lifetime spend ceiling (leadLifetimeCostCapUsd guardrail) —
+ *  enforced at insert, not claim: a capped lead must not even queue (the
+ *  row would park in 'queued' forever and every sweep tick would re-spend
+ *  the evaluation). The card is flagged once — a system activity plus the
+ *  same '[humano] <reason>' task request_human writes — so staff sees why
+ *  the agent went quiet and can raise the cap or retire the lead. */
+async function leadUnderCostCapTx(tx: Sql, leadId: string): Promise<boolean> {
+  const g = await getSettingTx<Partial<Guardrails>>(tx, 'guardrails', {});
+  const capUsd = g.leadLifetimeCostCapUsd ?? DEFAULT_GUARDRAILS.leadLifetimeCostCapUsd;
+  if (capUsd <= 0) return true;
+  const spent = (
+    await tx<{ cents: number }[]>`
+      select coalesce(sum(cost_cents), 0)::int as cents
+      from agent_runs where lead_id = ${leadId}
+    `
+  )[0]!.cents;
+  if (spent < Math.round(capUsd * 100)) return true;
+  // First-flag decisions serialize on a try-advisory — never waits, so no
+  // deadlock: a loser refuses its run while the winner writes the flag.
+  const got = await tx<{ got: boolean }[]>`
+    select pg_try_advisory_xact_lock(hashtext(${'cap:' + leadId})) as got
+  `;
+  if (!got[0]!.got) return false;
+  // Dedupe is per cap LEVEL — after staff raises the cap, hitting the new
+  // ceiling flags again; re-crossing the same level doesn't re-alert.
+  const flagged = await tx`
+    select 1 from lead_activities
+    where lead_id = ${leadId} and kind = 'system' and meta->>'type' = 'cost-cap'
+      and (meta->>'capUsd')::numeric = ${capUsd}
+    limit 1
+  `;
+  if (!flagged[0]) {
+    const name =
+      (await tx<{ name: string }[]>`select name from leads where id = ${leadId}`)[0]?.name ??
+      leadId;
+    await tx`
+      insert into lead_activities (lead_id, kind, body, meta, created_by)
+      values (${leadId}, 'system',
+              ${`custo acumulado do agente atingiu o teto (US$ ${capUsd}) — novas runs suspensas`},
+              ${tx.json({ type: 'cost-cap', capUsd, spentCents: spent } as never)}, 'system')
+    `;
+    await tx`
+      insert into lead_tasks (lead_id, title, due_at, created_by)
+      values (${leadId},
+              ${`[humano] ${name}: custo do agente ≥ US$ ${capUsd} — suba o teto ou encerre a automação`.slice(0, 300)},
+              null, 'agent')
+    `;
+  }
+  return false;
+}
+
 /** Transaction-local insert — call inside an existing tx (e.g. claimControl's)
  *  to atomically pair a run with another write. postgres.js transaction
- *  handles have no .begin(), so callers holding one must not use enqueueRun. */
+ *  handles have no .begin(), so callers holding one must not use enqueueRun.
+ *  Returns null when the lead's lifetime cost cap refuses the run. */
 export async function insertRun(
   tx: Sql,
   input: {
@@ -88,7 +140,8 @@ export async function insertRun(
      *  (guardrails-configured pacing); null = claimable immediately. */
     runAt?: Date | null;
   },
-): Promise<string> {
+): Promise<string | null> {
+  if (input.leadId && !(await leadUnderCostCapTx(tx, input.leadId))) return null;
   const row = (
     await tx<{ id: string }[]>`
       insert into agent_runs (kind, lead_id, thread_id, params, run_at)
@@ -108,19 +161,68 @@ export async function enqueueRun(
     runAt?: Date | null;
     params?: Record<string, unknown>;
   },
-): Promise<string> {
+): Promise<string | null> {
   const id = await controlTx(sql, (tx) => insertRun(tx, input));
-  emitControlEvent('run.update', id);
+  if (id) emitControlEvent('run.update', id);
   return id;
+}
+
+/** Flags leads already over the lifetime cap whose crossing no insert or
+ *  finish will ever see (e.g. staff LOWERED leadLifetimeCostCapUsd below
+ *  existing spend): without this pass their queued runs park silently.
+ *  leadUnderCostCapTx dedupes per (lead, cap level) — re-runs are cheap.
+ *  Called after a committed guardrails write; emits lead.change for leads
+ *  that got a NEW flag so the task list refreshes at once. */
+export async function flagCappedLeads(sql: Sql, limit = 200): Promise<number> {
+  const fresh = await controlTx(sql, async (tx) => {
+    const g = await getSettingTx<Partial<Guardrails>>(tx, 'guardrails', {});
+    const capUsd = g.leadLifetimeCostCapUsd ?? DEFAULT_GUARDRAILS.leadLifetimeCostCapUsd;
+    const capCents = Math.round(capUsd * 100);
+    if (capCents <= 0) return [] as string[];
+    const capped = await tx<{ lead_id: string; flagged: boolean }[]>`
+      select x.lead_id,
+             exists (
+               select 1 from lead_activities a
+               where a.lead_id = x.lead_id and a.kind = 'system'
+                 and a.meta->>'type' = 'cost-cap'
+                 and (a.meta->>'capUsd')::numeric = ${capUsd}
+             ) as flagged
+      from (
+        select lead_id, sum(cost_cents) s from agent_runs
+        where lead_id is not null and cost_cents > 0
+        group by lead_id
+      ) x
+      where x.s >= ${capCents}
+      limit ${limit}
+    `;
+    const fresh: string[] = [];
+    for (const { lead_id, flagged } of capped) {
+      await leadUnderCostCapTx(tx, lead_id);
+      if (!flagged) fresh.push(lead_id);
+    }
+    return fresh;
+  });
+  // Unscoped: the console coalesces a burst of events into one pending
+  // event and keeps a single ref — per-lead refs would drop intermediate
+  // cards' refreshes; one bare event refreshes every open card + the badge.
+  if (fresh.length) emitControlEvent('lead.change');
+  return fresh.length;
 }
 
 export async function claimRun(sql: Sql): Promise<RunRow | null> {
   const run = await controlTx(sql, async (tx) => {
     // Staff/founder numbers never run — ingest already refuses to mint
     // them, this covers leads created before the list existed.
-    const ignoredPhones =
-      (await getSettingTx<Partial<Guardrails>>(tx, 'guardrails', {})).ignoredPhones ?? [];
+    const g = await getSettingTx<Partial<Guardrails>>(tx, 'guardrails', {});
+    const ignoredPhones = g.ignoredPhones ?? [];
     const ignoredDigits = ignoredPhones.map(phoneDigits).filter((d) => d.length >= 6);
+    // Over-cap leads are excluded in the SCAN — not just rejected post-pick —
+    // so a prefix of parked capped runs can't monopolize the 8-attempt loop
+    // and starve runnable leads queued behind them. The locked revalidation
+    // below still catches spend landing between scan and claim.
+    const capCents = Math.round(
+      (g.leadLifetimeCostCapUsd ?? DEFAULT_GUARDRAILS.leadLifetimeCostCapUsd) * 100,
+    );
     // Outreach is serial per lead: a 'running' outreach row is the durable
     // ownership token — it outlives the claim tx, so a queued same-lead
     // outreach can only claim once the owner finishes (a crashed owner is
@@ -151,6 +253,12 @@ export async function claimRun(sql: Sql): Promise<RunRow | null> {
                 regexp_replace(l.whatsapp, '\D', '', 'g') <> all(${ignoredDigits}::text[]))
               and (l.phone is null or
                 regexp_replace(l.phone, '\D', '', 'g') <> all(${ignoredDigits}::text[]))
+              -- lifetime cost cap in the scan itself (0 = uncapped): a
+              -- capped lead never becomes a candidate, it parks until the
+              -- ceiling moves.
+              and (${capCents} <= 0 or
+                coalesce((select sum(x.cost_cents) from agent_runs x
+                          where x.lead_id = l.id), 0) < ${capCents})
           ))
           -- a staff-paused thread suppresses the same way — revalidated here
           -- on a fresh snapshot so a pause landing after enqueue still holds
@@ -237,6 +345,14 @@ export async function claimRun(sql: Sql): Promise<RunRow | null> {
           rejected.push(run.id);
           continue;
         }
+        // Lifetime cost cap, re-checked at claim: runs queued while the lead
+        // was under budget must not sail past it — parked like the other
+        // suppressions so raising the cap resumes the queued work. The lead
+        // row lock above serializes this with same-lead claim decisions.
+        if (!(await leadUnderCostCapTx(tx, run.lead_id))) {
+          rejected.push(run.id);
+          continue;
+        }
       }
       if (run.kind === 'outreach' && run.lead_id) {
         // Serialization point for concurrent claims on one lead: the scan's
@@ -289,9 +405,8 @@ async function finishRun(
     error?: string;
   },
 ): Promise<boolean> {
-  const rows = await controlTx(
-    sql,
-    (tx) => tx`
+  const rows = await controlTx(sql, async (tx) => {
+    const updated = await tx<{ id: string; lead_id: string | null; kind: RunRow['kind'] }[]>`
     update agent_runs set
       status = ${result.status},
       steps = ${tx.json(result.steps as never[])},
@@ -301,10 +416,38 @@ async function finishRun(
       error = ${result.error ?? null},
       finished_at = now()
     where id = ${run.id} and status = 'running' and claim_token = ${run.claimToken}
-    returning id
-  `,
-  );
-  if (rows.length) emitControlEvent('run.update', run.id);
+    returning id, lead_id, kind
+    `;
+    const r = updated[0];
+    // Failed-run visibility — a run dying here only ever showed in the Runs
+    // UI. Lead-bound failures flag the card with the same '[humano] <reason>'
+    // task request_human writes; board-scoped failures have no card and roll
+    // up into the daily digest counter instead.
+    if (r?.lead_id && result.status === 'failed') {
+      const name =
+        (await tx<{ name: string }[]>`select name from leads where id = ${r.lead_id}`)[0]?.name ??
+        r.lead_id;
+      await tx`
+        insert into lead_tasks (lead_id, title, due_at, created_by)
+        values (${r.lead_id},
+                ${`[humano] ${name}: run ${r.kind} falhou — ${(result.error ?? 'sem detalhe').slice(0, 200)}`.slice(0, 300)},
+                null, 'agent')
+      `;
+    }
+    // The run that CROSSES the cap is where the alert must land — queued
+    // siblings are scan-excluded and never reach the claim check, so this
+    // is the only flag write that covers "spent past the ceiling".
+    if (r?.lead_id) await leadUnderCostCapTx(tx, r.lead_id);
+    return updated;
+  });
+  if (rows.length) {
+    emitControlEvent('run.update', run.id);
+    // The [humano] task lands in the tx — the task list/badge refresh on
+    // lead.change, so mirror the event a real lead update would emit.
+    const r = rows[0];
+    if (r?.lead_id && result.status === 'failed')
+      emitControlEvent('lead.change', r.lead_id ?? undefined);
+  }
   return rows.length > 0;
 }
 
@@ -1539,9 +1682,10 @@ export async function drain(sql: Sql, limit = 20): Promise<number> {
   // backoff (run_at = now + 2^attempts min) so a poisoned run stops jumping
   // ahead of healthy work, and the attempt that exhausts max_attempts lands
   // 'failed' — journal kept — instead of looping the lease forever.
-  const reclaimed = await controlTx(
-    sql,
-    (tx) => tx<{ id: string }[]>`
+  const reclaimed = await controlTx(sql, async (tx) => {
+    const rows = await tx<
+      { id: string; lead_id: string | null; kind: RunRow['kind']; status: string }[]
+    >`
       update agent_runs set
         attempts = attempts + 1,
         status = case when attempts + 1 >= max_attempts then 'failed' else 'queued' end,
@@ -1555,9 +1699,27 @@ export async function drain(sql: Sql, limit = 20): Promise<number> {
         alive_at = null,
         claim_token = null
       where status = 'running' and coalesce(alive_at, started_at) < now() - make_interval(mins => ${RUN_LEASE_MIN})
-      returning id
-    `,
-  );
+      returning id, lead_id, kind, status
+    `;
+    // Same failed-run visibility as finishRun's path — the bulk reclaim
+    // writes 'failed' without going through it, so its own task insert.
+    const failed = rows.filter((r) => r.status === 'failed' && r.lead_id);
+    if (failed.length) {
+      const names = await tx<{ id: string; name: string }[]>`
+        select id, name from leads where id = any(${failed.map((f) => f.lead_id!)})
+      `;
+      const nameOf = new Map(names.map((n) => [n.id, n.name]));
+      for (const f of failed) {
+        await tx`
+          insert into lead_tasks (lead_id, title, due_at, created_by)
+          values (${f.lead_id},
+                  ${`[humano] ${nameOf.get(f.lead_id!) ?? f.lead_id}: run ${f.kind} falhou — tentativas esgotadas, a run morria no meio`.slice(0, 300)},
+                  null, 'agent')
+        `;
+      }
+    }
+    return rows;
+  });
   for (const r of reclaimed) emitControlEvent('run.update', r.id);
   // Terminal suppressions strand queued runs forever — the claim gate's
   // pause semantics never lifts them. unsubscribe writers cancel inline,
@@ -1763,19 +1925,18 @@ export async function sweepBriefs(sql: Sql): Promise<number> {
           continue;
         }
       }
-      queuedIds.push(
-        await insertRun(tx, {
-          kind: 'discovery',
-          params: {
-            query: b.query,
-            ...(b.segment ? { segment: b.segment } : {}),
-            ...(b.city ? { city: b.city } : {}),
-            ...(b.target ? { target: b.target } : {}),
-            briefId: b.id,
-            briefName: b.name,
-          },
-        }),
-      );
+      const runId = await insertRun(tx, {
+        kind: 'discovery',
+        params: {
+          query: b.query,
+          ...(b.segment ? { segment: b.segment } : {}),
+          ...(b.city ? { city: b.city } : {}),
+          ...(b.target ? { target: b.target } : {}),
+          briefId: b.id,
+          briefName: b.name,
+        },
+      });
+      if (runId) queuedIds.push(runId);
       await tx`update discovery_briefs set last_run_at = now() where id = ${b.id}`;
       fired++;
     }
@@ -1818,11 +1979,18 @@ export async function sweepStrategist(sql: Sql): Promise<boolean> {
 export async function sweepOutreach(sql: Sql): Promise<number> {
   const queuedIds: string[] = [];
   const fired = await controlTx(sql, async (tx) => {
+    const g = await getSettingTx<Partial<Guardrails>>(tx, 'guardrails', {});
+    const capCents = Math.round(
+      (g.leadLifetimeCostCapUsd ?? DEFAULT_GUARDRAILS.leadLifetimeCostCapUsd) * 100,
+    );
     // for update skip locked — concurrent sweeps on different replicas take
     // disjoint lead sets instead of both inserting a run for the same due
-    // lead (the not-exists check alone only sees committed runs).
-    const due = await tx<{ id: string }[]>`
-      select l.id from leads l
+    // lead (the not-exists check alone only sees committed runs). The cap
+    // predicate keeps over-cap leads OUT of the 20-row window — otherwise a
+    // wall of capped leads would starve every eligible lead behind them
+    // (their due dates stay untouched, so a raised cap resumes them).
+    const due = await tx<{ id: string; next_action_source: string }[]>`
+      select l.id, l.next_action_source from leads l
       where l.next_action_at is not null and l.next_action_at <= now()
         and l.archived_at is null and l.unsubscribed_at is null
         and l.agent_mode != 'off'
@@ -1831,21 +1999,34 @@ export async function sweepOutreach(sql: Sql): Promise<number> {
           where r.lead_id = l.id and r.kind = 'outreach'
             and r.status in ('queued', 'running')
         )
+        and (${capCents} <= 0 or
+          coalesce((select sum(x.cost_cents) from agent_runs x
+                    where x.lead_id = l.id), 0) < ${capCents})
       limit 20
       for update skip locked
     `;
-    for (const { id } of due) {
-      const run = (
-        await tx<{ id: string }[]>`
-        insert into agent_runs (kind, lead_id, params)
-        values ('outreach', ${id}, '{}'::jsonb)
-        returning id
-      `
-      )[0]!;
-      queuedIds.push(run.id);
-      await tx`update leads set next_action_at = null, next_action_source = null where id = ${id}`;
+    for (const { id, next_action_source } of due) {
+      // params.auto marks automation-scheduled work — a fresh inbound cancels
+      // it (ingestInbound). 'cadence' AND 'agent' sources are the
+      // automation's own nudges (the prompt writes nextActionAt as the
+      // "próxima cadência"): obsolete the moment the lead writes back — the
+      // reply run re-commits any still-wanted follow-up with fresh context.
+      // 'staff' is the only human scheduling, so its run materializes
+      // unmarked — an explicit staff decision outranks the reply, like
+      // every staff-triggered run. insertRun also applies the lifetime cost
+      // cap — a capped lead returns null and KEEPS its due action (claimRun
+      // parks it anyway, so no run executes over budget).
+      const runId = await insertRun(tx, {
+        kind: 'outreach',
+        leadId: id,
+        params: next_action_source === 'staff' ? {} : { auto: next_action_source },
+      });
+      if (runId) {
+        queuedIds.push(runId);
+        await tx`update leads set next_action_at = null, next_action_source = null where id = ${id}`;
+      }
     }
-    return due.length;
+    return queuedIds.length;
   });
   for (const id of queuedIds) emitControlEvent('run.update', id);
   return fired;

@@ -16,6 +16,7 @@ import { composeMessageTx, channel } from '../modules/threads.ts';
 import {
   AGENT_MEMORY_MAX_FACTS,
   DEFAULT_GUARDRAILS,
+  getSetting,
   getSettingTx,
   type Guardrails,
 } from '../modules/integrations.ts';
@@ -28,6 +29,7 @@ import {
   type SendVerdict,
 } from './guardrails.ts';
 import { dispatchMessage } from './send.ts';
+import { whatsappRegistered } from './channels/whatsapp.ts';
 
 /**
  * agent/tools — the central tool registry (Hermes-style: one registry, gated
@@ -728,6 +730,32 @@ export async function executeTool(
       // Provenance column: explicit whatsapp (wa.me-normalized or raw) is
       // verified; the mobile-derived fill stays unverified for the gate.
       input.whatsapp_verified = Boolean(input.whatsapp) && !whatsappDerived;
+      // Derived-but-promotable: maps prints "phone" for what is usually the
+      // whatsapp line. Ask the live socket whether the digits are actually
+      // registered — a registered answer clears `derived` and the whole
+      // verified/autocontact path treats the number as proven evidence.
+      // Runs BEFORE the claim tx: this is a network call and network calls
+      // never sit inside a DB transaction (post-commit would also lose the
+      // flag on a claim replay). Only probed when autocontact could fire
+      // anyway — otherwise the flag can't change the outcome. null = can't
+      // tell (socket down/probe failed): the number stays unverified, never
+      // deleted.
+      if (whatsappDerived && typeof input.whatsapp === 'string' && input.whatsapp) {
+        const g = await getSetting<Partial<Guardrails>>(sql, 'guardrails', {});
+        const score = typeof input.fit_score === 'number' ? input.fit_score : null;
+        const waReady = await controlTx(sql, (tx) => whatsappReadyTx(tx));
+        if (
+          (g.discoveryAutoContact ?? DEFAULT_GUARDRAILS.discoveryAutoContact) &&
+          waReady &&
+          score !== null &&
+          score >= (g.discoveryContactMinScore ?? DEFAULT_GUARDRAILS.discoveryContactMinScore)
+        ) {
+          if ((await whatsappRegistered(input.whatsapp).catch(() => null)) === true) {
+            whatsappDerived = false;
+            input.whatsapp_verified = true;
+          }
+        }
+      }
       const res = await claimControl(sql, key, async (tx) => {
         await assertRunClaimTx(tx, ctx);
         // The research dossier lands on the timeline as a note — created with
