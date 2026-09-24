@@ -603,11 +603,15 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('lead lifecycle (db)', () => {
         insertLeadTx(tx, { name: `A5 ${crypto.randomUUID()}`, agent_mode: 'auto', ...fields }),
       ).then((r) => r.body.lead.id);
 
-    const compose = async (leadId: string, author: 'staff' | 'agent') =>
+    const compose = async (
+      leadId: string,
+      author: 'staff' | 'agent',
+      channel: 'manual' | 'whatsapp' = 'manual',
+    ) =>
       controlTx(sql, async (tx) => {
         const r = await composeMessageTx(tx, {
           leadId,
-          channel: 'manual',
+          channel,
           body: 'oi',
           author,
           status: 'queued',
@@ -615,10 +619,22 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('lead lifecycle (db)', () => {
         return r.body.message.id;
       });
 
+    // The 'log' driver completes a whatsapp send without a socket — the only
+    // no-network path that still counts as a real outbound.
+    const waLogDriver = () =>
+      sql`
+        insert into control_integrations (kind, driver, enabled)
+        values ('whatsapp', 'log', true)
+        on conflict (kind, driver) do update set enabled = true
+      `;
+
     test('a sent outbound promotes lead → contacted and writes the transition trail', async () => {
       await setup();
-      const leadId = await mkLead();
-      expect((await dispatchMessage(sql, await compose(leadId, 'agent'))).ok).toBe(true);
+      await waLogDriver();
+      const leadId = await mkLead({ whatsapp: '5511955551234' });
+      expect((await dispatchMessage(sql, await compose(leadId, 'agent', 'whatsapp'))).ok).toBe(
+        true,
+      );
       const lead = (
         await sql<{ state: string }[]>`select state from leads where id = ${leadId}`
       )[0]!;
@@ -637,13 +653,26 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('lead lifecycle (db)', () => {
 
     test('the transition is forward-only — an invited lead is never demoted', async () => {
       await setup();
-      const leadId = await mkLead();
+      await waLogDriver();
+      const leadId = await mkLead({ whatsapp: '5511955551234' });
       await sql`update leads set state = 'invited' where id = ${leadId}`;
-      expect((await dispatchMessage(sql, await compose(leadId, 'agent'))).ok).toBe(true);
+      expect((await dispatchMessage(sql, await compose(leadId, 'agent', 'whatsapp'))).ok).toBe(
+        true,
+      );
       const lead = (
         await sql<{ state: string }[]>`select state from leads where id = ${leadId}`
       )[0]!;
       expect(lead.state).toBe('invited');
+    });
+
+    test('a manual dispatch is not contact — the lead stays a lead', async () => {
+      await setup();
+      const leadId = await mkLead();
+      expect((await dispatchMessage(sql, await compose(leadId, 'agent'))).ok).toBe(true);
+      const lead = (
+        await sql<{ state: string }[]>`select state from leads where id = ${leadId}`
+      )[0]!;
+      expect(lead.state).toBe('lead');
     });
 
     test('a run reclaimed into failed leaves a [humano] task on the lead', async () => {
@@ -770,13 +799,25 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('lead lifecycle (db)', () => {
         expect(capped.status).toBe(422);
         const err = (await capped.json()) as { error?: { code?: string } };
         expect(err.error?.code).toBe('LEAD_COST_CAP');
-        // The thrown claim stored nothing — replaying the same key after
-        // the raise creates the run instead of echoing the refusal.
+        // The refusal committed — the card flag survives the 422.
+        const flags = await sql`
+          select 1 from lead_activities
+          where lead_id = ${leadId} and kind = 'system' and meta->>'type' = 'cost-cap'
+        `;
+        expect(flags).toHaveLength(1);
+        // Same key replays the stored refusal (idempotent); a fresh key
+        // after the raise creates the run.
+        const replay = await post(
+          `/control/v1/leads/${leadId}/run`,
+          { kind: 'reply' },
+          key('a5-cap-run'),
+        );
+        expect(replay.status).toBe(422);
         await setGuardrails({ leadLifetimeCostCapUsd: 10 });
         const retry = await post(
           `/control/v1/leads/${leadId}/run`,
           { kind: 'reply' },
-          key('a5-cap-run'),
+          key('a5-cap-run-2'),
         );
         expect(retry.status).toBe(201);
         expect(((await retry.json()) as { runId?: string }).runId).toBeTruthy();

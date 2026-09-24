@@ -1078,15 +1078,20 @@ export function createApp({ sql, sessionSecret, controlSecret, autoDrain }: AppD
         ...(threadId ? { threadId } : {}),
         params: (body.params as Record<string, unknown>) ?? {},
       });
-      // An error (not a 201 with null) — the client contract is runId: string
-      // and a thrown claim never persists, so a retry after raising the cap
-      // actually creates the run.
+      // A 422 body (not a throw): the claim tx COMMITS, so insertRun's
+      // cost-cap flag stays on the card and the stored refusal replays
+      // idempotently — a throw would roll the alert back with it.
       if (!runId) {
-        throw new HttpError(
-          422,
-          'LEAD_COST_CAP',
-          'lead over its agent cost cap — raise guardrails.leadLifetimeCostCapUsd or retire the lead',
-        );
+        return {
+          status: 422,
+          body: {
+            error: {
+              code: 'LEAD_COST_CAP',
+              message:
+                'lead over its agent cost cap — raise guardrails.leadLifetimeCostCapUsd or retire the lead',
+            },
+          } as never,
+        };
       }
       return { status: 201, body: { runId } };
     });
@@ -1706,13 +1711,19 @@ export function createApp({ sql, sessionSecret, controlSecret, autoDrain }: AppD
         threadId,
         params: (body.params as Record<string, unknown>) ?? {},
       });
-      // Same cap refusal → error contract as /leads/:id/run.
+      // Same cap refusal → error contract as /leads/:id/run (committed
+      // claim — the flag survives and the refusal replays).
       if (!runId) {
-        throw new HttpError(
-          422,
-          'LEAD_COST_CAP',
-          'lead over its agent cost cap — raise guardrails.leadLifetimeCostCapUsd or retire the lead',
-        );
+        return {
+          status: 422,
+          body: {
+            error: {
+              code: 'LEAD_COST_CAP',
+              message:
+                'lead over its agent cost cap — raise guardrails.leadLifetimeCostCapUsd or retire the lead',
+            },
+          } as never,
+        };
       }
       return { status: 201, body: { runId } };
     });

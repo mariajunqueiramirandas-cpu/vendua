@@ -244,8 +244,13 @@ export async function dispatchMessage(
     // funnel can't wait on the model remembering set_state. Forward-only
     // ('lead' rows only): invited/live states stay the agent's call and a
     // staff-set state never demotes. History/activity land in the same tx,
-    // same writes updateLead's own transition makes.
-    const promoted = await tx<{ id: string }[]>`
+    // same writes updateLead's own transition makes. 'manual' is excluded:
+    // it dispatches nothing — staff copies the text elsewhere — so it can't
+    // be treated as contact confirmed.
+    const promoted =
+      send.channel === 'manual'
+        ? []
+        : await tx<{ id: string }[]>`
       update leads set state = 'contacted', updated_at = now()
       where id = ${send.leadId} and state = 'lead'
       returning id

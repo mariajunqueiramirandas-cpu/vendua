@@ -535,6 +535,9 @@ export async function approveMessage(
   }>(sql, idemKey, async (tx) => {
     const g = await getSettingTx<Partial<Guardrails>>(tx, 'guardrails', {});
     const staleDays = g.staleDraftDays ?? DEFAULT_GUARDRAILS.staleDraftDays;
+    const capCents = Math.round(
+      (g.leadLifetimeCostCapUsd ?? DEFAULT_GUARDRAILS.leadLifetimeCostCapUsd) * 100,
+    );
     if (staleDays > 0) {
       // A stale AGENT draft never ships: the copy was written against
       // week-old lead state. Supersede it and enqueue a draftOnly outreach
@@ -560,6 +563,12 @@ export async function approveMessage(
               and l.archived_at is null
               and l.unsubscribed_at is null
               and l.agent_paused_at is null
+              -- over the lifetime cost cap the regen could never queue —
+              -- don't supersede the draft into nothing: it falls through
+              -- to a normal approve (staff's send spends no agent budget).
+              and (${capCents} <= 0 or
+                coalesce((select sum(x.cost_cents) from agent_runs x
+                          where x.lead_id = l.id), 0) < ${capCents})
           )
         returning *
       `;
@@ -587,9 +596,6 @@ export async function approveMessage(
           runId = active[0].id;
         } else {
           const { insertRun } = await import('../agent/runner.ts');
-          // null when the lead's lifetime cost cap refused the run — the
-          // supersede still stands (the expired draft stays unusable) and
-          // the card's cost-cap flag explains why nothing requeued.
           runId = await insertRun(tx, {
             kind: 'outreach',
             leadId: thread.lead_id,
@@ -602,16 +608,26 @@ export async function approveMessage(
             },
           });
         }
-        await tx`
-          insert into lead_activities (lead_id, kind, body, meta, created_by)
-          values (${thread.lead_id}, 'system',
-                  ${`rascunho expirado (${staleDays}d) — regenerando contra o estado atual`},
-                  ${tx.json({ messageId, runId } as never)}, 'system')
-        `;
-        return {
-          status: 200,
-          body: { message: messageJson(stale[0]), stale: true, ...(runId ? { runId } : {}) },
-        };
+        if (!runId) {
+          // The cap landed between the stale check and the insert — undo the
+          // supersede so the normal approve below queues the draft as-is
+          // instead of losing it to a run that never queued.
+          await tx`
+            update lead_messages set status = 'draft', error = null, updated_at = now()
+            where id = ${messageId}
+          `;
+        } else {
+          await tx`
+            insert into lead_activities (lead_id, kind, body, meta, created_by)
+            values (${thread.lead_id}, 'system',
+                    ${`rascunho expirado (${staleDays}d) — regenerando contra o estado atual`},
+                    ${tx.json({ messageId, runId } as never)}, 'system')
+          `;
+          return {
+            status: 200,
+            body: { message: messageJson(stale[0]), stale: true, runId },
+          };
+        }
       }
     }
     const rows = await tx<MessageRow[]>`

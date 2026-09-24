@@ -171,9 +171,16 @@ export async function claimRun(sql: Sql): Promise<RunRow | null> {
   const run = await controlTx(sql, async (tx) => {
     // Staff/founder numbers never run — ingest already refuses to mint
     // them, this covers leads created before the list existed.
-    const ignoredPhones =
-      (await getSettingTx<Partial<Guardrails>>(tx, 'guardrails', {})).ignoredPhones ?? [];
+    const g = await getSettingTx<Partial<Guardrails>>(tx, 'guardrails', {});
+    const ignoredPhones = g.ignoredPhones ?? [];
     const ignoredDigits = ignoredPhones.map(phoneDigits).filter((d) => d.length >= 6);
+    // Over-cap leads are excluded in the SCAN — not just rejected post-pick —
+    // so a prefix of parked capped runs can't monopolize the 8-attempt loop
+    // and starve runnable leads queued behind them. The locked revalidation
+    // below still catches spend landing between scan and claim.
+    const capCents = Math.round(
+      (g.leadLifetimeCostCapUsd ?? DEFAULT_GUARDRAILS.leadLifetimeCostCapUsd) * 100,
+    );
     // Outreach is serial per lead: a 'running' outreach row is the durable
     // ownership token — it outlives the claim tx, so a queued same-lead
     // outreach can only claim once the owner finishes (a crashed owner is
@@ -204,6 +211,12 @@ export async function claimRun(sql: Sql): Promise<RunRow | null> {
                 regexp_replace(l.whatsapp, '\D', '', 'g') <> all(${ignoredDigits}::text[]))
               and (l.phone is null or
                 regexp_replace(l.phone, '\D', '', 'g') <> all(${ignoredDigits}::text[]))
+              -- lifetime cost cap in the scan itself (0 = uncapped): a
+              -- capped lead never becomes a candidate, it parks until the
+              -- ceiling moves.
+              and (${capCents} <= 0 or
+                coalesce((select sum(x.cost_cents) from agent_runs x
+                          where x.lead_id = l.id), 0) < ${capCents})
           ))
           -- a staff-paused thread suppresses the same way — revalidated here
           -- on a fresh snapshot so a pause landing after enqueue still holds
