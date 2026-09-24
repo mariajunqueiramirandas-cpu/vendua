@@ -1359,6 +1359,42 @@ dbDescribe('worker robustness (db)', () => {
     expect((saved[0] as { city?: string }).city).toBe('Olinda');
   });
 
+  test('a repeated create_lead is suppressed — outside discovery the repeat inserts a second card', async () => {
+    await migrate(sql, MIGRATIONS);
+    const lead = await controlTx(sql, (tx) => insertLeadTx(tx, { name: 'Dup Source' }));
+    const leadId = lead.body.lead.id;
+    const before = await sql`select id from leads where name = 'Cafe Azul'`;
+    await sql`delete from agent_runs where status = 'queued'`;
+    const runId = (await enqueueRun(sql, { kind: 'triage', leadId })!)!;
+    await sql`update agent_runs set
+      params = ${sql.json({
+        script: [
+          {
+            toolCalls: [
+              { name: 'create_lead', args: { name: 'Cafe Azul' } },
+              // a write lands between the card and its repeat — a versioned
+              // write would look stale, but a second insert is never a restore
+              { name: 'update_lead', args: { id: leadId, city: 'Recife' } },
+            ],
+          },
+          { toolCalls: [{ name: 'create_lead', args: { name: 'Cafe Azul' } }] },
+          { text: 'fim' },
+        ],
+      } as never)}
+      where id = ${runId}`;
+    expect(await runOnce(sql)).toBe(true);
+    const r = await getRun(runId);
+    const creates = r.steps.filter((s) => (s as { name?: string }).name === 'create_lead') as {
+      out?: { error?: string };
+    }[];
+    expect(creates).toHaveLength(2);
+    expect(creates[0]!.out?.error ?? '').not.toMatch(/^REPEAT/);
+    expect(creates[1]!.out?.error).toMatch(/^REPEAT/);
+    // exactly one new Cafe Azul card — the repeat never reached insertLeadTx
+    const after = await sql`select id from leads where name = 'Cafe Azul'`;
+    expect(after.length).toBe(before.length + 1);
+  });
+
   test('a cached re-read does not spend the reply page budget', async () => {
     await migrate(sql, MIGRATIONS);
     const lead = await controlTx(sql, (tx) => insertLeadTx(tx, { name: 'Cached Page Lead' }));

@@ -789,8 +789,8 @@ const READ_TOOLS = new Set([
  *  update_lead can legitimately restore a field another call changed.)
  *  send_message/draft_message mint a message row; create_task and
  *  request_human mint task rows; unsubscribe mints a farewell message;
- *  add_note mints an activity; book mints a meeting; propose_brief
- *  mints a discovery brief. */
+ *  add_note mints an activity; create_lead inserts a lead card outside
+ *  discovery's merge path; propose_brief mints a discovery brief. */
 const NON_IDEMPOTENT = new Set([
   'send_message',
   'draft_message',
@@ -798,7 +798,7 @@ const NON_IDEMPOTENT = new Set([
   'unsubscribe',
   'add_note',
   'create_task',
-  'book',
+  'create_lead',
   'propose_brief',
 ]);
 
