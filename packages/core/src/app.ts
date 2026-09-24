@@ -1905,15 +1905,21 @@ export function createApp({ sql, sessionSecret, controlSecret, autoDrain }: AppD
 
   app.get('/control/v1/agent/wakeups', async (c) => {
     controlGate(c);
-    const leadId = c.req.query('lead_id') ?? null;
+    // ADR spells the param `leadId`; `lead_id` stays accepted for callers
+    // that already emit snake_case.
+    const leadId = c.req.query('leadId') ?? c.req.query('lead_id') ?? null;
     if (leadId && !UUID_RE.test(leadId)) {
-      throw new HttpError(400, 'BAD_REQUEST', 'lead_id must be a uuid');
+      throw new HttpError(400, 'BAD_REQUEST', 'leadId must be a uuid');
     }
     const status = c.req.query('status') ?? 'pending';
     if (!['pending', 'fired', 'canceled', 'all'].includes(status)) {
       throw new HttpError(400, 'BAD_REQUEST', 'status must be pending|fired|canceled|all');
     }
-    const limit = Number(c.req.query('limit') ?? 100) || 100;
+    const rawLimit = c.req.query('limit');
+    const limit = rawLimit === undefined ? 100 : Number(rawLimit);
+    if (!Number.isInteger(limit)) {
+      throw new HttpError(400, 'BAD_REQUEST', 'limit must be an integer');
+    }
     const wakeups = await listWakeups(sql, {
       leadId,
       status: status === 'all' ? null : (status as 'pending' | 'fired' | 'canceled'),

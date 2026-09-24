@@ -20,7 +20,7 @@ import { sweepDigest } from '../modules/digest.ts';
 import { estimateModelCostUsd, providerFor, type AgentMessage, type ToolCall } from './llm.ts';
 import { buildSystemPrompt } from './prompts.ts';
 import { loadPlaybookTx, mergePlaybook } from './playbooks.ts';
-import { automationAllowedTx, claimPolicyTx } from './policy.ts';
+import { automationAllowedTx, claimPolicyTx, discoveryBudgetTx } from './policy.ts';
 import { pendingWakeupsTx, sweepWakeups } from './wakeups.ts';
 import { executeTool, toolsFor, bookDigest, type BookEntry, type ToolContext } from './tools.ts';
 import { MonidBudget } from './channels/monid.ts';
@@ -2195,6 +2195,7 @@ export function startAgentWorker(sql: Sql, intervalMs = 15_000) {
  *  the guardrails.discoveryAutoContact gate in tools.ts. */
 export async function sweepBriefs(sql: Sql): Promise<number> {
   const queuedIds: string[] = [];
+  const pausedIds: string[] = [];
   const fired = await controlTx(sql, async (tx) => {
     const due = await tx<
       {
@@ -2205,9 +2206,10 @@ export async function sweepBriefs(sql: Sql): Promise<number> {
         city: string | null;
         target: number | null;
         rearmed_at: string | null;
+        created_by: string;
       }[]
     >`
-      select id, name, query, segment, city, target, rearmed_at from discovery_briefs
+      select id, name, query, segment, city, target, rearmed_at, created_by from discovery_briefs
       where enabled
         and (last_run_at is null or last_run_at < now() - interval '23 hours')
         and not exists (
@@ -2221,8 +2223,35 @@ export async function sweepBriefs(sql: Sql): Promise<number> {
     if (!(await automationAllowedTx(tx, 'discovery')).ok) return 0;
     const g = await getSettingTx<Partial<Guardrails>>(tx, 'guardrails', {});
     const autoPauseRuns = g.briefAutoPauseRuns ?? DEFAULT_GUARDRAILS.briefAutoPauseRuns;
+    // An auto-approved brief keeps firing on its original reservation
+    // forever — the approval only checked the budget ONCE. Re-run the same
+    // spent+open*est check before each refire and disable the brief the
+    // moment the rolling 7d window no longer fits. serialized on the
+    // 'brief-proposals' advisory so the check serializes with proposals
+    // and other sweep passes exactly like it does across runs.
+    if (due.some((b) => b.created_by === 'strategist' && !b.rearmed_at)) {
+      await tx`select pg_advisory_xact_lock(hashtext('brief-proposals'))`;
+    }
     let fired = 0;
     for (const b of due) {
+      // rearmed_at marks a staff re-arm — the enablement is then a human
+      // decision, not autopilot spend, and exempt from the budget gate.
+      if (b.created_by === 'strategist' && !b.rearmed_at) {
+        const bdg = await discoveryBudgetTx(tx, b.id);
+        if (!(bdg.capCents > 0 && bdg.spent + (bdg.open + 1) * bdg.est <= bdg.capCents)) {
+          const note = 'auto-pausada — orçamento semanal de descoberta esgotado';
+          await tx`
+            update discovery_briefs set enabled = false, note = ${note}
+            where id = ${b.id}
+          `;
+          pausedIds.push(b.id);
+          agentLog.info(
+            { briefId: b.id, spent: bdg.spent, capCents: bdg.capCents },
+            'discovery brief auto-paused — strategist budget exhausted',
+          );
+          continue;
+        }
+      }
       // Dead-brief gate: a brief whose last N finished runs produced zero
       // leads pauses itself (enabled=false + a note) instead of burning the
       // daily run forever. The journal is the source of truth — a
@@ -2288,6 +2317,9 @@ export async function sweepBriefs(sql: Sql): Promise<number> {
     return fired;
   });
   for (const id of queuedIds) emitControlEvent('run.update', id);
+  // A budget pause lands no run — but it changed the board, so the
+  // discovery view refreshes on the same event it polls.
+  for (const id of pausedIds) emitControlEvent('run.update', id);
   return fired;
 }
 
@@ -2377,18 +2409,33 @@ export async function sweepOutreach(sql: Sql): Promise<number> {
       // applies the lifetime cost cap — a capped lead returns null and
       // KEEPS its due action (claimRun parks it anyway, so no run executes
       // over budget).
+      // The agent's own due wakeup is the same follow-up — fold it into
+      // this run instead of firing a second outreach after it, carrying
+      // its focus into the run's params (at most one pending agent wakeup
+      // exists per lead — the unique index enforces it). Read it BEFORE
+      // insertRun so the focus lands in the run's context, not the floor.
+      const fold = (
+        await tx<{ id: string; focus: string }[]>`
+          select id, focus from agent_wakeups
+          where lead_id = ${id} and status = 'pending' and at <= now()
+            and created_by = 'agent' and not requested
+          for update skip locked
+        `
+      )[0];
       const cap: { flagged?: boolean } = {};
       const runId = await insertRun(
         tx,
         {
           kind: 'outreach',
           leadId: id,
-          params:
-            next_action_source === 'staff' ||
+          params: {
+            ...(next_action_source === 'staff' ||
             next_action_source === 'requested' ||
             next_action_source === 'agent'
               ? {}
-              : { auto: next_action_source },
+              : { auto: next_action_source }),
+            ...(fold ? { focus: `agendado por você: ${fold.focus}`, wakeupId: fold.id } : {}),
+          },
         },
         cap,
       );
@@ -2396,17 +2443,12 @@ export async function sweepOutreach(sql: Sql): Promise<number> {
       if (runId) {
         queuedIds.push(runId);
         await tx`update leads set next_action_at = null, next_action_source = null where id = ${id}`;
-        // The agent's own due wakeup is the same follow-up — fold it into
-        // this run instead of firing a second outreach after it.
-        await tx`
-          update agent_wakeups set status = 'fired', fired_run_id = ${runId}, updated_at = now()
-          where id in (
-            select id from agent_wakeups
-            where lead_id = ${id} and status = 'pending' and at <= now()
-              and created_by = 'agent' and not requested
-            for update skip locked
-          )
-        `;
+        if (fold) {
+          await tx`
+            update agent_wakeups set status = 'fired', fired_run_id = ${runId}, updated_at = now()
+            where id = ${fold.id}
+          `;
+        }
       }
     }
     return queuedIds.length;
