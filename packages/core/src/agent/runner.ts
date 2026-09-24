@@ -211,6 +211,16 @@ export async function flagCappedLeads(sql: Sql, limit = 200): Promise<number> {
       `;
       if (!capped.length) break;
       for (const { lead_id } of capped) {
+        const exists = (
+          await tx`
+            select 1 from lead_activities
+            where lead_id = ${lead_id} and kind = 'system' and meta->>'type' = 'cost-cap'
+              and (meta->>'capUsd')::numeric = ${capUsd}
+            limit 1
+          `
+        )[0];
+        // A flag committed since the batch select isn't ours — don't count it.
+        if (exists) continue;
         await leadUnderCostCapTx(tx, lead_id);
         const flagged = (
           await tx`
@@ -229,22 +239,32 @@ export async function flagCappedLeads(sql: Sql, limit = 200): Promise<number> {
   // Lock contention isn't proof of a flag at THIS cap — the holder may
   // flag at an older level or roll back. Its tx is brief, so retry each
   // skipped lead in fresh short txs after commit (our own advisory locks
-  // are now released): under-cap needs nothing, a flag at the CURRENT
-  // level is done, and only a still-blocked lock retries. A lead still
-  // contended after the attempts is logged — the next settings write or
-  // sweep re-picks it since it stays unflagged.
+  // are now released): a flag already at the CURRENT level was committed
+  // by the contender — complete, but not counted as ours; under-cap needs
+  // nothing; a still-blocked lock retries. A lead still contended after
+  // the attempts is logged and stays unflagged — flagCappedLeads only
+  // runs on settings writes, so the next write re-picks it.
   for (const leadId of contended) {
     let done = false;
     for (let attempt = 0; attempt < 5 && !done; attempt++) {
       const state = await controlTx(sql, async (tx) => {
         const g = await getSettingTx<Partial<Guardrails>>(tx, 'guardrails', {});
         if (capCentsOf(g) <= 0) return 'under';
-        if (await leadUnderCostCapTx(tx, leadId)) return 'under';
         const capUsd = g.leadLifetimeCostCapUsd ?? DEFAULT_GUARDRAILS.leadLifetimeCostCapUsd;
-        const flagged = (
+        const exists = (
           await tx`
             select 1 from lead_activities
             where lead_id = ${leadId} and kind = 'system' and meta->>'type' = 'cost-cap'
+              and (meta->>'capUsd')::numeric = ${capUsd}
+            limit 1
+          `
+        )[0];
+        if (exists) return 'already';
+        if (await leadUnderCostCapTx(tx, leadId)) return 'under';
+        const flagged = (
+          await tx`
+            select 1 from lead_activities
+            where lead_id = ${lead_id} and kind = 'system' and meta->>'type' = 'cost-cap'
               and (meta->>'capUsd')::numeric = ${capUsd}
             limit 1
           `
