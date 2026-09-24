@@ -1234,14 +1234,79 @@ dbDescribe('worker robustness (db)', () => {
     const r = await getRun(runId);
     expect(r.status).toBe('done');
     const reads = r.steps.filter((s) => (s as { name?: string }).name === 'read_pages') as {
-      readSpent?: boolean;
+      readSpent?: number;
       out?: { error?: string };
     }[];
     expect(reads).toHaveLength(4);
-    // every call executed — no REPEAT — but only the fetches spent
-    expect(reads[0]!.readSpent).toBe(true);
-    expect(reads[1]!.readSpent).toBe(false);
-    expect(reads[2]!.readSpent).toBe(true);
+    // every call executed — no REPEAT — but only the fetches spent; a
+    // refusal issues no fetch and charges nothing
+    expect(reads[0]!.readSpent).toBe(1);
+    expect(reads[1]!.readSpent).toBe(0);
+    expect(reads[2]!.readSpent).toBe(1);
+    expect(reads[3]!.readSpent).toBe(0);
+    expect(reads[3]!.out?.error ?? '').toMatch(/^read_pages: limite/);
+  });
+
+  test('the reply page budget prices fetches, not calls', async () => {
+    await migrate(sql, MIGRATIONS);
+    const lead = await controlTx(sql, (tx) => insertLeadTx(tx, { name: 'Budget Lead' }));
+    const leadId = lead.body.lead.id;
+    await sql`delete from agent_runs where status = 'queued'`;
+    const runId = (await enqueueRun(sql, { kind: 'reply', leadId })!)!;
+    await sql`update agent_runs set
+      params = ${sql.json({
+        script: [
+          // a 3-url batch exceeds the 2-fetch cap outright — refused whole,
+          // nothing fetched, nothing charged
+          {
+            toolCalls: [
+              {
+                name: 'read_pages',
+                args: { urls: ['https://a.example/1', 'https://a.example/2', 'https://a.example/3'] },
+              },
+            ],
+          },
+          // 2 urls fit exactly — both fetches issued and charged
+          {
+            toolCalls: [
+              {
+                name: 'read_pages',
+                args: { urls: ['https://a.example/1', 'https://a.example/2'] },
+              },
+            ],
+          },
+          // the same pair again — suppressed as a REPEAT (result still
+          // current); spends nothing either way
+          {
+            toolCalls: [
+              {
+                name: 'read_pages',
+                args: { urls: ['https://a.example/1', 'https://a.example/2'] },
+              },
+            ],
+          },
+          // any new url is over budget now
+          { toolCalls: [{ name: 'read_pages', args: { urls: ['https://a.example/3'] } }] },
+          { toolCalls: [{ name: 'request_human', args: { leadId, reason: 'travou' } }] },
+          { text: 'fim' },
+        ],
+      } as never)}
+      where id = ${runId}`;
+    expect(await runOnce(sql)).toBe(true);
+    const r = await getRun(runId);
+    expect(r.status).toBe('done');
+    const reads = r.steps.filter((s) => (s as { name?: string }).name === 'read_pages') as {
+      readSpent?: number;
+      out?: { error?: string };
+    }[];
+    expect(reads).toHaveLength(4);
+    expect(reads[0]!.readSpent).toBe(0);
+    expect(reads[0]!.out?.error ?? '').toMatch(/^read_pages: limite/);
+    expect(reads[1]!.readSpent).toBe(2);
+    expect(reads[1]!.out?.error ?? '').toBe('');
+    expect(reads[2]!.readSpent).toBe(0);
+    expect(reads[2]!.out?.error ?? '').toMatch(/^REPEAT/);
+    expect(reads[3]!.readSpent).toBe(0);
     expect(reads[3]!.out?.error ?? '').toMatch(/^read_pages: limite/);
   });
 });

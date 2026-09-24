@@ -814,16 +814,18 @@ export function replayJournal(prior: unknown[]): JournalReplay {
     if (t?.type !== 'tool') continue;
     bankOut(t.out);
     if (t.name === 'read_pages') {
-      // The journaled marker is authoritative: the cap charges fetches, not
-      // calls, so only an entry recorded as spent counts (a cached repeat
-      // doesn't). Entries from before the marker — an in-flight run
+      // The journaled marker is authoritative: it's the fetch spend the
+      // call charged (0 for a fully-cached read — the cap prices fetches,
+      // not calls). Journals from before the marker — an in-flight run
       // reclaimed after a deploy — fall back to excluding the two
       // pre-check rejections (REPEAT suppression; a malformed 'needs urls'
       // call), which never incremented the counter; everything else,
       // including a pending/out-less entry from a crash mid-execution,
-      // counted as a spend.
-      const spent = (t as { readSpent?: boolean }).readSpent;
-      if (spent === true) {
+      // counted as one spend. A legacy boolean marker also counts one.
+      const spent = (t as { readSpent?: number | boolean }).readSpent;
+      if (typeof spent === 'number') {
+        replay.pageReads += spent;
+      } else if (spent === true) {
         replay.pageReads++;
       } else if (spent === undefined) {
         const e = (t.out as { error?: unknown } | null)?.error;
@@ -1551,7 +1553,7 @@ export async function runOnce(sql: Sql): Promise<boolean> {
             callId: string;
             step: number;
             pending?: boolean;
-            readSpent?: boolean;
+            readSpent?: number;
             out?: unknown;
           } = {
             type: 'tool',
@@ -1584,7 +1586,7 @@ export async function runOnce(sql: Sql): Promise<boolean> {
           }
           // Journal whether the call spent a read: the cap charges fetches,
           // not calls, so a cached read_pages entry must not count on replay.
-          if (call.name === 'read_pages') entry.readSpent = ctx.pageReads > readsBefore;
+          if (call.name === 'read_pages') entry.readSpent = ctx.pageReads - readsBefore;
           const res_ = out as {
             error?: unknown;
             blocked?: unknown;
