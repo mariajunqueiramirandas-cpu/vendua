@@ -2497,6 +2497,26 @@ details.raw textarea {
 }
 
 /* ---------- lead detail ---------- */
+/* agent panel — quiet group labels and secondary lines inside the card */
+.agp-t {
+  font-size: var(--t-2xs);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--muted);
+  margin: 16px 0 6px;
+  padding-top: 14px;
+  border-top: 1px solid var(--line);
+}
+.agp-none {
+  color: var(--muted);
+  font-size: var(--t-xs);
+  margin: 2px 0 8px;
+}
+.agp-sub {
+  color: var(--muted);
+  font-size: var(--t-xs);
+  margin-top: 3px;
+}
 .lead-acts {
   display: flex;
   gap: 10px;

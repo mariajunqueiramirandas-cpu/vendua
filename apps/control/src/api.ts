@@ -320,6 +320,46 @@ export interface MeetingStatus {
   };
 }
 
+// ---------- lead agent panel ----------
+// ADR 0014 contracts — names mirror the ADR so the parallel `// agent v2`
+// section (another change, same types) merges without renames.
+export type AutonomyLevel = 'off' | 'copilot' | 'supervised' | 'autopilot';
+export interface AutonomyReason {
+  code: string;
+  message: string;
+}
+export interface AutonomyExplanation {
+  level: AutonomyLevel;
+  canRun: boolean;
+  sendMode: 'auto' | 'draft' | 'blocked';
+  /** ordered — the first reason is the decisive one */
+  reasons: AutonomyReason[];
+}
+export type PlaybookKind = 'triage' | 'reply' | 'outreach' | 'discovery' | 'strategist';
+export interface Wakeup {
+  id: string;
+  leadId: string | null;
+  leadName: string | null;
+  kind: PlaybookKind;
+  at: string;
+  focus: string;
+  status: 'pending' | 'fired' | 'canceled';
+  requested: boolean;
+  createdBy: 'agent' | 'staff';
+  createdByRunId: string | null;
+  firedRunId: string | null;
+  cancelReason: string | null;
+  createdAt: string;
+}
+export interface LeadFact {
+  key: string;
+  value: string;
+  confidence: number;
+  source: 'agent' | 'staff';
+  sourceRunId: string | null;
+  updatedAt: string;
+}
+
 // ---------- calls ----------
 export const api = {
   login: (key: string) =>
@@ -503,4 +543,23 @@ export const api = {
     req<{ url: string }>(`/meetings/link?lead_id=${encodeURIComponent(leadId)}`),
   patchMeeting: (id: string, patch: { status?: string; startsAt?: string; endsAt?: string }) =>
     req<{ meeting: Meeting }>(`/meetings/${id}`, { method: 'PATCH', body: JSON.stringify(patch) }),
+
+  // ---------- lead agent panel ----------
+  leadAutonomy: (id: string) => req<AutonomyExplanation>(`/leads/${id}/autonomy`),
+  leadFacts: (id: string) => req<{ facts: LeadFact[] }>(`/leads/${id}/facts`),
+  putLeadFact: (id: string, key: string, body: { value: string; confidence?: number }) =>
+    req<{ fact: LeadFact }>(`/leads/${id}/facts/${encodeURIComponent(key)}`, {
+      method: 'PUT',
+      body: JSON.stringify(body),
+    }),
+  deleteLeadFact: (id: string, key: string) =>
+    req<{ ok: true }>(`/leads/${id}/facts/${encodeURIComponent(key)}`, { method: 'DELETE' }),
+  wakeups: (q: { lead_id?: string; status?: string; limit?: string } = {}) => {
+    const params = new URLSearchParams(
+      Object.entries(q).filter(([, v]) => v) as [string, string][],
+    );
+    return req<{ wakeups: Wakeup[] }>(`/agent/wakeups${params.size ? `?${params}` : ''}`);
+  },
+  cancelWakeup: (id: string) =>
+    req<{ wakeup: Wakeup }>(`/agent/wakeups/${id}/cancel`, { method: 'POST' }),
 };

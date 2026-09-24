@@ -1,26 +1,23 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
-import { Archive, Ban, Bot, Link2, Plus, Video } from 'lucide-react';
+import { Archive, Ban, Link2, Plus, Video } from 'lucide-react';
 import {
   api,
   ApiError,
   type Activity,
-  type AgentRun,
   type LeadListItem,
   type Meeting,
   type Task,
 } from '../api.ts';
 import { onControlEvent } from '../events.ts';
+import LeadAgentPanel from './LeadAgentPanel.tsx';
 import {
-  AGENT_GOALS,
-  AGENT_MODES,
   ConfirmBtn,
   Empty,
   LEAD_STATES,
   LEAD_STATE_LABEL,
   MEETING_STATUS_LABEL,
   Page,
-  RUN_KIND_LABEL,
   ScoreBar,
   fmtDateTime,
   fmtMoney,
@@ -51,12 +48,6 @@ const ACT_GROUPS: [string, (a: Activity) => boolean][] = [
   ['sistema', (a) => a.kind === 'system' || a.kind === 'blocked'],
 ];
 
-const MODE_NOTE: Record<string, string> = {
-  off: 'a equipe toca o lead — o agente não tria nem fala com ele',
-  draft: 'o agente prepara mensagens — você aprova cada envio no inbox',
-  auto: 'o agente conversa sozinho, dentro das guardrails',
-};
-
 // stored websites are free text — linkify only values that normalize to an
 // absolute http(s) URL; anything else renders as plain text
 function httpUrl(raw: string): string | null {
@@ -78,10 +69,8 @@ export default function LeadDetail() {
     [],
   );
   const [meetings, setMeetings] = useState<Meeting[]>([]);
-  const [schedRuns, setSchedRuns] = useState<AgentRun[]>([]);
   const [note, setNote] = useState('');
   const [taskTitle, setTaskTitle] = useState('');
-  const [actChannel, setActChannel] = useState<'auto' | 'whatsapp' | 'email'>('auto');
   const [actGroup, setActGroup] = useState('tudo');
   const [notFound, setNotFound] = useState(false);
 
@@ -122,11 +111,8 @@ export default function LeadDetail() {
     api.meetings({ leadId: id, scope: 'all' }).then((r) => {
       if (ok('meetings')) setMeetings(r.meetings);
     });
-    // Queued runs with a run_at — the scheduled first contact (or a delayed
-    // reply) staff would otherwise have to find on the Runs page.
-    api.runs({ lead_id: id, status: 'queued' }).then((r) => {
-      if (ok('runs')) setSchedRuns(r.runs.filter((x) => x.run_at));
-    });
+    // Agent-owned reads (autonomy, facts, wakeups, runs) live in
+    // LeadAgentPanel — it fetches and refreshes them itself.
   }, [id]);
   useEffect(load, [load]);
   // The page renders lead, meetings, and queued runs — all three types map
@@ -314,113 +300,19 @@ export default function LeadDetail() {
               </div>
             </div>
 
-            <div className="card" style={{ padding: 18 }}>
-              <div className="sec-t">agente</div>
-              <div className="seg-row">
-                <span className="seg" title="modo do agente">
-                  {AGENT_MODES.map(([v, l]) => (
-                    <button
-                      key={v}
-                      className={lead.agentMode === v ? 'sel' : ''}
-                      onClick={() => void patch({ agentMode: v })}
-                    >
-                      {l}
-                    </button>
-                  ))}
-                </span>
-                {lead.agentMode !== 'off' && (
-                  <span className="seg" title="objetivo do agente">
-                    {AGENT_GOALS.map(([v, l]) => (
-                      <button
-                        key={v}
-                        className={lead.agentGoal === v ? 'sel' : ''}
-                        onClick={() => void patch({ agentGoal: v })}
-                      >
-                        {l}
-                      </button>
-                    ))}
-                  </span>
-                )}
-              </div>
-              <div className="nl-note">{MODE_NOTE[lead.agentMode]}</div>
-              {lead.agentPausedAt && (
-                <div className="trow">
-                  <span className="chip warn">pausado</span>
-                  <span style={{ color: 'var(--muted)', fontSize: 'var(--t-xs)', flex: 1 }}>
-                    handoff da equipe — o agente segura este lead
-                  </span>
-                  <button
-                    className="btn ghost"
-                    style={{ padding: '3px 8px' }}
-                    title="retomar libera o agente neste lead de novo"
-                    onClick={() => void api.patchLead(lead.id, { agentPaused: false }).then(load)}
-                  >
-                    retomar
-                  </button>
-                </div>
-              )}
-              {schedRuns.map((r) => (
-                <div key={r.id} className="trow">
-                  <span className="chip">{RUN_KIND_LABEL[r.kind] ?? r.kind}</span>
-                  <span style={{ color: 'var(--muted)', fontSize: 'var(--t-xs)', flex: 1 }}>
-                    agenda {fmtDateTime(r.run_at)}
-                  </span>
-                  <button
-                    className="btn ghost"
-                    style={{ padding: '3px 8px' }}
-                    onClick={() => void api.cancelRun(r.id).then(load)}
-                  >
-                    cancelar
-                  </button>
-                </div>
-              ))}
-              {lead.agentMode !== 'off' && !lead.unsubscribedAt && !lead.agentPausedAt && (
-                <div style={{ display: 'flex', gap: 8, marginTop: 10 }}>
-                  <select
-                    value={actChannel}
-                    onChange={(e) => setActChannel(e.target.value as typeof actChannel)}
-                    title="canal do disparo — auto = o agente escolhe o canal alcançável"
-                  >
-                    <option value="auto">canal: auto</option>
-                    <option value="whatsapp">canal: whatsapp</option>
-                    <option value="email">canal: email</option>
-                  </select>
-                  <button
-                    className="btn agent"
-                    title="rodar o agente agora"
-                    onClick={() =>
-                      void api
-                        .runOnLead(
-                          lead.id,
-                          'outreach',
-                          actChannel === 'auto' ? {} : { channel: actChannel },
-                        )
-                        .then(load)
-                    }
-                  >
-                    <Bot size={14} /> agir agora
-                  </button>
-                </div>
-              )}
-            </div>
+            <LeadAgentPanel lead={lead} threads={threads} patch={patch} onChanged={load} />
 
             <div className="card" style={{ padding: 18 }}>
               <div className="sec-t">conversas</div>
               {threads.map((t) => (
                 <div key={t.id} className="trow">
                   <span className="chip">{t.channel}</span>
+                  <span style={{ color: 'var(--muted)', fontSize: 'var(--t-xs)', flex: 1 }}>
+                    {t.agentEnabled ? 'agente ativo' : 'agente fora'}
+                  </span>
                   <Link to={`/inbox/${t.id}`} className="btn ghost" style={{ padding: '3px 8px' }}>
                     abrir
                   </Link>
-                  <label className="tgl" style={{ marginLeft: 'auto' }}>
-                    <input
-                      type="checkbox"
-                      checked={t.agentEnabled}
-                      onChange={(e) => void api.setThreadAgent(t.id, e.target.checked).then(load)}
-                    />
-                    <span className="tk" />
-                    <span className="lbl">agente</span>
-                  </label>
                 </div>
               ))}
               {!threads.length && (
