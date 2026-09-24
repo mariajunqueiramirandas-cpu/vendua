@@ -402,12 +402,14 @@ export async function addInboundMessage(
     `;
     await tx`update leads set updated_at = now() where id = ${leadId}`;
     if (direction === 'in' && !input.historical) {
-      // A reply retires the cadence floor — it only ever means "keep nudging
-      // an unanswered send". Agent- or staff-set dates survive: those were
-      // scheduled with intent (e.g. "me chama semana que vem").
+      // A reply retires the automation's pending nudge — cadence floors and
+      // agent-set dates alike are the model's own scheduling (it writes
+      // nextActionAt as the "próxima cadência"); the reply run re-commits
+      // any still-wanted follow-up with fresh context. Staff-set dates
+      // survive: a human picked them (e.g. "me chama semana que vem").
       await tx`
         update leads set next_action_at = null, next_action_source = null
-        where id = ${leadId} and next_action_source = 'cadence'
+        where id = ${leadId} and next_action_source in ('cadence', 'agent')
       `;
     }
     // History import would flood the activity feed with one row per old

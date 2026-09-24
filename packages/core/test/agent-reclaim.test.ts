@@ -1066,7 +1066,7 @@ dbDescribe('worker robustness (db)', () => {
     const lead = await controlTx(sql, (tx) => insertLeadTx(tx, { name: 'Loop Lead' }));
     const leadId = lead.body.lead.id;
     await sql`delete from agent_runs where status = 'queued'`;
-    const runId = await enqueueRun(sql, { kind: 'reply', leadId });
+    const runId = (await enqueueRun(sql, { kind: 'reply', leadId })!)!;
     await sql`update agent_runs set
       params = ${sql.json({
         script: [
@@ -1096,7 +1096,7 @@ dbDescribe('worker robustness (db)', () => {
     const lead = await controlTx(sql, (tx) => insertLeadTx(tx, { name: 'Retry Lead' }));
     const leadId = lead.body.lead.id;
     await sql`delete from agent_runs where status = 'queued'`;
-    const runId = await enqueueRun(sql, { kind: 'reply', leadId });
+    const runId = (await enqueueRun(sql, { kind: 'reply', leadId })!)!;
     await sql`update agent_runs set
       params = ${sql.json({
         script: [
@@ -1126,7 +1126,7 @@ dbDescribe('worker robustness (db)', () => {
     const lead = await controlTx(sql, (tx) => insertLeadTx(tx, { name: 'Silent Lead' }));
     const leadId = lead.body.lead.id;
     await sql`delete from agent_runs where status = 'queued'`;
-    const runId = await enqueueRun(sql, { kind: 'reply', leadId });
+    const runId = (await enqueueRun(sql, { kind: 'reply', leadId })!)!;
     await sql`update agent_runs set
       params = ${sql.json({ script: [{ text: 'ok' }] } as never)}
       where id = ${runId}`;
@@ -1143,7 +1143,7 @@ dbDescribe('worker robustness (db)', () => {
     const lead = await controlTx(sql, (tx) => insertLeadTx(tx, { name: 'Blocked Lead' }));
     const leadId = lead.body.lead.id;
     await sql`delete from agent_runs where status = 'queued'`;
-    const runId = await enqueueRun(sql, { kind: 'reply', leadId });
+    const runId = (await enqueueRun(sql, { kind: 'reply', leadId })!)!;
     await sql`update agent_runs set
       params = ${sql.json({
         script: [
@@ -1178,7 +1178,7 @@ dbDescribe('worker robustness (db)', () => {
     const lead = await controlTx(sql, (tx) => insertLeadTx(tx, { name: 'Stale Read Lead' }));
     const leadId = lead.body.lead.id;
     await sql`delete from agent_runs where status = 'queued'`;
-    const runId = await enqueueRun(sql, { kind: 'reply', leadId });
+    const runId = (await enqueueRun(sql, { kind: 'reply', leadId })!)!;
     await sql`update agent_runs set
       params = ${sql.json({
         script: [
@@ -1210,7 +1210,7 @@ dbDescribe('worker robustness (db)', () => {
     const lead = await controlTx(sql, (tx) => insertLeadTx(tx, { name: 'Cached Page Lead' }));
     const leadId = lead.body.lead.id;
     await sql`delete from agent_runs where status = 'queued'`;
-    const runId = await enqueueRun(sql, { kind: 'reply', leadId });
+    const runId = (await enqueueRun(sql, { kind: 'reply', leadId })!)!;
     await sql`update agent_runs set
       params = ${sql.json({
         script: [

@@ -481,9 +481,9 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('whatsapp history + ignore list 
     );
     const leadId = lead.body.lead.id;
     await sql`delete from agent_runs where status = 'queued'`;
-    // Deliberately scheduled dates (staff OR agent — a callback the model
-    // promised) materialize unmarked so a reply can't cancel them; only
-    // cadence-floor work is disposable.
+    // Deliberate staff scheduling materializes unmarked so a reply can't
+    // cancel it; agent-sourced dates are the model's own cadence — marked
+    // and disposable like the cadence floor.
     await sql`
       update leads set next_action_at = now() - interval '1 hour',
                        next_action_source = 'staff'
@@ -504,11 +504,17 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('whatsapp history + ignore list 
     `;
     expect(swept).toHaveLength(1);
     expect(swept[0]!.params.auto).toBeUndefined();
-    const agentSwept = await sql<{ params: Record<string, unknown> }[]>`
-      select params from agent_runs
+    const agentSwept = await sql<{ id: string; params: Record<string, unknown> }[]>`
+      select id, params from agent_runs
       where lead_id = ${agentLead.body.lead.id} and kind = 'outreach' and status = 'queued'
     `;
-    expect(agentSwept[0]!.params.auto).toBeUndefined();
+    expect(agentSwept).toHaveLength(1);
+    expect(agentSwept[0]!.params.auto).toBe('agent');
+    // Park both so the first inbound's drain can't claim them mid-assertion.
+    await sql`
+      update agent_runs set run_at = now() + interval '1 hour'
+      where id in (${swept[0]!.id}, ${agentSwept[0]!.id})
+    `;
     const res = await ingestInbound(sql, {
       channel: 'whatsapp',
       from: '5511955550003@s.whatsapp.net',
@@ -520,5 +526,22 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('whatsapp history + ignore list 
       select status from agent_runs where id = ${swept[0]!.id}
     `;
     expect(r!.status).not.toBe('canceled');
+    // The agent-sourced nudge is disposable: canceled on the lead's own
+    // inbound, and the unswept date clears the same way.
+    const res2 = await ingestInbound(sql, {
+      channel: 'whatsapp',
+      from: '5511955550004@s.whatsapp.net',
+      body: 'oi',
+      providerMessageId: `fx10d-${crypto.randomUUID()}`,
+    });
+    if ('ignored' in res2) throw new Error('unexpected ignore');
+    const [ar] = await sql<{ status: string }[]>`
+      select status from agent_runs where id = ${agentSwept[0]!.id}
+    `;
+    expect(ar!.status).toBe('canceled');
+    const agentDate = await sql<{ next_action_at: Date | null }[]>`
+      select next_action_at from leads where id = ${agentLead.body.lead.id}
+    `;
+    expect(agentDate[0]!.next_action_at).toBeNull();
   });
 });
