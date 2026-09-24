@@ -267,6 +267,76 @@ describe('replayJournal', () => {
     expect(r.messages[0]!.content).toBe('segundo');
   });
 
+  test('landed artifact-minting calls rebuild their signatures — unproven pendings stay out', () => {
+    const r = replayJournal([
+      // a send that landed before the crash — suppressing its re-emission
+      // beats a possible double-send
+      {
+        type: 'tool',
+        name: 'send_message',
+        args: { leadId: 'l1', body: 'olá' },
+        out: { message: { id: 'm1', status: 'sent' } },
+      },
+      // a task journaled but never resolved — reconcileInterrupted only
+      // fills out when the claim proves it committed; unproven means it
+      // never ran, so it must stay retryable (not suppressible)
+      {
+        type: 'tool',
+        name: 'create_task',
+        args: { leadId: 'l1', title: 'vip' },
+        callId: 'c1',
+        step: 0,
+        pending: true,
+      },
+      // failures minted nothing — they stay retryable
+      {
+        type: 'tool',
+        name: 'create_task',
+        args: { leadId: 'l1', title: 'x' },
+        out: { error: 'boom' },
+      },
+      {
+        type: 'tool',
+        name: 'send_message',
+        args: { leadId: 'l1', body: 'tchau' },
+        out: { blocked: true },
+      },
+      // state-writes never join the set
+      { type: 'tool', name: 'update_lead', args: { id: 'l1', city: 'Recife' }, out: { lead: {} } },
+    ]);
+    expect(r.landedSigs.has(JSON.stringify(['send_message', { leadId: 'l1', body: 'olá' }]))).toBe(
+      true,
+    );
+    expect(r.landedSigs.size).toBe(1);
+  });
+
+  test('an unverified claim lookup suppresses pending artifact-mints conservatively', () => {
+    const journal = [
+      // attempt 1 journaled the task then died — out-less. When the claim
+      // lookup fails, it may have committed — suppress the re-emission
+      {
+        type: 'tool',
+        name: 'create_task',
+        args: { leadId: 'l1', title: 'vip' },
+        callId: 'c1',
+        step: 0,
+        pending: true,
+      },
+    ];
+    // successful check (proven unclaimed): the entry stays retryable
+    expect(
+      replayJournal(journal).landedSigs.has(
+        JSON.stringify(['create_task', { leadId: 'l1', title: 'vip' }]),
+      ),
+    ).toBe(false);
+    // failed check (unverifiable): suppress rather than risk a duplicate
+    expect(
+      replayJournal(journal, true).landedSigs.has(
+        JSON.stringify(['create_task', { leadId: 'l1', title: 'vip' }]),
+      ),
+    ).toBe(true);
+  });
+
   test('the latest stored plan rebuilds ctx.plan — no durable field backs it', () => {
     const r = replayJournal([
       {
@@ -1575,6 +1645,159 @@ dbDescribe('worker robustness (db)', () => {
     // exactly one new Cafe Azul card — the repeat never reached insertLeadTx
     const after = await sql`select id from leads where name = 'Cafe Azul'`;
     expect(after.length).toBe(before.length + 1);
+  });
+
+  test('a duplicate artifact mint is suppressed across turns — the landed set is run-wide', async () => {
+    await migrate(sql, MIGRATIONS);
+    const lead = await controlTx(sql, (tx) => insertLeadTx(tx, { name: 'Gap Task Lead' }));
+    const leadId = lead.body.lead.id;
+    // title-scoped: the run's request_human ending also writes lead_tasks
+    const before = await sql`select id from lead_tasks where lead_id = ${leadId} and title = 'vip'`;
+    await sql`delete from agent_runs where status = 'queued'`;
+    const runId = (await enqueueRun(sql, { kind: 'reply', leadId })!)!;
+    await sql`update agent_runs set
+      params = ${sql.json({
+        script: [
+          { toolCalls: [{ name: 'create_task', args: { leadId, title: 'vip' } }] },
+          // a different turn's calls flush the one-turn sig map entirely —
+          // the artifact repeat must still be suppressed on the landed set
+          { toolCalls: [{ name: 'get_lead', args: { id: leadId } }] },
+          { toolCalls: [{ name: 'create_task', args: { leadId, title: 'vip' } }] },
+          { toolCalls: [{ name: 'request_human', args: { leadId, reason: 'travou' } }] },
+          { text: 'fim' },
+        ],
+      } as never)}
+      where id = ${runId}`;
+    expect(await runOnce(sql)).toBe(true);
+    const r = await getRun(runId);
+    expect(r.status).toBe('done');
+    const tasks = r.steps.filter((s) => (s as { name?: string }).name === 'create_task') as {
+      out?: { error?: string };
+    }[];
+    expect(tasks).toHaveLength(2);
+    expect(tasks[0]!.out?.error ?? '').not.toMatch(/^REPEAT/);
+    expect(tasks[1]!.out?.error).toMatch(/^REPEAT/);
+    const after = await sql`select id from lead_tasks where lead_id = ${leadId} and title = 'vip'`;
+    expect(after.length).toBe(before.length + 1);
+  });
+
+  test('a pending artifact-mint retries unless its claim row proves it landed', async () => {
+    await migrate(sql, MIGRATIONS);
+    const lead = await controlTx(sql, (tx) => insertLeadTx(tx, { name: 'Pending Task Lead' }));
+    const leadId = lead.body.lead.id;
+    const before = await sql`select id from lead_tasks where lead_id = ${leadId} and title = 'vip'`;
+    await sql`delete from agent_runs where status = 'queued'`;
+    const pendingJournal = () => [
+      // attempt 1 journaled the task then died — out-less = unproven
+      {
+        type: 'tool',
+        name: 'create_task',
+        args: { leadId, title: 'vip' },
+        callId: 'c1',
+        step: 0,
+        pending: true,
+      },
+      { type: 'resumed', attempt: 1 },
+    ];
+    const script = {
+      script: [
+        { toolCalls: [{ name: 'create_task', args: { leadId, title: 'vip' } }] },
+        { toolCalls: [{ name: 'request_human', args: { leadId, reason: 'travou' } }] },
+        { text: 'fim' },
+      ],
+    };
+    // Case 1: no claim row — the call never ran; the retry must execute
+    const runA = (await enqueueRun(sql, { kind: 'reply', leadId })!)!;
+    await sql`update agent_runs set
+      steps = ${sql.json(pendingJournal() as never[])},
+      params = ${sql.json(script as never)}
+      where id = ${runA}`;
+    expect(await runOnce(sql)).toBe(true);
+    const rA = await getRun(runA);
+    const taskA = rA.steps.find(
+      (s) =>
+        (s as { name?: string; callId?: string }).name === 'create_task' &&
+        (s as { callId?: string }).callId === 'mock-1-0',
+    ) as { out?: { error?: string } } | undefined;
+    expect(taskA?.out?.error ?? '').not.toMatch(/^REPEAT/);
+    expect(
+      (await sql`select id from lead_tasks where lead_id = ${leadId} and title = 'vip'`).length,
+    ).toBe(before.length + 1);
+    // request_human parked the lead — lift it so run B can claim
+    await sql`update leads set agent_paused_at = null where id = ${leadId}`;
+    // Case 2: a committed claim row proves the crashed call's work landed —
+    // the identical retry is suppressed or it would mint a second row
+    const runB = (await enqueueRun(sql, { kind: 'reply', leadId })!)!;
+    await sql`insert into control_idempotency_keys (key, response, status_code)
+      values (${`agent:${runB}:0:create_task:c1`}, '{}', 200)`;
+    await sql`update agent_runs set
+      steps = ${sql.json(pendingJournal() as never[])},
+      params = ${sql.json(script as never)}
+      where id = ${runB}`;
+    expect(await runOnce(sql)).toBe(true);
+    const rB = await getRun(runB);
+    const taskB = rB.steps.find(
+      (s) =>
+        (s as { name?: string; callId?: string }).name === 'create_task' &&
+        (s as { callId?: string }).callId === 'mock-1-0',
+    ) as { out?: { error?: string } } | undefined;
+    expect(taskB?.out?.error).toMatch(/^REPEAT/);
+    expect(
+      (await sql`select id from lead_tasks where lead_id = ${leadId} and title = 'vip'`).length,
+    ).toBe(before.length + 1);
+    await sql`delete from control_idempotency_keys where key = ${`agent:${runB}:0:create_task:c1`}`;
+  });
+
+  test('a read_pages result with fetch failures stays retryable — errors[] is not clean', async () => {
+    await migrate(sql, MIGRATIONS);
+    const lead = await controlTx(sql, (tx) => insertLeadTx(tx, { name: 'Failed Fetch Lead' }));
+    const leadId = lead.body.lead.id;
+    await sql`delete from agent_runs where status = 'queued'`;
+    const runId = (await enqueueRun(sql, { kind: 'reply', leadId })!)!;
+    await sql`update agent_runs set
+      params = ${sql.json({
+        script: [
+          // mixed batch: a fetchable url + an unfetchable private host —
+          // the result carries errors[], which must not count as a clean
+          // prior result
+          {
+            toolCalls: [
+              {
+                name: 'read_pages',
+                args: { urls: ['https://shop.example/catalog', 'http://192.168.10.9/x'] },
+              },
+            ],
+          },
+          // identical retry — executes: the failed url re-validates, the
+          // good page comes back from the run cache for free
+          {
+            toolCalls: [
+              {
+                name: 'read_pages',
+                args: { urls: ['https://shop.example/catalog', 'http://192.168.10.9/x'] },
+              },
+            ],
+          },
+          { toolCalls: [{ name: 'request_human', args: { leadId, reason: 'travou' } }] },
+          { text: 'fim' },
+        ],
+      } as never)}
+      where id = ${runId}`;
+    expect(await runOnce(sql)).toBe(true);
+    const r = await getRun(runId);
+    const reads = r.steps.filter((s) => (s as { name?: string }).name === 'read_pages') as {
+      readSpent?: number;
+      out?: { error?: string; errors?: unknown[]; pages?: { cached?: boolean }[] };
+    }[];
+    expect(reads).toHaveLength(2);
+    // the retry was NOT suppressed — it reported the failure again
+    expect(reads[0]!.out?.error).toBeUndefined();
+    expect(reads[0]!.out?.errors).toHaveLength(1);
+    expect(reads[1]!.out?.error).toBeUndefined();
+    expect(reads[1]!.out?.errors).toHaveLength(1);
+    // the successful page stayed cached — the retry spent nothing on it
+    expect(reads[1]!.out?.pages?.[0]?.cached).toBe(true);
+    expect(reads[1]!.readSpent).toBe(0);
   });
 
   test('a cached re-read does not spend the reply page budget', async () => {

@@ -802,9 +802,10 @@ const READ_TOOLS = new Set([
 ]);
 
 /** Writes that mint a NEW durable artifact per call — a duplicate can
- *  never be a state-restore, so an identical repeat is suppressed even
- *  after other writes landed. (State writes are different: a repeated
- *  update_lead can legitimately restore a field another call changed.)
+ *  never be a state-restore, so an identical repeat is suppressed for
+ *  the rest of the run (a run-wide landed-signature set, not the
+ *  one-turn prevSigs window). State writes are different: a repeated
+ *  update_lead can legitimately restore a field another call changed.
  *  send_message/draft_message mint a message row; create_task and
  *  request_human mint task rows; unsubscribe mints a farewell message;
  *  add_note mints an activity; create_lead inserts a lead card outside
@@ -865,6 +866,12 @@ export interface JournalReplay {
   /** Pages the journal already fetched — a reread after recovery hits the
    *  rebuilt cache instead of spending against the cap twice. */
   pageCache: Map<string, Promise<unknown>>;
+  /** Signatures of artifact-minting calls the journal proves landed
+   *  (clean result — pending entries whose durable claim proves they
+   *  committed are resolved into clean outs by reconcileInterrupted
+   *  before this runs; unclaimed pendings minted nothing and stay
+   *  retryable): a re-emitted one would mint a second row. */
+  landedSigs: Set<string>;
 }
 
 /** Replay a reclaimed run's journal into live conversation + harness state.
@@ -875,7 +882,7 @@ export interface JournalReplay {
  *  thoughtSignature ride along), tool results replay truncated, and calls
  *  that crashed mid-batch (pending, no out) close with an explicit
  *  interrupted marker so the model re-checks state instead of assuming. */
-export function replayJournal(prior: unknown[]): JournalReplay {
+export function replayJournal(prior: unknown[], claimsUnverified = false): JournalReplay {
   const replay: JournalReplay = {
     baseStep: 0,
     messages: [],
@@ -884,6 +891,7 @@ export function replayJournal(prior: unknown[]): JournalReplay {
     plan: null,
     pageReads: 0,
     pageCache: new Map(),
+    landedSigs: new Set(),
   };
   for (const s of prior) {
     if ((s as { type?: string } | null)?.type === 'model') replay.baseStep++;
@@ -935,9 +943,35 @@ export function replayJournal(prior: unknown[]): JournalReplay {
   // would re-bank a phone attempt 1 already found and reset the
   // no-progress detector.
   for (const s of prior) {
-    const t = s as { type?: string; name?: string; out?: unknown } | null;
+    const t = s as {
+      type?: string;
+      name?: string;
+      args?: unknown;
+      out?: unknown;
+    } | null;
     if (t?.type !== 'tool') continue;
     bankOut(t.out);
+    if (NON_IDEMPOTENT.has(t.name ?? '')) {
+      // Clean result = definitely landed (reconcileInterrupted resolved
+      // committed pendings into their stored responses upstream, so
+      // they arrive here as clean outs too). Errored/blocked/ignored
+      // minted nothing, and an unclaimed still-pending entry never
+      // executed — both stay retryable. Exception: when the claim
+      // lookup itself failed, an out-less entry might have committed —
+      // suppressing the re-emission beats a possible duplicate row.
+      const o = t.out as { error?: unknown; blocked?: unknown; ignored?: unknown } | null;
+      if (
+        o === undefined
+          ? claimsUnverified
+          : typeof o === 'object' &&
+            o !== null &&
+            !o.error &&
+            o.blocked !== true &&
+            o.ignored !== true
+      ) {
+        replay.landedSigs.add(JSON.stringify([t.name, t.args ?? {}]));
+      }
+    }
     if (t.name === 'read_pages') {
       // The journaled marker is authoritative: it's the fetch spend the
       // call charged (0 for a fully-cached read — the cap prices fetches,
@@ -1223,7 +1257,13 @@ export async function runOnce(sql: Sql): Promise<boolean> {
   // worker died — the stored claim response is the real result, not an
   // 'interrupted' guess. Best-effort: a failed lookup just leaves them
   // pending and they replay as interrupted like before.
-  await reconcileInterrupted(sql, run.id, priorSteps).catch(() => undefined);
+  // Whether the claim lookup actually ran — a swallowed failure means
+  // pending artifact-mints couldn't be verified, and replayJournal must
+  // suppress them conservatively rather than risk a duplicate row.
+  const claimsChecked = await reconcileInterrupted(sql, run.id, priorSteps).then(
+    () => true,
+    () => false,
+  );
   const steps: unknown[] = [...priorSteps];
   if (priorSteps.length) {
     steps.push({ type: 'resumed', attempt: run.attempts, at: new Date().toISOString() });
@@ -1382,7 +1422,7 @@ export async function runOnce(sql: Sql): Promise<boolean> {
       },
     });
     const tools = toolsFor(run.kind);
-    const replay = replayJournal(priorSteps);
+    const replay = replayJournal(priorSteps, !claimsChecked);
     const ctx: ToolContext = {
       sql,
       runId: run.id,
@@ -1457,6 +1497,10 @@ export async function runOnce(sql: Sql): Promise<boolean> {
     // call with a still-current clean prior result is a stuck model; a
     // retry after failure or a re-read after a mutation executes.
     let prevSigs = new Map<string, { ok: boolean; v: number }>();
+    // Artifact-minters get a run-wide window instead: a duplicate row is
+    // never a state-restore no matter how many turns passed, and the
+    // journal-seeded set survives reclaim.
+    const landedSigs = new Set(replay.landedSigs);
     // Bumps on every landed write — read results recorded at an older
     // version may describe stale state and must not suppress a re-read.
     let stateVersion = 0;
@@ -1769,8 +1813,7 @@ export async function runOnce(sql: Sql): Promise<boolean> {
           // repeated write after an intervening mutation can be a
           // legitimate state-restore. Artifact-minters are the exception:
           // a duplicate is never legitimate, always suppressed.
-          const suppress =
-            prev?.ok === true && (NON_IDEMPOTENT.has(call.name) || prev.v === stateVersion);
+          const suppress = landedSigs.has(sig) || (prev?.ok === true && prev.v === stateVersion);
           const readsBefore = ctx.pageReads;
           // Let a read_pages call stamp each fetch reservation onto its
           // pending journal entry the moment it validates — a worker that
@@ -1805,13 +1848,18 @@ export async function runOnce(sql: Sql): Promise<boolean> {
             error?: unknown;
             blocked?: unknown;
             ignored?: unknown;
+            errors?: unknown;
           } | null;
+          // Per-url failures ride in errors[] (read_pages), not top-level
+          // error — a result that reports fetch failures isn't a clean
+          // prior result, so its retry must reissue, not suppress.
           const clean =
             typeof res_ === 'object' &&
             res_ !== null &&
             !res_.error &&
             res_.blocked !== true &&
-            res_.ignored !== true;
+            res_.ignored !== true &&
+            !(Array.isArray(res_.errors) && res_.errors.length > 0);
           // A suppressed call stands on its earlier clean result — its own
           // REPEAT error must not mark the signature retryable or the next
           // identical emission would execute again.
@@ -1820,6 +1868,7 @@ export async function runOnce(sql: Sql): Promise<boolean> {
           // ran' must not count the call's own write, or every repeated
           // write would look stale to itself.
           curSigs.set(sig, suppress ? prev! : { ok: clean, v: stateVersion });
+          if (clean && NON_IDEMPOTENT.has(call.name)) landedSigs.add(sig);
           delete entry.pending;
           entry.out = out;
           messages.push({
