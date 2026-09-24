@@ -848,9 +848,7 @@ export function replayJournal(prior: unknown[]): JournalReplay {
       // Re-bank fetched pages under both request and final url — a
       // recovered run's reread then hits the rebuilt cache instead of
       // paying for a page the run already holds.
-      const ro = t.out as
-        | { pages?: { url?: unknown; finalUrl?: unknown }[] }
-        | null;
+      const ro = t.out as { pages?: { url?: unknown; finalUrl?: unknown }[] } | null;
       for (const pg of ro?.pages ?? []) {
         const rec = Promise.resolve({ page: pg });
         for (const u of [pg.url, pg.finalUrl]) {
