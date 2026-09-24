@@ -101,7 +101,7 @@ export async function capLockTx(tx: Sql, leadId: string): Promise<void> {
 /** 'under' admits the run; the rest refuse it. Only 'flagged' means THIS
  *  call wrote the flag + staff task — 'already' saw the flag committed at
  *  this level. */
-async function leadUnderCostCapTx(tx: Sql, leadId: string): Promise<CapVerdict> {
+export async function leadUnderCostCapTx(tx: Sql, leadId: string): Promise<CapVerdict> {
   const g = await getSettingTx<Partial<Guardrails>>(tx, 'guardrails', {});
   const capUsd = g.leadLifetimeCostCapUsd ?? DEFAULT_GUARDRAILS.leadLifetimeCostCapUsd;
   if (capUsd <= 0) return 'under';
@@ -1563,14 +1563,25 @@ export async function runOnce(sql: Sql): Promise<boolean> {
           `,
         );
         if (replied.length) {
-          await controlTx(
-            sql,
-            (tx) => tx`
+          const superseded = await controlTx(sql, async (tx) => {
+            const flipped = await tx<{ id: string }[]>`
               update agent_runs set status = 'canceled', error = 'lead respondeu',
                 finished_at = now()
               where id = ${run.id} and status = 'running' and claim_token = ${run.claim_token}
-            `,
-          );
+              returning id
+            `;
+            if (!flipped[0]) return [] as string[];
+            // The run's already-committed unapproved drafts die with it —
+            // same lifecycle as the ingest gate's cancels.
+            const drafts = await tx<{ thread_id: string }[]>`
+              update lead_messages
+              set status = 'rejected', error = 'lead respondeu', updated_at = now()
+              where agent_run_id = ${run.id} and status = 'draft'
+              returning thread_id
+            `;
+            return drafts.map((d) => d.thread_id);
+          });
+          for (const tid of new Set(superseded)) emitControlEvent('draft.change', tid);
           emitControlEvent('run.update', run.id);
           lost = true;
           break;
@@ -2372,18 +2383,23 @@ export async function sweepOutreach(sql: Sql): Promise<number> {
       // automation's own nudges (the prompt writes nextActionAt as the
       // "próxima cadência"): obsolete the moment the lead writes back — the
       // reply run re-commits any still-wanted follow-up with fresh context.
-      // 'staff' is the only human scheduling, so its run materializes
-      // unmarked — an explicit staff decision outranks the reply, like
-      // every staff-triggered run. insertRun also applies the lifetime cost
-      // cap — a capped lead returns null and KEEPS its due action (claimRun
-      // parks it anyway, so no run executes over budget).
+      // 'staff' and 'requested' materialize UNMARKED like every staff-
+      // triggered run: a human's schedule and a lead-asked callback ("me
+      // chama terça") are promises a reply can't cancel — they outrank the
+      // reply exactly like an explicit staff decision. insertRun also
+      // applies the lifetime cost cap — a capped lead returns null and
+      // KEEPS its due action (claimRun parks it anyway, so no run executes
+      // over budget).
       const cap: { flagged?: boolean } = {};
       const runId = await insertRun(
         tx,
         {
           kind: 'outreach',
           leadId: id,
-          params: next_action_source === 'staff' ? {} : { auto: next_action_source },
+          params:
+            next_action_source === 'staff' || next_action_source === 'requested'
+              ? {}
+              : { auto: next_action_source },
         },
         cap,
       );
