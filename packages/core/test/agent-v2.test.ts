@@ -1,6 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 import postgres from 'postgres';
-import { insertRun } from '../src/agent/runner.ts';
+import { createApp } from '../src/app.ts';
+import { insertRun, sweepBriefs, sweepOutreach } from '../src/agent/runner.ts';
 import {
   executeTool,
   registeredToolNames,
@@ -22,7 +23,12 @@ import {
   explainAutonomyTx,
 } from '../src/agent/policy.ts';
 import { validateSetting } from '../src/modules/integrations.ts';
-import { parseWakeupAt, retireWakeupsOnInboundTx, sweepWakeups } from '../src/agent/wakeups.ts';
+import {
+  parseWakeupAt,
+  retireWakeupsOnInboundTx,
+  scheduleWakeupTx,
+  sweepWakeups,
+} from '../src/agent/wakeups.ts';
 import { controlTx } from '../src/modules/control.ts';
 import { insertLeadTx, leadInsert } from '../src/modules/leads.ts';
 
@@ -101,6 +107,22 @@ describe('agent v2 — pure', () => {
     expect(parseWakeupAt('2026-01-01T00:05:00Z', now)).toBeTypeOf('string');
     expect(parseWakeupAt('2026-06-01T00:00:00Z', now)).toBeTypeOf('string');
     expect(parseWakeupAt('2026-01-02T00:00:00Z', now)).toBeInstanceOf(Date);
+  });
+
+  test('wakeup `at` must be ISO-8601 — Date.parse leniency stays out', () => {
+    const now = Date.parse('2026-01-01T00:00:00Z');
+    // Strings Date.parse accepts but that are not ISO datetimes — a
+    // silently-guessed wakeup date is worse than an error the model retries.
+    for (const v of ['January 2, 2026', '01/02/2026', '2026/01/02', '02-01-2026']) {
+      expect(parseWakeupAt(v, now)).toBeTypeOf('string');
+    }
+    for (const v of [
+      '2026-01-02T00:00:00Z',
+      '2026-01-02T00:00:00.250Z',
+      '2026-01-02T03:00:00+02:00',
+    ]) {
+      expect(parseWakeupAt(v, now)).toBeInstanceOf(Date);
+    }
   });
 });
 
@@ -283,6 +305,209 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('agent v2 (db)', () => {
     const id = await controlTx(sql, (tx) => insertRun(tx, { kind: 'triage', leadId }));
     expect(id).toBeTruthy();
     await sql`update agent_runs set status = 'canceled' where id = ${id}`;
+  });
+
+  test('scheduleWakeupTx re-checks the 10-minute floor against db now() inside the tx', async () => {
+    const leadId = await mkLead('wk-floor');
+    // Bypasses parseWakeupAt — the point: a tx that sat on the advisory (or
+    // a conflicting writer) past the floor can't insert an expired wakeup.
+    const expired = await controlTx(sql, (tx) =>
+      scheduleWakeupTx(tx, {
+        leadId,
+        at: new Date(Date.now() + 5 * 60_000),
+        focus: 'x',
+        requested: false,
+        runId: null,
+      }),
+    );
+    expect('error' in expired && expired.error).toContain('10 minutes');
+    const ok = await controlTx(sql, (tx) =>
+      scheduleWakeupTx(tx, {
+        leadId,
+        at: new Date(Date.now() + 3_600_000),
+        focus: 'x',
+        requested: false,
+        runId: null,
+      }),
+    );
+    expect('error' in ok).toBe(false);
+    await sql`update agent_wakeups set status = 'canceled' where lead_id = ${leadId}`;
+  });
+
+  test('copilot keeps the opt-out but drafts the unsubscribe farewell', async () => {
+    const priorWa = (
+      await sql<{ enabled: boolean }[]>`
+        select enabled from control_integrations
+        where kind = 'whatsapp' and driver = 'log'
+      `
+    )[0];
+    const priorGuardrails = (
+      await sql<{ value: unknown }[]>`
+        select value from control_settings where key = 'guardrails'
+      `
+    )[0];
+    await sql`
+      insert into control_integrations (kind, driver, enabled)
+      values ('whatsapp', 'log', true)
+      on conflict (kind, driver) do update set enabled = true
+    `;
+    // quiet hours off — a blocked verdict would hide the forceDraft path.
+    await setSetting('guardrails', { quietStart: '00:00', quietEnd: '00:00' });
+    await setSetting('agent_autonomy', { level: 'copilot' });
+    try {
+      const leadId = await mkLead('unsub');
+      await sql`update leads set whatsapp = ${'+5511999' + uniq} where id = ${leadId}`;
+      // agent_run_id is a uuid column — a real run row also exercises that
+      // the opt-out's own cancel-queued pass leaves the composed draft.
+      const runId = (await controlTx(sql, (tx) => insertRun(tx, { kind: 'reply', leadId })))!;
+      const out = (await executeTool(
+        { ...mkCtx('reply', leadId, 'u'), runId },
+        's1',
+        'unsubscribe',
+        {
+          leadId,
+          reason: 'pediu para sair',
+          reply: 'tudo bem, não te incomodo mais',
+        },
+      )) as { unsubscribed: boolean; farewellSent: boolean; farewellDrafted?: boolean };
+      expect(out.unsubscribed).toBe(true);
+      expect(out.farewellSent).toBe(false);
+      expect(out.farewellDrafted).toBe(true);
+      const msg = (
+        await sql<{ status: string; is_farewell: boolean; author: string }[]>`
+          select m.status, m.is_farewell, m.author from lead_messages m
+          join lead_threads t on t.id = m.thread_id
+          where t.lead_id = ${leadId} and m.direction = 'out'
+        `
+      )[0]!;
+      expect(msg.status).toBe('draft');
+      expect(msg.is_farewell).toBe(true);
+      const lead = (
+        await sql<{ unsubscribed_at: string | null }[]>`
+          select unsubscribed_at from leads where id = ${leadId}
+        `
+      )[0]!;
+      expect(lead.unsubscribed_at).toBeTruthy();
+    } finally {
+      if (priorWa) {
+        await sql`
+          update control_integrations set enabled = ${priorWa.enabled}
+          where kind = 'whatsapp' and driver = 'log'
+        `;
+      } else {
+        await sql`delete from control_integrations where kind = 'whatsapp' and driver = 'log'`;
+      }
+      if (priorGuardrails) await setSetting('guardrails', priorGuardrails.value);
+      else await clearSetting('guardrails');
+      await clearSetting('agent_autonomy');
+    }
+  });
+
+  test('sweepOutreach folds a due agent wakeup into the cadence run — focus survives', async () => {
+    const leadId = await mkLead('fold');
+    await sql`
+      update leads set next_action_at = now() - interval '1 minute',
+                       next_action_source = 'cadence'
+      where id = ${leadId}
+    `;
+    const w = (
+      await sql<{ id: string }[]>`
+        insert into agent_wakeups (lead_id, at, focus)
+        values (${leadId}, now() - interval '1 minute', 'cobrar o orçamento')
+        returning id
+      `
+    )[0]!;
+    await sweepOutreach(sql);
+    const fired = (
+      await sql<{ status: string; fired_run_id: string | null }[]>`
+        select status, fired_run_id from agent_wakeups where id = ${w.id}
+      `
+    )[0]!;
+    expect(fired.status).toBe('fired');
+    expect(fired.fired_run_id).toBeTruthy();
+    const run = (
+      await sql<{ kind: string; params: Record<string, unknown> }[]>`
+        select kind, params from agent_runs where id = ${fired.fired_run_id!}
+      `
+    )[0]!;
+    expect(run.kind).toBe('outreach');
+    expect(run.params.auto).toBe('cadence');
+    expect(String(run.params.focus)).toContain('cobrar o orçamento');
+    expect(run.params.wakeupId).toBe(w.id);
+  });
+
+  test('sweepBriefs disables an over-budget strategist brief; a staff brief still fires', async () => {
+    await setSetting('agent_autonomy', { level: 'supervised', strategistAutoApproveUsd: 0.5 });
+    const strat = (
+      await sql<{ id: string }[]>`
+        insert into discovery_briefs (name, query, enabled, created_by, last_run_at)
+        values (${`sw-cap-${uniq}`}, 'q', true, 'strategist', now() - interval '2 days')
+        returning id
+      `
+    )[0]!;
+    const staff = (
+      await sql<{ id: string }[]>`
+        insert into discovery_briefs (name, query, enabled, created_by, last_run_at)
+        values (${`sw-staff-${uniq}`}, 'q', true, 'staff', now() - interval '2 days')
+        returning id
+      `
+    )[0]!;
+    // 60c spent in the rolling window vs a $0.50 cap — over regardless of
+    // ambient spend on the shared test DB.
+    const prior = await controlTx(sql, (tx) => insertRun(tx, { kind: 'discovery' }));
+    await sql`update agent_runs set status = 'done', cost_cents = 60 where id = ${prior!}`;
+    try {
+      await sweepBriefs(sql);
+      const rows = await sql<{ id: string; enabled: boolean; note: string | null }[]>`
+        select id, enabled, note from discovery_briefs where id in (${strat.id}, ${staff.id})
+      `;
+      const byId = Object.fromEntries(rows.map((r) => [r.id, r]));
+      expect(byId[strat.id]!.enabled).toBe(false);
+      expect(byId[strat.id]!.note).toContain('orçamento');
+      expect(byId[staff.id]!.enabled).toBe(true);
+      const staffRun = await sql<{ id: string }[]>`
+        select id from agent_runs where kind = 'discovery' and params->>'briefId' = ${staff.id}
+      `;
+      expect(staffRun).toHaveLength(1);
+    } finally {
+      await sql`
+        update agent_runs set status = 'canceled'
+        where status = 'queued'
+          and (id = ${prior!} or params->>'briefId' in (${strat.id}, ${staff.id}))
+      `;
+      await sql`delete from discovery_briefs where id in (${strat.id}, ${staff.id})`;
+      await clearSetting('agent_autonomy');
+    }
+  });
+
+  test('GET /agent/wakeups takes leadId or lead_id and validates limit', async () => {
+    const app = createApp({
+      sql,
+      sessionSecret: 's',
+      controlSecret: 'ctl-secret',
+      autoDrain: false,
+    });
+    const authed = { 'x-vendua-control': 'ctl-secret' };
+    const leadId = await mkLead('wk-list');
+    await sql`
+      insert into agent_wakeups (lead_id, at, focus)
+      values (${leadId}, now() + interval '1 hour', 'x')
+    `;
+    for (const q of ['limit=abc', 'limit=Infinity', 'limit=2.5']) {
+      const res = await app.request(`/control/v1/agent/wakeups?${q}`, { headers: authed });
+      expect(res.status).toBe(400);
+    }
+    const camel = await app.request(`/control/v1/agent/wakeups?leadId=${leadId}&limit=999`, {
+      headers: authed,
+    });
+    expect(camel.status).toBe(200);
+    const snake = await app.request(`/control/v1/agent/wakeups?lead_id=${leadId}&limit=1`, {
+      headers: authed,
+    });
+    expect(snake.status).toBe(200);
+    const body = (await snake.json()) as { wakeups: { leadId: string }[] };
+    expect(body.wakeups.every((w) => w.leadId === leadId)).toBe(true);
+    await sql`update agent_wakeups set status = 'canceled' where lead_id = ${leadId}`;
   });
 
   test('claim policy parks disabled playbooks and, at level off, automation rows only', async () => {

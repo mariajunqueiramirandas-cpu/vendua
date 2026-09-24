@@ -202,3 +202,44 @@ export async function explainAutonomyTx(
   }
   return { level, canRun, sendMode, reasons };
 }
+
+/** The strategist's rolling discovery budget — one arithmetic for proposal
+ *  approval (propose_brief) and every refire (sweepBriefs): trailing-7d
+ *  discovery spend plus a reservation per unit of work not yet booked
+ *  (queued/running discovery runs, plus auto-approved briefs that never
+ *  ran), each unit priced at the mean cost of recent discovery runs.
+ *  `excludeBriefId` removes one brief from the open count — sweepBriefs
+ *  evaluates a brief whose own imminent run IS the reservation being
+ *  tested, so it must not be double-counted. Serialize the caller's
+ *  check+write on the 'brief-proposals' advisory or two concurrent passes
+ *  can both see spare cap. */
+export async function discoveryBudgetTx(
+  tx: Sql,
+  excludeBriefId?: string,
+): Promise<{ capCents: number; spent: number; open: number; est: number }> {
+  const { strategistAutoApproveUsd } = await autonomyTx(tx);
+  const excl = excludeBriefId ?? null;
+  const row = (
+    await tx<{ spent: number; open: number; est: number }[]>`
+      select
+        coalesce((select sum(cost_cents) from agent_runs
+          where kind = 'discovery' and created_at > now() - interval '7 days'), 0)::int as spent,
+        ((select count(*) from agent_runs
+           where kind = 'discovery' and status in ('queued', 'running'))
+         + (select count(*) from discovery_briefs d
+            where d.created_by = 'strategist' and d.enabled
+              and d.created_at > now() - interval '7 days'
+              and (${excl}::uuid is null or d.id <> ${excl}::uuid)
+              and not exists (
+                select 1 from agent_runs r
+                where r.kind = 'discovery' and r.status in ('queued', 'running', 'done')
+                  and r.params->>'briefId' = d.id::text
+              )))::int as open,
+        coalesce((select avg(c)::int from (
+          select cost_cents as c from agent_runs
+          where kind = 'discovery' and status = 'done'
+          order by created_at desc limit 20) t), 50)::int as est
+    `
+  )[0]!;
+  return { capCents: Math.round(strategistAutoApproveUsd * 100), ...row };
+}

@@ -32,7 +32,7 @@ import { dispatchMessage } from './send.ts';
 import { whatsappRegistered } from './channels/whatsapp.ts';
 import { leadBoundArg, toolAvailable } from './tool-meta.ts';
 import { parseWakeupAt, scheduleWakeupTx } from './wakeups.ts';
-import { autonomyTx, automationAllowedTx } from './policy.ts';
+import { automationAllowedTx, discoveryBudgetTx } from './policy.ts';
 
 /**
  * agent/tools — the central tool registry (Hermes-style: one registry, gated
@@ -1173,6 +1173,7 @@ export async function executeTool(
           requested: args.requested === true,
           runId: UUID_LIKE.test(ctx.runId) ? ctx.runId : null,
         });
+        if ('error' in out) return { status: 200, body: { error: out.error } };
         return {
           status: 200,
           body: { scheduled: true, id: out.wakeup.id, at: out.wakeup.at, replaced: out.replaced },
@@ -1512,32 +1513,8 @@ export async function executeTool(
           // and auto-approved briefs with no finished run) plus this brief
           // fits the ceiling. Reservation = mean cost of recent discovery
           // runs. The brief-proposals lock above serializes the check.
-          const { strategistAutoApproveUsd } = await autonomyTx(tx);
-          let autoOn = false;
-          if (strategistAutoApproveUsd > 0) {
-            const b = (
-              await tx<{ spent: number; open: number; est: number }[]>`
-                select
-                  coalesce((select sum(cost_cents) from agent_runs
-                    where kind = 'discovery' and created_at > now() - interval '7 days'), 0)::int as spent,
-                  ((select count(*) from agent_runs
-                     where kind = 'discovery' and status in ('queued', 'running'))
-                   + (select count(*) from discovery_briefs d
-                      where d.created_by = 'strategist' and d.enabled
-                        and d.created_at > now() - interval '7 days'
-                        and not exists (
-                          select 1 from agent_runs r
-                          where r.kind = 'discovery' and r.status in ('queued', 'running', 'done')
-                            and r.params->>'briefId' = d.id::text
-                        )))::int as open,
-                  coalesce((select avg(c)::int from (
-                    select cost_cents as c from agent_runs
-                    where kind = 'discovery' and status = 'done'
-                    order by created_at desc limit 20) t), 50)::int as est
-              `
-            )[0]!;
-            autoOn = b.spent + (b.open + 1) * b.est <= Math.round(strategistAutoApproveUsd * 100);
-          }
+          const b = await discoveryBudgetTx(tx);
+          const autoOn = b.capCents > 0 && b.spent + (b.open + 1) * b.est <= b.capCents;
           const row = (
             await tx<{ id: string; name: string }[]>`
               insert into discovery_briefs (name, query, segment, city, target, enabled, created_by, note)
@@ -1620,6 +1597,7 @@ export async function executeTool(
         messageId: string | null;
         threadId: string | null;
         sendBlocked: string | null;
+        drafted: boolean;
         changed: boolean;
       };
       const res = await claimControl<UnsubBody>(sql, key, async (tx) => {
@@ -1628,6 +1606,7 @@ export async function executeTool(
         let messageId: string | null = null;
         let threadId: string | null = null;
         let sendBlocked: string | null = null;
+        let drafted = false;
         if (reply) {
           const pick = await resolveChannelTx(tx, leadId, {
             requested: null,
@@ -1638,22 +1617,27 @@ export async function executeTool(
             sendBlocked = pick.reason ?? 'no channel';
           } else {
             const g = await getSettingTx(tx, 'guardrails', {} as Partial<Guardrails>);
-            const verdict = await checkSendAllowedTx(
-              tx,
-              { ...DEFAULT_GUARDRAILS, ...g },
-              leadId,
-              pick.channel,
-            );
+            // Draft-only runs compose like draft_message — everything inside
+            // checkSendAllowedTx exists to stop a message leaving the
+            // building, and the farewell draft never does.
+            const verdict = ctx.draftOnly
+              ? ({ ok: true, forceDraft: false } as const)
+              : await checkSendAllowedTx(tx, { ...DEFAULT_GUARDRAILS, ...g }, leadId, pick.channel);
             if (!verdict.ok) {
               sendBlocked = verdict.reason ?? 'guardrail';
               await recordBlockedSendTx(tx, leadId, pick.channel, sendBlocked);
             } else {
+              // Copilot mode (forceDraft) keeps the opt-out but the farewell
+              // becomes an approval draft instead of queueing — approving it
+              // still sends (is_farewell survives the dispatch suppression
+              // re-check), it just never leaves unreviewed.
+              drafted = verdict.forceDraft || ctx.draftOnly;
               const composed = await composeMessageTx(tx, {
                 leadId,
                 channel: pick.channel,
                 body: reply,
                 author: 'agent',
-                status: 'queued',
+                status: drafted ? 'draft' : 'queued',
                 agentRunId: ctx.runId,
                 farewell: true,
               });
@@ -1681,19 +1665,32 @@ export async function executeTool(
         }
         return {
           status: 200,
-          body: { messageId, threadId, sendBlocked, changed: changed.length > 0 },
+          body: {
+            messageId,
+            threadId,
+            sendBlocked,
+            drafted,
+            changed: changed.length > 0,
+          },
         };
       });
       if (!res.replayed) {
-        if (res.body.threadId) emitControlEvent('thread.message', res.body.threadId);
+        if (res.body.threadId) {
+          emitControlEvent('thread.message', res.body.threadId);
+          if (res.body.drafted) emitControlEvent('draft.change', res.body.threadId);
+        }
         if (res.body.changed) emitControlEvent('lead.change', leadId);
       }
-      if (res.body.messageId) {
+      if (res.body.messageId && !res.body.drafted) {
         // Same compose→dispatch gap as send_message: the farewell must die
         // with the run that queued it.
         await dispatchMessage(sql, res.body.messageId, guard);
       }
-      return { unsubscribed: true, farewellSent: !!res.body.messageId };
+      return {
+        unsubscribed: true,
+        farewellSent: !!res.body.messageId && !res.body.drafted,
+        ...(res.body.drafted ? { farewellDrafted: true } : {}),
+      };
     }
     case 'web_search': {
       const { discoveryFor, annotateResults } = await import('./channels/discovery.ts');

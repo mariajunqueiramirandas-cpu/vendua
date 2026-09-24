@@ -72,11 +72,18 @@ function toWakeup(r: WakeupRow): Wakeup {
   };
 }
 
+/** ISO-8601 shape — Date.parse alone also accepts "March 5, 2030" or
+ *  "05/03/2030" and would silently land the wakeup on a guess. */
+const ISO_DATETIME_RE =
+  /^\d{4}-\d{2}-\d{2}(?:[T ]\d{2}:\d{2}(?::\d{2}(?:\.\d{1,6})?)?(?:Z|[+-]\d{2}:?\d{2})?)?$/;
+
 /** Validates and parses a schedule time — the bounds keep the agent from
  *  hot-looping itself (≥10 min) or parking work past any useful horizon. */
 export function parseWakeupAt(v: unknown, now = Date.now()): Date | string {
   if (typeof v !== 'string' || !v.trim()) return 'at must be an ISO-8601 datetime';
-  const t = Date.parse(v);
+  const s = v.trim();
+  if (!ISO_DATETIME_RE.test(s)) return 'at must be an ISO-8601 datetime';
+  const t = Date.parse(s);
   if (!Number.isFinite(t)) return 'at must be an ISO-8601 datetime';
   if (t < now + WAKEUP_MIN_LEAD_MS) return 'at must be at least 10 minutes from now';
   if (t > now + WAKEUP_MAX_AHEAD_MS) return 'at must be within 90 days';
@@ -97,8 +104,18 @@ export async function scheduleWakeupTx(
     runId: string | null;
     createdBy?: 'agent' | 'staff';
   },
-): Promise<{ wakeup: Wakeup; replaced: string | null }> {
+): Promise<{ wakeup: Wakeup; replaced: string | null } | { error: string }> {
   await tx`select pg_advisory_xact_lock(hashtext(${'wakeup:' + input.leadId}))`;
+  // parseWakeupAt's app-clock bounds go stale while this tx waits on the
+  // advisory (or any conflicting writer): a long hold can push `at` under
+  // the floor between validation and insert. Recheck against db now()
+  // inside the lock so the floor holds at commit time.
+  const soon = (
+    await tx<{ soon: boolean }[]>`
+      select (${input.at}::timestamptz < now() + make_interval(secs => ${WAKEUP_MIN_LEAD_MS / 1000})) as soon
+    `
+  )[0]!.soon;
+  if (soon) return { error: 'at must be at least 10 minutes from now' };
   const createdBy = input.createdBy ?? 'agent';
   let replaced: string | null = null;
   if (createdBy === 'agent') {
