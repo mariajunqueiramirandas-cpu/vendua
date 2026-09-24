@@ -1200,6 +1200,26 @@ export async function executeTool(
           };
         }
         const chan = pick.channel;
+        // A retried send reuses this claim key, so `key` replays — but a
+        // NEW callId for the same logical send (same body, same resolved
+        // channel) lands here. If its prior row failed after the wire was
+        // touched, composing again could put a second copy on the wire —
+        // adopt the failure instead. A failure stamped pre-wire (no
+        // dispatch_attempted_at) provably never left and stays retryable.
+        const priorFailed = await tx<{ dispatch_attempted_at: string | null }[]>`
+          select m.dispatch_attempted_at from lead_messages m
+          join lead_threads t on t.id = m.thread_id
+          where t.lead_id = ${leadId} and t.channel = ${chan}
+            and m.agent_run_id = ${ctx.runId} and m.status = 'failed'
+            and m.body = ${String(args.body).trim()}
+          order by m.created_at desc limit 1
+        `;
+        if (priorFailed[0]?.dispatch_attempted_at) {
+          return {
+            status: 200,
+            body: { blocked: true as const, reason: 'already dispatched by this run' },
+          };
+        }
         // Pause applies per (lead, channel) — staff disabling the DESTINATION
         // thread (or request_human earlier in this same run) must stop sends
         // even when the lead's agent_mode still allows them. A missing thread

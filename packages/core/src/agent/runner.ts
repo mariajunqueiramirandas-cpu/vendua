@@ -801,6 +801,16 @@ const READ_TOOLS = new Set([
   'serp',
 ]);
 
+/** Local reads of mutable CRM state. `stateVersion` only counts THIS
+ *  run's writes, so suppressing an identical get_lead/search_leads on
+ *  that version alone would hide external edits (staff, inbound-driven
+ *  updates) made between turns. They're cheap and spend no remote
+ *  budget — exempt them from repeat-suppression; a true identical-call
+ *  loop is still caught by the LOOP nudge. Remote/budgeted reads
+ *  (read_pages, web_search, serp, maps_lookup, instagram_profile) keep
+ *  suppression — that's what their spend caps exist for. */
+const MUTABLE_READS = new Set(['get_lead', 'search_leads']);
+
 /** Writes that mint a NEW durable artifact per call — a duplicate can
  *  never be a state-restore, so an identical repeat is suppressed for
  *  the rest of the run (a run-wide landed-signature set, not the
@@ -1813,7 +1823,9 @@ export async function runOnce(sql: Sql): Promise<boolean> {
           // repeated write after an intervening mutation can be a
           // legitimate state-restore. Artifact-minters are the exception:
           // a duplicate is never legitimate, always suppressed.
-          const suppress = landedSigs.has(sig) || (prev?.ok === true && prev.v === stateVersion);
+          const suppress =
+            !MUTABLE_READS.has(call.name) &&
+            (landedSigs.has(sig) || (prev?.ok === true && prev.v === stateVersion));
           const readsBefore = ctx.pageReads;
           // Let a read_pages call stamp each fetch reservation onto its
           // pending journal entry the moment it validates — a worker that

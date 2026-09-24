@@ -170,8 +170,12 @@ export async function dispatchMessage(
       return { fail: reason };
     }
 
+    // 'sending' is the point of no return: the provider call follows, so a
+    // failure after this transition may already be on the wire — stamp the
+    // attempt durably so a later dedupe can tell it from a pre-wire refusal.
     const upd = await tx<{ sending_at: string }[]>`
-      update lead_messages set status = 'sending', updated_at = clock_timestamp()
+      update lead_messages set status = 'sending', dispatch_attempted_at = clock_timestamp(),
+        updated_at = clock_timestamp()
       where id = ${messageId} returning updated_at as sending_at
     `;
     wroteTid = thread.id;
