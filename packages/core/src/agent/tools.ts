@@ -14,12 +14,12 @@ import {
 import { addActivity, createTask } from '../modules/activities.ts';
 import { composeMessageTx, channel } from '../modules/threads.ts';
 import {
-  AGENT_MEMORY_MAX_FACTS,
   DEFAULT_GUARDRAILS,
   getSetting,
   getSettingTx,
   type Guardrails,
 } from '../modules/integrations.ts';
+import { rememberTx, upsertLeadFactTx } from '../modules/agent-memory.ts';
 import { recordBlockedSendTx } from '../modules/channel-health.ts';
 import {
   agentPausedForChannelTx,
@@ -262,6 +262,26 @@ const REGISTRY: { def: AgentTool }[] = [
   },
   {
     def: {
+      name: 'set_fact',
+      description:
+        'Record a durable structured fact about THIS lead — snake_case key (e.g. "team_size", "decision_maker", "monthly_volume"), short value. It lands in lead memory: every later run on this lead sees it under FATOS. Facts are for durable structured data; add_note is for prose. Same key upserts the value.',
+      parameters: {
+        type: 'object',
+        properties: {
+          leadId: leadIdArg,
+          key: { type: 'string', description: 'snake_case, ≤60 chars' },
+          value: { type: 'string', description: '≤500 chars' },
+          confidence: {
+            type: 'number',
+            description: 'how sure you are, 0..1 (default 1)',
+          },
+        },
+        required: ['leadId', 'key', 'value'],
+      },
+    },
+  },
+  {
+    def: {
       name: 'create_task',
       description: 'Create a follow-up task for staff or self.',
       parameters: {
@@ -335,10 +355,16 @@ const REGISTRY: { def: AgentTool }[] = [
     def: {
       name: 'remember',
       description:
-        'Persist a durable learning (agent memory — e.g. "docerias respond better at night"). Bounded: keep ≤100 facts, consolidate instead of duplicating — when the cap drops an old fact the result returns it as `evicted`; fold it into a consolidated fact on a later call.',
+        'Persist a durable learning (agent memory — e.g. "docerias respond better at night"). Pass `segment` to scope it to one segment ("pudim") — it then only reaches runs on that segment; omit it for a workspace-wide learning. Dedupes case-insensitively per scope. Bounded: learnings cap at 200 total, evicting the oldest unpinned — the result returns dropped ones as `evicted`; fold them into a consolidated fact on a later call.',
       parameters: {
         type: 'object',
-        properties: { fact: { type: 'string' } },
+        properties: {
+          fact: { type: 'string' },
+          segment: {
+            type: 'string',
+            description: 'scope the learning to this segment only (lowercased, ≤120 chars)',
+          },
+        },
         required: ['fact'],
       },
     },
@@ -1417,36 +1443,61 @@ export async function executeTool(
     }
     case 'remember': {
       const fact = String(args.fact ?? '').slice(0, 500);
-      // Row lock on the settings row makes the read-modify-write atomic —
-      // concurrent remembers serialize instead of clobbering each other.
-      const written = await controlTx(sql, async (tx) => {
-        await assertRunClaimTx(tx, ctx);
-        await tx`
-          insert into control_settings (key, value)
-          values ('agent_memory', ${tx.json({ facts: [] } as never)})
-          on conflict (key) do nothing
-        `;
-        const rows = await tx<{ value: { facts?: unknown } }[]>`
-          select value from control_settings where key = 'agent_memory' for update
-        `;
-        const cur = Array.isArray(rows[0]?.value?.facts) ? (rows[0]!.value.facts as string[]) : [];
-        // The cap drops the OLDEST facts — surface them so the model can
-        // fold a dropped learning into a consolidated fact on a later call
-        // instead of losing it silently.
-        const next = [...cur.filter((f) => f !== fact), fact];
-        const evicted = next.slice(0, Math.max(0, next.length - AGENT_MEMORY_MAX_FACTS));
-        const facts = next.slice(-AGENT_MEMORY_MAX_FACTS);
-        await tx`
-          update control_settings set value = ${tx.json({ facts } as never)}
-          where key = 'agent_memory'
-        `;
-        return { total: facts.length, evicted };
-      });
-      return {
-        remembered: fact,
-        total: written.total,
-        ...(written.evicted.length ? { evicted: written.evicted } : {}),
-      };
+      const segment =
+        typeof args.segment === 'string' && args.segment.trim()
+          ? args.segment.trim().slice(0, 120)
+          : null;
+      try {
+        const { item, evicted } = await controlTx(sql, async (tx) => {
+          await assertRunClaimTx(tx, ctx);
+          return rememberTx(tx, {
+            scope: segment ? 'segment' : 'workspace',
+            segment,
+            content: fact,
+            source: 'agent',
+            sourceRunId: ctx.runId,
+          });
+        });
+        return {
+          remembered: item.content,
+          scope: item.scope,
+          ...(item.segment ? { segment: item.segment } : {}),
+          ...(evicted.length ? { evicted } : {}),
+        };
+      } catch (e) {
+        // Validation + fully-pinned rejections are model-relevant feedback
+        // (consolidate or move on), not run failures.
+        return { error: e instanceof Error ? e.message : String(e) };
+      }
+    }
+    case 'set_fact': {
+      const leadId = String(args.leadId ?? '');
+      const key = String(args.key ?? '');
+      const value = String(args.value ?? '').slice(0, 500);
+      const confidence =
+        args.confidence === undefined || args.confidence === null
+          ? undefined
+          : Number(args.confidence);
+      try {
+        const fact = await controlTx(sql, async (tx) => {
+          await assertRunClaimTx(tx, ctx);
+          const lead = await tx`select id from leads where id = ${leadId} limit 1`;
+          if (!lead.length) {
+            throw new HttpError(404, 'LEAD_NOT_FOUND', 'no such lead', { field: 'leadId' });
+          }
+          return upsertLeadFactTx(tx, leadId, {
+            key,
+            value,
+            ...(confidence === undefined ? {} : { confidence }),
+            source: 'agent',
+            sourceRunId: ctx.runId,
+          });
+        });
+        emitControlEvent('lead.change', leadId);
+        return { fact };
+      } catch (e) {
+        return { error: e instanceof Error ? e.message : String(e) };
+      }
     }
     case 'propose_brief': {
       const bname = String(args.name ?? '')

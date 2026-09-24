@@ -47,6 +47,7 @@ export const TOOL_META: Record<string, ToolMeta> = {
   create_lead: { effect: 'mint', playbooks: ['triage', 'discovery'] },
   update_lead: { effect: 'write', playbooks: ALL_BUT_STRATEGIST, leadBound: 'id', action: true },
   set_state: { effect: 'write', playbooks: LEAD_KINDS, leadBound: 'leadId', action: true },
+  set_fact: { effect: 'write', playbooks: LEAD_KINDS, leadBound: 'leadId' },
   add_note: { effect: 'mint', playbooks: ALL_BUT_STRATEGIST, leadBound: 'leadId' },
   create_task: { effect: 'mint', playbooks: LEAD_KINDS, leadBound: 'leadId', action: true },
   draft_message: { effect: 'mint', playbooks: LEAD_KINDS, leadBound: 'leadId', action: true },
