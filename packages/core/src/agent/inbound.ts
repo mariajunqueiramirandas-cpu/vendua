@@ -121,16 +121,15 @@ export async function ingestInbound(
     // parallel replies on the same lead. 'running' doesn't count: its
     // context froze at claim, so a genuinely new message still earns a
     // fresh run. The origin marker scopes the dedupe to auto-created
-    // inbound runs — a staff-queued reply (draftOnly, forced channel, goal
-    // override) carries its own intent and must not absorb a live inbound.
-    // Runs queued before the marker existed carry params = {} — with no
-    // staff-intent keys they behave exactly like an auto run, so they
-    // coalesce the same way.
+    // inbound runs only — a params={} row is ambiguous (pre-marker auto
+    // run vs plain staff reply) and can't be told apart, so it never
+    // coalesces: a bounded one-time duplicate for rows parked across the
+    // marker deploy beats silently absorbing an inbound behind a staff
+    // run's intent or schedule.
     const parked = await tx`
       select 1 from agent_runs
       where kind = 'reply' and thread_id = ${res.threadId} and status = 'queued'
-        and (params->>'origin' = 'inbound'
-          or not (params ?| array['draftOnly', 'channel', 'goal']))
+        and params->>'origin' = 'inbound'
       limit 1
     `;
     if (parked.length) return null;

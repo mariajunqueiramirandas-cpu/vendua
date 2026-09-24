@@ -221,6 +221,7 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('whatsapp history + ignore list 
     `;
     // Staff can park a reply carrying its own intent (draftOnly) — the
     // coalesce check must not treat it as an auto-created inbound run.
+    // origin:'staff' is what the run endpoints stamp on staff enqueues.
     const digits = `55219${Math.floor(Math.random() * 1e8)}`;
     const from = `${digits}@s.whatsapp.net`;
     const created = await controlTx(sql, (tx) =>
@@ -236,7 +237,7 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('whatsapp history + ignore list 
       kind: 'reply',
       leadId,
       threadId: thread!.id,
-      params: { draftOnly: true },
+      params: { origin: 'staff', draftOnly: true },
       runAt: new Date(Date.now() + 3_600_000),
     });
     const mid = crypto.randomUUID();
@@ -255,7 +256,7 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('whatsapp history + ignore list 
     // swallowed by it — and a follow-up message coalesces onto the
     // inbound one only.
     expect(queued).toHaveLength(2);
-    expect(queued.map((q) => q.params.origin)).toEqual([undefined, 'inbound']);
+    expect(queued.map((q) => q.params.origin)).toEqual(['staff', 'inbound']);
     await ingestInbound(sql, {
       channel: 'whatsapp',
       from,
@@ -267,15 +268,16 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('whatsapp history + ignore list 
     expect(still).toHaveLength(2);
   });
 
-  test('a legacy unmarked reply still coalesces inbound messages', async () => {
+  test('a legacy unmarked reply does not absorb the next inbound', async () => {
     await migrate(sql, MIGRATIONS);
     await sql`
       insert into control_settings (key, value) values ('guardrails', ${sql.json({ inboundReplyDelayMin: 60 } as never)})
       on conflict (key) do update set value = excluded.value
     `;
-    // Replies queued before the origin marker carry params = {} — with no
-    // staff-intent keys they must coalesce like an auto run, or a second
-    // message would queue a duplicate.
+    // Replies queued before the origin marker carry params = {} — they're
+    // indistinguishable from a plain staff reply, so they never coalesce:
+    // the message earns its own marked run instead (a bounded one-time
+    // duplicate, not a permanent swallow).
     const digits = `55218${Math.floor(Math.random() * 1e8)}`;
     const from = `${digits}@s.whatsapp.net`;
     const created = await controlTx(sql, (tx) =>
@@ -299,9 +301,16 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('whatsapp history + ignore list 
       body: 'oi',
       providerMessageId: `${mid}-1`,
     });
+    // The legacy row doesn't coalesce — a marked inbound run lands beside it
     const queued =
-      await sql`select id from agent_runs where thread_id = ${thread!.id} and status = 'queued'`;
-    expect(queued).toHaveLength(1);
+      await sql`select params from agent_runs where thread_id = ${thread!.id} and status = 'queued'`;
+    expect(queued).toHaveLength(2);
+    expect(queued.map((q) => (q.params as { origin?: string }).origin).sort()).toEqual([
+      'inbound',
+      undefined,
+    ]);
+    // ...and a follow-up coalesces onto the marked run only — the legacy
+    // row stays parked on its own, queued count holds at 2
     await ingestInbound(sql, {
       channel: 'whatsapp',
       from,
@@ -310,7 +319,7 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('whatsapp history + ignore list 
     });
     const still =
       await sql`select id from agent_runs where thread_id = ${thread!.id} and status = 'queued'`;
-    expect(still).toHaveLength(1);
+    expect(still).toHaveLength(2);
   });
 
   test('claimRun skips a lead whose number is ignored', async () => {
