@@ -105,7 +105,11 @@ export async function ingestInbound(
     // it's draftOnly composition work (staff approved the supersede); on
     // claim it recomposes against CURRENT state, so the fresh inbound makes
     // its draft more right, and canceling it would orphan the rejected
-    // draft with no replacement. The cancel stays 'queued'-only inside the
+    // draft with no replacement. 'agent' is exempt too — the pre-'auto'
+    // sweep marker is the same unrecoverable mix as the column value
+    // (self-schedule OR lead-asked callback), so a run still carrying it
+    // is treated as a possible promise: never disposable. The cancel
+    // stays 'queued'-only inside the
     // gate: its row locks land AFTER the l,t lock, matching every other
     // writer's leads→runs order (a 'running' predicate would wait on rows
     // held by tool txs that took their run row + lead lock the other way).
@@ -117,24 +121,36 @@ export async function ingestInbound(
       update agent_runs
       set status = 'canceled', error = 'lead respondeu', finished_at = now()
       where lead_id = ${res.leadId} and kind = 'outreach' and status = 'queued'
-        and params->>'auto' is not null and params->>'auto' <> 'regenerate'
+        and params->>'auto' is not null
+        and params->>'auto' not in ('regenerate', 'agent')
       returning id
     `;
     const canceledIds = canceled.map((c) => c.id);
-    // A canceled draftOnly run may have already committed a draft — a
-    // "first contact" answering nothing is exactly what the cancel is for,
-    // so its still-unapproved drafts die with it (same predicate as
-    // rejectMessage: status 'draft' only — queued/approved sends aren't
-    // touched, that's dispatch's business).
-    if (canceledIds.length) {
-      const drafts = await tx<{ thread_id: string }[]>`
-        update lead_messages
-        set status = 'rejected', error = 'lead respondeu', updated_at = now()
-        where agent_run_id = any(${canceledIds}) and status = 'draft'
-        returning thread_id
-      `;
-      supersededThreads.push(...drafts.map((d) => d.thread_id));
-    }
+    // Every still-unapproved draft an AUTO outreach run authored dies with
+    // the reply — a "first contact" answering nothing is exactly what the
+    // cancel is for, and a FINISHED draftOnly run leaves the same obsolete
+    // text parked in the approvals lane. The predicate keys on the run's
+    // own auto marker, not run status: queued just-canceled, running,
+    // done, failed — all supersede. 'regenerate' is exempt (same rule as
+    // the cancel: its recompose reads current state, so the fresh inbound
+    // makes its draft more right). 'agent' is exempt too — legacy marker
+    // from pre-'auto' sweeps, provenance unrecoverable → the run may be a
+    // promised callback, so it and its drafts are treated as preserved.
+    // Status 'draft' only — queued/approved sends aren't touched, that's
+    // dispatch's business.
+    const drafts = await tx<{ thread_id: string }[]>`
+      update lead_messages m
+      set status = 'rejected', error = 'lead respondeu', updated_at = now()
+      where m.status = 'draft'
+        and m.agent_run_id in (
+          select r.id from agent_runs r
+          where r.lead_id = ${res.leadId} and r.kind = 'outreach'
+            and r.params->>'auto' is not null
+            and r.params->>'auto' not in ('regenerate', 'agent')
+        )
+      returning m.thread_id
+    `;
+    supersededThreads.push(...drafts.map((d) => d.thread_id));
     const gate = gateRows[0];
 
     if (
@@ -202,7 +218,8 @@ export async function ingestInbound(
       where id in (
         select id from agent_runs
         where lead_id = ${res.leadId} and kind = 'outreach' and status = 'running'
-          and params->>'auto' is not null and params->>'auto' <> 'regenerate'
+          and params->>'auto' is not null
+          and params->>'auto' not in ('regenerate', 'agent')
         for update skip locked
       )
       returning id

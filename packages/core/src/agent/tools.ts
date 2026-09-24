@@ -570,7 +570,11 @@ export async function refuseOnFresherInboundTx(tx: Sql, ctx: ToolContext): Promi
       select params->>'auto' as auto, started_at from agent_runs where id = ${ctx.runId}
     `
   )[0];
-  if (!run?.started_at || run.auto == null || run.auto === 'regenerate') return null;
+  // 'agent' exempt like 'regenerate': the pre-'auto' sweep marker is
+  // ambiguous (self-schedule or lead-asked callback) → treated as a
+  // possible promise, so the send boundary doesn't refuse it.
+  if (!run?.started_at || run.auto == null || run.auto === 'regenerate' || run.auto === 'agent')
+    return null;
   const { capLockTx } = await import('./runner.ts');
   await capLockTx(tx, ctx.leadId);
   const replied = await tx<{ id: string }[]>`
