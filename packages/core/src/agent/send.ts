@@ -259,7 +259,8 @@ export async function dispatchMessage(
     // The not-exists closes the provider-call race: the lead can reply while
     // Resend/Baileys is still on the wire — that inbound already ran its
     // clearing update (nothing to clear yet), so finalization must not stamp
-    // a floor on an answered send.
+    // a floor on an answered send. `historical` rows are context imports,
+    // never answers — a history sync mid-call must not suppress the floor.
     if (send.author === 'agent') {
       const g = await getSettingTx<Partial<Guardrails>>(tx, 'guardrails', {});
       const days = g.followupCadenceDays ?? DEFAULT_GUARDRAILS.followupCadenceDays;
@@ -277,6 +278,7 @@ export async function dispatchMessage(
               join lead_threads it on it.id = im.thread_id
               where it.lead_id = ${send.leadId}
                 and im.direction = 'in'
+                and not im.historical
                 and im.received_at > ${send.sendingAt}::timestamptz
             )
         `;

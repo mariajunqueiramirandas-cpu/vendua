@@ -2154,13 +2154,17 @@ export function startAgentWorker(sql: Sql, intervalMs = 15_000) {
   if (workerTimer) return;
   // Leads already over the cap before this deploy (or stranded by a
   // direct-db spend write) park all queued work until flagged — the
-  // settings-write sweep can't reach them without a write. One boot pass
-  // flags+tasks them; the per-cap dedupe makes repeats silent.
+  // settings-write sweep can't reach them without a write. The boot pass
+  // covers the deploy case now; keeping it in the tick chain means a
+  // failed pass retries next interval instead of waiting for a restart.
   void flagCappedLeads(sql).catch((e) => agentLog.error({ err: e }, 'boot cap flag failed'));
   workerTimer = setInterval(() => {
     if (draining) return;
     draining = true;
     void drain(sql)
+      .then(() =>
+        flagCappedLeads(sql).catch((e) => agentLog.error({ err: e }, 'cap flag sweep failed')),
+      )
       .then(() => sweepOutreach(sql))
       .then(() => sweepBriefs(sql))
       .then(() => sweepStrategist(sql))
