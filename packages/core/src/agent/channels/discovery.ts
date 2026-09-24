@@ -993,7 +993,7 @@ export function chaseLinks(page: ReadPage): string[] {
 /** The business name a maps/google URL already carries (?q=, /maps/place/),
  *  or null when only a redirect hop could reveal it — the difference
  *  between resolving a pointer in-process and spending a real fetch. */
-export function mapPointerName(raw: string): string | null {
+export function mapPointerName(raw: string, depth = 0): string | null {
   try {
     const t = new URL(raw);
     // Only the map-pointer/google family can carry a business name — an
@@ -1005,9 +1005,15 @@ export function mapPointerName(raw: string): string | null {
     if (!isBizMapUrl(t) && !GOOGLE_HOST.test(t.hostname)) return null;
     // A captcha'd google redirect wraps the real target: /sorry/?continue=
     // <url>. Only the validated family gets to unwrap — an arbitrary
-    // host's continue param can't smuggle a google name in.
+    // host's continue param can't smuggle a google name in. The chain is
+    // untrusted input: a continue= pointing at another google url (or
+    // itself) would recurse without bound — past the cap, bail and let
+    // the url resolve through the fetch path instead.
     const inner = t.searchParams.get('continue');
-    if (inner) return mapPointerName(decodeURIComponent(inner));
+    if (inner) {
+      if (depth >= 3) return null;
+      return mapPointerName(decodeURIComponent(inner), depth + 1);
+    }
     const q = t.searchParams.get('q') ?? t.searchParams.get('query');
     if (q && !/\//.test(q) && q.length < 80) return q.replace(/\+/g, ' ');
     const m = /\/maps\/place\/([^/]+)/.exec(t.pathname);

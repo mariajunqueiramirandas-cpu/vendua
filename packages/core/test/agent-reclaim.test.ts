@@ -444,6 +444,28 @@ describe('mapPointerName', () => {
       ),
     ).toBe('Acme');
   });
+
+  test('a continue= chain is bounded — past the cap it resolves via fetch', () => {
+    // continue= points at another google url (or itself) — untrusted input;
+    // unbounded recursion would stack-overflow inside read_pages.
+    const self = 'https://www.google.com/sorry/?continue=' + encodeURIComponent('');
+    // a url whose continue points to itself, url-encoded per level
+    let loop = 'https://www.google.com/sorry/';
+    loop = `https://www.google.com/sorry/?continue=${encodeURIComponent(loop)}`;
+    loop = `https://www.google.com/sorry/?continue=${encodeURIComponent(loop)}`;
+    loop = `https://www.google.com/sorry/?continue=${encodeURIComponent(loop)}`;
+    expect(mapPointerName(self)).toBeNull();
+    expect(mapPointerName(loop)).toBeNull();
+    // a legit 3-hop chain still resolves the name at the end
+    let chain = 'https://www.google.com/search?q=Acme';
+    for (let i = 0; i < 3; i++) {
+      chain = `https://www.google.com/sorry/?continue=${encodeURIComponent(chain)}`;
+    }
+    expect(mapPointerName(chain)).toBe('Acme');
+    // …but 4 hops is past the cap — null, not a stack crash
+    chain = `https://www.google.com/sorry/?continue=${encodeURIComponent(chain)}`;
+    expect(mapPointerName(chain)).toBeNull();
+  });
 });
 
 const dbDescribe = describe.skipIf(!process.env.TEST_DATABASE_URL);
