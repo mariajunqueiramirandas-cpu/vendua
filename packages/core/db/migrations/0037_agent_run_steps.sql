@@ -22,6 +22,27 @@ create unique index if not exists agent_run_steps_call_uq
   on agent_run_steps (run_id, step, call_id) where call_id is not null;
 create index if not exists agent_run_steps_name on agent_run_steps (name) where name is not null;
 
+-- Backfill historical journals: finished runs never get another journal
+-- write, so without this their trajectories stay invisible to the shadow
+-- table. seq = ordinality - 1 to match syncRunStepsTx; cost_cents maps only
+-- model usage (real USD) — readSpent is a fetch count, monid_spend markers
+-- are cumulative snapshots, neither is a per-row cost.
+insert into agent_run_steps (run_id, step, seq, kind, name, call_id, args, out, cost_cents)
+select r.id,
+       case when jsonb_typeof(e.v->'step') = 'number' then (e.v->>'step')::int end,
+       e.i - 1,
+       coalesce(e.v->>'type', 'unknown'),
+       e.v->>'name',
+       e.v->>'callId',
+       e.v->'args',
+       e.v->'out',
+       case when e.v->>'type' = 'model' and jsonb_typeof(e.v->'usage'->'costUsd') = 'number'
+            then round((e.v->'usage'->>'costUsd')::numeric * 100)::int end
+from agent_runs r
+cross join lateral jsonb_array_elements(r.steps) with ordinality as e(v, i)
+where jsonb_typeof(r.steps) = 'array'
+on conflict (run_id, seq) do nothing;
+
 do $$
 begin
   execute format('alter table %I enable row level security', 'agent_run_steps');
