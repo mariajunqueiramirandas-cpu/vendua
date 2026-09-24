@@ -96,6 +96,16 @@ import {
   type Guardrails,
   type IntegrationKind,
 } from './modules/integrations.ts';
+import {
+  createMemoryItem,
+  deleteLeadFact,
+  deleteMemoryItem,
+  listLeadFacts,
+  listMemoryItems,
+  memoryScope,
+  patchMemoryItem,
+  putLeadFact,
+} from './modules/agent-memory.ts';
 import { claimControl, controlTx } from './modules/control.ts';
 import { controlSse } from './modules/control-sse.ts';
 import { emitControlEvent } from './modules/control-events.ts';
@@ -1386,6 +1396,101 @@ export function createApp({ sql, sessionSecret, controlSecret, autoDrain }: AppD
     // park, no insert/finish ever fires the flag) — flag them now so staff
     // sees the card instead of a silent stop. Deduped; await is fine.
     if (key === 'guardrails' && !res.replayed) await flagCappedLeads(sql);
+    return c.json(res.body);
+  });
+
+  // ---- agent memory (ADR 0014) -------------------------------------------------
+  // Workspace/segment learnings + discovery debriefs, and structured
+  // per-lead facts — the memory v2 write surface for staff (the agent writes
+  // the same tables through rememberTx/upsertLeadFactTx inside its runs).
+
+  app.get('/control/v1/agent/memory', async (c) => {
+    controlGate(c);
+    const scopeQ = c.req.query('scope');
+    const segment = c.req.query('segment');
+    const items = await listMemoryItems(sql, {
+      ...(scopeQ !== undefined ? { scope: memoryScope(scopeQ) } : {}),
+      ...(segment !== undefined ? { segment: str(segment, 'segment', 120) } : {}),
+    });
+    return c.json({ items });
+  });
+
+  app.post('/control/v1/agent/memory', async (c) => {
+    controlGate(c);
+    const body = await bodyJson(c);
+    const res = await createMemoryItem(
+      sql,
+      {
+        scope: memoryScope(body.scope),
+        ...(body.segment !== undefined && body.segment !== null
+          ? { segment: str(body.segment, 'segment', 120) }
+          : {}),
+        content: str(body.content, 'content', 500),
+      },
+      requireIdemKey(c),
+    );
+    if (res.replayed) c.header('x-idempotent-replay', 'true');
+    return c.json(res.body);
+  });
+
+  app.patch('/control/v1/agent/memory/:id', async (c) => {
+    controlGate(c);
+    const id = uuidParam(c, 'id');
+    const body = await bodyJson(c);
+    const patch: { content?: string; pinned?: boolean } = {};
+    if ('content' in body) patch.content = str(body.content, 'content', 500);
+    if ('pinned' in body) {
+      if (typeof body.pinned !== 'boolean') {
+        throw new HttpError(422, 'BAD_REQUEST', 'pinned must be a boolean', { field: 'pinned' });
+      }
+      patch.pinned = body.pinned;
+    }
+    if (!Object.keys(patch).length) {
+      throw new HttpError(422, 'BAD_REQUEST', 'no updatable fields in body');
+    }
+    const res = await patchMemoryItem(sql, id, patch, requireIdemKey(c));
+    if (res.replayed) c.header('x-idempotent-replay', 'true');
+    return c.json(res.body);
+  });
+
+  app.delete('/control/v1/agent/memory/:id', async (c) => {
+    controlGate(c);
+    const res = await deleteMemoryItem(sql, uuidParam(c, 'id'), requireIdemKey(c));
+    if (res.replayed) c.header('x-idempotent-replay', 'true');
+    return c.json(res.body);
+  });
+
+  app.get('/control/v1/leads/:id/facts', async (c) => {
+    controlGate(c);
+    return c.json({ facts: await listLeadFacts(sql, uuidParam(c, 'id')) });
+  });
+
+  app.put('/control/v1/leads/:id/facts/:key', async (c) => {
+    controlGate(c);
+    const body = await bodyJson(c);
+    const res = await putLeadFact(
+      sql,
+      uuidParam(c, 'id'),
+      str(c.req.param('key'), 'key', 60),
+      {
+        value: str(body.value, 'value', 500),
+        ...(body.confidence !== undefined ? { confidence: body.confidence as number } : {}),
+      },
+      requireIdemKey(c),
+    );
+    if (res.replayed) c.header('x-idempotent-replay', 'true');
+    return c.json(res.body);
+  });
+
+  app.delete('/control/v1/leads/:id/facts/:key', async (c) => {
+    controlGate(c);
+    const res = await deleteLeadFact(
+      sql,
+      uuidParam(c, 'id'),
+      str(c.req.param('key'), 'key', 60),
+      requireIdemKey(c),
+    );
+    if (res.replayed) c.header('x-idempotent-replay', 'true');
     return c.json(res.body);
   });
 
