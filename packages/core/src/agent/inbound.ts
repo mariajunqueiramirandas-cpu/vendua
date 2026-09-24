@@ -81,7 +81,7 @@ export async function ingestInbound(
   // the staff pause toggle on `lead_threads` — so a suppression committed
   // between the message insert and now is seen here instead of stranding a
   // queued reply on a suppressed thread/lead.
-  const runId = await controlTx(sql, async (tx) => {
+  const { runId, canceledIds } = await controlTx(sql, async (tx) => {
     const gateRows = await tx<ReplyGate[]>`
       select t.agent_enabled, l.agent_mode, l.unsubscribed_at, l.archived_at
       from lead_threads t join leads l on l.id = t.lead_id
@@ -98,12 +98,16 @@ export async function ingestInbound(
     // its draft more right, and canceling it would orphan the rejected
     // draft with no replacement. Runs under the l,t lock — claimRun's lead
     // revalidation can't slip a row through while we hold it.
-    await tx`
+    // The ids come back so post-commit run.update emissions refresh the
+    // Runs view — without them canceled rows keep showing as 'queued'.
+    const canceled = await tx<{ id: string }[]>`
       update agent_runs
       set status = 'canceled', error = 'lead respondeu', finished_at = now()
       where lead_id = ${res.leadId} and kind = 'outreach' and status = 'queued'
         and params->>'auto' is not null and params->>'auto' <> 'regenerate'
+      returning id
     `;
+    const canceledIds = canceled.map((c) => c.id);
     const gate = gateRows[0];
 
     if (
@@ -113,7 +117,7 @@ export async function ingestInbound(
       gate.unsubscribed_at ||
       gate.archived_at
     ) {
-      return null;
+      return { runId: null, canceledIds };
     }
     // Burst coalescing: a still-queued reply reads the freshest thread
     // state at claim anyway, so one parked run covers every message that
@@ -133,17 +137,21 @@ export async function ingestInbound(
           or not (params ?| array['draftOnly', 'channel', 'goal']))
       limit 1
     `;
-    if (parked.length) return null;
-    return insertRun(tx, {
-      kind: 'reply',
-      leadId: res.leadId,
-      threadId: res.threadId,
-      params: { origin: 'inbound' },
-      ...(inboundReplyDelayMin > 0
-        ? { runAt: new Date(Date.now() + inboundReplyDelayMin * 60_000) }
-        : {}),
-    });
+    if (parked.length) return { runId: null, canceledIds };
+    return {
+      runId: await insertRun(tx, {
+        kind: 'reply',
+        leadId: res.leadId,
+        threadId: res.threadId,
+        params: { origin: 'inbound' },
+        ...(inboundReplyDelayMin > 0
+          ? { runAt: new Date(Date.now() + inboundReplyDelayMin * 60_000) }
+          : {}),
+      }),
+      canceledIds,
+    };
   });
+  for (const id of canceledIds) emitControlEvent('run.update', id);
   if (runId) {
     emitControlEvent('run.update', runId);
     // Kick the queue now — don't wait up to the poll interval for a reply
