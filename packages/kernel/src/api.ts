@@ -462,6 +462,11 @@ export const ERROR_CODES = [
   'THREAD_PAUSED',
   'PLAYBOOK_DISABLED',
   'WAKEUP_NOT_FOUND',
+  // memory v2 (agent memory items + lead facts)
+  'MEMORY_ITEM_NOT_FOUND',
+  'MEMORY_CAP_PINNED',
+  'FACT_NOT_FOUND',
+  'SOURCE_RUN_NOT_FOUND',
   'NOTE_LIMIT',
   // meetings module (booking surface + control meetings API)
   'MEETING_NOT_FOUND',

@@ -388,39 +388,82 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('agent memory v2 (db)', () => {
     expect(facts[0]).toMatchObject({ key: 'size', value: 'xxl', confidence: 1, source: 'staff' });
   });
 
+  test('a fully-pinned class rejects the write instead of phantom-saving it', async () => {
+    await setup();
+    await sql`delete from agent_memory_items`;
+    await controlTx(
+      sql,
+      (tx) => tx`
+        insert into agent_memory_items (scope, content, source, pinned)
+        select 'workspace', ${nm('pin-')} || g, 'staff', true
+        from generate_series(1, 200) g
+      `,
+    );
+    const res = await catchErr(
+      controlTx(sql, (tx) =>
+        rememberTx(tx, { scope: 'workspace', content: nm('no-room'), source: 'agent' }),
+      ),
+    );
+    expect(res?.status).toBe(422);
+    // The whole tx rolled back — no phantom row, nothing evicted either.
+    const n = await sql<{ n: number }[]>`select count(*)::int as n from agent_memory_items`;
+    expect(n[0]!.n).toBe(200);
+    // Debrief class is symmetric.
+    await sql`update agent_memory_items set scope = 'debrief'`;
+    const res2 = await catchErr(
+      controlTx(sql, (tx) => appendDebriefTx(tx, { content: nm('db-no-room') })),
+    );
+    expect(res2?.status).toBe(422);
+  });
+
   // ---- migration backfill ---------------------------------------------------
 
   test('0035 backfill classifies agent_memory.facts into debrief vs workspace', async () => {
     await setup();
-    // Re-run the migration's backfill against a controlled settings row:
-    // drop the objects, pull the ledger row, seed facts, migrate again.
-    await sql`drop table if exists agent_memory_items, lead_facts`;
-    await sql`delete from schema_migrations where name = '0035_agent_memory_v2.sql'`;
-    await sql`
-      insert into control_settings (key, value) values ('agent_memory', ${sql.json({
-        facts: [
-          `run ${nonce}a: 12 leads (3 c/ whatsapp)`,
-          `run ${nonce}b/centro: 0 leads`,
-          nm('plain learning'),
-          { not: 'a string' } as never, // non-string entries are skipped
-        ],
-      })})
-      on conflict (key) do update set value = excluded.value
-    `;
-    await migrate(sql, join(import.meta.dir, '../db/migrations'));
+    // Re-run the migration's backfill against a controlled settings row on the
+    // shared DB: clear the two tables (they're new — no other suite reads
+    // them), pull the ledger row, seed facts, migrate again. Tables/policies
+    // stay put — the migration's create/RLS statements are all idempotent.
+    const prior = await sql<
+      { value: unknown }[]
+    >`select value from control_settings where key = 'agent_memory'`;
+    try {
+      await sql`delete from agent_memory_items`;
+      await sql`delete from lead_facts`;
+      await sql`delete from schema_migrations where name = '0035_agent_memory_v2.sql'`;
+      await sql`
+        insert into control_settings (key, value) values ('agent_memory', ${sql.json({
+          facts: [
+            `run ${nonce}a: 12 leads (3 c/ whatsapp)`,
+            `run ${nonce}b/centro: 0 leads`,
+            nm('plain learning'),
+            { not: 'a string' } as never, // non-string entries are skipped
+          ],
+        })})
+        on conflict (key) do update set value = excluded.value
+      `;
+      await migrate(sql, join(import.meta.dir, '../db/migrations'));
 
-    const rows = await sql<{ scope: string; source: string; content: string }[]>`
-      select scope, source, content from agent_memory_items order by created_at
-    `;
-    expect(rows.map((r) => [r.scope, r.source])).toEqual([
-      ['debrief', 'staff'],
-      ['debrief', 'staff'],
-      ['workspace', 'staff'],
-    ]);
-    // The old settings row is left untouched for the parent to retire.
-    const kept = await sql<
-      { v: unknown }[]
-    >`select value as v from control_settings where key = 'agent_memory'`;
-    expect(kept).toHaveLength(1);
+      const rows = await sql<
+        { scope: string; source: string; content: string }[]
+      >`\n        select scope, source, content from agent_memory_items order by created_at\n      `;
+      expect(rows.map((r) => [r.scope, r.source])).toEqual([
+        ['debrief', 'staff'],
+        ['debrief', 'staff'],
+        ['workspace', 'staff'],
+      ]);
+      // The old settings row is left untouched by the migration itself.
+      const kept = await sql<
+        { v: unknown }[]
+      >`select value as v from control_settings where key = 'agent_memory'`;
+      expect(kept).toHaveLength(1);
+    } finally {
+      // Restore whatever the suite had for agent_memory (usually nothing).
+      if (prior.length) {
+        await sql`update control_settings set value = ${sql.json(prior[0]!.value as never)} where key = 'agent_memory'`;
+      } else {
+        await sql`delete from control_settings where key = 'agent_memory'`;
+      }
+    }
   });
 });

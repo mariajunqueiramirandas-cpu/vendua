@@ -150,14 +150,17 @@ function checkSourceRunId(v: unknown): string | null {
 
 /** Cap enforcement inside the remember tx: keep ⌊cap − pinned⌋ newest
  *  unpinned items of the class. Pinning is the staff override — a class
- *  entirely pinned simply exceeds the cap rather than evicting staff's
- *  explicit keeps. Learnings evict by updated_at (a dedupe-hit refresh is
- *  an anti-eviction signal); debriefs are an append log, evict by
- *  created_at. */
-async function enforceMemoryCapTx(tx: Sql, cls: 'learning' | 'debrief'): Promise<string[]> {
+ *  entirely pinned leaves no room at all, so a write into it is rejected
+ *  (MEMORY_CAP_PINNED) rather than silently evicting what was just stored.
+ *  Learnings evict by updated_at (a dedupe-hit refresh is an anti-eviction
+ *  signal); debriefs are an append log, evict by created_at. */
+async function enforceMemoryCapTx(
+  tx: Sql,
+  cls: 'learning' | 'debrief',
+): Promise<{ id: string; content: string }[]> {
   const rows =
     cls === 'learning'
-      ? await tx<{ content: string }[]>`
+      ? await tx<{ id: string; content: string }[]>`
           with pins as (
             select count(*)::int as n from agent_memory_items
             where scope in ('workspace', 'segment') and pinned
@@ -169,9 +172,9 @@ async function enforceMemoryCapTx(tx: Sql, cls: 'learning' | 'debrief'): Promise
             order by updated_at desc, id asc
             offset (select greatest(0, ${LEARNINGS_CAP} - n) from pins)
           )
-          returning content
+          returning id, content
         `
-      : await tx<{ content: string }[]>`
+      : await tx<{ id: string; content: string }[]>`
           with pins as (
             select count(*)::int as n from agent_memory_items
             where scope = 'debrief' and pinned
@@ -183,9 +186,9 @@ async function enforceMemoryCapTx(tx: Sql, cls: 'learning' | 'debrief'): Promise
             order by created_at desc, id asc
             offset (select greatest(0, ${DEBRIEFS_CAP} - n) from pins)
           )
-          returning content
+          returning id, content
         `;
-  return rows.map((r) => r.content);
+  return rows;
 }
 
 /** Shared insert + dedupe + cap for learnings and debriefs. */
@@ -218,15 +221,29 @@ export async function rememberTx(
   // row before computing cap eviction or two txs could each keep an
   // over-cap set (the old settings-row FOR UPDATE had the same job).
   await tx`select pg_advisory_xact_lock(hashtext('vendua.agent_memory'))`;
+  // clock_timestamp() (not now()): this tx may have started BEFORE waiting on
+  // the lock — a tx-start stamp would sort the new row behind the previous
+  // winner's commits and eviction could delete the row being written.
   const rows = await tx<MemoryItemRow[]>`
-    insert into agent_memory_items (scope, segment, content, source, source_run_id)
-    values (${scope}, ${segment}, ${content}, ${input.source}, ${sourceRunId})
+    insert into agent_memory_items (scope, segment, content, source, source_run_id, created_at, updated_at)
+    values (${scope}, ${segment}, ${content}, ${input.source}, ${sourceRunId}, clock_timestamp(), clock_timestamp())
     on conflict (scope, (coalesce(segment, '')), (lower(content)))
-    do update set updated_at = now()
+    do update set updated_at = clock_timestamp()
     returning *
   `;
   const evicted = await enforceMemoryCapTx(tx, scope === 'debrief' ? 'debrief' : 'learning');
-  return { item: memoryItemJson(rows[0]!), evicted };
+  // Fully-pinned class: every unpinned row gets evicted — including the one
+  // just written. Roll back (this throw undoes the insert AND the evictions)
+  // rather than return a phantom item the next read can't find.
+  if (evicted.some((r) => r.id === rows[0]!.id)) {
+    throw new HttpError(
+      422,
+      'MEMORY_CAP_PINNED',
+      `all ${scope === 'debrief' ? DEBRIEFS_CAP : LEARNINGS_CAP} ${scope === 'debrief' ? 'debriefs' : 'learnings'} are pinned — unpin one to make room`,
+      { field: 'pinned' },
+    );
+  }
+  return { item: memoryItemJson(rows[0]!), evicted: evicted.map((r) => r.content) };
 }
 
 /** Discovery debrief line (the runner's writeDebrief successor): own scope,
