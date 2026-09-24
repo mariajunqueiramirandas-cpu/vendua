@@ -166,6 +166,32 @@ describe('slimToolOut', () => {
     expect(String(p.text)).toContain('read_pages offset:');
   });
 
+  test('fat contact lists degrade to markers — the offset head always survives', () => {
+    // foundContacts/nav big enough that a naive slim would burn the whole
+    // budget on them and drop text — the marker must come first.
+    const out = {
+      pages: [
+        page('x'.repeat(20_000), {
+          foundContacts: {
+            phones: Array.from({ length: 40 }, (_, i) => `+552199999${i}`),
+            emails: Array.from({ length: 40 }, (_, i) => `lead${i}@x.test`),
+          },
+          nav: Array.from({ length: 60 }, (_, i) => `https://x.test/nav-${i}`),
+        }),
+      ],
+    };
+    const replayCaps = { page: 1_000, total: 2_400, str: 800, hardMax: 2_900 };
+    const slim = slimToolOut('read_pages', out, replayCaps) as Record<string, unknown>;
+    const json = JSON.stringify(slim);
+    expect(json.length).toBeLessThanOrEqual(2_900);
+    expect(() => JSON.parse(json)).not.toThrow();
+    const p = (slim.pages as Record<string, unknown>[])[0]!;
+    expect(p.url).toBe('https://x.test/p');
+    expect(String(p.text)).toContain('read_pages offset:');
+    // contacts degrade to a labeled marker instead of starving the budget
+    expect(JSON.stringify(p.foundContacts)).toContain('omitted');
+  });
+
   test('recovery primes chased pages without the chasedFrom marker', () => {
     // The live cache banks the raw page; a primed copy keeping chasedFrom
     // would make slicePage skip the offset on the next explicit read.

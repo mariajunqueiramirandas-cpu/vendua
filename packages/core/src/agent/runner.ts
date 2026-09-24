@@ -997,10 +997,22 @@ export function slimToolOut(name: string, out: unknown, caps: SlimCaps = SLIM_LI
       while (result.pages.length > 1 && JSON.stringify(result).length > caps.hardMax) {
         dropped.unshift(result.pages.pop());
       }
+      if (dropped.length) {
+        result.droppedPages = dropped.map((p) => {
+          const d = p as Record<string, unknown>;
+          return {
+            url: d.url,
+            finalUrl: d.finalUrl,
+            textChars: d.textChars ?? (typeof d.text === 'string' ? d.text.length : undefined),
+            omitted: 'over the result budget — read that url directly',
+          };
+        });
+      }
       // The last page can't drop without losing the read — rebuild it
-      // around the keys the model needs (identity, contacts, the marked
-      // head) with the fat text fields capped, so url + the continuation
-      // pointer always survive.
+      // around the keys the model needs. Identity + the marked text head
+      // are reserved FIRST (text already carries the continuation pointer;
+      // a generic slim could cut it). Contact collections then get
+      // whatever room remains — fat lists degrade to a labeled marker.
       if (result.pages.length === 1 && JSON.stringify(result).length > caps.hardMax) {
         const p = result.pages[0] as Record<string, unknown>;
         const kept = new Set([
@@ -1030,28 +1042,30 @@ export function slimToolOut(name: string, out: unknown, caps: SlimCaps = SLIM_LI
           truncated: p.truncated,
           title: capStr(p.title, 200),
           description: capStr(p.description, caps.str),
-          foundContacts: p.foundContacts,
-          nav: p.nav,
-          text: p.text, // already carries the read_pages offset marker
+          text: p.text, // carries the read_pages offset marker — never re-capped
           ...(omitted.length ? { omittedKeys: omitted } : {}),
         };
-        result.pages[0] = rebuilt;
-        // Pathological contact/nav lists can still overflow — last resort,
-        // generic slim keeps the outcome keys (url, contacts, pointer).
-        if (JSON.stringify(result).length > caps.hardMax) {
-          result.pages[0] = slimValue(rebuilt, { left: caps.hardMax - 512 }, caps.str);
+        // Room left after the essentials and any dropped-page markers —
+        // contacts/nav fit inside it or degrade to a pointer marker.
+        const room = caps.hardMax - JSON.stringify({ ...result, pages: [rebuilt] }).length;
+        if (JSON.stringify({ foundContacts: p.foundContacts, nav: p.nav }).length <= room) {
+          rebuilt.foundContacts = p.foundContacts;
+          rebuilt.nav = p.nav;
+        } else {
+          const navArr = Array.isArray(p.nav) ? (p.nav as unknown[]) : [];
+          const keptNav: string[] = [];
+          let used = 0;
+          for (const n of navArr) {
+            const s = String(n);
+            if (used + s.length + 4 > room - 160) break; // reserve the contacts marker
+            keptNav.push(s);
+            used += s.length + 4;
+          }
+          if (navArr.length)
+            rebuilt.nav = [...keptNav, `…[+${navArr.length - keptNav.length} — journaled]`];
+          rebuilt.foundContacts = { omitted: 'over the result budget — read the url for contacts' };
         }
-      }
-      if (dropped.length) {
-        result.droppedPages = dropped.map((p) => {
-          const d = p as Record<string, unknown>;
-          return {
-            url: d.url,
-            finalUrl: d.finalUrl,
-            textChars: d.textChars ?? (typeof d.text === 'string' ? d.text.length : undefined),
-            omitted: 'over the result budget — read that url directly',
-          };
-        });
+        result.pages[0] = rebuilt;
       }
       return result;
     }
