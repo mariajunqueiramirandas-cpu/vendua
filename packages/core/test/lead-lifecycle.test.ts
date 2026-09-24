@@ -486,6 +486,35 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('lead lifecycle (db)', () => {
       expect(res.body.message.status).toBe('queued');
     });
 
+    test('stale draft on a capped lead → 422 refusal, draft preserved for staff', async () => {
+      await setup();
+      await setGuardrails({ leadLifetimeCostCapUsd: 0.01 });
+      try {
+        const leadId = await controlTx(sql, (tx) =>
+          insertLeadTx(tx, { name: 'Capped Stale', agent_mode: 'auto' }),
+        ).then((r) => r.body.lead.id);
+        // Prior spend over the 1¢ cap — insertRun refuses the regen.
+        await sql`
+          insert into agent_runs (kind, lead_id, status, cost_cents, finished_at)
+          values ('outreach', ${leadId}, 'done', 50, now())
+        `;
+        const messageId = await mkDraft(leadId, 'agent', 8);
+        const res = await approveMessage(sql, messageId, 'staff', key('a3-cap-stale'));
+        // The expired text must NOT go out as-is: the approve refuses so
+        // staff rewrites or rejects — and the draft survives untouched.
+        expect(res.status).toBe(422);
+        const [m] = await sql<{ status: string; error: string | null }[]>`
+          select status, error from lead_messages where id = ${messageId}
+        `;
+        expect(m!.status).toBe('draft');
+        expect(m!.error).toContain('teto de custo');
+        // No regen queued — the only run is the seeded spend row itself.
+        expect((await runsFor(leadId)).filter((r) => r.status === 'queued')).toHaveLength(0);
+      } finally {
+        await setGuardrails({});
+      }
+    });
+
     test('staleDraftDays: 0 disables the gate', async () => {
       await setup();
       await setGuardrails({ staleDraftDays: 0 });

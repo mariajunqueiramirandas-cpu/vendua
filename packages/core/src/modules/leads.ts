@@ -297,6 +297,10 @@ export function leadInsert(body: Record<string, unknown>): Record<string, unknow
 export function leadPatch(
   body: Record<string, unknown>,
   actor: 'agent' | 'staff' = 'staff',
+  /** true marks the written nextActionAt as lead-requested ("me chama
+   *  terça") — provenance 'requested' survives an inbound reply, unlike
+   *  the automation's own 'cadence'/'agent' scheduling. */
+  nextActionRequested = false,
 ): Record<string, unknown> {
   const set: Record<string, unknown> = {};
   for (const field of Object.keys(LEAD_TEXT_FIELDS) as LeadTextField[]) {
@@ -322,8 +326,10 @@ export function leadPatch(
   if ('nextActionAt' in body) {
     set.next_action_at = timestampValue(body.nextActionAt, 'nextActionAt');
     // Provenance rides with the write so inbound replies only clear the
-    // cadence floor, never a deliberately scheduled follow-up.
-    set.next_action_source = set.next_action_at === null ? null : actor;
+    // automation's own scheduling ('cadence'/'agent'), never a deliberately
+    // promised follow-up — 'requested' survives exactly like 'staff'.
+    set.next_action_source =
+      set.next_action_at === null ? null : nextActionRequested ? 'requested' : actor;
   }
   if ('archived' in body) {
     if (typeof body.archived !== 'boolean') {

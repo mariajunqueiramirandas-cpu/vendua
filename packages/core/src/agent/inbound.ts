@@ -81,6 +81,7 @@ export async function ingestInbound(
   // the staff pause toggle on `lead_threads` — so a suppression committed
   // between the message insert and now is seen here instead of stranding a
   // queued reply on a suppressed thread/lead.
+  const supersededThreads: string[] = [];
   const { runId, coalescedId, canceledIds, capFlagged } = await controlTx(sql, async (tx) => {
     // 'capfin' first: the per-lead advisory serializes this whole gate
     // against claims (claimRun only TRIES it — while we hold it every
@@ -120,6 +121,20 @@ export async function ingestInbound(
       returning id
     `;
     const canceledIds = canceled.map((c) => c.id);
+    // A canceled draftOnly run may have already committed a draft — a
+    // "first contact" answering nothing is exactly what the cancel is for,
+    // so its still-unapproved drafts die with it (same predicate as
+    // rejectMessage: status 'draft' only — queued/approved sends aren't
+    // touched, that's dispatch's business).
+    if (canceledIds.length) {
+      const drafts = await tx<{ thread_id: string }[]>`
+        update lead_messages
+        set status = 'rejected', error = 'lead respondeu', updated_at = now()
+        where agent_run_id = any(${canceledIds}) and status = 'draft'
+        returning thread_id
+      `;
+      supersededThreads.push(...drafts.map((d) => d.thread_id));
+    }
     const gate = gateRows[0];
 
     if (
@@ -192,13 +207,26 @@ export async function ingestInbound(
       )
       returning id
     `;
-    return rows.map((r) => r.id);
+    const ids = rows.map((r) => r.id);
+    // Same lifecycle as the gate's queued flips — a mid-compose draftOnly
+    // run's already-committed draft dies with the run.
+    if (ids.length) {
+      const drafts = await tx<{ thread_id: string }[]>`
+        update lead_messages
+        set status = 'rejected', error = 'lead respondeu', updated_at = now()
+        where agent_run_id = any(${ids}) and status = 'draft'
+        returning thread_id
+      `;
+      supersededThreads.push(...drafts.map((d) => d.thread_id));
+    }
+    return ids;
   }).catch((e) => {
     // Best-effort pass — a failure here must not mask the committed ingest.
     agentLog.warn({ err: e, leadId: res.leadId }, 'running-outreach cancel failed');
     return [] as string[];
   });
   for (const id of [...canceledIds, ...runningCanceled]) emitControlEvent('run.update', id);
+  for (const tid of new Set(supersededThreads)) emitControlEvent('draft.change', tid);
   if (capFlagged) emitControlEvent('lead.change');
   const enqueuedId = runId ?? coalescedId;
   if (enqueuedId) {
