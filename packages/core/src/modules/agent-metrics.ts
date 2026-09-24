@@ -51,6 +51,8 @@ export interface AgentMetrics {
 
 export async function agentMetrics(sql: Sql, days: 7 | 30): Promise<AgentMetrics> {
   const to = new Date();
+  // `to` compares as <= everywhere: rows written in the same millisecond as
+  // the request are inside the window, never just past it.
   const from = new Date(to.getTime() - days * 86_400_000);
   return controlTx(sql, async (tx) => {
     const kindRows = await tx<
@@ -84,7 +86,7 @@ export async function agentMetrics(sql: Sql, days: 7 | 30): Promise<AgentMetrics
         avg(jsonb_array_length(steps)) filter (where status = 'done')::float8 as avg_steps,
         coalesce(sum(cost_cents), 0)::int as cost_cents
       from agent_runs
-      where created_at >= ${from} and created_at < ${to}
+      where created_at >= ${from} and created_at <= ${to}
       group by kind
     `;
     const byKind = new Map(kindRows.map((r) => [r.kind, r]));
@@ -98,27 +100,33 @@ export async function agentMetrics(sql: Sql, days: 7 | 30): Promise<AgentMetrics
           count(*) filter (where status = 'rejected')::int as rejected
         from lead_messages
         where direction = 'out' and author = 'agent'
-          and created_at >= ${from} and created_at < ${to}
+          and created_at >= ${from} and created_at <= ${to}
       `
     )[0]!;
 
     const replies = (
       await tx<{ leads_contacted: number; leads_replied: number }[]>`
         with contacted as (
-          select distinct t.lead_id from lead_messages m
+          -- a lead counts as replied only when a non-historical inbound
+          -- lands AFTER an agent-authored send — an inbound predating first
+          -- contact is an unanswered lead, not a reply
+          select t.lead_id, min(m.created_at) as first_sent_at
+          from lead_messages m
           join lead_threads t on t.id = m.thread_id
           where m.direction = 'out' and m.author = 'agent'
             and m.status in ('sent', 'delivered')
-            and m.created_at >= ${from} and m.created_at < ${to}
+            and m.created_at >= ${from} and m.created_at <= ${to}
+          group by t.lead_id
         ), replied as (
           select distinct t.lead_id from lead_messages m
           join lead_threads t on t.id = m.thread_id
+          join contacted c on c.lead_id = t.lead_id
           where m.direction = 'in' and not m.historical
-            and m.created_at >= ${from} and m.created_at < ${to}
+            and m.created_at >= ${from} and m.created_at <= ${to}
+            and m.created_at > c.first_sent_at
         )
         select (select count(*)::int from contacted) as leads_contacted,
-          (select count(*)::int from replied
-            where lead_id in (select lead_id from contacted)) as leads_replied
+          (select count(*)::int from replied) as leads_replied
       `
     )[0]!;
 
@@ -129,9 +137,22 @@ export async function agentMetrics(sql: Sql, days: 7 | 30): Promise<AgentMetrics
     const wakeups = hasWakeups
       ? (
           await tx<{ pending: number; fired: number }[]>`
-            select count(*) filter (where status = 'pending')::int as pending,
-              count(*) filter (where status = 'fired' and at >= ${from} and at < ${to})::int as fired
-            from agent_wakeups
+        select count(*) filter (where status = 'pending')::int as pending,
+              count(*) filter (
+                -- attribute a fire to when the sweep actually turned it into
+                -- a run (fired_run_id's created_at), not the requested at —
+                -- an overdue wakeup firing now belongs to this window
+                where status = 'fired'
+                  and coalesce(
+                    (select r.created_at from agent_runs r where r.id = w.fired_run_id),
+                    w.at
+                  ) >= ${from}
+                  and coalesce(
+                    (select r.created_at from agent_runs r where r.id = w.fired_run_id),
+                    w.at
+                  ) <= ${to}
+              )::int as fired
+            from agent_wakeups w
           `
         )[0]!
       : null;

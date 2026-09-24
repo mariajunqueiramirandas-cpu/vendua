@@ -285,6 +285,10 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('agent v2 (db)', () => {
       const st = await sql`select status from agent_wakeups where lead_id = ${leadId}`;
       expect(st[0]!.status).toBe('pending');
 
+      // an enabled email integration must exist for the channel to be
+      // reachable — seed it: other files' cleanup can leave none behind
+      await sql`insert into control_integrations (kind, driver, enabled)
+                values ('email', 'log', true)`;
       await setSetting('agent_autonomy', { level: 'copilot' });
       const cp = await controlTx(sql, (tx) => explainAutonomyTx(tx, leadId));
       expect(cp!.sendMode).toBe('blocked'); // no channel on this lead
@@ -296,6 +300,7 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('agent v2 (db)', () => {
       await clearSetting('agent_autonomy');
       await clearSetting('agent_playbooks');
       await sql`update agent_wakeups set status = 'canceled' where lead_id = ${leadId}`;
+      await sql`delete from control_integrations where kind = 'email' and driver = 'log'`;
     }
   });
 

@@ -27,21 +27,23 @@ function MetricsPanel() {
   const [days, setDays] = useState<7 | 30>(7);
 
   const seq = useRef(0);
-  const ok = useRef(0);
   const daysRef = useRef(days);
   daysRef.current = days;
   const load = useCallback(() => {
     const req = ++seq.current;
+    const forDays = daysRef.current;
     api
-      .agentMetrics(daysRef.current)
+      .agentMetrics(forDays)
       .then((r) => {
-        if (req < ok.current) return;
-        ok.current = req;
+        // Only the latest-issued request may write — an older response
+        // landing mid-toggle must not repaint the panel with stale-window
+        // data while the chips show the new selection.
+        if (req !== seq.current || forDays !== daysRef.current) return;
         setM(r);
         setErr('');
       })
       .catch((e) => {
-        if (req >= ok.current) setErr(String(e));
+        if (req === seq.current) setErr(String(e));
       });
   }, []);
   useEffect(load, [load, days]);

@@ -130,6 +130,11 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('agent evals — golden runs (db
       }
     } finally {
       setTestProvider(null);
+      // Leave the queue empty: ingestInbound's floating drain outlives the
+      // test and would claim anything still queued — including rows the
+      // NEXT file is about to assert on. Terminal rows are history; queued
+      // is the only status stray drains can claim.
+      await cancelQueued();
     }
   };
 

@@ -59,10 +59,19 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('agentMetrics (db)', () => {
       )`;
   };
 
-  test('empty window returns zeroed contract shape', async () => {
-    await migrate(sql, MIGRATIONS);
+  // Every metric source must be reset per test: sibling files leave
+  // agent_wakeups/agent_runs/lead_messages rows behind, and floating drains
+  // from their ingest calls can claim or mint queued rows mid-test. Nothing
+  // here seeds 'queued' — the only status foreign sweeps and drains touch.
+  const clean = async () => {
+    await sql`delete from agent_wakeups`;
     await sql`delete from lead_messages`;
     await sql`delete from agent_runs`;
+  };
+
+  test('empty window returns zeroed contract shape', async () => {
+    await migrate(sql, MIGRATIONS);
+    await clean();
     const m = await agentMetrics(sql, 7);
     expect(m.byKind.map((k) => k.kind)).toEqual([
       'triage',
@@ -83,7 +92,7 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('agentMetrics (db)', () => {
 
   test('byKind counts statuses; actedRate mirrors runActed over the journal', async () => {
     await migrate(sql, MIGRATIONS);
-    await sql`delete from agent_runs`;
+    await clean();
     const { leadId } = await seedLead('Metrics Lead');
     const actedSteps = [
       { type: 'model', content: 'ok', toolCalls: [] },
@@ -109,7 +118,9 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('agentMetrics (db)', () => {
     await seedRun({ kind: 'reply', leadId, status: 'failed' });
     await seedRun({ kind: 'reply', leadId, status: 'canceled' });
     await seedRun({ kind: 'outreach', leadId, steps: actedSteps, costCents: 250 });
-    await seedRun({ kind: 'discovery', steps: actedSteps, status: 'queued' });
+    // 'canceled' — not 'queued': queued rows are fair game to every other
+    // file's sweep/delete and to stray drains surviving file boundaries.
+    await seedRun({ kind: 'discovery', steps: actedSteps, status: 'canceled' });
     const m = await agentMetrics(sql, 7);
     const reply = m.byKind.find((k) => k.kind === 'reply')!;
     expect(reply.runs).toBe(5);
@@ -118,28 +129,42 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('agentMetrics (db)', () => {
     expect(reply.canceled).toBe(1);
     expect(reply.actedRate).toBeCloseTo(2 / 3, 5);
     const outreach = m.byKind.find((k) => k.kind === 'outreach')!;
+    expect(outreach.runs).toBe(1);
+    expect(outreach.done).toBe(1);
     expect(outreach.actedRate).toBe(1);
     expect(outreach.costUsd).toBe(2.5);
     expect(outreach.avgCostUsd).toBe(2.5);
     const discovery = m.byKind.find((k) => k.kind === 'discovery')!;
     expect(discovery.runs).toBe(1);
     expect(discovery.done).toBe(0);
+    expect(discovery.canceled).toBe(1);
     expect(discovery.actedRate).toBe(0);
-    // queued rows don't drag the done-only average either
+    // non-done rows don't drag the done-only average either
     expect(discovery.avgSteps).toBe(0);
     expect(reply.avgSteps).toBe(3);
   });
 
   test('outbound and replies read lead_messages, windowed', async () => {
     await migrate(sql, MIGRATIONS);
-    await sql`delete from lead_messages`;
-    await sql`delete from agent_runs`;
+    await clean();
     const a = await seedLead('Replier A');
     const b = await seedLead('Replier B');
+    const c = await seedLead('Early Writer');
     const stale = new Date(Date.now() - 20 * 86_400_000);
-    // A: contacted and replied — counts on both sides
-    await seedMessage({ threadId: a.threadId, direction: 'out', status: 'sent' });
-    await seedMessage({ threadId: a.threadId, direction: 'in', status: 'received' });
+    // A: contacted and replied — counts on both sides. Explicit offsets make
+    // the reply order deterministic (future timestamps fall outside `to`).
+    await seedMessage({
+      threadId: a.threadId,
+      direction: 'out',
+      status: 'sent',
+      createdAt: new Date(Date.now() - 10_000),
+    });
+    await seedMessage({
+      threadId: a.threadId,
+      direction: 'in',
+      status: 'received',
+      createdAt: new Date(Date.now() - 5_000),
+    });
     // B: contacted twice, never replied; a draft pending and one rejected
     await seedMessage({ threadId: b.threadId, direction: 'out', status: 'delivered' });
     await seedMessage({ threadId: b.threadId, direction: 'out', status: 'sent' });
@@ -151,6 +176,20 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('agentMetrics (db)', () => {
       approvedBy: 'staff',
     });
     await seedMessage({ threadId: b.threadId, direction: 'out', status: 'rejected' });
+    // C: wrote BEFORE the agent's first send — contacted, but the inbound
+    // can't be credited as a reply (it answers nothing)
+    await seedMessage({
+      threadId: c.threadId,
+      direction: 'in',
+      status: 'received',
+      createdAt: new Date(Date.now() - 10_000),
+    });
+    await seedMessage({
+      threadId: c.threadId,
+      direction: 'out',
+      status: 'sent',
+      createdAt: new Date(Date.now() - 5_000),
+    });
     // staff-authored and historical-inbound rows never enter agent metrics
     await seedMessage({ threadId: a.threadId, direction: 'out', status: 'sent', author: 'staff' });
     await seedMessage({
@@ -167,15 +206,16 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('agentMetrics (db)', () => {
       createdAt: stale,
     });
     const m = await agentMetrics(sql, 7);
-    expect(m.outbound).toEqual({ sent: 4, drafted: 1, approved: 1, rejected: 1 });
-    expect(m.replies).toEqual({ leadsContacted: 2, leadsReplied: 1, replyRate: 0.5 });
+    expect(m.outbound).toEqual({ sent: 5, drafted: 1, approved: 1, rejected: 1 });
+    // C contacted but its only inbound predates the send — not a reply
+    expect(m.replies).toEqual({ leadsContacted: 3, leadsReplied: 1, replyRate: 1 / 3 });
     const m30 = await agentMetrics(sql, 30);
-    expect(m30.outbound.sent).toBe(5);
+    expect(m30.outbound.sent).toBe(6);
   });
 
   test('wakeups counts pending backlog and fired-in-window', async () => {
     await migrate(sql, MIGRATIONS);
-    await sql`delete from agent_wakeups`;
+    await clean();
     const stale = new Date(Date.now() - 20 * 86_400_000);
     await sql`
       insert into agent_wakeups (kind, at, focus, status, created_by)
@@ -185,9 +225,15 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('agentMetrics (db)', () => {
         ('reply', now(), 'follow up', 'fired', 'agent'),
         ('reply', ${stale}, 'old fire', 'fired', 'agent'),
         ('outreach', now(), 'gave up', 'canceled', 'staff')`;
+    // A wakeup scheduled long ago that only fired now attributes to the
+    // firing run's created_at, not the requested `at`.
+    const firedRun = await seedRun({ kind: 'outreach' });
+    await sql`
+      insert into agent_wakeups (kind, at, focus, status, created_by, fired_run_id)
+      values ('reply', ${stale}, 'late fire', 'fired', 'agent', ${firedRun})`;
     const m = await agentMetrics(sql, 7);
-    expect(m.wakeups).toEqual({ pending: 2, fired: 1 });
+    expect(m.wakeups).toEqual({ pending: 2, fired: 2 });
     const m30 = await agentMetrics(sql, 30);
-    expect(m30.wakeups).toEqual({ pending: 2, fired: 2 });
+    expect(m30.wakeups).toEqual({ pending: 2, fired: 3 });
   });
 });

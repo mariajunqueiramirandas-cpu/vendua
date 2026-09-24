@@ -52,8 +52,10 @@ export function scriptedProvider(script: ScriptedTurn[], name = 'eval:scripted')
     async chat({ system, messages, tools }): Promise<LlmResult> {
       requests.push({
         system,
-        messages: messages.map((m) => ({ ...m })),
-        tools: tools.map((t) => ({ ...t })),
+        // deep snapshots — the runner mutates nested args/toolCalls between
+        // turns, and a probe reading history must see what was actually sent
+        messages: structuredClone(messages),
+        tools: structuredClone(tools),
       });
       const turn = script[turns] ?? { text: 'ok' };
       turns++;
