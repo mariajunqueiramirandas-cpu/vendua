@@ -1653,6 +1653,18 @@ export async function executeTool(
       const missOut = new Map<string, Promise<PageResult>>(); // url → its slice
       const fetchable: string[] = [];
       const queued = new Set<string>();
+      const replyBound = ctx.runKind === 'reply';
+      // Reserve-and-charge for every real request the resolver issues —
+      // named map pointers never trigger it (in-process, free); a nameless
+      // shortlink's hop chain spends one slot per issued fetch.
+      const reserve = replyBound
+        ? async (): Promise<boolean> => {
+            if (ctx.pageReads >= REPLY_READ_PAGES_CAP) return false;
+            ctx.pageReads++;
+            await ctx.markReadSpent?.(1);
+            return true;
+          }
+        : undefined;
       for (const url of urls) {
         const id = pageKey(url) ?? url;
         // Validation precedes the cache short-circuit — pageKey drops the
@@ -1672,14 +1684,35 @@ export async function executeTool(
         }
         if (ctx.pageCache.has(id) || queued.has(id)) continue;
         queued.add(id);
+        if (isMapPointer(url)) {
+          // A direct map pointer resolves through the pointer path — a
+          // named carrier costs zero fetches, so a provider fetch would
+          // only buy a captcha page. Its slice behaves like any other
+          // miss: cached under the pointer's key, error on failure.
+          const key2 = pageKey(url);
+          const p: Promise<PageResult> = resolveMapPointer(url, reserve)
+            .then(
+              (page): PageResult =>
+                page ? { page } : { page: null, error: 'map pointer did not resolve' },
+            )
+            .catch(
+              (e): PageResult => ({
+                page: null,
+                error: e instanceof Error ? e.message : String(e),
+              }),
+            );
+          missOut.set(url, p);
+          if (key2) ctx.pageCache.set(key2, p);
+          continue;
+        }
         fetchable.push(url);
       }
       // Reply's bound prices fetches, not calls — one call can fetch up
       // to six pages, so the fetchable count itself is the spend. All-or-
       // nothing, checked before any fetch issues: a call that doesn't
       // fit the remaining budget is refused whole, a call served fully
-      // from the run's pageCache spends nothing.
-      const replyBound = ctx.runKind === 'reply';
+      // from the run's pageCache spends nothing. Map pointers never reach
+      // this count — they resolve through the pointer path above.
       if (replyBound && fetchable.length) {
         if (ctx.pageReads + fetchable.length > REPLY_READ_PAGES_CAP) {
           return {
@@ -1863,18 +1896,6 @@ export async function executeTool(
           mapWave.push({ url: link, from: pg.url });
         }
       }
-      // A pointer that already names the place (?q=, /maps/place/) resolves
-      // entirely in-process — no request, no spend. A shortlink's 302 chain
-      // costs per actual request, reserved before each issues — the
-      // resolver's hops share the same reply fetch budget.
-      const reserve = replyBound
-        ? async (): Promise<boolean> => {
-            if (ctx.pageReads >= REPLY_READ_PAGES_CAP) return false;
-            ctx.pageReads++;
-            await ctx.markReadSpent?.(1);
-            return true;
-          }
-        : undefined;
       for (const c of mapWave.slice(0, 6)) {
         const key2 = pageKey(c.url);
         const page = await resolveMapPointer(c.url, reserve).catch(() => null);

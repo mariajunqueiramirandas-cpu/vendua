@@ -489,6 +489,20 @@ describe('mapPointerName', () => {
     expect(mapPointerName(wrap(encodeURIComponent('https://www.google.com/search?q=Acme')))).toBe(
       'Acme',
     );
+    // the peel never crosses the pointer family — a continue= pointing at a
+    // foreign host keeps the wrapper (leftover continue → unresolved →
+    // null), so the foreign target never becomes a chase hop
+    expect(
+      mapPointerName(
+        `https://www.google.com/sorry/?continue=${encodeURIComponent('https://evil.example/x?q=Acme')}`,
+      ),
+    ).toBeNull();
+    // same for a non-http target smuggled through continue=
+    expect(
+      mapPointerName(
+        `https://www.google.com/sorry/?continue=${encodeURIComponent('javascript:alert(1)')}`,
+      ),
+    ).toBeNull();
   });
 });
 
