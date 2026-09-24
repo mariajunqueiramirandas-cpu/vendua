@@ -277,6 +277,7 @@ dbDescribe('worker robustness (db)', () => {
     plan: null,
     monid: null,
     seenContacts: new Set(),
+    pageReads: 0,
     draftOnly: false,
   });
 
@@ -996,5 +997,29 @@ dbDescribe('worker robustness (db)', () => {
       select status from agent_runs where id = ${replyRun}
     `;
     expect(live!.status).toBe('running');
+  });
+
+  test('reply read_pages is bounded — the cap refuses the call before fetching', async () => {
+    const ctx = mkCtx('rp-cap', null, null, 'reply');
+    ctx.pageReads = 2;
+    const out = (await executeTool(ctx, 'x', 'read_pages', {
+      urls: ['https://x.co'],
+    })) as { error?: string };
+    expect(out.error).toContain('limite');
+  });
+
+  test('remember returns the fact the ≤100 cap evicted', async () => {
+    await migrate(sql, MIGRATIONS);
+    const facts = Array.from({ length: 100 }, (_, i) => `fato ${i}`);
+    await sql`
+      insert into control_settings (key, value)
+      values ('agent_memory', ${sql.json({ facts })})
+      on conflict (key) do update set value = excluded.value
+    `;
+    const out = (await executeTool(mkCtx('mem', null, null, 'strategist'), 'm1', 'remember', {
+      fact: 'fato novo',
+    })) as { remembered: string; total: number; evicted?: string[] };
+    expect(out.total).toBe(100);
+    expect(out.evicted).toEqual(['fato 0']);
   });
 });

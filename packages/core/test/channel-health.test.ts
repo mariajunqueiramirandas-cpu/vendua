@@ -82,6 +82,7 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('channel health (db)', () => {
       plan: null,
       monid: null,
       seenContacts: new Set(),
+      pageReads: 0,
       draftOnly: false,
     });
     // A 3-hour quiet window centered on now (guardrails tz) — deterministic
@@ -165,6 +166,7 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('channel health (db)', () => {
       plan: null,
       monid: null,
       seenContacts: new Set(),
+      pageReads: 0,
       draftOnly: true,
     });
     const h =
