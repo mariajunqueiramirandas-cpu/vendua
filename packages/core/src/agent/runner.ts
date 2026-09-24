@@ -1557,7 +1557,16 @@ export async function runOnce(sql: Sql): Promise<boolean> {
       // comes off the app clock and received_at off the DB clock, and skew
       // runs both directions.
       const autoSrc = (run.params as { auto?: string } | null)?.auto;
-      if (!lost && run.kind === 'outreach' && autoSrc != null && autoSrc !== 'regenerate') {
+      // 'agent' exempt like 'regenerate': the pre-'auto' sweep marker mixes
+      // self-schedules with lead-asked callbacks — possibly a promise, so
+      // a reply doesn't self-cancel it.
+      if (
+        !lost &&
+        run.kind === 'outreach' &&
+        autoSrc != null &&
+        autoSrc !== 'regenerate' &&
+        autoSrc !== 'agent'
+      ) {
         const replied = await controlTx(
           sql,
           (tx) => tx`

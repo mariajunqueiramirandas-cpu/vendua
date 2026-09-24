@@ -8,3 +8,15 @@
 alter table leads drop constraint leads_next_action_source_check;
 alter table leads add constraint leads_next_action_source_check
   check (next_action_source in ('cadence', 'agent', 'staff', 'requested', 'auto'));
+
+-- Pre-'auto' sweeps stamped params.auto = 'agent' on materialized runs —
+-- the same unrecoverable mix (self-schedule or lead-asked callback). Strip
+-- the marker from still-live rows so a reply can't cancel a possible
+-- promise; they become unmarked like post-deploy 'agent' sweeps. Code
+-- also exempts the marker at every disposable-auto predicate (cancel,
+-- supersede, mid-run abort, send guard), covering rows an old worker may
+-- stamp during a rolling deploy. Terminal rows keep their history.
+update agent_runs
+set params = params - 'auto'
+where kind = 'outreach' and status in ('queued', 'running')
+  and params->>'auto' = 'agent';

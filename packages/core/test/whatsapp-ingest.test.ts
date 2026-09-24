@@ -596,6 +596,20 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('whatsapp history + ignore list 
               ${sql.json({ auto: 'regenerate', draftOnly: true } as never)}, now())
       returning id
     `;
+    // Pre-'auto' sweeps stamped params.auto='agent' — same unrecoverable mix
+    // as the column value, so a live row carrying it is a possible promise:
+    // never canceled, its draft never superseded.
+    const [legacyRun] = await sql<{ id: string }[]>`
+      insert into agent_runs (kind, lead_id, status, params, run_at)
+      values ('outreach', ${leadId}, 'queued',
+              ${sql.json({ auto: 'agent' } as never)}, now() + interval '1 hour')
+      returning id
+    `;
+    const [legacyDraft] = await sql<{ id: string }[]>`
+      insert into lead_messages (thread_id, direction, author, body, status, agent_run_id)
+      values (${thread!.id}, 'out', 'agent', 'te chamo terça!', 'draft', ${legacyRun!.id})
+      returning id
+    `;
     const [draft] = await sql<{ id: string }[]>`
       insert into lead_messages (thread_id, direction, author, body, status, agent_run_id)
       values (${thread!.id}, 'out', 'agent', 'oi! vi seu negócio', 'draft', ${doneRun!.id})
@@ -624,6 +638,14 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('whatsapp history + ignore list 
       select status from lead_messages where id = ${regenDraft!.id}
     `;
     expect(rd!.status).toBe('draft');
+    const [lrun] = await sql<{ status: string }[]>`
+      select status from agent_runs where id = ${legacyRun!.id}
+    `;
+    expect(lrun!.status).toBe('queued');
+    const [ld] = await sql<{ status: string }[]>`
+      select status from lead_messages where id = ${legacyDraft!.id}
+    `;
+    expect(ld!.status).toBe('draft');
   });
 
   test("a 'requested' callback survives the inbound reply and sweeps unmarked", async () => {

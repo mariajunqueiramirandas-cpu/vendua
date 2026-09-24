@@ -542,6 +542,20 @@ export async function approveMessage(
     const g = await getSettingTx<Partial<Guardrails>>(tx, 'guardrails', {});
     const staleDays = g.staleDraftDays ?? DEFAULT_GUARDRAILS.staleDraftDays;
     if (staleDays > 0) {
+      // capfin BEFORE the draft row lock: the inbound gate takes capfin
+      // first and locks this same message (its draft supersede) — a
+      // message-lock → capfin order here is the AB-BA the capfin-first
+      // rule exists to prevent, and an aborted gate leaves a recorded
+      // inbound with no reply run.
+      const leadRow = await tx<{ lead_id: string }[]>`
+        select t.lead_id from lead_messages m
+        join lead_threads t on t.id = m.thread_id
+        where m.id = ${messageId}
+      `;
+      if (leadRow[0]) {
+        const { capLockTx } = await import('../agent/runner.ts');
+        await capLockTx(tx, leadRow[0].lead_id);
+      }
       // A stale AGENT draft never ships: the copy was written against
       // week-old lead state. Supersede it and enqueue a draftOnly outreach
       // run — the recomposed draft lands back in this queue for a second
