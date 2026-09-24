@@ -32,15 +32,17 @@ export async function dispatchMessage(
   messageId: string,
   /** Optional fence run first inside the claim tx — agent-run dispatches
    *  pass a live-claim check so a canceled/reclaimed run can't still push a
-   *  queued message to the provider. Staff approvals, meeting sends, and the
-   *  stranded-message recovery in drain() pass nothing: they legitimately
-   *  dispatch messages whose authoring run already finished. */
-  guard?: (tx: Sql) => Promise<void>,
+   *  queued message to the provider; auto-outreach dispatches also return a
+   *  refusal reason when a live inbound postdates the claim (a string means
+   *  "mark the message failed and don't send"). Staff approvals, meeting
+   *  sends, and the stranded-message recovery in drain() pass nothing: they
+   *  legitimately dispatch messages whose authoring run already finished. */
+  guard?: (tx: Sql) => Promise<string | null | void>,
 ): Promise<{ ok: boolean; reason?: string }> {
   // Phase 1: claim.
   let wroteTid: string | null = null;
   const job = await controlTx(sql, async (tx) => {
-    await guard?.(tx);
+    const refused = (await guard?.(tx)) || null;
     const msg = (
       await tx<
         {
@@ -170,6 +172,15 @@ export async function dispatchMessage(
       return { fail: reason };
     }
 
+    // Caller-refused sends (a live inbound postdating an auto-outreach
+    // claim) fail durably like suppression — 'failed' also keeps the
+    // stranded-message recovery from resending the dead nudge.
+    if (refused) {
+      await markMessageFailed(tx, messageId, refused);
+      wroteTid = msg.thread_id;
+      return { fail: refused };
+    }
+
     // 'sending' is the point of no return: the provider call follows, so a
     // failure after this transition may already be on the wire — stamp the
     // attempt durably so a later dedupe can tell it from a pre-wire refusal.
@@ -252,7 +263,8 @@ export async function dispatchMessage(
     // The not-exists closes the provider-call race: the lead can reply while
     // Resend/Baileys is still on the wire — that inbound already ran its
     // clearing update (nothing to clear yet), so finalization must not stamp
-    // a floor on an answered send.
+    // a floor on an answered send. `historical` rows are context imports,
+    // never answers — a history sync mid-call must not suppress the floor.
     if (send.author === 'agent') {
       const g = await getSettingTx<Partial<Guardrails>>(tx, 'guardrails', {});
       const days = g.followupCadenceDays ?? DEFAULT_GUARDRAILS.followupCadenceDays;
@@ -270,7 +282,8 @@ export async function dispatchMessage(
               join lead_threads it on it.id = im.thread_id
               where it.lead_id = ${send.leadId}
                 and im.direction = 'in'
-                and im.created_at > ${send.sendingAt}::timestamptz
+                and not im.historical
+                and im.received_at > ${send.sendingAt}::timestamptz
             )
         `;
       }

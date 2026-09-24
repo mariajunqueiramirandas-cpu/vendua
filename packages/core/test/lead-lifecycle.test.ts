@@ -256,6 +256,38 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('lead lifecycle (db)', () => {
         await setGuardrails({});
       }
     });
+
+    test('a live inbound past the send boundary suppresses the floor', async () => {
+      await setup();
+      const leadId = await mkLead();
+      const messageId = await compose(leadId, 'agent', 'queued');
+      const [msg] = await sql<{ thread_id: string }[]>`
+        select thread_id from lead_messages where id = ${messageId}
+      `;
+      // received_at after the 'sending' stamp = the lead answered on the
+      // wire — the floor must not reschedule a replied send.
+      await sql`insert into lead_messages (thread_id, direction, author, body, status, created_at, received_at)
+        values (${msg!.thread_id}, 'in', 'lead', 'quero', 'received',
+                now(), now() + interval '1 minute')`;
+      expect((await dispatchMessage(sql, messageId)).ok).toBe(true);
+      expect(await nextAction(leadId)).toBeNull();
+    });
+
+    test('a history import past the send boundary never suppresses the floor', async () => {
+      await setup();
+      const leadId = await mkLead();
+      const messageId = await compose(leadId, 'agent', 'queued');
+      const [msg] = await sql<{ thread_id: string }[]>`
+        select thread_id from lead_messages where id = ${messageId}
+      `;
+      // Context-only import stamped as if it landed during the provider
+      // call — historical rows are never an answer.
+      await sql`insert into lead_messages (thread_id, direction, author, body, status, created_at, received_at, historical)
+        values (${msg!.thread_id}, 'in', 'lead', 'contexto antigo', 'received',
+                now() - interval '2 days', now() + interval '1 minute', true)`;
+      expect((await dispatchMessage(sql, messageId)).ok).toBe(true);
+      expect(await nextAction(leadId)).not.toBeNull();
+    });
   });
 
   describe('A3 — stale draft approval regenerates', () => {

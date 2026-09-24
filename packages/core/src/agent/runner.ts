@@ -805,10 +805,11 @@ const READ_TOOLS = new Set([
  *  run's writes, so suppressing an identical get_lead/search_leads on
  *  that version alone would hide external edits (staff, inbound-driven
  *  updates) made between turns. They're cheap and spend no remote
- *  budget — exempt them from repeat-suppression; a true identical-call
- *  loop is still caught by the LOOP nudge. Remote/budgeted reads
- *  (read_pages, web_search, serp, maps_lookup, instagram_profile) keep
- *  suppression — that's what their spend caps exist for. */
+ *  budget — exempt them from repeat-suppression (the repeat still
+ *  counts toward allRepeat, so a read-only loop trips the LOOP nudge).
+ *  Remote/budgeted reads (read_pages, web_search, serp, maps_lookup,
+ *  instagram_profile) keep suppression — that's what their spend caps
+ *  exist for. */
 const MUTABLE_READS = new Set(['get_lead', 'search_leads']);
 
 /** Writes that mint a NEW durable artifact per call — a duplicate can
@@ -1542,12 +1543,13 @@ export async function runOnce(sql: Sql): Promise<boolean> {
       // post-commit pass flips 'running' ones SKIP-LOCKED — a row locked
       // mid-tool-call escapes that pass and nothing revisits it. The
       // marker the cancel keys on is the committed LIVE inbound itself:
-      // one newer than this attempt's claim means the lead already wrote —
-      // stop exactly like the API cancel (fenced flip → lost → unwind →
-      // persistAborted journals the trajectory). Historical imports are
-      // excluded: they store the provider's sentAt as created_at, so a
-      // re-imported old message (or a skewed provider clock) must not
-      // cancel live outreach — the same rule the ingest gate applies.
+      // one ingested after this attempt's claim means the lead already
+      // wrote — stop exactly like the API cancel (fenced flip → lost →
+      // unwind → persistAborted journals the trajectory). The comparison
+      // runs on received_at (server ingestion time), not created_at:
+      // a delayed webhook or lagging provider clock can stamp a genuinely
+      // new inbound before the claim time and must still cancel.
+      // Historical imports stay excluded — context, not a live reply.
       const autoSrc = (run.params as { auto?: string } | null)?.auto;
       if (!lost && run.kind === 'outreach' && autoSrc != null && autoSrc !== 'regenerate') {
         const replied = await controlTx(
@@ -1556,7 +1558,7 @@ export async function runOnce(sql: Sql): Promise<boolean> {
             select 1 from lead_messages m
             join lead_threads t on t.id = m.thread_id
             where t.lead_id = ${run.lead_id} and m.direction = 'in' and not m.historical
-              and m.created_at > (select started_at from agent_runs where id = ${run.id})
+              and m.received_at > (select started_at from agent_runs where id = ${run.id})
             limit 1
           `,
         );
@@ -1823,9 +1825,12 @@ export async function runOnce(sql: Sql): Promise<boolean> {
           // repeated write after an intervening mutation can be a
           // legitimate state-restore. Artifact-minters are the exception:
           // a duplicate is never legitimate, always suppressed.
-          const suppress =
-            !MUTABLE_READS.has(call.name) &&
-            (landedSigs.has(sig) || (prev?.ok === true && prev.v === stateVersion));
+          const repeatHit =
+            landedSigs.has(sig) || (prev?.ok === true && prev.v === stateVersion);
+          // Mutable reads re-execute on a repeat so external edits stay
+          // visible — but they still count toward allRepeat, or a
+          // read-only loop would dodge the LOOP nudge entirely.
+          const suppress = !MUTABLE_READS.has(call.name) && repeatHit;
           const readsBefore = ctx.pageReads;
           // Let a read_pages call stamp each fetch reservation onto its
           // pending journal entry the moment it validates — a worker that
@@ -1846,7 +1851,9 @@ export async function runOnce(sql: Sql): Promise<boolean> {
                 'REPEAT — chamada idêntica à anterior já foi executada nesta run; o resultado já está no contexto e não muda. Faça algo diferente ou encerre.',
             };
           } else {
-            allRepeat = false;
+            // A proven repeat that isn't suppressed (a mutable read) still
+            // counts as a repeat for the loop nudge.
+            if (!repeatHit) allRepeat = false;
             try {
               out = await executeTool(ctx, callId, call.name, call.args);
             } catch (e) {
@@ -2163,10 +2170,19 @@ let draining = false;
  *  outreach sweep. Queue lives in Postgres, so queued runs survive reboots. */
 export function startAgentWorker(sql: Sql, intervalMs = 15_000) {
   if (workerTimer) return;
+  // Leads already over the cap before this deploy (or stranded by a
+  // direct-db spend write) park all queued work until flagged — the
+  // settings-write sweep can't reach them without a write. The boot pass
+  // covers the deploy case now; keeping it in the tick chain means a
+  // failed pass retries next interval instead of waiting for a restart.
+  void flagCappedLeads(sql).catch((e) => agentLog.error({ err: e }, 'boot cap flag failed'));
   workerTimer = setInterval(() => {
     if (draining) return;
     draining = true;
     void drain(sql)
+      .then(() =>
+        flagCappedLeads(sql).catch((e) => agentLog.error({ err: e }, 'cap flag sweep failed')),
+      )
       .then(() => sweepOutreach(sql))
       .then(() => sweepBriefs(sql))
       .then(() => sweepStrategist(sql))

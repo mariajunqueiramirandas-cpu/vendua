@@ -1034,6 +1034,15 @@ export async function resolveMapPointer(url: string): Promise<ReadPage | null> {
   let name = mapPointerName(url);
   let next: string | null = url;
   for (let hops = 0; !location && next && hops < 3; hops++) {
+    // Every hop is just another url the agent asked us to fetch — run the
+    // same guard read_pages applies at the batch boundary. Family
+    // membership is not a substitute: a shortlink can 302 to a private or
+    // non-http target its own host check would never name.
+    try {
+      assertFetchable(next);
+    } catch {
+      break;
+    }
     let redirect: string | null = null;
     try {
       const res = await fetch(next, {
@@ -1054,6 +1063,13 @@ export async function resolveMapPointer(url: string): Promise<ReadPage | null> {
     }
     name = mapPointerName(t.toString()) ?? name;
     if (GOOGLE_HOST.test(t.hostname)) {
+      // The resolved location is handed to the model as a follow-up url —
+      // it must pass the fetchable guard too, not just the family check.
+      try {
+        assertFetchable(t.toString());
+      } catch {
+        break;
+      }
       location = t.toString();
       break;
     }

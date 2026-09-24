@@ -1563,7 +1563,8 @@ dbDescribe('worker robustness (db)', () => {
     await migrate(sql, MIGRATIONS);
     // A clean get_lead stays reusable only because nothing MUTATED — but
     // stateVersion counts this run's writes, not a staff edit between
-    // turns. Mutable-CRM reads are exempt from suppression outright.
+    // turns. Mutable-CRM reads are exempt from suppression outright —
+    // but still count as repeats for the LOOP nudge.
     const lead = await controlTx(sql, (tx) => insertLeadTx(tx, { name: 'Fresh Read Lead' }));
     const leadId = lead.body.lead.id;
     await sql`delete from agent_runs where status = 'queued'`;
@@ -1571,6 +1572,7 @@ dbDescribe('worker robustness (db)', () => {
     await sql`update agent_runs set
       params = ${sql.json({
         script: [
+          { toolCalls: [{ name: 'get_lead', args: { id: leadId } }] },
           { toolCalls: [{ name: 'get_lead', args: { id: leadId } }] },
           { toolCalls: [{ name: 'get_lead', args: { id: leadId } }] },
           { toolCalls: [{ name: 'request_human', args: { leadId, reason: 'travou' } }] },
@@ -1584,11 +1586,14 @@ dbDescribe('worker robustness (db)', () => {
     const gets = r.steps.filter((s) => (s as { name?: string }).name === 'get_lead') as {
       out?: { error?: string };
     }[];
-    expect(gets).toHaveLength(2);
-    // both ran fresh — no REPEAT on a mutable-state read
-    expect(gets[0]!.out?.error ?? '').not.toMatch(/^REPEAT/);
-    expect(gets[1]!.out?.error ?? '').not.toMatch(/^REPEAT/);
-    expect(JSON.stringify(gets[1]!.out)).toContain('Fresh Read Lead');
+    expect(gets).toHaveLength(3);
+    // each ran fresh — no REPEAT on a mutable-state read
+    for (const g of gets) expect(g.out?.error ?? '').not.toMatch(/^REPEAT/);
+    expect(JSON.stringify(gets[2]!.out)).toContain('Fresh Read Lead');
+    // the read-only repeats still tripped the loop detector — once
+    const nudges = r.steps.filter((s) => (s as { type?: string }).type === 'nudge');
+    expect(nudges).toHaveLength(1);
+    expect((nudges[0] as { content?: string }).content).toContain('LOOP');
   });
 
   test('a retried send after a dispatch-stage failure adopts the failed row — no second compose', async () => {
@@ -1678,6 +1683,54 @@ dbDescribe('worker robustness (db)', () => {
         await sql`delete from control_settings where key = 'guardrails'`;
       }
     }
+  });
+
+  test('a channel-hop retry after an attempted failure is still adopted', async () => {
+    await migrate(sql, MIGRATIONS);
+    // WhatsApp send attempted then failed; the channel died so the retry
+    // resolves email — the body match spans channels, or the lead would
+    // get the same text twice.
+    const lead = await controlTx(sql, (tx) =>
+      insertLeadTx(tx, {
+        name: 'Chan Hop Lead',
+        email: 'hop@example.com',
+        agent_mode: 'auto',
+      }),
+    );
+    const leadId = lead.body.lead.id;
+    const waThread = await controlTx(sql, (tx) => ensureThread(tx, leadId, 'whatsapp', {}));
+    await sql`delete from agent_runs where status = 'queued'`;
+    const runId = (await enqueueRun(sql, { kind: 'reply', leadId })!)!;
+    // The run's own earlier attempt on the now-dead channel: failed AFTER
+    // 'sending' — dispatch_attempted_at is stamped.
+    await sql`
+      insert into lead_messages (thread_id, direction, author, body, status, agent_run_id, dispatch_attempted_at)
+      values (${waThread.id}, 'out', 'agent', 'olá', 'failed', ${runId}, now())
+    `;
+    await sql`update agent_runs set
+      params = ${sql.json({
+        script: [
+          { toolCalls: [{ name: 'send_message', args: { leadId, body: 'olá' } }] },
+          { text: 'fim' },
+        ],
+      } as never)}
+      where id = ${runId}`;
+    expect(await runOnce(sql)).toBe(true);
+    const r = await getRun(runId);
+    expect(r.status).toBe('done');
+    const sends = r.steps.filter((s) => (s as { name?: string }).name === 'send_message') as {
+      out?: { blocked?: boolean; reason?: string };
+    }[];
+    expect(sends).toHaveLength(1);
+    // adopted on email too — no second copy on another wire
+    expect(sends[0]!.out?.blocked).toBe(true);
+    expect(sends[0]!.out?.reason).toBe('already dispatched by this run');
+    const rows = await sql<{ status: string }[]>`
+      select m.status from lead_messages m
+      join lead_threads t on t.id = m.thread_id
+      where t.lead_id = ${leadId} and m.agent_run_id = ${runId}
+    `;
+    expect(rows).toHaveLength(1);
   });
 
   test('a pre-wire failed send stays retryable — the failure never left the building', async () => {
@@ -2208,13 +2261,15 @@ dbDescribe('worker robustness (db)', () => {
     // 'running' row locked during that pass escapes it — the run must
     // catch the committed inbound itself at the next step boundary.
     await sql`update agent_runs set run_at = now(),
-      params = ${sql.json({ auto: 'first-contact', script: [{ text: 'oi' }, { text: 'outra' }] } as never)}
+      params = ${sql.json({ auto: 'first-contact', script: [{ text: 'oi', delayMs: 1500 }, { text: 'outra' }] } as never)}
       where id = ${runId}`;
-    // sentAt is provider time — clock skew can land it ahead of the
-    // claim stamp and it still counts as "arrived during this attempt"
+    // The probe keys on received_at (server ingest): the inbound must land
+    // AFTER the claim — fire the run, let claim+turn-1 start, then insert.
+    const running = runOnce(sql);
+    await new Promise((r) => setTimeout(r, 150));
     await sql`insert into lead_messages (thread_id, direction, author, body, status, created_at)
-      values (${thread!.id}, 'in', 'lead', 'sim, quero', 'received', now() + interval '1 minute')`;
-    expect(await runOnce(sql)).toBe(true);
+      values (${thread!.id}, 'in', 'lead', 'sim, quero', 'received', now())`;
+    expect(await running).toBe(true);
     const r = await getRun(runId);
     expect(r.status).toBe('canceled');
     expect(r.error).toBe('lead respondeu');
@@ -2243,5 +2298,76 @@ dbDescribe('worker robustness (db)', () => {
     expect(await runOnce(sql)).toBe(true);
     const r = await getRun(runId);
     expect(r.status).toBe('done');
+  });
+
+  test('a lagging provider stamp still self-cancels — the probe keys on ingest time', async () => {
+    await migrate(sql, MIGRATIONS);
+    const lead = await controlTx(sql, (tx) => insertLeadTx(tx, { name: 'Lag Inbound' }));
+    const leadId = lead.body.lead.id;
+    const [thread] = await sql<{ id: string }[]>`
+      insert into lead_threads (lead_id, channel) values (${leadId}, 'whatsapp') returning id
+    `;
+    await sql`delete from agent_runs where status = 'queued'`;
+    const runId = (await enqueueRun(sql, { kind: 'outreach', leadId }))!;
+    await sql`update agent_runs set run_at = now(),
+      params = ${sql.json({ auto: 'first-contact', script: [{ text: 'oi', delayMs: 1500 }, { text: 'outra' }] } as never)}
+      where id = ${runId}`;
+    // Provider clock an hour BEHIND: created_at predates the claim, but the
+    // message is ingested mid-run — received_at is what "arrived during
+    // this attempt" means.
+    const running = runOnce(sql);
+    await new Promise((r) => setTimeout(r, 150));
+    await sql`insert into lead_messages (thread_id, direction, author, body, status, created_at)
+      values (${thread!.id}, 'in', 'lead', 'sim, quero', 'received', now() - interval '1 hour')`;
+    expect(await running).toBe(true);
+    const r = await getRun(runId);
+    expect(r.status).toBe('canceled');
+    expect(r.error).toBe('lead respondeu');
+    expect(r.steps.filter((s) => (s as { type?: string }).type === 'model')).toHaveLength(1);
+  });
+
+  test('an auto send refused at dispatch — the inbound beat the probe window', async () => {
+    await migrate(sql, MIGRATIONS);
+    await sql`
+      insert into control_integrations (kind, driver, enabled)
+      values ('whatsapp', 'log', true)
+      on conflict (kind, driver) do update set enabled = true
+    `;
+    // The default first-contact draft-only gate would park the send in the
+    // approval queue before it ever reaches dispatch.
+    await sql`
+      insert into control_settings (key, value) values ('guardrails', ${sql.json({ firstContactDraftOnly: false, quietStart: '00:00', quietEnd: '00:00' } as never)})
+      on conflict (key) do update set value = excluded.value
+    `;
+    const lead = await controlTx(sql, (tx) =>
+      insertLeadTx(tx, { name: 'Send Boundary', whatsapp: '5511955550001', agent_mode: 'auto' }),
+    );
+    const leadId = lead.body.lead.id;
+    const [thread] = await sql<{ id: string }[]>`
+      insert into lead_threads (lead_id, channel) values (${leadId}, 'whatsapp') returning id
+    `;
+    await sql`delete from agent_runs where status = 'queued'`;
+    const runId = (await enqueueRun(sql, { kind: 'outreach', leadId }))!;
+    await sql`update agent_runs set run_at = now(),
+      params = ${sql.json({ auto: 'first-contact' } as never)}
+      where id = ${runId}`;
+    const claimed = await claimRun(sql);
+    expect(claimed?.id).toBe(runId);
+    // Live inbound committed AFTER the claim but before any step boundary —
+    // the probe hasn't run yet; the send-claim tx must refuse on its own.
+    await sql`insert into lead_messages (thread_id, direction, author, body, status)
+      values (${thread!.id}, 'in', 'lead', 'oi, quero', 'received')`;
+    const out = (await executeTool(
+      mkCtx(runId, claimed!.claim_token, leadId, 'outreach'),
+      's1',
+      'send_message',
+      { leadId, body: 'não deve enviar' },
+    )) as { error?: string };
+    expect(out.error).toBe('lead respondeu');
+    const msgs = await sql<{ status: string }[]>`
+      select status from lead_messages where thread_id = ${thread!.id} and direction = 'out'
+    `;
+    expect(msgs).toHaveLength(1);
+    expect(msgs[0]!.status).toBe('failed');
   });
 });
