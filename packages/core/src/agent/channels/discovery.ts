@@ -734,7 +734,7 @@ function isPrivateV4(ip: number): boolean {
 
 /** The provider fetches the page, not us — but an agent-controlled URL
  *  should still never name an internal or loopback host. */
-function assertFetchable(url: string): URL {
+export function assertFetchable(url: string): URL {
   const target = new URL(url);
   if (target.protocol !== 'http:' && target.protocol !== 'https:') {
     throw new Error(`unsupported url scheme ${target.protocol}`);
@@ -986,6 +986,24 @@ export function chaseLinks(page: ReadPage): string[] {
   return out;
 }
 
+/** The business name a maps/google URL already carries (?q=, /maps/place/),
+ *  or null when only a redirect hop could reveal it — the difference
+ *  between resolving a pointer in-process and spending a real fetch. */
+export function mapPointerName(raw: string): string | null {
+  try {
+    const t = new URL(raw);
+    // A captcha'd redirect wraps the real target: /sorry/?continue=<url>.
+    const inner = t.searchParams.get('continue');
+    if (inner) return mapPointerName(decodeURIComponent(inner));
+    const q = t.searchParams.get('q') ?? t.searchParams.get('query');
+    if (q && !/\//.test(q) && q.length < 80) return q.replace(/\+/g, ' ');
+    const m = /\/maps\/place\/([^/]+)/.exec(t.pathname);
+    return m ? decodeURIComponent(m[1]!).replace(/\+/g, ' ') : null;
+  } catch {
+    return null;
+  }
+}
+
 /** A g.co/kgs or maps shortlink can't be provider-fetched — google.com lands
  *  the render on a captcha wall. The 302 itself is clean though, and its
  *  target carries the canonical entity: ?q=<name> on /search, /maps/place/
@@ -993,20 +1011,6 @@ export function chaseLinks(page: ReadPage): string[] {
  *  synthetic page whose text names the business profile (→ the search query
  *  that surfaces the phone in directories). */
 export async function resolveMapPointer(url: string): Promise<ReadPage | null> {
-  const nameFrom = (raw: string): string | null => {
-    try {
-      const t = new URL(raw);
-      // A captcha'd redirect wraps the real target: /sorry/?continue=<url>.
-      const inner = t.searchParams.get('continue');
-      if (inner) return nameFrom(decodeURIComponent(inner));
-      const q = t.searchParams.get('q') ?? t.searchParams.get('query');
-      if (q && !/\//.test(q) && q.length < 80) return q.replace(/\+/g, ' ');
-      const m = /\/maps\/place\/([^/]+)/.exec(t.pathname);
-      return m ? decodeURIComponent(m[1]!).replace(/\+/g, ' ') : null;
-    } catch {
-      return null;
-    }
-  };
   // Direct google.com/maps/place/<name> links carry the name already — only
   // shortlinks (g.co/kgs, maps.app.goo.gl) need the 302 resolved. Redirects
   // are followed only while the target stays in the shortlink/google family:
@@ -1014,8 +1018,8 @@ export async function resolveMapPointer(url: string): Promise<ReadPage | null> {
   // never reaches the model as a follow-up url.
   const SHORTLINK_HOST = /^(g\.co|maps\.app\.goo\.gl|.*\.goo\.gl|bit\.ly|tinyurl\.com|t\.co)$/i;
   const GOOGLE_HOST = /^((www|maps|m)\.)?google\.[a-z]{2,}(\.[a-z]{2})?$/i;
-  let location: string | null = nameFrom(url) ? url : null;
-  let name = nameFrom(url);
+  let location: string | null = mapPointerName(url) ? url : null;
+  let name = mapPointerName(url);
   let next: string | null = url;
   for (let hops = 0; !location && next && hops < 3; hops++) {
     let redirect: string | null = null;
@@ -1036,7 +1040,7 @@ export async function resolveMapPointer(url: string): Promise<ReadPage | null> {
     } catch {
       break;
     }
-    name = nameFrom(t.toString()) ?? name;
+    name = mapPointerName(t.toString()) ?? name;
     if (GOOGLE_HOST.test(t.hostname)) {
       location = t.toString();
       break;
