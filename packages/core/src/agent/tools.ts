@@ -1834,18 +1834,21 @@ export async function executeTool(
           mapWave.push({ url: link, from: pg.url });
         }
       }
+      // A pointer that already names the place (?q=, /maps/place/) resolves
+      // entirely in-process — no request, no spend. A shortlink's 302 chain
+      // costs per actual request, reserved before each issues — the
+      // resolver's hops share the same reply fetch budget.
+      const reserve = replyBound
+        ? async (): Promise<boolean> => {
+            if (ctx.pageReads >= REPLY_READ_PAGES_CAP) return false;
+            ctx.pageReads++;
+            await ctx.markReadSpent?.(1);
+            return true;
+          }
+        : undefined;
       for (const c of mapWave.slice(0, 6)) {
-        // A pointer that already names the place (?q=, /maps/place/) resolves
-        // entirely in-process — no request, no spend. Only a shortlink's
-        // 302 chain costs a slot, and an unaffordable one mustn't stop the
-        // wave's later free pointers.
-        if (replyBound && mapPointerName(c.url) === null) {
-          if (ctx.pageReads >= REPLY_READ_PAGES_CAP) continue;
-          ctx.pageReads++;
-          await ctx.markReadSpent?.(1);
-        }
         const key2 = pageKey(c.url);
-        const page = await resolveMapPointer(c.url).catch(() => null);
+        const page = await resolveMapPointer(c.url, reserve).catch(() => null);
         if (page) {
           pages.push({ ...page, chasedFrom: c.from });
           if (key2) ctx.pageCache.set(key2, Promise.resolve({ page }));

@@ -1013,7 +1013,9 @@ function unwrapContinue(raw: string, max = 8): string {
     // &continue= split off as its own param. The narrow exception is a
     // twice-encoded absolute target (get() leaves https%3A…): decode once
     // more only when the result is itself a complete url.
-    const inner = t.searchParams.get('continue');
+    // A duplicated continue= is followed at its first nonempty value — an
+    // empty slot isn't a wrapper and mustn't hide the real target.
+    const inner = t.searchParams.getAll('continue').find((v) => v);
     if (!inner) break;
     try {
       let target = inner;
@@ -1029,10 +1031,11 @@ function unwrapContinue(raw: string, max = 8): string {
   return cur;
 }
 
-/** The business name a maps/google URL already carries (?q=, /maps/place/),
- *  or null when only a redirect hop could reveal it — the difference
- *  between resolving a pointer in-process and spending a real fetch. */
-export function mapPointerName(raw: string): string | null {
+/** The carrier a maps/google url peels to in-process, plus the business
+ *  name it already carries (?q=, /maps/place/) — null name when only a
+ *  redirect hop could reveal it. Exposing the carrier lets the resolver
+ *  hand the model the real destination, not the outermost wrapper. */
+function mapPointerCarrier(raw: string): { carrier: URL; name: string | null } | null {
   try {
     const t = new URL(unwrapContinue(raw));
     // Only the map-pointer/google family can carry a business name — an
@@ -1042,18 +1045,29 @@ export function mapPointerName(raw: string): string | null {
     // profile pointer either.
     if (t.protocol !== 'http:' && t.protocol !== 'https:') return null;
     if (!isBizMapUrl(t) && !GOOGLE_HOST.test(t.hostname)) return null;
-    // A leftover (non-empty) continue= means the peel hit its bound
-    // mid-chain — this carrier never resolved, so its ?q=/place fields
-    // describe the wrapper, not the destination. Unresolved beats a false
-    // name. An empty `&continue=` isn't a wrapper and mustn't mask a name.
-    if (t.searchParams.get('continue')) return null;
+    // A leftover nonempty continue= means the peel hit its bound mid-chain
+    // — this carrier never resolved, so its ?q=/place fields describe the
+    // wrapper, not the destination. Unresolved beats a false name. Empty
+    // values are ignored: `&continue=` alone isn't a wrapper.
+    if (t.searchParams.getAll('continue').some((v) => v)) return { carrier: t, name: null };
     const q = t.searchParams.get('q') ?? t.searchParams.get('query');
-    if (q && !/\//.test(q) && q.length < 80) return q.replace(/\+/g, ' ');
-    const m = /\/maps\/place\/([^/]+)/.exec(t.pathname);
-    return m ? decodeURIComponent(m[1]!).replace(/\+/g, ' ') : null;
+    let name: string | null = null;
+    if (q && !/\//.test(q) && q.length < 80) name = q.replace(/\+/g, ' ');
+    if (!name) {
+      const m = /\/maps\/place\/([^/]+)/.exec(t.pathname);
+      name = m ? decodeURIComponent(m[1]!).replace(/\+/g, ' ') : null;
+    }
+    return { carrier: t, name };
   } catch {
     return null;
   }
+}
+
+/** The business name a maps/google URL already carries (?q=, /maps/place/),
+ *  or null when only a redirect hop could reveal it — the difference
+ *  between resolving a pointer in-process and spending a real fetch. */
+export function mapPointerName(raw: string): string | null {
+  return mapPointerCarrier(raw)?.name ?? null;
 }
 
 /** A g.co/kgs or maps shortlink can't be provider-fetched — google.com lands
@@ -1062,7 +1076,13 @@ export function mapPointerName(raw: string): string | null {
  *  <name> on maps. Resolve the pointer in-process and hand the model a
  *  synthetic page whose text names the business profile (→ the search query
  *  that surfaces the phone in directories). */
-export async function resolveMapPointer(url: string): Promise<ReadPage | null> {
+export async function resolveMapPointer(
+  url: string,
+  // Reserve-and-charge hook for the caller's fetch budget: called before
+  // each network request is issued; returning false stops the chase. A
+  // nameable pointer never triggers it — those resolve in-process, free.
+  reserve?: () => Promise<boolean>,
+): Promise<ReadPage | null> {
   // Direct google.com/maps/place/<name> links carry the name already — only
   // shortlinks (g.co/kgs, maps.app.goo.gl) need the 302 resolved. Redirects
   // are followed only while the target stays in the shortlink/google family:
@@ -1070,10 +1090,12 @@ export async function resolveMapPointer(url: string): Promise<ReadPage | null> {
   // never reaches the model as a follow-up url.
   const SHORTLINK_HOST = /^(g\.co|maps\.app\.goo\.gl|.*\.goo\.gl|bit\.ly|tinyurl\.com|t\.co)$/i;
   // Peel continue= wrappers off the input too — a nested sorry/ chain
-  // deeper than mapPointerName's name window still shortens in-process
-  // before the first fetch.
-  let location: string | null = mapPointerName(url) ? url : null;
-  let name = mapPointerName(url);
+  // still shortens in-process before the first fetch. When a name is
+  // found, the peeled carrier is the resolved location the model follows
+  // up on — the original url stays on the page for request identity.
+  const init = mapPointerCarrier(url);
+  let location: string | null = init?.name ? init.carrier.toString() : null;
+  let name: string | null = init?.name ?? null;
   let next: string | null = unwrapContinue(url);
   for (let hops = 0; !location && next && hops < 3; hops++) {
     // Every hop is just another url the agent asked us to fetch — run the
@@ -1085,6 +1107,9 @@ export async function resolveMapPointer(url: string): Promise<ReadPage | null> {
     } catch {
       break;
     }
+    // Charge the request before it issues — a pointer can burn several
+    // hops against the caller's fetch budget; out of budget, stop here.
+    if (reserve && !(await reserve())) break;
     let redirect: string | null = null;
     try {
       const res = await fetch(next, {
@@ -1113,21 +1138,26 @@ export async function resolveMapPointer(url: string): Promise<ReadPage | null> {
     } catch {
       break;
     }
-    name = mapPointerName(peeled) ?? name;
+    const p = mapPointerCarrier(peeled);
+    name = p?.name ?? name;
     if (GOOGLE_HOST.test(t.hostname)) {
       // A peeled target that still wraps a continue= isn't the
-      // destination — it's the captcha carrier itself. Don't hand it to
-      // the model as the resolved location, and don't spend a fetch on
-      // the wall.
-      if (t.searchParams.get('continue')) break;
+      // destination — it's another captcha carrier. Never hand it to the
+      // model as the resolved location, but its own redirect can still
+      // advance the chain: keep chasing it (bounded, charged per hop).
+      if (t.searchParams.getAll('continue').some((v) => v)) {
+        next = t.toString();
+        continue;
+      }
       // The resolved location is handed to the model as a follow-up url —
       // it must pass the fetchable guard too, not just the family check.
+      // A named carrier resolves deeper than t — prefer it.
       try {
-        assertFetchable(t.toString());
+        assertFetchable(p?.name ? p.carrier.toString() : t.toString());
       } catch {
         break;
       }
-      location = t.toString();
+      location = p?.name ? p.carrier.toString() : t.toString();
       break;
     }
     // keep chasing only while the chain stays on shortlink hosts — a foreign

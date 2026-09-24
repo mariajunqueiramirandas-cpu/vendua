@@ -459,6 +459,13 @@ describe('mapPointerName', () => {
     expect(mapPointerName(loop)).toBeNull();
     // an empty &continue= is not a wrapper — the url's own name still reads
     expect(mapPointerName('https://www.google.com/search?q=Acme&continue=')).toBe('Acme');
+    // …but a duplicated continue= resolves at its first nonempty value —
+    // the wrapper's own ?q is never the destination's name
+    expect(
+      mapPointerName(
+        `https://www.google.com/sorry/?q=Wrong&continue=&continue=${encodeURIComponent('https://www.google.com/search?q=Acme')}`,
+      ),
+    ).toBe('Acme');
     // a chain within the bound still resolves the name — in-process, free
     let chain = 'https://www.google.com/search?q=Acme';
     for (let i = 0; i < 7; i++) chain = wrap(chain);
