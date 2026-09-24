@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { PauseCircle, XCircle } from 'lucide-react';
-import { api, type AgentRun } from '../api.ts';
+import { api, type AgentMetrics, type AgentRun } from '../api.ts';
 import { onControlEvent } from '../events.ts';
 import { Empty, Page, RUN_KIND_LABEL, fmtDateTime, fmtMoney, rel, relDue } from '../components.tsx';
 
@@ -12,6 +12,149 @@ const STATUS_CHIP: Record<string, string> = {
   failed: 'bad',
   canceled: 'bad',
 };
+
+// Agent spend is USD — the console's fmtMoney is BRL-denominated.
+const fmtUsd = (usd: number) => `US$ ${usd.toFixed(2)}`;
+const pct = (v: number) => `${Math.round(v * 100)}%`;
+
+/** Ops readout above the run list — the ADR-0014 metrics endpoint
+ *  rendered in the console's own stat/table grammar. The window toggle
+ *  (7|30d) is scoped to the panel; the run list below keeps its own
+ *  filters. */
+function MetricsPanel() {
+  const [m, setM] = useState<AgentMetrics | null>(null);
+  const [err, setErr] = useState('');
+  const [days, setDays] = useState<7 | 30>(7);
+
+  const seq = useRef(0);
+  const ok = useRef(0);
+  const daysRef = useRef(days);
+  daysRef.current = days;
+  const load = useCallback(() => {
+    const req = ++seq.current;
+    api
+      .agentMetrics(daysRef.current)
+      .then((r) => {
+        if (req < ok.current) return;
+        ok.current = req;
+        setM(r);
+        setErr('');
+      })
+      .catch((e) => {
+        if (req >= ok.current) setErr(String(e));
+      });
+  }, []);
+  useEffect(load, [load, days]);
+  useEffect(() => onControlEvent('run.update', load), [load]);
+  useEffect(() => {
+    const t = setInterval(load, 60_000);
+    return () => clearInterval(t);
+  }, [load]);
+
+  const totalRuns = m?.byKind.reduce((a, k) => a + k.runs, 0) ?? 0;
+  const totalDone = m?.byKind.reduce((a, k) => a + k.done, 0) ?? 0;
+  const acted = m?.byKind.reduce((a, k) => a + Math.round(k.actedRate * k.done), 0) ?? 0;
+  const cost = m?.byKind.reduce((a, k) => a + k.costUsd, 0) ?? 0;
+  const empty =
+    !!m &&
+    totalRuns === 0 &&
+    !m.outbound.sent &&
+    !m.outbound.drafted &&
+    !m.outbound.rejected &&
+    !m.replies.leadsContacted &&
+    !(m.wakeups?.pending || m.wakeups?.fired);
+
+  return (
+    <div className="card pad">
+      <div className="card-head">
+        <b>leitura</b>
+        <span className="fchips" style={{ marginBottom: 0 }}>
+          {([7, 30] as const).map((d) => (
+            <button key={d} className={days === d ? 'sel' : ''} onClick={() => setDays(d)}>
+              {d}d
+            </button>
+          ))}
+        </span>
+      </div>
+      {err ? (
+        <Empty title="não foi possível carregar a leitura" hint={err} />
+      ) : !m ? (
+        <Empty title="carregando…" />
+      ) : empty ? (
+        <div style={{ color: 'var(--muted)', fontSize: 'var(--t-sm)' }}>
+          nenhum run no período — o agente ainda não trabalhou
+        </div>
+      ) : (
+        <>
+          <div className="mstats">
+            <div>
+              <div className="v">{totalDone}</div>
+              <div className="k">runs feitos · {totalRuns} total</div>
+            </div>
+            <div>
+              <div className="v">{totalDone ? pct(acted / totalDone) : '—'}</div>
+              <div className="k">agiram</div>
+            </div>
+            <div>
+              <div className="v" style={{ color: m.outbound.drafted ? '#7a5b12' : undefined }}>
+                {m.outbound.drafted}
+              </div>
+              <div className="k">rascunhos p/ aprovar</div>
+            </div>
+            <div>
+              <div className="v">{m.replies.leadsContacted ? pct(m.replies.replyRate) : '—'}</div>
+              <div className="k">
+                responderam · {m.replies.leadsReplied}/{m.replies.leadsContacted}
+              </div>
+            </div>
+            <div>
+              <div className="v">{fmtUsd(cost)}</div>
+              <div className="k">custo</div>
+            </div>
+            {m.wakeups && (
+              <div>
+                <div className="v">{m.wakeups.pending}</div>
+                <div className="k">wakeups pendentes · {m.wakeups.fired} disparados</div>
+              </div>
+            )}
+          </div>
+          {m.byKind.some((k) => k.runs > 0) && (
+            <table className="tbl" style={{ marginTop: 12 }}>
+              <thead>
+                <tr>
+                  <th>tipo</th>
+                  <th className="num">runs</th>
+                  <th className="num">feitos</th>
+                  <th className="num">falhas</th>
+                  <th className="num">cancel.</th>
+                  <th className="num">agiu</th>
+                  <th className="num">passos</th>
+                  <th className="num">custo</th>
+                </tr>
+              </thead>
+              <tbody>
+                {m.byKind
+                  .filter((k) => k.runs > 0)
+                  .map((k) => (
+                    <tr key={k.kind}>
+                      <td>{RUN_KIND_LABEL[k.kind] ?? k.kind}</td>
+                      <td className="num">{k.runs}</td>
+                      <td className="num">{k.done}</td>
+                      <td className="num">{k.failed || '—'}</td>
+                      <td className="num">{k.canceled || '—'}</td>
+                      <td className="num">{k.done ? pct(k.actedRate) : '—'}</td>
+                      <td className="num">{k.avgSteps || '—'}</td>
+                      <td className="num">{fmtUsd(k.costUsd)}</td>
+                    </tr>
+                  ))}
+              </tbody>
+            </table>
+          )}
+        </>
+      )}
+    </div>
+  );
+}
 
 // Filter strip — 'agendados' is the delayed queue (scheduled=1), not a status:
 // it flips the endpoint to run_at ordering and its own pagination cursor.
@@ -266,6 +409,7 @@ export default function Runs() {
         </select>
       }
     >
+      <MetricsPanel />
       <div className="fchips">
         {VIEWS.map(([v, l]) => (
           <button key={v} className={view === v ? 'sel' : ''} onClick={() => setView(v)}>

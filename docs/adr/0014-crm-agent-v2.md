@@ -170,3 +170,21 @@ Core module `modules/agent-memory.ts` exports (consumed by the runner/tools):
   replies: { leadsContacted: number; leadsReplied: number; replyRate: number };
   wakeups: { pending: number; fired: number } | null; }
 ```
+
+## Evaluation
+
+Two harnesses, two budgets:
+
+- **Scripted evals — CI, free.** `packages/core/src/agent/scripted-provider.ts`
+  replays a fixed script of turns (text + toolCalls) through the real
+  pipeline — `ingestInbound → drain → runOnce → tools → dispatch` on the
+  `log` channel drivers — and records every request it received, so a test
+  asserts both what the model "said" did in the DB and what the runner fed
+  back. Golden scenarios live in `packages/core/test/agent-evals.test.ts`
+  (send lands, firstContactDraftOnly forces a draft, unsubscribe suppresses,
+  loop guard, finish gate, cost cap). No network, no keys, no tokens —
+  `bun test` covers them.
+- **Sim — manual, paid.** `bun run sim` drives the same pipeline through a
+  real provider (Gemini) to judge end-to-end quality. It is never invoked
+  by a workflow or test — run it locally when you want model behaviour on
+  the record, not in CI.

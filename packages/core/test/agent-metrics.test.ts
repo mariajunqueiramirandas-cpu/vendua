@@ -1,0 +1,176 @@
+import { describe, expect, test } from 'bun:test';
+import { join } from 'node:path';
+import postgres from 'postgres';
+import { agentMetrics } from '../src/modules/agent-metrics.ts';
+import { controlTx } from '../src/modules/control.ts';
+import { insertLeadTx } from '../src/modules/leads.ts';
+import { ensureThread } from '../src/modules/threads.ts';
+import { migrate } from '../src/platform/db.ts';
+
+// DB-backed — opt-in via TEST_DATABASE_URL (CI has no Postgres).
+describe.skipIf(!process.env.TEST_DATABASE_URL)('agentMetrics (db)', () => {
+  const sql = postgres(process.env.TEST_DATABASE_URL!);
+  const MIGRATIONS = join(import.meta.dir, '../db/migrations');
+
+  /** A lead + whatsapp thread so outbound/inbound messages have somewhere
+   *  to live; returns ids the test composes messages/runs against. */
+  const seedLead = async (name: string) => {
+    const created = await controlTx(sql, (tx) => insertLeadTx(tx, { name, agent_mode: 'auto' }));
+    const leadId = created.body.lead.id;
+    const thread = await controlTx(sql, (tx) => ensureThread(tx, leadId, 'whatsapp', {}));
+    return { leadId, threadId: thread.id };
+  };
+
+  const seedRun = async (opts: {
+    kind: string;
+    leadId?: string | null;
+    status?: string;
+    steps?: unknown[];
+    costCents?: number;
+    createdAt?: Date;
+  }) => {
+    const rows = await sql<{ id: string }[]>`
+      insert into agent_runs (kind, lead_id, status, steps, cost_cents, created_at, finished_at)
+      values (
+        ${opts.kind}, ${opts.leadId ?? null}, ${opts.status ?? 'done'},
+        ${sql.json((opts.steps ?? []) as never[])}, ${opts.costCents ?? 0},
+        ${opts.createdAt ?? new Date()}, ${opts.status === 'queued' ? null : new Date()}
+      )
+      returning id`;
+    return rows[0]!.id;
+  };
+
+  const seedMessage = async (opts: {
+    threadId: string;
+    direction: 'in' | 'out';
+    status: string;
+    author?: string;
+    approvedBy?: string | null;
+    historical?: boolean;
+    createdAt?: Date;
+  }) => {
+    await sql`
+      insert into lead_messages
+        (thread_id, direction, author, body, status, approved_by, historical, created_at)
+      values (
+        ${opts.threadId}, ${opts.direction}, ${opts.author ?? 'agent'}, 'm',
+        ${opts.status}, ${opts.approvedBy ?? null}, ${opts.historical ?? false},
+        ${opts.createdAt ?? new Date()}
+      )`;
+  };
+
+  test('empty window returns zeroed contract shape', async () => {
+    await migrate(sql, MIGRATIONS);
+    await sql`delete from lead_messages`;
+    await sql`delete from agent_runs`;
+    const m = await agentMetrics(sql, 7);
+    expect(m.byKind.map((k) => k.kind)).toEqual([
+      'triage',
+      'reply',
+      'outreach',
+      'discovery',
+      'strategist',
+    ]);
+    for (const k of m.byKind) {
+      expect(k.runs).toBe(0);
+      expect(k.actedRate).toBe(0);
+      expect(k.costUsd).toBe(0);
+    }
+    expect(m.outbound).toEqual({ sent: 0, drafted: 0, approved: 0, rejected: 0 });
+    expect(m.replies).toEqual({ leadsContacted: 0, leadsReplied: 0, replyRate: 0 });
+    // agent_wakeups doesn't exist on this schema → null, never an error
+    expect(m.wakeups).toBeNull();
+  });
+
+  test('byKind counts statuses; actedRate mirrors runActed over the journal', async () => {
+    await migrate(sql, MIGRATIONS);
+    await sql`delete from agent_runs`;
+    const { leadId } = await seedLead('Metrics Lead');
+    const actedSteps = [
+      { type: 'model', content: 'ok', toolCalls: [] },
+      {
+        type: 'tool',
+        name: 'send_message',
+        args: { leadId, body: 'oi' },
+        out: { message: { id: 'm1', status: 'sent' } },
+      },
+    ];
+    const noisySteps = [
+      // error'd / blocked / ignored results and pending entries never count
+      { type: 'tool', name: 'send_message', args: {}, out: { blocked: true } },
+      { type: 'tool', name: 'update_lead', args: {}, out: { ignored: true } },
+      { type: 'tool', name: 'create_task', args: {}, out: { error: 'boom' } },
+      { type: 'tool', name: 'send_message', args: {}, pending: true },
+      // read tools don't count even when clean
+      { type: 'tool', name: 'web_search', args: {}, out: { results: [] } },
+    ];
+    await seedRun({ kind: 'reply', leadId, steps: actedSteps });
+    await seedRun({ kind: 'reply', leadId, steps: actedSteps });
+    await seedRun({ kind: 'reply', leadId, steps: noisySteps });
+    await seedRun({ kind: 'reply', leadId, status: 'failed' });
+    await seedRun({ kind: 'reply', leadId, status: 'canceled' });
+    await seedRun({ kind: 'outreach', leadId, steps: actedSteps, costCents: 250 });
+    await seedRun({ kind: 'discovery', steps: actedSteps, status: 'queued' });
+    const m = await agentMetrics(sql, 7);
+    const reply = m.byKind.find((k) => k.kind === 'reply')!;
+    expect(reply.runs).toBe(5);
+    expect(reply.done).toBe(3);
+    expect(reply.failed).toBe(1);
+    expect(reply.canceled).toBe(1);
+    expect(reply.actedRate).toBeCloseTo(2 / 3, 5);
+    const outreach = m.byKind.find((k) => k.kind === 'outreach')!;
+    expect(outreach.actedRate).toBe(1);
+    expect(outreach.costUsd).toBe(2.5);
+    expect(outreach.avgCostUsd).toBe(2.5);
+    const discovery = m.byKind.find((k) => k.kind === 'discovery')!;
+    expect(discovery.runs).toBe(1);
+    expect(discovery.done).toBe(0);
+    expect(discovery.actedRate).toBe(0);
+    // queued rows don't drag the done-only average either
+    expect(discovery.avgSteps).toBe(0);
+    expect(reply.avgSteps).toBe(3);
+  });
+
+  test('outbound and replies read lead_messages, windowed', async () => {
+    await migrate(sql, MIGRATIONS);
+    await sql`delete from lead_messages`;
+    await sql`delete from agent_runs`;
+    const a = await seedLead('Replier A');
+    const b = await seedLead('Replier B');
+    const stale = new Date(Date.now() - 20 * 86_400_000);
+    // A: contacted and replied — counts on both sides
+    await seedMessage({ threadId: a.threadId, direction: 'out', status: 'sent' });
+    await seedMessage({ threadId: a.threadId, direction: 'in', status: 'received' });
+    // B: contacted twice, never replied; a draft pending and one rejected
+    await seedMessage({ threadId: b.threadId, direction: 'out', status: 'delivered' });
+    await seedMessage({ threadId: b.threadId, direction: 'out', status: 'sent' });
+    await seedMessage({ threadId: b.threadId, direction: 'out', status: 'draft' });
+    await seedMessage({
+      threadId: b.threadId,
+      direction: 'out',
+      status: 'sent',
+      approvedBy: 'staff',
+    });
+    await seedMessage({ threadId: b.threadId, direction: 'out', status: 'rejected' });
+    // staff-authored and historical-inbound rows never enter agent metrics
+    await seedMessage({ threadId: a.threadId, direction: 'out', status: 'sent', author: 'staff' });
+    await seedMessage({
+      threadId: b.threadId,
+      direction: 'in',
+      status: 'received',
+      historical: true,
+    });
+    // outside the 7d window — invisible here, counted by days=30
+    await seedMessage({
+      threadId: a.threadId,
+      direction: 'out',
+      status: 'sent',
+      createdAt: stale,
+    });
+    const m = await agentMetrics(sql, 7);
+    expect(m.outbound).toEqual({ sent: 4, drafted: 1, approved: 1, rejected: 1 });
+    expect(m.replies).toEqual({ leadsContacted: 2, leadsReplied: 1, replyRate: 0.5 });
+    const m30 = await agentMetrics(sql, 30);
+    expect(m30.outbound.sent).toBe(5);
+  });
+});

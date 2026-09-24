@@ -111,6 +111,7 @@ import { controlSse } from './modules/control-sse.ts';
 import { emitControlEvent } from './modules/control-events.ts';
 import { pipelineForecast, snapshotPipelineTx } from './modules/forecast.ts';
 import { channelHealth } from './modules/channel-health.ts';
+import { agentMetrics } from './modules/agent-metrics.ts';
 import {
   availableSlots,
   bookBusyWindows,
@@ -1880,6 +1881,16 @@ export function createApp({ sql, sessionSecret, controlSecret, autoDrain }: AppD
     }
     kickDrain();
     return c.json(res.body, res.status as 201);
+  });
+
+  // ---- agent metrics -----------------------------------------------------------
+  app.get('/control/v1/agent/metrics', async (c) => {
+    controlGate(c);
+    const days = c.req.query('days') ?? '7';
+    if (days !== '7' && days !== '30') {
+      throw new HttpError(422, 'BAD_REQUEST', 'days must be 7 or 30');
+    }
+    return c.json(await agentMetrics(sql, Number(days) as 7 | 30));
   });
 
   // ---- dispatch + briefs + segment stats -------------------------------------
