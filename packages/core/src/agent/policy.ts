@@ -7,7 +7,8 @@ import {
   type Guardrails,
 } from '../modules/integrations.ts';
 import { loadPlaybookTx } from './playbooks.ts';
-import type { PlaybookKind } from './tool-meta.ts';
+import { PLAYBOOK_KINDS, type PlaybookKind } from './tool-meta.ts';
+import { channelAvailabilityTx } from './guardrails.ts';
 
 /**
  * agent/policy — the single answer to "may the agent act on its own, and may
@@ -53,6 +54,17 @@ export async function automationAllowedTx(tx: Sql, kind: PlaybookKind): Promise<
     return { ok: false, code: 'workspace_off', reason: 'autonomia do agente desligada' };
   }
   return playbookEnabledTx(tx, kind);
+}
+
+/** Scan inputs for claimRun: playbooks switched off, and whether the
+ *  workspace level holds automation-queued rows. */
+export async function claimPolicyTx(
+  tx: Sql,
+): Promise<{ disabledKinds: PlaybookKind[]; autoOff: boolean }> {
+  const { level } = await autonomyTx(tx);
+  const disabledKinds: PlaybookKind[] = [];
+  for (const k of PLAYBOOK_KINDS) if (!(await loadPlaybookTx(tx, k)).enabled) disabledKinds.push(k);
+  return { disabledKinds, autoOff: level === 'off' };
 }
 
 export async function playbookEnabledTx(tx: Sql, kind: PlaybookKind): Promise<AutomationVerdict> {
@@ -154,13 +166,14 @@ export async function explainAutonomyTx(
   if (level === 'off')
     reasons.push({ code: 'workspace_off', message: 'autonomia do workspace desligada' });
   reasons.push(...blockers);
-  const waOk = Boolean(lead.whatsapp || lead.wa_thread);
-  const emailOk = Boolean(lead.email) && !lead.email_bounced_at;
+  const ch = await channelAvailabilityTx(tx, leadId);
+  const waOk = ch.whatsapp.ok;
+  const emailOk = ch.email.ok;
   let sendMode: AutonomyExplanation['sendMode'];
   if (blockers.length) sendMode = 'blocked';
   else if (!waOk && !emailOk) {
     sendMode = 'blocked';
-    reasons.push({ code: 'no_channel', message: 'sem whatsapp ou email utilizável' });
+    reasons.push({ code: 'no_channel', message: `sem canal utilizável (whatsapp: ${ch.whatsapp.ok ? 'ok' : ch.whatsapp.reason}; email: ${ch.email.ok ? 'ok' : ch.email.reason})` });
   } else {
     const d = draftDecision({
       level,

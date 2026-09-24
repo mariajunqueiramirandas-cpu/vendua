@@ -20,7 +20,7 @@ import { sweepDigest } from '../modules/digest.ts';
 import { estimateModelCostUsd, providerFor, type AgentMessage, type ToolCall } from './llm.ts';
 import { buildSystemPrompt } from './prompts.ts';
 import { loadPlaybookTx, mergePlaybook } from './playbooks.ts';
-import { automationAllowedTx } from './policy.ts';
+import { automationAllowedTx, claimPolicyTx } from './policy.ts';
 import { pendingWakeupsTx, sweepWakeups } from './wakeups.ts';
 import { executeTool, toolsFor, bookDigest, type BookEntry, type ToolContext } from './tools.ts';
 import { MonidBudget } from './channels/monid.ts';
@@ -272,6 +272,11 @@ export async function claimRun(sql: Sql): Promise<RunRow | null> {
     // and starve runnable leads queued behind them. The locked revalidation
     // below still catches spend landing between scan and claim.
     const capCents = capCentsOf(g);
+    // Autonomy/playbook switches park queued work in the scan (like the
+    // other suppressions): a disabled playbook holds every row of its kind,
+    // workspace 'off' holds only automation-queued rows (auto marker or
+    // inbound origin) — staff runs and promised callbacks stay eligible.
+    const { disabledKinds, autoOff } = await claimPolicyTx(tx);
     // Outreach is serial per lead: a 'running' outreach row is the durable
     // ownership token — it outlives the claim tx, so a queued same-lead
     // outreach can only claim once the owner finishes (a crashed owner is
@@ -323,6 +328,8 @@ export async function claimRun(sql: Sql): Promise<RunRow | null> {
             where x.lead_id = r.lead_id and x.kind = 'outreach'
               and x.status = 'running'
           ))
+          and not (r.kind = any(${disabledKinds}::text[]))
+          and not (${autoOff} and (r.params ? 'auto' or r.params->>'origin' = 'inbound'))
           and not (r.id = any(${rejected}::uuid[]))
         order by r.created_at
         limit 1
@@ -2389,6 +2396,17 @@ export async function sweepOutreach(sql: Sql): Promise<number> {
       if (runId) {
         queuedIds.push(runId);
         await tx`update leads set next_action_at = null, next_action_source = null where id = ${id}`;
+        // The agent's own due wakeup is the same follow-up — fold it into
+        // this run instead of firing a second outreach after it.
+        await tx`
+          update agent_wakeups set status = 'fired', fired_run_id = ${runId}, updated_at = now()
+          where id in (
+            select id from agent_wakeups
+            where lead_id = ${id} and status = 'pending' and at <= now()
+              and created_by = 'agent' and not requested
+            for update skip locked
+          )
+        `;
       }
     }
     return queuedIds.length;

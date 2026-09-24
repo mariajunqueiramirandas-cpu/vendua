@@ -3,6 +3,7 @@ import { HttpError, str } from '../platform/http.ts';
 import { claimControl, controlTx, type ClaimResult } from './control.ts';
 import { emitControlEvent } from './control-events.ts';
 import { LEAD_STATES, type LeadState } from './leads.ts';
+import { PLAYBOOK_KINDS } from '../agent/tool-meta.ts';
 
 /**
  * integrations module — modular provider configuration for the agentic CRM.
@@ -586,6 +587,60 @@ export function validateSetting(key: string, value: unknown): void {
     }
     if (v.enabled === true && !v.to) {
       throw bad('to', 'is required when the digest is enabled');
+    }
+    return;
+  }
+
+  if (key === 'agent_playbooks') {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) {
+      throw bad('*', 'must be an object');
+    }
+    for (const [kind, o] of Object.entries(value as Record<string, unknown>)) {
+      if (!(PLAYBOOK_KINDS as readonly string[]).includes(kind)) throw bad(kind, 'unknown playbook');
+      if (!o || typeof o !== 'object' || Array.isArray(o)) throw bad(kind, 'must be an object');
+      const p = o as Record<string, unknown>;
+      for (const f of Object.keys(p)) {
+        if (!['enabled', 'stepBudget', 'model', 'instructions', 'monidCapUsd'].includes(f)) {
+          throw bad(`${kind}.${f}`, 'is not a playbook field');
+        }
+      }
+      if (p.enabled !== undefined && typeof p.enabled !== 'boolean') {
+        throw bad(`${kind}.enabled`, 'must be a boolean');
+      }
+      const sb = p.stepBudget;
+      if (sb !== undefined && (typeof sb !== 'number' || !Number.isInteger(sb) || sb < 1 || sb > 60)) {
+        throw bad(`${kind}.stepBudget`, 'must be an integer in [1, 60]');
+      }
+      const mc = p.monidCapUsd;
+      if (mc !== undefined && (typeof mc !== 'number' || !Number.isFinite(mc) || mc < 0 || mc > 5)) {
+        throw bad(`${kind}.monidCapUsd`, 'must be a number in [0, 5]');
+      }
+      const m = p.model;
+      if (m !== undefined && m !== null && (typeof m !== 'string' || !m.trim() || m.length > 100)) {
+        throw bad(`${kind}.model`, 'must be null or a model id (≤100 chars)');
+      }
+      const ins = p.instructions;
+      if (ins !== undefined && (typeof ins !== 'string' || ins.length > 4000)) {
+        throw bad(`${kind}.instructions`, 'must be a string (≤4000 chars)');
+      }
+    }
+    return;
+  }
+
+  if (key === 'agent_autonomy') {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) {
+      throw bad('*', 'must be an object');
+    }
+    const v = value as Record<string, unknown>;
+    for (const f of Object.keys(v)) {
+      if (f !== 'level' && f !== 'strategistAutoApproveUsd') throw bad(f, 'is not an autonomy field');
+    }
+    if (!['off', 'copilot', 'supervised', 'autopilot'].includes(v.level as string)) {
+      throw bad('level', 'must be off | copilot | supervised | autopilot');
+    }
+    const usd = v.strategistAutoApproveUsd;
+    if (usd !== undefined && (typeof usd !== 'number' || !Number.isFinite(usd) || usd < 0 || usd > 50)) {
+      throw bad('strategistAutoApproveUsd', 'must be a number in [0, 50]');
     }
     return;
   }

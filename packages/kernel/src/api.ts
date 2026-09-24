@@ -460,6 +460,8 @@ export const ERROR_CODES = [
   'LEAD_SUPPRESSED',
   'LEAD_COST_CAP',
   'THREAD_PAUSED',
+  'PLAYBOOK_DISABLED',
+  'WAKEUP_NOT_FOUND',
   'NOTE_LIMIT',
   // meetings module (booking surface + control meetings API)
   'MEETING_NOT_FOUND',

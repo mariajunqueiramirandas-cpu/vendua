@@ -1507,18 +1507,36 @@ export async function executeTool(
             };
           }
           // Budgeted auto-approval: with agent_autonomy.strategistAutoApproveUsd
-          // set, a proposal goes live while trailing-7d discovery spend stays
-          // under that ceiling; otherwise it lands as a disabled draft.
+          // set, a proposal goes live only if trailing-7d discovery spend plus
+          // a reservation for work not yet booked (queued/running discovery
+          // and auto-approved briefs with no finished run) plus this brief
+          // fits the ceiling. Reservation = mean cost of recent discovery
+          // runs. The brief-proposals lock above serializes the check.
           const { strategistAutoApproveUsd } = await autonomyTx(tx);
           let autoOn = false;
           if (strategistAutoApproveUsd > 0) {
-            const spent = (
-              await tx<{ c: number }[]>`
-                select coalesce(sum(cost_cents), 0)::int as c from agent_runs
-                where kind = 'discovery' and created_at > now() - interval '7 days'
+            const b = (
+              await tx<{ spent: number; open: number; est: number }[]>`
+                select
+                  coalesce((select sum(cost_cents) from agent_runs
+                    where kind = 'discovery' and created_at > now() - interval '7 days'), 0)::int as spent,
+                  ((select count(*) from agent_runs
+                     where kind = 'discovery' and status in ('queued', 'running'))
+                   + (select count(*) from discovery_briefs d
+                      where d.created_by = 'strategist' and d.enabled
+                        and d.created_at > now() - interval '7 days'
+                        and not exists (
+                          select 1 from agent_runs r
+                          where r.kind = 'discovery' and r.status in ('queued', 'running', 'done')
+                            and r.params->>'briefId' = d.id::text
+                        )))::int as open,
+                  coalesce((select avg(c)::int from (
+                    select cost_cents as c from agent_runs
+                    where kind = 'discovery' and status = 'done'
+                    order by created_at desc limit 20) t), 50)::int as est
               `
-            )[0]!.c;
-            autoOn = spent < Math.round(strategistAutoApproveUsd * 100);
+            )[0]!;
+            autoOn = b.spent + (b.open + 1) * b.est <= Math.round(strategistAutoApproveUsd * 100);
           }
           const row = (
             await tx<{ id: string; name: string }[]>`

@@ -6,6 +6,7 @@ import { emitControlEvent } from '../modules/control-events.ts';
 import { insertRun } from './runner.ts';
 import { automationAllowedTx } from './policy.ts';
 import type { PlaybookKind } from './tool-meta.ts';
+import { capCentsOf, getSettingTx, type Guardrails } from '../modules/integrations.ts';
 
 const agentLog = log.child({ mod: 'agent' });
 
@@ -201,6 +202,11 @@ export async function sweepWakeups(sql: Sql): Promise<number> {
         and (l.unsubscribed_at is not null or l.archived_at is not null)
     `;
     if (!(await automationAllowedTx(tx, 'outreach')).ok) return;
+    const g = await getSettingTx<Partial<Guardrails>>(tx, 'guardrails', {});
+    const capCents = capCentsOf(g);
+    // Busy and over-cap leads stay out of the 20-row window (same reason as
+    // sweepOutreach): a parked prefix must not starve later due wakeups.
+    // The busy check is repeated under capfin below for the race.
     const due = await tx<
       { id: string; lead_id: string; focus: string; requested: boolean; created_by: string }[]
     >`
@@ -208,6 +214,14 @@ export async function sweepWakeups(sql: Sql): Promise<number> {
       join leads l on l.id = w.lead_id
       where w.status = 'pending' and w.at <= now()
         and l.agent_mode != 'off' and l.agent_paused_at is null
+        and not exists (
+          select 1 from agent_runs r
+          where r.lead_id = w.lead_id and r.kind = 'outreach'
+            and r.status in ('queued', 'running')
+        )
+        and (${capCents} <= 0 or
+          coalesce((select sum(x.cost_cents) from agent_runs x
+                    where x.lead_id = w.lead_id), 0) < ${capCents})
       order by w.at
       limit 20
       for update of w skip locked
@@ -247,12 +261,17 @@ export async function sweepWakeups(sql: Sql): Promise<number> {
           update agent_wakeups set status = 'fired', fired_run_id = ${runId}, updated_at = now()
           where id = ${w.id}
         `;
-      } else {
+        // One follow-up per lead: a due automation nudge (cadence/auto) is
+        // the same intent — the wakeup run consumes it. capfin is held, so
+        // the lead row lock comes second as capLockTx requires.
         await tx`
-          update agent_wakeups set status = 'canceled', cancel_reason = 'teto de custo', updated_at = now()
-          where id = ${w.id}
+          update leads set next_action_at = null, next_action_source = null
+          where id = ${w.lead_id} and next_action_at <= now()
+            and next_action_source in ('cadence', 'auto')
         `;
       }
+      // insertRun refusing (cost cap) leaves the wakeup pending: a raised
+      // cap resumes it, and the scan's cap predicate keeps it out of the way.
     }
   }).catch((e) => agentLog.error({ err: e }, 'wakeup sweep failed'));
   for (const id of queuedIds) emitControlEvent('run.update', id);

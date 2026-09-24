@@ -15,7 +15,13 @@ import {
   TOOL_META,
 } from '../src/agent/tool-meta.ts';
 import { PLAYBOOKS, mergePlaybook, playbookTools } from '../src/agent/playbooks.ts';
-import { automationAllowedTx, draftDecision, explainAutonomyTx } from '../src/agent/policy.ts';
+import {
+  automationAllowedTx,
+  claimPolicyTx,
+  draftDecision,
+  explainAutonomyTx,
+} from '../src/agent/policy.ts';
+import { validateSetting } from '../src/modules/integrations.ts';
 import { parseWakeupAt, retireWakeupsOnInboundTx, sweepWakeups } from '../src/agent/wakeups.ts';
 import { controlTx } from '../src/modules/control.ts';
 import { insertLeadTx, leadInsert } from '../src/modules/leads.ts';
@@ -95,6 +101,23 @@ describe('agent v2 — pure', () => {
     expect(parseWakeupAt('2026-01-01T00:05:00Z', now)).toBeTypeOf('string');
     expect(parseWakeupAt('2026-06-01T00:00:00Z', now)).toBeTypeOf('string');
     expect(parseWakeupAt('2026-01-02T00:00:00Z', now)).toBeInstanceOf(Date);
+  });
+});
+
+describe('agent v2 — settings validation', () => {
+  test('agent_playbooks and agent_autonomy are bounded', () => {
+    expect(() => validateSetting('agent_playbooks', { reply: { stepBudget: 20 } })).not.toThrow();
+    expect(() => validateSetting('agent_playbooks', { reply: { stepBudget: 61 } })).toThrow();
+    expect(() => validateSetting('agent_playbooks', { nope: {} })).toThrow();
+    expect(() => validateSetting('agent_playbooks', { reply: { extra: 1 } })).toThrow();
+    expect(() =>
+      validateSetting('agent_playbooks', { reply: { instructions: 'x'.repeat(4001) } }),
+    ).toThrow();
+    expect(() => validateSetting('agent_autonomy', { level: 'autopilot' })).not.toThrow();
+    expect(() => validateSetting('agent_autonomy', { level: 'yolo' })).toThrow();
+    expect(() =>
+      validateSetting('agent_autonomy', { level: 'supervised', strategistAutoApproveUsd: 51 }),
+    ).toThrow();
   });
 });
 
@@ -260,5 +283,32 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('agent v2 (db)', () => {
     const id = await controlTx(sql, (tx) => insertRun(tx, { kind: 'triage', leadId }));
     expect(id).toBeTruthy();
     await sql`update agent_runs set status = 'canceled' where id = ${id}`;
+  });
+
+  test('claim policy parks disabled playbooks and, at level off, automation rows only', async () => {
+    try {
+      await setSetting('agent_autonomy', { level: 'off' });
+      await setSetting('agent_playbooks', { discovery: { enabled: false } });
+      const p = await controlTx(sql, (tx) => claimPolicyTx(tx));
+      expect(p.autoOff).toBe(true);
+      expect(p.disabledKinds).toEqual(['discovery']);
+      const leadId = await mkLead('claim');
+      const auto = await controlTx(sql, (tx) =>
+        insertRun(tx, { kind: 'triage', leadId, params: { auto: 'x' } }),
+      );
+      const staff = await controlTx(sql, (tx) =>
+        insertRun(tx, { kind: 'triage', leadId, params: { origin: 'staff' } }),
+      );
+      const rows = await sql<{ id: string }[]>`
+        select r.id from agent_runs r where r.id in (${auto!}, ${staff!})
+          and not (r.kind = any(${p.disabledKinds}::text[]))
+          and not (${p.autoOff} and (r.params ? 'auto' or r.params->>'origin' = 'inbound'))
+      `;
+      expect(rows.map((r) => r.id)).toEqual([staff!]);
+      await sql`update agent_runs set status = 'canceled' where id in (${auto!}, ${staff!})`;
+    } finally {
+      await clearSetting('agent_autonomy');
+      await clearSetting('agent_playbooks');
+    }
   });
 });
