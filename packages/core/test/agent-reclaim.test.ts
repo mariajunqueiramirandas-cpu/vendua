@@ -1099,4 +1099,71 @@ dbDescribe('worker robustness (db)', () => {
     expect(nudges).toHaveLength(1);
     expect((nudges[0] as { content?: string }).content).toContain('Ação pendente');
   });
+
+  test('a blocked send is not a reusable result — its retry re-executes', async () => {
+    await migrate(sql, MIGRATIONS);
+    const lead = await controlTx(sql, (tx) => insertLeadTx(tx, { name: 'Blocked Lead' }));
+    const leadId = lead.body.lead.id;
+    await sql`delete from agent_runs where status = 'queued'`;
+    const runId = await enqueueRun(sql, { kind: 'reply', leadId });
+    await sql`update agent_runs set
+      params = ${sql.json({
+        script: [
+          // the send blocks (this lead has no channel); a write lands after it
+          {
+            toolCalls: [
+              { name: 'send_message', args: { leadId, body: 'olá' } },
+              { name: 'update_lead', args: { id: leadId, city: 'Recife' } },
+            ],
+          },
+          // an identical send next turn must execute, not return REPEAT
+          { toolCalls: [{ name: 'send_message', args: { leadId, body: 'olá' } }] },
+          { toolCalls: [{ name: 'request_human', args: { leadId, reason: 'travou' } }] },
+          { text: 'fim' },
+        ],
+      } as never)}
+      where id = ${runId}`;
+    expect(await runOnce(sql)).toBe(true);
+    const r = await getRun(runId);
+    expect(r.status).toBe('done');
+    const sends = r.steps.filter(
+      (s) => (s as { name?: string }).name === 'send_message',
+    ) as { out?: { error?: string; blocked?: boolean } }[];
+    expect(sends).toHaveLength(2);
+    // still blocked (no channel ever appeared) — but it RAN, not REPEAT
+    expect(sends[1]!.out?.error ?? '').not.toMatch(/^REPEAT/);
+    expect(sends[1]!.out?.blocked).toBe(true);
+  });
+
+  test('a re-read after a mutation executes — the earlier result went stale', async () => {
+    await migrate(sql, MIGRATIONS);
+    const lead = await controlTx(sql, (tx) => insertLeadTx(tx, { name: 'Stale Read Lead' }));
+    const leadId = lead.body.lead.id;
+    await sql`delete from agent_runs where status = 'queued'`;
+    const runId = await enqueueRun(sql, { kind: 'reply', leadId });
+    await sql`update agent_runs set
+      params = ${sql.json({
+        script: [
+          {
+            toolCalls: [
+              { name: 'get_lead', args: { id: leadId } },
+              { name: 'update_lead', args: { id: leadId, city: 'Recife' } },
+            ],
+          },
+          { toolCalls: [{ name: 'get_lead', args: { id: leadId } }] },
+          { toolCalls: [{ name: 'request_human', args: { leadId, reason: 'travou' } }] },
+          { text: 'fim' },
+        ],
+      } as never)}
+      where id = ${runId}`;
+    expect(await runOnce(sql)).toBe(true);
+    const r = await getRun(runId);
+    expect(r.status).toBe('done');
+    const gets = r.steps.filter(
+      (s) => (s as { name?: string }).name === 'get_lead',
+    ) as { out?: unknown }[];
+    expect(gets).toHaveLength(2);
+    // the second read ran fresh — current profile, not a REPEAT artifact
+    expect(JSON.stringify(gets[1]!.out)).toContain('Recife');
+  });
 });

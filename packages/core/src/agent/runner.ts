@@ -542,6 +542,20 @@ const ACTION_TOOLS = new Set([
   'create_task',
 ]);
 
+/** Read-only tools — a result stays reusable only while no write has
+ *  landed since it ran (a mutation in between may have changed the state
+ *  the read described). Everything not in this set is a write for the
+ *  loop guard's staleness tracking. */
+const READ_TOOLS = new Set([
+  'search_leads',
+  'get_lead',
+  'web_search',
+  'read_pages',
+  'maps_lookup',
+  'instagram_profile',
+  'serp',
+]);
+
 /** True once this run's journal holds a landed action call — a result that
  *  neither errored, came back {blocked} (a blocked send produced nothing
  *  visible) nor {ignored} (an update_lead stripped of every field changed
@@ -1133,10 +1147,14 @@ export async function runOnce(sql: Sql): Promise<boolean> {
     // starts at -1 so the first tick fires after 3 truly idle steps.
     let lastProgress = -1;
     // Loop guard (messaging kinds): the previous turn's call signatures
-    // mapped to whether each returned a reusable (non-error) result — a
-    // repeated call with a clean prior result is a stuck model; repeating
-    // an errored one is a retry and executes.
-    let prevSigs = new Map<string, boolean>();
+    // mapped to whether each returned a reusable result (no error, not
+    // blocked, not ignored) and the state version it ran at — a repeated
+    // call with a still-current clean prior result is a stuck model; a
+    // retry after failure or a re-read after a mutation executes.
+    let prevSigs = new Map<string, { ok: boolean; v: number }>();
+    // Bumps on every landed write — read results recorded at an older
+    // version may describe stale state and must not suppress a re-read.
+    let stateVersion = 0;
     let loopNudged = false;
 
     for (let i = 0; i < limit && !lost; i++) {
@@ -1366,7 +1384,7 @@ export async function runOnce(sql: Sql): Promise<boolean> {
         // re-emitted identical send literally re-sends). Suppress per call
         // — each repeated call gets a "já executada" result — and when the
         // whole turn repeated, nudge once: act differently or finish.
-        const curSigs = new Map<string, boolean>();
+        const curSigs = new Map<string, { ok: boolean; v: number }>();
         let allRepeat = res.toolCalls.length > 0;
         for (const [callIndex, call] of res.toolCalls.entries()) {
           const callId = call.id ?? String(callIndex);
@@ -1392,7 +1410,9 @@ export async function runOnce(sql: Sql): Promise<boolean> {
           steps.push(entry);
           await persist();
           const sig = JSON.stringify([call.name, call.args ?? {}]);
-          const suppress = prevSigs.get(sig) === true;
+          const prev = prevSigs.get(sig);
+          const suppress =
+            prev?.ok === true && (!READ_TOOLS.has(call.name) || prev.v === stateVersion);
           let out: unknown;
           if (suppress) {
             out = {
@@ -1407,10 +1427,22 @@ export async function runOnce(sql: Sql): Promise<boolean> {
               out = { error: e instanceof Error ? e.message : String(e) };
             }
           }
+          const res_ = out as {
+            error?: unknown;
+            blocked?: unknown;
+            ignored?: unknown;
+          } | null;
+          const clean =
+            typeof res_ === 'object' &&
+            res_ !== null &&
+            !res_.error &&
+            res_.blocked !== true &&
+            res_.ignored !== true;
           // A suppressed call stands on its earlier clean result — its own
           // REPEAT error must not mark the signature retryable or the next
           // identical emission would execute again.
-          curSigs.set(sig, suppress || !(out as { error?: unknown } | null)?.error);
+          curSigs.set(sig, suppress ? prev! : { ok: clean, v: stateVersion });
+          if (clean && !READ_TOOLS.has(call.name)) stateVersion++;
           delete entry.pending;
           entry.out = out;
           messages.push({
