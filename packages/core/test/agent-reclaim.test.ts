@@ -1758,9 +1758,10 @@ dbDescribe('worker robustness (db)', () => {
       where id = ${runId}`;
     expect(await runOnce(sql)).toBe(true);
     const r = await getRun(runId);
-    const reads = r.steps.filter(
-      (s) => (s as { name?: string }).name === 'read_pages',
-    ) as { readSpent?: number; out?: { error?: string; errors?: unknown[]; pages?: { cached?: boolean }[] } }[];
+    const reads = r.steps.filter((s) => (s as { name?: string }).name === 'read_pages') as {
+      readSpent?: number;
+      out?: { error?: string; errors?: unknown[]; pages?: { cached?: boolean }[] };
+    }[];
     expect(reads).toHaveLength(2);
     // the retry was NOT suppressed — it reported the failure again
     expect(reads[0]!.out?.error).toBeUndefined();
