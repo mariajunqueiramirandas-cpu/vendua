@@ -1487,10 +1487,13 @@ export async function runOnce(sql: Sql): Promise<boolean> {
       // Inbound retires auto outreach: the gate flips queued rows and the
       // post-commit pass flips 'running' ones SKIP-LOCKED — a row locked
       // mid-tool-call escapes that pass and nothing revisits it. The
-      // marker the cancel keys on is the committed inbound itself: one
-      // newer than this attempt's claim means the lead already wrote —
+      // marker the cancel keys on is the committed LIVE inbound itself:
+      // one newer than this attempt's claim means the lead already wrote —
       // stop exactly like the API cancel (fenced flip → lost → unwind →
-      // persistAborted journals the trajectory).
+      // persistAborted journals the trajectory). Historical imports are
+      // excluded: they store the provider's sentAt as created_at, so a
+      // re-imported old message (or a skewed provider clock) must not
+      // cancel live outreach — the same rule the ingest gate applies.
       const autoSrc = (run.params as { auto?: string } | null)?.auto;
       if (!lost && run.kind === 'outreach' && autoSrc != null && autoSrc !== 'regenerate') {
         const replied = await controlTx(
@@ -1498,7 +1501,7 @@ export async function runOnce(sql: Sql): Promise<boolean> {
           (tx) => tx`
             select 1 from lead_messages m
             join lead_threads t on t.id = m.thread_id
-            where t.lead_id = ${run.lead_id} and m.direction = 'in'
+            where t.lead_id = ${run.lead_id} and m.direction = 'in' and not m.historical
               and m.created_at > (select started_at from agent_runs where id = ${run.id})
             limit 1
           `,

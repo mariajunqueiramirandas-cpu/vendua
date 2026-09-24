@@ -1775,4 +1775,27 @@ dbDescribe('worker robustness (db)', () => {
     // the second scripted turn never ran — the probe broke the loop
     expect(r.steps.filter((s) => (s as { type?: string }).type === 'model')).toHaveLength(1);
   });
+
+  test('a historical import does not self-cancel auto outreach', async () => {
+    await migrate(sql, MIGRATIONS);
+    const lead = await controlTx(sql, (tx) => insertLeadTx(tx, { name: 'History Sync' }));
+    const leadId = lead.body.lead.id;
+    const [thread] = await sql<{ id: string }[]>`
+      insert into lead_threads (lead_id, channel) values (${leadId}, 'whatsapp') returning id
+    `;
+    await sql`delete from agent_runs where status = 'queued'`;
+    const runId = (await enqueueRun(sql, { kind: 'outreach', leadId }))!;
+    await sql`update agent_runs set run_at = now(),
+      params = ${sql.json({ auto: 'first-contact', script: [{ text: 'oi' }] } as never)}
+      where id = ${runId}`;
+    // Re-imported context message stamped AFTER the claim — a provider
+    // clock ahead would land here too. historical=true means "context
+    // only": it never asked for a reply, so it must not cancel.
+    await sql`insert into lead_messages (thread_id, direction, author, body, status, created_at, historical)
+      values (${thread!.id}, 'in', 'lead', 'contexto antigo', 'received',
+              now() + interval '1 minute', true)`;
+    expect(await runOnce(sql)).toBe(true);
+    const r = await getRun(runId);
+    expect(r.status).toBe('done');
+  });
 });
