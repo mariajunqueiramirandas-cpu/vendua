@@ -783,6 +783,25 @@ const READ_TOOLS = new Set([
   'serp',
 ]);
 
+/** Writes that mint a NEW durable artifact per call — a duplicate can
+ *  never be a state-restore, so an identical repeat is suppressed even
+ *  after other writes landed. (State writes are different: a repeated
+ *  update_lead can legitimately restore a field another call changed.)
+ *  send_message/draft_message mint a message row; create_task and
+ *  request_human mint task rows; unsubscribe mints a farewell message;
+ *  add_note mints an activity; book mints a meeting; propose_brief
+ *  mints a discovery brief. */
+const NON_IDEMPOTENT = new Set([
+  'send_message',
+  'draft_message',
+  'request_human',
+  'unsubscribe',
+  'add_note',
+  'create_task',
+  'book',
+  'propose_brief',
+]);
+
 /** True once this run's journal holds a landed action call — a result that
  *  neither errored, came back {blocked} (a blocked send produced nothing
  *  visible) nor {ignored} (an update_lead stripped of every field changed
@@ -1682,8 +1701,13 @@ export async function runOnce(sql: Sql): Promise<boolean> {
           await persist();
           const sig = JSON.stringify([call.name, call.args ?? {}]);
           const prev = prevSigs.get(sig);
+          // Suppress only while NOTHING landed since the prior clean
+          // result — reads AND writes share the version check, since a
+          // repeated write after an intervening mutation can be a
+          // legitimate state-restore. Artifact-minters are the exception:
+          // a duplicate is never legitimate, always suppressed.
           const suppress =
-            prev?.ok === true && (!READ_TOOLS.has(call.name) || prev.v === stateVersion);
+            prev?.ok === true && (NON_IDEMPOTENT.has(call.name) || prev.v === stateVersion);
           const readsBefore = ctx.pageReads;
           // Let a read_pages call stamp each fetch reservation onto its
           // pending journal entry the moment it validates — a worker that
@@ -1728,8 +1752,11 @@ export async function runOnce(sql: Sql): Promise<boolean> {
           // A suppressed call stands on its earlier clean result — its own
           // REPEAT error must not mark the signature retryable or the next
           // identical emission would execute again.
-          curSigs.set(sig, suppress ? prev! : { ok: clean, v: stateVersion });
           if (clean && !READ_TOOLS.has(call.name)) stateVersion++;
+          // Writes record the POST-call version — 'nothing landed since it
+          // ran' must not count the call's own write, or every repeated
+          // write would look stale to itself.
+          curSigs.set(sig, suppress ? prev! : { ok: clean, v: stateVersion });
           delete entry.pending;
           entry.out = out;
           messages.push({

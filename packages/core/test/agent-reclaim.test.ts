@@ -1307,6 +1307,58 @@ dbDescribe('worker robustness (db)', () => {
     expect(JSON.stringify(gets[1]!.out)).toContain('Recife');
   });
 
+  test('a repeated write after an intervening write executes — but a duplicate artifact never does', async () => {
+    await migrate(sql, MIGRATIONS);
+    const lead = await controlTx(sql, (tx) => insertLeadTx(tx, { name: 'Restore Lead' }));
+    const leadId = lead.body.lead.id;
+    await sql`delete from agent_runs where status = 'queued'`;
+    const runId = (await enqueueRun(sql, { kind: 'reply', leadId })!)!;
+    await sql`update agent_runs set
+      params = ${sql.json({
+        script: [
+          {
+            toolCalls: [
+              { name: 'update_lead', args: { id: leadId, city: 'Recife' } },
+              { name: 'update_lead', args: { id: leadId, city: 'Natal' } },
+            ],
+          },
+          // restoring Recife is not a REPEAT — Natal landed since it ran
+          { toolCalls: [{ name: 'update_lead', args: { id: leadId, city: 'Recife' } }] },
+          {
+            toolCalls: [
+              { name: 'create_task', args: { leadId, title: 'vip' } },
+              // a write lands between the task and its repeat — a
+              // versioned write would look stale, but a duplicate task
+              // mints a second row: never a restore, always suppressed
+              { name: 'update_lead', args: { id: leadId, city: 'Olinda' } },
+            ],
+          },
+          { toolCalls: [{ name: 'create_task', args: { leadId, title: 'vip' } }] },
+          { toolCalls: [{ name: 'request_human', args: { leadId, reason: 'travou' } }] },
+          { text: 'fim' },
+        ],
+      } as never)}
+      where id = ${runId}`;
+    expect(await runOnce(sql)).toBe(true);
+    const r = await getRun(runId);
+    expect(r.status).toBe('done');
+    const writes = r.steps.filter((s) => (s as { name?: string }).name === 'update_lead') as {
+      out?: { error?: string };
+    }[];
+    const tasks = r.steps.filter((s) => (s as { name?: string }).name === 'create_task') as {
+      out?: { error?: string };
+    }[];
+    // all four writes really ran — the repeat-as-restore is not REPEAT'd
+    expect(writes).toHaveLength(4);
+    expect(writes.every((w) => !w.out?.error)).toBe(true);
+    // ...while the duplicate task was suppressed on the second emission
+    expect(tasks).toHaveLength(2);
+    expect(tasks[0]!.out?.error ?? '').not.toMatch(/^REPEAT/);
+    expect(tasks[1]!.out?.error).toMatch(/^REPEAT/);
+    const saved = await sql`select city from leads where id = ${leadId}`;
+    expect((saved[0] as { city?: string }).city).toBe('Olinda');
+  });
+
   test('a cached re-read does not spend the reply page budget', async () => {
     await migrate(sql, MIGRATIONS);
     const lead = await controlTx(sql, (tx) => insertLeadTx(tx, { name: 'Cached Page Lead' }));
