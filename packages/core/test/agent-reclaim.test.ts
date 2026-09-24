@@ -1001,8 +1001,10 @@ dbDescribe('worker robustness (db)', () => {
       claim_token = 'tok' where id = ${running}`;
     await drain(sql, 0);
     const status = async (id: string) =>
-      (await sql<{ status: string; error: string | null }[]>`
-        select status, error from agent_runs where id = ${id}`)[0]!;
+      (
+        await sql<{ status: string; error: string | null }[]>`
+        select status, error from agent_runs where id = ${id}`
+      )[0]!;
     expect(await status(runs.archived!)).toMatchObject({ status: 'canceled', error: 'arquivado' });
     expect(await status(runs.unsub!)).toMatchObject({ status: 'canceled', error: 'descadastrado' });
     // paused/'off' lift — their parked runs must resume, never die
