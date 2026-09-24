@@ -941,19 +941,28 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('lead lifecycle (db)', () => {
             leadId,
             params: {
               providerName: 'gemini:gemini-3.5-flash-lite',
-              // the delay gives the test a window to flip the row mid-run —
-              // the fenced persist then detects 'lost' and runs persistAborted
-              script: [{ text: 'ok', delayMs: 800, tokensIn: 1_000_000, tokensOut: 100_000 }],
+              // turn 1 must COMMIT before the cancel, or persistAborted
+              // legitimately journals 0¢ — 'running' alone proves only the
+              // claim landed. Turn 2's delay keeps the run in-flight while
+              // the flip propagates → the fenced persist detects 'lost'
+              // and persistAborted folds turn 1's spend.
+              script: [
+                { text: 'ok', delayMs: 50, tokensIn: 1_000_000, tokensOut: 100_000 },
+                { text: 'ok', delayMs: 2_000 },
+              ],
             },
           }),
         ))!;
         await sql`delete from agent_runs where status = 'queued' and id <> ${runId}`;
         const running = runOnce(sql);
-        // wait for the claim to land before canceling, or the flip fences nothing
-        for (let i = 0; i < 200; i++) {
-          const [s] = await sql<{ status: string }[]>`
-            select status from agent_runs where id = ${runId}`;
-          if (s?.status === 'running') break;
+        // wait for the first model turn to land in the journal — that is the
+        // deterministic point where the in-memory cost is already accrued
+        for (let i = 0; i < 400; i++) {
+          const [s] = await sql<{ m: boolean }[]>`
+            select exists(
+              select 1 from jsonb_array_elements(steps) e where e->>'type' = 'model'
+            ) as m from agent_runs where id = ${runId}`;
+          if (s?.m) break;
           await new Promise((r) => setTimeout(r, 10));
         }
         await sql`update agent_runs set status = 'canceled', finished_at = now() where id = ${runId}`;
