@@ -192,11 +192,29 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('whatsapp history + ignore list 
     });
     if ('ignored' in second) throw new Error('unexpected ignore');
     expect(second.threadId).toBe(first.threadId);
-    // One parked run covers both messages — it reads fresh thread at claim.
-    const queued = await sql<{ id: string }[]>`
-      select id from agent_runs where thread_id = ${first.threadId} and status = 'queued'
+    // One parked run covers both messages — it reads fresh thread at claim,
+    // and the latest message earns its own quiet period (run_at slides).
+    const queued = await sql<{ id: string; run_at: Date }[]>`
+      select id, run_at from agent_runs where thread_id = ${first.threadId} and status = 'queued'
     `;
     expect(queued).toHaveLength(1);
+    const slideMs = queued[0]!.run_at.getTime() - Date.now();
+    expect(slideMs).toBeGreaterThan(55 * 60_000);
+    expect(slideMs).toBeLessThanOrEqual(61 * 60_000);
+    // An already-overdue run never slides further — it fires on the next tick
+    await sql`update agent_runs set run_at = now() - interval '1 minute' where id = ${queued[0]!.id}`;
+    await ingestInbound(sql, {
+      channel: 'whatsapp',
+      from,
+      body: 'ainda aí?',
+      providerMessageId: `${mid}-2b`,
+    });
+    const overdue = (
+      await sql<{ run_at: Date }[]>`
+        select run_at from agent_runs where id = ${queued[0]!.id}
+      `
+    )[0]!;
+    expect(overdue.run_at.getTime()).toBeLessThan(Date.now());
     // A 'running' reply has frozen context — a new message earns a fresh run.
     await sql`update agent_runs set status = 'running', claim_token = 'x' where id = ${queued[0]!.id}`;
     const third = await ingestInbound(sql, {

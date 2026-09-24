@@ -126,13 +126,26 @@ export async function ingestInbound(
     // coalesces: a bounded one-time duplicate for rows parked across the
     // marker deploy beats silently absorbing an inbound behind a staff
     // run's intent or schedule.
-    const parked = await tx`
-      select 1 from agent_runs
+    const parked = await tx<{ id: string }[]>`
+      select id from agent_runs
       where kind = 'reply' and thread_id = ${res.threadId} and status = 'queued'
         and params->>'origin' = 'inbound'
       limit 1
     `;
-    if (parked.length) return null;
+    if (parked.length) {
+      // The latest message earns its own quiet period: slide the parked
+      // run forward to now+delay — greatest() never delays an already-
+      // overdue reply further (it fires on the next tick), and delay=0
+      // needs no write at all.
+      if (inboundReplyDelayMin > 0) {
+        await tx`
+          update agent_runs
+          set run_at = greatest(run_at, ${new Date(Date.now() + inboundReplyDelayMin * 60_000)})
+          where id = ${parked[0]!.id}
+        `;
+      }
+      return parked[0]!.id;
+    }
     return insertRun(tx, {
       kind: 'reply',
       leadId: res.leadId,
