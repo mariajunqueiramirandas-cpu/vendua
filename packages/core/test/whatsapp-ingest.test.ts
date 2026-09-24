@@ -12,6 +12,10 @@ import {
   validateSetting,
 } from '../src/modules/integrations.ts';
 import { controlTx } from '../src/modules/control.ts';
+import {
+  subscribeControlEvents,
+  type ControlEvent,
+} from '../src/modules/control-events.ts';
 import { insertLeadTx } from '../src/modules/leads.ts';
 import { migrate } from '../src/platform/db.ts';
 
@@ -427,12 +431,19 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('whatsapp history + ignore list 
       params: { goal: 'negotiation' },
       runAt: new Date(Date.now() + 3_600_000),
     }))!;
-    const res = await ingestInbound(sql, {
-      channel: 'whatsapp',
-      from: '5511955550001@s.whatsapp.net',
-      body: 'oi, quero saber mais',
-      providerMessageId: `fx10-${crypto.randomUUID()}`,
-    });
+    const events: ControlEvent[] = [];
+    const unsub = subscribeControlEvents((e) => events.push(e));
+    let res;
+    try {
+      res = await ingestInbound(sql, {
+        channel: 'whatsapp',
+        from: '5511955550001@s.whatsapp.net',
+        body: 'oi, quero saber mais',
+        providerMessageId: `fx10-${crypto.randomUUID()}`,
+      });
+    } finally {
+      unsub();
+    }
     if ('ignored' in res) throw new Error('unexpected ignore');
     const rows = await sql<{ id: string; status: string }[]>`
       select id, status from agent_runs where id in (${autoRun}, ${staffRun})
@@ -442,6 +453,9 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('whatsapp history + ignore list 
     // ingest kicks a fire-and-forget drain that may already have claimed
     // the staff run — 'running' or 'queued', the point is never 'canceled'.
     expect(byId[staffRun]).not.toBe('canceled');
+    // The cancel emits run.update per row — otherwise the Runs view keeps
+    // showing the retired row as 'queued'.
+    expect(events.some((e) => e.type === 'run.update' && e.ref === autoRun)).toBe(true);
   });
 
   test('a queued regen run survives the inbound cancel', async () => {

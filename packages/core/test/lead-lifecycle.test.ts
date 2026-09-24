@@ -12,6 +12,10 @@ import {
   type Guardrails,
 } from '../src/modules/integrations.ts';
 import { controlTx } from '../src/modules/control.ts';
+import {
+  subscribeControlEvents,
+  type ControlEvent,
+} from '../src/modules/control-events.ts';
 import { insertLeadTx } from '../src/modules/leads.ts';
 import { approveMessage, composeMessageTx } from '../src/modules/threads.ts';
 import { migrate } from '../src/platform/db.ts';
@@ -882,6 +886,44 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('lead lifecycle (db)', () => {
         select status, cost_cents from agent_runs where id = ${runId}`;
       expect(r!.status).toBe('done');
       expect(r!.cost_cents).toBe(14);
+    });
+
+    test('a successful run crossing the cap emits lead.change for the fresh flag', async () => {
+      await setup();
+      // The mock spends 14¢ — a 10¢ cap makes this very run the crossing.
+      await setGuardrails({ leadLifetimeCostCapUsd: 0.1 });
+      const events: ControlEvent[] = [];
+      const unsub = subscribeControlEvents((e) => events.push(e));
+      try {
+        const leadId = await mkLead();
+        const runId = (await controlTx(sql, (tx) =>
+          insertRun(tx, {
+            kind: 'reply',
+            leadId,
+            params: {
+              providerName: 'gemini:gemini-3.5-flash-lite',
+              script: [{ text: 'ok', tokensIn: 1_000_000, tokensOut: 100_000 }],
+            },
+          }),
+        ))!;
+        await sql`delete from agent_runs where status = 'queued' and id <> ${runId}`;
+        expect(await runOnce(sql)).toBe(true);
+        const [r] = await sql<{ status: string }[]>`
+          select status from agent_runs where id = ${runId}`;
+        expect(r!.status).toBe('done');
+        // finishRun committed the flag + staff task — Tasks views refresh
+        // on lead.change, so a SUCCESSFUL crossing must emit it too (only
+        // the failed path emitted before).
+        expect(events.some((e) => e.type === 'lead.change' && e.ref === leadId)).toBe(true);
+        const flags = await sql`
+          select 1 from lead_activities
+          where lead_id = ${leadId} and kind = 'system' and meta->>'type' = 'cost-cap'
+        `;
+        expect(flags).toHaveLength(1);
+      } finally {
+        unsub();
+        await setGuardrails({});
+      }
     });
 
     test('estimateModelCostUsd prices listed, free and unknown models', () => {
