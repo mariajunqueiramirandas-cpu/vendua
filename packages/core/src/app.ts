@@ -111,7 +111,7 @@ import {
 } from './modules/meetings.ts';
 import { BOOKING_PAGE } from './modules/booking-page.ts';
 import * as rooms from './modules/rooms.ts';
-import { drain, flagCappedLeads, insertRun } from './agent/runner.ts';
+import { capLockTx, drain, flagCappedLeads, insertRun } from './agent/runner.ts';
 import { ingestInbound } from './agent/inbound.ts';
 import { ingestResendEvent, svixHeaders, svixVerified } from './agent/channels/email-inbound.ts';
 import { LOADER_JS } from './loader.ts';
@@ -1035,6 +1035,10 @@ export function createApp({ sql, sessionSecret, controlSecret, autoDrain }: AppD
       // forever. Reject with the reason like dispatch reports it. The row
       // lock serializes with a concurrent unsubscribe — otherwise this tx
       // could still insert a zombie run after the opt-out's cancel pass.
+      // capfin before the lead lock — the advisory must be this tx's first
+      // lock for the lead or a finisher holding it can cycle against us
+      // (see capLockTx).
+      await capLockTx(tx, leadId);
       const lead = (
         await tx<
           {
@@ -1688,6 +1692,8 @@ export function createApp({ sql, sessionSecret, controlSecret, autoDrain }: AppD
       // under a suppressed lead can never claim — report instead of parking.
       // The row lock serializes with a concurrent unsubscribe.
       if (effLeadId) {
+        // capfin before the lead lock (see capLockTx's ordering rule).
+        await capLockTx(tx, effLeadId);
         const lead = (
           await tx<
             {
@@ -1777,6 +1783,10 @@ export function createApp({ sql, sessionSecret, controlSecret, autoDrain }: AppD
     const res = await claimControl(sql, requireIdemKey(c), async (tx) => {
       let enqueued = 0;
       const skipped: { id: string; reason: string }[] = [];
+      // Every capfin first, in sorted order — a multi-lead tx taking the
+      // advisories in request order could AB-BA against another batch whose
+      // ids overlap in a different order (see capLockTx's ordering rule).
+      for (const id of [...new Set(ids as string[])].sort()) await capLockTx(tx, id);
       for (const id of ids as string[]) {
         const lead = (
           await tx<

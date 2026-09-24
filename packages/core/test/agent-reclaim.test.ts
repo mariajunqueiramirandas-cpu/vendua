@@ -476,13 +476,17 @@ dbDescribe('worker robustness (db)', () => {
     `;
     const id = (await enqueueRun(sql, { kind: 'outreach', leadId }))!;
     const stale = new Date(Date.now() - 11 * 60_000);
-    // 15¢ of model usage + 10¢ of monid in the journal — over the 20¢ cap,
-    // but only ever recorded in steps (the attempt died before finishRun).
+    // 15¢ of model usage + monid markers holding CUMULATIVE balances
+    // (3¢ then 10¢ — the budget's running total, not per-charge deltas):
+    // over the 20¢ cap, but only ever recorded in steps (the attempt died
+    // before finishRun). A sum would inflate to 28¢ — the fold must read
+    // the LAST marker like priorSpend does on resume.
     await sql`
       update agent_runs set status = 'running', claim_token = 'stale',
         started_at = ${stale}, alive_at = ${stale}, max_attempts = 1,
         steps = ${sql.json([
           { type: 'model', content: 'a', usage: { tokensIn: 1, tokensOut: 1, costUsd: 0.15 } },
+          { type: 'monid_spend', spentUsd: 0.03 },
           { type: 'monid_spend', spentUsd: 0.1 },
         ] as never[])}
       where id = ${id}

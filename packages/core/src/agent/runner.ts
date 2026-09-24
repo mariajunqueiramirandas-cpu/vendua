@@ -84,6 +84,20 @@ interface RunRow {
  *  the agent went quiet and can raise the cap or retire the lead. */
 type CapVerdict = 'under' | 'flagged' | 'already';
 
+/** 'capfin' ordering rule: this blocking advisory must be a tx's FIRST
+ *  lock for a lead — before any lead_threads/leads FOR UPDATE or agent_runs
+ *  writes that target the same lead. A tx that takes it empty-handed can
+ *  never deadlock: its later row-lock waits (a finisher's flag insert takes
+ *  key-share on leads through the FK; an inbound's l,t lock is FOR UPDATE)
+ *  always resolve against holders that never wait on capfin themselves —
+ *  claims only TRY it, and every other evaluator holds it first too.
+ *  Conversely a tx that grabbed row locks first and then waits here CAN
+ *  cycle (inbound holds the lead → wants capfin; finisher holds capfin →
+ *  wants the lead's key-share). */
+export async function capLockTx(tx: Sql, leadId: string): Promise<void> {
+  await tx`select pg_advisory_xact_lock(hashtext(${'capfin:' + leadId}))`;
+}
+
 /** 'under' admits the run; the rest refuse it. Only 'flagged' means THIS
  *  call wrote the flag + staff task — 'already' saw the flag committed at
  *  this level. */
@@ -95,11 +109,8 @@ async function leadUnderCostCapTx(tx: Sql, leadId: string): Promise<CapVerdict> 
   // the other's uncommitted cost_cents as absent — both under-cap, no
   // flag, parked siblings with no task. The blocking xact advisory makes
   // the second evaluator read the first's COMMITTED total (its own spend
-  // is visible to itself, committed or not). Leaf lock — a holder only
-  // reads spend and writes the flag rows, never waits on leads/agent_runs
-  // locks a waiter already holds, so it can't AB-BA with claimRun or
-  // inbound's l,t locks.
-  await tx`select pg_advisory_xact_lock(hashtext(${'capfin:' + leadId}))`;
+  // is visible to itself, committed or not).
+  await capLockTx(tx, leadId);
   const spent = (
     await tx<{ cents: number }[]>`
       select coalesce(sum(cost_cents), 0)::int as cents
@@ -330,40 +341,57 @@ export async function claimRun(sql: Sql): Promise<RunRow | null> {
       `;
       const run = cand[0];
       if (!run) return null;
-      // The scan predicate reads t.agent_enabled on the select snapshot — a
-      // pause committed between it and the status flip below would still
-      // claim. Lock the thread row before deciding: an in-flight pause
-      // blocks this FOR UPDATE, then the re-read sees the committed value.
-      if (run.thread_id) {
-        const enabled = await tx<{ agent_enabled: boolean }[]>`
-          select agent_enabled from lead_threads where id = ${run.thread_id} for update
+      // 'capfin' must be a tx's first lock for a lead (see capLockTx) — a
+      // claim holding this row and BLOCKING on it would cycle against a
+      // finisher's key-share. Try-only: a live evaluator means "flagging
+      // or about to be capped" — parking this candidate is the right
+      // disposition anyway, so contention just means reject. It also
+      // serializes the claim against ingestInbound's gate (which holds
+      // capfin through its cancel): while the gate runs, every same-lead
+      // candidate rejects here and the queued cancel always wins.
+      if (run.lead_id) {
+        const capFree = await tx<{ got: boolean }[]>`
+          select pg_try_advisory_xact_lock(hashtext(${'capfin:' + run.lead_id})) as got
         `;
-        if (!enabled[0]?.agent_enabled) {
+        if (!capFree[0]!.got) {
           rejected.push(run.id);
           continue;
         }
       }
-      if (run.lead_id) {
-        // The lead suppression predicate has the same snapshot gap as the
-        // thread leg above — a handoff/unsubscribe committing between the
-        // scan and the status flip would still claim. Revalidate under the
-        // lead row lock. nowait: the suppression writers hold the lead row
-        // and then touch run rows, so waiting here could AB-BA deadlock —
-        // contention just means "about to be suppressed", reject instead.
-        // The savepoint is load-bearing: a 55P03 outside it would abort the
-        // whole claim tx, failing every later statement with 25P02.
-        await tx`savepoint lead_check`;
-        let lead:
-          | {
-              agent_mode: string;
-              archived_at: string | null;
-              unsubscribed_at: string | null;
-              agent_paused_at: string | null;
-              whatsapp: string | null;
-              phone: string | null;
-            }
-          | undefined;
-        try {
+      // Both row revalidations fail fast under one savepoint — a contended
+      // lock means the pause/suppression writer wins, so park instead of
+      // waiting (a blocking wait on rows while holding this candidate's
+      // lock is how claims and the inbound cancel deadlocked each other).
+      // The savepoint is load-bearing: a 55P03 outside it would abort the
+      // whole claim tx, failing every later statement with 25P02.
+      await tx`savepoint cand_check`;
+      let lockLost = false;
+      let lead:
+        | {
+            agent_mode: string;
+            archived_at: string | null;
+            unsubscribed_at: string | null;
+            agent_paused_at: string | null;
+            whatsapp: string | null;
+            phone: string | null;
+          }
+        | undefined;
+      try {
+        // The scan predicate reads t.agent_enabled on the select snapshot —
+        // a pause committed between it and the status flip below would
+        // still claim. Revalidate under the thread row lock — nowait for
+        // the same reason as the lead leg: contention is "about to be
+        // suppressed", so reject.
+        if (run.thread_id) {
+          const enabled = await tx<{ agent_enabled: boolean }[]>`
+            select agent_enabled from lead_threads where id = ${run.thread_id} for update nowait
+          `;
+          if (!enabled[0]?.agent_enabled) {
+            rejected.push(run.id);
+            continue;
+          }
+        }
+        if (run.lead_id) {
           lead = (
             await tx<
               {
@@ -379,10 +407,17 @@ export async function claimRun(sql: Sql): Promise<RunRow | null> {
               from leads where id = ${run.lead_id} for update nowait
             `
           )[0];
-        } catch (e) {
-          if ((e as { code?: string }).code !== '55P03') throw e;
-          await tx`rollback to savepoint lead_check`;
         }
+      } catch (e) {
+        if ((e as { code?: string }).code !== '55P03') throw e;
+        await tx`rollback to savepoint cand_check`;
+        lockLost = true;
+      }
+      if (lockLost) {
+        rejected.push(run.id);
+        continue;
+      }
+      if (run.lead_id) {
         if (
           !lead ||
           lead.agent_mode === 'off' ||
@@ -449,7 +484,7 @@ export async function claimRun(sql: Sql): Promise<RunRow | null> {
 
 async function finishRun(
   sql: Sql,
-  run: { id: string; claimToken: string },
+  run: { id: string; claimToken: string; leadId?: string | null },
   result: {
     status: 'done' | 'failed' | 'canceled';
     steps: unknown[];
@@ -460,6 +495,11 @@ async function finishRun(
   },
 ): Promise<boolean> {
   const out = await controlTx(sql, async (tx) => {
+    // capfin before the run-row update — the cap evaluator that takes it
+    // first can never deadlock (see capLockTx); grabbing it after locking
+    // the run row would invert against inbound's cancel predicate, which
+    // now covers 'running' auto rows too.
+    if (run.leadId) await capLockTx(tx, run.leadId);
     const updated = await tx<{ id: string; lead_id: string | null; kind: RunRow['kind'] }[]>`
     update agent_runs set
       status = ${result.status},
@@ -1154,7 +1194,7 @@ async function writeDebrief(
 export async function runOnce(sql: Sql): Promise<boolean> {
   const run = await claimRun(sql);
   if (!run) return false;
-  const claim = { id: run.id, claimToken: run.claim_token };
+  const claim = { id: run.id, claimToken: run.claim_token, leadId: run.lead_id };
 
   // A reclaimed row carries its prior attempts' journal — keep it (the audit
   // trail for the whole run, not just this attempt) and mark the boundary so
@@ -1255,6 +1295,9 @@ export async function runOnce(sql: Sql): Promise<boolean> {
   const persistAborted = async (): Promise<void> => {
     await tail.catch(() => undefined);
     const cap = await controlTx(sql, async (tx) => {
+      // capfin before the run-row update — same first-lock ordering as
+      // finishRun (see capLockTx) so the wait can never cycle.
+      if (run.lead_id) await capLockTx(tx, run.lead_id);
       const rows = await tx<{ id: string }[]>`
         update agent_runs set steps = ${tx.json(steps as never[])}, finished_at = now(),
           tokens_in = ${tokensIn}, tokens_out = ${tokensOut},
@@ -1814,48 +1857,53 @@ export async function drain(sql: Sql, limit = 20): Promise<number> {
       where status = 'running' and coalesce(alive_at, started_at) < now() - make_interval(mins => ${RUN_LEASE_MIN})
       returning id, lead_id, kind, status
     `;
-    // Same failed-run visibility as finishRun's path — the bulk reclaim
-    // writes 'failed' without going through it, so its own task insert.
-    const failed = rows.filter((r) => r.status === 'failed' && r.lead_id);
-    if (failed.length) {
+    return rows;
+  });
+  for (const r of reclaimed) emitControlEvent('run.update', r.id);
+  // Terminal rows do their spend fold + failed-run task + cap check in
+  // per-row txs AFTER the bulk commit: the bulk update holds every
+  // reclaimed row's lock, and a capfin wait while holding those could
+  // cycle against an inbound gate (see capLockTx). capfin first inside
+  // each small tx keeps the evaluator empty-handed.
+  const failed = reclaimed.filter((r) => r.status === 'failed' && r.lead_id);
+  for (const f of failed) {
+    const flagged = await controlTx(sql, async (tx) => {
+      await capLockTx(tx, f.lead_id!);
       // A dead attempt never reached finishRun — its spend lives only in
-      // the journal (model usage.costUsd + monid_spend markers, the same
-      // fields runOnce replays on resume). Fold it into cost_cents or the
-      // lead's lifetime total ignores every dead attempt, then run the
-      // same cap check the other terminal paths do — dead-run spend can
-      // itself push the lead over.
+      // the journal. Model entries are usage DELTAS (sum them); monid_spend
+      // markers carry the CUMULATIVE budget balance at each write — read
+      // the LAST marker like runOnce's priorSpend, never a sum (summing
+      // cumulative balances would inflate cost_cents and cap early).
       await tx`
         update agent_runs r set
           cost_cents = round((
             coalesce((select sum((e->'usage'->>'costUsd')::numeric)
                       from jsonb_array_elements(r.steps) e
                       where e->>'type' = 'model'), 0)
-            + coalesce((select sum((e->>'spentUsd')::numeric)
-                        from jsonb_array_elements(r.steps) e
-                        where e->>'type' = 'monid_spend'), 0)
+            + coalesce((select (e.v->>'spentUsd')::numeric
+                        from jsonb_array_elements(r.steps) with ordinality as e(v, idx)
+                        where e.v->>'type' = 'monid_spend'
+                        order by idx desc limit 1), 0)
           ) * 100)::int
-        where r.id = any(${failed.map((f) => f.id)}::uuid[])
+        where r.id = ${f.id}
       `;
-      for (const f of failed) {
-        if ((await leadUnderCostCapTx(tx, f.lead_id!)) === 'flagged')
-          capFlaggedIds.push(f.lead_id!);
-      }
-      const names = await tx<{ id: string; name: string }[]>`
-        select id, name from leads where id = any(${failed.map((f) => f.lead_id!)})
+      // Same failed-run visibility as finishRun's path — the bulk reclaim
+      // writes 'failed' without going through it, so its own task insert.
+      const name =
+        (await tx<{ name: string }[]>`select name from leads where id = ${f.lead_id}`)[0]?.name ??
+        f.lead_id!;
+      await tx`
+        insert into lead_tasks (lead_id, title, due_at, created_by)
+        values (${f.lead_id},
+                ${`[humano] ${name}: run ${f.kind} falhou — tentativas esgotadas, a run morria no meio`.slice(0, 300)},
+                null, 'agent')
       `;
-      const nameOf = new Map(names.map((n) => [n.id, n.name]));
-      for (const f of failed) {
-        await tx`
-          insert into lead_tasks (lead_id, title, due_at, created_by)
-          values (${f.lead_id},
-                  ${`[humano] ${nameOf.get(f.lead_id!) ?? f.lead_id}: run ${f.kind} falhou — tentativas esgotadas, a run morria no meio`.slice(0, 300)},
-                  null, 'agent')
-        `;
-      }
-    }
-    return rows;
-  });
-  for (const r of reclaimed) emitControlEvent('run.update', r.id);
+      // And now that the spend persisted, run the same cap check every
+      // other terminal path does — dead-run spend can itself cross the cap.
+      return (await leadUnderCostCapTx(tx, f.lead_id!)) === 'flagged';
+    }).catch(() => false);
+    if (flagged) capFlaggedIds.push(f.lead_id!);
+  }
   if (capFlaggedIds.length) emitControlEvent('lead.change');
   // Terminal suppressions strand queued runs forever — the claim gate's
   // pause semantics never lifts them. unsubscribe writers cancel inline,
@@ -2141,6 +2189,16 @@ export async function sweepOutreach(sql: Sql): Promise<number> {
       for update skip locked
     `;
     for (const { id, next_action_source } of due) {
+      // The select's for-update already holds THIS lead's row lock, so a
+      // blocking capfin wait here would invert against ingestInbound's
+      // gate (capfin first, then the lead lock — see capLockTx). Try the
+      // advisory instead: a busy capfin means an inbound gate or a cost
+      // finalizer is serializing the lead right now — skip this pass; the
+      // due date stays for the next sweep.
+      const capFree = await tx<{ got: boolean }[]>`
+        select pg_try_advisory_xact_lock(hashtext(${'capfin:' + id})) as got
+      `;
+      if (!capFree[0]!.got) continue;
       // params.auto marks automation-scheduled work — a fresh inbound cancels
       // it (ingestInbound). 'cadence' AND 'agent' sources are the
       // automation's own nudges (the prompt writes nextActionAt as the
