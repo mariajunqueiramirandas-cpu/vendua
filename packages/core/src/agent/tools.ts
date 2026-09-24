@@ -1652,6 +1652,7 @@ export async function executeTool(
       type PageResult = { page: ReadPage | null; error?: string };
       const missOut = new Map<string, Promise<PageResult>>(); // url → its slice
       const fetchable: string[] = [];
+      const mapDirects: string[] = [];
       const queued = new Set<string>();
       const replyBound = ctx.runKind === 'reply';
       // Reserve-and-charge for every real request the resolver issues —
@@ -1684,22 +1685,13 @@ export async function executeTool(
         }
         if (ctx.pageCache.has(id) || queued.has(id)) continue;
         queued.add(id);
+        // A direct map pointer resolves through the pointer path — a named
+        // carrier costs zero fetches, so a provider fetch would only buy a
+        // captcha page. Collected here, resolved below — starting it now
+        // would spend hop reservations before the batch's own admission
+        // check, and its result would be discarded if the batch refuses.
         if (isMapPointer(url)) {
-          // A direct map pointer resolves through the pointer path — a
-          // named carrier costs zero fetches, so a provider fetch would
-          // only buy a captcha page. Its slice behaves like any other
-          // miss: cached under the pointer's key, error on failure.
-          const key2 = pageKey(url);
-          const p: Promise<PageResult> = resolveMapPointer(url, reserve)
-            .then((page): PageResult =>
-              page ? { page } : { page: null, error: 'map pointer did not resolve' },
-            )
-            .catch((e): PageResult => ({
-              page: null,
-              error: e instanceof Error ? e.message : String(e),
-            }));
-          missOut.set(url, p);
-          if (key2) ctx.pageCache.set(key2, p);
+          mapDirects.push(url);
           continue;
         }
         fetchable.push(url);
@@ -1709,7 +1701,8 @@ export async function executeTool(
       // nothing, checked before any fetch issues: a call that doesn't
       // fit the remaining budget is refused whole, a call served fully
       // from the run's pageCache spends nothing. Map pointers never reach
-      // this count — they resolve through the pointer path above.
+      // this count — they resolve through the pointer path, after this
+      // admission decision, so a refused call spends nothing at all.
       if (replyBound && fetchable.length) {
         if (ctx.pageReads + fetchable.length > REPLY_READ_PAGES_CAP) {
           return {
@@ -1720,6 +1713,32 @@ export async function executeTool(
         // Stamp the reservation on the pending journal entry — a reclaim
         // mid-batch replays the spend the call already made, not a guess.
         await ctx.markReadSpent?.(fetchable.length);
+      }
+      // Admission settled — now the pointer resolutions can start. Each
+      // slice behaves like any other miss: cached under the pointer's key,
+      // error on failure. A failed resolve doesn't bank — a later retry
+      // must reissue the chase, matching the provider-miss behavior.
+      for (const url of mapDirects) {
+        const key2 = pageKey(url);
+        const p: Promise<PageResult> = resolveMapPointer(url, reserve)
+          .then((page): PageResult => {
+            if (!page) {
+              if (key2) ctx.pageCache.delete(key2);
+              return { page: null, error: 'map pointer did not resolve' };
+            }
+            return { page };
+          })
+          .catch(
+            (e): PageResult => {
+              if (key2) ctx.pageCache.delete(key2);
+              return {
+                page: null,
+                error: e instanceof Error ? e.message : String(e),
+              };
+            },
+          );
+        missOut.set(url, p);
+        if (key2) ctx.pageCache.set(key2, p);
       }
       const provider = await discoveryFor(sql);
       const goal = String(args.goal ?? '');
