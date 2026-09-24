@@ -238,8 +238,7 @@ export async function rememberTx(
         else agent_memory_items.created_at
       end,
       source_run_id = case
-        when agent_memory_items.scope = 'debrief'
-          then coalesce(excluded.source_run_id, agent_memory_items.source_run_id)
+        when agent_memory_items.scope = 'debrief' then excluded.source_run_id
         else agent_memory_items.source_run_id
       end
     returning *
