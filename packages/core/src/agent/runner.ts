@@ -867,8 +867,10 @@ export interface JournalReplay {
    *  rebuilt cache instead of spending against the cap twice. */
   pageCache: Map<string, Promise<unknown>>;
   /** Signatures of artifact-minting calls the journal proves landed
-   *  (clean result — or still pending, since a crashed send may have
-   *  dispatched): a re-emitted one would mint a second row. */
+   *  (clean result — pending entries whose durable claim proves they
+   *  committed are resolved into clean outs by reconcileInterrupted
+   *  before this runs; unclaimed pendings minted nothing and stay
+   *  retryable): a re-emitted one would mint a second row. */
   landedSigs: Set<string>;
 }
 
@@ -950,18 +952,18 @@ export function replayJournal(prior: unknown[]): JournalReplay {
     if (t?.type !== 'tool') continue;
     bankOut(t.out);
     if (NON_IDEMPOTENT.has(t.name ?? '')) {
-      // Landed-or-maybe-landed only: an errored/blocked/ignored result
-      // minted nothing and stays retryable; a still-pending entry may
-      // have committed before the crash — err on the suppress side or a
-      // reclaim would double-send/double-insert.
+      // Clean result = definitely landed (reconcileInterrupted resolved
+      // committed pendings into their stored responses upstream, so
+      // they arrive here as clean outs too). Errored/blocked/ignored
+      // minted nothing, and an unclaimed still-pending entry never
+      // executed — both stay retryable.
       const o = t.out as { error?: unknown; blocked?: unknown; ignored?: unknown } | null;
       if (
-        o === undefined ||
-        (typeof o === 'object' &&
-          o !== null &&
-          !o.error &&
-          o.blocked !== true &&
-          o.ignored !== true)
+        typeof o === 'object' &&
+        o !== null &&
+        !o.error &&
+        o.blocked !== true &&
+        o.ignored !== true
       ) {
         replay.landedSigs.add(JSON.stringify([t.name, t.args ?? {}]));
       }
@@ -1487,8 +1489,7 @@ export async function runOnce(sql: Sql): Promise<boolean> {
     let prevSigs = new Map<string, { ok: boolean; v: number }>();
     // Artifact-minters get a run-wide window instead: a duplicate row is
     // never a state-restore no matter how many turns passed, and the
-    // journal-seeded set survives reclaim (a crashed send may have
-    // dispatched — suppressing the re-emission beats a double-send).
+    // journal-seeded set survives reclaim.
     const landedSigs = new Set(replay.landedSigs);
     // Bumps on every landed write — read results recorded at an older
     // version may describe stale state and must not suppress a re-read.
