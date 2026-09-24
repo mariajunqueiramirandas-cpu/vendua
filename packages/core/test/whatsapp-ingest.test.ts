@@ -263,6 +263,45 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('whatsapp history + ignore list 
     expect(still).toHaveLength(2);
   });
 
+  test('a legacy unmarked reply still coalesces inbound messages', async () => {
+    await migrate(sql, MIGRATIONS);
+    await sql`
+      insert into control_settings (key, value) values ('guardrails', ${sql.json({ inboundReplyDelayMin: 60 } as never)})
+      on conflict (key) do update set value = excluded.value
+    `;
+    // Replies queued before the origin marker carry params = {} — with no
+    // staff-intent keys they must coalesce like an auto run, or a second
+    // message would queue a duplicate.
+    const digits = `55218${Math.floor(Math.random() * 1e8)}`;
+    const from = `${digits}@s.whatsapp.net`;
+    const created = await controlTx(sql, (tx) =>
+      insertLeadTx(tx, { name: 'Legacy Parked', whatsapp: digits }),
+    );
+    const leadId = created.body.lead.id;
+    const [thread] = await sql<{ id: string }[]>`
+      insert into lead_threads (lead_id, channel) values (${leadId}, 'whatsapp') returning id
+    `;
+    await enqueueRun(sql, { kind: 'reply', leadId, threadId: thread!.id });
+    const mid = crypto.randomUUID();
+    await ingestInbound(sql, {
+      channel: 'whatsapp',
+      from,
+      body: 'oi',
+      providerMessageId: `${mid}-1`,
+    });
+    const queued = await sql`select id from agent_runs where thread_id = ${thread!.id} and status = 'queued'`;
+    expect(queued).toHaveLength(1);
+    await ingestInbound(sql, {
+      channel: 'whatsapp',
+      from,
+      body: 'e aí?',
+      providerMessageId: `${mid}-2`,
+    });
+    const still =
+      await sql`select id from agent_runs where thread_id = ${thread!.id} and status = 'queued'`;
+    expect(still).toHaveLength(1);
+  });
+
   test('claimRun skips a lead whose number is ignored', async () => {
     await migrate(sql, MIGRATIONS);
     await setIgnored(['5511999776655']);
