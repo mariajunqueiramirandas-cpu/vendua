@@ -73,9 +73,12 @@ function toWakeup(r: WakeupRow): Wakeup {
 }
 
 /** ISO-8601 shape — Date.parse alone also accepts "March 5, 2030" or
- *  "05/03/2030" and would silently land the wakeup on a guess. */
+ *  "05/03/2030" and would silently land the wakeup on a guess. A full
+ *  datetime with an explicit offset is required: date-only lands at UTC
+ *  midnight and a bare datetime resolves in the server's timezone — both
+ *  are guesses, not the instant the caller named. */
 const ISO_DATETIME_RE =
-  /^\d{4}-\d{2}-\d{2}(?:[T ]\d{2}:\d{2}(?::\d{2}(?:\.\d{1,6})?)?(?:Z|[+-]\d{2}:?\d{2})?)?$/;
+  /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(?::\d{2}(?:\.\d{1,6})?)?(?:Z|[+-]\d{2}:\d{2})$/;
 
 /** Validates and parses a schedule time — the bounds keep the agent from
  *  hot-looping itself (≥10 min) or parking work past any useful horizon. */
@@ -108,11 +111,12 @@ export async function scheduleWakeupTx(
   await tx`select pg_advisory_xact_lock(hashtext(${'wakeup:' + input.leadId}))`;
   // parseWakeupAt's app-clock bounds go stale while this tx waits on the
   // advisory (or any conflicting writer): a long hold can push `at` under
-  // the floor between validation and insert. Recheck against db now()
-  // inside the lock so the floor holds at commit time.
+  // the floor between validation and insert. Recheck inside the lock —
+  // clock_timestamp(), not now(): now() is the tx-start time and would
+  // repeat the same stale boundary the wait already outlived.
   const soon = (
     await tx<{ soon: boolean }[]>`
-      select (${input.at}::timestamptz < now() + make_interval(secs => ${WAKEUP_MIN_LEAD_MS / 1000})) as soon
+      select (${input.at}::timestamptz < clock_timestamp() + make_interval(secs => ${WAKEUP_MIN_LEAD_MS / 1000})) as soon
     `
   )[0]!.soon;
   if (soon) return { error: 'at must be at least 10 minutes from now' };

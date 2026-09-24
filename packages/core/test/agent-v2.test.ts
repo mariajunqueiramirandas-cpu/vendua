@@ -111,9 +111,19 @@ describe('agent v2 — pure', () => {
 
   test('wakeup `at` must be ISO-8601 — Date.parse leniency stays out', () => {
     const now = Date.parse('2026-01-01T00:00:00Z');
-    // Strings Date.parse accepts but that are not ISO datetimes — a
-    // silently-guessed wakeup date is worse than an error the model retries.
-    for (const v of ['January 2, 2026', '01/02/2026', '2026/01/02', '02-01-2026']) {
+    // Strings Date.parse accepts but that are not unambiguous ISO
+    // datetimes — a silently-guessed wakeup date is worse than an error
+    // the model retries. Date-only and offset-less forms guess too
+    // (UTC midnight / server tz), so they reject like non-ISO strings.
+    for (const v of [
+      'January 2, 2026',
+      '01/02/2026',
+      '2026/01/02',
+      '02-01-2026',
+      '2026-01-02',
+      '2026-01-02T10:00:00',
+      '2026-01-02 10:00:00',
+    ]) {
       expect(parseWakeupAt(v, now)).toBeTypeOf('string');
     }
     for (const v of [

@@ -2195,6 +2195,7 @@ export function startAgentWorker(sql: Sql, intervalMs = 15_000) {
  *  the guardrails.discoveryAutoContact gate in tools.ts. */
 export async function sweepBriefs(sql: Sql): Promise<number> {
   const queuedIds: string[] = [];
+  const pausedIds: string[] = [];
   const fired = await controlTx(sql, async (tx) => {
     const due = await tx<
       {
@@ -2243,6 +2244,7 @@ export async function sweepBriefs(sql: Sql): Promise<number> {
             update discovery_briefs set enabled = false, note = ${note}
             where id = ${b.id}
           `;
+          pausedIds.push(b.id);
           agentLog.info(
             { briefId: b.id, spent: bdg.spent, capCents: bdg.capCents },
             'discovery brief auto-paused — strategist budget exhausted',
@@ -2315,6 +2317,9 @@ export async function sweepBriefs(sql: Sql): Promise<number> {
     return fired;
   });
   for (const id of queuedIds) emitControlEvent('run.update', id);
+  // A budget pause lands no run — but it changed the board, so the
+  // discovery view refreshes on the same event it polls.
+  for (const id of pausedIds) emitControlEvent('run.update', id);
   return fired;
 }
 
