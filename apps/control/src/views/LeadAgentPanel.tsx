@@ -123,12 +123,25 @@ export default function LeadAgentPanel({
         if (!alive()) return;
         setWakeupsState(e instanceof ApiError && e.status === 404 ? 'missing' : 'error');
       });
-    // Queued runs with a run_at — the scheduled work staff would otherwise
-    // have to find on the Runs page. Recent runs sit beside them for cost.
-    api
-      .runs({ lead_id: leadId, status: 'queued' })
-      .then((r) => {
-        if (alive()) setSchedRuns(r.runs.filter((x) => x.run_at));
+    // Scheduled runs for this lead — scheduled=1 → run_at asc + keyset
+    // cursor, so a queue deeper than one page can't hide follow-ups.
+    const schedPage = (cursor?: string): Promise<AgentRun[]> =>
+      api
+        .runs({
+          lead_id: leadId,
+          status: 'queued',
+          scheduled: '1',
+          limit: '200',
+          ...(cursor ? { cursor } : {}),
+        })
+        .then((r) =>
+          (r.nextCursor ? schedPage(r.nextCursor) : Promise.resolve([] as AgentRun[])).then(
+            (rest) => [...r.runs, ...rest],
+          ),
+        );
+    schedPage()
+      .then((rs) => {
+        if (alive()) setSchedRuns(rs);
       })
       .catch(() => undefined);
     api
@@ -187,9 +200,7 @@ export default function LeadAgentPanel({
           a API ainda não expõe a explicação de autonomia — os controles abaixo valem normalmente
         </div>
       )}
-      {autonomyState === 'error' && (
-        <div className="agp-none">falha ao ler a autonomia — nova tentativa em instantes</div>
-      )}
+      {autonomyState === 'error' && <FetchErr what="a autonomia" retry={load} />}
       {autonomyState === 'ok' && autonomy && (
         <div>
           <div style={{ fontSize: 'var(--t-sm)' }}>
@@ -354,9 +365,7 @@ export default function LeadAgentPanel({
       {factsState === 'missing' && (
         <div className="agp-none">a API ainda não expõe fatos estruturados do lead</div>
       )}
-      {factsState === 'error' && (
-        <div className="agp-none">falha ao ler os fatos — nova tentativa em instantes</div>
-      )}
+      {factsState === 'error' && <FetchErr what="os fatos" retry={load} />}
       {factsState === 'ok' && (
         <div>
           {facts.map((f) => (
@@ -432,9 +441,7 @@ export default function LeadAgentPanel({
       {wakeupsState === 'missing' && (
         <div className="agp-none">despertares ainda não expostos pela API</div>
       )}
-      {wakeupsState === 'error' && (
-        <div className="agp-none">falha ao ler os despertares — nova tentativa em instantes</div>
-      )}
+      {wakeupsState === 'error' && <FetchErr what="os despertares" retry={load} />}
       {agendaEmpty && (
         <div className="agp-none">nada agendado — follow-ups e despertares aparecem aqui</div>
       )}
@@ -485,10 +492,14 @@ function FactRow({
   const [conf, setConf] = useState(String(fact.confidence));
   const save = () => {
     const c = Number(conf);
+    if (conf.trim() && (!Number.isFinite(c) || c < 0 || c > 1)) {
+      onError('confiança precisa ser um número de 0 a 1 — ex.: 0.8');
+      return;
+    }
     api
       .putLeadFact(leadId, fact.key, {
         value: val.trim(),
-        ...(conf.trim() && Number.isFinite(c) ? { confidence: c } : {}),
+        ...(conf.trim() ? { confidence: c } : {}),
       })
       .then(() => {
         onError('');
@@ -523,10 +534,14 @@ function FactRow({
                 if (e.key === 'Enter') save();
                 if (e.key === 'Escape') setEditing(false);
               }}
-              onBlur={save}
               title="confiança 0–1"
               style={{ width: 52 }}
             />
+            {/* No blur-save — clicking × while editing must not race a PUT
+             *  against the DELETE and resurrect the fact. */}
+            <button className="btn ghost" style={{ padding: '1px 8px' }} onClick={save}>
+              ok
+            </button>
           </span>
         ) : (
           <button
@@ -599,10 +614,14 @@ function FactAdd({
       return;
     }
     const c = Number(conf);
+    if (conf.trim() && (!Number.isFinite(c) || c < 0 || c > 1)) {
+      onError('confiança precisa ser um número de 0 a 1 — ex.: 0.8');
+      return;
+    }
     api
       .putLeadFact(leadId, k, {
         value: v,
-        ...(conf.trim() && Number.isFinite(c) ? { confidence: c } : {}),
+        ...(conf.trim() ? { confidence: c } : {}),
       })
       .then(() => {
         onError('');
@@ -644,6 +663,19 @@ function FactAdd({
       />
       <button className="btn" onClick={add} disabled={!key.trim() || !val.trim()}>
         gravar
+      </button>
+    </div>
+  );
+}
+
+/** Failed read — the 60s poll and SSE retry on their own, this is the
+ *  explicit escape hatch so staff isn't stuck watching a dead section. */
+function FetchErr({ what, retry }: { what: string; retry: () => void }) {
+  return (
+    <div className="agp-none">
+      falha ao ler {what}{' '}
+      <button className="btn ghost" style={{ padding: '1px 6px' }} onClick={retry}>
+        tentar de novo
       </button>
     </div>
   );
