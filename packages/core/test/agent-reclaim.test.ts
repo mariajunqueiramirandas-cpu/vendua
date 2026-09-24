@@ -277,6 +277,7 @@ dbDescribe('worker robustness (db)', () => {
     plan: null,
     monid: null,
     seenContacts: new Set(),
+    pageReads: 0,
     draftOnly: false,
   });
 
@@ -1034,5 +1035,213 @@ dbDescribe('worker robustness (db)', () => {
       select status from agent_runs where id = ${replyRun}
     `;
     expect(live!.status).toBe('running');
+  });
+
+  test('reply read_pages is bounded — the cap refuses the call before fetching', async () => {
+    const ctx = mkCtx('rp-cap', null, null, 'reply');
+    ctx.pageReads = 2;
+    const out = (await executeTool(ctx, 'x', 'read_pages', {
+      urls: ['https://x.co'],
+    })) as { error?: string };
+    expect(out.error).toContain('limite');
+  });
+
+  test('remember returns the fact the ≤100 cap evicted', async () => {
+    await migrate(sql, MIGRATIONS);
+    const facts = Array.from({ length: 100 }, (_, i) => `fato ${i}`);
+    await sql`
+      insert into control_settings (key, value)
+      values ('agent_memory', ${sql.json({ facts })})
+      on conflict (key) do update set value = excluded.value
+    `;
+    const out = (await executeTool(mkCtx('mem', null, null, 'strategist'), 'm1', 'remember', {
+      fact: 'fato novo',
+    })) as { remembered: string; total: number; evicted?: string[] };
+    expect(out.total).toBe(100);
+    expect(out.evicted).toEqual(['fato 0']);
+  });
+
+  test('a consecutive identical call is suppressed and nudged — once', async () => {
+    await migrate(sql, MIGRATIONS);
+    const lead = await controlTx(sql, (tx) => insertLeadTx(tx, { name: 'Loop Lead' }));
+    const leadId = lead.body.lead.id;
+    await sql`delete from agent_runs where status = 'queued'`;
+    const runId = await enqueueRun(sql, { kind: 'reply', leadId });
+    await sql`update agent_runs set
+      params = ${sql.json({
+        script: [
+          { toolCalls: [{ name: 'get_lead', args: { id: leadId } }] },
+          { toolCalls: [{ name: 'get_lead', args: { id: leadId } }] },
+          { toolCalls: [{ name: 'request_human', args: { leadId, reason: 'travou' } }] },
+          { text: 'fim' },
+        ],
+      } as never)}
+      where id = ${runId}`;
+    expect(await runOnce(sql)).toBe(true);
+    const r = await getRun(runId);
+    expect(r.status).toBe('done');
+    const reads = r.steps.filter((s) => (s as { name?: string }).name === 'get_lead') as {
+      out?: { error?: string };
+    }[];
+    expect(reads).toHaveLength(2);
+    expect(reads[1]!.out?.error).toMatch(/^REPEAT/);
+    // ONE loop nudge — and since request_human acted, no finish nudge joins it
+    const nudges = r.steps.filter((s) => (s as { type?: string }).type === 'nudge');
+    expect(nudges).toHaveLength(1);
+    expect((nudges[0] as { content?: string }).content).toContain('LOOP');
+  });
+
+  test('a repeated call that errored is a retry, not a loop — it re-executes', async () => {
+    await migrate(sql, MIGRATIONS);
+    const lead = await controlTx(sql, (tx) => insertLeadTx(tx, { name: 'Retry Lead' }));
+    const leadId = lead.body.lead.id;
+    await sql`delete from agent_runs where status = 'queued'`;
+    const runId = await enqueueRun(sql, { kind: 'reply', leadId });
+    await sql`update agent_runs set
+      params = ${sql.json({
+        script: [
+          { toolCalls: [{ name: 'read_pages', args: { urls: [] } }] },
+          { toolCalls: [{ name: 'read_pages', args: { urls: [] } }] },
+          { toolCalls: [{ name: 'request_human', args: { leadId, reason: 'travou' } }] },
+          { text: 'fim' },
+        ],
+      } as never)}
+      where id = ${runId}`;
+    expect(await runOnce(sql)).toBe(true);
+    const r = await getRun(runId);
+    expect(r.status).toBe('done');
+    const reads = r.steps.filter((s) => (s as { name?: string }).name === 'read_pages') as {
+      out?: { error?: string };
+    }[];
+    expect(reads).toHaveLength(2);
+    // both really ran — the second is the same validation error, not REPEAT
+    expect(reads[0]!.out?.error).toMatch(/^read_pages needs urls/);
+    expect(reads[1]!.out?.error).toMatch(/^read_pages needs urls/);
+    const nudges = r.steps.filter((s) => (s as { type?: string }).type === 'nudge');
+    expect(nudges).toHaveLength(0);
+  });
+
+  test('a reply run closing without a visible action gets one finish nudge', async () => {
+    await migrate(sql, MIGRATIONS);
+    const lead = await controlTx(sql, (tx) => insertLeadTx(tx, { name: 'Silent Lead' }));
+    const leadId = lead.body.lead.id;
+    await sql`delete from agent_runs where status = 'queued'`;
+    const runId = await enqueueRun(sql, { kind: 'reply', leadId });
+    await sql`update agent_runs set
+      params = ${sql.json({ script: [{ text: 'ok' }] } as never)}
+      where id = ${runId}`;
+    expect(await runOnce(sql)).toBe(true);
+    const r = await getRun(runId);
+    expect(r.status).toBe('done');
+    const nudges = r.steps.filter((s) => (s as { type?: string }).type === 'nudge');
+    expect(nudges).toHaveLength(1);
+    expect((nudges[0] as { content?: string }).content).toContain('Ação pendente');
+  });
+
+  test('a blocked send is not a reusable result — its retry re-executes', async () => {
+    await migrate(sql, MIGRATIONS);
+    const lead = await controlTx(sql, (tx) => insertLeadTx(tx, { name: 'Blocked Lead' }));
+    const leadId = lead.body.lead.id;
+    await sql`delete from agent_runs where status = 'queued'`;
+    const runId = await enqueueRun(sql, { kind: 'reply', leadId });
+    await sql`update agent_runs set
+      params = ${sql.json({
+        script: [
+          // the send blocks (this lead has no channel); a write lands after it
+          {
+            toolCalls: [
+              { name: 'send_message', args: { leadId, body: 'olá' } },
+              { name: 'update_lead', args: { id: leadId, city: 'Recife' } },
+            ],
+          },
+          // an identical send next turn must execute, not return REPEAT
+          { toolCalls: [{ name: 'send_message', args: { leadId, body: 'olá' } }] },
+          { toolCalls: [{ name: 'request_human', args: { leadId, reason: 'travou' } }] },
+          { text: 'fim' },
+        ],
+      } as never)}
+      where id = ${runId}`;
+    expect(await runOnce(sql)).toBe(true);
+    const r = await getRun(runId);
+    expect(r.status).toBe('done');
+    const sends = r.steps.filter((s) => (s as { name?: string }).name === 'send_message') as {
+      out?: { error?: string; blocked?: boolean };
+    }[];
+    expect(sends).toHaveLength(2);
+    // still blocked (no channel ever appeared) — but it RAN, not REPEAT
+    expect(sends[1]!.out?.error ?? '').not.toMatch(/^REPEAT/);
+    expect(sends[1]!.out?.blocked).toBe(true);
+  });
+
+  test('a re-read after a mutation executes — the earlier result went stale', async () => {
+    await migrate(sql, MIGRATIONS);
+    const lead = await controlTx(sql, (tx) => insertLeadTx(tx, { name: 'Stale Read Lead' }));
+    const leadId = lead.body.lead.id;
+    await sql`delete from agent_runs where status = 'queued'`;
+    const runId = await enqueueRun(sql, { kind: 'reply', leadId });
+    await sql`update agent_runs set
+      params = ${sql.json({
+        script: [
+          {
+            toolCalls: [
+              { name: 'get_lead', args: { id: leadId } },
+              { name: 'update_lead', args: { id: leadId, city: 'Recife' } },
+            ],
+          },
+          { toolCalls: [{ name: 'get_lead', args: { id: leadId } }] },
+          { toolCalls: [{ name: 'request_human', args: { leadId, reason: 'travou' } }] },
+          { text: 'fim' },
+        ],
+      } as never)}
+      where id = ${runId}`;
+    expect(await runOnce(sql)).toBe(true);
+    const r = await getRun(runId);
+    expect(r.status).toBe('done');
+    const gets = r.steps.filter((s) => (s as { name?: string }).name === 'get_lead') as {
+      out?: unknown;
+    }[];
+    expect(gets).toHaveLength(2);
+    // the second read ran fresh — current profile, not a REPEAT artifact
+    expect(JSON.stringify(gets[1]!.out)).toContain('Recife');
+  });
+
+  test('a cached re-read does not spend the reply page budget', async () => {
+    await migrate(sql, MIGRATIONS);
+    const lead = await controlTx(sql, (tx) => insertLeadTx(tx, { name: 'Cached Page Lead' }));
+    const leadId = lead.body.lead.id;
+    await sql`delete from agent_runs where status = 'queued'`;
+    const runId = await enqueueRun(sql, { kind: 'reply', leadId });
+    await sql`update agent_runs set
+      params = ${sql.json({
+        script: [
+          {
+            toolCalls: [
+              { name: 'read_pages', args: { urls: ['https://shop.example/catalog'] } },
+              { name: 'update_lead', args: { id: leadId, city: 'Recife' } },
+            ],
+          },
+          // same url again — served from pageCache, spends nothing
+          { toolCalls: [{ name: 'read_pages', args: { urls: ['https://shop.example/catalog'] } }] },
+          // a new url still fits the cap; the one after hits it
+          { toolCalls: [{ name: 'read_pages', args: { urls: ['https://shop.example/prices'] } }] },
+          { toolCalls: [{ name: 'read_pages', args: { urls: ['https://shop.example/about'] } }] },
+          { toolCalls: [{ name: 'request_human', args: { leadId, reason: 'travou' } }] },
+          { text: 'fim' },
+        ],
+      } as never)}
+      where id = ${runId}`;
+    expect(await runOnce(sql)).toBe(true);
+    const r = await getRun(runId);
+    expect(r.status).toBe('done');
+    const reads = r.steps.filter((s) => (s as { name?: string }).name === 'read_pages') as {
+      readSpent?: boolean;
+      out?: { error?: string };
+    }[];
+    expect(reads).toHaveLength(4);
+    // every call executed — no REPEAT — but only the fetches spent
+    expect(reads[0]!.readSpent).toBe(true);
+    expect(reads[1]!.readSpent).toBe(false);
+    expect(reads[2]!.readSpent).toBe(true);
+    expect(reads[3]!.out?.error ?? '').toMatch(/^read_pages: limite/);
   });
 });

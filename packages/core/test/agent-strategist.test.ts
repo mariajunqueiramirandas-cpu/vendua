@@ -19,6 +19,7 @@ const ctx = (): ToolContext => ({
   plan: null,
   monid: new MonidBudget(0.25),
   seenContacts: new Set(),
+  pageReads: 0,
   draftOnly: false,
 });
 
