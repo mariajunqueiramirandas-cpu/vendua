@@ -7,13 +7,18 @@ import {
   getPitch,
   getSetting,
   getSettingTx,
-  AGENT_MEMORY_MAX_FACTS,
   capCentsOf,
   DEFAULT_GUARDRAILS,
   phoneDigits,
   phoneIsIgnored,
   type Guardrails,
 } from '../modules/integrations.ts';
+import {
+  appendDebriefTx,
+  hasMemoryTablesTx,
+  leadFactsTx,
+  memoryForRunTx,
+} from '../modules/agent-memory.ts';
 import { segmentStats, type AgentGoal } from '../modules/leads.ts';
 import { sweepPipelineSnapshots } from '../modules/forecast.ts';
 import { sweepDigest } from '../modules/digest.ts';
@@ -46,7 +51,7 @@ const HEARTBEAT_MS = 20_000;
  *  safety bound the prompt can't talk past. Runs WITH a meta cap at it. */
 const DISCOVERY_LEAD_CAP = 20;
 
-interface RunRow {
+export interface RunRow {
   id: string;
   kind: 'triage' | 'reply' | 'outreach' | 'discovery' | 'strategist';
   lead_id: string | null;
@@ -549,7 +554,7 @@ async function finishRun(
   return out.updated.length > 0;
 }
 
-async function contextFor(
+export async function contextFor(
   sql: Sql,
   run: RunRow,
 ): Promise<{ text: string; goal: AgentGoal; bookingUrl: string | null }> {
@@ -579,6 +584,27 @@ async function contextFor(
         const plan = rows[0].j.agent_plan;
         if (Array.isArray(plan) && plan.length) {
           parts.push(`PLANO: ${JSON.stringify(plan)}`);
+        }
+        // Structured per-lead memory (memory v2): durable key/value facts
+        // set by set_fact calls and staff PUTs — survives plan rewrites and
+        // note churn. Low-confidence entries are marked so the model knows
+        // to re-verify before asserting them. Bounded + recent-first: a
+        // lead with >50 facts still surfaces the freshest ones. Pre-0035
+        // schemas have no table — omit the block, don't fail the run.
+        const facts = await controlTx(sql, async (tx) =>
+          (await hasMemoryTablesTx(tx))
+            ? leadFactsTx(tx, run.lead_id!, { limit: 50, order: 'recent' })
+            : [],
+        );
+        if (facts.length) {
+          parts.push(
+            `FATOS (memória estruturada do lead — set_fact atualiza):\n${facts
+              .map(
+                (f) =>
+                  `- ${f.key}: ${f.value}${f.confidence < 1 ? ` (confiança ${f.confidence})` : ''}`,
+              )
+              .join('\n')}`,
+          );
         }
         // Dossier: recent notes + research findings — the agent must know the
         // business it's negotiating with, not just the raw lead row.
@@ -1151,11 +1177,41 @@ export async function reconcileInterrupted(
   }
 }
 
-/** Doctrine write-back — a deterministic debrief line appended to
- *  agent_memory on a finished discovery run: what the segment/city yielded,
- *  which tools resolved whatsapp, which prospects dead-ended. Next run's
- *  system prompt already loads agent_memory, so runs compound. */
-async function writeDebrief(
+/** The run prompt's memory feed — memory v2: pinned learnings, learnings
+ *  matching the run's segment (the brief's `params.segment`, else the bound
+ *  lead's `segment`), workspace learnings, latest debriefs. A schema ahead
+ *  of the 0035 migration (or freshly migrated tables with nothing in them
+ *  yet) falls back to the legacy flat facts list.
+ *  Exported for tests. */
+export async function memoryForPrompt(sql: Sql, run: RunRow): Promise<string[]> {
+  return controlTx(sql, async (tx) => {
+    if (await hasMemoryTablesTx(tx)) {
+      const segment =
+        typeof run.params.segment === 'string' && run.params.segment
+          ? run.params.segment
+          : run.lead_id
+            ? ((
+                await tx<{ segment: string | null }[]>`
+                  select segment from leads where id = ${run.lead_id}
+                `
+              )[0]?.segment ?? null)
+            : null;
+      const feed = await memoryForRunTx(tx, { segment });
+      if (feed.length) return feed;
+    }
+    const rows = await tx<{ value: { facts?: unknown } }[]>`
+      select value from control_settings where key = 'agent_memory'
+    `;
+    const cur = rows[0]?.value?.facts;
+    return Array.isArray(cur) ? (cur as string[]) : [];
+  });
+}
+
+/** Doctrine write-back — a deterministic debrief line stored as a
+ *  scope='debrief' memory item on a finished run: what the segment/city
+ *  yielded, which tools resolved whatsapp, which prospects dead-ended.
+ *  Next run's memory feed includes recent debriefs, so runs compound. */
+export async function writeDebrief(
   sql: Sql,
   run: RunRow,
   ctx: ToolContext,
@@ -1191,21 +1247,20 @@ async function writeDebrief(
     `${resolvers.size ? `; canais via ${[...resolvers].join('+')}` : ''}` +
     `${dead.length ? `; beco sem saída: ${dead.slice(0, 4).join(', ')}` : ''}` +
     `${ctx.monid?.spent ? `; monid $${ctx.monid.spent.toFixed(3)}` : ''}`;
+  // memory v2: debriefs are their own capped scope — they no longer evict
+  // the learnings the way the shared facts list let them. A schema ahead
+  // of the 0035 migration has no debrief sink — skip (the deploy-ordering
+  // window is hours, not a state worth alerting on). Never throws:
+  // doctrine write-back must not fail a finished run, but warn so a broken
+  // write doesn't go silent.
   await controlTx(sql, async (tx) => {
-    await tx`
-      insert into control_settings (key, value)
-      values ('agent_memory', ${tx.json({ facts: [] } as never)})
-      on conflict (key) do nothing
-    `;
-    const rows = await tx<{ value: { facts?: unknown } }[]>`
-      select value from control_settings where key = 'agent_memory' for update
-    `;
-    const cur = Array.isArray(rows[0]?.value?.facts) ? (rows[0]!.value.facts as string[]) : [];
-    await tx`
-      update control_settings set value = ${tx.json({ facts: [...cur, fact.slice(0, 500)].slice(-AGENT_MEMORY_MAX_FACTS) } as never)}
-      where key = 'agent_memory'
-    `;
-  });
+    if (!(await hasMemoryTablesTx(tx))) return;
+    await appendDebriefTx(tx, {
+      content: fact.slice(0, 500),
+      sourceRunId: run.id,
+      segment: typeof run.params.segment === 'string' ? run.params.segment : null,
+    });
+  }).catch((e) => agentLog.warn({ err: e, runId: run.id }, 'debrief write failed'));
 }
 
 export async function runOnce(sql: Sql): Promise<boolean> {
@@ -1379,8 +1434,8 @@ export async function runOnce(sql: Sql): Promise<boolean> {
       run.params,
     );
     const pitch = await getPitch(sql);
-    const memory = await getSetting<{ facts: string[] }>(sql, 'agent_memory', { facts: [] });
     const { text: context, goal, bookingUrl } = await contextFor(sql, run);
+    const memory = { facts: await memoryForPrompt(sql, run) };
     const g = await getSetting<Partial<Guardrails>>(sql, 'guardrails', {});
     // The prompt only promises autocontact when it can actually happen —
     // the same conditions create_lead's gate checks (enabled + reachable).
@@ -1668,7 +1723,7 @@ export async function runOnce(sql: Sql): Promise<boolean> {
           })
         ) {
           if (playbook.debrief) {
-            // debrief → agent_memory: the doctrine that makes the next run
+            // debrief → agent_memory_items: the doctrine that makes the next run
             // start smarter. Best-effort — never fail a finished run on it.
             await writeDebrief(sql, run, ctx, steps).catch(() => undefined);
           }
