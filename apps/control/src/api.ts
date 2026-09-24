@@ -619,6 +619,8 @@ export interface AgentPlaybookInfo {
   description: string;
   /** automatic enqueue paths the playbook owns */
   triggers: string[];
+  /** writes a doctrine debrief line to memory at run end (ADR 0014) */
+  debrief: boolean;
   defaults: { stepBudget: number; monidCapUsd: number };
   tools: string[];
   override: PlaybookOverride;
@@ -649,24 +651,6 @@ export interface MemoryItem {
   updatedAt: string;
 }
 
-export interface AgentMetrics {
-  window: { from: string; to: string };
-  byKind: {
-    kind: PlaybookKind;
-    runs: number;
-    done: number;
-    failed: number;
-    canceled: number;
-    actedRate: number;
-    avgSteps: number;
-    costUsd: number;
-    avgCostUsd: number;
-  }[];
-  outbound: { sent: number; drafted: number; approved: number; rejected: number };
-  replies: { leadsContacted: number; leadsReplied: number; replyRate: number };
-  wakeups: { pending: number; fired: number } | null;
-}
-
 const agentV2 = {
   playbooks: () => req<{ playbooks: AgentPlaybookInfo[] }>('/agent/playbooks'),
 
@@ -689,8 +673,6 @@ const agentV2 = {
       body: JSON.stringify(patch),
     }),
   deleteMemory: (id: string) => req<{ ok: true }>(`/agent/memory/${id}`, { method: 'DELETE' }),
-
-  metrics: (days: 7 | 30 = 7) => req<AgentMetrics>(`/agent/metrics?days=${days}`),
 };
 
 // one client — the v2 section merges in so callers keep a single import

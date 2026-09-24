@@ -671,6 +671,7 @@ function PlaybookCard({
             {t}
           </span>
         ))}
+        {pb.debrief && <span className="chip">memoriza o que aprendeu</span>}
       </div>
       <div className="pb-eff">
         <span className={`chip${over(pb.override.stepBudget !== undefined)}`}>
