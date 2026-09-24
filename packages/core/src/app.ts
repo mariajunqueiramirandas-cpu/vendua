@@ -111,7 +111,7 @@ import {
 } from './modules/meetings.ts';
 import { BOOKING_PAGE } from './modules/booking-page.ts';
 import * as rooms from './modules/rooms.ts';
-import { drain, insertRun } from './agent/runner.ts';
+import { capLockTx, drain, flagCappedLeads, insertRun } from './agent/runner.ts';
 import { ingestInbound } from './agent/inbound.ts';
 import { ingestResendEvent, svixHeaders, svixVerified } from './agent/channels/email-inbound.ts';
 import { LOADER_JS } from './loader.ts';
@@ -884,7 +884,9 @@ export function createApp({ sql, sessionSecret, controlSecret, autoDrain }: AppD
           });
           return {
             status: created.status,
-            body: { ...created.body, runId },
+            // null when the lifetime cost cap refused the run — the card's
+            // cost-cap flag is the explanation staff sees.
+            body: { ...created.body, ...(runId ? { runId } : {}) },
           };
         }
         return created;
@@ -1033,6 +1035,10 @@ export function createApp({ sql, sessionSecret, controlSecret, autoDrain }: AppD
       // forever. Reject with the reason like dispatch reports it. The row
       // lock serializes with a concurrent unsubscribe — otherwise this tx
       // could still insert a zombie run after the opt-out's cancel pass.
+      // capfin before the lead lock — the advisory must be this tx's first
+      // lock for the lead or a finisher holding it can cycle against us
+      // (see capLockTx).
+      await capLockTx(tx, leadId);
       const lead = (
         await tx<
           {
@@ -1070,20 +1076,38 @@ export function createApp({ sql, sessionSecret, controlSecret, autoDrain }: AppD
         }
         if (!th.agent_enabled) throw new HttpError(422, 'THREAD_PAUSED', 'thread paused for agent');
       }
-      return {
-        status: 201,
-        body: {
-          runId: await insertRun(tx, {
-            kind: kind as 'triage' | 'reply' | 'outreach' | 'discovery',
-            leadId,
-            ...(threadId ? { threadId } : {}),
-            params: (body.params as Record<string, unknown>) ?? {},
-          }),
-        },
-      };
+      const runId = await insertRun(tx, {
+        kind: kind as 'triage' | 'reply' | 'outreach' | 'discovery',
+        leadId,
+        ...(threadId ? { threadId } : {}),
+        // origin stamps provenance — dedupe/audit distinguish a staff-queued
+        // run from an auto inbound one even when params carry no overrides
+        params: { ...((body.params as Record<string, unknown>) ?? {}), origin: 'staff' },
+      });
+      // A 422 body (not a throw): the claim tx COMMITS, so insertRun's
+      // cost-cap flag stays on the card and the stored refusal replays
+      // idempotently — a throw would roll the alert back with it.
+      if (!runId) {
+        return {
+          status: 422,
+          body: {
+            error: {
+              code: 'LEAD_COST_CAP',
+              message:
+                'lead over its agent cost cap — raise guardrails.leadLifetimeCostCapUsd or retire the lead',
+            },
+          } as never,
+        };
+      }
+      return { status: 201, body: { runId } };
     });
     if (res.replayed) c.header('x-idempotent-replay', 'true');
-    if (!res.replayed) emitControlEvent('run.update', res.body.runId);
+    if (!res.replayed) {
+      emitControlEvent('run.update', res.body.runId);
+      // The refusal committed a cap flag + staff task — only lead.change
+      // refreshes the Tasks view/badge, so a run.update alone hides it.
+      if (res.status === 422) emitControlEvent('lead.change', leadId);
+    }
     kickDrain();
     return c.json(res.body, res.status as 201);
   });
@@ -1253,6 +1277,10 @@ export function createApp({ sql, sessionSecret, controlSecret, autoDrain }: AppD
     controlGate(c);
     const res = await approveMessage(sql, uuidParam(c, 'id'), 'staff', requireIdemKey(c));
     if (res.replayed) c.header('x-idempotent-replay', 'true');
+    // A refusal carries its own body (e.g. LEAD_COST_CAP on a stale draft
+    // whose regen can't queue) — dispatch must not run on a message that
+    // stayed 'draft', or the refusal hides behind a fake success.
+    if (res.status !== 200) return c.json(res.body, res.status as 422);
     // A stale draft is superseded inside the claim — nothing ships from the
     // expired copy. Kick the drain so the regen run recomposes it promptly.
     if (res.body.stale) {
@@ -1339,6 +1367,10 @@ export function createApp({ sql, sessionSecret, controlSecret, autoDrain }: AppD
     validateSetting(key, body.value);
     const res = await putSetting(sql, key, body.value, requireIdemKey(c));
     if (res.replayed) c.header('x-idempotent-replay', 'true');
+    // A LOWERED cost cap strands already-over-cap leads (their queued runs
+    // park, no insert/finish ever fires the flag) — flag them now so staff
+    // sees the card instead of a silent stop. Deduped; await is fine.
+    if (key === 'guardrails' && !res.replayed) await flagCappedLeads(sql);
     return c.json(res.body);
   });
 
@@ -1666,6 +1698,8 @@ export function createApp({ sql, sessionSecret, controlSecret, autoDrain }: AppD
       // under a suppressed lead can never claim — report instead of parking.
       // The row lock serializes with a concurrent unsubscribe.
       if (effLeadId) {
+        // capfin before the lead lock (see capLockTx's ordering rule).
+        await capLockTx(tx, effLeadId);
         const lead = (
           await tx<
             {
@@ -1692,20 +1726,36 @@ export function createApp({ sql, sessionSecret, controlSecret, autoDrain }: AppD
                 : null;
         if (suppressed) throw new HttpError(422, 'LEAD_SUPPRESSED', suppressed);
       }
-      return {
-        status: 201,
-        body: {
-          runId: await insertRun(tx, {
-            kind: kind as 'triage' | 'reply' | 'outreach' | 'discovery' | 'strategist',
-            leadId: effLeadId,
-            threadId,
-            params: (body.params as Record<string, unknown>) ?? {},
-          }),
-        },
-      };
+      const runId = await insertRun(tx, {
+        kind: kind as 'triage' | 'reply' | 'outreach' | 'discovery' | 'strategist',
+        leadId: effLeadId,
+        threadId,
+        params: { ...((body.params as Record<string, unknown>) ?? {}), origin: 'staff' },
+      });
+      // Same cap refusal → error contract as /leads/:id/run (committed
+      // claim — the flag survives and the refusal replays).
+      if (!runId) {
+        return {
+          status: 422,
+          body: {
+            error: {
+              code: 'LEAD_COST_CAP',
+              message:
+                'lead over its agent cost cap — raise guardrails.leadLifetimeCostCapUsd or retire the lead',
+            },
+          } as never,
+        };
+      }
+      return { status: 201, body: { runId } };
     });
     if (res.replayed) c.header('x-idempotent-replay', 'true');
-    if (!res.replayed) emitControlEvent('run.update', res.body.runId);
+    if (!res.replayed) {
+      emitControlEvent('run.update', res.body.runId);
+      // Unscoped on a cap refusal: the effective lead can live behind a
+      // threadId, and one bare event refreshes every open card + the badge
+      // the flag+task write just changed.
+      if (res.status === 422) emitControlEvent('lead.change');
+    }
     kickDrain();
     return c.json(res.body, res.status as 201);
   });
@@ -1739,6 +1789,10 @@ export function createApp({ sql, sessionSecret, controlSecret, autoDrain }: AppD
     const res = await claimControl(sql, requireIdemKey(c), async (tx) => {
       let enqueued = 0;
       const skipped: { id: string; reason: string }[] = [];
+      // Every capfin first, in sorted order — a multi-lead tx taking the
+      // advisories in request order could AB-BA against another batch whose
+      // ids overlap in a different order (see capLockTx's ordering rule).
+      for (const id of [...new Set(ids as string[])].sort()) await capLockTx(tx, id);
       for (const id of ids as string[]) {
         const lead = (
           await tx<
@@ -1781,20 +1835,31 @@ export function createApp({ sql, sessionSecret, controlSecret, autoDrain }: AppD
           skipped.push({ id, reason: 'outreach already queued' });
           continue;
         }
-        await tx`update leads set agent_goal = ${goal}, updated_at = now() where id = ${id}`;
-        await insertRun(tx, {
+        // null = lifetime cost cap refused the run — surface it like every
+        // other ineligibility instead of counting a phantom enqueue. The
+        // goal update stays AFTER the run insert: a refused lead must not
+        // keep a goal every future lead-bound run would still read.
+        const runId = await insertRun(tx, {
           kind: 'outreach',
           leadId: id,
           params: { goal, ...(wantChannel ? { channel: wantChannel } : {}) },
         });
+        if (!runId) {
+          skipped.push({ id, reason: 'lead over its agent cost cap' });
+          continue;
+        }
+        await tx`update leads set agent_goal = ${goal}, updated_at = now() where id = ${id}`;
         enqueued++;
       }
       return { status: 200, body: { enqueued, skipped } };
     });
     if (res.replayed) c.header('x-idempotent-replay', 'true');
-    if (!res.replayed && res.body.enqueued) {
-      emitControlEvent('lead.change');
-      emitControlEvent('run.update');
+    if (!res.replayed) {
+      // Cap refusals committed flag+task writes for the skipped leads —
+      // lead.change is what refreshes the Tasks view/badge for them.
+      const capSkipped = res.body.skipped.some((s) => s.reason === 'lead over its agent cost cap');
+      if (res.body.enqueued || capSkipped) emitControlEvent('lead.change');
+      if (res.body.enqueued) emitControlEvent('run.update');
     }
     if (res.body.enqueued) kickDrain();
     return c.json(res.body);

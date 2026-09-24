@@ -388,8 +388,8 @@ export async function addInboundMessage(
     const status = direction === 'in' ? 'received' : 'sent';
     const message = (
       await tx<MessageRow[]>`
-        insert into lead_messages (thread_id, direction, author, body, status, provider_message_id, created_at)
-        values (${thread.id}, ${direction}, ${author}, ${body}, ${status}, ${pmid}, ${input.sentAt ?? new Date()})
+        insert into lead_messages (thread_id, direction, author, body, status, provider_message_id, created_at, historical)
+        values (${thread.id}, ${direction}, ${author}, ${body}, ${status}, ${pmid}, ${input.sentAt ?? new Date()}, ${input.historical === true})
         returning *
       `
     )[0]!;
@@ -402,12 +402,17 @@ export async function addInboundMessage(
     `;
     await tx`update leads set updated_at = now() where id = ${leadId}`;
     if (direction === 'in' && !input.historical) {
-      // A reply retires the cadence floor — it only ever means "keep nudging
-      // an unanswered send". Agent- or staff-set dates survive: those were
-      // scheduled with intent (e.g. "me chama semana que vem").
+      // A reply retires the automation's pending nudge — cadence floors and
+      // agent-self-scheduled dates ('auto') alike are its own bookkeeping;
+      // the reply run re-commits any still-wanted follow-up with fresh
+      // context. 'requested', 'staff' AND legacy 'agent' survive: 0025
+      // backfilled every pre-existing date to 'agent', mixing self-schedules
+      // with lead-asked callbacks ("me chama terça") — provenance is
+      // unrecoverable, so those rows are treated as promises a reply can't
+      // cancel. New self-schedules stamp 'auto' and clear normally.
       await tx`
         update leads set next_action_at = null, next_action_source = null
-        where id = ${leadId} and next_action_source = 'cadence'
+        where id = ${leadId} and next_action_source in ('cadence', 'auto')
       `;
     }
     // History import would flood the activity feed with one row per old
@@ -528,6 +533,7 @@ export async function approveMessage(
 ): Promise<
   ClaimResult<{ message: ReturnType<typeof messageJson>; stale?: boolean; runId?: string }>
 > {
+  let capFlagged = false;
   const res = await claimControl<{
     message: ReturnType<typeof messageJson>;
     stale?: boolean;
@@ -536,6 +542,20 @@ export async function approveMessage(
     const g = await getSettingTx<Partial<Guardrails>>(tx, 'guardrails', {});
     const staleDays = g.staleDraftDays ?? DEFAULT_GUARDRAILS.staleDraftDays;
     if (staleDays > 0) {
+      // capfin BEFORE the draft row lock: the inbound gate takes capfin
+      // first and locks this same message (its draft supersede) — a
+      // message-lock → capfin order here is the AB-BA the capfin-first
+      // rule exists to prevent, and an aborted gate leaves a recorded
+      // inbound with no reply run.
+      const leadRow = await tx<{ lead_id: string }[]>`
+        select t.lead_id from lead_messages m
+        join lead_threads t on t.id = m.thread_id
+        where m.id = ${messageId}
+      `;
+      if (leadRow[0]) {
+        const { capLockTx } = await import('../agent/runner.ts');
+        await capLockTx(tx, leadRow[0].lead_id);
+      }
       // A stale AGENT draft never ships: the copy was written against
       // week-old lead state. Supersede it and enqueue a draftOnly outreach
       // run — the recomposed draft lands back in this queue for a second
@@ -543,7 +563,9 @@ export async function approveMessage(
       // The exists() mirrors claimRun's lead gate + the compose-time thread
       // gate: a lead that can't run (off/archived/unsubscribed/disabled
       // thread) falls through to a normal approve — the alternative is
-      // losing the draft to a run queued forever.
+      // losing the draft to a run queued forever. The gate deliberately
+      // skips the cost cap: a capped lead's regen refusal is handled below
+      // as an approve refusal, never as a silent send of the expired text.
       const stale = await tx<MessageRow[]>`
         update lead_messages
         set status = 'rejected',
@@ -582,30 +604,71 @@ export async function approveMessage(
             and params->>'src' = ${messageId}
           order by created_at limit 1
         `;
-        let runId: string;
+        let runId: string | null;
+        const cap: { flagged?: boolean } = {};
         if (active[0]) {
-          runId = active[0].id;
+          // A queued regen is reusable only while it can still claim: if the
+          // lead crossed the cap AFTER queueing, claimRun parks it forever
+          // and rejecting this draft leaves nothing behind — refuse instead.
+          const { leadUnderCostCapTx } = await import('../agent/runner.ts');
+          const verdict = await leadUnderCostCapTx(tx, thread.lead_id);
+          cap.flagged = verdict === 'flagged';
+          runId = verdict === 'under' ? active[0].id : null;
         } else {
           const { insertRun } = await import('../agent/runner.ts');
-          runId = await insertRun(tx, {
-            kind: 'outreach',
-            leadId: thread.lead_id,
-            threadId: stale[0].thread_id,
-            params: {
-              draftOnly: true,
-              auto: 'regenerate',
-              src: messageId,
-              focus: `o rascunho anterior expirou (${staleDays}d sem envio) — reescreva a mesma intenção com o estado atual do lead. Texto anterior: ${stale[0].body.slice(0, 500)}`,
+          runId = await insertRun(
+            tx,
+            {
+              kind: 'outreach',
+              leadId: thread.lead_id,
+              threadId: stale[0].thread_id,
+              params: {
+                draftOnly: true,
+                auto: 'regenerate',
+                src: messageId,
+                focus: `o rascunho anterior expirou (${staleDays}d sem envio) — reescreva a mesma intenção com o estado atual do lead. Texto anterior: ${stale[0].body.slice(0, 500)}`,
+              },
             },
-          });
+            cap,
+          );
         }
-        await tx`
-          insert into lead_activities (lead_id, kind, body, meta, created_by)
-          values (${thread.lead_id}, 'system',
-                  ${`rascunho expirado (${staleDays}d) — regenerando contra o estado atual`},
-                  ${tx.json({ messageId, runId } as never)}, 'system')
-        `;
-        return { status: 200, body: { message: messageJson(stale[0]), stale: true, runId } };
+        if (!runId) {
+          // The lifetime cost cap refused the regen — the draft can never
+          // be recomposed by the agent, but the expired text must NOT go
+          // out either. Keep it a draft (its own 'expired' error says why)
+          // and refuse the approve: staff rewrites the copy or rejects it.
+          capFlagged = cap.flagged === true;
+          const kept = await tx<MessageRow[]>`
+            update lead_messages
+            set status = 'draft',
+                error = ${'rascunho expirado — lead acima do teto de custo do agente'},
+                updated_at = now()
+            where id = ${messageId}
+            returning *
+          `;
+          return {
+            status: 422,
+            body: {
+              error: {
+                code: 'LEAD_COST_CAP',
+                message:
+                  'draft is stale and the lead is over its agent cost cap — rewrite the text or reject it',
+              },
+              message: messageJson(kept[0]!),
+            } as never,
+          };
+        } else {
+          await tx`
+            insert into lead_activities (lead_id, kind, body, meta, created_by)
+            values (${thread.lead_id}, 'system',
+                    ${`rascunho expirado (${staleDays}d) — regenerando contra o estado atual`},
+                    ${tx.json({ messageId, runId } as never)}, 'system')
+          `;
+          return {
+            status: 200,
+            body: { message: messageJson(stale[0]), stale: true, runId },
+          };
+        }
       }
     }
     const rows = await tx<MessageRow[]>`
@@ -621,7 +684,7 @@ export async function approveMessage(
     emitControlEvent('draft.change', res.body.message.threadId);
     emitControlEvent('thread.message', res.body.message.threadId);
     if (res.body.runId) emitControlEvent('run.update', res.body.runId);
-    if (res.body.stale) emitControlEvent('lead.change');
+    if (res.body.stale || capFlagged) emitControlEvent('lead.change');
   }
   return res;
 }

@@ -16,6 +16,7 @@ import { composeMessageTx, channel } from '../modules/threads.ts';
 import {
   AGENT_MEMORY_MAX_FACTS,
   DEFAULT_GUARDRAILS,
+  getSetting,
   getSettingTx,
   type Guardrails,
 } from '../modules/integrations.ts';
@@ -28,6 +29,7 @@ import {
   type SendVerdict,
 } from './guardrails.ts';
 import { dispatchMessage } from './send.ts';
+import { whatsappRegistered } from './channels/whatsapp.ts';
 
 /**
  * agent/tools — the central tool registry (Hermes-style: one registry, gated
@@ -73,6 +75,16 @@ export interface ToolContext {
   /** Contact values already banked this run (book channels + enrichment
    *  hits) — a repeated phone/email isn't progress, only a fresh one is. */
   seenContacts: Set<string>;
+  /** read_pages fetches spent this run — reply's bound (REPLY_READ_PAGES_CAP):
+   *  a lead can send a link the agent must read, but a live conversation
+   *  can't afford an unbounded page-reading rabbit hole. Counts fetches,
+   *  not calls: each cache miss and every auto-chased hop spends one. */
+  pageReads: number;
+  /** Reservation stamp — the runner binds this to the call's pending
+   *  journal entry so a read_pages reservation is persisted the moment
+   *  it validates, not only when the result does; a reclaim mid-batch
+   *  then replays real spend. Undefined outside a claimed run. */
+  markReadSpent?: (delta: number) => Promise<void>;
   /** Staff-assist runs (params.draftOnly): send_message may only compose —
    *  a suggestion goes to the approvals queue, never on the wire. */
   draftOnly: boolean;
@@ -107,6 +119,13 @@ export function bookDigest(book: Map<string, BookEntry>): string {
     .join('\n');
 }
 
+/** Per-run read_pages fetch budget for reply runs — enough to read the
+ *  link a lead sent (catálogo, site, perfil), never a research rabbit
+ *  hole mid-conversation. Charged per fetch issued: every cache miss and
+ *  every auto-chased hop spends one; a call served entirely from cache
+ *  is free. */
+const REPLY_READ_PAGES_CAP = 2;
+
 const leadIdArg = { type: 'string', description: 'lead uuid' } as const;
 const LEAD_FIELDS = {
   businessName: { type: 'string' },
@@ -121,6 +140,11 @@ const LEAD_FIELDS = {
   tags: { type: 'array', items: { type: 'string' } },
   dealValueCents: { type: 'integer' },
   nextActionAt: { type: 'string', description: 'ISO-8601' },
+  nextActionRequested: {
+    type: 'boolean',
+    description:
+      "true when the LEAD asked to be contacted at nextActionAt (\"me chama terça\") — marks the date 'requested': a promised callback that survives the lead's next message. Omit for the agent's own cadence.",
+  },
   fitScore: {
     type: 'integer',
     description: '0–10 ICP fit — how well this business matches the target audience',
@@ -297,7 +321,7 @@ const REGISTRY: { def: AgentTool; toolsets: string[] }[] = [
     def: {
       name: 'remember',
       description:
-        'Persist a durable learning (agent memory — e.g. "docerias respond better at night"). Bounded: keep ≤100 facts, consolidate instead of duplicating.',
+        'Persist a durable learning (agent memory — e.g. "docerias respond better at night"). Bounded: keep ≤100 facts, consolidate instead of duplicating — when the cap drops an old fact the result returns it as `evicted`; fold it into a consolidated fact on a later call.',
       parameters: {
         type: 'object',
         properties: { fact: { type: 'string' } },
@@ -378,9 +402,10 @@ const REGISTRY: { def: AgentTool; toolsets: string[] }[] = [
     },
   },
   {
-    // triage/outreach read deep (site/perfil do prospect); reply stays light —
-    // a live conversation can't afford a page-reading rabbit hole.
-    toolsets: ['triage', 'outreach', 'discovery'],
+    // triage/outreach read deep (site/perfil do prospect). Reply gets it too
+    // but capped (REPLY_READ_PAGES_CAP): a lead can send a link the agent
+    // must read — a live conversation still can't afford a rabbit hole.
+    toolsets: ['triage', 'reply', 'outreach', 'discovery'],
     def: {
       name: 'read_pages',
       description:
@@ -536,6 +561,36 @@ export async function assertRunClaimTx(tx: Sql, ctx: ToolContext): Promise<void>
   if (row?.status !== 'running' || row.claim_token !== ctx.claimToken) {
     throw new HttpError(409, 'STALE_CLAIM', 'run claim lost — tool effects suppressed');
   }
+}
+
+/** Auto outreach's dispatch-boundary recheck — the same predicate the
+ *  mid-run probe uses (live inbound ingested after this attempt's claim),
+ *  re-evaluated inside the send-claim tx under the capfin lead lock so
+ *  ingest and send serialize: a committed inbound can never be followed by
+ *  the auto nudge it already answered. Returns the refusal reason. */
+export async function refuseOnFresherInboundTx(tx: Sql, ctx: ToolContext): Promise<string | null> {
+  if (ctx.runKind !== 'outreach' || !ctx.leadId || !ctx.claimToken) return null;
+  const run = (
+    await tx<{ auto: string | null; started_at: string | null }[]>`
+      select params->>'auto' as auto, started_at from agent_runs where id = ${ctx.runId}
+    `
+  )[0];
+  // 'agent' exempt like 'regenerate': the pre-'auto' sweep marker is
+  // ambiguous (self-schedule or lead-asked callback) → treated as a
+  // possible promise, so the send boundary doesn't refuse it.
+  if (!run?.started_at || run.auto == null || run.auto === 'regenerate' || run.auto === 'agent')
+    return null;
+  const { capLockTx } = await import('./runner.ts');
+  await capLockTx(tx, ctx.leadId);
+  const replied = await tx<{ id: string }[]>`
+    select m.id from lead_messages m
+    join lead_threads t on t.id = m.thread_id
+    where t.lead_id = ${ctx.leadId} and m.direction = 'in' and not m.historical
+      and m.received_at is not null
+      and m.received_at > ${run.started_at}::timestamptz
+    limit 1
+  `;
+  return replied.length ? 'lead respondeu' : null;
 }
 
 export async function executeTool(
@@ -723,6 +778,32 @@ export async function executeTool(
       // Provenance column: explicit whatsapp (wa.me-normalized or raw) is
       // verified; the mobile-derived fill stays unverified for the gate.
       input.whatsapp_verified = Boolean(input.whatsapp) && !whatsappDerived;
+      // Derived-but-promotable: maps prints "phone" for what is usually the
+      // whatsapp line. Ask the live socket whether the digits are actually
+      // registered — a registered answer clears `derived` and the whole
+      // verified/autocontact path treats the number as proven evidence.
+      // Runs BEFORE the claim tx: this is a network call and network calls
+      // never sit inside a DB transaction (post-commit would also lose the
+      // flag on a claim replay). Only probed when autocontact could fire
+      // anyway — otherwise the flag can't change the outcome. null = can't
+      // tell (socket down/probe failed): the number stays unverified, never
+      // deleted.
+      if (whatsappDerived && typeof input.whatsapp === 'string' && input.whatsapp) {
+        const g = await getSetting<Partial<Guardrails>>(sql, 'guardrails', {});
+        const score = typeof input.fit_score === 'number' ? input.fit_score : null;
+        const waReady = await controlTx(sql, (tx) => whatsappReadyTx(tx));
+        if (
+          (g.discoveryAutoContact ?? DEFAULT_GUARDRAILS.discoveryAutoContact) &&
+          waReady &&
+          score !== null &&
+          score >= (g.discoveryContactMinScore ?? DEFAULT_GUARDRAILS.discoveryContactMinScore)
+        ) {
+          if ((await whatsappRegistered(input.whatsapp).catch(() => null)) === true) {
+            whatsappDerived = false;
+            input.whatsapp_verified = true;
+          }
+        }
+      }
       const res = await claimControl(sql, key, async (tx) => {
         await assertRunClaimTx(tx, ctx);
         // The research dossier lands on the timeline as a note — created with
@@ -843,6 +924,13 @@ export async function executeTool(
             `
           )[0];
           if (dup) {
+            // capfin first — this tx writes the lead row (merge update,
+            // findings FK insert) and may queueOutreach → insertRun, which
+            // takes the advisory itself. It must be the tx's first lock for
+            // the lead or an inbound gate holding it can cycle (see
+            // capLockTx's ordering rule).
+            const { capLockTx } = await import('./runner.ts');
+            await capLockTx(tx, dup.id as string);
             // Known prospect, new research: fill still-empty contact/profile
             // columns (never overwrite what a human or earlier run set) and
             // append the dossier to its timeline instead of dropping it.
@@ -915,15 +1003,19 @@ export async function executeTool(
               dup.state === 'lead' &&
               dup.agent_mode !== 'off' &&
               !(await outreachActive(dup.id as string));
-            if (dupContact && dup.agent_mode !== 'auto') {
-              set.agent_mode = 'auto';
-              merged.push('agent_mode');
-            }
+            // agent_mode promotes only after the run is admitted: a cap
+            // refusal (insertRun → null) must not commit 'auto' with no
+            // outreach behind it — the mode is automation's own flag and a
+            // refused queue leaves nothing to drive it.
             if (merged.length) {
               await tx`update leads set ${tx(set)}, updated_at = now() where id = ${dup.id as string}`;
             }
-            await writeFindings(dup.id as string, { merged });
             const contactRun = dupContact ? await queueOutreach(dup.id as string, dupScore) : null;
+            if (contactRun && dup.agent_mode !== 'auto') {
+              await tx`update leads set agent_mode = 'auto', updated_at = now() where id = ${dup.id as string}`;
+              merged.push('agent_mode');
+            }
+            await writeFindings(dup.id as string, { merged });
             return {
               status: 200,
               body: {
@@ -971,7 +1063,6 @@ export async function executeTool(
           newScore,
           whatsappDerived ? '' : String(input.whatsapp ?? '').trim(),
         );
-        if (autoContact) input.agent_mode = 'auto';
         const created = await insertLeadTx(tx, input);
         await writeFindings(created.body.lead.id as string);
         if (whatsappDerived) {
@@ -980,7 +1071,15 @@ export async function executeTool(
             'whatsapp derivado do celular — um wa.me/link-in-bio confirma de verdade (e destrava autocontato)';
         }
         if (autoContact) {
+          // agent_mode follows the admitted run, not the gate: a cap refusal
+          // (insertRun → null) must not leave 'auto' with no outreach behind
+          // it — same rule as the dup-merge promotion above.
           const contactRun = await queueOutreach(created.body.lead.id, newScore);
+          if (contactRun) {
+            await tx`update leads set agent_mode = 'auto', updated_at = now()
+              where id = ${created.body.lead.id as string}`;
+            created.body.lead.agentMode = 'auto';
+          }
           return {
             ...created,
             body: { ...created.body, contactRun } as never,
@@ -1009,6 +1108,11 @@ export async function executeTool(
       delete rest.agentMode;
       delete rest.agentPaused;
       if (rest.archived === false) delete rest.archived;
+      // Provenance marker, not a column: pull it off the patch and hand it
+      // to leadPatch — 'requested' dates survive a fresh inbound, the
+      // agent's own 'agent'-stamped cadence does not.
+      const nextActionRequested = rest.nextActionRequested === true;
+      delete rest.nextActionRequested;
       // A patch reduced to nothing shouldn't 422 back at the model — say
       // what was refused instead of erroring the tool call.
       if (Object.keys(rest).length === 0) {
@@ -1018,7 +1122,14 @@ export async function executeTool(
             'agentMode, agentPaused and unarchiving are staff-managed; nothing else to update',
         };
       }
-      const res = await updateLead(sql, String(id), leadPatch(rest, 'agent'), key, 'agent', guard);
+      const res = await updateLead(
+        sql,
+        String(id),
+        leadPatch(rest, 'agent', nextActionRequested),
+        key,
+        'agent',
+        guard,
+      );
       return res.body;
     }
     case 'set_state': {
@@ -1152,6 +1263,31 @@ export async function executeTool(
           };
         }
         const chan = pick.channel;
+        // A retried send reuses this claim key, so `key` replays — but a
+        // NEW callId for the same logical send (same body) lands here — and
+        // channel fallback can move that send between rows: an attempted
+        // whatsapp failure followed by an email retry would dispatch a
+        // second copy of the same text. Match on the body across channels,
+        // like `already` above. ANY attempted copy masks the retry — a
+        // newer pre-wire failure must not hide an older maybe-sent one:
+        // composing again could put a second copy on the wire. A failure
+        // stamped pre-wire (no dispatch_attempted_at) provably never left
+        // and stays retryable.
+        const attemptedFailed = await tx<{ id: string }[]>`
+          select m.id from lead_messages m
+          join lead_threads t on t.id = m.thread_id
+          where t.lead_id = ${leadId}
+            and m.agent_run_id = ${ctx.runId} and m.status = 'failed'
+            and m.body = ${String(args.body).trim()}
+            and m.dispatch_attempted_at is not null
+          limit 1
+        `;
+        if (attemptedFailed[0]) {
+          return {
+            status: 200,
+            body: { blocked: true as const, reason: 'already dispatched by this run' },
+          };
+        }
         // Pause applies per (lead, channel) — staff disabling the DESTINATION
         // thread (or request_human earlier in this same run) must stop sends
         // even when the lead's agent_mode still allows them. A missing thread
@@ -1215,11 +1351,32 @@ export async function executeTool(
       // the owning attempt finishing its own send (the stranded sweep defers
       // to any run that isn't 'done'), and a cancel/reclaim between
       // compose-commit and this send stops the message via the guard.
+      let sendError: string | undefined;
       if (out.verdict.forceDraft === false && !ctx.draftOnly) {
-        await dispatchMessage(sql, out.composed.body.message.id, guard);
+        const sent = await dispatchMessage(sql, out.composed.body.message.id, async (tx) => {
+          // capfin BEFORE the claim fence: finishRun (and the inbound gate)
+          // take capfin first and touch run/message rows after — a run-row →
+          // capfin order here is the AB-BA the capfin-first rule exists to
+          // prevent, and a losing dispatch abort drops the send.
+          if (ctx.leadId) {
+            const { capLockTx } = await import('./runner.ts');
+            await capLockTx(tx, ctx.leadId);
+          }
+          await assertRunClaimTx(tx, ctx);
+          // The probe only runs at step boundaries — an inbound committed
+          // between the last probe and this send would escape it, and the
+          // ingest gate can't see the locked run. Recheck under capfin so
+          // ingest and send serialize on the same lead lock.
+          return refuseOnFresherInboundTx(tx, ctx);
+        });
+        // A composed-but-failed send must not count as a landed action —
+        // surfacing the failure as {error} keeps runActed's finish gate
+        // honest and tells the model the send didn't land.
+        if (!sent.ok) sendError = sent.reason ?? 'send failed';
       }
       return {
         ...out.composed.body,
+        ...(sendError ? { error: sendError } : {}),
         draftFallback: out.verdict.forceDraft || ctx.draftOnly,
         channel: out.pick.channel,
         via: out.pick.via,
@@ -1233,7 +1390,7 @@ export async function executeTool(
       const fact = String(args.fact ?? '').slice(0, 500);
       // Row lock on the settings row makes the read-modify-write atomic —
       // concurrent remembers serialize instead of clobbering each other.
-      const total = await controlTx(sql, async (tx) => {
+      const written = await controlTx(sql, async (tx) => {
         await assertRunClaimTx(tx, ctx);
         await tx`
           insert into control_settings (key, value)
@@ -1244,14 +1401,23 @@ export async function executeTool(
           select value from control_settings where key = 'agent_memory' for update
         `;
         const cur = Array.isArray(rows[0]?.value?.facts) ? (rows[0]!.value.facts as string[]) : [];
-        const facts = [...cur.filter((f) => f !== fact), fact].slice(-AGENT_MEMORY_MAX_FACTS);
+        // The cap drops the OLDEST facts — surface them so the model can
+        // fold a dropped learning into a consolidated fact on a later call
+        // instead of losing it silently.
+        const next = [...cur.filter((f) => f !== fact), fact];
+        const evicted = next.slice(0, Math.max(0, next.length - AGENT_MEMORY_MAX_FACTS));
+        const facts = next.slice(-AGENT_MEMORY_MAX_FACTS);
         await tx`
           update control_settings set value = ${tx.json({ facts } as never)}
           where key = 'agent_memory'
         `;
-        return facts.length;
+        return { total: facts.length, evicted };
       });
-      return { remembered: fact, total };
+      return {
+        remembered: fact,
+        total: written.total,
+        ...(written.evicted.length ? { evicted: written.evicted } : {}),
+      };
     }
     case 'propose_brief': {
       const bname = String(args.name ?? '')
@@ -1478,16 +1644,21 @@ export async function executeTool(
       };
     }
     case 'read_pages': {
-      const { chaseLinks, discoveryFor, isMapPointer, pageKey, resolveMapPointer } =
-        await import('./channels/discovery.ts');
+      const {
+        assertFetchable,
+        chaseLinks,
+        discoveryFor,
+        isMapPointer,
+        mapPointerName,
+        pageKey,
+        resolveMapPointer,
+      } = await import('./channels/discovery.ts');
       type ReadPage = import('./channels/discovery.ts').ReadPage;
       const urls = (Array.isArray(args.urls) ? args.urls : [args.url])
         .map((u) => String(u ?? '').trim())
         .filter(Boolean)
         .slice(0, 6);
       if (!urls.length) return { error: 'read_pages needs urls: ["https://…"] (1–6)' };
-      const provider = await discoveryFor(sql);
-      const goal = String(args.goal ?? '');
       // offset pages a page's tail — the cache keeps the full body so a
       // continuation read costs nothing (slimmed reads print the offset).
       const offset = Math.max(0, Math.min(10_000_000, Math.floor(Number(args.offset)) || 0));
@@ -1508,38 +1679,120 @@ export async function executeTool(
         }
         return { ...page, textChars: text.length, offset, text: text.slice(offset) };
       };
-      type PageResult = {
-        page: import('./channels/discovery.ts').ReadPage | null;
-        error?: string;
-      };
       // Dedupe by page identity across the run cache AND this call — the
       // same page twice in one batch (https vs https://www, trailing slash)
-      // resolves to one fetch, not two.
-      const miss: string[] = [];
+      // resolves to one fetch, not two. The same assertFetchable guard
+      // the provider runs validates each miss before the reservation:
+      // a rejected url never batches, never spends, and never claims a
+      // page slot — pageKey drops the scheme, so caching an ftp://
+      // rejection would mask its fetchable https:// twin all run long.
+      type PageResult = { page: ReadPage | null; error?: string };
+      const missOut = new Map<string, Promise<PageResult>>(); // url → its slice
+      const fetchable: string[] = [];
+      const mapDirects: string[] = [];
       const queued = new Set<string>();
+      const replyBound = ctx.runKind === 'reply';
+      // Reserve-and-charge for every real request the resolver issues —
+      // named map pointers never trigger it (in-process, free); a nameless
+      // shortlink's hop chain spends one slot per issued fetch.
+      const reserve = replyBound
+        ? async (): Promise<boolean> => {
+            if (ctx.pageReads >= REPLY_READ_PAGES_CAP) return false;
+            ctx.pageReads++;
+            await ctx.markReadSpent?.(1);
+            return true;
+          }
+        : undefined;
       for (const url of urls) {
         const id = pageKey(url) ?? url;
+        // Validation precedes the cache short-circuit — pageKey drops the
+        // scheme, so an ftp:// miss could otherwise inherit a cached
+        // https:// page it never earned.
+        try {
+          assertFetchable(url);
+        } catch (e) {
+          missOut.set(
+            url,
+            Promise.resolve({
+              page: null,
+              error: e instanceof Error ? e.message : String(e),
+            }),
+          );
+          continue;
+        }
         if (ctx.pageCache.has(id) || queued.has(id)) continue;
         queued.add(id);
-        miss.push(url);
+        // A direct map pointer resolves through the pointer path — a named
+        // carrier costs zero fetches, so a provider fetch would only buy a
+        // captcha page. Collected here, resolved below — starting it now
+        // would spend hop reservations before the batch's own admission
+        // check, and its result would be discarded if the batch refuses.
+        if (isMapPointer(url)) {
+          mapDirects.push(url);
+          continue;
+        }
+        fetchable.push(url);
       }
-      const missOut = new Map<string, Promise<PageResult>>(); // miss url → its slice
-      if (miss.length) {
+      // Reply's bound prices fetches, not calls — one call can fetch up
+      // to six pages, so the fetchable count itself is the spend. All-or-
+      // nothing, checked before any fetch issues: a call that doesn't
+      // fit the remaining budget is refused whole, a call served fully
+      // from the run's pageCache spends nothing. Map pointers never reach
+      // this count — they resolve through the pointer path, after this
+      // admission decision, so a refused call spends nothing at all.
+      if (replyBound && fetchable.length) {
+        if (ctx.pageReads + fetchable.length > REPLY_READ_PAGES_CAP) {
+          return {
+            error: `read_pages: limite de ${REPLY_READ_PAGES_CAP} leituras por run de reply — pergunte na conversa o que ainda faltar`,
+          };
+        }
+        ctx.pageReads += fetchable.length;
+        // Stamp the reservation on the pending journal entry — a reclaim
+        // mid-batch replays the spend the call already made, not a guess.
+        await ctx.markReadSpent?.(fetchable.length);
+      }
+      // Admission settled — now the pointer resolutions can start. Each
+      // slice behaves like any other miss: cached under the pointer's key,
+      // error on failure. A failed resolve doesn't bank — a later retry
+      // must reissue the chase, matching the provider-miss behavior.
+      for (const url of mapDirects) {
+        const key2 = pageKey(url);
+        const p: Promise<PageResult> = resolveMapPointer(url, reserve)
+          .then((page): PageResult => {
+            if (!page) {
+              if (key2) ctx.pageCache.delete(key2);
+              return { page: null, error: 'map pointer did not resolve' };
+            }
+            return { page };
+          })
+          .catch((e): PageResult => {
+            if (key2) ctx.pageCache.delete(key2);
+            return {
+              page: null,
+              error: e instanceof Error ? e.message : String(e),
+            };
+          });
+        missOut.set(url, p);
+        if (key2) ctx.pageCache.set(key2, p);
+      }
+      const provider = await discoveryFor(sql);
+      const goal = String(args.goal ?? '');
+      if (fetchable.length) {
         // One provider call for the whole miss batch — the Fetch API is
         // natively batched, so N misses still cost a single HTTP round-trip.
         const batch: Promise<import('./channels/discovery.ts').ReadPagesResult> = provider
-          .readPages(miss, goal)
+          .readPages(fetchable, goal)
           .then(
             (out) => out,
             (e: unknown) => ({
               pages: [],
-              errors: miss.map((url) => ({
+              errors: fetchable.map((url) => ({
                 url,
                 error: e instanceof Error ? e.message : String(e),
               })),
             }),
           );
-        for (const url of miss) {
+        for (const url of fetchable) {
           const key2 = pageKey(url);
           const p: Promise<PageResult> = batch.then(async (res) => {
             const page = res.pages.find(
@@ -1547,6 +1800,10 @@ export async function executeTool(
             );
             if (page) return { page };
             const err = res.errors.find((er) => pageKey(er.url) === key2);
+            // A failed fetch doesn't bank — a later retry must reissue it,
+            // not serve the error forever. Good pages in the same batch
+            // still cache.
+            if (key2) ctx.pageCache.delete(key2);
             return { page: null, error: err?.error ?? 'no result for url' };
           });
           missOut.set(url, p);
@@ -1557,9 +1814,12 @@ export async function executeTool(
       const errs: { url: string; error: string }[] = [];
       for (const url of urls) {
         const key2 = pageKey(url);
+        // This url's own slot first — a validation rejection must report
+        // its error even when a fetchable twin banked the same scheme-free
+        // pageKey, never inherit the twin's page.
         const p =
-          (key2 ? (ctx.pageCache.get(key2) as Promise<PageResult> | undefined) : undefined) ??
-          missOut.get(url);
+          missOut.get(url) ??
+          (key2 ? (ctx.pageCache.get(key2) as Promise<PageResult> | undefined) : undefined);
         const out = p ? await p : null;
         if (out?.page) {
           // fresh this call only when the url itself was queued — a shared
@@ -1586,26 +1846,75 @@ export async function executeTool(
           chaseOf.push({ url: link, from: pg.url });
         }
       }
-      const chases = chaseOf.slice(0, 4);
+      // Chases are fetches too and spend the same reply budget — paid
+      // candidates are bounded by what's left, but a named map pointer
+      // resolves in-process: free pointers neither spend nor displace
+      // spendable slots, and the run simply stops chasing paid hops
+      // when the budget's gone.
+      const chases: typeof chaseOf = [];
+      if (replyBound) {
+        let slots = Math.max(0, REPLY_READ_PAGES_CAP - ctx.pageReads);
+        for (const c of chaseOf) {
+          if (chases.length >= 4) break;
+          const free = mapPointerName(c.url) !== null;
+          if (!free) {
+            // A paid candidate validates before it claims a slot — a url
+            // no provider could issue just reports its rejection, it
+            // never displaces a later valid link.
+            try {
+              assertFetchable(c.url);
+            } catch (e) {
+              errs.push({
+                url: c.url,
+                error: e instanceof Error ? e.message : String(e),
+              });
+              continue;
+            }
+            if (slots <= 0) continue;
+            slots--;
+          }
+          chases.push(c);
+        }
+      } else {
+        chases.push(...chaseOf.slice(0, 4));
+      }
       const hubChases = chases.filter((c) => !isMapPointer(c.url));
       const mapChases = chases.filter((c) => isMapPointer(c.url));
-      if (hubChases.length) {
+      // Non-reply selections never ran the guard — same rule as the
+      // direct batch: un-fetchable chase urls spend nothing.
+      const fetchableHubs = hubChases.filter((c) => {
+        try {
+          assertFetchable(c.url);
+          return true;
+        } catch (e) {
+          errs.push({
+            url: c.url,
+            error: e instanceof Error ? e.message : String(e),
+          });
+          return false;
+        }
+      });
+      if (fetchableHubs.length) {
+        if (replyBound) {
+          ctx.pageReads += fetchableHubs.length;
+          await ctx.markReadSpent?.(fetchableHubs.length);
+        }
         const res = await provider
           .readPages(
-            hubChases.map((c) => c.url),
+            fetchableHubs.map((c) => c.url),
             goal,
           )
           .then(
             (out) => out,
             (e: unknown) => ({
               pages: [] as ReadPage[],
-              errors: hubChases.map((c) => ({
+              errors: fetchableHubs.map((c) => ({
                 url: c.url,
                 error: e instanceof Error ? e.message : String(e),
               })),
             }),
           );
-        for (const c of hubChases) {
+        for (const c of fetchableHubs) {
           const key2 = pageKey(c.url);
           const page = res.pages.find(
             (pg) => pageKey(pg.url) === key2 || pageKey(pg.finalUrl ?? '') === key2,
@@ -1617,7 +1926,7 @@ export async function executeTool(
             const error =
               res.errors.find((er) => pageKey(er.url) === key2)?.error ?? 'no result for url';
             errs.push({ url: c.url, error });
-            if (key2) ctx.pageCache.set(key2, Promise.resolve({ page: null, error }));
+            // chase failures don't bank either — a retry refetches
           }
         }
       }
@@ -1640,7 +1949,7 @@ export async function executeTool(
       }
       for (const c of mapWave.slice(0, 6)) {
         const key2 = pageKey(c.url);
-        const page = await resolveMapPointer(c.url).catch(() => null);
+        const page = await resolveMapPointer(c.url, reserve).catch(() => null);
         if (page) {
           pages.push({ ...page, chasedFrom: c.from });
           if (key2) ctx.pageCache.set(key2, Promise.resolve({ page }));

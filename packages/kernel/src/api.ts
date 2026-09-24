@@ -458,6 +458,7 @@ export const ERROR_CODES = [
   'UNKNOWN_TOOL',
   'INVALID_AGENT_GOAL',
   'LEAD_SUPPRESSED',
+  'LEAD_COST_CAP',
   'THREAD_PAUSED',
   'NOTE_LIMIT',
   // meetings module (booking surface + control meetings API)
