@@ -85,6 +85,11 @@ describe('agent v2 — pure', () => {
     expect(mergePlaybook('outreach', { stepBudget: 2.5 }).stepBudget).toBe(
       PLAYBOOKS.outreach.stepBudget,
     );
+    // debrief is a playbook flag (ADR 0014) — only discovery writes doctrine
+    expect(PLAYBOOKS.discovery.debrief).toBe(true);
+    expect(
+      PLAYBOOK_KINDS.filter((k) => k !== 'discovery').every((k) => !PLAYBOOKS[k].debrief),
+    ).toBe(true);
   });
 
   test('draft decision: supervised keeps firstContactDraftOnly, autopilot lifts it, copilot drafts all', () => {
