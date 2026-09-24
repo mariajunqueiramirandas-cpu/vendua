@@ -18,6 +18,11 @@ export function buildSystemPrompt(
   opts: {
     goal?: AgentGoal;
     bookingUrl?: string | null;
+    /** Harness flag (control_integrations.config.harness.staticSystem):
+     *  true → the meeting goal line refers to the BOOKING_URL context field
+     *  instead of inlining the per-lead link, keeping the rendered prompt —
+     *  and its provider cache prefix — per-kind constant across leads. */
+    staticSystem?: boolean;
     /** discovery: score gate for auto-contact — mirrors the create_lead
      *  guardrail so the model knows what its fitScore decides. */
     autoContact?: { enabled: boolean; minScore: number };
@@ -42,9 +47,11 @@ export function buildSystemPrompt(
     base.push(
       goal === 'meeting'
         ? `OBJETIVO DESTE LEAD: marcar reunião no Google Meet com os fundadores. Qualifique o interesse e proponha a call; quando a pessoa topar, ${
-            opts.bookingUrl
-              ? `envie o link de agendamento exatamente como está: ${opts.bookingUrl}`
-              : `o link de agendamento NÃO está configurado — request_human em vez de inventar um`
+            opts.staticSystem
+              ? `envie o link do campo BOOKING_URL do contexto exatamente como está — se o campo disser '(não configurado)', request_human em vez de inventar um`
+              : opts.bookingUrl
+                ? `envie o link de agendamento exatamente como está: ${opts.bookingUrl}`
+                : `o link de agendamento NÃO está configurado — request_human em vez de inventar um`
           }. Confirmou que agendou → set_state invited + add_note com o horário mencionado.`
         : `OBJETIVO DESTE LEAD: fechar a negociação na conversa — levar ao sim dentro das ofertas (teste, demo, pedido). Conduza para um próximo passo concreto; fechou → set_state invited/live + add_note com o que foi acordado.`,
       // Channel policy is enforced in code (CANAIS line + channel resolver on
