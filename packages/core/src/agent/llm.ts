@@ -607,6 +607,20 @@ export function mockProvider(script: MockStep[], name = 'mock'): LlmProvider {
   };
 }
 
+// ---------------------------------------------------------------------------
+// test seam — evals install a scripted provider that must reach EVERY run
+// kind, including runs whose params are minted inside the pipeline
+// (ingestInbound's {origin:'inbound'} carries no script). Production code
+// never sets it; it exists only for `bun test`.
+// ---------------------------------------------------------------------------
+let testProvider: LlmProvider | null = null;
+
+/** Test-only provider override — consulted by providerFor ahead of every
+ *  driver. Pass null to restore. */
+export function setTestProvider(provider: LlmProvider | null): void {
+  testProvider = provider;
+}
+
 /** Resolve the active LLM provider for a run: enabled 'llm' integration's
  *  driver, or `mock` when none is configured (dev default). Run params may
  *  carry a `script` that a mock driver consumes. */
@@ -614,6 +628,7 @@ export function providerFor(
   integration: IntegrationRow | null,
   runParams: Record<string, unknown> = {},
 ): LlmProvider {
+  if (testProvider) return testProvider;
   const driver = integration?.driver ?? 'mock';
   const config = integration?.config ?? {};
   const secretRef = integration?.secret_ref ?? null;

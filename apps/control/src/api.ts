@@ -211,6 +211,25 @@ export interface AgentRun {
   steps?: unknown[];
   params?: Record<string, unknown>;
 }
+export interface AgentMetrics {
+  window: { from: string; to: string };
+  byKind: {
+    kind: string;
+    runs: number;
+    done: number;
+    failed: number;
+    canceled: number;
+    /** share of done runs whose journal holds a clean action tool result */
+    actedRate: number;
+    avgSteps: number;
+    costUsd: number;
+    avgCostUsd: number;
+  }[];
+  outbound: { sent: number; drafted: number; approved: number; rejected: number };
+  replies: { leadsContacted: number; leadsReplied: number; replyRate: number };
+  /** null until the agent_wakeups migration deploys */
+  wakeups: { pending: number; fired: number } | null;
+}
 export interface Stats {
   total: number;
   byState: Record<string, { count: number; valueCents: number }>;
@@ -506,6 +525,9 @@ export const api = {
     }),
   cancelRun: (id: string) =>
     req<{ ok: true; status?: string }>(`/agent/runs/${id}/cancel`, { method: 'POST' }),
+
+  // ---- agent metrics
+  agentMetrics: (days: 7 | 30 = 7) => req<AgentMetrics>(`/agent/metrics?days=${days}`),
 
   dispatch: (
     leadIds: string[],
