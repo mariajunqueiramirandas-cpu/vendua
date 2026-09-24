@@ -2121,4 +2121,27 @@ dbDescribe('worker robustness (db)', () => {
     expect(msgs).toHaveLength(1);
     expect(msgs[0]!.status).toBe('failed');
   });
+
+  test('received_at is wall-clock — an open inbound tx stamps insert time, not tx start', async () => {
+    await migrate(sql, MIGRATIONS);
+    const lead = await controlTx(sql, (tx) => insertLeadTx(tx, { name: 'Tx Clock' }));
+    const leadId = lead.body.lead.id;
+    const [thread] = await sql<{ id: string }[]>`
+      insert into lead_threads (lead_id, channel) values (${leadId}, 'whatsapp') returning id
+    `;
+    // now() freezes at tx start — a row inserted 50ms later must carry the
+    // wall-clock instant, or a started-before-claim tx would hide its
+    // inbound from every probe that compares on started_at.
+    await sql.begin(async (tx) => {
+      const [t0] = await tx<{ t0: string }[]>`select now() as t0`;
+      await tx`select pg_sleep(0.05)`;
+      const [m] = await tx<{ received_at: string }[]>`
+        insert into lead_messages (thread_id, direction, author, body, status)
+        values (${thread!.id}, 'in', 'lead', 'oi', 'received') returning received_at
+      `;
+      const [t1] = await tx<{ t1: string }[]>`select now() as t1`;
+      expect(new Date(t1!.t1).getTime()).toBe(new Date(t0!.t0).getTime());
+      expect(new Date(m!.received_at).getTime()).toBeGreaterThan(new Date(t0!.t0).getTime());
+    });
+  });
 });
