@@ -267,6 +267,43 @@ describe('replayJournal', () => {
     expect(r.messages[0]!.content).toBe('segundo');
   });
 
+  test('landed artifact-minting calls rebuild their signatures — pending included, failures out', () => {
+    const r = replayJournal([
+      // a send that landed before the crash — suppressing its re-emission
+      // beats a possible double-send
+      {
+        type: 'tool',
+        name: 'send_message',
+        args: { leadId: 'l1', body: 'olá' },
+        out: { message: { id: 'm1', status: 'sent' } },
+      },
+      // a task that died mid-call — it may have committed
+      { type: 'tool', name: 'create_task', args: { leadId: 'l1', title: 'vip' }, pending: true },
+      // failures minted nothing — they stay retryable
+      {
+        type: 'tool',
+        name: 'create_task',
+        args: { leadId: 'l1', title: 'x' },
+        out: { error: 'boom' },
+      },
+      {
+        type: 'tool',
+        name: 'send_message',
+        args: { leadId: 'l1', body: 'tchau' },
+        out: { blocked: true },
+      },
+      // state-writes never join the set
+      { type: 'tool', name: 'update_lead', args: { id: 'l1', city: 'Recife' }, out: { lead: {} } },
+    ]);
+    expect(r.landedSigs.has(JSON.stringify(['send_message', { leadId: 'l1', body: 'olá' }]))).toBe(
+      true,
+    );
+    expect(r.landedSigs.has(JSON.stringify(['create_task', { leadId: 'l1', title: 'vip' }]))).toBe(
+      true,
+    );
+    expect(r.landedSigs.size).toBe(2);
+  });
+
   test('the latest stored plan rebuilds ctx.plan — no durable field backs it', () => {
     const r = replayJournal([
       {
@@ -1547,6 +1584,40 @@ dbDescribe('worker robustness (db)', () => {
     expect(creates[1]!.out?.error).toMatch(/^REPEAT/);
     // exactly one new Cafe Azul card — the repeat never reached insertLeadTx
     const after = await sql`select id from leads where name = 'Cafe Azul'`;
+    expect(after.length).toBe(before.length + 1);
+  });
+
+  test('a duplicate artifact mint is suppressed across turns — the landed set is run-wide', async () => {
+    await migrate(sql, MIGRATIONS);
+    const lead = await controlTx(sql, (tx) => insertLeadTx(tx, { name: 'Gap Task Lead' }));
+    const leadId = lead.body.lead.id;
+    // title-scoped: the run's request_human ending also writes lead_tasks
+    const before = await sql`select id from lead_tasks where lead_id = ${leadId} and title = 'vip'`;
+    await sql`delete from agent_runs where status = 'queued'`;
+    const runId = (await enqueueRun(sql, { kind: 'reply', leadId })!)!;
+    await sql`update agent_runs set
+      params = ${sql.json({
+        script: [
+          { toolCalls: [{ name: 'create_task', args: { leadId, title: 'vip' } }] },
+          // a different turn's calls flush the one-turn sig map entirely —
+          // the artifact repeat must still be suppressed on the landed set
+          { toolCalls: [{ name: 'get_lead', args: { id: leadId } }] },
+          { toolCalls: [{ name: 'create_task', args: { leadId, title: 'vip' } }] },
+          { toolCalls: [{ name: 'request_human', args: { leadId, reason: 'travou' } }] },
+          { text: 'fim' },
+        ],
+      } as never)}
+      where id = ${runId}`;
+    expect(await runOnce(sql)).toBe(true);
+    const r = await getRun(runId);
+    expect(r.status).toBe('done');
+    const tasks = r.steps.filter((s) => (s as { name?: string }).name === 'create_task') as {
+      out?: { error?: string };
+    }[];
+    expect(tasks).toHaveLength(2);
+    expect(tasks[0]!.out?.error ?? '').not.toMatch(/^REPEAT/);
+    expect(tasks[1]!.out?.error).toMatch(/^REPEAT/);
+    const after = await sql`select id from lead_tasks where lead_id = ${leadId} and title = 'vip'`;
     expect(after.length).toBe(before.length + 1);
   });
 
