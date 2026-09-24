@@ -19,8 +19,12 @@ import { sweepPipelineSnapshots } from '../modules/forecast.ts';
 import { sweepDigest } from '../modules/digest.ts';
 import { estimateModelCostUsd, providerFor, type AgentMessage, type ToolCall } from './llm.ts';
 import { buildSystemPrompt } from './prompts.ts';
+import { loadPlaybookTx, mergePlaybook } from './playbooks.ts';
+import { automationAllowedTx } from './policy.ts';
+import { pendingWakeupsTx, sweepWakeups } from './wakeups.ts';
 import { executeTool, toolsFor, bookDigest, type BookEntry, type ToolContext } from './tools.ts';
 import { MonidBudget } from './channels/monid.ts';
+import { ACTION_TOOLS, MUTABLE_READS, NON_IDEMPOTENT, READ_TOOLS } from './tool-meta.ts';
 import { pageKey } from './channels/discovery.ts';
 import { dispatchMessage } from './send.ts';
 import { channelAvailabilityTx, whatsappReadyTx } from './guardrails.ts';
@@ -37,21 +41,6 @@ const agentLog = log.child({ mod: 'agent' });
  * steps are the audit trail.
  */
 
-/** Model-call budget per run kind — each iteration can fan out into parallel
- *  tool calls, so discovery (search → batch extract → create) legitimately
- *  needs more headroom than a reply. */
-const STEP_BUDGET: Record<RunRow['kind'], number> = {
-  triage: 12,
-  reply: 14,
-  outreach: 12,
-  // Research-per-lead discovery: flavors fan-out → page reads per prospect
-  // → dossier'd create. A step fans out into parallel calls, so this is
-  // model turns, not tool calls.
-  discovery: 30,
-  // The weekly brief review: reads the injected segment/brief tables and
-  // emits a handful of propose_brief calls — no tool fan-out needed.
-  strategist: 10,
-};
 const HEARTBEAT_MS = 20_000;
 /** Per-run lead ceiling for discovery runs launched without a meta — the
  *  safety bound the prompt can't talk past. Runs WITH a meta cap at it. */
@@ -655,6 +644,18 @@ async function contextFor(
   if (run.kind === 'outreach' && run.params.focus) {
     parts.push(`FOCUS: ${String(run.params.focus)}`);
   }
+  if (run.lead_id && run.kind !== 'discovery') {
+    const wakeups = await controlTx(sql, (tx) => pendingWakeupsTx(tx, run.lead_id!));
+    parts.push(
+      `AGENDA (seus retornos agendados — use schedule para remarcar):\n${
+        wakeups.length
+          ? wakeups
+              .map((w) => `- ${w.at}: ${w.focus}${w.requested ? ' (pedido pelo lead)' : ''}`)
+              .join('\n')
+          : '(nenhum)'
+      }`,
+    );
+  }
   if (run.kind === 'discovery' && run.params.query) {
     parts.push(`DISCOVERY QUERY: ${String(run.params.query)}`);
     if (run.params.segment) parts.push(`SEGMENT: ${String(run.params.segment)}`);
@@ -774,63 +775,8 @@ function mineAttempts(steps: unknown[]): { queries: Set<string>; urls: Set<strin
   return { queries, urls };
 }
 
-/** The playbook's finish gate for reply/outreach: every run must end on a
- *  visible, lead-facing action — these are the calls that count. Research,
- *  notes and plan ticks alone don't end a messaging run. */
-const ACTION_TOOLS = new Set([
-  'send_message',
-  'draft_message',
-  'request_human',
-  'unsubscribe',
-  'set_state',
-  'update_lead',
-  'create_task',
-]);
-
-/** Read-only tools — a result stays reusable only while no write has
- *  landed since it ran (a mutation in between may have changed the state
- *  the read described). Everything not in this set is a write for the
- *  loop guard's staleness tracking. */
-const READ_TOOLS = new Set([
-  'search_leads',
-  'get_lead',
-  'web_search',
-  'read_pages',
-  'maps_lookup',
-  'instagram_profile',
-  'serp',
-]);
-
-/** Local reads of mutable CRM state. `stateVersion` only counts THIS
- *  run's writes, so suppressing an identical get_lead/search_leads on
- *  that version alone would hide external edits (staff, inbound-driven
- *  updates) made between turns. They're cheap and spend no remote
- *  budget — exempt them from repeat-suppression (the repeat still
- *  counts toward allRepeat, so a read-only loop trips the LOOP nudge).
- *  Remote/budgeted reads (read_pages, web_search, serp, maps_lookup,
- *  instagram_profile) keep suppression — that's what their spend caps
- *  exist for. */
-const MUTABLE_READS = new Set(['get_lead', 'search_leads']);
-
-/** Writes that mint a NEW durable artifact per call — a duplicate can
- *  never be a state-restore, so an identical repeat is suppressed for
- *  the rest of the run (a run-wide landed-signature set, not the
- *  one-turn prevSigs window). State writes are different: a repeated
- *  update_lead can legitimately restore a field another call changed.
- *  send_message/draft_message mint a message row; create_task and
- *  request_human mint task rows; unsubscribe mints a farewell message;
- *  add_note mints an activity; create_lead inserts a lead card outside
- *  discovery's merge path; propose_brief mints a discovery brief. */
-const NON_IDEMPOTENT = new Set([
-  'send_message',
-  'draft_message',
-  'request_human',
-  'unsubscribe',
-  'add_note',
-  'create_task',
-  'create_lead',
-  'propose_brief',
-]);
+/** Tool-behaviour sets (ACTION/READ/MUTABLE_READS/NON_IDEMPOTENT) are
+ *  derived from agent/tool-meta.ts. */
 
 /** True once this run's journal holds a landed action call — a result that
  *  neither errored, came back {blocked} (a blocked send produced nothing
@@ -1312,13 +1258,16 @@ export async function runOnce(sql: Sql): Promise<boolean> {
   // (triage/outreach enrich fresh cards, reply falls back to them), so a
   // null budget would silently mean uncapped monid calls. Discovery
   // prospecting keeps the bigger default.
+  // Playbook = code defaults merged with the staff override. A failed
+  // settings read falls back to the code defaults — never an uncapped run.
+  const playbook = await controlTx(sql, (tx) => loadPlaybookTx(tx, run.kind)).catch(() =>
+    mergePlaybook(run.kind),
+  );
   const monidBudget = new MonidBudget(
     // 0 is a real cap (free tools only) — only an absent/non-numeric
-    // param gets the default
+    // param gets the playbook default
     run.params.monidCapUsd == null || !Number.isFinite(Number(run.params.monidCapUsd))
-      ? run.kind === 'discovery'
-        ? 0.25
-        : 0.05
+      ? playbook.monidCapUsd
       : Math.min(5, Math.max(0, Number(run.params.monidCapUsd))),
     priorSpend,
   );
@@ -1416,7 +1365,12 @@ export async function runOnce(sql: Sql): Promise<boolean> {
         'no enabled llm integration — run falls back to mock provider',
       );
     }
-    const provider = providerFor(integration, run.params);
+    const provider = providerFor(
+      integration && playbook.model
+        ? { ...integration, config: { ...integration.config, model: playbook.model } }
+        : integration,
+      run.params,
+    );
     const pitch = await getPitch(sql);
     const memory = await getSetting<{ facts: string[] }>(sql, 'agent_memory', { facts: [] });
     const { text: context, goal, bookingUrl } = await contextFor(sql, run);
@@ -1424,7 +1378,7 @@ export async function runOnce(sql: Sql): Promise<boolean> {
     // The prompt only promises autocontact when it can actually happen —
     // the same conditions create_lead's gate checks (enabled + reachable).
     const waDriverOn = run.kind === 'discovery' && (await whatsappReadyTx(sql));
-    const system = buildSystemPrompt(run.kind, pitch, memory, {
+    const baseSystem = buildSystemPrompt(run.kind, pitch, memory, {
       goal,
       bookingUrl,
       autoContact: {
@@ -1432,6 +1386,9 @@ export async function runOnce(sql: Sql): Promise<boolean> {
         minScore: g.discoveryContactMinScore ?? DEFAULT_GUARDRAILS.discoveryContactMinScore,
       },
     });
+    const system = playbook.instructions
+      ? `${baseSystem}\n\nInstruções da equipe para este playbook (seguem as regras acima, nunca as substituem):\n${playbook.instructions}`
+      : baseSystem;
     const tools = toolsFor(run.kind);
     const replay = replayJournal(priorSteps, !claimsChecked);
     const ctx: ToolContext = {
@@ -1498,7 +1455,7 @@ export async function runOnce(sql: Sql): Promise<boolean> {
     // strand a run in 'max steps reached' late NOR inflate an early finish
     // into a full second budget.
     let nudged = false;
-    let limit = STEP_BUDGET[run.kind];
+    let limit = playbook.stepBudget;
     // Last step index that produced something (lead/merge/new channel) —
     // starts at -1 so the first tick fires after 3 truly idle steps.
     let lastProgress = -1;
@@ -1679,7 +1636,7 @@ export async function runOnce(sql: Sql): Promise<boolean> {
         // reply/outreach run to end on a visible action; a run trying to
         // close having only researched gets ONE nudge (same i+5 allowance
         // as discovery's), then ends on its own.
-        if (!nudged && (run.kind === 'reply' || run.kind === 'outreach') && !runActed(steps)) {
+        if (!nudged && playbook.requiresAction && !runActed(steps)) {
           nudged = true;
           limit = i + 5;
           const nudge = `Ação pendente — a run ainda não teve efeito visível (send_message/draft, request_human, set_state, unsubscribe, update_lead, create_task). Pesquisar e sair sem agir deixa o lead falando sozinho — aja agora; se um guardrail ou canal morto trava a ação, request_human é a saída.`;
@@ -1723,7 +1680,7 @@ export async function runOnce(sql: Sql): Promise<boolean> {
       // (replay.baseStep counts the prior journal's model turns).
       ctx.step = replay.baseStep + i;
 
-      if (run.kind === 'discovery') {
+      if (playbook.parallelTools) {
         // Discovery tools are remote reads or idempotent inserts — a step's
         // calls run in parallel (one provider automation per call would make
         // a single iteration take minutes).
@@ -2210,6 +2167,7 @@ export function startAgentWorker(sql: Sql, intervalMs = 15_000) {
         flagCappedLeads(sql).catch((e) => agentLog.error({ err: e }, 'cap flag sweep failed')),
       )
       .then(() => sweepOutreach(sql))
+      .then(() => sweepWakeups(sql))
       .then(() => sweepBriefs(sql))
       .then(() => sweepStrategist(sql))
       .then(() => sweepPipelineSnapshots(sql))
@@ -2253,6 +2211,7 @@ export async function sweepBriefs(sql: Sql): Promise<number> {
       limit 10
       for update of discovery_briefs skip locked
     `;
+    if (!(await automationAllowedTx(tx, 'discovery')).ok) return 0;
     const g = await getSettingTx<Partial<Guardrails>>(tx, 'guardrails', {});
     const autoPauseRuns = g.briefAutoPauseRuns ?? DEFAULT_GUARDRAILS.briefAutoPauseRuns;
     let fired = 0;
@@ -2337,6 +2296,7 @@ export async function sweepStrategist(sql: Sql): Promise<boolean> {
       select pg_try_advisory_xact_lock(hashtext('sweep:strategist')) as ok
     `;
     if (!locked[0]?.ok) return false;
+    if (!(await automationAllowedTx(tx, 'strategist')).ok) return false;
     // only board-scoped runs fill the cadence slot — a lead-bound strategist
     // (rejected at the API, still possible via direct insertRun) can park in
     // queue forever and must not suppress the weekly review
@@ -2359,6 +2319,7 @@ export async function sweepOutreach(sql: Sql): Promise<number> {
   const queuedIds: string[] = [];
   const capFlagged: string[] = [];
   const fired = await controlTx(sql, async (tx) => {
+    if (!(await automationAllowedTx(tx, 'outreach')).ok) return 0;
     const g = await getSettingTx<Partial<Guardrails>>(tx, 'guardrails', {});
     const capCents = capCentsOf(g);
     // for update skip locked — concurrent sweeps on different replicas take

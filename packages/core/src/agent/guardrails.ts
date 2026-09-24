@@ -2,6 +2,7 @@ import type { Sql } from '../platform/db.ts';
 import { getIntegrationTx, type Guardrails } from '../modules/integrations.ts';
 import type { Channel } from '../modules/threads.ts';
 import { waStatus } from './channels/whatsapp.ts';
+import { autonomyTx, draftDecision } from './policy.ts';
 
 /**
  * agent/guardrails — the hard rules around every outbound message. Enforced
@@ -266,10 +267,13 @@ export async function checkSendAllowedTx(
           and m.status in ('queued', 'sending', 'sent', 'delivered')
       `
     )[0]!.n;
-    if (g.firstContactDraftOnly && priorOut === 0) {
-      return { ok: true, forceDraft: true };
-    }
-    if (lead.agent_mode === 'draft') return { ok: true, forceDraft: true };
-    return { ok: true, forceDraft: false };
+    const { level } = await autonomyTx(tx);
+    const d = draftDecision({
+      level,
+      firstContact: priorOut === 0,
+      firstContactDraftOnly: g.firstContactDraftOnly,
+      leadMode: lead.agent_mode,
+    });
+    return { ok: true, forceDraft: d.forceDraft };
   }
 }
