@@ -377,6 +377,14 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('whatsapp history + ignore list 
   test('a parked ignored prefix cannot starve the claim queue', async () => {
     await migrate(sql, MIGRATIONS);
     await setIgnored(['5511999776600']);
+    // Leftover due runs from earlier tests (incl. mail the orphan sweep
+    // respawns) would claim before the valid one — drain them first so the
+    // queue holds only what this test makes.
+    for (let i = 0; i < 20; i++) {
+      const stale = await claimRun(sql);
+      if (!stale) break;
+      await sql`update agent_runs set status = 'done', finished_at = now() where id = ${stale.id}`;
+    }
     // More ignored-lead runs than the claim loop's 8-attempt budget — they
     // must be filtered in the scan, not rejected one at a time.
     for (let i = 0; i < 10; i++) {
