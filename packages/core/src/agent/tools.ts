@@ -1500,19 +1500,6 @@ export async function executeTool(
         .filter(Boolean)
         .slice(0, 6);
       if (!urls.length) return { error: 'read_pages needs urls: ["https://…"] (1–6)' };
-      // Reply's bound: the cap covers the link a lead sent — more means the
-      // run drifted into research it should ask about in the conversation.
-      if (ctx.runKind === 'reply' && ++ctx.pageReads > REPLY_READ_PAGES_CAP) {
-        return {
-          error: `read_pages: limite de ${REPLY_READ_PAGES_CAP} leituras por run de reply — pergunte na conversa o que ainda faltar`,
-        };
-      }
-      const provider = await discoveryFor(sql);
-      const goal = String(args.goal ?? '');
-      type PageResult = {
-        page: import('./channels/discovery.ts').ReadPage | null;
-        error?: string;
-      };
       // Dedupe by page identity across the run cache AND this call — the
       // same page twice in one batch (https vs https://www, trailing slash)
       // resolves to one fetch, not two.
@@ -1524,6 +1511,20 @@ export async function executeTool(
         queued.add(id);
         miss.push(url);
       }
+      // Reply's bound counts fetches, not calls: a repeat served entirely
+      // from the run's pageCache spends nothing — the cap is for pages the
+      // run actually has to go get, not results it already holds.
+      if (ctx.runKind === 'reply' && miss.length && ++ctx.pageReads > REPLY_READ_PAGES_CAP) {
+        return {
+          error: `read_pages: limite de ${REPLY_READ_PAGES_CAP} leituras por run de reply — pergunte na conversa o que ainda faltar`,
+        };
+      }
+      const provider = await discoveryFor(sql);
+      const goal = String(args.goal ?? '');
+      type PageResult = {
+        page: import('./channels/discovery.ts').ReadPage | null;
+        error?: string;
+      };
       const missOut = new Map<string, Promise<PageResult>>(); // miss url → its slice
       if (miss.length) {
         // One provider call for the whole miss batch — the Fetch API is

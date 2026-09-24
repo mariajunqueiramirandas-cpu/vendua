@@ -1166,4 +1166,43 @@ dbDescribe('worker robustness (db)', () => {
     // the second read ran fresh — current profile, not a REPEAT artifact
     expect(JSON.stringify(gets[1]!.out)).toContain('Recife');
   });
+
+  test('a cached re-read does not spend the reply page budget', async () => {
+    await migrate(sql, MIGRATIONS);
+    const lead = await controlTx(sql, (tx) => insertLeadTx(tx, { name: 'Cached Page Lead' }));
+    const leadId = lead.body.lead.id;
+    await sql`delete from agent_runs where status = 'queued'`;
+    const runId = await enqueueRun(sql, { kind: 'reply', leadId });
+    await sql`update agent_runs set
+      params = ${sql.json({
+        script: [
+          {
+            toolCalls: [
+              { name: 'read_pages', args: { urls: ['https://shop.example/catalog'] } },
+              { name: 'update_lead', args: { id: leadId, city: 'Recife' } },
+            ],
+          },
+          // same url again — served from pageCache, spends nothing
+          { toolCalls: [{ name: 'read_pages', args: { urls: ['https://shop.example/catalog'] } }] },
+          // a new url still fits the cap; the one after hits it
+          { toolCalls: [{ name: 'read_pages', args: { urls: ['https://shop.example/prices'] } }] },
+          { toolCalls: [{ name: 'read_pages', args: { urls: ['https://shop.example/about'] } }] },
+          { toolCalls: [{ name: 'request_human', args: { leadId, reason: 'travou' } }] },
+          { text: 'fim' },
+        ],
+      } as never)}
+      where id = ${runId}`;
+    expect(await runOnce(sql)).toBe(true);
+    const r = await getRun(runId);
+    expect(r.status).toBe('done');
+    const reads = r.steps.filter(
+      (s) => (s as { name?: string }).name === 'read_pages',
+    ) as { readSpent?: boolean; out?: { error?: string } }[];
+    expect(reads).toHaveLength(4);
+    // every call executed — no REPEAT — but only the fetches spent
+    expect(reads[0]!.readSpent).toBe(true);
+    expect(reads[1]!.readSpent).toBe(false);
+    expect(reads[2]!.readSpent).toBe(true);
+    expect(reads[3]!.out?.error ?? '').toMatch(/^read_pages: limite/);
+  });
 });

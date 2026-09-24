@@ -671,14 +671,24 @@ export function replayJournal(prior: unknown[]): JournalReplay {
     if (t?.type !== 'tool') continue;
     bankOut(t.out);
     if (t.name === 'read_pages') {
-      const e = (t.out as { error?: unknown } | null)?.error;
-      // Only a call that reached the budget check consumed a read — the two
-      // pre-check rejections (a REPEAT suppression; a malformed 'needs
-      // urls' call) never incremented the counter, so replaying them as
-      // spend would shrink a resumed run's real budget.
-      const preCheck =
-        typeof e === 'string' && (e.startsWith('REPEAT') || e.startsWith('read_pages needs urls'));
-      if (!preCheck) replay.pageReads++;
+      // The journaled marker is authoritative: the cap charges fetches, not
+      // calls, so only an entry recorded as spent counts (a cached repeat
+      // doesn't). Entries from before the marker — an in-flight run
+      // reclaimed after a deploy — fall back to excluding the two
+      // pre-check rejections (REPEAT suppression; a malformed 'needs urls'
+      // call), which never incremented the counter; everything else,
+      // including a pending/out-less entry from a crash mid-execution,
+      // counted as a spend.
+      const spent = (t as { readSpent?: boolean }).readSpent;
+      if (spent === true) {
+        replay.pageReads++;
+      } else if (spent === undefined) {
+        const e = (t.out as { error?: unknown } | null)?.error;
+        const preCheck =
+          typeof e === 'string' &&
+          (e.startsWith('REPEAT') || e.startsWith('read_pages needs urls'));
+        if (!preCheck) replay.pageReads++;
+      }
     }
     const p = t.out as { stored?: boolean; plan?: unknown } | null;
     // Last stored plan wins — including an empty one: a cleared plan must
@@ -1398,6 +1408,7 @@ export async function runOnce(sql: Sql): Promise<boolean> {
             callId: string;
             step: number;
             pending?: boolean;
+            readSpent?: boolean;
             out?: unknown;
           } = {
             type: 'tool',
@@ -1413,6 +1424,7 @@ export async function runOnce(sql: Sql): Promise<boolean> {
           const prev = prevSigs.get(sig);
           const suppress =
             prev?.ok === true && (!READ_TOOLS.has(call.name) || prev.v === stateVersion);
+          const readsBefore = ctx.pageReads;
           let out: unknown;
           if (suppress) {
             out = {
@@ -1427,6 +1439,9 @@ export async function runOnce(sql: Sql): Promise<boolean> {
               out = { error: e instanceof Error ? e.message : String(e) };
             }
           }
+          // Journal whether the call spent a read: the cap charges fetches,
+          // not calls, so a cached read_pages entry must not count on replay.
+          if (call.name === 'read_pages') entry.readSpent = ctx.pageReads > readsBefore;
           const res_ = out as {
             error?: unknown;
             blocked?: unknown;
