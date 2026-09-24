@@ -886,6 +886,13 @@ const OUTCOME_KEYS = new Set([
   'entry',
   'lead',
   'duplicate',
+  // Page identity + the continuation pointer — without them a slimmed read
+  // can't be re-read or continued.
+  'url',
+  'finalUrl',
+  'offset',
+  'textChars',
+  'chasedFrom',
 ]);
 
 /** Structure-preserving slim under a char budget — never slices mid-JSON:
@@ -989,6 +996,51 @@ export function slimToolOut(name: string, out: unknown, caps: SlimCaps = SLIM_LI
       const dropped: unknown[] = [];
       while (result.pages.length > 1 && JSON.stringify(result).length > caps.hardMax) {
         dropped.unshift(result.pages.pop());
+      }
+      // The last page can't drop without losing the read — rebuild it
+      // around the keys the model needs (identity, contacts, the marked
+      // head) with the fat text fields capped, so url + the continuation
+      // pointer always survive.
+      if (result.pages.length === 1 && JSON.stringify(result).length > caps.hardMax) {
+        const p = result.pages[0] as Record<string, unknown>;
+        const kept = new Set([
+          'url',
+          'finalUrl',
+          'chasedFrom',
+          'offset',
+          'textChars',
+          'truncated',
+          'title',
+          'description',
+          'foundContacts',
+          'nav',
+          'text',
+        ]);
+        const capStr = (v: unknown, n: number) =>
+          typeof v === 'string' && v.length > n
+            ? `${v.slice(0, n)}\n…[${v.length - n} omitted]`
+            : v;
+        const omitted = Object.keys(p).filter((k) => !kept.has(k));
+        const rebuilt: Record<string, unknown> = {
+          url: p.url,
+          finalUrl: p.finalUrl,
+          chasedFrom: p.chasedFrom,
+          offset: p.offset,
+          textChars: p.textChars,
+          truncated: p.truncated,
+          title: capStr(p.title, 200),
+          description: capStr(p.description, caps.str),
+          foundContacts: p.foundContacts,
+          nav: p.nav,
+          text: p.text, // already carries the read_pages offset marker
+          ...(omitted.length ? { omittedKeys: omitted } : {}),
+        };
+        result.pages[0] = rebuilt;
+        // Pathological contact/nav lists can still overflow — last resort,
+        // generic slim keeps the outcome keys (url, contacts, pointer).
+        if (JSON.stringify(result).length > caps.hardMax) {
+          result.pages[0] = slimValue(rebuilt, { left: caps.hardMax - 512 }, caps.str);
+        }
       }
       if (dropped.length) {
         result.droppedPages = dropped.map((p) => {
@@ -1170,11 +1222,16 @@ export function replayJournal(
       // `offset` is a partial (sliced) body — priming it would shift every
       // future absolute offset, so skip it and let the read refetch.
       const ro = t.out as {
-        pages?: { url?: unknown; finalUrl?: unknown; offset?: unknown }[];
+        pages?: { url?: unknown; finalUrl?: unknown; offset?: unknown; chasedFrom?: unknown }[];
       } | null;
       for (const pg of ro?.pages ?? []) {
         if (typeof pg.offset === 'number') continue;
-        const rec = Promise.resolve({ page: pg });
+        // The live cache banks the raw page — only the emitted result copy
+        // carries chasedFrom. Priming the journaled copy would mark the
+        // cached page as chased, so an explicit continuation read skips its
+        // offset and re-reads the head.
+        const { chasedFrom: _chasedFrom, ...cachePage } = pg;
+        const rec = Promise.resolve({ page: cachePage });
         for (const u of [pg.url, pg.finalUrl]) {
           const k = typeof u === 'string' ? pageKey(u) : null;
           if (k && !replay.pageCache.has(k)) replay.pageCache.set(k, rec);
@@ -2254,6 +2311,15 @@ export async function drain(sql: Sql, limit = 20): Promise<number> {
           started_at = null,
           alive_at = null,
           claim_token = null,
+          tokens_in = coalesce((select sum((e->'usage'->>'tokensIn')::numeric)
+                                from jsonb_array_elements(steps) e
+                                where e->>'type' = 'model'), 0)::int,
+          tokens_out = coalesce((select sum((e->'usage'->>'tokensOut')::numeric)
+                                from jsonb_array_elements(steps) e
+                                where e->>'type' = 'model'), 0)::int,
+          tokens_cached = coalesce((select sum((e->'usage'->>'cachedTokensIn')::numeric)
+                                    from jsonb_array_elements(steps) e
+                                    where e->>'type' = 'model'), 0)::int,
           cost_cents = round((
             coalesce((select sum((e->'usage'->>'costUsd')::numeric)
                       from jsonb_array_elements(steps) e

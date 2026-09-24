@@ -565,10 +565,11 @@ dbDescribe('worker robustness (db)', () => {
         steps: unknown[];
         tokens_in: number;
         tokens_out: number;
+        tokens_cached: number;
         cost_cents: number;
       }[]
     >`select status, attempts, max_attempts, run_at, claim_token, started_at, error, finished_at, steps,
-      tokens_in, tokens_out, cost_cents
+      tokens_in, tokens_out, tokens_cached, cost_cents
       from agent_runs where id = ${id}`.then((r) => r[0]!);
 
   test('reclaim requeues with attempts+1 and a ~2min backoff', async () => {
@@ -639,7 +640,16 @@ dbDescribe('worker robustness (db)', () => {
       update agent_runs set status = 'running', claim_token = 'stale',
         started_at = ${stale}, alive_at = ${stale}, max_attempts = 1,
         steps = ${sql.json([
-          { type: 'model', content: 'a', usage: { tokensIn: 1, tokensOut: 1, costUsd: 0.15 } },
+          {
+            type: 'model',
+            content: 'a',
+            usage: { tokensIn: 4_000, tokensOut: 300, cachedTokensIn: 2_000, costUsd: 0.15 },
+          },
+          {
+            type: 'model',
+            content: 'b',
+            usage: { tokensIn: 5_000, tokensOut: 400, cachedTokensIn: 3_500, costUsd: 0 },
+          },
           { type: 'monid_spend', spentUsd: 0.03 },
           { type: 'monid_spend', spentUsd: 0.1 },
         ] as never[])}
@@ -649,6 +659,10 @@ dbDescribe('worker robustness (db)', () => {
     const r = await getRun(id);
     expect(r.status).toBe('failed');
     expect(r.cost_cents).toBe(25);
+    // the dead attempt's token counters fold too — cached reads included
+    expect(r.tokens_in).toBe(9_000);
+    expect(r.tokens_out).toBe(700);
+    expect(r.tokens_cached).toBe(5_500);
     const flags = await sql`select 1 from lead_activities
       where lead_id = ${leadId} and kind = 'system' and meta->>'type' = 'cost-cap'`;
     expect(flags.length).toBe(1);

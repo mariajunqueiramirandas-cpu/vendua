@@ -144,6 +144,55 @@ describe('slimToolOut', () => {
     expect(toolMsg.content.length).toBeLessThanOrEqual(3_000);
     expect(toolMsg.content).not.toContain('read_pages offset:');
   });
+
+  test('one oversized page slims its metadata — url + contacts survive', () => {
+    // Tail-drop stops at one page; description/title can still overflow
+    // hardMax alone, and a whole-result fallback would lose the read.
+    const out = {
+      pages: [
+        page('x'.repeat(20_000), {
+          description: 'd'.repeat(40_000),
+          nav: ['https://x.test/contato'],
+        }),
+      ],
+    };
+    const replayCaps = { page: 1_000, total: 2_400, str: 800, hardMax: 2_900 };
+    const slim = slimToolOut('read_pages', out, replayCaps) as Record<string, unknown>;
+    const json = JSON.stringify(slim);
+    expect(json.length).toBeLessThanOrEqual(2_900);
+    const p = (slim.pages as Record<string, unknown>[])[0]!;
+    expect(p.url).toBe('https://x.test/p');
+    expect(p.foundContacts).toEqual({ phones: ['+5521'] });
+    expect(String(p.text)).toContain('read_pages offset:');
+  });
+
+  test('recovery primes chased pages without the chasedFrom marker', () => {
+    // The live cache banks the raw page; a primed copy keeping chasedFrom
+    // would make slicePage skip the offset on the next explicit read.
+    const prior = [
+      { type: 'model', content: null, toolCalls: [{ id: 'c1', name: 'read_pages', args: {} }] },
+      {
+        type: 'tool',
+        name: 'read_pages',
+        out: {
+          pages: [
+            page('x'.repeat(30_000), {
+              url: 'https://linktr.ee/lead',
+              chasedFrom: 'https://instagram.com/lead',
+            }),
+          ],
+        },
+      },
+    ];
+    const replay = replayJournal(prior);
+    const rec = replay.pageCache.get('linktr.ee/lead') as
+      Promise<{ page: Record<string, unknown> }> | undefined;
+    expect(rec).toBeDefined();
+    return rec!.then(({ page }) => {
+      expect(page.chasedFrom).toBeUndefined();
+      expect(String(page.text).length).toBe(30_000); // full body re-banked
+    });
+  });
 });
 
 describe('pricingFor', () => {
