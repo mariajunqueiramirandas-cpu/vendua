@@ -4,7 +4,7 @@ import postgres from 'postgres';
 import { ingestInbound } from '../src/agent/inbound.ts';
 import { whatsappRegistered } from '../src/agent/channels/whatsapp.ts';
 import { dispatchMessage } from '../src/agent/send.ts';
-import { claimRun, enqueueRun } from '../src/agent/runner.ts';
+import { claimRun, enqueueRun, sweepOutreach } from '../src/agent/runner.ts';
 import { composeMessageTx } from '../src/modules/threads.ts';
 import {
   DEFAULT_GUARDRAILS,
@@ -230,11 +230,14 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('whatsapp history + ignore list 
     const [thread] = await sql<{ id: string }[]>`
       insert into lead_threads (lead_id, channel) values (${leadId}, 'whatsapp') returning id
     `;
+    // runAt in the future: ingest's fire-and-forget drain may claim a due
+    // run mid-assertion — a parked row keeps the queue contents observable.
     await enqueueRun(sql, {
       kind: 'reply',
       leadId,
       threadId: thread!.id,
       params: { draftOnly: true },
+      runAt: new Date(Date.now() + 3_600_000),
     });
     const mid = crypto.randomUUID();
     const first = await ingestInbound(sql, {
@@ -282,7 +285,13 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('whatsapp history + ignore list 
     const [thread] = await sql<{ id: string }[]>`
       insert into lead_threads (lead_id, channel) values (${leadId}, 'whatsapp') returning id
     `;
-    await enqueueRun(sql, { kind: 'reply', leadId, threadId: thread!.id });
+    // Future-dated like the staff case above — the drain race is the same.
+    await enqueueRun(sql, {
+      kind: 'reply',
+      leadId,
+      threadId: thread!.id,
+      runAt: new Date(Date.now() + 3_600_000),
+    });
     const mid = crypto.randomUUID();
     await ingestInbound(sql, {
       channel: 'whatsapp',
@@ -404,15 +413,19 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('whatsapp history + ignore list 
     await sql`delete from agent_runs where status = 'queued'`;
     // Automation-queued runs carry params.auto; a staff-dispatched run
     // ({goal} only) is an explicit decision and must outrank the reply.
+    // Future-dated so an in-flight drain can't claim them mid-assertion —
+    // the cancel predicate keys on 'queued', not on run_at.
     const autoRun = (await enqueueRun(sql, {
       kind: 'outreach',
       leadId,
       params: { auto: 'cadence' },
+      runAt: new Date(Date.now() + 3_600_000),
     }))!;
     const staffRun = (await enqueueRun(sql, {
       kind: 'outreach',
       leadId,
       params: { goal: 'negotiation' },
+      runAt: new Date(Date.now() + 3_600_000),
     }))!;
     const res = await ingestInbound(sql, {
       channel: 'whatsapp',
@@ -429,5 +442,69 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('whatsapp history + ignore list 
     // ingest kicks a fire-and-forget drain that may already have claimed
     // the staff run — 'running' or 'queued', the point is never 'canceled'.
     expect(byId[staffRun]).not.toBe('canceled');
+  });
+
+  test('a queued regen run survives the inbound cancel', async () => {
+    await migrate(sql, MIGRATIONS);
+    const lead = await controlTx(sql, (tx) =>
+      insertLeadTx(tx, { name: 'Regen', whatsapp: '5511955550002' }),
+    );
+    const leadId = lead.body.lead.id;
+    await sql`delete from agent_runs where status = 'queued'`;
+    // Regen is draftOnly composition work staff already approved — the
+    // fresh inbound makes its recompose MORE relevant, so it must not die
+    // with the disposable autos (its superseded draft has no replacement
+    // otherwise).
+    const regen = (await enqueueRun(sql, {
+      kind: 'outreach',
+      leadId,
+      params: { auto: 'regenerate', draftOnly: true },
+      runAt: new Date(Date.now() + 3_600_000),
+    }))!;
+    const res = await ingestInbound(sql, {
+      channel: 'whatsapp',
+      from: '5511955550002@s.whatsapp.net',
+      body: 'oi',
+      providerMessageId: `fx10b-${crypto.randomUUID()}`,
+    });
+    if ('ignored' in res) throw new Error('unexpected ignore');
+    const [r] = await sql<{ status: string }[]>`
+      select status from agent_runs where id = ${regen}
+    `;
+    expect(r!.status).toBe('queued');
+  });
+
+  test('a staff-scheduled sweep run carries no auto marker and survives', async () => {
+    await migrate(sql, MIGRATIONS);
+    const lead = await controlTx(sql, (tx) =>
+      insertLeadTx(tx, { name: 'Staff Slot', whatsapp: '5511955550003' }),
+    );
+    const leadId = lead.body.lead.id;
+    await sql`delete from agent_runs where status = 'queued'`;
+    // A staff-scheduled follow-up is an explicit decision — the sweep
+    // materializes it unmarked so a reply can't cancel it.
+    await sql`
+      update leads set next_action_at = now() - interval '1 hour',
+                       next_action_source = 'staff'
+      where id = ${leadId}
+    `;
+    expect(await sweepOutreach(sql)).toBe(1);
+    const swept = await sql<{ id: string; params: Record<string, unknown> }[]>`
+      select id, params from agent_runs
+      where lead_id = ${leadId} and kind = 'outreach' and status = 'queued'
+    `;
+    expect(swept).toHaveLength(1);
+    expect(swept[0]!.params.auto).toBeUndefined();
+    const res = await ingestInbound(sql, {
+      channel: 'whatsapp',
+      from: '5511955550003@s.whatsapp.net',
+      body: 'oi',
+      providerMessageId: `fx10c-${crypto.randomUUID()}`,
+    });
+    if ('ignored' in res) throw new Error('unexpected ignore');
+    const [r] = await sql<{ status: string }[]>`
+      select status from agent_runs where id = ${swept[0]!.id}
+    `;
+    expect(r!.status).not.toBe('canceled');
   });
 });

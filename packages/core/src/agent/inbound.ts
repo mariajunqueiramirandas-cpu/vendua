@@ -89,16 +89,20 @@ export async function ingestInbound(
       for update of l, t
     `;
     // A live inbound retires queued AUTO outreach — the lead already wrote,
-    // so a "reopening" message queued by cadence/discovery/first-contact/
-    // regen would arrive answering nothing. Only runs the automation itself
+    // so a "reopening" message queued by cadence/discovery/first-contact
+    // would arrive answering nothing. Only runs the automation itself
     // queued (params->>'auto' set) are canceled: a staff-triggered run is an
-    // explicit decision and outranks the reply. Runs under the l,t lock —
-    // claimRun's lead revalidation can't slip a row through while we hold it.
+    // explicit decision and outranks the reply. 'regenerate' is exempt —
+    // it's draftOnly composition work (staff approved the supersede); on
+    // claim it recomposes against CURRENT state, so the fresh inbound makes
+    // its draft more right, and canceling it would orphan the rejected
+    // draft with no replacement. Runs under the l,t lock — claimRun's lead
+    // revalidation can't slip a row through while we hold it.
     await tx`
       update agent_runs
       set status = 'canceled', error = 'lead respondeu', finished_at = now()
       where lead_id = ${res.leadId} and kind = 'outreach' and status = 'queued'
-        and params->>'auto' is not null
+        and params->>'auto' is not null and params->>'auto' <> 'regenerate'
     `;
     const gate = gateRows[0];
 

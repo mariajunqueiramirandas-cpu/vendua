@@ -392,6 +392,10 @@ async function finishRun(
                 null, 'agent')
       `;
     }
+    // The run that CROSSES the cap is where the alert must land — queued
+    // siblings are scan-excluded and never reach the claim check, so this
+    // is the only flag write that covers "spent past the ceiling".
+    if (r?.lead_id) await leadUnderCostCapTx(tx, r.lead_id);
     return updated;
   });
   if (rows.length) emitControlEvent('run.update', run.id);
@@ -1784,8 +1788,8 @@ export async function sweepOutreach(sql: Sql): Promise<number> {
     // for update skip locked — concurrent sweeps on different replicas take
     // disjoint lead sets instead of both inserting a run for the same due
     // lead (the not-exists check alone only sees committed runs).
-    const due = await tx<{ id: string }[]>`
-      select l.id from leads l
+    const due = await tx<{ id: string; next_action_source: string }[]>`
+      select l.id, l.next_action_source from leads l
       where l.next_action_at is not null and l.next_action_at <= now()
         and l.archived_at is null and l.unsubscribed_at is null
         and l.agent_mode != 'off'
@@ -1797,16 +1801,19 @@ export async function sweepOutreach(sql: Sql): Promise<number> {
       limit 20
       for update skip locked
     `;
-    for (const { id } of due) {
-      // params.auto marks the run as automation-queued — a fresh inbound
-      // cancels it (ingestInbound); staff-triggered runs carry none. insertRun
-      // also applies the lifetime cost cap — a capped lead returns null and
-      // KEEPS its due action (a staff-scheduled follow-up survives the cap;
-      // claimRun parks it anyway, so no run executes over budget).
+    for (const { id, next_action_source } of due) {
+      // params.auto marks automation-queued outreach — a fresh inbound
+      // cancels it (ingestInbound). The marker mirrors the action's provenance:
+      // cadence/agent-scheduled work is the automation's own and dies on a
+      // reply; a STAFF-scheduled follow-up carries no marker — an explicit
+      // staff decision outranks the reply, like every staff-triggered run.
+      // insertRun also applies the lifetime cost cap — a capped lead returns
+      // null and KEEPS its due action (claimRun parks it anyway, so no run
+      // executes over budget).
       const runId = await insertRun(tx, {
         kind: 'outreach',
         leadId: id,
-        params: { auto: 'cadence' },
+        params: next_action_source === 'staff' ? {} : { auto: next_action_source },
       });
       if (runId) {
         queuedIds.push(runId);
