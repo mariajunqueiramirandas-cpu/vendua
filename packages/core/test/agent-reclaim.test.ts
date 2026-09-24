@@ -993,10 +993,10 @@ dbDescribe('worker robustness (db)', () => {
     await sql`delete from agent_runs where status = 'queued'`;
     const runs: Record<string, string> = {};
     for (const [k, id] of Object.entries({ archived, unsub, paused, off, live })) {
-      runs[k] = await enqueueRun(sql, { kind: 'outreach', leadId: id });
+      runs[k] = (await enqueueRun(sql, { kind: 'outreach', leadId: id }))!;
     }
     // a 'running' run on an archived lead is mid-flight — not the sweep's
-    const running = await enqueueRun(sql, { kind: 'outreach', leadId: archived });
+    const running = (await enqueueRun(sql, { kind: 'outreach', leadId: archived }))!;
     await sql`update agent_runs set status = 'running', started_at = now(), alive_at = now(),
       claim_token = 'tok' where id = ${running}`;
     await drain(sql, 0);
