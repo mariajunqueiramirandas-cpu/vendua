@@ -81,7 +81,7 @@ export async function ingestInbound(
   // the staff pause toggle on `lead_threads` — so a suppression committed
   // between the message insert and now is seen here instead of stranding a
   // queued reply on a suppressed thread/lead.
-  const enqueued = await controlTx(sql, async (tx) => {
+  const { runId, coalescedId, canceledIds } = await controlTx(sql, async (tx) => {
     const gateRows = await tx<ReplyGate[]>`
       select t.agent_enabled, l.agent_mode, l.unsubscribed_at, l.archived_at
       from lead_threads t join leads l on l.id = t.lead_id
@@ -98,12 +98,16 @@ export async function ingestInbound(
     // its draft more right, and canceling it would orphan the rejected
     // draft with no replacement. Runs under the l,t lock — claimRun's lead
     // revalidation can't slip a row through while we hold it.
-    await tx`
+    // The ids come back so post-commit run.update emissions refresh the
+    // Runs view — without them canceled rows keep showing as 'queued'.
+    const canceled = await tx<{ id: string }[]>`
       update agent_runs
       set status = 'canceled', error = 'lead respondeu', finished_at = now()
       where lead_id = ${res.leadId} and kind = 'outreach' and status = 'queued'
         and params->>'auto' is not null and params->>'auto' <> 'regenerate'
+      returning id
     `;
+    const canceledIds = canceled.map((c) => c.id);
     const gate = gateRows[0];
 
     if (
@@ -113,7 +117,7 @@ export async function ingestInbound(
       gate.unsubscribed_at ||
       gate.archived_at
     ) {
-      return null;
+      return { runId: null, coalescedId: null, canceledIds };
     }
     // Burst coalescing: a still-queued reply reads the freshest thread
     // state at claim anyway, so one parked run covers every message that
@@ -132,7 +136,7 @@ export async function ingestInbound(
         and params->>'origin' = 'inbound'
       limit 1
     `;
-    if (parked.length) return { id: parked[0]!.id, coalesced: true };
+    if (parked.length) return { runId: null, coalescedId: parked[0]!.id, canceledIds };
     // null = the lifetime cost cap refused the run — nothing queued to
     // announce or kick.
     const id = await insertRun(tx, {
@@ -144,23 +148,25 @@ export async function ingestInbound(
         ? { runAt: new Date(Date.now() + inboundReplyDelayMin * 60_000) }
         : {}),
     });
-    return id ? { id, coalesced: false } : null;
+    return { runId: id, coalescedId: null, canceledIds };
   });
-  if (enqueued) {
+  for (const id of canceledIds) emitControlEvent('run.update', id);
+  const enqueuedId = runId ?? coalescedId;
+  if (enqueuedId) {
     // The latest message earns its own quiet period: slide the parked run
     // forward to now+delay — done OUTSIDE the l,t tx because claimRun locks
     // run→thread while the gate holds thread→run; a run write there can
     // deadlock. The status/run_at guards keep it safe and narrow: an
     // already-claimed or already-overdue reply fires as-is, delay=0 needs
     // no write at all.
-    if (enqueued.coalesced && inboundReplyDelayMin > 0) {
+    if (coalescedId && inboundReplyDelayMin > 0) {
       await sql`
         update agent_runs
         set run_at = greatest(run_at, ${new Date(Date.now() + inboundReplyDelayMin * 60_000)})
-        where id = ${enqueued.id} and status = 'queued' and run_at > now()
+        where id = ${coalescedId} and status = 'queued' and run_at > now()
       `;
     }
-    emitControlEvent('run.update', enqueued.id);
+    emitControlEvent('run.update', enqueuedId);
     // Kick the queue now — don't wait up to the poll interval for a reply
     // (a delayed run_at is simply not due yet; the worker tick picks it up).
     void drain(sql).catch((e) => agentLog.error({ err: e }, 'drain failed'));

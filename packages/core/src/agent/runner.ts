@@ -21,6 +21,7 @@ import { estimateModelCostUsd, providerFor, type AgentMessage, type ToolCall } f
 import { buildSystemPrompt } from './prompts.ts';
 import { executeTool, toolsFor, bookDigest, type BookEntry, type ToolContext } from './tools.ts';
 import { MonidBudget } from './channels/monid.ts';
+import { pageKey } from './channels/discovery.ts';
 import { dispatchMessage } from './send.ts';
 import { channelAvailabilityTx, whatsappReadyTx } from './guardrails.ts';
 import { bookingLinkForRunner, sweepMeetingReminders } from '../modules/meetings.ts';
@@ -81,23 +82,28 @@ interface RunRow {
  *  the evaluation). The card is flagged once — a system activity plus the
  *  same '[humano] <reason>' task request_human writes — so staff sees why
  *  the agent went quiet and can raise the cap or retire the lead. */
-async function leadUnderCostCapTx(tx: Sql, leadId: string): Promise<boolean> {
+type CapVerdict = 'under' | 'flagged' | 'already' | 'contended';
+
+/** 'under' admits the run; the rest refuse it. Only 'flagged' means THIS
+ *  call wrote the flag + staff task — 'already' saw the flag committed at
+ *  this level, 'contended' lost the advisory race to another flag writer. */
+async function leadUnderCostCapTx(tx: Sql, leadId: string): Promise<CapVerdict> {
   const g = await getSettingTx<Partial<Guardrails>>(tx, 'guardrails', {});
   const capUsd = g.leadLifetimeCostCapUsd ?? DEFAULT_GUARDRAILS.leadLifetimeCostCapUsd;
-  if (capUsd <= 0) return true;
+  if (capUsd <= 0) return 'under';
   const spent = (
     await tx<{ cents: number }[]>`
       select coalesce(sum(cost_cents), 0)::int as cents
       from agent_runs where lead_id = ${leadId}
     `
   )[0]!.cents;
-  if (spent < capCentsOf(g)) return true;
+  if (spent < capCentsOf(g)) return 'under';
   // First-flag decisions serialize on a try-advisory — never waits, so no
   // deadlock: a loser refuses its run while the winner writes the flag.
   const got = await tx<{ got: boolean }[]>`
     select pg_try_advisory_xact_lock(hashtext(${'cap:' + leadId})) as got
   `;
-  if (!got[0]!.got) return false;
+  if (!got[0]!.got) return 'contended';
   // Dedupe is per cap LEVEL — after staff raises the cap, hitting the new
   // ceiling flags again; re-crossing the same level doesn't re-alert.
   const flagged = await tx`
@@ -106,24 +112,22 @@ async function leadUnderCostCapTx(tx: Sql, leadId: string): Promise<boolean> {
       and (meta->>'capUsd')::numeric = ${capUsd}
     limit 1
   `;
-  if (!flagged[0]) {
-    const name =
-      (await tx<{ name: string }[]>`select name from leads where id = ${leadId}`)[0]?.name ??
-      leadId;
-    await tx`
-      insert into lead_activities (lead_id, kind, body, meta, created_by)
-      values (${leadId}, 'system',
-              ${`custo acumulado do agente atingiu o teto (US$ ${capUsd}) — novas runs suspensas`},
-              ${tx.json({ type: 'cost-cap', capUsd, spentCents: spent } as never)}, 'system')
-    `;
-    await tx`
-      insert into lead_tasks (lead_id, title, due_at, created_by)
-      values (${leadId},
-              ${`[humano] ${name}: custo do agente ≥ US$ ${capUsd} — suba o teto ou encerre a automação`.slice(0, 300)},
-              null, 'agent')
-    `;
-  }
-  return false;
+  if (flagged[0]) return 'already';
+  const name =
+    (await tx<{ name: string }[]>`select name from leads where id = ${leadId}`)[0]?.name ?? leadId;
+  await tx`
+    insert into lead_activities (lead_id, kind, body, meta, created_by)
+    values (${leadId}, 'system',
+            ${`custo acumulado do agente atingiu o teto (US$ ${capUsd}) — novas runs suspensas`},
+            ${tx.json({ type: 'cost-cap', capUsd, spentCents: spent } as never)}, 'system')
+  `;
+  await tx`
+    insert into lead_tasks (lead_id, title, due_at, created_by)
+    values (${leadId},
+            ${`[humano] ${name}: custo do agente ≥ US$ ${capUsd} — suba o teto ou encerre a automação`.slice(0, 300)},
+            null, 'agent')
+  `;
+  return 'flagged';
 }
 
 /** Transaction-local insert — call inside an existing tx (e.g. claimControl's)
@@ -141,8 +145,17 @@ export async function insertRun(
      *  (guardrails-configured pacing); null = claimable immediately. */
     runAt?: Date | null;
   },
+  /** Out-box for tx-owning callers: set when a refusal wrote a FRESH cap
+   *  flag, so they can emit lead.change post-commit for the task refresh. */
+  cap?: { flagged?: boolean },
 ): Promise<string | null> {
-  if (input.leadId && !(await leadUnderCostCapTx(tx, input.leadId))) return null;
+  if (input.leadId) {
+    const verdict = await leadUnderCostCapTx(tx, input.leadId);
+    if (verdict !== 'under') {
+      if (cap) cap.flagged = verdict === 'flagged';
+      return null;
+    }
+  }
   const row = (
     await tx<{ id: string }[]>`
       insert into agent_runs (kind, lead_id, thread_id, params, run_at)
@@ -163,8 +176,14 @@ export async function enqueueRun(
     params?: Record<string, unknown>;
   },
 ): Promise<string | null> {
-  const id = await controlTx(sql, (tx) => insertRun(tx, input));
+  const { id, capFlagged } = await controlTx(sql, async (tx) => {
+    const cap: { flagged?: boolean } = {};
+    return { id: await insertRun(tx, input, cap), capFlagged: cap.flagged === true };
+  });
   if (id) emitControlEvent('run.update', id);
+  // A fresh flag committed a [humano] task — emit lead.change (unscoped;
+  // the coalescer drops middle refs on bursts) or Tasks stays stale.
+  if (capFlagged) emitControlEvent('lead.change');
   return id;
 }
 
@@ -188,9 +207,12 @@ export async function flagCappedLeads(sql: Sql, limit = 200): Promise<number> {
     // must flag or it stays parked with no staff task. A lead whose flag
     // write loses the try-advisory is SKIPPED for the rest of this sweep —
     // the contender holding its lock is inside its own leadUnderCostCapTx
-    // and flags the lead itself — so contention can't stall the pass.
+    // and flags the lead itself — so contention can't stall the pass. An
+    // 'under' verdict (cap raised mid-sweep) is excluded the same way —
+    // the stale batch threshold would otherwise re-select it forever.
     const fresh: string[] = [];
     const contended: string[] = [];
+    const excluded: string[] = [];
     for (;;) {
       const capped = await tx<{ lead_id: string }[]>`
         select x.lead_id
@@ -206,32 +228,21 @@ export async function flagCappedLeads(sql: Sql, limit = 200): Promise<number> {
               and a.meta->>'type' = 'cost-cap'
               and (a.meta->>'capUsd')::numeric = ${capUsd}
           )
-          and not (x.lead_id = any(${contended}::uuid[]))
+          and not (x.lead_id = any(${excluded}::uuid[]))
         limit ${limit}
       `;
       if (!capped.length) break;
       for (const { lead_id } of capped) {
-        const exists = (
-          await tx`
-            select 1 from lead_activities
-            where lead_id = ${lead_id} and kind = 'system' and meta->>'type' = 'cost-cap'
-              and (meta->>'capUsd')::numeric = ${capUsd}
-            limit 1
-          `
-        )[0];
-        // A flag committed since the batch select isn't ours — don't count it.
-        if (exists) continue;
-        await leadUnderCostCapTx(tx, lead_id);
-        const flagged = (
-          await tx`
-            select 1 from lead_activities
-            where lead_id = ${lead_id} and kind = 'system' and meta->>'type' = 'cost-cap'
-              and (meta->>'capUsd')::numeric = ${capUsd}
-            limit 1
-          `
-        )[0];
-        if (flagged) fresh.push(lead_id);
-        else contended.push(lead_id);
+        const verdict = await leadUnderCostCapTx(tx, lead_id);
+        if (verdict === 'flagged') fresh.push(lead_id);
+        else if (verdict === 'contended') contended.push(lead_id);
+        // 'under' means the cap ROSE mid-sweep (each statement re-reads
+        // committed settings; the batch threshold is the stale one) —
+        // exclude it like a contended lead or every later batch re-selects
+        // it forever. Only 'contended' earns the post-commit retry: an
+        // 'under' lead needs nothing. 'already' drops out of the next
+        // batch's not-exists on its own.
+        if (verdict === 'contended' || verdict === 'under') excluded.push(lead_id);
       }
     }
     return { fresh, contended };
@@ -250,26 +261,8 @@ export async function flagCappedLeads(sql: Sql, limit = 200): Promise<number> {
       const state = await controlTx(sql, async (tx) => {
         const g = await getSettingTx<Partial<Guardrails>>(tx, 'guardrails', {});
         if (capCentsOf(g) <= 0) return 'under';
-        const capUsd = g.leadLifetimeCostCapUsd ?? DEFAULT_GUARDRAILS.leadLifetimeCostCapUsd;
-        const exists = (
-          await tx`
-            select 1 from lead_activities
-            where lead_id = ${leadId} and kind = 'system' and meta->>'type' = 'cost-cap'
-              and (meta->>'capUsd')::numeric = ${capUsd}
-            limit 1
-          `
-        )[0];
-        if (exists) return 'already';
-        if (await leadUnderCostCapTx(tx, leadId)) return 'under';
-        const flagged = (
-          await tx`
-            select 1 from lead_activities
-            where lead_id = ${leadId} and kind = 'system' and meta->>'type' = 'cost-cap'
-              and (meta->>'capUsd')::numeric = ${capUsd}
-            limit 1
-          `
-        )[0];
-        return flagged ? 'flagged' : 'blocked';
+        const verdict = await leadUnderCostCapTx(tx, leadId);
+        return verdict === 'contended' ? 'blocked' : verdict;
       });
       if (state !== 'blocked') {
         if (state === 'flagged') fresh.push(leadId);
@@ -289,6 +282,7 @@ export async function flagCappedLeads(sql: Sql, limit = 200): Promise<number> {
 }
 
 export async function claimRun(sql: Sql): Promise<RunRow | null> {
+  const capFlagged: string[] = [];
   const run = await controlTx(sql, async (tx) => {
     // Staff/founder numbers never run — ingest already refuses to mint
     // them, this covers leads created before the list existed.
@@ -426,7 +420,9 @@ export async function claimRun(sql: Sql): Promise<RunRow | null> {
         // was under budget must not sail past it — parked like the other
         // suppressions so raising the cap resumes the queued work. The lead
         // row lock above serializes this with same-lead claim decisions.
-        if (!(await leadUnderCostCapTx(tx, run.lead_id))) {
+        const capVerdict = await leadUnderCostCapTx(tx, run.lead_id);
+        if (capVerdict !== 'under') {
+          if (capVerdict === 'flagged') capFlagged.push(run.lead_id);
           rejected.push(run.id);
           continue;
         }
@@ -467,6 +463,9 @@ export async function claimRun(sql: Sql): Promise<RunRow | null> {
     return null;
   });
   if (run) emitControlEvent('run.update', run.id);
+  // Claim-time refusals commit fresh flags in the same tx — the task
+  // refresh rides lead.change, unscoped like the other flag emitters.
+  if (capFlagged.length) emitControlEvent('lead.change');
   return run;
 }
 
@@ -482,7 +481,7 @@ async function finishRun(
     error?: string;
   },
 ): Promise<boolean> {
-  const rows = await controlTx(sql, async (tx) => {
+  const out = await controlTx(sql, async (tx) => {
     const updated = await tx<{ id: string; lead_id: string | null; kind: RunRow['kind'] }[]>`
     update agent_runs set
       status = ${result.status},
@@ -514,18 +513,26 @@ async function finishRun(
     // The run that CROSSES the cap is where the alert must land — queued
     // siblings are scan-excluded and never reach the claim check, so this
     // is the only flag write that covers "spent past the ceiling".
-    if (r?.lead_id) await leadUnderCostCapTx(tx, r.lead_id);
-    return updated;
+    // A SUCCESSFUL crossing flags too — the verdict distinguishes "we
+    // wrote the flag" from "it already existed", which the post-commit
+    // emit needs.
+    const cap = r?.lead_id ? await leadUnderCostCapTx(tx, r.lead_id) : 'under';
+    return { updated, cap };
   });
-  if (rows.length) {
+  if (out.updated.length) {
     emitControlEvent('run.update', run.id);
     // The [humano] task lands in the tx — the task list/badge refresh on
-    // lead.change, so mirror the event a real lead update would emit.
-    const r = rows[0];
-    if (r?.lead_id && result.status === 'failed')
-      emitControlEvent('lead.change', r.lead_id ?? undefined);
+    // lead.change, so mirror the event a real lead update would emit. A
+    // fresh cap flag writes the same kind of task — emit on that too, or
+    // open Tasks views stay stale on a successful crossing. Fresh flags go
+    // UNSCOPED: the console coalesces a burst into one pending event with a
+    // single ref, so scoped emits would strand the middle leads' refreshes
+    // (the same reason flagCappedLeads emits bare).
+    const r = out.updated[0];
+    if (r?.lead_id && (result.status === 'failed' || out.cap === 'flagged'))
+      emitControlEvent('lead.change', out.cap === 'flagged' ? undefined : r.lead_id);
   }
-  return rows.length > 0;
+  return out.updated.length > 0;
 }
 
 async function contextFor(
@@ -818,6 +825,9 @@ export interface JournalReplay {
   /** Reply's read_pages spend carries over — the cap is per RUN, not per
    *  attempt, or a reclaim would hand back a fresh budget. */
   pageReads: number;
+  /** Pages the journal already fetched — a reread after recovery hits the
+   *  rebuilt cache instead of spending against the cap twice. */
+  pageCache: Map<string, Promise<unknown>>;
 }
 
 /** Replay a reclaimed run's journal into live conversation + harness state.
@@ -836,6 +846,7 @@ export function replayJournal(prior: unknown[]): JournalReplay {
     seenContacts: new Set(),
     plan: null,
     pageReads: 0,
+    pageCache: new Map(),
   };
   for (const s of prior) {
     if ((s as { type?: string } | null)?.type === 'model') replay.baseStep++;
@@ -891,16 +902,24 @@ export function replayJournal(prior: unknown[]): JournalReplay {
     if (t?.type !== 'tool') continue;
     bankOut(t.out);
     if (t.name === 'read_pages') {
-      // The journaled marker is authoritative: the cap charges fetches, not
-      // calls, so only an entry recorded as spent counts (a cached repeat
-      // doesn't). Entries from before the marker — an in-flight run
-      // reclaimed after a deploy — fall back to excluding the two
-      // pre-check rejections (REPEAT suppression; a malformed 'needs urls'
-      // call), which never incremented the counter; everything else,
-      // including a pending/out-less entry from a crash mid-execution,
-      // counted as a spend.
-      const spent = (t as { readSpent?: boolean }).readSpent;
-      if (spent === true) {
+      // The journaled marker is authoritative: it's the fetch spend the
+      // call charged (0 for a fully-cached read — the cap prices fetches,
+      // not calls). Current code stamps readSpent: 0 at journal time and
+      // increments it per reservation, so a dead pending entry carries
+      // its real spend — and one stamped 0 provably died before
+      // validation. Markerless entries are pre-marker legacy journals:
+      // completed calls count one spend (that era charged per call), and
+      // a still-pending/out-less entry reserves one too — the legacy
+      // runner may have died mid-fetch, and whether its fetch issued is
+      // unknowable from the journal; reserving is the conservative side
+      // for a spend cap (it can only under-fetch recovery, never breach
+      // the budget the entry's run was charged against). The two
+      // pre-check rejections (REPEAT suppression; a malformed 'needs
+      // urls' call) never reached the counter.
+      const spent = (t as { readSpent?: number | boolean }).readSpent;
+      if (typeof spent === 'number') {
+        replay.pageReads += spent;
+      } else if (spent === true) {
         replay.pageReads++;
       } else if (spent === undefined) {
         const e = (t.out as { error?: unknown } | null)?.error;
@@ -908,6 +927,17 @@ export function replayJournal(prior: unknown[]): JournalReplay {
           typeof e === 'string' &&
           (e.startsWith('REPEAT') || e.startsWith('read_pages needs urls'));
         if (!preCheck) replay.pageReads++;
+      }
+      // Re-bank fetched pages under both request and final url — a
+      // recovered run's reread then hits the rebuilt cache instead of
+      // paying for a page the run already holds.
+      const ro = t.out as { pages?: { url?: unknown; finalUrl?: unknown }[] } | null;
+      for (const pg of ro?.pages ?? []) {
+        const rec = Promise.resolve({ page: pg });
+        for (const u of [pg.url, pg.finalUrl]) {
+          const k = typeof u === 'string' ? pageKey(u) : null;
+          if (k && !replay.pageCache.has(k)) replay.pageCache.set(k, rec);
+        }
       }
     }
     const p = t.out as { stored?: boolean; plan?: unknown } | null;
@@ -1328,7 +1358,7 @@ export async function runOnce(sql: Sql): Promise<boolean> {
         run.params.channel === 'whatsapp' || run.params.channel === 'email'
           ? run.params.channel
           : null,
-      pageCache: new Map(),
+      pageCache: replay.pageCache,
       book: new Map(),
       plan: null,
       seenContacts: new Set(),
@@ -1633,7 +1663,7 @@ export async function runOnce(sql: Sql): Promise<boolean> {
             callId: string;
             step: number;
             pending?: boolean;
-            readSpent?: boolean;
+            readSpent?: number;
             out?: unknown;
           } = {
             type: 'tool',
@@ -1643,6 +1673,11 @@ export async function runOnce(sql: Sql): Promise<boolean> {
             step: ctx.step,
             pending: true,
           };
+          // read_pages carries its spend marker from birth — 0 until a
+          // reservation stamps it. A markerless entry in a replayed
+          // journal can therefore only be a pre-marker legacy read, which
+          // replay counts conservatively (that era charged per call).
+          if (call.name === 'read_pages') entry.readSpent = 0;
           steps.push(entry);
           await persist();
           const sig = JSON.stringify([call.name, call.args ?? {}]);
@@ -1650,6 +1685,18 @@ export async function runOnce(sql: Sql): Promise<boolean> {
           const suppress =
             prev?.ok === true && (!READ_TOOLS.has(call.name) || prev.v === stateVersion);
           const readsBefore = ctx.pageReads;
+          // Let a read_pages call stamp each fetch reservation onto its
+          // pending journal entry the moment it validates — a worker that
+          // dies mid-batch leaves the real spend persisted, and an entry
+          // without one provably never reached validation.
+          if (call.name === 'read_pages') {
+            ctx.markReadSpent = async (delta: number) => {
+              entry.readSpent = (entry.readSpent ?? 0) + delta;
+              await persist();
+            };
+          } else {
+            delete ctx.markReadSpent;
+          }
           let out: unknown;
           if (suppress) {
             out = {
@@ -1666,7 +1713,7 @@ export async function runOnce(sql: Sql): Promise<boolean> {
           }
           // Journal whether the call spent a read: the cap charges fetches,
           // not calls, so a cached read_pages entry must not count on replay.
-          if (call.name === 'read_pages') entry.readSpent = ctx.pageReads > readsBefore;
+          if (call.name === 'read_pages') entry.readSpent = ctx.pageReads - readsBefore;
           const res_ = out as {
             error?: unknown;
             blocked?: unknown;
@@ -2060,6 +2107,7 @@ export async function sweepStrategist(sql: Sql): Promise<boolean> {
 /** Periodic sweep: leads due for a follow-up get an outreach run. */
 export async function sweepOutreach(sql: Sql): Promise<number> {
   const queuedIds: string[] = [];
+  const capFlagged: string[] = [];
   const fired = await controlTx(sql, async (tx) => {
     const g = await getSettingTx<Partial<Guardrails>>(tx, 'guardrails', {});
     const capCents = capCentsOf(g);
@@ -2096,11 +2144,17 @@ export async function sweepOutreach(sql: Sql): Promise<number> {
       // every staff-triggered run. insertRun also applies the lifetime cost
       // cap — a capped lead returns null and KEEPS its due action (claimRun
       // parks it anyway, so no run executes over budget).
-      const runId = await insertRun(tx, {
-        kind: 'outreach',
-        leadId: id,
-        params: next_action_source === 'staff' ? {} : { auto: next_action_source },
-      });
+      const cap: { flagged?: boolean } = {};
+      const runId = await insertRun(
+        tx,
+        {
+          kind: 'outreach',
+          leadId: id,
+          params: next_action_source === 'staff' ? {} : { auto: next_action_source },
+        },
+        cap,
+      );
+      if (cap.flagged) capFlagged.push(id);
       if (runId) {
         queuedIds.push(runId);
         await tx`update leads set next_action_at = null, next_action_source = null where id = ${id}`;
@@ -2109,5 +2163,6 @@ export async function sweepOutreach(sql: Sql): Promise<number> {
     return queuedIds.length;
   });
   for (const id of queuedIds) emitControlEvent('run.update', id);
+  if (capFlagged.length) emitControlEvent('lead.change');
   return fired;
 }
