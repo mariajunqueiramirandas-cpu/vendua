@@ -1532,12 +1532,13 @@ export async function runOnce(sql: Sql): Promise<boolean> {
       // post-commit pass flips 'running' ones SKIP-LOCKED — a row locked
       // mid-tool-call escapes that pass and nothing revisits it. The
       // marker the cancel keys on is the committed LIVE inbound itself:
-      // one newer than this attempt's claim means the lead already wrote —
-      // stop exactly like the API cancel (fenced flip → lost → unwind →
-      // persistAborted journals the trajectory). Historical imports are
-      // excluded: they store the provider's sentAt as created_at, so a
-      // re-imported old message (or a skewed provider clock) must not
-      // cancel live outreach — the same rule the ingest gate applies.
+      // one ingested after this attempt's claim means the lead already
+      // wrote — stop exactly like the API cancel (fenced flip → lost →
+      // unwind → persistAborted journals the trajectory). The comparison
+      // runs on received_at (server ingestion time), not created_at:
+      // a delayed webhook or lagging provider clock can stamp a genuinely
+      // new inbound before the claim time and must still cancel.
+      // Historical imports stay excluded — context, not a live reply.
       const autoSrc = (run.params as { auto?: string } | null)?.auto;
       if (!lost && run.kind === 'outreach' && autoSrc != null && autoSrc !== 'regenerate') {
         const replied = await controlTx(
@@ -1546,7 +1547,7 @@ export async function runOnce(sql: Sql): Promise<boolean> {
             select 1 from lead_messages m
             join lead_threads t on t.id = m.thread_id
             where t.lead_id = ${run.lead_id} and m.direction = 'in' and not m.historical
-              and m.created_at > (select started_at from agent_runs where id = ${run.id})
+              and m.received_at > (select started_at from agent_runs where id = ${run.id})
             limit 1
           `,
         );
@@ -2151,6 +2152,11 @@ let draining = false;
  *  outreach sweep. Queue lives in Postgres, so queued runs survive reboots. */
 export function startAgentWorker(sql: Sql, intervalMs = 15_000) {
   if (workerTimer) return;
+  // Leads already over the cap before this deploy (or stranded by a
+  // direct-db spend write) park all queued work until flagged — the
+  // settings-write sweep can't reach them without a write. One boot pass
+  // flags+tasks them; the per-cap dedupe makes repeats silent.
+  void flagCappedLeads(sql).catch((e) => agentLog.error({ err: e }, 'boot cap flag failed'));
   workerTimer = setInterval(() => {
     if (draining) return;
     draining = true;
