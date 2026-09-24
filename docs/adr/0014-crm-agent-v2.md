@@ -44,11 +44,11 @@ JSON is camelCase.
 ```ts
 type PlaybookKind = 'triage' | 'reply' | 'outreach' | 'discovery' | 'strategist';
 type PlaybookOverride = {
-  enabled?: boolean;          // false → insertRun refuses new runs of this kind
-  stepBudget?: number;        // integer 1..60
-  model?: string | null;      // provider model id; null/absent = workspace llm default
-  instructions?: string;      // ≤ 4000 chars, appended to the system prompt
-  monidCapUsd?: number;       // 0..5, default paid-enrichment cap for the kind
+  enabled?: boolean; // false → insertRun refuses new runs of this kind
+  stepBudget?: number; // integer 1..60
+  model?: string | null; // provider model id; null/absent = workspace llm default
+  instructions?: string; // ≤ 4000 chars, appended to the system prompt
+  monidCapUsd?: number; // 0..5, default paid-enrichment cap for the kind
 };
 type AgentPlaybooksSetting = Partial<Record<PlaybookKind, PlaybookOverride>>;
 ```
@@ -74,12 +74,20 @@ type AgentAutonomySetting = {
 ```
 
 Lead explanation: `GET /control/v1/leads/:id/autonomy` →
+
 ```ts
-{ level: AutonomyLevel;                  // workspace level after lead overrides
-  canRun: boolean;                       // automatic runs allowed right now
+{
+  level: AutonomyLevel; // workspace level after lead overrides
+  canRun: boolean; // automatic runs allowed right now
   sendMode: 'auto' | 'draft' | 'blocked';
-  reasons: { code: string; message: string }[]; } // ordered, first = decisive
+  reasons: {
+    code: string;
+    message: string;
+  }
+  [];
+} // ordered, first = decisive
 ```
+
 (parent implements)
 
 ### Wakeups (parent implements table, sweep, `schedule` tool)
@@ -87,13 +95,20 @@ Lead explanation: `GET /control/v1/leads/:id/autonomy` →
 `GET /control/v1/agent/wakeups?leadId=&status=pending|fired|canceled&limit=`
 → `{ wakeups: Wakeup[] }`
 `POST /control/v1/agent/wakeups/:id/cancel` → `{ wakeup: Wakeup }`
+
 ```ts
 type Wakeup = {
-  id: string; leadId: string | null; leadName: string | null;
-  kind: PlaybookKind; at: string /* ISO */; focus: string;
+  id: string;
+  leadId: string | null;
+  leadName: string | null;
+  kind: PlaybookKind;
+  at: string /* ISO */;
+  focus: string;
   status: 'pending' | 'fired' | 'canceled';
-  createdBy: 'agent' | 'staff'; createdByRunId: string | null;
-  firedRunId: string | null; createdAt: string;
+  createdBy: 'agent' | 'staff';
+  createdByRunId: string | null;
+  firedRunId: string | null;
+  createdAt: string;
 };
 ```
 
@@ -104,24 +119,37 @@ type Wakeup = {
 `POST /control/v1/agent/memory` body `{ scope, segment?, content }` → `{ item }`
 `PATCH /control/v1/agent/memory/:id` body `{ content?, pinned? }` → `{ item }`
 `DELETE /control/v1/agent/memory/:id` → `{ ok: true }`
+
 ```ts
 type MemoryItem = {
-  id: string; scope: 'workspace' | 'segment' | 'debrief';
-  segment: string | null; content: string /* ≤500 */; pinned: boolean;
-  source: 'agent' | 'staff' | 'debrief'; sourceRunId: string | null;
-  uses: number; createdAt: string; updatedAt: string;
+  id: string;
+  scope: 'workspace' | 'segment' | 'debrief';
+  segment: string | null;
+  content: string /* ≤500 */;
+  pinned: boolean;
+  source: 'agent' | 'staff' | 'debrief';
+  sourceRunId: string | null;
+  uses: number;
+  createdAt: string;
+  updatedAt: string;
 };
 ```
+
 `GET /control/v1/leads/:id/facts` → `{ facts: LeadFact[] }`
 `PUT /control/v1/leads/:id/facts/:key` body `{ value, confidence? }` → `{ fact }`
 `DELETE /control/v1/leads/:id/facts/:key` → `{ ok: true }`
+
 ```ts
 type LeadFact = {
-  key: string /* snake_case ≤60 */; value: string /* ≤500 */;
-  confidence: number /* 0..1 */; source: 'agent' | 'staff';
-  sourceRunId: string | null; updatedAt: string;
+  key: string /* snake_case ≤60 */;
+  value: string /* ≤500 */;
+  confidence: number /* 0..1 */;
+  source: 'agent' | 'staff';
+  sourceRunId: string | null;
+  updatedAt: string;
 };
 ```
+
 Core module `modules/agent-memory.ts` exports (consumed by the runner/tools):
 `memoryForRunTx(tx, { segment?: string | null; limit?: number }) → Promise<string[]>`,
 `rememberTx(tx, { scope, segment?, content, source, sourceRunId? })`,
@@ -132,6 +160,7 @@ Core module `modules/agent-memory.ts` exports (consumed by the runner/tools):
 ### Metrics (delegated)
 
 `GET /control/v1/agent/metrics?days=7|30` →
+
 ```ts
 { window: { from: string; to: string };
   byKind: { kind: PlaybookKind; runs: number; done: number; failed: number;
