@@ -175,11 +175,11 @@ export async function enqueueRun(
  *  Called after a committed guardrails write; emits lead.change for leads
  *  that got a NEW flag so the task list refreshes at once. */
 export async function flagCappedLeads(sql: Sql, limit = 200): Promise<number> {
-  const fresh = await controlTx(sql, async (tx) => {
+  const { fresh, contended } = await controlTx(sql, async (tx) => {
     const g = await getSettingTx<Partial<Guardrails>>(tx, 'guardrails', {});
     const capUsd = g.leadLifetimeCostCapUsd ?? DEFAULT_GUARDRAILS.leadLifetimeCostCapUsd;
     const capCents = capCentsOf(g);
-    if (capCents <= 0) return [] as string[];
+    if (capCents <= 0) return { fresh: [] as string[], contended: [] as string[] };
     // Only UNFLAGGED-at-this-cap leads come back — flagging inside the same
     // tx makes each next batch's not-exists see this batch's flags. Without
     // the filter a window full of already-flagged leads would let every
@@ -224,8 +224,43 @@ export async function flagCappedLeads(sql: Sql, limit = 200): Promise<number> {
         else contended.push(lead_id);
       }
     }
-    return fresh;
+    return { fresh, contended };
   });
+  // Lock contention isn't proof of a flag at THIS cap — the holder may
+  // flag at an older level or roll back. Its tx is brief, so retry each
+  // skipped lead in fresh short txs after commit (our own advisory locks
+  // are now released): under-cap needs nothing, a flag at the CURRENT
+  // level is done, and only a still-blocked lock retries. A lead still
+  // contended after the attempts is logged — the next settings write or
+  // sweep re-picks it since it stays unflagged.
+  for (const leadId of contended) {
+    let done = false;
+    for (let attempt = 0; attempt < 5 && !done; attempt++) {
+      const state = await controlTx(sql, async (tx) => {
+        const g = await getSettingTx<Partial<Guardrails>>(tx, 'guardrails', {});
+        if (capCentsOf(g) <= 0) return 'under';
+        if (await leadUnderCostCapTx(tx, leadId)) return 'under';
+        const capUsd =
+          g.leadLifetimeCostCapUsd ?? DEFAULT_GUARDRAILS.leadLifetimeCostCapUsd;
+        const flagged = (
+          await tx`
+            select 1 from lead_activities
+            where lead_id = ${leadId} and kind = 'system' and meta->>'type' = 'cost-cap'
+              and (meta->>'capUsd')::numeric = ${capUsd}
+            limit 1
+          `
+        )[0];
+        return flagged ? 'flagged' : 'blocked';
+      });
+      if (state !== 'blocked') {
+        if (state === 'flagged') fresh.push(leadId);
+        done = true;
+      } else {
+        await new Promise((r) => setTimeout(r, 50 * (attempt + 1)));
+      }
+    }
+    if (!done) agentLog.warn({ leadId }, 'cost-cap flag retry exhausted — lead still lock-contended');
+  }
   // Unscoped: the console coalesces a burst of events into one pending
   // event and keeps a single ref — per-lead refs would drop intermediate
   // cards' refreshes; one bare event refreshes every open card + the badge.
