@@ -979,11 +979,11 @@ function MemoryPanel({
 
 // ---------- agenda (wakeups) ----------
 
-const WAKEUP_FILTERS: { key: string; label: string }[] = [
-  { key: 'pending', label: 'pendentes' },
-  { key: 'fired', label: 'disparados' },
-  { key: 'canceled', label: 'cancelados' },
-  { key: 'all', label: 'todos' },
+const WAKEUP_FILTERS: { key: string; label: string; empty: string }[] = [
+  { key: 'pending', label: 'pendentes', empty: 'nada agendado' },
+  { key: 'fired', label: 'disparados', empty: 'nada disparado' },
+  { key: 'canceled', label: 'cancelados', empty: 'nada cancelado' },
+  { key: 'all', label: 'todos', empty: 'nada por aqui' },
 ];
 
 function WakeupsPanel({ enabled, onError }: { enabled: boolean; onError: (text: string) => void }) {
@@ -1059,7 +1059,9 @@ function WakeupList({
   if (!items.length) {
     return (
       <div className="empty">
-        <span className="serif">{status === 'pending' ? 'nada agendado' : `nada ${status}`}</span>
+        <span className="serif">
+          {WAKEUP_FILTERS.find((f) => f.key === status)?.empty ?? 'nada por aqui'}
+        </span>
         <div>o agente marca retornos sozinho com a tool `schedule`</div>
       </div>
     );
