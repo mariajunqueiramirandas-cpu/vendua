@@ -369,11 +369,12 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('agent v2 (db)', () => {
     const prevBriefs = await sql<{ id: string }[]>`
       select id from discovery_briefs where created_by = 'strategist' and enabled
     `;
-    await sql`update agent_runs set cost_cents = 0 where kind = 'discovery' and cost_cents <> 0`;
-    await sql`update agent_runs set status = 'canceled'
-              where kind = 'discovery' and status in ('queued', 'running')`;
-    await sql`update discovery_briefs set enabled = false where created_by = 'strategist' and enabled`;
     try {
+      // Inside try so a mid-setup failure still runs the finally restore.
+      await sql`update agent_runs set cost_cents = 0 where kind = 'discovery' and cost_cents <> 0`;
+      await sql`update agent_runs set status = 'canceled'
+                where kind = 'discovery' and status in ('queued', 'running')`;
+      await sql`update discovery_briefs set enabled = false where created_by = 'strategist' and enabled`;
       await setSetting('agent_autonomy', { level: 'supervised', strategistAutoApproveUsd: 1000 });
       const out = (await executeTool(
         { ...mkCtx('strategist', '', 'f'), leadId: null },
@@ -574,12 +575,14 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('agent v2 (db)', () => {
         `
       ).map((r) => r.id),
     );
-    const preEnabled = new Set(
+    // Firing an ambient brief also advances its last_run_at (a canceled
+    // run doesn't roll the cadence back), so keep the stamp to restore.
+    const preEnabled = new Map(
       (
-        await sql<{ id: string }[]>`
-          select id from discovery_briefs where enabled
+        await sql<{ id: string; last_run_at: string | null }[]>`
+          select id, last_run_at from discovery_briefs where enabled
         `
-      ).map((r) => r.id),
+      ).map((r) => [r.id, r.last_run_at] as const),
     );
     try {
       // sweepBriefs gates on automationAllowedTx('discovery').
@@ -613,17 +616,15 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('agent v2 (db)', () => {
       if (spawned.length) {
         await sql`update agent_runs set status = 'canceled' where id in ${sql(spawned)}`;
       }
-      // Re-enable ambient briefs the sweep auto-paused (ours get deleted).
-      const nowEnabled = new Set(
-        (
-          await sql<{ id: string }[]>`
-            select id from discovery_briefs where enabled
-          `
-        ).map((r) => r.id),
-      );
-      const repaused = [...preEnabled].filter((id) => !nowEnabled.has(id));
-      if (repaused.length) {
-        await sql`update discovery_briefs set enabled = true where id in ${sql(repaused)}`;
+      // Re-enable ambient briefs the sweep auto-paused and roll their
+      // cadence stamp back (ours get deleted right after).
+      for (const [id, lastRunAt] of preEnabled) {
+        if (id === strat.id || id === staff.id) continue;
+        await sql`
+          update discovery_briefs
+          set enabled = true, last_run_at = ${lastRunAt}
+          where id = ${id} and (enabled = false or last_run_at is distinct from ${lastRunAt})
+        `;
       }
       await sql`delete from discovery_briefs where id in (${strat.id}, ${staff.id})`;
       await unpinPolicy(priorPolicy);
