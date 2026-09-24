@@ -1262,7 +1262,9 @@ dbDescribe('worker robustness (db)', () => {
             toolCalls: [
               {
                 name: 'read_pages',
-                args: { urls: ['https://a.example/1', 'https://a.example/2', 'https://a.example/3'] },
+                args: {
+                  urls: ['https://a.example/1', 'https://a.example/2', 'https://a.example/3'],
+                },
               },
             ],
           },
