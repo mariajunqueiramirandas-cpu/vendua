@@ -4,6 +4,7 @@ import { log } from '../platform/log.ts';
 import { claimControl, controlTx } from '../modules/control.ts';
 import { emitControlEvent } from '../modules/control-events.ts';
 import { insertRun } from './runner.ts';
+import { enqueueInboxTx } from './inbox.ts';
 import { automationAllowedTx } from './policy.ts';
 import type { PlaybookKind } from './tool-meta.ts';
 import { capCentsOf, getSettingTx, type Guardrails } from '../modules/integrations.ts';
@@ -225,9 +226,10 @@ export async function sweepWakeups(sql: Sql): Promise<number> {
     if (!(await automationAllowedTx(tx, 'outreach')).ok) return;
     const g = await getSettingTx<Partial<Guardrails>>(tx, 'guardrails', {});
     const capCents = capCentsOf(g);
-    // Busy and over-cap leads stay out of the 20-row window (same reason as
+    // Over-cap leads stay out of the 20-row window (same reason as
     // sweepOutreach): a parked prefix must not starve later due wakeups.
-    // The busy check is repeated under capfin below for the race.
+    // An already-active run is no longer "busy" — the fired wakeup mails
+    // its intent to it through agent_inbox instead of waiting it out.
     const due = await tx<
       { id: string; lead_id: string; focus: string; requested: boolean; created_by: string }[]
     >`
@@ -235,11 +237,6 @@ export async function sweepWakeups(sql: Sql): Promise<number> {
       join leads l on l.id = w.lead_id
       where w.status = 'pending' and w.at <= now()
         and l.agent_mode != 'off' and l.agent_paused_at is null
-        and not exists (
-          select 1 from agent_runs r
-          where r.lead_id = w.lead_id and r.kind = 'outreach'
-            and r.status in ('queued', 'running')
-        )
         and (${capCents} <= 0 or
           coalesce((select sum(x.cost_cents) from agent_runs x
                     where x.lead_id = w.lead_id), 0) < ${capCents})
@@ -252,32 +249,35 @@ export async function sweepWakeups(sql: Sql): Promise<number> {
         select pg_try_advisory_xact_lock(hashtext(${'capfin:' + w.lead_id})) as got
       `;
       if (!capFree[0]!.got) continue;
-      const busy = await tx`
-        select 1 from agent_runs
-        where lead_id = ${w.lead_id} and kind = 'outreach' and status in ('queued', 'running')
-        limit 1
-      `;
-      if (busy.length) continue;
       const cap: { flagged?: boolean } = {};
       // Agent self-schedules are automation ('auto' — a reply retires them);
       // lead-asked callbacks and staff wakeups are promises: unmarked.
       const promised = w.requested || w.created_by === 'staff';
+      const params: Record<string, unknown> = {
+        ...(promised ? {} : { auto: 'wakeup' }),
+        focus: `agendado por você: ${w.focus}`,
+        wakeupId: w.id,
+      };
       const runId = await insertRun(
         tx,
         {
           kind: 'outreach',
           leadId: w.lead_id,
-          params: {
-            ...(promised ? {} : { auto: 'wakeup' }),
-            focus: `agendado por você: ${w.focus}`,
-            wakeupId: w.id,
-          },
+          params,
         },
         cap,
       );
       if (cap.flagged) capFlagged = true;
       if (runId) {
         queuedIds.push(runId);
+        // A fired wakeup is mail for the lead's run — created now or
+        // already active, the item carries the focus into it (insertRun's
+        // conflict path returns the active run either way).
+        await enqueueInboxTx(tx, w.lead_id, 'wakeup', {
+          text: `agendado por você: ${w.focus}`,
+          requestedKind: 'outreach',
+          params,
+        });
         await tx`
           update agent_wakeups set status = 'fired', fired_run_id = ${runId}, updated_at = now()
           where id = ${w.id}

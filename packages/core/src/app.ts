@@ -132,6 +132,7 @@ import {
 import { BOOKING_PAGE } from './modules/booking-page.ts';
 import * as rooms from './modules/rooms.ts';
 import { capLockTx, drain, flagCappedLeads, insertRun } from './agent/runner.ts';
+import { enqueueInboxTx } from './agent/inbox.ts';
 import { ingestInbound } from './agent/inbound.ts';
 import { ingestResendEvent, svixHeaders, svixVerified } from './agent/channels/email-inbound.ts';
 import { LOADER_JS } from './loader.ts';
@@ -1102,13 +1103,22 @@ export function createApp({ sql, sessionSecret, controlSecret, autoDrain }: AppD
       }
       const pv = await playbookEnabledTx(tx, kind as PlaybookKind);
       if (!pv.ok) throw new HttpError(422, 'PLAYBOOK_DISABLED', pv.reason);
+      const params: Record<string, unknown> = {
+        ...((body.params as Record<string, unknown>) ?? {}),
+        origin: 'staff',
+      };
+      // Bound the params blob — it lands verbatim in agent_runs.params AND
+      // the inbox payload, so an unrestricted body would double-durable any
+      // size the caller sends.
+      if (JSON.stringify(params).length > 16_384)
+        throw new HttpError(422, 'PARAMS_TOO_LARGE', 'run params exceed 16 KiB');
       const runId = await insertRun(tx, {
         kind: kind as 'triage' | 'reply' | 'outreach' | 'discovery',
         leadId,
         ...(threadId ? { threadId } : {}),
         // origin stamps provenance — dedupe/audit distinguish a staff-queued
         // run from an auto inbound one even when params carry no overrides
-        params: { ...((body.params as Record<string, unknown>) ?? {}), origin: 'staff' },
+        params,
       });
       // A 422 body (not a throw): the claim tx COMMITS, so insertRun's
       // cost-cap flag stays on the card and the stored refusal replays
@@ -1125,6 +1135,15 @@ export function createApp({ sql, sessionSecret, controlSecret, autoDrain }: AppD
           } as never,
         };
       }
+      // The nudge is mail: when insertRun found the lead's already-active
+      // run (the 201 still reports that run's id) the item is what actually
+      // carries this intent into it — created or delivered, same audit.
+      await enqueueInboxTx(tx, leadId, 'staff', {
+        text: `a equipe pediu uma run '${kind}'${typeof params.focus === 'string' ? ` — ${params.focus}` : ''}`,
+        requestedKind: kind as PlaybookKind,
+        threadId: threadId ?? null,
+        params,
+      });
       return { status: 201, body: { runId } };
     });
     if (res.replayed) c.header('x-idempotent-replay', 'true');
@@ -1849,11 +1868,17 @@ export function createApp({ sql, sessionSecret, controlSecret, autoDrain }: AppD
       }
       const pv = await playbookEnabledTx(tx, kind as PlaybookKind);
       if (!pv.ok) throw new HttpError(422, 'PLAYBOOK_DISABLED', pv.reason);
+      const params: Record<string, unknown> = {
+        ...((body.params as Record<string, unknown>) ?? {}),
+        origin: 'staff',
+      };
+      if (JSON.stringify(params).length > 16_384)
+        throw new HttpError(422, 'PARAMS_TOO_LARGE', 'run params exceed 16 KiB');
       const runId = await insertRun(tx, {
         kind: kind as 'triage' | 'reply' | 'outreach' | 'discovery' | 'strategist',
         leadId: effLeadId,
         threadId,
-        params: { ...((body.params as Record<string, unknown>) ?? {}), origin: 'staff' },
+        params,
       });
       // Same cap refusal → error contract as /leads/:id/run (committed
       // claim — the flag survives and the refusal replays).
@@ -1868,6 +1893,17 @@ export function createApp({ sql, sessionSecret, controlSecret, autoDrain }: AppD
             },
           } as never,
         };
+      }
+      if (effLeadId) {
+        // Mail the nudge: a lead with an already-active run gets the staff
+        // intent delivered into it (insertRun's conflict path returned its
+        // id above); a fresh run just keeps the audit item beside its row.
+        await enqueueInboxTx(tx, effLeadId, 'staff', {
+          text: `a equipe pediu uma run '${kind}'${typeof params.focus === 'string' ? ` — ${params.focus}` : ''}`,
+          requestedKind: kind as PlaybookKind,
+          threadId: threadId ?? null,
+          params,
+        });
       }
       return { status: 201, body: { runId } };
     });
@@ -1957,30 +1993,31 @@ export function createApp({ sql, sessionSecret, controlSecret, autoDrain }: AppD
           skipped.push({ id, reason });
           continue;
         }
-        const running = (
-          await tx`
-            select 1 from agent_runs
-            where lead_id = ${id} and kind = 'outreach' and status in ('queued', 'running')
-            limit 1
-          `
-        )[0];
-        if (running) {
-          skipped.push({ id, reason: 'outreach already queued' });
-          continue;
-        }
         // null = lifetime cost cap refused the run — surface it like every
         // other ineligibility instead of counting a phantom enqueue. The
         // goal update stays AFTER the run insert: a refused lead must not
         // keep a goal every future lead-bound run would still read.
+        // A lead with an active run is no longer skipped: insertRun's
+        // conflict path returns its id and the goal mails to it through
+        // the inbox — one active run per lead, no second queue.
+        const params: Record<string, unknown> = {
+          goal,
+          ...(wantChannel ? { channel: wantChannel } : {}),
+        };
         const runId = await insertRun(tx, {
           kind: 'outreach',
           leadId: id,
-          params: { goal, ...(wantChannel ? { channel: wantChannel } : {}) },
+          params,
         });
         if (!runId) {
           skipped.push({ id, reason: 'lead over its agent cost cap' });
           continue;
         }
+        await enqueueInboxTx(tx, id, 'staff', {
+          text: `a equipe definiu a meta '${goal}'`,
+          requestedKind: 'outreach',
+          params,
+        });
         await tx`update leads set agent_goal = ${goal}, updated_at = now() where id = ${id}`;
         enqueued++;
       }

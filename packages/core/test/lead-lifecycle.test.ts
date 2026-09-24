@@ -381,20 +381,28 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('lead lifecycle (db)', () => {
       expect(await runsFor(leadId)).toHaveLength(0);
     });
 
-    test('a generic queued outreach does NOT block the regen — it lacks the regen params', async () => {
+    test('a generic queued outreach does NOT block the regen — the intent mails into it', async () => {
       await setup();
       const leadId = await controlTx(sql, (tx) =>
         insertLeadTx(tx, { name: 'Busy Lead', agent_mode: 'auto' }),
       ).then((r) => r.body.lead.id);
-      await controlTx(sql, (tx) => insertRun(tx, { kind: 'outreach', leadId }));
+      const generic = (await controlTx(sql, (tx) => insertRun(tx, { kind: 'outreach', leadId })))!;
       const messageId = await mkDraft(leadId, 'agent', 8);
       const res = await approveMessage(sql, messageId, 'staff', key('a3-active-run'));
       expect(res.body.stale).toBe(true);
+      // One active run per lead: the regen intent can't spawn a second row —
+      // it lands as an 'event' item the parked outreach drains at claim.
+      expect(res.body.runId).toBe(generic);
       const runs = await runsFor(leadId);
-      expect(runs).toHaveLength(2);
-      const regen = runs.find((r) => r.id === res.body.runId)!;
-      expect(regen.params.draftOnly).toBe(true);
-      expect(regen.params.auto).toBe('regenerate');
+      expect(runs).toHaveLength(1);
+      const items = await sql<{ payload: Record<string, unknown> }[]>`
+        select payload from agent_inbox
+        where lead_id = ${leadId} and kind = 'event' and consumed_at is null
+      `;
+      expect(items).toHaveLength(1);
+      expect(items[0]!.payload.auto).toBe('regenerate');
+      expect(items[0]!.payload.src).toBe(messageId);
+      expect((items[0]!.payload.params as Record<string, unknown>).draftOnly).toBe(true);
     });
 
     test('queued regen dedupes per source draft — other drafts spawn their own', async () => {
@@ -420,11 +428,21 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('lead lifecycle (db)', () => {
       const otherId = await mkDraft(leadId, 'agent', 8);
       const res2 = await approveMessage(sql, otherId, 'staff', key('a3-regen-other'));
       expect(res2.body.stale).toBe(true);
-      expect(res2.body.runId).not.toBe(existing);
-      expect(await runsFor(leadId)).toHaveLength(2);
+      // …but a regen still pending on another draft doesn't swallow this
+      // one under one-run-per-lead either — the distinct src earns its own
+      // regen ITEM inside the same queued run, which recomposes each draft.
+      expect(res2.body.runId).toBe(existing);
+      expect(await runsFor(leadId)).toHaveLength(1);
+      const items = await sql<{ payload: Record<string, unknown> }[]>`
+        select payload from agent_inbox
+        where lead_id = ${leadId} and kind = 'event' and consumed_at is null
+        order by created_at
+      `;
+      expect(items).toHaveLength(1);
+      expect(items[0]!.payload.src).toBe(otherId);
     });
 
-    test('claimRun serializes outreach per lead — a busy lead waits, others claim', async () => {
+    test('one active run per lead — a second insertRun reuses the first', async () => {
       await setup();
       // Earlier tests leave queued runs claimable — drain the slate so the
       // assertions below only see this test's rows.
@@ -439,22 +457,26 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('lead lifecycle (db)', () => {
       const mkRun = (leadId: string) =>
         controlTx(sql, async (tx) => (await insertRun(tx, { kind: 'outreach', leadId }))!);
       const a1 = await mkRun(leadA);
-      const a2 = await mkRun(leadA);
+      // The partial unique index makes a second active row for the same
+      // lead impossible — insertRun returns the live row's id instead of
+      // erroring, which is what "deliver into the existing run" keys on.
+      expect(await mkRun(leadA)).toBe(a1);
+      expect(await runsFor(leadA)).toHaveLength(1);
       const b1 = await mkRun(leadB);
       // claimRun orders by created_at and back-to-back txs can share a
       // millisecond — pin explicit offsets or the pick order is a coin toss.
-      await sql`update agent_runs set created_at = now() - interval '3 seconds' where id = ${a1}`;
-      await sql`update agent_runs set created_at = now() - interval '2 seconds' where id = ${b1}`;
-      await sql`update agent_runs set created_at = now() - interval '1 seconds' where id = ${a2}`;
-      // A's first run claims; A's second is gated by the durable 'running'
-      // owner; B's run is unaffected — a busy lead never starves the drain.
-      const ours = [a1, a2, b1];
+      await sql`update agent_runs set created_at = now() - interval '2 seconds' where id = ${a1}`;
+      await sql`update agent_runs set created_at = now() - interval '1 seconds' where id = ${b1}`;
+      const ours = [a1, b1];
       expect(await claimAmong(ours)).toBe(a1);
       expect(await claimAmong(ours)).toBe(b1);
       expect(await claimAmong(ours)).toBeNull();
+      // Once A's run leaves the active set, the NEXT insert lands a fresh
+      // row — "no active run → a run is created".
       await sql`update agent_runs set status = 'done', finished_at = now() where id in (${a1}, ${b1})`;
-      expect(await claimAmong(ours)).toBe(a2);
-      await sql`update agent_runs set status = 'done', finished_at = now() where id = ${a2}`;
+      const a2 = await mkRun(leadA);
+      expect(a2).not.toBe(a1);
+      expect(await claimAmong([a2])).toBe(a2);
     });
 
     test('a durably-blocked lead does not starve later runnable work', async () => {
@@ -1173,6 +1195,10 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('lead lifecycle (db)', () => {
       try {
         const leadId = await mkLead();
         expect(await controlTx(sql, (tx) => insertRun(tx, { kind: 'reply', leadId }))).toBeTruthy();
+        // The cap refusal binds a lead with NO active run — an active one
+        // owns the mail regardless (insertRun returns it before the cap
+        // check, since delivery into it costs nothing extra).
+        await sql`update agent_runs set status = 'done', finished_at = now() where lead_id = ${leadId}`;
         await sql`
           insert into agent_runs (kind, lead_id, status, cost_cents, finished_at)
           values ('reply', ${leadId}, 'done', 1, now())

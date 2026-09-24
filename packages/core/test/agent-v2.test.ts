@@ -670,11 +670,14 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('agent v2 (db)', () => {
       expect(p.autoOff).toBe(true);
       expect(p.disabledKinds).toEqual(['discovery']);
       const leadId = await mkLead('claim');
+      // One active run per lead — the staff row parks on a second lead or
+      // insertRun would deliver it into the auto run instead of inserting.
+      const staffLead = await mkLead('claim-staff');
       const auto = await controlTx(sql, (tx) =>
         insertRun(tx, { kind: 'triage', leadId, params: { auto: 'x' } }),
       );
       const staff = await controlTx(sql, (tx) =>
-        insertRun(tx, { kind: 'triage', leadId, params: { origin: 'staff' } }),
+        insertRun(tx, { kind: 'triage', leadId: staffLead, params: { origin: 'staff' } }),
       );
       const rows = await sql<{ id: string }[]>`
         select r.id from agent_runs r where r.id in (${auto!}, ${staff!})

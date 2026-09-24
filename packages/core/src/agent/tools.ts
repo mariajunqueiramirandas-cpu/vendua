@@ -96,6 +96,11 @@ export interface ToolContext {
   /** Staff-assist runs (params.draftOnly): send_message may only compose —
    *  a suggestion goes to the approvals queue, never on the wire. */
   draftOnly: boolean;
+  /** Playbook kinds this run may call tools as — starts as {runKind};
+   *  drained inbox mail adds its requestedKind so a lead's mid-run intent
+   *  (e.g. an opt-out arriving as 'reply' mail inside an outreach run)
+   *  stays servable. The dispatcher gate reads this, not just runKind. */
+  toolKinds?: ReadonlySet<string>;
 }
 
 /** One prospect in the agent's ledger — what it found and which moves it
@@ -621,8 +626,15 @@ export async function refuseOnFresherInboundTx(tx: Sql, ctx: ToolContext): Promi
     where t.lead_id = ${ctx.leadId} and m.direction = 'in' and not m.historical
       and m.received_at is not null
       and m.received_at > ${run.started_at}::timestamptz
+      and not exists (
+        select 1 from agent_inbox i
+        where i.consumed_by_run = ${ctx.runId}
+          and i.payload->>'messageId' = m.id::text
+      )
     limit 1
   `;
+  // Mail this run already drained doesn't refuse its answer — the obsolete-
+  // auto guard still bites on any inbound that arrived unhandled.
   return replied.length ? 'lead respondeu' : null;
 }
 
@@ -642,8 +654,12 @@ export async function executeTool(
 
   // toolsFor() only decides what the model is TOLD about — nothing stops it
   // emitting another name. Enforce the toolset here too, or a discovery run
-  // can emit send_message and reach the real dispatch path.
-  if (!toolAvailable(ctx.runKind, name) || !REGISTRY.some((t) => t.def.name === name)) {
+  // can emit send_message and reach the real dispatch path. Mail that
+  // drained mid-run widens the set through ctx.toolKinds (its requested
+  // kind joins) — the model only ever saw tools that union produces.
+  const kinds = ctx.toolKinds ?? new Set([ctx.runKind]);
+  const allowed = [...kinds].some((k) => toolAvailable(k, name));
+  if (!allowed || !REGISTRY.some((t) => t.def.name === name)) {
     return { error: `tool ${name} not available for ${ctx.runKind} runs` };
   }
 
@@ -1291,12 +1307,20 @@ export async function executeTool(
         await tx`select pg_advisory_xact_lock(hashtext(${`send:${leadId}`}))`;
         // Run-scoped dedupe: a run reclaimed after a mid-send crash re-executes
         // the whole conversation — the model may emit a different callId, so
-        // `key` can't catch it. The run's own prior dispatch can.
+        // `key` can't catch it. The run's own prior dispatch can. Scoped to
+        // the latest delivered mail batch: a drained inbox batch re-arms the
+        // run for exactly one answer — without it a run that already sent
+        // could never reply to mail it just read, and replay still can't
+        // double-send (the consumed_at stamp predates the prior dispatch).
         const already = await tx`
           select 1 from lead_messages m
           join lead_threads t on t.id = m.thread_id
           where t.lead_id = ${leadId} and m.agent_run_id = ${ctx.runId}
             and m.status in ('queued', 'sending', 'sent', 'delivered')
+            and m.created_at > coalesce(
+              (select max(i.consumed_at) from agent_inbox i
+               where i.consumed_by_run = ${ctx.runId}),
+              '-infinity'::timestamptz)
           limit 1
         `;
         if (already[0]) {
@@ -1732,6 +1756,12 @@ export async function executeTool(
           await tx`
             update agent_runs set status = 'canceled', finished_at = now(), error = 'descadastrado'
             where lead_id = ${leadId} and status = 'queued'
+          `;
+          // Pending mail dies with the opt-out too — delivered items are
+          // work the lead will never want served.
+          await tx`
+            update agent_inbox set consumed_at = now()
+            where lead_id = ${leadId} and consumed_at is null
           `;
           await tx`
             insert into lead_activities (lead_id, kind, body, created_by)
