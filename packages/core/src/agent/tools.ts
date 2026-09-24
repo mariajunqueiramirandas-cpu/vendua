@@ -1691,16 +1691,13 @@ export async function executeTool(
           // miss: cached under the pointer's key, error on failure.
           const key2 = pageKey(url);
           const p: Promise<PageResult> = resolveMapPointer(url, reserve)
-            .then(
-              (page): PageResult =>
-                page ? { page } : { page: null, error: 'map pointer did not resolve' },
+            .then((page): PageResult =>
+              page ? { page } : { page: null, error: 'map pointer did not resolve' },
             )
-            .catch(
-              (e): PageResult => ({
-                page: null,
-                error: e instanceof Error ? e.message : String(e),
-              }),
-            );
+            .catch((e): PageResult => ({
+              page: null,
+              error: e instanceof Error ? e.message : String(e),
+            }));
           missOut.set(url, p);
           if (key2) ctx.pageCache.set(key2, p);
           continue;
