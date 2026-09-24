@@ -30,6 +30,9 @@ import {
 } from './guardrails.ts';
 import { dispatchMessage } from './send.ts';
 import { whatsappRegistered } from './channels/whatsapp.ts';
+import { leadBoundArg, toolAvailable } from './tool-meta.ts';
+import { parseWakeupAt, scheduleWakeupTx } from './wakeups.ts';
+import { autonomyTx, automationAllowedTx } from './policy.ts';
 
 /**
  * agent/tools — the central tool registry (Hermes-style: one registry, gated
@@ -126,6 +129,7 @@ export function bookDigest(book: Map<string, BookEntry>): string {
  *  is free. */
 const REPLY_READ_PAGES_CAP = 2;
 
+const UUID_LIKE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const leadIdArg = { type: 'string', description: 'lead uuid' } as const;
 const LEAD_FIELDS = {
   businessName: { type: 'string' },
@@ -158,9 +162,8 @@ const LEAD_FIELDS = {
   intentReason: { type: 'string', description: 'one line: the intent signals observed' },
 } as const;
 
-const REGISTRY: { def: AgentTool; toolsets: string[] }[] = [
+const REGISTRY: { def: AgentTool }[] = [
   {
-    toolsets: ['triage', 'reply', 'outreach', 'discovery'],
     def: {
       name: 'search_leads',
       description:
@@ -176,7 +179,6 @@ const REGISTRY: { def: AgentTool; toolsets: string[] }[] = [
     },
   },
   {
-    toolsets: ['triage', 'reply', 'outreach', 'discovery'],
     def: {
       name: 'get_lead',
       description: 'Full lead profile: fields, tags, score, counters.',
@@ -184,7 +186,6 @@ const REGISTRY: { def: AgentTool; toolsets: string[] }[] = [
     },
   },
   {
-    toolsets: ['triage', 'discovery'],
     def: {
       name: 'create_lead',
       description:
@@ -210,7 +211,6 @@ const REGISTRY: { def: AgentTool; toolsets: string[] }[] = [
     },
   },
   {
-    toolsets: ['triage', 'reply', 'outreach', 'discovery'],
     def: {
       name: 'update_lead',
       description: 'Patch lead fields (contact info, tags, deal value, next action, goal).',
@@ -236,7 +236,6 @@ const REGISTRY: { def: AgentTool; toolsets: string[] }[] = [
     },
   },
   {
-    toolsets: ['triage', 'reply', 'outreach'],
     def: {
       name: 'set_state',
       description: 'Move a lead along the pipeline (writes state history).',
@@ -251,7 +250,6 @@ const REGISTRY: { def: AgentTool; toolsets: string[] }[] = [
     },
   },
   {
-    toolsets: ['triage', 'reply', 'outreach', 'discovery'],
     def: {
       name: 'add_note',
       description: 'Append a note to the lead timeline.',
@@ -263,7 +261,6 @@ const REGISTRY: { def: AgentTool; toolsets: string[] }[] = [
     },
   },
   {
-    toolsets: ['triage', 'reply', 'outreach'],
     def: {
       name: 'create_task',
       description: 'Create a follow-up task for staff or self.',
@@ -279,9 +276,28 @@ const REGISTRY: { def: AgentTool; toolsets: string[] }[] = [
     },
   },
   {
+    def: {
+      name: 'schedule',
+      description:
+        'Book your own next touch on this lead: at the given time an outreach run wakes up with this focus. One pending agenda item per lead — scheduling again replaces it. A new message from the lead cancels it unless requested=true (the lead asked for that date).',
+      parameters: {
+        type: 'object',
+        properties: {
+          leadId: leadIdArg,
+          at: { type: 'string', description: 'ISO-8601, ≥10 min and ≤90 days ahead' },
+          focus: { type: 'string', description: 'what that run must do and why (≤500 chars)' },
+          requested: {
+            type: 'boolean',
+            description: 'true only when the lead asked for this date',
+          },
+        },
+        required: ['leadId', 'at', 'focus'],
+      },
+    },
+  },
+  {
     // triage included: the first-contact draft IS triage's write-up — but
     // send_message stays out, so a new lead can never be sent unreviewed.
-    toolsets: ['triage', 'reply', 'outreach'],
     def: {
       name: 'draft_message',
       description:
@@ -299,7 +315,6 @@ const REGISTRY: { def: AgentTool; toolsets: string[] }[] = [
     },
   },
   {
-    toolsets: ['reply', 'outreach'],
     def: {
       name: 'send_message',
       description:
@@ -317,7 +332,6 @@ const REGISTRY: { def: AgentTool; toolsets: string[] }[] = [
     },
   },
   {
-    toolsets: ['triage', 'reply', 'outreach', 'discovery', 'strategist'],
     def: {
       name: 'remember',
       description:
@@ -330,7 +344,6 @@ const REGISTRY: { def: AgentTool; toolsets: string[] }[] = [
     },
   },
   {
-    toolsets: ['strategist'],
     def: {
       name: 'propose_brief',
       description:
@@ -353,7 +366,6 @@ const REGISTRY: { def: AgentTool; toolsets: string[] }[] = [
     },
   },
   {
-    toolsets: ['reply', 'outreach'],
     def: {
       name: 'request_human',
       description: 'Pause the agent on this thread and hand the lead to staff (creates a task).',
@@ -365,7 +377,6 @@ const REGISTRY: { def: AgentTool; toolsets: string[] }[] = [
     },
   },
   {
-    toolsets: ['reply'],
     def: {
       name: 'unsubscribe',
       description:
@@ -386,7 +397,6 @@ const REGISTRY: { def: AgentTool; toolsets: string[] }[] = [
     // anything — outreach carries that job on fresh cards, triage on manual
     // re-research. Reply keeps it as a fallback only: in a live conversation
     // asking beats searching.
-    toolsets: ['triage', 'reply', 'outreach', 'discovery'],
     def: {
       name: 'web_search',
       description:
@@ -405,7 +415,6 @@ const REGISTRY: { def: AgentTool; toolsets: string[] }[] = [
     // triage/outreach read deep (site/perfil do prospect). Reply gets it too
     // but capped (REPLY_READ_PAGES_CAP): a lead can send a link the agent
     // must read — a live conversation still can't afford a rabbit hole.
-    toolsets: ['triage', 'reply', 'outreach', 'discovery'],
     def: {
       name: 'read_pages',
       description:
@@ -425,7 +434,6 @@ const REGISTRY: { def: AgentTool; toolsets: string[] }[] = [
     },
   },
   {
-    toolsets: ['triage', 'reply', 'outreach', 'discovery'],
     def: {
       name: 'plan',
       description:
@@ -455,7 +463,6 @@ const REGISTRY: { def: AgentTool; toolsets: string[] }[] = [
     },
   },
   {
-    toolsets: ['discovery'],
     def: {
       name: 'book',
       description:
@@ -485,7 +492,6 @@ const REGISTRY: { def: AgentTool; toolsets: string[] }[] = [
   {
     // A fresh card (staff-created or manual triage) with a business name +
     // city resolves contacts here before the first-contact draft.
-    toolsets: ['triage', 'outreach', 'discovery'],
     def: {
       name: 'maps_lookup',
       description:
@@ -502,7 +508,6 @@ const REGISTRY: { def: AgentTool; toolsets: string[] }[] = [
     },
   },
   {
-    toolsets: ['triage', 'outreach', 'discovery'],
     def: {
       name: 'instagram_profile',
       description:
@@ -517,7 +522,6 @@ const REGISTRY: { def: AgentTool; toolsets: string[] }[] = [
     },
   },
   {
-    toolsets: ['triage', 'reply', 'outreach', 'discovery'],
     def: {
       name: 'serp',
       description:
@@ -534,7 +538,12 @@ const REGISTRY: { def: AgentTool; toolsets: string[] }[] = [
 /** Toolset filter — the Hermes enabled_toolsets pattern: each run kind sees
  *  only the tools its job needs. */
 export function toolsFor(kind: string): AgentTool[] {
-  return REGISTRY.filter((t) => t.toolsets.includes(kind)).map((t) => t.def);
+  return REGISTRY.filter((t) => toolAvailable(kind, t.def.name)).map((t) => t.def);
+}
+
+/** Registered tool names — the meta table must cover exactly these. */
+export function registeredToolNames(): string[] {
+  return REGISTRY.map((t) => t.def.name);
 }
 
 /** Side-effect fence on the live claim. claim_token already guards the
@@ -605,7 +614,7 @@ export async function executeTool(
   // toolsFor() only decides what the model is TOLD about — nothing stops it
   // emitting another name. Enforce the toolset here too, or a discovery run
   // can emit send_message and reach the real dispatch path.
-  if (!toolsFor(ctx.runKind).some((t) => t.name === name)) {
+  if (!toolAvailable(ctx.runKind, name) || !REGISTRY.some((t) => t.def.name === name)) {
     return { error: `tool ${name} not available for ${ctx.runKind} runs` };
   }
 
@@ -613,19 +622,9 @@ export async function executeTool(
   // model picks the leadId arg, so enforce the binding in code. Read-only
   // tools (search_leads, get_lead) stay unscoped: triage legitimately inspects
   // other leads, e.g. to spot duplicates.
-  const leadBoundArg =
-    {
-      update_lead: 'id',
-      set_state: 'leadId',
-      add_note: 'leadId',
-      create_task: 'leadId',
-      draft_message: 'leadId',
-      send_message: 'leadId',
-      request_human: 'leadId',
-      unsubscribe: 'leadId',
-    }[name] ?? null;
-  if (ctx.leadId && leadBoundArg) {
-    const target = String(args[leadBoundArg] ?? '');
+  const boundArg = leadBoundArg(name);
+  if (ctx.leadId && boundArg) {
+    const target = String(args[boundArg] ?? '');
     if (target !== ctx.leadId) {
       return {
         error: `LEAD_MISMATCH — this run is bound to lead ${ctx.leadId}; pass that leadId`,
@@ -845,6 +844,7 @@ export async function executeTool(
         };
         const queueOutreach = async (leadId: string, score: number | null) => {
           if (await outreachActive(leadId)) return null;
+          if (!(await automationAllowedTx(tx, 'outreach')).ok) return null;
           const { insertRun } = await import('./runner.ts');
           return insertRun(tx, {
             kind: 'outreach',
@@ -1146,6 +1146,39 @@ export async function executeTool(
         key,
         guard,
       );
+      return res.body;
+    }
+    case 'schedule': {
+      const leadId = String(args.leadId ?? '');
+      const at = parseWakeupAt(args.at);
+      if (typeof at === 'string') return { error: at };
+      const focus = String(args.focus ?? '').trim();
+      if (!focus) return { error: 'focus is required' };
+      const res = await claimControl(sql, key, async (tx) => {
+        await assertRunClaimTx(tx, ctx);
+        const lead = (
+          await tx<{ archived_at: string | null; unsubscribed_at: string | null }[]>`
+            select archived_at, unsubscribed_at from leads where id = ${leadId}
+          `
+        )[0];
+        if (!lead)
+          return { status: 200, body: { error: 'lead not found' } as Record<string, unknown> };
+        if (lead.archived_at || lead.unsubscribed_at) {
+          return { status: 200, body: { blocked: true, reason: 'lead suppressed' } };
+        }
+        const out = await scheduleWakeupTx(tx, {
+          leadId,
+          at,
+          focus,
+          requested: args.requested === true,
+          runId: UUID_LIKE.test(ctx.runId) ? ctx.runId : null,
+        });
+        return {
+          status: 200,
+          body: { scheduled: true, id: out.wakeup.id, at: out.wakeup.at, replaced: out.replaced },
+        };
+      });
+      if (!res.replayed && res.body.scheduled === true) emitControlEvent('lead.change', leadId);
       return res.body;
     }
     case 'create_task': {
@@ -1473,10 +1506,42 @@ export async function executeTool(
               body: { proposed: false, duplicate: true, existingName: dup.name },
             };
           }
+          // Budgeted auto-approval: with agent_autonomy.strategistAutoApproveUsd
+          // set, a proposal goes live only if trailing-7d discovery spend plus
+          // a reservation for work not yet booked (queued/running discovery
+          // and auto-approved briefs with no finished run) plus this brief
+          // fits the ceiling. Reservation = mean cost of recent discovery
+          // runs. The brief-proposals lock above serializes the check.
+          const { strategistAutoApproveUsd } = await autonomyTx(tx);
+          let autoOn = false;
+          if (strategistAutoApproveUsd > 0) {
+            const b = (
+              await tx<{ spent: number; open: number; est: number }[]>`
+                select
+                  coalesce((select sum(cost_cents) from agent_runs
+                    where kind = 'discovery' and created_at > now() - interval '7 days'), 0)::int as spent,
+                  ((select count(*) from agent_runs
+                     where kind = 'discovery' and status in ('queued', 'running'))
+                   + (select count(*) from discovery_briefs d
+                      where d.created_by = 'strategist' and d.enabled
+                        and d.created_at > now() - interval '7 days'
+                        and not exists (
+                          select 1 from agent_runs r
+                          where r.kind = 'discovery' and r.status in ('queued', 'running', 'done')
+                            and r.params->>'briefId' = d.id::text
+                        )))::int as open,
+                  coalesce((select avg(c)::int from (
+                    select cost_cents as c from agent_runs
+                    where kind = 'discovery' and status = 'done'
+                    order by created_at desc limit 20) t), 50)::int as est
+              `
+            )[0]!;
+            autoOn = b.spent + (b.open + 1) * b.est <= Math.round(strategistAutoApproveUsd * 100);
+          }
           const row = (
             await tx<{ id: string; name: string }[]>`
               insert into discovery_briefs (name, query, segment, city, target, enabled, created_by, note)
-              values (${bname}, ${bquery}, ${bsegment}, ${bcity}, ${btarget}, false, 'strategist', ${reason || null})
+              values (${bname}, ${bquery}, ${bsegment}, ${bcity}, ${btarget}, ${autoOn}, 'strategist', ${reason || null})
               returning id, name
             `
           )[0]!;
@@ -1485,7 +1550,10 @@ export async function executeTool(
             body: {
               proposed: true,
               brief: row,
-              next: 'rascunho desativado no quadro — staff aprova ou descarta; você nunca ativa',
+              enabled: autoOn,
+              next: autoOn
+                ? 'ativado automaticamente dentro do orçamento semanal de descoberta'
+                : 'rascunho desativado no quadro — staff aprova ou descarta; você nunca ativa',
             },
           };
         },

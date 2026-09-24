@@ -1,4 +1,13 @@
 import { createHmac, timingSafeEqual } from 'node:crypto';
+import { listPlaybooksTx } from './agent/playbooks.ts';
+import {
+  autonomyTx,
+  automationAllowedTx,
+  explainAutonomyTx,
+  playbookEnabledTx,
+} from './agent/policy.ts';
+import type { PlaybookKind } from './agent/tool-meta.ts';
+import { cancelWakeup, listWakeups } from './agent/wakeups.ts';
 import { existsSync, statSync } from 'node:fs';
 import { extname, join, normalize } from 'node:path';
 import { Hono, type Context } from 'hono';
@@ -864,7 +873,11 @@ export function createApp({ sql, sessionSecret, controlSecret, autoDrain }: AppD
         // Lead + its run share ONE claim: a retried POST replays the
         // stored body (lead + runId) instead of creating a second lead.
         const created = await insertLeadTx(tx, leadInsert(body));
-        if (created.body.lead.agentMode !== 'off' && body.automation !== false) {
+        if (
+          created.body.lead.agentMode !== 'off' &&
+          body.automation !== false &&
+          (await automationAllowedTx(tx, 'outreach')).ok
+        ) {
           // guardrails.firstContactDelayMin paces the contact — the run waits
           // out the delay in 'queued' (cancelable in Runs), and the send still
           // obeys agent_mode + firstContactDraftOnly. 0 = approval path: the
@@ -1076,6 +1089,8 @@ export function createApp({ sql, sessionSecret, controlSecret, autoDrain }: AppD
         }
         if (!th.agent_enabled) throw new HttpError(422, 'THREAD_PAUSED', 'thread paused for agent');
       }
+      const pv = await playbookEnabledTx(tx, kind as PlaybookKind);
+      if (!pv.ok) throw new HttpError(422, 'PLAYBOOK_DISABLED', pv.reason);
       const runId = await insertRun(tx, {
         kind: kind as 'triage' | 'reply' | 'outreach' | 'discovery',
         leadId,
@@ -1726,6 +1741,8 @@ export function createApp({ sql, sessionSecret, controlSecret, autoDrain }: AppD
                 : null;
         if (suppressed) throw new HttpError(422, 'LEAD_SUPPRESSED', suppressed);
       }
+      const pv = await playbookEnabledTx(tx, kind as PlaybookKind);
+      if (!pv.ok) throw new HttpError(422, 'PLAYBOOK_DISABLED', pv.reason);
       const runId = await insertRun(tx, {
         kind: kind as 'triage' | 'reply' | 'outreach' | 'discovery' | 'strategist',
         leadId: effLeadId,
@@ -1867,6 +1884,54 @@ export function createApp({ sql, sessionSecret, controlSecret, autoDrain }: AppD
 
   // Discovery briefs — the daily-autopilot side of lead gathering: each
   // enabled brief fires one discovery run every ~23h (see sweepBriefs).
+  app.get('/control/v1/agent/playbooks', async (c) => {
+    controlGate(c);
+    const playbooks = await controlTx(sql, (tx) => listPlaybooksTx(tx));
+    return c.json({ playbooks });
+  });
+
+  app.get('/control/v1/agent/autonomy', async (c) => {
+    controlGate(c);
+    return c.json(await controlTx(sql, (tx) => autonomyTx(tx)));
+  });
+
+  app.get('/control/v1/leads/:id/autonomy', async (c) => {
+    controlGate(c);
+    const id = uuidParam(c, 'id');
+    const out = await controlTx(sql, (tx) => explainAutonomyTx(tx, id));
+    if (!out) throw new HttpError(404, 'LEAD_NOT_FOUND', 'lead not found');
+    return c.json(out);
+  });
+
+  app.get('/control/v1/agent/wakeups', async (c) => {
+    controlGate(c);
+    const leadId = c.req.query('lead_id') ?? null;
+    if (leadId && !UUID_RE.test(leadId)) {
+      throw new HttpError(400, 'BAD_REQUEST', 'lead_id must be a uuid');
+    }
+    const status = c.req.query('status') ?? 'pending';
+    if (!['pending', 'fired', 'canceled', 'all'].includes(status)) {
+      throw new HttpError(400, 'BAD_REQUEST', 'status must be pending|fired|canceled|all');
+    }
+    const limit = Number(c.req.query('limit') ?? 100) || 100;
+    const wakeups = await listWakeups(sql, {
+      leadId,
+      status: status === 'all' ? null : (status as 'pending' | 'fired' | 'canceled'),
+      limit,
+    });
+    return c.json({ wakeups });
+  });
+
+  app.post('/control/v1/agent/wakeups/:id/cancel', async (c) => {
+    controlGate(c);
+    const id = uuidParam(c, 'id');
+    const res = await cancelWakeup(sql, id, requireIdemKey(c));
+    if (res.replayed) c.header('x-idempotent-replay', 'true');
+    if (!res.replayed && res.body.wakeup.leadId)
+      emitControlEvent('lead.change', res.body.wakeup.leadId);
+    return c.json(res.body);
+  });
+
   app.get('/control/v1/agent/briefs', async (c) => {
     controlGate(c);
     const rows = await controlTx(

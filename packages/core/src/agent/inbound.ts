@@ -4,6 +4,8 @@ import { emitControlEvent } from '../modules/control-events.ts';
 import { getGuardrails, phoneIsIgnored } from '../modules/integrations.ts';
 import { addInboundMessage, type Channel, type InboundResult } from '../modules/threads.ts';
 import { capLockTx, drain, insertRun } from './runner.ts';
+import { automationAllowedTx } from './policy.ts';
+import { retireWakeupsOnInboundTx } from './wakeups.ts';
 import { log } from '../platform/log.ts';
 
 const agentLog = log.child({ mod: 'agent' });
@@ -151,6 +153,7 @@ export async function ingestInbound(
       returning m.thread_id
     `;
     supersededThreads.push(...drafts.map((d) => d.thread_id));
+    await retireWakeupsOnInboundTx(tx, res.leadId);
     const gate = gateRows[0];
 
     if (
@@ -160,6 +163,9 @@ export async function ingestInbound(
       gate.unsubscribed_at ||
       gate.archived_at
     ) {
+      return { runId: null, coalescedId: null, canceledIds, capFlagged: false };
+    }
+    if (!(await automationAllowedTx(tx, 'reply')).ok) {
       return { runId: null, coalescedId: null, canceledIds, capFlagged: false };
     }
     // Burst coalescing: a still-queued reply reads the freshest thread
