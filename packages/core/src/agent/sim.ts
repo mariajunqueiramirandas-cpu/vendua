@@ -243,6 +243,8 @@ export async function runSim(
     toolCalls: [],
     tokensIn: 0,
     tokensOut: 0,
+    cachedTokensIn: 0,
+    cacheWriteTokensIn: 0,
     costUsd: 0,
   };
   if (transcript.length) {

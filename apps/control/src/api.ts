@@ -198,6 +198,7 @@ export interface AgentRun {
   thread_id: string | null;
   tokens_in: number;
   tokens_out: number;
+  tokens_cached: number;
   cost_cents: number;
   error: string | null;
   created_at: string;

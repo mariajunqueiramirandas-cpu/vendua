@@ -32,10 +32,78 @@ export type AgentMessage =
 export interface LlmResult {
   text: string | null;
   toolCalls: ToolCall[];
+  /** Total prompt tokens billed this call — cache hits INCLUDED (every
+   *  provider counts them inside its input total). */
   tokensIn: number;
   tokensOut: number;
-  /** USD cost when the provider reports it (OpenRouter does). */
+  /** Input tokens served from a provider cache read — billed at the
+   *  cached rate (~10x cheaper than fresh input). */
+  cachedTokensIn: number;
+  /** Input tokens written to a provider cache this call — Anthropic
+   *  charges 5m-cache creation at 1.25x input; Gemini/OpenAI implicit
+   *  caches have no write fee. */
+  cacheWriteTokensIn: number;
+  /** USD cost — provider-reported when available (OpenRouter), else the
+   *  published-price estimate from the built-in table or config.pricing.
+   *  Null when the model has no known price. */
   costUsd: number | null;
+}
+
+/** Published paid-tier USD per 1M tokens for the driver default models.
+ *  Order matters: prefix matching is first-hit, so longer ids come first.
+ *  `write` is Anthropic's 5m-cache creation rate; provider implicit caches
+ *  (Gemini/OpenAI) charge nothing to write. Overridable per integration
+ *  via `config.pricing = {in, cached, write, out}` — full rows only, and
+ *  prices drift: refresh this table when the deployment changes tiers. */
+const PRICE_TABLE: { match: string; in: number; cached: number; write: number; out: number }[] = [
+  { match: 'gemini-3.5-flash-lite', in: 0.3, cached: 0.03, write: 0, out: 2.5 },
+  { match: 'gemini-3.5-flash', in: 1.5, cached: 0.15, write: 0, out: 9.0 },
+  { match: 'gemini-3.1-flash-lite', in: 0.25, cached: 0.025, write: 0, out: 1.5 },
+  { match: 'gemini-2.5-flash-lite', in: 0.1, cached: 0.01, write: 0, out: 0.4 },
+  { match: 'gemini-2.5-flash', in: 0.3, cached: 0.03, write: 0, out: 2.5 },
+  { match: 'gemini-2.5-pro', in: 1.25, cached: 0.125, write: 0, out: 10.0 },
+  { match: 'claude-sonnet-4-5', in: 3.0, cached: 0.3, write: 3.75, out: 15.0 },
+  { match: 'claude-sonnet-4-6', in: 3.0, cached: 0.3, write: 3.75, out: 15.0 },
+  { match: 'claude-haiku-4-5', in: 1.0, cached: 0.1, write: 1.25, out: 5.0 },
+  { match: 'gpt-4o-mini', in: 0.15, cached: 0.075, write: 0, out: 0.6 },
+  { match: 'gpt-4o', in: 5.0, cached: 1.25, write: 0, out: 15.0 },
+];
+
+function pricingFor(model: string, config: Record<string, unknown>) {
+  const c = config.pricing as
+    | { in?: unknown; cached?: unknown; write?: unknown; out?: unknown }
+    | undefined;
+  if (c && typeof c.in === 'number' && typeof c.out === 'number') {
+    return {
+      in: c.in,
+      cached: typeof c.cached === 'number' ? c.cached : c.in,
+      write: typeof c.write === 'number' ? c.write : 0,
+      out: c.out,
+    };
+  }
+  for (const row of PRICE_TABLE) if (model.startsWith(row.match)) return row;
+  return null;
+}
+
+/** Bill-shaped estimate: (total input − cache reads − cache writes) at the
+ *  fresh rate + reads at the cached rate + writes at the write rate +
+ *  output at the output rate. Null without a known price — an honest gap
+ *  beats a fabricated number. */
+function estimateCostUsd(
+  model: string,
+  config: Record<string, unknown>,
+  u: { tokensIn: number; tokensOut: number; cachedTokensIn: number; cacheWriteTokensIn: number },
+): number | null {
+  const p = pricingFor(model, config);
+  if (!p) return null;
+  const fresh = Math.max(0, u.tokensIn - u.cachedTokensIn - u.cacheWriteTokensIn);
+  return (
+    (fresh * p.in +
+      u.cachedTokensIn * p.cached +
+      u.cacheWriteTokensIn * p.write +
+      u.tokensOut * p.out) /
+    1_000_000
+  );
 }
 
 export interface LlmProvider {
@@ -171,7 +239,14 @@ function openrouterProvider(
             toolCalls?: { id: string; function: { name: string; arguments: string } }[];
           };
         }[];
-        usage?: { promptTokens?: number; completionTokens?: number; cost?: number };
+        usage?: {
+          promptTokens?: number;
+          completionTokens?: number;
+          cost?: number;
+          promptTokensDetails?: { cachedTokens?: number };
+          // raw OpenRouter passthrough names, when the SDK leaves them as-is
+          prompt_tokens_details?: { cached_tokens?: number };
+        };
       };
       const choice = res.choices?.[0];
       const msg = choice?.message as
@@ -192,12 +267,24 @@ function openrouterProvider(
         name: tc.function.name,
         args: JSON.parse(tc.function.arguments || '{}') as Record<string, unknown>,
       }));
+      const cachedTokensIn =
+        res.usage?.promptTokensDetails?.cachedTokens ??
+        res.usage?.prompt_tokens_details?.cached_tokens ??
+        0;
+      const u = {
+        tokensIn: res.usage?.promptTokens ?? 0,
+        tokensOut: res.usage?.completionTokens ?? 0,
+        cachedTokensIn,
+        cacheWriteTokensIn: 0,
+      };
       return {
         text,
         toolCalls,
-        tokensIn: res.usage?.promptTokens ?? 0,
-        tokensOut: res.usage?.completionTokens ?? 0,
-        costUsd: typeof res.usage?.cost === 'number' ? res.usage.cost : null,
+        ...u,
+        costUsd:
+          typeof res.usage?.cost === 'number'
+            ? res.usage.cost
+            : estimateCostUsd(model, config, u),
       };
     },
   };
@@ -307,6 +394,7 @@ function geminiProvider(config: Record<string, unknown>, secretRef: string | nul
           promptTokenCount?: number;
           candidatesTokenCount?: number;
           thoughtsTokenCount?: number;
+          cachedContentTokenCount?: number;
         };
       };
       const cand = data.candidates?.[0];
@@ -336,13 +424,19 @@ function geminiProvider(config: Record<string, unknown>, secretRef: string | nul
           args: (p.functionCall!.args ?? {}) as Record<string, unknown>,
           ...(p.thoughtSignature ? { thoughtSignature: p.thoughtSignature } : {}),
         }));
-      const u = data.usageMetadata;
+      const u = {
+        tokensIn: data.usageMetadata?.promptTokenCount ?? 0,
+        tokensOut:
+          (data.usageMetadata?.candidatesTokenCount ?? 0) +
+          (data.usageMetadata?.thoughtsTokenCount ?? 0),
+        cachedTokensIn: data.usageMetadata?.cachedContentTokenCount ?? 0,
+        cacheWriteTokensIn: 0,
+      };
       return {
         text,
         toolCalls,
-        tokensIn: u?.promptTokenCount ?? 0,
-        tokensOut: (u?.candidatesTokenCount ?? 0) + (u?.thoughtsTokenCount ?? 0),
-        costUsd: null,
+        ...u,
+        costUsd: estimateCostUsd(model, config, u),
       };
     },
   };
@@ -410,7 +504,12 @@ function anthropicProvider(config: Record<string, unknown>, secretRef: string | 
       );
       const data = (await res.json()) as {
         content?: { type: string; text?: string; id?: string; name?: string; input?: unknown }[];
-        usage?: { input_tokens?: number; output_tokens?: number };
+        usage?: {
+          input_tokens?: number;
+          output_tokens?: number;
+          cache_read_input_tokens?: number;
+          cache_creation_input_tokens?: number;
+        };
       };
       const text = (data.content ?? [])
         .filter((b) => b.type === 'text')
@@ -423,12 +522,22 @@ function anthropicProvider(config: Record<string, unknown>, secretRef: string | 
           name: b.name!,
           args: (b.input ?? {}) as Record<string, unknown>,
         }));
+      const u = {
+        // Anthropic bills cached input outside input_tokens — fold it in
+        // so tokensIn stays the total-prompt count like every other driver.
+        tokensIn:
+          (data.usage?.input_tokens ?? 0) +
+          (data.usage?.cache_read_input_tokens ?? 0) +
+          (data.usage?.cache_creation_input_tokens ?? 0),
+        tokensOut: data.usage?.output_tokens ?? 0,
+        cachedTokensIn: data.usage?.cache_read_input_tokens ?? 0,
+        cacheWriteTokensIn: data.usage?.cache_creation_input_tokens ?? 0,
+      };
       return {
         text: text || null,
         toolCalls,
-        tokensIn: data.usage?.input_tokens ?? 0,
-        tokensOut: data.usage?.output_tokens ?? 0,
-        costUsd: null,
+        ...u,
+        costUsd: estimateCostUsd(model, config, u),
       };
     },
   };
@@ -484,7 +593,11 @@ function openaiProvider(config: Record<string, unknown>, secretRef: string | nul
             tool_calls?: { id: string; function: { name: string; arguments: string } }[];
           };
         }[];
-        usage?: { prompt_tokens?: number; completion_tokens?: number };
+        usage?: {
+          prompt_tokens?: number;
+          completion_tokens?: number;
+          prompt_tokens_details?: { cached_tokens?: number };
+        };
       };
       const msg = data.choices?.[0]?.message;
       return {
@@ -496,7 +609,14 @@ function openaiProvider(config: Record<string, unknown>, secretRef: string | nul
         })),
         tokensIn: data.usage?.prompt_tokens ?? 0,
         tokensOut: data.usage?.completion_tokens ?? 0,
-        costUsd: null,
+        cachedTokensIn: data.usage?.prompt_tokens_details?.cached_tokens ?? 0,
+        cacheWriteTokensIn: 0,
+        costUsd: estimateCostUsd(model, config, {
+          tokensIn: data.usage?.prompt_tokens ?? 0,
+          tokensOut: data.usage?.completion_tokens ?? 0,
+          cachedTokensIn: data.usage?.prompt_tokens_details?.cached_tokens ?? 0,
+          cacheWriteTokensIn: 0,
+        }),
       };
     },
   };
@@ -535,6 +655,8 @@ export function mockProvider(script: MockStep[]): LlmProvider {
         })),
         tokensIn: 0,
         tokensOut: 0,
+        cachedTokensIn: 0,
+        cacheWriteTokensIn: 0,
         costUsd: null,
       };
     },

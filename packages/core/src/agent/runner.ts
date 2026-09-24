@@ -285,6 +285,7 @@ async function finishRun(
     steps: unknown[];
     tokensIn: number;
     tokensOut: number;
+    tokensCached: number;
     costCents: number;
     error?: string;
   },
@@ -297,6 +298,7 @@ async function finishRun(
       steps = ${tx.json(result.steps as never[])},
       tokens_in = ${result.tokensIn},
       tokens_out = ${result.tokensOut},
+      tokens_cached = ${result.tokensCached},
       cost_cents = ${result.costCents},
       error = ${result.error ?? null},
       finished_at = now()
@@ -532,6 +534,47 @@ function mineAttempts(steps: unknown[]): { queries: Set<string>; urls: Set<strin
 /** Max chars of a replayed tool result — the model needs the call's outcome
  *  (contacts found, blocked reason, ids), not a full page dump. */
 const REPLAY_OUT_MAX = 3000;
+
+/** Model-facing cap on a single read_pages page body (flag: slimToolOutputs).
+ *  Page text is the run's dominant history driver — a 6-url call can exceed
+ *  50K tokens and every later turn resubmits it. The journal keeps the full
+ *  result; the model gets the head plus the extracted fields (contacts, nav,
+ *  errors) and the char count so it knows a cached re-read serves more. */
+const SLIM_PAGE_CHARS = 8_000;
+/** Envelope cap for any other tool result riding the conversation — big
+ *  enough that ordinary results never touch it. */
+const SLIM_OUT_CHARS = 24_000;
+
+function slimToolOut(name: string, out: unknown): unknown {
+  if (name === 'read_pages' && typeof out === 'object' && out !== null) {
+    const pages = (out as { pages?: unknown }).pages;
+    if (Array.isArray(pages)) {
+      return {
+        ...(out as Record<string, unknown>),
+        pages: pages.map((p) => {
+          const page = p as Record<string, unknown>;
+          const text = page.text;
+          if (typeof text !== 'string' || text.length <= SLIM_PAGE_CHARS) return p;
+          return {
+            ...page,
+            textChars: text.length,
+            text: `${text.slice(0, SLIM_PAGE_CHARS)}\n…[${
+              text.length - SLIM_PAGE_CHARS
+            } chars omitted — full result is journaled; read_pages is cached, a re-read is free]`,
+          };
+        }),
+      };
+    }
+  }
+  const json = JSON.stringify(out);
+  if (json.length <= SLIM_OUT_CHARS) return out;
+  return {
+    slimmedForModel: true,
+    totalChars: json.length,
+    head: `${json.slice(0, SLIM_OUT_CHARS)}…`,
+    note: 'result exceeded the conversation budget — full output is journaled under this tool call',
+  };
+}
 
 export interface JournalReplay {
   /** Model turns across ALL prior attempts — seeds ctx.step so a resumed
@@ -877,17 +920,24 @@ export async function runOnce(sql: Sql): Promise<boolean> {
   // adds its own. Journals predating the usage field contribute 0.
   let tokensIn = 0;
   let tokensOut = 0;
+  let tokensCached = 0;
   // accumulate fractional dollars — rounding to cents per step would zero out
   // sub-cent calls and skew the run total.
   let costUsd = 0;
   for (const s of priorSteps) {
     const e = s as {
       type?: string;
-      usage?: { tokensIn?: number; tokensOut?: number; costUsd?: number };
+      usage?: {
+        tokensIn?: number;
+        tokensOut?: number;
+        cachedTokensIn?: number;
+        costUsd?: number;
+      };
     } | null;
     if (e?.type === 'model' && e.usage) {
       tokensIn += e.usage.tokensIn ?? 0;
       tokensOut += e.usage.tokensOut ?? 0;
+      tokensCached += e.usage.cachedTokensIn ?? 0;
       costUsd += e.usage.costUsd ?? 0;
     }
   }
@@ -959,7 +1009,7 @@ export async function runOnce(sql: Sql): Promise<boolean> {
       sql,
       (tx) => tx`
         update agent_runs set steps = ${tx.json(steps as never[])}, finished_at = now(),
-          tokens_in = ${tokensIn}, tokens_out = ${tokensOut},
+          tokens_in = ${tokensIn}, tokens_out = ${tokensOut}, tokens_cached = ${tokensCached},
           cost_cents = ${Math.round((costUsd + monidBudget.spent) * 100)}
         where id = ${run.id} and status = 'canceled' and claim_token = ${run.claim_token}
       `,
@@ -1000,6 +1050,18 @@ export async function runOnce(sql: Sql): Promise<boolean> {
       );
     }
     const provider = providerFor(integration, run.params);
+    // A/B-able harness behaviors, per llm integration config: opt in via
+    // control_integrations.config.harness — every flag defaults OFF so a
+    // deploy never changes behavior until the field is flipped.
+    const harnessCfg = (integration?.config as { harness?: Record<string, unknown> } | undefined)
+      ?.harness;
+    const FLAG = {
+      // Bound what tool results resend to the model (journal stays verbatim).
+      slimToolOutputs: harnessCfg?.slimToolOutputs === true,
+      // Keep the system prompt per-kind constant (lead-volatile values like
+      // the booking link stay in the context message) — cross-run cache reuse.
+      staticSystem: harnessCfg?.staticSystem === true,
+    };
     const pitch = await getPitch(sql);
     const memory = await getSetting<{ facts: string[] }>(sql, 'agent_memory', { facts: [] });
     const { text: context, goal, bookingUrl } = await contextFor(sql, run);
@@ -1009,7 +1071,10 @@ export async function runOnce(sql: Sql): Promise<boolean> {
     const waDriverOn = run.kind === 'discovery' && (await whatsappReadyTx(sql));
     const system = buildSystemPrompt(run.kind, pitch, memory, {
       goal,
-      bookingUrl,
+      // staticSystem drops the per-lead link so the prompt — and its cache
+      // prefix — is per-kind constant; BOOKING_URL stays in the context.
+      bookingUrl: FLAG.staticSystem ? null : bookingUrl,
+      staticSystem: FLAG.staticSystem,
       autoContact: {
         enabled: (g.discoveryAutoContact ?? DEFAULT_GUARDRAILS.discoveryAutoContact) && waDriverOn,
         minScore: g.discoveryContactMinScore ?? DEFAULT_GUARDRAILS.discoveryContactMinScore,
@@ -1089,6 +1154,7 @@ export async function runOnce(sql: Sql): Promise<boolean> {
       const res = await provider.chat({ system, messages, tools });
       tokensIn += res.tokensIn;
       tokensOut += res.tokensOut;
+      tokensCached += res.cachedTokensIn;
       if (res.costUsd != null) costUsd += res.costUsd;
       // Full ToolCall objects, not just names: a resumed run replays this
       // turn verbatim into the conversation — ids pair with the tool results
@@ -1097,7 +1163,13 @@ export async function runOnce(sql: Sql): Promise<boolean> {
         type: 'model',
         content: res.text,
         toolCalls: res.toolCalls,
-        usage: { tokensIn: res.tokensIn, tokensOut: res.tokensOut, costUsd: res.costUsd ?? 0 },
+        usage: {
+          tokensIn: res.tokensIn,
+          tokensOut: res.tokensOut,
+          cachedTokensIn: res.cachedTokensIn,
+          cacheWriteTokensIn: res.cacheWriteTokensIn,
+          costUsd: res.costUsd ?? 0,
+        },
       });
       await persist();
       if (lost) break;
@@ -1184,6 +1256,7 @@ export async function runOnce(sql: Sql): Promise<boolean> {
             steps,
             tokensIn,
             tokensOut,
+            tokensCached,
             costCents: Math.round((costUsd + monidBudget.spent) * 100),
           })
         ) {
@@ -1244,7 +1317,9 @@ export async function runOnce(sql: Sql): Promise<boolean> {
               role: 'tool',
               toolCallId: call.id,
               name: call.name,
-              content: JSON.stringify(out),
+              content: JSON.stringify(
+                FLAG.slimToolOutputs ? slimToolOut(call.name, out) : out,
+              ),
             };
             await persist(batch);
           }),
@@ -1327,7 +1402,9 @@ export async function runOnce(sql: Sql): Promise<boolean> {
             role: 'tool',
             toolCallId: call.id,
             name: call.name,
-            content: JSON.stringify(out),
+            content: JSON.stringify(
+              FLAG.slimToolOutputs ? slimToolOut(call.name, out) : out,
+            ),
           });
           await persist();
           if (lost) break;
@@ -1354,6 +1431,7 @@ export async function runOnce(sql: Sql): Promise<boolean> {
         steps,
         tokensIn,
         tokensOut,
+        tokensCached,
         costCents: Math.round((costUsd + monidBudget.spent) * 100),
         error: `max steps reached${created ? ` — ${created} lead(s) created` : ''}`,
       })
@@ -1372,6 +1450,7 @@ export async function runOnce(sql: Sql): Promise<boolean> {
         steps,
         tokensIn,
         tokensOut,
+        tokensCached,
         costCents: Math.round((costUsd + monidBudget.spent) * 100),
         error: e instanceof Error ? e.message : String(e),
       }))

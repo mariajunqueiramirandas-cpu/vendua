@@ -206,7 +206,11 @@ export default function Runs() {
                         '—'
                       ),
                     ],
-                    ['tokens', `${run.tokens_in} in · ${run.tokens_out} out`],
+                    [
+                      'tokens',
+                      `${run.tokens_in} in · ${run.tokens_out} out` +
+                        (run.tokens_cached ? ` · ${run.tokens_cached} cached` : ''),
+                    ],
                     ['custo', fmtMoney(run.cost_cents)],
                     ...(run.run_at ? [['agendado p/', fmtDateTime(run.run_at)] as const] : []),
                     ['início', fmtDateTime(run.started_at)],
