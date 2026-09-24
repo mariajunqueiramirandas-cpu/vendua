@@ -65,6 +65,14 @@ Modeled reply run (14 turns, ~2K/turn history growth): **uncached**
 call can add ~52K tok to every later turn — the run-level dominant
 variable.
 
+**Observed:** a flagged sim batch (outreach + 2 reply runs, shared
+per-kind static prefix) recorded `cachedTokensIn: 0` on every call —
+either the free-tier key gets no implicit caching or the ~3.9K-token
+shared prefix sits under the model's ~4K cacheable minimum. Until
+`tokens_cached` shows otherwise in production, treat ALL input as
+fresh-billed — which makes slimToolOutputs's history bounding worth
+more, not less.
+
 ## 3. Ranked opportunities
 
 | #   | change                                                                  | est. saving                                                                            | quality risk                                                                                                  | status                    |
