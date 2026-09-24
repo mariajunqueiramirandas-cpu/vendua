@@ -837,8 +837,7 @@ export function replayJournal(prior: unknown[]): JournalReplay {
           // reservation may already have charged one slot per requested
           // url before the result ever journaled. Reserve what the call
           // could have spent, not the single slot it recorded.
-          const dead =
-            (t as { pending?: boolean }).pending === true || t.out === undefined;
+          const dead = (t as { pending?: boolean }).pending === true || t.out === undefined;
           const urls = (t as { args?: { urls?: unknown } }).args?.urls;
           const argCount = Array.isArray(urls) ? Math.min(Math.max(urls.length, 1), 6) : 1;
           replay.pageReads += dead ? argCount : 1;

@@ -1388,9 +1388,7 @@ dbDescribe('worker robustness (db)', () => {
           // urls no provider could issue — rejected before the batch,
           // spending nothing
           {
-            toolCalls: [
-              { name: 'read_pages', args: { urls: ['not-a-url', 'also-garbage'] } },
-            ],
+            toolCalls: [{ name: 'read_pages', args: { urls: ['not-a-url', 'also-garbage'] } }],
           },
           // the valid pair still fits the untouched budget
           {
