@@ -1281,6 +1281,11 @@ dbDescribe('worker robustness (db)', () => {
       values ('email', 'resend', true)
       on conflict (kind, driver) do update set enabled = true
     `;
+    const priorGuardrails = (
+      await sql<{ value: unknown }[]>`
+        select value from control_settings where key = 'guardrails'
+      `
+    )[0];
     try {
       // First contact must not be draft-forced and quiet hours must be
       // empty (start == end → never quiet) — the send has to reach the
@@ -1333,6 +1338,16 @@ dbDescribe('worker robustness (db)', () => {
         `;
       } else {
         await sql`delete from control_integrations where kind = 'email' and driver = 'resend'`;
+      }
+      // Same for the guardrails row — later tests must not inherit
+      // disabled first-contact drafts or empty quiet hours.
+      if (priorGuardrails) {
+        await sql`
+          update control_settings set value = ${sql.json(priorGuardrails.value as never)}
+          where key = 'guardrails'
+        `;
+      } else {
+        await sql`delete from control_settings where key = 'guardrails'`;
       }
     }
   });
