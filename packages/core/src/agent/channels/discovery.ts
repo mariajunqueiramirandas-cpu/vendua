@@ -996,9 +996,6 @@ export function chaseLinks(page: ReadPage): string[] {
 export function mapPointerName(raw: string): string | null {
   try {
     const t = new URL(raw);
-    // A captcha'd redirect wraps the real target: /sorry/?continue=<url>.
-    const inner = t.searchParams.get('continue');
-    if (inner) return mapPointerName(decodeURIComponent(inner));
     // Only the map-pointer/google family can carry a business name — an
     // arbitrary host's ?q= is not a profile pointer and must not claim
     // the free in-process resolution this name unlocks. The carrier must
@@ -1006,6 +1003,11 @@ export function mapPointerName(raw: string): string | null {
     // profile pointer either.
     if (t.protocol !== 'http:' && t.protocol !== 'https:') return null;
     if (!isBizMapUrl(t) && !GOOGLE_HOST.test(t.hostname)) return null;
+    // A captcha'd google redirect wraps the real target: /sorry/?continue=
+    // <url>. Only the validated family gets to unwrap — an arbitrary
+    // host's continue param can't smuggle a google name in.
+    const inner = t.searchParams.get('continue');
+    if (inner) return mapPointerName(decodeURIComponent(inner));
     const q = t.searchParams.get('q') ?? t.searchParams.get('query');
     if (q && !/\//.test(q) && q.length < 80) return q.replace(/\+/g, ' ');
     const m = /\/maps\/place\/([^/]+)/.exec(t.pathname);

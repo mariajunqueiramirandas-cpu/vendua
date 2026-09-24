@@ -354,6 +354,24 @@ describe('mapPointerName', () => {
     expect(mapPointerName('https://evil.example/maps/place/Acme+Pizza')).toBeNull();
     // a map-pointer host on an unfetchable scheme is not a pointer either
     expect(mapPointerName('ftp://maps.google.com/maps?q=Acme+Pizza')).toBeNull();
+    // a continue param can't smuggle a google name through an invalid
+    // outer url — the outer host/scheme validates first
+    expect(
+      mapPointerName(
+        'https://unrelated.example/x?continue=https%3A%2F%2Fwww.google.com%2Fsearch%3Fq%3DAcme',
+      ),
+    ).toBeNull();
+    expect(
+      mapPointerName(
+        'ftp://maps.google.com/maps?continue=https%3A%2F%2Fwww.google.com%2Fsearch%3Fq%3DAcme',
+      ),
+    ).toBeNull();
+    // the real captcha-redirect shape still resolves
+    expect(
+      mapPointerName(
+        'https://www.google.com/sorry/?continue=https%3A%2F%2Fwww.google.com%2Fsearch%3Fq%3DAcme',
+      ),
+    ).toBe('Acme');
   });
 });
 
