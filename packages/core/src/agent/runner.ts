@@ -825,12 +825,14 @@ export function replayJournal(prior: unknown[]): JournalReplay {
       // increments it per reservation, so a dead pending entry carries
       // its real spend — and one stamped 0 provably died before
       // validation. Markerless entries are pre-marker legacy journals:
-      // a completed call counts one spend (that era charged per call),
-      // but a still-pending or output-less entry can't establish that
-      // its fetch ever issued, so it reserves nothing rather than lock
-      // the recovery budget on a call that fetched nothing. Either way
-      // the two pre-check rejections (REPEAT suppression; a malformed
-      // 'needs urls' call) never reached the counter.
+      // completed calls count one spend (that era charged per call), and
+      // a still-pending/out-less entry reserves one too — the legacy
+      // runner may have died mid-fetch, and whether its fetch issued is
+      // unknowable from the journal; reserving is the conservative side
+      // for a spend cap (it can only under-fetch recovery, never breach
+      // the budget the entry's run was charged against). The two
+      // pre-check rejections (REPEAT suppression; a malformed 'needs
+      // urls' call) never reached the counter.
       const spent = (t as { readSpent?: number | boolean }).readSpent;
       if (typeof spent === 'number') {
         replay.pageReads += spent;
@@ -841,8 +843,7 @@ export function replayJournal(prior: unknown[]): JournalReplay {
         const preCheck =
           typeof e === 'string' &&
           (e.startsWith('REPEAT') || e.startsWith('read_pages needs urls'));
-        const dead = (t as { pending?: boolean }).pending === true || t.out === undefined;
-        if (!preCheck && !dead) replay.pageReads++;
+        if (!preCheck) replay.pageReads++;
       }
       // Re-bank fetched pages under both request and final url — a
       // recovered run's reread then hits the rebuilt cache instead of
