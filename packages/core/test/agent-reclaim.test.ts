@@ -1126,9 +1126,9 @@ dbDescribe('worker robustness (db)', () => {
     expect(await runOnce(sql)).toBe(true);
     const r = await getRun(runId);
     expect(r.status).toBe('done');
-    const sends = r.steps.filter(
-      (s) => (s as { name?: string }).name === 'send_message',
-    ) as { out?: { error?: string; blocked?: boolean } }[];
+    const sends = r.steps.filter((s) => (s as { name?: string }).name === 'send_message') as {
+      out?: { error?: string; blocked?: boolean };
+    }[];
     expect(sends).toHaveLength(2);
     // still blocked (no channel ever appeared) — but it RAN, not REPEAT
     expect(sends[1]!.out?.error ?? '').not.toMatch(/^REPEAT/);
@@ -1159,9 +1159,9 @@ dbDescribe('worker robustness (db)', () => {
     expect(await runOnce(sql)).toBe(true);
     const r = await getRun(runId);
     expect(r.status).toBe('done');
-    const gets = r.steps.filter(
-      (s) => (s as { name?: string }).name === 'get_lead',
-    ) as { out?: unknown }[];
+    const gets = r.steps.filter((s) => (s as { name?: string }).name === 'get_lead') as {
+      out?: unknown;
+    }[];
     expect(gets).toHaveLength(2);
     // the second read ran fresh — current profile, not a REPEAT artifact
     expect(JSON.stringify(gets[1]!.out)).toContain('Recife');
