@@ -3,7 +3,7 @@ import { join } from 'node:path';
 import postgres from 'postgres';
 import { createApp } from '../src/app.ts';
 import { dispatchMessage } from '../src/agent/send.ts';
-import { claimRun, drain, insertRun } from '../src/agent/runner.ts';
+import { claimRun, drain, flagCappedLeads, insertRun } from '../src/agent/runner.ts';
 import {
   DEFAULT_GUARDRAILS,
   validateSetting,
@@ -741,6 +741,37 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('lead lifecycle (db)', () => {
         expect(
           await controlTx(sql, (tx) => insertRun(tx, { kind: 'outreach', leadId: other })),
         ).toBeTruthy();
+      } finally {
+        await setGuardrails({});
+      }
+    });
+
+    test('flagCappedLeads flags leads a lowered cap stranded — once', async () => {
+      await setup();
+      // Spend accumulated under the old (higher) ceiling — no flag yet
+      // because no insert/finish has seen the crossing.
+      const leadId = await mkLead();
+      await sql`
+        insert into agent_runs (kind, lead_id, status, cost_cents, finished_at)
+        values ('reply', ${leadId}, 'done', 60, now())
+      `;
+      await setGuardrails({ leadLifetimeCostCapUsd: 0.5 });
+      try {
+        // ≥1: other runs of the shared DB can hold over-cap leads too —
+        // they flag alongside, which is the function working as intended.
+        expect(await flagCappedLeads(sql)).toBeGreaterThanOrEqual(1);
+        const flags = await sql`
+          select 1 from lead_activities
+          where lead_id = ${leadId} and kind = 'system' and meta->>'type' = 'cost-cap'
+        `;
+        expect(flags).toHaveLength(1);
+        // Already flagged at this level — nothing fresh, nothing written.
+        expect(await flagCappedLeads(sql)).toBe(0);
+        const flags2 = await sql`
+          select 1 from lead_activities
+          where lead_id = ${leadId} and kind = 'system' and meta->>'type' = 'cost-cap'
+        `;
+        expect(flags2).toHaveLength(1);
       } finally {
         await setGuardrails({});
       }

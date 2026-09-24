@@ -171,24 +171,39 @@ export async function enqueueRun(
  *  finish will ever see (e.g. staff LOWERED leadLifetimeCostCapUsd below
  *  existing spend): without this pass their queued runs park silently.
  *  leadUnderCostCapTx dedupes per (lead, cap level) — re-runs are cheap.
- *  Called after a committed guardrails write; returns leads flagged. */
+ *  Called after a committed guardrails write; emits lead.change for leads
+ *  that got a NEW flag so the task list refreshes at once. */
 export async function flagCappedLeads(sql: Sql, limit = 200): Promise<number> {
-  return controlTx(sql, async (tx) => {
+  const fresh = await controlTx(sql, async (tx) => {
     const g = await getSettingTx<Partial<Guardrails>>(tx, 'guardrails', {});
-    const capCents = Math.round(
-      (g.leadLifetimeCostCapUsd ?? DEFAULT_GUARDRAILS.leadLifetimeCostCapUsd) * 100,
-    );
-    if (capCents <= 0) return 0;
-    const capped = await tx<{ lead_id: string }[]>`
-      select lead_id from agent_runs
-      where lead_id is not null and cost_cents > 0
-      group by lead_id
-      having coalesce(sum(cost_cents), 0) >= ${capCents}
+    const capUsd = g.leadLifetimeCostCapUsd ?? DEFAULT_GUARDRAILS.leadLifetimeCostCapUsd;
+    const capCents = Math.round(capUsd * 100);
+    if (capCents <= 0) return [] as string[];
+    const capped = await tx<{ lead_id: string; flagged: boolean }[]>`
+      select x.lead_id,
+             exists (
+               select 1 from lead_activities a
+               where a.lead_id = x.lead_id and a.kind = 'system'
+                 and a.meta->>'type' = 'cost-cap'
+                 and (a.meta->>'capUsd')::numeric = ${capUsd}
+             ) as flagged
+      from (
+        select lead_id, sum(cost_cents) s from agent_runs
+        where lead_id is not null and cost_cents > 0
+        group by lead_id
+      ) x
+      where x.s >= ${capCents}
       limit ${limit}
     `;
-    for (const { lead_id } of capped) await leadUnderCostCapTx(tx, lead_id);
-    return capped.length;
+    const fresh: string[] = [];
+    for (const { lead_id, flagged } of capped) {
+      await leadUnderCostCapTx(tx, lead_id);
+      if (!flagged) fresh.push(lead_id);
+    }
+    return fresh;
   });
+  for (const id of fresh) emitControlEvent('lead.change', id);
+  return fresh.length;
 }
 
 export async function claimRun(sql: Sql): Promise<RunRow | null> {
