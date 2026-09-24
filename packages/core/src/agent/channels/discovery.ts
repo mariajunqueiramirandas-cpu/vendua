@@ -1023,7 +1023,19 @@ function unwrapContinue(raw: string, max = 8): string {
         const dec = decodeURIComponent(inner);
         if (/^https?:\/\//i.test(dec)) target = dec;
       }
-      cur = new URL(target, cur).toString();
+      const cand = new URL(target, cur);
+      // The peel never crosses the pointer family — a continue= resolving
+      // outside biz-map/google means this chain isn't a map pointer: keep
+      // the wrapper (its leftover continue= marks it unresolved) and never
+      // let a foreign host become a chase hop. assertFetchable can't stop
+      // that — it only blocks private/non-http targets.
+      if (
+        (cand.protocol !== 'http:' && cand.protocol !== 'https:') ||
+        (!isBizMapUrl(cand) && !GOOGLE_HOST.test(cand.hostname))
+      ) {
+        break;
+      }
+      cur = cand.toString();
     } catch {
       break;
     }
