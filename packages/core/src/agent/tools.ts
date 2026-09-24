@@ -1733,6 +1733,12 @@ export async function executeTool(
             update agent_runs set status = 'canceled', finished_at = now(), error = 'descadastrado'
             where lead_id = ${leadId} and status = 'queued'
           `;
+          // Pending mail dies with the opt-out too — delivered items are
+          // work the lead will never want served.
+          await tx`
+            update agent_inbox set consumed_at = now()
+            where lead_id = ${leadId} and consumed_at is null
+          `;
           await tx`
             insert into lead_activities (lead_id, kind, body, created_by)
             values (${leadId}, 'system', ${`Pediu para sair — opt-out registrado${reason ? ` (${reason})` : ''}`}, 'agent')

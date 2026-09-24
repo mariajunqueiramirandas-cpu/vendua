@@ -2,6 +2,7 @@ import { describe, expect, test } from 'bun:test';
 import { join } from 'node:path';
 import postgres from 'postgres';
 import { claimRun, drain, enqueueRun, replayJournal, runOnce } from '../src/agent/runner.ts';
+import { enqueueInboxTx } from '../src/agent/inbox.ts';
 import { executeTool, assertRunClaimTx, type ToolContext } from '../src/agent/tools.ts';
 import { mapPointerName, pageKey } from '../src/agent/channels/discovery.ts';
 import { dispatchMessage } from '../src/agent/send.ts';
@@ -1106,8 +1107,11 @@ dbDescribe('worker robustness (db)', () => {
       insert into lead_threads (lead_id, channel) values (${leadId}, 'manual') returning id
     `;
     await sql`delete from agent_runs where status = 'queued'`;
-    // 'done' run: its committed send has no owner left — recovery delivers it
+    // 'done' run: its committed send has no owner left — recovery delivers it.
+    // Marked terminal BEFORE the second insertRun — one active run per lead
+    // means a queued sibling can't exist alongside it.
     const doneRun = (await enqueueRun(sql, { kind: 'reply', leadId }))!;
+    await sql`update agent_runs set status = 'done', claim_token = null where id = ${doneRun}`;
     const [doneMsg] = await sql<{ id: string }[]>`
       insert into lead_messages (thread_id, direction, author, body, status, agent_run_id, created_at)
       values (${thread!.id}, 'out', 'agent', 'done envia', 'queued', ${doneRun}, now() - interval '30 seconds')
@@ -1115,12 +1119,12 @@ dbDescribe('worker robustness (db)', () => {
     `;
     // 'queued' run: the next attempt owns the send — recovery must NOT dispatch
     const queuedRun = (await enqueueRun(sql, { kind: 'reply', leadId }))!;
+    expect(queuedRun).not.toBe(doneRun);
     const [queuedMsg] = await sql<{ id: string }[]>`
       insert into lead_messages (thread_id, direction, author, body, status, agent_run_id, created_at)
       values (${thread!.id}, 'out', 'agent', 'ainda não', 'queued', ${queuedRun}, now() - interval '30 seconds')
       returning id
     `;
-    await sql`update agent_runs set status = 'done', claim_token = null where id = ${doneRun}`;
     // run_at in the future keeps the queued run unclaimable — drain can't
     // race it into 'running' mid-test
     await sql`update agent_runs set run_at = now() + interval '1 hour' where id = ${queuedRun}`;
@@ -1323,8 +1327,11 @@ dbDescribe('worker robustness (db)', () => {
     for (const [k, id] of Object.entries({ archived, unsub, paused, off, live })) {
       runs[k] = (await enqueueRun(sql, { kind: 'outreach', leadId: id }))!;
     }
-    // a 'running' run on an archived lead is mid-flight — not the sweep's
-    const running = (await enqueueRun(sql, { kind: 'outreach', leadId: archived }))!;
+    // a 'running' run on an archived lead is mid-flight — not the sweep's.
+    // One active row per lead → it needs its own lead (the queued row on
+    // `archived` already occupies the index slot).
+    const runningLead = await mkLead('Swept Running', 'archived_at = now()');
+    const running = (await enqueueRun(sql, { kind: 'outreach', leadId: runningLead }))!;
     await sql`update agent_runs set status = 'running', started_at = now(), alive_at = now(),
       claim_token = 'tok' where id = ${running}`;
     await drain(sql, 0);
@@ -1342,7 +1349,7 @@ dbDescribe('worker robustness (db)', () => {
     expect((await status(running)).status).toBe('running');
   });
 
-  test('unsubscribe cancels the lead’s queued runs — they could never claim', async () => {
+  test('unsubscribe clears the lead’s pending mail — an opted-out lead never drains it', async () => {
     await migrate(sql, MIGRATIONS);
     const lead = await controlTx(sql, (tx) => insertLeadTx(tx, { name: 'OptOut Lead' }));
     const leadId = lead.body.lead.id;
@@ -1350,18 +1357,54 @@ dbDescribe('worker robustness (db)', () => {
     const replyRun = (await enqueueRun(sql, { kind: 'reply', leadId }))!;
     const claimed = await claimRun(sql);
     expect(claimed?.id).toBe(replyRun);
-    const queuedRun = (await enqueueRun(sql, { kind: 'outreach', leadId }))!;
+    // One active run per lead — "queued sibling" is no longer constructible;
+    // the lead's pending WORK now lives in the inbox, and the opt-out drops
+    // it so the next drain (or the running run itself) never sees it.
+    await controlTx(sql, (tx) =>
+      enqueueInboxTx(tx, leadId, 'inbound', { text: 'mensagem pendente' }),
+    );
     const ctx = mkCtx(replyRun, claimed!.claim_token, leadId);
     await executeTool(ctx, 'u1', 'unsubscribe', { leadId, reason: 'pediu para sair' });
-    const [dead] = await sql<{ status: string }[]>`
-      select status from agent_runs where id = ${queuedRun}
-    `;
-    expect(dead!.status).toBe('canceled');
+    const pending = await sql`select 1 from agent_inbox
+      where lead_id = ${leadId} and consumed_at is null`;
+    expect(pending).toHaveLength(0);
     // the running run doing the unsubscribe finishes normally
     const [live] = await sql<{ status: string }[]>`
       select status from agent_runs where id = ${replyRun}
     `;
     expect(live!.status).toBe('running');
+  });
+
+  test('drain spawns a run for orphan mail — the item is consumed by it', async () => {
+    await migrate(sql, MIGRATIONS);
+    const lead = await controlTx(sql, (tx) =>
+      insertLeadTx(tx, { name: 'Orphan Mail', agent_mode: 'auto' }),
+    );
+    const leadId = lead.body.lead.id;
+    await sql`delete from agent_runs where status = 'queued'`;
+    await sql`update agent_inbox set consumed_at = now() where consumed_at is null`;
+    // Mail with no live run: the sweep inside drain materializes the run
+    // (kind from payload.requestedKind) and that very run drains the item.
+    await controlTx(sql, (tx) =>
+      enqueueInboxTx(tx, leadId, 'staff', {
+        text: 'a equipe pediu um contato',
+        requestedKind: 'outreach',
+      }),
+    );
+    // full drain: the sweep inserts the run, then the claim loop runs it —
+    // drain(sql, 0) would sweep but never claim
+    await drain(sql);
+    const runs = await sql<{ id: string; kind: string }[]>`
+      select id, kind from agent_runs where lead_id = ${leadId} order by created_at
+    `;
+    expect(runs).toHaveLength(1);
+    expect(runs[0]!.kind).toBe('outreach');
+    const items = await sql<{ consumed_by_run: string | null; consumed_at: string | null }[]>`
+      select consumed_by_run, consumed_at from agent_inbox where lead_id = ${leadId}
+    `;
+    expect(items).toHaveLength(1);
+    expect(items[0]!.consumed_at).not.toBeNull();
+    expect(items[0]!.consumed_by_run).toBe(runs[0]!.id);
   });
 
   test('reply read_pages is bounded — the cap refuses the call before fetching', async () => {
@@ -2438,7 +2481,7 @@ dbDescribe('worker robustness (db)', () => {
     expect(reads[2]!.out?.errors?.map((e) => e.url)).toEqual(['ftp://shop.example/menu']);
   });
 
-  test('auto outreach self-cancels when a fresher inbound exists mid-run', async () => {
+  test('a mid-run inbound mails into the running outreach between steps', async () => {
     await migrate(sql, MIGRATIONS);
     const lead = await controlTx(sql, (tx) => insertLeadTx(tx, { name: 'Replied Mid-Run' }));
     const leadId = lead.body.lead.id;
@@ -2447,24 +2490,32 @@ dbDescribe('worker robustness (db)', () => {
     `;
     await sql`delete from agent_runs where status = 'queued'`;
     const runId = (await enqueueRun(sql, { kind: 'outreach', leadId }))!;
-    // params.auto is the marker the gate/post-commit cancel keys on; a
-    // 'running' row locked during that pass escapes it — the run must
-    // catch the committed inbound itself at the next step boundary.
     await sql`update agent_runs set run_at = now(),
       params = ${sql.json({ auto: 'first-contact', script: [{ text: 'oi', delayMs: 1500 }, { text: 'outra' }] } as never)}
       where id = ${runId}`;
-    // The probe keys on received_at (server ingest): the inbound must land
-    // AFTER the claim — fire the run, let claim+turn-1 start, then insert.
+    // The item must land mid-flight: fire the run, let claim+turn-1 start,
+    // then enqueue — the kernel drains it at the next step boundary and
+    // renders it to the model instead of cancelling the run.
     const running = runOnce(sql);
     await new Promise((r) => setTimeout(r, 150));
-    await sql`insert into lead_messages (thread_id, direction, author, body, status, created_at)
-      values (${thread!.id}, 'in', 'lead', 'sim, quero', 'received', now())`;
+    await controlTx(sql, (tx) =>
+      enqueueInboxTx(tx, leadId, 'inbound', {
+        text: 'sim, quero',
+        threadId: thread!.id,
+        requestedKind: 'reply',
+      }),
+    );
     expect(await running).toBe(true);
     const r = await getRun(runId);
-    expect(r.status).toBe('canceled');
-    expect(r.error).toBe('lead respondeu');
-    // the second scripted turn never ran — the probe broke the loop
-    expect(r.steps.filter((s) => (s as { type?: string }).type === 'model')).toHaveLength(1);
+    expect(r.status).toBe('done');
+    // both scripted turns ran — the drain journal entry sits between them
+    const inboxSteps = r.steps.filter((s) => (s as { type?: string }).type === 'inbox');
+    expect(inboxSteps).toHaveLength(1);
+    expect(r.steps.filter((s) => (s as { type?: string }).type === 'model')).toHaveLength(2);
+    const items = await sql<{ consumed_by_run: string | null }[]>`
+      select consumed_by_run from agent_inbox where lead_id = ${leadId}
+    `;
+    expect(items[0]!.consumed_by_run).toBe(runId);
   });
 
   test('a historical import does not self-cancel auto outreach', async () => {
@@ -2515,7 +2566,7 @@ dbDescribe('worker robustness (db)', () => {
     expect(r.status).toBe('done');
   });
 
-  test('a lagging provider stamp still self-cancels — the probe keys on ingest time', async () => {
+  test('a second mid-run item drains at the next boundary — mail is not one-shot', async () => {
     await migrate(sql, MIGRATIONS);
     const lead = await controlTx(sql, (tx) => insertLeadTx(tx, { name: 'Lag Inbound' }));
     const leadId = lead.body.lead.id;
@@ -2527,18 +2578,19 @@ dbDescribe('worker robustness (db)', () => {
     await sql`update agent_runs set run_at = now(),
       params = ${sql.json({ auto: 'first-contact', script: [{ text: 'oi', delayMs: 1500 }, { text: 'outra' }] } as never)}
       where id = ${runId}`;
-    // Provider clock an hour BEHIND: created_at predates the claim, but the
-    // message is ingested mid-run — received_at is what "arrived during
-    // this attempt" means.
     const running = runOnce(sql);
     await new Promise((r) => setTimeout(r, 150));
-    await sql`insert into lead_messages (thread_id, direction, author, body, status, created_at)
-      values (${thread!.id}, 'in', 'lead', 'sim, quero', 'received', now() - interval '1 hour')`;
+    await controlTx(sql, (tx) =>
+      enqueueInboxTx(tx, leadId, 'staff', { text: 'a equipe pediu atenção' }),
+    );
     expect(await running).toBe(true);
     const r = await getRun(runId);
-    expect(r.status).toBe('canceled');
-    expect(r.error).toBe('lead respondeu');
-    expect(r.steps.filter((s) => (s as { type?: string }).type === 'model')).toHaveLength(1);
+    expect(r.status).toBe('done');
+    const inboxSteps = r.steps.filter((s) => (s as { type?: string }).type === 'inbox') as {
+      items?: { kind: string }[];
+    }[];
+    expect(inboxSteps).toHaveLength(1);
+    expect(inboxSteps[0]!.items![0]!.kind).toBe('staff');
   });
 
   test('an auto send refused at dispatch — the inbound beat the probe window', async () => {

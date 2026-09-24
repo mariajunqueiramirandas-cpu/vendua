@@ -105,9 +105,13 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('agent evals — golden runs (db
     return created.body.lead.id;
   };
 
-  /** Park leftovers from earlier tests so drain only picks up ours. */
-  const cancelQueued = async () =>
-    sql`update agent_runs set status = 'canceled' where status = 'queued'`;
+  /** Park leftovers from earlier tests so drain only picks up ours —
+   *  pending mail too: the orphan sweep would otherwise spawn runs for it,
+   *  and those runs feed the scripted provider, polluting `requests`. */
+  const cancelQueued = async () => {
+    await sql`update agent_runs set status = 'canceled' where status = 'queued'`;
+    await sql`update agent_inbox set consumed_at = now() where consumed_at is null`;
+  };
 
   /** Drive a scripted inbound → drain until the run reaches a terminal
    *  status; returns the finished run row. */

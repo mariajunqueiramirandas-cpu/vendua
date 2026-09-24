@@ -591,17 +591,23 @@ export async function approveMessage(
             select lead_id from lead_threads where id = ${stale[0].thread_id}
           `
         )[0]!;
-        // Dedupe on the SAME intent only: an already-queued regen covers this
-        // one. A generic outreach run (first-contact/cadence sweep) does NOT —
-        // it lacks draftOnly + the expired-copy focus and may send or produce
-        // nothing reviewable, so the regen inserts beside it (runs serialize
-        // through claimRun; the regen only ever composes a draft).
+        // Dedupe on the SAME intent only: an already-queued regen (or its
+        // undrained inbox item) covers this one. A generic outreach run
+        // (first-contact/cadence sweep) does NOT — it lacks draftOnly + the
+        // expired-copy focus, so the regen mails as an 'event' item into it
+        // instead: the item carries the recompose intent and the active run
+        // handles it in-context.
         const active = await tx<{ id: string }[]>`
-          select id from agent_runs
+          select id::text as id, created_at from agent_runs
           where lead_id = ${thread.lead_id} and kind = 'outreach'
             and status in ('queued', 'running')
             and params->>'auto' = 'regenerate'
             and params->>'src' = ${messageId}
+          union all
+          select id::text, created_at from agent_inbox
+          where lead_id = ${thread.lead_id} and consumed_at is null
+            and payload->>'auto' = 'regenerate'
+            and payload->>'src' = ${messageId}
           order by created_at limit 1
         `;
         let runId: string | null;
@@ -616,21 +622,34 @@ export async function approveMessage(
           runId = verdict === 'under' ? active[0].id : null;
         } else {
           const { insertRun } = await import('../agent/runner.ts');
+          const { enqueueInboxTx } = await import('../agent/inbox.ts');
+          const focus = `o rascunho anterior expirou (${staleDays}d sem envio) — reescreva a mesma intenção com o estado atual do lead. Texto anterior: ${stale[0].body.slice(0, 500)}`;
+          const params = {
+            draftOnly: true,
+            auto: 'regenerate',
+            src: messageId,
+            focus,
+          };
           runId = await insertRun(
             tx,
             {
               kind: 'outreach',
               leadId: thread.lead_id,
               threadId: stale[0].thread_id,
-              params: {
-                draftOnly: true,
-                auto: 'regenerate',
-                src: messageId,
-                focus: `o rascunho anterior expirou (${staleDays}d sem envio) — reescreva a mesma intenção com o estado atual do lead. Texto anterior: ${stale[0].body.slice(0, 500)}`,
-              },
+              params,
             },
             cap,
           );
+          if (runId) {
+            await enqueueInboxTx(tx, thread.lead_id, 'event', {
+              text: focus,
+              requestedKind: 'outreach',
+              threadId: stale[0].thread_id,
+              auto: 'regenerate',
+              src: messageId,
+              params,
+            });
+          }
         }
         if (!runId) {
           // The lifetime cost cap refused the regen — the draft can never

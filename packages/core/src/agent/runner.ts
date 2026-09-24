@@ -35,6 +35,7 @@ import { buildSystemPrompt } from './prompts.ts';
 import { loadPlaybookTx, mergePlaybook, type EffectivePlaybook } from './playbooks.ts';
 import { automationAllowedTx, claimPolicyTx, discoveryBudgetTx } from './policy.ts';
 import { pendingWakeupsTx, sweepWakeups } from './wakeups.ts';
+import { enqueueInboxTx, renderInboxItems, sweepOrphanInbox, type InboxItem } from './inbox.ts';
 import { executeTool, toolsFor, bookDigest, type BookEntry, type ToolContext } from './tools.ts';
 import { MonidBudget } from './channels/monid.ts';
 import { ACTION_TOOLS, MUTABLE_READS, NON_IDEMPOTENT, READ_TOOLS } from './tool-meta.ts';
@@ -172,14 +173,28 @@ export async function insertRun(
       return null;
     }
   }
+  // One active run per lead (agent_runs_one_active_per_lead). The mailbox
+  // model means a second insert is never an error: the caller's intent
+  // already lives in an agent_inbox item, so a conflicting row just owns
+  // the delivery — return its id. ON CONFLICT's arbiter does the check
+  // atomically inside the insert; on hit the row aborts and DO NOTHING
+  // returns nothing (the plain INSERT would instead abort the whole tx on
+  // the unique violation).
   const row = (
     await tx<{ id: string }[]>`
       insert into agent_runs (kind, lead_id, thread_id, params, run_at)
       values (${input.kind}, ${input.leadId ?? null}, ${input.threadId ?? null}, ${tx.json((input.params ?? {}) as never)}, ${input.runAt ?? null})
+      on conflict (lead_id) where status in ('queued', 'running') do nothing
       returning id
     `
-  )[0]!;
-  return row.id;
+  )[0];
+  if (row) return row.id;
+  const existing = await tx<{ id: string }[]>`
+    select id from agent_runs
+    where lead_id = ${input.leadId ?? null} and status in ('queued', 'running')
+    order by created_at limit 1
+  `;
+  return existing[0]?.id ?? null;
 }
 
 export async function enqueueRun(
@@ -1119,7 +1134,7 @@ export function replayJournal(prior: unknown[], claimsUnverified = false): Journ
       });
       continue;
     }
-    if (s.type === 'nudge' || s.type === 'reflection') {
+    if (s.type === 'nudge' || s.type === 'reflection' || s.type === 'inbox') {
       flush();
       replay.messages.push({ role: 'user', content: s.content ?? '' });
       continue;
@@ -1420,7 +1435,7 @@ async function syncRunStepsTx(
  *  row. Writes serialize on `tail` and each snapshots [...steps, ...extra]
  *  when its turn begins, so parallel tool resolutions can only advance the
  *  journal — a delayed write never re-commits an older pending state. */
-function persist(att: Attempt, extra: unknown[] = []): Promise<void> {
+function persist(att: Attempt, extra: unknown[] = [], consumeInbox: string[] = []): Promise<void> {
   const p = att.tail.then(async () => {
     if (att.lost) return;
     const snap = [...att.steps, ...extra];
@@ -1431,6 +1446,16 @@ function persist(att: Attempt, extra: unknown[] = []): Promise<void> {
         returning id
       `;
       if (r.length) {
+        // Inbox items render exactly once: the drain's 'inbox' entry is
+        // already inside `snap`, so stamping consumed inside THIS fenced
+        // commit ties "rendered" to "journaled" — a run that loses the
+        // fence or dies before commit leaves them pending for the next.
+        if (consumeInbox.length) {
+          await tx`
+            update agent_inbox set consumed_by_run = ${att.run.id}, consumed_at = now()
+            where id = any(${consumeInbox}::uuid[]) and consumed_at is null
+          `;
+        }
         await syncRunStepsTx(tx, att.run.id, snap, Math.min(att.dirtyFrom, att.synced));
       }
       return r;
@@ -1473,6 +1498,40 @@ async function persistAborted(att: Attempt): Promise<void> {
   }).catch((): CapVerdict => 'under');
   emitControlEvent('run.update', att.run.id);
   if (cap === 'flagged') emitControlEvent('lead.change');
+}
+
+/** Drain the lead's mailbox into this run: pending agent_inbox items become
+ *  one 'inbox' journal entry + a user message, and are stamped consumed in
+ *  the same fenced commit that journals them (persist's consumeInbox path)
+ *  — an item is rendered exactly once, and only by a run that actually owns
+ *  the claim. Returns the item count so finishGate can buy another turn. */
+async function drainInbox(att: Attempt): Promise<number> {
+  if (att.lost || !att.run.lead_id) return 0;
+  // Read-only select — consumption is fenced inside persist, so a stale
+  // worker picking items here only fails later at the fence, never
+  // swallows the mail.
+  const items = await controlTx(
+    att.sql,
+    (tx) => tx<InboxItem[]>`
+      select id, kind, payload, created_at from agent_inbox
+      where lead_id = ${att.run.lead_id!} and consumed_at is null
+      order by created_at limit 10
+    `,
+  );
+  if (!items.length) return 0;
+  const content = renderInboxItems(items);
+  att.steps.push({
+    type: 'inbox',
+    items: items.map((i) => ({ id: i.id, kind: i.kind })),
+    content,
+  });
+  att.messages.push({ role: 'user', content });
+  await persist(
+    att,
+    [],
+    items.map((i) => i.id),
+  );
+  return items.length;
 }
 
 /** Attempt setup — journal resume + cost accounting: reconcile journaled
@@ -1728,74 +1787,6 @@ async function modelTurn(att: Attempt): Promise<void> {
   await persist(att);
 }
 
-/** Loop guard — inbound retires auto outreach: the gate flips queued rows
- *  and the post-commit pass flips 'running' ones SKIP-LOCKED — a row
- *  locked mid-tool-call escapes that pass and nothing revisits it. The
- *  marker the cancel keys on is the committed LIVE inbound itself: one
- *  ingested after this attempt's claim means the lead already wrote —
- *  stop exactly like the API cancel (fenced flip → lost → unwind →
- *  persistAborted journals the trajectory). The comparison runs on
- *  received_at (server ingestion time), not created_at: a delayed webhook
- *  or lagging provider clock can stamp a genuinely new inbound before the
- *  claim time and must still cancel. Historical imports stay excluded —
- *  context, not a live reply. `received_at is not null` is the "real
- *  server ingest" test: 0034 NULLed the 0030 backfill (received_at =
- *  created_at), and a real ingest always rides the clock_timestamp()
- *  default — never NULL. The earlier `received_at <> created_at`
- *  fingerprint could false-negative a live reply whose app-clock ms and
- *  DB µs clocks happened to agree exactly.
- *  Returns true when the run was superseded — the kernel unwinds. */
-async function inboundRepliedGuard(att: Attempt): Promise<boolean> {
-  const { sql, run } = att;
-  const autoSrc = (run.params as { auto?: string } | null)?.auto;
-  // 'agent' exempt like 'regenerate': the pre-'auto' sweep marker mixes
-  // self-schedules with lead-asked callbacks — possibly a promise, so
-  // a reply doesn't self-cancel it.
-  if (
-    att.lost ||
-    run.kind !== 'outreach' ||
-    autoSrc == null ||
-    autoSrc === 'regenerate' ||
-    autoSrc === 'agent'
-  ) {
-    return false;
-  }
-  const replied = await controlTx(
-    sql,
-    (tx) => tx`
-      select 1 from lead_messages m
-      join lead_threads t on t.id = m.thread_id
-      where t.lead_id = ${run.lead_id} and m.direction = 'in' and not m.historical
-        and m.received_at is not null
-        and m.received_at > (select started_at from agent_runs where id = ${run.id})
-      limit 1
-    `,
-  );
-  if (!replied.length) return false;
-  const superseded = await controlTx(sql, async (tx) => {
-    const flipped = await tx<{ id: string }[]>`
-      update agent_runs set status = 'canceled', error = 'lead respondeu',
-        finished_at = now()
-      where id = ${run.id} and status = 'running' and claim_token = ${run.claim_token}
-      returning id
-    `;
-    if (!flipped[0]) return [] as string[];
-    // The run's already-committed unapproved drafts die with it —
-    // same lifecycle as the ingest gate's cancels.
-    const drafts = await tx<{ thread_id: string }[]>`
-      update lead_messages
-      set status = 'rejected', error = 'lead respondeu', updated_at = now()
-      where agent_run_id = ${run.id} and status = 'draft'
-      returning thread_id
-    `;
-    return drafts.map((d) => d.thread_id);
-  });
-  for (const tid of new Set(superseded)) emitControlEvent('draft.change', tid);
-  emitControlEvent('run.update', run.id);
-  att.lost = true;
-  return true;
-}
-
 /** Finish gate — a no-toolCalls turn either ends the run or buys it ONE
  *  enforcement nudge: discovery's produce-or-perish pressure, or the
  *  messaging kinds' visible-action requirement. A nudge sets its own
@@ -1886,6 +1877,10 @@ async function finishGate(att: Attempt): Promise<'end' | 'again'> {
     await persist(att);
     return 'again';
   }
+  // Mail that landed mid-attempt rides this run instead of a second one:
+  // drain before finishing so the run answers what arrived while it
+  // worked, not just what it started with.
+  if (await drainInbox(att)) return 'again';
   // A cancel landing between the last persist and now leaves the row
   // 'canceled' — finishRun matches nothing; persistAborted's canceled-
   // fence still stores the usage so the spend isn't lost. Debrief runs
@@ -2184,18 +2179,21 @@ async function failAttempt(att: Attempt, e: unknown): Promise<void> {
     await persistAborted(att);
 }
 
-/** The kernel loop — the phases as middleware: model turn → inbound guard
- *  → finish gate → tool dispatch, for `limit` steps or until the run loses
- *  its fence. */
+/** The kernel loop — the phases as middleware: inbox drain → model turn →
+ *  finish gate → tool dispatch, for `limit` steps or until the run loses
+ *  its fence. Draining first covers both "items queued while the run sat
+ *  parked" (first iteration) and "items landed mid-attempt" (every step
+ *  boundary after). */
 async function runKernel(att: Attempt): Promise<void> {
   // Artifact-minters get a run-wide window instead: a duplicate row is
   // never a state-restore no matter how many turns passed, and the
   // journal-seeded set survives reclaim.
   att.landedSigs = new Set(att.replay.landedSigs);
   for (att.i = 0; att.i < att.limit && !att.lost; att.i++) {
+    await drainInbox(att);
+    if (att.lost) break;
     await modelTurn(att);
     if (att.lost) break;
-    if (await inboundRepliedGuard(att)) break;
     if (!att.res.toolCalls.length) {
       if ((await finishGate(att)) === 'end') return;
       continue;
@@ -2450,6 +2448,10 @@ export async function drain(sql: Sql, limit = 20): Promise<number> {
       agentLog.error({ err: e, messageId: m.id }, 'dispatch failed'),
     );
   }
+  // Orphaned mail: items whose enqueueing side never got a run for them
+  // (cap refusal, the run they rode died before draining, a lost race).
+  // The sweep creates the fallback run each payload describes.
+  await sweepOrphanInbox(sql).catch((e) => agentLog.error({ err: e }, 'inbox sweep failed'));
   let ran = 0;
   while (ran < limit && (await runOnce(sql))) ran++;
   return ran;
@@ -2674,11 +2676,6 @@ export async function sweepOutreach(sql: Sql): Promise<number> {
       where l.next_action_at is not null and l.next_action_at <= now()
         and l.archived_at is null and l.unsubscribed_at is null
         and l.agent_mode != 'off'
-        and not exists (
-          select 1 from agent_runs r
-          where r.lead_id = l.id and r.kind = 'outreach'
-            and r.status in ('queued', 'running')
-        )
         and (${capCents} <= 0 or
           coalesce((select sum(x.cost_cents) from agent_runs x
                     where x.lead_id = l.id), 0) < ${capCents})
@@ -2724,26 +2721,35 @@ export async function sweepOutreach(sql: Sql): Promise<number> {
           for update skip locked
         `
       )[0];
+      const params: Record<string, unknown> = {
+        ...(next_action_source === 'staff' ||
+        next_action_source === 'requested' ||
+        next_action_source === 'agent'
+          ? {}
+          : { auto: next_action_source }),
+        ...(fold ? { focus: `agendado por você: ${fold.focus}`, wakeupId: fold.id } : {}),
+      };
       const cap: { flagged?: boolean } = {};
       const runId = await insertRun(
         tx,
         {
           kind: 'outreach',
           leadId: id,
-          params: {
-            ...(next_action_source === 'staff' ||
-            next_action_source === 'requested' ||
-            next_action_source === 'agent'
-              ? {}
-              : { auto: next_action_source }),
-            ...(fold ? { focus: `agendado por você: ${fold.focus}`, wakeupId: fold.id } : {}),
-          },
+          params,
         },
         cap,
       );
       if (cap.flagged) capFlagged.push(id);
       if (runId) {
         queuedIds.push(runId);
+        // The cadence intent rides the mailbox too: when insertRun found an
+        // already-active run (same or another kind) the item is what carries
+        // the intent into it — and it doubles as the audit trail either way.
+        await enqueueInboxTx(tx, id, 'event', {
+          text: `a cadência disparou${fold ? ` — ${params.focus}` : ''}`,
+          requestedKind: 'outreach',
+          params,
+        });
         await tx`update leads set next_action_at = null, next_action_source = null where id = ${id}`;
         if (fold) {
           await tx`
