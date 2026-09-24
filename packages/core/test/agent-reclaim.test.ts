@@ -529,6 +529,33 @@ dbDescribe('worker robustness (db)', () => {
     unsub();
   });
 
+  test('a terminal reclaim emits lead.change for the failed-run task — no cap needed', async () => {
+    await migrate(sql, MIGRATIONS);
+    const events: ControlEvent[] = [];
+    const unsub = subscribeControlEvents((e) => events.push(e));
+    const lead = await controlTx(sql, (tx) => insertLeadTx(tx, { name: 'Dead Run' }));
+    const leadId = lead.body.lead.id;
+    const id = (await enqueueRun(sql, { kind: 'outreach', leadId }))!;
+    const stale = new Date(Date.now() - 11 * 60_000);
+    await sql`
+      update agent_runs set status = 'running', claim_token = 'stale',
+        started_at = ${stale}, alive_at = ${stale}, max_attempts = 1
+      where id = ${id}
+    `;
+    await drain(sql, 0);
+    const r = await getRun(id);
+    expect(r.status).toBe('failed');
+    // ordinary failure, no cap — the [humano] task still needs the refresh
+    const tasks = await sql`select 1 from lead_tasks
+      where lead_id = ${leadId} and title like '%tentativas esgotadas%'`;
+    expect(tasks).toHaveLength(1);
+    const flags = await sql`select 1 from lead_activities
+      where lead_id = ${leadId} and kind = 'system' and meta->>'type' = 'cost-cap'`;
+    expect(flags).toHaveLength(0);
+    expect(events.some((e) => e.type === 'lead.change' && e.ref === undefined)).toBe(true);
+    unsub();
+  });
+
   test('a requeued run claims once its backoff elapses — attempts intact', async () => {
     await migrate(sql, MIGRATIONS);
     const id = await seedStaleRun();

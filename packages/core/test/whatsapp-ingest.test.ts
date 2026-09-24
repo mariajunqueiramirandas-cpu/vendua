@@ -582,4 +582,49 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('whatsapp history + ignore list 
     `;
     expect(agentDate[0]!.next_action_at).toBeNull();
   });
+
+  test('a capped inbound flags the lead and emits lead.change', async () => {
+    await migrate(sql, MIGRATIONS);
+    await sql`
+      insert into control_settings (key, value)
+      values ('guardrails', ${sql.json({ leadLifetimeCostCapUsd: 0.01 } as never)})
+      on conflict (key) do update set value = excluded.value
+    `;
+    // whatsapp matches the inbound sender so the message lands on this card,
+    // not a freshly-created lead.
+    const lead = await controlTx(sql, (tx) =>
+      insertLeadTx(tx, { name: 'Capped Inbound', whatsapp: '5511944440001' }),
+    );
+    const leadId = lead.body.lead.id;
+    // 5¢ of prior terminal spend — the cap refuses the reply run and writes
+    // a fresh flag + [humano] task inside the gate tx.
+    await sql`insert into agent_runs (kind, lead_id, status, cost_cents)
+      values ('outreach', ${leadId}, 'done', 5)`;
+    const events: ControlEvent[] = [];
+    const unsub = subscribeControlEvents((e) => events.push(e));
+    try {
+      const res = await ingestInbound(sql, {
+        channel: 'whatsapp',
+        from: '5511944440001@s.whatsapp.net',
+        body: 'oi, ainda quero',
+        providerMessageId: `cap-inbound-${crypto.randomUUID()}`,
+      });
+      if ('ignored' in res) throw new Error('unexpected ignore');
+      // reply refused — no new run for this lead beyond the seeded one
+      const queued = await sql`select 1 from agent_runs
+        where lead_id = ${leadId} and status = 'queued'`;
+      expect(queued).toHaveLength(0);
+      const flags = await sql`select 1 from lead_activities
+        where lead_id = ${leadId} and kind = 'system' and meta->>'type' = 'cost-cap'`;
+      expect(flags).toHaveLength(1);
+      const tasks = await sql`select 1 from lead_tasks
+        where lead_id = ${leadId} and title like '%custo do agente%'`;
+      expect(tasks).toHaveLength(1);
+      // the flag's task committed inside the gate tx — lead.change must
+      // refresh Tasks views (the message-path emit predates the flag)
+      expect(events.some((e) => e.type === 'lead.change' && e.ref === undefined)).toBe(true);
+    } finally {
+      unsub();
+    }
+  });
 });

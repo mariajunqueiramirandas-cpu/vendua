@@ -1902,6 +1902,9 @@ export async function drain(sql: Sql, limit = 20): Promise<number> {
   // ahead of healthy work, and the attempt that exhausts max_attempts lands
   // 'failed' — journal kept — instead of looping the lease forever.
   const capFlaggedIds: string[] = [];
+  // Track task writes separately from cap flags — a normal failed run's
+  // [humano] task needs the same lead.change refresh a fresh flag earns.
+  let taskLanded = false;
   const { requeued, terminal } = await controlTx(sql, async (tx) => {
     // Requeue below-cap attempts in one bulk pass — nothing else needs to
     // commit with them (the retry's own finishRun folds its total spend).
@@ -1962,14 +1965,17 @@ export async function drain(sql: Sql, limit = 20): Promise<number> {
         returning id, lead_id
       `;
       const row = rows[0];
-      if (!row) return false;
+      // A stale row revived between select and update skips the whole
+      // finalize — no task, no flag, no emit.
+      if (!row) return { task: false, cap: false };
       // A dead attempt never reached finishRun — its spend lives only in
       // the journal. Model entries are usage DELTAS (sum them); monid_spend
       // markers carry the CUMULATIVE budget balance at each write — the
       // fold above reads the LAST marker like runOnce's priorSpend, never
       // a sum (summing cumulative balances would inflate cost_cents).
-      // Same failed-run visibility as finishRun's path.
-      if (!row.lead_id) return false;
+      // Same failed-run visibility as finishRun's path; board-scoped
+      // failures roll into the digest instead — no task, no emit.
+      if (!row.lead_id) return { task: false, cap: false };
       const name =
         (await tx<{ name: string }[]>`select name from leads where id = ${row.lead_id}`)[0]?.name ??
         row.lead_id;
@@ -1981,12 +1987,16 @@ export async function drain(sql: Sql, limit = 20): Promise<number> {
       `;
       // And now that the spend persisted, run the same cap check every
       // other terminal path does — dead-run spend can itself cross the cap.
-      return (await leadUnderCostCapTx(tx, row.lead_id)) === 'flagged';
-    }).catch(() => false);
-    if (flagged) capFlaggedIds.push(f.lead_id!);
+      return {
+        task: true,
+        cap: (await leadUnderCostCapTx(tx, row.lead_id)) === 'flagged',
+      };
+    }).catch(() => ({ task: false, cap: false }));
+    if (flagged.cap) capFlaggedIds.push(f.lead_id!);
+    if (flagged.task) taskLanded = true;
     emitControlEvent('run.update', f.id);
   }
-  if (capFlaggedIds.length) emitControlEvent('lead.change');
+  if (capFlaggedIds.length || taskLanded) emitControlEvent('lead.change');
   // Terminal suppressions strand queued runs forever — the claim gate's
   // pause semantics never lifts them. unsubscribe writers cancel inline,
   // archive doesn't, so this sweep is the catch-all for both (a writer
