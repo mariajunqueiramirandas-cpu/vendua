@@ -98,9 +98,17 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('agent memory v2 (db)', () => {
     });
     expect(missingIdem.status).toBe(400);
 
-    const badScope = await post('/control/v1/agent/memory', { scope: 'bogus', content: nm('a') }, idem('k1'));
+    const badScope = await post(
+      '/control/v1/agent/memory',
+      { scope: 'bogus', content: nm('a') },
+      idem('k1'),
+    );
     expect(badScope.status).toBe(422);
-    const noSegment = await post('/control/v1/agent/memory', { scope: 'segment', content: nm('a') }, idem('k2'));
+    const noSegment = await post(
+      '/control/v1/agent/memory',
+      { scope: 'segment', content: nm('a') },
+      idem('k2'),
+    );
     expect(noSegment.status).toBe(422);
     const tooLong = await post(
       '/control/v1/agent/memory',
@@ -143,7 +151,11 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('agent memory v2 (db)', () => {
 
     const noFields = await patch(`/control/v1/agent/memory/${item.id}`, {}, idem('k6'));
     expect(noFields.status).toBe(422);
-    const badPinned = await patch(`/control/v1/agent/memory/${item.id}`, { pinned: 'yes' }, idem('k7'));
+    const badPinned = await patch(
+      `/control/v1/agent/memory/${item.id}`,
+      { pinned: 'yes' },
+      idem('k7'),
+    );
     expect(badPinned.status).toBe(422);
     const pinned = await patch(`/control/v1/agent/memory/${item.id}`, { pinned: true }, idem('k8'));
     expect(pinned.status).toBe(200);
@@ -171,10 +183,18 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('agent memory v2 (db)', () => {
 
     const ghostFacts = await ctlGet(`/control/v1/leads/${ghostId}/facts`);
     expect(ghostFacts.status).toBe(404);
-    const ghostPut = await put(`/control/v1/leads/${ghostId}/facts/size`, { value: 'xl' }, idem('f1'));
+    const ghostPut = await put(
+      `/control/v1/leads/${ghostId}/facts/size`,
+      { value: 'xl' },
+      idem('f1'),
+    );
     expect(ghostPut.status).toBe(404); // FK-checked, not a 23503 500
 
-    const badKey = await put(`/control/v1/leads/${leadId}/facts/Bad-Key`, { value: 'x' }, idem('f2'));
+    const badKey = await put(
+      `/control/v1/leads/${leadId}/facts/Bad-Key`,
+      { value: 'x' },
+      idem('f2'),
+    );
     expect(badKey.status).toBe(422);
     const noValue = await put(`/control/v1/leads/${leadId}/facts/size`, {}, idem('f3'));
     expect(noValue.status).toBe(422);
@@ -201,7 +221,11 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('agent memory v2 (db)', () => {
     });
     expect(fact.confidence).toBe(0.8);
 
-    const rewrote = await put(`/control/v1/leads/${leadId}/facts/size`, { value: 'xxl' }, idem('f6'));
+    const rewrote = await put(
+      `/control/v1/leads/${leadId}/facts/size`,
+      { value: 'xxl' },
+      idem('f6'),
+    );
     expect(rewrote.status).toBe(200);
     const facts = await ctlGet(`/control/v1/leads/${leadId}/facts`);
     const list = ((await facts.json()) as { facts: { key: string; value: string }[] }).facts;
@@ -254,12 +278,15 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('agent memory v2 (db)', () => {
     await setup();
     // Clean slate — the cap is global across all learnings.
     await sql`delete from agent_memory_items`;
-    await controlTx(sql, (tx) => tx`
+    await controlTx(
+      sql,
+      (tx) => tx`
       insert into agent_memory_items (scope, content, source, created_at, updated_at)
       select 'workspace', ${nm('seed-')} || g, 'staff',
              now() - g * interval '1 second', now() - g * interval '1 second'
       from generate_series(1, 200) g
-    `);
+    `,
+    );
     // Pin the oldest seed — it must survive the next insert.
     await sql`update agent_memory_items set pinned = true where content = ${nm('seed-200')}`;
 
@@ -280,14 +307,15 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('agent memory v2 (db)', () => {
   test('debrief cap 60: appendDebriefTx evicts the oldest debrief only', async () => {
     await setup();
     await sql`delete from agent_memory_items`;
-    await controlTx(sql, (tx) => tx`
+    await controlTx(
+      sql,
+      (tx) => tx`
       insert into agent_memory_items (scope, content, source, created_at)
       select 'debrief', ${nm('db-')} || g, 'debrief', now() - g * interval '1 second'
       from generate_series(1, 60) g
-    `);
-    const res = await controlTx(sql, (tx) =>
-      appendDebriefTx(tx, { content: nm('db-new') }),
+    `,
     );
+    const res = await controlTx(sql, (tx) => appendDebriefTx(tx, { content: nm('db-new') }));
     expect(res.item.scope).toBe('debrief');
     expect(res.item.source).toBe('debrief');
     expect(res.evicted).toEqual([nm('db-60')]);
@@ -390,7 +418,9 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('agent memory v2 (db)', () => {
       ['workspace', 'staff'],
     ]);
     // The old settings row is left untouched for the parent to retire.
-    const kept = await sql<{ v: unknown }[]>`select value as v from control_settings where key = 'agent_memory'`;
+    const kept = await sql<
+      { v: unknown }[]
+    >`select value as v from control_settings where key = 'agent_memory'`;
     expect(kept).toHaveLength(1);
   });
 });

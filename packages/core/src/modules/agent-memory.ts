@@ -328,7 +328,12 @@ export async function upsertLeadFactTx(
     throw bad('source', 'must be agent|staff');
   }
   const confidence = input.confidence ?? 1;
-  if (typeof confidence !== 'number' || !Number.isFinite(confidence) || confidence < 0 || confidence > 1) {
+  if (
+    typeof confidence !== 'number' ||
+    !Number.isFinite(confidence) ||
+    confidence < 0 ||
+    confidence > 1
+  ) {
     throw bad('confidence', 'must be a number in [0, 1]');
   }
   const sourceRunId = checkSourceRunId(input.sourceRunId);
