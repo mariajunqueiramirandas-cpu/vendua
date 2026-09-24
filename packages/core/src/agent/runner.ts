@@ -264,7 +264,7 @@ export async function flagCappedLeads(sql: Sql, limit = 200): Promise<number> {
         const flagged = (
           await tx`
             select 1 from lead_activities
-            where lead_id = ${lead_id} and kind = 'system' and meta->>'type' = 'cost-cap'
+            where lead_id = ${leadId} and kind = 'system' and meta->>'type' = 'cost-cap'
               and (meta->>'capUsd')::numeric = ${capUsd}
             limit 1
           `
