@@ -7,6 +7,9 @@
 import { buildSystemPrompt } from './src/agent/prompts.ts';
 import { toolsFor } from './src/agent/tools.ts';
 import { DEFAULT_PITCH } from './src/modules/integrations.ts';
+import { log } from './src/platform/log.ts';
+
+const cliLog = log.child({ mod: 'measure-harness' });
 
 const KINDS = ['triage', 'reply', 'outreach', 'discovery', 'strategist'] as const;
 
@@ -33,13 +36,13 @@ for (const kind of KINDS) {
     (t) =>
       `    ${t.name}: ${JSON.stringify({ description: t.description, parameters: t.parameters }).length} chars`,
   );
-  console.log(`\n=== ${kind} ===`);
-  console.log(`  system_prompt: ${system.length} chars (~${Math.ceil(system.length / 3.5)} tok)`);
-  console.log(
+  cliLog.info(`\n=== ${kind} ===`);
+  cliLog.info(`  system_prompt: ${system.length} chars (~${Math.ceil(system.length / 3.5)} tok)`);
+  cliLog.info(
     `  tool defs total: ${toolsJson.length} chars (~${Math.ceil(toolsJson.length / 3.5)} tok), ${tools.length} tools`,
   );
-  for (const l of perTool) console.log(l);
-  console.log(`  STATIC PREFIX total: ${system.length + toolsJson.length} chars`);
+  for (const l of perTool) cliLog.info(l);
+  cliLog.info(`  STATIC PREFIX total: ${system.length + toolsJson.length} chars`);
 }
 
 // Sample context blocks (lead-bound kinds) — sizes from real shapes.
@@ -96,8 +99,8 @@ const ctx = [
   `CANAIS: whatsapp ok · email indisponível (sem e-mail no cadastro)`,
   `THREAD: ${JSON.stringify(thread)}`,
 ].join('\n\n');
-console.log(`\n=== context sample (reply/triage lead-bound) ===`);
-console.log(`  context: ${ctx.length} chars (~${Math.ceil(ctx.length / 3.5)} tok)`);
+cliLog.info(`\n=== context sample (reply/triage lead-bound) ===`);
+cliLog.info(`  context: ${ctx.length} chars (~${Math.ceil(ctx.length / 3.5)} tok)`);
 
 // Tool-output size audit — worst-case shapes from tools.ts.
 const bigPage = {
@@ -117,7 +120,7 @@ const bigPage = {
   },
 };
 const readPagesOut = JSON.stringify({ pages: Array.from({ length: 6 }, () => bigPage) });
-console.log(
+cliLog.info(
   `  read_pages 6-url worst case: ${readPagesOut.length} chars (~${Math.ceil(readPagesOut.length / 3.5)} tok) — resends EVERY later turn`,
 );
 
@@ -157,7 +160,7 @@ if (key) {
       },
     );
     const data = (await res.json()) as { totalTokens?: number; error?: { message?: string } };
-    console.log(
+    cliLog.info(
       `  ${kind}: countTokens(system+tools+ctx) = ${data.totalTokens ?? data.error?.message ?? '?'}`,
     );
   }
@@ -197,6 +200,6 @@ if (key) {
       },
     );
     const data = (await res.json()) as { totalTokens?: number };
-    console.log(`  reply ${part} alone = ${data.totalTokens}`);
+    cliLog.info(`  reply ${part} alone = ${data.totalTokens}`);
   }
 }

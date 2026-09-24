@@ -111,6 +111,20 @@ more, not less.
    offset to continue from. `costUsdEstimated` rides the journal so
    ops can tell table/config estimates from provider-reported cost
    (OpenRouter only).
+6. review round 2 — recovery continuity + pricing hardening:
+   - `replayJournal` under slimToolOutputs replays the SLIMMED shape
+     with tighter caps (`SLIM_REPLAY_CAPS` page 1K/total 2.4K/str 0.8K)
+     so the `offset:` marker lands inside `REPLAY_OUT_MAX` — a recovered
+     run keeps its continuation pointer and page metadata instead of a
+     raw 3000-char prefix.
+   - `pageCache` re-primes from journaled read_pages outputs on resume
+     (journal holds the full bodies), so an `offset:` read after a
+     worker restart slices the ORIGINAL page, not a refetched/changed
+     one.
+   - `pricingFor` strips OpenRouter's `provider/` + `:variant` ids
+     (`openai/gpt-4o-mini:free` → `gpt-4o-mini`) and rejects
+     negative/NaN `config.pricing` rates (falls back to the table).
+   - `measure-harness.ts` logs via pino like `sim-cli`.
 
 ### System-prompt diff (staticSystem=on)
 

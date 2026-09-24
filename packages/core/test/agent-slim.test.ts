@@ -1,5 +1,6 @@
 import { describe, expect, test } from 'bun:test';
-import { slimToolOut } from '../src/agent/runner.ts';
+import { pricingFor } from '../src/agent/llm.ts';
+import { replayJournal, slimToolOut } from '../src/agent/runner.ts';
 
 const page = (text: string, extra: Record<string, unknown> = {}) => ({
   url: 'https://x.test/p',
@@ -76,5 +77,65 @@ describe('slimToolOut', () => {
       expect(typeof r.name).toBe('string');
     }
     expect(String(JSON.stringify(results.at(-1)))).toContain('omitted');
+  });
+
+  test('replay under the flag keeps the continuation marker inside the cap', () => {
+    const prior = [
+      { type: 'model', content: null, toolCalls: [{ id: 'c1', name: 'read_pages', args: {} }] },
+      {
+        type: 'tool',
+        name: 'read_pages',
+        out: { pages: [page('x'.repeat(30_000))] },
+      },
+    ];
+    const replay = replayJournal(prior, { slim: true });
+    const toolMsg = replay.messages.find((m) => m.role === 'tool')!;
+    expect(toolMsg.content.length).toBeLessThanOrEqual(3_000);
+    expect(toolMsg.content).toContain('read_pages offset:1000');
+    expect(toolMsg.content).toContain('foundContacts');
+  });
+
+  test('replay without the flag is unchanged raw-prefix behavior', () => {
+    const prior = [
+      { type: 'model', content: null, toolCalls: [{ id: 'c1', name: 'read_pages', args: {} }] },
+      { type: 'tool', name: 'read_pages', out: { pages: [page('x'.repeat(30_000))] } },
+    ];
+    const replay = replayJournal(prior);
+    const toolMsg = replay.messages.find((m) => m.role === 'tool')!;
+    expect(toolMsg.content.length).toBeLessThanOrEqual(3_000);
+    expect(toolMsg.content).not.toContain('read_pages offset:');
+  });
+});
+
+describe('pricingFor', () => {
+  test('openrouter provider/namespace + :variant suffix still price-match', () => {
+    const p = pricingFor('openai/gpt-4o-mini', {});
+    expect(p?.in).toBe(0.15);
+    const f = pricingFor('openai/gpt-4o-mini:free', {});
+    expect(f?.out).toBe(0.6);
+  });
+
+  test('unprefixed and anthropic ids match as before', () => {
+    expect(pricingFor('gemini-3.5-flash-lite', {})?.cached).toBe(0.03);
+    expect(pricingFor('claude-haiku-4-5', {})?.write).toBe(1.25);
+  });
+
+  test('negative/NaN config rates fall back to the table', () => {
+    const bad = pricingFor('gemini-3.5-flash-lite', {
+      pricing: { in: -1, out: Number.NaN },
+    });
+    expect(bad?.in).toBe(0.3); // table row, not the poisoned override
+    expect(pricingFor('gemini-3.5-flash-lite', { pricing: { in: 0, out: 0 } })?.in).toBe(0);
+  });
+
+  test('valid config override wins over the table', () => {
+    const p = pricingFor('gemini-3.5-flash-lite', {
+      pricing: { in: 9, cached: 0.9, write: 1.1, out: 99 },
+    });
+    expect(p).toEqual({ in: 9, cached: 0.9, write: 1.1, out: 99 });
+  });
+
+  test('unknown model returns null — an honest gap, not a fabrication', () => {
+    expect(pricingFor('liquid/lfm-2.5-2.6b', {})).toBeNull();
   });
 });

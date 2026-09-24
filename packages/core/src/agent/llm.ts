@@ -72,18 +72,30 @@ const PRICE_TABLE: { match: string; in: number; cached: number; write: number; o
   { match: 'gpt-4o', in: 5.0, cached: 1.25, write: 0, out: 15.0 },
 ];
 
-function pricingFor(model: string, config: Record<string, unknown>) {
+const priceNum = (v: unknown) =>
+  typeof v === 'number' && Number.isFinite(v) && v >= 0 ? v : undefined;
+
+export function pricingFor(model: string, config: Record<string, unknown>) {
   const c = config.pricing as
     { in?: unknown; cached?: unknown; write?: unknown; out?: unknown } | undefined;
-  if (c && typeof c.in === 'number' && typeof c.out === 'number') {
+  // Staff-authored rates must be sane — a negative/NaN rate would silently
+  // poison cost reports, so an invalid override falls back to the table.
+  const inRate = priceNum(c?.in);
+  const outRate = priceNum(c?.out);
+  if (c && inRate !== undefined && outRate !== undefined) {
     return {
-      in: c.in,
-      cached: typeof c.cached === 'number' ? c.cached : c.in,
-      write: typeof c.write === 'number' ? c.write : 0,
-      out: c.out,
+      in: inRate,
+      cached: priceNum(c.cached) ?? inRate,
+      write: priceNum(c.write) ?? 0,
+      out: outRate,
     };
   }
-  for (const row of PRICE_TABLE) if (model.startsWith(row.match)) return row;
+  // OpenRouter ids are 'provider/model:variant' — strip the namespace and
+  // the price-tag suffix so 'openai/gpt-4o-mini:free' prices as gpt-4o-mini.
+  const bare = model.split('/').pop()?.split(':')[0] ?? model;
+  for (const row of PRICE_TABLE) {
+    if (model.startsWith(row.match) || bare.startsWith(row.match)) return row;
+  }
   return null;
 }
 

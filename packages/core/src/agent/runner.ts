@@ -569,15 +569,15 @@ const OUTCOME_KEYS = new Set([
  *  long strings cap at SLIM_STR_CHARS, later array records drop with a
  *  count marker, non-outcome keys drop by name, and OUTCOME_KEYS always
  *  survive. Ordinary results pass through untouched (budget never spent). */
-function slimValue(v: unknown, b: { left: number }): unknown {
+function slimValue(v: unknown, b: { left: number }, strCap: number): unknown {
   if (v === null || typeof v === 'number' || typeof v === 'boolean') return v;
   if (typeof v === 'string') {
-    if (v.length <= SLIM_STR_CHARS) {
+    if (v.length <= strCap) {
       b.left -= v.length;
       return v;
     }
-    b.left -= SLIM_STR_CHARS;
-    return `${v.slice(0, SLIM_STR_CHARS)}\n…[${v.length - SLIM_STR_CHARS} chars omitted — journaled in full]`;
+    b.left -= strCap;
+    return `${v.slice(0, strCap)}\n…[${v.length - strCap} chars omitted — journaled in full]`;
   }
   if (Array.isArray(v)) {
     const out: unknown[] = [];
@@ -586,7 +586,7 @@ function slimValue(v: unknown, b: { left: number }): unknown {
         out.push({ omitted: `+${v.length - out.length} records — journaled in full` });
         return out;
       }
-      out.push(slimValue(item, b));
+      out.push(slimValue(item, b, strCap));
     }
     return out;
   }
@@ -601,13 +601,27 @@ function slimValue(v: unknown, b: { left: number }): unknown {
       dropped.push(k);
       continue;
     }
-    out[k] = slimValue(o[k], b);
+    out[k] = slimValue(o[k], b, strCap);
   }
   if (dropped.length) out.omittedKeys = dropped;
   return out;
 }
 
-export function slimToolOut(name: string, out: unknown): unknown {
+export interface SlimCaps {
+  page: number;
+  total: number;
+  str: number;
+}
+const SLIM_LIVE_CAPS: SlimCaps = {
+  page: SLIM_PAGE_CHARS,
+  total: SLIM_TOTAL_CHARS,
+  str: SLIM_STR_CHARS,
+};
+/** Tighter replay caps — the marker has to land inside REPLAY_OUT_MAX or a
+ *  recovered run loses the continuation pointer entirely. */
+const SLIM_REPLAY_CAPS: SlimCaps = { page: 1_000, total: 2_400, str: 800 };
+
+export function slimToolOut(name: string, out: unknown, caps: SlimCaps = SLIM_LIVE_CAPS): unknown {
   if (name === 'read_pages' && typeof out === 'object' && out !== null) {
     const pages = (out as { pages?: unknown }).pages;
     if (Array.isArray(pages)) {
@@ -615,7 +629,7 @@ export function slimToolOut(name: string, out: unknown): unknown {
       // metadata (url, foundContacts, nav, chasedFrom) while bodies share
       // SLIM_TOTAL_CHARS head-first; an exhausted page reports its length
       // and the continuation offset so read_pages(offset) can page the tail.
-      let left = SLIM_TOTAL_CHARS;
+      let left = caps.total;
       return {
         ...(out as Record<string, unknown>),
         pages: pages.map((p) => {
@@ -624,7 +638,7 @@ export function slimToolOut(name: string, out: unknown): unknown {
           if (typeof text !== 'string') return p;
           const base = typeof page.offset === 'number' ? page.offset : 0;
           const total = typeof page.textChars === 'number' ? page.textChars : base + text.length;
-          const cap = Math.min(SLIM_PAGE_CHARS, Math.max(0, left));
+          const cap = Math.min(caps.page, Math.max(0, left));
           if (text.length <= cap) {
             left -= text.length;
             return p;
@@ -641,7 +655,7 @@ export function slimToolOut(name: string, out: unknown): unknown {
       };
     }
   }
-  return slimValue(out, { left: SLIM_TOTAL_CHARS });
+  return slimValue(out, { left: caps.total }, caps.str);
 }
 
 export interface JournalReplay {
@@ -669,7 +683,7 @@ export interface JournalReplay {
  *  thoughtSignature ride along), tool results replay truncated, and calls
  *  that crashed mid-batch (pending, no out) close with an explicit
  *  interrupted marker so the model re-checks state instead of assuming. */
-export function replayJournal(prior: unknown[]): JournalReplay {
+export function replayJournal(prior: unknown[], opts?: { slim?: boolean }): JournalReplay {
   const replay: JournalReplay = {
     baseStep: 0,
     messages: [],
@@ -826,14 +840,18 @@ export function replayJournal(prior: unknown[]): JournalReplay {
                 'attempt died before this call returned — outcome unknown, verify before re-doing',
             }
           : s.out;
+      // Flagged runs replay the SLIMMED shape (tighter caps so the marker
+      // lands inside REPLAY_OUT_MAX) — otherwise a recovered run sees a raw
+      // 3000-char prefix with no continuation pointer and no page metadata.
+      const modelOut = opts?.slim ? slimToolOut(s.name ?? '', out, SLIM_REPLAY_CAPS) : out;
       replay.messages.push({
         role: 'tool',
         toolCallId: call?.id ?? `replayed-${replay.baseStep}-${i}-x${consumed}`,
         name: s.name ?? '?',
         content:
-          typeof out === 'string'
-            ? out.slice(0, REPLAY_OUT_MAX)
-            : JSON.stringify(out).slice(0, REPLAY_OUT_MAX),
+          typeof modelOut === 'string'
+            ? modelOut.slice(0, REPLAY_OUT_MAX)
+            : JSON.stringify(modelOut).slice(0, REPLAY_OUT_MAX),
       });
       continue;
     }
@@ -1149,7 +1167,7 @@ export async function runOnce(sql: Sql): Promise<boolean> {
       },
     });
     const tools = toolsFor(run.kind);
-    const replay = replayJournal(priorSteps);
+    const replay = replayJournal(priorSteps, { slim: FLAG.slimToolOutputs });
     const ctx: ToolContext = {
       sql,
       runId: run.id,
@@ -1187,6 +1205,31 @@ export async function runOnce(sql: Sql): Promise<boolean> {
     // a channel/tried entry appeared).
     for (const [k, e] of replay.book)
       ctx.book.set(k, { ...e, channels: { ...e.channels }, tried: [...e.tried] });
+    // Re-prime the page cache from journaled read_pages outputs — the journal
+    // holds the full body, so a continuation read after recovery slices the
+    // ORIGINAL page instead of a refetched (possibly changed) one.
+    {
+      const { pageKey } = await import('./channels/discovery.ts');
+      for (const s of priorSteps as {
+        type?: string;
+        name?: string;
+        pending?: boolean;
+        out?: unknown;
+      }[]) {
+        if (s.type !== 'tool' || s.name !== 'read_pages' || s.pending) continue;
+        const pages = (s.out as { pages?: { url?: string; finalUrl?: string }[] } | undefined)
+          ?.pages;
+        if (!Array.isArray(pages)) continue;
+        for (const page of pages) {
+          for (const u of [page.url, page.finalUrl]) {
+            const id = u ? (pageKey(u) ?? u) : null;
+            if (id && !ctx.pageCache.has(id)) {
+              ctx.pageCache.set(id, Promise.resolve({ page }));
+            }
+          }
+        }
+      }
+    }
     for (const v of replay.seenContacts) ctx.seenContacts.add(v);
     // Discovery plan is harness state with no durable home — rebuild from the
     // journal or reflection falsely reports '(nenhum)' after a resume.
