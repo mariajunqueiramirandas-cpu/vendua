@@ -1802,18 +1802,18 @@ export async function sweepOutreach(sql: Sql): Promise<number> {
       for update skip locked
     `;
     for (const { id, next_action_source } of due) {
-      // params.auto marks automation-queued outreach — a fresh inbound
-      // cancels it (ingestInbound). The marker mirrors the action's provenance:
-      // cadence/agent-scheduled work is the automation's own and dies on a
-      // reply; a STAFF-scheduled follow-up carries no marker — an explicit
-      // staff decision outranks the reply, like every staff-triggered run.
-      // insertRun also applies the lifetime cost cap — a capped lead returns
-      // null and KEEPS its due action (claimRun parks it anyway, so no run
-      // executes over budget).
+      // params.auto marks disposable cadence work — a fresh inbound cancels
+      // it (ingestInbound), mirroring addInboundMessage clearing only
+      // next_action_source='cadence'. 'agent'/'staff'-scheduled dates are
+      // deliberate appointments (the model or a human picked them), so the
+      // run materializes unmarked — outranking the reply like every
+      // staff-triggered run. insertRun also applies the lifetime cost cap —
+      // a capped lead returns null and KEEPS its due action (claimRun parks
+      // it anyway, so no run executes over budget).
       const runId = await insertRun(tx, {
         kind: 'outreach',
         leadId: id,
-        params: next_action_source === 'staff' ? {} : { auto: next_action_source },
+        params: next_action_source === 'cadence' ? { auto: 'cadence' } : {},
       });
       if (runId) {
         queuedIds.push(runId);

@@ -481,20 +481,34 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('whatsapp history + ignore list 
     );
     const leadId = lead.body.lead.id;
     await sql`delete from agent_runs where status = 'queued'`;
-    // A staff-scheduled follow-up is an explicit decision — the sweep
-    // materializes it unmarked so a reply can't cancel it.
+    // Deliberately scheduled dates (staff OR agent — a callback the model
+    // promised) materialize unmarked so a reply can't cancel them; only
+    // cadence-floor work is disposable.
     await sql`
       update leads set next_action_at = now() - interval '1 hour',
                        next_action_source = 'staff'
       where id = ${leadId}
     `;
-    expect(await sweepOutreach(sql)).toBe(1);
+    const agentLead = await controlTx(sql, (tx) =>
+      insertLeadTx(tx, { name: 'Agent Slot', whatsapp: '5511955550004' }),
+    );
+    await sql`
+      update leads set next_action_at = now() - interval '1 hour',
+                       next_action_source = 'agent'
+      where id = ${agentLead.body.lead.id}
+    `;
+    expect(await sweepOutreach(sql)).toBeGreaterThanOrEqual(2);
     const swept = await sql<{ id: string; params: Record<string, unknown> }[]>`
       select id, params from agent_runs
       where lead_id = ${leadId} and kind = 'outreach' and status = 'queued'
     `;
     expect(swept).toHaveLength(1);
     expect(swept[0]!.params.auto).toBeUndefined();
+    const agentSwept = await sql<{ params: Record<string, unknown> }[]>`
+      select params from agent_runs
+      where lead_id = ${agentLead.body.lead.id} and kind = 'outreach' and status = 'queued'
+    `;
+    expect(agentSwept[0]!.params.auto).toBeUndefined();
     const res = await ingestInbound(sql, {
       channel: 'whatsapp',
       from: '5511955550003@s.whatsapp.net',
