@@ -1665,6 +1665,18 @@ export async function executeTool(
           if (chases.length >= 4) break;
           const free = mapPointerName(c.url) !== null;
           if (!free) {
+            // A paid candidate validates before it claims a slot — a url
+            // no provider could issue just reports its rejection, it
+            // never displaces a later valid link.
+            try {
+              assertFetchable(c.url);
+            } catch (e) {
+              errs.push({
+                url: c.url,
+                error: e instanceof Error ? e.message : String(e),
+              });
+              continue;
+            }
             if (slots <= 0) continue;
             slots--;
           }
@@ -1675,9 +1687,8 @@ export async function executeTool(
       }
       const hubChases = chases.filter((c) => !isMapPointer(c.url));
       const mapChases = chases.filter((c) => isMapPointer(c.url));
-      // Same rule as the direct batch: un-fetchable chase urls spend
-      // nothing — they just report their rejection (and never occupy a
-      // page slot, same scheme-free masking concern as above).
+      // Non-reply selections never ran the guard — same rule as the
+      // direct batch: un-fetchable chase urls spend nothing.
       const fetchableHubs = hubChases.filter((c) => {
         try {
           assertFetchable(c.url);

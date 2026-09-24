@@ -3,7 +3,7 @@ import { join } from 'node:path';
 import postgres from 'postgres';
 import { claimRun, drain, enqueueRun, replayJournal, runOnce } from '../src/agent/runner.ts';
 import { executeTool, assertRunClaimTx, type ToolContext } from '../src/agent/tools.ts';
-import { mapPointerName } from '../src/agent/channels/discovery.ts';
+import { mapPointerName, pageKey } from '../src/agent/channels/discovery.ts';
 import { dispatchMessage } from '../src/agent/send.ts';
 import { controlTx } from '../src/modules/control.ts';
 import { insertLeadTx, getLeadDetail } from '../src/modules/leads.ts';
@@ -132,17 +132,45 @@ describe('replayJournal', () => {
         readSpent: 2,
         pending: true,
       },
-      // a pending entry with no stamp died before validation — it spent
-      // nothing, and guessing could lock the whole recovery budget
+      // a pending entry stamped 0 died before validation — spent nothing
       {
         type: 'tool',
         name: 'read_pages',
-        args: { urls: ['https://a.co/7', 'https://a.co/8', 'https://a.co/9'] },
+        args: { urls: ['https://a.co/7'] },
+        readSpent: 0,
+        pending: true,
+      },
+      // a pending entry with NO marker can only be a legacy journal —
+      // its read had already started a fetch under the old per-call
+      // charge, so it conservatively counts one
+      {
+        type: 'tool',
+        name: 'read_pages',
+        args: { urls: ['https://a.co/8', 'https://a.co/9'] },
         pending: true,
       },
     ]);
-    // 2 + 0 + 1 + 1 + 0 + 2 + 0 = 6
-    expect(r.pageReads).toBe(6);
+    // 2 + 0 + 1 + 1 + 0 + 2 + 0 + 1 = 7
+    expect(r.pageReads).toBe(7);
+  });
+
+  test('replay rebuilds pageCache from journaled read_pages results', async () => {
+    const r = replayJournal([
+      {
+        type: 'tool',
+        name: 'read_pages',
+        args: { urls: ['https://a.co/m'] },
+        out: {
+          pages: [{ url: 'https://a.co/m', finalUrl: 'https://a.co/menu', content: 'x' }],
+        },
+      },
+    ]);
+    for (const u of ['https://a.co/m', 'https://a.co/menu']) {
+      const hit = r.pageCache.get(pageKey(u)!);
+      expect(hit).toBeDefined();
+      const out = (await hit) as { page: { url: string } };
+      expect(out.page.url).toBe('https://a.co/m');
+    }
   });
 
   test('nudge/reflection entries replay as user turns', () => {
