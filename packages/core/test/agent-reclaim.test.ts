@@ -1042,9 +1042,9 @@ dbDescribe('worker robustness (db)', () => {
     expect(await runOnce(sql)).toBe(true);
     const r = await getRun(runId);
     expect(r.status).toBe('done');
-    const reads = r.steps.filter(
-      (s) => (s as { name?: string }).name === 'get_lead',
-    ) as { out?: { error?: string } }[];
+    const reads = r.steps.filter((s) => (s as { name?: string }).name === 'get_lead') as {
+      out?: { error?: string };
+    }[];
     expect(reads).toHaveLength(2);
     expect(reads[1]!.out?.error).toMatch(/^REPEAT/);
     // ONE loop nudge — and since request_human acted, no finish nudge joins it
@@ -1072,9 +1072,9 @@ dbDescribe('worker robustness (db)', () => {
     expect(await runOnce(sql)).toBe(true);
     const r = await getRun(runId);
     expect(r.status).toBe('done');
-    const reads = r.steps.filter(
-      (s) => (s as { name?: string }).name === 'read_pages',
-    ) as { out?: { error?: string } }[];
+    const reads = r.steps.filter((s) => (s as { name?: string }).name === 'read_pages') as {
+      out?: { error?: string };
+    }[];
     expect(reads).toHaveLength(2);
     // both really ran — the second is the same validation error, not REPEAT
     expect(reads[0]!.out?.error).toMatch(/^read_pages needs urls/);

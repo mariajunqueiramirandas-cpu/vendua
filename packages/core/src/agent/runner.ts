@@ -663,8 +663,7 @@ export function replayJournal(prior: unknown[]): JournalReplay {
       // urls' call) never incremented the counter, so replaying them as
       // spend would shrink a resumed run's real budget.
       const preCheck =
-        typeof e === 'string' &&
-        (e.startsWith('REPEAT') || e.startsWith('read_pages needs urls'));
+        typeof e === 'string' && (e.startsWith('REPEAT') || e.startsWith('read_pages needs urls'));
       if (!preCheck) replay.pageReads++;
     }
     const p = t.out as { stored?: boolean; plan?: unknown } | null;
