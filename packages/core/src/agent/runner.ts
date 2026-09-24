@@ -955,7 +955,14 @@ export function replayJournal(prior: unknown[]): JournalReplay {
       // have committed before the crash — err on the suppress side or a
       // reclaim would double-send/double-insert.
       const o = t.out as { error?: unknown; blocked?: unknown; ignored?: unknown } | null;
-      if (o === undefined || (typeof o === 'object' && o !== null && !o.error && o.blocked !== true && o.ignored !== true)) {
+      if (
+        o === undefined ||
+        (typeof o === 'object' &&
+          o !== null &&
+          !o.error &&
+          o.blocked !== true &&
+          o.ignored !== true)
+      ) {
         replay.landedSigs.add(JSON.stringify([t.name, t.args ?? {}]));
       }
     }
@@ -1795,8 +1802,7 @@ export async function runOnce(sql: Sql): Promise<boolean> {
           // repeated write after an intervening mutation can be a
           // legitimate state-restore. Artifact-minters are the exception:
           // a duplicate is never legitimate, always suppressed.
-          const suppress =
-            landedSigs.has(sig) || (prev?.ok === true && prev.v === stateVersion);
+          const suppress = landedSigs.has(sig) || (prev?.ok === true && prev.v === stateVersion);
           const readsBefore = ctx.pageReads;
           // Let a read_pages call stamp each fetch reservation onto its
           // pending journal entry the moment it validates — a worker that
