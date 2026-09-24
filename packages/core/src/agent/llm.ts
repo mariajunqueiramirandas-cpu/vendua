@@ -76,6 +76,11 @@ const priceNum = (v: unknown) =>
   typeof v === 'number' && Number.isFinite(v) && v >= 0 ? v : undefined;
 
 export function pricingFor(model: string, config: Record<string, unknown>) {
+  // OpenRouter ids are 'provider/model:variant' — strip the namespace only
+  // for the table lookup (variant handling happens below, not here).
+  const bare = model.split('/').pop() ?? model;
+  const table = PRICE_TABLE.find((r) => model.startsWith(r.match) || bare.startsWith(r.match));
+
   const c = config.pricing as
     { in?: unknown; cached?: unknown; write?: unknown; out?: unknown } | undefined;
   // Staff-authored rates must be sane — a negative/NaN rate would silently
@@ -83,24 +88,23 @@ export function pricingFor(model: string, config: Record<string, unknown>) {
   const inRate = priceNum(c?.in);
   const outRate = priceNum(c?.out);
   if (c && inRate !== undefined && outRate !== undefined) {
-    return {
-      in: inRate,
-      cached: priceNum(c.cached) ?? inRate,
-      write: priceNum(c.write) ?? 0,
-      out: outRate,
-    };
+    // Cache rates left out of an override inherit the model's table row —
+    // Anthropic bills reads AND writes, and defaulting them to the input
+    // rate / zero silently misprices cached runs. No row to inherit from +
+    // incomplete override = reject (falls through to the variant/table path).
+    const cached = priceNum(c.cached) ?? table?.cached;
+    const write = priceNum(c.write) ?? table?.write;
+    if (cached !== undefined && write !== undefined) {
+      return { in: inRate, cached, write, out: outRate };
+    }
   }
-  // OpenRouter ids are 'provider/model:variant' — strip the namespace only.
+
   // ':free' variants bill $0 (that's OpenRouter's contract for the suffix);
   // other variants (:extended, :nitro, :floor…) have their own pricing we
   // don't track — return null rather than fabricate the base rate.
-  const bare = model.split('/').pop() ?? model;
   if (bare.endsWith(':free')) return { in: 0, cached: 0, write: 0, out: 0 };
   if (bare.includes(':')) return null;
-  for (const row of PRICE_TABLE) {
-    if (model.startsWith(row.match) || bare.startsWith(row.match)) return row;
-  }
-  return null;
+  return table ?? null;
 }
 
 /** Bill-shaped estimate: (total input − cache reads − cache writes) at the

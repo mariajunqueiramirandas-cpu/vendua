@@ -174,6 +174,19 @@ describe('pricingFor', () => {
     expect(pricingFor('gemini-3.5-flash-lite', { pricing: { in: 0, out: 0 } })?.in).toBe(0);
   });
 
+  test('partial override inherits the model cache rates — Anthropic bills them', () => {
+    // in+out only on an Anthropic model: cached/write come from the table
+    // row, not the input rate / zero — cache tokens stay priced.
+    expect(pricingFor('claude-haiku-4-5', { pricing: { in: 3, out: 15 } })).toEqual({
+      in: 3,
+      cached: 0.1,
+      write: 1.25,
+      out: 15,
+    });
+    // Same partial override on an unknown model: nothing to inherit → reject.
+    expect(pricingFor('my-unknown-model', { pricing: { in: 1, out: 2 } })).toBeNull();
+  });
+
   test('valid config override wins over the table', () => {
     const p = pricingFor('gemini-3.5-flash-lite', {
       pricing: { in: 9, cached: 0.9, write: 1.1, out: 99 },
