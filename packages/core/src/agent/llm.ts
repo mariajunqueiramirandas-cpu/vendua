@@ -90,10 +90,12 @@ export function pricingFor(model: string, config: Record<string, unknown>) {
   if (c && inRate !== undefined && outRate !== undefined) {
     // Cache rates left out of an override inherit the model's table row —
     // Anthropic bills reads AND writes, and defaulting them to the input
-    // rate / zero silently misprices cached runs. No row to inherit from +
+    // rate / zero silently misprices cached runs. A :free variant zero-fills
+    // instead (its contract covers cache too). No row to inherit from +
     // incomplete override = reject (falls through to the variant/table path).
-    const cached = priceNum(c.cached) ?? table?.cached;
-    const write = priceNum(c.write) ?? table?.write;
+    const freeFill = bare.endsWith(':free') ? 0 : undefined;
+    const cached = priceNum(c.cached) ?? freeFill ?? table?.cached;
+    const write = priceNum(c.write) ?? freeFill ?? table?.write;
     if (cached !== undefined && write !== undefined) {
       return { in: inRate, cached, write, out: outRate };
     }

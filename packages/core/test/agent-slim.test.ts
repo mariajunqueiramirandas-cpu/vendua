@@ -185,6 +185,13 @@ describe('pricingFor', () => {
     });
     // Same partial override on an unknown model: nothing to inherit → reject.
     expect(pricingFor('my-unknown-model', { pricing: { in: 1, out: 2 } })).toBeNull();
+    // On a :free id missing rates zero-fill — never the paid base row.
+    expect(pricingFor('openai/gpt-4o-mini:free', { pricing: { in: 0, out: 0 } })).toEqual({
+      in: 0,
+      cached: 0,
+      write: 0,
+      out: 0,
+    });
   });
 
   test('valid config override wins over the table', () => {
