@@ -1076,7 +1076,9 @@ export function createApp({ sql, sessionSecret, controlSecret, autoDrain }: AppD
         kind: kind as 'triage' | 'reply' | 'outreach' | 'discovery',
         leadId,
         ...(threadId ? { threadId } : {}),
-        params: (body.params as Record<string, unknown>) ?? {},
+        // origin stamps provenance — dedupe/audit distinguish a staff-queued
+        // run from an auto inbound one even when params carry no overrides
+        params: { ...((body.params as Record<string, unknown>) ?? {}), origin: 'staff' },
       });
       // A 422 body (not a throw): the claim tx COMMITS, so insertRun's
       // cost-cap flag stays on the card and the stored refusal replays
@@ -1718,7 +1720,7 @@ export function createApp({ sql, sessionSecret, controlSecret, autoDrain }: AppD
         kind: kind as 'triage' | 'reply' | 'outreach' | 'discovery' | 'strategist',
         leadId: effLeadId,
         threadId,
-        params: (body.params as Record<string, unknown>) ?? {},
+        params: { ...((body.params as Record<string, unknown>) ?? {}), origin: 'staff' },
       });
       // Same cap refusal → error contract as /leads/:id/run (committed
       // claim — the flag survives and the refusal replays).

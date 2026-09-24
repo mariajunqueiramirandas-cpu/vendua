@@ -12,6 +12,7 @@ import {
   validateSetting,
 } from '../src/modules/integrations.ts';
 import { controlTx } from '../src/modules/control.ts';
+import { subscribeControlEvents, type ControlEvent } from '../src/modules/control-events.ts';
 import { insertLeadTx } from '../src/modules/leads.ts';
 import { migrate } from '../src/platform/db.ts';
 
@@ -192,11 +193,29 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('whatsapp history + ignore list 
     });
     if ('ignored' in second) throw new Error('unexpected ignore');
     expect(second.threadId).toBe(first.threadId);
-    // One parked run covers both messages — it reads fresh thread at claim.
-    const queued = await sql<{ id: string }[]>`
-      select id from agent_runs where thread_id = ${first.threadId} and status = 'queued'
+    // One parked run covers both messages — it reads fresh thread at claim,
+    // and the latest message earns its own quiet period (run_at slides).
+    const queued = await sql<{ id: string; run_at: Date }[]>`
+      select id, run_at from agent_runs where thread_id = ${first.threadId} and status = 'queued'
     `;
     expect(queued).toHaveLength(1);
+    const slideMs = queued[0]!.run_at.getTime() - Date.now();
+    expect(slideMs).toBeGreaterThan(55 * 60_000);
+    expect(slideMs).toBeLessThanOrEqual(61 * 60_000);
+    // An already-overdue run never slides further — it fires on the next tick
+    await sql`update agent_runs set run_at = now() - interval '1 minute' where id = ${queued[0]!.id}`;
+    await ingestInbound(sql, {
+      channel: 'whatsapp',
+      from,
+      body: 'ainda aí?',
+      providerMessageId: `${mid}-2b`,
+    });
+    const overdue = (
+      await sql<{ run_at: Date }[]>`
+        select run_at from agent_runs where id = ${queued[0]!.id}
+      `
+    )[0]!;
+    expect(overdue.run_at.getTime()).toBeLessThan(Date.now());
     // A 'running' reply has frozen context — a new message earns a fresh run.
     await sql`update agent_runs set status = 'running', claim_token = 'x' where id = ${queued[0]!.id}`;
     const third = await ingestInbound(sql, {
@@ -221,6 +240,7 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('whatsapp history + ignore list 
     `;
     // Staff can park a reply carrying its own intent (draftOnly) — the
     // coalesce check must not treat it as an auto-created inbound run.
+    // origin:'staff' is what the run endpoints stamp on staff enqueues.
     const digits = `55219${Math.floor(Math.random() * 1e8)}`;
     const from = `${digits}@s.whatsapp.net`;
     const created = await controlTx(sql, (tx) =>
@@ -236,7 +256,7 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('whatsapp history + ignore list 
       kind: 'reply',
       leadId,
       threadId: thread!.id,
-      params: { draftOnly: true },
+      params: { origin: 'staff', draftOnly: true },
       runAt: new Date(Date.now() + 3_600_000),
     });
     const mid = crypto.randomUUID();
@@ -255,7 +275,7 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('whatsapp history + ignore list 
     // swallowed by it — and a follow-up message coalesces onto the
     // inbound one only.
     expect(queued).toHaveLength(2);
-    expect(queued.map((q) => q.params.origin)).toEqual([undefined, 'inbound']);
+    expect(queued.map((q) => q.params.origin)).toEqual(['staff', 'inbound']);
     await ingestInbound(sql, {
       channel: 'whatsapp',
       from,
@@ -267,15 +287,16 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('whatsapp history + ignore list 
     expect(still).toHaveLength(2);
   });
 
-  test('a legacy unmarked reply still coalesces inbound messages', async () => {
+  test('a legacy unmarked reply does not absorb the next inbound', async () => {
     await migrate(sql, MIGRATIONS);
     await sql`
       insert into control_settings (key, value) values ('guardrails', ${sql.json({ inboundReplyDelayMin: 60 } as never)})
       on conflict (key) do update set value = excluded.value
     `;
-    // Replies queued before the origin marker carry params = {} — with no
-    // staff-intent keys they must coalesce like an auto run, or a second
-    // message would queue a duplicate.
+    // Replies queued before the origin marker carry params = {} — they're
+    // indistinguishable from a plain staff reply, so they never coalesce:
+    // the message earns its own marked run instead (a bounded one-time
+    // duplicate, not a permanent swallow).
     const digits = `55218${Math.floor(Math.random() * 1e8)}`;
     const from = `${digits}@s.whatsapp.net`;
     const created = await controlTx(sql, (tx) =>
@@ -299,9 +320,16 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('whatsapp history + ignore list 
       body: 'oi',
       providerMessageId: `${mid}-1`,
     });
+    // The legacy row doesn't coalesce — a marked inbound run lands beside it
     const queued =
-      await sql`select id from agent_runs where thread_id = ${thread!.id} and status = 'queued'`;
-    expect(queued).toHaveLength(1);
+      await sql`select params from agent_runs where thread_id = ${thread!.id} and status = 'queued'`;
+    expect(queued).toHaveLength(2);
+    expect(queued.map((q) => (q.params as { origin?: string }).origin).sort()).toEqual([
+      'inbound',
+      undefined,
+    ]);
+    // ...and a follow-up coalesces onto the marked run only — the legacy
+    // row stays parked on its own, queued count holds at 2
     await ingestInbound(sql, {
       channel: 'whatsapp',
       from,
@@ -310,7 +338,7 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('whatsapp history + ignore list 
     });
     const still =
       await sql`select id from agent_runs where thread_id = ${thread!.id} and status = 'queued'`;
-    expect(still).toHaveLength(1);
+    expect(still).toHaveLength(2);
   });
 
   test('claimRun skips a lead whose number is ignored', async () => {
@@ -427,12 +455,19 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('whatsapp history + ignore list 
       params: { goal: 'negotiation' },
       runAt: new Date(Date.now() + 3_600_000),
     }))!;
-    const res = await ingestInbound(sql, {
-      channel: 'whatsapp',
-      from: '5511955550001@s.whatsapp.net',
-      body: 'oi, quero saber mais',
-      providerMessageId: `fx10-${crypto.randomUUID()}`,
-    });
+    const events: ControlEvent[] = [];
+    const unsub = subscribeControlEvents((e) => events.push(e));
+    let res;
+    try {
+      res = await ingestInbound(sql, {
+        channel: 'whatsapp',
+        from: '5511955550001@s.whatsapp.net',
+        body: 'oi, quero saber mais',
+        providerMessageId: `fx10-${crypto.randomUUID()}`,
+      });
+    } finally {
+      unsub();
+    }
     if ('ignored' in res) throw new Error('unexpected ignore');
     const rows = await sql<{ id: string; status: string }[]>`
       select id, status from agent_runs where id in (${autoRun}, ${staffRun})
@@ -442,6 +477,9 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('whatsapp history + ignore list 
     // ingest kicks a fire-and-forget drain that may already have claimed
     // the staff run — 'running' or 'queued', the point is never 'canceled'.
     expect(byId[staffRun]).not.toBe('canceled');
+    // The cancel emits run.update per row — otherwise the Runs view keeps
+    // showing the retired row as 'queued'.
+    expect(events.some((e) => e.type === 'run.update' && e.ref === autoRun)).toBe(true);
   });
 
   test('a queued regen run survives the inbound cancel', async () => {
