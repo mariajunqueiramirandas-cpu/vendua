@@ -348,6 +348,10 @@ describe('mapPointerName', () => {
     );
     expect(mapPointerName('https://g.co/kgs/abc123')).toBeNull();
     expect(mapPointerName('https://maps.app.goo.gl/xyz')).toBeNull();
+    // a ?q= or /maps/place/ on any other host is not a profile pointer —
+    // it must not claim the free in-process resolution a name unlocks
+    expect(mapPointerName('https://evil.example/x?q=Acme+Pizza')).toBeNull();
+    expect(mapPointerName('https://evil.example/maps/place/Acme+Pizza')).toBeNull();
   });
 });
 
@@ -1240,6 +1244,55 @@ dbDescribe('worker robustness (db)', () => {
     expect((nudges[0] as { content?: string }).content).toContain('Ação pendente');
   });
 
+  test('a composed-but-failed send is not a landed action — the finish nudge fires', async () => {
+    await migrate(sql, MIGRATIONS);
+    // An enabled resend integration with no api key: the send composes
+    // (email reachable), then the driver throws 'missing RESEND_API_KEY'.
+    await sql`
+      insert into control_integrations (kind, driver, enabled)
+      values ('email', 'resend', true)
+      on conflict (kind, driver) do update set enabled = true
+    `;
+    // First contact must not be draft-forced and quiet hours must be
+    // empty (start == end → never quiet) — the send has to reach the
+    // dispatch stage to fail.
+    await sql`
+      insert into control_settings (key, value)
+      values ('guardrails',
+              ${sql.json({ firstContactDraftOnly: false, quietStart: '00:00', quietEnd: '00:00' } as never)})
+      on conflict (key) do update set value = excluded.value
+    `;
+    const lead = await controlTx(sql, (tx) =>
+      insertLeadTx(tx, {
+        name: 'Unsendable Lead',
+        email: 'lead@example.com',
+        agent_mode: 'auto',
+      }),
+    );
+    const leadId = lead.body.lead.id;
+    await sql`delete from agent_runs where status = 'queued'`;
+    const runId = (await enqueueRun(sql, { kind: 'reply', leadId })!)!;
+    await sql`update agent_runs set
+      params = ${sql.json({
+        script: [
+          { toolCalls: [{ name: 'send_message', args: { leadId, body: 'olá' } }] },
+          { text: 'fim' },
+        ],
+      } as never)}
+      where id = ${runId}`;
+    expect(await runOnce(sql)).toBe(true);
+    const r = await getRun(runId);
+    expect(r.status).toBe('done');
+    const sends = r.steps.filter((s) => (s as { name?: string }).name === 'send_message') as {
+      out?: { error?: string };
+    }[];
+    expect(sends).toHaveLength(1);
+    expect(sends[0]!.out?.error).toBeTruthy();
+    const nudges = r.steps.filter((s) => (s as { type?: string }).type === 'nudge');
+    expect(nudges).toHaveLength(1);
+    expect((nudges[0] as { content?: string }).content).toContain('Ação pendente');
+  });
+
   test('a blocked send is not a reusable result — its retry re-executes', async () => {
     await migrate(sql, MIGRATIONS);
     const lead = await controlTx(sql, (tx) => insertLeadTx(tx, { name: 'Blocked Lead' }));
@@ -1472,8 +1525,8 @@ dbDescribe('worker robustness (db)', () => {
           {
             toolCalls: [{ name: 'read_pages', args: { urls: ['https://shop.example/menu'] } }],
           },
-          // same-call twin: both urls share the fetched page's identity —
-          // the read dedupes to the cached page, free
+          // same-call twin: the ftp url must NOT inherit the https page
+          // behind its scheme-free pageKey — it reports its own rejection
           {
             toolCalls: [
               {
@@ -1499,9 +1552,10 @@ dbDescribe('worker robustness (db)', () => {
     expect(reads[0]!.out?.errors?.[0]?.url).toBe('ftp://shop.example/menu');
     expect(reads[1]!.readSpent).toBe(1);
     expect(reads[1]!.out?.pages?.length).toBeGreaterThan(0);
-    // the twin dedupes onto the cached page — both urls serve it, free
+    // the ftp url reports its rejection even behind a cached pageKey —
+    // the https twin still serves the cached page, free
     expect(reads[2]!.readSpent).toBe(0);
-    expect(reads[2]!.out?.pages?.length).toBe(2);
-    expect(reads[2]!.out?.errors ?? []).toHaveLength(0);
+    expect(reads[2]!.out?.pages?.length).toBe(1);
+    expect(reads[2]!.out?.errors?.map((e) => e.url)).toEqual(['ftp://shop.example/menu']);
   });
 });

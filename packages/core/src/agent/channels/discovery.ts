@@ -174,6 +174,10 @@ function isBizMapUrl(u: URL): boolean {
     (/^google\.[a-z.]+$/.test(h) && /^\/maps/i.test(p))
   );
 }
+
+/** google.tld under any of its web subdomains — the family a map pointer's
+ *  redirect or name carrier can live on (www.google.com/search?q=…). */
+const GOOGLE_HOST = /^((www|maps|m)\.)?google\.[a-z]{2,}(\.[a-z]{2})?$/i;
 // instagram paths that aren't profiles — posts, help, auth.
 const PROFILE_STOP = new Set([
   'p',
@@ -995,6 +999,10 @@ export function mapPointerName(raw: string): string | null {
     // A captcha'd redirect wraps the real target: /sorry/?continue=<url>.
     const inner = t.searchParams.get('continue');
     if (inner) return mapPointerName(decodeURIComponent(inner));
+    // Only the map-pointer/google family can carry a business name — an
+    // arbitrary host's ?q= is not a profile pointer and must not claim
+    // the free in-process resolution this name unlocks.
+    if (!isBizMapUrl(t) && !GOOGLE_HOST.test(t.hostname)) return null;
     const q = t.searchParams.get('q') ?? t.searchParams.get('query');
     if (q && !/\//.test(q) && q.length < 80) return q.replace(/\+/g, ' ');
     const m = /\/maps\/place\/([^/]+)/.exec(t.pathname);
@@ -1017,7 +1025,6 @@ export async function resolveMapPointer(url: string): Promise<ReadPage | null> {
   // an arbitrary Location never gets fetched, and a non-google final target
   // never reaches the model as a follow-up url.
   const SHORTLINK_HOST = /^(g\.co|maps\.app\.goo\.gl|.*\.goo\.gl|bit\.ly|tinyurl\.com|t\.co)$/i;
-  const GOOGLE_HOST = /^((www|maps|m)\.)?google\.[a-z]{2,}(\.[a-z]{2})?$/i;
   let location: string | null = mapPointerName(url) ? url : null;
   let name = mapPointerName(url);
   let next: string | null = url;
