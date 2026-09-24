@@ -91,9 +91,18 @@ async function leadUnderCostCapTx(tx: Sql, leadId: string): Promise<boolean> {
     `
   )[0]!.cents;
   if (spent < Math.round(capUsd * 100)) return true;
+  // First-flag decisions serialize on a try-advisory — never waits, so no
+  // deadlock: a loser refuses its run while the winner writes the flag.
+  const got = await tx<{ got: boolean }[]>`
+    select pg_try_advisory_xact_lock(hashtext(${'cap:' + leadId})) as got
+  `;
+  if (!got[0]!.got) return false;
+  // Dedupe is per cap LEVEL — after staff raises the cap, hitting the new
+  // ceiling flags again; re-crossing the same level doesn't re-alert.
   const flagged = await tx`
     select 1 from lead_activities
     where lead_id = ${leadId} and kind = 'system' and meta->>'type' = 'cost-cap'
+      and (meta->>'capUsd')::numeric = ${capUsd}
     limit 1
   `;
   if (!flagged[0]) {
@@ -278,6 +287,14 @@ export async function claimRun(sql: Sql): Promise<RunRow | null> {
           lead.agent_paused_at ||
           phoneIsIgnored(ignoredPhones, lead.whatsapp, lead.phone)
         ) {
+          rejected.push(run.id);
+          continue;
+        }
+        // Lifetime cost cap, re-checked at claim: runs queued while the lead
+        // was under budget must not sail past it — parked like the other
+        // suppressions so raising the cap resumes the queued work. The lead
+        // row lock above serializes this with same-lead claim decisions.
+        if (!(await leadUnderCostCapTx(tx, run.lead_id))) {
           rejected.push(run.id);
           continue;
         }
@@ -1753,14 +1770,17 @@ export async function sweepOutreach(sql: Sql): Promise<number> {
       // params.auto marks the run as automation-queued — a fresh inbound
       // cancels it (ingestInbound); staff-triggered runs carry none. insertRun
       // also applies the lifetime cost cap — a capped lead returns null and
-      // its slot still clears below so the sweep stops re-probing it.
+      // KEEPS its due action (a staff-scheduled follow-up survives the cap;
+      // claimRun parks it anyway, so no run executes over budget).
       const runId = await insertRun(tx, {
         kind: 'outreach',
         leadId: id,
         params: { auto: 'cadence' },
       });
-      if (runId) queuedIds.push(runId);
-      await tx`update leads set next_action_at = null, next_action_source = null where id = ${id}`;
+      if (runId) {
+        queuedIds.push(runId);
+        await tx`update leads set next_action_at = null, next_action_source = null where id = ${id}`;
+      }
     }
     return due.length;
   });

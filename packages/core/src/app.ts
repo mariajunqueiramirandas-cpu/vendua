@@ -1072,21 +1072,26 @@ export function createApp({ sql, sessionSecret, controlSecret, autoDrain }: AppD
         }
         if (!th.agent_enabled) throw new HttpError(422, 'THREAD_PAUSED', 'thread paused for agent');
       }
-      return {
-        status: 201,
-        body: {
-          runId: await insertRun(tx, {
-            kind: kind as 'triage' | 'reply' | 'outreach' | 'discovery',
-            leadId,
-            ...(threadId ? { threadId } : {}),
-            params: (body.params as Record<string, unknown>) ?? {},
-          }),
-        },
-      };
+      const runId = await insertRun(tx, {
+        kind: kind as 'triage' | 'reply' | 'outreach' | 'discovery',
+        leadId,
+        ...(threadId ? { threadId } : {}),
+        params: (body.params as Record<string, unknown>) ?? {},
+      });
+      // An error (not a 201 with null) — the client contract is runId: string
+      // and a thrown claim never persists, so a retry after raising the cap
+      // actually creates the run.
+      if (!runId) {
+        throw new HttpError(
+          422,
+          'LEAD_COST_CAP',
+          'lead over its agent cost cap — raise guardrails.leadLifetimeCostCapUsd or retire the lead',
+        );
+      }
+      return { status: 201, body: { runId } };
     });
     if (res.replayed) c.header('x-idempotent-replay', 'true');
-    // runId null = the lifetime cost cap refused the insert (card flag explains).
-    if (!res.replayed && res.body.runId) emitControlEvent('run.update', res.body.runId);
+    if (!res.replayed) emitControlEvent('run.update', res.body.runId);
     kickDrain();
     return c.json(res.body, res.status as 201);
   });
@@ -1695,21 +1700,24 @@ export function createApp({ sql, sessionSecret, controlSecret, autoDrain }: AppD
                 : null;
         if (suppressed) throw new HttpError(422, 'LEAD_SUPPRESSED', suppressed);
       }
-      return {
-        status: 201,
-        body: {
-          runId: await insertRun(tx, {
-            kind: kind as 'triage' | 'reply' | 'outreach' | 'discovery' | 'strategist',
-            leadId: effLeadId,
-            threadId,
-            params: (body.params as Record<string, unknown>) ?? {},
-          }),
-        },
-      };
+      const runId = await insertRun(tx, {
+        kind: kind as 'triage' | 'reply' | 'outreach' | 'discovery' | 'strategist',
+        leadId: effLeadId,
+        threadId,
+        params: (body.params as Record<string, unknown>) ?? {},
+      });
+      // Same cap refusal → error contract as /leads/:id/run.
+      if (!runId) {
+        throw new HttpError(
+          422,
+          'LEAD_COST_CAP',
+          'lead over its agent cost cap — raise guardrails.leadLifetimeCostCapUsd or retire the lead',
+        );
+      }
+      return { status: 201, body: { runId } };
     });
     if (res.replayed) c.header('x-idempotent-replay', 'true');
-    // runId null = the lifetime cost cap refused the insert (card flag explains).
-    if (!res.replayed && res.body.runId) emitControlEvent('run.update', res.body.runId);
+    if (!res.replayed) emitControlEvent('run.update', res.body.runId);
     kickDrain();
     return c.json(res.body, res.status as 201);
   });

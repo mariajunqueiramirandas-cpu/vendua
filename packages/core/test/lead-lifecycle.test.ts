@@ -35,6 +35,15 @@ describe('guardrails — cadence + stale-draft knobs', () => {
       expect(() => validateSetting('guardrails', { [k]: '7' })).toThrow();
     }
   });
+
+  test('leadLifetimeCostCapUsd takes a bounded number — 0 disables', () => {
+    for (const v of [5, 0, 2.5, 1000]) {
+      expect(() => validateSetting('guardrails', { leadLifetimeCostCapUsd: v })).not.toThrow();
+    }
+    for (const v of [-1, '5', 1001, Number.NaN]) {
+      expect(() => validateSetting('guardrails', { leadLifetimeCostCapUsd: v })).toThrow();
+    }
+  });
 });
 
 // DB-backed — opt-in via TEST_DATABASE_URL (CI has no Postgres).
@@ -687,6 +696,15 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('lead lifecycle (db)', () => {
           select 1 from lead_tasks where lead_id = ${leadId} and title like '[humano]%'
         `;
         expect(tasks).toHaveLength(1);
+        // Dedupe is per cap level: staff raises the ceiling, the lead
+        // re-crosses it → a NEW flag, not silence.
+        await setGuardrails({ leadLifetimeCostCapUsd: 0.6 });
+        expect(await controlTx(sql, (tx) => insertRun(tx, { kind: 'reply', leadId }))).toBeNull();
+        const flags2 = await sql`
+          select 1 from lead_activities
+          where lead_id = ${leadId} and kind = 'system' and meta->>'type' = 'cost-cap'
+        `;
+        expect(flags2).toHaveLength(2);
         // Board-scoped runs carry no lead — uncapped by definition.
         expect(await controlTx(sql, (tx) => insertRun(tx, { kind: 'strategist' }))).toBeTruthy();
         // A lead under the cap queues normally.
@@ -694,6 +712,74 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('lead lifecycle (db)', () => {
         expect(
           await controlTx(sql, (tx) => insertRun(tx, { kind: 'outreach', leadId: other })),
         ).toBeTruthy();
+      } finally {
+        await setGuardrails({});
+      }
+    });
+
+    test('claimRun parks a queued run once the lead crosses the cap', async () => {
+      await setup();
+      await setGuardrails({ leadLifetimeCostCapUsd: 0.5 });
+      try {
+        const leadId = await mkLead();
+        const runId = (await controlTx(sql, (tx) => insertRun(tx, { kind: 'reply', leadId })))!;
+        // Spend lands after the run is already queued — the claim gate
+        // re-checks the ceiling so a parked row can't sail past it.
+        await sql`
+          insert into agent_runs (kind, lead_id, status, cost_cents, finished_at)
+          values ('reply', ${leadId}, 'done', 60, now())
+        `;
+        await sql`delete from agent_runs where status = 'queued' and id <> ${runId}`;
+        expect(await claimRun(sql)).toBeNull();
+        const [r] = await sql<{ status: string }[]>`
+          select status from agent_runs where id = ${runId}
+        `;
+        // Parked, not canceled — raising the cap resumes the queued work.
+        expect(r!.status).toBe('queued');
+        await setGuardrails({ leadLifetimeCostCapUsd: 10 });
+        expect(await claimAmong([runId])).toBe(runId);
+      } finally {
+        await setGuardrails({});
+      }
+    });
+
+    test('staff run endpoints answer LEAD_COST_CAP — a retry after the raise works', async () => {
+      await setup();
+      await setGuardrails({ leadLifetimeCostCapUsd: 0.5 });
+      const post = (path: string, body: Record<string, unknown>, idem: string) =>
+        app.request(path, {
+          method: 'POST',
+          headers: {
+            'content-type': 'application/json',
+            'x-vendua-control': 'ctl-secret',
+            'idempotency-key': idem,
+          },
+          body: JSON.stringify(body),
+        });
+      try {
+        const leadId = await mkLead();
+        await sql`
+          insert into agent_runs (kind, lead_id, status, cost_cents, finished_at)
+          values ('reply', ${leadId}, 'done', 60, now())
+        `;
+        const capped = await post(
+          `/control/v1/leads/${leadId}/run`,
+          { kind: 'reply' },
+          key('a5-cap-run'),
+        );
+        expect(capped.status).toBe(422);
+        const err = (await capped.json()) as { error?: { code?: string } };
+        expect(err.error?.code).toBe('LEAD_COST_CAP');
+        // The thrown claim stored nothing — replaying the same key after
+        // the raise creates the run instead of echoing the refusal.
+        await setGuardrails({ leadLifetimeCostCapUsd: 10 });
+        const retry = await post(
+          `/control/v1/leads/${leadId}/run`,
+          { kind: 'reply' },
+          key('a5-cap-run'),
+        );
+        expect(retry.status).toBe(201);
+        expect(((await retry.json()) as { runId?: string }).runId).toBeTruthy();
       } finally {
         await setGuardrails({});
       }

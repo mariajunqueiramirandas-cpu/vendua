@@ -154,8 +154,14 @@ export async function whatsappRegistered(phone: string): Promise<boolean | null>
   const sock = socket;
   if (!sock || connState !== 'open') return null;
   try {
-    const res = await sock.onWhatsApp(`${digits}@s.whatsapp.net`);
-    return Boolean(res?.[0]?.exists);
+    // Bounded wait — baileys's own query timeout is ~60s, far too long to
+    // hold a discovery step hostage to an unresponsive socket.
+    const res = await Promise.race([
+      sock.onWhatsApp(`${digits}@s.whatsapp.net`),
+      new Promise<undefined>((r) => setTimeout(r, 8000)),
+    ]);
+    if (res === undefined) return null;
+    return Boolean(res[0]?.exists);
   } catch (e) {
     waLog.warn({ err: e }, 'onWhatsApp probe failed');
     return null;
