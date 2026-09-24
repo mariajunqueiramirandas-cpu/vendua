@@ -1324,6 +1324,11 @@ dbDescribe('worker robustness (db)', () => {
       values ('email', 'resend', true)
       on conflict (kind, driver) do update set enabled = true
     `;
+    const priorGuardrails = (
+      await sql<{ value: unknown }[]>`
+        select value from control_settings where key = 'guardrails'
+      `
+    )[0];
     try {
       // First contact must not be draft-forced and quiet hours must be
       // empty (start == end → never quiet) — the send has to reach the
@@ -1376,6 +1381,16 @@ dbDescribe('worker robustness (db)', () => {
         `;
       } else {
         await sql`delete from control_integrations where kind = 'email' and driver = 'resend'`;
+      }
+      // Same for the guardrails row — later tests must not inherit
+      // disabled first-contact drafts or empty quiet hours.
+      if (priorGuardrails) {
+        await sql`
+          update control_settings set value = ${sql.json(priorGuardrails.value as never)}
+          where key = 'guardrails'
+        `;
+      } else {
+        await sql`delete from control_settings where key = 'guardrails'`;
       }
     }
   });
@@ -1445,6 +1460,94 @@ dbDescribe('worker robustness (db)', () => {
     expect(gets).toHaveLength(2);
     // the second read ran fresh — current profile, not a REPEAT artifact
     expect(JSON.stringify(gets[1]!.out)).toContain('Recife');
+  });
+
+  test('a repeated write after an intervening write executes — but a duplicate artifact never does', async () => {
+    await migrate(sql, MIGRATIONS);
+    const lead = await controlTx(sql, (tx) => insertLeadTx(tx, { name: 'Restore Lead' }));
+    const leadId = lead.body.lead.id;
+    await sql`delete from agent_runs where status = 'queued'`;
+    const runId = (await enqueueRun(sql, { kind: 'reply', leadId })!)!;
+    await sql`update agent_runs set
+      params = ${sql.json({
+        script: [
+          {
+            toolCalls: [
+              { name: 'update_lead', args: { id: leadId, city: 'Recife' } },
+              { name: 'update_lead', args: { id: leadId, city: 'Natal' } },
+            ],
+          },
+          // restoring Recife is not a REPEAT — Natal landed since it ran
+          { toolCalls: [{ name: 'update_lead', args: { id: leadId, city: 'Recife' } }] },
+          {
+            toolCalls: [
+              { name: 'create_task', args: { leadId, title: 'vip' } },
+              // a write lands between the task and its repeat — a
+              // versioned write would look stale, but a duplicate task
+              // mints a second row: never a restore, always suppressed
+              { name: 'update_lead', args: { id: leadId, city: 'Olinda' } },
+            ],
+          },
+          { toolCalls: [{ name: 'create_task', args: { leadId, title: 'vip' } }] },
+          { toolCalls: [{ name: 'request_human', args: { leadId, reason: 'travou' } }] },
+          { text: 'fim' },
+        ],
+      } as never)}
+      where id = ${runId}`;
+    expect(await runOnce(sql)).toBe(true);
+    const r = await getRun(runId);
+    expect(r.status).toBe('done');
+    const writes = r.steps.filter((s) => (s as { name?: string }).name === 'update_lead') as {
+      out?: { error?: string };
+    }[];
+    const tasks = r.steps.filter((s) => (s as { name?: string }).name === 'create_task') as {
+      out?: { error?: string };
+    }[];
+    // all four writes really ran — the repeat-as-restore is not REPEAT'd
+    expect(writes).toHaveLength(4);
+    expect(writes.every((w) => !w.out?.error)).toBe(true);
+    // ...while the duplicate task was suppressed on the second emission
+    expect(tasks).toHaveLength(2);
+    expect(tasks[0]!.out?.error ?? '').not.toMatch(/^REPEAT/);
+    expect(tasks[1]!.out?.error).toMatch(/^REPEAT/);
+    const saved = await sql`select city from leads where id = ${leadId}`;
+    expect((saved[0] as { city?: string }).city).toBe('Olinda');
+  });
+
+  test('a repeated create_lead is suppressed — outside discovery the repeat inserts a second card', async () => {
+    await migrate(sql, MIGRATIONS);
+    const lead = await controlTx(sql, (tx) => insertLeadTx(tx, { name: 'Dup Source' }));
+    const leadId = lead.body.lead.id;
+    const before = await sql`select id from leads where name = 'Cafe Azul'`;
+    await sql`delete from agent_runs where status = 'queued'`;
+    const runId = (await enqueueRun(sql, { kind: 'triage', leadId })!)!;
+    await sql`update agent_runs set
+      params = ${sql.json({
+        script: [
+          {
+            toolCalls: [
+              { name: 'create_lead', args: { name: 'Cafe Azul' } },
+              // a write lands between the card and its repeat — a versioned
+              // write would look stale, but a second insert is never a restore
+              { name: 'update_lead', args: { id: leadId, city: 'Recife' } },
+            ],
+          },
+          { toolCalls: [{ name: 'create_lead', args: { name: 'Cafe Azul' } }] },
+          { text: 'fim' },
+        ],
+      } as never)}
+      where id = ${runId}`;
+    expect(await runOnce(sql)).toBe(true);
+    const r = await getRun(runId);
+    const creates = r.steps.filter((s) => (s as { name?: string }).name === 'create_lead') as {
+      out?: { error?: string };
+    }[];
+    expect(creates).toHaveLength(2);
+    expect(creates[0]!.out?.error ?? '').not.toMatch(/^REPEAT/);
+    expect(creates[1]!.out?.error).toMatch(/^REPEAT/);
+    // exactly one new Cafe Azul card — the repeat never reached insertLeadTx
+    const after = await sql`select id from leads where name = 'Cafe Azul'`;
+    expect(after.length).toBe(before.length + 1);
   });
 
   test('a cached re-read does not spend the reply page budget', async () => {
