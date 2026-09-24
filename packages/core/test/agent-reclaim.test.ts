@@ -1022,4 +1022,81 @@ dbDescribe('worker robustness (db)', () => {
     expect(out.total).toBe(100);
     expect(out.evicted).toEqual(['fato 0']);
   });
+
+  test('a consecutive identical call is suppressed and nudged — once', async () => {
+    await migrate(sql, MIGRATIONS);
+    const lead = await controlTx(sql, (tx) => insertLeadTx(tx, { name: 'Loop Lead' }));
+    const leadId = lead.body.lead.id;
+    await sql`delete from agent_runs where status = 'queued'`;
+    const runId = await enqueueRun(sql, { kind: 'reply', leadId });
+    await sql`update agent_runs set
+      params = ${sql.json({
+        script: [
+          { toolCalls: [{ name: 'get_lead', args: { id: leadId } }] },
+          { toolCalls: [{ name: 'get_lead', args: { id: leadId } }] },
+          { toolCalls: [{ name: 'request_human', args: { leadId, reason: 'travou' } }] },
+          { text: 'fim' },
+        ],
+      } as never)}
+      where id = ${runId}`;
+    expect(await runOnce(sql)).toBe(true);
+    const r = await getRun(runId);
+    expect(r.status).toBe('done');
+    const reads = r.steps.filter(
+      (s) => (s as { name?: string }).name === 'get_lead',
+    ) as { out?: { error?: string } }[];
+    expect(reads).toHaveLength(2);
+    expect(reads[1]!.out?.error).toMatch(/^REPEAT/);
+    // ONE loop nudge — and since request_human acted, no finish nudge joins it
+    const nudges = r.steps.filter((s) => (s as { type?: string }).type === 'nudge');
+    expect(nudges).toHaveLength(1);
+    expect((nudges[0] as { content?: string }).content).toContain('LOOP');
+  });
+
+  test('a repeated call that errored is a retry, not a loop — it re-executes', async () => {
+    await migrate(sql, MIGRATIONS);
+    const lead = await controlTx(sql, (tx) => insertLeadTx(tx, { name: 'Retry Lead' }));
+    const leadId = lead.body.lead.id;
+    await sql`delete from agent_runs where status = 'queued'`;
+    const runId = await enqueueRun(sql, { kind: 'reply', leadId });
+    await sql`update agent_runs set
+      params = ${sql.json({
+        script: [
+          { toolCalls: [{ name: 'read_pages', args: { urls: [] } }] },
+          { toolCalls: [{ name: 'read_pages', args: { urls: [] } }] },
+          { toolCalls: [{ name: 'request_human', args: { leadId, reason: 'travou' } }] },
+          { text: 'fim' },
+        ],
+      } as never)}
+      where id = ${runId}`;
+    expect(await runOnce(sql)).toBe(true);
+    const r = await getRun(runId);
+    expect(r.status).toBe('done');
+    const reads = r.steps.filter(
+      (s) => (s as { name?: string }).name === 'read_pages',
+    ) as { out?: { error?: string } }[];
+    expect(reads).toHaveLength(2);
+    // both really ran — the second is the same validation error, not REPEAT
+    expect(reads[0]!.out?.error).toMatch(/^read_pages needs urls/);
+    expect(reads[1]!.out?.error).toMatch(/^read_pages needs urls/);
+    const nudges = r.steps.filter((s) => (s as { type?: string }).type === 'nudge');
+    expect(nudges).toHaveLength(0);
+  });
+
+  test('a reply run closing without a visible action gets one finish nudge', async () => {
+    await migrate(sql, MIGRATIONS);
+    const lead = await controlTx(sql, (tx) => insertLeadTx(tx, { name: 'Silent Lead' }));
+    const leadId = lead.body.lead.id;
+    await sql`delete from agent_runs where status = 'queued'`;
+    const runId = await enqueueRun(sql, { kind: 'reply', leadId });
+    await sql`update agent_runs set
+      params = ${sql.json({ script: [{ text: 'ok' }] } as never)}
+      where id = ${runId}`;
+    expect(await runOnce(sql)).toBe(true);
+    const r = await getRun(runId);
+    expect(r.status).toBe('done');
+    const nudges = r.steps.filter((s) => (s as { type?: string }).type === 'nudge');
+    expect(nudges).toHaveLength(1);
+    expect((nudges[0] as { content?: string }).content).toContain('Ação pendente');
+  });
 });

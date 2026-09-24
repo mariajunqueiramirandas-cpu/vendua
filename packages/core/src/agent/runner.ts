@@ -543,15 +543,22 @@ const ACTION_TOOLS = new Set([
 ]);
 
 /** True once this run's journal holds a landed action call — a result that
- *  neither errored nor came back {blocked} (a blocked send produced
- *  nothing visible). */
+ *  neither errored, came back {blocked} (a blocked send produced nothing
+ *  visible) nor {ignored} (an update_lead stripped of every field changed
+ *  nothing). */
 function runActed(steps: unknown[]): boolean {
   return steps.some((s) => {
     if (typeof s !== 'object' || s === null) return false;
     const st = s as { type?: string; name?: string; out?: unknown };
     if (st.type !== 'tool' || !st.name || !ACTION_TOOLS.has(st.name)) return false;
-    const out = st.out as { error?: unknown; blocked?: unknown } | null;
-    return typeof out === 'object' && out !== null && !out.error && out.blocked !== true;
+    const out = st.out as { error?: unknown; blocked?: unknown; ignored?: unknown } | null;
+    return (
+      typeof out === 'object' &&
+      out !== null &&
+      !out.error &&
+      out.blocked !== true &&
+      out.ignored !== true
+    );
   });
 }
 
@@ -649,11 +656,16 @@ export function replayJournal(prior: unknown[]): JournalReplay {
     const t = s as { type?: string; name?: string; out?: unknown } | null;
     if (t?.type !== 'tool') continue;
     bankOut(t.out);
-    // A REPEAT-suppressed call never reached executeTool, so it didn't
-    // consume the reply read_pages budget — every other journaled one did.
     if (t.name === 'read_pages') {
       const e = (t.out as { error?: unknown } | null)?.error;
-      if (!(typeof e === 'string' && e.startsWith('REPEAT'))) replay.pageReads++;
+      // Only a call that reached the budget check consumed a read — the two
+      // pre-check rejections (a REPEAT suppression; a malformed 'needs
+      // urls' call) never incremented the counter, so replaying them as
+      // spend would shrink a resumed run's real budget.
+      const preCheck =
+        typeof e === 'string' &&
+        (e.startsWith('REPEAT') || e.startsWith('read_pages needs urls'));
+      if (!preCheck) replay.pageReads++;
     }
     const p = t.out as { stored?: boolean; plan?: unknown } | null;
     // Last stored plan wins — including an empty one: a cleared plan must
@@ -1121,10 +1133,11 @@ export async function runOnce(sql: Sql): Promise<boolean> {
     // Last step index that produced something (lead/merge/new channel) —
     // starts at -1 so the first tick fires after 3 truly idle steps.
     let lastProgress = -1;
-    // Loop guard (messaging kinds): the previous model turn's call
-    // signature — a consecutive identical re-emission is a stuck model, not
-    // new work, and re-running send_message would literally re-send.
-    let lastCallSig: string | null = null;
+    // Loop guard (messaging kinds): the previous turn's call signatures
+    // mapped to whether each returned a reusable (non-error) result — a
+    // repeated call with a clean prior result is a stuck model; repeating
+    // an errored one is a retry and executes.
+    let prevSigs = new Map<string, boolean>();
     let loopNudged = false;
 
     for (let i = 0; i < limit && !lost; i++) {
@@ -1348,15 +1361,14 @@ export async function runOnce(sql: Sql): Promise<boolean> {
       } else {
         // Messaging kinds stay sequential: tool calls in one response may
         // depend on each other's ordering (draft before send).
-        // Loop guard — two consecutive turns emitting the identical call
-        // list is a stuck model: every result is already in context, and
-        // re-running a side-effecting call would duplicate it (send_message
-        // has no cross-step dedupe — a re-emitted identical send literally
-        // re-sends). Suppress the repeat — each call gets a "já executada"
-        // result — and nudge once: act differently or finish.
-        const callSig = JSON.stringify(res.toolCalls.map((c) => [c.name, c.args ?? {}]));
-        const suppress = callSig === lastCallSig;
-        lastCallSig = callSig;
+        // Loop guard — re-emitting a call whose previous result was clean
+        // can't produce anything new, and re-running a side-effecting call
+        // would duplicate it (send_message has no cross-step dedupe — a
+        // re-emitted identical send literally re-sends). Suppress per call
+        // — each repeated call gets a "já executada" result — and when the
+        // whole turn repeated, nudge once: act differently or finish.
+        const curSigs = new Map<string, boolean>();
+        let allRepeat = res.toolCalls.length > 0;
         for (const [callIndex, call] of res.toolCalls.entries()) {
           const callId = call.id ?? String(callIndex);
           // Journal the pending call BEFORE executing: a crash between the
@@ -1380,6 +1392,8 @@ export async function runOnce(sql: Sql): Promise<boolean> {
           };
           steps.push(entry);
           await persist();
+          const sig = JSON.stringify([call.name, call.args ?? {}]);
+          const suppress = prevSigs.get(sig) === true;
           let out: unknown;
           if (suppress) {
             out = {
@@ -1387,12 +1401,17 @@ export async function runOnce(sql: Sql): Promise<boolean> {
                 'REPEAT — chamada idêntica à anterior já foi executada nesta run; o resultado já está no contexto e não muda. Faça algo diferente ou encerre.',
             };
           } else {
+            allRepeat = false;
             try {
               out = await executeTool(ctx, callId, call.name, call.args);
             } catch (e) {
               out = { error: e instanceof Error ? e.message : String(e) };
             }
           }
+          // A suppressed call stands on its earlier clean result — its own
+          // REPEAT error must not mark the signature retryable or the next
+          // identical emission would execute again.
+          curSigs.set(sig, suppress || !(out as { error?: unknown } | null)?.error);
           delete entry.pending;
           entry.out = out;
           messages.push({
@@ -1404,7 +1423,8 @@ export async function runOnce(sql: Sql): Promise<boolean> {
           await persist();
           if (lost) break;
         }
-        if (suppress && !loopNudged && !lost) {
+        prevSigs = curSigs;
+        if (allRepeat && !loopNudged && !lost) {
           loopNudged = true;
           const nudge = `LOOP — você emitiu exatamente as mesmas chamadas com os mesmos argumentos duas vezes seguidas; o resultado já está no contexto e não muda. Pare de repetir: faça a próxima ação do plano ou encerre a run.`;
           steps.push({ type: 'nudge', content: nudge });
