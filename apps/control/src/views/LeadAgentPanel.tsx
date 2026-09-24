@@ -18,7 +18,7 @@ import {
   AGENT_MODES,
   RUN_KIND_LABEL,
   fmtDateTime,
-  fmtMoney,
+  fmtUsdCents,
   isLate,
   rel,
   relDue,
@@ -81,6 +81,8 @@ export default function LeadAgentPanel({
   const [schedRuns, setSchedRuns] = useState<AgentRun[]>([]);
   const [recentRuns, setRecentRuns] = useState<AgentRun[]>([]);
   const [actChannel, setActChannel] = useState<'auto' | 'whatsapp' | 'email'>('auto');
+  const [actErr, setActErr] = useState('');
+  const [acting, setActing] = useState(false);
   const [factErr, setFactErr] = useState('');
 
   // Latest load wins — responses from before the newest load() (or for the
@@ -308,18 +310,30 @@ export default function LeadAgentPanel({
           <button
             className="btn agent"
             title="rodar o agente agora"
-            onClick={() =>
+            disabled={acting}
+            onClick={() => {
+              setActing(true);
               void api
                 .runOnLead(
                   lead.id,
                   'outreach',
                   actChannel === 'auto' ? {} : { channel: actChannel },
                 )
-                .then(onChanged)
-            }
+                .then(() => {
+                  setActErr('');
+                  onChanged();
+                })
+                .catch((e) => setActErr(e instanceof ApiError ? e.message : 'falha ao disparar'))
+                .finally(() => setActing(false));
+            }}
           >
             <Bot size={14} /> agir agora
           </button>
+          {actErr && (
+            <div className="agp-none" style={{ color: 'var(--red-400)' }}>
+              {actErr}
+            </div>
+          )}
         </div>
       )}
 
@@ -455,7 +469,7 @@ export default function LeadAgentPanel({
           <span className="chip">{RUN_KIND_LABEL[r.kind] ?? r.kind}</span>
           <span className={`chip ${RUN_CHIP[r.status] ?? ''}`}>{r.status}</span>
           <span style={{ flex: 1 }} />
-          <span className="qmono">{fmtMoney(r.cost_cents)}</span>
+          <span className="qmono">{fmtUsdCents(r.cost_cents)}</span>
           <span className="due">{rel(r.created_at)}</span>
         </div>
       ))}

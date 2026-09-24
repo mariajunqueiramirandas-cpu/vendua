@@ -56,25 +56,29 @@ export function ListEditor({
   onChange: (items: string[]) => void;
 }) {
   const [draft, setDraft] = useState('');
+  // Settings come back as untyped jsonb — coerce non-string entries once so
+  // they render instead of crashing, and a later save re-sends strings the
+  // server-side validator accepts instead of raw jsonb it rejects.
+  const norm = items.map((it) => (typeof it === 'string' ? it : JSON.stringify(it)));
   const atMax = max !== undefined && items.length >= max;
   const add = () => {
     const v = draft.trim();
     if (!v || atMax) return;
-    onChange([...items, v]);
+    onChange([...norm, v]);
     setDraft('');
   };
   return (
     <div>
       <div className="lst">
-        {items.length === 0 && <div className="none">nada por aqui ainda</div>}
-        {items.map((it, i) => (
+        {norm.length === 0 && <div className="none">nada por aqui ainda</div>}
+        {norm.map((it, i) => (
           <div className="row" key={`${i}-${it.slice(0, 12)}`}>
             <span className="ix">{String(i + 1).padStart(2, '0')}</span>
             <span className="tx">{it}</span>
             <button
               className="x"
               title="remover"
-              onClick={() => onChange(items.filter((_, j) => j !== i))}
+              onClick={() => onChange(norm.filter((_, j) => j !== i))}
             >
               ×
             </button>

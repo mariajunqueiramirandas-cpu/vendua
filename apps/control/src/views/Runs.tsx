@@ -3,7 +3,16 @@ import { Link, useNavigate, useParams } from 'react-router-dom';
 import { PauseCircle, XCircle } from 'lucide-react';
 import { api, type AgentMetrics, type AgentRun } from '../api.ts';
 import { onControlEvent } from '../events.ts';
-import { Empty, Page, RUN_KIND_LABEL, fmtDateTime, fmtMoney, rel, relDue } from '../components.tsx';
+import {
+  Empty,
+  Page,
+  RUN_KIND_LABEL,
+  fmtDateTime,
+  fmtUsd,
+  fmtUsdCents,
+  rel,
+  relDue,
+} from '../components.tsx';
 
 const STATUS_CHIP: Record<string, string> = {
   queued: 'warn',
@@ -13,8 +22,6 @@ const STATUS_CHIP: Record<string, string> = {
   canceled: 'bad',
 };
 
-// Agent spend is USD — the console's fmtMoney is BRL-denominated.
-const fmtUsd = (usd: number) => `US$ ${usd.toFixed(2)}`;
 const pct = (v: number) => `${Math.round(v * 100)}%`;
 
 /** Ops readout above the run list — the ADR-0014 metrics endpoint
@@ -173,6 +180,7 @@ const VIEWS = [
 interface Step {
   type: string;
   name?: string;
+  callId?: string;
   args?: unknown;
   out?: unknown;
   content?: unknown;
@@ -299,7 +307,7 @@ export default function Runs() {
                       ? 'prompt'
                       : s.type === 'model'
                         ? 'modelo'
-                        : `tool · ${s.name}`}
+                        : `tool · ${s.name ?? s.callId ?? `#${i}`}`}
                   </div>
                   {s.type === 'model' && s.content != null && <pre>{String(s.content)}</pre>}
                   {s.type === 'model' && s.toolCalls?.length ? (
@@ -352,7 +360,7 @@ export default function Runs() {
                       ),
                     ],
                     ['tokens', `${run.tokens_in} in · ${run.tokens_out} out`],
-                    ['custo', fmtMoney(run.cost_cents)],
+                    ['custo', fmtUsdCents(run.cost_cents)],
                     ...(run.run_at ? [['agendado p/', fmtDateTime(run.run_at)] as const] : []),
                     ['início', fmtDateTime(run.started_at)],
                     ['fim', fmtDateTime(run.finished_at)],
@@ -491,7 +499,7 @@ export default function Runs() {
                     </td>
                     <td>{r.lead_name ?? '—'}</td>
                     <td className="num">{(r.tokens_in + r.tokens_out).toLocaleString('pt-BR')}</td>
-                    <td className="num">{fmtMoney(r.cost_cents)}</td>
+                    <td className="num">{fmtUsdCents(r.cost_cents)}</td>
                     <td className="num">{rel(r.created_at)}</td>
                     <td className="r-act" onClick={(e) => e.stopPropagation()}>
                       {active && (

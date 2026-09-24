@@ -141,6 +141,14 @@ export const fmtMoney = (cents: number | null | undefined) =>
     ? '—'
     : (cents / 100).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
 
+/** Agent spend (agent_runs.cost_cents and every stat derived from it) is
+ *  metered in USD — model/tool pricing — unlike lead deal values, which are
+ *  BRL. Showing it through fmtMoney would print the same cents as R$. */
+export const fmtUsd = (usd: number) => `US$ ${usd.toFixed(2)}`;
+
+export const fmtUsdCents = (cents: number | null | undefined) =>
+  cents == null ? '—' : fmtUsd(cents / 100);
+
 export const fmtDate = (iso: string | null | undefined) =>
   iso ? new Date(iso).toLocaleDateString('pt-BR', { day: '2-digit', month: 'short' }) : '—';
 

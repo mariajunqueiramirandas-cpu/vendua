@@ -11,7 +11,7 @@ import {
   type SegmentStat,
 } from '../api.ts';
 import { onControlEvent } from '../events.ts';
-import { Empty, StateChip, fmtMoney, rel } from '../components.tsx';
+import { Empty, StateChip, fmtUsdCents, rel } from '../components.tsx';
 
 /* Descoberta — the launch pad AND the scoreboard. Idle is a dark hero:
    brief on the left, the daily rotation and recent hunts on the right.
@@ -423,7 +423,8 @@ export default function Discovery() {
                   : 'nenhum lead dessa vez.'}
             </div>
             <div className="mono dim stage-end-meta">
-              {fmtClock(elapsed)} · {run.tokens_in}↑ {run.tokens_out}↓ · {fmtMoney(run.cost_cents)}
+              {fmtClock(elapsed)} · {run.tokens_in}↑ {run.tokens_out}↓ ·{' '}
+              {fmtUsdCents(run.cost_cents)}
               {run.error ? ` · ${run.error}` : ''}
             </div>
             <div className="stage-end-cta">
@@ -736,7 +737,7 @@ export default function Discovery() {
                 >
                   <span className="mono">{rel(r.created_at)}</span>
                   <span className={`recent-status ${r.status}`}>{r.status}</span>
-                  <span className="mono dim">{fmtMoney(r.cost_cents)}</span>
+                  <span className="mono dim">{fmtUsdCents(r.cost_cents)}</span>
                 </button>
               ))}
             </div>
@@ -781,9 +782,9 @@ export default function Discovery() {
                       )}
                     </td>
                     <td className="mono">{s.live}</td>
-                    <td className="mono">{fmtMoney(s.costCents)}</td>
+                    <td className="mono">{fmtUsdCents(s.costCents)}</td>
                     <td className="mono" title="custo 30d ÷ leads novos 30d">
-                      {s.cplCents == null ? '—' : fmtMoney(s.cplCents)}
+                      {s.cplCents == null ? '—' : fmtUsdCents(s.cplCents)}
                     </td>
                   </tr>
                 ))}
