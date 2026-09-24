@@ -512,6 +512,105 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('whatsapp history + ignore list 
     expect(r!.status).toBe('queued');
   });
 
+  test("the inbound cancel also retires the canceled run's unapproved drafts", async () => {
+    await migrate(sql, MIGRATIONS);
+    const lead = await controlTx(sql, (tx) =>
+      insertLeadTx(tx, { name: 'Drafter', whatsapp: '5511955550011' }),
+    );
+    const leadId = lead.body.lead.id;
+    await sql`delete from agent_runs where status = 'queued'`;
+    const [thread] = await sql<{ id: string }[]>`
+      insert into lead_threads (lead_id, channel) values (${leadId}, 'whatsapp') returning id
+    `;
+    // A draftOnly auto parked far ahead + the draft it already committed —
+    // "first contact" copy that now answers nothing.
+    const autoRun = (await enqueueRun(sql, {
+      kind: 'outreach',
+      leadId,
+      params: { auto: 'first-contact', draftOnly: true },
+      runAt: new Date(Date.now() + 3_600_000),
+    }))!;
+    const staffRun = (await enqueueRun(sql, {
+      kind: 'outreach',
+      leadId,
+      params: { goal: 'negotiation' },
+      runAt: new Date(Date.now() + 3_600_000),
+    }))!;
+    const [draft] = await sql<{ id: string }[]>`
+      insert into lead_messages (thread_id, direction, author, body, status, agent_run_id)
+      values (${thread!.id}, 'out', 'agent', 'oi! vi seu negócio', 'draft', ${autoRun})
+      returning id
+    `;
+    // Control: a staff run's draft is staff's own — never superseded.
+    const [staffDraft] = await sql<{ id: string }[]>`
+      insert into lead_messages (thread_id, direction, author, body, status, agent_run_id)
+      values (${thread!.id}, 'out', 'agent', 'draft da equipe', 'draft', ${staffRun})
+      returning id
+    `;
+    const events: ControlEvent[] = [];
+    const unsub = subscribeControlEvents((e) => events.push(e));
+    try {
+      const res = await ingestInbound(sql, {
+        channel: 'whatsapp',
+        from: '5511955550011@s.whatsapp.net',
+        body: 'oi, me conta mais',
+        providerMessageId: `fx10e-${crypto.randomUUID()}`,
+      });
+      if ('ignored' in res) throw new Error('unexpected ignore');
+    } finally {
+      unsub();
+    }
+    const [d] = await sql<{ status: string; error: string | null }[]>`
+      select status, error from lead_messages where id = ${draft!.id}
+    `;
+    expect(d!.status).toBe('rejected');
+    expect(d!.error).toBe('lead respondeu');
+    const [s] = await sql<{ status: string }[]>`
+      select status from lead_messages where id = ${staffDraft!.id}
+    `;
+    expect(s!.status).toBe('draft');
+    expect(events.some((e) => e.type === 'draft.change' && e.ref === thread!.id)).toBe(true);
+  });
+
+  test("a 'requested' callback survives the inbound reply and sweeps unmarked", async () => {
+    await migrate(sql, MIGRATIONS);
+    const lead = await controlTx(sql, (tx) =>
+      insertLeadTx(tx, { name: 'Promised', whatsapp: '5511955550012' }),
+    );
+    const leadId = lead.body.lead.id;
+    await sql`delete from agent_runs where status = 'queued'`;
+    // "me chama semana que vem" — provenance 'requested': the reply run
+    // re-commits its own cadence but can't wipe a lead-asked promise.
+    await sql`
+      update leads set next_action_at = now() + interval '2 days',
+                       next_action_source = 'requested'
+      where id = ${leadId}
+    `;
+    const res = await ingestInbound(sql, {
+      channel: 'whatsapp',
+      from: '5511955550012@s.whatsapp.net',
+      body: 'ah, e também queria saber do frete',
+      providerMessageId: `fx10f-${crypto.randomUUID()}`,
+    });
+    if ('ignored' in res) throw new Error('unexpected ignore');
+    const [l] = await sql<{ next_action_source: string | null }[]>`
+      select next_action_source from leads where id = ${leadId}
+    `;
+    expect(l!.next_action_source).toBe('requested');
+    // And when the date does come due it materializes UNMARKED — a promised
+    // callback outranks a later reply exactly like a staff decision.
+    await sql`
+      update leads set next_action_at = now() - interval '1 hour' where id = ${leadId}
+    `;
+    expect(await sweepOutreach(sql)).toBeGreaterThanOrEqual(1);
+    const swept = await sql<{ params: Record<string, unknown> }[]>`
+      select params from agent_runs
+      where lead_id = ${leadId} and kind = 'outreach' and status = 'queued'
+    `;
+    expect(swept).toHaveLength(1);
+    expect(swept[0]!.params.auto).toBeUndefined();
+  });
+
   test('a staff-scheduled sweep run carries no auto marker and survives', async () => {
     await migrate(sql, MIGRATIONS);
     const lead = await controlTx(sql, (tx) =>

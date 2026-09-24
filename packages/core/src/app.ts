@@ -1277,6 +1277,10 @@ export function createApp({ sql, sessionSecret, controlSecret, autoDrain }: AppD
     controlGate(c);
     const res = await approveMessage(sql, uuidParam(c, 'id'), 'staff', requireIdemKey(c));
     if (res.replayed) c.header('x-idempotent-replay', 'true');
+    // A refusal carries its own body (e.g. LEAD_COST_CAP on a stale draft
+    // whose regen can't queue) — dispatch must not run on a message that
+    // stayed 'draft', or the refusal hides behind a fake success.
+    if (res.status !== 200) return c.json(res.body, res.status as 422);
     // A stale draft is superseded inside the claim — nothing ships from the
     // expired copy. Kick the drain so the regen run recomposes it promptly.
     if (res.body.stale) {

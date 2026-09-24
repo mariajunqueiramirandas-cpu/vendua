@@ -140,6 +140,11 @@ const LEAD_FIELDS = {
   tags: { type: 'array', items: { type: 'string' } },
   dealValueCents: { type: 'integer' },
   nextActionAt: { type: 'string', description: 'ISO-8601' },
+  nextActionRequested: {
+    type: 'boolean',
+    description:
+      "true when the LEAD asked to be contacted at nextActionAt (\"me chama terça\") — marks the date 'requested': a promised callback that survives the lead's next message. Omit for the agent's own cadence.",
+  },
   fitScore: {
     type: 'integer',
     description: '0–10 ICP fit — how well this business matches the target audience',
@@ -1082,6 +1087,11 @@ export async function executeTool(
       delete rest.agentMode;
       delete rest.agentPaused;
       if (rest.archived === false) delete rest.archived;
+      // Provenance marker, not a column: pull it off the patch and hand it
+      // to leadPatch — 'requested' dates survive a fresh inbound, the
+      // agent's own 'agent'-stamped cadence does not.
+      const nextActionRequested = rest.nextActionRequested === true;
+      delete rest.nextActionRequested;
       // A patch reduced to nothing shouldn't 422 back at the model — say
       // what was refused instead of erroring the tool call.
       if (Object.keys(rest).length === 0) {
@@ -1091,7 +1101,14 @@ export async function executeTool(
             'agentMode, agentPaused and unarchiving are staff-managed; nothing else to update',
         };
       }
-      const res = await updateLead(sql, String(id), leadPatch(rest, 'agent'), key, 'agent', guard);
+      const res = await updateLead(
+        sql,
+        String(id),
+        leadPatch(rest, 'agent', nextActionRequested),
+        key,
+        'agent',
+        guard,
+      );
       return res.body;
     }
     case 'set_state': {
