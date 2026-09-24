@@ -1559,6 +1559,24 @@ export async function drain(sql: Sql, limit = 20): Promise<number> {
     `,
   );
   for (const r of reclaimed) emitControlEvent('run.update', r.id);
+  // Terminal suppressions strand queued runs forever — the claim gate's
+  // pause semantics never lifts them. unsubscribe writers cancel inline,
+  // archive doesn't, so this sweep is the catch-all for both (a writer
+  // that forgets, or rows parked before the inline cancels existed).
+  // agent_paused_at and agent_mode='off' are NOT touched: those flags
+  // lift and their parked runs must resume.
+  const parked = await controlTx(
+    sql,
+    (tx) => tx<{ id: string }[]>`
+      update agent_runs r set status = 'canceled', finished_at = now(),
+        error = case when l.unsubscribed_at is not null then 'descadastrado' else 'arquivado' end
+      from leads l
+      where l.id = r.lead_id and r.status = 'queued'
+        and (l.unsubscribed_at is not null or l.archived_at is not null)
+      returning r.id
+    `,
+  );
+  for (const r of parked) emitControlEvent('run.update', r.id);
   // 'sending' past the lease = worker died between provider call and status
   // write. Fail it visibly — staff redrafts — instead of silently requeuing
   // (at-most-once: the provider may already have accepted it).

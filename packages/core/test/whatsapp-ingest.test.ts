@@ -164,6 +164,145 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('whatsapp history + ignore list 
     expect(leads).toHaveLength(0);
   });
 
+  test('an inbound burst coalesces onto one queued reply run', async () => {
+    await migrate(sql, MIGRATIONS);
+    // A delayed inboundReplyDelayMin parks the first run (run_at future —
+    // unclaimable), so the coalesce check sees a 'queued' row, not a race.
+    await sql`
+      insert into control_settings (key, value) values ('guardrails', ${sql.json({ inboundReplyDelayMin: 60 } as never)})
+      on conflict (key) do update set value = excluded.value
+    `;
+    // unique sender + message ids — the shared test db keeps prior runs'
+    // threads, and a seen providerMessageId returns early without a run
+    const from = `5511${Math.floor(Math.random() * 1e10)}@s.whatsapp.net`;
+    const mid = crypto.randomUUID();
+    const first = await ingestInbound(sql, {
+      channel: 'whatsapp',
+      from,
+      body: 'oi',
+      providerMessageId: `${mid}-1`,
+    });
+    if ('ignored' in first) throw new Error('unexpected ignore');
+    const second = await ingestInbound(sql, {
+      channel: 'whatsapp',
+      from,
+      body: 'e aí?',
+      providerMessageId: `${mid}-2`,
+    });
+    if ('ignored' in second) throw new Error('unexpected ignore');
+    expect(second.threadId).toBe(first.threadId);
+    // One parked run covers both messages — it reads fresh thread at claim.
+    const queued = await sql<{ id: string }[]>`
+      select id from agent_runs where thread_id = ${first.threadId} and status = 'queued'
+    `;
+    expect(queued).toHaveLength(1);
+    // A 'running' reply has frozen context — a new message earns a fresh run.
+    await sql`update agent_runs set status = 'running', claim_token = 'x' where id = ${queued[0]!.id}`;
+    const third = await ingestInbound(sql, {
+      channel: 'whatsapp',
+      from,
+      body: 'tá aí?',
+      providerMessageId: `${mid}-3`,
+    });
+    if ('ignored' in third) throw new Error('unexpected ignore');
+    const all = await sql<{ status: string }[]>`
+      select status from agent_runs where thread_id = ${first.threadId}
+    `;
+    expect(all).toHaveLength(2);
+    expect(all.filter((r) => r.status === 'queued')).toHaveLength(1);
+  });
+
+  test('a staff-queued reply does not absorb a live inbound', async () => {
+    await migrate(sql, MIGRATIONS);
+    await sql`
+      insert into control_settings (key, value) values ('guardrails', ${sql.json({ inboundReplyDelayMin: 60 } as never)})
+      on conflict (key) do update set value = excluded.value
+    `;
+    // Staff can park a reply carrying its own intent (draftOnly) — the
+    // coalesce check must not treat it as an auto-created inbound run.
+    const digits = `55219${Math.floor(Math.random() * 1e8)}`;
+    const from = `${digits}@s.whatsapp.net`;
+    const created = await controlTx(sql, (tx) =>
+      insertLeadTx(tx, { name: 'Staff Draft', whatsapp: digits }),
+    );
+    const leadId = created.body.lead.id;
+    const [thread] = await sql<{ id: string }[]>`
+      insert into lead_threads (lead_id, channel) values (${leadId}, 'whatsapp') returning id
+    `;
+    await enqueueRun(sql, {
+      kind: 'reply',
+      leadId,
+      threadId: thread!.id,
+      params: { draftOnly: true },
+    });
+    const mid = crypto.randomUUID();
+    const first = await ingestInbound(sql, {
+      channel: 'whatsapp',
+      from,
+      body: 'oi',
+      providerMessageId: `${mid}-1`,
+    });
+    if ('ignored' in first) throw new Error('unexpected ignore');
+    const queued = await sql<{ params: { origin?: string } }[]>`
+      select params from agent_runs where thread_id = ${thread!.id} and status = 'queued'
+      order by created_at
+    `;
+    // The inbound run lands alongside the staff run instead of being
+    // swallowed by it — and a follow-up message coalesces onto the
+    // inbound one only.
+    expect(queued).toHaveLength(2);
+    expect(queued.map((q) => q.params.origin)).toEqual([undefined, 'inbound']);
+    await ingestInbound(sql, {
+      channel: 'whatsapp',
+      from,
+      body: 'oi de novo',
+      providerMessageId: `${mid}-2`,
+    });
+    const still =
+      await sql`select id from agent_runs where thread_id = ${thread!.id} and status = 'queued'`;
+    expect(still).toHaveLength(2);
+  });
+
+  test('a legacy unmarked reply still coalesces inbound messages', async () => {
+    await migrate(sql, MIGRATIONS);
+    await sql`
+      insert into control_settings (key, value) values ('guardrails', ${sql.json({ inboundReplyDelayMin: 60 } as never)})
+      on conflict (key) do update set value = excluded.value
+    `;
+    // Replies queued before the origin marker carry params = {} — with no
+    // staff-intent keys they must coalesce like an auto run, or a second
+    // message would queue a duplicate.
+    const digits = `55218${Math.floor(Math.random() * 1e8)}`;
+    const from = `${digits}@s.whatsapp.net`;
+    const created = await controlTx(sql, (tx) =>
+      insertLeadTx(tx, { name: 'Legacy Parked', whatsapp: digits }),
+    );
+    const leadId = created.body.lead.id;
+    const [thread] = await sql<{ id: string }[]>`
+      insert into lead_threads (lead_id, channel) values (${leadId}, 'whatsapp') returning id
+    `;
+    await enqueueRun(sql, { kind: 'reply', leadId, threadId: thread!.id });
+    const mid = crypto.randomUUID();
+    await ingestInbound(sql, {
+      channel: 'whatsapp',
+      from,
+      body: 'oi',
+      providerMessageId: `${mid}-1`,
+    });
+    const queued =
+      await sql`select id from agent_runs where thread_id = ${thread!.id} and status = 'queued'`;
+    expect(queued).toHaveLength(1);
+    await ingestInbound(sql, {
+      channel: 'whatsapp',
+      from,
+      body: 'e aí?',
+      providerMessageId: `${mid}-2`,
+    });
+    const still =
+      await sql`select id from agent_runs where thread_id = ${thread!.id} and status = 'queued'`;
+    expect(still).toHaveLength(1);
+  });
+
   test('claimRun skips a lead whose number is ignored', async () => {
     await migrate(sql, MIGRATIONS);
     await setIgnored(['5511999776655']);
