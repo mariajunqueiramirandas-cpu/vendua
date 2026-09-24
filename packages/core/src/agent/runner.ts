@@ -1667,7 +1667,7 @@ export async function runOnce(sql: Sql): Promise<boolean> {
             costCents: Math.round((costUsd + monidBudget.spent) * 100),
           })
         ) {
-          if (run.kind === 'discovery') {
+          if (playbook.debrief) {
             // debrief → agent_memory: the doctrine that makes the next run
             // start smarter. Best-effort — never fail a finished run on it.
             await writeDebrief(sql, run, ctx, steps).catch(() => undefined);
@@ -1925,7 +1925,7 @@ export async function runOnce(sql: Sql): Promise<boolean> {
     ) {
       // A budget-exhausted run still taught the field something — its leads
       // and dead ends belong in the doctrine too.
-      if (run.kind === 'discovery') await writeDebrief(sql, run, ctx, steps).catch(() => undefined);
+      if (playbook.debrief) await writeDebrief(sql, run, ctx, steps).catch(() => undefined);
     } else {
       await persistAborted();
     }

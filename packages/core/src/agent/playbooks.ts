@@ -31,6 +31,8 @@ export interface PlaybookDef {
   parallelTools: boolean;
   /** the run must end on a visible lead-facing action (one nudge otherwise) */
   requiresAction: boolean;
+  /** a finished/budget-out run writes a doctrine debrief line to memory */
+  debrief: boolean;
   /** automatic enqueue paths the playbook owns, for the Studio */
   triggers: string[];
 }
@@ -44,6 +46,7 @@ export const PLAYBOOKS: Record<PlaybookKind, PlaybookDef> = {
     monidCapUsd: 0.05,
     parallelTools: false,
     requiresAction: false,
+    debrief: false,
     triggers: ['staff'],
   },
   reply: {
@@ -54,6 +57,7 @@ export const PLAYBOOKS: Record<PlaybookKind, PlaybookDef> = {
     monidCapUsd: 0.05,
     parallelTools: false,
     requiresAction: true,
+    debrief: false,
     triggers: ['inbound', 'staff'],
   },
   outreach: {
@@ -64,6 +68,7 @@ export const PLAYBOOKS: Record<PlaybookKind, PlaybookDef> = {
     monidCapUsd: 0.05,
     parallelTools: false,
     requiresAction: true,
+    debrief: false,
     triggers: ['next-action', 'wakeup', 'discovery', 'first-contact', 'staff'],
   },
   discovery: {
@@ -74,6 +79,7 @@ export const PLAYBOOKS: Record<PlaybookKind, PlaybookDef> = {
     monidCapUsd: 0.25,
     parallelTools: true,
     requiresAction: false,
+    debrief: true,
     triggers: ['brief', 'staff'],
   },
   strategist: {
@@ -84,6 +90,7 @@ export const PLAYBOOKS: Record<PlaybookKind, PlaybookDef> = {
     monidCapUsd: 0.05,
     parallelTools: false,
     requiresAction: false,
+    debrief: false,
     triggers: ['weekly', 'staff'],
   },
 };
@@ -137,6 +144,7 @@ export async function listPlaybooksTx(tx: Sql) {
       label: d.label,
       description: d.description,
       triggers: d.triggers,
+      debrief: d.debrief,
       defaults: { stepBudget: d.stepBudget, monidCapUsd: d.monidCapUsd },
       tools: playbookTools(kind),
       override: s[kind] ?? {},
