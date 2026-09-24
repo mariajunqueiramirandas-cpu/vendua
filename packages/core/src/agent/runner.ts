@@ -1825,8 +1825,7 @@ export async function runOnce(sql: Sql): Promise<boolean> {
           // repeated write after an intervening mutation can be a
           // legitimate state-restore. Artifact-minters are the exception:
           // a duplicate is never legitimate, always suppressed.
-          const repeatHit =
-            landedSigs.has(sig) || (prev?.ok === true && prev.v === stateVersion);
+          const repeatHit = landedSigs.has(sig) || (prev?.ok === true && prev.v === stateVersion);
           // Mutable reads re-execute on a repeat so external edits stay
           // visible — but they still count toward allRepeat, or a
           // read-only loop would dodge the LOOP nudge entirely.
