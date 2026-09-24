@@ -1645,4 +1645,31 @@ dbDescribe('worker robustness (db)', () => {
     expect(reads[2]!.out?.pages?.length).toBe(1);
     expect(reads[2]!.out?.errors?.map((e) => e.url)).toEqual(['ftp://shop.example/menu']);
   });
+
+  test('auto outreach self-cancels when a fresher inbound exists mid-run', async () => {
+    await migrate(sql, MIGRATIONS);
+    const lead = await controlTx(sql, (tx) => insertLeadTx(tx, { name: 'Replied Mid-Run' }));
+    const leadId = lead.body.lead.id;
+    const [thread] = await sql<{ id: string }[]>`
+      insert into lead_threads (lead_id, channel) values (${leadId}, 'whatsapp') returning id
+    `;
+    await sql`delete from agent_runs where status = 'queued'`;
+    const runId = (await enqueueRun(sql, { kind: 'outreach', leadId }))!;
+    // params.auto is the marker the gate/post-commit cancel keys on; a
+    // 'running' row locked during that pass escapes it — the run must
+    // catch the committed inbound itself at the next step boundary.
+    await sql`update agent_runs set run_at = now(),
+      params = ${sql.json({ auto: 'first-contact', script: [{ text: 'oi' }, { text: 'outra' }] } as never)}
+      where id = ${runId}`;
+    // sentAt is provider time — clock skew can land it ahead of the
+    // claim stamp and it still counts as "arrived during this attempt"
+    await sql`insert into lead_messages (thread_id, direction, author, body, status, created_at)
+      values (${thread!.id}, 'in', 'lead', 'sim, quero', 'received', now() + interval '1 minute')`;
+    expect(await runOnce(sql)).toBe(true);
+    const r = await getRun(runId);
+    expect(r.status).toBe('canceled');
+    expect(r.error).toBe('lead respondeu');
+    // the second scripted turn never ran — the probe broke the loop
+    expect(r.steps.filter((s) => (s as { type?: string }).type === 'model')).toHaveLength(1);
+  });
 });

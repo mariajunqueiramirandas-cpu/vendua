@@ -1465,6 +1465,40 @@ export async function runOnce(sql: Sql): Promise<boolean> {
       await persist();
       if (lost) break;
 
+      // Inbound retires auto outreach: the gate flips queued rows and the
+      // post-commit pass flips 'running' ones SKIP-LOCKED — a row locked
+      // mid-tool-call escapes that pass and nothing revisits it. The
+      // marker the cancel keys on is the committed inbound itself: one
+      // newer than this attempt's claim means the lead already wrote —
+      // stop exactly like the API cancel (fenced flip → lost → unwind →
+      // persistAborted journals the trajectory).
+      const autoSrc = (run.params as { auto?: string } | null)?.auto;
+      if (!lost && run.kind === 'outreach' && autoSrc != null && autoSrc !== 'regenerate') {
+        const replied = await controlTx(
+          sql,
+          (tx) => tx`
+            select 1 from lead_messages m
+            join lead_threads t on t.id = m.thread_id
+            where t.lead_id = ${run.lead_id} and m.direction = 'in'
+              and m.created_at > (select started_at from agent_runs where id = ${run.id})
+            limit 1
+          `,
+        );
+        if (replied.length) {
+          await controlTx(
+            sql,
+            (tx) => tx`
+              update agent_runs set status = 'canceled', error = 'lead respondeu',
+                finished_at = now()
+              where id = ${run.id} and status = 'running' and claim_token = ${run.claim_token}
+            `,
+          );
+          emitControlEvent('run.update', run.id);
+          lost = true;
+          break;
+        }
+      }
+
       if (!res.toolCalls.length) {
         if (run.kind === 'discovery' && !nudged) {
           const created = steps
@@ -1838,71 +1872,89 @@ export async function drain(sql: Sql, limit = 20): Promise<number> {
   // ahead of healthy work, and the attempt that exhausts max_attempts lands
   // 'failed' — journal kept — instead of looping the lease forever.
   const capFlaggedIds: string[] = [];
-  const reclaimed = await controlTx(sql, async (tx) => {
-    const rows = await tx<
-      { id: string; lead_id: string | null; kind: RunRow['kind']; status: string }[]
-    >`
+  const { requeued, terminal } = await controlTx(sql, async (tx) => {
+    // Requeue below-cap attempts in one bulk pass — nothing else needs to
+    // commit with them (the retry's own finishRun folds its total spend).
+    const requeued = await tx<{ id: string }[]>`
       update agent_runs set
         attempts = attempts + 1,
-        status = case when attempts + 1 >= max_attempts then 'failed' else 'queued' end,
-        run_at = case when attempts + 1 >= max_attempts then run_at
-                      else now() + make_interval(mins => 1 << least(attempts + 1, 16)) end,
-        error = case when attempts + 1 >= max_attempts
-                     then 'attempt cap reached — run kept dying mid-execution'
-                     else error end,
-        finished_at = case when attempts + 1 >= max_attempts then now() else finished_at end,
+        status = 'queued',
+        run_at = now() + make_interval(mins => 1 << least(attempts + 1, 16)),
         started_at = null,
         alive_at = null,
         claim_token = null
-      where status = 'running' and coalesce(alive_at, started_at) < now() - make_interval(mins => ${RUN_LEASE_MIN})
-      returning id, lead_id, kind, status
+      where status = 'running' and attempts + 1 < max_attempts
+        and coalesce(alive_at, started_at) < now() - make_interval(mins => ${RUN_LEASE_MIN})
+      returning id
     `;
-    return rows;
+    // Terminal rows are finalized one tx each below — the 'running' row
+    // itself is the pending marker: a crash between rows leaves the rest
+    // stale, and the next drain re-picks them (spend fold + task + cap
+    // check all retry with it). A bulk mark-then-finalize split would
+    // strand a 'failed' row with no spend and no task on restart.
+    const terminal = await tx<{ id: string; lead_id: string | null; kind: RunRow['kind'] }[]>`
+      select id, lead_id, kind from agent_runs
+      where status = 'running' and attempts + 1 >= max_attempts
+        and coalesce(alive_at, started_at) < now() - make_interval(mins => ${RUN_LEASE_MIN})
+    `;
+    return { requeued, terminal };
   });
-  for (const r of reclaimed) emitControlEvent('run.update', r.id);
-  // Terminal rows do their spend fold + failed-run task + cap check in
-  // per-row txs AFTER the bulk commit: the bulk update holds every
-  // reclaimed row's lock, and a capfin wait while holding those could
-  // cycle against an inbound gate (see capLockTx). capfin first inside
-  // each small tx keeps the evaluator empty-handed.
-  const failed = reclaimed.filter((r) => r.status === 'failed' && r.lead_id);
-  for (const f of failed) {
+  for (const r of requeued) emitControlEvent('run.update', r.id);
+  for (const f of terminal) {
     const flagged = await controlTx(sql, async (tx) => {
-      await capLockTx(tx, f.lead_id!);
-      // A dead attempt never reached finishRun — its spend lives only in
-      // the journal. Model entries are usage DELTAS (sum them); monid_spend
-      // markers carry the CUMULATIVE budget balance at each write — read
-      // the LAST marker like runOnce's priorSpend, never a sum (summing
-      // cumulative balances would inflate cost_cents and cap early).
-      await tx`
-        update agent_runs r set
+      // capfin before the row write — the bulk pass holds every reclaimed
+      // row's lock, so a capfin wait in there could cycle against an
+      // inbound gate (see capLockTx); inside each small tx it's first.
+      if (f.lead_id) await capLockTx(tx, f.lead_id);
+      // The 'failed' transition, spend fold, staff task, and cap check are
+      // one commit — fenced on staleness so a row revived between the
+      // select and here skips the whole finalize instead of half of it.
+      const rows = await tx<{ id: string; lead_id: string | null }[]>`
+        update agent_runs set
+          attempts = attempts + 1,
+          status = 'failed',
+          error = 'attempt cap reached — run kept dying mid-execution',
+          finished_at = now(),
+          started_at = null,
+          alive_at = null,
+          claim_token = null,
           cost_cents = round((
             coalesce((select sum((e->'usage'->>'costUsd')::numeric)
-                      from jsonb_array_elements(r.steps) e
+                      from jsonb_array_elements(steps) e
                       where e->>'type' = 'model'), 0)
             + coalesce((select (e.v->>'spentUsd')::numeric
-                        from jsonb_array_elements(r.steps) with ordinality as e(v, idx)
+                        from jsonb_array_elements(steps) with ordinality as e(v, idx)
                         where e.v->>'type' = 'monid_spend'
                         order by idx desc limit 1), 0)
           ) * 100)::int
-        where r.id = ${f.id}
+        where id = ${f.id} and status = 'running'
+          and coalesce(alive_at, started_at) < now() - make_interval(mins => ${RUN_LEASE_MIN})
+        returning id, lead_id
       `;
-      // Same failed-run visibility as finishRun's path — the bulk reclaim
-      // writes 'failed' without going through it, so its own task insert.
+      const row = rows[0];
+      if (!row) return false;
+      // A dead attempt never reached finishRun — its spend lives only in
+      // the journal. Model entries are usage DELTAS (sum them); monid_spend
+      // markers carry the CUMULATIVE budget balance at each write — the
+      // fold above reads the LAST marker like runOnce's priorSpend, never
+      // a sum (summing cumulative balances would inflate cost_cents).
+      // Same failed-run visibility as finishRun's path.
+      if (!row.lead_id) return false;
       const name =
-        (await tx<{ name: string }[]>`select name from leads where id = ${f.lead_id}`)[0]?.name ??
-        f.lead_id!;
+        (await tx<{ name: string }[]>`select name from leads where id = ${row.lead_id}`)[0]?.name ??
+        row.lead_id;
       await tx`
         insert into lead_tasks (lead_id, title, due_at, created_by)
-        values (${f.lead_id},
+        values (${row.lead_id},
                 ${`[humano] ${name}: run ${f.kind} falhou — tentativas esgotadas, a run morria no meio`.slice(0, 300)},
                 null, 'agent')
       `;
       // And now that the spend persisted, run the same cap check every
       // other terminal path does — dead-run spend can itself cross the cap.
-      return (await leadUnderCostCapTx(tx, f.lead_id!)) === 'flagged';
+      return (await leadUnderCostCapTx(tx, row.lead_id)) === 'flagged';
     }).catch(() => false);
     if (flagged) capFlaggedIds.push(f.lead_id!);
+    emitControlEvent('run.update', f.id);
   }
   if (capFlaggedIds.length) emitControlEvent('lead.change');
   // Terminal suppressions strand queued runs forever — the claim gate's
