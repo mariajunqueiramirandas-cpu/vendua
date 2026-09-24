@@ -1,20 +1,26 @@
 import { describe, expect, test } from 'bun:test';
 import { join } from 'node:path';
 import postgres from 'postgres';
-import { contextFor, writeDebrief, type RunRow } from '../src/agent/runner.ts';
 import { executeTool, type ToolContext } from '../src/agent/tools.ts';
+import {
+  contextFor,
+  insertRun,
+  memoryForPrompt,
+  writeDebrief,
+  type RunRow,
+} from '../src/agent/runner.ts';
+import { leadFactsTx, rememberTx } from '../src/modules/agent-memory.ts';
 import { controlTx } from '../src/modules/control.ts';
-import { insertLeadTx } from '../src/modules/leads.ts';
-import { insertRun } from '../src/agent/runner.ts';
+import { insertLeadTx, leadInsert } from '../src/modules/leads.ts';
 import { migrate } from '../src/platform/db.ts';
 
 // DB-backed — opt-in via TEST_DATABASE_URL (CI has no Postgres). Covers the
-// run-side wiring of memory v2: the remember/set_fact tools and the
-// discovery writeDebrief, all against real rows.
+// run-side wiring of memory v2: the remember/set_fact tools, the prompt feed
+// (memoryForPrompt) and the discovery writeDebrief — all against real rows.
 describe.skipIf(!process.env.TEST_DATABASE_URL)('agent memory v2 wiring (db)', () => {
   const sql = postgres(process.env.TEST_DATABASE_URL!);
-  const nonce = crypto.randomUUID().slice(0, 8);
-  const nm = (s: string) => `zzw-${nonce}-${s}`;
+  const uniq = crypto.randomUUID().slice(0, 8);
+  const nm = (s: string) => `wm-${uniq}-${s}`;
   let migrated = false;
   const setup = async () => {
     if (!migrated) {
@@ -24,9 +30,9 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('agent memory v2 wiring (db)', (
   };
 
   const mkCtx = (
-    runId: string,
+    runKind: ToolContext['runKind'],
     leadId: string | null,
-    runKind: ToolContext['runKind'] = 'reply',
+    runId: string,
   ): ToolContext => ({
     sql,
     runId,
@@ -48,165 +54,243 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('agent memory v2 wiring (db)', (
     draftOnly: false,
   });
 
-  const mkRunId = (kind: 'discovery' | 'reply' = 'reply', leadId?: string) =>
-    controlTx(sql, (tx) => insertRun(tx, { kind, ...(leadId ? { leadId } : {}) })).then((id) => {
-      if (!id) throw new Error('insertRun refused');
+  const mkLead = (name: string, segment: string | null = null) =>
+    controlTx(sql, async (tx) => {
+      const r = await insertLeadTx(tx, leadInsert({ name: `${name}-${uniq}`, whatsapp: null }));
+      const id = r.body.lead.id;
+      if (segment) await tx`update leads set segment = ${segment} where id = ${id}`;
       return id;
     });
-  const mkLeadId = () =>
-    controlTx(sql, (tx) => insertLeadTx(tx, { name: `Wire ${nonce} ${crypto.randomUUID()}` })).then(
-      (r) => r.body.lead.id,
-    );
 
-  const memRows = () =>
+  const mkRun = async (
+    kind: RunRow['kind'],
+    leadId: string | null = null,
+    params: Record<string, unknown> = {},
+  ): Promise<RunRow> => {
+    const id = await controlTx(sql, (tx) => insertRun(tx, { kind, leadId, params }));
+    if (!id) throw new Error('insertRun refused');
+    // Leave the run 'done' — the suite shares one DB, and a queued discovery
+    // run inflates discoveryBudgetTx's open-work reservation for tests that
+    // check auto-approval.
+    await sql`update agent_runs set status = 'done' where id = ${id}`;
+    return (await sql<RunRow[]>`select * from agent_runs where id = ${id}`)[0]!;
+  };
+
+  const myItems = (scope?: string) =>
     sql<
-      { scope: string; segment: string | null; source: string; source_run_id: string | null; content: string }[]
-    >`select scope, segment, source, source_run_id, content from agent_memory_items
-       where content like ${`zzw-${nonce}-%`} order by created_at`;
+      {
+        scope: string;
+        segment: string | null;
+        content: string;
+        source: string;
+        source_run_id: string | null;
+      }[]
+    >`
+      select scope, segment, content, source, source_run_id
+      from agent_memory_items
+      where content like ${`wm-${uniq}-%`}
+      ${scope ? sql`and scope = ${scope}` : sql``}
+      order by content`;
 
-  test('remember tool writes workspace/segment memory items with the run id', async () => {
+  test('remember writes agent_memory_items with agent source, dedupes', async () => {
     await setup();
-    const runId = await mkRunId('discovery');
-    const ctx = mkCtx(runId, null, 'discovery');
+    const leadId = await mkLead('rem');
+    const run = await mkRun('reply', leadId);
+    const ctx = mkCtx('reply', leadId, run.id);
+    const out = (await executeTool(ctx, 's1', 'remember', {
+      fact: nm('docerias respondem melhor à noite'),
+    })) as { remembered: string };
+    expect(out.remembered).toBe(nm('docerias respondem melhor à noite'));
 
-    const ws = (await executeTool(ctx, 'w1', 'remember', { fact: nm('ws') })) as Record<
-      string,
-      unknown
-    >;
-    expect(ws).toMatchObject({ remembered: nm('ws'), scope: 'workspace' });
-    expect(ws).not.toHaveProperty('segment');
+    // dedupe — same content twice stays one row
+    await executeTool(ctx, 's2', 'remember', { fact: nm('docerias respondem melhor à noite') });
+    const rows = await myItems('workspace');
+    expect(rows.map((r) => r.content)).toEqual([nm('docerias respondem melhor à noite')]);
+    expect(rows[0]!.source).toBe('agent');
+    expect(rows[0]!.source_run_id).toBe(run.id);
 
-    const seg = (await executeTool(ctx, 'w2', 'remember', {
-      fact: nm('seg'),
-      segment: 'Pudim Norte',
-    })) as Record<string, unknown>;
-    expect(seg).toMatchObject({ remembered: nm('seg'), scope: 'segment', segment: 'pudim norte' });
+    // segment scope carries the segment; workspace ignores it
+    await executeTool(ctx, 's3', 'remember', {
+      fact: nm('padarias têm pico antes das 9h'),
+      scope: 'segment',
+      segment: nm('PADARIAS'),
+    });
+    const segRows = await myItems('segment');
+    expect(segRows).toHaveLength(1);
+    expect(segRows[0]!.segment).toBe(nm('padarias'));
 
-    // Dedupe: same content + scope, different case → same item id, no new row.
-    const again = (await executeTool(ctx, 'w3', 'remember', {
-      fact: nm('SEG'),
-      segment: 'pudim norte',
-    })) as Record<string, unknown>;
-    expect(again).toMatchObject({ scope: 'segment', segment: 'pudim norte' });
+    const bad = (await executeTool(ctx, 's4', 'remember', {
+      fact: 'x',
+      scope: 'segment',
+    })) as { error?: string };
+    expect(bad.error).toBeTruthy();
+    const empty = (await executeTool(ctx, 's5', 'remember', { fact: '  ' })) as {
+      error?: string;
+    };
+    expect(empty.error).toBeTruthy();
 
-    const rows = await memRows();
-    expect(rows.map((r) => [r.scope, r.segment, r.source])).toEqual([
-      ['workspace', null, 'agent'],
-      ['segment', 'pudim norte', 'agent'],
-    ]);
-    expect(rows.every((r) => r.source_run_id === runId)).toBe(true);
-    // Nothing lands on the legacy flat list anymore.
-    const legacy = await sql`select 1 from control_settings where key = 'agent_memory'`;
+    // the tool never touches the legacy flat list anymore
+    const legacy = await sql`
+      select 1 from control_settings
+      where key = 'agent_memory' and value::text like ${`%wm-${uniq}%`}
+    `;
     expect(legacy).toHaveLength(0);
-
-    const empty = (await executeTool(ctx, 'w4', 'remember', { fact: '  ' })) as Record<
-      string,
-      unknown
-    >;
-    expect(String(empty.error)).toContain('content');
   });
 
-  test('set_fact tool writes lead_facts, enforces the lead binding', async () => {
+  test('set_fact upserts lead_facts bound to the run lead', async () => {
     await setup();
-    const leadId = await mkLeadId();
-    const runId = await mkRunId('reply', leadId);
-    const ctx = mkCtx(runId, leadId, 'reply');
+    const leadId = await mkLead('fact');
+    const run = await mkRun('reply', leadId);
+    const ctx = mkCtx('reply', leadId, run.id);
 
-    const out = (await executeTool(ctx, 'f1', 'set_fact', {
+    const bad = (await executeTool(ctx, 's1', 'set_fact', {
       leadId,
-      key: 'team_size',
-      value: '4 people',
-      confidence: 0.7,
-    })) as { fact: { key: string; value: string; confidence: number; sourceRunId: string | null } };
-    expect(out.fact).toMatchObject({
-      key: 'team_size',
-      value: '4 people',
-      confidence: 0.7,
-      source: 'agent',
-      sourceRunId: runId,
-    });
-    const stored = await sql<
-      { key: string; value: string; source_run_id: string | null }[]
-    >`select key, value, source_run_id from lead_facts where lead_id = ${leadId}`;
-    expect(stored).toHaveLength(1);
-
-    const bound = (await executeTool(ctx, 'f2', 'set_fact', {
-      leadId: crypto.randomUUID(), // not this run's lead
-      key: 'x',
-      value: 'y',
-    })) as Record<string, unknown>;
-    expect(String(bound.error)).toContain('LEAD_MISMATCH');
-
-    const badKey = (await executeTool(ctx, 'f3', 'set_fact', {
-      leadId,
-      key: 'Bad Key',
-      value: 'y',
-    })) as Record<string, unknown>;
-    expect(badKey.error).toBeDefined();
-    const badConf = (await executeTool(ctx, 'f4', 'set_fact', {
+      key: 'BAD KEY',
+      value: 'x',
+    })) as { error?: string };
+    expect(bad.error).toContain('snake_case');
+    const badConf = (await executeTool(ctx, 's1b', 'set_fact', {
       leadId,
       key: 'size',
-      value: 'y',
+      value: 'x',
       confidence: 2,
-    })) as Record<string, unknown>;
-    expect(badConf.error).toBeDefined();
+    })) as { error?: string };
+    expect(badConf.error).toContain('confidence');
 
-    // Unbound ctx (sim-like): a ghost lead id is a clean error, not an FK 500.
-    const ghost = (await executeTool(mkCtx(runId, null, 'reply'), 'f5', 'set_fact', {
+    const out = (await executeTool(ctx, 's2', 'set_fact', {
+      leadId,
+      key: 'fleet_size',
+      value: '12',
+      confidence: 0.8,
+    })) as {
+      fact: {
+        key: string;
+        value: string;
+        confidence: number;
+        source: string;
+        sourceRunId: string | null;
+      };
+    };
+    expect(out.fact).toMatchObject({
+      key: 'fleet_size',
+      value: '12',
+      confidence: 0.8,
+      source: 'agent',
+      sourceRunId: run.id,
+    });
+
+    // upsert — same key refreshes value/confidence
+    await executeTool(ctx, 's3', 'set_fact', { leadId, key: 'fleet_size', value: '14' });
+    const facts = await controlTx(sql, (tx) => leadFactsTx(tx, leadId));
+    expect(facts).toHaveLength(1);
+    expect(facts[0]).toMatchObject({ key: 'fleet_size', value: '14', confidence: 1 });
+
+    // lead-binding — a run bound to another lead can't write this one's facts
+    const other = await mkLead('fact-other');
+    const denied = (await executeTool(mkCtx('reply', other, run.id), 's4', 'set_fact', {
+      leadId,
+      key: 'fleet_size',
+      value: 'x',
+    })) as { error?: string };
+    expect(denied.error).toContain('LEAD_MISMATCH');
+
+    // unbound ctx (sim-like): a ghost lead id is a clean error, not an FK 500
+    const ghost = (await executeTool(mkCtx('reply', null, run.id), 's5', 'set_fact', {
       leadId: crypto.randomUUID(),
       key: 'size',
-      value: 'y',
-    })) as Record<string, unknown>;
-    expect(String(ghost.error)).toContain('no such lead');
+      value: 'x',
+    })) as { error?: string };
+    expect(ghost.error).toContain('no such lead');
   });
 
-  test('contextFor renders FATOS for lead-bound runs', async () => {
+  test('contextFor renders a FATOS block for lead-bound runs', async () => {
     await setup();
-    const leadId = await mkLeadId();
-    const runId = await mkRunId('reply', leadId);
-    await executeTool(mkCtx(runId, leadId, 'reply'), 'f1', 'set_fact', {
+    const leadId = await mkLead('fatos');
+    const run = await mkRun('reply', leadId);
+    await executeTool(mkCtx('reply', leadId, run.id), 'f1', 'set_fact', {
       leadId,
       key: 'team_size',
       value: '4 people',
       confidence: 0.5,
     });
-    const run = (
-      await sql<RunRow[]>`select id, kind, lead_id, thread_id, params, claim_token, steps, attempts, max_attempts
-         from agent_runs where id = ${runId}`
-    )[0]!;
     const { text } = await contextFor(sql, run);
     expect(text).toContain('FATOS');
     expect(text).toContain('team_size: 4 people (confiança 0.5)');
   });
 
-  test('writeDebrief stores a debrief-scope memory item, never the legacy row', async () => {
+  test('memoryForPrompt feeds segment learnings from the bound lead', async () => {
     await setup();
-    const runId = await mkRunId('discovery');
-    const run = (
-      await sql<RunRow[]>`select id, kind, lead_id, thread_id, params, claim_token, steps, attempts, max_attempts
-         from agent_runs where id = ${runId}`
-    )[0]!;
-    await sql`update agent_runs set params = ${sql.json({ query: nm('docerias'), city: 'Fortaleza' } as never)} where id = ${runId}`;
-    run.params = { query: nm('docerias'), city: 'Fortaleza' };
-    const ctx = mkCtx(runId, null, 'discovery');
-
-    // No leads/merges/deads → no debrief.
-    await writeDebrief(sql, run, ctx, []);
-    expect(await memRows()).toHaveLength(0);
-
-    await writeDebrief(sql, run, ctx, [
-      { name: 'create_lead', out: { lead: { whatsapp: '+5585' } } },
-      { name: 'maps_lookup', out: { foundContacts: { phones: ['1'] } } },
-    ]);
-    const rows = await memRows();
-    expect(rows).toHaveLength(1);
-    expect(rows[0]).toMatchObject({
-      scope: 'debrief',
-      source: 'debrief',
-      source_run_id: runId,
+    const segment = nm('docerias');
+    const leadId = await mkLead('feed', segment);
+    const run = await mkRun('reply', leadId);
+    await controlTx(sql, async (tx) => {
+      await rememberTx(tx, {
+        scope: 'segment',
+        segment,
+        content: nm('seg-learning'),
+        source: 'agent',
+      });
+      await rememberTx(tx, { scope: 'workspace', content: nm('ws-learning'), source: 'agent' });
+      await rememberTx(tx, {
+        scope: 'segment',
+        segment: 'outro-nicho',
+        content: nm('miss'),
+        source: 'agent',
+      });
     });
-    expect(rows[0]!.content).toContain(`run ${nm('docerias')}/Fortaleza: 1 leads (1 c/ whatsapp)`);
-    const legacy = await sql`select 1 from control_settings where key = 'agent_memory'`;
+    const feed = await memoryForPrompt(sql, run);
+    expect(feed).toContain(nm('seg-learning'));
+    expect(feed).toContain(nm('ws-learning'));
+    expect(feed).not.toContain(nm('miss'));
+
+    // params.segment wins over the lead's segment (discovery runs have no lead)
+    const runParams = await mkRun('discovery', null, { segment: 'outro-nicho' });
+    const feedParams = await memoryForPrompt(sql, runParams);
+    expect(feedParams).toContain(nm('miss'));
+  });
+
+  test('writeDebrief stores a debrief-scope item tagged with the brief segment', async () => {
+    await setup();
+    const run = await mkRun('discovery', null, {
+      query: nm('docerias'),
+      segment: nm('padarias'),
+    });
+    const ctx = mkCtx('discovery', null, run.id);
+    const steps = [
+      {
+        type: 'tool',
+        name: 'create_lead',
+        args: {},
+        out: { lead: { id: 'l1', whatsapp: '+5511999' } },
+      },
+    ];
+    await writeDebrief(sql, run, ctx, steps);
+    const rows = await sql<{ source: string; content: string; segment: string | null }[]>`
+      select source, content, segment from agent_memory_items
+      where scope = 'debrief' and source_run_id = ${run.id}
+    `;
+    expect(rows).toHaveLength(1);
+    expect(rows[0]!.source).toBe('debrief');
+    expect(rows[0]!.content).toContain('1 leads (1 c/ whatsapp)');
+    expect(rows[0]!.segment).toBe(nm('padarias'));
+
+    // the debrief lands in the next run's feed
+    const feed = await memoryForPrompt(sql, run);
+    expect(feed.some((c) => c.includes(nm('docerias')))).toBe(true);
+
+    // no debrief when the run produced nothing
+    const dry = await mkRun('discovery', null, { query: nm('dry') });
+    await writeDebrief(sql, dry, mkCtx('discovery', null, dry.id), []);
+    const dryRows = await sql`
+      select 1 from agent_memory_items where scope = 'debrief' and source_run_id = ${dry.id}
+    `;
+    expect(dryRows).toHaveLength(0);
+
+    // and nothing lands on the legacy row
+    const legacy = await sql`
+      select 1 from control_settings
+      where key = 'agent_memory' and value::text like ${`%wm-${uniq}%`}
+    `;
     expect(legacy).toHaveLength(0);
   });
 });

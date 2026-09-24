@@ -107,6 +107,14 @@ export function leadFactJson(row: LeadFactRow): LeadFact {
   };
 }
 
+/** True when the 0035 memory tables are deployed — a control box ahead of
+ *  its migrations keeps the legacy `control_settings.agent_memory` read
+ *  path and turns the write tools into no-op errors instead of 42P01s. */
+export async function hasMemoryTablesTx(tx: Sql): Promise<boolean> {
+  const r = await tx<{ r: string | null }[]>`select to_regclass('agent_memory_items') as r`;
+  return r[0]!.r !== null;
+}
+
 const bad = (field: string, why: string) =>
   new HttpError(422, 'BAD_REQUEST', `${field} ${why}`, { field });
 
@@ -259,13 +267,16 @@ export async function rememberTx(
 }
 
 /** Discovery debrief line (the runner's writeDebrief successor): own scope,
- *  own cap — appended under the same dedupe/eviction rules as learnings. */
+ *  own cap — appended under the same dedupe/eviction rules as learnings.
+ *  `segment` tags the run's niche so the feed ranks segment-matched debriefs
+ *  first (same normalization as segment learnings). */
 export async function appendDebriefTx(
   tx: Sql,
-  input: { content: string; sourceRunId?: string | null },
+  input: { content: string; sourceRunId?: string | null; segment?: string | null },
 ): Promise<{ item: MemoryItem; evicted: string[] }> {
   return rememberTx(tx, {
     scope: 'debrief',
+    segment: input.segment ?? null,
     content: input.content,
     source: 'debrief',
     sourceRunId: input.sourceRunId ?? null,
@@ -327,9 +338,12 @@ export async function memoryForRunTx(
 }
 
 /** Structured per-lead facts — the agent's keyed dossier memory. */
-export async function leadFactsTx(tx: Sql, leadId: string): Promise<LeadFact[]> {
+export async function leadFactsTx(tx: Sql, leadId: string, limit = 200): Promise<LeadFact[]> {
   const rows = await tx<LeadFactRow[]>`
-    select * from lead_facts where lead_id = ${leadId} order by key
+    select * from lead_facts where lead_id = ${leadId} order by key limit ${Math.max(
+      1,
+      Math.min(Math.floor(limit), 1000),
+    )}
   `;
   return rows.map(leadFactJson);
 }

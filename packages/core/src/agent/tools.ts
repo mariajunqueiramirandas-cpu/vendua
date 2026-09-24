@@ -1,5 +1,5 @@
 import type { Sql } from '../platform/db.ts';
-import { HttpError } from '../platform/http.ts';
+import { HttpError, UUID_RE } from '../platform/http.ts';
 import type { AgentTool } from './llm.ts';
 import { claimControl, controlTx } from '../modules/control.ts';
 import { emitControlEvent } from '../modules/control-events.ts';
@@ -19,7 +19,12 @@ import {
   getSettingTx,
   type Guardrails,
 } from '../modules/integrations.ts';
-import { rememberTx, upsertLeadFactTx } from '../modules/agent-memory.ts';
+import {
+  LEAD_FACT_KEY_RE,
+  hasMemoryTablesTx,
+  rememberTx,
+  upsertLeadFactTx,
+} from '../modules/agent-memory.ts';
 import { recordBlockedSendTx } from '../modules/channel-health.ts';
 import {
   agentPausedForChannelTx,
@@ -355,15 +360,13 @@ const REGISTRY: { def: AgentTool }[] = [
     def: {
       name: 'remember',
       description:
-        'Persist a durable learning (agent memory — e.g. "docerias respond better at night"). Pass `segment` to scope it to one segment ("pudim") — it then only reaches runs on that segment; omit it for a workspace-wide learning. Dedupes case-insensitively per scope. Bounded: learnings cap at 200 total, evicting the oldest unpinned — the result returns dropped ones as `evicted`; fold them into a consolidated fact on a later call.',
+        'Persist a durable learning (agent memory — e.g. "docerias respond better at night"). scope: "workspace" (default — applies to every run) or "segment" + `segment` for a learning that only fits one niche. Deduped case-insensitively per scope/segment — repeating a learning refreshes it instead of duplicating. Cap 200 workspace+segment learnings (staff-pinned items never drop); when the cap drops an old learning the result returns it as `evicted` — fold it into a consolidated learning on a later call. For a structured fact about THIS lead, prefer `set_fact`.',
       parameters: {
         type: 'object',
         properties: {
           fact: { type: 'string' },
-          segment: {
-            type: 'string',
-            description: 'scope the learning to this segment only (lowercased, ≤120 chars)',
-          },
+          scope: { type: 'string', enum: ['workspace', 'segment'] },
+          segment: { type: 'string', description: 'required when scope=segment' },
         },
         required: ['fact'],
       },
@@ -1443,19 +1446,30 @@ export async function executeTool(
     }
     case 'remember': {
       const fact = String(args.fact ?? '').slice(0, 500);
-      const segment =
-        typeof args.segment === 'string' && args.segment.trim()
-          ? args.segment.trim().slice(0, 120)
-          : null;
+      if (!fact) return { error: 'fact is required' };
+      const scope = args.scope === 'segment' ? 'segment' : 'workspace';
+      const segment = typeof args.segment === 'string' ? args.segment.trim() : '';
+      if (scope === 'segment' && !segment) {
+        return { error: 'scope=segment needs the `segment` arg' };
+      }
       try {
         const { item, evicted } = await controlTx(sql, async (tx) => {
           await assertRunClaimTx(tx, ctx);
+          if (!(await hasMemoryTablesTx(tx))) {
+            throw new HttpError(
+              503,
+              'MEMORY_NOT_MIGRATED',
+              'agent memory tables not deployed (migration 0035 pending)',
+            );
+          }
           return rememberTx(tx, {
-            scope: segment ? 'segment' : 'workspace',
-            segment,
+            scope,
+            ...(scope === 'segment' ? { segment } : {}),
             content: fact,
             source: 'agent',
-            sourceRunId: ctx.runId,
+            // stamped only when the caller is a real claimed run — sims and
+            // tests carry synthetic run ids that have no agent_runs row
+            sourceRunId: UUID_RE.test(ctx.runId) ? ctx.runId : null,
           });
         });
         return {
@@ -1465,8 +1479,8 @@ export async function executeTool(
           ...(evicted.length ? { evicted } : {}),
         };
       } catch (e) {
-        // Validation + fully-pinned rejections are model-relevant feedback
-        // (consolidate or move on), not run failures.
+        // Validation, cap-pinned and pre-migration rejections are
+        // model-relevant feedback (consolidate or move on), not run failures.
         return { error: e instanceof Error ? e.message : String(e) };
       }
     }
@@ -1474,13 +1488,23 @@ export async function executeTool(
       const leadId = String(args.leadId ?? '');
       const key = String(args.key ?? '');
       const value = String(args.value ?? '').slice(0, 500);
-      const confidence =
-        args.confidence === undefined || args.confidence === null
-          ? undefined
-          : Number(args.confidence);
+      if (!LEAD_FACT_KEY_RE.test(key)) {
+        return { error: 'key must be snake_case — ^[a-z][a-z0-9_]{0,59}$' };
+      }
+      if (!value) return { error: 'value is required' };
+      const confidence = args.confidence === undefined ? null : Number(args.confidence);
+      if (
+        confidence !== null &&
+        (!Number.isFinite(confidence) || confidence < 0 || confidence > 1)
+      ) {
+        return { error: 'confidence must be a number in [0, 1]' };
+      }
       try {
         const fact = await controlTx(sql, async (tx) => {
           await assertRunClaimTx(tx, ctx);
+          if (!(await hasMemoryTablesTx(tx))) {
+            throw new HttpError(503, 'MEMORY_NOT_MIGRATED', 'lead facts need migration 0035');
+          }
           const lead = await tx`select id from leads where id = ${leadId} limit 1`;
           if (!lead.length) {
             throw new HttpError(404, 'LEAD_NOT_FOUND', 'no such lead', { field: 'leadId' });
@@ -1488,9 +1512,9 @@ export async function executeTool(
           return upsertLeadFactTx(tx, leadId, {
             key,
             value,
-            ...(confidence === undefined ? {} : { confidence }),
+            ...(confidence !== null ? { confidence } : {}),
             source: 'agent',
-            sourceRunId: ctx.runId,
+            sourceRunId: UUID_RE.test(ctx.runId) ? ctx.runId : null,
           });
         });
         emitControlEvent('lead.change', leadId);
