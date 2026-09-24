@@ -82,15 +82,24 @@ interface RunRow {
  *  the evaluation). The card is flagged once — a system activity plus the
  *  same '[humano] <reason>' task request_human writes — so staff sees why
  *  the agent went quiet and can raise the cap or retire the lead. */
-type CapVerdict = 'under' | 'flagged' | 'already' | 'contended';
+type CapVerdict = 'under' | 'flagged' | 'already';
 
 /** 'under' admits the run; the rest refuse it. Only 'flagged' means THIS
  *  call wrote the flag + staff task — 'already' saw the flag committed at
- *  this level, 'contended' lost the advisory race to another flag writer. */
+ *  this level. */
 async function leadUnderCostCapTx(tx: Sql, leadId: string): Promise<CapVerdict> {
   const g = await getSettingTx<Partial<Guardrails>>(tx, 'guardrails', {});
   const capUsd = g.leadLifetimeCostCapUsd ?? DEFAULT_GUARDRAILS.leadLifetimeCostCapUsd;
   if (capUsd <= 0) return 'under';
+  // Serialize same-lead cap decisions: two concurrent finishers each see
+  // the other's uncommitted cost_cents as absent — both under-cap, no
+  // flag, parked siblings with no task. The blocking xact advisory makes
+  // the second evaluator read the first's COMMITTED total (its own spend
+  // is visible to itself, committed or not). Leaf lock — a holder only
+  // reads spend and writes the flag rows, never waits on leads/agent_runs
+  // locks a waiter already holds, so it can't AB-BA with claimRun or
+  // inbound's l,t locks.
+  await tx`select pg_advisory_xact_lock(hashtext(${'capfin:' + leadId}))`;
   const spent = (
     await tx<{ cents: number }[]>`
       select coalesce(sum(cost_cents), 0)::int as cents
@@ -98,12 +107,6 @@ async function leadUnderCostCapTx(tx: Sql, leadId: string): Promise<CapVerdict> 
     `
   )[0]!.cents;
   if (spent < capCentsOf(g)) return 'under';
-  // First-flag decisions serialize on a try-advisory — never waits, so no
-  // deadlock: a loser refuses its run while the winner writes the flag.
-  const got = await tx<{ got: boolean }[]>`
-    select pg_try_advisory_xact_lock(hashtext(${'cap:' + leadId})) as got
-  `;
-  if (!got[0]!.got) return 'contended';
   // Dedupe is per cap LEVEL — after staff raises the cap, hitting the new
   // ceiling flags again; re-crossing the same level doesn't re-alert.
   const flagged = await tx`
@@ -194,26 +197,29 @@ export async function enqueueRun(
  *  Called after a committed guardrails write; emits lead.change for leads
  *  that got a NEW flag so the task list refreshes at once. */
 export async function flagCappedLeads(sql: Sql, limit = 200): Promise<number> {
-  const { fresh, contended } = await controlTx(sql, async (tx) => {
-    const g = await getSettingTx<Partial<Guardrails>>(tx, 'guardrails', {});
-    const capUsd = g.leadLifetimeCostCapUsd ?? DEFAULT_GUARDRAILS.leadLifetimeCostCapUsd;
-    const capCents = capCentsOf(g);
-    if (capCents <= 0) return { fresh: [] as string[], contended: [] as string[] };
-    // Only UNFLAGGED-at-this-cap leads come back — flagging inside the same
-    // tx makes each next batch's not-exists see this batch's flags. Without
-    // the filter a window full of already-flagged leads would let every
-    // lead beyond `limit` park silently, pass after pass. No round cap: a
-    // settings write is the only trigger, so every unflagged over-cap lead
-    // must flag or it stays parked with no staff task. A lead whose flag
-    // write loses the try-advisory is SKIPPED for the rest of this sweep —
-    // the contender holding its lock is inside its own leadUnderCostCapTx
-    // and flags the lead itself — so contention can't stall the pass. An
-    // 'under' verdict (cap raised mid-sweep) is excluded the same way —
-    // the stale batch threshold would otherwise re-select it forever.
-    const fresh: string[] = [];
-    const contended: string[] = [];
-    const excluded: string[] = [];
-    for (;;) {
+  const fresh: string[] = [];
+  const excluded: string[] = [];
+  // One COMMITTED tx per batch: the xact-scoped 'capfin:' advisories
+  // leadUnderCostCapTx takes pile up until commit, so a single sweep tx on
+  // a populated DB would hold every flagged lead's lock for the whole
+  // request. Per-batch commits release them incrementally — and the
+  // not-exists dedupe makes chunking safe: a flag batch N wrote drops the
+  // lead out of batch N+1's fresh snapshot.
+  // Only UNFLAGGED-at-this-cap leads come back — without the filter a
+  // window full of already-flagged leads would let every lead beyond
+  // `limit` park silently, pass after pass. No round cap: a settings write
+  // is the only trigger, so every unflagged over-cap lead must flag or it
+  // stays parked with no staff task. Lead order is fixed (lead_id) so two
+  // concurrent sweeps take the per-lead advisories in the same order and
+  // can't cross-lock each other.
+  for (;;) {
+    const batch = await controlTx(sql, async (tx) => {
+      // Settings are re-read per batch — a cap write mid-sweep is honored
+      // on the next chunk instead of being masked by the stale threshold.
+      const g = await getSettingTx<Partial<Guardrails>>(tx, 'guardrails', {});
+      const capUsd = g.leadLifetimeCostCapUsd ?? DEFAULT_GUARDRAILS.leadLifetimeCostCapUsd;
+      const capCents = capCentsOf(g);
+      if (capCents <= 0) return { flagged: [] as string[], done: true };
       const capped = await tx<{ lead_id: string }[]>`
         select x.lead_id
         from (
@@ -229,50 +235,22 @@ export async function flagCappedLeads(sql: Sql, limit = 200): Promise<number> {
               and (a.meta->>'capUsd')::numeric = ${capUsd}
           )
           and not (x.lead_id = any(${excluded}::uuid[]))
+        order by x.lead_id
         limit ${limit}
       `;
-      if (!capped.length) break;
+      const flagged: string[] = [];
       for (const { lead_id } of capped) {
         const verdict = await leadUnderCostCapTx(tx, lead_id);
-        if (verdict === 'flagged') fresh.push(lead_id);
-        else if (verdict === 'contended') contended.push(lead_id);
-        // 'under' means the cap ROSE mid-sweep (each statement re-reads
-        // committed settings; the batch threshold is the stale one) —
-        // exclude it like a contended lead or every later batch re-selects
-        // it forever. Only 'contended' earns the post-commit retry: an
-        // 'under' lead needs nothing. 'already' drops out of the next
-        // batch's not-exists on its own.
-        if (verdict === 'contended' || verdict === 'under') excluded.push(lead_id);
+        if (verdict === 'flagged') flagged.push(lead_id);
+        // 'under' means the cap ROSE mid-sweep — exclude it or a later
+        // batch re-selects it. 'already' drops out of the next batch's
+        // not-exists on its own.
+        if (verdict === 'under') excluded.push(lead_id);
       }
-    }
-    return { fresh, contended };
-  });
-  // Lock contention isn't proof of a flag at THIS cap — the holder may
-  // flag at an older level or roll back. Its tx is brief, so retry each
-  // skipped lead in fresh short txs after commit (our own advisory locks
-  // are now released): a flag already at the CURRENT level was committed
-  // by the contender — complete, but not counted as ours; under-cap needs
-  // nothing; a still-blocked lock retries. A lead still contended after
-  // the attempts is logged and stays unflagged — flagCappedLeads only
-  // runs on settings writes, so the next write re-picks it.
-  for (const leadId of contended) {
-    let done = false;
-    for (let attempt = 0; attempt < 5 && !done; attempt++) {
-      const state = await controlTx(sql, async (tx) => {
-        const g = await getSettingTx<Partial<Guardrails>>(tx, 'guardrails', {});
-        if (capCentsOf(g) <= 0) return 'under';
-        const verdict = await leadUnderCostCapTx(tx, leadId);
-        return verdict === 'contended' ? 'blocked' : verdict;
-      });
-      if (state !== 'blocked') {
-        if (state === 'flagged') fresh.push(leadId);
-        done = true;
-      } else {
-        await new Promise((r) => setTimeout(r, 50 * (attempt + 1)));
-      }
-    }
-    if (!done)
-      agentLog.warn({ leadId }, 'cost-cap flag retry exhausted — lead still lock-contended');
+      return { flagged, done: capped.length < limit };
+    });
+    fresh.push(...batch.flagged);
+    if (batch.done) break;
   }
   // Unscoped: the console coalesces a burst of events into one pending
   // event and keeps a single ref — per-lead refs would drop intermediate
@@ -1276,16 +1254,21 @@ export async function runOnce(sql: Sql): Promise<boolean> {
    *  worker can't overwrite the newer execution's journal. */
   const persistAborted = async (): Promise<void> => {
     await tail.catch(() => undefined);
-    await controlTx(
-      sql,
-      (tx) => tx`
+    const cap = await controlTx(sql, async (tx) => {
+      const rows = await tx<{ id: string }[]>`
         update agent_runs set steps = ${tx.json(steps as never[])}, finished_at = now(),
           tokens_in = ${tokensIn}, tokens_out = ${tokensOut},
           cost_cents = ${Math.round((costUsd + monidBudget.spent) * 100)}
         where id = ${run.id} and status = 'canceled' and claim_token = ${run.claim_token}
-      `,
-    ).catch(() => undefined);
+        returning id
+      `;
+      // The persisted spend can itself push the lead over the cap — without
+      // this check the lead's queued siblings park silently with no task.
+      if (!rows.length || !run.lead_id) return 'under' as CapVerdict;
+      return leadUnderCostCapTx(tx, run.lead_id);
+    }).catch((): CapVerdict => 'under');
     emitControlEvent('run.update', run.id);
+    if (cap === 'flagged') emitControlEvent('lead.change');
   };
 
   // Every reserve/reconcile journals a monid_spend marker — a future
@@ -1811,6 +1794,7 @@ export async function drain(sql: Sql, limit = 20): Promise<number> {
   // backoff (run_at = now + 2^attempts min) so a poisoned run stops jumping
   // ahead of healthy work, and the attempt that exhausts max_attempts lands
   // 'failed' — journal kept — instead of looping the lease forever.
+  const capFlaggedIds: string[] = [];
   const reclaimed = await controlTx(sql, async (tx) => {
     const rows = await tx<
       { id: string; lead_id: string | null; kind: RunRow['kind']; status: string }[]
@@ -1834,6 +1818,28 @@ export async function drain(sql: Sql, limit = 20): Promise<number> {
     // writes 'failed' without going through it, so its own task insert.
     const failed = rows.filter((r) => r.status === 'failed' && r.lead_id);
     if (failed.length) {
+      // A dead attempt never reached finishRun — its spend lives only in
+      // the journal (model usage.costUsd + monid_spend markers, the same
+      // fields runOnce replays on resume). Fold it into cost_cents or the
+      // lead's lifetime total ignores every dead attempt, then run the
+      // same cap check the other terminal paths do — dead-run spend can
+      // itself push the lead over.
+      await tx`
+        update agent_runs r set
+          cost_cents = round((
+            coalesce((select sum((e->'usage'->>'costUsd')::numeric)
+                      from jsonb_array_elements(r.steps) e
+                      where e->>'type' = 'model'), 0)
+            + coalesce((select sum((e->>'spentUsd')::numeric)
+                        from jsonb_array_elements(r.steps) e
+                        where e->>'type' = 'monid_spend'), 0)
+          ) * 100)::int
+        where r.id = any(${failed.map((f) => f.id)}::uuid[])
+      `;
+      for (const f of failed) {
+        if ((await leadUnderCostCapTx(tx, f.lead_id!)) === 'flagged')
+          capFlaggedIds.push(f.lead_id!);
+      }
       const names = await tx<{ id: string; name: string }[]>`
         select id, name from leads where id = any(${failed.map((f) => f.lead_id!)})
       `;
@@ -1850,6 +1856,7 @@ export async function drain(sql: Sql, limit = 20): Promise<number> {
     return rows;
   });
   for (const r of reclaimed) emitControlEvent('run.update', r.id);
+  if (capFlaggedIds.length) emitControlEvent('lead.change');
   // Terminal suppressions strand queued runs forever — the claim gate's
   // pause semantics never lifts them. unsubscribe writers cancel inline,
   // archive doesn't, so this sweep is the catch-all for both (a writer

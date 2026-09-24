@@ -82,12 +82,6 @@ export async function ingestInbound(
   // between the message insert and now is seen here instead of stranding a
   // queued reply on a suppressed thread/lead.
   const { runId, canceledIds } = await controlTx(sql, async (tx) => {
-    const gateRows = await tx<ReplyGate[]>`
-      select t.agent_enabled, l.agent_mode, l.unsubscribed_at, l.archived_at
-      from lead_threads t join leads l on l.id = t.lead_id
-      where t.id = ${res.threadId}
-      for update of l, t
-    `;
     // A live inbound retires queued AUTO outreach — the lead already wrote,
     // so a "reopening" message queued by cadence/discovery/first-contact
     // would arrive answering nothing. Only runs the automation itself
@@ -96,8 +90,13 @@ export async function ingestInbound(
     // it's draftOnly composition work (staff approved the supersede); on
     // claim it recomposes against CURRENT state, so the fresh inbound makes
     // its draft more right, and canceling it would orphan the rejected
-    // draft with no replacement. Runs under the l,t lock — claimRun's lead
-    // revalidation can't slip a row through while we hold it.
+    // draft with no replacement.
+    // The cancel runs BEFORE the l,t lock on purpose: it makes this tx's
+    // lock order agent_runs → leads/threads, the same order claimRun uses
+    // (run row via for-update-skip-locked, then the lead row). The opposite
+    // order AB-BA deadlocks the pair — and since addInboundMessage already
+    // committed, a lost ingest would leave the message recorded with no
+    // reply run ever scheduled (alreadySeen swallows the provider retry).
     // The ids come back so post-commit run.update emissions refresh the
     // Runs view — without them canceled rows keep showing as 'queued'.
     const canceled = await tx<{ id: string }[]>`
@@ -108,6 +107,12 @@ export async function ingestInbound(
       returning id
     `;
     const canceledIds = canceled.map((c) => c.id);
+    const gateRows = await tx<ReplyGate[]>`
+      select t.agent_enabled, l.agent_mode, l.unsubscribed_at, l.archived_at
+      from lead_threads t join leads l on l.id = t.lead_id
+      where t.id = ${res.threadId}
+      for update of l, t
+    `;
     const gate = gateRows[0];
 
     if (

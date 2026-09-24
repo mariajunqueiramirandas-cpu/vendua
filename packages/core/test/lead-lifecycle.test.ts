@@ -925,6 +925,57 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('lead lifecycle (db)', () => {
       }
     });
 
+    test('a canceled run crossing the cap persists its spend and flags the lead', async () => {
+      await setup();
+      // The mock spends 14¢ — canceling mid-flight used to persist the cost
+      // without the cap check, so a canceled run could push the lead over
+      // while queued siblings parked silently with no task.
+      await setGuardrails({ leadLifetimeCostCapUsd: 0.1 });
+      const events: ControlEvent[] = [];
+      const unsub = subscribeControlEvents((e) => events.push(e));
+      try {
+        const leadId = await mkLead();
+        const runId = (await controlTx(sql, (tx) =>
+          insertRun(tx, {
+            kind: 'reply',
+            leadId,
+            params: {
+              providerName: 'gemini:gemini-3.5-flash-lite',
+              // the delay gives the test a window to flip the row mid-run —
+              // the fenced persist then detects 'lost' and runs persistAborted
+              script: [{ text: 'ok', delayMs: 800, tokensIn: 1_000_000, tokensOut: 100_000 }],
+            },
+          }),
+        ))!;
+        await sql`delete from agent_runs where status = 'queued' and id <> ${runId}`;
+        const running = runOnce(sql);
+        // wait for the claim to land before canceling, or the flip fences nothing
+        for (let i = 0; i < 200; i++) {
+          const [s] = await sql<{ status: string }[]>`
+            select status from agent_runs where id = ${runId}`;
+          if (s?.status === 'running') break;
+          await new Promise((r) => setTimeout(r, 10));
+        }
+        await sql`update agent_runs set status = 'canceled', finished_at = now() where id = ${runId}`;
+        expect(await running).toBe(true);
+        const [r] = await sql<{ status: string; cost_cents: number }[]>`
+          select status, cost_cents from agent_runs where id = ${runId}`;
+        expect(r!.status).toBe('canceled');
+        expect(r!.cost_cents).toBe(14);
+        // persisted spend crossed the cap → flag + task inside the abort tx,
+        // lead.change post-commit so Tasks views refresh
+        const flags = await sql`
+          select 1 from lead_activities
+          where lead_id = ${leadId} and kind = 'system' and meta->>'type' = 'cost-cap'
+        `;
+        expect(flags).toHaveLength(1);
+        expect(events.some((e) => e.type === 'lead.change' && e.ref === undefined)).toBe(true);
+      } finally {
+        unsub();
+        await setGuardrails({});
+      }
+    });
+
     test('estimateModelCostUsd prices listed, free and unknown models', () => {
       expect(estimateModelCostUsd('gemini:gemini-3.5-flash-lite', 1_000_000, 0)).toBeCloseTo(0.1);
       expect(

@@ -6,6 +6,7 @@ import { executeTool, assertRunClaimTx, type ToolContext } from '../src/agent/to
 import { mapPointerName, pageKey } from '../src/agent/channels/discovery.ts';
 import { dispatchMessage } from '../src/agent/send.ts';
 import { controlTx } from '../src/modules/control.ts';
+import { subscribeControlEvents, type ControlEvent } from '../src/modules/control-events.ts';
 import { insertLeadTx, getLeadDetail } from '../src/modules/leads.ts';
 import { ensureThread } from '../src/modules/threads.ts';
 import { migrate } from '../src/platform/db.ts';
@@ -460,6 +461,44 @@ dbDescribe('worker robustness (db)', () => {
     expect(r.attempts).toBe(3);
     expect(r.error).toContain('attempt cap');
     expect(r.finished_at).not.toBeNull();
+  });
+
+  test('a terminal reclaim persists journaled spend and fires the cap check', async () => {
+    await migrate(sql, MIGRATIONS);
+    const events: ControlEvent[] = [];
+    const unsub = subscribeControlEvents((e) => events.push(e));
+    const lead = await controlTx(sql, (tx) => insertLeadTx(tx, { name: 'Capped Dead Run' }));
+    const leadId = lead.body.lead.id;
+    await sql`
+      insert into control_settings (key, value)
+      values ('guardrails', ${sql.json({ leadLifetimeCostCapUsd: 0.2 } as never)})
+      on conflict (key) do update set value = excluded.value
+    `;
+    const id = (await enqueueRun(sql, { kind: 'outreach', leadId }))!;
+    const stale = new Date(Date.now() - 11 * 60_000);
+    // 15¢ of model usage + 10¢ of monid in the journal — over the 20¢ cap,
+    // but only ever recorded in steps (the attempt died before finishRun).
+    await sql`
+      update agent_runs set status = 'running', claim_token = 'stale',
+        started_at = ${stale}, alive_at = ${stale}, max_attempts = 1,
+        steps = ${sql.json([
+          { type: 'model', content: 'a', usage: { tokensIn: 1, tokensOut: 1, costUsd: 0.15 } },
+          { type: 'monid_spend', spentUsd: 0.1 },
+        ] as never[])}
+      where id = ${id}
+    `;
+    await drain(sql, 0);
+    const r = await getRun(id);
+    expect(r.status).toBe('failed');
+    expect(r.cost_cents).toBe(25);
+    const flags = await sql`select 1 from lead_activities
+      where lead_id = ${leadId} and kind = 'system' and meta->>'type' = 'cost-cap'`;
+    expect(flags.length).toBe(1);
+    const tasks = await sql`select title from lead_tasks
+      where lead_id = ${leadId} and title like '%custo do agente%'`;
+    expect(tasks.length).toBe(1);
+    expect(events.some((e) => e.type === 'lead.change')).toBe(true);
+    unsub();
   });
 
   test('a requeued run claims once its backoff elapses — attempts intact', async () => {
