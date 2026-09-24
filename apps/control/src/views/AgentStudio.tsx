@@ -11,6 +11,7 @@ import { Pin, PinOff } from 'lucide-react';
 import {
   api,
   ApiError,
+  AUTONOMY_LEVELS,
   type AgentPlaybookInfo,
   type AgentAutonomySetting,
   type AutonomyLevel,
@@ -55,14 +56,17 @@ type Load = 'loading' | 'ok' | 'missing' | 'err';
 
 /** Endpoint fetch with a success watermark: a late failure can't clobber a
  *  newer success, and a 404 reports 'missing' — a route that hasn't shipped
- *  to this server yet is a state, not an error. */
-function useAgent<T>(fn: () => Promise<T>, deps: unknown[] = []) {
+ *  to this server yet is a state, not an error. `enabled=false` keeps it
+ *  dormant — section-scoped endpoints only fetch while their section is
+ *  open, so an unvisited panel costs zero requests. */
+function useAgent<T>(fn: () => Promise<T>, deps: unknown[] = [], enabled = true) {
   const [data, setData] = useState<T | null>(null);
   const [st, setSt] = useState<Load>('loading');
   const seq = useRef(0);
   const okSeq = useRef(0);
   // eslint-disable-next-line react-hooks/exhaustive-deps -- deps is the caller's choice
   const reload = useCallback(() => {
+    if (!enabled) return;
     const my = ++seq.current;
     void fn()
       .then((d) => {
@@ -78,7 +82,7 @@ function useAgent<T>(fn: () => Promise<T>, deps: unknown[] = []) {
           setSt(e instanceof ApiError && e.status === 404 ? 'missing' : 'err');
         }
       });
-  }, deps);
+  }, [enabled, ...deps]);
   useEffect(reload, [reload]);
   // write lets a caller push a freshly-saved value into `data` ahead of the
   // next fetch — closes the PUT→refetch window where a stale map shows.
@@ -139,6 +143,16 @@ export default function AgentStudio() {
   const [searchParams, setSearchParams] = useSearchParams();
   const [notice, setNotice] = useState<Notice>(null);
 
+  // ---------- section selection (?s=) — same grammar as Config ----------
+  const section: SectionKey =
+    SECTIONS.find((s) => s.key === searchParams.get('s'))?.key ?? 'autonomia';
+  const go = (s: SectionKey) => {
+    const next = new URLSearchParams(searchParams);
+    if (s === 'autonomia') next.delete('s');
+    else next.set('s', s);
+    setSearchParams(next);
+  };
+
   // settings map — pitch, guardrails, agent_memory, agent_playbooks,
   // agent_autonomy all live here; PUT /settings/:key is the write path.
   const settings = useAgent(
@@ -146,7 +160,14 @@ export default function AgentStudio() {
     [],
   );
   const autonomy = useAgent(() => api.autonomy(), []);
-  const playbooks = useAgent(() => api.playbooks().then((r) => r.playbooks), []);
+  // section-scoped fetches stay dormant until their section is opened —
+  // memory fans out to three calls, and a 404-per-visit per scope adds up
+  // while the route hasn't shipped.
+  const playbooks = useAgent(
+    () => api.playbooks().then((r) => r.playbooks),
+    [],
+    section === 'playbooks',
+  );
   const memory = useAgent(
     () =>
       Promise.all([
@@ -159,6 +180,7 @@ export default function AgentStudio() {
         debrief: d.items,
       })),
     [],
+    section === 'memoria',
   );
 
   const reload = useCallback(() => {
@@ -219,16 +241,6 @@ export default function AgentStudio() {
   const guardrails = (map.guardrails ?? {}) as Record<string, unknown>;
   const memoryV1 = (map.agent_memory ?? { facts: [] }) as { facts: string[] };
   const pbSetting = (map.agent_playbooks ?? {}) as Record<string, unknown>;
-
-  // ---------- section selection (?s=) — same grammar as Config ----------
-  const section: SectionKey =
-    SECTIONS.find((s) => s.key === searchParams.get('s'))?.key ?? 'autonomia';
-  const go = (s: SectionKey) => {
-    const next = new URLSearchParams(searchParams);
-    if (s === 'autonomia') next.delete('s');
-    else next.set('s', s);
-    setSearchParams(next);
-  };
 
   const savePlaybook = (kind: PlaybookKind, ov: PlaybookOverride | null) =>
     void saveSetting('agent_playbooks', (cur: unknown) => {
@@ -361,7 +373,10 @@ export default function AgentStudio() {
             <section className="set-sec">
               <h2>agenda</h2>
               <p className="sub">retornos que o agente marcou — cancelar aqui desmarca o run</p>
-              <WakeupsPanel onError={(text) => setNotice({ kind: 'err', text })} />
+              <WakeupsPanel
+                enabled={section === 'agenda'}
+                onError={(text) => setNotice({ kind: 'err', text })}
+              />
             </section>
           </div>
           <div hidden={section !== 'regras'}>
@@ -441,11 +456,18 @@ function AutonomyCard({
   saved: Record<string, unknown>;
   onSave: (v: AgentAutonomySetting) => void;
 }) {
-  const base: Required<AgentAutonomySetting> = server ?? {
-    level: ['off', 'copilot', 'supervised', 'autopilot'].includes(saved.level as string)
-      ? (saved.level as AutonomyLevel)
-      : 'supervised',
-    strategistAutoApproveUsd: num(saved.strategistAutoApproveUsd, 0),
+  // The settings map is the freshest read — after a save it already carries
+  // the PUT value while `server` may still hold the previous GET's answer.
+  // Per-field precedence: saved wins when valid, server fills what's absent.
+  const savedLevel = AUTONOMY_LEVELS.includes(saved.level as AutonomyLevel)
+    ? (saved.level as AutonomyLevel)
+    : null;
+  const base: Required<AgentAutonomySetting> = {
+    level: savedLevel ?? server?.level ?? 'supervised',
+    strategistAutoApproveUsd: num(
+      saved.strategistAutoApproveUsd,
+      server?.strategistAutoApproveUsd ?? 0,
+    ),
   };
   const [edit, setEdit] = useState(base);
   useEffect(() => setEdit(base), [JSON.stringify(base)]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -751,7 +773,8 @@ function MemoryPanel({
 
   const add = async () => {
     const content = draft.trim();
-    if (!content || saving) return;
+    // same gate as the button's disabled state — covers the Enter path
+    if (!content || saving || (scope === 'segment' && !segment.trim())) return;
     setSaving(true);
     try {
       await api.createMemory({
@@ -928,7 +951,7 @@ const WAKEUP_FILTERS: { key: string; label: string }[] = [
   { key: 'all', label: 'todos' },
 ];
 
-function WakeupsPanel({ onError }: { onError: (text: string) => void }) {
+function WakeupsPanel({ enabled, onError }: { enabled: boolean; onError: (text: string) => void }) {
   const [status, setStatus] = useState('pending');
   return (
     <>
@@ -946,13 +969,27 @@ function WakeupsPanel({ onError }: { onError: (text: string) => void }) {
         ))}
       </div>
       {/* key remounts on filter change — rows never flash the wrong set */}
-      <WakeupList key={status} status={status} onError={onError} />
+      <WakeupList key={status} status={status} enabled={enabled} onError={onError} />
     </>
   );
 }
 
-function WakeupList({ status, onError }: { status: string; onError: (t: string) => void }) {
-  const res = useAgent(() => api.wakeups({ status }), [status]);
+const WAKEUP_PAGE = 500; // server cap — beyond this we say so, no silent tail
+
+function WakeupList({
+  status,
+  enabled,
+  onError,
+}: {
+  status: string;
+  enabled: boolean;
+  onError: (t: string) => void;
+}) {
+  const res = useAgent(
+    () => api.wakeups({ status, limit: String(WAKEUP_PAGE) }),
+    [status],
+    enabled,
+  );
   useEffect(() => {
     const off = onControlEvent('run.update', res.reload);
     const t = setInterval(res.reload, 60_000);
@@ -1044,6 +1081,12 @@ function WakeupList({ status, onError }: { status: string; onError: (t: string) 
           ))}
         </tbody>
       </table>
+      {items.length === WAKEUP_PAGE && (
+        <div className="hint" style={{ padding: '8px 12px' }}>
+          mostrando os {WAKEUP_PAGE} primeiros — a lista corta aqui; cancele pelo painel do lead
+          pros que ficaram de fora
+        </div>
+      )}
     </div>
   );
 }

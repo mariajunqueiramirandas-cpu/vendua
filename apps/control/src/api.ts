@@ -587,13 +587,14 @@ const apiBase = {
 };
 
 // ============================ agent v2 (ADR 0014) ============================
-// Every contract route/type of the CRM agent v2 lives in this section —
-// settings shapes (agent_playbooks, agent_autonomy), playbook catalog,
-// wakeups, memory v2, lead facts/autonomy, metrics. Shared types are
-// exported from here so the Studio and the lead panel read one contract.
+// CRM agent v2 contract — the Studio's surface: settings shapes
+// (agent_playbooks, agent_autonomy), playbook catalog, memory v2, metrics.
+// Shared domain types (AutonomyLevel, PlaybookKind, Wakeup, LeadFact,
+// AutonomyExplanation) and the lead-panel calls live in the
+// `// ---------- lead agent panel ----------` sections above — declared
+// once, re-used here.
 
 export const PLAYBOOK_KINDS = ['triage', 'reply', 'outreach', 'discovery', 'strategist'] as const;
-export type PlaybookKind = (typeof PLAYBOOK_KINDS)[number];
 
 /** Staff override per kind, stored in the `agent_playbooks` setting and
  *  merged over the playbook's built-in defaults at insert time. */
@@ -624,7 +625,6 @@ export interface AgentPlaybookInfo {
 }
 
 export const AUTONOMY_LEVELS = ['off', 'copilot', 'supervised', 'autopilot'] as const;
-export type AutonomyLevel = (typeof AUTONOMY_LEVELS)[number];
 
 /** The `agent_autonomy` setting — the workspace preset policy.ts reads. */
 export interface AgentAutonomySetting {
@@ -632,35 +632,6 @@ export interface AgentAutonomySetting {
   /** strategist self-approves proposed discovery briefs while trailing-7d
    *  discovery spend stays under this cap. 0 = never. */
   strategistAutoApproveUsd?: number;
-}
-
-/** GET /leads/:id/autonomy — the policy's answer for one lead, explained. */
-export interface LeadAutonomy {
-  /** workspace level after lead overrides */
-  level: AutonomyLevel;
-  /** automatic runs allowed right now */
-  canRun: boolean;
-  sendMode: 'auto' | 'draft' | 'blocked';
-  /** ordered — first is the decisive one */
-  reasons: { code: string; message: string }[];
-}
-
-export interface Wakeup {
-  id: string;
-  leadId: string | null;
-  leadName: string | null;
-  kind: PlaybookKind;
-  /** ISO */
-  at: string;
-  focus: string;
-  status: 'pending' | 'fired' | 'canceled';
-  /** staff/agent explicitly asked for this wake — a live inbound does NOT retire it */
-  requested: boolean;
-  createdBy: 'agent' | 'staff';
-  createdByRunId: string | null;
-  firedRunId: string | null;
-  cancelReason: string | null;
-  createdAt: string;
 }
 
 export type MemoryScope = 'workspace' | 'segment' | 'debrief';
@@ -675,18 +646,6 @@ export interface MemoryItem {
   sourceRunId: string | null;
   uses: number;
   createdAt: string;
-  updatedAt: string;
-}
-
-export interface LeadFact {
-  /** snake_case ≤60 */
-  key: string;
-  /** ≤500 */
-  value: string;
-  /** 0..1 */
-  confidence: number;
-  source: 'agent' | 'staff';
-  sourceRunId: string | null;
   updatedAt: string;
 }
 
@@ -716,17 +675,6 @@ const agentV2 = {
   autonomy: () =>
     req<{ level: AutonomyLevel; strategistAutoApproveUsd: number }>('/agent/autonomy'),
 
-  leadAutonomy: (leadId: string) => req<LeadAutonomy>(`/leads/${leadId}/autonomy`),
-
-  wakeups: (q: { lead_id?: string; status?: string; limit?: string } = {}) => {
-    const params = new URLSearchParams(
-      Object.entries(q).filter(([, v]) => v) as [string, string][],
-    );
-    return req<{ wakeups: Wakeup[] }>(`/agent/wakeups${params.size ? `?${params}` : ''}`);
-  },
-  cancelWakeup: (id: string) =>
-    req<{ wakeup: Wakeup }>(`/agent/wakeups/${id}/cancel`, { method: 'POST' }),
-
   memory: (q: { scope?: MemoryScope; segment?: string } = {}) => {
     const params = new URLSearchParams(
       Object.entries(q).filter(([, v]) => v) as [string, string][],
@@ -741,15 +689,6 @@ const agentV2 = {
       body: JSON.stringify(patch),
     }),
   deleteMemory: (id: string) => req<{ ok: true }>(`/agent/memory/${id}`, { method: 'DELETE' }),
-
-  leadFacts: (leadId: string) => req<{ facts: LeadFact[] }>(`/leads/${leadId}/facts`),
-  putLeadFact: (leadId: string, key: string, b: { value: string; confidence?: number }) =>
-    req<{ fact: LeadFact }>(`/leads/${leadId}/facts/${encodeURIComponent(key)}`, {
-      method: 'PUT',
-      body: JSON.stringify(b),
-    }),
-  deleteLeadFact: (leadId: string, key: string) =>
-    req<{ ok: true }>(`/leads/${leadId}/facts/${encodeURIComponent(key)}`, { method: 'DELETE' }),
 
   metrics: (days: 7 | 30 = 7) => req<AgentMetrics>(`/agent/metrics?days=${days}`),
 };
