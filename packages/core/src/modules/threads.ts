@@ -403,13 +403,16 @@ export async function addInboundMessage(
     await tx`update leads set updated_at = now() where id = ${leadId}`;
     if (direction === 'in' && !input.historical) {
       // A reply retires the automation's pending nudge — cadence floors and
-      // agent-self-scheduled dates alike are its own bookkeeping; the reply
-      // run re-commits any still-wanted follow-up with fresh context.
-      // 'requested' and 'staff' survive: a lead-asked callback ("me chama
-      // terça") and a human-set date are promises a reply can't cancel.
+      // agent-self-scheduled dates ('auto') alike are its own bookkeeping;
+      // the reply run re-commits any still-wanted follow-up with fresh
+      // context. 'requested', 'staff' AND legacy 'agent' survive: 0025
+      // backfilled every pre-existing date to 'agent', mixing self-schedules
+      // with lead-asked callbacks ("me chama terça") — provenance is
+      // unrecoverable, so those rows are treated as promises a reply can't
+      // cancel. New self-schedules stamp 'auto' and clear normally.
       await tx`
         update leads set next_action_at = null, next_action_source = null
-        where id = ${leadId} and next_action_source in ('cadence', 'agent')
+        where id = ${leadId} and next_action_source in ('cadence', 'auto')
       `;
     }
     // History import would flood the activity feed with one row per old
@@ -539,6 +542,20 @@ export async function approveMessage(
     const g = await getSettingTx<Partial<Guardrails>>(tx, 'guardrails', {});
     const staleDays = g.staleDraftDays ?? DEFAULT_GUARDRAILS.staleDraftDays;
     if (staleDays > 0) {
+      // capfin BEFORE the draft row lock: the inbound gate takes capfin
+      // first and locks this same message (its draft supersede) — a
+      // message-lock → capfin order here is the AB-BA the capfin-first
+      // rule exists to prevent, and an aborted gate leaves a recorded
+      // inbound with no reply run.
+      const leadRow = await tx<{ lead_id: string }[]>`
+        select t.lead_id from lead_messages m
+        join lead_threads t on t.id = m.thread_id
+        where m.id = ${messageId}
+      `;
+      if (leadRow[0]) {
+        const { capLockTx } = await import('../agent/runner.ts');
+        await capLockTx(tx, leadRow[0].lead_id);
+      }
       // A stale AGENT draft never ships: the copy was written against
       // week-old lead state. Supersede it and enqueue a draftOnly outreach
       // run — the recomposed draft lands back in this queue for a second

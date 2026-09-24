@@ -1557,7 +1557,16 @@ export async function runOnce(sql: Sql): Promise<boolean> {
       // comes off the app clock and received_at off the DB clock, and skew
       // runs both directions.
       const autoSrc = (run.params as { auto?: string } | null)?.auto;
-      if (!lost && run.kind === 'outreach' && autoSrc != null && autoSrc !== 'regenerate') {
+      // 'agent' exempt like 'regenerate': the pre-'auto' sweep marker mixes
+      // self-schedules with lead-asked callbacks — possibly a promise, so
+      // a reply doesn't self-cancel it.
+      if (
+        !lost &&
+        run.kind === 'outreach' &&
+        autoSrc != null &&
+        autoSrc !== 'regenerate' &&
+        autoSrc !== 'agent'
+      ) {
         const replied = await controlTx(
           sql,
           (tx) => tx`
@@ -2386,14 +2395,17 @@ export async function sweepOutreach(sql: Sql): Promise<number> {
       `;
       if (!capFree[0]!.got) continue;
       // params.auto marks automation-scheduled work — a fresh inbound cancels
-      // it (ingestInbound). 'cadence' AND 'agent' sources are the
+      // it (ingestInbound). 'cadence' AND 'auto' sources are the
       // automation's own nudges (the prompt writes nextActionAt as the
       // "próxima cadência"): obsolete the moment the lead writes back — the
       // reply run re-commits any still-wanted follow-up with fresh context.
-      // 'staff' and 'requested' materialize UNMARKED like every staff-
-      // triggered run: a human's schedule and a lead-asked callback ("me
-      // chama terça") are promises a reply can't cancel — they outrank the
-      // reply exactly like an explicit staff decision. insertRun also
+      // 'staff', 'requested' AND legacy 'agent' materialize UNMARKED like
+      // every staff-triggered run: a human's schedule and a lead-asked
+      // callback ("me chama terça") are promises a reply can't cancel —
+      // they outrank the reply exactly like an explicit staff decision.
+      // 'agent' is legacy-only: 0025 backfilled every pre-existing date to
+      // it (self-schedules AND asked callbacks, unrecoverably mixed), so it
+      // takes the preserved side like 'requested'. insertRun also
       // applies the lifetime cost cap — a capped lead returns null and
       // KEEPS its due action (claimRun parks it anyway, so no run executes
       // over budget).
@@ -2404,7 +2416,9 @@ export async function sweepOutreach(sql: Sql): Promise<number> {
           kind: 'outreach',
           leadId: id,
           params:
-            next_action_source === 'staff' || next_action_source === 'requested'
+            next_action_source === 'staff' ||
+            next_action_source === 'requested' ||
+            next_action_source === 'agent'
               ? {}
               : { auto: next_action_source },
         },
