@@ -601,6 +601,7 @@ function slimValue(v: unknown, b: { left: number }, strCap: number): unknown {
       dropped.push(k);
       continue;
     }
+    b.left -= k.length + 4; // key name + quotes/colon — approximates wire size
     out[k] = slimValue(o[k], b, strCap);
   }
   if (dropped.length) out.omittedKeys = dropped;
@@ -611,15 +612,19 @@ export interface SlimCaps {
   page: number;
   total: number;
   str: number;
+  /** Serialized-size ceiling — past this, tail pages drop as markers so the
+   *  result stays valid JSON (a raw slice would emit a broken object). */
+  hardMax: number;
 }
 const SLIM_LIVE_CAPS: SlimCaps = {
   page: SLIM_PAGE_CHARS,
   total: SLIM_TOTAL_CHARS,
   str: SLIM_STR_CHARS,
+  hardMax: 32_000,
 };
 /** Tighter replay caps — the marker has to land inside REPLAY_OUT_MAX or a
  *  recovered run loses the continuation pointer entirely. */
-const SLIM_REPLAY_CAPS: SlimCaps = { page: 1_000, total: 2_400, str: 800 };
+const SLIM_REPLAY_CAPS: SlimCaps = { page: 1_000, total: 2_400, str: 800, hardMax: 2_900 };
 
 export function slimToolOut(name: string, out: unknown, caps: SlimCaps = SLIM_LIVE_CAPS): unknown {
   if (name === 'read_pages' && typeof out === 'object' && out !== null) {
@@ -630,29 +635,50 @@ export function slimToolOut(name: string, out: unknown, caps: SlimCaps = SLIM_LI
       // SLIM_TOTAL_CHARS head-first; an exhausted page reports its length
       // and the continuation offset so read_pages(offset) can page the tail.
       let left = caps.total;
-      return {
+      const slimPages = pages.map((p) => {
+        const page = p as Record<string, unknown>;
+        const text = page.text;
+        if (typeof text !== 'string') return p;
+        const base = typeof page.offset === 'number' ? page.offset : 0;
+        const total = typeof page.textChars === 'number' ? page.textChars : base + text.length;
+        const cap = Math.min(caps.page, Math.max(0, left));
+        if (text.length <= cap) {
+          left -= text.length;
+          return p;
+        }
+        left = Math.max(0, left - cap);
+        return {
+          ...page,
+          textChars: total,
+          text: `${text.slice(0, cap)}\n…[${
+            total - base - cap
+          } chars omitted — continue with read_pages offset:${base + cap}; full result is journaled]`,
+        };
+      });
+      // Serialized bound — page metadata (urls, contacts, nav) is unbudgeted,
+      // so fat batches can outgrow the text cap. Past hardMax drop tail pages
+      // as markers instead of slicing: the wire stays valid JSON and each
+      // dropped page keeps url + size for a targeted re-read.
+      const result: { pages: unknown[]; droppedPages?: unknown[] } & Record<string, unknown> = {
         ...(out as Record<string, unknown>),
-        pages: pages.map((p) => {
-          const page = p as Record<string, unknown>;
-          const text = page.text;
-          if (typeof text !== 'string') return p;
-          const base = typeof page.offset === 'number' ? page.offset : 0;
-          const total = typeof page.textChars === 'number' ? page.textChars : base + text.length;
-          const cap = Math.min(caps.page, Math.max(0, left));
-          if (text.length <= cap) {
-            left -= text.length;
-            return p;
-          }
-          left = Math.max(0, left - cap);
-          return {
-            ...page,
-            textChars: total,
-            text: `${text.slice(0, cap)}\n…[${
-              total - base - cap
-            } chars omitted — continue with read_pages offset:${base + cap}; full result is journaled]`,
-          };
-        }),
+        pages: slimPages,
       };
+      const dropped: unknown[] = [];
+      while (result.pages.length > 1 && JSON.stringify(result).length > caps.hardMax) {
+        dropped.unshift(result.pages.pop());
+      }
+      if (dropped.length) {
+        result.droppedPages = dropped.map((p) => {
+          const d = p as Record<string, unknown>;
+          return {
+            url: d.url,
+            finalUrl: d.finalUrl,
+            textChars: d.textChars ?? (typeof d.text === 'string' ? d.text.length : undefined),
+            omitted: 'over the result budget — read that url directly',
+          };
+        });
+      }
+      return result;
     }
   }
   return slimValue(out, { left: caps.total }, caps.str);
@@ -844,14 +870,22 @@ export function replayJournal(prior: unknown[], opts?: { slim?: boolean }): Jour
       // lands inside REPLAY_OUT_MAX) — otherwise a recovered run sees a raw
       // 3000-char prefix with no continuation pointer and no page metadata.
       const modelOut = opts?.slim ? slimToolOut(s.name ?? '', out, SLIM_REPLAY_CAPS) : out;
+      let content = typeof modelOut === 'string' ? modelOut : JSON.stringify(modelOut);
+      if (content.length > REPLAY_OUT_MAX) {
+        content = opts?.slim
+          ? // structured fallback — a raw slice would emit invalid JSON.
+            JSON.stringify({
+              slimmedForModel: true,
+              totalChars: content.length,
+              note: 'result exceeded the replay budget — journaled in full',
+            })
+          : content.slice(0, REPLAY_OUT_MAX);
+      }
       replay.messages.push({
         role: 'tool',
         toolCallId: call?.id ?? `replayed-${replay.baseStep}-${i}-x${consumed}`,
         name: s.name ?? '?',
-        content:
-          typeof modelOut === 'string'
-            ? modelOut.slice(0, REPLAY_OUT_MAX)
-            : JSON.stringify(modelOut).slice(0, REPLAY_OUT_MAX),
+        content,
       });
       continue;
     }
@@ -1221,6 +1255,10 @@ export async function runOnce(sql: Sql): Promise<boolean> {
           ?.pages;
         if (!Array.isArray(pages)) continue;
         for (const page of pages) {
+          // A journaled page carrying `offset` is a partial (sliced) body —
+          // priming it would shift every future absolute offset. Skip it and
+          // let a continuation read refetch the full page.
+          if (typeof (page as { offset?: unknown }).offset === 'number') continue;
           for (const u of [page.url, page.finalUrl]) {
             const id = u ? (pageKey(u) ?? u) : null;
             if (id && !ctx.pageCache.has(id)) {

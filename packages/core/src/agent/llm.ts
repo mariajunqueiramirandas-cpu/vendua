@@ -90,9 +90,13 @@ export function pricingFor(model: string, config: Record<string, unknown>) {
       out: outRate,
     };
   }
-  // OpenRouter ids are 'provider/model:variant' — strip the namespace and
-  // the price-tag suffix so 'openai/gpt-4o-mini:free' prices as gpt-4o-mini.
-  const bare = model.split('/').pop()?.split(':')[0] ?? model;
+  // OpenRouter ids are 'provider/model:variant' — strip the namespace only.
+  // ':free' variants bill $0 (that's OpenRouter's contract for the suffix);
+  // other variants (:extended, :nitro, :floor…) have their own pricing we
+  // don't track — return null rather than fabricate the base rate.
+  const bare = model.split('/').pop() ?? model;
+  if (bare.endsWith(':free')) return { in: 0, cached: 0, write: 0, out: 0 };
+  if (bare.includes(':')) return null;
   for (const row of PRICE_TABLE) {
     if (model.startsWith(row.match) || bare.startsWith(row.match)) return row;
   }

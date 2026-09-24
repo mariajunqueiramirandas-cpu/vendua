@@ -1494,6 +1494,9 @@ export async function executeTool(
       const slicePage = (p: unknown): unknown => {
         if (!offset || typeof p !== 'object' || p === null) return p;
         const page = p as Record<string, unknown>;
+        // Chased pages are new reads this call, not continuations — the
+        // offset belongs to the explicitly requested urls only.
+        if (page.chasedFrom != null) return p;
         const text = page.text;
         if (typeof text !== 'string' || text.length <= offset) {
           return {

@@ -125,6 +125,17 @@ more, not less.
      (`openai/gpt-4o-mini:free` → `gpt-4o-mini`) and rejects
      negative/NaN `config.pricing` rates (falls back to the table).
    - `measure-harness.ts` logs via pino like `sim-cli`.
+7. review round 3 — continuation correctness:
+   - `slicePage` no longer slices `chasedFrom` pages — auto-chased reads
+     return from their start; offset applies only to requested urls.
+   - pageCache priming skips journaled pages that carry an `offset`
+     (partial bodies — priming them would shift absolute offsets).
+   - `hardMax` serialized bound: fat-metadata batches drop tail pages as
+     `droppedPages` markers instead of slicing mid-JSON; slim replay
+     falls back to a structured `{slimmedForModel}` note rather than
+     emitting invalid JSON.
+   - OpenRouter `:free` variants price as $0 (provider contract); other
+     `:variant` ids return null rather than borrowing the base rate.
 
 ### System-prompt diff (staticSystem=on)
 
@@ -161,6 +172,10 @@ Rollback = flip the integration config JSON — no redeploy.
   elsewhere — journal `costUsdEstimated` marks the source per step; the
   `cost_cents` column sums both (label reads as estimate unless an
   OpenRouter integration runs).
+- currency: `cost_cents`/`costUsd` are USD — consistent with monid spend
+  (also USD-priced) already summed into the same column. BRL-facing lead
+  reports (`segmentStats`) don't consume run cost today; a report-layer
+  conversion is a follow-up if ops wants R$ on agent spend.
 - Implicit-cache min for 3.5-flash-lite isn't published; 3.5-flash is 4096.
   Prefixes ~3.9–5.7K are likely eligible; telemetry will tell.
 - `thoughtsTokenCount` is billed as output — the journal records it inside

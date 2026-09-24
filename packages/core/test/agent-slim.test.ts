@@ -79,6 +79,27 @@ describe('slimToolOut', () => {
     expect(String(JSON.stringify(results.at(-1)))).toContain('omitted');
   });
 
+  test('serialized bound drops tail pages as markers — valid JSON always', () => {
+    // fat metadata makes the batch exceed hardMax even after text slimming
+    const out = {
+      pages: Array.from({ length: 6 }, (_, i) =>
+        page('x'.repeat(9_000), {
+          url: `https://x.test/p${i}`,
+          description: 'd'.repeat(400),
+          nav: Array.from({ length: 10 }, (_, j) => `https://x.test/nav${j}`),
+        }),
+      ),
+    };
+    const replayCaps = { page: 1_000, total: 2_400, str: 800, hardMax: 2_900 };
+    const slim = slimToolOut('read_pages', out, replayCaps) as Record<string, unknown>;
+    const json = JSON.stringify(slim);
+    expect(json.length).toBeLessThanOrEqual(2_900);
+    expect(() => JSON.parse(json)).not.toThrow();
+    expect(Array.isArray(slim.droppedPages)).toBe(true);
+    const dropped = slim.droppedPages as Record<string, unknown>[];
+    expect(dropped.every((d) => typeof d.url === 'string')).toBe(true);
+  });
+
   test('replay under the flag keeps the continuation marker inside the cap', () => {
     const prior = [
       { type: 'model', content: null, toolCalls: [{ id: 'c1', name: 'read_pages', args: {} }] },
@@ -95,6 +116,24 @@ describe('slimToolOut', () => {
     expect(toolMsg.content).toContain('foundContacts');
   });
 
+  test('replay under the flag never emits invalid JSON', () => {
+    const fat = Array.from({ length: 6 }, (_, i) =>
+      page('x'.repeat(9_000), {
+        url: `https://x.test/p${i}`,
+        description: 'd'.repeat(500),
+        nav: Array.from({ length: 12 }, (_, j) => `https://x.test/n${j}`),
+      }),
+    );
+    const prior = [
+      { type: 'model', content: null, toolCalls: [{ id: 'c1', name: 'read_pages', args: {} }] },
+      { type: 'tool', name: 'read_pages', out: { pages: fat } },
+    ];
+    const replay = replayJournal(prior, { slim: true });
+    const toolMsg = replay.messages.find((m) => m.role === 'tool')!;
+    expect(toolMsg.content.length).toBeLessThanOrEqual(3_000);
+    expect(() => JSON.parse(toolMsg.content)).not.toThrow();
+  });
+
   test('replay without the flag is unchanged raw-prefix behavior', () => {
     const prior = [
       { type: 'model', content: null, toolCalls: [{ id: 'c1', name: 'read_pages', args: {} }] },
@@ -108,11 +147,18 @@ describe('slimToolOut', () => {
 });
 
 describe('pricingFor', () => {
-  test('openrouter provider/namespace + :variant suffix still price-match', () => {
+  test('openrouter provider/namespace strips; :free bills zero; other variants unknown', () => {
     const p = pricingFor('openai/gpt-4o-mini', {});
     expect(p?.in).toBe(0.15);
-    const f = pricingFor('openai/gpt-4o-mini:free', {});
-    expect(f?.out).toBe(0.6);
+    // OpenRouter's :free contract bills $0 — not the paid table rate.
+    expect(pricingFor('openai/gpt-4o-mini:free', {})).toEqual({
+      in: 0,
+      cached: 0,
+      write: 0,
+      out: 0,
+    });
+    // Other variants carry their own pricing — honest gap, not a fabricated rate.
+    expect(pricingFor('openai/gpt-4o-mini:extended', {})).toBeNull();
   });
 
   test('unprefixed and anthropic ids match as before', () => {
