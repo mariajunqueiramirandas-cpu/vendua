@@ -1550,6 +1550,10 @@ export async function runOnce(sql: Sql): Promise<boolean> {
       // a delayed webhook or lagging provider clock can stamp a genuinely
       // new inbound before the claim time and must still cancel.
       // Historical imports stay excluded — context, not a live reply.
+      // `received_at > created_at` is the "real server ingest" test: the
+      // 0030 backfill stamped legacy rows received_at = created_at exactly,
+      // so a pre-upgrade row can never satisfy it — a skewed provider
+      // timestamp on an old import can't look like a fresh reply.
       const autoSrc = (run.params as { auto?: string } | null)?.auto;
       if (!lost && run.kind === 'outreach' && autoSrc != null && autoSrc !== 'regenerate') {
         const replied = await controlTx(
@@ -1558,6 +1562,7 @@ export async function runOnce(sql: Sql): Promise<boolean> {
             select 1 from lead_messages m
             join lead_threads t on t.id = m.thread_id
             where t.lead_id = ${run.lead_id} and m.direction = 'in' and not m.historical
+              and m.received_at > m.created_at
               and m.received_at > (select started_at from agent_runs where id = ${run.id})
             limit 1
           `,

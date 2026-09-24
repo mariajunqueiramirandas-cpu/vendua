@@ -993,15 +993,19 @@ export async function executeTool(
               dup.state === 'lead' &&
               dup.agent_mode !== 'off' &&
               !(await outreachActive(dup.id as string));
-            if (dupContact && dup.agent_mode !== 'auto') {
-              set.agent_mode = 'auto';
-              merged.push('agent_mode');
-            }
+            // agent_mode promotes only after the run is admitted: a cap
+            // refusal (insertRun → null) must not commit 'auto' with no
+            // outreach behind it — the mode is automation's own flag and a
+            // refused queue leaves nothing to drive it.
             if (merged.length) {
               await tx`update leads set ${tx(set)}, updated_at = now() where id = ${dup.id as string}`;
             }
-            await writeFindings(dup.id as string, { merged });
             const contactRun = dupContact ? await queueOutreach(dup.id as string, dupScore) : null;
+            if (contactRun && dup.agent_mode !== 'auto') {
+              await tx`update leads set agent_mode = 'auto', updated_at = now() where id = ${dup.id as string}`;
+              merged.push('agent_mode');
+            }
+            await writeFindings(dup.id as string, { merged });
             return {
               status: 200,
               body: {

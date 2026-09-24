@@ -283,6 +283,7 @@ export async function dispatchMessage(
               where it.lead_id = ${send.leadId}
                 and im.direction = 'in'
                 and not im.historical
+                and im.received_at > im.created_at
                 and im.received_at > ${send.sendingAt}::timestamptz
             )
         `;

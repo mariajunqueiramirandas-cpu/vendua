@@ -386,4 +386,89 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('discovery intelligence (db)', (
     )[0]!;
     expect(filled.intent_score).toBe(4);
   });
+
+  test('C4: dup-merge promotes agent_mode only when the outreach run is admitted', async () => {
+    const c = mkCtx('discovery');
+    // The autocontact gate needs a live whatsapp driver — log driver counts.
+    await sql`
+      insert into control_integrations (kind, driver, enabled)
+      values ('whatsapp', 'log', true)
+      on conflict (kind, driver) do update set enabled = true
+    `;
+    const seedDup = async (name: string, whatsapp: string) =>
+      (
+        await controlTx(sql, (tx) =>
+          insertLeadTx(tx, {
+            name,
+            city: 'Fortaleza',
+            whatsapp,
+            whatsapp_verified: true,
+            fit_score: 9,
+            agent_mode: 'draft',
+          }),
+        )
+      ).body.lead;
+    const createDup = (name: string, whatsapp: string) =>
+      executeTool(c, `cd-${whatsapp.slice(-4)}`, 'create_lead', {
+        name,
+        city: 'Fortaleza',
+        findings: 'mesma doceria encontrada de novo',
+        whatsapp,
+        website: `https://site-${whatsapp.slice(-4)}.test`,
+      }) as Promise<{ duplicate: boolean; merged: string[]; contactRun?: string }>;
+
+    const cappedWa = `55119${String(Date.now()).slice(-7)}01`;
+    const openWa = `55119${String(Date.now()).slice(-7)}02`;
+    const capped = await seedDup(`Capped Merge ${uniq}`, cappedWa);
+    const open = await seedDup(`Open Merge ${uniq}`, openWa);
+    try {
+      // Spend already over the tiny cap → insertRun must refuse the merge's
+      // first contact; 'auto' with no run behind it would leave the lead
+      // driven by nothing (raising the cap later never recreates it).
+      await sql`
+        insert into agent_runs (kind, lead_id, status, cost_cents, finished_at)
+        values ('outreach', ${capped.id}, 'done', 50, now())
+      `;
+      await controlTx(
+        sql,
+        (tx) => tx`
+          insert into control_settings (key, value) values ('guardrails', ${tx.json({ leadLifetimeCostCapUsd: 0.01 } as never)})
+          on conflict (key) do update set value = excluded.value
+        `,
+      );
+
+      const refused = await createDup(`Capped Merge ${uniq}`, cappedWa);
+      expect(refused.duplicate).toBe(true);
+      // the merge itself still lands — only the automation flag is refused
+      expect(refused.merged).toContain('website');
+      expect(refused.merged).not.toContain('agent_mode');
+      expect(refused.contactRun).toBeUndefined();
+      const cappedLead = (
+        await sql<{ agent_mode: string }[]>`select agent_mode from leads where id = ${capped.id}`
+      )[0]!;
+      expect(cappedLead.agent_mode).toBe('draft');
+      const parked = await sql<{ n: number }[]>`
+        select count(*)::int n from agent_runs where lead_id = ${capped.id} and status = 'queued'
+      `;
+      expect(parked[0]!.n).toBe(0);
+
+      // A lead under the cap still promotes — run admitted, mode follows.
+      const admitted = await createDup(`Open Merge ${uniq}`, openWa);
+      expect(admitted.duplicate).toBe(true);
+      expect(admitted.merged).toContain('agent_mode');
+      expect(admitted.contactRun).toBeTruthy();
+      const openLead = (
+        await sql<{ agent_mode: string }[]>`select agent_mode from leads where id = ${open.id}`
+      )[0]!;
+      expect(openLead.agent_mode).toBe('auto');
+    } finally {
+      await controlTx(
+        sql,
+        (tx) => tx`
+          insert into control_settings (key, value) values ('guardrails', '{}')
+          on conflict (key) do update set value = excluded.value
+        `,
+      );
+    }
+  });
 });
