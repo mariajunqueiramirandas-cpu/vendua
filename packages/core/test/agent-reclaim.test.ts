@@ -2466,6 +2466,30 @@ dbDescribe('worker robustness (db)', () => {
     expect(r.status).toBe('done');
   });
 
+  test('a pre-upgrade row with a skewed provider stamp does not self-cancel', async () => {
+    await migrate(sql, MIGRATIONS);
+    const lead = await controlTx(sql, (tx) => insertLeadTx(tx, { name: 'Legacy Import' }));
+    const leadId = lead.body.lead.id;
+    const [thread] = await sql<{ id: string }[]>`
+      insert into lead_threads (lead_id, channel) values (${leadId}, 'whatsapp') returning id
+    `;
+    await sql`delete from agent_runs where status = 'queued'`;
+    const runId = (await enqueueRun(sql, { kind: 'outreach', leadId }))!;
+    await sql`update agent_runs set run_at = now(),
+      params = ${sql.json({ auto: 'first-contact', script: [{ text: 'oi' }] } as never)}
+      where id = ${runId}`;
+    // Migration 0030's backfill shape: received_at = created_at exactly,
+    // historical = false. A provider clock ahead lands created_at past the
+    // claim — without the real-ingest discriminator this cancels outreach
+    // on a message that isn't a live reply.
+    await sql`insert into lead_messages (thread_id, direction, author, body, status, created_at, received_at)
+      values (${thread!.id}, 'in', 'lead', 'contexto antigo', 'received',
+              now() + interval '1 hour', now() + interval '1 hour')`;
+    expect(await runOnce(sql)).toBe(true);
+    const r = await getRun(runId);
+    expect(r.status).toBe('done');
+  });
+
   test('a lagging provider stamp still self-cancels — the probe keys on ingest time', async () => {
     await migrate(sql, MIGRATIONS);
     const lead = await controlTx(sql, (tx) => insertLeadTx(tx, { name: 'Lag Inbound' }));
