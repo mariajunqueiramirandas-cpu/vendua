@@ -1009,10 +1009,10 @@ export function slimToolOut(name: string, out: unknown, caps: SlimCaps = SLIM_LI
         });
       }
       // The last page can't drop without losing the read — rebuild it
-      // around the keys the model needs. Identity + the marked text head
-      // are reserved FIRST (text already carries the continuation pointer;
-      // a generic slim could cut it). Contact collections then get
-      // whatever room remains — fat lists degrade to a labeled marker.
+      // inside a hard budget: identity keys and the marked text head are
+      // reserved first (the continuation pointer lives in text's tail),
+      // then contacts, then nav — each stage takes what room remains, so
+      // a fat nav list can never starve a small foundContacts.
       if (result.pages.length === 1 && JSON.stringify(result).length > caps.hardMax) {
         const p = result.pages[0] as Record<string, unknown>;
         const kept = new Set([
@@ -1032,40 +1032,71 @@ export function slimToolOut(name: string, out: unknown, caps: SlimCaps = SLIM_LI
           typeof v === 'string' && v.length > n
             ? `${v.slice(0, n)}\n…[${v.length - n} omitted]`
             : v;
+        const size = (v: unknown) => JSON.stringify(v).length;
         const omitted = Object.keys(p).filter((k) => !kept.has(k));
-        const rebuilt: Record<string, unknown> = {
-          url: p.url,
-          finalUrl: p.finalUrl,
-          chasedFrom: p.chasedFrom,
-          offset: p.offset,
-          textChars: p.textChars,
-          truncated: p.truncated,
-          title: capStr(p.title, 200),
-          description: capStr(p.description, caps.str),
-          text: p.text, // carries the read_pages offset marker — never re-capped
-          ...(omitted.length ? { omittedKeys: omitted } : {}),
+        const rebuilt: Record<string, unknown> = {};
+        // `left` = chars the page may still add and stay under the
+        // serialized ceiling (result minus this page plus its envelope).
+        let left = caps.hardMax - JSON.stringify({ ...result, pages: [{}] }).length;
+        const put = (k: string, v: unknown) => {
+          if (v === undefined) return;
+          left -= size(v) + k.length + 3; // "key":value on the wire
+          rebuilt[k] = v;
         };
-        // Room left after the essentials and any dropped-page markers —
-        // contacts/nav fit inside it or degrade to a pointer marker.
-        const room = caps.hardMax - JSON.stringify({ ...result, pages: [rebuilt] }).length;
-        if (JSON.stringify({ foundContacts: p.foundContacts, nav: p.nav }).length <= room) {
-          rebuilt.foundContacts = p.foundContacts;
-          rebuilt.nav = p.nav;
-        } else {
-          const navArr = Array.isArray(p.nav) ? (p.nav as unknown[]) : [];
+        put('url', p.url);
+        put('finalUrl', p.finalUrl);
+        put('chasedFrom', p.chasedFrom);
+        put('offset', p.offset);
+        put('textChars', p.textChars);
+        put('truncated', p.truncated);
+        put('title', capStr(p.title, 200));
+        put('description', capStr(p.description, caps.str));
+        if (omitted.length) put('omittedKeys', omitted);
+        // Contacts are the outcome — they get their own allocation BEFORE
+        // the marked head, so a fat nav list or long body can never hide
+        // an extracted phone. Reserve only the pointer's room when
+        // deciding whether they fit.
+        const text = typeof p.text === 'string' ? p.text : '';
+        const mk = /\n…\[[^\]]*omitted[^\]]*\]$/.exec(text);
+        const marker = mk?.[0] ?? '';
+        const contactsMarker = { omitted: 'over the result budget — journaled in full' };
+        const contactsFloor = marker.length + 20; // room for 'text":"<marker>"'
+        if (p.foundContacts !== undefined && size(p.foundContacts) + 16 <= left - contactsFloor) {
+          put('foundContacts', p.foundContacts);
+        } else if (size(contactsMarker) + 16 <= left - contactsFloor) {
+          put('foundContacts', contactsMarker);
+        }
+        // The marked head keeps its continuation pointer at the tail — the
+        // body is sized to what remains, then the marker re-appended.
+        const body = marker ? text.slice(0, text.length - marker.length) : text;
+        const bodyRoom = Math.max(0, left - marker.length - 7); // "text":"…"
+        rebuilt.text = body.slice(0, bodyRoom) + marker;
+        left -= bodyRoom + marker.length + 7;
+        // Nav takes the remainder — the weakest data on the page.
+        const navArr = Array.isArray(p.nav) ? (p.nav as unknown[]) : [];
+        if (navArr.length) {
           const keptNav: string[] = [];
-          let used = 0;
           for (const n of navArr) {
             const s = String(n);
-            if (used + s.length + 4 > room - 160) break; // reserve the contacts marker
+            if (s.length + 4 > left - 40) break; // reserve the count marker
             keptNav.push(s);
-            used += s.length + 4;
+            left -= s.length + 4;
           }
-          if (navArr.length)
-            rebuilt.nav = [...keptNav, `…[+${navArr.length - keptNav.length} — journaled]`];
-          rebuilt.foundContacts = { omitted: 'over the result budget — read the url for contacts' };
+          rebuilt.nav =
+            keptNav.length === navArr.length
+              ? keptNav
+              : [...keptNav, `…[+${navArr.length - keptNav.length} — journaled]`];
         }
         result.pages[0] = rebuilt;
+        // Pathological identity (a ~3K url): a minimal fallback still keeps
+        // a valid-ish url plus the read size under the ceiling.
+        if (JSON.stringify(result).length > caps.hardMax) {
+          result.pages[0] = {
+            url: capStr(p.url, Math.max(0, caps.hardMax - 400)),
+            textChars: p.textChars,
+            text: marker || '…[head omitted — journaled in full]',
+          };
+        }
       }
       return result;
     }
