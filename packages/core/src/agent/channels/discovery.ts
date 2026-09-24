@@ -1007,10 +1007,13 @@ function unwrapContinue(raw: string, max = 3): string {
     }
     if (t.protocol !== 'http:' && t.protocol !== 'https:') break;
     if (!isBizMapUrl(t) && !GOOGLE_HOST.test(t.hostname)) break;
+    // get() already decodes the value once — a second decode would collapse
+    // several nesting levels per peel and let an inner &continue= split off
+    // as its own param. One level per iteration keeps the bound honest.
     const inner = t.searchParams.get('continue');
     if (!inner) break;
     try {
-      cur = new URL(decodeURIComponent(inner), cur).toString();
+      cur = new URL(inner, cur).toString();
     } catch {
       break;
     }
@@ -1031,6 +1034,10 @@ export function mapPointerName(raw: string): string | null {
     // profile pointer either.
     if (t.protocol !== 'http:' && t.protocol !== 'https:') return null;
     if (!isBizMapUrl(t) && !GOOGLE_HOST.test(t.hostname)) return null;
+    // A leftover continue= means the peel hit its bound mid-chain — this
+    // carrier never resolved, so its ?q=/place fields describe the
+    // wrapper, not the destination. Unresolved beats a false name.
+    if (t.searchParams.has('continue')) return null;
     const q = t.searchParams.get('q') ?? t.searchParams.get('query');
     if (q && !/\//.test(q) && q.length < 80) return q.replace(/\+/g, ' ');
     const m = /\/maps\/place\/([^/]+)/.exec(t.pathname);

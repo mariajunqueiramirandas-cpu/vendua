@@ -469,6 +469,15 @@ describe('mapPointerName', () => {
     // still recoverable with real spend instead of lost outright
     chain = `https://www.google.com/sorry/?continue=${encodeURIComponent(chain)}`;
     expect(mapPointerName(chain)).toBeNull();
+    // a wrapper's own ?q is not the destination's name — if the peel cap
+    // leaves a leftover continue=, the carrier never resolved → null, not
+    // the wrapper's name
+    const tail = `https://www.google.com/sorry/?q=Wrong&continue=${encodeURIComponent('https://www.google.com/search?q=Acme')}`;
+    let deep = tail;
+    for (let i = 0; i < 3; i++) {
+      deep = `https://www.google.com/sorry/?continue=${encodeURIComponent(deep)}`;
+    }
+    expect(mapPointerName(deep)).toBeNull();
   });
 });
 
