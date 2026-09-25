@@ -7,6 +7,9 @@
 -- release mail the dead runs consumed back to pending so the surviving
 -- run drains it. 'staff' vs 'event' mirrors claimRun's promised-run
 -- marker: unmarked params = a human asked for it, marked = automation.
+-- notBefore carries the canceled run's run_at: a future-dated queued run
+-- (first-contact delay, scheduled reply) keeps its deadline instead of
+-- becoming immediately drainable; past run_at degrades to eligible-now.
 insert into agent_inbox (lead_id, kind, payload)
 select r.lead_id,
        case when r.params ? 'auto' or r.params->>'origin' = 'inbound'
@@ -17,6 +20,7 @@ select r.lead_id,
          'requestedKind', r.kind,
          'threadId', r.thread_id,
          'params', r.params,
+         'notBefore', r.run_at,
          'src', 'migration-0039')
 from agent_runs r
 where r.error = 'superseded — single active run per lead'
