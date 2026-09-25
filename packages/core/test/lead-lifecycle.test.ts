@@ -4,6 +4,7 @@ import postgres from 'postgres';
 import { createApp } from '../src/app.ts';
 import { dispatchMessage } from '../src/agent/send.ts';
 import { claimRun, drain, flagCappedLeads, insertRun, runOnce } from '../src/agent/runner.ts';
+import { sweepOrphanInbox } from '../src/agent/inbox.ts';
 import { estimateModelCostUsd } from '../src/agent/llm.ts';
 import {
   capCentsOf,
@@ -757,6 +758,28 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('lead lifecycle (db)', () => {
         select lead_id from agent_runs where lead_id = ${leadId}
       `;
       expect(run!.lead_id?.toLowerCase()).toBe(leadId.toLowerCase());
+    });
+
+    test('POST /agent/runs/:id/cancel tombstones the run’s own request — no sweep restart', async () => {
+      await setup();
+      const leadId = await mkLeadApi({ name: 'Cancel Owns' }, key('a4-cxl-lead'));
+      const run = await post(
+        '/control/v1/agent/runs',
+        { kind: 'outreach', leadId },
+        key('a4-cxl-run'),
+      );
+      expect(run.status).toBe(201);
+      const { runId } = (await run.json()) as { runId: string };
+      const cancel = await post(`/control/v1/agent/runs/${runId}/cancel`, {}, key('a4-cxl-cancel'));
+      expect(cancel.status).toBe(200);
+      // The request the queued run was minted for dies with it — a pending
+      // 'staff' item would otherwise respawn the very run staff canceled.
+      const pending = await sql`
+        select 1 from agent_inbox where lead_id = ${leadId} and consumed_at is null
+      `;
+      expect(pending).toHaveLength(0);
+      await sweepOrphanInbox(sql);
+      expect(await runsFor(leadId)).toHaveLength(1); // the canceled row only
     });
 
     test('POST /agent/dispatch skips a capped lead without committing its goal', async () => {

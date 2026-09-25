@@ -1160,6 +1160,7 @@ export function createApp({ sql, sessionSecret, controlSecret, autoDrain }: AppD
         requestedKind: kind as PlaybookKind,
         threadId: threadId ?? null,
         params,
+        forRunId: runId,
       });
       return { status: 201, body: { runId } };
     });
@@ -1804,6 +1805,16 @@ export function createApp({ sql, sessionSecret, controlSecret, autoDrain }: AppD
       // event=true: cancel carries no failure signal — the deliveries
       // bound is for poison mail, not for retired runs' outstanding work.
       await releaseInboxTx(tx, id, true);
+      // …but the request the canceled run was queued FOR dies with it —
+      // staff-run items stamp forRunId at enqueue (the run this request
+      // minted or adopted). Without the tombstone a pending-forRunId item
+      // (or one just released above) respawns under the sweep and the
+      // cancel silently restarts. Unowned mail still re-serves: the lead's
+      // own inbound isn't staff's canceled request.
+      await tx`
+        update agent_inbox set consumed_at = now()
+        where payload->>'forRunId' = ${id} and consumed_at is null
+      `;
       transitioned = true;
       return { status: 200, body: { ok: true, status: 'canceled' } };
     });
@@ -1935,6 +1946,7 @@ export function createApp({ sql, sessionSecret, controlSecret, autoDrain }: AppD
           requestedKind: kind as PlaybookKind,
           threadId: threadId ?? null,
           params,
+          forRunId: runId,
         });
       }
       return { status: 201, body: { runId } };
@@ -2057,6 +2069,7 @@ export function createApp({ sql, sessionSecret, controlSecret, autoDrain }: AppD
           text: `a equipe definiu a meta '${goal}'`,
           requestedKind: 'outreach',
           params,
+          forRunId: runId,
         });
         await tx`update leads set agent_goal = ${goal}, updated_at = now() where id = ${id}`;
         enqueued++;

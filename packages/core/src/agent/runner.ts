@@ -665,18 +665,33 @@ export async function claimRun(sql: Sql): Promise<RunRow | null> {
  *  that's where poison mail lives. */
 export async function releaseInboxTx(tx: Sql, runId: string, event?: boolean): Promise<void> {
   await tx`
-    update agent_inbox
+    update agent_inbox i
     set consumed_at = null, consumed_by_run = null,
-        payload = payload || jsonb_build_object(
-          'deliveries', coalesce((payload->>'deliveries')::int, 0) + 1)
-        || case when payload ? 'resumed' then '{}'::jsonb
+        payload = i.payload || jsonb_build_object(
+          'deliveries', coalesce((i.payload->>'deliveries')::int, 0) + 1)
+        || case when i.payload ? 'resumed' then '{}'::jsonb
             else jsonb_build_object(
-              'text', coalesce(payload->>'text', '') ||
+              'text', coalesce(i.payload->>'text', '') ||
                 ' — (reentregue: a run anterior foi interrompida — confira o histórico antes de agir de novo)',
               'resumed', true)
             end
-    where consumed_by_run = ${runId}
-      and (${event === true} or coalesce((payload->>'deliveries')::int, 0) < 2)
+    where i.consumed_by_run = ${runId}
+      and (${event === true} or coalesce((i.payload->>'deliveries')::int, 0) < 2)
+      -- an inbound the run already answered is never outstanding work:
+      -- re-serving it under a new run id re-sends, and the send dedup is
+      -- run-scoped so it can't see the earlier dispatch. An 'out' on the
+      -- same thread after the inbound's stamp counts any author — a
+      -- staff reply answers it too.
+      and not exists (
+        select 1
+        from lead_messages im
+        join lead_messages om
+          on om.thread_id = im.thread_id
+         and om.direction = 'out'
+         and om.created_at > im.created_at
+         and om.status in ('queued', 'sending', 'sent', 'delivered')
+        where im.id::text = i.payload->>'messageId'
+      )
   `;
 }
 

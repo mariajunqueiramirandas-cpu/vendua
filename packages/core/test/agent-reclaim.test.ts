@@ -3810,4 +3810,51 @@ dbDescribe('worker robustness (db)', () => {
     expect(it.consumed_by_run).toBe(dead3);
     expect(it.deliveries).toBe(2);
   });
+
+  test('failed-run release keeps answered mail — a re-serve would double-send', async () => {
+    await migrate(sql, MIGRATIONS);
+    const lead = await controlTx(sql, (tx) =>
+      insertLeadTx(tx, { name: 'Answered Mail', whatsapp: '5511910000022' }),
+    );
+    const leadId = lead.body.lead.id;
+    const [thread] = await sql<{ id: string }[]>`
+      insert into lead_threads (lead_id, channel) values (${leadId}, 'whatsapp') returning id
+    `;
+    const [inMsg] = await sql<{ id: string }[]>`
+      insert into lead_messages (thread_id, direction, author, body, status)
+      values (${thread!.id}, 'in', 'lead', 'oi', 'received') returning id
+    `;
+    const stale = new Date(Date.now() - 11 * 60_000);
+    const [run] = await sql<{ id: string }[]>`
+      insert into agent_runs (kind, lead_id, status, claim_token, attempts, max_attempts, started_at, alive_at)
+      values ('reply', ${leadId}, 'running', 'stale', 1, 1, ${stale}, ${stale})
+      returning id
+    `;
+    // The answer the run committed before dying — the send dedup is
+    // run-scoped, so only the inbound's own identity keeps the resend out.
+    await sql`
+      insert into lead_messages (thread_id, direction, author, body, status, agent_run_id)
+      values (${thread!.id}, 'out', 'agent', 'oi!', 'sent', ${run!.id})
+    `;
+    const itemId = await controlTx(sql, (tx) =>
+      enqueueInboxTx(tx, leadId, 'inbound', {
+        text: 'oi',
+        requestedKind: 'reply',
+        messageId: inMsg!.id,
+        params: { origin: 'inbound', channel: 'whatsapp' },
+      }),
+    );
+    await sql`update agent_inbox set consumed_by_run = ${run!.id}, consumed_at = now()
+      where id = ${itemId}`;
+    await drain(sql, 0);
+    const [it] = await sql<{ consumed_at: string | null; consumed_by_run: string | null }[]>`
+      select consumed_at, consumed_by_run from agent_inbox where id = ${itemId}
+    `;
+    // The dead run's reconcile releases what it can still answer — this
+    // inbound already got its reply, so it stays consumed history rather
+    // than respawning a run that re-sends under a fresh run id.
+    expect(it!.consumed_at).not.toBeNull();
+    expect(it!.consumed_by_run).toBe(run!.id);
+    await sql`delete from agent_runs where status = 'queued'`;
+  });
 });
