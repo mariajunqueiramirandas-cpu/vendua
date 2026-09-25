@@ -56,8 +56,8 @@ export default function PlansPage() {
   const wakeQ = usePendingWakeups();
   const cancelWakeup = useCancelWakeup();
 
-  // both halves commit together — a half can't render as if complete
-  const ready = leadsQ.data && runsQ.data;
+  // all sources commit together — a missing one can't render as a complete queue
+  const ready = leadsQ.data && runsQ.data && wakeQ.data;
   const leads = leadsQ.data ?? [];
   const byId = useMemo(() => new Map(leads.map((l) => [l.id, l])), [leads]);
   const queue = useMemo(
@@ -75,7 +75,7 @@ export default function PlansPage() {
   const order = useMemo(() => new Map(queue.map((p, i) => [p.key, i + 1])), [queue]);
   const late = queue.filter((p) => p.late).length;
   const next = queue[0];
-  const error = !ready && (leadsQ.error || runsQ.error);
+  const error = !ready && (leadsQ.error || runsQ.error || wakeQ.error);
 
   const planOf = (id: string | null) => (id ? byId.get(id) : undefined);
   const leadCell = (p: QueueItem) =>
@@ -172,7 +172,10 @@ export default function PlansPage() {
   let body;
   if (error)
     body = (
-      <ErrorState error={error} onRetry={() => (void leadsQ.refetch(), void runsQ.refetch())} />
+      <ErrorState
+        error={error}
+        onRetry={() => (void leadsQ.refetch(), void runsQ.refetch(), void wakeQ.refetch())}
+      />
     );
   else if (!ready) body = <LoadingRows />;
   else if (!queue.length && !planned.length)
