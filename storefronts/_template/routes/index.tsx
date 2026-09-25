@@ -1,11 +1,6 @@
 import { Link } from 'react-router-dom';
 import { formatCents, useCatalog, useKernel, useStore } from '@vendua/kernel';
 
-/**
- * Catalog — the storefront's required index route. Renders Core's catalog
- * grouped by category; every card is a `data-vendua="product-link"` anchor so
- * the commerce flow is traceable from the grid to checkout.
- */
 export function CatalogPage() {
   const { store } = useStore();
   const { categories, loading, error } = useCatalog();

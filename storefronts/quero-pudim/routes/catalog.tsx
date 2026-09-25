@@ -8,12 +8,6 @@ import { ProductFigure, type FigureVariant } from './_components/ProductFigure.t
 import { Skeleton } from './_components/Skeleton.tsx';
 import { setLastSeenItem } from './_lib/lastSeen.ts';
 
-/**
- * Nosso cardápio — ficha grid over a category tab bar, with diacritic-blind
- * search, #produto-<slug> deep links (scroll + highlight), the "Sob encomenda"
- * virtual tab when the platform exposes it, and the floating sacola bar.
- */
-
 type ListedProduct = CatalogProduct & {
   figureVariant?: FigureVariant;
   imageUrl?: string | null;
@@ -138,8 +132,7 @@ export function CatalogPage() {
     });
   }, [allProducts, category, query]);
 
-  // One-shot deep link: /catalog#produto-<slug> scrolls to + highlights the
-  // card, pre-selecting its category tab if needed.
+  // one-shot #produto-<slug> deep link — scrolls, highlights, pre-selects its tab
   useEffect(() => {
     if (hashDone.current || allProducts.length === 0) return;
     const hash = window.location.hash;

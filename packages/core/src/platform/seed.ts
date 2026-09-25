@@ -1,17 +1,4 @@
-/**
- * Seed — Phase 0 dev tenants. Idempotent: wipes and recreates the spike
- * tenants' catalog/settings rows on each run (orders/carts are preserved for
- * whatever dev history exists; tenant wipe is scoped to catalog+settings).
- *
- * Tenant ↔ storefront mapping lives here because agents building
- * storefronts/<slug>/ must never need to touch packages/core.
- *
- *   slug          | dev hostnames                    | story exercised
- *   ------------- | -------------------------------- | ----------------------------
- *   quero-pudim   | quero-pudim.localhost, :5174     | modifiers, zones, promo
- *   brasa         | brasa.localhost, :5191           | required modifier groups
- *   forn          | forn.localhost, :5192            | closed hours → notice, pickup-only
- */
+// dev tenants — idempotent wipe+recreate of catalog/settings (orders/carts preserved); quero-pudim :5174, brasa :5191, forn :5192
 import { createSql } from './db.ts';
 import { log } from './log.ts';
 
@@ -485,10 +472,7 @@ for (const t of TENANTS) {
     const tid = tenant.id;
 
     await tx`delete from domains where tenant_id = ${tid}`;
-    // SEED_DOMAINS maps slug → public host(s), comma-separated entries:
-    //   SEED_DOMAINS="quero-pudim:pudim.example.com,brasa:brasa.example.com"
-    // This is how a deploy registers its real domains at seed time — the
-    // resolver routes on Host, so a storefront's public domain must exist here.
+    // SEED_DOMAINS="slug:host1|host2,..." — registers real public domains (resolver routes on Host)
     const extra = (process.env.SEED_DOMAINS ?? '')
       .split(',')
       .map((e) => e.trim().split(':'))
@@ -523,11 +507,7 @@ for (const t of TENANTS) {
       `;
     }
 
-    // Rebuild catalog rows for the spike tenants — deterministic reseed.
-    // cart_items.product_id is NO ACTION: preserved carts hold rows pointing
-    // at products this delete cascades away — drop their items first so a
-    // reseed after cart activity still runs (the carts themselves survive,
-    // emptied; product ids are regenerated anyway).
+    // drop cart_items first — preserved carts FK-reference products this delete cascades away
     await tx`delete from cart_items where tenant_id = ${tid}`;
     await tx`delete from categories where tenant_id = ${tid}`;
     for (const cat of t.categories) {
@@ -566,8 +546,7 @@ for (const t of TENANTS) {
   slog.info({ slug: t.slug }, 'seeded tenant');
 }
 
-// CRM demo leads — wiped+recreated each seed (source='seed' is the marker).
-// Runs as the migration role (table owner, no FORCE RLS) so no GUC needed.
+// CRM demo leads — wiped+recreated each seed (source='seed'); runs as table owner so no RLS GUC needed
 {
   await sql`delete from leads where source = 'seed'`;
   const SEED_LEADS = [
@@ -649,8 +628,7 @@ for (const t of TENANTS) {
       insert into lead_activities (lead_id, kind, body, created_by)
       values (${lead.id}, 'note', ${l.activity}, 'staff')
     `;
-    // everReached counts `to_state` rows — a lead seeded mid-funnel gets one
-    // history row per stage it would have passed through.
+    // one history row per stage the lead passed through — everReached counts to_state rows
     const stages = ['lead', 'contacted', 'invited', 'live'] as const;
     for (const s of stages.slice(0, stages.indexOf(l.state) + 1)) {
       await sql`

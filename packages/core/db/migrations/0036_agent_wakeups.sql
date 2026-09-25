@@ -1,8 +1,4 @@
--- 0036_agent_wakeups.sql — the agent books its own future work. A wakeup is
--- a pending intent ("follow up tuesday about the trial") with an explicit
--- focus; sweepWakeups materializes due rows through insertRun, so the cost
--- cap and every claim-time suppression still apply. One pending agent
--- wakeup per lead: a new schedule replaces the old one.
+-- add agent_wakeups — agent-booked future work; one pending agent wakeup per lead
 create table if not exists agent_wakeups (
   id uuid primary key default gen_random_uuid(),
   lead_id uuid references leads (id) on delete cascade,
@@ -12,8 +8,7 @@ create table if not exists agent_wakeups (
   focus text not null check (length(focus) between 1 and 500),
   status text not null default 'pending' check (status in ('pending', 'fired', 'canceled')),
   created_by text not null default 'agent' check (created_by in ('agent', 'staff')),
-  -- the LEAD asked for this date ("me chama terça") — a promise that
-  -- survives the lead's next message, like next_action_source='requested'
+  -- lead-requested date survives the lead's next message
   requested boolean not null default false,
   created_by_run_id uuid references agent_runs (id) on delete set null,
   fired_run_id uuid references agent_runs (id) on delete set null,

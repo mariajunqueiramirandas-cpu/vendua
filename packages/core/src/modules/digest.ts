@@ -4,22 +4,13 @@ import { sendEmail } from '../agent/channels/email.ts';
 import { getIntegrationTx, getSettingTx, type IntegrationRow } from './integrations.ts';
 import { controlTx } from './control.ts';
 
-/**
- * digest module — the daily staff email. `sweepDigest` rides the worker tick:
- * once the configured local hour passes it claims the day via the
- * `digest_state` settings row (insert-or-update gated on last status, so a
- * double tick can't send twice), builds the 24h rollup, and sends it through
- * the same `sendEmail` path outbound replies use — the `log` driver covers
- * dev, `resend` production.
- */
-
+// daily staff email — sweep claims the day via digest_state once the local hour passes, sends via sendEmail
 export interface DigestConfig {
   enabled: boolean;
   /** staff recipient — there is no other staff-email field in the settings
    *  schema, so digest carries its own. */
   to: string;
-  /** local hour (0–23, guardrails.timezone) after which the digest fires.
-   *  "≥ hour" not "at hour" — a worker down at the hour still sends on boot. */
+  /** local hour (guardrails.timezone) after which it fires — "≥" so a worker down at the hour still sends on boot. */
   hour: number;
 }
 
@@ -33,9 +24,7 @@ export interface DigestReport {
   meetingsBooked: number;
   meetingsNext24h: number;
   agentRuns: number;
-  /** board-scoped runs (lead_id null — discovery/strategist) that landed
-   *  'failed' in the window — lead-bound failures already flag their cards
-   *  with [humano] tasks, these have no card so the digest carries them. */
+  /** board-scoped failures (no lead card to flag) — the digest must carry them. */
   failedBoardRuns: number;
   costCents: number;
   pendingDrafts: number;
@@ -46,10 +35,9 @@ interface DigestState {
   date?: string;
   status?: 'claimed' | 'sent' | 'skipped' | 'error';
   fails?: number;
-  /** ISO timestamp of the last claim — a stale claim is reclaimable. */
+  /** last claim timestamp — a stale claim is reclaimable. */
   at?: string;
-  /** Owner token minted by the claimer — completion writes are filtered on
-   *  it, so a superseded worker can't downgrade a newer owner's 'sent'. */
+  /** claim-owner token — outcome writes filter on it so a superseded worker can't clobber a newer 'sent'. */
   tok?: string;
   error?: string;
 }
@@ -62,9 +50,7 @@ export async function digestConfigTx(tx: Sql): Promise<DigestConfig> {
   return { ...DEFAULT_DIGEST, ...stored };
 }
 
-/** The 24h board rollup. One round-trip per counter keeps each predicate
- *  readable; the window is `at/created_at > now() - interval '24 hours'` so
- *  the email always describes "since yesterday's digest". */
+// 24h board rollup
 export async function digestReportTx(tx: Sql, date: string): Promise<DigestReport> {
   const one = async (q: Promise<{ n: number }[]>) => (await q)[0]!.n;
   const [
@@ -159,13 +145,7 @@ export function digestText(r: DigestReport): { subject: string; body: string } {
   };
 }
 
-/** Worker sweep — claims today once, then sends outside the claim tx (the
- *  provider call never sits inside a Postgres transaction). The claim is a
- *  single conditional upsert so two replica ticks can't both win: a fresh
- *  'claimed' row blocks the loser's re-check for RECLAIM_AFTER_MINUTES, and
- *  only a stale claim (a crashed sender) is reclaimable. A send error
- *  releases the claim as status 'error' so the next tick retries, up to
- *  MAX_SEND_ATTEMPTS per day. */
+// claims the day via conditional upsert (stale claims reclaimable); send runs outside the claim tx, errors release it for retry
 const RECLAIM_AFTER_MINUTES = 10;
 
 interface DigestClaim {
@@ -191,10 +171,7 @@ export async function sweepDigest(sql: Sql): Promise<boolean> {
     if (now.hour < cfg.hour) return null;
     const integration = await getIntegrationTx(tx, 'email');
     if (!integration) {
-      // 'skipped' marks the day consumed without a send — enabling a driver
-      // mid-day still delivers tomorrow, and the tick doesn't warn-spam. Same
-      // conditional upsert as the claim so a send already in flight (fresh
-      // 'claimed') or already done ('sent') is never downgraded.
+      // 'skipped' marks the day consumed without sending — never downgrade an in-flight/done claim
       digestLog.warn('digest due but no enabled email integration — skipping today');
       await tx`
         insert into control_settings (key, value)
@@ -209,10 +186,7 @@ export async function sweepDigest(sql: Sql): Promise<boolean> {
       `;
       return null;
     }
-    // Atomic claim: on any conflict the WHERE re-checks the committed row, so
-    // a concurrent tick that just claimed can't be reclaimed until stale. The
-    // claim mints an owner token so a superseded worker's late completion
-    // write can't downgrade this claim's outcome.
+    // atomic claim — WHERE re-checks the committed row; tok guards outcome writes from superseded workers
     const tok = crypto.randomUUID();
     const win = await tx<{ fails: number }[]>`
       insert into control_settings (key, value)
@@ -241,9 +215,7 @@ export async function sweepDigest(sql: Sql): Promise<boolean> {
   if (!claimed) return false;
 
   const { cfg, date, fails, tok, integration } = claimed;
-  // Only the claim owner may write the outcome — a stale worker whose claim
-  // was reclaimed finds tok mismatch and its write no-ops, so a late 'error'
-  // can never clobber a successor's 'sent' into a resend.
+  // only the claim owner writes the outcome — tok mismatch makes a superseded worker's write a no-op
   const setState = async (state: DigestState) => {
     const res = await controlTx(
       sql,
@@ -259,9 +231,7 @@ export async function sweepDigest(sql: Sql): Promise<boolean> {
   try {
     const report = await controlTx(sql, (tx) => digestReportTx(tx, date));
     const { subject, body } = digestText(report);
-    // Per-day key: a crash between provider-accept and the state write below
-    // leaves a stale claim that re-sends — the key makes the provider dedupe
-    // it, so reclaim retries are safe by construction.
+    // per-day idem key — the provider dedupes a reclaim-driven resend
     const pmid = await sendEmail(integration, {
       to: cfg.to,
       subject,

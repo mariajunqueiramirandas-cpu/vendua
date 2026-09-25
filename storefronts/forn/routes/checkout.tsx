@@ -63,8 +63,7 @@ export default function CheckoutPage() {
   const [pending, setPending] = useState(false);
   const [err, setErr] = useState<{ msg: string; field?: 'name' | 'phone' } | null>(null);
 
-  // Core refuses a second checkout on a completed cart (409 CART_NOT_OPEN);
-  // the placed order in this tab is just the friendlier guard.
+  // Core 409s a second checkout on a completed cart — the tab-local flag is the friendlier guard
   const alreadyOrdered = !!getLastOrder();
   const open = !alreadyOrdered && cart?.status === 'open' && cart.items.length > 0;
 
@@ -89,8 +88,7 @@ export default function CheckoutPage() {
         payment: { method: pay },
       });
       setLastOrder(order);
-      // submit() invalidates 'cart' itself — the completed cart drops out of
-      // the comanda badge without storefront plumbing.
+      // submit() invalidates 'cart' itself — no extra plumbing needed
       navigate(`/pedido/${order.id}`, { state: { order } });
     } catch (e2) {
       setErr(friendlyError(e2));

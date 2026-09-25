@@ -1,10 +1,5 @@
 import type { Sql } from '../platform/db.ts';
 
-/**
- * catalog module — categories, products, modifier groups. Public read surface
- * (`/storefront/v1`): tenant-scoped by host, read-heavy, CDN-cacheable.
- */
-
 export interface ProductSummary {
   id: string;
   slug: string;

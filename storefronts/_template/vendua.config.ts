@@ -1,10 +1,6 @@
 import { defineStorefront } from '@vendua/kernel';
 
-/**
- * _template — the always-green baseline every `vendua scaffold` copies.
- * Tokens are a deliberately restrained neutral default — a scaffold starting
- * point, not a brand. Full token set; the Kernel emits them as --v-* vars.
- */
+// the always-green baseline every `vendua scaffold` copies — deliberately neutral tokens, not a brand
 export default defineStorefront({
   contract: 1,
   ring: 'stable',
