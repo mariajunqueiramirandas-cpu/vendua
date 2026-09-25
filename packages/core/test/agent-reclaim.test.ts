@@ -2848,11 +2848,14 @@ dbDescribe('worker robustness (db)', () => {
     const fixtureLeadIds: string[] = [];
     try {
       await sql`delete from agent_runs where status = 'queued'`;
-      // Shared-DB ambient mail would reorder or outservable the fixture —
-      // tombstone all pending so this test's population is the whole scan.
+      // With limit=1 the first servable lead wins — ambient mail requesting
+      // an ENABLED playbook would outservable the fixture, so tombstone just
+      // that class (kindless or 'reply'-requesting leftovers are already
+      // unservable under the disabled 'reply' gate and stay pending).
       await controlTx(
         sql,
-        (tx) => tx`update agent_inbox set consumed_at = now() where consumed_at is null`,
+        (tx) => tx`update agent_inbox set consumed_at = now()
+          where consumed_at is null and payload->>'requestedKind' <> 'reply'`,
       );
       // Eleven leads ahead of the servable one, each holding only mail the
       // disabled 'reply' playbook can't spawn — past the old 10-lead window
