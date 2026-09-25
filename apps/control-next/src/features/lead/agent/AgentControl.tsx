@@ -50,17 +50,19 @@ export function ThreadAgentSwitch({
 }) {
   const client = useQueryClient();
   const key = qk.leadThreads(leadId);
-  type T = { id: string; channel: string; agentEnabled: boolean }[];
+  type T = { threads: { id: string; channel: string; agentEnabled: boolean }[] };
   const m = useMutation({
     mutationFn: (enabled: boolean) => api.setThreadAgent(thread.id, enabled),
     onMutate: async (enabled) => {
       await client.cancelQueries({ queryKey: key });
       const prev = client.getQueryData<T>(key);
       if (prev)
-        client.setQueryData<T>(
-          key,
-          prev.map((t) => (t.id === thread.id ? { ...t, agentEnabled: enabled } : t)),
-        );
+        client.setQueryData<T>(key, {
+          ...prev,
+          threads: prev.threads.map((t) =>
+            t.id === thread.id ? { ...t, agentEnabled: enabled } : t,
+          ),
+        });
       return { prev };
     },
     onError: (e, _v, ctx) => {

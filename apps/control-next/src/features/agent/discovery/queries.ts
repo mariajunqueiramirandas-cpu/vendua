@@ -6,7 +6,8 @@ import { errorMessage, qk } from '@/lib/query.ts';
 export const useDiscoveryRuns = () =>
   useQuery({
     queryKey: qk.runs({ kind: 'discovery' }),
-    queryFn: () => api.runs({ kind: 'discovery' }).then((r) => r.runs),
+    queryFn: () => api.runs({ kind: 'discovery' }),
+    select: (r) => r.runs,
   });
 
 /** Leads the hunts brought in — the `descoberto` tag, or `discoveredVia` on servers without the tag filter. */
@@ -23,13 +24,13 @@ export const useFoundLeads = () =>
   });
 
 export const useDuplicates = () =>
-  useQuery({ queryKey: qk.duplicates(), queryFn: () => api.duplicates().then((r) => r.groups) });
+  useQuery({ queryKey: qk.duplicates(), queryFn: () => api.duplicates(), select: (r) => r.groups });
 
 export const useBriefs = () =>
-  useQuery({ queryKey: qk.briefs(), queryFn: () => api.briefs().then((r) => r.briefs) });
+  useQuery({ queryKey: qk.briefs(), queryFn: () => api.briefs(), select: (r) => r.briefs });
 
 export const useSegments = () =>
-  useQuery({ queryKey: qk.segments(), queryFn: () => api.segments().then((r) => r.segments) });
+  useQuery({ queryKey: qk.segments(), queryFn: () => api.segments(), select: (r) => r.segments });
 
 export function useBriefMutations() {
   const client = useQueryClient();

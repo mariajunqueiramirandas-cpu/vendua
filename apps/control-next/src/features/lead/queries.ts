@@ -13,34 +13,42 @@ const schedRunsKey = (leadId: string) =>
 const recentRunsKey = (leadId: string) => qk.runs({ lead_id: leadId, limit: '6' });
 
 export const useLead = (id: string) =>
-  useQuery({ queryKey: qk.lead(id), queryFn: () => api.lead(id).then((r) => r.lead) });
+  useQuery({ queryKey: qk.lead(id), queryFn: () => api.lead(id), select: (r) => r.lead });
 
 export const useActivities = (id: string) =>
   useQuery({
     queryKey: qk.activities(id),
-    queryFn: () => api.activities(id).then((r) => r.activities),
+    queryFn: () => api.activities(id),
+    select: (r) => r.activities,
   });
 
 export const useLeadThreads = (id: string) =>
   useQuery({
     queryKey: qk.leadThreads(id),
-    queryFn: () => api.leadThreads(id).then((r) => r.threads),
+    queryFn: () => api.leadThreads(id),
+    select: (r) => r.threads,
   });
 
 export const useLeadTasks = (id: string) =>
   useQuery({
     queryKey: tasksKey(id),
-    queryFn: () => api.tasks({ leadId: id }).then((r) => r.tasks),
+    queryFn: () => api.tasks({ leadId: id }),
+    select: (r) => r.tasks,
   });
 
 export const useLeadMeetings = (id: string) =>
   useQuery({
     queryKey: meetingsKey(id),
-    queryFn: () => api.meetings({ leadId: id, scope: 'all' }).then((r) => r.meetings),
+    queryFn: () => api.meetings({ leadId: id, scope: 'all' }),
+    select: (r) => r.meetings,
   });
 
 export const useLeadFacts = (id: string) =>
-  useQuery({ queryKey: qk.leadFacts(id), queryFn: () => api.leadFacts(id).then((r) => r.facts) });
+  useQuery({
+    queryKey: qk.leadFacts(id),
+    queryFn: () => api.leadFacts(id),
+    select: (r) => r.facts,
+  });
 
 export const useLeadAutonomy = (id: string) =>
   useQuery({ queryKey: qk.leadAutonomy(id), queryFn: () => api.leadAutonomy(id) });
@@ -48,7 +56,8 @@ export const useLeadAutonomy = (id: string) =>
 export const useLeadWakeups = (id: string) =>
   useQuery({
     queryKey: wakeupsKey(id),
-    queryFn: () => api.wakeups({ lead_id: id, status: 'pending' }).then((r) => r.wakeups),
+    queryFn: () => api.wakeups({ lead_id: id, status: 'pending' }),
+    select: (r) => r.wakeups,
   });
 
 // scheduled=1 → run_at asc + keyset cursor — walk every page so a deep queue can't hide follow-ups
@@ -69,7 +78,8 @@ export const useScheduledRuns = (id: string) =>
 export const useRecentRuns = (id: string) =>
   useQuery({
     queryKey: recentRunsKey(id),
-    queryFn: () => api.runs({ lead_id: id, limit: '6' }).then((r) => r.runs),
+    queryFn: () => api.runs({ lead_id: id, limit: '6' }),
+    select: (r) => r.runs,
   });
 
 /** Everything a lead write can ripple into (stage → activities, mode → autonomy, lists…). */
@@ -98,8 +108,8 @@ export function usePatchLead(id: string) {
     mutationFn: (p: LeadPatch) => api.patchLead(id, p),
     onMutate: async (p) => {
       await client.cancelQueries({ queryKey: qk.lead(id) });
-      const prev = client.getQueryData<LeadListItem>(qk.lead(id));
-      if (prev) client.setQueryData(qk.lead(id), applyPatch(prev, p));
+      const prev = client.getQueryData<{ lead: LeadListItem }>(qk.lead(id));
+      if (prev) client.setQueryData(qk.lead(id), { ...prev, lead: applyPatch(prev.lead, p) });
       return { prev };
     },
     onError: (e, _p, ctx) => {
@@ -117,14 +127,14 @@ export function useSetTaskDone(leadId: string) {
     mutationFn: ({ id, done }: { id: string; done: boolean }) => api.setTaskDone(id, done),
     onMutate: async ({ id, done }) => {
       await client.cancelQueries({ queryKey: key });
-      const prev = client.getQueryData<Task[]>(key);
+      const prev = client.getQueryData<{ tasks: Task[] }>(key);
       if (prev)
-        client.setQueryData<Task[]>(
-          key,
-          prev.map((t) =>
+        client.setQueryData<{ tasks: Task[] }>(key, {
+          ...prev,
+          tasks: prev.tasks.map((t) =>
             t.id === id ? { ...t, doneAt: done ? new Date().toISOString() : null } : t,
           ),
-        );
+        });
       return { prev };
     },
     onError: (e, _v, ctx) => {
@@ -144,9 +154,11 @@ export function useOpenChannel(leadId: string) {
   const client = useQueryClient();
   return useMutation({
     mutationFn: async (channel: 'whatsapp' | 'email' | 'manual') => {
-      const threads =
-        client.getQueryData<{ id: string; channel: string }[]>(qk.leadThreads(leadId)) ??
-        (await api.leadThreads(leadId)).threads;
+      const threads = (
+        client.getQueryData<{ threads: { id: string; channel: string }[] }>(
+          qk.leadThreads(leadId),
+        ) ?? (await api.leadThreads(leadId))
+      ).threads;
       const found = threads.find((t) => t.channel === channel);
       if (found) return found.id;
       const r = await api.newThread(leadId, channel);

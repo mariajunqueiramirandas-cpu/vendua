@@ -47,7 +47,8 @@ export const useScheduledRuns = () =>
 export const usePendingWakeups = () =>
   useQuery({
     queryKey: qk.wakeups({ status: 'pending', limit: '200' }),
-    queryFn: () => api.wakeups({ status: 'pending', limit: '200' }).then((r) => r.wakeups),
+    queryFn: () => api.wakeups({ status: 'pending', limit: '200' }),
+    select: (r) => r.wakeups,
   });
 
 export function useCancelWakeup() {

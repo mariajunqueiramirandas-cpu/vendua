@@ -51,6 +51,10 @@ src/features/<area>/   one folder per hub/screen: pages, components, queries.ts
   is what SSE invalidates (`lib/live.ts`). No `setInterval` polling, no hand-rolled
   "newest response wins" refs. Mutations: `useMutation` + `invalidateQueries`, optimistic
   where the old app was.
+- The cache holds the raw API response under a `qk` key — unwrap with `select`, never in
+  `queryFn` — because several screens share keys (a lead's threads, segments, tasks…) and
+  bulk updaters (`setQueriesData`) assume that shape. A query that stores a derived shape
+  (all pages merged, filtered) must add a distinguishing param to its key.
 - Put filters/tabs/selected ids in the URL (`useSearchParams`) so back/forward and deep links work.
 - Errors: `ErrorState`/`toast.error(errorMessage(e))` from `lib/query.ts`; never `String(e)`.
 - No inline `style={{}}` except truly dynamic values (bar widths, calendar positions).
