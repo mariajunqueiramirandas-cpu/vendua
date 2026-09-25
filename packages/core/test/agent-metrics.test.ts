@@ -222,7 +222,9 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('agentMetrics (db)', () => {
       values
         ('reply', now(), 'follow up', 'pending', 'agent', null),
         ('outreach', now() + interval '1 day', 'retry', 'pending', 'staff', null),
-        ('reply', now(), 'follow up', 'fired', 'agent', now()),
+        -- fired_at sits an hour inside the window: bare now() races the
+        -- metric's client-side to-boundary under db/host clock skew.
+        ('reply', now(), 'follow up', 'fired', 'agent', now() - interval '1 hour'),
         ('reply', ${stale}, 'old fire', 'fired', 'agent', ${stale}),
         ('outreach', now(), 'gave up', 'canceled', 'staff', null)`;
     // A wakeup scheduled long ago that only fired now attributes to the
@@ -230,7 +232,7 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('agentMetrics (db)', () => {
     const firedRun = await seedRun({ kind: 'outreach' });
     await sql`
       insert into agent_wakeups (kind, at, focus, status, created_by, fired_run_id, fired_at)
-      values ('reply', ${stale}, 'late fire', 'fired', 'agent', ${firedRun}, now())`;
+      values ('reply', ${stale}, 'late fire', 'fired', 'agent', ${firedRun}, now() - interval '1 hour')`;
     // A post-fire cancellation bumps updated_at but the metric must not
     // move: fired_at is immutable past the flip.
     await sql`update agent_wakeups set updated_at = now() + interval '1 day' where focus = 'follow up' and status = 'fired'`;
