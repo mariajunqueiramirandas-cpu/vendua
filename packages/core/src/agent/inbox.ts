@@ -223,21 +223,24 @@ export async function sweepOrphanInbox(sql: Sql, limit = 10): Promise<number> {
       }
       // insertRun's cap check still applies — a refused lead keeps the
       // mail pending for a raised cap.
-      return insertRun(tx, {
+      const cap: { retired?: string[] } = {};
+      const id = await insertRun(tx, {
         kind: spawn.kind,
         leadId: lead_id,
         threadId: spawn.threadId,
         params: spawn.params,
         ...(notBefore ? { runAt: new Date(notBefore) } : {}),
       });
+      return { id, retired: cap.retired ?? [] };
     }).catch((e) => {
       agentLog.warn({ err: e, leadId: lead_id }, 'orphan inbox sweep failed for lead');
       return null;
     });
-    if (runId) {
+    if (runId?.id) {
       served++;
-      emitControlEvent('run.update', runId);
+      emitControlEvent('run.update', runId.id);
     }
+    for (const r of runId?.retired ?? []) emitControlEvent('run.update', r);
   }
   return served;
 }

@@ -290,7 +290,7 @@ export async function sweepWakeups(sql: Sql): Promise<number> {
         select pg_try_advisory_xact_lock(hashtext(${'capfin:' + w.lead_id})) as got
       `;
       if (!capFree[0]!.got) continue;
-      const cap: { flagged?: boolean } = {};
+      const cap: { flagged?: boolean; retired?: string[] } = {};
       // Agent self-schedules are automation ('auto' — a reply retires them);
       // lead-asked callbacks and staff wakeups are promises: unmarked,
       // so autonomy 'off' never stalls them (same exemption claimRun gives
@@ -313,6 +313,8 @@ export async function sweepWakeups(sql: Sql): Promise<number> {
         cap,
       );
       if (cap.flagged) capFlagged = true;
+      // Rows insertRun retired: same run.update the minted run gets.
+      if (cap.retired) queuedIds.push(...cap.retired);
       if (runId) {
         queuedIds.push(runId);
         // A fired wakeup is mail for the lead's run — created now or

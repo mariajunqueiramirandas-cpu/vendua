@@ -531,13 +531,19 @@ export async function approveMessage(
   approvedBy: string,
   idemKey: string,
 ): Promise<
-  ClaimResult<{ message: ReturnType<typeof messageJson>; stale?: boolean; runId?: string }>
+  ClaimResult<{
+    message: ReturnType<typeof messageJson>;
+    stale?: boolean;
+    runId?: string;
+    retired?: string[];
+  }>
 > {
   let capFlagged = false;
   const res = await claimControl<{
     message: ReturnType<typeof messageJson>;
     stale?: boolean;
     runId?: string;
+    retired?: string[];
   }>(sql, idemKey, async (tx) => {
     const g = await getSettingTx<Partial<Guardrails>>(tx, 'guardrails', {});
     const staleDays = g.staleDraftDays ?? DEFAULT_GUARDRAILS.staleDraftDays;
@@ -615,7 +621,7 @@ export async function approveMessage(
         // intent but has no run to point the UI at.
         let queued = false;
         let runId: string | null = null;
-        const cap: { flagged?: boolean } = {};
+        const cap: { flagged?: boolean; retired?: string[] } = {};
         if (active[0]) {
           // A queued regen is reusable only while it can still claim: if the
           // lead crossed the cap AFTER queueing, claimRun parks it forever
@@ -707,6 +713,7 @@ export async function approveMessage(
               message: messageJson(stale[0]),
               stale: true,
               ...(runId ? { runId } : {}),
+              ...(cap.retired?.length ? { retired: cap.retired } : {}),
             },
           };
         }
@@ -725,6 +732,7 @@ export async function approveMessage(
     emitControlEvent('draft.change', res.body.message.threadId);
     emitControlEvent('thread.message', res.body.message.threadId);
     if (res.body.runId) emitControlEvent('run.update', res.body.runId);
+    for (const r of res.body.retired ?? []) emitControlEvent('run.update', r);
     if (res.body.stale || capFlagged) emitControlEvent('lead.change');
   }
   return res;

@@ -702,6 +702,13 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('agent v2 (db)', () => {
       const auto = await controlTx(sql, (tx) =>
         insertRun(tx, { kind: 'triage', leadId: offLead, params: { auto: 'x' } }),
       );
+      // A same-kind staff item is NOT a stand-in for the retired auto
+      // intent — provenance differs, so the retire still writes its anchor.
+      await sql`
+        insert into agent_inbox (lead_id, kind, payload)
+        values (${offLead}, 'staff',
+          ${sql.json({ text: 'pedido', requestedKind: 'triage', params: { origin: 'staff' } } as never)})
+      `;
       const staff = await controlTx(sql, (tx) =>
         insertRun(tx, { kind: 'triage', leadId: offLead, params: { origin: 'staff' } }),
       );
@@ -712,6 +719,15 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('agent v2 (db)', () => {
       `;
       expect(offRows.find((r) => r.id === auto)!.status).toBe('canceled');
       expect(offRows.find((r) => r.id === staff!)!.status).toBe('queued');
+      const offAnchor = await sql<
+        { payload: { requestedKind?: string; params?: { auto?: string } } }[]
+      >`
+        select payload from agent_inbox
+        where lead_id = ${offLead} and kind = 'event' and consumed_at is null
+      `;
+      expect(offAnchor).toHaveLength(1);
+      expect(offAnchor[0]!.payload.requestedKind).toBe('triage');
+      expect(offAnchor[0]!.payload.params?.auto).toBe('x');
 
       // Same retire for a disabled playbook's queued row.
       await setSetting('agent_playbooks', { discovery: { enabled: false } });
@@ -743,6 +759,17 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('agent v2 (db)', () => {
           params: { focus: 'triagem marcada' },
         }),
       );
+      // An undated same-intent item can't cover the schedule — the retire
+      // still anchors at the row's own deadline.
+      await sql`
+        insert into agent_inbox (lead_id, kind, payload)
+        values (${dateLead}, 'staff',
+          ${sql.json({
+            text: 'pedido',
+            requestedKind: 'triage',
+            params: { origin: 'staff', focus: 'triagem marcada' },
+          } as never)})
+      `;
       const immediate = await controlTx(sql, (tx) =>
         insertRun(tx, { kind: 'reply', leadId: dateLead }),
       );
@@ -772,12 +799,22 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('agent v2 (db)', () => {
       const replyLead = await mkLead('adopt-covered');
       const quiet = new Date(Date.now() + 3_600_000);
       const replyParked = await controlTx(sql, (tx) =>
-        insertRun(tx, { kind: 'reply', leadId: replyLead, runAt: quiet }),
+        insertRun(tx, {
+          kind: 'reply',
+          leadId: replyLead,
+          runAt: quiet,
+          params: { origin: 'inbound', channel: 'whatsapp' },
+        }),
       );
       await sql`
         insert into agent_inbox (lead_id, kind, payload)
         values (${replyLead}, 'inbound',
-          ${sql.json({ text: 'oi', notBefore: quiet.toISOString() } as never)})
+          ${sql.json({
+            text: 'oi',
+            requestedKind: 'reply',
+            params: { origin: 'inbound', channel: 'whatsapp' },
+            notBefore: quiet.toISOString(),
+          } as never)})
       `;
       const staffReply = await controlTx(sql, (tx) =>
         insertRun(tx, { kind: 'triage', leadId: replyLead, params: { origin: 'staff' } }),

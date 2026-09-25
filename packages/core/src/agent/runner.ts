@@ -175,20 +175,24 @@ export async function insertRun(
      *  (guardrails-configured pacing); null = claimable immediately. */
     runAt?: Date | null;
   },
-  /** Out-box for tx-owning callers: set when a refusal wrote a FRESH cap
-   *  flag, so they can emit lead.change post-commit for the task refresh. */
-  cap?: { flagged?: boolean },
+  /** Out-box for tx-owning callers: `flagged` set when a refusal wrote a
+   *  FRESH cap flag (emit lead.change post-commit); `retired` collects the
+   *  ids of rows `adopt` canceled — emit run.update for each post-commit,
+   *  or a Runs view watching only the new owner keeps them as queued. */
+  cap?: { flagged?: boolean; retired?: string[] },
 ): Promise<string | null> {
   // Adopt an already-active row as the mail's owner — or retire it when
   // it can't serve this mail: policy-parked (a queued auto row under
   // workspace 'off', or a disabled playbook's kind) or SCHEDULED — a
-  // future-dated row whose own intent would fire early if the caller's
-  // earlier start pulled run_at forward (paced first contact has no mail
-  // carrying its delay — run_at is the only gate). A retire re-anchors
-  // the row's own intent as an 'event' item stamped with its deadline —
-  // pending items already covering it (same requestedKind, or a notBefore
-  // reaching its schedule) make that a no-op — then releases its consumed
-  // mail. The intent parks/fires under exactly the gates the row had.
+  // future-dated row never slides earlier for a caller (paced first
+  // contact has no mail carrying its delay — run_at is the only gate),
+  // so adoption can't pull its start forward. A retire re-anchors
+  // the row's own intent as an 'event' item carrying its params and
+  // deadline — unless pending mail already carries that SAME intent
+  // (matching kind, provenance marker, channel and draftOnly — and for a
+  // scheduled row a notBefore at least its deadline, e.g. the reply-quiet
+  // mail that parked it) — then releases its consumed mail. The intent
+  // parks/fires under exactly the gates the row had.
   const callerAt = input.runAt ?? new Date();
   const adopt = async (a: {
     id: string;
@@ -217,15 +221,27 @@ export async function insertRun(
         returning id
       `;
       if (!retired.length) return a.id;
+      if (cap) (cap.retired ??= []).push(a.id);
+      // A pending item only stands in for the retired row when it carries
+      // the same intent whole — a same-kind item with a different marker,
+      // channel or draftOnly spawns different work, and without a deadline
+      // at least the row's own the schedule evaporates with it.
+      const marked = 'auto' in p || p['origin'] === 'inbound';
+      const chan = typeof p['channel'] === 'string' ? (p['channel'] as string) : '';
       const covered = (
         await tx<{ ok: boolean }[]>`
           select exists (
             select 1 from agent_inbox i
             where i.lead_id = ${input.leadId ?? null} and i.consumed_at is null
-              and (i.payload->>'requestedKind' = ${a.kind}
-                   or (${scheduled}
-                       and coalesce(nullif(i.payload->>'notBefore', '')::timestamptz,
-                             '-infinity'::timestamptz) >= ${a.run_at ?? null}))
+              and i.payload->>'requestedKind' = ${a.kind}
+              and ((coalesce(i.payload->'params', '{}'::jsonb) ? 'auto')
+                   or coalesce(i.payload->'params'->>'origin', '') = 'inbound') = ${marked}
+              and coalesce(i.payload->'params'->>'channel', '') = ${chan}
+              and (coalesce(i.payload->'params'->>'draftOnly', 'false') = 'true') = ${p['draftOnly'] === true}
+              and (not ${scheduled}
+                   or coalesce(nullif(i.payload->>'notBefore', '')::timestamptz,
+                        '-infinity'::timestamptz)
+                      >= ${a.run_at ?? null}::timestamptz - interval '5 seconds')
           ) as ok
         `
       )[0]!.ok;
@@ -327,11 +343,16 @@ export async function enqueueRun(
     params?: Record<string, unknown>;
   },
 ): Promise<string | null> {
-  const { id, capFlagged } = await controlTx(sql, async (tx) => {
-    const cap: { flagged?: boolean } = {};
-    return { id: await insertRun(tx, input, cap), capFlagged: cap.flagged === true };
+  const { id, capFlagged, retired } = await controlTx(sql, async (tx) => {
+    const cap: { flagged?: boolean; retired?: string[] } = {};
+    return {
+      id: await insertRun(tx, input, cap),
+      capFlagged: cap.flagged === true,
+      retired: cap.retired ?? [],
+    };
   });
   if (id) emitControlEvent('run.update', id);
+  for (const r of retired) emitControlEvent('run.update', r);
   // A fresh flag committed a [humano] task — emit lead.change (unscoped;
   // the coalescer drops middle refs on bursts) or Tasks stays stale.
   if (capFlagged) emitControlEvent('lead.change');
@@ -3055,7 +3076,7 @@ export async function sweepOutreach(sql: Sql): Promise<number> {
         ...(promised ? {} : { auto: next_action_source }),
         ...(fold ? { focus: `agendado por você: ${fold.focus}`, wakeupId: fold.id } : {}),
       };
-      const cap: { flagged?: boolean } = {};
+      const cap: { flagged?: boolean; retired?: string[] } = {};
       const runId = await insertRun(
         tx,
         {
@@ -3066,6 +3087,9 @@ export async function sweepOutreach(sql: Sql): Promise<number> {
         cap,
       );
       if (cap.flagged) capFlagged.push(id);
+      // Retired rows changed too — same run.update refresh the minted run
+      // gets, or the view keeps showing them queued.
+      if (cap.retired) queuedIds.push(...cap.retired);
       if (runId) {
         queuedIds.push(runId);
         // The cadence intent rides the mailbox too: when insertRun found an

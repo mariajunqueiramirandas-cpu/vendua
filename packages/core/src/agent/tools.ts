@@ -896,7 +896,9 @@ export async function executeTool(
             auto: 'discovery',
             focus: `primeiro contato — lead descoberto (fitScore ${String(score)}). O dossiê de pesquisa está na timeline do lead.`,
           };
-          const runId = await insertRun(tx, { kind: 'outreach', leadId, params });
+          const cap: { retired?: string[] } = {};
+          const runId = await insertRun(tx, { kind: 'outreach', leadId, params }, cap);
+          for (const r of cap.retired ?? []) emitControlEvent('run.update', r);
           if (!runId) return null;
           // The intent rides the mailbox too: insertRun returns the lead's
           // already-active NON-outreach row when one exists, and the item is
