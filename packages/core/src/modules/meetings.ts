@@ -1,23 +1,4 @@
-/**
- * modules/meetings — CRM-native meeting booking.
- *
- * The lead-facing flow: agent (or staff) mints an HMAC booking link → the
- * public `/agendar` page reads slots from `/book/v1/slots?t=` →
- * `/book/v1/book` validates the slot is still on the grid and free, inserts
- * the meeting (the unique (lead_id, starts_at) partial index makes replays
- * return the same row), provisions a video room (Daily.co per-meeting room
- * when DAILY_API_KEY is set, else the configured static roomUrl), syncs to
- * Google Calendar when configured, and queues a confirmation message.
- *
- * Availability is rules-first: weekly windows × horizon, minus a buffer
- * around existing meetings, minus gcal busy windows when the calendar envs
- * are present. All wall-clock math runs in the configured meeting tz via
- * platform/tz.ts — no manual offset arithmetic.
- *
- * Reminders piggyback on the agent worker tick (runner.ts calls
- * sweepMeetingReminders next to the discovery-briefs sweep). They are NOT
- * agent runs — system-authored messages that still obey the send guardrails.
- */
+// booking: idempotent (lead,slot) insert + post-commit room/gcal/confirm; reminders are system messages, not agent runs
 import { createHmac, timingSafeEqual } from 'node:crypto';
 import type { Sql } from '../platform/db.ts';
 import { HttpError, str, UUID_RE } from '../platform/http.ts';
@@ -31,10 +12,6 @@ import * as gcal from './gcal.ts';
 import * as rooms from './rooms.ts';
 
 const mlog = log.child({ mod: 'meetings' });
-
-// ---------------------------------------------------------------------------
-// Settings
-// ---------------------------------------------------------------------------
 
 /** Per-day windows as minutes-of-day pairs, indexed 0 (Sun) … 6 (Sat). */
 export type WeeklyWindows = [number, number][][];
@@ -64,7 +41,6 @@ const WORKWEEK: WeeklyWindows = [
   [], // sat
 ];
 
-/** The JSON shape stored in control_settings.meeting — day-name keys. */
 export const MEETING_DEFAULTS: Record<string, unknown> = {
   roomUrl: null,
   publicBaseUrl: 'https://crm.vendua.com.br',
@@ -98,9 +74,7 @@ export const MEETING_DEFAULTS: Record<string, unknown> = {
   },
 };
 
-/** Stored settings JSON → normalized config. Malformed pieces fall back to
- *  defaults rather than breaking booking (validateSetting guards writes;
- *  this tolerates rows written before validation existed). */
+/** malformed pieces fall back to defaults — tolerates rows written before validation existed */
 export function normalizeMeetingConfig(raw: Record<string, unknown>): MeetingConfig {
   const s = (v: unknown): string | null => (typeof v === 'string' && v.trim() ? v.trim() : null);
   const int = (v: unknown, dflt: number, lo: number, hi: number): number => {
@@ -150,7 +124,6 @@ export async function meetingConfigTx(tx: Sql): Promise<MeetingConfig> {
   return normalizeMeetingConfig(raw ?? {});
 }
 
-/** Normalized config → the day-name JSON shape the Settings UI edits. */
 export function weeklyToJson(weekly: WeeklyWindows): Record<DayKey, [string, string][]> {
   const hhmm = (m: number) =>
     `${String(Math.floor(m / 60)).padStart(2, '0')}:${String(m % 60).padStart(2, '0')}`;
@@ -160,10 +133,6 @@ export function weeklyToJson(weekly: WeeklyWindows): Record<DayKey, [string, str
   });
   return out;
 }
-
-// ---------------------------------------------------------------------------
-// Slots — pure computation, testable
-// ---------------------------------------------------------------------------
 
 export interface Slot {
   start: Date;
@@ -175,16 +144,13 @@ export interface BusyWindow {
   end: Date;
 }
 
-/** Calendar-day distance a→b (both local dates in cfg.tz). */
 function dayDiff(a: ReturnType<typeof localDateOf>, b: ReturnType<typeof localDateOf>): number {
   return Math.round(
     (Date.UTC(b.year, b.month - 1, b.day) - Date.UTC(a.year, a.month - 1, a.day)) / 86_400_000,
   );
 }
 
-/** Does `start` land on the slot grid — a weekly window, aligned to
- *  slotMinutes from window open, whole duration inside the window, within
- *  the horizon, and in the future? */
+/** lands on the grid: weekly window, slot-aligned, within horizon, in the future */
 export function onGrid(cfg: MeetingConfig, start: Date, durationMin: number, now: Date): boolean {
   if (Number.isNaN(start.getTime()) || start.getTime() <= now.getTime()) return false;
   const date = localDateOf(start, cfg.tz);
@@ -201,7 +167,6 @@ export function onGrid(cfg: MeetingConfig, start: Date, durationMin: number, now
   );
 }
 
-/** Does [start,end) overlap any busy window padded by bufferMinutes? */
 export function isFree(start: Date, end: Date, busy: BusyWindow[], bufferMinutes: number): boolean {
   const buf = bufferMinutes * 60_000;
   const s = start.getTime();
@@ -209,7 +174,6 @@ export function isFree(start: Date, end: Date, busy: BusyWindow[], bufferMinutes
   return !busy.some((b) => s < b.end.getTime() + buf && e > b.start.getTime() - buf);
 }
 
-/** Does [start, start+durationMin) fit the grid and stay clear of busy? */
 export function slotFits(
   cfg: MeetingConfig,
   start: Date,
@@ -223,13 +187,7 @@ export function slotFits(
   );
 }
 
-/**
- * Available slots: each weekly window × horizonDays, stepped in slotMinutes,
- * minus slots already past, minus anything overlapping a busy window padded
- * by bufferMinutes on both sides (the buffer keeps meetings from butting
- * against each other). All candidate instants come from wall-clock times in
- * cfg.tz, so a São Paulo 09:00 is 09:00 regardless of server tz.
- */
+/** weekly windows × horizon stepped in slotMinutes, minus past/busy+buffer; wall-clock math in cfg.tz */
 export function computeSlots(cfg: MeetingConfig, now: Date, busy: BusyWindow[]): Slot[] {
   const slots: Slot[] = [];
   const seen = new Set<number>();
@@ -252,7 +210,6 @@ export function computeSlots(cfg: MeetingConfig, now: Date, busy: BusyWindow[]):
   return slots.sort((a, b) => a.start.getTime() - b.start.getTime());
 }
 
-/** Scheduled meetings as busy windows overlapping [from, to). */
 async function meetingBusyTx(
   tx: Sql,
   from: Date,
@@ -267,8 +224,7 @@ async function meetingBusyTx(
   return rows.map((r) => ({ start: new Date(r.starts_at), end: new Date(r.ends_at) }));
 }
 
-/** Full availability for the public slots endpoint: meetings busy ∪ gcal
- *  busy (when configured). gcal is queried outside any transaction. */
+/** meetings busy ∪ gcal busy; gcal queried outside any transaction */
 export async function availableSlots(
   sql: Sql,
   now: Date,
@@ -282,17 +238,12 @@ export async function availableSlots(
   return { cfg, slots: computeSlots(cfg, now, [...dbBusy, ...gcalBusy]) };
 }
 
-// ---------------------------------------------------------------------------
-// Booking tokens — same HMAC style as mintSessionToken (platform/http.ts):
-// <prefix>.<payload>.<sig>, sig = hmac(secret, domain|payload).
-// ---------------------------------------------------------------------------
+// booking tokens: same HMAC style as mintSessionToken — <prefix>.<payload>.<sig>
 
 const TOKEN_PREFIX = 'vbt';
 const TOKEN_TTL_S = 30 * 24 * 3600; // 30d
 
-// The worker (agent/runner) mints booking links too but never sees the app
-// secrets — index.ts calls this once at boot with staffSecret. Unset →
-// agent links fall back to the static `meeting.bookingUrl` setting.
+// set once at boot with staffSecret; unset → agent links fall back to meeting.bookingUrl
 let runnerBookingSecret: string | null = null;
 export function setBookingSecret(secret: string): void {
   runnerBookingSecret = secret;
@@ -306,15 +257,13 @@ export function bookingToken(leadId: string, secret: string, now = new Date()): 
   return `${TOKEN_PREFIX}.${leadId}.${exp}.${sig}`;
 }
 
-/** Returns the lead_id for a valid token, null for malformed/expired. */
 export function verifyBookingToken(token: string, secret: string, now = new Date()): string | null {
   const parts = token.split('.');
   if (parts.length !== 4 || parts[0] !== TOKEN_PREFIX) return null;
   const leadId = parts[1]!;
   const exp = Number(parts[2]);
   const sig = parts[3]!;
-  // A token may never outlive the mint TTL — reject distant expiries too so
-  // the lifetime is bounded even if a signer is ever used carelessly.
+  // also reject distant expiries — a token may never outlive the mint TTL
   if (!Number.isInteger(exp)) return null;
   if (exp * 1000 < now.getTime() || exp * 1000 > now.getTime() + TOKEN_TTL_S * 1000) return null;
   const expect = createHmac('sha256', `${secret}:booking`)
@@ -330,16 +279,11 @@ export async function bookingLink(sql: Sql, leadId: string, secret: string): Pro
   return `${cfg.publicBaseUrl}/agendar?t=${bookingToken(leadId, secret)}`;
 }
 
-/** Runner-side mint — null when the boot secret was never set (tests,
- *  bare workers), letting callers fall back to the stored setting. */
+/** null when the boot secret was never set — callers fall back to the stored setting */
 export async function bookingLinkForRunner(sql: Sql, leadId: string): Promise<string | null> {
   if (!runnerBookingSecret) return null;
   return bookingLink(sql, leadId, runnerBookingSecret);
 }
-
-// ---------------------------------------------------------------------------
-// Rows
-// ---------------------------------------------------------------------------
 
 export type MeetingStatus = 'scheduled' | 'cancelled' | 'done' | 'no_show';
 export type MeetingSource = 'link' | 'staff' | 'agent';
@@ -411,8 +355,7 @@ export async function listMeetings(
   return rows.map(meetingJson);
 }
 
-/** The lead's next scheduled meeting — the booking page uses it to show an
- *  "already booked" state instead of offering slots. */
+/** the booking page uses this to show "already booked" */
 export async function nextMeetingForLead(
   sql: Sql,
   leadId: string,
@@ -427,10 +370,6 @@ export async function nextMeetingForLead(
   );
   return rows[0] ? meetingJson(rows[0]) : null;
 }
-
-// ---------------------------------------------------------------------------
-// Booking
-// ---------------------------------------------------------------------------
 
 export function fmtWhen(iso: string, tz: string): string {
   return new Intl.DateTimeFormat('pt-BR', {
@@ -484,9 +423,6 @@ export interface BookTxInput {
   durationMin?: number;
 }
 
-/** Validate + normalize a BookInput the same way for both entry points —
- *  the public route calls `bookMeeting`, the staff route runs `bookMeetingTx`
- *  under its own idempotency claim. */
 export function parseBookInput(input: BookInput): BookTxInput {
   const leadId = str(input.leadId, 'leadId', 64);
   if (!UUID_RE.test(leadId)) throw new HttpError(400, 'BAD_REQUEST', 'leadId must be a uuid');
@@ -504,8 +440,7 @@ export function parseBookInput(input: BookInput): BookTxInput {
   };
 }
 
-/** gcal busy around a candidate start — fetch BEFORE opening the transaction:
- *  a network call must never run inside one (nor hold a pooled conn open). */
+/** fetch gcal busy BEFORE opening a tx — no network calls inside one */
 export async function bookBusyWindows(start: Date, excludeEventId?: string | null | undefined) {
   return gcal.busyWindowsExceptEvent(
     new Date(start.getTime() - 24 * 3600_000),
@@ -521,11 +456,7 @@ export interface BookTxResult {
   lead: LeadRow;
 }
 
-/** The booking insert step inside the caller's transaction — the staff POST
- *  runs it under its own claimControl claim so the request stays on ONE
- *  pooled connection. A nested controlTx per request plus ten concurrent
- *  staff bookings would hold every pool connection while each waited on
- *  another (deadlock). */
+/** runs inside the caller's claim — a nested claim per request would deadlock the 10-conn pool */
 export async function bookMeetingTx(
   tx: Sql,
   input: BookTxInput,
@@ -538,8 +469,7 @@ export async function bookMeetingTx(
     if (!lead) throw new HttpError(404, 'LEAD_NOT_FOUND', 'lead not found');
     if (lead.archived_at) throw new HttpError(409, 'LEAD_ARCHIVED', 'lead is archived');
     const cfg = await meetingConfigTx(tx);
-    // Idempotent replay first: a booked (lead, slot) is the caller's own
-    // meeting — return it before slotFits counts it as busy.
+    // replay first: a booked (lead, slot) is the caller's own — return it before slotFits counts it busy
     const existing = (
       await tx<MeetingRow[]>`
         select * from meetings where lead_id = ${leadId} and starts_at = ${start.toISOString()}
@@ -547,12 +477,9 @@ export async function bookMeetingTx(
       `
     )[0];
     if (existing) return { meeting: existing, created: false as const, cfg, lead };
-    // Serialize the busy check + insert across concurrent bookings: at READ
-    // COMMITTED two transactions could both see the slot free — the advisory
-    // lock turns check-then-write into a critical section.
+    // advisory lock turns check-then-write into a critical section (READ COMMITTED could double-book)
     await tx`select pg_advisory_xact_lock(hashtext('vendua.meetings.slot'))`;
-    // A racing book for this same (lead, slot) may have committed while we
-    // waited on the lock — re-check so it replays instead of 409ing.
+    // a racing book may have committed while we waited — re-check so it replays
     const racedExisting = (
       await tx<MeetingRow[]>`
         select * from meetings where lead_id = ${leadId} and starts_at = ${start.toISOString()}
@@ -560,9 +487,7 @@ export async function bookMeetingTx(
       `
     )[0];
     if (racedExisting) return { meeting: racedExisting, created: false as const, cfg, lead };
-    // The public link books one call at a time — a lead with a scheduled
-    // meeting must cancel it (the page offers that) before picking a new slot.
-    // Staff/agent bookings stay unrestricted: staff schedules series.
+    // link books one call at a time; staff/agent bookings stay unrestricted
     if (input.source === 'link') {
       const other = (
         await tx<MeetingRow[]>`
@@ -586,8 +511,7 @@ export async function bookMeetingTx(
     if (!slotFits(cfg, start, durationMin, now, [...dbBusy, ...gcalBusy])) {
       throw new HttpError(409, 'SLOT_TAKEN', 'horário indisponível — escolha outro');
     }
-    // No arbiter target: ON CONFLICT DO NOTHING fires on the partial unique
-    // index too — a concurrent book for the same slot reselects below.
+    // ON CONFLICT DO NOTHING fires on the partial unique index too — a raced book reselects below
     const row = (
       await tx<MeetingRow[]>`
         insert into meetings
@@ -607,13 +531,10 @@ export async function bookMeetingTx(
         `
       )[0];
       if (raced) return { meeting: raced, created: false as const, cfg, lead };
-      // Conflict was against a non-(lead,start) predicate — shouldn't happen
-      // with the single partial index; treat as taken.
+      // conflict on a non-(lead,start) predicate shouldn't happen — treat as taken
       throw new HttpError(409, 'SLOT_TAKEN', 'horário indisponível — escolha outro');
     }
-    // A booked call means the lead engaged — move them to 'invited' when
-    // they're still at the top of the funnel (same write shape updateLead
-    // uses for transitions).
+    // a booked call means the lead engaged — bump top-of-funnel leads to 'invited'
     const actor = input.source === 'staff' ? 'staff' : 'system';
     if (lead.state === 'lead' || lead.state === 'contacted') {
       await tx`update leads set state = 'invited', updated_at = now() where id = ${leadId}`;
@@ -640,12 +561,7 @@ export async function bookMeetingTx(
   }
 }
 
-/**
- * The booking pipeline shared by the public endpoint and staff POST:
- * validate slot → insert (idempotent) → state bump + activity → room + gcal
- * + confirmation after commit. Post-commit effects are best-effort — a
- * Daily/gcal/mail outage must not lose a booked meeting.
- */
+/** post-commit effects are best-effort — a Daily/gcal/mail outage must not lose a booked meeting */
 export async function bookMeeting(sql: Sql, input: BookInput): Promise<BookResult> {
   const bookInput = parseBookInput(input);
   const now = new Date();
@@ -655,18 +571,12 @@ export async function bookMeeting(sql: Sql, input: BookInput): Promise<BookResul
     emitControlEvent('meeting.change', txResult.meeting.id);
     emitControlEvent('lead.change', txResult.lead.id);
   }
-  // Post-commit effects run for replays too — a crash between the insert
-  // commit and here leaves room_url/gcal/confirmation unfinished, and a
-  // retried request is the natural retry point. Each step fills only what's
-  // missing, so re-running is safe.
+  // run effects for replays too — a crash post-commit leaves them unfinished; each step fills what's missing
   await meetingEffects(sql, txResult.meeting, txResult.cfg, txResult.lead, bookInput.bookerContact);
   return { meeting: meetingJson(txResult.meeting), created: txResult.created };
 }
 
-/** Re-runnable effect completion for a meeting whose booking committed but
- *  whose post-commit steps may not have finished (crash mid-effects, then a
- *  claim/idempotency replay that skips the work fn). Called by routes on
- *  replayed responses; no-ops when everything is already in place. */
+/** re-runnable effect completion for a committed booking whose post-commit steps didn't finish */
 export async function ensureMeetingEffects(sql: Sql, meetingId: string): Promise<void> {
   const snap = await controlTx(sql, async (tx) => {
     const meeting = (await tx<MeetingRow[]>`select * from meetings where id = ${meetingId}`)[0];
@@ -679,9 +589,7 @@ export async function ensureMeetingEffects(sql: Sql, meetingId: string): Promise
   await meetingEffects(sql, snap.meeting, snap.cfg, snap.lead, snap.meeting.booker_contact);
 }
 
-/** Per-meeting room URL ends with `vendua-<meetingId>` — anything else on
- *  the row is the static fallback (or nothing), i.e. the Daily step failed
- *  or never ran. */
+/** URL ending in vendua-<id> = per-meeting room; anything else is the static fallback */
 function hasDailyRoom(roomUrl: string | null, meetingId: string): boolean {
   return (roomUrl ?? '').endsWith(`/vendua-${meetingId}`);
 }
@@ -694,19 +602,11 @@ async function meetingEffects(
   bookerContact: string | null,
 ): Promise<void> {
   const leadId = meeting.lead_id ?? lead.id;
-  // Serialize effects per meeting: two concurrent runs (book + idempotent
-  // replay, staff PATCH replay, ensureMeetingEffects) could both read
-  // gcal_event_id null and insert two events — the loser is orphaned and
-  // blocks freebusy forever. A session-scoped advisory lock on a reserved
-  // connection spans the provider calls; a tx-scoped lock can't (the rule
-  // against network calls inside a tx still stands). Each SQL step is its
-  // own manual tx with the tx-local GUC — no session-scoped 'vendua.control'
-  // is ever set on the reserved conn, so nothing can leak to the next pool
-  // borrower.
+  // serialize effects per meeting — concurrent runs would double-insert gcal
+  // events; session advisory on a reserved conn spans the provider calls (a
+  // tx lock can't), manual tx-local GUC can't leak to the next pool borrower
   const conn = await sql.reserve();
-  // postgres.js ReservedSql has no .begin() at runtime (the type extends Sql
-  // but the runtime object lacks it) — drive the tx manually on the pinned
-  // conn; the tx-local GUC still auto-resets at commit/rollback.
+  // ReservedSql has no .begin() — drive the tx manually; the tx-local GUC auto-resets
   const withControl = async <T>(fn: (t: Sql) => Promise<T>): Promise<T> => {
     await conn`begin`;
     try {
@@ -719,20 +619,17 @@ async function meetingEffects(
       throw e;
     }
   };
-  // The row as re-read under the lock — post-commit state the confirmation
-  // copy must reflect (a stale caller snapshot could name an old slot).
+  // re-read under the lock so the confirmation copy reflects post-commit state
   let locked: MeetingRow | null = null;
   try {
     await conn`select pg_advisory_lock(hashtext('vendua.meetings.effects'), hashtext(${meeting.id}))`;
-    // Re-read under the lock — a serialized predecessor may have completed.
     const cur = await withControl(
       async (t) => (await t<MeetingRow[]>`select * from meetings where id = ${meeting.id}`)[0],
     );
     if (!cur || cur.status !== 'scheduled') return;
     let roomUrl = cur.room_url;
     if (!roomUrl || (rooms.dailyConfigured() && !hasDailyRoom(roomUrl, cur.id))) {
-      // Order matters: the room URL must exist before gcal's description and
-      // the confirmation copy are written.
+      // the room URL must exist before gcal's description and the confirmation copy
       const room = await rooms.createRoom(cur.id, new Date(cur.ends_at), cfg.roomUrl);
       roomUrl = room.url;
     }
@@ -773,13 +670,9 @@ async function meetingEffects(
     conn.release();
   }
   if (!locked) return;
-  // Confirmation is composed+dispatched only after conn is released — the
-  // pool is size 10, so compose (claimControl on a pooled conn) running while
-  // we held a reserved conn would deadlock under ~10 concurrent bookings.
+  // compose+dispatch only after releasing conn — the 10-conn pool would deadlock under concurrent bookings
   if (lead.email && !lead.unsubscribed_at) {
-    // An unsubscribed lead can still book (clicking the link is fresh consent),
-    // but outbound honors the opt-out — dispatchMessage would refuse anyway, so
-    // don't leave a stranded 'queued' message on the thread.
+    // unsubscribed lead can still book (fresh consent) but outbound honors the opt-out — don't leave a stranded queued message
     await queueMeetingMessage(sql, {
       leadId,
       channel: 'email',
@@ -810,19 +703,13 @@ function confirmationBody(startsAt: string, roomUrl: string | null, cfg: Meeting
   ].join('\n');
 }
 
-/** Compose a system-authored outbound and dispatch it — used for booking
- *  confirmations. Attempts are numbered: the first runs under the plain
- *  idemKey, and when the latest attempt's message died ('failed') a
- *  `<key>:retry-N` claim composes a fresh row — otherwise replays would only
- *  ever re-dispatch the dead one (dispatchMessage refuses failed messages). */
+/** compose + dispatch a system outbound; a dead attempt's `<key>:retry-N` claim composes a fresh row */
 async function queueMeetingMessage(
   sql: Sql,
   opts: {
     leadId: string;
     channel: 'email' | 'whatsapp';
-    /** Written to lead_messages.meeting_id — dispatch suppresses the send if
-     *  this meeting is no longer 'scheduled': a confirmation/reminder must
-     *  not outlive a cancellation. */
+    /** dispatch suppresses the send when this meeting is no longer 'scheduled' */
     meetingId?: string;
     subject: string;
     body: string;
@@ -867,34 +754,19 @@ async function queueMeetingMessage(
     },
     key,
   );
-  // Dispatch even on a replayed claim: a crash between compose and dispatch
-  // leaves the row 'queued' — dispatchMessage no-ops on terminal states, so
-  // re-dispatch is also the self-heal path. The row's meeting_id drops the
-  // send if the meeting was cancelled/rescheduled in the compose→dispatch
-  // gap — and it also guards the stranded-message recovery in drain().
+  // dispatch even on a replayed claim — re-dispatch is the self-heal path; meeting_id drops the send if cancelled meanwhile
   const dispatch = await dispatchMessage(sql, res.body.message.id);
   return { queued: dispatch.ok, reason: dispatch.reason };
 }
 
-// ---------------------------------------------------------------------------
-// Cancel / reschedule / status
-// ---------------------------------------------------------------------------
-
 const CANCEL_MIN_NOTICE_MS = 12 * 3600_000;
 
-/** Lead-initiated cancel is only allowed while the meeting is still more
- *  than 12h out — inside that window staff cancels it by hand. */
+/** only while the meeting is >12h out — inside that window staff cancels by hand */
 export function selfCancelAllowed(startsAtMs: number, nowMs: number): boolean {
   return startsAtMs - nowMs > CANCEL_MIN_NOTICE_MS;
 }
 
-/**
- * Public-token cancel. `meetingId` pins the target when the caller knows it
- * (the booking page always does — from slots' `existing` or the book
- * response); without it, the soonest upcoming scheduled meeting is cancelled.
- * A retry on an already-cancelled target replays the cancelled row instead of
- * walking on to the lead's next meeting.
- */
+/** meetingId pins the target (else soonest upcoming); a retry on an already-cancelled target replays it */
 export async function cancelByLead(
   sql: Sql,
   leadId: string,
@@ -944,8 +816,7 @@ export async function cancelByLead(
         for update
       `
     )[0];
-    // Replay: the upcoming meeting was already cancelled (e.g. a retry whose
-    // first response was lost) — return it instead of a 404.
+    // already cancelled — replay the row instead of a 404
     if (!row) {
       const replay = (
         await tx<MeetingRow[]>`
@@ -981,10 +852,7 @@ export async function cancelByLead(
     emitControlEvent('meeting.change', out.row.id);
     if (out.row.lead_id) emitControlEvent('lead.change', out.row.lead_id);
   }
-  // Delete runs on replays too — a first attempt may have crashed before or
-  // during it. gcal_event_id is only cleared on success so a failed delete
-  // stays retryable on the next cancel attempt instead of leaking a busy
-  // calendar event.
+  // delete runs on replays too; gcal_event_id clears only on success so a failed delete stays retryable
   if (out.row.gcal_event_id) {
     if (await gcal.deleteEvent(out.row.gcal_event_id)) {
       await controlTx(
@@ -1000,15 +868,7 @@ export async function cancelByLead(
   return meetingJson(out.row);
 }
 
-/**
- * Bring the meeting's tracked calendar event to the row's window — the durable
- * retry for a reschedule interrupted mid-sync (patch + delete both failing on
- * an outage leaves the stored event at the OLD window while the row holds the
- * new one). Probes first: a live event is PATCHed in place, a confirmed-gone
- * one is replaced (delete+insert then writes the new id), an unreachable one
- * keeps its id for the next pass — 'unknown' is never treated as missing.
- * Mutates row.gcal_event_id to the persisted value.
- */
+/** bring the tracked event to the row's window — durable retry for a mid-sync crash; PATCH when live, replace when gone, keep id when unreachable; mutates row.gcal_event_id */
 async function reconcileMeetingEvent(sql: Sql, row: MeetingRow, cfg: MeetingConfig): Promise<void> {
   const wantStart = new Date(row.starts_at).getTime();
   const wantEnd = new Date(row.ends_at).getTime();
@@ -1043,10 +903,7 @@ async function reconcileMeetingEvent(sql: Sql, row: MeetingRow, cfg: MeetingConf
     leadId: row.lead_id,
   });
   if (newId === row.gcal_event_id) return; // was already null and insert failed
-  // Stale-snapshot guard: the row may have moved on while the probe/insert ran
-  // (a concurrent reschedule stored event B while we probed gone event A).
-  // Write only when the row still matches what we read; on miss, delete the
-  // event we just made so it can't sit orphaned on the calendar.
+  // write only when the row still matches what we read — on miss, delete the event we just made
   const wrote = await controlTx(
     sql,
     async (tx) =>
@@ -1071,11 +928,7 @@ export interface PatchMeetingInput {
   endsAt?: string;
 }
 
-/**
- * Staff PATCH: status transitions + reschedule. Writes the matching timeline
- * activity and syncs gcal + room expiry after commit (cancel → gcal delete;
- * reschedule → gcal delete+insert, daily-room exp bump).
- */
+/** status transitions + reschedule; timeline activity + gcal/room sync after commit */
 export async function patchMeeting(
   sql: Sql,
   id: string,
@@ -1086,11 +939,7 @@ export async function patchMeeting(
   body: { meeting: ReturnType<typeof meetingJson> };
   replayed: boolean;
 }> {
-  // gcal busy read for a reschedule must precede the claim tx — never hold
-  // the claim transaction open over a network call. The pre-read is only for
-  // the meeting's own gcal_event_id: the freebusy feed can't name events, so
-  // excluding "the meeting itself" requires the events.list path — without it
-  // a same-day nudge 409s against the event it's moving.
+  // gcal busy read precedes the claim tx — freebusy can't name events, so excluding this meeting needs its own gcal_event_id via events.list
   const gcalBusy = input.startsAt
     ? await gcal.busyWindowsExceptEvent(
         new Date(new Date(input.startsAt).getTime() - 24 * 3600_000),
@@ -1108,8 +957,7 @@ export async function patchMeeting(
         )?.gcal_event_id ?? null,
       )
     : [];
-  // Object-ref instead of a narrowed local — TS narrows `= null` to null and
-  // can't see the closure assignment; a property read keeps the union.
+  // object-ref keeps the union — TS narrows `= null` on a local
   const committed: {
     row?: MeetingRow;
     cfg?: MeetingConfig;
@@ -1133,8 +981,7 @@ export async function patchMeeting(
 
     if (wantsStatus) {
       const target = input.status!;
-      // Allowed: scheduled → cancelled|done|no_show, and done ↔ no_show
-      // (marking the wrong outcome is a normal correction).
+      // allowed: scheduled → cancelled|done|no_show, done ↔ no_show
       const allowed =
         (row.status === 'scheduled' && ['cancelled', 'done', 'no_show'].includes(target)) ||
         (row.status === 'done' && target === 'no_show') ||
@@ -1173,8 +1020,7 @@ export async function patchMeeting(
           'staff',
         );
         if (target === 'no_show') {
-          // One open re-engagement task per lead — a no_show → done → no_show
-          // flip-flop must not stack duplicates.
+          // one open re-engagement task per lead — flip-flops must not stack duplicates
           await tx`
             insert into lead_tasks (lead_id, title, due_at, created_by)
             select ${leadId}, ${`Reengajar após no-show da call de ${fmtWhen(row.starts_at, cfg.tz)}`},
@@ -1187,8 +1033,7 @@ export async function patchMeeting(
           `;
         }
         if (target === 'done') {
-          // A done verdict after no_show means the call happened — the
-          // re-engagement task is moot, close it instead of leaving it open.
+          // done after no_show means the call happened — close the re-engagement task
           await tx`
             update lead_tasks set done_at = now()
             where lead_id = ${leadId} and done_at is null and created_by = 'agent'
@@ -1201,8 +1046,7 @@ export async function patchMeeting(
       return { status: 200, body: { meeting: meetingJson(updated) } };
     }
 
-    // Reschedule: only a scheduled meeting moves; the new slot must fit the
-    // grid and stay clear of busy (this meeting's own row excluded).
+    // only a scheduled meeting moves; new slot must fit the grid, own row excluded
     if (row.status !== 'scheduled') {
       throw new HttpError(409, 'BAD_TRANSITION', `can't reschedule a ${row.status} meeting`);
     }
@@ -1218,8 +1062,7 @@ export async function patchMeeting(
     }
     const end = new Date(start.getTime() + durationMin * 60_000);
     const now = new Date();
-    // Same advisory section as bookMeeting — reschedule can't run its busy
-    // check concurrently with a booking for the same slot.
+    // same advisory section as bookMeeting — reschedule can't race a booking's busy check
     await tx`select pg_advisory_xact_lock(hashtext('vendua.meetings.slot'))`;
     const dbBusy = await meetingBusyTx(
       tx,
@@ -1263,10 +1106,7 @@ export async function patchMeeting(
     if (committed.row.lead_id) emitControlEvent('lead.change', committed.row.lead_id);
   }
 
-  // Post-commit gcal/room sync — runs on replayed claims too: a crash
-  // between claim commit and here leaves the calendar unsynced, and the
-  // retried request is the retry point. Every step fills or rewrites a
-  // stored marker so re-running is safe.
+  // post-commit gcal/room sync — runs on replayed claims too; each step fills or rewrites a stored marker
   const row =
     committed.row ??
     (await controlTx(
@@ -1277,12 +1117,7 @@ export async function patchMeeting(
     committed.cfg ?? (row ? await controlTx(sql, (tx) => meetingConfigTx(tx)) : undefined);
   if (row && cfg) {
     if (row.status === 'cancelled' && row.gcal_event_id) {
-      // The stored id doubles as the "gcal sync pending" marker — cleared only
-      // on success. A failed delete must NOT throw: the cancellation is
-      // already committed and the client makes a fresh idempotency key per
-      // click, so a 500 would report failure for a meeting that's cancelled
-      // and send the retry into BAD_TRANSITION. Warn and keep the marker —
-      // any same-key replay (or a later PATCH replay) retries the delete.
+      // stored id doubles as the "sync pending" marker — a failed delete warns and keeps it (a 500 would send the retry into BAD_TRANSITION)
       if (!(await gcal.deleteEvent(row.gcal_event_id))) {
         mlog.warn({ meetingId: row.id }, 'gcal delete failed — event id kept, replay retries it');
       } else {
@@ -1295,19 +1130,11 @@ export async function patchMeeting(
       }
     } else if (row.status === 'scheduled' && input.startsAt !== undefined) {
       if (committed.prevStart === undefined) {
-        // Claim replay — the reschedule already committed and its effects
-        // already ran (or this is the crash window between them, or a first
-        // run whose gcal calls failed mid-sync). Reconcile heals whatever the
-        // event still needs: in-place PATCH when it's live but drifted,
-        // replace when gone, nothing when already synced or unreachable.
+        // claim replay — reconcile heals whatever the event still needs
         await reconcileMeetingEvent(sql, row, cfg);
         await rooms.bumpRoomExpiry(row.room_url, new Date(row.ends_at));
       } else {
-        // Fresh run: prefer PATCHing the existing event in place — the row
-        // keeps tracking the same id, so a failed update leaves no untracked
-        // event at the old time. The delete+insert swap only runs when the
-        // old event is actually gone (patch 404 → delete is a no-op true),
-        // which is the only state where overwriting the stored id is safe.
+        // prefer PATCH in place — a failed update leaves no untracked event; delete+insert only when the old event is gone
         let synced = false;
         let prevGone = !committed.prevGcalId;
         if (committed.prevGcalId) {
@@ -1318,10 +1145,7 @@ export async function patchMeeting(
           });
           if (!synced) prevGone = await gcal.deleteEvent(committed.prevGcalId);
           if (!synced && !prevGone) {
-            // Both patch and delete failed — keep tracking the old id rather
-            // than inserting a replacement and orphaning it. The event stays
-            // owned by this row: a later reschedule's PATCH heals the times,
-            // and the cancelled-meeting sweeper still deletes it.
+            // both failed — keep tracking the old id; a later PATCH heals the times
             mlog.warn(
               { meetingId: row.id, eventId: committed.prevGcalId },
               'gcal reschedule failed — stored event kept at old time for retry',
@@ -1351,15 +1175,12 @@ export async function patchMeeting(
   return { status: res.status, body: res.body, replayed: res.replayed };
 }
 
-// ---------------------------------------------------------------------------
-// Reminder sweep — called from the agent worker tick (runner.ts)
-// ---------------------------------------------------------------------------
+// reminder sweep — called from the agent worker tick
 
 const REMINDER_24H_MS = 24 * 3600_000;
 const REMINDER_1H_MS = 3600_000;
 
-// Cursor for the gcal drift-reconcile scan in sweepMeetingReminders — a plain
-// in-memory watermark (worst case on restart: the scan restarts from id 0).
+// in-memory scan watermark — on restart the scan resumes from id 0
 let reconcileCursor: string | null = null;
 
 function reminderBody(kind: '24h' | '1h', meeting: MeetingRow, cfg: MeetingConfig): string {
@@ -1370,15 +1191,7 @@ function reminderBody(kind: '24h' | '1h', meeting: MeetingRow, cfg: MeetingConfi
     : `Oi! Nossa call começa daqui a ~1h (${when}).${room}`;
 }
 
-/**
- * Send due meeting reminders. For each scheduled meeting inside a window
- * without its marker: row-lock it, re-check the marker, resolve the lead's
- * reachable channel, run the send guardrail, queue+dispatch. Skipped (marker
- * left null → retried next tick) when the guardrail says no/draft or no
- * channel is reachable — quiet hours clear on their own, and a meeting that
- * starts stops matching the query 10min in.
- * Returns how many reminders went out.
- */
+/** send due reminders; skipped (marker stays null → retried next tick) when the guardrail says no/draft or no channel is reachable */
 export async function sweepMeetingReminders(sql: Sql): Promise<number> {
   const { composeMessageTx } = await import('./threads.ts');
   const { resolveChannelTx, checkSendAllowedTx } = await import('../agent/guardrails.ts');
@@ -1401,8 +1214,7 @@ export async function sweepMeetingReminders(sql: Sql): Promise<number> {
   for (const m of due) {
     if (!m.lead_id) continue;
     const claim = await controlTx(sql, async (tx) => {
-      // Lock the row and re-derive under the lock — a concurrent sweep or a
-      // cancel landing between the list read and here can't double-send.
+      // lock and re-derive under the lock — a concurrent sweep or cancel can't double-send
       const cur = (await tx<MeetingRow[]>`select * from meetings where id = ${m.id} for update`)[0];
       if (!cur || cur.status !== 'scheduled' || !cur.lead_id) return null;
       const msToStart = new Date(cur.starts_at).getTime() - Date.now();
@@ -1416,8 +1228,7 @@ export async function sweepMeetingReminders(sql: Sql): Promise<number> {
       const stored = await getSettingTx<Record<string, unknown>>(tx, 'guardrails', {});
       const g = { ...DEFAULT_GUARDRAILS, ...stored } as Guardrails;
       const verdict = await checkSendAllowedTx(tx, g, cur.lead_id, pick.channel);
-      // Draft-required (first contact / draft mode) or a hard block → don't
-      // send; leave the marker unset so a later tick re-evaluates.
+      // draft-required or hard block → leave the marker unset for the next tick
       if (!verdict.ok || verdict.forceDraft) return null;
       const composed = await composeMessageTx(tx, {
         leadId: cur.lead_id,
@@ -1441,10 +1252,7 @@ export async function sweepMeetingReminders(sql: Sql): Promise<number> {
     if (dispatch.ok) {
       sent++;
     } else {
-      // Dispatch failed → release the marker(s) this tick claimed so a later
-      // tick recomposes and retries; the failed message row stays on the
-      // thread as the attempt's record. reminder_24h_at is only cleared when
-      // a 1h claim set it as a side marker (it was null before).
+      // dispatch failed → release claimed markers so a later tick retries; the failed row stays as the record
       await controlTx(sql, async (tx) => {
         if (claim.kind === '1h' && claim.claimed24) {
           await tx`update meetings set reminder_1h_at = null, reminder_24h_at = null, updated_at = now() where id = ${m.id}`;
@@ -1457,10 +1265,7 @@ export async function sweepMeetingReminders(sql: Sql): Promise<number> {
       mlog.warn({ meetingId: m.id, reason: dispatch.reason }, 'meeting reminder dispatch failed');
     }
   }
-  // Heal bookings whose post-commit effects never ran — a crash between the
-  // booking commit and meetingEffects otherwise waits for a client replay.
-  // Scoped to artifacts a configured provider should have produced, so a
-  // bare install (null room_url/gcal_event_id legitimately) isn't re-scanned.
+  // heal bookings whose post-commit effects never ran; scoped to artifacts a configured provider should have produced
   const wantGcal = gcal.gcalConfigured();
   const wantDaily = rooms.dailyConfigured();
   if (wantGcal || wantDaily) {
@@ -1482,12 +1287,7 @@ export async function sweepMeetingReminders(sql: Sql): Promise<number> {
       );
     }
   }
-  // Reschedule reconcile: a gcal outage mid-reschedule can leave the stored
-  // event on the OLD window while the row holds the new one — probe each
-  // tracked upcoming meeting and PATCH/replace drifted events. The scan walks
-  // a module-level cursor over id order: with more rows than the batch, a
-  // static order would re-check the same in-sync prefix every tick and starve
-  // the drifted tail.
+  // reconcile gcal events drifted by mid-reschedule outages; the cursor keeps a static order from starving the tail
   if (wantGcal) {
     let driftCandidates: MeetingRow[] = [];
     for (let attempt = 0; attempt < 2; attempt++) {
@@ -1514,9 +1314,7 @@ export async function sweepMeetingReminders(sql: Sql): Promise<number> {
         );
       }
     }
-    // The same reap on the other side of a cancel: a failed deleteEvent leaves
-    // gcal_event_id on the cancelled row as the retry marker — without a sweeper
-    // the stale event blocks that slot on the shared calendar forever.
+    // reap cancelled rows' gcal_event_id — a failed delete leaves it as the retry marker
     const stale = await controlTx(
       sql,
       (tx) => tx<{ id: string; gcal_event_id: string }[]>`
@@ -1537,10 +1335,6 @@ export async function sweepMeetingReminders(sql: Sql): Promise<number> {
   }
   return sent;
 }
-
-// ---------------------------------------------------------------------------
-// Status — for GET /control/v1/meetings/status
-// ---------------------------------------------------------------------------
 
 export async function meetingsStatus(sql: Sql) {
   const cfg = await controlTx(sql, (tx) => meetingConfigTx(tx));

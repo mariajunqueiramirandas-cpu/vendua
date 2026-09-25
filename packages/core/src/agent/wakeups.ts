@@ -11,13 +11,6 @@ import { capCentsOf, getSettingTx, type Guardrails } from '../modules/integratio
 
 const agentLog = log.child({ mod: 'agent' });
 
-/**
- * agent/wakeups — the agent's own agenda. `schedule` writes a pending
- * wakeup (one per lead for agent-authored rows — a new one replaces the
- * old), sweepWakeups turns due rows into runs through insertRun, and a live
- * inbound retires non-requested ones exactly like auto outreach.
- */
-
 export const WAKEUP_MIN_LEAD_MS = 10 * 60_000;
 export const WAKEUP_MAX_AHEAD_MS = 90 * 86_400_000;
 
@@ -45,8 +38,7 @@ type WakeupRow = {
   at: Date;
   focus: string;
   status: Wakeup['status'];
-  /** Immutable stamp written at the fired flip — metrics attribute by it
-   *  (updated_at can't serve: cancelWakeup bumps it even on fired rows). */
+  /** metrics attribute by this stamp; updated_at can't serve (cancel bumps it on fired rows) */
   fired_at: Date | null;
   requested: boolean;
   created_by: Wakeup['createdBy'];
@@ -76,16 +68,11 @@ function toWakeup(r: WakeupRow): Wakeup {
   };
 }
 
-/** ISO-8601 shape — Date.parse alone also accepts "March 5, 2030" or
- *  "05/03/2030" and would silently land the wakeup on a guess. A full
- *  datetime with an explicit offset is required: date-only lands at UTC
- *  midnight and a bare datetime resolves in the server's timezone — both
- *  are guesses, not the instant the caller named. */
+/** strict ISO datetime with explicit offset — date-only/bare forms resolve as guesses */
 const ISO_DATETIME_RE =
   /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(?::\d{2}(?:\.\d{1,6})?)?(?:Z|[+-]\d{2}:\d{2})$/;
 
-/** Validates and parses a schedule time — the bounds keep the agent from
- *  hot-looping itself (≥10 min) or parking work past any useful horizon. */
+/** bounds keep the agent from hot-looping itself or parking work past a useful horizon */
 export function parseWakeupAt(v: unknown, now = Date.now()): Date | string {
   if (typeof v !== 'string' || !v.trim()) return 'at must be an ISO-8601 datetime';
   const s = v.trim();
@@ -97,10 +84,7 @@ export function parseWakeupAt(v: unknown, now = Date.now()): Date | string {
   return new Date(t);
 }
 
-/** Replace the lead's pending agent wakeup with a new one. Caller runs it
- *  inside the tool's claim tx (after assertRunClaimTx). The per-lead
- *  advisory makes replace+insert atomic across concurrent runs; it is never
- *  held while waiting on capfin or lead rows, so it can't join a cycle. */
+/** replace the lead's pending agent wakeup inside the tool's claim tx; the per-lead advisory makes replace+insert atomic across concurrent runs */
 export async function scheduleWakeupTx(
   tx: Sql,
   input: {
@@ -113,11 +97,8 @@ export async function scheduleWakeupTx(
   },
 ): Promise<{ wakeup: Wakeup; replaced: string | null } | { error: string }> {
   await tx`select pg_advisory_xact_lock(hashtext(${'wakeup:' + input.leadId}))`;
-  // parseWakeupAt's app-clock bounds go stale while this tx waits on the
-  // advisory (or any conflicting writer): a long hold can push `at` under
-  // the floor between validation and insert. Recheck inside the lock —
-  // clock_timestamp(), not now(): now() is the tx-start time and would
-  // repeat the same stale boundary the wait already outlived.
+  // recheck the floor inside the lock — the wait can push `at` stale;
+  // clock_timestamp(), not now() (tx-start time, already outlived)
   const soon = (
     await tx<{ soon: boolean }[]>`
       select (${input.at}::timestamptz < clock_timestamp() + make_interval(secs => ${WAKEUP_MIN_LEAD_MS / 1000})) as soon
@@ -127,11 +108,8 @@ export async function scheduleWakeupTx(
   const createdBy = input.createdBy ?? 'agent';
   let replaced: string | null = null;
   if (createdBy === 'agent') {
-    // Replace within the class only: an autonomous reminder supersedes the
-    // agent's prior plan but never a `requested` callback the LEAD was
-    // promised (retireWakeupsOnInboundTx already spares it — a cancel here
-    // would let the next inbound retire the reminder too and the promise
-    // dies twice). A new promise likewise supersedes only older promises.
+    // replace within the class only: automation supersedes prior plans but
+    // never a requested callback — that promise would die twice
     const prev = await tx<{ id: string }[]>`
       update agent_wakeups set status = 'canceled', cancel_reason = 'substituído', updated_at = now()
       where lead_id = ${input.leadId} and status = 'pending' and created_by = 'agent'
@@ -151,8 +129,7 @@ export async function scheduleWakeupTx(
   return { wakeup: toWakeup(row), replaced };
 }
 
-/** Pending wakeups of a lead — rendered into lead-bound run context so the
- *  agent knows what it already promised itself. */
+/** rendered into lead-bound run context so the agent knows what it promised */
 export async function pendingWakeupsTx(tx: Sql, leadId: string): Promise<Wakeup[]> {
   const rows = await tx<WakeupRow[]>`
     select w.*, l.name as lead_name from agent_wakeups w
@@ -163,10 +140,7 @@ export async function pendingWakeupsTx(tx: Sql, leadId: string): Promise<Wakeup[
   return rows.map(toWakeup);
 }
 
-/** Inbound retires the agent's own pending follow-ups — the reply run
- *  re-schedules with fresh context. Requested callbacks survive. SKIP
- *  LOCKED: a row the sweep is firing right now becomes an auto outreach the
- *  inbound cancel passes already cover. */
+/** inbound retires the agent's pending follow-ups; requested callbacks survive; SKIP LOCKED — a row mid-fire is covered by the inbound cancel */
 export async function retireWakeupsOnInboundTx(tx: Sql, leadId: string): Promise<number> {
   const rows = await tx<{ id: string }[]>`
     update agent_wakeups set status = 'canceled', cancel_reason = 'lead respondeu', updated_at = now()
@@ -212,12 +186,8 @@ export async function cancelWakeup(sql: Sql, id: string, idemKey: string) {
       `
     )[0];
     if (!row) throw new HttpError(404, 'WAKEUP_NOT_FOUND', 'wakeup not found');
-    // A fired wakeup already materialized its intent — the cancel has to
-    // reach it: drop its still-pending inbox mail and cancel the dedicated
-    // run it spawned, but only while that work is parked (a running run
-    // owns its in-flight steps — stopping those is the cancel-run
-    // endpoint's job, and a run that merely absorbed the mail isn't this
-    // wakeup's to kill, so the wakeupId match stands guard).
+    // a fired wakeup already materialized — cancel its pending inbox mail
+    // and its still-queued run (a running run owns its in-flight steps)
     await tx`
       update agent_inbox set consumed_at = now()
       where consumed_at is null and payload->'params'->>'wakeupId' = ${id}
@@ -229,11 +199,8 @@ export async function cancelWakeup(sql: Sql, id: string, idemKey: string) {
         returning id
       `;
       if (killed.length) {
-        // A requeued run can still carry mail an earlier (dead) attempt
-        // consumed — killing the row would strand it on a terminal run.
-        // This wakeup's own items tombstone instead of re-serving (the
-        // cancel kills that intent); everything else goes back to the
-        // sweep through the same release the staff run-cancel uses.
+        // tombstone this wakeup's items instead of re-serving; release the
+        // rest like the staff run-cancel
         await tx`
           update agent_inbox set consumed_by_run = null
           where consumed_by_run = ${row.fired_run_id} and payload->'params'->>'wakeupId' = ${id}
@@ -247,9 +214,7 @@ export async function cancelWakeup(sql: Sql, id: string, idemKey: string) {
   return res;
 }
 
-/** Materialize due wakeups. Mirrors sweepOutreach's lock discipline: rows
- *  are taken FOR UPDATE SKIP LOCKED, capfin is only TRIED (a busy lead is
- *  skipped and stays pending), insertRun applies the lifetime cost cap. */
+/** materialize due wakeups — FOR UPDATE SKIP LOCKED, capfin only tried (busy lead stays pending), insertRun applies the cost cap */
 export async function sweepWakeups(sql: Sql): Promise<number> {
   const queuedIds: string[] = [];
   let capFlagged = false;
@@ -261,21 +226,16 @@ export async function sweepWakeups(sql: Sql): Promise<number> {
       where l.id = w.lead_id and w.status = 'pending'
         and (l.unsubscribed_at is not null or l.archived_at is not null)
     `;
-    // The playbook switch gates every wakeup; workspace autonomy gates
-    // only the automation kind — promised callbacks (lead-asked or
-    // staff-created) run unmarked like claimRun allows them to.
+    // playbook switch gates every wakeup; autonomy gates only automation —
+    // promised callbacks run unmarked
     if (!(await playbookEnabledTx(tx, 'outreach')).ok) return;
     const { level } = await autonomyTx(tx);
     const autoOff = level === 'off';
     const g = await getSettingTx<Partial<Guardrails>>(tx, 'guardrails', {});
     const capCents = capCentsOf(g);
-    // Over-cap leads stay out of the 20-row window (same reason as
-    // sweepOutreach): a parked prefix must not starve later due wakeups.
-    // Same for autonomy-off — automation wakeups stay pending and would
-    // re-pick every tick, so the query excludes them rather than skipping
-    // them in-loop and letting 20 parked rows starve promised callbacks.
-    // An already-active run is no longer "busy" — the fired wakeup mails
-    // its intent to it through agent_inbox instead of waiting it out.
+    // exclude over-cap and autonomy-off rows in the query so 20 parked
+    // rows can't starve later due wakeups; an active run gets the fired
+    // intent by mail
     const due = await tx<
       { id: string; lead_id: string; focus: string; requested: boolean; created_by: string }[]
     >`
@@ -297,11 +257,8 @@ export async function sweepWakeups(sql: Sql): Promise<number> {
       `;
       if (!capFree[0]!.got) continue;
       const cap: { flagged?: boolean; retired?: string[] } = {};
-      // Agent self-schedules are automation ('auto' — a reply retires them);
-      // lead-asked callbacks and staff wakeups are promises: unmarked,
-      // so autonomy 'off' never stalls them (same exemption claimRun gives
-      // unmarked rows) — they park pending while autonomy is off only when
-      // the run itself is automation.
+      // lead-asked/staff wakeups are promises: unmarked, so autonomy 'off'
+      // never stalls them
       const promised = w.requested || w.created_by === 'staff';
       if (!promised && level === 'off') continue;
       const params: Record<string, unknown> = {
@@ -319,13 +276,10 @@ export async function sweepWakeups(sql: Sql): Promise<number> {
         cap,
       );
       if (cap.flagged) capFlagged = true;
-      // Rows insertRun retired: same run.update the minted run gets.
       if (cap.retired) queuedIds.push(...cap.retired);
       if (runId) {
         queuedIds.push(runId);
-        // A fired wakeup is mail for the lead's run — created now or
-        // already active, the item carries the focus into it (insertRun's
-        // conflict path returns the active run either way).
+        // fired wakeup mails the focus into the lead's run, new or active
         await enqueueInboxTx(tx, w.lead_id, 'wakeup', {
           text: `agendado por você: ${w.focus}`,
           requestedKind: 'outreach',
@@ -335,17 +289,15 @@ export async function sweepWakeups(sql: Sql): Promise<number> {
           update agent_wakeups set status = 'fired', fired_run_id = ${runId}, fired_at = now(), updated_at = now()
           where id = ${w.id}
         `;
-        // One follow-up per lead: a due automation nudge (cadence/auto) is
-        // the same intent — the wakeup run consumes it. capfin is held, so
-        // the lead row lock comes second as capLockTx requires.
+        // the wakeup run consumes a due cadence/auto nudge — same intent;
+        // capfin held, lead lock second per capLockTx
         await tx`
           update leads set next_action_at = null, next_action_source = null
           where id = ${w.lead_id} and next_action_at <= now()
             and next_action_source in ('cadence', 'auto')
         `;
       }
-      // insertRun refusing (cost cap) leaves the wakeup pending: a raised
-      // cap resumes it, and the scan's cap predicate keeps it out of the way.
+      // insertRun refusing (cost cap) leaves the wakeup pending — a raised cap resumes it
     }
   }).catch((e) => agentLog.error({ err: e }, 'wakeup sweep failed'));
   for (const id of queuedIds) emitControlEvent('run.update', id);
