@@ -1571,6 +1571,9 @@ async function drainInbox(att: Attempt): Promise<number> {
     att.run.params?.channel === 'whatsapp' || att.run.params?.channel === 'email'
       ? att.run.params.channel
       : '';
+  // Mail still inside its quiet period (payload.notBefore, stamped at
+  // enqueue) doesn't drain mid-flight either — the inbound delay holds
+  // uniformly whether the item waits for this run or its own later one.
   // Read-only select — consumption is fenced inside persist, so a stale
   // worker picking items here only fails later at the fence, never
   // swallows the mail.
@@ -1581,6 +1584,7 @@ async function drainInbox(att: Attempt): Promise<number> {
       where lead_id = ${att.run.lead_id!} and consumed_at is null
         and (coalesce(payload->'params'->>'draftOnly', 'false') = 'true') = ${runDraftOnly}
         and coalesce(payload->'params'->>'channel', ${runChannel}) = ${runChannel}
+        and (payload->>'notBefore' is null or (payload->>'notBefore')::timestamptz <= now())
       order by created_at limit 10
     `,
   );

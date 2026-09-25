@@ -206,6 +206,22 @@ export async function cancelWakeup(sql: Sql, id: string, idemKey: string) {
       `
     )[0];
     if (!row) throw new HttpError(404, 'WAKEUP_NOT_FOUND', 'wakeup not found');
+    // A fired wakeup already materialized its intent — the cancel has to
+    // reach it: drop its still-pending inbox mail and cancel the dedicated
+    // run it spawned, but only while that work is parked (a running run
+    // owns its in-flight steps — stopping those is the cancel-run
+    // endpoint's job, and a run that merely absorbed the mail isn't this
+    // wakeup's to kill, so the wakeupId match stands guard).
+    await tx`
+      update agent_inbox set consumed_at = now()
+      where consumed_at is null and payload->'params'->>'wakeupId' = ${id}
+    `;
+    if (row.fired_run_id) {
+      await tx`
+        update agent_runs set status = 'canceled', finished_at = now()
+        where id = ${row.fired_run_id} and status = 'queued' and params->>'wakeupId' = ${id}
+      `;
+    }
     return { status: 200, body: { wakeup: toWakeup(row) } };
   });
   if (!res.replayed) emitControlEvent('run.update', id);
