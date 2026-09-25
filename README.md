@@ -30,10 +30,6 @@ vendua/
   storefronts/   # one package per storefront: _template, _examples, <slug>…
   tools/         # repo-level CI utilities, affected-graph scripts
   docs/          # normative architecture docs, ADRs, roadmap, summaries
-  .omp/          # omp agent config: RULES.md (sticky rules), agents/
-  .agents/       # skills/ — custom agent skills (omp + Devin convention)
-  .claude/       # agents/ — task-agent mirrors for Claude Code / Devin
-  AGENTS.md      # repo instructions for coding agents (site/AGENTS.md nests)
 ```
 
 Rationale and isolation rules:
