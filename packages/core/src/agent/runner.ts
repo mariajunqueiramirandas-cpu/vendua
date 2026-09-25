@@ -20,8 +20,6 @@ import {
   memoryForRunTx,
 } from '../modules/agent-memory.ts';
 import { segmentStats, type AgentGoal } from '../modules/leads.ts';
-import { sweepPipelineSnapshots } from '../modules/forecast.ts';
-import { sweepDigest } from '../modules/digest.ts';
 import {
   estimateModelCostUsd,
   providerFor,
@@ -43,6 +41,7 @@ import {
 import { pendingWakeupsTx, sweepWakeups } from './wakeups.ts';
 import { enqueueInboxTx, renderInboxItems, type InboxItem } from './inbox.ts';
 import { requestAgentTx, sweepOrphanInbox } from './dispatch.ts';
+import { anchorTx } from './schedule-anchors.ts';
 import { provenance, SOURCE_PRIORITY, type TriggerSource } from './sources.ts';
 import { executeTool, toolsFor, bookDigest, type BookEntry, type ToolContext } from './tools.ts';
 import { MonidBudget } from './channels/monid.ts';
@@ -57,7 +56,7 @@ import {
 import { pageKey } from './channels/discovery.ts';
 import { dispatchMessage } from './send.ts';
 import { channelAvailabilityTx, whatsappReadyTx } from './guardrails.ts';
-import { bookingLinkForRunner, sweepMeetingReminders } from '../modules/meetings.ts';
+import { bookingLinkForRunner } from '../modules/meetings.ts';
 import { emitControlEvent } from '../modules/control-events.ts';
 
 const agentLog = log.child({ mod: 'agent' });
@@ -2405,46 +2404,25 @@ export async function drain(sql: Sql, limit = 20): Promise<number> {
   // Orphaned mail: the sweep creates the fallback run each payload describes.
   await sweepOrphanInbox(sql).catch((e) => agentLog.error({ err: e }, 'inbox sweep failed'));
   let ran = 0;
-  while (ran < limit && (await runOnce(sql))) ran++;
+  while (ran < limit && !claimsStopped && (await runOnce(sql))) ran++;
   return ran;
 }
 
-let workerTimer: ReturnType<typeof setInterval> | null = null;
-let draining = false;
-
-// In-process worker: durable Postgres queue + periodic sweeps.
-export function startAgentWorker(sql: Sql, intervalMs = 15_000) {
-  if (workerTimer) return;
-  // Over-cap leads without a settings write park queued work until flagged;
-  // keeping the pass in the tick chain retries a failure next interval.
-  void flagCappedLeads(sql).catch((e) => agentLog.error({ err: e }, 'boot cap flag failed'));
-  workerTimer = setInterval(() => {
-    if (draining) return;
-    draining = true;
-    void drain(sql)
-      .then(() =>
-        flagCappedLeads(sql).catch((e) => agentLog.error({ err: e }, 'cap flag sweep failed')),
-      )
-      .then(() => sweepWakeups(sql))
-      .then(() => sweepBriefs(sql))
-      .then(() => sweepStrategist(sql))
-      .then(() => sweepPipelineSnapshots(sql))
-      .then(() => sweepMeetingReminders(sql))
-      .then(() => sweepDigest(sql))
-      .catch((e) => agentLog.error({ err: e }, 'worker failed'))
-      .finally(() => {
-        draining = false;
-      });
-  }, intervalMs);
-  workerTimer.unref?.();
+// Set by the scheduler on shutdown: finish the run in hand, claim nothing new.
+let claimsStopped = false;
+export function stopClaims(stop = true) {
+  claimsStopped = stop;
 }
 
-// Each enabled brief past its 23h cadence gets a discovery run (not-exists prevents
-// double-fire); new leads tag 'descoberto'.
+// Each enabled brief runs once a day from agent.schedule.discoveryHour (workspace time);
+// a brief that hasn't run since the latest anchor is due, a new one runs right away
+// (not-exists prevents double-fire); new leads tag 'descoberto'.
 export async function sweepBriefs(sql: Sql): Promise<number> {
   const queuedIds: string[] = [];
   const pausedIds: string[] = [];
   const fired = await controlTx(sql, async (tx) => {
+    const { schedule } = await agentSettingTx(tx);
+    const { last: anchor } = await anchorTx(tx, { hour: schedule.discoveryHour });
     const due = await tx<
       {
         id: string;
@@ -2459,7 +2437,7 @@ export async function sweepBriefs(sql: Sql): Promise<number> {
     >`
       select id, name, query, segment, city, target, rearmed_at, created_by from discovery_briefs
       where enabled
-        and (last_run_at is null or last_run_at < now() - interval '23 hours')
+        and (last_run_at is null or last_run_at < ${anchor})
         and not exists (
           select 1 from agent_runs r
           where r.kind = 'discovery' and r.status in ('queued', 'running')
@@ -2556,8 +2534,8 @@ export async function sweepBriefs(sql: Sql): Promise<number> {
   return fired;
 }
 
-// Weekly strategist cadence, stamped by created_at; the advisory lock substitutes for a
-// missing anchor row so two workers can't double-fire.
+// Weekly review at agent.schedule weekday/hour (workspace time): due once per anchor, stamped
+// by created_at; the advisory lock serializes workers so two can't double-fire.
 export async function sweepStrategist(sql: Sql): Promise<boolean> {
   let queuedId: string | null = null;
   const fired = await controlTx(sql, async (tx) => {
@@ -2566,11 +2544,15 @@ export async function sweepStrategist(sql: Sql): Promise<boolean> {
     `;
     if (!locked[0]?.ok) return false;
     if (!(await automationAllowedTx(tx, 'strategist')).ok) return false;
+    const { schedule } = await agentSettingTx(tx);
+    const { last: anchor } = await anchorTx(tx, {
+      hour: schedule.weeklyHour,
+      weekday: schedule.weeklyDay,
+    });
     // only board-scoped runs fill the cadence slot
     const recent = await tx`
       select 1 from agent_runs
-      where kind = 'strategist' and lead_id is null
-        and created_at > now() - interval '7 days'
+      where kind = 'strategist' and lead_id is null and created_at >= ${anchor}
       limit 1
     `;
     if (recent.length) return false;

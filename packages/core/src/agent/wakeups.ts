@@ -1,6 +1,5 @@
 import type { Sql } from '../platform/db.ts';
 import { HttpError } from '../platform/http.ts';
-import { log } from '../platform/log.ts';
 import { claimControl, controlTx } from '../modules/control.ts';
 import { emitControlEvent } from '../modules/control-events.ts';
 import { releaseInboxTx } from './runner.ts';
@@ -8,8 +7,6 @@ import { requestAgentTx } from './dispatch.ts';
 import { parkPolicyTx } from './policy.ts';
 import type { JobKind } from './tool-meta.ts';
 import { capCentsOf, getSettingTx, type Guardrails } from '../modules/integrations.ts';
-
-const agentLog = log.child({ mod: 'agent' });
 
 export const WAKEUP_MIN_LEAD_MS = 10 * 60_000;
 export const WAKEUP_MAX_AHEAD_MS = 90 * 86_400_000;
@@ -371,7 +368,7 @@ export async function sweepWakeups(sql: Sql): Promise<number> {
       }
       // insertRun refusing (cost cap) leaves the wakeup pending — a raised cap resumes it
     }
-  }).catch((e) => agentLog.error({ err: e }, 'wakeup sweep failed'));
+  });
   for (const id of queuedIds) emitControlEvent('run.update', id);
   if (capFlagged) emitControlEvent('lead.change');
   return queuedIds.length;

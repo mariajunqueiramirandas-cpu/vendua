@@ -81,7 +81,11 @@ describe('agent v2 — pure', () => {
       jobs: { reply: true, outreach: true, discovery: true, strategist: true },
       instructions: DEFAULT_INSTRUCTIONS,
       weeklyDiscoveryUsd: 0,
+      schedule: { discoveryHour: 9, weeklyDay: 1, weeklyHour: 8 },
     });
+    expect(
+      normalizeAgent({ schedule: { discoveryHour: 25, weeklyDay: 3, weeklyHour: 1.5 } }).schedule,
+    ).toEqual({ discoveryHour: 9, weeklyDay: 3, weeklyHour: 8 });
     const n = normalizeAgent({
       level: 'yolo',
       jobs: { discovery: false, reply: 'no' },
@@ -177,6 +181,11 @@ describe('agent v2 — settings validation', () => {
       validateSetting('agent', { level: 'off', instructions: 'x'.repeat(8001) }),
     ).toThrow();
     expect(() => validateSetting('agent', { level: 'off', weeklyDiscoveryUsd: 51 })).toThrow();
+    expect(() =>
+      validateSetting('agent', { level: 'off', schedule: { discoveryHour: 7, weeklyDay: 5 } }),
+    ).not.toThrow();
+    expect(() => validateSetting('agent', { level: 'off', schedule: { weeklyDay: 7 } })).toThrow();
+    expect(() => validateSetting('agent', { level: 'off', schedule: { hour: 7 } })).toThrow();
   });
 });
 

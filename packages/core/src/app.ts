@@ -2,6 +2,7 @@ import { createHmac, timingSafeEqual } from 'node:crypto';
 import { agentSettingTx, automationAllowedTx, explainAutonomyTx } from './agent/policy.ts';
 import { JOB_KINDS, type JobKind } from './agent/tool-meta.ts';
 import { requestAgentTx } from './agent/dispatch.ts';
+import { listRoutines } from './agent/scheduler.ts';
 import { cancelWakeup, listWakeups } from './agent/wakeups.ts';
 import { existsSync, statSync } from 'node:fs';
 import { extname, join, normalize } from 'node:path';
@@ -1777,6 +1778,12 @@ export function createApp({ sql, sessionSecret, controlSecret, autoDrain }: AppD
       throw new HttpError(422, 'BAD_REQUEST', 'days must be 7 or 30');
     }
     return c.json(await agentMetrics(sql, Number(days) as 7 | 30));
+  });
+
+  // the scheduler's routines: cadence, next run, last recorded outcome (ADR 0016)
+  app.get('/control/v1/agent/routines', async (c) => {
+    controlGate(c);
+    return c.json({ routines: await listRoutines(sql) });
   });
 
   // the `agent` setting with defaults applied — what the runner actually reads

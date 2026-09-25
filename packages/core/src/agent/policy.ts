@@ -29,12 +29,23 @@ export const AGENT_JOBS: readonly AgentJob[] = ['reply', 'outreach', 'discovery'
 export const AGENT_INSTRUCTIONS_MAX = 8000;
 export const DEFAULT_INSTRUCTIONS = DEFAULT_AGENT_RULES.map((r) => `- ${r}`).join('\n');
 
+/** when the recurring jobs run, in the workspace timezone (guardrails.timezone) */
+export interface AgentSchedule {
+  /** discovery briefs run once a day from this local hour */
+  discoveryHour: number;
+  /** weekly review: 0 = Sunday … 6 = Saturday */
+  weeklyDay: number;
+  weeklyHour: number;
+}
+export const DEFAULT_SCHEDULE: AgentSchedule = { discoveryHour: 9, weeklyDay: 1, weeklyHour: 8 };
+
 export interface AgentSetting {
   level: AutonomyLevel;
   jobs: Record<AgentJob, boolean>;
   instructions: string;
   /** strategist may enable its own discovery briefs while trailing-7d discovery spend stays under this; 0 = never */
   weeklyDiscoveryUsd: number;
+  schedule: AgentSchedule;
 }
 
 // Normalizes a stored row: bad/missing fields fall back to defaults so a hand-edited row can't poison policy.
@@ -42,6 +53,12 @@ export function normalizeAgent(v: unknown): AgentSetting {
   const o = (v && typeof v === 'object' && !Array.isArray(v) ? v : {}) as Record<string, unknown>;
   const j = (o.jobs && typeof o.jobs === 'object' ? o.jobs : {}) as Record<string, unknown>;
   const usd = Number(o.weeklyDiscoveryUsd);
+  const sc = (o.schedule && typeof o.schedule === 'object' ? o.schedule : {}) as Record<
+    string,
+    unknown
+  >;
+  const int = (v: unknown, max: number, d: number) =>
+    typeof v === 'number' && Number.isInteger(v) && v >= 0 && v <= max ? v : d;
   return {
     level: AUTONOMY_LEVELS.includes(o.level as AutonomyLevel)
       ? (o.level as AutonomyLevel)
@@ -55,6 +72,11 @@ export function normalizeAgent(v: unknown): AgentSetting {
         ? o.instructions.slice(0, AGENT_INSTRUCTIONS_MAX)
         : DEFAULT_INSTRUCTIONS,
     weeklyDiscoveryUsd: Number.isFinite(usd) ? Math.min(50, Math.max(0, usd)) : 0,
+    schedule: {
+      discoveryHour: int(sc.discoveryHour, 23, DEFAULT_SCHEDULE.discoveryHour),
+      weeklyDay: int(sc.weeklyDay, 6, DEFAULT_SCHEDULE.weeklyDay),
+      weeklyHour: int(sc.weeklyHour, 23, DEFAULT_SCHEDULE.weeklyHour),
+    },
   };
 }
 

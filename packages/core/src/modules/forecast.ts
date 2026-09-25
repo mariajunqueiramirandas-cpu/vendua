@@ -1,7 +1,7 @@
 import type { Sql } from '../platform/db.ts';
 import { controlTx } from './control.ts';
 import { emitControlEvent } from './control-events.ts';
-import { getForecastConfigTx } from './integrations.ts';
+import { DEFAULT_GUARDRAILS, getForecastConfigTx, getSettingTx } from './integrations.ts';
 import { LEAD_STATES, pipelineByStateTx, type StateBucket } from './leads.ts';
 
 // deal_value × per-stage close probability; snapshots freeze the picture once a day
@@ -65,6 +65,13 @@ function snapshotJson(r: SnapshotRow): Snapshot {
 }
 
 /** measure the pipeline now and upsert today's row — unique taken_on makes re-runs idempotent; call inside a control tx */
+/** today in the workspace timezone — a snapshot's day is the team's day, not UTC's */
+async function localDateTx(tx: Sql): Promise<string> {
+  const g = await getSettingTx<{ timezone?: string }>(tx, 'guardrails', {});
+  const tz = g.timezone ?? DEFAULT_GUARDRAILS.timezone;
+  return (await tx<{ d: string }[]>`select (now() at time zone ${tz})::date::text as d`)[0]!.d;
+}
+
 export async function snapshotPipelineTx(tx: Sql): Promise<Snapshot> {
   const byState = await pipelineByStateTx(tx);
   const { weightedCents } = applyProbabilities(byState, await getForecastConfigTx(tx));
@@ -77,7 +84,7 @@ export async function snapshotPipelineTx(tx: Sql): Promise<Snapshot> {
   const row = (
     await tx<SnapshotRow[]>`
       insert into pipeline_snapshots (taken_on, by_state, weighted_cents, agent_cost_cents)
-      values (current_date, ${tx.json(byState as never)}, ${weightedCents}, ${cost})
+      values (${await localDateTx(tx)}::date, ${tx.json(byState as never)}, ${weightedCents}, ${cost})
       on conflict (taken_on) do update set
         by_state = excluded.by_state,
         weighted_cents = excluded.weighted_cents,
@@ -91,7 +98,9 @@ export async function snapshotPipelineTx(tx: Sql): Promise<Snapshot> {
 /** no-op once today's row exists */
 export async function sweepPipelineSnapshots(sql: Sql): Promise<boolean> {
   const taken = await controlTx(sql, async (tx) => {
-    const done = await tx`select 1 from pipeline_snapshots where taken_on = current_date`;
+    const done = await tx`
+      select 1 from pipeline_snapshots where taken_on = ${await localDateTx(tx)}::date
+    `;
     if (done.length) return false;
     await snapshotPipelineTx(tx);
     return true;
