@@ -6,7 +6,7 @@
   import Closing from '$lib/components/Closing.svelte';
   import HeroShader from '$lib/components/HeroShader.svelte';
   import TxShader from '$lib/components/TxShader.svelte';
-  import { onVeilOpen } from '$lib/intro';
+  import { onVeilOpen, VEIL_SKIP_EVENT } from '$lib/intro';
   import { site, signals, manifesto, transmissions, ritual, teaserFaqs } from '$lib/content/site';
 
   let root = $state<HTMLElement>();
@@ -110,9 +110,9 @@
         .from('.scroll-cue', { opacity: 0, duration: 0.9 }, 1.1);
       // A skipped veil clears in a fraction of its normal time; catch the hero up with it.
       const HERO_SKIP_RATE = 2;
-      const offVeilOpen = onVeilOpen((rate) =>
-        hero.timeScale(rate > 1 ? HERO_SKIP_RATE : 1).play(),
-      );
+      const onVeilSkip = () => hero.timeScale(HERO_SKIP_RATE);
+      addEventListener(VEIL_SKIP_EVENT, onVeilSkip, { once: true });
+      const offVeilOpen = onVeilOpen(() => hero.play());
 
       gsap.fromTo(
         '.hero-inner',
@@ -285,7 +285,10 @@
         scrollTrigger: { trigger: '.closing', start: 'top 70%' },
       });
 
-      return offVeilOpen;
+      return () => {
+        offVeilOpen();
+        removeEventListener(VEIL_SKIP_EVENT, onVeilSkip);
+      };
     });
 
     const onSummary = (e: Event) => {

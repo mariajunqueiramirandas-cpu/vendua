@@ -3,6 +3,9 @@
 
 const PART_ANIMATION = 'veil-part';
 
+/** Dispatched on `window` when the visitor skips (fast-forwards) the veil. */
+export const VEIL_SKIP_EVENT = 'vnd:veil-skip';
+
 function partAnimation(): CSSAnimation | undefined {
   const half = document.querySelector<HTMLElement>('.intro-veil .veil-left');
   if (!half || getComputedStyle(half).display === 'none') return undefined;
@@ -13,22 +16,19 @@ function partAnimation(): CSSAnimation | undefined {
     );
 }
 
-/**
- * Runs `cb` once the veil starts parting — immediately if there is no veil to wait for.
- * `rate` is the veil's playback rate at that moment (> 1 when the visitor skipped it).
- */
-export function onVeilOpen(cb: (rate: number) => void): () => void {
+/** Runs `cb` once the veil starts parting — immediately if there is no veil to wait for. */
+export function onVeilOpen(cb: () => void): () => void {
   const anim = partAnimation();
   const target = anim?.effect instanceof KeyframeEffect ? anim.effect.target : null;
   const delay = anim?.effect?.getTiming().delay ?? 0;
   if (!anim || !target || Number(anim.currentTime ?? 0) >= delay) {
-    cb(1);
+    cb();
     return () => {};
   }
   const onStart = (e: Event) => {
     if (e instanceof AnimationEvent && e.animationName === PART_ANIMATION) {
       target.removeEventListener('animationstart', onStart);
-      cb(anim.playbackRate);
+      cb();
     }
   };
   target.addEventListener('animationstart', onStart);
