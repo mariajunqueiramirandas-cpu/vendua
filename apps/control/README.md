@@ -1,0 +1,64 @@
+# apps/control — venduá CRM console
+
+Staff CRM + agent ops console. Served by Core at `/control/` in prod (built into
+`dist/`), talks to `/control/v1` through the typed client in `src/lib/api.ts`.
+
+```sh
+bun run dev      # http://localhost:5195/control/  (proxies /control/v1 → Core :8787)
+bun run check    # tsc
+bun run build
+bun scripts/dev-seed.ts   # 40 leads + threads/drafts/tasks into a local Core
+CHROMIUM=/opt/pw-browsers/chromium bun scripts/shots.ts /pipeline /inbox   # screenshots at 375/820/1440 + overflow check
+```
+
+## Layout
+
+```
+src/app/          shell: AppShell (sidebar ≥768, tab bar <768), routes + legacy redirects, CommandPalette
+src/lib/          api.ts + events.ts (unchanged from apps/control), query.ts (client + `qk` keys),
+                  live.ts (SSE → invalidation), format.ts, labels.ts, hooks.ts, theme.ts
+src/components/   Page, DataList, common (EmptyState, ErrorState, LoadingRows, StateChip, Avatar,
+                  ScoreBar, ConfirmButton, KpiStrip, Fact); ui/ = primitives (button, input, badge,
+                  card/Panel, controls, overlay)
+src/features/<area>/   one folder per hub/screen: pages, components, queries.ts
+```
+
+## Rules
+
+**Design**
+
+- Density first. Desktop: text-sm body, h-8 controls, h-10 table rows, p-3 cards, p-4 page gutter.
+  Phones: 16px inputs (the `Input` already does it), ≥40px tap targets (`pointer-coarse:` sizes
+  are baked into Button/controls), p-3 gutter.
+- Look: neutral warm-gray app chrome with the content on an inset white panel (Linear/Attio
+  class), Inter, hairline borders + soft `shadow-card`/`shadow-pop`. Brand = accents only:
+  forest `primary` for the main action, lime `agent` for agent activity. `bg-sidebar` is the
+  always-dark "night" surface for deliberately dark blocks, not the nav. Numbers use `tnum`,
+  not `font-mono`. Living reference over real data: `/#/_ui`.
+- One header line per page: `<Page title count actions tabs toolbar>`. No hero sections, no
+  display type, no `min-height` filler. The serif is for the logo and login only.
+- Colors are tokens only (`bg-card`, `text-muted-foreground`, `border`, `bg-agent`…) — never
+  hex in components. Both themes must work; check dark with `THEME=dark bun scripts/shots.ts`.
+- Lime (`agent`) marks what the agent did or will do. Amber (`warning`) = needs you.
+  Red (`destructive`) = danger. Primary (forest) = the main action.
+- Mobile first: every list uses `DataList` with a real `mobileRow`; forms/filters open in
+  `ResponsiveSheet` (bottom sheet on phones); multi-pane layouts collapse to routes, not
+  `display:none`. No hover-only affordances. No horizontal page scroll at 375px.
+
+**Code**
+
+- Data through TanStack Query with keys from `qk` in `lib/query.ts` — the first key segment
+  is what SSE invalidates (`lib/live.ts`). No `setInterval` polling, no hand-rolled
+  "newest response wins" refs. Mutations: `useMutation` + `invalidateQueries`, optimistic
+  where the old app was.
+- The cache holds the raw API response under a `qk` key — unwrap with `select`, never in
+  `queryFn` — because several screens share keys (a lead's threads, segments, tasks…) and
+  bulk updaters (`setQueriesData`) assume that shape. A query that stores a derived shape
+  (all pages merged, filtered) must add a distinguishing param to its key.
+- Put filters/tabs/selected ids in the URL (`useSearchParams`) so back/forward and deep links work.
+- Errors: `ErrorState`/`toast.error(errorMessage(e))` from `lib/query.ts`; never `String(e)`.
+- No inline `style={{}}` except truly dynamic values (bar widths, calendar positions).
+- Files under ~400 lines; split by tab/area.
+- `exactOptionalPropertyTypes` is on: optional props are typed `?: T | undefined`.
+- Copy is pt-BR, lowercase-first like the old app ("novo lead", "carregando…").
+- Comments are sparse: only non-obvious _why_.

@@ -1,10 +1,15 @@
+import { fileURLToPath } from 'node:url';
 import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
+import tailwindcss from '@tailwindcss/vite';
 
-// Object-form proxy keeps the Host header intact; string shorthand would set changeOrigin and break tenant resolution.
+// Object-form proxy keeps the Host header intact (string shorthand sets changeOrigin).
 export default defineConfig({
-  plugins: [react()],
+  plugins: [react(), tailwindcss()],
   base: '/control/',
+  resolve: {
+    alias: { '@': fileURLToPath(new URL('./src', import.meta.url)) },
+  },
   server: {
     port: 5195,
     strictPort: true,
@@ -13,7 +18,6 @@ export default defineConfig({
     },
   },
   build: {
-    // Prod: Core serves these assets at /control/*.
     outDir: 'dist',
     assetsDir: 'assets',
   },

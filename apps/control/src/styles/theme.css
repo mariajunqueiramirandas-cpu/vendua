@@ -1,0 +1,315 @@
+@import 'tailwindcss';
+
+@custom-variant dark (&:where(.dark, .dark *));
+
+/*
+ * Neutral, warm-gray surfaces with the brand as accents: forest = primary
+ * action, lime = agent. The app chrome (--app/--nav) sits behind an inset
+ * content panel (--background) on ≥768px.
+ * `--sidebar-*` is the "night" surface for intentionally dark blocks
+ * (WhatsApp pairing, discovery stage) — it stays dark in both themes.
+ */
+:root {
+  --app: #f3f3f1;
+  --nav-foreground: #3f4541;
+  --nav-muted: #7b817d;
+  --nav-active: #ffffff;
+  --nav-hover: rgb(20 30 25 / 0.045);
+
+  --background: #ffffff;
+  --foreground: #16201b;
+  --card: #ffffff;
+  --card-foreground: #16201b;
+  --popover: #ffffff;
+  --popover-foreground: #16201b;
+  --muted: #f6f6f4;
+  --muted-foreground: #6a716c;
+  --secondary: #f0f0ed;
+  --secondary-foreground: #16201b;
+  --primary: #174a3c;
+  --primary-foreground: #ffffff;
+  --agent: #d5f36a;
+  --agent-foreground: #16201b;
+  --agent-soft: #f3fbd6;
+  --agent-ink: #4d6b0b;
+  --warning: #e5a82e;
+  --warning-soft: #fdf3dc;
+  --warning-foreground: #8a5a06;
+  --destructive: #d24b3e;
+  --destructive-soft: #fdecea;
+  --destructive-foreground: #b3372b;
+  --success: #1f7a52;
+  --border: #e8e7e3;
+  --border-strong: #d8d6d0;
+  --input: #dddbd5;
+  --ring: #174a3c;
+  --hover: rgb(20 30 25 / 0.035);
+
+  --shadow-color: 20 25 22;
+  --shadow-panel: 0 0 0 1px rgb(20 25 22 / 0.04), 0 1px 2px rgb(20 25 22 / 0.05);
+  --shadow-card: 0 1px 2px rgb(20 25 22 / 0.04);
+  --shadow-pop:
+    0 0 0 1px rgb(20 25 22 / 0.06), 0 8px 24px -4px rgb(20 25 22 / 0.14),
+    0 2px 6px rgb(20 25 22 / 0.06);
+
+  --sidebar: #0c1410;
+  --sidebar-foreground: #ece7d5;
+  --sidebar-muted: #9dafa4;
+  --sidebar-accent: #17231e;
+  --sidebar-border: #1c2b25;
+
+  --stage-lead: #f0f0ed;
+  --stage-lead-fg: #545b56;
+  --stage-lead-dot: #9aa19c;
+  --stage-contacted: #e9f0fd;
+  --stage-contacted-fg: #2d58b8;
+  --stage-contacted-dot: #4a7de0;
+  --stage-invited: #f1ecfd;
+  --stage-invited-fg: #6440b5;
+  --stage-invited-dot: #8a63e0;
+  --stage-live: #e4f4eb;
+  --stage-live-fg: #1d6b47;
+  --stage-live-dot: #2c9a64;
+
+  --font-sans: 'Inter Variable', 'Inter', ui-sans-serif, system-ui, sans-serif;
+  --font-serif: 'Instrument Serif', Georgia, serif;
+  --font-mono: ui-monospace, 'SF Mono', 'Cascadia Mono', Consolas, monospace;
+
+  color-scheme: light;
+}
+
+.dark {
+  --app: #0b0c0c;
+  --nav-foreground: #c9ccca;
+  --nav-muted: #7e8481;
+  --nav-active: #1b1d1c;
+  --nav-hover: rgb(255 255 255 / 0.04);
+
+  --background: #111312;
+  --foreground: #eceeec;
+  --card: #151716;
+  --card-foreground: #eceeec;
+  --popover: #1a1c1b;
+  --popover-foreground: #eceeec;
+  --muted: #1a1d1b;
+  --muted-foreground: #8d948f;
+  --secondary: #202321;
+  --secondary-foreground: #eceeec;
+  --primary: #e9ede9;
+  --primary-foreground: #111312;
+  --agent: #d5f36a;
+  --agent-foreground: #111312;
+  --agent-soft: rgb(213 243 106 / 0.1);
+  --agent-ink: #d5f36a;
+  --warning: #e5a82e;
+  --warning-soft: rgb(229 168 46 / 0.13);
+  --warning-foreground: #f0c164;
+  --destructive: #e0655a;
+  --destructive-soft: rgb(224 101 90 / 0.13);
+  --destructive-foreground: #f19a90;
+  --success: #5cc592;
+  --border: #232624;
+  --border-strong: #2f3330;
+  --input: #2d312e;
+  --ring: #d5f36a;
+  --hover: rgb(255 255 255 / 0.035);
+
+  --shadow-panel: 0 0 0 1px rgb(255 255 255 / 0.05), 0 1px 3px rgb(0 0 0 / 0.4);
+  --shadow-card: 0 1px 2px rgb(0 0 0 / 0.3);
+  --shadow-pop: 0 0 0 1px rgb(255 255 255 / 0.07), 0 12px 32px -6px rgb(0 0 0 / 0.6);
+
+  --sidebar: #070b09;
+  --sidebar-foreground: #ece7d5;
+  --sidebar-muted: #8fa396;
+  --sidebar-accent: #131d18;
+  --sidebar-border: #16211c;
+
+  --stage-lead: #222523;
+  --stage-lead-fg: #b4bab6;
+  --stage-lead-dot: #7d847f;
+  --stage-contacted: rgb(74 125 224 / 0.15);
+  --stage-contacted-fg: #93b3f3;
+  --stage-contacted-dot: #6b97ee;
+  --stage-invited: rgb(138 99 224 / 0.17);
+  --stage-invited-fg: #bca3f5;
+  --stage-invited-dot: #a283f0;
+  --stage-live: rgb(44 154 100 / 0.16);
+  --stage-live-fg: #7fd6a8;
+  --stage-live-dot: #4cc38a;
+
+  color-scheme: dark;
+}
+
+@theme inline {
+  --color-app: var(--app);
+  --color-nav-foreground: var(--nav-foreground);
+  --color-nav-muted: var(--nav-muted);
+  --color-nav-active: var(--nav-active);
+  --color-nav-hover: var(--nav-hover);
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-agent: var(--agent);
+  --color-agent-foreground: var(--agent-foreground);
+  --color-agent-soft: var(--agent-soft);
+  --color-agent-ink: var(--agent-ink);
+  --color-warning: var(--warning);
+  --color-warning-soft: var(--warning-soft);
+  --color-warning-foreground: var(--warning-foreground);
+  --color-destructive: var(--destructive);
+  --color-destructive-soft: var(--destructive-soft);
+  --color-destructive-foreground: var(--destructive-foreground);
+  --color-success: var(--success);
+  --color-border: var(--border);
+  --color-border-strong: var(--border-strong);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --color-hover: var(--hover);
+  --color-sidebar: var(--sidebar);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-sidebar-muted: var(--sidebar-muted);
+  --color-sidebar-accent: var(--sidebar-accent);
+  --color-sidebar-border: var(--sidebar-border);
+  --color-stage-lead: var(--stage-lead);
+  --color-stage-lead-fg: var(--stage-lead-fg);
+  --color-stage-lead-dot: var(--stage-lead-dot);
+  --color-stage-contacted: var(--stage-contacted);
+  --color-stage-contacted-fg: var(--stage-contacted-fg);
+  --color-stage-contacted-dot: var(--stage-contacted-dot);
+  --color-stage-invited: var(--stage-invited);
+  --color-stage-invited-fg: var(--stage-invited-fg);
+  --color-stage-invited-dot: var(--stage-invited-dot);
+  --color-stage-live: var(--stage-live);
+  --color-stage-live-fg: var(--stage-live-fg);
+  --color-stage-live-dot: var(--stage-live-dot);
+
+  --font-sans: var(--font-sans);
+  --font-serif: var(--font-serif);
+  --font-mono: var(--font-mono);
+
+  --shadow-panel: var(--shadow-panel);
+  --shadow-card: var(--shadow-card);
+  --shadow-pop: var(--shadow-pop);
+
+  --radius-sm: 5px;
+  --radius-md: 7px;
+  --radius-lg: 10px;
+  --radius-xl: 12px;
+}
+
+@layer base {
+  * {
+    border-color: var(--border);
+    -webkit-tap-highlight-color: transparent;
+  }
+  html {
+    overscroll-behavior-y: none;
+  }
+  html,
+  body,
+  #root {
+    height: 100%;
+  }
+  body {
+    background: var(--app);
+    color: var(--foreground);
+    font-family: var(--font-sans);
+    font-size: 0.875rem;
+    line-height: 1.45;
+    letter-spacing: -0.006em;
+    font-feature-settings: 'cv11', 'ss01', 'ss03';
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    text-rendering: optimizeLegibility;
+    touch-action: manipulation;
+  }
+  h1,
+  h2,
+  h3 {
+    letter-spacing: -0.012em;
+  }
+  ::selection {
+    background: var(--agent);
+    color: var(--agent-foreground);
+  }
+  :focus-visible {
+    outline: 2px solid var(--ring);
+    outline-offset: 1px;
+  }
+  button:not(:disabled),
+  [role='button']:not(:disabled) {
+    cursor: pointer;
+  }
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: var(--border-strong) transparent;
+  }
+  @media (prefers-reduced-motion: reduce) {
+    *,
+    *::before,
+    *::after {
+      animation-duration: 0.01ms !important;
+      transition-duration: 0.01ms !important;
+    }
+  }
+}
+
+@utility tnum {
+  font-variant-numeric: tabular-nums;
+}
+
+@utility pb-safe {
+  padding-bottom: env(safe-area-inset-bottom, 0px);
+}
+
+@utility pt-safe {
+  padding-top: env(safe-area-inset-top, 0px);
+}
+
+@utility px-safe {
+  padding-left: env(safe-area-inset-left, 0px);
+  padding-right: env(safe-area-inset-right, 0px);
+}
+
+/* phones pin the shell to the visual viewport (--vvh/--vvo from main.tsx) so the
+   tab bar and composers ride above the software keyboard */
+@utility h-vv {
+  position: fixed;
+  inset-inline: 0;
+  top: var(--vvo, 0px);
+  height: var(--vvh, 100dvh);
+}
+
+@utility no-scrollbar {
+  scrollbar-width: none;
+  &::-webkit-scrollbar {
+    display: none;
+  }
+}
+
+@keyframes pop-in {
+  from {
+    opacity: 0;
+    transform: translateY(4px) scale(0.985);
+  }
+}
+@keyframes fade-in {
+  from {
+    opacity: 0;
+  }
+}
+@utility animate-pop {
+  animation: pop-in 140ms cubic-bezier(0.2, 0, 0, 1);
+}
+@utility animate-fade {
+  animation: fade-in 140ms ease-out;
+}
