@@ -108,7 +108,11 @@
         .from('.line-mask > span', { yPercent: 115, duration: 1.1, stagger: 0.11 }, 0.3)
         .from('.hero-bottom > *', { opacity: 0, y: 22, duration: 0.8, stagger: 0.12 }, 0.8)
         .from('.scroll-cue', { opacity: 0, duration: 0.9 }, 1.1);
-      const offVeilOpen = onVeilOpen(() => hero.play());
+      // A skipped veil clears in a fraction of its normal time; catch the hero up with it.
+      const HERO_SKIP_RATE = 2;
+      const offVeilOpen = onVeilOpen((rate) =>
+        hero.timeScale(rate > 1 ? HERO_SKIP_RATE : 1).play(),
+      );
 
       gsap.fromTo(
         '.hero-inner',
