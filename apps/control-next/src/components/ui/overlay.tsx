@@ -6,7 +6,7 @@ import { X } from 'lucide-react';
 import { cn } from '@/lib/cn.ts';
 import { useIsMobile } from '@/lib/hooks.ts';
 
-const overlayClass = 'fixed inset-0 z-50 bg-black/40';
+const overlayClass = 'fixed inset-0 z-50 animate-fade bg-black/30 dark:bg-black/60';
 
 /** Centered modal (desktop) — becomes a bottom sheet on phones via ResponsiveSheet. */
 export function Dialog({
@@ -32,7 +32,7 @@ export function Dialog({
         <DialogPrimitive.Overlay className={overlayClass} />
         <DialogPrimitive.Content
           className={cn(
-            'fixed top-[12vh] left-1/2 z-50 flex max-h-[76vh] w-[calc(100%-24px)] max-w-md -translate-x-1/2 flex-col rounded-xl border bg-popover text-popover-foreground shadow-2xl outline-none',
+            'fixed top-[12vh] left-1/2 z-50 flex max-h-[76vh] w-[calc(100%-24px)] max-w-md -translate-x-1/2 animate-pop flex-col rounded-xl bg-popover text-popover-foreground shadow-pop outline-none',
             className,
           )}
         >
@@ -45,7 +45,13 @@ export function Dialog({
   );
 }
 
-function SheetHeader({ title, description }: { title: ReactNode; description?: ReactNode }) {
+function SheetHeader({
+  title,
+  description,
+}: {
+  title: ReactNode;
+  description?: ReactNode | undefined;
+}) {
   return (
     <div className="flex items-start gap-2 px-4 pt-3.5 pb-2">
       <div className="min-w-0 flex-1">
@@ -93,7 +99,7 @@ export function ResponsiveSheet({
     return (
       <Vaul.Root open={open} onOpenChange={onOpenChange} repositionInputs={false}>
         <Vaul.Portal>
-          <Vaul.Overlay className="fixed inset-0 z-50 bg-black/40" />
+          <Vaul.Overlay className="fixed inset-0 z-50 bg-black/30 dark:bg-black/60" />
           <Vaul.Content className="fixed inset-x-0 bottom-0 z-50 flex max-h-[calc(var(--vvh,100dvh)-24px)] flex-col rounded-t-2xl border-t bg-popover text-popover-foreground outline-none">
             <div className="mx-auto mt-2 h-1 w-10 shrink-0 rounded-full bg-border-strong" />
             <div className="flex items-start gap-2 px-4 pt-2 pb-2">
@@ -124,7 +130,7 @@ export function ResponsiveSheet({
         <DialogPrimitive.Overlay className={overlayClass} />
         <DialogPrimitive.Content
           className={cn(
-            'fixed inset-y-0 right-0 z-50 flex w-full flex-col border-l bg-popover text-popover-foreground shadow-2xl outline-none',
+            'fixed inset-y-2 right-2 z-50 flex w-[calc(100%-16px)] animate-pop flex-col rounded-xl bg-popover text-popover-foreground shadow-pop outline-none',
             width,
           )}
         >
@@ -151,7 +157,7 @@ export const DropdownMenuContent = forwardRef<
       sideOffset={sideOffset}
       align={align}
       className={cn(
-        'z-50 min-w-44 overflow-hidden rounded-lg border bg-popover p-1 text-popover-foreground shadow-lg',
+        'z-50 min-w-44 animate-pop overflow-hidden rounded-lg bg-popover p-1 text-popover-foreground shadow-pop',
         className,
       )}
       {...props}
@@ -162,12 +168,12 @@ DropdownMenuContent.displayName = 'DropdownMenuContent';
 
 export const DropdownMenuItem = forwardRef<
   ElementRef<typeof MenuPrimitive.Item>,
-  ComponentPropsWithoutRef<typeof MenuPrimitive.Item> & { destructive?: boolean }
+  ComponentPropsWithoutRef<typeof MenuPrimitive.Item> & { destructive?: boolean | undefined }
 >(({ className, destructive, ...props }, ref) => (
   <MenuPrimitive.Item
     ref={ref}
     className={cn(
-      'flex h-8 cursor-default items-center gap-2 rounded-md px-2 text-sm outline-none select-none data-[disabled]:opacity-50 data-[highlighted]:bg-hover pointer-coarse:h-10 [&_svg]:size-4 [&_svg]:text-muted-foreground',
+      'flex h-8 cursor-default items-center gap-2 rounded-[5px] px-2 text-[13px] outline-none select-none data-[disabled]:opacity-50 data-[highlighted]:bg-hover pointer-coarse:h-10 [&_svg]:size-4 [&_svg]:text-muted-foreground',
       destructive && 'text-destructive-foreground [&_svg]:text-destructive-foreground',
       className,
     )}

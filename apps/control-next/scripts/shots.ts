@@ -1,13 +1,16 @@
 // Screenshot + layout smoke for the control app.
 //   bun scripts/shots.ts [route ...]      (defaults to every hub)
 // Env: CHROMIUM, BASE (http://localhost:5196/control/), CONTROL_KEY (dev), OUT (./shots), THEME (light|dark)
-import { chromium, type Page } from '@playwright/test';
-import { mkdirSync } from 'node:fs';
+import { chromium } from '@playwright/test';
+import { existsSync, mkdirSync } from 'node:fs';
 
 const BASE = process.env.BASE ?? 'http://localhost:5196/control/';
 const KEY = process.env.CONTROL_KEY ?? 'dev';
 const OUT = process.env.OUT ?? 'shots';
 const THEME = process.env.THEME === 'dark' ? 'dark' : 'light';
+// Core allows 10 logins/min/IP and the cookie ignores the port — every run (and
+// every parallel dev server) shares one saved session instead of logging in again.
+const AUTH = process.env.AUTH_STATE ?? '/tmp/vendua-control-auth.json';
 const routes = process.argv.slice(2).length
   ? process.argv.slice(2)
   : ['/', '/pipeline', '/pipeline?v=board', '/inbox', '/agenda', '/agente/atividade', '/config'];
@@ -22,6 +25,7 @@ mkdirSync(OUT, { recursive: true });
 const browser = await chromium.launch(
   process.env.CHROMIUM ? { executablePath: process.env.CHROMIUM } : {},
 );
+await ensureAuth();
 let failures = 0;
 for (const vp of VIEWPORTS) {
   const ctx = await browser.newContext({
@@ -29,6 +33,7 @@ for (const vp of VIEWPORTS) {
     isMobile: vp.mobile,
     hasTouch: vp.mobile,
     colorScheme: THEME,
+    storageState: AUTH,
   });
   const page = await ctx.newPage();
   const errors: string[] = [];
@@ -38,7 +43,8 @@ for (const vp of VIEWPORTS) {
     if (m.type() === 'error' && !m.text().startsWith('Failed to load resource'))
       errors.push(m.text());
   });
-  await login(page);
+  await page.goto(BASE);
+  await page.waitForSelector('main', { timeout: 15_000 });
   page.on('response', (r) => r.status() >= 400 && errors.push(`${r.status()} ${r.url()}`));
   for (const r of routes) {
     await page.goto(`${BASE}#${r}`);
@@ -60,13 +66,19 @@ for (const vp of VIEWPORTS) {
 await browser.close();
 process.exit(failures ? 1 : 0);
 
-async function login(page: Page) {
-  await page.goto(BASE);
-  await page.waitForSelector('input[placeholder="chave de acesso"], main', { timeout: 15_000 });
-  const input = page.getByPlaceholder('chave de acesso');
-  if (await input.isVisible()) {
-    await input.fill(KEY);
-    await page.getByRole('button', { name: 'entrar' }).click();
-    await page.waitForSelector('main', { timeout: 15_000 });
+async function ensureAuth() {
+  if (existsSync(AUTH)) {
+    const ctx = await browser.newContext({ storageState: AUTH });
+    const ok = (await ctx.request.get(new URL('v1/session', BASE).href)).ok();
+    await ctx.close();
+    if (ok) return;
   }
+  const ctx = await browser.newContext();
+  const res = await ctx.request.post(new URL('v1/login', BASE).href, {
+    data: { key: KEY },
+    headers: { 'x-vendua-staff': '1', 'idempotency-key': crypto.randomUUID() },
+  });
+  if (!res.ok()) throw new Error(`login failed: ${res.status()} ${await res.text()}`);
+  await ctx.storageState({ path: AUTH });
+  await ctx.close();
 }

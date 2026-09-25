@@ -30,6 +30,11 @@ src/features/<area>/   one folder per hub/screen: pages, components, queries.ts
 - Density first. Desktop: text-sm body, h-8 controls, h-10 table rows, p-3 cards, p-4 page gutter.
   Phones: 16px inputs (the `Input` already does it), ≥40px tap targets (`pointer-coarse:` sizes
   are baked into Button/controls), p-3 gutter.
+- Look: neutral warm-gray app chrome with the content on an inset white panel (Linear/Attio
+  class), Inter, hairline borders + soft `shadow-card`/`shadow-pop`. Brand = accents only:
+  forest `primary` for the main action, lime `agent` for agent activity. `bg-sidebar` is the
+  always-dark "night" surface for deliberately dark blocks, not the nav. Numbers use `tnum`,
+  not `font-mono`. Living reference over real data: `/#/_ui`.
 - One header line per page: `<Page title count actions tabs toolbar>`. No hero sections, no
   display type, no `min-height` filler. The serif is for the logo and login only.
 - Colors are tokens only (`bg-card`, `text-muted-foreground`, `border`, `bg-agent`…) — never

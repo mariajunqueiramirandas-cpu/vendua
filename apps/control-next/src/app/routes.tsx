@@ -13,6 +13,7 @@ const PlansPage = lazy(() => import('@/features/agent/plans/PlansPage.tsx'));
 const DiscoveryPage = lazy(() => import('@/features/agent/discovery/DiscoveryPage.tsx'));
 const StudioPage = lazy(() => import('@/features/agent/studio/StudioPage.tsx'));
 const SettingsPage = lazy(() => import('@/features/settings/SettingsPage.tsx'));
+const UiPreview = lazy(() => import('@/features/dev/UiPreview.tsx'));
 
 /** Old (pre-redesign) URL → new URL, carrying the query string plus `extra` params. */
 function Legacy({
@@ -54,6 +55,7 @@ export function AppRoutes() {
         <Route path="/agente/descoberta" element={<DiscoveryPage />} />
         <Route path="/agente/estudio" element={<StudioPage />} />
         <Route path="/config" element={<SettingsPage />} />
+        <Route path="/_ui" element={<UiPreview />} />
 
         <Route path="/funil" element={<Legacy to="/pipeline?v=board" />} />
         <Route path="/leads" element={<Legacy to="/pipeline" />} />

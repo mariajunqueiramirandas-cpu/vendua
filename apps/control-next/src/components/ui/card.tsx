@@ -3,7 +3,10 @@ import { cn } from '@/lib/cn.ts';
 
 export function Card({ className, ...props }: HTMLAttributes<HTMLDivElement>) {
   return (
-    <div className={cn('rounded-lg border bg-card text-card-foreground', className)} {...props} />
+    <div
+      className={cn('rounded-lg border bg-card text-card-foreground shadow-card', className)}
+      {...props}
+    />
   );
 }
 
@@ -30,7 +33,7 @@ export function Panel({
     <Card className={cn('flex min-w-0 flex-col', className)}>
       {(title || actions || aside) && (
         <div className="flex min-h-10 items-center gap-2 border-b px-3 py-1.5">
-          {title && <h2 className="truncate text-[13px] font-semibold">{title}</h2>}
+          {title && <h2 className="truncate text-[13px] font-semibold tracking-tight">{title}</h2>}
           {aside && <span className="truncate text-xs text-muted-foreground">{aside}</span>}
           {actions && <div className="ml-auto flex shrink-0 items-center gap-1">{actions}</div>}
         </div>

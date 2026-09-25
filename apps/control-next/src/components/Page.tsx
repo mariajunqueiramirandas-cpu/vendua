@@ -1,5 +1,5 @@
 import { useLayoutEffect, useRef, type ReactNode } from 'react';
-import { Link, NavLink, useLocation } from 'react-router-dom';
+import { Link, NavLink, useLocation, useNavigate } from 'react-router-dom';
 import { ChevronLeft } from 'lucide-react';
 import { cn } from '@/lib/cn.ts';
 import { GlobalActions } from '@/app/GlobalActions.tsx';
@@ -45,6 +45,7 @@ export function Page({
   children: ReactNode;
 }) {
   const loc = useLocation();
+  const navigate = useNavigate();
   const key = loc.pathname + loc.search;
   const scroller = useRef<HTMLDivElement>(null);
 
@@ -61,21 +62,30 @@ export function Page({
   return (
     <div className="flex min-h-0 min-w-0 flex-1 flex-col">
       <header className="shrink-0 border-b bg-background">
-        <div className="flex h-12 items-center gap-2 px-3 md:px-4">
+        <div className="flex h-12 items-center gap-2 px-3 md:h-[52px] md:px-5">
           {back && (
             <Link
               to={back}
+              onClick={(e) => {
+                // came from inside the app: go back so the list keeps its filters and scroll
+                if ((window.history.state as { idx?: number } | null)?.idx) {
+                  e.preventDefault();
+                  navigate(-1);
+                }
+              }}
               className="-ml-1.5 inline-flex size-8 items-center justify-center rounded-md text-muted-foreground hover:bg-hover hover:text-foreground"
               aria-label="voltar"
             >
               <ChevronLeft className="size-5" />
             </Link>
           )}
-          <h1 className="min-w-0 truncate text-base font-semibold tracking-tight md:text-lg">
+          <h1 className="min-w-0 truncate text-[15px] font-semibold tracking-[-0.015em]">
             {title}
           </h1>
           {count != null && (
-            <span className="shrink-0 font-mono text-xs text-muted-foreground tnum">{count}</span>
+            <span className="shrink-0 rounded-md bg-secondary px-1.5 text-xs leading-5 font-medium text-muted-foreground tnum">
+              {count}
+            </span>
           )}
           <div className="ml-auto flex shrink-0 items-center gap-1.5">
             {actions}
@@ -83,7 +93,7 @@ export function Page({
           </div>
         </div>
         {tabs && (
-          <nav className="no-scrollbar -mb-px flex gap-1 overflow-x-auto px-2 md:px-3">
+          <nav className="no-scrollbar -mb-px flex gap-0.5 overflow-x-auto px-1.5 md:px-3">
             {tabs.map((t) => (
               <NavLink
                 key={t.to}
@@ -91,7 +101,7 @@ export function Page({
                 end={t.end ?? false}
                 className={({ isActive }) =>
                   cn(
-                    'relative inline-flex h-9 shrink-0 items-center gap-1.5 px-2.5 text-sm text-muted-foreground transition-colors hover:text-foreground',
+                    'relative inline-flex h-9 shrink-0 items-center gap-1.5 px-2 text-[13px] font-medium text-muted-foreground transition-colors hover:text-foreground',
                     isActive &&
                       'text-foreground after:absolute after:inset-x-1.5 after:bottom-0 after:h-0.5 after:rounded-full after:bg-foreground',
                   )
@@ -103,7 +113,7 @@ export function Page({
             ))}
           </nav>
         )}
-        {toolbar && <div className="border-t px-3 py-2 md:px-4">{toolbar}</div>}
+        {toolbar && <div className="border-t px-3 py-2 md:px-5">{toolbar}</div>}
       </header>
       {bleed ? (
         <div ref={scroller} className={cn('flex min-h-0 flex-1 flex-col', className)}>
@@ -111,7 +121,7 @@ export function Page({
         </div>
       ) : (
         <div ref={scroller} className="min-h-0 flex-1 overflow-auto">
-          <div className={cn('p-3 md:p-4', className)}>{children}</div>
+          <div className={cn('p-3 md:p-5', className)}>{children}</div>
         </div>
       )}
     </div>

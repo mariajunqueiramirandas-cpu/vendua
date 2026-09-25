@@ -7,7 +7,7 @@ import { onUnauthorized, qk } from '@/lib/query.ts';
 import { useApplyTheme, useTheme } from '@/lib/theme.ts';
 import { TooltipProvider } from '@/components/ui/controls.tsx';
 import Login from '@/features/auth/Login.tsx';
-import { AppShell } from './AppShell.tsx';
+import { AppShell, BrandMark } from './AppShell.tsx';
 import { AppRoutes } from './routes.tsx';
 
 export default function App() {
@@ -60,10 +60,8 @@ export default function App() {
 
 function Splash() {
   return (
-    <div className="flex h-full items-center justify-center bg-sidebar">
-      <span className="animate-pulse font-serif text-3xl text-sidebar-foreground italic">
-        venduá
-      </span>
+    <div className="flex h-full items-center justify-center bg-app">
+      <BrandMark className="size-9 animate-pulse rounded-[10px] text-[24px]" />
     </div>
   );
 }

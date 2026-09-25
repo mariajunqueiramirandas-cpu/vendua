@@ -9,7 +9,7 @@ import { cn } from '@/lib/cn.ts';
 
 // 16px on phones: iOS zooms into inputs rendered smaller than that
 const field =
-  'w-full min-w-0 rounded-md border border-input bg-card px-2.5 text-base md:text-sm text-foreground placeholder:text-muted-foreground/70 transition-colors focus-visible:outline-2 focus-visible:outline-offset-0 focus-visible:outline-ring disabled:opacity-50';
+  'w-full min-w-0 rounded-md border border-input bg-card px-2.5 text-base text-foreground shadow-card transition-[border-color,box-shadow] placeholder:text-muted-foreground/70 focus-visible:border-ring/60 focus-visible:ring-[3px] focus-visible:ring-ring/15 focus-visible:outline-none disabled:opacity-50 md:text-[13px]';
 
 export const Input = forwardRef<HTMLInputElement, InputHTMLAttributes<HTMLInputElement>>(
   ({ className, ...props }, ref) => (
@@ -40,9 +40,7 @@ export const Select = forwardRef<HTMLSelectElement, SelectHTMLAttributes<HTMLSel
 Select.displayName = 'Select';
 
 export function Label({ className, ...props }: React.LabelHTMLAttributes<HTMLLabelElement>) {
-  return (
-    <label className={cn('text-xs font-medium text-muted-foreground', className)} {...props} />
-  );
+  return <label className={cn('text-xs font-medium text-foreground/80', className)} {...props} />;
 }
 
 /** Label + control + optional hint, stacked. */

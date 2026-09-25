@@ -1,4 +1,4 @@
-import type { ReactNode } from 'react';
+import { useRef, type ReactNode } from 'react';
 import { cn } from '@/lib/cn.ts';
 import { useIsMobile } from '@/lib/hooks.ts';
 import { Checkbox } from './ui/controls.tsx';
@@ -59,44 +59,24 @@ export function DataList<T>({
   };
 
   if (mobile) {
+    // phones: long-press a row to start selecting; checkboxes appear only while selecting
+    const selecting = !!selection && selection.selected.size > 0;
     return (
       <ul className={cn('divide-y', className)}>
         {rows.map((row) => {
           const id = rowKey(row);
           const sel = selection?.selected.has(id) ?? false;
           return (
-            <li
+            <MobileRow
               key={id}
-              className={cn(
-                'flex min-h-14 items-stretch gap-3 px-3',
-                sel && 'bg-agent-soft',
-                rowClassName?.(row),
-              )}
+              selected={sel}
+              selecting={selecting}
+              onToggle={selection ? (on) => toggle(id, on) : undefined}
+              onOpen={onRowClick ? () => onRowClick(row) : undefined}
+              className={rowClassName?.(row)}
             >
-              {selection && (
-                <span className="flex items-center" onClick={(e) => e.stopPropagation()}>
-                  <Checkbox
-                    checked={sel}
-                    onCheckedChange={(v) => toggle(id, v === true)}
-                    aria-label="selecionar"
-                  />
-                </span>
-              )}
-              <div
-                role={onRowClick ? 'button' : undefined}
-                tabIndex={onRowClick ? 0 : undefined}
-                onClick={onRowClick && (() => onRowClick(row))}
-                onKeyDown={
-                  onRowClick &&
-                  ((e) => {
-                    if (e.key === 'Enter') onRowClick(row);
-                  })
-                }
-                className="min-w-0 flex-1 py-2.5 active:bg-hover"
-              >
-                {mobileRow(row)}
-              </div>
-            </li>
+              {mobileRow(row)}
+            </MobileRow>
           );
         })}
       </ul>
@@ -108,8 +88,8 @@ export function DataList<T>({
 
   return (
     <div className={cn('overflow-x-auto', className)}>
-      <table className="w-full border-collapse text-sm">
-        <thead className="sticky top-0 z-10 bg-card">
+      <table className="w-full border-collapse text-[13px]">
+        <thead className="sticky top-0 z-10 bg-muted/80 backdrop-blur">
           <tr className="border-b">
             {selection && (
               <th className="w-9 pl-3">
@@ -126,7 +106,7 @@ export function DataList<T>({
               <th
                 key={c.key}
                 className={cn(
-                  'h-8 px-2 text-left text-[11px] font-medium whitespace-nowrap text-muted-foreground',
+                  'h-8 px-2 text-left text-xs font-medium whitespace-nowrap text-muted-foreground',
                   i === 0 && !selection && 'pl-3',
                   i === columns.length - 1 && 'pr-3',
                   c.align === 'end' && 'text-right',
@@ -169,7 +149,7 @@ export function DataList<T>({
                       'px-2 py-1.5 align-middle',
                       i === 0 && !selection && 'pl-3',
                       i === columns.length - 1 && 'pr-3',
-                      c.align === 'end' && 'text-right font-mono text-[13px] tnum',
+                      c.align === 'end' && 'text-right tnum',
                       c.className,
                     )}
                   >
@@ -182,5 +162,77 @@ export function DataList<T>({
         </tbody>
       </table>
     </div>
+  );
+}
+
+function MobileRow({
+  selected,
+  selecting,
+  onToggle,
+  onOpen,
+  className,
+  children,
+}: {
+  selected: boolean;
+  selecting: boolean;
+  onToggle: ((on: boolean) => void) | undefined;
+  onOpen: (() => void) | undefined;
+  className: string | undefined;
+  children: ReactNode;
+}) {
+  const timer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  const pressed = useRef(false);
+  const cancel = () => clearTimeout(timer.current);
+  const tap = () => {
+    if (pressed.current) {
+      pressed.current = false;
+      return;
+    }
+    if (selecting && onToggle) onToggle(!selected);
+    else onOpen?.();
+  };
+  return (
+    <li
+      className={cn(
+        'flex min-h-14 items-stretch gap-3 px-3 transition-colors select-none',
+        selected && 'bg-agent-soft',
+        className,
+      )}
+    >
+      {selecting && onToggle && (
+        <span className="flex items-center">
+          <Checkbox
+            checked={selected}
+            onCheckedChange={(v) => onToggle(v === true)}
+            aria-label="selecionar"
+          />
+        </span>
+      )}
+      <div
+        role={onOpen || onToggle ? 'button' : undefined}
+        tabIndex={onOpen || onToggle ? 0 : undefined}
+        onClick={tap}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter') tap();
+        }}
+        onPointerDown={
+          onToggle &&
+          (() => {
+            timer.current = setTimeout(() => {
+              pressed.current = true;
+              onToggle(!selected);
+              navigator.vibrate?.(10);
+            }, 450);
+          })
+        }
+        onPointerUp={cancel}
+        onPointerLeave={cancel}
+        onPointerCancel={cancel}
+        onContextMenu={(e) => onToggle && e.preventDefault()}
+        className="min-w-0 flex-1 py-2.5 active:bg-hover"
+      >
+        {children}
+      </div>
+    </li>
   );
 }

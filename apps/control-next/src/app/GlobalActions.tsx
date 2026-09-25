@@ -10,7 +10,6 @@ import {
   SunMoon,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button.tsx';
-import { Kbd } from '@/components/ui/controls.tsx';
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -22,47 +21,31 @@ import {
 import { THEME_LABEL, useTheme } from '@/lib/theme.ts';
 import { useShell } from './shell-context.ts';
 
-/** Search + quick add on every page header; phones also get the overflow menu (config, theme, logout). */
+/** Phone-only header tools — on ≥768px the sidebar carries search, new lead and the account menu. */
 export function GlobalActions() {
   const shell = useShell();
   const nav = useNavigate();
   const theme = useTheme();
   return (
-    <>
-      <Button
-        variant="outline"
-        size="sm"
-        className="hidden h-8 w-44 justify-start text-muted-foreground lg:inline-flex"
-        onClick={shell.openPalette}
-      >
-        <Search /> buscar…
-        <Kbd className="ml-auto">⌘K</Kbd>
+    <div className="-mr-1.5 flex items-center md:hidden">
+      <Button variant="ghost" size="icon" onClick={shell.openPalette} aria-label="buscar">
+        <Search />
       </Button>
       <Button
         variant="ghost"
         size="icon"
-        className="lg:hidden"
-        onClick={shell.openPalette}
-        aria-label="buscar"
-      >
-        <Search />
-      </Button>
-      <Button
-        size="icon"
-        className="md:size-8"
         onClick={() => nav('/pipeline?novo=1')}
         aria-label="novo lead"
-        title="novo lead (n)"
       >
         <Plus />
       </Button>
       <DropdownMenu>
         <DropdownMenuTrigger asChild>
-          <Button variant="ghost" size="icon" className="md:hidden" aria-label="mais">
+          <Button variant="ghost" size="icon" aria-label="mais">
             <MoreHorizontal />
           </Button>
         </DropdownMenuTrigger>
-        <DropdownMenuContent>
+        <DropdownMenuContent className="w-56">
           <DropdownMenuLabel>agente · {shell.llmDriver || '…'}</DropdownMenuLabel>
           <DropdownMenuItem onSelect={() => nav('/config')}>
             <Settings /> Config
@@ -73,22 +56,22 @@ export function GlobalActions() {
               theme.cycle();
             }}
           >
-            <SunMoon /> tema: {THEME_LABEL[theme.pref]}
+            <SunMoon /> Tema: {THEME_LABEL[theme.pref]}
           </DropdownMenuItem>
           {shell.install && (
             <DropdownMenuItem onSelect={shell.install}>
-              <Download /> instalar app
+              <Download /> Instalar app
             </DropdownMenuItem>
           )}
           <DropdownMenuItem onSelect={shell.openHelp}>
-            <Keyboard /> atalhos
+            <Keyboard /> Atalhos
           </DropdownMenuItem>
           <DropdownMenuSeparator />
           <DropdownMenuItem destructive onSelect={shell.logout}>
-            <LogOut /> sair
+            <LogOut /> Sair
           </DropdownMenuItem>
         </DropdownMenuContent>
       </DropdownMenu>
-    </>
+    </div>
   );
 }

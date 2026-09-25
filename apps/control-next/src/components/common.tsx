@@ -24,11 +24,13 @@ export function EmptyState({
   return (
     <div
       className={cn(
-        'flex flex-col items-center justify-center gap-1 px-4 py-8 text-center',
+        'flex flex-col items-center justify-center gap-1 px-4 py-10 text-center',
         className,
       )}
     >
-      <Icon className="mb-1 size-5 text-muted-foreground/70" />
+      <span className="mb-2 inline-flex size-9 items-center justify-center rounded-lg border bg-card shadow-card">
+        <Icon className="size-4 text-muted-foreground" />
+      </span>
       <p className="text-sm font-medium">{title}</p>
       {hint && <p className="max-w-sm text-xs text-muted-foreground">{hint}</p>}
       {action && <div className="mt-2 flex gap-2">{action}</div>}
@@ -63,7 +65,13 @@ export function ErrorState({
 }
 
 /** Placeholder rows while a list loads — keeps layout stable. */
-export function LoadingRows({ rows = 6, className }: { rows?: number; className?: string }) {
+export function LoadingRows({
+  rows = 6,
+  className,
+}: {
+  rows?: number | undefined;
+  className?: string | undefined;
+}) {
   return (
     <div className={cn('flex flex-col gap-2', className)}>
       {Array.from({ length: rows }, (_, i) => (
@@ -80,17 +88,41 @@ const STAGE_VARIANT = {
   live: 'live',
 } as const;
 
-export function StateChip({ state, className }: { state: string; className?: string }) {
+const STAGE_DOT: Record<string, string> = {
+  lead: 'bg-stage-lead-dot',
+  contacted: 'bg-stage-contacted-dot',
+  invited: 'bg-stage-invited-dot',
+  live: 'bg-stage-live-dot',
+};
+
+export function StateChip({ state, className }: { state: string; className?: string | undefined }) {
   const variant = STAGE_VARIANT[state as keyof typeof STAGE_VARIANT] ?? 'default';
   return (
     <Badge variant={variant} className={className}>
+      <span className={cn('size-1.5 rounded-full', STAGE_DOT[state] ?? 'bg-muted-foreground')} />
       {LEAD_STATE_LABEL[state] ?? state}
     </Badge>
   );
 }
 
+// Soft tinted monograms; the hue is a stable hash of the name so a person keeps their color.
+const AVATAR_TONES = [
+  'bg-[#e6efe9] text-[#1e5a40] dark:bg-[#1c3328] dark:text-[#9fd8b8]',
+  'bg-[#e8eefb] text-[#2d52a8] dark:bg-[#1d2a44] dark:text-[#a4bdf0]',
+  'bg-[#f1ebfb] text-[#5e3ca8] dark:bg-[#2c2342] dark:text-[#c3adf2]',
+  'bg-[#fbeee4] text-[#9a4a17] dark:bg-[#3a2a1e] dark:text-[#f0bb92]',
+  'bg-[#fbe9ee] text-[#a5304f] dark:bg-[#3b1f28] dark:text-[#f2a5ba]',
+  'bg-[#eef3dc] text-[#526b10] dark:bg-[#2a3218] dark:text-[#cde58c]',
+];
+
 /** Monogram puck — marks a person/thread across the app. */
-export function Avatar({ name, size = 'md' }: { name: string; size?: 'sm' | 'md' | 'lg' }) {
+export function Avatar({
+  name,
+  size = 'md',
+}: {
+  name: string;
+  size?: 'sm' | 'md' | 'lg' | undefined;
+}) {
   const init = name
     .trim()
     .split(/\s+/)
@@ -98,13 +130,16 @@ export function Avatar({ name, size = 'md' }: { name: string; size?: 'sm' | 'md'
     .map((w) => w[0])
     .join('')
     .toUpperCase();
+  let h = 0;
+  for (const ch of name) h = (h * 31 + ch.charCodeAt(0)) | 0;
   return (
     <span
       aria-hidden
       className={cn(
-        'inline-flex shrink-0 items-center justify-center rounded-full bg-primary font-mono font-semibold text-agent dark:bg-secondary',
+        'inline-flex shrink-0 items-center justify-center rounded-full font-semibold tracking-tight',
+        AVATAR_TONES[Math.abs(h) % AVATAR_TONES.length],
         size === 'sm' && 'size-6 text-[10px]',
-        size === 'md' && 'size-8 text-[11px]',
+        size === 'md' && 'size-8 text-[11.5px]',
         size === 'lg' && 'size-10 text-sm',
       )}
     >
@@ -114,14 +149,14 @@ export function Avatar({ name, size = 'md' }: { name: string; size?: 'sm' | 'md'
 }
 
 /** Score 0–100 as a sliver + tabular number. */
-export function ScoreBar({ score, className }: { score: number; className?: string }) {
+export function ScoreBar({ score, className }: { score: number; className?: string | undefined }) {
   const pct = Math.max(0, Math.min(100, score));
   return (
     <span className={cn('inline-flex items-center gap-1.5', className)} title={`score ${score}`}>
       <span className="h-1 w-10 overflow-hidden rounded-full bg-muted">
         <span className="block h-full rounded-full bg-success" style={{ width: `${pct}%` }} />
       </span>
-      <span className="font-mono text-xs tnum">{score}</span>
+      <span className="text-xs font-medium tnum">{score}</span>
     </span>
   );
 }
@@ -133,7 +168,7 @@ export function ConfirmButton({
   onConfirm,
   variant = 'outline',
   ...props
-}: Omit<ButtonProps, 'onClick'> & { confirm?: ReactNode; onConfirm: () => void }) {
+}: Omit<ButtonProps, 'onClick'> & { confirm?: ReactNode | undefined; onConfirm: () => void }) {
   const [arm, setArm] = useState(false);
   useEffect(() => {
     if (!arm) return;
@@ -161,19 +196,17 @@ export interface Kpi {
 }
 
 /** One compact row of numbers — scrolls sideways on phones instead of stacking cards. */
-export function KpiStrip({ items, className }: { items: Kpi[]; className?: string }) {
+export function KpiStrip({ items, className }: { items: Kpi[]; className?: string | undefined }) {
   return (
     <div className={cn('no-scrollbar -mx-3 flex overflow-x-auto px-3 md:mx-0 md:px-0', className)}>
-      <div className="flex min-w-full divide-x rounded-lg border bg-card">
+      <div className="flex min-w-full divide-x rounded-lg border bg-card shadow-card">
         {items.map((k) => {
           const body = (
             <>
-              <div className="text-[11px] font-medium whitespace-nowrap text-muted-foreground">
-                {k.label}
-              </div>
+              <div className="text-xs whitespace-nowrap text-muted-foreground">{k.label}</div>
               <div
                 className={cn(
-                  'font-mono text-lg leading-tight font-medium whitespace-nowrap tnum',
+                  'text-xl leading-tight font-semibold tracking-[-0.02em] whitespace-nowrap tnum',
                   k.tone === 'warn' && 'text-warning-foreground',
                   k.tone === 'bad' && 'text-destructive-foreground',
                 )}
@@ -185,7 +218,7 @@ export function KpiStrip({ items, className }: { items: Kpi[]; className?: strin
               )}
             </>
           );
-          const cls = 'flex min-w-28 flex-1 flex-col gap-0.5 px-3 py-2';
+          const cls = 'flex min-w-32 flex-1 flex-col gap-1 px-4 py-3';
           return k.to ? (
             <Link key={k.label} to={k.to} className={cn(cls, 'transition-colors hover:bg-hover')}>
               {body}
@@ -205,7 +238,7 @@ export function KpiStrip({ items, className }: { items: Kpi[]; className?: strin
 export function Fact({ label, children }: { label: ReactNode; children: ReactNode }) {
   return (
     <div className="flex min-w-0 flex-col">
-      <span className="text-[11px] text-muted-foreground">{label}</span>
+      <span className="text-xs text-muted-foreground">{label}</span>
       <span className="min-w-0 truncate text-sm">{children}</span>
     </div>
   );
