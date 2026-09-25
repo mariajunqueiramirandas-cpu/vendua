@@ -1,4 +1,4 @@
-import type { HTMLAttributes } from 'react';
+import { forwardRef, type HTMLAttributes } from 'react';
 import { cva, type VariantProps } from 'class-variance-authority';
 import { cn } from '@/lib/cn.ts';
 
@@ -24,13 +24,13 @@ export const badgeVariants = cva(
   },
 );
 
-export function Badge({
-  className,
-  variant,
-  ...props
-}: HTMLAttributes<HTMLSpanElement> & VariantProps<typeof badgeVariants>) {
-  return <span className={cn(badgeVariants({ variant }), className)} {...props} />;
-}
+export const Badge = forwardRef<
+  HTMLSpanElement,
+  HTMLAttributes<HTMLSpanElement> & VariantProps<typeof badgeVariants>
+>(({ className, variant, ...props }, ref) => (
+  <span ref={ref} className={cn(badgeVariants({ variant }), className)} {...props} />
+));
+Badge.displayName = 'Badge';
 
 /** Tiny count bubble for nav items and tabs. */
 export function CountDot({ n, className }: { n: number; className?: string | undefined }) {
