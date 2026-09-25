@@ -3243,6 +3243,53 @@ dbDescribe('worker robustness (db)', () => {
     }
   });
 
+  test("a parked auto item's deadline can't postpone a staff-eligible spawn under autonomy off", async () => {
+    await migrate(sql, MIGRATIONS);
+    await sql`
+      insert into control_settings (key, value) values ('agent_autonomy', ${sql.json({ level: 'off' } as never)})
+      on conflict (key) do update set value = excluded.value
+    `;
+    try {
+      const lead = await controlTx(sql, (tx) =>
+        insertLeadTx(tx, { name: 'Off Deadline', whatsapp: '5511910000021' }),
+      );
+      const leadId = lead.body.lead.id;
+      await sql`delete from agent_runs where status = 'queued'`;
+      // Auto-marked mail parks under 'off' — its notBefore can't stall
+      // the staff request the sweep CAN serve.
+      const tomorrow = new Date(Date.now() + 86_400_000).toISOString();
+      await controlTx(sql, (tx) =>
+        enqueueInboxTx(tx, leadId, 'event', {
+          text: 'a cadência disparou',
+          requestedKind: 'outreach',
+          params: { auto: 'first-contact' },
+          notBefore: tomorrow,
+        }),
+      );
+      await controlTx(sql, (tx) =>
+        enqueueInboxTx(tx, leadId, 'staff', {
+          text: 'reengaja já',
+          requestedKind: 'outreach',
+          params: {},
+        }),
+      );
+      await sweepOrphanInbox(sql);
+      const [run] = await sql<{ run_at: Date | null }[]>`
+        select run_at from agent_runs where lead_id = ${leadId} and status = 'queued'
+      `;
+      expect(run).toBeTruthy();
+      expect(run!.run_at == null || run!.run_at.getTime() <= Date.now() + 60_000).toBe(true);
+      // The parked auto item stays pending for its own switch.
+      expect(
+        (await sql`select 1 from agent_inbox where lead_id = ${leadId} and consumed_at is null`)
+          .length,
+      ).toBe(2);
+      await sql`update agent_runs set status = 'canceled' where lead_id = ${leadId}`;
+    } finally {
+      await sql`delete from control_settings where key = 'agent_autonomy'`;
+    }
+  });
+
   test('terminal leads drop their mail even while paused', async () => {
     await migrate(sql, MIGRATIONS);
     const lead = await controlTx(sql, (tx) =>

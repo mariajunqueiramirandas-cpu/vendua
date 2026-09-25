@@ -223,21 +223,20 @@ export async function insertRun(
       if (!retired.length) return a.id;
       if (cap) (cap.retired ??= []).push(a.id);
       // A pending item only stands in for the retired row when it carries
-      // the same intent whole — a same-kind item with a different marker,
-      // channel or draftOnly spawns different work, and without a deadline
-      // at least the row's own the schedule evaporates with it.
-      const marked = 'auto' in p || p['origin'] === 'inbound';
-      const chan = typeof p['channel'] === 'string' ? (p['channel'] as string) : '';
+      // the same intent whole: same kind, same thread, and the item's
+      // params containing every param the row had (provenance, channel,
+      // draftOnly, focus, src, wakeupId — the sweep respawns from the
+      // item's own params, so anything missing is lost intent). A
+      // scheduled row also needs a notBefore reaching its deadline or
+      // the schedule evaporates with it.
       const covered = (
         await tx<{ ok: boolean }[]>`
           select exists (
             select 1 from agent_inbox i
             where i.lead_id = ${input.leadId ?? null} and i.consumed_at is null
               and i.payload->>'requestedKind' = ${a.kind}
-              and ((coalesce(i.payload->'params', '{}'::jsonb) ? 'auto')
-                   or coalesce(i.payload->'params'->>'origin', '') = 'inbound') = ${marked}
-              and coalesce(i.payload->'params'->>'channel', '') = ${chan}
-              and (coalesce(i.payload->'params'->>'draftOnly', 'false') = 'true') = ${p['draftOnly'] === true}
+              and coalesce(i.payload->>'threadId', '') = ${a.thread_id ?? ''}
+              and coalesce(i.payload->'params', '{}'::jsonb) @> ${tx.json(p as never)}::jsonb
               and (not ${scheduled}
                    or coalesce(nullif(i.payload->>'notBefore', '')::timestamptz,
                         '-infinity'::timestamptz)

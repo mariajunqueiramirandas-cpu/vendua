@@ -843,6 +843,10 @@ export async function executeTool(
           }
         }
       }
+      // Tx outbox — retirements queueOutreach's insertRun collects emit
+      // post-commit; emitting inside the claim would leak a false event on
+      // rollback.
+      const retiredOutreach: string[] = [];
       const res = await claimControl(sql, key, async (tx) => {
         await assertRunClaimTx(tx, ctx);
         // The research dossier lands on the timeline as a note — created with
@@ -898,7 +902,7 @@ export async function executeTool(
           };
           const cap: { retired?: string[] } = {};
           const runId = await insertRun(tx, { kind: 'outreach', leadId, params }, cap);
-          for (const r of cap.retired ?? []) emitControlEvent('run.update', r);
+          retiredOutreach.push(...(cap.retired ?? []));
           if (!runId) return null;
           // The intent rides the mailbox too: insertRun returns the lead's
           // already-active NON-outreach row when one exists, and the item is
@@ -1156,6 +1160,7 @@ export async function executeTool(
         if (typeof leadId === 'string') emitControlEvent('lead.change', leadId);
         const contactRun = (res.body as { contactRun?: unknown }).contactRun;
         if (typeof contactRun === 'string') emitControlEvent('run.update', contactRun);
+        for (const r of retiredOutreach) emitControlEvent('run.update', r);
       }
       return res.body;
     }
