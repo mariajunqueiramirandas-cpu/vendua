@@ -2618,6 +2618,150 @@ dbDescribe('worker robustness (db)', () => {
     expect(msg!.status).toBe('draft');
   });
 
+  test('mail on another channel waits for its own bound run — never drains mid-flight cross-thread', async () => {
+    await migrate(sql, MIGRATIONS);
+    const lead = await controlTx(sql, (tx) =>
+      insertLeadTx(tx, { name: 'Cross Channel', whatsapp: '5511910000006', email: 'x@y.br' }),
+    );
+    const leadId = lead.body.lead.id;
+    const [waThread] = await sql<{ id: string }[]>`
+      insert into lead_threads (lead_id, channel) values (${leadId}, 'whatsapp') returning id
+    `;
+    const [emThread] = await sql<{ id: string }[]>`
+      insert into lead_threads (lead_id, channel) values (${leadId}, 'email') returning id
+    `;
+    await sql`delete from agent_runs where status = 'queued'`;
+    // A whatsapp-bound reply run owns the lead for the next hour — ctx's
+    // threadId/channelOverride are fixed at claim, so an email item that
+    // drained into it would reply on whatsapp. It must stay pending for a
+    // run pinned to ITS channel + thread.
+    const waRun = (await enqueueRun(sql, {
+      kind: 'reply',
+      leadId,
+      threadId: waThread!.id,
+      runAt: new Date(Date.now() + 3600e3),
+      params: { origin: 'inbound', channel: 'whatsapp' },
+    }))!;
+    await controlTx(sql, (tx) =>
+      enqueueInboxTx(tx, leadId, 'inbound', {
+        text: 'mensagem do lead [email]: ainda tem?',
+        threadId: emThread!.id,
+        requestedKind: 'reply',
+        params: { origin: 'inbound', channel: 'email' },
+      }),
+    );
+    await drain(sql);
+    expect(
+      (await sql`select 1 from agent_inbox where lead_id = ${leadId} and consumed_at is null`)
+        .length,
+    ).toBe(1);
+    // Freed, the orphan sweep spawns a run pinned to the mail's own
+    // channel + thread — the reply rides the right conversation.
+    await sql`update agent_runs set status = 'done', finished_at = now() where id = ${waRun}`;
+    await drain(sql);
+    const [item] = await sql<{ consumed_by_run: string | null }[]>`
+      select consumed_by_run from agent_inbox where lead_id = ${leadId}
+    `;
+    expect(item!.consumed_by_run).not.toBeNull();
+    const [spawned] = await sql<
+      { kind: string; thread_id: string; params: { channel?: string } }[]
+    >`select kind, thread_id, params from agent_runs where id = ${item!.consumed_by_run!}`;
+    expect(spawned!.kind).toBe('reply');
+    expect(spawned!.thread_id).toBe(emThread!.id);
+    expect(spawned!.params.channel).toBe('email');
+  });
+
+  test('mail arriving during a draft-only run waits — a reply never strands as a draft', async () => {
+    await migrate(sql, MIGRATIONS);
+    const lead = await controlTx(sql, (tx) =>
+      insertLeadTx(tx, { name: 'Draft Window', whatsapp: '5511910000007' }),
+    );
+    const leadId = lead.body.lead.id;
+    await sql`delete from agent_runs where status = 'queued'`;
+    const draft = (await enqueueRun(sql, {
+      kind: 'reply',
+      leadId,
+      runAt: new Date(Date.now() + 3600e3),
+      params: { draftOnly: true, script: [{ text: 'pensando', delayMs: 1500 }, { text: 'fim' }] },
+    }))!;
+    // Send-capable mail mid-flight in a draftOnly run must defer: draining
+    // it would render the reaction inside a run whose send_message only
+    // composes drafts — the reply would wait for approval it never asked for.
+    await sql`update agent_runs set run_at = now() where id = ${draft}`;
+    const running = runOnce(sql);
+    await new Promise((r) => setTimeout(r, 150));
+    await controlTx(sql, (tx) =>
+      enqueueInboxTx(tx, leadId, 'inbound', {
+        text: 'sim, quero',
+        requestedKind: 'reply',
+        params: { origin: 'inbound' },
+      }),
+    );
+    await running;
+    expect(
+      (await sql`select 1 from agent_inbox where lead_id = ${leadId} and consumed_at is null`)
+        .length,
+    ).toBe(1);
+    // After it finishes, the sweep spawns a normal send-capable reply run.
+    await drain(sql);
+    const [item] = await sql<{ consumed_by_run: string | null }[]>`
+      select consumed_by_run from agent_inbox where lead_id = ${leadId}
+    `;
+    expect(item!.consumed_by_run).not.toBeNull();
+    const [spawned] = await sql<{ params: { draftOnly?: boolean } }[]>`
+      select params from agent_runs where id = ${item!.consumed_by_run!}
+    `;
+    expect(spawned!.params.draftOnly ?? false).toBe(false);
+  });
+
+  test('a blocked oldest item never starves later servable mail on the same lead', async () => {
+    await migrate(sql, MIGRATIONS);
+    const lead = await controlTx(sql, (tx) =>
+      insertLeadTx(tx, { name: 'Blocked First', agent_mode: 'auto' }),
+    );
+    const leadId = lead.body.lead.id;
+    await sql`delete from agent_runs where status = 'queued'`;
+    await sql`update agent_inbox set consumed_at = now() where consumed_at is null`;
+    // The oldest pending item asks for a switched-off playbook — it parks
+    // until triage is re-enabled, but it must NOT park the lead's newer mail.
+    await sql`
+      insert into control_settings (key, value)
+      values ('agent_playbooks', ${sql.json({ triage: { enabled: false } } as never)})
+      on conflict (key) do update set value = excluded.value
+    `;
+    try {
+      await controlTx(sql, (tx) =>
+        enqueueInboxTx(tx, leadId, 'event', {
+          text: 'triage pendente',
+          requestedKind: 'triage',
+          params: { auto: 'cadence' },
+        }),
+      );
+      await controlTx(sql, (tx) =>
+        enqueueInboxTx(tx, leadId, 'staff', {
+          text: 'a equipe pediu um contato',
+          requestedKind: 'outreach',
+          params: { script: [{ text: 'ok' }] },
+        }),
+      );
+      await drain(sql);
+      const runs = await sql<{ id: string; kind: string }[]>`
+        select id, kind from agent_runs where lead_id = ${leadId} order by created_at
+      `;
+      expect(runs).toHaveLength(1);
+      expect(runs[0]!.kind).toBe('outreach');
+      // Draining carries no gates — the spawned run absorbs the parked
+      // triage item into context too; both end up consumed by it.
+      const items = await sql<{ consumed_by_run: string | null }[]>`
+        select consumed_by_run from agent_inbox where lead_id = ${leadId} order by created_at
+      `;
+      expect(items).toHaveLength(2);
+      expect(items.every((i) => i.consumed_by_run === runs[0]!.id)).toBe(true);
+    } finally {
+      await sql`delete from control_settings where key = 'agent_playbooks'`;
+    }
+  });
+
   test('the orphan sweep window reaches younger leads past parked mail', async () => {
     await migrate(sql, MIGRATIONS);
     await sql`delete from agent_runs where status = 'queued'`;

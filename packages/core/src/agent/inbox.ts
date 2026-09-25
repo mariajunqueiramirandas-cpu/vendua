@@ -139,33 +139,47 @@ export async function sweepOrphanInbox(sql: Sql, limit = 10): Promise<number> {
       }
       // Paused or mode 'off' lifts — keep the mail pending.
       if (lead.agent_paused_at || lead.agent_mode === 'off') return null;
-      const first = items[0]!;
-      const p = first.payload;
-      const requestedKind = p?.requestedKind;
-      if (!requestedKind) return null;
-      // Automation intents answer to autonomy; staff and promised work
-      // only to the playbook switch — the same markers claimRun reads off
-      // run params ('auto' key or origin='inbound' = automation; unmarked
-      // = a human asked for it, which kind 'staff' always is).
-      const marked = p?.params != null && ('auto' in p.params || p.params.origin === 'inbound');
-      const gate =
-        first.kind === 'staff' || !marked
-          ? await playbookEnabledTx(tx, requestedKind)
-          : await automationAllowedTx(tx, requestedKind);
-      if (!gate.ok) return null;
-      if (p?.threadId) {
-        const th = await tx<{ agent_enabled: boolean }[]>`
-          select agent_enabled from lead_threads where id = ${p.threadId}
-        `;
-        if (!th[0]?.agent_enabled) return null;
+      // The first ELIGIBLE item drives the spawn: an oldest item stuck
+      // behind a disabled playbook or agent-disabled thread must not
+      // starve younger servable mail on the same lead — blocked items
+      // stay pending for whenever their gate lifts (or a spawned run
+      // drains them into context, gate-free).
+      let spawn: {
+        kind: PlaybookKind;
+        threadId: string | null;
+        params: Record<string, unknown>;
+      } | null = null;
+      for (const item of items) {
+        const p = item.payload;
+        const requestedKind = p?.requestedKind;
+        if (!requestedKind) continue;
+        // Automation intents answer to autonomy; staff and promised work
+        // only to the playbook switch — the same markers claimRun reads
+        // off run params ('auto' key or origin='inbound' = automation;
+        // unmarked = a human asked for it, which kind 'staff' always is).
+        const marked = p?.params != null && ('auto' in p.params || p.params.origin === 'inbound');
+        const gate =
+          item.kind === 'staff' || !marked
+            ? await playbookEnabledTx(tx, requestedKind)
+            : await automationAllowedTx(tx, requestedKind);
+        if (!gate.ok) continue;
+        if (p?.threadId) {
+          const th = await tx<{ agent_enabled: boolean }[]>`
+            select agent_enabled from lead_threads where id = ${p.threadId}
+          `;
+          if (!th[0]?.agent_enabled) continue;
+        }
+        spawn = { kind: requestedKind, threadId: p.threadId ?? null, params: p.params ?? {} };
+        break;
       }
+      if (!spawn) return null;
       // insertRun's cap check still applies — a refused lead keeps the
       // mail pending for a raised cap.
       return insertRun(tx, {
-        kind: requestedKind,
+        kind: spawn.kind,
         leadId: lead_id,
-        threadId: p.threadId ?? null,
-        params: p.params ?? {},
+        threadId: spawn.threadId,
+        params: spawn.params,
       });
     }).catch((e) => {
       agentLog.warn({ err: e, leadId: lead_id }, 'orphan inbox sweep failed for lead');

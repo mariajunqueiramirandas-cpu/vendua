@@ -140,17 +140,10 @@ export async function agentMetrics(sql: Sql, days: 7 | 30): Promise<AgentMetrics
         select count(*) filter (where status = 'pending')::int as pending,
               count(*) filter (
                 -- attribute a fire to when the sweep actually turned it into
-                -- a run (fired_run_id's created_at), not the requested at —
-                -- an overdue wakeup firing now belongs to this window
-                where status = 'fired'
-                  and coalesce(
-                    (select r.created_at from agent_runs r where r.id = w.fired_run_id),
-                    w.at
-                  ) >= ${from}
-                  and coalesce(
-                    (select r.created_at from agent_runs r where r.id = w.fired_run_id),
-                    w.at
-                  ) <= ${to}
+                -- mail (the flip's own updated_at stamp): fired_run_id's
+                -- created_at would misdate a wakeup delivered into a
+                -- pre-existing run, and w.at is the request, not the fire.
+                where status = 'fired' and w.updated_at >= ${from} and w.updated_at <= ${to}
               )::int as fired
             from agent_wakeups w
           `
