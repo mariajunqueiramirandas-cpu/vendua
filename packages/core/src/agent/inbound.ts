@@ -3,7 +3,7 @@ import { controlTx } from '../modules/control.ts';
 import { emitControlEvent } from '../modules/control-events.ts';
 import { getGuardrails, phoneIsIgnored } from '../modules/integrations.ts';
 import { addInboundMessage, type Channel, type InboundResult } from '../modules/threads.ts';
-import { capLockTx, drain, insertRun } from './runner.ts';
+import { capLockTx, drain, insertRun, releaseInboxTx } from './runner.ts';
 import { enqueueInboxTx } from './inbox.ts';
 import { automationAllowedTx } from './policy.ts';
 import { retireWakeupsOnInboundTx } from './wakeups.ts';
@@ -85,6 +85,7 @@ export async function ingestInbound(
   // between the message insert and now is seen here instead of stranding a
   // queued reply on a suppressed thread/lead.
   const supersededThreads: string[] = [];
+  const canceledRunIds: string[] = [];
   const { runId, capFlagged } = await controlTx(sql, async (tx) => {
     // 'capfin' first: the per-lead advisory serializes this whole gate
     // against claims (claimRun only TRIES it — while we hold it every
@@ -102,10 +103,10 @@ export async function ingestInbound(
     // Inbound retires COMPOSED drafts of auto outreach — a "first contact"
     // answering nothing is obsolete the moment the lead writes, wherever
     // the run that authored it stands (queued, running, done, failed).
-    // The runs themselves are NOT touched anymore: the message mails to
-    // the lead's active run through agent_inbox instead of superseding it.
-    // 'regenerate'/'agent' stay exempt — provenance says "possibly a
-    // promise", never disposable.
+    // Queued auto outreach rows retire alongside them (below); a RUNNING
+    // outreach is untouched — the message mails to it through agent_inbox
+    // instead of superseding it. 'regenerate'/'agent' stay exempt —
+    // provenance says "possibly a promise", never disposable.
     const drafts = await tx<{ thread_id: string }[]>`
       update lead_messages m
       set status = 'rejected', error = 'lead respondeu', updated_at = now()
@@ -119,6 +120,41 @@ export async function ingestInbound(
       returning m.thread_id
     `;
     supersededThreads.push(...drafts.map((d) => d.thread_id));
+    // Queued AUTO outreach retires with the drafts: it can never serve the
+    // new mail (drainInbox only runs inside an executing run, its channel
+    // pin may not match the item's, and it would fire before the inbound's
+    // quiet period ends) — so it would send a "reopening" that answers
+    // nothing. 'regenerate'/'agent' stay exempt — provenance says
+    // "possibly a promise", never disposable. A RUNNING outreach keeps
+    // its claim and drains the mail mid-flight — and the 'queued'
+    // predicate keeps this update's row locks behind the l,t lock, the
+    // same ordering every other writer follows (a 'running' predicate
+    // would wait on rows held by tool txs that took run→lead).
+    const canceled = await tx<{ id: string }[]>`
+      update agent_runs
+      set status = 'canceled', error = 'lead respondeu', finished_at = now()
+      where lead_id = ${res.leadId} and kind = 'outreach' and status = 'queued'
+        and params->>'auto' is not null
+        and params->>'auto' not in ('regenerate', 'agent')
+      returning id
+    `;
+    canceledRunIds.push(...canceled.map((c) => c.id));
+    // A canceled requeued run keeps mail consumed in its dead attempt —
+    // release it so the reply serves it (event retire: the deliveries
+    // bound is for failure paths), then tombstone the pending cadence
+    // events those runs minted: 'a cadência disparou' is obsolete the
+    // moment the lead writes. Scoped to requestedKind='outreach' — an
+    // auto discovery/strategist event owes the lead nothing and waits
+    // for its own run.
+    for (const rid of canceledRunIds) await releaseInboxTx(tx, rid, true);
+    await tx`
+      update agent_inbox
+      set consumed_at = now(), consumed_by_run = null
+      where lead_id = ${res.leadId} and kind = 'event' and consumed_at is null
+        and payload->>'requestedKind' = 'outreach'
+        and payload->'params'->>'auto' is not null
+        and payload->'params'->>'auto' not in ('regenerate', 'agent')
+    `;
     await retireWakeupsOnInboundTx(tx, res.leadId);
     const gate = gateRows[0];
 
@@ -178,6 +214,7 @@ export async function ingestInbound(
     return { runId: id, capFlagged: cap.flagged === true };
   });
   for (const tid of new Set(supersededThreads)) emitControlEvent('draft.change', tid);
+  for (const id of canceledRunIds) emitControlEvent('run.update', id);
   if (capFlagged) emitControlEvent('lead.change');
   if (runId) {
     // The latest message earns its own quiet period: slide the parked

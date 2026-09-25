@@ -232,7 +232,7 @@ export async function cancelWakeup(sql: Sql, id: string, idemKey: string) {
           update agent_inbox set consumed_by_run = null
           where consumed_by_run = ${row.fired_run_id} and payload->'params'->>'wakeupId' = ${id}
         `;
-        await releaseInboxTx(tx, row.fired_run_id);
+        await releaseInboxTx(tx, row.fired_run_id, true);
       }
     }
     return { status: 200, body: { wakeup: toWakeup(row) } };

@@ -35,6 +35,7 @@ import { buildSystemPrompt } from './prompts.ts';
 import { loadPlaybookTx, mergePlaybook, type EffectivePlaybook } from './playbooks.ts';
 import {
   automationAllowedTx,
+  autonomyTx,
   claimPolicyTx,
   discoveryBudgetTx,
   playbookEnabledTx,
@@ -537,8 +538,15 @@ export async function claimRun(sql: Sql): Promise<RunRow | null> {
  *  terminal-reclaim commit, and the staff-cancel endpoint. Delivery is
  *  at-least-once — the first re-serve stamps a `resumed` marker and a
  *  note in the rendered text so the serving run checks the thread
- *  history for what the dead run already did (it may have sent). */
-export async function releaseInboxTx(tx: Sql, runId: string): Promise<void> {
+ *  history for what the dead run already did (it may have sent).
+ *
+ *  `event` retirements (staff cancel, wakeup cancel, inbound cancel,
+ *  promised-work takeover) carry no failure signal — the run didn't die
+ *  serving the mail, an event retired it — so the bound lifts: every
+ *  outstanding request returns for another serve rather than stranding
+ *  consumed by a canceled run. Failure retirements keep the bound —
+ *  that's where poison mail lives. */
+export async function releaseInboxTx(tx: Sql, runId: string, event?: boolean): Promise<void> {
   await tx`
     update agent_inbox
     set consumed_at = null, consumed_by_run = null,
@@ -551,7 +559,7 @@ export async function releaseInboxTx(tx: Sql, runId: string): Promise<void> {
               'resumed', true)
             end
     where consumed_by_run = ${runId}
-      and coalesce((payload->>'deliveries')::int, 0) < 2
+      and (${event === true} or coalesce((payload->>'deliveries')::int, 0) < 2)
   `;
 }
 
@@ -1623,10 +1631,23 @@ async function drainInbox(att: Attempt): Promise<number> {
       )
         off.push(k);
     }
+    // Same recheck for a thread staff paused after the item enqueued —
+    // the spawn gate consults lead_threads.agent_enabled, so the drain
+    // must too or an unbound run still serves that thread's mail.
+    const dead = (
+      await tx<{ t: string }[]>`
+        select distinct payload->>'threadId' as t from agent_inbox
+        where ${scope} and payload->>'threadId' is not null
+          and payload->>'threadId' in (
+            select id::text from lead_threads where not agent_enabled
+          )
+      `
+    ).map((d) => d.t);
     return tx<InboxItem[]>`
       select id, kind, payload, created_at from agent_inbox
       where ${scope}
         and (payload->>'requestedKind' is null or not (payload->>'requestedKind' = any(${off})))
+        and (payload->>'threadId' is null or not (payload->>'threadId' = any(${dead})))
       order by created_at limit 10
     `;
   });
@@ -2833,7 +2854,12 @@ export async function sweepOutreach(sql: Sql): Promise<number> {
   const queuedIds: string[] = [];
   const capFlagged: string[] = [];
   const fired = await controlTx(sql, async (tx) => {
-    if (!(await automationAllowedTx(tx, 'outreach')).ok) return 0;
+    // Autonomy 'off' parks only the automation's own nudges — promised
+    // work ('staff'/'requested'/'agent' sources, materialized unmarked
+    // below) is a human's schedule or a lead-asked callback and still
+    // fires. The playbook switch gates everyone.
+    const level = (await autonomyTx(tx)).level;
+    if (!(await playbookEnabledTx(tx, 'outreach')).ok) return 0;
     const g = await getSettingTx<Partial<Guardrails>>(tx, 'guardrails', {});
     const capCents = capCentsOf(g);
     // for update skip locked — concurrent sweeps on different replicas take
@@ -2847,6 +2873,7 @@ export async function sweepOutreach(sql: Sql): Promise<number> {
       where l.next_action_at is not null and l.next_action_at <= now()
         and l.archived_at is null and l.unsubscribed_at is null
         and l.agent_mode != 'off'
+        and (l.next_action_source in ('staff', 'requested', 'agent') or ${level !== 'off'})
         and (${capCents} <= 0 or
           coalesce((select sum(x.cost_cents) from agent_runs x
                     where x.lead_id = l.id), 0) < ${capCents})
@@ -2892,12 +2919,28 @@ export async function sweepOutreach(sql: Sql): Promise<number> {
           for update skip locked
         `
       )[0];
-      const params: Record<string, unknown> = {
-        ...(next_action_source === 'staff' ||
+      const promised =
+        next_action_source === 'staff' ||
         next_action_source === 'requested' ||
-        next_action_source === 'agent'
-          ? {}
-          : { auto: next_action_source }),
+        next_action_source === 'agent';
+      // Under autonomy 'off' an already-queued auto outreach can never
+      // claim — delivering the promised date into it would park the
+      // promise forever. Retire the disposable autos so insertRun mints
+      // the runnable unmarked row; their dead-attempt mail releases too.
+      if (promised && level === 'off') {
+        const retired = await tx<{ id: string }[]>`
+          update agent_runs
+          set status = 'canceled', error = 'promised work takes over', finished_at = now()
+          where lead_id = ${id} and kind = 'outreach' and status = 'queued'
+            and params->>'auto' is not null
+            and params->>'auto' not in ('regenerate', 'agent')
+          returning id
+        `;
+        for (const r of retired) await releaseInboxTx(tx, r.id, true);
+        queuedIds.push(...retired.map((r) => r.id));
+      }
+      const params: Record<string, unknown> = {
+        ...(promised ? {} : { auto: next_action_source }),
         ...(fold ? { focus: `agendado por você: ${fold.focus}`, wakeupId: fold.id } : {}),
       };
       const cap: { flagged?: boolean } = {};
