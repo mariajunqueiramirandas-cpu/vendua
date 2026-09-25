@@ -5,6 +5,8 @@ import { ingestInbound } from '../src/agent/inbound.ts';
 import { whatsappRegistered } from '../src/agent/channels/whatsapp.ts';
 import { dispatchMessage } from '../src/agent/send.ts';
 import { claimRun, enqueueRun, sweepOutreach } from '../src/agent/runner.ts';
+import { sweepWakeups } from '../src/agent/wakeups.ts';
+import { sweepOrphanInbox } from '../src/agent/inbox.ts';
 import { composeMessageTx } from '../src/modules/threads.ts';
 import {
   DEFAULT_GUARDRAILS,
@@ -615,6 +617,56 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('whatsapp history + ignore list 
     expect(events.some((e) => e.type === 'run.update' && e.ref === autoRun)).toBe(true);
   });
 
+  test('a fired wakeup’s pending mail tombstones with its canceled run on inbound', async () => {
+    await migrate(sql, MIGRATIONS);
+    const lead = await controlTx(sql, (tx) =>
+      insertLeadTx(tx, { name: 'Fired Wakeup', whatsapp: '5511955550063' }),
+    );
+    const leadId = lead.body.lead.id;
+    await sql`delete from agent_runs where status = 'queued'`;
+    // A due automation wakeup: the sweep fires it — an 'outreach' run with
+    // auto='wakeup' and a pending 'wakeup' item carrying the same intent.
+    await sql`
+      insert into agent_wakeups (lead_id, kind, at, focus, created_by, requested, status)
+      values (${leadId}, 'outreach', now() - interval '1 minute',
+              'lembra da prova', 'agent', false, 'pending')
+    `;
+    expect(await sweepWakeups(sql)).toBe(1);
+    const mail = await sql<{ id: string; consumed_at: string | null }[]>`
+      select id, consumed_at from agent_inbox
+      where lead_id = ${leadId} and kind = 'wakeup'
+    `;
+    expect(mail).toHaveLength(1);
+    expect(mail[0]!.consumed_at).toBeNull();
+    const res = await ingestInbound(sql, {
+      channel: 'whatsapp',
+      from: '5511955550063@s.whatsapp.net',
+      body: 'oi, pode deixar',
+      providerMessageId: 'wk-tomb-1',
+    });
+    expect('ignored' in res).toBe(false);
+    // The fired wakeup's outreach retires on the reply — and its pending
+    // item goes with it. Left pending, the orphan sweep would respawn the
+    // dead reminder the lead just made obsolete.
+    const [tomb] = await sql<{ consumed_at: string | null }[]>`
+      select consumed_at from agent_inbox where id = ${mail[0]!.id}
+    `;
+    expect(tomb!.consumed_at).not.toBeNull();
+    // The reply run still owns the lead — retire it so the sweep's scope
+    // is just the tombstoned mail: nothing may respawn.
+    await sql`
+      update agent_runs set status = 'done'
+      where lead_id = ${leadId} and kind = 'reply' and status in ('queued', 'running')
+    `;
+    await sweepOrphanInbox(sql);
+    const outreach = await sql<{ status: string }[]>`
+      select status from agent_runs
+      where lead_id = ${leadId} and kind = 'outreach'
+    `;
+    expect(outreach).toHaveLength(1);
+    expect(outreach[0]!.status).toBe('canceled');
+  });
+
   test('a scheduled regen run re-anchors intact when the inbound cancels it', async () => {
     await migrate(sql, MIGRATIONS);
     const lead = await controlTx(sql, (tx) =>
@@ -926,32 +978,46 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('whatsapp history + ignore list 
                        next_action_source = 'agent'
       where id = ${legacyLead.body.lead.id}
     `;
-    expect(await sweepOutreach(sql)).toBeGreaterThanOrEqual(3);
-    const swept = await sql<{ id: string; params: Record<string, unknown> }[]>`
-      select id, params from agent_runs
-      where lead_id = ${leadId} and kind = 'outreach' and status = 'queued'
-    `;
+    // Materialized rows are due the instant the sweep commits — a drain
+    // still in flight from an earlier ingest (ingestInbound kicks one
+    // fire-and-forget) could claim a run in the gap before the park lands
+    // and turn a 'canceled' assertion into 'running'. The claim's own
+    // serialization point closes that: hold each lead's `claimrun:`
+    // advisory across sweep+park so every same-lead claim rejects at its
+    // pg_try_, then unlock — the rows stay parked 'queued' for the rest of
+    // the test. sweepOutreach only tries `capfin:`, so it materializes
+    // unaffected.
+    const leadIds = [leadId, autoLead.body.lead.id, legacyLead.body.lead.id];
+    let swept: { id: string; lead_id: string; params: Record<string, unknown> }[] = [];
+    let autoSwept: { id: string; lead_id: string; params: Record<string, unknown> }[] = [];
+    let legacySwept: { id: string; lead_id: string; params: Record<string, unknown> }[] = [];
+    const gate = await sql.reserve();
+    try {
+      for (const id of leadIds) await gate`select pg_advisory_lock(hashtext(${'claimrun:' + id}))`;
+      expect(await sweepOutreach(sql)).toBeGreaterThanOrEqual(3);
+      // Park + fetch in one statement — no cross-statement window left
+      // for a late claim to slip into after the advisory releases.
+      const parked = await sql<{ id: string; lead_id: string; params: Record<string, unknown> }[]>`
+        update agent_runs set run_at = now() + interval '1 hour'
+        where kind = 'outreach' and status = 'queued'
+          and lead_id in ${sql(leadIds)}
+        returning id, lead_id, params
+      `;
+      swept = parked.filter((r) => r.lead_id === leadId);
+      autoSwept = parked.filter((r) => r.lead_id === autoLead.body.lead.id);
+      legacySwept = parked.filter((r) => r.lead_id === legacyLead.body.lead.id);
+    } finally {
+      await gate`select pg_advisory_unlock_all()`;
+      gate.release();
+    }
     expect(swept).toHaveLength(1);
     expect(swept[0]!.params.auto).toBeUndefined();
-    const autoSwept = await sql<{ id: string; params: Record<string, unknown> }[]>`
-      select id, params from agent_runs
-      where lead_id = ${autoLead.body.lead.id} and kind = 'outreach' and status = 'queued'
-    `;
     expect(autoSwept).toHaveLength(1);
     expect(autoSwept[0]!.params.auto).toBe('auto');
-    const legacySwept = await sql<{ id: string; params: Record<string, unknown> }[]>`
-      select id, params from agent_runs
-      where lead_id = ${legacyLead.body.lead.id} and kind = 'outreach' and status = 'queued'
-    `;
     expect(legacySwept).toHaveLength(1);
     // Provenance unrecoverable → preserved: the run carries no auto marker
     // so a reply can't cancel the possible promise.
     expect(legacySwept[0]!.params.auto).toBeUndefined();
-    // Park all so the first inbound's drain can't claim them mid-assertion.
-    await sql`
-      update agent_runs set run_at = now() + interval '1 hour'
-      where id in (${swept[0]!.id}, ${autoSwept[0]!.id}, ${legacySwept[0]!.id})
-    `;
     const res = await ingestInbound(sql, {
       channel: 'whatsapp',
       from: '5511955550003@s.whatsapp.net',

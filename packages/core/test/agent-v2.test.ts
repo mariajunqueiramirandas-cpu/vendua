@@ -19,6 +19,7 @@ import { PLAYBOOKS, mergePlaybook, playbookTools } from '../src/agent/playbooks.
 import {
   automationAllowedTx,
   claimPolicyTx,
+  discoveryBudgetTx,
   draftDecision,
   explainAutonomyTx,
 } from '../src/agent/policy.ts';
@@ -395,6 +396,38 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('agent v2 (db)', () => {
       for (const b of prevBriefs) {
         await sql`update discovery_briefs set enabled = true where id = ${b.id}`;
       }
+    }
+  });
+
+  test('the discovery unit estimate ignores zero-cost done runs', async () => {
+    // Zero-cost finishes carry no price signal (sub-cent rounds to 0, the
+    // mock charges nothing) — averaging them into `est` deflates the unit
+    // price until open work reserves ~nothing against the weekly cap.
+    const priorAuto = await getSetting('agent_autonomy');
+    const prevCosts = await sql<{ id: string; cost_cents: number }[]>`
+      select id, cost_cents from agent_runs where kind = 'discovery' and cost_cents <> 0
+    `;
+    let seededRunId: string | null = null;
+    try {
+      await sql`update agent_runs set cost_cents = 0 where kind = 'discovery' and cost_cents <> 0`;
+      // All-zero sample → the 50¢ floor stands instead of 0.
+      let bdg = await controlTx(sql, (tx) => discoveryBudgetTx(tx));
+      expect(bdg.est).toBe(50);
+      // A real price still feeds the mean; zeros beside it are skipped.
+      const [ins] = await sql<{ id: string }[]>`
+        insert into agent_runs (kind, lead_id, status, steps, cost_cents, created_at, finished_at)
+        values ('discovery', null, 'done', ${sql.json([] as never[])}, 200, now(), now())
+        returning id
+      `;
+      bdg = await controlTx(sql, (tx) => discoveryBudgetTx(tx));
+      expect(bdg.est).toBe(200);
+      seededRunId = ins!.id;
+    } finally {
+      await restoreSetting('agent_autonomy', priorAuto);
+      for (const r of prevCosts) {
+        await sql`update agent_runs set cost_cents = ${r.cost_cents} where id = ${r.id}`;
+      }
+      if (seededRunId) await sql`delete from agent_runs where id = ${seededRunId}`;
     }
   });
 

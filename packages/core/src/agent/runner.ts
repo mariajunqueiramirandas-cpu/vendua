@@ -1799,6 +1799,18 @@ async function drainInbox(att: Attempt): Promise<number> {
     `;
   });
   if (!items.length) return 0;
+  // Fresh mail is a state change for the repeat gate: bump the version so
+  // a repeated call after the batch can't match its pre-drain twin's
+  // stamp, and re-arm send_message's sig — its own dedupe keys the newest
+  // consumption stamp, so the loop gate must not hold an earlier batch's
+  // sig over a legitimately identical reply ('Obrigado!' is a valid
+  // answer twice). 'mint' sigs keep run-wide suppression — a new batch
+  // never makes a duplicate create_lead/draft legitimate, and
+  // replay-seeded sigs for THIS batch stay until it answers.
+  att.stateVersion++;
+  for (const s of att.landedSigs) {
+    if (s.startsWith('["send_message",')) att.landedSigs.delete(s);
+  }
   // The mail's requestedKind joins the run's tool kinds: an 'inbound'
   // item inside an outreach run can need reply-only tools (unsubscribe
   // honoring an opt-out). Widen both what the model is told (att.tools)
@@ -2199,8 +2211,16 @@ async function finishGate(att: Attempt): Promise<'end' | 'again'> {
   // Messaging finish gate — the playbook already requires every
   // reply/outreach run to end on a visible action; a run trying to
   // close having only researched gets ONE nudge (same i+5 allowance
-  // as discovery's), then ends on its own.
-  if (!att.nudged && att.playbook.requiresAction && !runActed(steps)) {
+  // as discovery's), then ends on its own. The bar resets per drained
+  // batch: mail picked up mid-attempt demands its own action — a send
+  // that answered an earlier batch can't close a text-only turn over
+  // fresh mail, or that item ends consumed with nothing on the wire.
+  const lastInbox = steps.reduce<number>(
+    (acc, s, i) =>
+      typeof s === 'object' && s !== null && (s as { type?: string }).type === 'inbox' ? i : acc,
+    -1,
+  );
+  if (!att.nudged && att.playbook.requiresAction && !runActed(steps.slice(lastInbox + 1))) {
     att.nudged = true;
     att.limit = att.i + 5;
     const nudge = `Ação pendente — a run ainda não teve efeito visível (send_message/draft, request_human, set_state, unsubscribe, update_lead, create_task). Pesquisar e sair sem agir deixa o lead falando sozinho — aja agora; se um guardrail ou canal morto trava a ação, request_human é a saída.`;
