@@ -1786,10 +1786,12 @@ export function createApp({ sql, sessionSecret, controlSecret, autoDrain }: AppD
     const id = uuidParam(c, 'id');
     let transitioned = false;
     const res = await claimControl(sql, requireIdemKey(c), async (tx) => {
-      const rows = await tx<{ params: { channel?: unknown; draftOnly?: unknown } | null }[]>`
+      const rows = await tx<
+        { thread_id: string | null; params: { channel?: unknown; draftOnly?: unknown } | null }[]
+      >`
         update agent_runs set status = 'canceled', finished_at = now(), error = 'cancelado'
         where id = ${id} and status in ('queued', 'running')
-        returning id, params
+        returning id, params, thread_id
       `;
       if (!rows[0]) {
         const cur = (
@@ -1811,8 +1813,9 @@ export function createApp({ sql, sessionSecret, controlSecret, autoDrain }: AppD
       // minted or adopted). Without the tombstone a pending-forRunId item
       // (or one just released above) respawns under the sweep and the
       // cancel silently restarts. The kill is scoped to items the run
-      // could actually serve — drainInbox's channel/draftOnly predicate
-      // verbatim ('auto'/empty channels pin only an unpinned run) — so a
+      // could actually serve — drainInbox's compatibility predicate:
+      // draftOnly + effective channel (params pin, else the bound
+      // thread's channel) + thread match for thread-bound runs — so a
       // forRunId item merely associated with an adopted run (say an
       // email request riding a whatsapp run) survives to spawn its own.
       // Unowned mail still re-serves: the lead's own inbound isn't
@@ -1821,12 +1824,29 @@ export function createApp({ sql, sessionSecret, controlSecret, autoDrain }: AppD
         rows[0].params?.channel === 'whatsapp' || rows[0].params?.channel === 'email'
           ? rows[0].params.channel
           : '';
+      const runThread = rows[0].thread_id ?? '';
+      const effChan =
+        runChan ||
+        (runThread
+          ? ((
+              await tx<{ c: string }[]>`
+              select channel::text as c from lead_threads where id = ${runThread}::uuid
+            `
+            )[0]?.c ?? '')
+          : '');
+      const unpinned = runChan === '' && runThread === '';
       const runDraftOnly = rows[0].params?.draftOnly === true;
       await tx`
         update agent_inbox set consumed_at = now()
         where payload->>'forRunId' = ${id} and consumed_at is null
-          and coalesce(payload->'params'->>'channel', ${runChan}) = ${runChan}
           and (coalesce(payload->'params'->>'draftOnly', 'false') = 'true') = ${runDraftOnly}
+          and (${unpinned}
+               or coalesce(
+                 payload->'params'->>'channel',
+                 (select lt.channel::text from lead_threads lt where lt.id::text = payload->>'threadId'),
+                 ${effChan}
+               ) = ${effChan})
+          and (${runThread} = '' or coalesce(payload->>'threadId', ${runThread}) = ${runThread})
       `;
       transitioned = true;
       return { status: 200, body: { ok: true, status: 'canceled' } };

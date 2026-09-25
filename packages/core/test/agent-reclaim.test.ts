@@ -3315,6 +3315,43 @@ dbDescribe('worker robustness (db)', () => {
     expect(spawned!.thread_id).toBe(emThread!.id);
   });
 
+  test('an unpinned unbound run drains thread-bound mail — no pin is a wildcard', async () => {
+    await migrate(sql, MIGRATIONS);
+    const lead = await controlTx(sql, (tx) =>
+      insertLeadTx(tx, { name: 'Wildcard Run', whatsapp: '5511910000093', email: 'wc@y.br' }),
+    );
+    const leadId = lead.body.lead.id;
+    const [emThread] = await sql<{ id: string }[]>`
+      insert into lead_threads (lead_id, channel) values (${leadId}, 'email') returning id
+    `;
+    await sql`delete from agent_runs where status = 'queued'`;
+    // No thread_id, no channel pin — the run serves whatever thread the
+    // item asks for, so the email request must not wait for a later run.
+    const runId = (await enqueueRun(sql, {
+      kind: 'reply',
+      leadId,
+      runAt: new Date(Date.now()),
+      params: {
+        script: [{ text: 'pensando', delayMs: 1500 }, { text: 'fim' }],
+      },
+    }))!;
+    const running = runOnce(sql);
+    await new Promise((r) => setTimeout(r, 150));
+    await controlTx(sql, (tx) =>
+      enqueueInboxTx(tx, leadId, 'staff', {
+        text: 'responde no email',
+        threadId: emThread!.id,
+        requestedKind: 'reply',
+        params: { origin: 'staff' },
+      }),
+    );
+    await running;
+    const [item] = await sql<{ consumed_by_run: string | null }[]>`
+      select consumed_by_run from agent_inbox where lead_id = ${leadId}
+    `;
+    expect(item!.consumed_by_run).toBe(runId);
+  });
+
   test('mail arriving during a draft-only run waits — a reply never strands as a draft', async () => {
     await migrate(sql, MIGRATIONS);
     const lead = await controlTx(sql, (tx) =>
