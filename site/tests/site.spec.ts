@@ -241,8 +241,12 @@ test('zoom 200%, redução de movimento, links e SEO', async ({ page, request })
       await page.evaluate(() => getComputedStyle(document.documentElement).scrollBehavior),
     ).toBe('auto');
     await expect(page.locator('meta[name="description"]')).toHaveAttribute('content', /.+/);
-    // Canonical/OG absolutos só são emitidos quando site.publicDomain é definido (F05).
-    await expect(page.locator('link[rel="canonical"]')).toHaveCount(0);
+    // Canonical absoluto em todas as rotas (F05): a 404 usa o path default '/' do Seo.
+    const canonical = route === '/nao-existe/' ? '/' : route;
+    await expect(page.locator('link[rel="canonical"]')).toHaveAttribute(
+      'href',
+      `https://vendua.com.br${canonical}`,
+    );
   }
   await page.goto('/');
   const links = await page
