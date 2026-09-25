@@ -3,13 +3,6 @@ import { die, findRoot } from './paths.ts';
 import { cmdBuild, cmdCheck, cmdDev, cmdQa } from './run.ts';
 import { cmdScaffold } from './scaffold.ts';
 
-/**
- * `vendua` — the storefront CLI (03-storefront-contract.md): scaffold, dev,
- * check, build, qa. Zero-config inside the monorepo: commands discover the
- * repo root from cwd and resolve [slug] to storefronts/<slug>, or to cwd when
- * run inside a storefront.
- */
-
 const USAGE = `vendua — the Venduá storefront CLI
 
 Usage:

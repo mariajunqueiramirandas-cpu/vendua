@@ -1,15 +1,8 @@
 import type { Sql } from '../../platform/db.ts';
 import { getIntegration, type IntegrationRow } from '../../modules/integrations.ts';
 
-/**
- * agent/channels/discovery — TinyFish driver. Search API for prospect
- * queries (GET api.search.tinyfish.ai), Fetch API (POST api.fetch.tinyfish.ai)
- * for reading found pages: clean markdown + every link on the page, which is
- * where the contact channels live (wa.me/api.whatsapp.com send links, mailto:,
- * tel:, social profiles). The model reads the text; contactsFromLinks parses
- * the URLs deterministically. `mock` driver returns canned prospects so
- * discovery runs end-to-end with no credentials.
- */
+// TinyFish discovery driver — Search + Fetch (markdown + every link on the
+// page, which is where contact channels live); `mock` needs no credentials.
 
 export interface DiscoveryResult {
   results: { title: string; url: string; snippet?: string }[];
@@ -25,10 +18,8 @@ export interface FoundContacts {
   instagram: string[];
   facebook: string[];
   tiktok: string[];
-  /** Phone-shaped text fragments that aren't dialable as-is — a bare
-   *  9xxxx-xxxx mobile with no DDD is the most common instagram-bio form.
-   *  Not a contact channel; proof a whatsapp exists that a follow-up
-   *  search/directory read can resolve into a full number. */
+  /** undialable phone-shaped fragments (bare 9xxxx-xxxx, no DDD) — proof a
+   *  whatsapp exists; a follow-up resolves the full number. */
   phoneHints: string[];
 }
 
@@ -60,12 +51,8 @@ export interface DiscoveryProvider {
   readPages(urls: string[], purpose: string): Promise<ReadPagesResult>;
 }
 
-// ---------------------------------------------------------------------------
-// Result annotation — pure URL-structure parsing. Nothing is dropped: the
-// model keeps every result and every judgment call; the annotations just
-// spare it work it can't do better than code (a wa.me URL literally contains
-// the phone; an instagram.com/<user> URL literally contains the handle).
-// ---------------------------------------------------------------------------
+// result annotation is pure URL-structure parsing — it spares the model work
+// code does better (a wa.me URL contains the phone; instagram.com/<user> the handle)
 
 export type ResultKind =
   /** deep link that IS the contact (wa.me/99…, api.whatsapp.com/send?phone=) */
@@ -118,10 +105,8 @@ const LISTING_HOSTS = new Set([
   'cnpj.info',
   'casadosdados.com',
 ]);
-/** Link-in-bio hubs — where an instagram-first business parks its real
- *  channels. A hub page is the cheapest fetch to a wa.me link. The shortener
- *  tail is the same pattern: the provider follows the redirect, so surfacing
- *  `bit.ly/x` in nav is a fetch that lands on the real contact page. */
+/** link-in-bio hubs — where an ig-first business parks its real channels;
+ *  the cheapest fetch to a wa.me link */
 const LINK_HUB_HOSTS = new Set([
   'linktr.ee',
   'lnk.bio',
@@ -138,9 +123,8 @@ const LINK_HUB_HOSTS = new Set([
   'camps.bio',
   'flow.page',
 ]);
-/** URL shorteners — one opaque segment, destination resolves on read. Kept
- *  out of LINK_HUB_HOSTS on purpose: on a hub page a shortener link is the
- *  OUTBOUND contact (linktr.ee/x → w.app/x), not platform chrome. */
+/** URL shorteners — opaque tail, destination resolves on read. Kept out of
+ *  LINK_HUB_HOSTS: on a hub page a shortener link is the OUTBOUND contact. */
 const SHORTENER_HOSTS = new Set([
   'bit.ly',
   'w.app',
@@ -149,9 +133,8 @@ const SHORTENER_HOSTS = new Set([
   'rebrand.ly',
   'short.io',
 ]);
-/** Social redirect wrappers — the real destination sits in the `u` param
- *  (l.instagram.com/?u=…, l.facebook.com/l.php?u=…). Unwrap before parsing
- *  or the bio's linktr.ee reads as an instagram link. */
+/** social redirect wrappers — real destination sits in the `u` param;
+ *  unwrap before parsing or a linktr.ee reads as an instagram link */
 const REDIRECT_HOSTS = new Set([
   'l.instagram.com',
   'lm.instagram.com',
@@ -160,10 +143,8 @@ const REDIRECT_HOSTS = new Set([
 ]);
 const PROFILE_HOSTS = new Set(['instagram.com', 'facebook.com']);
 
-/** Google-business/map pointers — a g.co/kgs share link or a maps url IS the
- *  business's profile page, where phone + address + hours live. Surfaced in
- *  nav cross-host and auto-chased: the single cheapest reliable phone source
- *  when a hub page hides its wa.me link behind JS. */
+/** g.co/kgs + maps urls — the business's profile page (phone, address, hours),
+ *  the cheapest reliable phone source when a hub hides wa.me behind JS */
 function isBizMapUrl(u: URL): boolean {
   const h = u.hostname.toLowerCase().replace(/^www\./, '');
   const p = u.pathname;
@@ -175,8 +156,8 @@ function isBizMapUrl(u: URL): boolean {
   );
 }
 
-/** google.tld under any of its web subdomains — the family a map pointer's
- *  redirect or name carrier can live on (www.google.com/search?q=…). */
+/** google.tld under any web subdomain — the family a pointer's redirect or
+ *  name carrier can live on */
 const GOOGLE_HOST = /^((www|maps|m)\.)?google\.[a-z]{2,}(\.[a-z]{2})?$/i;
 // instagram paths that aren't profiles — posts, help, auth.
 const PROFILE_STOP = new Set([
@@ -210,16 +191,14 @@ const FACEBOOK_STOP = new Set([
   'marketplace',
   'gaming',
 ]);
-// internal links that usually carry contact info — the follow-up reads worth
-// spending a fetch on, ahead of catalog-ish links (a product page repeats
-// the home's contact block at best).
+// contact-ish paths rank ahead of catalog-ish — a product page repeats the
+// home's contact block at best
 const NAV_CONTACT =
   /contato|contact|sobre|about|quem-somos|atendimento|or[cç]amento|encomend|visite-nos|where|unidades/i;
 const NAV_CATALOG = /cardapio|card[aá]pio|menu|produtos|products|pedido|order|delivery|loja|shop/i;
 
 const digits = (s: string): string => s.replace(/\D/g, '');
 
-/** Hostname normalized for comparison — lowercased, www stripped. */
 export function hostOf(url: string): string | null {
   try {
     return new URL(url).hostname.toLowerCase().replace(/^www\./, '');
@@ -228,9 +207,8 @@ export function hostOf(url: string): string | null {
   }
 }
 
-/** Params that never change page content — stripped from the key; every
- *  other param is content (e.g. api.whatsapp.com/send?phone=X is a different
- *  page per phone) and stays, sorted for canonical order. */
+/** tracking params are stripped from the key; every other param is content
+ *  (send?phone=X is a different page per phone) and stays, sorted */
 const TRACKING_PARAMS = /^(utm_|fbclid$|gclid$|igsh(id)?$|hl$|si$|ref$|_ga|pk_)/i;
 
 /** Canonical identity for "have we extracted this yet" — host + path +
@@ -267,10 +245,9 @@ export function unwrapLink(raw: string): string {
   }
 }
 
-/** Pull whatever the URL itself encodes: phone out of wa.me/whatsapp deep
- *  links, handle out of profile roots. `whatsappLink` marks every verified
- *  click-to-chat url — including wa.me/message/ and wa.me/c/ variants — even
- *  when it doesn't expose the number. Returns null fields otherwise. */
+/** contacts encoded in the URL itself — phone from deep links, handle from
+ *  profile roots; `whatsappLink` marks verified click-to-chat urls even when
+ *  they don't expose the number */
 export function contactFromUrl(u: URL): {
   phone?: string;
   whatsappLink?: string;
@@ -279,11 +256,8 @@ export function contactFromUrl(u: URL): {
   const host = u.hostname.toLowerCase().replace(/^www\./, '');
   if (host === 'wa.me' || host === 'whatsapp.com') {
     const out: { phone?: string; whatsappLink?: string } = {};
-    // click-to-chat surfaces: /<digits>, /message/<code>, /c/<digits>,
-    // /p/<item>/<digits>, /qr/<code>. /message/ and /qr/ codes are opaque
-    // alphanumeric — never a phone. /p/ puts the number LAST
-    // (wa.me/p/<item>/<phone>), so the last all-digit segment is the
-    // destination; a segment with letters is a code, not a number.
+    // the number is the last all-digit segment (/p/ puts it last); segments
+    // with letters are opaque codes (/message/, /qr/), never a phone
     const segs = u.pathname.split('/').filter(Boolean);
     const numSeg = /^\/(?:message|qr)\//i.test(u.pathname)
       ? undefined
@@ -304,8 +278,7 @@ export function contactFromUrl(u: URL): {
     if (d) out.phone = `+${d}`;
     return out;
   }
-  // chat.whatsapp.com/<code> is a group/channel invite — a real whatsapp
-  // surface (common in bios) even though it never exposes a number.
+  // group/channel invite — a real whatsapp surface that never exposes a number
   if (host === 'chat.whatsapp.com' && /^\/[\w-]{10,}\/?$/i.test(u.pathname)) {
     return { whatsappLink: u.toString() };
   }
@@ -324,7 +297,6 @@ function hostMatches(host: string, hosts: Set<string>): boolean {
   return hosts.has(host) || [...hosts].some((h) => host.endsWith(`.${h}`));
 }
 
-/** Classify one result and surface contacts encoded in the URL. */
 export function annotateResult(r: {
   title: string;
   url: string;
@@ -355,9 +327,8 @@ export function annotateResult(r: {
           : hostMatches(host, LISTING_HOSTS) || host.endsWith('.gov.br') || host.endsWith('.gov')
             ? { ...base, kind: 'listing' }
             : base;
-  // Snippet text sometimes carries the contact itself (google business blurb,
-  // bio teaser) — parse it for free before spending a fetch; each field fills
-  // independently so a URL phone doesn't hide a snippet email.
+  // parse the snippet for free before spending a fetch — fields fill
+  // independently so a URL phone doesn't hide a snippet email
   if (r.snippet && (!out.phone || !out.email)) {
     const c = contactsFromText(r.snippet);
     if (!out.phone && c.phones[0]) out.phone = c.phones[0];
@@ -367,9 +338,8 @@ export function annotateResult(r: {
   return out;
 }
 
-/** Annotate + dedupe by page identity + order contact > site > profile >
- *  listing, capped at 12 — every result is still returned, just shaped so
- *  the model spends calls on pages that can pay off. */
+/** annotate + dedupe by page identity, ordered contact > site > profile >
+ *  listing, capped at 12 */
 export function annotateResults(results: { title: string; url: string; snippet?: string }[]): {
   results: AnnotatedResult[];
   droppedDupes: number;
@@ -395,10 +365,8 @@ const uniqPush = (arr: string[], v: string) => {
   if (!arr.includes(v)) arr.push(v);
 };
 
-/** Every contact channel a page's links encode — whatsapp/wa.me send links
- *  carry the phone, social roots carry the handle, mailto:/tel: are direct.
- *  This is why read_pages returns links:true: for this prospect segment the
- *  contact block is a row of icon links, not body text. */
+/** every contact channel a page's links encode — this segment's contact
+ *  block is a row of icon links, not body text */
 export function contactsFromLinks(links: string[]): FoundContacts {
   const out: FoundContacts = {
     phones: [],
@@ -433,10 +401,8 @@ export function contactsFromLinks(links: string[]): FoundContacts {
     if (u.protocol === 'tel:') {
       const d = digits(u.pathname);
       if (d.length < 8) continue;
-      // `tel:` only carries an international number when it starts with '+'.
-      // BR pages publish DDD+number (10-11 digits) without it — prefixing
-      // '+' there fabricates a wrong country code, so normalize local forms
-      // to +55 and keep short fragments as a bare-digit hint.
+      // BR tel: links publish DDD+number (10-11 digits) with no '+' — prefixing
+      // '+' would fabricate a wrong country code, so local forms get +55
       const phone = u.pathname.trim().startsWith('+')
         ? `+${d}`
         : d.length >= 10 && d.length <= 11
@@ -468,38 +434,26 @@ export function contactsFromLinks(links: string[]): FoundContacts {
   return out;
 }
 
-// ---------------------------------------------------------------------------
-// Text extraction — the contact surface that isn't an anchor. Brazilian
-// small-business pages (and instagram bios above all) print the whatsapp as
-// text: "wa.me/5522…", "(22) 9 9712-3470", "pedidos: contato@doceria.com".
-// ---------------------------------------------------------------------------
-
-/** A url written out in prose — scheme optional for the contact domains,
- *  required otherwise. */
+/** a url written out in prose — scheme optional for contact domains */
 const TEXT_URL_RE = /https?:\/\/[^\s"'<>()[\]]+/gi;
 const BARE_CONTACT_RE =
   /\b(?:[\w-]+\.)?(?:wa\.me|api\.whatsapp\.com|linktr\.ee|lnk\.bio|bio\.link|beacons\.ai|linklist\.bio|allmylinks\.com|msha\.ke|hoo\.be|carrd\.co|solo\.to|wa\.link|linkbio\.co|camps\.bio|flow\.page|bit\.ly|w\.app|cutt\.ly|tinyurl\.com|rebrand\.ly|short\.io)\/[^\s"'<>()[\]]*/gi;
 const EMAIL_TEXT_RE = /[\w.+-]+@[\w-]+(?:\.[\w-]+)+/g;
 const ASSET_TAIL_RE = /\.(?:png|jpe?g|gif|webp|svg|css|js|mjs|ico|woff2?|ttf|otf)$/i;
-/** BR phones, formatted: optional +55, DDD (parens optional), 8-9 digit
- *  subscriber with a separator before the last 4 — the separator requirement
- *  and the \w-ish boundaries keep CNPJs/dates/prices out. Bare contiguous
- *  numbers only count when they're the 11-13 digit mobile shape (55? + DDD +
- *  9xxxxxxxx) — a bare landline can't be told apart from any 10-digit code. */
+/** formatted BR phones — the required separator and \w-ish boundaries keep
+ *  CNPJs/dates/prices out; bare contiguous digits only count in the 11-13
+ *  mobile shape (a bare landline is indistinguishable from a 10-digit code) */
 const PHONE_TEXT_RE =
   /(?<![\w@/.-])(?:\+?55[\s.-]?)?\(?\d{2}\)?[\s.-]?(?:9[\s.-]?)?\d{4}[\s.-]\d{4}(?![\w/-])|\b\+?(?:55)?\d{2}9\d{8}\b/g;
-/** Bare BR mobile with no DDD — "9xxxx-xxxx"/"9 xxxx-xxxx" printed alone.
- *  Can't be dialed without the area code, but its presence proves a whatsapp
- *  exists; lands in phoneHints so the model resolves the full number via
- *  search/directories instead of dropping a real contact surface. */
+/** bare BR mobile with no DDD — undialable as-is, but proves a whatsapp
+ *  exists; lands in phoneHints for the model to resolve */
 const PHONE_HINT_RE = /(?<![\w@/.-])9[\s.-]?\d{4}[\s.-]\d{4}(?![\w/-])/g;
 
 /** Normalize a phone-shaped match to +55…/intl, or null when it's not a
  *  callable-looking number (too short, weird country-less form). */
 export function phoneFromText(raw: string): string | null {
   const d = digits(raw);
-  // An explicit + means the country code is already there — keep it verbatim
-  // (8–15 digits = E.164 range) instead of gluing +55 onto a foreign number.
+  // an explicit + already carries the country code — keep verbatim (E.164)
   if (/^\s*\(?\+/.test(raw)) {
     return d.length >= 8 && d.length <= 15 && d[0] !== '0' ? `+${d}` : null;
   }
@@ -508,9 +462,8 @@ export function phoneFromText(raw: string): string | null {
   return null;
 }
 
-/** BR mobile = whatsapp-reachable by definition: 11-digit local form with a
- *  leading 9 on the subscriber number (+55 DD 9xxxx-xxxx). Landlines
- *  (2-4/30xx-4xxx starts) are not whatsapp. */
+/** BR mobile = whatsapp-reachable — 11-digit local form with a leading 9;
+ *  landlines are not whatsapp */
 export function isBrMobilePhone(phone: string): boolean {
   const d = digits(phone);
   const local = d.startsWith('55') && (d.length === 12 || d.length === 13) ? d.slice(2) : d;
@@ -523,9 +476,8 @@ function isHubHost(host: string): boolean {
   return hostMatches(host, LINK_HUB_HOSTS);
 }
 
-/** Profile-shaped url on a link-in-bio host — the business's own hub page,
- *  not platform chrome. Apex hubs put the handle in the path (linktr.ee/x);
- *  subdomain hubs put it in the host (x.carrd.co, path `/` or a section). */
+/** profile-shaped url on a link-in-bio host — apex hubs carry the handle in
+ *  the path (linktr.ee/x), subdomain hubs in the host (x.carrd.co) */
 export function isProfileHubUrl(u: URL): boolean {
   const h = u.hostname.toLowerCase().replace(/^www\./, '');
   const segs = u.pathname.split('/').filter(Boolean).length;
@@ -533,9 +485,8 @@ export function isProfileHubUrl(u: URL): boolean {
   return hostMatches(h, LINK_HUB_HOSTS) && segs <= 1;
 }
 
-/** Contacts printed in body text — same fields as contactsFromLinks, so the
- *  caller merges the two lists per field. Also returns link-in-bio hub urls
- *  spotted in prose (instagram renders the bio link as text, not an anchor). */
+/** contacts printed in body text — same fields as contactsFromLinks, plus
+ *  hub urls spotted in prose (instagram renders the bio link as text) */
 export function contactsFromText(text: string): FoundContacts & { hubs: string[] } {
   const out: FoundContacts & { hubs: string[] } = {
     phones: [],
@@ -594,10 +545,8 @@ export function contactsFromText(text: string): FoundContacts & { hubs: string[]
   return out;
 }
 
-/** The links most likely to carry contact info or the catalog — surfaced so
- *  the model can queue a follow-up read without re-fetching junk (blog posts,
- *  product detail pages, anchors). Same-host contact-ish paths plus
- *  cross-host link-in-bio hubs (unwrapped from social redirects), capped. */
+/** links most likely to carry contact info or the catalog — same-host
+ *  contact-ish paths plus cross-host hubs, capped */
 export function navLinks(links: string[], pageUrl: string): string[] {
   const host = hostOf(pageUrl);
   const out: string[] = [];
@@ -608,10 +557,8 @@ export function navLinks(links: string[], pageUrl: string): string[] {
       out.push(v);
     }
   };
-  // hubs first — for ig-first businesses the link-in-bio IS the contact
-  // page. A hub's OWN pages are footer noise (staff picks, /s/about), so hub
-  // surfacing only happens from non-hub pages and only for profile-shaped
-  // (single-segment) urls.
+  // hubs first — for ig-first businesses the link-in-bio IS the contact page;
+  // a hub's own pages are footer noise, so hub surfacing is profile-shaped only
   if (!host || !isHubHost(host)) {
     for (const link of links) {
       const raw = unwrapLink(link);
@@ -624,18 +571,16 @@ export function navLinks(links: string[], pageUrl: string): string[] {
       if (isProfileHubUrl(u)) {
         push(`${u.protocol}//${u.host}${u.pathname.replace(/\/+$/, '')}`);
       } else if (isBizMapUrl(u)) {
-        // a google-business/maps pointer on any page — the profile it lands
-        // on carries phone + address; same contact-pointer class as a hub.
-        // Keep the query: /maps/search?q=<name> encodes the business IN the
-        // params — strip it and the pointer loses the entity entirely.
+        // keep the query — /maps/search?q=<name> encodes the business in the
+        // params; strip it and the pointer loses the entity
         push(`${u.protocol}//${u.host}${u.pathname.replace(/\/+$/, '')}${u.search}`);
       }
     }
   }
   if (!host) return out.slice(0, 8);
   if (isHubHost(host)) {
-    // On a hub page the same-host links are the platform's own chrome — the
-    // follow-ups worth anything point OUT to the business's own domain.
+    // on a hub page same-host links are platform chrome — the worthwhile
+    // follow-ups point OUT to the business's own domain
     for (const link of links) {
       const raw = unwrapLink(link);
       const h = hostOf(raw);
@@ -648,16 +593,16 @@ export function navLinks(links: string[], pageUrl: string): string[] {
         continue;
       }
       const c = contactFromUrl(u);
-      // wa.me/api.whatsapp destinations are already in foundContacts — nav
-      // exists to point at pages worth another fetch.
+      // wa.me destinations are already in foundContacts — nav points at
+      // pages worth another fetch
       if (c.phone || c.whatsappLink) continue;
       push(`${u.protocol}//${u.host}${u.pathname.replace(/\/+$/, '') || '/'}`);
       if (out.length >= 8) break;
     }
     return out.slice(0, 8);
   }
-  // two passes: contact-ish paths first, catalog-ish backfill to the cap —
-  // otherwise a site whose nav is mostly product cards never surfaces /contato.
+  // contact-ish paths first, catalog-ish backfill — otherwise a nav full of
+  // product cards never surfaces /contato
   for (const hint of [NAV_CONTACT, NAV_CATALOG]) {
     for (const link of links) {
       const raw = unwrapLink(link);
@@ -678,9 +623,8 @@ export function navLinks(links: string[], pageUrl: string): string[] {
   return out.slice(0, 8);
 }
 
-/** Base URLs are configurable per-integration but pinned to TinyFish hosts
- *  over https — otherwise the config row becomes an SSRF primitive that
- *  exfiltrates the API key to an arbitrary endpoint. */
+/** pinned to TinyFish hosts over https — otherwise the config row is an SSRF
+ *  primitive that exfiltrates the API key */
 function tinyfishBase(raw: unknown, fallback: string): string {
   const value = typeof raw === 'string' && raw ? raw : fallback;
   const u = new URL(value);
@@ -693,11 +637,8 @@ function tinyfishBase(raw: unknown, fallback: string): string {
   return value.replace(/\/+$/, '');
 }
 
-/** inet_aton semantics — 1–4 parts, each decimal/octal/hex; the last part
- *  carries however many bytes are left. Returns the address as u32, or
- *  null when the host isn't an IPv4 literal at all. Catches every notation
- *  an agent could smuggle past string-prefix checks (0177.0.0.1, 0x7f…1,
- *  2130706433). */
+/** inet_aton semantics — 1–4 parts, decimal/octal/hex; catches every notation
+ *  smuggled past string-prefix checks (0177.0.0.1, 0x7f…1, 2130706433) */
 function ipv4ToU32(host: string): number | null {
   const parts = host.split('.');
   if (parts.length > 4) return null;
@@ -736,8 +677,8 @@ function isPrivateV4(ip: number): boolean {
   );
 }
 
-/** The provider fetches the page, not us — but an agent-controlled URL
- *  should still never name an internal or loopback host. */
+/** the provider fetches, not us — but an agent-controlled URL must still
+ *  never name an internal or loopback host */
 export function assertFetchable(url: string): URL {
   const target = new URL(url);
   if (target.protocol !== 'http:' && target.protocol !== 'https:') {
@@ -801,9 +742,8 @@ function tinyfish(integration: IntegrationRow): DiscoveryProvider {
       };
     },
     async readPages(urls, purpose) {
-      // Fetch API batches up to 10 urls per POST; per-URL failures land in
-      // errors[] without sinking the batch — mirrors how the tool treats a
-      // batch of reads.
+      // Fetch API batches ≤10 urls per POST; per-URL failures land in
+      // errors[] without sinking the batch
       const errors: { url: string; error: string }[] = [];
       const good: string[] = [];
       for (const url of urls.slice(0, 10)) {
@@ -846,17 +786,14 @@ function tinyfish(integration: IntegrationRow): DiscoveryProvider {
         const links = Array.isArray(r.links) ? r.links : [];
         const url = r.url ?? '';
         const text = typeof r.text === 'string' ? r.text : '';
-        // Links carry the rendered anchors; text carries what the business
-        // printed (the instagram bio's wa.me is text, not a link). og:title /
-        // og:description ride along — directory pages put "Telefone: …" in
-        // meta text. Union all three surfaces.
+        // union all three surfaces: links (anchors), text (an ig bio's wa.me
+        // is text), og:title/description (directories put "Telefone:" in meta)
         const fromLinks = contactsFromLinks(links);
         const fromText = contactsFromText(
           [text, r.title, r.description].filter(Boolean).join('\n'),
         );
-        // The requested/resolved URL can itself be the contact: a shortener
-        // (bit.ly/x, w.app/x) whose redirect lands on wa.me/<digits> yields
-        // the phone for free — no body read needed.
+        // the requested/resolved URL can itself be the contact — a shortener
+        // redirect to wa.me/<digits> yields the phone for free
         const fromUrls = [r.final_url, url].flatMap((u) => {
           if (!u) return [];
           try {
@@ -898,9 +835,8 @@ function tinyfish(integration: IntegrationRow): DiscoveryProvider {
           title: r.title ?? null,
           description: r.description ?? null,
           text,
-          // links belong to the rendered destination — on a redirect the
-          // same-host nav check must compare against final_url, not the
-          // requested url, or every internal follow-up drops out.
+          // nav links belong to the rendered destination — compare same-host
+          // against final_url, not the requested url
           nav: [...new Set([...navLinks(links, r.final_url ?? url), ...fromText.hubs])].slice(0, 8),
           ...(isTruncatedText(text) ? { truncated: true } : {}),
           foundContacts,
@@ -970,10 +906,8 @@ export function isMapPointer(url: string): boolean {
   }
 }
 
-/** Links on a page worth a free follow-up read — the pointer-only surfaces
- *  (link-in-bio hubs, google-business/map links) that exist solely to hold
- *  the real contact. read_pages auto-chases these so the shortest path
- *  profile → hub → wa.me never depends on a second model step. */
+/** pointer-only surfaces that exist solely to hold the real contact —
+ *  auto-chased so profile → hub → wa.me never costs a second model step */
 export function chaseLinks(page: ReadPage): string[] {
   const out: string[] = [];
   for (const link of page.nav) {
@@ -990,13 +924,9 @@ export function chaseLinks(page: ReadPage): string[] {
   return out;
 }
 
-/** Iteratively peel `continue=` wrappers off a google-family url — a
- *  captcha'd google redirect (/sorry/?continue=<url>) can nest. Every
- *  level re-validates the carrier family and scheme before unwrapping.
- *  The bound guards WORK on untrusted input — it was the recursion that
- *  had to go, not the depth; an iterative peel is cheap, so the window is
- *  generous. Whatever remains past the bound resolves through the fetch
- *  path instead. */
+/** iteratively peel `continue=` wrappers off a google-family url (a captcha'd
+ *  /sorry/ redirect can nest), re-validating family + scheme each level;
+ *  past the bound the url resolves through the fetch path instead */
 function unwrapContinue(raw: string, max = 8): string {
   let cur = raw;
   for (let i = 0; i < max; i++) {
@@ -1008,13 +938,9 @@ function unwrapContinue(raw: string, max = 8): string {
     }
     if (t.protocol !== 'http:' && t.protocol !== 'https:') break;
     if (!isBizMapUrl(t) && !GOOGLE_HOST.test(t.hostname)) break;
-    // get() already decodes the value once — decoding *every* inner again
-    // would collapse several nesting levels per peel and let an inner
-    // &continue= split off as its own param. The narrow exception is a
-    // twice-encoded absolute target (get() leaves https%3A…): decode once
-    // more only when the result is itself a complete url.
-    // A duplicated continue= is followed at its first nonempty value — an
-    // empty slot isn't a wrapper and mustn't hide the real target.
+    // get() already decodes once — decode again only when the result is
+    // itself a complete url; a duplicated continue= follows its first
+    // nonempty value (an empty slot isn't a wrapper)
     const inner = t.searchParams.getAll('continue').find((v) => v);
     if (!inner) break;
     try {
@@ -1024,11 +950,9 @@ function unwrapContinue(raw: string, max = 8): string {
         if (/^https?:\/\//i.test(dec)) target = dec;
       }
       const cand = new URL(target, cur);
-      // The peel never crosses the pointer family — a continue= resolving
-      // outside biz-map/google means this chain isn't a map pointer: keep
-      // the wrapper (its leftover continue= marks it unresolved) and never
-      // let a foreign host become a chase hop. assertFetchable can't stop
-      // that — it only blocks private/non-http targets.
+      // the peel never crosses the pointer family — a continue= resolving
+      // outside biz-map/google keeps the wrapper unresolved (leftover
+      // continue= marks it) and never becomes a chase hop
       if (
         (cand.protocol !== 'http:' && cand.protocol !== 'https:') ||
         (!isBizMapUrl(cand) && !GOOGLE_HOST.test(cand.hostname))
@@ -1043,24 +967,17 @@ function unwrapContinue(raw: string, max = 8): string {
   return cur;
 }
 
-/** The carrier a maps/google url peels to in-process, plus the business
- *  name it already carries (?q=, /maps/place/) — null name when only a
- *  redirect hop could reveal it. Exposing the carrier lets the resolver
- *  hand the model the real destination, not the outermost wrapper. */
+/** the carrier a maps/google url peels to, plus the business name it already
+ *  carries (?q=, /maps/place/) — null name when only a redirect could reveal it */
 function mapPointerCarrier(raw: string): { carrier: URL; name: string | null } | null {
   try {
     const t = new URL(unwrapContinue(raw));
-    // Only the map-pointer/google family can carry a business name — an
-    // arbitrary host's ?q= is not a profile pointer and must not claim
-    // the free in-process resolution this name unlocks. The carrier must
-    // also be a fetchable page: an ftp://maps.google.com link is not a
-    // profile pointer either.
+    // only the map-pointer/google family can carry a business name, and the
+    // carrier must be fetchable (ftp://maps.google.com is not a pointer)
     if (t.protocol !== 'http:' && t.protocol !== 'https:') return null;
     if (!isBizMapUrl(t) && !GOOGLE_HOST.test(t.hostname)) return null;
-    // A leftover nonempty continue= means the peel hit its bound mid-chain
-    // — this carrier never resolved, so its ?q=/place fields describe the
-    // wrapper, not the destination. Unresolved beats a false name. Empty
-    // values are ignored: `&continue=` alone isn't a wrapper.
+    // a leftover nonempty continue= means the peel hit its bound mid-chain —
+    // the wrapper's ?q=/place fields describe the wrapper, not the destination
     if (t.searchParams.getAll('continue').some((v) => v)) return { carrier: t, name: null };
     const q = t.searchParams.get('q') ?? t.searchParams.get('query');
     let name: string | null = null;
@@ -1082,45 +999,33 @@ export function mapPointerName(raw: string): string | null {
   return mapPointerCarrier(raw)?.name ?? null;
 }
 
-/** A g.co/kgs or maps shortlink can't be provider-fetched — google.com lands
- *  the render on a captcha wall. The 302 itself is clean though, and its
- *  target carries the canonical entity: ?q=<name> on /search, /maps/place/
- *  <name> on maps. Resolve the pointer in-process and hand the model a
- *  synthetic page whose text names the business profile (→ the search query
- *  that surfaces the phone in directories). */
+/** a g.co/kgs or maps shortlink can't be provider-fetched (captcha wall) but
+ *  its 302 target carries the canonical entity (?q=<name>, /maps/place/) —
+ *  resolve in-process into a synthetic page naming the business */
 export async function resolveMapPointer(
   url: string,
-  // Reserve-and-charge hook for the caller's fetch budget: called before
-  // each network request is issued; returning false stops the chase. A
-  // nameable pointer never triggers it — those resolve in-process, free.
+  // fetch-budget hook — called before each request is issued; false stops
+  // the chase (a nameable pointer never triggers it — those resolve free)
   reserve?: () => Promise<boolean>,
 ): Promise<ReadPage | null> {
-  // Direct google.com/maps/place/<name> links carry the name already — only
-  // shortlinks (g.co/kgs, maps.app.goo.gl) need the 302 resolved. Redirects
-  // are followed only while the target stays in the shortlink/google family:
-  // an arbitrary Location never gets fetched, and a non-google final target
-  // never reaches the model as a follow-up url.
+  // only shortlinks need the 302 resolved; redirects are followed only while
+  // the target stays in the shortlink/google family
   const SHORTLINK_HOST = /^(g\.co|maps\.app\.goo\.gl|.*\.goo\.gl|bit\.ly|tinyurl\.com|t\.co)$/i;
-  // Peel continue= wrappers off the input too — a nested sorry/ chain
-  // still shortens in-process before the first fetch. When a name is
-  // found, the peeled carrier is the resolved location the model follows
-  // up on — the original url stays on the page for request identity.
+  // peel continue= wrappers off the input too; when a name is found the peeled
+  // carrier is the resolved location (the original url stays the page identity)
   const init = mapPointerCarrier(url);
   let location: string | null = init?.name ? init.carrier.toString() : null;
   let name: string | null = init?.name ?? null;
   let next: string | null = unwrapContinue(url);
   for (let hops = 0; !location && next && hops < 3; hops++) {
-    // Every hop is just another url the agent asked us to fetch — run the
-    // same guard read_pages applies at the batch boundary. Family
-    // membership is not a substitute: a shortlink can 302 to a private or
-    // non-http target its own host check would never name.
+    // every hop runs the same guard read_pages applies — a shortlink can
+    // 302 to a private/non-http target its host check would never name
     try {
       assertFetchable(next);
     } catch {
       break;
     }
-    // Charge the request before it issues — a pointer can burn several
-    // hops against the caller's fetch budget; out of budget, stop here.
+    // charge before issuing — a pointer can burn several hops of fetch budget
     if (reserve && !(await reserve())) break;
     let redirect: string | null = null;
     try {
@@ -1140,10 +1045,8 @@ export async function resolveMapPointer(
     } catch {
       break;
     }
-    // The redirect may land on another sorry/ continue wrapper around the
-    // real target — peel it in-process (bounded, same cap as the name
-    // window) so a nested chain still surfaces its name, and the location
-    // handed to the model is the real target, not the captcha wall.
+    // the redirect may land on another sorry/ wrapper — peel it so the
+    // location handed to the model is the real target, not the captcha wall
     const peeled = unwrapContinue(t.toString());
     try {
       t = new URL(peeled);
@@ -1152,9 +1055,7 @@ export async function resolveMapPointer(
     }
     const p = mapPointerCarrier(peeled);
     name = p?.name ?? name;
-    // A named carrier IS the resolved destination — validate it and
-    // resolve now rather than spending another hop on the mid-chain
-    // wrapper's redirect.
+    // a named carrier IS the resolved destination — no further hop needed
     if (p?.name) {
       try {
         assertFetchable(p.carrier.toString());
@@ -1165,16 +1066,15 @@ export async function resolveMapPointer(
       break;
     }
     if (GOOGLE_HOST.test(t.hostname)) {
-      // A peeled target that still wraps a continue= isn't the
-      // destination — it's another captcha carrier. Never hand it to the
-      // model as the resolved location, but its own redirect can still
-      // advance the chain: keep chasing it (bounded, charged per hop).
+      // a peeled target that still wraps a continue= is another captcha
+      // carrier — never the resolved location, but its redirect can advance
+      // the chain
       if (t.searchParams.getAll('continue').some((v) => v)) {
         next = t.toString();
         continue;
       }
-      // The resolved location is handed to the model as a follow-up url —
-      // it must pass the fetchable guard too, not just the family check.
+      // the resolved location reaches the model as a follow-up url — it must
+      // pass the fetchable guard too, not just the family check
       try {
         assertFetchable(t.toString());
       } catch {
@@ -1183,8 +1083,7 @@ export async function resolveMapPointer(
       location = t.toString();
       break;
     }
-    // keep chasing only while the chain stays on shortlink hosts — a foreign
-    // target is never fetched, and its url never reaches the model.
+    // a foreign target is never fetched and its url never reaches the model
     next = SHORTLINK_HOST.test(t.hostname) ? t.toString() : null;
   }
   if (!location && !name) return null;
@@ -1209,9 +1108,8 @@ export async function resolveMapPointer(
   };
 }
 
-/** The provider's render stopped early — a '…'/'mais'/'more' tail where the
- *  bio's contact line lives. Flagged so the model switches to search +
- *  directories instead of trusting a bio that was cut. */
+/** the provider's render stopped early — the bio's contact line lives past
+ *  the cut; flag so the model switches to search + directories */
 function isTruncatedText(text: string): boolean {
   const tail = text.trim().slice(-80);
   return (

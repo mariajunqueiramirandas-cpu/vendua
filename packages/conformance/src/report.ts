@@ -1,8 +1,3 @@
-/**
- * Check result model — every command emits one result per check ID, always
- * printing IDs so failure bundles can reference them (docs/architecture/10).
- */
-
 export type CheckStatus = 'pass' | 'fail' | 'skip';
 
 export interface CheckResult {
