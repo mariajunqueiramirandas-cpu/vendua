@@ -62,10 +62,10 @@ O diretório `build/` é a entrega estática. A hospedagem deve servir `rota/ind
 
 Antes de publicar:
 
-1. Confirmar aquisição e configuração do domínio e do responsável.
+1. Confirmar a identificação do responsável.
 2. Inventariar os dados da hospedagem e finalizar a política de privacidade em `/privacidade/`.
-3. Definir `publicDomain` em `src/lib/content/site.ts` com a origem HTTPS confirmada e gerar novo build. Isso habilita canonical, Open Graph com URL absoluta, sitemap e robots para indexação. Sem domínio, robots bloqueia indexação e não são emitidas URLs fictícias.
+3. `publicDomain` já está definido como `https://vendua.com.br` — canonical, Open Graph com URL absoluta, sitemap e robots para indexação são emitidos no build. Ao trocar de domínio, atualizar `src/lib/content/site.ts` e gerar novo build; sem domínio, robots bloqueia indexação e não são emitidas URLs fictícias.
 4. Configurar HTTPS e redirecionamento para a origem canônica na hospedagem escolhida.
 5. Conferir o perfil `@vendua.digital` com e sem login.
 
-O cartão social ainda é o da fase anterior e deve ser regenerado quando houver arte nova. Não houve publicação ou envio de mensagens.
+O cartão social foi regenerado com a mensagem atual ("Software sob medida."). Não houve publicação ou envio de mensagens.
