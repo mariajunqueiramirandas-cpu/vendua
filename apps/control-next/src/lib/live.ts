@@ -27,23 +27,19 @@ export function useLiveInvalidation(client: QueryClient, enabled: boolean) {
   useEffect(() => {
     if (!enabled) return;
     // one subscription per type: events.ts throttles per subscriber and keeps only
-    // the latest pending event, so a shared one would drop mixed-type bursts
-    let lastSync = -1;
+    // the latest pending event, so a shared one would drop mixed-type bursts.
+    // sync gets its own subscriber for the same reason — a resource event landing in
+    // the throttle window must not replace a pending reconnect sync.
     const offs = (Object.keys(REFRESH) as (keyof typeof REFRESH)[]).map((type) =>
       onControlEvent(type, (e) => {
-        if (e.type === 'sync') {
-          // sync lands on every subscriber — refetch once
-          if (e.id === lastSync) return;
-          lastSync = e.id;
-          void client.invalidateQueries();
-          return;
-        }
+        if (e.type === 'sync') return;
         const roots = new Set(REFRESH[type]);
         void client.invalidateQueries({
           predicate: (q) => roots.has(String(q.queryKey[0])),
         });
       }),
     );
+    offs.push(onControlEvent('sync', () => void client.invalidateQueries()));
     return () => offs.forEach((off) => off());
   }, [client, enabled]);
 }

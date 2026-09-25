@@ -52,8 +52,7 @@ export function Page({
   useLayoutEffect(() => {
     const el = scroller.current;
     if (!el) return;
-    const saved = scrollMemo.get(key);
-    if (saved) el.scrollTop = saved;
+    el.scrollTop = scrollMemo.get(key) ?? 0;
     const onScroll = () => scrollMemo.set(key, el.scrollTop);
     el.addEventListener('scroll', onScroll, { passive: true });
     return () => el.removeEventListener('scroll', onScroll);

@@ -95,9 +95,15 @@ export function DataList<T>({
               <th className="w-9 pl-3">
                 <Checkbox
                   checked={allSel ? true : someSel ? 'indeterminate' : false}
-                  onCheckedChange={(v) =>
-                    selection.onChange(v === true ? new Set(rows.map(rowKey)) : new Set())
-                  }
+                  onCheckedChange={(v) => {
+                    // only this page's rows change — ids selected elsewhere stay selected
+                    const next = new Set(selection.selected);
+                    for (const r of rows) {
+                      if (v === true) next.add(rowKey(r));
+                      else next.delete(rowKey(r));
+                    }
+                    selection.onChange(next);
+                  }}
                   aria-label="selecionar todos"
                 />
               </th>
