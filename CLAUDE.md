@@ -35,7 +35,7 @@ CHROMIUM=/opt/pw-browsers/chromium bun scripts/shots.ts /pipeline /inbox   # 375
   kills the shell running it.
 - Docker + Compose are installed but the daemon isn't running: start it on demand with
   `(nohup dockerd > /tmp/dockerd.log 2>&1 &)`. It can pull from Docker Hub, so the real
-  Dokploy images can be checked with `docker compose build core crm` — images are large, so
+  Dokploy images can be checked with `docker compose build core` (it builds the CRM inside) — images are large, so
   mind the session's disk allowance and `docker system prune` afterwards.
 
 ## apps/control (CRM)
