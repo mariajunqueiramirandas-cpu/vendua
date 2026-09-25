@@ -178,41 +178,11 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('lead lifecycle (db)', () => {
         const runs = await runsFor(lead.id);
         expect(runs).toHaveLength(1);
         expect(runs[0]!.kind).toBe('outreach');
-        // firstContactDelayMin = 0 → the merged run researches and drafts but
-        // never sends — the approval path triage used to carry.
-        expect(runs[0]!.params.draftOnly).toBe(true);
-        expect(runs[0]!.params.auto).toBe('first-contact');
-      } finally {
-        if (prior) {
-          await sql`update control_settings set value = ${sql.json(prior.value as never)} where key = 'agent_autonomy'`;
-        } else {
-          await sql`delete from control_settings where key = 'agent_autonomy'`;
-        }
-      }
-    });
-
-    test('autopilot lifts the first-contact draft — zero-delay sends unreviewed', async () => {
-      await setup();
-      const prior = (
-        await sql<
-          { value: unknown }[]
-        >`select value from control_settings where key = 'agent_autonomy'`
-      )[0];
-      await sql`insert into control_settings (key, value) values ('agent_autonomy', ${sql.json({ level: 'autopilot' } as never)})
-        on conflict (key) do update set value = excluded.value`;
-      try {
-        const res = await postLead(
-          { name: 'Autopilot First', whatsapp: '+55 85 90000-0004' },
-          key('a1-autopilot'),
-        );
-        expect(res.status).toBe(201);
-        const { lead } = (await res.json()) as { lead: { id: string } };
-        const runs = await runsFor(lead.id);
-        expect(runs).toHaveLength(1);
-        expect(runs[0]!.kind).toBe('outreach');
-        // draftDecision lifts firstContactDraftOnly under autopilot — the
-        // stamped marker must not override the level back to drafts.
+        // No draftOnly is stamped — the first-contact draft is decided live
+        // by checkSendAllowedTx at send time (level + firstContactDraftOnly
+        // read then), so a policy flip between create and claim takes effect.
         expect(runs[0]!.params.draftOnly).toBeUndefined();
+        expect(runs[0]!.params.auto).toBe('first-contact');
       } finally {
         if (prior) {
           await sql`update control_settings set value = ${sql.json(prior.value as never)} where key = 'agent_autonomy'`;

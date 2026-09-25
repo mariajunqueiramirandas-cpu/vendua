@@ -130,7 +130,8 @@ export async function sweepOrphanInbox(
   // cost cap) keep their rows, so a blocked prefix gets re-checked once per
   // rotation instead of monopolizing every tick — and a keyset (not offset)
   // page can't skip leads that shift when terminal mail drops mid-scan.
-  // Per-tick work stays bounded: at most SWEEP_INSPECT per-lead checks and
+  // Per-tick work stays bounded: at most `maxInspect` per-lead checks —
+  // SWEEP_INSPECT by default; the opts overrides exist for tests — and
   // `limit` minted runs, then the next tick resumes at the cursor.
   let served = 0;
   let inspected = 0;

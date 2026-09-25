@@ -2836,6 +2836,99 @@ dbDescribe('worker robustness (db)', () => {
     }
   });
 
+  test('first-contact draft is decided at send time — a level flip before claim takes effect', async () => {
+    await migrate(sql, MIGRATIONS);
+    const prior = await sql<{ key: string; value: unknown }[]>`
+      select key, value from control_settings where key in ('guardrails', 'agent_autonomy')
+    `;
+    const priorOf = (k: string) => prior.find((r) => r.key === k);
+    await sql`insert into control_settings (key, value) values ('guardrails', ${sql.json({
+      firstContactDraftOnly: true,
+      quietStart: '00:00',
+      quietEnd: '00:00',
+    } as never)})
+      on conflict (key) do update set value = excluded.value`;
+    const setLevel = (level: string) =>
+      sql`insert into control_settings (key, value) values ('agent_autonomy', ${sql.json({ level } as never)})
+        on conflict (key) do update set value = excluded.value`;
+    try {
+      await setLevel('supervised');
+      const lead = await controlTx(sql, (tx) =>
+        insertLeadTx(tx, { name: 'Flip Send', whatsapp: '5511910000096', agent_mode: 'auto' }),
+      );
+      const leadId = lead.body.lead.id;
+      const [thread] = await sql<{ id: string }[]>`
+        insert into lead_threads (lead_id, channel) values (${leadId}, 'whatsapp') returning id
+      `;
+      await sql`delete from agent_runs where status = 'queued'`;
+      // Queued while supervised — but nothing was stamped, so the send
+      // verdict at execution time is the only policy that counts.
+      const runId = (await enqueueRun(sql, {
+        kind: 'outreach',
+        leadId,
+        threadId: thread!.id,
+        params: {
+          auto: 'first-contact',
+          script: [
+            { toolCalls: [{ name: 'send_message', args: { leadId, body: 'oi, bem-vindo' } }] },
+            { text: 'fim' },
+          ],
+        },
+      }))!;
+      await setLevel('autopilot');
+      expect(await runOnce(sql)).toBe(true);
+      const outs = await sql<{ status: string }[]>`
+        select m.status from lead_messages m
+        join lead_threads t on t.id = m.thread_id
+        where t.lead_id = ${leadId} and m.direction = 'out'
+      `;
+      // Autopilot at send time lifts firstContactDraftOnly — the wire gets
+      // it, not the approvals queue.
+      expect(outs.map((o) => o.status)).toEqual(['sent']);
+      expect((await getRun(runId)).status).toBe('done');
+
+      // And the supervised posture still drafts — the same run shape on a
+      // fresh lead under firstContactDraftOnly.
+      await setLevel('supervised');
+      const lead2 = await controlTx(sql, (tx) =>
+        insertLeadTx(tx, { name: 'Flip Draft', whatsapp: '5511910000095', agent_mode: 'auto' }),
+      );
+      const lead2Id = lead2.body.lead.id;
+      const [thread2] = await sql<{ id: string }[]>`
+        insert into lead_threads (lead_id, channel) values (${lead2Id}, 'whatsapp') returning id
+      `;
+      await sql`delete from agent_runs where status = 'queued'`;
+      (await enqueueRun(sql, {
+        kind: 'outreach',
+        leadId: lead2Id,
+        threadId: thread2!.id,
+        params: {
+          auto: 'first-contact',
+          script: [
+            { toolCalls: [{ name: 'send_message', args: { leadId: lead2Id, body: 'oi' } }] },
+            { text: 'fim' },
+          ],
+        },
+      }))!;
+      expect(await runOnce(sql)).toBe(true);
+      const outs2 = await sql<{ status: string }[]>`
+        select m.status from lead_messages m
+        join lead_threads t on t.id = m.thread_id
+        where t.lead_id = ${lead2Id} and m.direction = 'out'
+      `;
+      expect(outs2.map((o) => o.status)).toEqual(['draft']);
+    } finally {
+      for (const k of ['guardrails', 'agent_autonomy']) {
+        const p = priorOf(k);
+        if (p) {
+          await sql`update control_settings set value = ${sql.json(p.value as never)} where key = ${k}`;
+        } else {
+          await sql`delete from control_settings where key = ${k}`;
+        }
+      }
+    }
+  });
+
   test('a zero-lead discovery nudge must not silence drained reply mail', async () => {
     await migrate(sql, MIGRATIONS);
     const priorGuardrails = (
