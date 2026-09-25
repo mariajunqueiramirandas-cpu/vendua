@@ -1,29 +1,15 @@
 #!/usr/bin/env bun
-// Enforces the storefront write-scope boundary
-// (docs/architecture/06-monorepo.md): a PR labelled `storefront:<slug>` may
-// only touch files under `storefronts/<slug>/**`.
-//
-// CI mode — `bun tools/check-storefront-paths.mjs [--base <ref>]`
-//   Reads labels and the base branch from the pull_request payload at
-//   $GITHUB_EVENT_PATH; changed files come from
-//   `git diff --name-only <base>...HEAD` (default base:
-//   `origin/<pr.base.ref>`; the checkout needs `fetch-depth: 0`).
-//   Zero `storefront:` labels → no-op pass; two different slugs → fail
-//   (a PR belongs to one storefront).
-//
-// Local mode — `bun tools/check-storefront-paths.mjs --slug <slug> --files f1 f2 …`
-//   The same check on an explicit file list; no git or event payload needed.
-//   `--files` consumes the rest of the argument list.
-//
-// Exit 0 = pass, 1 = violations or usage error (details on stderr).
+// Enforces the storefront write-scope boundary (docs/architecture/06-monorepo.md):
+// a PR labelled `storefront:<slug>` may only touch `storefronts/<slug>/**`.
+// CI: `check-storefront-paths.mjs [--base <ref>]` — labels+diff from $GITHUB_EVENT_PATH.
+// Local: `check-storefront-paths.mjs --slug <slug> --files f1 f2 …`
+// Exit 0 = pass, 1 = violations/usage error.
 
 import { execFileSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 
 const LABEL_PREFIX = 'storefront:';
-// `platform` is the deliberate escape hatch for platform-wide changes that
-// legitimately touch a storefront (a kernel-driven migration, a rename that
-// sweeps the fleet). It makes the bypass visible — the label is the audit.
+// `platform` label: deliberate escape hatch for platform-wide changes — the label is the audit
 const PLATFORM_LABEL = 'platform';
 const SLUG_RE = /^[a-z0-9][a-z0-9._-]*$/i;
 
@@ -108,12 +94,8 @@ if (unique.length > 1) {
   );
 }
 if (unique.length === 0) {
-  // Unlabelled doesn't mean unbounded: ANY diff touching a non-reserved
-  // storefront is a storefront PR whether it was labelled or not — otherwise
-  // omitting the label would bypass the boundary entirely (confined diffs
-  // and mixed diffs alike). Underscored dirs (_template, _examples) are
-  // platform-owned and exempt; `platform` is the deliberate label for
-  // platform-wide changes that must touch a storefront.
+  // unlabelled ≠ unbounded: any diff touching a non-reserved storefront is a
+  // storefront PR; underscored dirs (_template, _examples) are exempt
   files ??= changedFiles(opts.base ?? 'origin/main');
   const sfRe = /^storefronts\/([^/]+)\//;
   const scoped = files.map((f) => sfRe.exec(f)?.[1]);

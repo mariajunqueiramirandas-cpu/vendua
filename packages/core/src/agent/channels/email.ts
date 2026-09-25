@@ -4,12 +4,7 @@ import { renderReplyEmail } from './email-template.ts';
 
 const mailLog = log.child({ mod: 'email' });
 
-/**
- * agent/channels/email — outbound drivers. `resend` posts to the Resend API;
- * `log` is the dev driver: writes the would-be send to the log and
- * returns a synthetic provider id so the whole draft→send→reply loop runs
- * with zero credentials.
- */
+// outbound drivers: 'resend' posts to the Resend API, 'log' fakes the send for credential-free dev
 export async function sendEmail(
   integration: IntegrationRow,
   msg: { to: string; subject: string; body: string; idemKey?: string },
@@ -30,8 +25,7 @@ export async function sendEmail(
       headers: {
         'content-type': 'application/json',
         authorization: `Bearer ${apiKey}`,
-        // Resend dedupes on this key — a reclaimed caller retrying the same
-        // logical send (e.g. the daily digest) can't double-deliver.
+        // Resend dedupes on this key
         ...(msg.idemKey ? { 'idempotency-key': msg.idemKey } : {}),
       },
       body: JSON.stringify({

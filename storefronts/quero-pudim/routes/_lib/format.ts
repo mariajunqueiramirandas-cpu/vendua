@@ -1,7 +1,6 @@
 const BRL = new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' });
 
-/** cents → "R$ 18,90". Money display should come from the platform (locale +
- * currency of record); until then every surface formats with this. */
+// money display should come from the platform (locale+currency); until then every surface formats here
 export function formatBRL(cents: number): string {
   return BRL.format(cents / 100);
 }

@@ -4,7 +4,6 @@ import { Shell } from '../components/shell.tsx';
 import { BagMark } from '../components/marks.tsx';
 import { brl } from '../components/format.ts';
 
-/** /sacola — the comanda: a kraft-paper ticket listing what goes in the bag. */
 export default function SacolaPage() {
   const { cart } = useCart();
   const { store } = useStore();

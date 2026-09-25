@@ -1,9 +1,6 @@
-/**
- * The last-resort loader (`v.js`) — docs/architecture/05-system-surfaces.md#the-loader-vjs.
- * ~dependency-free, renders blocking/emergency notices in Shadow DOM so no
- * storefront CSS can break it. Phase 0: served by Core in dev; production serves
- * it from cdn.vendua.com.br and it reads the edge-cached state endpoint.
- */
+// last-resort loader (`v.js`): ~dependency-free, renders blocking/emergency
+// notices in Shadow DOM so no storefront CSS can break it
+// (docs/architecture/05-system-surfaces.md#the-loader-vjs)
 export const LOADER_JS = `(function () {
   var PING = '__VENDUA_LOADER__';
   window[PING] = { status: 'ready', version: 1 };
@@ -12,8 +9,7 @@ export const LOADER_JS = `(function () {
     return '';
   }
   async function tick() {
-    // Once the Kernel mounts it owns surfaces — the loader is the last-resort
-    // path only. Yield and strip any overlay already rendered.
+    // once the kernel mounts it owns surfaces — yield and strip any stale overlay
     if (window.__VENDUA_KERNEL_MOUNTED__) {
       var stale = document.getElementById('vendua-loader-overlay');
       if (stale) stale.remove();

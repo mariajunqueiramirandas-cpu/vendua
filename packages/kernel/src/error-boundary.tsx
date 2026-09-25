@@ -1,9 +1,6 @@
 import { Component, type ReactNode } from 'react';
 
-/**
- * Kernel error boundary — overrides render inside this; a throwing override
- * degrades to the Kernel default, never to broken (04: override rules).
- */
+// a throwing override degrades to the Kernel default, never to broken (04: override rules)
 export class ErrorBoundary extends Component<
   { fallback: ReactNode; children: ReactNode; onError?: (err: unknown) => void },
   { failed: boolean }

@@ -9,11 +9,7 @@ import {
   useStore,
 } from '@vendua/kernel';
 
-/**
- * Checkout — the minimal real flow: customer + delivery mode + payment,
- * `mutations.setDelivery` keeps the server cart's zone/fee in sync, and
- * `useCheckout().submit` places the order. Core owns all the math.
- */
+// `setDelivery` keeps the server cart's zone/fee in sync; Core owns all the math
 
 type Mode = 'pickup' | 'delivery';
 type Pay = 'pix' | 'card_on_delivery' | 'cash';
@@ -49,8 +45,7 @@ export function CheckoutPage() {
   const totals = cart?.totals;
   const neighborhoods = zones.flatMap((z) => z.neighborhoods);
 
-  // Keep the server cart's delivery in sync so zone fee / min-order land in
-  // cart.totals. The seq guard drops superseded responses.
+  // sync so zone fee / min-order land in cart.totals; seq drops superseded responses
   const syncSeq = useRef(0);
   const [deliverySync, setDeliverySync] = useState<'syncing' | 'ok' | 'error'>('ok');
   useEffect(() => {

@@ -12,8 +12,7 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('agentMetrics (db)', () => {
   const sql = postgres(process.env.TEST_DATABASE_URL!);
   const MIGRATIONS = join(import.meta.dir, '../db/migrations');
 
-  /** A lead + whatsapp thread so outbound/inbound messages have somewhere
-   *  to live; returns ids the test composes messages/runs against. */
+  // lead + whatsapp thread so messages/runs have somewhere to live
   const seedLead = async (name: string) => {
     const created = await controlTx(sql, (tx) => insertLeadTx(tx, { name, agent_mode: 'auto' }));
     const leadId = created.body.lead.id;
@@ -64,10 +63,8 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('agentMetrics (db)', () => {
       )`;
   };
 
-  // Every metric source must be reset per test: sibling files leave
-  // agent_wakeups/agent_runs/lead_messages rows behind, and floating drains
-  // from their ingest calls can claim or mint queued rows mid-test. Nothing
-  // here seeds 'queued' — the only status foreign sweeps and drains touch.
+  // reset every metric source per test: sibling files' leftover rows and stray
+  // drains can touch 'queued' — nothing here seeds it
   const clean = async () => {
     await sql`delete from agent_wakeups`;
     await sql`delete from lead_messages`;
@@ -123,8 +120,7 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('agentMetrics (db)', () => {
     await seedRun({ kind: 'reply', leadId, status: 'failed' });
     await seedRun({ kind: 'reply', leadId, status: 'canceled' });
     await seedRun({ kind: 'outreach', leadId, steps: actedSteps, costCents: 250 });
-    // 'canceled' — not 'queued': queued rows are fair game to every other
-    // file's sweep/delete and to stray drains surviving file boundaries.
+    // 'canceled', not 'queued': queued rows are fair game to other files' sweeps/drains
     await seedRun({ kind: 'discovery', steps: actedSteps, status: 'canceled' });
     const m = await agentMetrics(sql, 7);
     const reply = m.byKind.find((k) => k.kind === 'reply')!;
@@ -156,8 +152,7 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('agentMetrics (db)', () => {
     const b = await seedLead('Replier B');
     const c = await seedLead('Early Writer');
     const stale = new Date(Date.now() - 20 * 86_400_000);
-    // A: contacted and replied — counts on both sides. Explicit offsets make
-    // the reply order deterministic (future timestamps fall outside `to`).
+    // A: contacted and replied — counts both sides; explicit offsets make order deterministic
     await seedMessage({
       threadId: a.threadId,
       direction: 'out',
@@ -181,8 +176,7 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('agentMetrics (db)', () => {
       approvedBy: 'staff',
     });
     await seedMessage({ threadId: b.threadId, direction: 'out', status: 'rejected' });
-    // C: wrote BEFORE the agent's first send — contacted, but the inbound
-    // can't be credited as a reply (it answers nothing)
+    // C: wrote BEFORE the first send — contacted, but the inbound can't be credited as a reply
     await seedMessage({
       threadId: c.threadId,
       direction: 'in',
@@ -224,8 +218,7 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('agentMetrics (db)', () => {
     const a = await seedLead('Late Approve A');
     const b = await seedLead('Late Approve B');
     const stale = new Date(Date.now() - 20 * 86_400_000);
-    // Composed 20d ago, approved+dispatched today — every aggregate lands
-    // in the window its event happened in, none on compose day.
+    // composed 20d ago, approved+dispatched today — each aggregate lands in its event's window
     await seedMessage({
       threadId: a.threadId,
       direction: 'out',
@@ -235,8 +228,7 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('agentMetrics (db)', () => {
       dispatchAttemptedAt: new Date(),
       createdAt: stale,
     });
-    // Composed 20d ago, staff rejection today — rejected counts on the
-    // rejection day even though compose fell outside the window.
+    // composed 20d ago, rejected today — rejected counts on rejection day
     await seedMessage({
       threadId: b.threadId,
       direction: 'out',
@@ -244,16 +236,13 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('agentMetrics (db)', () => {
       createdAt: stale,
       updatedAt: new Date(),
     });
-    // Draft composed in-window stays on compose time for drafted.
+    // draft composed in-window stays on compose time for 'drafted'
     await seedMessage({ threadId: b.threadId, direction: 'out', status: 'draft' });
     const m = await agentMetrics(sql, 7);
-    // sent: 1 (dispatch today, not compose); drafted: 1; approved: 1
-    // (approved_at today); rejected: 1 (rejected today)
     expect(m.outbound).toEqual({ sent: 1, drafted: 1, approved: 1, rejected: 1 });
     // the delayed send also counts as contact inside the window
     expect(m.replies.leadsContacted).toBe(1);
-    // 30d window sees the same rows once — the compose-day aggregation
-    // would have counted them twice under the old single-window read
+    // 30d window sees the same rows once
     const m30 = await agentMetrics(sql, 30);
     expect(m30.outbound.sent).toBe(1);
     expect(m30.outbound.approved).toBe(1);
@@ -268,19 +257,16 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('agentMetrics (db)', () => {
       values
         ('reply', now(), 'follow up', 'pending', 'agent', null),
         ('outreach', now() + interval '1 day', 'retry', 'pending', 'staff', null),
-        -- fired_at sits an hour inside the window: bare now() races the
-        -- metric's client-side to-boundary under db/host clock skew.
+        -- fired_at an hour inside the window: bare now() races the to-boundary under clock skew
         ('reply', now(), 'follow up', 'fired', 'agent', now() - interval '1 hour'),
         ('reply', ${stale}, 'old fire', 'fired', 'agent', ${stale}),
         ('outreach', now(), 'gave up', 'canceled', 'staff', null)`;
-    // A wakeup scheduled long ago that only fired now attributes to the
-    // fire, not the requested `at` — fired_at is the immutable flip stamp.
+    // a wakeup scheduled long ago but fired now attributes to fired_at
     const firedRun = await seedRun({ kind: 'outreach' });
     await sql`
       insert into agent_wakeups (kind, at, focus, status, created_by, fired_run_id, fired_at)
       values ('reply', ${stale}, 'late fire', 'fired', 'agent', ${firedRun}, now() - interval '1 hour')`;
-    // A post-fire cancellation bumps updated_at but the metric must not
-    // move: fired_at is immutable past the flip.
+    // a post-fire cancellation bumps updated_at but must not move the metric
     await sql`update agent_wakeups set updated_at = now() + interval '1 day' where focus = 'follow up' and status = 'fired'`;
     const m = await agentMetrics(sql, 7);
     expect(m.wakeups).toEqual({ pending: 2, fired: 2 });

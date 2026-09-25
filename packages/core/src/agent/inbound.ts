@@ -18,14 +18,8 @@ type ReplyGate = {
   archived_at: string | null;
 };
 
-/**
- * agent/inbound — the shared inbound path: a message from any channel (the
- * Baileys socket handler or an email webhook) lands here. Opt-out intent is
- * the agent's call — the reply run reads the message and flips
- * unsubscribed_at via the `unsubscribe` tool; this file just queues the run
- * (and skips it entirely once the lead is already unsubscribed). A bare
- * "sair"/"cancelar" can be normal speech, so nothing is decided by regex.
- */
+// shared inbound path. Opt-out intent is the reply run's call via the `unsubscribe`
+// tool — a bare "sair"/"cancelar" can be normal speech, so nothing is decided by regex.
 
 export type IngestResult = InboundResult | { ignored: string };
 
@@ -34,16 +28,13 @@ export async function ingestInbound(
   input: {
     channel: Channel;
     from: string;
-    /** The sender's complementary provider address when the channel carried
-     *  one (whatsapp LID ↔ phone-number jid) — lets lead matching converge
-     *  on a contact first seen under the other alias. */
+    /** complementary provider address (whatsapp LID ↔ phone jid) — helps lead matching converge */
     fromAlias?: string;
     fromName?: string;
     subject?: string;
     body: string;
     providerMessageId?: string | null;
-    /** 'out' = account's own copy of a sent message — context, never an
-     *  inbound to answer. */
+    /** 'out' = own sent copy — context, never answered */
     direction?: 'in' | 'out';
     /** provider timestamp for history import */
     sentAt?: Date;
@@ -75,24 +66,15 @@ export async function ingestInbound(
   emitControlEvent('thread.message', res.threadId);
   if (res.leadCreated) emitControlEvent('lead.change', res.leadId);
 
-  // History and own-account echoes are context only — an old message must
-  // not turn into a live reply, and the agent never answers a message the
-  // account itself sent.
+  // history imports and own-account echoes are context only — never answered
   if (input.historical || input.direction === 'out') return res;
-  // Gate check and run insert in one tx: `for update of l, t` serializes
-  // with both suppression writers — archive/unsubscribe land on `leads`,
-  // the staff pause toggle on `lead_threads` — so a suppression committed
-  // between the message insert and now is seen here instead of stranding a
-  // queued reply on a suppressed thread/lead.
+  // gate check + run insert in one tx: `for update of l, t` serializes with the
+  // suppression writers so a suppression committed mid-flight is seen here
   const supersededThreads: string[] = [];
   const canceledRunIds: string[] = [];
   const { runId, capFlagged, retired } = await controlTx(sql, async (tx) => {
-    // 'capfin' first: the per-lead advisory serializes this whole gate
-    // against claims (claimRun only TRIES it — while we hold it every
-    // same-lead candidate rejects there) AND against cap evaluators. It must
-    // come before the l,t lock — the advisory is this tx's first lock or
-    // a finisher holding it + waiting on our lead row would cycle (the
-    // flag insert's FK takes key-share on leads). See capLockTx.
+    // 'capfin' advisory first: serializes this gate against claims and cap
+    // evaluators; must precede the l,t lock to avoid a lock-order cycle. See capLockTx.
     await capLockTx(tx, res.leadId);
     const gateRows = await tx<ReplyGate[]>`
       select t.agent_enabled, l.agent_mode, l.unsubscribed_at, l.archived_at
@@ -100,13 +82,8 @@ export async function ingestInbound(
       where t.id = ${res.threadId}
       for update of l, t
     `;
-    // Inbound retires COMPOSED drafts of auto outreach — a "first contact"
-    // answering nothing is obsolete the moment the lead writes, wherever
-    // the run that authored it stands (queued, running, done, failed).
-    // Queued auto outreach rows retire alongside them (below); a RUNNING
-    // outreach is untouched — the message mails to it through agent_inbox
-    // instead of superseding it. 'regenerate'/'agent' stay exempt —
-    // provenance says "possibly a promise", never disposable.
+    // retire composed auto-outreach drafts — obsolete once the lead writes;
+    // 'regenerate'/'agent' exempt (possibly a promise), running runs untouched
     const drafts = await tx<{ thread_id: string }[]>`
       update lead_messages m
       set status = 'rejected', error = 'lead respondeu', updated_at = now()
@@ -120,16 +97,8 @@ export async function ingestInbound(
       returning m.thread_id
     `;
     supersededThreads.push(...drafts.map((d) => d.thread_id));
-    // Queued AUTO outreach retires with the drafts: it can never serve the
-    // new mail (drainInbox only runs inside an executing run, its channel
-    // pin may not match the item's, and it would fire before the inbound's
-    // quiet period ends) — so it would send a "reopening" that answers
-    // nothing. 'regenerate'/'agent' stay exempt — provenance says
-    // "possibly a promise", never disposable. A RUNNING outreach keeps
-    // its claim and drains the mail mid-flight — and the 'queued'
-    // predicate keeps this update's row locks behind the l,t lock, the
-    // same ordering every other writer follows (a 'running' predicate
-    // would wait on rows held by tool txs that took run→lead).
+    // queued auto outreach retires too — it can't serve the mail and would fire
+    // a "reopening"; the 'queued' predicate keeps its row locks behind the l,t lock
     const canceled = await tx<{ id: string }[]>`
       update agent_runs
       set status = 'canceled', error = 'lead respondeu', finished_at = now()
@@ -139,16 +108,9 @@ export async function ingestInbound(
       returning id
     `;
     canceledRunIds.push(...canceled.map((c) => c.id));
-    // A canceled requeued run keeps mail consumed in its dead attempt —
-    // release it so the reply serves it (event retire: the deliveries
-    // bound is for failure paths), then tombstone the pending cadence
-    // events those runs minted: 'a cadência disparou' is obsolete the
-    // moment the lead writes. 'wakeup' mail rides the same predicate — a
-    // fired automation wakeup queued an outreach this inbound just
-    // canceled; leaving its item pending would let the orphan sweep
-    // respawn the dead reminder. Scoped to requestedKind='outreach' — an
-    // auto discovery/strategist event owes the lead nothing and waits
-    // for its own run; promised wakeups carry no auto marker and stay.
+    // release mail consumed in the dead attempts, then tombstone pending
+    // cadence/'wakeup' inbox items those runs minted — scoped to
+    // requestedKind='outreach' so promised wakeups stay
     for (const rid of canceledRunIds) await releaseInboxTx(tx, rid, true);
     await tx`
       update agent_inbox
@@ -173,21 +135,9 @@ export async function ingestInbound(
     if (!(await automationAllowedTx(tx, 'reply')).ok) {
       return { runId: null, capFlagged: false, retired: [] };
     }
-    // Mailbox delivery: the message enqueues as an inbox item no matter
-    // who owns the lead's run — a queued or running run drains it between
-    // steps and renders it to the model (burst coalescing for free: five
-    // rapid messages = five items drained by the SAME run, in order).
-    // The channel pin keeps the item thread-bound: an inbound on a
-    // different channel than the active run's DEFERS instead of draining
-    // (drainInbox's channel check) and the orphan sweep later spawns a
-    // run pinned to this channel + thread — a reply can never ship on
-    // the wrong conversation. insertRun's on-conflict path returns the
-    // already-active run's id, so a missing row here means the cap
-    // refused — the item stays pending for the sweep when the cap lifts.
-    // notBefore carries the quiet period into the deferred path: if the
-    // mail waits for another run to finish, the sweep's replacement run
-    // still can't claim before this deadline (same slide the parked-run
-    // path gets).
+    // enqueue as an inbox item: an active run drains it between steps (burst
+    // coalescing); a channel mismatch defers to a sweep-spawned run pinned to
+    // this channel. notBefore carries the quiet period into the deferred path.
     await enqueueInboxTx(tx, res.leadId, 'inbound', {
       text: `mensagem do lead [${input.channel}]: ${input.body.slice(0, 400)}`,
       threadId: res.threadId,
@@ -220,13 +170,8 @@ export async function ingestInbound(
   for (const id of [...canceledRunIds, ...retired]) emitControlEvent('run.update', id);
   if (capFlagged) emitControlEvent('lead.change');
   if (runId) {
-    // The latest message earns its own quiet period: slide the parked
-    // reply forward to now+delay — done OUTSIDE the l,t tx because
-    // claimRun locks run→thread while the gate holds thread→run; a run
-    // write there can deadlock. Applies to the delivered target as much
-    // as to a fresh insert — the same 'queued' + not-yet-due guards that
-    // made the old coalesced slide safe bound it here (a running or
-    // already-due run is never rescheduled).
+    // slide the parked reply's quiet period to now+delay — outside the l,t tx
+    // because claimRun locks run→thread while the gate holds thread→run
     if (inboundReplyDelayMin > 0) {
       const due = new Date(Date.now() + inboundReplyDelayMin * 60_000);
       await controlTx(sql, async (tx) => {
@@ -241,8 +186,7 @@ export async function ingestInbound(
       });
     }
     emitControlEvent('run.update', runId);
-    // Kick the queue now — don't wait up to the poll interval for a reply
-    // (a delayed run_at is simply not due yet; the worker tick picks it up).
+    // kick the queue now rather than waiting for the poll tick
     void drain(sql).catch((e) => agentLog.error({ err: e }, 'drain failed'));
   }
   return res;

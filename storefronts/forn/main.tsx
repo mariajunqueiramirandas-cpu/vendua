@@ -13,11 +13,8 @@ import CheckoutPage from './routes/checkout.tsx';
 import PedidoPage from './routes/pedido.tsx';
 import NotFound from './routes/not-found.tsx';
 
-/**
- * The app root sets `data-status` so the whole storefront shifts into its
- * after-hours palette when Core says the shop is closed — the system notice
- * remains Kernel-rendered via <SystemSurfaces /> (with our sign override).
- */
+// data-status shifts the whole storefront into its after-hours palette when
+// Core says the shop is closed
 function Frame() {
   const { status } = useStore();
   useEffect(() => {

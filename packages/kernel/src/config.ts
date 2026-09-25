@@ -1,15 +1,11 @@
 import type { ComponentType, LazyExoticComponent } from 'react';
 
-/**
- * defineStorefront + config types — the compile-time half of
- * docs/architecture/03-storefront-contract.md. `contract` is a single integer;
- * unknown slot keys are rejected by the `SlotKey` union.
- */
+// compile-time half of docs/architecture/03-storefront-contract.md
 
 export type ContractMajor = 1;
 export type Ring = 'stable' | 'preview' | 'canary';
 
-/** Slot registry v1 (04-extensions-and-overrides.md#slot-registry). */
+// slot registry v1 (04-extensions-and-overrides.md#slot-registry)
 export const SLOT_KEYS = [
   'system.Notice',
   'system.StorePausedNotice',
@@ -36,9 +32,7 @@ export const SLOT_KEYS = [
 ] as const;
 export type SlotKey = (typeof SLOT_KEYS)[number];
 
-/** One @font-face declaration — `family` must equal a font role's family
- *  name so `--v-font-*` vars resolve to the loaded face. `src` is a public
- *  URL, conventionally under `assets/fonts/` (03-storefront-contract.md). */
+// one @font-face — `family` must equal a font role's family name so `--v-font-*` resolves
 export interface FontSource {
   family: string;
   src: string;

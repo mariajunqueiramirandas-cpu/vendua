@@ -2,16 +2,12 @@ import { Link } from 'react-router-dom';
 import { QuantityStepper, useCart, useStore } from '@vendua/kernel';
 import { cents } from './_ui';
 
-/**
- * Sacola — the comanda: butcher-paper ticket spiked over the board. Every price
- * on it is Core-computed (unitPriceCents / lineTotalCents / totals).
- */
+// every price on the ticket is Core-computed (unitPriceCents / lineTotalCents / totals)
 export function Sacola() {
   const { cart } = useCart();
   const { store } = useStore();
-  // cart.status 'completed'/'abandoned' = the comanda already left the rail;
-  // items only count while the cart is open (useCart().loading never resolves
-  // before a session exists, so the empty ticket is also the loading state).
+  // items only count while the cart is open; useCart().loading never resolves
+  // before a session exists, so the empty ticket doubles as the loading state
   const items = cart?.status === 'open' ? cart.items : [];
   const totals = cart?.totals;
   const belowMin = totals?.belowMinOrder ?? false;

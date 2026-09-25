@@ -1,14 +1,6 @@
-/**
- * Preview server — serves the storefront's built dist/ and proxies the
- * reserved API prefixes to Core, mirroring the production edge: the incoming
- * Host header is forwarded untouched so Core resolves the QA tenant exactly
- * like a real public domain.
- *
- * Hostile fixture: for the qa-edge host only, GET /storefront/v1/surfaces is
- * answered locally with an envelope containing unknown notice kinds,
- * severities and action types — S03/S04 verify the storefront degrades
- * instead of crashing. Every other request proxies normally.
- */
+// serves dist/ and proxies API prefixes to Core with Host untouched (so the QA
+// tenant resolves); on the qa-edge host /storefront/v1/surfaces is answered locally
+// with unknown kinds/severities for the S03/S04 degrade checks
 import {
   createServer,
   request as httpRequest,
@@ -42,8 +34,7 @@ const MIME: Record<string, string> = {
 
 const API_PREFIXES = ['/storefront/v1', '/checkout/v1', '/v1'];
 
-/** The hostile surfaces envelope for the qa-edge host — unknown kind, unknown
- *  severity, unknown action types, one notice with no title. */
+// hostile fixture: unknown kind, unknown severity, unknown action types
 const HOSTILE_SURFACES = {
   version: 1,
   store: { status: 'open' },
@@ -93,8 +84,7 @@ function isApiPath(pathname: string): boolean {
 }
 
 export const proxyStats = {
-  /** `${host} ${status}` → count — observability for bursts (e.g. a run of
-   *  checkout requests tripping Core's rate limiter). */
+  // `host method path → status` → count, for burst observability
   requests: new Map<string, number>(),
   reset() {
     this.requests.clear();
@@ -111,8 +101,7 @@ function track(req: IncomingMessage, status: number) {
 function proxy(req: IncomingMessage, res: ServerResponse, coreOrigin: string) {
   const upstream = new URL(coreOrigin);
   const headers = { ...req.headers } as Record<string, string | string[] | undefined>;
-  // Host untouched: the storefront's public hostname is how Core resolves the
-  // tenant — exactly what the production edge forwards.
+  // Host untouched: the public hostname is how Core resolves the tenant
   const out = httpRequest(
     {
       hostname: upstream.hostname,
@@ -155,9 +144,7 @@ export function startPreview(opts: PreviewOptions): Promise<Server> {
       return;
     }
 
-    // Static dist with SPA history fallback. Containment is checked after
-    // resolve — an encoded traversal (`/%2e%2e/…`) decodes to `..` segments
-    // that must never land outside distDir.
+    // containment after resolve: encoded traversal (`/%2e%2e/…`) decodes to `..`
     const root = resolve(distDir);
     const safe = normalize(pathname).replace(/^([/\\]*\.\.[/\\])+/, '');
     let file = resolve(root, `.${safe.startsWith('/') ? '' : '/'}${safe}`);
@@ -180,9 +167,7 @@ export function startPreview(opts: PreviewOptions): Promise<Server> {
 
   return new Promise((resolvePromise, reject) => {
     server.once('error', reject);
-    // Dual-stack '::' — Chromium reaches us via 127.0.0.1 (--host-resolver-rules
-    // maps *.localhost to IPv4) while Node/Playwright's request fixture resolves
-    // *.localhost to ::1 through NSS.
+    // dual-stack '::': Chromium reaches 127.0.0.1 while Node/Playwright resolves *.localhost to ::1
     server.listen(port, '::', () => resolvePromise(server));
   });
 }
