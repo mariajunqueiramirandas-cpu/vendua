@@ -690,4 +690,152 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('agent v2 (db)', () => {
       await unpinPolicy(prior);
     }
   });
+
+  test('insertRun retires a policy-parked row, and pulls a runnable row to the earlier start', async () => {
+    const prior = await pinPolicy();
+    try {
+      await setSetting('agent_autonomy', { level: 'off' });
+      // Autonomy-off parks the auto row — a staff request can't inherit
+      // a run that will never claim, so the parked row retires and the
+      // request mints a runnable unmarked owner.
+      const offLead = await mkLead('adopt-off');
+      const auto = await controlTx(sql, (tx) =>
+        insertRun(tx, { kind: 'triage', leadId: offLead, params: { auto: 'x' } }),
+      );
+      // A same-kind staff item is NOT a stand-in for the retired auto
+      // intent — provenance differs, so the retire still writes its anchor.
+      await sql`
+        insert into agent_inbox (lead_id, kind, payload)
+        values (${offLead}, 'staff',
+          ${sql.json({ text: 'pedido', requestedKind: 'triage', params: { origin: 'staff' } } as never)})
+      `;
+      const staff = await controlTx(sql, (tx) =>
+        insertRun(tx, { kind: 'triage', leadId: offLead, params: { origin: 'staff' } }),
+      );
+      expect(staff).toBeTruthy();
+      expect(staff).not.toBe(auto);
+      const offRows = await sql<{ id: string; status: string }[]>`
+        select id, status from agent_runs where lead_id = ${offLead}
+      `;
+      expect(offRows.find((r) => r.id === auto)!.status).toBe('canceled');
+      expect(offRows.find((r) => r.id === staff!)!.status).toBe('queued');
+      const offAnchor = await sql<
+        { payload: { requestedKind?: string; params?: { auto?: string } } }[]
+      >`
+        select payload from agent_inbox
+        where lead_id = ${offLead} and kind = 'event' and consumed_at is null
+      `;
+      expect(offAnchor).toHaveLength(1);
+      expect(offAnchor[0]!.payload.requestedKind).toBe('triage');
+      expect(offAnchor[0]!.payload.params?.auto).toBe('x');
+
+      // Same retire for a disabled playbook's queued row.
+      await setSetting('agent_playbooks', { discovery: { enabled: false } });
+      const disLead = await mkLead('adopt-disabled');
+      const disc = await controlTx(sql, (tx) =>
+        insertRun(tx, { kind: 'discovery', leadId: disLead }),
+      );
+      const staffDisc = await controlTx(sql, (tx) =>
+        insertRun(tx, { kind: 'triage', leadId: disLead, params: { origin: 'staff' } }),
+      );
+      expect(staffDisc).not.toBe(disc);
+      const disRows = await sql<{ id: string; status: string }[]>`
+        select id, status from agent_runs where lead_id = ${disLead}
+      `;
+      expect(disRows.find((r) => r.id === disc)!.status).toBe('canceled');
+      expect(disRows.find((r) => r.id === staffDisc!)!.status).toBe('queued');
+
+      // A future-dated runnable row can't be pulled early — its own pacing
+      // (run_at) is its intent's only gate. It retires and re-anchors as an
+      // 'event' item stamped with the same deadline; the immediate caller
+      // mints a runnable owner now.
+      const dateLead = await mkLead('adopt-date');
+      const later = new Date(Date.now() + 3_600_000);
+      const parked = await controlTx(sql, (tx) =>
+        insertRun(tx, {
+          kind: 'triage',
+          leadId: dateLead,
+          runAt: later,
+          params: { focus: 'triagem marcada' },
+        }),
+      );
+      // An undated same-intent item can't cover the schedule — the retire
+      // still anchors at the row's own deadline.
+      await sql`
+        insert into agent_inbox (lead_id, kind, payload)
+        values (${dateLead}, 'staff',
+          ${sql.json({
+            text: 'pedido',
+            requestedKind: 'triage',
+            params: { origin: 'staff', focus: 'triagem marcada' },
+          } as never)})
+      `;
+      const immediate = await controlTx(sql, (tx) =>
+        insertRun(tx, { kind: 'reply', leadId: dateLead }),
+      );
+      expect(immediate).toBeTruthy();
+      expect(immediate).not.toBe(parked);
+      const dateRows = await sql<{ id: string; status: string }[]>`
+        select id, status from agent_runs where lead_id = ${dateLead}
+      `;
+      expect(dateRows.find((r) => r.id === parked)!.status).toBe('canceled');
+      expect(dateRows.find((r) => r.id === immediate!)!.status).toBe('queued');
+      const anchor = await sql<
+        { payload: { requestedKind?: string; notBefore?: string; params?: { focus?: string } } }[]
+      >`
+        select payload from agent_inbox
+        where lead_id = ${dateLead} and kind = 'event' and consumed_at is null
+      `;
+      expect(anchor).toHaveLength(1);
+      expect(anchor[0]!.payload.requestedKind).toBe('triage');
+      expect(anchor[0]!.payload.params?.focus).toBe('triagem marcada');
+      expect(Math.abs(Date.parse(anchor[0]!.payload.notBefore!) - later.getTime())).toBeLessThan(
+        5_000,
+      );
+
+      // Mail already carrying the parked row's deadline covers the intent —
+      // a parked reply's inbound items hold the quiet period themselves,
+      // so no anchor is written for it.
+      const replyLead = await mkLead('adopt-covered');
+      const quiet = new Date(Date.now() + 3_600_000);
+      const replyParked = await controlTx(sql, (tx) =>
+        insertRun(tx, {
+          kind: 'reply',
+          leadId: replyLead,
+          runAt: quiet,
+          params: { origin: 'inbound', channel: 'whatsapp' },
+        }),
+      );
+      await sql`
+        insert into agent_inbox (lead_id, kind, payload)
+        values (${replyLead}, 'inbound',
+          ${sql.json({
+            text: 'oi',
+            requestedKind: 'reply',
+            params: { origin: 'inbound', channel: 'whatsapp' },
+            notBefore: quiet.toISOString(),
+          } as never)})
+      `;
+      const staffReply = await controlTx(sql, (tx) =>
+        insertRun(tx, { kind: 'triage', leadId: replyLead, params: { origin: 'staff' } }),
+      );
+      expect(staffReply).not.toBe(replyParked);
+      const coveredMail = await sql<{ n: number }[]>`
+        select count(*)::int n from agent_inbox
+        where lead_id = ${replyLead} and kind = 'event'
+      `;
+      expect(coveredMail[0]!.n).toBe(0);
+      const replyRow = await sql<{ status: string }[]>`
+        select status from agent_runs where id = ${replyParked}
+      `;
+      expect(replyRow[0]!.status).toBe('canceled');
+
+      await sql`
+        update agent_runs set status = 'canceled'
+        where lead_id in (${offLead}, ${disLead}, ${dateLead}, ${replyLead})
+      `;
+    } finally {
+      await unpinPolicy(prior);
+    }
+  });
 });

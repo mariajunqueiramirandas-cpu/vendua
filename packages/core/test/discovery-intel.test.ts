@@ -482,6 +482,29 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('discovery intelligence (db)', (
         >`select agent_mode from leads where id = ${fresh.lead.id}`
       )[0]!;
       expect(freshLead.agent_mode).toBe('auto');
+
+      // A merged lead with an active NON-outreach run: insertRun returns
+      // that run's id (one active row per lead), so the first-contact
+      // intent has to ride the mailbox — the 'event' item is what carries
+      // it into the owning run.
+      const busyWa = `55119${String(Date.now()).slice(-7)}05`;
+      const busy = await seedDup(`Busy Merge ${uniq}`, busyWa);
+      const owner = (
+        await sql<{ id: string }[]>`
+          insert into agent_runs (kind, lead_id, status)
+          values ('reply', ${busy.id}, 'queued') returning id
+        `
+      )[0]!;
+      const busyRes = await createDup(`Busy Merge ${uniq}`, busyWa);
+      expect(busyRes.duplicate).toBe(true);
+      expect(busyRes.contactRun).toBe(owner.id);
+      const mail = await sql<{ n: number }[]>`
+        select count(*)::int n from agent_inbox
+        where lead_id = ${busy.id} and kind = 'event' and consumed_at is null
+          and payload->>'requestedKind' = 'outreach'
+          and payload->'params'->>'auto' = 'discovery'
+      `;
+      expect(mail[0]!.n).toBe(1);
     } finally {
       await controlTx(
         sql,

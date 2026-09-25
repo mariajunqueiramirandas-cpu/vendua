@@ -86,7 +86,7 @@ export async function ingestInbound(
   // queued reply on a suppressed thread/lead.
   const supersededThreads: string[] = [];
   const canceledRunIds: string[] = [];
-  const { runId, capFlagged } = await controlTx(sql, async (tx) => {
+  const { runId, capFlagged, retired } = await controlTx(sql, async (tx) => {
     // 'capfin' first: the per-lead advisory serializes this whole gate
     // against claims (claimRun only TRIES it — while we hold it every
     // same-lead candidate rejects there) AND against cap evaluators. It must
@@ -165,10 +165,10 @@ export async function ingestInbound(
       gate.unsubscribed_at ||
       gate.archived_at
     ) {
-      return { runId: null, capFlagged: false };
+      return { runId: null, capFlagged: false, retired: [] };
     }
     if (!(await automationAllowedTx(tx, 'reply')).ok) {
-      return { runId: null, capFlagged: false };
+      return { runId: null, capFlagged: false, retired: [] };
     }
     // Mailbox delivery: the message enqueues as an inbox item no matter
     // who owns the lead's run — a queued or running run drains it between
@@ -197,7 +197,7 @@ export async function ingestInbound(
           }
         : {}),
     });
-    const cap: { flagged?: boolean } = {};
+    const cap: { flagged?: boolean; retired?: string[] } = {};
     const id = await insertRun(
       tx,
       {
@@ -211,10 +211,10 @@ export async function ingestInbound(
       },
       cap,
     );
-    return { runId: id, capFlagged: cap.flagged === true };
+    return { runId: id, capFlagged: cap.flagged === true, retired: cap.retired ?? [] };
   });
   for (const tid of new Set(supersededThreads)) emitControlEvent('draft.change', tid);
-  for (const id of canceledRunIds) emitControlEvent('run.update', id);
+  for (const id of [...canceledRunIds, ...retired]) emitControlEvent('run.update', id);
   if (capFlagged) emitControlEvent('lead.change');
   if (runId) {
     // The latest message earns its own quiet period: slide the parked

@@ -878,7 +878,7 @@ export function createApp({ sql, sessionSecret, controlSecret, autoDrain }: AppD
     // the staff-managed equivalent of a CSV-imported lead, which never queues
     // agent work. One outreach run does the new card's whole job: research →
     // dossier → first contact.
-    const res = await claimControl<{ lead: Lead; runId?: string }>(
+    const res = await claimControl<{ lead: Lead; runId?: string; retired?: string[] }>(
       sql,
       requireIdemKey(c),
       async (tx) => {
@@ -897,21 +897,30 @@ export function createApp({ sql, sessionSecret, controlSecret, autoDrain }: AppD
           // drafts while nothing can send unreviewed.
           const g = await getSettingTx<Partial<Guardrails>>(tx, 'guardrails', {});
           const delay = g.firstContactDelayMin ?? DEFAULT_GUARDRAILS.firstContactDelayMin;
-          const runId = await insertRun(tx, {
-            kind: 'outreach',
-            leadId: created.body.lead.id,
-            ...(delay > 0 ? { runAt: new Date(Date.now() + delay * 60_000) } : {}),
-            params: {
-              auto: 'first-contact',
-              focus: 'primeiro contato — lead recém-criado pela equipe',
-              ...(delay > 0 ? {} : { draftOnly: true }),
+          const cap: { retired?: string[] } = {};
+          const runId = await insertRun(
+            tx,
+            {
+              kind: 'outreach',
+              leadId: created.body.lead.id,
+              ...(delay > 0 ? { runAt: new Date(Date.now() + delay * 60_000) } : {}),
+              params: {
+                auto: 'first-contact',
+                focus: 'primeiro contato — lead recém-criado pela equipe',
+                ...(delay > 0 ? {} : { draftOnly: true }),
+              },
             },
-          });
+            cap,
+          );
           return {
             status: created.status,
             // null when the lifetime cost cap refused the run — the card's
             // cost-cap flag is the explanation staff sees.
-            body: { ...created.body, ...(runId ? { runId } : {}) },
+            body: {
+              ...created.body,
+              ...(runId ? { runId } : {}),
+              ...(cap.retired?.length ? { retired: cap.retired } : {}),
+            },
           };
         }
         return created;
@@ -921,6 +930,7 @@ export function createApp({ sql, sessionSecret, controlSecret, autoDrain }: AppD
     if (!res.replayed) {
       emitControlEvent('lead.change', res.body.lead.id);
       if (res.body.runId) emitControlEvent('run.update', res.body.runId);
+      for (const r of res.body.retired ?? []) emitControlEvent('run.update', r);
     }
     if (res.body.runId) kickDrain();
     return c.json(res.body, res.status as 200);
@@ -1054,6 +1064,7 @@ export function createApp({ sql, sessionSecret, controlSecret, autoDrain }: AppD
     if (threadId && !UUID_RE.test(threadId)) {
       throw new HttpError(400, 'BAD_REQUEST', 'threadId must be a uuid');
     }
+    const retiredIds: string[] = [];
     const res = await claimControl(sql, requireIdemKey(c), async (tx) => {
       // Mirror the claim gate's suppression predicate: a run queued for a
       // suppressed lead/thread can never claim — it would park 'queued'
@@ -1112,14 +1123,20 @@ export function createApp({ sql, sessionSecret, controlSecret, autoDrain }: AppD
       // size the caller sends.
       if (JSON.stringify(params).length > 16_384)
         throw new HttpError(422, 'PARAMS_TOO_LARGE', 'run params exceed 16 KiB');
-      const runId = await insertRun(tx, {
-        kind: kind as 'triage' | 'reply' | 'outreach' | 'discovery',
-        leadId,
-        ...(threadId ? { threadId } : {}),
-        // origin stamps provenance — dedupe/audit distinguish a staff-queued
-        // run from an auto inbound one even when params carry no overrides
-        params,
-      });
+      const cap: { retired?: string[] } = {};
+      const runId = await insertRun(
+        tx,
+        {
+          kind: kind as 'triage' | 'reply' | 'outreach' | 'discovery',
+          leadId,
+          ...(threadId ? { threadId } : {}),
+          // origin stamps provenance — dedupe/audit distinguish a staff-queued
+          // run from an auto inbound one even when params carry no overrides
+          params,
+        },
+        cap,
+      );
+      retiredIds.push(...(cap.retired ?? []));
       // A 422 body (not a throw): the claim tx COMMITS, so insertRun's
       // cost-cap flag stays on the card and the stored refusal replays
       // idempotently — a throw would roll the alert back with it.
@@ -1149,6 +1166,7 @@ export function createApp({ sql, sessionSecret, controlSecret, autoDrain }: AppD
     if (res.replayed) c.header('x-idempotent-replay', 'true');
     if (!res.replayed) {
       emitControlEvent('run.update', res.body.runId);
+      for (const r of retiredIds) emitControlEvent('run.update', r);
       // The refusal committed a cap flag + staff task — only lead.change
       // refreshes the Tasks view/badge, so a run.update alone hides it.
       if (res.status === 422) emitControlEvent('lead.change', leadId);
@@ -1821,6 +1839,7 @@ export function createApp({ sql, sessionSecret, controlSecret, autoDrain }: AppD
     if (kind === 'strategist' && (leadId || threadId)) {
       throw new HttpError(422, 'BAD_REQUEST', 'strategist runs take no leadId/threadId');
     }
+    const retiredIds2: string[] = [];
     const res = await claimControl(sql, requireIdemKey(c), async (tx) => {
       // leadId and threadId aren't independent: a reply run bound to a thread
       // must belong to that thread's lead, or thread content could be
@@ -1881,12 +1900,18 @@ export function createApp({ sql, sessionSecret, controlSecret, autoDrain }: AppD
       };
       if (JSON.stringify(params).length > 16_384)
         throw new HttpError(422, 'PARAMS_TOO_LARGE', 'run params exceed 16 KiB');
-      const runId = await insertRun(tx, {
-        kind: kind as 'triage' | 'reply' | 'outreach' | 'discovery' | 'strategist',
-        leadId: effLeadId,
-        threadId,
-        params,
-      });
+      const cap: { retired?: string[] } = {};
+      const runId = await insertRun(
+        tx,
+        {
+          kind: kind as 'triage' | 'reply' | 'outreach' | 'discovery' | 'strategist',
+          leadId: effLeadId,
+          threadId,
+          params,
+        },
+        cap,
+      );
+      retiredIds2.push(...(cap.retired ?? []));
       // Same cap refusal → error contract as /leads/:id/run (committed
       // claim — the flag survives and the refusal replays).
       if (!runId) {
@@ -1917,6 +1942,7 @@ export function createApp({ sql, sessionSecret, controlSecret, autoDrain }: AppD
     if (res.replayed) c.header('x-idempotent-replay', 'true');
     if (!res.replayed) {
       emitControlEvent('run.update', res.body.runId);
+      for (const r of retiredIds2) emitControlEvent('run.update', r);
       // Unscoped on a cap refusal: the effective lead can live behind a
       // threadId, and one bare event refreshes every open card + the badge
       // the flag+task write just changed.
@@ -1962,6 +1988,7 @@ export function createApp({ sql, sessionSecret, controlSecret, autoDrain }: AppD
     if (body.channel != null && body.channel !== 'auto' && !wantChannel) {
       throw new HttpError(422, 'BAD_REQUEST', 'channel must be auto|whatsapp|email');
     }
+    const retiredIds3: string[] = [];
     const res = await claimControl(sql, requireIdemKey(c), async (tx) => {
       let enqueued = 0;
       const skipped: { id: string; reason: string }[] = [];
@@ -2011,11 +2038,17 @@ export function createApp({ sql, sessionSecret, controlSecret, autoDrain }: AppD
           goal,
           ...(wantChannel ? { channel: wantChannel } : {}),
         };
-        const runId = await insertRun(tx, {
-          kind: 'outreach',
-          leadId: id,
-          params,
-        });
+        const cap: { retired?: string[] } = {};
+        const runId = await insertRun(
+          tx,
+          {
+            kind: 'outreach',
+            leadId: id,
+            params,
+          },
+          cap,
+        );
+        retiredIds3.push(...(cap.retired ?? []));
         if (!runId) {
           skipped.push({ id, reason: 'lead over its agent cost cap' });
           continue;
@@ -2037,6 +2070,7 @@ export function createApp({ sql, sessionSecret, controlSecret, autoDrain }: AppD
       const capSkipped = res.body.skipped.some((s) => s.reason === 'lead over its agent cost cap');
       if (res.body.enqueued || capSkipped) emitControlEvent('lead.change');
       if (res.body.enqueued) emitControlEvent('run.update');
+      for (const r of retiredIds3) emitControlEvent('run.update', r);
     }
     if (res.body.enqueued) kickDrain();
     return c.json(res.body);

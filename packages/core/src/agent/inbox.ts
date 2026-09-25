@@ -2,7 +2,7 @@ import type { Sql } from '../platform/db.ts';
 import { controlTx } from '../modules/control.ts';
 import { emitControlEvent } from '../modules/control-events.ts';
 import { log } from '../platform/log.ts';
-import { automationAllowedTx, playbookEnabledTx } from './policy.ts';
+import { automationAllowedTx, autonomyTx, playbookEnabledTx } from './policy.ts';
 import { PLAYBOOK_KINDS, type PlaybookKind } from './tool-meta.ts';
 import { capLockTx, insertRun } from './runner.ts';
 
@@ -194,6 +194,7 @@ export async function sweepOrphanInbox(sql: Sql, limit = 10): Promise<number> {
           ? (spawn.params.channel as string)
           : '';
       const runDraftOnly = spawn.params.draftOnly === true;
+      const autoOff = (await autonomyTx(tx)).level === 'off';
       let notBefore = 0;
       // Only mail this run would actually drain owns a quiet period: a
       // gated item (its playbook switched off — the same check drainInbox
@@ -209,6 +210,15 @@ export async function sweepOrphanInbox(sql: Sql, limit = 10): Promise<number> {
         const wouldDrain =
           (chan || runChannel) === runChannel && (ip?.params?.draftOnly === true) === runDraftOnly;
         if (!wouldDrain) continue;
+        // Same per-item gate drainInbox applies inside the spawned run:
+        // under workspace 'off' an auto-marked item stays pending, so its
+        // notBefore can't postpone the mail that CAN serve.
+        if (
+          autoOff &&
+          ip?.params != null &&
+          ('auto' in ip.params || ip.params.origin === 'inbound')
+        )
+          continue;
         const k = ip?.requestedKind;
         if (k != null && (PLAYBOOK_KINDS as readonly string[]).includes(k)) {
           let ok = enabled.get(k);
@@ -223,21 +233,24 @@ export async function sweepOrphanInbox(sql: Sql, limit = 10): Promise<number> {
       }
       // insertRun's cap check still applies — a refused lead keeps the
       // mail pending for a raised cap.
-      return insertRun(tx, {
+      const cap: { retired?: string[] } = {};
+      const id = await insertRun(tx, {
         kind: spawn.kind,
         leadId: lead_id,
         threadId: spawn.threadId,
         params: spawn.params,
         ...(notBefore ? { runAt: new Date(notBefore) } : {}),
       });
+      return { id, retired: cap.retired ?? [] };
     }).catch((e) => {
       agentLog.warn({ err: e, leadId: lead_id }, 'orphan inbox sweep failed for lead');
       return null;
     });
-    if (runId) {
+    if (runId?.id) {
       served++;
-      emitControlEvent('run.update', runId);
+      emitControlEvent('run.update', runId.id);
     }
+    for (const r of runId?.retired ?? []) emitControlEvent('run.update', r);
   }
   return served;
 }

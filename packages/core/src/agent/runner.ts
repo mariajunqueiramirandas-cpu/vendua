@@ -175,21 +175,121 @@ export async function insertRun(
      *  (guardrails-configured pacing); null = claimable immediately. */
     runAt?: Date | null;
   },
-  /** Out-box for tx-owning callers: set when a refusal wrote a FRESH cap
-   *  flag, so they can emit lead.change post-commit for the task refresh. */
-  cap?: { flagged?: boolean },
+  /** Out-box for tx-owning callers: `flagged` set when a refusal wrote a
+   *  FRESH cap flag (emit lead.change post-commit); `retired` collects the
+   *  ids of rows `adopt` canceled — emit run.update for each post-commit,
+   *  or a Runs view watching only the new owner keeps them as queued. */
+  cap?: { flagged?: boolean; retired?: string[] },
 ): Promise<string | null> {
+  // Adopt an already-active row as the mail's owner — or retire it when
+  // it can't serve this mail: policy-parked (a queued auto row under
+  // workspace 'off', or a disabled playbook's kind) or SCHEDULED — a
+  // future-dated row never slides earlier for a caller (paced first
+  // contact has no mail carrying its delay — run_at is the only gate),
+  // so adoption can't pull its start forward. A retire re-anchors
+  // the row's own intent as an 'event' item carrying its params and
+  // deadline — unless pending mail already carries that SAME intent
+  // (matching kind, provenance marker, channel and draftOnly — and for a
+  // scheduled row a notBefore at least its deadline, e.g. the reply-quiet
+  // mail that parked it) — then releases its consumed mail. The intent
+  // parks/fires under exactly the gates the row had.
+  const callerAt = input.runAt ?? new Date();
+  const adopt = async (a: {
+    id: string;
+    status: string;
+    kind: string;
+    thread_id: string | null;
+    params: Record<string, unknown>;
+    run_at: Date | null;
+  }): Promise<string | null> => {
+    if (a.status !== 'queued') return a.id;
+    const { disabledKinds, autoOff } = await claimPolicyTx(tx);
+    const p = a.params ?? {};
+    const parkedByPolicy =
+      disabledKinds.includes(a.kind as PlaybookKind) ||
+      (autoOff && ('auto' in p || p['origin'] === 'inbound'));
+    const scheduled = a.run_at !== null && a.run_at.getTime() > callerAt.getTime();
+    if (parkedByPolicy || scheduled) {
+      // Status-conditional — a worker claiming between our select and this
+      // update means the row already owns everything arriving for it.
+      const retired = await tx<{ id: string }[]>`
+        update agent_runs
+        set status = 'canceled',
+            error = ${parkedByPolicy ? 'policy-parked — a newer request replaced it' : 'a newer request takes over'},
+            finished_at = now()
+        where id = ${a.id} and status = 'queued'
+        returning id
+      `;
+      if (!retired.length) return a.id;
+      if (cap) (cap.retired ??= []).push(a.id);
+      // A pending item only stands in for the retired row when it carries
+      // the same intent whole: same kind, same thread, and EQUAL params —
+      // the sweep respawns from the item's own params, so a missing key
+      // loses intent while an extra gating key ('auto', channel,
+      // draftOnly) makes it spawn or drain under different constraints
+      // than the row had. A scheduled row also needs a notBefore reaching
+      // its deadline or the schedule evaporates with it.
+      const covered = (
+        await tx<{ ok: boolean }[]>`
+          select exists (
+            select 1 from agent_inbox i
+            where i.lead_id = ${input.leadId ?? null} and i.consumed_at is null
+              and i.payload->>'requestedKind' = ${a.kind}
+              and coalesce(i.payload->>'threadId', '') = ${a.thread_id ?? ''}
+              and coalesce(i.payload->'params', '{}'::jsonb) = ${tx.json(p as never)}::jsonb
+              and (not ${scheduled}
+                   or coalesce(nullif(i.payload->>'notBefore', '')::timestamptz,
+                        '-infinity'::timestamptz)
+                      >= ${a.run_at ?? null}::timestamptz - interval '5 seconds')
+          ) as ok
+        `
+      )[0]!.ok;
+      if (!covered) {
+        await enqueueInboxTx(tx, input.leadId!, 'event', {
+          text: `uma '${a.kind}' estava marcada${typeof p['focus'] === 'string' ? ` — ${p['focus']}` : ''}`,
+          requestedKind: a.kind as PlaybookKind,
+          threadId: a.thread_id,
+          params: p,
+          ...(scheduled ? { notBefore: a.run_at!.toISOString() } : {}),
+        });
+      }
+      await releaseInboxTx(tx, a.id, true);
+      return null;
+    }
+    // Runnable + no schedule conflict — keep the row, pull its start to
+    // the earlier of the two intents (status-conditional: a claim in
+    // flight owns the mail just the same). Each item's own notBefore
+    // still gates its drain, so inbound quiet periods hold.
+    await tx`
+      update agent_runs
+      set run_at = least(coalesce(run_at, now()), ${callerAt})
+      where id = ${a.id} and status = 'queued'
+    `;
+    return a.id;
+  };
   if (input.leadId) {
     // An already-active run owns the mail regardless of the cap — delivery
     // into it costs nothing extra, so the active row wins before the cap
     // check (a refused verdict must not strand an enqueue site that could
     // have delivered). Callers hold capfin — the read can't race a sibling.
-    const active = await tx<{ id: string }[]>`
-      select id from agent_runs
+    const active = await tx<
+      {
+        id: string;
+        status: string;
+        kind: string;
+        thread_id: string | null;
+        params: Record<string, unknown>;
+        run_at: Date | null;
+      }[]
+    >`
+      select id, status, kind, thread_id, params, run_at from agent_runs
       where lead_id = ${input.leadId} and status in ('queued', 'running')
       order by created_at limit 1
     `;
-    if (active.length) return active[0]!.id;
+    if (active.length) {
+      const adopted = await adopt(active[0]!);
+      if (adopted) return adopted;
+    }
     const verdict = await leadUnderCostCapTx(tx, input.leadId);
     if (verdict !== 'under') {
       if (cap) cap.flagged = verdict === 'flagged';
@@ -212,12 +312,24 @@ export async function insertRun(
     `
   )[0];
   if (row) return row.id;
-  const existing = await tx<{ id: string }[]>`
-    select id from agent_runs
+  const existing = await tx<
+    {
+      id: string;
+      status: string;
+      kind: string;
+      thread_id: string | null;
+      params: Record<string, unknown>;
+      run_at: Date | null;
+    }[]
+  >`
+    select id, status, kind, thread_id, params, run_at from agent_runs
     where lead_id = ${input.leadId ?? null} and status in ('queued', 'running')
     order by created_at limit 1
   `;
-  return existing[0]?.id ?? null;
+  // Same adopt path — if the just-appearing row is policy-parked it retires
+  // and the caller's item waits for the orphan sweep (same disposition as a
+  // cap refusal: the mail is pending, the sweep mints its owner).
+  return existing[0] ? await adopt(existing[0]) : null;
 }
 
 export async function enqueueRun(
@@ -230,11 +342,16 @@ export async function enqueueRun(
     params?: Record<string, unknown>;
   },
 ): Promise<string | null> {
-  const { id, capFlagged } = await controlTx(sql, async (tx) => {
-    const cap: { flagged?: boolean } = {};
-    return { id: await insertRun(tx, input, cap), capFlagged: cap.flagged === true };
+  const { id, capFlagged, retired } = await controlTx(sql, async (tx) => {
+    const cap: { flagged?: boolean; retired?: string[] } = {};
+    return {
+      id: await insertRun(tx, input, cap),
+      capFlagged: cap.flagged === true,
+      retired: cap.retired ?? [],
+    };
   });
   if (id) emitControlEvent('run.update', id);
+  for (const r of retired) emitControlEvent('run.update', r);
   // A fresh flag committed a [humano] task — emit lead.change (unscoped;
   // the coalescer drops middle refs on bursts) or Tasks stays stale.
   if (capFlagged) emitControlEvent('lead.change');
@@ -1643,11 +1760,20 @@ async function drainInbox(att: Attempt): Promise<number> {
           )
       `
     ).map((d) => d.t);
+    // Autonomy gates each item like the sweep's spawn gate: automation-
+    // marked mail ('auto' key or origin='inbound' — the same markers
+    // claimRun reads off run params) parks under workspace 'off' instead
+    // of riding an allowed staff run. Unmarked mail — staff's, promised
+    // work, the lead's own messages — still drains.
+    const autoOff = (await autonomyTx(tx)).level === 'off';
     return tx<InboxItem[]>`
       select id, kind, payload, created_at from agent_inbox
       where ${scope}
         and (payload->>'requestedKind' is null or not (payload->>'requestedKind' = any(${off})))
         and (payload->>'threadId' is null or not (payload->>'threadId' = any(${dead})))
+        and (not ${autoOff}
+             or not (coalesce(payload->'params', '{}'::jsonb) ? 'auto'
+                     or coalesce(payload->'params'->>'origin', '') = 'inbound'))
       order by created_at limit 10
     `;
   });
@@ -2911,14 +3037,20 @@ export async function sweepOutreach(sql: Sql): Promise<number> {
       // its focus into the run's params (at most one pending agent wakeup
       // exists per lead — the unique index enforces it). Read it BEFORE
       // insertRun so the focus lands in the run's context, not the floor.
-      const fold = (
-        await tx<{ id: string; focus: string }[]>`
-          select id, focus from agent_wakeups
-          where lead_id = ${id} and status = 'pending' and at <= now()
-            and created_by = 'agent' and not requested
-          for update skip locked
-        `
-      )[0];
+      // Under autonomy 'off' the model's self-schedule is parked — the
+      // wakeup stays pending for sweepWakeups' own gate, never rides an
+      // allowed staff/requested run.
+      const fold =
+        level === 'off'
+          ? undefined
+          : (
+              await tx<{ id: string; focus: string }[]>`
+                select id, focus from agent_wakeups
+                where lead_id = ${id} and status = 'pending' and at <= now()
+                  and created_by = 'agent' and not requested
+                for update skip locked
+              `
+            )[0];
       const promised =
         next_action_source === 'staff' ||
         next_action_source === 'requested' ||
@@ -2943,7 +3075,7 @@ export async function sweepOutreach(sql: Sql): Promise<number> {
         ...(promised ? {} : { auto: next_action_source }),
         ...(fold ? { focus: `agendado por você: ${fold.focus}`, wakeupId: fold.id } : {}),
       };
-      const cap: { flagged?: boolean } = {};
+      const cap: { flagged?: boolean; retired?: string[] } = {};
       const runId = await insertRun(
         tx,
         {
@@ -2954,6 +3086,9 @@ export async function sweepOutreach(sql: Sql): Promise<number> {
         cap,
       );
       if (cap.flagged) capFlagged.push(id);
+      // Retired rows changed too — same run.update refresh the minted run
+      // gets, or the view keeps showing them queued.
+      if (cap.retired) queuedIds.push(...cap.retired);
       if (runId) {
         queuedIds.push(runId);
         // The cadence intent rides the mailbox too: when insertRun found an
