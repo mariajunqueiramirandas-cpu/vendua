@@ -6,12 +6,7 @@ import { getContinueShoppingUrl } from './_lib/lastSeen.ts';
 import { listOrders } from './_lib/orders.ts';
 import { maskPhone, phoneDigits } from './_lib/profile.ts';
 
-/**
- * Meus pedidos — sem senha, sem cadastro. The reference app fetched orders by
- * WhatsApp number from `GET /customer/orders?phone=`; Core has no such route
- * (and `api.order` 401s without session auth), so the search honestly filters
- * this device's session order log instead (OBSERVATIONS.md FEATURE-GAP).
- */
+/** Meus pedidos — Core has no customer-orders route; search filters this device's session order log (OBSERVATIONS.md). */
 
 const STATE_CHIP: Record<string, { label: string; tone: string }> = {
   placed: { label: 'Recebido', tone: 'warn' },

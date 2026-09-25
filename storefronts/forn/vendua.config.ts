@@ -25,8 +25,7 @@ export default defineStorefront({
     motion: { duration: '180ms', easing: 'cubic-bezier(0.22, 0.68, 0.32, 1)' },
   },
   overrides: {
-    // The closed state is this storefront's core surface — restyle it as a
-    // lit shop sign instead of the generic token-styled banner.
+    // closed state is the core surface — a lit shop sign, not the generic banner
     'system.StoreClosedNotice': () => import('./overrides/StoreClosedNotice'),
   },
   routes: './routes',

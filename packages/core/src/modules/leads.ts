@@ -4,10 +4,8 @@ import { claimControl, controlTx, type ClaimResult } from './control.ts';
 import { emitControlEvent } from './control-events.ts';
 
 /**
- * leads module — the Founder CRM's merchant-intake pipeline (docs/roadmap.md,
- * Phase 1). `leads` is platform data, not tenant data — every query runs
- * under the `vendua.control` GUC and the /control/v1 gate is the only access
- * boundary. Phase 4 folds these states into the Control Plane's provisioner.
+ * Lead CRM module — `leads` is platform data under the `vendua.control`
+ * GUC; /control/v1 is the only access boundary.
  */
 
 export const LEAD_STATES = ['lead', 'contacted', 'invited', 'live'] as const;
@@ -16,15 +14,13 @@ export type LeadState = (typeof LEAD_STATES)[number];
 export const AGENT_MODES = ['off', 'draft', 'auto'] as const;
 export type AgentMode = (typeof AGENT_MODES)[number];
 
-/** What the agent is trying to get out of the conversation — staff picks it
- *  at dispatch time; 'negotiation' closes in-thread, 'meeting' drives toward
- *  the configured booking link. */
+/** Staff-set conversation goal: 'negotiation' closes in-thread, 'meeting'
+ *  drives to the booking link. */
 export const AGENT_GOALS = ['negotiation', 'meeting'] as const;
 export type AgentGoal = (typeof AGENT_GOALS)[number];
 
-/** One item of the lead's negotiation checklist — the agent writes it via
- *  `plan` (lead kinds) and ticks `done` as stages complete. Persisted on the
- *  lead so the plan survives across runs. */
+/** Agent-written negotiation checklist persisted on the lead so the plan
+ *  survives across runs. */
 export const AGENT_PLAN_STATUSES = ['todo', 'done', 'skip'] as const;
 export type AgentPlanStatus = (typeof AGENT_PLAN_STATUSES)[number];
 export interface AgentPlanStep {
@@ -69,7 +65,6 @@ export interface LeadRow {
   updated_at: string;
 }
 
-/** camelCase API view — the contract shape the app and callers see. */
 export interface Lead {
   id: string;
   name: string;
@@ -105,8 +100,7 @@ export interface Lead {
   updatedAt: string;
 }
 
-/** List view — a lead plus the board/list columns the UI renders without
- *  N+1 queries. score comes from LEAD_SCORE_SQL below. */
+/** Lead + board/list counters without N+1; score from LEAD_SCORE_SQL. */
 export interface LeadListItem extends Lead {
   score: number;
   openTasks: number;
@@ -151,7 +145,6 @@ export function leadJson(row: LeadRow): Lead {
   };
 }
 
-/** Validated state enum — anything outside it is a 422 contract error. */
 export function leadState(v: unknown): LeadState {
   if (typeof v !== 'string' || !(LEAD_STATES as readonly string[]).includes(v)) {
     throw new HttpError(422, 'INVALID_STATE', `state must be one of: ${LEAD_STATES.join(', ')}`, {
@@ -175,9 +168,8 @@ export function agentGoal(v: unknown): AgentGoal {
   return v as AgentGoal;
 }
 
-/** Score payload → int 0–10 or null. fitScore is the model's ICP match and
- *  intentScore its read of buying intent — both stay separate from the SQL
- *  completeness score. */
+/** Score payload → int 0–10 or null; model's fit/intent scores, separate
+ *  from the SQL completeness score. */
 function score010(v: unknown, field: 'fitScore' | 'intentScore'): number | null {
   if (v === null || v === undefined || v === '') return null;
   const n = Number(v);
@@ -228,7 +220,6 @@ const MAX_TAGS = 20;
 const MAX_TAG_LEN = 40;
 const MAX_DEAL_VALUE_CENTS = 999_999_999;
 
-/** tags payload → text[] value. Arrays only; entries trimmed, bounded. */
 function tagsValue(v: unknown): string[] {
   if (!Array.isArray(v)) {
     throw new HttpError(422, 'BAD_REQUEST', 'tags must be an array of strings', { field: 'tags' });
@@ -241,7 +232,6 @@ function tagsValue(v: unknown): string[] {
   return v.map((t) => str(t, 'tags', MAX_TAG_LEN));
 }
 
-/** dealValueCents payload → int. null clears; negatives and fractions rejected. */
 function dealValue(v: unknown): number | null {
   if (v === null || v === undefined || v === '') return null;
   const n = Number(v);
@@ -253,7 +243,6 @@ function dealValue(v: unknown): number | null {
   return n;
 }
 
-/** ISO-8601 timestamp payload → string postgres can cast. null clears. */
 function timestampValue(v: unknown, field: string): string | null {
   if (v === null || v === undefined || v === '') return null;
   const s = str(v, field, 60);
@@ -263,7 +252,6 @@ function timestampValue(v: unknown, field: string): string | null {
   return s;
 }
 
-/** Create payload → column map. name required, the rest optional (→ null). */
 export function leadInsert(body: Record<string, unknown>): Record<string, unknown> {
   const out: Record<string, unknown> = {};
   for (const field of Object.keys(LEAD_TEXT_FIELDS) as LeadTextField[]) {
@@ -274,9 +262,8 @@ export function leadInsert(body: Record<string, unknown>): Record<string, unknow
   if (!out.name?.toString().trim()) {
     throw new HttpError(422, 'INVALID_LEAD', 'name is required', { field: 'name' });
   }
-  // Every path through here is an explicit whatsapp write — the setter is
-  // asserting real evidence, so the provenance flag rides with the value.
-  // Discovery overrides this to false right after for its mobile-derived fill.
+  // explicit whatsapp write = real evidence; Discovery overrides to false
+  // for its mobile-derived fill
   out.whatsapp_verified = Boolean(out.whatsapp);
   if ('tags' in body) out.tags = tagsValue(body.tags);
   if ('dealValueCents' in body) out.deal_value_cents = dealValue(body.dealValueCents);
@@ -290,18 +277,14 @@ export function leadInsert(body: Record<string, unknown>): Record<string, unknow
   return out;
 }
 
-/** Patch payload → column map. Absent keys are skipped; explicit null clears.
- *  `archived: true|false` maps to archived_at = now()/null — archive is a
- *  flag, not a pipeline state. `actor` stamps next_action_source when
- *  nextActionAt is written — 'auto' for tool calls, 'staff' for the API
- *  ('auto' because 'agent' is the legacy backfill value whose provenance
- *  is unrecoverable — new writes must not reuse it). */
+/** Patch payload → column map; `archived` maps to archived_at; `actor`
+ *  stamps next_action_source — 'auto' for tool calls ('agent' is the
+ *  unrecoverable 0025 legacy — never reuse it). */
 export function leadPatch(
   body: Record<string, unknown>,
   actor: 'agent' | 'staff' = 'staff',
-  /** true marks the written nextActionAt as lead-requested ("me chama
-   *  terça") — provenance 'requested' survives an inbound reply, unlike
-   *  the automation's own 'cadence'/'auto' scheduling. */
+  /** true marks nextActionAt as lead-requested — 'requested' survives an
+   *  inbound reply, unlike 'cadence'/'auto'. */
   nextActionRequested = false,
 ): Record<string, unknown> {
   const set: Record<string, unknown> = {};
@@ -314,9 +297,8 @@ export function leadPatch(
   if ('name' in set && !set.name?.toString().trim()) {
     throw new HttpError(422, 'INVALID_LEAD', 'name cannot be empty', { field: 'name' });
   }
-  // An explicit whatsapp write is the setter asserting real evidence — flag
-  // it; clearing the field clears the flag too. (Discovery's mobile-derived
-  // fill bypasses this path and lands the column itself.)
+  // explicit whatsapp write = real evidence → flag it; clearing clears it
+  // (Discovery's mobile-derived fill bypasses this path)
   if ('whatsapp' in set) set.whatsapp_verified = Boolean(set.whatsapp);
   if ('state' in body) set.state = leadState(body.state);
   if ('agentMode' in body) set.agent_mode = agentMode(body.agentMode);
@@ -327,12 +309,8 @@ export function leadPatch(
   if ('dealValueCents' in body) set.deal_value_cents = dealValue(body.dealValueCents);
   if ('nextActionAt' in body) {
     set.next_action_at = timestampValue(body.nextActionAt, 'nextActionAt');
-    // Provenance rides with the write so inbound replies only clear the
-    // automation's own scheduling ('cadence'/'auto'), never a deliberately
-    // promised follow-up — 'requested' survives exactly like 'staff'. The
-    // tool caller stamps 'auto', not 'agent': 'agent' is the legacy value
-    // 0025 backfilled onto every pre-existing date — provenance there is
-    // unrecoverable, so those rows stay preserved like a promise.
+    // provenance: 'requested'/'staff' survive inbound replies; 'auto' for
+    // tool calls since 'agent' is the unrecoverable 0025 backfill legacy
     set.next_action_source =
       set.next_action_at === null
         ? null
@@ -350,8 +328,8 @@ export function leadPatch(
     }
     set.archived_at = body.archived ? new Date().toISOString() : null;
   }
-  // Staff-side resume after an unbound request_human handoff — the lead-wide
-  // pause marker gates every channel until cleared.
+  // staff resume after an unbound request_human — the lead-wide pause
+  // gates every channel until cleared
   if ('agentPaused' in body) {
     if (typeof body.agentPaused !== 'boolean') {
       throw new HttpError(422, 'BAD_REQUEST', 'agentPaused must be a boolean', {
@@ -373,7 +351,6 @@ export interface ListLeadsQuery {
   /** 'exclude' (default) hides archived, 'only' shows just them, 'all' both. */
   archived?: 'exclude' | 'only' | 'all';
   limit?: number;
-  /** Opaque cursor from a previous page's nextCursor. */
   cursor?: string;
   /** Keyset order — 'new' (default) walks created_at desc. */
   sort?: LeadSort;
@@ -392,10 +369,8 @@ export function leadSort(v: unknown): LeadSort {
 }
 
 /**
- * Lead score, computed in SQL — deterministic, explainable, no model call.
- * Contact completeness + engagement recency, minus hard negatives
- * (unsubscribed/archived floor it at 0). Kept as one expression so list,
- * board and detail all rank identically.
+ * Lead score in SQL — completeness + engagement recency, minus hard
+ * negatives; one expression so list, board and detail rank identically.
  */
 const LEAD_SCORE_SQL = `greatest(0, least(100, (
     (case when l.phone is not null or l.whatsapp is not null then 20 else 0 end)
@@ -440,11 +415,8 @@ interface LeadListRow extends LeadRow {
   last_at_ts: string | null;
 }
 
-/** `timestamptz::text` shape AND calendar sanity, e.g.
- *  `2026-09-23 21:36:35.31372+00` — '2026-99-99 25:61:61+99' matches a
- *  loose regex but Postgres' cast rejects it (a 500 if it reached the
- *  query). Offset ≤15 mirrors Postgres' bound; day ≤ month length
- *  catches Feb 30. */
+/** `timestamptz::text` shape + calendar sanity — Postgres' cast is the
+ *  authority, so pre-validate (offset ≤15, day ≤ month length). */
 const TS_TEXT_RE = /^(\d{4})-(\d{2})-(\d{2}) (\d{2}):(\d{2}):(\d{2})(?:\.\d+)?[+-](\d{2})$/;
 function tsTextOk(ts: string): boolean {
   const m = TS_TEXT_RE.exec(ts);
@@ -484,16 +456,14 @@ function tsTextOk(ts: string): boolean {
   );
 }
 
-/** Per-sort keyset contract: the key expression used in the cursor WHERE
- *  (select aliases aren't visible there), the ORDER BY fragment (which may
- *  reference the alias), the walk direction, and whether the key is
- *  nullable — nullable keys page after all values on a desc walk. */
+/** Per-sort keyset contract: cursor-WHERE key expression, ORDER BY
+ *  fragment, direction, nullability (null keys page last on desc). */
 const LEAD_SORT_SPEC: Record<
   LeadSort,
   {
     key: string;
-    /** wraps the bound cursor value — e.g. 'lower' so a name cursor
-     *  compares lower(name) on both sides. */
+    /** wraps the bound cursor value — e.g. 'lower' compares lower(name) on
+     *  both sides. */
     cwrap?: string;
     order: string;
     desc: boolean;
@@ -507,8 +477,7 @@ const LEAD_SORT_SPEC: Record<
     desc: true,
     nullable: true,
   },
-  // 'score' keys on the computed expression — the alias only exists in
-  // ORDER BY, WHERE needs the expression itself.
+  // 'score' keys on the expression — the alias only exists in ORDER BY
   score: {
     key: `(${LEAD_SCORE_SQL})`,
     order: 'score desc, l.id desc',
@@ -529,7 +498,6 @@ const LEAD_SORT_SPEC: Record<
     nullable: false,
   },
 };
-/** The row's sort key as a JSON cursor value (null for absent keys). */
 function sortKeyOf(sort: LeadSort, row: LeadListRow): string | number | null {
   switch (sort) {
     case 'activity':
@@ -564,17 +532,13 @@ export async function listLeads(
   const q = query.q?.trim();
   // \ is Postgres' default LIKE escape — user % and _ can't widen the match.
   const qEsc = q ? `%${q.replace(/[%_\\]/g, (ch) => `\\${ch}`)}%` : null;
-  // Phone-shaped queries match NORMALIZED digits, not the stored formatting —
-  // "997123470" must find "+55 22 99712-3470". The query must be ALL phone
-  // characters, or a name like "Studio 54 2026" digit-matches strangers'
-  // numbers. ≥4 digits guards short runs like "Doces 22".
+  // phone-shaped queries match normalized digits — must be ALL phone chars
+  // and ≥4 digits so names can't digit-match strangers' numbers
   const qDigits = q && /^[+\d\s().-]+$/.test(q) ? q.replace(/\D/g, '') : '';
   const qDigitsLike = qDigits.length >= 4 ? `%${qDigits}%` : null;
 
-  // Keyset pagination: (sort key, id) — stable under concurrent inserts
-  // where a naive offset page can skip/dupe rows. The cursor is an opaque
-  // base64url JSON triple [sort, keyValue, id]; a cursor minted under one
-  // sort is rejected under another (its predicate wouldn't line up).
+  // keyset cursor [sort, keyValue, id] — stable under concurrent inserts;
+  // a cursor is only valid for its own sort
   const sort = query.sort ?? 'new';
   const spec = LEAD_SORT_SPEC[sort];
   let curVal: string | number | null = null;
@@ -587,8 +551,7 @@ export async function listLeads(
         string,
       ];
       if (s !== sort) throw new Error('shape');
-      // Postgres would reject a malformed uuid mid-query with a 500 — check
-      // the shape here so bad cursors get the BAD_REQUEST below instead.
+      // reject malformed uuid here so bad cursors get BAD_REQUEST, not a 500
       if (typeof i !== 'string' || !UUID_RE.test(i)) throw new Error('shape');
       if (v === null) {
         if (!spec.nullable) throw new Error('shape');
@@ -633,16 +596,14 @@ export async function listLeads(
                : ''
            })`
         : 'true',
-      // Cursor predicate: strictly past the last emitted key, then the id
-      // tiebreak in the same direction. A null-keyed cursor only walks
-      // further null keys (they page last on desc walks).
+      // cursor predicate: strictly past last key, then id tiebreak; null
+      // keys page last on desc
       curId
         ? curVal === null
           ? `(${spec.key} is null and l.id ${spec.desc ? '<' : '>'} ${p(curId)}::uuid)`
           : (() => {
-              // timestamp keys bind as text and cast server-side — binding a
-              // timestamp-shaped string directly makes the driver serialize
-              // it through a JS Date and drop microseconds.
+              // timestamp keys bind as text cast server-side — a JS Date
+              // bind would drop microseconds
               const kv =
                 sort === 'new' || sort === 'activity'
                   ? `${p(curVal)}::text::timestamptz`
@@ -694,7 +655,6 @@ export async function getLead(sql: Sql, id: string): Promise<LeadRow | null> {
   });
 }
 
-/** Detail view: the lead plus its score + inbox-style counters. */
 export async function getLeadDetail(sql: Sql, id: string): Promise<LeadListItem | null> {
   const rows = await controlTx(
     sql,
@@ -723,9 +683,8 @@ export async function createLead(
   return res;
 }
 
-/** Tx-local insert — callers combining lead creation with side effects in
- *  one claim (the POST /leads route inserts the lead and its triage run
- *  under a single idempotency key) use this. */
+/** Tx-local insert for callers combining lead creation with side effects
+ *  under one claim key (e.g. POST /leads + triage run). */
 export async function insertLeadTx(
   tx: Sql,
   fields: Record<string, unknown>,
@@ -744,16 +703,16 @@ export async function updateLead(
   set: Record<string, unknown>,
   idemKey: string,
   actor: 'staff' | 'agent' | 'system' = 'staff',
-  /** Optional fence run first inside the claim tx — agent tool calls pass a
-   *  live-claim check so a reclaimed run can't still mutate. */
+  /** Optional fence inside the claim tx — a live-claim check so a
+   *  reclaimed run can't still mutate. */
   guard?: (tx: Sql) => Promise<void>,
 ): Promise<ClaimResult<{ lead: Lead }>> {
   const res = await claimControl(sql, idemKey, async (tx) => {
     await guard?.(tx);
     const cur = (await tx<LeadRow[]>`select * from leads where id = ${id}`)[0];
     if (!cur) throw new HttpError(404, 'LEAD_NOT_FOUND', 'lead not found');
-    // The bounce marker describes the stored address — a patch that swaps in
-    // a different one must clear it, or the replacement stays blocked forever.
+    // the bounce marker describes the stored address — a different email
+    // must clear it
     const normEmail = (v: unknown) => (typeof v === 'string' ? v.trim().toLowerCase() : null);
     if ('email' in set && normEmail(set.email) !== normEmail(cur.email)) {
       set.email_bounced_at = null;
@@ -762,8 +721,7 @@ export async function updateLead(
       update leads set ${tx(set)}, updated_at = now() where id = ${id} returning *
     `;
     if (typeof set.state === 'string' && set.state !== cur.state) {
-      // value_cents stamps the post-update deal value — a same-patch edit to
-      // dealValueCents is the value effective at the transition.
+      // value_cents stamps the post-update deal value at the transition
       await tx`
         insert into lead_state_history (lead_id, from_state, to_state, actor, value_cents)
         values (${id}, ${cur.state}, ${set.state}, ${actor}, ${rows[0]!.deal_value_cents})
@@ -795,8 +753,7 @@ export async function deleteLead(
   return res;
 }
 
-/** Opt-out signal — from an inbound "para/unsubscribe" or a staff action.
- *  Once set, the agent guardrail blocks every outbound on this lead. */
+/** Opt-out — once set, the guardrail blocks every outbound on this lead. */
 export async function unsubscribeLead(sql: Sql, id: string): Promise<void> {
   const transitioned = await controlTx(sql, async (tx) => {
     const rows = await tx`
@@ -806,8 +763,7 @@ export async function unsubscribeLead(sql: Sql, id: string): Promise<void> {
     const exists = rows[0] ?? (await tx`select id from leads where id = ${id}`)[0];
     if (!exists) throw new HttpError(404, 'LEAD_NOT_FOUND', 'lead not found');
     if (!rows[0]) return false;
-    // Queued runs on an opted-out lead can never claim — cancel them like
-    // the staff endpoint and the unsubscribe tool both do.
+    // queued runs on an opted-out lead can never claim — cancel them
     await tx`
       update agent_runs set status = 'canceled', error = 'descadastrado', finished_at = now()
       where lead_id = ${id} and status = 'queued'
@@ -820,10 +776,6 @@ export async function unsubscribeLead(sql: Sql, id: string): Promise<void> {
   });
   if (transitioned) emitControlEvent('lead.change', id);
 }
-
-// ---------------------------------------------------------------------------
-// Stats + duplicates — the dashboard reads
-// ---------------------------------------------------------------------------
 
 export interface LeadStats {
   total: number;
@@ -847,8 +799,8 @@ export interface StateBucket {
   valueCents: number;
 }
 
-/** Live per-state funnel totals — the same read leadStats serves and
- *  snapshotPipelineTx freezes into pipeline_snapshots (forecast.ts). */
+/** Live per-state funnel totals — the read snapshotPipelineTx freezes
+ *  into pipeline_snapshots (forecast.ts). */
 export async function pipelineByStateTx(tx: Sql): Promise<Record<string, StateBucket>> {
   const rows = await tx<{ state: string; count: number; value_cents: number }[]>`
     select state, count(*)::int as count, coalesce(sum(deal_value_cents), 0)::int as value_cents
@@ -875,10 +827,8 @@ export async function leadStats(sql: Sql): Promise<LeadStats> {
              coalesce(sum(deal_value_cents), 0)::int as value_cents
       from leads where archived_at is null group by 1 order by 2 desc, 1
     `;
-    // "Won" = first 'live' entry inside the window per lead — a lead that
-    // bounced through 'live' twice counts once. value_cents is frozen at
-    // transition time (migration 0015 backfills pre-column rows), so post-win
-    // edits to deal_value_cents can't rewrite reported revenue.
+    // "won" = first 'live' entry in the window per lead; value_cents frozen
+    // at transition so later edits can't rewrite reported revenue
     const won = (
       await tx<{ n: number; value_cents: number }[]>`
         select count(*)::int as n, coalesce(sum(w.value_cents), 0)::int as value_cents
@@ -947,26 +897,20 @@ export async function leadStats(sql: Sql): Promise<LeadStats> {
 export interface SegmentStat {
   segment: string;
   leads: number;
-  /** leads created in the last 30d — the denominator that pairs with
-   *  costCents (also 30d) for an apples-to-apples CPL. */
+  /** leads created in the last 30d — denominator pairing with costCents
+   *  for CPL. */
   leads30d: number;
   contacted: number;
   replied: number;
   live: number;
   costCents: number;
-  /** costCents / leads30d; null when the segment produced no lead in the
-   *  window — a spend with zero output is a worse signal than "—" implies,
-   *  but inventing a per-lead price would be fiction. */
+  /** costCents/leads30d; null with no leads in window — inventing a price
+   *  would be fiction. */
   cplCents: number | null;
 }
 
-/** Per-segment performance — leads found, contacts made, replies received,
- *  actives won, and 30d agent spend. Powers the Discovery panel and feeds
- *  each discovery run's context, so the agent leans into segments that
- *  convert instead of only following the brief's defaults. costCents covers
- *  BOTH lead-bound runs (triaged by the lead's segment) and discovery runs
- *  carrying params.segment — discovery is the acquisition spend, so a CPL
- *  without it would be fiction. */
+/** Per-segment performance incl. 30d spend — costCents covers lead-bound
+ *  runs AND lead-less discovery runs (acquisition spend) so CPL is honest. */
 export async function segmentStats(sql: Sql): Promise<SegmentStat[]> {
   return controlTx(sql, async (tx) => {
     const rows = await tx<
@@ -1004,9 +948,8 @@ export async function segmentStats(sql: Sql): Promise<SegmentStat[]> {
         and l.archived_at is null
       group by 1
     `;
-    // Disjoint with the lead-bound query above: a lead-bound discovery run
-    // attributes through the lead join already — params.segment only carries
-    // lead-less runs, or every cost would double-count.
+    // disjoint with the lead-bound query — params.segment only carries
+    // lead-less runs, else every cost would double-count
     const discovery = await tx<{ segment: string | null; cost_cents: number }[]>`
       select nullif(r.params->>'segment', '') as segment,
              coalesce(sum(r.cost_cents), 0)::int as cost_cents
@@ -1032,8 +975,8 @@ export interface DuplicateGroup {
   leads: { id: string; name: string; businessName: string | null; state: LeadState }[];
 }
 
-/** Exact normalized matches on the four contact channels — cheap, honest
- *  duplicate detection (fuzzy matching is a Phase-4+ concern). */
+/** Exact normalized matches on the contact channels — fuzzy matching is
+ *  a later concern. */
 export async function findDuplicates(sql: Sql): Promise<DuplicateGroup[]> {
   return controlTx(sql, async (tx) => {
     const norm = `
@@ -1060,10 +1003,6 @@ export async function findDuplicates(sql: Sql): Promise<DuplicateGroup[]> {
     return groups;
   });
 }
-
-// ---------------------------------------------------------------------------
-// CSV export / import
-// ---------------------------------------------------------------------------
 
 const CSV_COLUMNS: [string, (l: LeadRow) => string][] = [
   ['name', (l) => l.name],
@@ -1183,8 +1122,8 @@ export function parseLeadsCsv(text: string): {
     rec.forEach((v, j) => {
       const field = cols[j];
       if (!field || v.trim() === '') return;
-      // Our own export joins tags with ';' — split back so the round trip
-      // preserves them instead of writing one giant tag.
+      // our export joins tags with ';' — split back so the round trip
+      // preserves them
       out[field] =
         field === 'tags'
           ? v
@@ -1199,8 +1138,8 @@ export function parseLeadsCsv(text: string): {
   return { rows, skipped };
 }
 
-/** Bulk import inside one claim: skips rows whose email/phone/instagram
- *  already exists — re-importing the same spreadsheet is a no-op. */
+/** Bulk import in one claim — skips existing email/phone/instagram;
+ *  re-import is a no-op. */
 export async function importLeads(
   sql: Sql,
   rows: Record<string, unknown>[],
@@ -1221,8 +1160,8 @@ export async function importLeads(
       const phone = fields.phone as string | null;
       const whatsapp = fields.whatsapp as string | null;
       const instagram = fields.instagram as string | null;
-      // ::text casts: a NULL param in a bare "is not null" has no inferable
-      // type — Postgres rejects the statement with 42P18.
+      // ::text casts — a NULL param in bare "is not null" is untypable
+      // (Postgres 42P18)
       const dup = await tx<{ id: string }[]>`
         select id from leads where archived_at is null and (
           (${email}::text is not null and lower(trim(email)) = lower(trim(${email})))

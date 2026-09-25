@@ -5,9 +5,8 @@ import { waStatus } from './channels/whatsapp.ts';
 import { autonomyTx, draftDecision } from './policy.ts';
 
 /**
- * agent/guardrails — the hard rules around every outbound message. Enforced
- * in code in the runner path, never in the prompt: the model asks, this
- * decides. Ordering matters — the first false answer wins.
+ * Hard outbound rules enforced in code in the runner path, never in the
+ * prompt. Ordering matters — the first false answer wins.
  */
 
 export interface ChannelVerdict {
@@ -15,29 +14,23 @@ export interface ChannelVerdict {
   reason?: string;
 }
 
-/** Enabled integration alone doesn't mean whatsapp can send — the baileys
- *  driver also needs a live session (waStatus 'open'); drivers that need no
- *  connection (log) count as ready on the row alone. Shared by the discovery
- *  autocontact gate and channel availability so 'reachable' means the same
- *  thing everywhere. */
+/** Enabled row + live connection (baileys needs waStatus 'open'; 'log'
+ *  needs none). Shared so 'reachable' means the same thing everywhere. */
 export async function whatsappReadyTx(tx: Sql): Promise<boolean> {
   const wa = await getIntegrationTx(tx, 'whatsapp');
   if (!wa) return false;
   return wa.driver === 'baileys' ? waStatus() === 'open' : true;
 }
 
-/** Which channels can actually carry a message to this lead right now:
- *  contact data + an enabled integration + deliverability. 'manual' always
- *  works — a draft there is a note for staff to copy elsewhere. */
+/** Channels that can carry a message now: contact data + enabled
+ *  integration + deliverability; 'manual' always works. */
 export async function channelAvailabilityTx(
   tx: Sql,
   leadId: string,
   opts: { lock?: boolean } = {},
 ): Promise<Record<Channel, ChannelVerdict>> {
-  // lock: serialize against concurrent contact/bounce writes (updateLead,
-  // delivery events) — a resolve→insert caller holding the lead row can't be
-  // stranded on a channel that died mid-transaction. Display-only callers
-  // (run context's CANAIS line) leave it off — no need to block writes.
+  // lock serializes against concurrent contact/bounce writes; display
+  // callers (run context's CANAIS line) leave it off
   const lead = (
     await tx<
       {
@@ -51,8 +44,8 @@ export async function channelAvailabilityTx(
     const dead = { ok: false, reason: 'lead not found' };
     return { whatsapp: dead, email: dead, manual: dead };
   }
-  // An inbound whatsapp thread carries the sender's number on external_id —
-  // reachable even when lead.whatsapp was never saved.
+  // an inbound whatsapp thread carries the sender on external_id — reachable
+  // even without lead.whatsapp
   const waThread = (
     await tx<{ n: number }[]>`
       select count(*)::int as n from lead_threads
@@ -88,35 +81,27 @@ export type ChannelPick =
       ok: true;
       channel: Channel;
       via: 'requested' | 'override' | 'continuity' | 'fallback';
-      /** channel of the lead's last inbound — set when this send switches
-       *  channels mid-conversation, so the caller can say so in the copy. */
+      /** channel of the lead's last inbound — set on a mid-conversation switch */
       prevChannel: Channel | null;
     }
   | { ok: false; reason: string; available: Channel[] };
 
-/** Resolve which channel a send/draft should go out on. Priority: a staff
- *  override (dispatch-time `params.channel`) > the model's explicit arg >
- *  the channel the lead last wrote on (continuity) > whatsapp > email.
- *  A requested-but-dead channel returns {ok:false, available} so the caller
- *  can retry on a reachable one instead of composing on air. 'manual' is
- *  only honored when explicitly requested — it never delivers by itself. */
+/** Send channel: staff override > model arg > last-inbound continuity >
+ *  whatsapp > email; 'manual' only when explicitly requested. */
 export async function resolveChannelTx(
   tx: Sql,
   leadId: string,
   args: {
     requested?: Channel | null;
     override?: Channel | null;
-    /** A thread-bound run (reply) continues on ITS thread's channel — the
-     *  lead's newer inbound on another channel must not hijack a reply
-     *  composed from this thread's context. Unbound runs use the lead's
-     *  last inbound instead. */
+    /** thread-bound run continues on ITS thread's channel; unbound runs
+     *  use last inbound. */
     threadId?: string | null;
   },
 ): Promise<ChannelPick> {
   const avail = await channelAvailabilityTx(tx, leadId, { lock: true });
   const usable = (['whatsapp', 'email'] as const).filter((ch) => avail[ch].ok);
-  // Continuity channel — for continuity picks and to flag a mid-conversation
-  // switch back to the caller.
+  // continuity channel — for continuity picks and mid-conversation-switch flags
   const lastIn =
     (
       await tx<{ channel: Channel | null }[]>`
@@ -149,8 +134,7 @@ export async function resolveChannelTx(
   if (prev && avail[prev].ok) {
     return { ok: true, channel: prev, via: 'continuity', prevChannel: prev };
   }
-  // First contact / stale channel: whatsapp is the stronger channel for this
-  // audience, email the fallback.
+  // first contact / stale channel: whatsapp is the stronger channel, email the fallback
   const first = usable[0];
   if (first) return { ok: true, channel: first, via: 'fallback', prevChannel: prev };
   return {
@@ -160,11 +144,8 @@ export async function resolveChannelTx(
   };
 }
 
-/** Whether agent output is paused for (lead, channel): the lead-wide
- *  handoff flag (`leads.agent_paused_at`, set by an unbound request_human)
- *  blocks every channel — including ones with no thread yet; otherwise a
- *  paused destination thread blocks. Missing thread + no lead flag = fresh
- *  channel, allowed. */
+/** Paused = lead-wide agent_paused_at blocks every channel; else a paused
+ *  destination thread blocks; missing thread = allowed. */
 export async function agentPausedForChannelTx(
   tx: Sql,
   leadId: string,
@@ -193,9 +174,8 @@ export interface SendVerdict {
   reason?: string;
 }
 
-/** Tx-local guardrail check — the send_message tool calls this inside the
- *  same transaction that takes the lead's advisory lock and inserts the
- *  outbound message, so two concurrent runs can't both see spare cap. */
+/** Runs inside the tx holding the lead's advisory lock so concurrent runs
+ *  can't both see spare cap. */
 export async function checkSendAllowedTx(
   tx: Sql,
   g: Guardrails,
@@ -221,19 +201,12 @@ export async function checkSendAllowedTx(
       return { ok: false, forceDraft: false, reason: 'agent paused for lead' };
     if (lead.agent_mode === 'off')
       return { ok: false, forceDraft: false, reason: 'agent off for lead' };
-    // A bounced address is a dead address — Resend told us so. Blocking here
-    // pushes the agent to the lead's other channels instead of burning
-    // reputation on a guaranteed bounce.
+    // a bounced address is dead — block here so the agent tries other channels
     if (channel === 'email' && lead.email_bounced_at)
       return { ok: false, forceDraft: false, reason: 'email bounced' };
 
-    // First contact is always human-approved — the lead has never seen an
-    // outbound from us, so this one must wait in the approvals queue. The
-    // draft decision runs before the send-only gates: a forced draft is an
-    // approval item, not a wire send — quiet hours and the daily cap pace
-    // sends, not drafts, so they only bind when the live decision permits
-    // an actual send (a zero-delay first contact at 22:00 must still leave
-    // something to approve).
+    // first contact is always human-approved; the draft decision runs
+    // before the send-only gates so quiet hours/cap only bind live sends
     const priorOut = (
       await tx<{ n: number }[]>`
         select count(*)::int as n from lead_messages m
@@ -251,8 +224,7 @@ export async function checkSendAllowedTx(
     });
     if (d.forceDraft) return { ok: true, forceDraft: true };
 
-    // Quiet hours — compared in the configured timezone (America/Sao_Paulo
-    // default). Overnight window (21:00→08:00) wraps past midnight.
+    // quiet hours in configured tz; overnight window wraps past midnight
     const hh = (
       await tx<{ h: number; m: number }[]>`
         select extract(hour from now() at time zone ${g.timezone})::int as h,
@@ -267,7 +239,7 @@ export async function checkSendAllowedTx(
     const quiet = start <= end ? cur >= start && cur < end : cur >= start || cur < end;
     if (quiet) return { ok: false, forceDraft: false, reason: 'quiet hours' };
 
-    // Daily outbound cap per lead (agent-authored only — staff sends don't count).
+    // daily outbound cap per lead (agent-authored only)
     const sentToday = (
       await tx<{ n: number }[]>`
         select count(*)::int as n from lead_messages m

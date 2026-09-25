@@ -13,10 +13,8 @@ import {
 import { onControlEvent } from '../events.ts';
 import { Empty, StateChip, fmtUsdCents, rel } from '../components.tsx';
 
-/* Descoberta — the launch pad AND the scoreboard. Idle is a dark hero:
-   brief on the left, the daily rotation and recent hunts on the right.
-   With ?run=<id> the page becomes the machine's stage — the trajectory
-   streams while leads materialize as cream cards. */
+/* Descoberta — launch pad and scoreboard; ?run=<id> turns the page into
+   the live run stage. */
 
 interface Step {
   type: string;
@@ -123,7 +121,6 @@ export default function Discovery() {
   const [params, setParams] = useSearchParams();
   const runId = params.get('run');
 
-  /* ---- page data ---- */
   const [runs, setRuns] = useState<AgentRun[]>([]);
   const [found, setFound] = useState<LeadListItem[]>([]);
   const [dupes, setDupes] = useState<DupeGroup[]>([]);
@@ -132,7 +129,6 @@ export default function Discovery() {
   const [bf, setBf] = useState({ name: '', query: '', segment: '', city: '', target: '' });
   const [msg, setMsg] = useState('');
 
-  /* ---- launch brief ---- */
   const [segment, setSegment] = useState('');
   const [city, setCity] = useState('');
   const [focus, setFocus] = useState('');
@@ -140,14 +136,12 @@ export default function Discovery() {
   const [launching, setLaunching] = useState(false);
   const [err, setErr] = useState('');
 
-  /* ---- watched run ---- */
   const [run, setRun] = useState<AgentRun | null>(null);
   const [runMissing, setRunMissing] = useState(false);
   const [now, setNow] = useState(() => Date.now());
   const streamRef = useRef<HTMLDivElement>(null);
 
-  // Event-driven loads overlap the mount/floor ones — per-resource success
-  // watermarks drop a response that lands after a newer one already painted.
+  // per-resource success watermarks drop responses that land after a newer paint
   const loadSeq = useRef(0);
   const seenSeq = useRef<Record<string, number>>({});
   const load = useCallback(() => {
@@ -205,8 +199,7 @@ export default function Discovery() {
   }, []);
   useEffect(load, [load]);
 
-  // Leads land in the table as the agent creates them — run/lead events
-  // accelerate the refresh; the slow poll floors a dead stream.
+  // run/lead events accelerate refresh; the slow poll floors a dead stream
   useEffect(() => onControlEvent(['run.update', 'lead.change'], load), [load]);
   useEffect(() => {
     const t = setInterval(load, 60_000);
@@ -215,7 +208,6 @@ export default function Discovery() {
 
   const liveRun = runs.find((r) => r.status === 'queued' || r.status === 'running');
 
-  /* ---- run watcher ---- */
   const runActive = run?.status === 'queued' || run?.status === 'running';
   useEffect(() => {
     if (!runActive) return;
@@ -229,20 +221,17 @@ export default function Discovery() {
       setRunMissing(false);
       return;
     }
-    // New run id → drop the previous run's stage immediately so a stale
-    // terminal frame can't be acted on (e.g. cancel targeting the old run).
+    // drop the previous run's stage so a stale terminal frame can't be acted on
     setRun(null);
     setRunMissing(false);
     let dead = false;
-    // Overlapping fetches resolve out of order — drop any response older
-    // than the newest seen, and latch terminal: a delayed 'running'
-    // snapshot can't resurrect a finished run.
+    // drop out-of-order responses; a terminal commit latches so a delayed
+    // 'running' snapshot can't resurrect a finished run
     let seq = 0;
     let seen = 0;
     let terminal = false;
-    // 'canceled' lands on the row before the worker persists its final
-    // journal — keep reading through a short grace window so late tool
-    // results still land in the summary. Bounded chain, not a standing poll.
+    // 'canceled' lands before the final journal — read through a short
+    // bounded grace window so late tool results still land
     let cancelAt = 0;
     let cancelLen = -1;
     const timers: ReturnType<typeof setTimeout>[] = [];
@@ -278,8 +267,7 @@ export default function Discovery() {
           if (latch) terminal = true;
         })
         .catch((e) => {
-          // A 404 is permanent — stop fetching instead of spinning on the
-          // loading state forever.
+          // a 404 is permanent — stop polling
           if (dead || !(e instanceof ApiError && e.status === 404)) return;
           terminal = true;
           setRunMissing(true);
@@ -329,9 +317,8 @@ export default function Discovery() {
   }, [steps]);
 
   useEffect(() => {
-    // Mobile: .stage-live owns scrolling and .stage-stream is overflow:visible,
-    // so el.scrollTop is a no-op — scrollIntoView hits whichever ancestor
-    // scrolls on either breakpoint.
+    // .stage-live owns scrolling on mobile — scrollIntoView hits the
+    // scrolling ancestor on either breakpoint
     const el = streamRef.current;
     el?.lastElementChild?.scrollIntoView({ block: 'nearest' });
   }, [steps.length]);
@@ -379,8 +366,6 @@ export default function Discovery() {
   };
 
   const reset = () => setParams({});
-
-  /* ================= run stage ================= */
 
   if (runId && run) {
     const elapsed =
@@ -544,8 +529,6 @@ export default function Discovery() {
       </div>
     );
   }
-
-  /* ============ idle — the stage IS the page ============ */
 
   return (
     <div className="stage stage-idle">
@@ -749,7 +732,6 @@ export default function Discovery() {
         </div>
       </div>
 
-      {/* scoreboard — same dark room, below the fold */}
       <div className="stage-data">
         {segs.length > 0 && (
           <section className="dsec">
