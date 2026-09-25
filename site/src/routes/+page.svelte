@@ -6,6 +6,7 @@
   import Closing from '$lib/components/Closing.svelte';
   import HeroShader from '$lib/components/HeroShader.svelte';
   import TxShader from '$lib/components/TxShader.svelte';
+  import { onVeilOpen } from '$lib/intro';
   import { site, signals, manifesto, transmissions, ritual, teaserFaqs } from '$lib/content/site';
 
   let root = $state<HTMLElement>();
@@ -85,9 +86,6 @@
   onMount(() => {
     gsap.registerPlugin(ScrollTrigger);
     ScrollTrigger.config({ ignoreMobileResize: true });
-    // IntroVeil.svelte starts parting at ~1.6s; the hero timeline leads in slightly
-    // early so the reveal overlaps the veil opening instead of starting behind it.
-    const VEIL_LEAD_S = 1.5;
     // Pinned tx timeline: durations are relative segment weights (travel vs. exit),
     // and the tail adds scroll runway after the last panel, in viewport fractions.
     const TX_TRAVEL = 100;
@@ -103,17 +101,14 @@
         ease: 'none',
         scrollTrigger: { trigger: root, start: 'top top', end: 'bottom bottom', scrub: 0.3 },
       });
-      // .intro-veil lives in +layout (IntroVeil.svelte), outside `root` — document scope is required.
-      const veil = document.querySelector<HTMLElement>('.intro-veil');
-      const introDelay = veil && getComputedStyle(veil).display !== 'none' ? VEIL_LEAD_S : 0;
-
-      gsap
-        .timeline({ defaults: { ease: 'power3.out' }, delay: introDelay })
+      const hero = gsap
+        .timeline({ defaults: { ease: 'power3.out' }, paused: true })
         .from('.hero-gl', { opacity: 0, scale: 1.08, duration: 1.8, ease: 'power2.out' }, 0)
         .from('.hero-top > *', { opacity: 0, y: -14, duration: 0.7, stagger: 0.08 }, 0.15)
         .from('.line-mask > span', { yPercent: 115, duration: 1.1, stagger: 0.11 }, 0.3)
         .from('.hero-bottom > *', { opacity: 0, y: 22, duration: 0.8, stagger: 0.12 }, 0.8)
         .from('.scroll-cue', { opacity: 0, duration: 0.9 }, 1.1);
+      const offVeilOpen = onVeilOpen(() => hero.play());
 
       gsap.fromTo(
         '.hero-inner',
@@ -285,6 +280,8 @@
         ease: 'power2.out',
         scrollTrigger: { trigger: '.closing', start: 'top 70%' },
       });
+
+      return offVeilOpen;
     });
 
     const onSummary = (e: Event) => {

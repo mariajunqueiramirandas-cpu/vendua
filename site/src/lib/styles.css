@@ -554,8 +554,16 @@ html[data-theme='dark'] .tt-label::after {
 [dir='rtl'] .scroll-progress {
   transform-origin: right;
 }
+@property --veil-n {
+  syntax: '<integer>';
+  inherits: false;
+  initial-value: 0;
+}
 .intro-veil {
   display: none;
+  --veil-ease-out: cubic-bezier(0.22, 1, 0.36, 1);
+  --veil-ease-in: cubic-bezier(0.55, 0, 1, 0.45);
+  --veil-ease-part: cubic-bezier(0.76, 0, 0.24, 1);
 }
 html.js:not(.seen) .intro-veil {
   position: fixed;
@@ -564,7 +572,8 @@ html.js:not(.seen) .intro-veil {
   display: flex;
   align-items: center;
   justify-content: center;
-  animation: veil-guard 0s 3.6s forwards;
+  /* Fallback if hydration never cleans up: stop covering the page once the halves are gone. */
+  animation: veil-guard 0s 1.7s forwards;
 }
 @keyframes veil-guard {
   to {
@@ -577,12 +586,20 @@ html.js:not(.seen) .intro-veil {
   bottom: 0;
   width: 50.5%;
   background: var(--color-bg);
+  animation: veil-part 700ms var(--veil-ease-part) 950ms both;
 }
 .veil-left {
   left: 0;
+  --veil-to: -101%;
 }
 .veil-right {
   right: 0;
+  --veil-to: 101%;
+}
+@keyframes veil-part {
+  to {
+    translate: var(--veil-to) 0;
+  }
 }
 .veil-slit {
   position: absolute;
@@ -591,21 +608,59 @@ html.js:not(.seen) .intro-veil {
   width: 2px;
   height: 46vh;
   transform: translate(-50%, -50%);
-  transform-origin: center;
   background: var(--color-accent);
   box-shadow:
     0 0 24px 6px color-mix(in srgb, var(--color-accent) 55%, transparent),
     0 0 80px 30px color-mix(in srgb, var(--color-accent) 18%, transparent);
+  animation: veil-slit 1100ms 50ms both;
+}
+@keyframes veil-slit {
+  0% {
+    scale: 1 0;
+    animation-timing-function: var(--veil-ease-out);
+  }
+  40%,
+  78% {
+    scale: 1 1;
+    opacity: 1;
+    animation-timing-function: var(--veil-ease-in);
+  }
+  100% {
+    scale: 6 1;
+    opacity: 0;
+  }
 }
 .veil-word {
   position: relative;
+  overflow: hidden;
+  padding-block: 0.1em;
   font-size: 2.1rem;
   font-weight: 700;
   letter-spacing: -0.02em;
   color: var(--color-text);
 }
-.veil-word span {
+.veil-word-inner {
+  display: block;
+  animation: veil-word 1000ms 120ms both;
+}
+.veil-dot {
   color: var(--color-accent-ink);
+}
+@keyframes veil-word {
+  0% {
+    translate: 0 140%;
+    animation-timing-function: var(--veil-ease-out);
+  }
+  50%,
+  80% {
+    translate: 0 0;
+    opacity: 1;
+    animation-timing-function: var(--veil-ease-in);
+  }
+  100% {
+    translate: 0 -30%;
+    opacity: 0;
+  }
 }
 .veil-count {
   position: absolute;
@@ -617,6 +672,31 @@ html.js:not(.seen) .intro-veil {
   font-variant-numeric: tabular-nums;
   letter-spacing: 0.3em;
   color: var(--color-muted);
+  animation: veil-fade 1050ms 100ms both;
+}
+.veil-count-n {
+  counter-reset: veil var(--veil-n);
+  animation: veil-count 750ms cubic-bezier(0.65, 0, 0.35, 1) 150ms both;
+}
+.veil-count-n::after {
+  content: counter(veil, decimal-leading-zero);
+}
+@keyframes veil-count {
+  to {
+    --veil-n: 100;
+  }
+}
+@keyframes veil-fade {
+  0% {
+    opacity: 0;
+  }
+  25%,
+  80% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 0;
+  }
 }
 .header-bar {
   position: sticky;
