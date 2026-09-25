@@ -85,9 +85,8 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('channel health (db)', () => {
       pageReads: 0,
       draftOnly: false,
     });
-    // A 3-hour quiet window centered on now (guardrails tz) — deterministic
-    // regardless of when the suite runs, unlike a '00:00–23:59' that has a
-    // one-minute hole at 23:59.
+    // quiet window centered on now (guardrails tz) — deterministic regardless
+    // of when the suite runs ('00:00–23:59' would leave a one-minute hole)
     const h =
       Number(
         new Intl.DateTimeFormat('en-US', {
@@ -147,9 +146,8 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('channel health (db)', () => {
 
   test('send_message with draftOnly composes a draft even under quiet hours', async () => {
     await migrate(sql, join(import.meta.dir, '../db/migrations'));
-    // Delivery gates exist to stop a message leaving the building — a draft
-    // never does, so draft-only runs compose straight through them (the
-    // approval click is where quiet hours/caps apply).
+    // drafts never leave the building, so draft-only runs skip delivery gates
+    // (quiet hours/caps apply at the approval click)
     const ctx = (leadId: string): ToolContext => ({
       sql,
       runId: '00000000-0000-4000-8000-000000000002',
@@ -228,9 +226,8 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('segment CPL (db)', () => {
 
   test('cplCents = 30d spend ÷ leads30d, including discovery-run spend', async () => {
     await migrate(sql, join(import.meta.dir, '../db/migrations'));
-    // The shared test DB keeps prior runs' cpl-seg rows — 12+ replied
-    // 1-lead segments squeeze this one out of the top-12 rollup
-    // nondeterministically. Drop the class (cascades) before seeding.
+    // prior runs' cpl-seg rows can squeeze this segment out of the top-12
+    // rollup nondeterministically — drop the class (cascades) before seeding
     await sql`delete from leads where segment like 'cpl-seg-%' or segment like 'cpl-old-%'`;
     const seg = `cpl-seg-${Date.now()}`;
     const lead = await controlTx(sql, async (tx) => {

@@ -1,6 +1,5 @@
--- agent/sim — negotiation simulation results.
--- Scenarios live in code (src/agent/sim-scenarios.ts); each run persists its
--- transcript + judge verdict here for quality tracking over time.
+-- sim_runs: negotiation-simulation transcripts + judge verdicts
+-- (scenarios live in src/agent/sim-scenarios.ts)
 create table if not exists sim_runs (
   id uuid primary key default gen_random_uuid(),
   scenario text not null,

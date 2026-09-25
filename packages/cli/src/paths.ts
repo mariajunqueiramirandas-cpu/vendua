@@ -1,11 +1,7 @@
 import { existsSync, readFileSync, readdirSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 
-/**
- * Repo-root + storefront path discovery. The monorepo root is the package.json
- * whose workspaces cover 'storefronts/*'; everything else hangs off that.
- */
-
+// repo root = the package.json whose workspaces cover 'storefronts/*'
 export function findRoot(from = process.cwd()): string | null {
   let dir = resolve(from);
   for (;;) {
@@ -32,7 +28,6 @@ export function isStorefrontDir(dir: string): boolean {
   return existsSync(join(dir, 'vendua.config.ts'));
 }
 
-/** Slug arg wins; otherwise the cwd must itself be a storefront dir. */
 export function storefrontDir(root: string, slug: string | undefined): string {
   if (slug) {
     const dir = join(root, 'storefronts', slug);
@@ -46,7 +41,6 @@ export function storefrontDir(root: string, slug: string | undefined): string {
   die('no <slug> given and cwd is not a storefront directory (no vendua.config.ts)');
 }
 
-/** Every port claimed by a storefronts/<slug>/vite.config.ts. */
 export function usedPorts(root: string): Set<number> {
   const used = new Set<number>();
   const dir = join(root, 'storefronts');

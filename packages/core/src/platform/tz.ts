@@ -1,13 +1,5 @@
-/**
- * platform/tz — wall-clock ↔ instant helpers for one IANA zone, via Intl
- * (no manual offset tables). Used by meeting slot computation; kept separate
- * from modules/store.ts's private localParts because that one is specialized
- * to the storefront-hours shape.
- *
- * America/Sao_Paulo has no DST since 2019, but everything here is written so
- * a zone with DST still computes correct instants (a single correction pass
- * absorbs offset drift at transitions).
- */
+// wall-clock ↔ instant helpers for one IANA zone via Intl — one correction
+// pass absorbs offset drift so a DST-transitioning zone still lands right
 
 const dtfCache = new Map<string, Intl.DateTimeFormat>();
 
@@ -65,7 +57,6 @@ export function assertTz(tz: string): string {
   return tz;
 }
 
-/** Wall-clock parts of `instant` in `tz`. */
 export function localParts(instant: Date, tz: string): LocalParts {
   const parts = dtf(tz).formatToParts(instant);
   const get = (type: string) => parts.find((p) => p.type === type)?.value ?? '';
@@ -83,23 +74,15 @@ export function localParts(instant: Date, tz: string): LocalParts {
   };
 }
 
-/**
- * Milliseconds the zone's wall clock is ahead of UTC at `instant`
- * (i.e. localEpochMs − instantEpochMs). Seconds are enough — historical
- * sub-minute offsets don't matter for scheduling.
- */
+// ms the zone's wall clock leads UTC at `instant` (seconds resolution is enough)
 function tzOffsetMs(instant: Date, tz: string): number {
   const p = localParts(instant, tz);
   const wall = Date.UTC(p.year, p.month - 1, p.day, p.hour, p.minute, p.second);
   return wall - Math.floor(instant.getTime() / 1000) * 1000;
 }
 
-/**
- * The instant corresponding to wall time `minutes`-after-midnight on `date`
- * in `tz`. One correction pass after the first guess handles the rare case
- * where the offset changes between the guess and the result (a slot
- * straddling a DST jump still lands on the right wall-clock minute).
- */
+// instant for wall time `minutes`-after-midnight on `date` in `tz` — one
+// correction pass lands slots straddling a DST jump on the right minute
 export function zonedInstant(tz: string, date: LocalDate, minutes: number): Date {
   const guess = Date.UTC(date.year, date.month - 1, date.day, 0, minutes);
   let t = guess - tzOffsetMs(new Date(guess), tz);
@@ -109,24 +92,18 @@ export function zonedInstant(tz: string, date: LocalDate, minutes: number): Date
   return new Date(t);
 }
 
-/** Local calendar date of `instant` in `tz`. */
 export function localDateOf(instant: Date, tz: string): LocalDate {
   const p = localParts(instant, tz);
   return { year: p.year, month: p.month, day: p.day, weekday: p.weekday };
 }
 
-/**
- * Calendar-day arithmetic: `n` days after `date`, recomputing the weekday
- * through a real epoch so DST can't skip or double a day the way adding
- * 86400s to an instant can.
- */
+// `n` days after `date` — epoch arithmetic so DST can't skip/double a day
 export function addDays(date: LocalDate, n: number): LocalDate {
   const d = new Date(Date.UTC(date.year, date.month - 1, date.day + n));
   const local = { year: d.getUTCFullYear(), month: d.getUTCMonth() + 1, day: d.getUTCDate() };
   return { ...local, weekday: d.getUTCDay() };
 }
 
-/** HH:MM → minutes-of-day, or null on malformed input. */
 export function hhmmToMinutes(t: string): number | null {
   const m = /^(\d{1,2}):(\d{2})$/.exec(t.trim());
   if (!m) return null;
