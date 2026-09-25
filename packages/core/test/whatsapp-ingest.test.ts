@@ -996,6 +996,14 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('whatsapp history + ignore list 
           ${sql.json({ text: 'liga amanhã', requestedKind: 'outreach', params: {}, deliveries: 2 } as never)},
           ${parked}, now())
       `;
+      // The model's own due wakeup is parked by the same switch — it must
+      // NOT fold its focus into the allowed promised run (that would let a
+      // parked intent ride work it didn't schedule).
+      await sql`
+        insert into agent_wakeups (lead_id, kind, at, focus, created_by, requested, status)
+        values (${promisedId}, 'outreach', now() - interval '1 minute',
+                'sondagem de cadência', 'agent', false, 'pending')
+      `;
       expect(await sweepOutreach(sql)).toBeGreaterThanOrEqual(1);
       const [pr] = await sql<{ status: string }[]>`
         select status from agent_runs where id = ${parked}
@@ -1015,6 +1023,12 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('whatsapp history + ignore list 
       expect(swept).toHaveLength(1);
       expect(swept[0]!.id).not.toBe(parked);
       expect(swept[0]!.params.auto).toBeUndefined();
+      // The wakeup stayed pending for its own sweep's gate — no fold.
+      expect(swept[0]!.params.focus).toBeUndefined();
+      const [wk] = await sql<{ status: string }[]>`
+        select status from agent_wakeups where lead_id = ${promisedId}
+      `;
+      expect(wk!.status).toBe('pending');
       // …while the model's own cadence nudge parks under autonomy 'off'.
       const skipped = await sql`
         select 1 from agent_runs where lead_id = ${auto.body.lead.id}

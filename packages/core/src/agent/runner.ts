@@ -179,17 +179,63 @@ export async function insertRun(
    *  flag, so they can emit lead.change post-commit for the task refresh. */
   cap?: { flagged?: boolean },
 ): Promise<string | null> {
+  // Adopt an already-active row as the mail's owner — or retire it when
+  // claim policy parks it (a queued auto row under workspace 'off', or a
+  // disabled playbook's kind): a parked row can never serve the caller's
+  // intent. The retire is an event retire — its dead-attempt mail releases
+  // into whatever comes next, and its own intent survives in the lead's
+  // pending items, which the new run drains through the same gates.
+  const adopt = async (a: {
+    id: string;
+    status: string;
+    kind: string;
+    params: Record<string, unknown>;
+  }): Promise<string | null> => {
+    if (a.status !== 'queued') return a.id;
+    const { disabledKinds, autoOff } = await claimPolicyTx(tx);
+    const p = a.params ?? {};
+    const parked =
+      disabledKinds.includes(a.kind as PlaybookKind) ||
+      (autoOff && ('auto' in p || p['origin'] === 'inbound'));
+    if (parked) {
+      await tx`
+        update agent_runs
+        set status = 'canceled',
+            error = 'policy-parked — a newer request replaced it',
+            finished_at = now()
+        where id = ${a.id}
+      `;
+      await releaseInboxTx(tx, a.id, true);
+      return null;
+    }
+    // A runnable owner keeps the mail — but a future-dated row mustn't
+    // make an immediate caller wait out its schedule. Pull the start to
+    // the earlier of the two intents; the mail merges into the active run
+    // either way, and each item's own notBefore still gates its drain, so
+    // inbound quiet periods hold.
+    await tx`
+      update agent_runs
+      set run_at = least(coalesce(run_at, now()), coalesce(${input.runAt ?? null}, now()))
+      where id = ${a.id}
+    `;
+    return a.id;
+  };
   if (input.leadId) {
     // An already-active run owns the mail regardless of the cap — delivery
     // into it costs nothing extra, so the active row wins before the cap
     // check (a refused verdict must not strand an enqueue site that could
     // have delivered). Callers hold capfin — the read can't race a sibling.
-    const active = await tx<{ id: string }[]>`
-      select id from agent_runs
+    const active = await tx<
+      { id: string; status: string; kind: string; params: Record<string, unknown> }[]
+    >`
+      select id, status, kind, params from agent_runs
       where lead_id = ${input.leadId} and status in ('queued', 'running')
       order by created_at limit 1
     `;
-    if (active.length) return active[0]!.id;
+    if (active.length) {
+      const adopted = await adopt(active[0]!);
+      if (adopted) return adopted;
+    }
     const verdict = await leadUnderCostCapTx(tx, input.leadId);
     if (verdict !== 'under') {
       if (cap) cap.flagged = verdict === 'flagged';
@@ -212,12 +258,17 @@ export async function insertRun(
     `
   )[0];
   if (row) return row.id;
-  const existing = await tx<{ id: string }[]>`
-    select id from agent_runs
+  const existing = await tx<
+    { id: string; status: string; kind: string; params: Record<string, unknown> }[]
+  >`
+    select id, status, kind, params from agent_runs
     where lead_id = ${input.leadId ?? null} and status in ('queued', 'running')
     order by created_at limit 1
   `;
-  return existing[0]?.id ?? null;
+  // Same adopt path — if the just-appearing row is policy-parked it retires
+  // and the caller's item waits for the orphan sweep (same disposition as a
+  // cap refusal: the mail is pending, the sweep mints its owner).
+  return existing[0] ? await adopt(existing[0]) : null;
 }
 
 export async function enqueueRun(
@@ -2911,14 +2962,20 @@ export async function sweepOutreach(sql: Sql): Promise<number> {
       // its focus into the run's params (at most one pending agent wakeup
       // exists per lead — the unique index enforces it). Read it BEFORE
       // insertRun so the focus lands in the run's context, not the floor.
-      const fold = (
-        await tx<{ id: string; focus: string }[]>`
-          select id, focus from agent_wakeups
-          where lead_id = ${id} and status = 'pending' and at <= now()
-            and created_by = 'agent' and not requested
-          for update skip locked
-        `
-      )[0];
+      // Under autonomy 'off' the model's self-schedule is parked — the
+      // wakeup stays pending for sweepWakeups' own gate, never rides an
+      // allowed staff/requested run.
+      const fold =
+        level === 'off'
+          ? undefined
+          : (
+              await tx<{ id: string; focus: string }[]>`
+                select id, focus from agent_wakeups
+                where lead_id = ${id} and status = 'pending' and at <= now()
+                  and created_by = 'agent' and not requested
+                for update skip locked
+              `
+            )[0];
       const promised =
         next_action_source === 'staff' ||
         next_action_source === 'requested' ||

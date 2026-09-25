@@ -690,4 +690,68 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('agent v2 (db)', () => {
       await unpinPolicy(prior);
     }
   });
+
+  test('insertRun retires a policy-parked row, and pulls a runnable row to the earlier start', async () => {
+    const prior = await pinPolicy();
+    try {
+      await setSetting('agent_autonomy', { level: 'off' });
+      // Autonomy-off parks the auto row — a staff request can't inherit
+      // a run that will never claim, so the parked row retires and the
+      // request mints a runnable unmarked owner.
+      const offLead = await mkLead('adopt-off');
+      const auto = await controlTx(sql, (tx) =>
+        insertRun(tx, { kind: 'triage', leadId: offLead, params: { auto: 'x' } }),
+      );
+      const staff = await controlTx(sql, (tx) =>
+        insertRun(tx, { kind: 'triage', leadId: offLead, params: { origin: 'staff' } }),
+      );
+      expect(staff).toBeTruthy();
+      expect(staff).not.toBe(auto);
+      const offRows = await sql<{ id: string; status: string }[]>`
+        select id, status from agent_runs where lead_id = ${offLead}
+      `;
+      expect(offRows.find((r) => r.id === auto)!.status).toBe('canceled');
+      expect(offRows.find((r) => r.id === staff!)!.status).toBe('queued');
+
+      // Same retire for a disabled playbook's queued row.
+      await setSetting('agent_playbooks', { discovery: { enabled: false } });
+      const disLead = await mkLead('adopt-disabled');
+      const disc = await controlTx(sql, (tx) =>
+        insertRun(tx, { kind: 'discovery', leadId: disLead }),
+      );
+      const staffDisc = await controlTx(sql, (tx) =>
+        insertRun(tx, { kind: 'triage', leadId: disLead, params: { origin: 'staff' } }),
+      );
+      expect(staffDisc).not.toBe(disc);
+      const disRows = await sql<{ id: string; status: string }[]>`
+        select id, status from agent_runs where lead_id = ${disLead}
+      `;
+      expect(disRows.find((r) => r.id === disc)!.status).toBe('canceled');
+      expect(disRows.find((r) => r.id === staffDisc!)!.status).toBe('queued');
+
+      // A runnable future-dated row keeps the mail — but an immediate
+      // caller pulls its run_at to the earlier start instead of waiting
+      // out the schedule (the parked intent survives, it just fires with
+      // the merged run).
+      const dateLead = await mkLead('adopt-date');
+      const later = new Date(Date.now() + 3_600_000);
+      const parked = await controlTx(sql, (tx) =>
+        insertRun(tx, { kind: 'triage', leadId: dateLead, runAt: later }),
+      );
+      const immediate = await controlTx(sql, (tx) =>
+        insertRun(tx, { kind: 'reply', leadId: dateLead }),
+      );
+      expect(immediate).toBe(parked);
+      const runAt = (
+        await sql<{ run_at: Date }[]>`select run_at from agent_runs where id = ${parked!}`
+      )[0]!.run_at;
+      expect(runAt.getTime()).toBeLessThanOrEqual(Date.now() + 5_000);
+      await sql`
+        update agent_runs set status = 'canceled'
+        where lead_id in (${offLead}, ${disLead}, ${dateLead})
+      `;
+    } finally {
+      await unpinPolicy(prior);
+    }
+  });
 });

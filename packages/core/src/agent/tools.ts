@@ -891,15 +891,35 @@ export async function executeTool(
           if (await outreachActive(leadId)) return null;
           if (!(await automationAllowedTx(tx, 'outreach')).ok) return null;
           const { insertRun } = await import('./runner.ts');
-          return insertRun(tx, {
-            kind: 'outreach',
-            leadId,
-            params: {
-              channel: 'whatsapp',
-              auto: 'discovery',
-              focus: `primeiro contato — lead descoberto (fitScore ${String(score)}). O dossiê de pesquisa está na timeline do lead.`,
-            },
-          });
+          const params = {
+            channel: 'whatsapp',
+            auto: 'discovery',
+            focus: `primeiro contato — lead descoberto (fitScore ${String(score)}). O dossiê de pesquisa está na timeline do lead.`,
+          };
+          const runId = await insertRun(tx, { kind: 'outreach', leadId, params });
+          if (!runId) return null;
+          // The intent rides the mailbox too: insertRun returns the lead's
+          // already-active NON-outreach row when one exists, and the item is
+          // what actually carries the first contact into it (created or
+          // delivered, same audit). One pending discovery event per lead is
+          // enough — repeated dedup-merges don't pile duplicates.
+          const pending = (
+            await tx<{ n: number }[]>`
+              select count(*)::int n from agent_inbox
+              where lead_id = ${leadId} and kind = 'event' and consumed_at is null
+                and payload->>'requestedKind' = 'outreach'
+                and payload->'params'->>'auto' = 'discovery'
+            `
+          )[0]!.n;
+          if (!pending) {
+            const { enqueueInboxTx } = await import('./inbox.ts');
+            await enqueueInboxTx(tx, leadId, 'event', {
+              text: 'lead descoberto — primeiro contato',
+              requestedKind: 'outreach',
+              params,
+            });
+          }
+          return runId;
         };
         const writeFindings = async (leadId: string, extra: Record<string, unknown> = {}) => {
           if (!findings) return;
