@@ -2383,9 +2383,13 @@ async function finishGate(att: Attempt): Promise<'end' | 'again'> {
   // draft that passed it can die to inbound retire before the commit.
   // When every action the slice minted was a message (no artifact-free
   // effect), their ids ride into finishRun's tx: under capfin the liveness
-  // read serializes with ingestInbound's reject, so a dead-at-commit run
-  // nudges here instead of closing 'done' on nothing approvable.
-  const actedIds = gated ? actedMessageIds(actedSlice) : null;
+  // read serializes with the reject writers (inbound retire, staff
+  // rejectMessage), so a dead-at-commit run nudges here instead of
+  // closing 'done' on nothing approvable. The check is independent of the
+  // nudge budget — a second rejection after the one-shot nudge still
+  // can't count as success.
+  const actedIds =
+    att.playbook.requiresAction || actionBar >= 0 ? actedMessageIds(actedSlice) : null;
   const liveMessageIds =
     actedIds && actedIds.onlyMessages && actedIds.ids.length ? actedIds.ids : undefined;
   const fin = await finishRun(sql, att.claim, {
@@ -2396,7 +2400,23 @@ async function finishGate(att: Attempt): Promise<'end' | 'again'> {
     costCents: Math.round((att.costUsd + att.monidBudget.spent) * 100),
     liveMessageIds,
   });
-  if (fin.deadAction) return actionNudge();
+  if (fin.deadAction) {
+    if (gated) return actionNudge();
+    // Nudge already spent and every artifact is dead — 'done' would claim
+    // a visible effect that never landed. 'failed' is honest: it releases
+    // the run's consumed mail back to pending for the orphan sweep and
+    // flags the miss for staff.
+    const dead = await finishRun(sql, att.claim, {
+      status: 'failed',
+      steps,
+      tokensIn: att.tokensIn,
+      tokensOut: att.tokensOut,
+      costCents: Math.round((att.costUsd + att.monidBudget.spent) * 100),
+      error: 'every produced message artifact was rejected before close',
+    });
+    if (!dead.matched) await persistAborted(att);
+    return 'end';
+  }
   if (fin.matched) {
     if (att.playbook.debrief) {
       // debrief → agent_memory_items: the doctrine that makes the next run

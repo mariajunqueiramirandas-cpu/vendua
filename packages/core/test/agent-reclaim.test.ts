@@ -1183,11 +1183,16 @@ dbDescribe('worker robustness (db)', () => {
     // output on every channel is blocked while the flag stands — even on the
     // channels whose threads were never individually paused ('manual' always
     // resolves, so the pause check is what blocks)
-    const draft = (await executeTool(mkCtx('ghost-unbound', null, leadId), 'd1', 'draft_message', {
-      leadId,
-      channel: 'manual',
-      body: 'não deve compor',
-    })) as { blocked?: boolean; reason?: string };
+    const draft = (await executeTool(
+      mkCtx(crypto.randomUUID(), null, leadId),
+      'd1',
+      'draft_message',
+      {
+        leadId,
+        channel: 'manual',
+        body: 'não deve compor',
+      },
+    )) as { blocked?: boolean; reason?: string };
     expect(draft.blocked).toBe(true);
     expect(draft.reason).toContain('paused');
   });
@@ -1214,11 +1219,16 @@ dbDescribe('worker robustness (db)', () => {
       select agent_paused_at from leads where id = ${leadId}
     `;
     expect(l!.agent_paused_at).toBeNull();
-    const draft = (await executeTool(mkCtx('ghost-bound', null, leadId), 'd1', 'draft_message', {
-      leadId,
-      channel: 'manual',
-      body: 'canal novo deve compor',
-    })) as { blocked?: boolean };
+    const draft = (await executeTool(
+      mkCtx(crypto.randomUUID(), null, leadId),
+      'd1',
+      'draft_message',
+      {
+        leadId,
+        channel: 'manual',
+        body: 'canal novo deve compor',
+      },
+    )) as { blocked?: boolean };
     expect(draft.blocked).toBeUndefined();
   });
 
@@ -1262,11 +1272,16 @@ dbDescribe('worker robustness (db)', () => {
       insert into lead_threads (lead_id, channel, agent_enabled)
       values (${leadId}, 'manual', false)
     `;
-    const out = (await executeTool(mkCtx('ghost-run', null, leadId), 'd1', 'draft_message', {
-      leadId,
-      channel: 'manual',
-      body: 'não deve compor',
-    })) as { blocked?: boolean; reason?: string };
+    const out = (await executeTool(
+      mkCtx(crypto.randomUUID(), null, leadId),
+      'd1',
+      'draft_message',
+      {
+        leadId,
+        channel: 'manual',
+        body: 'não deve compor',
+      },
+    )) as { blocked?: boolean; reason?: string };
     expect(out.blocked).toBe(true);
     expect(out.reason).toContain('paused');
     const msgs = await sql`select 1 from lead_messages m join lead_threads t on t.id = m.thread_id
@@ -1288,11 +1303,16 @@ dbDescribe('worker robustness (db)', () => {
     const fresh = await controlTx(sql, (tx) => ensureThread(tx, leadId, 'email'));
     expect(fresh.agent_enabled).toBe(true);
     // and the send-side check blocks before composing on that channel at all
-    const out = (await executeTool(mkCtx('ghost-hop', null, leadId), 'd1', 'draft_message', {
-      leadId,
-      channel: 'manual',
-      body: 'não deve compor',
-    })) as { blocked?: boolean; reason?: string };
+    const out = (await executeTool(
+      mkCtx(crypto.randomUUID(), null, leadId),
+      'd1',
+      'draft_message',
+      {
+        leadId,
+        channel: 'manual',
+        body: 'não deve compor',
+      },
+    )) as { blocked?: boolean; reason?: string };
     expect(out.blocked).toBe(true);
     expect(out.reason).toContain('paused');
     // a lead with zero threads is fresh — not paused
