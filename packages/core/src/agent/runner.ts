@@ -728,6 +728,11 @@ export async function contextFor(
     }
   }
   if (run.thread_id) {
+    // Messages whose inbox item is still inside its quiet period stay out
+    // of context too — drainInbox holds the item, but the model could
+    // otherwise read the same text straight off the thread and reply
+    // before notBefore. Once the deadline passes the item drains and the
+    // message shows normally.
     const rows = await controlTx(
       sql,
       (tx) => tx`
@@ -737,6 +742,11 @@ export async function contextFor(
             select coalesce(jsonb_agg(m order by m.created_at), '[]'::jsonb)
             from (select direction, body, status, author, created_at
                   from lead_messages where thread_id = ${run.thread_id}
+                    and id::text not in (
+                      select i.payload->>'messageId' from agent_inbox i
+                      where i.consumed_at is null and i.payload->>'messageId' is not null
+                        and (i.payload->>'notBefore')::timestamptz > now()
+                    )
                   order by created_at desc limit 12) m
           )
         ) as j
@@ -1571,6 +1581,9 @@ async function drainInbox(att: Attempt): Promise<number> {
     att.run.params?.channel === 'whatsapp' || att.run.params?.channel === 'email'
       ? att.run.params.channel
       : '';
+  // Mail still inside its quiet period (payload.notBefore, stamped at
+  // enqueue) doesn't drain mid-flight either — the inbound delay holds
+  // uniformly whether the item waits for this run or its own later one.
   // Read-only select — consumption is fenced inside persist, so a stale
   // worker picking items here only fails later at the fence, never
   // swallows the mail.
@@ -1581,6 +1594,7 @@ async function drainInbox(att: Attempt): Promise<number> {
       where lead_id = ${att.run.lead_id!} and consumed_at is null
         and (coalesce(payload->'params'->>'draftOnly', 'false') = 'true') = ${runDraftOnly}
         and coalesce(payload->'params'->>'channel', ${runChannel}) = ${runChannel}
+        and (payload->>'notBefore' is null or (payload->>'notBefore')::timestamptz <= now())
       order by created_at limit 10
     `,
   );

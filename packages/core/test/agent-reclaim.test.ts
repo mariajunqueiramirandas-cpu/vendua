@@ -3,13 +3,16 @@ import { join } from 'node:path';
 import postgres from 'postgres';
 import {
   claimRun,
+  contextFor,
   drain,
   enqueueRun,
   insertRun,
   replayJournal,
   runOnce,
+  type RunRow,
 } from '../src/agent/runner.ts';
 import { enqueueInboxTx } from '../src/agent/inbox.ts';
+import { cancelWakeup } from '../src/agent/wakeups.ts';
 import { executeTool, assertRunClaimTx, type ToolContext } from '../src/agent/tools.ts';
 import { mapPointerName, pageKey } from '../src/agent/channels/discovery.ts';
 import { dispatchMessage } from '../src/agent/send.ts';
@@ -2788,6 +2791,144 @@ dbDescribe('worker robustness (db)', () => {
     `;
     expect(run!.status).toBe('queued');
     expect(Math.abs(run!.run_at.getTime() - Date.parse(deadline))).toBeLessThan(2000);
+  });
+
+  test('not-yet-due mail waits out its quiet period — even inside an active run', async () => {
+    await migrate(sql, MIGRATIONS);
+    const lead = await controlTx(sql, (tx) =>
+      insertLeadTx(tx, { name: 'Quiet Mid-Run', whatsapp: '5511910000008' }),
+    );
+    const leadId = lead.body.lead.id;
+    const [thread] = await sql<{ id: string }[]>`
+      insert into lead_threads (lead_id, channel) values (${leadId}, 'whatsapp') returning id
+    `;
+    await sql`delete from agent_runs where status = 'queued'`;
+    const runId = (await enqueueRun(sql, {
+      kind: 'reply',
+      leadId,
+      threadId: thread!.id,
+      params: {
+        origin: 'inbound',
+        channel: 'whatsapp',
+        script: [{ text: 'a', delayMs: 1500 }, { text: 'b' }],
+      },
+    }))!;
+    // An item inside its quiet period must NOT drain into a mid-flight
+    // run — the inbound delay holds whether the mail waits for this run
+    // or its own later one.
+    const running = runOnce(sql);
+    await new Promise((r) => setTimeout(r, 150));
+    await sql`
+      insert into lead_messages (thread_id, direction, author, body, status)
+      values (${thread!.id}, 'in', 'lead', 'oi', 'received'),
+             (${thread!.id}, 'in', 'lead', 'sim, quero', 'received')
+    `;
+    const [deferredMsg] = await sql<{ id: string }[]>`
+      select id from lead_messages where thread_id = ${thread!.id} and body = 'sim, quero'
+    `;
+    await controlTx(sql, (tx) =>
+      enqueueInboxTx(tx, leadId, 'inbound', {
+        text: 'sim, quero',
+        threadId: thread!.id,
+        messageId: deferredMsg!.id,
+        requestedKind: 'reply',
+        params: { origin: 'inbound', channel: 'whatsapp' },
+        notBefore: new Date(Date.now() + 3600e3).toISOString(),
+      }),
+    );
+    await running;
+    expect(
+      (await sql`select 1 from agent_inbox where lead_id = ${leadId} and consumed_at is null`)
+        .length,
+    ).toBe(1);
+    // The deferred text stays out of thread context too — a model can't
+    // read the quiet-period mail straight off the thread.
+    const [runRow] = await sql<RunRow[]>`select * from agent_runs where id = ${runId}`;
+    const { text } = await contextFor(sql, runRow!);
+    expect(text).toContain('"body":"oi"');
+    expect(text).not.toContain('sim, quero');
+    // Past the deadline it drains normally — the sweep's spawned run takes it.
+    await sql`
+      update agent_inbox set payload = payload || ${sql.json({ notBefore: '2020-01-01T00:00:00Z' } as never)}
+      where lead_id = ${leadId}
+    `;
+    await drain(sql);
+    const [item] = await sql<{ consumed_by_run: string | null }[]>`
+      select consumed_by_run from agent_inbox where lead_id = ${leadId}
+    `;
+    expect(item!.consumed_by_run).not.toBeNull();
+  });
+
+  test('canceling a fired wakeup kills its undrained intent', async () => {
+    await migrate(sql, MIGRATIONS);
+    const lead = await controlTx(sql, (tx) =>
+      insertLeadTx(tx, { name: 'Cancel Fired', agent_mode: 'auto' }),
+    );
+    const leadId = lead.body.lead.id;
+    await sql`delete from agent_runs where status = 'queued'`;
+    await sql`update agent_inbox set consumed_at = now() where consumed_at is null`;
+    // A fired wakeup's materialized state: its own queued run + an
+    // undrained inbox item — the cancel must reach both or the follow-up
+    // the staff just canceled still lands.
+    const runId = (await enqueueRun(sql, {
+      kind: 'outreach',
+      leadId,
+      runAt: new Date(Date.now() + 3600e3),
+      params: { auto: 'wakeup', wakeupId: 'w1', focus: 'retorno marcado' },
+    }))!;
+    const [w] = await sql<{ id: string }[]>`
+      insert into agent_wakeups (lead_id, kind, at, focus, status, created_by, fired_run_id, fired_at)
+      values (${leadId}, 'outreach', now(), 'retorno marcado', 'fired', 'agent', ${runId}, now())
+      returning id
+    `;
+    await sql`update agent_runs set params = params || ${sql.json({ wakeupId: w!.id } as never)} where id = ${runId}`;
+    await controlTx(sql, (tx) =>
+      enqueueInboxTx(tx, leadId, 'wakeup', {
+        text: 'agendado por você: retorno marcado',
+        requestedKind: 'outreach',
+        params: { auto: 'wakeup', wakeupId: w!.id },
+      }),
+    );
+    // The requeued state: an earlier attempt of this run already consumed
+    // mail — this wakeup's tombstones, but other lead mail must release
+    // back to the sweep instead of stranding on a now-canceled row.
+    const [otherItem] = await sql<{ id: string }[]>`
+      insert into agent_inbox (lead_id, kind, payload, consumed_by_run, consumed_at)
+      values (${leadId}, 'inbound',
+        ${sql.json({ text: 'oi', requestedKind: 'reply', params: { origin: 'inbound', channel: 'whatsapp' } } as never)},
+        ${runId}, now())
+      returning id
+    `;
+    await sql`
+      insert into agent_inbox (lead_id, kind, payload, consumed_by_run, consumed_at)
+      values (${leadId}, 'wakeup',
+        ${sql.json({ text: 'retorno', requestedKind: 'outreach', params: { auto: 'wakeup', wakeupId: w!.id } } as never)},
+        ${runId}, now())
+    `;
+    const res = await cancelWakeup(sql, w!.id, `cancel-fired-${crypto.randomUUID()}`);
+    expect(res.status).toBe(200);
+    // The undrained mail drops like terminal suppression…
+    const items = await sql<
+      { id: string; consumed_at: Date | null; consumed_by_run: string | null }[]
+    >`
+      select id, consumed_at, consumed_by_run from agent_inbox where lead_id = ${leadId}
+    `;
+    for (const i of items) {
+      if (i.id === otherItem!.id) {
+        // released back to the sweep — pending again
+        expect(i.consumed_at).toBeNull();
+        expect(i.consumed_by_run).toBeNull();
+      } else {
+        // this wakeup's own mail — pending or previously consumed — drops
+        expect(i.consumed_at).not.toBeNull();
+        expect(i.consumed_by_run).toBeNull();
+      }
+    }
+    // …and the dedicated parked run dies with it.
+    const [run] = await sql<{ status: string }[]>`
+      select status from agent_runs where id = ${runId}
+    `;
+    expect(run!.status).toBe('canceled');
   });
 
   test('the orphan sweep window reaches younger leads past parked mail', async () => {
