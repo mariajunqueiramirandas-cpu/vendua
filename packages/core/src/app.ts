@@ -1783,7 +1783,9 @@ export function createApp({ sql, sessionSecret, controlSecret, autoDrain }: AppD
       // returns to pending — the orphan sweep respawns a run for it.
       // No-op for a queued run (it never drained); staff pause/unsubscribe
       // is the way to silence a lead, so a cancel never strands mail.
-      await releaseInboxTx(tx, id);
+      // event=true: cancel carries no failure signal — the deliveries
+      // bound is for poison mail, not for retired runs' outstanding work.
+      await releaseInboxTx(tx, id, true);
       transitioned = true;
       return { status: 200, body: { ok: true, status: 'canceled' } };
     });

@@ -140,14 +140,18 @@ export async function ingestInbound(
     `;
     canceledRunIds.push(...canceled.map((c) => c.id));
     // A canceled requeued run keeps mail consumed in its dead attempt —
-    // release it so the reply serves it, then tombstone the pending
-    // cadence events those runs minted: 'a cadência disparou' is obsolete
-    // the moment the lead writes (same disposable-auto predicate).
-    for (const rid of canceledRunIds) await releaseInboxTx(tx, rid);
+    // release it so the reply serves it (event retire: the deliveries
+    // bound is for failure paths), then tombstone the pending cadence
+    // events those runs minted: 'a cadência disparou' is obsolete the
+    // moment the lead writes. Scoped to requestedKind='outreach' — an
+    // auto discovery/strategist event owes the lead nothing and waits
+    // for its own run.
+    for (const rid of canceledRunIds) await releaseInboxTx(tx, rid, true);
     await tx`
       update agent_inbox
       set consumed_at = now(), consumed_by_run = null
       where lead_id = ${res.leadId} and kind = 'event' and consumed_at is null
+        and payload->>'requestedKind' = 'outreach'
         and payload->'params'->>'auto' is not null
         and payload->'params'->>'auto' not in ('regenerate', 'agent')
     `;

@@ -534,8 +534,12 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('whatsapp history + ignore list 
         ${sql.json({ text: 'a cadência disparou', requestedKind: 'outreach', params: { auto: 'cadence' } } as never)}),
              (${leadId}, 'event',
         ${sql.json({ text: 'nota da equipe', requestedKind: 'outreach', params: {} } as never)}),
+             (${leadId}, 'event',
+        ${sql.json({ text: 'retome a descoberta', requestedKind: 'discovery', params: { auto: 'discovery' } } as never)}),
              (${leadId}, 'staff',
-        ${sql.json({ text: 'prioridade', requestedKind: 'outreach', params: {} } as never)})
+        ${sql.json({ text: 'prioridade', requestedKind: 'outreach', params: {} } as never)}),
+             (${leadId}, 'staff',
+        ${sql.json({ text: 'insiste na proposta', requestedKind: 'outreach', params: {}, deliveries: 2 } as never)})
     `;
     await sql`
       update agent_inbox set consumed_by_run = ${autoRun}, consumed_at = now()
@@ -568,18 +572,24 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('whatsapp history + ignore list 
     >`
       select kind, consumed_at, payload from agent_inbox where lead_id = ${leadId}
     `;
-    expect(items).toHaveLength(4);
+    expect(items).toHaveLength(6);
     const pending = items.filter((i) => i.consumed_at === null);
-    expect(pending).toHaveLength(3);
-    // The disposable cadence event tombstoned with its run…
-    const tomb = items.find((i) => i.kind === 'event' && i.payload.params?.auto);
+    expect(pending).toHaveLength(5);
+    // The disposable cadence event tombstoned with its run — scoped to
+    // outreach intent, so the auto DISCOVERY event survives for its run…
+    const tomb = items.find(
+      (i) => i.kind === 'event' && i.payload.requestedKind === 'outreach' && i.payload.params?.auto,
+    );
     expect(tomb!.consumed_at).not.toBeNull();
+    const discovery = items.find((i) => i.payload.requestedKind === 'discovery');
+    expect(discovery!.consumed_at).toBeNull();
     // …the pending 'inbound' carries the message…
     const inbound = pending.find((i) => i.kind === 'inbound');
     expect(inbound!.payload.requestedKind).toBe('reply');
-    // …and the staff note + the released staff mail wait for the reply
-    // run's quiet period alongside it.
-    expect(pending.filter((i) => i.kind !== 'inbound')).toHaveLength(2);
+    // …the staff note waits, and BOTH consumed staff mails released back
+    // — event retire lifts the deliveries bound, so deliveries:2 returns
+    // to pending instead of stranding on the canceled run.
+    expect(pending.filter((i) => i.kind === 'staff')).toHaveLength(2);
     // The reply run exists to serve it, parked at the quiet period.
     const reply = await sql<{ kind: string; status: string }[]>`
       select kind, status from agent_runs where lead_id = ${leadId} and kind = 'reply'
@@ -978,11 +988,24 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('whatsapp history + ignore list 
         params: { auto: 'first-contact' },
         runAt: new Date(Date.now() + 3_600_000),
       }))!;
+      // Mail the parked run already consumed — even at the deliveries
+      // bound — releases with it: a retire carries no failure signal.
+      await sql`
+        insert into agent_inbox (lead_id, kind, payload, consumed_by_run, consumed_at)
+        values (${promisedId}, 'staff',
+          ${sql.json({ text: 'liga amanhã', requestedKind: 'outreach', params: {}, deliveries: 2 } as never)},
+          ${parked}, now())
+      `;
       expect(await sweepOutreach(sql)).toBeGreaterThanOrEqual(1);
       const [pr] = await sql<{ status: string }[]>`
         select status from agent_runs where id = ${parked}
       `;
       expect(pr!.status).toBe('canceled');
+      const [released] = await sql<{ consumed_at: Date | null }[]>`
+        select consumed_at from agent_inbox
+        where lead_id = ${promisedId} and kind = 'staff'
+      `;
+      expect(released!.consumed_at).toBeNull();
       // The lead-asked callback fires unmarked — a promise outranks the
       // workspace switch the same way a staff decision does.
       const swept = await sql<{ id: string; params: Record<string, unknown> }[]>`

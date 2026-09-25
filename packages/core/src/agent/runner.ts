@@ -538,8 +538,15 @@ export async function claimRun(sql: Sql): Promise<RunRow | null> {
  *  terminal-reclaim commit, and the staff-cancel endpoint. Delivery is
  *  at-least-once — the first re-serve stamps a `resumed` marker and a
  *  note in the rendered text so the serving run checks the thread
- *  history for what the dead run already did (it may have sent). */
-export async function releaseInboxTx(tx: Sql, runId: string): Promise<void> {
+ *  history for what the dead run already did (it may have sent).
+ *
+ *  `event` retirements (staff cancel, wakeup cancel, inbound cancel,
+ *  promised-work takeover) carry no failure signal — the run didn't die
+ *  serving the mail, an event retired it — so the bound lifts: every
+ *  outstanding request returns for another serve rather than stranding
+ *  consumed by a canceled run. Failure retirements keep the bound —
+ *  that's where poison mail lives. */
+export async function releaseInboxTx(tx: Sql, runId: string, event?: boolean): Promise<void> {
   await tx`
     update agent_inbox
     set consumed_at = null, consumed_by_run = null,
@@ -552,7 +559,7 @@ export async function releaseInboxTx(tx: Sql, runId: string): Promise<void> {
               'resumed', true)
             end
     where consumed_by_run = ${runId}
-      and coalesce((payload->>'deliveries')::int, 0) < 2
+      and (${event === true} or coalesce((payload->>'deliveries')::int, 0) < 2)
   `;
 }
 
@@ -2929,7 +2936,7 @@ export async function sweepOutreach(sql: Sql): Promise<number> {
             and params->>'auto' not in ('regenerate', 'agent')
           returning id
         `;
-        for (const r of retired) await releaseInboxTx(tx, r.id);
+        for (const r of retired) await releaseInboxTx(tx, r.id, true);
         queuedIds.push(...retired.map((r) => r.id));
       }
       const params: Record<string, unknown> = {
