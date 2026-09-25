@@ -13,6 +13,7 @@ import {
 } from '../src/agent/runner.ts';
 import { mockProvider, setTestProvider } from '../src/agent/llm.ts';
 import { enqueueInboxTx, sweepOrphanInbox } from '../src/agent/inbox.ts';
+import { ingestInbound } from '../src/agent/inbound.ts';
 import { cancelWakeup } from '../src/agent/wakeups.ts';
 import { executeTool, assertRunClaimTx, type ToolContext } from '../src/agent/tools.ts';
 import { mapPointerName, pageKey } from '../src/agent/channels/discovery.ts';
@@ -3390,10 +3391,10 @@ dbDescribe('worker robustness (db)', () => {
     );
     const leadId = lead.body.lead.id;
     await sql`delete from agent_runs where status = 'queued'`;
-    // Auto outreach mid-flight with a composed draft. The inbound retire
-    // (applied directly below — same predicate ingestInbound runs) rejects
-    // it while the run still stands: the finish gate must not count the
-    // dead artifact, or the run closes leaving staff nothing to approve.
+    // Auto outreach mid-flight with a composed draft. A real inbound from
+    // the lead retires it while the run still stands: the finish gate must
+    // not count the dead artifact, or the run closes leaving staff nothing
+    // to approve.
     const runId = (await enqueueRun(sql, {
       kind: 'outreach',
       leadId,
@@ -3421,18 +3422,15 @@ dbDescribe('worker robustness (db)', () => {
       if (d.length) break;
       await new Promise((r) => setTimeout(r, 100));
     }
-    // ingestInbound's retire predicate verbatim — the draft is findable
-    // BECAUSE it carries the run's stamp.
-    await sql`
-      update lead_messages m set status = 'rejected', error = 'lead respondeu', updated_at = now()
-      where m.status = 'draft'
-        and m.agent_run_id in (
-          select r.id from agent_runs r
-          where r.lead_id = ${leadId} and r.kind = 'outreach'
-            and r.params->>'auto' is not null
-            and r.params->>'auto' not in ('regenerate', 'agent')
-        )
-    `;
+    // The real inbound path: the lead's own reply lands mid-run, and
+    // ingestInbound retires the running outreach's draft under capfin —
+    // the same serialization the finish gate's liveness read relies on.
+    // The draft is findable BECAUSE it carries the run's stamp.
+    await ingestInbound(sql, {
+      channel: 'whatsapp',
+      from: '5511910000094',
+      body: 'opa, tenho interesse sim',
+    });
     await running;
     const r = await getRun(runId);
     expect(r.status).toBe('done');
@@ -3443,6 +3441,7 @@ dbDescribe('worker robustness (db)', () => {
       join lead_threads t on t.id = m.thread_id
       where t.lead_id = ${leadId} and m.direction = 'out'
     `;
+    expect(drafts.find((d) => d.body === 'oi, primeira')?.status).toBe('rejected');
     expect(drafts.filter((d) => d.status === 'draft').map((d) => d.body)).toEqual(['oi, segunda']);
     expect(
       (r.steps as { type?: string }[]).filter((s) => s.type === 'nudge').length,
