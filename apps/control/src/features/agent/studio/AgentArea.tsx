@@ -6,7 +6,7 @@ import { qk } from '@/lib/query.ts';
 import { Badge } from '@/components/ui/badge.tsx';
 import { Panel } from '@/components/ui/card.tsx';
 import { Switch } from '@/components/ui/controls.tsx';
-import { Field, Input, Textarea } from '@/components/ui/input.tsx';
+import { Field, Input, Select, Textarea } from '@/components/ui/input.tsx';
 import { AreaIntro, EndpointState, FieldError, SaveBar, useDraft } from './bits.tsx';
 import { obj, str, type SettingsMap, type SettingWrite } from './settings.ts';
 
@@ -72,6 +72,36 @@ const PRESET_JOBS: Record<Exclude<AutonomyLevel, 'off'>, Record<AgentJob, boolea
 
 const sameJobs = (a: Record<AgentJob, boolean>, b: Record<AgentJob, boolean>) =>
   AGENT_JOBS.every((k) => a[k] === b[k]);
+
+const WEEKDAYS = ['domingo', 'segunda', 'terça', 'quarta', 'quinta', 'sexta', 'sábado'];
+
+function HourSelect({
+  value,
+  onChange,
+  id,
+  'aria-label': ariaLabel,
+}: {
+  value: number;
+  onChange: (h: number) => void;
+  id?: string;
+  'aria-label'?: string;
+}) {
+  return (
+    <Select
+      id={id}
+      aria-label={ariaLabel}
+      className="w-auto tnum"
+      value={value}
+      onChange={(e) => onChange(Number(e.target.value))}
+    >
+      {Array.from({ length: 24 }, (_, h) => (
+        <option key={h} value={h}>
+          {String(h).padStart(2, '0')}:00
+        </option>
+      ))}
+    </Select>
+  );
+}
 
 export const useAgentConfig = () =>
   useQuery({ queryKey: qk.agentConfig(), queryFn: api.agentConfig });
@@ -207,26 +237,77 @@ function AgentForm({
               </label>
             ))}
           </fieldset>
-          {a.jobs.strategist && !off && (
-            <Field
-              className="mt-3"
-              label="auto-aprovação dos briefs do estrategista (US$/semana)"
-              htmlFor="agent-weekly-usd"
-              hint="o brief proposto já nasce ligado enquanto o gasto de descoberta dos últimos 7 dias ficar abaixo disso — 0 = toda proposta espera você"
-            >
-              <Input
-                id="agent-weekly-usd"
-                type="number"
-                inputMode="decimal"
-                min={0}
-                max={50}
-                step={0.5}
-                className="md:max-w-40"
-                value={a.weeklyDiscoveryUsd}
-                onChange={(e) => setA({ weeklyDiscoveryUsd: Number(e.target.value) })}
-              />
-              {usdBad && <FieldError>número entre 0 e 50</FieldError>}
-            </Field>
+          {!off && (a.jobs.discovery || a.jobs.strategist) && (
+            <div className="mt-3 grid gap-3 border-t pt-3 md:grid-cols-2">
+              {a.jobs.discovery && (
+                <Field
+                  label="briefs de descoberta rodam"
+                  htmlFor="agent-discovery-hour"
+                  hint="uma vez por dia, no fuso da aba limites — brief novo roda na hora"
+                >
+                  <div className="flex items-center gap-2 text-sm">
+                    todo dia às
+                    <HourSelect
+                      id="agent-discovery-hour"
+                      value={a.schedule.discoveryHour}
+                      onChange={(h) => setA({ schedule: { ...a.schedule, discoveryHour: h } })}
+                    />
+                  </div>
+                </Field>
+              )}
+              {a.jobs.strategist && (
+                <Field
+                  label="revisão semanal roda"
+                  htmlFor="agent-weekly-day"
+                  hint="o estrategista lê o funil e propõe briefs novos"
+                >
+                  <div className="flex flex-wrap items-center gap-2 text-sm">
+                    toda
+                    <Select
+                      id="agent-weekly-day"
+                      className="w-auto"
+                      value={a.schedule.weeklyDay}
+                      onChange={(e) =>
+                        setA({ schedule: { ...a.schedule, weeklyDay: Number(e.target.value) } })
+                      }
+                    >
+                      {WEEKDAYS.map((d, i) => (
+                        <option key={d} value={i}>
+                          {d}
+                        </option>
+                      ))}
+                    </Select>
+                    às
+                    <HourSelect
+                      aria-label="hora da revisão semanal"
+                      value={a.schedule.weeklyHour}
+                      onChange={(h) => setA({ schedule: { ...a.schedule, weeklyHour: h } })}
+                    />
+                  </div>
+                </Field>
+              )}
+              {a.jobs.strategist && (
+                <Field
+                  label="auto-aprovação dos briefs do estrategista (US$/semana)"
+                  htmlFor="agent-weekly-usd"
+                  hint="o brief proposto já nasce ligado enquanto o gasto de descoberta dos últimos 7 dias ficar abaixo disso — 0 = toda proposta espera você"
+                  className="md:col-span-2"
+                >
+                  <Input
+                    id="agent-weekly-usd"
+                    type="number"
+                    inputMode="decimal"
+                    min={0}
+                    max={50}
+                    step={0.5}
+                    className="md:max-w-40"
+                    value={a.weeklyDiscoveryUsd}
+                    onChange={(e) => setA({ weeklyDiscoveryUsd: Number(e.target.value) })}
+                  />
+                  {usdBad && <FieldError>número entre 0 e 50</FieldError>}
+                </Field>
+              )}
+            </div>
           )}
         </Panel>
 

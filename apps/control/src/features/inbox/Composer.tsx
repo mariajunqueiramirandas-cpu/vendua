@@ -152,7 +152,12 @@ function useSuggest(view: ThreadView) {
   const m = useMutation({
     mutationFn: () => {
       const kind = view.messages.some((x) => x.direction === 'in') ? 'reply' : 'outreach';
-      return api.runOnLead(view.lead.id, kind, { draftOnly: true }, view.thread.id);
+      return api.requestAgent({
+        kind,
+        leadIds: [view.lead.id],
+        threadId: view.thread.id,
+        draftOnly: true,
+      });
     },
     onError: (e) => {
       setWait(null);

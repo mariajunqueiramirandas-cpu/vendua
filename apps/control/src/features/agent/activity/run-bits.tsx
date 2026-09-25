@@ -1,7 +1,7 @@
 import { PauseCircle } from 'lucide-react';
 import type { AgentRun } from '@/lib/api.ts';
 import { cn } from '@/lib/cn.ts';
-import { RUN_KIND_LABEL } from '@/lib/labels.ts';
+import { RUN_KIND_LABEL, TRIGGER_LABEL } from '@/lib/labels.ts';
 import { Badge } from '@/components/ui/badge.tsx';
 import { Tooltip } from '@/components/ui/controls.tsx';
 import { isActive } from './queries.ts';
@@ -34,10 +34,25 @@ export function RunStatus({ status, className }: { status: string; className?: s
   );
 }
 
-export function RunKind({ kind, className }: { kind: string; className?: string }) {
+/** The run's kind, and — when known — why it exists ("resposta · o lead escreveu"). */
+export function RunKind({
+  kind,
+  source,
+  className,
+}: {
+  kind: string;
+  source?: string | null | undefined;
+  className?: string;
+}) {
   return (
     <span className={cn('text-xs whitespace-nowrap text-muted-foreground', className)}>
       {RUN_KIND_LABEL[kind] ?? kind}
+      {source && (
+        <span className="font-normal text-muted-foreground">
+          {' '}
+          · {TRIGGER_LABEL[source] ?? source}
+        </span>
+      )}
     </span>
   );
 }

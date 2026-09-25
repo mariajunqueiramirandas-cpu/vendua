@@ -733,17 +733,16 @@ export async function updateLead(
       };
       delete set.next_action_at;
       delete set.next_action_source;
+      // agenda first: every agenda writer locks wakeup:advisory → wakeup rows → the lead row
+      // (scheduleWakeupTx, the wakeup sweep) — updating the lead first would invert that
+      const { setNextActionTx } = await import('../agent/wakeups.ts');
+      await setNextActionTx(tx, id, nextAction.at, nextAction.who);
     }
-    let rows = Object.keys(set).length
+    const rows = Object.keys(set).length
       ? await tx<LeadRow[]>`
           update leads set ${tx(set)}, updated_at = now() where id = ${id} returning *
         `
       : await tx<LeadRow[]>`update leads set updated_at = now() where id = ${id} returning *`;
-    if (nextAction) {
-      const { setNextActionTx } = await import('../agent/wakeups.ts');
-      await setNextActionTx(tx, id, nextAction.at, nextAction.who);
-      rows = await tx<LeadRow[]>`select * from leads where id = ${id}`;
-    }
     if (typeof set.state === 'string' && set.state !== cur.state) {
       // value_cents stamps the post-update deal value at the transition
       await tx`

@@ -200,6 +200,10 @@ export interface AgentRun {
   finished_at: string | null;
   /** queued rows only — the earliest-start the run is waiting on */
   run_at?: string | null;
+  /** why the run exists (ADR 0016) */
+  source?: TriggerSource;
+  /** a promise to the lead or staff — the preset never parks it */
+  promised?: boolean;
   lead_name?: string | null;
   /** thread-bound runs only — staff pause holds the run queued */
   thread_agent_enabled?: boolean | null;
@@ -392,14 +396,11 @@ const apiBase = {
     req<{ lead: Lead }>(`/leads/${id}`, { method: 'PATCH', body: JSON.stringify(patch) }),
   deleteLead: (id: string) => req<{ ok: true }>(`/leads/${id}`, { method: 'DELETE' }),
   unsubscribe: (id: string) => req<{ ok: true }>(`/leads/${id}/unsubscribe`, { method: 'POST' }),
-  runOnLead: (id: string, kind: string, params?: Record<string, unknown>, threadId?: string) =>
-    req<{ runId: string }>(`/leads/${id}/run`, {
+  /** The one way to ask the agent for work (ADR 0016): the board (no leads), one lead, or many. */
+  requestAgent: (r: AgentRequest) =>
+    req<AgentRequestResult>('/agent/requests', {
       method: 'POST',
-      body: JSON.stringify({
-        kind,
-        ...(threadId ? { threadId } : {}),
-        ...(params ? { params } : {}),
-      }),
+      body: JSON.stringify(r),
     }),
   stats: () => req<Stats>('/stats'),
   snapshotNow: () => req<{ snapshot: Snapshot }>('/stats/snapshot', { method: 'POST' }),
@@ -509,25 +510,11 @@ const apiBase = {
     );
   },
   run: (id: string) => req<{ run: AgentRun }>(`/agent/runs/${id}`),
-  startRun: (kind: string, params: Record<string, unknown> = {}) =>
-    req<{ runId: string }>('/agent/runs', {
-      method: 'POST',
-      body: JSON.stringify({ kind, params }),
-    }),
   cancelRun: (id: string) =>
     req<{ ok: true; status?: string }>(`/agent/runs/${id}/cancel`, { method: 'POST' }),
 
   agentMetrics: (days: 7 | 30 = 7) => req<AgentMetrics>(`/agent/metrics?days=${days}`),
 
-  dispatch: (
-    leadIds: string[],
-    goal: 'negotiation' | 'meeting',
-    channel?: 'auto' | 'whatsapp' | 'email',
-  ) =>
-    req<{ enqueued: number; skipped: { id: string; reason: string }[] }>('/agent/dispatch', {
-      method: 'POST',
-      body: JSON.stringify({ leadIds, goal, ...(channel ? { channel } : {}) }),
-    }),
   briefs: () => req<{ briefs: Brief[] }>('/agent/briefs'),
   createBrief: (b: {
     name: string;
@@ -581,6 +568,60 @@ export const AUTONOMY_LEVELS = ['off', 'copilot', 'supervised', 'autopilot'] as 
 export const AGENT_JOBS = ['reply', 'outreach', 'discovery', 'strategist'] as const;
 export type AgentJob = (typeof AGENT_JOBS)[number];
 
+/** Why a run exists (ADR 0016). */
+export type TriggerSource =
+  | 'inbound'
+  | 'callback'
+  | 'staff'
+  | 'regenerate'
+  | 'first_contact'
+  | 'followup'
+  | 'brief'
+  | 'weekly';
+
+export interface AgentRequest {
+  kind: RunKind;
+  /** none = a board-level run (discovery hunt, weekly review) */
+  leadIds?: string[];
+  threadId?: string;
+  focus?: string;
+  channel?: 'auto' | 'whatsapp' | 'email';
+  draftOnly?: boolean;
+  goal?: 'negotiation' | 'meeting';
+  params?: Record<string, unknown>;
+}
+export interface AgentRequestResult {
+  runId?: string;
+  runs: { leadId: string | null; runId: string; startAt: string | null }[];
+  skipped: { leadId: string; code: string; reason: string }[];
+}
+
+/** One scheduler routine — GET /agent/routines. */
+export interface Routine {
+  name: string;
+  label: string;
+  cadence: string;
+  enabled: boolean;
+  nextAt: string | null;
+  lastStartedAt: string | null;
+  lastFinishedAt: string | null;
+  lastOk: boolean | null;
+  lastError: string | null;
+  lastResult: number | null;
+  lastWorkAt: string | null;
+  failingSince: string | null;
+  runs: number;
+  failures: number;
+}
+
+/** when the recurring jobs run, in the workspace timezone */
+export interface AgentSchedule {
+  discoveryHour: number;
+  /** 0 = Sunday … 6 = Saturday */
+  weeklyDay: number;
+  weeklyHour: number;
+}
+
 /** The `agent` setting — the one agent config policy.ts reads (ADR 0015). */
 export interface AgentConfig {
   level: AutonomyLevel;
@@ -590,6 +631,7 @@ export interface AgentConfig {
   instructions: string;
   /** strategist self-approves proposed briefs while trailing-7d discovery spend stays under this. 0 = never. */
   weeklyDiscoveryUsd: number;
+  schedule: AgentSchedule;
 }
 
 export type MemoryScope = 'workspace' | 'segment' | 'debrief';
@@ -610,6 +652,7 @@ export interface MemoryItem {
 const agentV2 = {
   /** the `agent` setting with defaults applied; the Studio writes via putSetting. */
   agentConfig: () => req<AgentConfig>('/agent/config'),
+  routines: () => req<{ routines: Routine[] }>('/agent/routines'),
 
   memory: (q: { scope?: MemoryScope; segment?: string } = {}) => {
     const params = new URLSearchParams(

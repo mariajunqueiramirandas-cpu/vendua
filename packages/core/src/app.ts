@@ -1495,6 +1495,7 @@ export function createApp({ sql, sessionSecret, controlSecret, autoDrain }: AppD
       tx.unsafe(
         `select r.id, r.kind, r.status, r.lead_id, r.thread_id, r.tokens_in, r.tokens_out,
                 r.cost_cents, r.error, r.created_at, r.started_at, r.finished_at, r.run_at,
+                r.source, r.promised,
                 r.created_at::text as created_at_ts, r.run_at::text as run_at_ts,
                 l.name as lead_name, t.agent_enabled as thread_agent_enabled
          from agent_runs r

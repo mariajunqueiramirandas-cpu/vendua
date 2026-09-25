@@ -62,7 +62,7 @@ export function RunDetail({
     <div className="flex flex-col gap-3">
       <div className="flex flex-wrap items-center gap-2">
         <h2 className="text-sm font-semibold">
-          <RunKind kind={run.kind} className="text-sm text-foreground" />
+          <RunKind kind={run.kind} source={run.source} className="text-sm text-foreground" />
         </h2>
         <span className="font-mono text-xs text-muted-foreground">run {shortId(run.id)}</span>
         <RunStatus status={run.status} />

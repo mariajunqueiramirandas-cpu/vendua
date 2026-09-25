@@ -139,7 +139,7 @@ export function AgentControl({
   const [channel, setChannel] = useState<ActChannel>('auto');
   const [actErr, setActErr] = useState('');
   const run = useMutation({
-    mutationFn: () => api.runOnLead(lead.id, 'outreach', channel === 'auto' ? {} : { channel }),
+    mutationFn: () => api.requestAgent({ kind: 'outreach', leadIds: [lead.id], channel }),
     onSuccess: () => {
       setActErr('');
       toast.success('agente disparado');

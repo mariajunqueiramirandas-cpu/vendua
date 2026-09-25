@@ -31,6 +31,18 @@ export const RUN_KIND_LABEL: Record<string, string> = {
   strategist: 'estrategista',
 };
 
+/** why a run exists (ADR 0016) — shown next to its kind */
+export const TRIGGER_LABEL: Record<string, string> = {
+  inbound: 'o lead escreveu',
+  callback: 'retorno prometido',
+  staff: 'pedido da equipe',
+  regenerate: 'rascunho expirado',
+  first_contact: 'lead novo',
+  followup: 'follow-up do agente',
+  brief: 'brief',
+  weekly: 'revisão semanal',
+};
+
 export const MEETING_STATUS_LABEL: Record<Meeting['status'], string> = {
   scheduled: 'marcada',
   done: 'feita',
