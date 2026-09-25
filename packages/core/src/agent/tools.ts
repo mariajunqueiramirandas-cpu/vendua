@@ -1453,15 +1453,23 @@ export async function executeTool(
           // Scope: every still-unanswered inbound the run holds — the model
           // saw them all when composing; a fallback or deliberate
           // cross-channel reply answers mail received on another thread,
-          // so thread scoping would re-serve exactly those sends. `not
-          // answeredBy` keeps the FIRST answer: a later send claims only
-          // what no send answered yet — a failed second send can't erase
-          // the record of a landed one.
+          // so thread scoping would re-serve exactly those sends. An
+          // existing marker wins while its answer is live or on the wire
+          // (the same predicate releaseInboxTx uses) — but a marker onto a
+          // provably-dead send (failed before the provider call) re-points
+          // here, so a retry's landed send can't strand answered mail.
           await tx`
             update agent_inbox
             set payload = payload || jsonb_build_object('answeredBy', ${composed.body.message.id}::text)
             where consumed_by_run = ${ctx.runId} and kind = 'inbound'
-              and not (payload ? 'answeredBy')
+              and not exists (
+                select 1 from lead_messages m
+                where m.id::text = payload->>'answeredBy'
+                  and (
+                    m.status in ('queued', 'sending', 'sent', 'delivered')
+                    or m.dispatch_attempted_at is not null
+                  )
+              )
           `;
         }
         return {
