@@ -531,13 +531,19 @@ export async function approveMessage(
   approvedBy: string,
   idemKey: string,
 ): Promise<
-  ClaimResult<{ message: ReturnType<typeof messageJson>; stale?: boolean; runId?: string }>
+  ClaimResult<{
+    message: ReturnType<typeof messageJson>;
+    stale?: boolean;
+    runId?: string;
+    retired?: string[];
+  }>
 > {
   let capFlagged = false;
   const res = await claimControl<{
     message: ReturnType<typeof messageJson>;
     stale?: boolean;
     runId?: string;
+    retired?: string[];
   }>(sql, idemKey, async (tx) => {
     const g = await getSettingTx<Partial<Guardrails>>(tx, 'guardrails', {});
     const staleDays = g.staleDraftDays ?? DEFAULT_GUARDRAILS.staleDraftDays;
@@ -591,21 +597,31 @@ export async function approveMessage(
             select lead_id from lead_threads where id = ${stale[0].thread_id}
           `
         )[0]!;
-        // Dedupe on the SAME intent only: an already-queued regen covers this
-        // one. A generic outreach run (first-contact/cadence sweep) does NOT —
-        // it lacks draftOnly + the expired-copy focus and may send or produce
-        // nothing reviewable, so the regen inserts beside it (runs serialize
-        // through claimRun; the regen only ever composes a draft).
-        const active = await tx<{ id: string }[]>`
-          select id from agent_runs
+        // Dedupe on the SAME intent only: an already-queued regen (or its
+        // undrained inbox item) covers this one. A generic outreach run
+        // (first-contact/cadence sweep) does NOT — it lacks draftOnly + the
+        // expired-copy focus, so the regen mails as an 'event' item into it
+        // instead: the item carries the recompose intent and the active run
+        // handles it in-context.
+        const active = await tx<{ id: string; src: 'run' | 'mail' }[]>`
+          select 'run' as src, id::text as id, created_at from agent_runs
           where lead_id = ${thread.lead_id} and kind = 'outreach'
             and status in ('queued', 'running')
             and params->>'auto' = 'regenerate'
             and params->>'src' = ${messageId}
+          union all
+          select 'mail' as src, id::text, created_at from agent_inbox
+          where lead_id = ${thread.lead_id} and consumed_at is null
+            and payload->>'auto' = 'regenerate'
+            and payload->>'src' = ${messageId}
           order by created_at limit 1
         `;
-        let runId: string | null;
-        const cap: { flagged?: boolean } = {};
+        // `queued` tracks whether the regen intent is covered; `runId` is
+        // only ever an agent_runs id — an undrained inbox item queues the
+        // intent but has no run to point the UI at.
+        let queued = false;
+        let runId: string | null = null;
+        const cap: { flagged?: boolean; retired?: string[] } = {};
         if (active[0]) {
           // A queued regen is reusable only while it can still claim: if the
           // lead crossed the cap AFTER queueing, claimRun parks it forever
@@ -613,26 +629,53 @@ export async function approveMessage(
           const { leadUnderCostCapTx } = await import('../agent/runner.ts');
           const verdict = await leadUnderCostCapTx(tx, thread.lead_id);
           cap.flagged = verdict === 'flagged';
-          runId = verdict === 'under' ? active[0].id : null;
+          queued = verdict === 'under';
+          runId = queued && active[0].src === 'run' ? active[0].id : null;
         } else {
           const { insertRun } = await import('../agent/runner.ts');
+          const { enqueueInboxTx } = await import('../agent/inbox.ts');
+          const focus = `o rascunho anterior expirou (${staleDays}d sem envio) — reescreva a mesma intenção com o estado atual do lead. Texto anterior: ${stale[0].body.slice(0, 500)}`;
+          const params = {
+            draftOnly: true,
+            auto: 'regenerate',
+            src: messageId,
+            focus,
+          };
           runId = await insertRun(
             tx,
             {
               kind: 'outreach',
               leadId: thread.lead_id,
               threadId: stale[0].thread_id,
-              params: {
-                draftOnly: true,
-                auto: 'regenerate',
-                src: messageId,
-                focus: `o rascunho anterior expirou (${staleDays}d sem envio) — reescreva a mesma intenção com o estado atual do lead. Texto anterior: ${stale[0].body.slice(0, 500)}`,
-              },
+              params,
             },
             cap,
           );
+          if (runId) {
+            await enqueueInboxTx(tx, thread.lead_id, 'event', {
+              text: focus,
+              requestedKind: 'outreach',
+              threadId: stale[0].thread_id,
+              auto: 'regenerate',
+              src: messageId,
+              params,
+            });
+            queued = true;
+            // insertRun also returns the already-active run's id on the
+            // one-run-per-lead conflict — report it only when that run can
+            // actually drain this item. drainInbox defers draftOnly mail
+            // for a send-capable run, so a generic active run would finish
+            // without ever recomposing the draft; in that case the item
+            // waits pending for the orphan sweep's own draftOnly run.
+            const drains = await tx<{ id: string }[]>`
+              select id from agent_runs
+              where id = ${runId}
+                and coalesce(params->>'draftOnly', 'false') = 'true'
+            `;
+            if (!drains.length) runId = null;
+          }
         }
-        if (!runId) {
+        if (!queued) {
           // The lifetime cost cap refused the regen — the draft can never
           // be recomposed by the agent, but the expired text must NOT go
           // out either. Keep it a draft (its own 'expired' error says why)
@@ -666,7 +709,12 @@ export async function approveMessage(
           `;
           return {
             status: 200,
-            body: { message: messageJson(stale[0]), stale: true, runId },
+            body: {
+              message: messageJson(stale[0]),
+              stale: true,
+              ...(runId ? { runId } : {}),
+              ...(cap.retired?.length ? { retired: cap.retired } : {}),
+            },
           };
         }
       }
@@ -684,6 +732,7 @@ export async function approveMessage(
     emitControlEvent('draft.change', res.body.message.threadId);
     emitControlEvent('thread.message', res.body.message.threadId);
     if (res.body.runId) emitControlEvent('run.update', res.body.runId);
+    for (const r of res.body.retired ?? []) emitControlEvent('run.update', r);
     if (res.body.stale || capFlagged) emitControlEvent('lead.change');
   }
   return res;
@@ -695,8 +744,22 @@ export async function rejectMessage(
   idemKey: string,
 ): Promise<ClaimResult<{ message: ReturnType<typeof messageJson> }>> {
   const res = await claimControl(sql, idemKey, async (tx) => {
+    // capfin before the reject, same ordering approveMessage keeps: the
+    // finish gate's artifact check serializes on it — a staff reject
+    // committing between the gate's liveness read and its 'done' flip
+    // would strand a finished run with nothing approvable. The lead read
+    // is lock-free; the advisory hold lands before the row update.
+    const leadRow = await tx<{ lead_id: string }[]>`
+      select t.lead_id from lead_messages m
+      join lead_threads t on t.id = m.thread_id
+      where m.id = ${messageId}
+    `;
+    if (leadRow[0]) {
+      const { capLockTx } = await import('../agent/runner.ts');
+      await capLockTx(tx, leadRow[0].lead_id);
+    }
     const rows = await tx<MessageRow[]>`
-      update lead_messages set status = 'rejected'
+      update lead_messages set status = 'rejected', updated_at = now()
       where id = ${messageId} and status = 'draft'
       returning *
     `;

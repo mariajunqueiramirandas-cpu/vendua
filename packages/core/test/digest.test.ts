@@ -57,7 +57,8 @@ describe('digestText', () => {
     expect(body).toContain('leads novos: 4');
     expect(body).toContain('respostas recebidas: 2');
     expect(body).toContain('calls marcadas: 1');
-    expect(body).toContain('custo R$ 123,45');
+    // agent spend is USD cents — the digest prints US$, not R$
+    expect(body).toContain('custo US$ 123.45');
     expect(body).toContain('rascunhos aguardando aprovação: 3');
   });
 });

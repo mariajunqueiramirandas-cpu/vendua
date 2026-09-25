@@ -4,6 +4,7 @@ import postgres from 'postgres';
 import { createApp } from '../src/app.ts';
 import { dispatchMessage } from '../src/agent/send.ts';
 import { claimRun, drain, flagCappedLeads, insertRun, runOnce } from '../src/agent/runner.ts';
+import { enqueueInboxTx, sweepOrphanInbox } from '../src/agent/inbox.ts';
 import { estimateModelCostUsd } from '../src/agent/llm.ts';
 import {
   capCentsOf,
@@ -154,23 +155,41 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('lead lifecycle (db)', () => {
 
     test('default — one outreach run, draft-only approval path', async () => {
       await setup();
-      const res = await postLead(
-        { name: 'Default Automation', whatsapp: '+55 85 90000-0003' },
-        key('a1-default'),
-      );
-      expect(res.status).toBe(201);
-      const { lead, runId } = (await res.json()) as {
-        lead: { id: string };
-        runId?: string;
-      };
-      expect(runId).toBeTruthy();
-      const runs = await runsFor(lead.id);
-      expect(runs).toHaveLength(1);
-      expect(runs[0]!.kind).toBe('outreach');
-      // firstContactDelayMin = 0 → the merged run researches and drafts but
-      // never sends — the approval path triage used to carry.
-      expect(runs[0]!.params.draftOnly).toBe(true);
-      expect(runs[0]!.params.auto).toBe('first-contact');
+      // The draft verdict is level-dependent now — pin supervised so an
+      // ambient agent_autonomy can't flip it.
+      const prior = (
+        await sql<
+          { value: unknown }[]
+        >`select value from control_settings where key = 'agent_autonomy'`
+      )[0];
+      await sql`insert into control_settings (key, value) values ('agent_autonomy', ${sql.json({ level: 'supervised' } as never)})
+        on conflict (key) do update set value = excluded.value`;
+      try {
+        const res = await postLead(
+          { name: 'Default Automation', whatsapp: '+55 85 90000-0003' },
+          key('a1-default'),
+        );
+        expect(res.status).toBe(201);
+        const { lead, runId } = (await res.json()) as {
+          lead: { id: string };
+          runId?: string;
+        };
+        expect(runId).toBeTruthy();
+        const runs = await runsFor(lead.id);
+        expect(runs).toHaveLength(1);
+        expect(runs[0]!.kind).toBe('outreach');
+        // No draftOnly is stamped — the first-contact draft is decided live
+        // by checkSendAllowedTx at send time (level + firstContactDraftOnly
+        // read then), so a policy flip between create and claim takes effect.
+        expect(runs[0]!.params.draftOnly).toBeUndefined();
+        expect(runs[0]!.params.auto).toBe('first-contact');
+      } finally {
+        if (prior) {
+          await sql`update control_settings set value = ${sql.json(prior.value as never)} where key = 'agent_autonomy'`;
+        } else {
+          await sql`delete from control_settings where key = 'agent_autonomy'`;
+        }
+      }
     });
   });
 
@@ -381,20 +400,31 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('lead lifecycle (db)', () => {
       expect(await runsFor(leadId)).toHaveLength(0);
     });
 
-    test('a generic queued outreach does NOT block the regen — it lacks the regen params', async () => {
+    test('a generic queued outreach does NOT block the regen — the intent mails into it', async () => {
       await setup();
       const leadId = await controlTx(sql, (tx) =>
         insertLeadTx(tx, { name: 'Busy Lead', agent_mode: 'auto' }),
       ).then((r) => r.body.lead.id);
-      await controlTx(sql, (tx) => insertRun(tx, { kind: 'outreach', leadId }));
+      const generic = (await controlTx(sql, (tx) => insertRun(tx, { kind: 'outreach', leadId })))!;
       const messageId = await mkDraft(leadId, 'agent', 8);
       const res = await approveMessage(sql, messageId, 'staff', key('a3-active-run'));
       expect(res.body.stale).toBe(true);
+      // One active run per lead: the regen intent can't spawn a second row —
+      // it lands as an 'event' item. But drainInbox defers draftOnly mail
+      // for a send-capable run, so the parked outreach never recomposes it —
+      // runId is absent rather than pointing at a run that won't produce
+      // the draft (the orphan sweep spawns the real draftOnly run later).
+      expect(res.body.runId).toBeUndefined();
       const runs = await runsFor(leadId);
-      expect(runs).toHaveLength(2);
-      const regen = runs.find((r) => r.id === res.body.runId)!;
-      expect(regen.params.draftOnly).toBe(true);
-      expect(regen.params.auto).toBe('regenerate');
+      expect(runs).toHaveLength(1);
+      const items = await sql<{ payload: Record<string, unknown> }[]>`
+        select payload from agent_inbox
+        where lead_id = ${leadId} and kind = 'event' and consumed_at is null
+      `;
+      expect(items).toHaveLength(1);
+      expect(items[0]!.payload.auto).toBe('regenerate');
+      expect(items[0]!.payload.src).toBe(messageId);
+      expect((items[0]!.payload.params as Record<string, unknown>).draftOnly).toBe(true);
     });
 
     test('queued regen dedupes per source draft — other drafts spawn their own', async () => {
@@ -420,11 +450,21 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('lead lifecycle (db)', () => {
       const otherId = await mkDraft(leadId, 'agent', 8);
       const res2 = await approveMessage(sql, otherId, 'staff', key('a3-regen-other'));
       expect(res2.body.stale).toBe(true);
-      expect(res2.body.runId).not.toBe(existing);
-      expect(await runsFor(leadId)).toHaveLength(2);
+      // …but a regen still pending on another draft doesn't swallow this
+      // one under one-run-per-lead either — the distinct src earns its own
+      // regen ITEM inside the same queued run, which recomposes each draft.
+      expect(res2.body.runId).toBe(existing);
+      expect(await runsFor(leadId)).toHaveLength(1);
+      const items = await sql<{ payload: Record<string, unknown> }[]>`
+        select payload from agent_inbox
+        where lead_id = ${leadId} and kind = 'event' and consumed_at is null
+        order by created_at
+      `;
+      expect(items).toHaveLength(1);
+      expect(items[0]!.payload.src).toBe(otherId);
     });
 
-    test('claimRun serializes outreach per lead — a busy lead waits, others claim', async () => {
+    test('one active run per lead — a second insertRun reuses the first', async () => {
       await setup();
       // Earlier tests leave queued runs claimable — drain the slate so the
       // assertions below only see this test's rows.
@@ -439,22 +479,26 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('lead lifecycle (db)', () => {
       const mkRun = (leadId: string) =>
         controlTx(sql, async (tx) => (await insertRun(tx, { kind: 'outreach', leadId }))!);
       const a1 = await mkRun(leadA);
-      const a2 = await mkRun(leadA);
+      // The partial unique index makes a second active row for the same
+      // lead impossible — insertRun returns the live row's id instead of
+      // erroring, which is what "deliver into the existing run" keys on.
+      expect(await mkRun(leadA)).toBe(a1);
+      expect(await runsFor(leadA)).toHaveLength(1);
       const b1 = await mkRun(leadB);
       // claimRun orders by created_at and back-to-back txs can share a
       // millisecond — pin explicit offsets or the pick order is a coin toss.
-      await sql`update agent_runs set created_at = now() - interval '3 seconds' where id = ${a1}`;
-      await sql`update agent_runs set created_at = now() - interval '2 seconds' where id = ${b1}`;
-      await sql`update agent_runs set created_at = now() - interval '1 seconds' where id = ${a2}`;
-      // A's first run claims; A's second is gated by the durable 'running'
-      // owner; B's run is unaffected — a busy lead never starves the drain.
-      const ours = [a1, a2, b1];
+      await sql`update agent_runs set created_at = now() - interval '2 seconds' where id = ${a1}`;
+      await sql`update agent_runs set created_at = now() - interval '1 seconds' where id = ${b1}`;
+      const ours = [a1, b1];
       expect(await claimAmong(ours)).toBe(a1);
       expect(await claimAmong(ours)).toBe(b1);
       expect(await claimAmong(ours)).toBeNull();
+      // Once A's run leaves the active set, the NEXT insert lands a fresh
+      // row — "no active run → a run is created".
       await sql`update agent_runs set status = 'done', finished_at = now() where id in (${a1}, ${b1})`;
-      expect(await claimAmong(ours)).toBe(a2);
-      await sql`update agent_runs set status = 'done', finished_at = now() where id = ${a2}`;
+      const a2 = await mkRun(leadA);
+      expect(a2).not.toBe(a1);
+      expect(await claimAmong([a2])).toBe(a2);
     });
 
     test('a durably-blocked lead does not starve later runnable work', async () => {
@@ -732,6 +776,71 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('lead lifecycle (db)', () => {
         select lead_id from agent_runs where lead_id = ${leadId}
       `;
       expect(run!.lead_id?.toLowerCase()).toBe(leadId.toLowerCase());
+    });
+
+    test('POST /agent/runs/:id/cancel tombstones the run’s own request — no sweep restart', async () => {
+      await setup();
+      const leadId = await mkLeadApi({ name: 'Cancel Owns' }, key('a4-cxl-lead'));
+      // The run rides the whatsapp thread — its effective channel is the
+      // thread's even with no params.channel pin.
+      const [waThread] = await sql<{ id: string }[]>`
+        insert into lead_threads (lead_id, channel) values (${leadId}, 'whatsapp') returning id
+      `;
+      const run = await post(
+        '/control/v1/agent/runs',
+        { kind: 'outreach', leadId, threadId: waThread!.id },
+        key('a4-cxl-run'),
+      );
+      expect(run.status).toBe(201);
+      const { runId } = (await run.json()) as { runId: string };
+      // An email-pinned request merely associated with this whatsapp run —
+      // channel pinning keeps it pending for a matching run it must
+      // outlive, so the tombstone can't take it.
+      await sql`
+        insert into agent_inbox (lead_id, kind, payload)
+        values (${leadId}, 'staff', ${sql.json({
+          text: "a equipe pediu uma run 'reply'",
+          requestedKind: 'reply',
+          params: { channel: 'email', origin: 'staff' },
+          forRunId: runId,
+        })})
+      `;
+      // An 'auto'-channeled request normalizes to unpinned at enqueue —
+      // "let the agent pick" is not a channel pin — and no threadId, so
+      // it IS deliverable to this whatsapp-bound run and dies with it
+      // like the minted request.
+      const autoId = await controlTx(sql, (tx) =>
+        enqueueInboxTx(tx, leadId, 'staff', {
+          text: "a equipe pediu uma run 'discovery'",
+          requestedKind: 'discovery',
+          params: { channel: 'auto', origin: 'staff' },
+          forRunId: runId,
+        }),
+      );
+      const autoRow = await sql<{ payload: { params?: { channel?: string } } }[]>`
+        select payload from agent_inbox where id = ${autoId}
+      `;
+      expect(autoRow[0]!.payload.params?.channel).toBeUndefined();
+      const cancel = await post(`/control/v1/agent/runs/${runId}/cancel`, {}, key('a4-cxl-cancel'));
+      expect(cancel.status).toBe(200);
+      // The request the queued run was minted for dies with it — a pending
+      // 'staff' item would otherwise respawn the very run staff canceled.
+      // The email request survives: it was never deliverable to this run.
+      // The 'auto' request normalized to unpinned → deliverable → tombstoned.
+      const pending = await sql<{ payload: { params?: { channel?: string } } }[]>`
+        select payload from agent_inbox where lead_id = ${leadId} and consumed_at is null
+        order by created_at
+      `;
+      expect(pending).toHaveLength(1);
+      expect(pending[0]!.payload.params?.channel).toBe('email');
+      // …and the survivor is not stranded: the sweep spawns a run for it —
+      // exactly the restart the canceled request must NOT get.
+      await sweepOrphanInbox(sql);
+      const runs = await runsFor(leadId);
+      expect(runs).toHaveLength(2);
+      expect(runs[1]!.status).toBe('queued');
+      expect(runs[1]!.kind).toBe('reply');
+      await sql`delete from agent_runs where status = 'queued'`;
     });
 
     test('POST /agent/dispatch skips a capped lead without committing its goal', async () => {
@@ -1173,6 +1282,10 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('lead lifecycle (db)', () => {
       try {
         const leadId = await mkLead();
         expect(await controlTx(sql, (tx) => insertRun(tx, { kind: 'reply', leadId }))).toBeTruthy();
+        // The cap refusal binds a lead with NO active run — an active one
+        // owns the mail regardless (insertRun returns it before the cap
+        // check, since delivery into it costs nothing extra).
+        await sql`update agent_runs set status = 'done', finished_at = now() where lead_id = ${leadId}`;
         await sql`
           insert into agent_runs (kind, lead_id, status, cost_cents, finished_at)
           values ('reply', ${leadId}, 'done', 1, now())

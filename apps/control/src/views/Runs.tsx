@@ -1,9 +1,18 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { PauseCircle, XCircle } from 'lucide-react';
-import { api, type AgentRun } from '../api.ts';
+import { api, type AgentMetrics, type AgentRun } from '../api.ts';
 import { onControlEvent } from '../events.ts';
-import { Empty, Page, RUN_KIND_LABEL, fmtDateTime, fmtMoney, rel, relDue } from '../components.tsx';
+import {
+  Empty,
+  Page,
+  RUN_KIND_LABEL,
+  fmtDateTime,
+  fmtUsd,
+  fmtUsdCents,
+  rel,
+  relDue,
+} from '../components.tsx';
 
 const STATUS_CHIP: Record<string, string> = {
   queued: 'warn',
@@ -12,6 +21,149 @@ const STATUS_CHIP: Record<string, string> = {
   failed: 'bad',
   canceled: 'bad',
 };
+
+const pct = (v: number) => `${Math.round(v * 100)}%`;
+
+/** Ops readout above the run list — the ADR-0014 metrics endpoint
+ *  rendered in the console's own stat/table grammar. The window toggle
+ *  (7|30d) is scoped to the panel; the run list below keeps its own
+ *  filters. */
+function MetricsPanel() {
+  const [m, setM] = useState<AgentMetrics | null>(null);
+  const [err, setErr] = useState('');
+  const [days, setDays] = useState<7 | 30>(7);
+
+  const seq = useRef(0);
+  const daysRef = useRef(days);
+  daysRef.current = days;
+  const load = useCallback(() => {
+    const req = ++seq.current;
+    const forDays = daysRef.current;
+    api
+      .agentMetrics(forDays)
+      .then((r) => {
+        // Only the latest-issued request may write — an older response
+        // landing mid-toggle must not repaint the panel with stale-window
+        // data while the chips show the new selection.
+        if (req !== seq.current || forDays !== daysRef.current) return;
+        setM(r);
+        setErr('');
+      })
+      .catch((e) => {
+        if (req === seq.current) setErr(String(e));
+      });
+  }, []);
+  useEffect(load, [load, days]);
+  useEffect(() => onControlEvent('run.update', load), [load]);
+  useEffect(() => {
+    const t = setInterval(load, 60_000);
+    return () => clearInterval(t);
+  }, [load]);
+
+  const totalRuns = m?.byKind.reduce((a, k) => a + k.runs, 0) ?? 0;
+  const totalDone = m?.byKind.reduce((a, k) => a + k.done, 0) ?? 0;
+  const acted = m?.byKind.reduce((a, k) => a + Math.round(k.actedRate * k.done), 0) ?? 0;
+  const cost = m?.byKind.reduce((a, k) => a + k.costUsd, 0) ?? 0;
+  const empty =
+    !!m &&
+    totalRuns === 0 &&
+    !m.outbound.sent &&
+    !m.outbound.drafted &&
+    !m.outbound.rejected &&
+    !m.replies.leadsContacted &&
+    !(m.wakeups?.pending || m.wakeups?.fired);
+
+  return (
+    <div className="card pad">
+      <div className="card-head">
+        <b>leitura</b>
+        <span className="fchips" style={{ marginBottom: 0 }}>
+          {([7, 30] as const).map((d) => (
+            <button key={d} className={days === d ? 'sel' : ''} onClick={() => setDays(d)}>
+              {d}d
+            </button>
+          ))}
+        </span>
+      </div>
+      {err ? (
+        <Empty title="não foi possível carregar a leitura" hint={err} />
+      ) : !m ? (
+        <Empty title="carregando…" />
+      ) : empty ? (
+        <div style={{ color: 'var(--muted)', fontSize: 'var(--t-sm)' }}>
+          nenhum run no período — o agente ainda não trabalhou
+        </div>
+      ) : (
+        <>
+          <div className="mstats">
+            <div>
+              <div className="v">{totalDone}</div>
+              <div className="k">runs feitos · {totalRuns} total</div>
+            </div>
+            <div>
+              <div className="v">{totalDone ? pct(acted / totalDone) : '—'}</div>
+              <div className="k">agiram</div>
+            </div>
+            <div>
+              <div className="v" style={{ color: m.outbound.drafted ? '#7a5b12' : undefined }}>
+                {m.outbound.drafted}
+              </div>
+              <div className="k">rascunhos p/ aprovar</div>
+            </div>
+            <div>
+              <div className="v">{m.replies.leadsContacted ? pct(m.replies.replyRate) : '—'}</div>
+              <div className="k">
+                responderam · {m.replies.leadsReplied}/{m.replies.leadsContacted}
+              </div>
+            </div>
+            <div>
+              <div className="v">{fmtUsd(cost)}</div>
+              <div className="k">custo</div>
+            </div>
+            {m.wakeups && (
+              <div>
+                <div className="v">{m.wakeups.pending}</div>
+                <div className="k">wakeups pendentes · {m.wakeups.fired} disparados</div>
+              </div>
+            )}
+          </div>
+          {m.byKind.some((k) => k.runs > 0) && (
+            <table className="tbl" style={{ marginTop: 12 }}>
+              <thead>
+                <tr>
+                  <th>tipo</th>
+                  <th className="num">runs</th>
+                  <th className="num">feitos</th>
+                  <th className="num">falhas</th>
+                  <th className="num">cancel.</th>
+                  <th className="num">agiu</th>
+                  <th className="num">passos</th>
+                  <th className="num">custo</th>
+                </tr>
+              </thead>
+              <tbody>
+                {m.byKind
+                  .filter((k) => k.runs > 0)
+                  .map((k) => (
+                    <tr key={k.kind}>
+                      <td>{RUN_KIND_LABEL[k.kind] ?? k.kind}</td>
+                      <td className="num">{k.runs}</td>
+                      <td className="num">{k.done}</td>
+                      <td className="num">{k.failed || '—'}</td>
+                      <td className="num">{k.canceled || '—'}</td>
+                      <td className="num">{k.done ? pct(k.actedRate) : '—'}</td>
+                      <td className="num">{k.avgSteps || '—'}</td>
+                      <td className="num">{fmtUsd(k.costUsd)}</td>
+                    </tr>
+                  ))}
+              </tbody>
+            </table>
+          )}
+        </>
+      )}
+    </div>
+  );
+}
 
 // Filter strip — 'agendados' is the delayed queue (scheduled=1), not a status:
 // it flips the endpoint to run_at ordering and its own pagination cursor.
@@ -25,9 +177,23 @@ const VIEWS = [
   ['canceled', 'cancelados'],
 ] as const;
 
+/** Journal step types that carry user-injected content rather than a tool
+ *  call or model turn — mail drained from the lead's inbox, engine nudges,
+ *  reflection ticks. They render with their own label so the mailbox reads
+ *  as what it is instead of an anonymous `tool · #N`. */
+const STEP_LABELS: Record<string, string> = {
+  system_prompt: 'prompt',
+  model: 'modelo',
+  inbox: 'caixa de entrada',
+  nudge: 'nudge',
+  reflection: 'reflexão',
+};
+const CONTENT_STEPS = new Set(['inbox', 'nudge', 'reflection']);
+
 interface Step {
   type: string;
   name?: string;
+  callId?: string;
   args?: unknown;
   out?: unknown;
   content?: unknown;
@@ -150,11 +316,7 @@ export default function Runs() {
               {steps.map((s, i) => (
                 <div key={i} className={`step ${s.type}`}>
                   <div className="who">
-                    {s.type === 'system_prompt'
-                      ? 'prompt'
-                      : s.type === 'model'
-                        ? 'modelo'
-                        : `tool · ${s.name}`}
+                    {STEP_LABELS[s.type] ?? `tool · ${s.name ?? s.callId ?? `#${i}`}`}
                   </div>
                   {s.type === 'model' && s.content != null && <pre>{String(s.content)}</pre>}
                   {s.type === 'model' && s.toolCalls?.length ? (
@@ -167,6 +329,7 @@ export default function Runs() {
                       <pre>{JSON.stringify(s.out, null, 1).slice(0, 3000)}</pre>
                     ))}
                   {s.type === 'system_prompt' && <pre>{String(s.content).slice(0, 1500)}</pre>}
+                  {CONTENT_STEPS.has(s.type) && s.content != null && <pre>{String(s.content)}</pre>}
                 </div>
               ))}
               {!steps.length && <Empty title="sem passos ainda" />}
@@ -207,7 +370,7 @@ export default function Runs() {
                       ),
                     ],
                     ['tokens', `${run.tokens_in} in · ${run.tokens_out} out`],
-                    ['custo', fmtMoney(run.cost_cents)],
+                    ['custo', fmtUsdCents(run.cost_cents)],
                     ...(run.run_at ? [['agendado p/', fmtDateTime(run.run_at)] as const] : []),
                     ['início', fmtDateTime(run.started_at)],
                     ['fim', fmtDateTime(run.finished_at)],
@@ -266,6 +429,7 @@ export default function Runs() {
         </select>
       }
     >
+      <MetricsPanel />
       <div className="fchips">
         {VIEWS.map(([v, l]) => (
           <button key={v} className={view === v ? 'sel' : ''} onClick={() => setView(v)}>
@@ -345,7 +509,7 @@ export default function Runs() {
                     </td>
                     <td>{r.lead_name ?? '—'}</td>
                     <td className="num">{(r.tokens_in + r.tokens_out).toLocaleString('pt-BR')}</td>
-                    <td className="num">{fmtMoney(r.cost_cents)}</td>
+                    <td className="num">{fmtUsdCents(r.cost_cents)}</td>
                     <td className="num">{rel(r.created_at)}</td>
                     <td className="r-act" onClick={(e) => e.stopPropagation()}>
                       {active && (

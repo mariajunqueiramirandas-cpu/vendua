@@ -1,5 +1,5 @@
 import type { Sql } from '../platform/db.ts';
-import { HttpError } from '../platform/http.ts';
+import { HttpError, UUID_RE } from '../platform/http.ts';
 import type { AgentTool } from './llm.ts';
 import { claimControl, controlTx } from '../modules/control.ts';
 import { emitControlEvent } from '../modules/control-events.ts';
@@ -14,12 +14,17 @@ import {
 import { addActivity, createTask } from '../modules/activities.ts';
 import { composeMessageTx, channel } from '../modules/threads.ts';
 import {
-  AGENT_MEMORY_MAX_FACTS,
   DEFAULT_GUARDRAILS,
   getSetting,
   getSettingTx,
   type Guardrails,
 } from '../modules/integrations.ts';
+import {
+  LEAD_FACT_KEY_RE,
+  hasMemoryTablesTx,
+  rememberTx,
+  upsertLeadFactTx,
+} from '../modules/agent-memory.ts';
 import { recordBlockedSendTx } from '../modules/channel-health.ts';
 import {
   agentPausedForChannelTx,
@@ -30,6 +35,9 @@ import {
 } from './guardrails.ts';
 import { dispatchMessage } from './send.ts';
 import { whatsappRegistered } from './channels/whatsapp.ts';
+import { leadBoundArg, toolAvailable } from './tool-meta.ts';
+import { parseWakeupAt, scheduleWakeupTx } from './wakeups.ts';
+import { automationAllowedTx, discoveryBudgetTx } from './policy.ts';
 
 /**
  * agent/tools — the central tool registry (Hermes-style: one registry, gated
@@ -88,6 +96,11 @@ export interface ToolContext {
   /** Staff-assist runs (params.draftOnly): send_message may only compose —
    *  a suggestion goes to the approvals queue, never on the wire. */
   draftOnly: boolean;
+  /** Playbook kinds this run may call tools as — starts as {runKind};
+   *  drained inbox mail adds its requestedKind so a lead's mid-run intent
+   *  (e.g. an opt-out arriving as 'reply' mail inside an outreach run)
+   *  stays servable. The dispatcher gate reads this, not just runKind. */
+  toolKinds?: ReadonlySet<string>;
 }
 
 /** One prospect in the agent's ledger — what it found and which moves it
@@ -126,6 +139,7 @@ export function bookDigest(book: Map<string, BookEntry>): string {
  *  is free. */
 const REPLY_READ_PAGES_CAP = 2;
 
+const UUID_LIKE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const leadIdArg = { type: 'string', description: 'lead uuid' } as const;
 const LEAD_FIELDS = {
   businessName: { type: 'string' },
@@ -158,9 +172,8 @@ const LEAD_FIELDS = {
   intentReason: { type: 'string', description: 'one line: the intent signals observed' },
 } as const;
 
-const REGISTRY: { def: AgentTool; toolsets: string[] }[] = [
+const REGISTRY: { def: AgentTool }[] = [
   {
-    toolsets: ['triage', 'reply', 'outreach', 'discovery'],
     def: {
       name: 'search_leads',
       description:
@@ -176,7 +189,6 @@ const REGISTRY: { def: AgentTool; toolsets: string[] }[] = [
     },
   },
   {
-    toolsets: ['triage', 'reply', 'outreach', 'discovery'],
     def: {
       name: 'get_lead',
       description: 'Full lead profile: fields, tags, score, counters.',
@@ -184,7 +196,6 @@ const REGISTRY: { def: AgentTool; toolsets: string[] }[] = [
     },
   },
   {
-    toolsets: ['triage', 'discovery'],
     def: {
       name: 'create_lead',
       description:
@@ -210,7 +221,6 @@ const REGISTRY: { def: AgentTool; toolsets: string[] }[] = [
     },
   },
   {
-    toolsets: ['triage', 'reply', 'outreach', 'discovery'],
     def: {
       name: 'update_lead',
       description: 'Patch lead fields (contact info, tags, deal value, next action, goal).',
@@ -236,7 +246,6 @@ const REGISTRY: { def: AgentTool; toolsets: string[] }[] = [
     },
   },
   {
-    toolsets: ['triage', 'reply', 'outreach'],
     def: {
       name: 'set_state',
       description: 'Move a lead along the pipeline (writes state history).',
@@ -251,7 +260,6 @@ const REGISTRY: { def: AgentTool; toolsets: string[] }[] = [
     },
   },
   {
-    toolsets: ['triage', 'reply', 'outreach', 'discovery'],
     def: {
       name: 'add_note',
       description: 'Append a note to the lead timeline.',
@@ -263,7 +271,26 @@ const REGISTRY: { def: AgentTool; toolsets: string[] }[] = [
     },
   },
   {
-    toolsets: ['triage', 'reply', 'outreach'],
+    def: {
+      name: 'set_fact',
+      description:
+        'Record a durable structured fact about THIS lead — snake_case key (e.g. "team_size", "decision_maker", "monthly_volume"), short value. It lands in lead memory: every later run on this lead sees it under FATOS. Facts are for durable structured data; add_note is for prose. Same key upserts the value.',
+      parameters: {
+        type: 'object',
+        properties: {
+          leadId: leadIdArg,
+          key: { type: 'string', description: 'snake_case, ≤60 chars' },
+          value: { type: 'string', description: '≤500 chars' },
+          confidence: {
+            type: 'number',
+            description: 'how sure you are, 0..1 (default 1)',
+          },
+        },
+        required: ['leadId', 'key', 'value'],
+      },
+    },
+  },
+  {
     def: {
       name: 'create_task',
       description: 'Create a follow-up task for staff or self.',
@@ -279,9 +306,28 @@ const REGISTRY: { def: AgentTool; toolsets: string[] }[] = [
     },
   },
   {
+    def: {
+      name: 'schedule',
+      description:
+        'Book your own next touch on this lead: at the given time an outreach run wakes up with this focus. One pending agenda item per lead — scheduling again replaces it. A new message from the lead cancels it unless requested=true (the lead asked for that date).',
+      parameters: {
+        type: 'object',
+        properties: {
+          leadId: leadIdArg,
+          at: { type: 'string', description: 'ISO-8601, ≥10 min and ≤90 days ahead' },
+          focus: { type: 'string', description: 'what that run must do and why (≤500 chars)' },
+          requested: {
+            type: 'boolean',
+            description: 'true only when the lead asked for this date',
+          },
+        },
+        required: ['leadId', 'at', 'focus'],
+      },
+    },
+  },
+  {
     // triage included: the first-contact draft IS triage's write-up — but
     // send_message stays out, so a new lead can never be sent unreviewed.
-    toolsets: ['triage', 'reply', 'outreach'],
     def: {
       name: 'draft_message',
       description:
@@ -299,7 +345,6 @@ const REGISTRY: { def: AgentTool; toolsets: string[] }[] = [
     },
   },
   {
-    toolsets: ['reply', 'outreach'],
     def: {
       name: 'send_message',
       description:
@@ -317,20 +362,22 @@ const REGISTRY: { def: AgentTool; toolsets: string[] }[] = [
     },
   },
   {
-    toolsets: ['triage', 'reply', 'outreach', 'discovery', 'strategist'],
     def: {
       name: 'remember',
       description:
-        'Persist a durable learning (agent memory — e.g. "docerias respond better at night"). Bounded: keep ≤100 facts, consolidate instead of duplicating — when the cap drops an old fact the result returns it as `evicted`; fold it into a consolidated fact on a later call.',
+        'Persist a durable learning (agent memory — e.g. "docerias respond better at night"). scope: "workspace" (default — applies to every run) or "segment" + `segment` for a learning that only fits one niche. Deduped case-insensitively per scope/segment — repeating a learning refreshes it instead of duplicating. Cap 200 workspace+segment learnings (staff-pinned items never drop); when the cap drops an old learning the result returns it as `evicted` — fold it into a consolidated learning on a later call. For a structured fact about THIS lead, prefer `set_fact`.',
       parameters: {
         type: 'object',
-        properties: { fact: { type: 'string' } },
+        properties: {
+          fact: { type: 'string' },
+          scope: { type: 'string', enum: ['workspace', 'segment'] },
+          segment: { type: 'string', description: 'required when scope=segment' },
+        },
         required: ['fact'],
       },
     },
   },
   {
-    toolsets: ['strategist'],
     def: {
       name: 'propose_brief',
       description:
@@ -353,7 +400,6 @@ const REGISTRY: { def: AgentTool; toolsets: string[] }[] = [
     },
   },
   {
-    toolsets: ['reply', 'outreach'],
     def: {
       name: 'request_human',
       description: 'Pause the agent on this thread and hand the lead to staff (creates a task).',
@@ -365,7 +411,6 @@ const REGISTRY: { def: AgentTool; toolsets: string[] }[] = [
     },
   },
   {
-    toolsets: ['reply'],
     def: {
       name: 'unsubscribe',
       description:
@@ -386,7 +431,6 @@ const REGISTRY: { def: AgentTool; toolsets: string[] }[] = [
     // anything — outreach carries that job on fresh cards, triage on manual
     // re-research. Reply keeps it as a fallback only: in a live conversation
     // asking beats searching.
-    toolsets: ['triage', 'reply', 'outreach', 'discovery'],
     def: {
       name: 'web_search',
       description:
@@ -405,7 +449,6 @@ const REGISTRY: { def: AgentTool; toolsets: string[] }[] = [
     // triage/outreach read deep (site/perfil do prospect). Reply gets it too
     // but capped (REPLY_READ_PAGES_CAP): a lead can send a link the agent
     // must read — a live conversation still can't afford a rabbit hole.
-    toolsets: ['triage', 'reply', 'outreach', 'discovery'],
     def: {
       name: 'read_pages',
       description:
@@ -425,7 +468,6 @@ const REGISTRY: { def: AgentTool; toolsets: string[] }[] = [
     },
   },
   {
-    toolsets: ['triage', 'reply', 'outreach', 'discovery'],
     def: {
       name: 'plan',
       description:
@@ -455,7 +497,6 @@ const REGISTRY: { def: AgentTool; toolsets: string[] }[] = [
     },
   },
   {
-    toolsets: ['discovery'],
     def: {
       name: 'book',
       description:
@@ -485,7 +526,6 @@ const REGISTRY: { def: AgentTool; toolsets: string[] }[] = [
   {
     // A fresh card (staff-created or manual triage) with a business name +
     // city resolves contacts here before the first-contact draft.
-    toolsets: ['triage', 'outreach', 'discovery'],
     def: {
       name: 'maps_lookup',
       description:
@@ -502,7 +542,6 @@ const REGISTRY: { def: AgentTool; toolsets: string[] }[] = [
     },
   },
   {
-    toolsets: ['triage', 'outreach', 'discovery'],
     def: {
       name: 'instagram_profile',
       description:
@@ -517,7 +556,6 @@ const REGISTRY: { def: AgentTool; toolsets: string[] }[] = [
     },
   },
   {
-    toolsets: ['triage', 'reply', 'outreach', 'discovery'],
     def: {
       name: 'serp',
       description:
@@ -534,7 +572,12 @@ const REGISTRY: { def: AgentTool; toolsets: string[] }[] = [
 /** Toolset filter — the Hermes enabled_toolsets pattern: each run kind sees
  *  only the tools its job needs. */
 export function toolsFor(kind: string): AgentTool[] {
-  return REGISTRY.filter((t) => t.toolsets.includes(kind)).map((t) => t.def);
+  return REGISTRY.filter((t) => toolAvailable(kind, t.def.name)).map((t) => t.def);
+}
+
+/** Registered tool names — the meta table must cover exactly these. */
+export function registeredToolNames(): string[] {
+  return REGISTRY.map((t) => t.def.name);
 }
 
 /** Side-effect fence on the live claim. claim_token already guards the
@@ -583,8 +626,15 @@ export async function refuseOnFresherInboundTx(tx: Sql, ctx: ToolContext): Promi
     where t.lead_id = ${ctx.leadId} and m.direction = 'in' and not m.historical
       and m.received_at is not null
       and m.received_at > ${run.started_at}::timestamptz
+      and not exists (
+        select 1 from agent_inbox i
+        where i.consumed_by_run = ${ctx.runId}
+          and i.payload->>'messageId' = m.id::text
+      )
     limit 1
   `;
+  // Mail this run already drained doesn't refuse its answer — the obsolete-
+  // auto guard still bites on any inbound that arrived unhandled.
   return replied.length ? 'lead respondeu' : null;
 }
 
@@ -604,8 +654,12 @@ export async function executeTool(
 
   // toolsFor() only decides what the model is TOLD about — nothing stops it
   // emitting another name. Enforce the toolset here too, or a discovery run
-  // can emit send_message and reach the real dispatch path.
-  if (!toolsFor(ctx.runKind).some((t) => t.name === name)) {
+  // can emit send_message and reach the real dispatch path. Mail that
+  // drained mid-run widens the set through ctx.toolKinds (its requested
+  // kind joins) — the model only ever saw tools that union produces.
+  const kinds = ctx.toolKinds ?? new Set([ctx.runKind]);
+  const allowed = [...kinds].some((k) => toolAvailable(k, name));
+  if (!allowed || !REGISTRY.some((t) => t.def.name === name)) {
     return { error: `tool ${name} not available for ${ctx.runKind} runs` };
   }
 
@@ -613,19 +667,9 @@ export async function executeTool(
   // model picks the leadId arg, so enforce the binding in code. Read-only
   // tools (search_leads, get_lead) stay unscoped: triage legitimately inspects
   // other leads, e.g. to spot duplicates.
-  const leadBoundArg =
-    {
-      update_lead: 'id',
-      set_state: 'leadId',
-      add_note: 'leadId',
-      create_task: 'leadId',
-      draft_message: 'leadId',
-      send_message: 'leadId',
-      request_human: 'leadId',
-      unsubscribe: 'leadId',
-    }[name] ?? null;
-  if (ctx.leadId && leadBoundArg) {
-    const target = String(args[leadBoundArg] ?? '');
+  const boundArg = leadBoundArg(name);
+  if (ctx.leadId && boundArg) {
+    const target = String(args[boundArg] ?? '');
     if (target !== ctx.leadId) {
       return {
         error: `LEAD_MISMATCH — this run is bound to lead ${ctx.leadId}; pass that leadId`,
@@ -799,6 +843,10 @@ export async function executeTool(
           }
         }
       }
+      // Tx outbox — retirements queueOutreach's insertRun collects emit
+      // post-commit; emitting inside the claim would leak a false event on
+      // rollback.
+      const retiredOutreach: string[] = [];
       const res = await claimControl(sql, key, async (tx) => {
         await assertRunClaimTx(tx, ctx);
         // The research dossier lands on the timeline as a note — created with
@@ -845,16 +893,39 @@ export async function executeTool(
         };
         const queueOutreach = async (leadId: string, score: number | null) => {
           if (await outreachActive(leadId)) return null;
+          if (!(await automationAllowedTx(tx, 'outreach')).ok) return null;
           const { insertRun } = await import('./runner.ts');
-          return insertRun(tx, {
-            kind: 'outreach',
-            leadId,
-            params: {
-              channel: 'whatsapp',
-              auto: 'discovery',
-              focus: `primeiro contato — lead descoberto (fitScore ${String(score)}). O dossiê de pesquisa está na timeline do lead.`,
-            },
-          });
+          const params = {
+            channel: 'whatsapp',
+            auto: 'discovery',
+            focus: `primeiro contato — lead descoberto (fitScore ${String(score)}). O dossiê de pesquisa está na timeline do lead.`,
+          };
+          const cap: { retired?: string[] } = {};
+          const runId = await insertRun(tx, { kind: 'outreach', leadId, params }, cap);
+          retiredOutreach.push(...(cap.retired ?? []));
+          if (!runId) return null;
+          // The intent rides the mailbox too: insertRun returns the lead's
+          // already-active NON-outreach row when one exists, and the item is
+          // what actually carries the first contact into it (created or
+          // delivered, same audit). One pending discovery event per lead is
+          // enough — repeated dedup-merges don't pile duplicates.
+          const pending = (
+            await tx<{ n: number }[]>`
+              select count(*)::int n from agent_inbox
+              where lead_id = ${leadId} and kind = 'event' and consumed_at is null
+                and payload->>'requestedKind' = 'outreach'
+                and payload->'params'->>'auto' = 'discovery'
+            `
+          )[0]!.n;
+          if (!pending) {
+            const { enqueueInboxTx } = await import('./inbox.ts');
+            await enqueueInboxTx(tx, leadId, 'event', {
+              text: 'lead descoberto — primeiro contato',
+              requestedKind: 'outreach',
+              params,
+            });
+          }
+          return runId;
         };
         const writeFindings = async (leadId: string, extra: Record<string, unknown> = {}) => {
           if (!findings) return;
@@ -1089,6 +1160,7 @@ export async function executeTool(
         if (typeof leadId === 'string') emitControlEvent('lead.change', leadId);
         const contactRun = (res.body as { contactRun?: unknown }).contactRun;
         if (typeof contactRun === 'string') emitControlEvent('run.update', contactRun);
+        for (const r of retiredOutreach) emitControlEvent('run.update', r);
       }
       return res.body;
     }
@@ -1148,6 +1220,40 @@ export async function executeTool(
       );
       return res.body;
     }
+    case 'schedule': {
+      const leadId = String(args.leadId ?? '');
+      const at = parseWakeupAt(args.at);
+      if (typeof at === 'string') return { error: at };
+      const focus = String(args.focus ?? '').trim();
+      if (!focus) return { error: 'focus is required' };
+      const res = await claimControl(sql, key, async (tx) => {
+        await assertRunClaimTx(tx, ctx);
+        const lead = (
+          await tx<{ archived_at: string | null; unsubscribed_at: string | null }[]>`
+            select archived_at, unsubscribed_at from leads where id = ${leadId}
+          `
+        )[0];
+        if (!lead)
+          return { status: 200, body: { error: 'lead not found' } as Record<string, unknown> };
+        if (lead.archived_at || lead.unsubscribed_at) {
+          return { status: 200, body: { blocked: true, reason: 'lead suppressed' } };
+        }
+        const out = await scheduleWakeupTx(tx, {
+          leadId,
+          at,
+          focus,
+          requested: args.requested === true,
+          runId: UUID_LIKE.test(ctx.runId) ? ctx.runId : null,
+        });
+        if ('error' in out) return { status: 200, body: { error: out.error } };
+        return {
+          status: 200,
+          body: { scheduled: true, id: out.wakeup.id, at: out.wakeup.at, replaced: out.replaced },
+        };
+      });
+      if (!res.replayed && res.body.scheduled === true) emitControlEvent('lead.change', leadId);
+      return res.body;
+    }
     case 'create_task': {
       const res = await createTask(
         sql,
@@ -1197,6 +1303,10 @@ export async function executeTool(
           subject: (args.subject as string) ?? undefined,
           author: 'agent',
           status: 'draft',
+          // Stamped like the send paths — inbound retire scopes stale
+          // drafts by authoring run, and an unstamped draft_message was
+          // invisible to it (staff could approve a pre-inbound draft).
+          agentRunId: ctx.runId,
         });
         return {
           status: composed.status,
@@ -1228,12 +1338,20 @@ export async function executeTool(
         await tx`select pg_advisory_xact_lock(hashtext(${`send:${leadId}`}))`;
         // Run-scoped dedupe: a run reclaimed after a mid-send crash re-executes
         // the whole conversation — the model may emit a different callId, so
-        // `key` can't catch it. The run's own prior dispatch can.
+        // `key` can't catch it. The run's own prior dispatch can. Scoped to
+        // the latest delivered mail batch: a drained inbox batch re-arms the
+        // run for exactly one answer — without it a run that already sent
+        // could never reply to mail it just read, and replay still can't
+        // double-send (the consumed_at stamp predates the prior dispatch).
         const already = await tx`
           select 1 from lead_messages m
           join lead_threads t on t.id = m.thread_id
           where t.lead_id = ${leadId} and m.agent_run_id = ${ctx.runId}
             and m.status in ('queued', 'sending', 'sent', 'delivered')
+            and m.created_at > coalesce(
+              (select max(i.consumed_at) from agent_inbox i
+               where i.consumed_by_run = ${ctx.runId}),
+              '-infinity'::timestamptz)
           limit 1
         `;
         if (already[0]) {
@@ -1328,6 +1446,36 @@ export async function executeTool(
           status: verdict.forceDraft || ctx.draftOnly ? 'draft' : 'queued',
           agentRunId: ctx.runId,
         });
+        if (!verdict.forceDraft && !ctx.draftOnly) {
+          // A dispatch committed to the wire answers the inbound batches
+          // this run still holds — record which message answered them NOW,
+          // inside the claim tx (RLS-safe — agent_inbox needs
+          // vendua.control): writing it post-dispatch would run outside
+          // controlTx AND race a cancel that releases the mail before the
+          // provider call resolves. The marker lands before the send can
+          // land, so a released item can never hide an in-flight answer.
+          // Scope: every still-unanswered inbound the run holds — the model
+          // saw them all when composing; a fallback or deliberate
+          // cross-channel reply answers mail received on another thread,
+          // so thread scoping would re-serve exactly those sends. An
+          // existing marker wins while its answer is live or on the wire
+          // (the same predicate releaseInboxTx uses) — but a marker onto a
+          // provably-dead send (failed before the provider call) re-points
+          // here, so a retry's landed send can't strand answered mail.
+          await tx`
+            update agent_inbox
+            set payload = payload || jsonb_build_object('answeredBy', ${composed.body.message.id}::text)
+            where consumed_by_run = ${ctx.runId} and kind = 'inbound'
+              and not exists (
+                select 1 from lead_messages m
+                where m.id::text = payload->>'answeredBy'
+                  and (
+                    m.status in ('queued', 'sending', 'sent', 'delivered')
+                    or m.dispatch_attempted_at is not null
+                  )
+              )
+          `;
+        }
         return {
           status: 200,
           body: { blocked: false as const, verdict, composed, pick },
@@ -1383,36 +1531,82 @@ export async function executeTool(
     }
     case 'remember': {
       const fact = String(args.fact ?? '').slice(0, 500);
-      // Row lock on the settings row makes the read-modify-write atomic —
-      // concurrent remembers serialize instead of clobbering each other.
-      const written = await controlTx(sql, async (tx) => {
-        await assertRunClaimTx(tx, ctx);
-        await tx`
-          insert into control_settings (key, value)
-          values ('agent_memory', ${tx.json({ facts: [] } as never)})
-          on conflict (key) do nothing
-        `;
-        const rows = await tx<{ value: { facts?: unknown } }[]>`
-          select value from control_settings where key = 'agent_memory' for update
-        `;
-        const cur = Array.isArray(rows[0]?.value?.facts) ? (rows[0]!.value.facts as string[]) : [];
-        // The cap drops the OLDEST facts — surface them so the model can
-        // fold a dropped learning into a consolidated fact on a later call
-        // instead of losing it silently.
-        const next = [...cur.filter((f) => f !== fact), fact];
-        const evicted = next.slice(0, Math.max(0, next.length - AGENT_MEMORY_MAX_FACTS));
-        const facts = next.slice(-AGENT_MEMORY_MAX_FACTS);
-        await tx`
-          update control_settings set value = ${tx.json({ facts } as never)}
-          where key = 'agent_memory'
-        `;
-        return { total: facts.length, evicted };
-      });
-      return {
-        remembered: fact,
-        total: written.total,
-        ...(written.evicted.length ? { evicted: written.evicted } : {}),
-      };
+      if (!fact) return { error: 'fact is required' };
+      const scope = args.scope === 'segment' ? 'segment' : 'workspace';
+      const segment = typeof args.segment === 'string' ? args.segment.trim() : '';
+      if (scope === 'segment' && !segment) {
+        return { error: 'scope=segment needs the `segment` arg' };
+      }
+      try {
+        const { item, evicted } = await controlTx(sql, async (tx) => {
+          await assertRunClaimTx(tx, ctx);
+          if (!(await hasMemoryTablesTx(tx))) {
+            throw new HttpError(
+              503,
+              'MEMORY_NOT_MIGRATED',
+              'agent memory tables not deployed (migration 0035 pending)',
+            );
+          }
+          return rememberTx(tx, {
+            scope,
+            ...(scope === 'segment' ? { segment } : {}),
+            content: fact,
+            source: 'agent',
+            // stamped only when the caller is a real claimed run — sims and
+            // tests carry synthetic run ids that have no agent_runs row
+            sourceRunId: UUID_RE.test(ctx.runId) ? ctx.runId : null,
+          });
+        });
+        return {
+          remembered: item.content,
+          scope: item.scope,
+          ...(item.segment ? { segment: item.segment } : {}),
+          ...(evicted.length ? { evicted } : {}),
+        };
+      } catch (e) {
+        // Validation, cap-pinned and pre-migration rejections are
+        // model-relevant feedback (consolidate or move on), not run failures.
+        return { error: e instanceof Error ? e.message : String(e) };
+      }
+    }
+    case 'set_fact': {
+      const leadId = String(args.leadId ?? '');
+      const key = String(args.key ?? '');
+      const value = String(args.value ?? '').slice(0, 500);
+      if (!LEAD_FACT_KEY_RE.test(key)) {
+        return { error: 'key must be snake_case — ^[a-z][a-z0-9_]{0,59}$' };
+      }
+      if (!value) return { error: 'value is required' };
+      const confidence = args.confidence === undefined ? null : Number(args.confidence);
+      if (
+        confidence !== null &&
+        (!Number.isFinite(confidence) || confidence < 0 || confidence > 1)
+      ) {
+        return { error: 'confidence must be a number in [0, 1]' };
+      }
+      try {
+        const fact = await controlTx(sql, async (tx) => {
+          await assertRunClaimTx(tx, ctx);
+          if (!(await hasMemoryTablesTx(tx))) {
+            throw new HttpError(503, 'MEMORY_NOT_MIGRATED', 'lead facts need migration 0035');
+          }
+          const lead = await tx`select id from leads where id = ${leadId} limit 1`;
+          if (!lead.length) {
+            throw new HttpError(404, 'LEAD_NOT_FOUND', 'no such lead', { field: 'leadId' });
+          }
+          return upsertLeadFactTx(tx, leadId, {
+            key,
+            value,
+            ...(confidence !== null ? { confidence } : {}),
+            source: 'agent',
+            sourceRunId: UUID_RE.test(ctx.runId) ? ctx.runId : null,
+          });
+        });
+        emitControlEvent('lead.change', leadId);
+        return { fact };
+      } catch (e) {
+        return { error: e instanceof Error ? e.message : String(e) };
+      }
     }
     case 'propose_brief': {
       const bname = String(args.name ?? '')
@@ -1473,10 +1667,18 @@ export async function executeTool(
               body: { proposed: false, duplicate: true, existingName: dup.name },
             };
           }
+          // Budgeted auto-approval: with agent_autonomy.strategistAutoApproveUsd
+          // set, a proposal goes live only if trailing-7d discovery spend plus
+          // a reservation for work not yet booked (queued/running discovery
+          // and auto-approved briefs with no finished run) plus this brief
+          // fits the ceiling. Reservation = mean cost of recent discovery
+          // runs. The brief-proposals lock above serializes the check.
+          const b = await discoveryBudgetTx(tx);
+          const autoOn = b.capCents > 0 && b.spent + (b.open + 1) * b.est <= b.capCents;
           const row = (
             await tx<{ id: string; name: string }[]>`
               insert into discovery_briefs (name, query, segment, city, target, enabled, created_by, note)
-              values (${bname}, ${bquery}, ${bsegment}, ${bcity}, ${btarget}, false, 'strategist', ${reason || null})
+              values (${bname}, ${bquery}, ${bsegment}, ${bcity}, ${btarget}, ${autoOn}, 'strategist', ${reason || null})
               returning id, name
             `
           )[0]!;
@@ -1485,7 +1687,10 @@ export async function executeTool(
             body: {
               proposed: true,
               brief: row,
-              next: 'rascunho desativado no quadro — staff aprova ou descarta; você nunca ativa',
+              enabled: autoOn,
+              next: autoOn
+                ? 'ativado automaticamente dentro do orçamento semanal de descoberta'
+                : 'rascunho desativado no quadro — staff aprova ou descarta; você nunca ativa',
             },
           };
         },
@@ -1552,6 +1757,7 @@ export async function executeTool(
         messageId: string | null;
         threadId: string | null;
         sendBlocked: string | null;
+        drafted: boolean;
         changed: boolean;
       };
       const res = await claimControl<UnsubBody>(sql, key, async (tx) => {
@@ -1560,6 +1766,7 @@ export async function executeTool(
         let messageId: string | null = null;
         let threadId: string | null = null;
         let sendBlocked: string | null = null;
+        let drafted = false;
         if (reply) {
           const pick = await resolveChannelTx(tx, leadId, {
             requested: null,
@@ -1570,22 +1777,27 @@ export async function executeTool(
             sendBlocked = pick.reason ?? 'no channel';
           } else {
             const g = await getSettingTx(tx, 'guardrails', {} as Partial<Guardrails>);
-            const verdict = await checkSendAllowedTx(
-              tx,
-              { ...DEFAULT_GUARDRAILS, ...g },
-              leadId,
-              pick.channel,
-            );
+            // Draft-only runs compose like draft_message — everything inside
+            // checkSendAllowedTx exists to stop a message leaving the
+            // building, and the farewell draft never does.
+            const verdict = ctx.draftOnly
+              ? ({ ok: true, forceDraft: false } as const)
+              : await checkSendAllowedTx(tx, { ...DEFAULT_GUARDRAILS, ...g }, leadId, pick.channel);
             if (!verdict.ok) {
               sendBlocked = verdict.reason ?? 'guardrail';
               await recordBlockedSendTx(tx, leadId, pick.channel, sendBlocked);
             } else {
+              // Copilot mode (forceDraft) keeps the opt-out but the farewell
+              // becomes an approval draft instead of queueing — approving it
+              // still sends (is_farewell survives the dispatch suppression
+              // re-check), it just never leaves unreviewed.
+              drafted = verdict.forceDraft || ctx.draftOnly;
               const composed = await composeMessageTx(tx, {
                 leadId,
                 channel: pick.channel,
                 body: reply,
                 author: 'agent',
-                status: 'queued',
+                status: drafted ? 'draft' : 'queued',
                 agentRunId: ctx.runId,
                 farewell: true,
               });
@@ -1606,6 +1818,12 @@ export async function executeTool(
             update agent_runs set status = 'canceled', finished_at = now(), error = 'descadastrado'
             where lead_id = ${leadId} and status = 'queued'
           `;
+          // Pending mail dies with the opt-out too — delivered items are
+          // work the lead will never want served.
+          await tx`
+            update agent_inbox set consumed_at = now()
+            where lead_id = ${leadId} and consumed_at is null
+          `;
           await tx`
             insert into lead_activities (lead_id, kind, body, created_by)
             values (${leadId}, 'system', ${`Pediu para sair — opt-out registrado${reason ? ` (${reason})` : ''}`}, 'agent')
@@ -1613,19 +1831,32 @@ export async function executeTool(
         }
         return {
           status: 200,
-          body: { messageId, threadId, sendBlocked, changed: changed.length > 0 },
+          body: {
+            messageId,
+            threadId,
+            sendBlocked,
+            drafted,
+            changed: changed.length > 0,
+          },
         };
       });
       if (!res.replayed) {
-        if (res.body.threadId) emitControlEvent('thread.message', res.body.threadId);
+        if (res.body.threadId) {
+          emitControlEvent('thread.message', res.body.threadId);
+          if (res.body.drafted) emitControlEvent('draft.change', res.body.threadId);
+        }
         if (res.body.changed) emitControlEvent('lead.change', leadId);
       }
-      if (res.body.messageId) {
+      if (res.body.messageId && !res.body.drafted) {
         // Same compose→dispatch gap as send_message: the farewell must die
         // with the run that queued it.
         await dispatchMessage(sql, res.body.messageId, guard);
       }
-      return { unsubscribed: true, farewellSent: !!res.body.messageId };
+      return {
+        unsubscribed: true,
+        farewellSent: !!res.body.messageId && !res.body.drafted,
+        ...(res.body.drafted ? { farewellDrafted: true } : {}),
+      };
     }
     case 'web_search': {
       const { discoveryFor, annotateResults } = await import('./channels/discovery.ts');

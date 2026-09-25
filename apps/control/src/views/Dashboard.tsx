@@ -2,7 +2,14 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { api, type Stats } from '../api.ts';
 import { onControlEvent } from '../events.ts';
-import { Empty, LEAD_STATES, LEAD_STATE_LABEL, Page, fmtMoney } from '../components.tsx';
+import {
+  Empty,
+  LEAD_STATES,
+  LEAD_STATE_LABEL,
+  Page,
+  fmtMoney,
+  fmtUsdCents,
+} from '../components.tsx';
 // Funnel reads left→right as deepening commitment: one hue, rising density.
 const FILL: Record<string, string> = {
   lead: 'color-mix(in srgb, var(--forest-800) 26%, var(--surface-2))',
@@ -111,7 +118,7 @@ export default function Dashboard() {
                   <div className="k">tokens</div>
                 </div>
                 <div>
-                  <div className="v">{fmtMoney(s.agent30d.costCents)}</div>
+                  <div className="v">{fmtUsdCents(s.agent30d.costCents)}</div>
                   <div className="k">custo</div>
                 </div>
                 <div>

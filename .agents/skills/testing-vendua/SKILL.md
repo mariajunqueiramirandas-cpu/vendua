@@ -22,6 +22,22 @@ SESSION_SECRET=test-secret bun run dev      # API :8787 — REQUIRED for /contro
 dead end. `bun --watch` (the dev script) hot-restarts on file save — expect
 ~1s ECONNREFUSED windows when the tree changes mid-test.
 
+### Alt env: apt Postgres on :5432
+
+Some boxes have no docker stack but an apt PostgreSQL on `localhost:5432`
+(user `postgres`/`vendua`, `psql` available, `vendua` + `vendua_test` DBs —
+possibly empty). Boot auto-migrates when BOTH URLs point at it:
+
+```sh
+DATABASE_URL=postgres://postgres:vendua@localhost:5432/vendua \
+MIGRATION_DATABASE_URL=postgres://postgres:vendua@localhost:5432/vendua \
+CONTROL_SECRET=ctl-test SESSION_SECRET=s bun run dev   # :8787, migrates on boot
+```
+
+Staff API then works via `x-vendua-control: ctl-test` header (unauth → 404).
+Empty DB is fine for `/control/v1` platform routes (leads, agent memory) —
+no seed needed.
+
 ## Tenant resolution
 
 Tenants resolve from the **Host header** → `domains` table. Seeded dev hosts:

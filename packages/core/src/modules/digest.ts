@@ -137,7 +137,8 @@ export async function digestReportTx(tx: Sql, date: string): Promise<DigestRepor
   };
 }
 
-const fmtBrl = (cents: number) => `R$ ${(cents / 100).toFixed(2).replace('.', ',')}`;
+// agent_runs.cost_cents is metered in USD (model/tool pricing) — never BRL.
+const fmtUsdCents = (cents: number) => `US$ ${(cents / 100).toFixed(2)}`;
 
 export function digestText(r: DigestReport): { subject: string; body: string } {
   return {
@@ -149,7 +150,7 @@ export function digestText(r: DigestReport): { subject: string; body: string } {
       `• leads novos: ${r.newLeads}`,
       `• respostas recebidas: ${r.repliesIn}`,
       `• calls marcadas: ${r.meetingsBooked} (próximas 24h: ${r.meetingsNext24h})`,
-      `• runs do agente: ${r.agentRuns} — custo ${fmtBrl(r.costCents)}${r.failedBoardRuns ? ` — ${r.failedBoardRuns} run(s) do board falharam` : ''}`,
+      `• runs do agente: ${r.agentRuns} — custo ${fmtUsdCents(r.costCents)}${r.failedBoardRuns ? ` — ${r.failedBoardRuns} run(s) do board falharam` : ''}`,
       '',
       'Na fila agora:',
       `• rascunhos aguardando aprovação: ${r.pendingDrafts}`,

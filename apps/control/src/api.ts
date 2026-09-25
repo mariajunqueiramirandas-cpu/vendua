@@ -211,6 +211,25 @@ export interface AgentRun {
   steps?: unknown[];
   params?: Record<string, unknown>;
 }
+export interface AgentMetrics {
+  window: { from: string; to: string };
+  byKind: {
+    kind: string;
+    runs: number;
+    done: number;
+    failed: number;
+    canceled: number;
+    /** share of done runs whose journal holds a clean action tool result */
+    actedRate: number;
+    avgSteps: number;
+    costUsd: number;
+    avgCostUsd: number;
+  }[];
+  outbound: { sent: number; drafted: number; approved: number; rejected: number };
+  replies: { leadsContacted: number; leadsReplied: number; replyRate: number };
+  /** null until the agent_wakeups migration deploys */
+  wakeups: { pending: number; fired: number } | null;
+}
 export interface Stats {
   total: number;
   byState: Record<string, { count: number; valueCents: number }>;
@@ -320,8 +339,48 @@ export interface MeetingStatus {
   };
 }
 
+// ---------- lead agent panel ----------
+// ADR 0014 contracts — names mirror the ADR so the parallel `// agent v2`
+// section (another change, same types) merges without renames.
+export type AutonomyLevel = 'off' | 'copilot' | 'supervised' | 'autopilot';
+export interface AutonomyReason {
+  code: string;
+  message: string;
+}
+export interface AutonomyExplanation {
+  level: AutonomyLevel;
+  canRun: boolean;
+  sendMode: 'auto' | 'draft' | 'blocked';
+  /** ordered — the first reason is the decisive one */
+  reasons: AutonomyReason[];
+}
+export type PlaybookKind = 'triage' | 'reply' | 'outreach' | 'discovery' | 'strategist';
+export interface Wakeup {
+  id: string;
+  leadId: string | null;
+  leadName: string | null;
+  kind: PlaybookKind;
+  at: string;
+  focus: string;
+  status: 'pending' | 'fired' | 'canceled';
+  requested: boolean;
+  createdBy: 'agent' | 'staff';
+  createdByRunId: string | null;
+  firedRunId: string | null;
+  cancelReason: string | null;
+  createdAt: string;
+}
+export interface LeadFact {
+  key: string;
+  value: string;
+  confidence: number;
+  source: 'agent' | 'staff';
+  sourceRunId: string | null;
+  updatedAt: string;
+}
+
 // ---------- calls ----------
-export const api = {
+const apiBase = {
   login: (key: string) =>
     req<{ ok: true }>('/login', { method: 'POST', body: JSON.stringify({ key }) }),
   logout: () => req<{ ok: true }>('/logout', { method: 'POST' }),
@@ -467,6 +526,9 @@ export const api = {
   cancelRun: (id: string) =>
     req<{ ok: true; status?: string }>(`/agent/runs/${id}/cancel`, { method: 'POST' }),
 
+  // ---- agent metrics
+  agentMetrics: (days: 7 | 30 = 7) => req<AgentMetrics>(`/agent/metrics?days=${days}`),
+
   dispatch: (
     leadIds: string[],
     goal: 'negotiation' | 'meeting',
@@ -503,4 +565,116 @@ export const api = {
     req<{ url: string }>(`/meetings/link?lead_id=${encodeURIComponent(leadId)}`),
   patchMeeting: (id: string, patch: { status?: string; startsAt?: string; endsAt?: string }) =>
     req<{ meeting: Meeting }>(`/meetings/${id}`, { method: 'PATCH', body: JSON.stringify(patch) }),
+
+  // ---------- lead agent panel ----------
+  leadAutonomy: (id: string) => req<AutonomyExplanation>(`/leads/${id}/autonomy`),
+  leadFacts: (id: string) => req<{ facts: LeadFact[] }>(`/leads/${id}/facts`),
+  putLeadFact: (id: string, key: string, body: { value: string; confidence?: number }) =>
+    req<{ fact: LeadFact }>(`/leads/${id}/facts/${encodeURIComponent(key)}`, {
+      method: 'PUT',
+      body: JSON.stringify(body),
+    }),
+  deleteLeadFact: (id: string, key: string) =>
+    req<{ ok: true }>(`/leads/${id}/facts/${encodeURIComponent(key)}`, { method: 'DELETE' }),
+  wakeups: (q: { lead_id?: string; status?: string; limit?: string } = {}) => {
+    const params = new URLSearchParams(
+      Object.entries(q).filter(([, v]) => v) as [string, string][],
+    );
+    return req<{ wakeups: Wakeup[] }>(`/agent/wakeups${params.size ? `?${params}` : ''}`);
+  },
+  cancelWakeup: (id: string) =>
+    req<{ wakeup: Wakeup }>(`/agent/wakeups/${id}/cancel`, { method: 'POST' }),
 };
+
+// ============================ agent v2 (ADR 0014) ============================
+// CRM agent v2 contract — the Studio's surface: settings shapes
+// (agent_playbooks, agent_autonomy), playbook catalog, memory v2, metrics.
+// Shared domain types (AutonomyLevel, PlaybookKind, Wakeup, LeadFact,
+// AutonomyExplanation) and the lead-panel calls live in the
+// `// ---------- lead agent panel ----------` sections above — declared
+// once, re-used here.
+
+export const PLAYBOOK_KINDS = ['triage', 'reply', 'outreach', 'discovery', 'strategist'] as const;
+
+/** Staff override per kind, stored in the `agent_playbooks` setting and
+ *  merged over the playbook's built-in defaults at insert time. */
+export interface PlaybookOverride {
+  /** false → insertRun refuses new runs of this kind */
+  enabled?: boolean;
+  /** integer 1..60 */
+  stepBudget?: number;
+  /** provider model id; null/absent = workspace llm default */
+  model?: string | null;
+  /** ≤4000 chars, appended to the system prompt */
+  instructions?: string;
+  /** 0..5 — default paid-enrichment cap for the kind */
+  monidCapUsd?: number;
+}
+export type AgentPlaybooksSetting = Partial<Record<PlaybookKind, PlaybookOverride>>;
+
+/** One entry of GET /agent/playbooks — catalog metadata + live override. */
+export interface AgentPlaybookInfo {
+  kind: PlaybookKind;
+  label: string;
+  description: string;
+  /** automatic enqueue paths the playbook owns */
+  triggers: string[];
+  /** writes a doctrine debrief line to memory at run end (ADR 0014) */
+  debrief: boolean;
+  defaults: { stepBudget: number; monidCapUsd: number };
+  tools: string[];
+  override: PlaybookOverride;
+}
+
+export const AUTONOMY_LEVELS = ['off', 'copilot', 'supervised', 'autopilot'] as const;
+
+/** The `agent_autonomy` setting — the workspace preset policy.ts reads. */
+export interface AgentAutonomySetting {
+  level: AutonomyLevel;
+  /** strategist self-approves proposed discovery briefs while trailing-7d
+   *  discovery spend stays under this cap. 0 = never. */
+  strategistAutoApproveUsd?: number;
+}
+
+export type MemoryScope = 'workspace' | 'segment' | 'debrief';
+export interface MemoryItem {
+  id: string;
+  scope: MemoryScope;
+  segment: string | null;
+  /** ≤500 */
+  content: string;
+  pinned: boolean;
+  source: 'agent' | 'staff' | 'debrief';
+  sourceRunId: string | null;
+  uses: number;
+  createdAt: string;
+  updatedAt: string;
+}
+
+const agentV2 = {
+  playbooks: () => req<{ playbooks: AgentPlaybookInfo[] }>('/agent/playbooks'),
+
+  /** workspace preset — server always returns both fields (defaults
+   *  supervised/0 when unset); the Studio writes via putSetting. */
+  autonomy: () =>
+    req<{ level: AutonomyLevel; strategistAutoApproveUsd: number }>('/agent/autonomy'),
+
+  memory: (q: { scope?: MemoryScope; segment?: string } = {}) => {
+    const params = new URLSearchParams(
+      Object.entries(q).filter(([, v]) => v) as [string, string][],
+    );
+    return req<{ items: MemoryItem[] }>(`/agent/memory${params.size ? `?${params}` : ''}`);
+  },
+  createMemory: (b: { scope: MemoryScope; segment?: string; content: string }) =>
+    req<{ item: MemoryItem }>('/agent/memory', { method: 'POST', body: JSON.stringify(b) }),
+  patchMemory: (id: string, patch: { content?: string; pinned?: boolean }) =>
+    req<{ item: MemoryItem }>(`/agent/memory/${id}`, {
+      method: 'PATCH',
+      body: JSON.stringify(patch),
+    }),
+  deleteMemory: (id: string) => req<{ ok: true }>(`/agent/memory/${id}`, { method: 'DELETE' }),
+};
+
+// one client — the v2 section merges in so callers keep a single import
+export const api = Object.assign(apiBase, agentV2);
+// ========================== end agent v2 (ADR 0014) ==========================

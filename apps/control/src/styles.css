@@ -1179,6 +1179,11 @@ a.card-foot:hover {
 .steps .step.tool {
   border-inline-start-color: var(--lime-300);
 }
+.steps .step.inbox,
+.steps .step.nudge,
+.steps .step.reflection {
+  border-inline-start-color: var(--amber-400);
+}
 .steps .step .who {
   color: var(--muted);
   font-size: var(--t-2xs);
@@ -1681,6 +1686,245 @@ a.card-foot:hover {
 }
 .lst .none {
   padding: 14px 2px;
+  color: var(--muted);
+  font-size: var(--t-xs);
+}
+
+/* ---------- estúdio ---------- */
+/* page-scoped to /estudio — the agent's bench. Reuses the settings rail
+   grammar; the pieces below are the parts Config doesn't have. */
+
+/* a rail item that leaves the view instead of selecting an area */
+.idx.out {
+  margin-top: 10px;
+  border-top: 1px solid var(--line);
+  border-radius: 0;
+  padding-top: 12px;
+}
+.idx.out:hover {
+  color: var(--ink);
+}
+
+/* the autonomy throttle — four stops on one rail; the lit span from the
+   first stop to the selected one shows how much the workspace delegates */
+.thr {
+  position: relative;
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  margin: 8px 0 12px;
+}
+.thr::before {
+  content: '';
+  position: absolute;
+  top: 5px;
+  left: 12.5%;
+  right: 12.5%;
+  height: 2px;
+  border-radius: 1px;
+  background: var(--line-strong);
+}
+.thr::after {
+  content: '';
+  position: absolute;
+  top: 5px;
+  left: 12.5%;
+  width: calc(var(--pos) * 25%);
+  height: 2px;
+  border-radius: 1px;
+  background: var(--forest-800);
+  transition: width var(--motion);
+}
+.thr-stop {
+  position: relative;
+  z-index: 1;
+  border: 0;
+  background: transparent;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 3px;
+  padding: 0 4px;
+  cursor: pointer;
+}
+.thr-stop:focus-visible {
+  outline: 2px solid var(--forest-800);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+.thr-dot {
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: var(--surface);
+  border: 2px solid var(--line-strong);
+  transition:
+    border-color var(--motion),
+    background var(--motion);
+}
+.thr-stop:hover .thr-dot {
+  border-color: var(--forest-800);
+}
+.thr-stop.sel .thr-dot {
+  border-color: var(--forest-800);
+  background: var(--lime-300);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--lime-300) 45%, transparent);
+}
+.thr-l {
+  font-size: var(--t-sm);
+  font-weight: 600;
+  color: var(--muted);
+}
+.thr-stop.sel .thr-l {
+  color: var(--ink);
+}
+.thr-s {
+  font-size: var(--t-2xs);
+  color: var(--muted);
+  text-align: center;
+}
+/* the consequence read-out under the rail — keyed to the selected stop */
+.thr-read {
+  border-top: 1px solid var(--line);
+  border-bottom: 1px solid var(--line);
+  margin-bottom: 12px;
+}
+.thr-read > div {
+  display: flex;
+  gap: 12px;
+  padding: 7px 2px;
+  font-size: var(--t-sm);
+  line-height: 1.4;
+}
+.thr-read > div + div {
+  border-top: 1px dashed var(--line);
+}
+.thr-read .k {
+  font-family: var(--font-mono);
+  font-size: var(--t-2xs);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--muted);
+  min-width: 52px;
+  padding-top: 2px;
+}
+
+/* playbook cards — effective config as chips, overrides get the lime mark */
+.pb-desc {
+  margin: 0 0 8px;
+  font-size: var(--t-sm);
+  color: var(--ink-2);
+  line-height: 1.45;
+}
+.pb-eff {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+.pb-eff .chip.ovr {
+  background: var(--lime-300);
+  color: var(--forest-900);
+}
+details.pb-ed {
+  margin-top: 10px;
+  border-top: 1px solid var(--line);
+  padding-top: 8px;
+}
+details.pb-ed > summary {
+  cursor: pointer;
+  font-size: var(--t-2xs);
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  list-style: none;
+}
+details.pb-ed > summary::before {
+  content: '›';
+  display: inline-block;
+  margin-inline-end: 6px;
+  transition: transform var(--motion);
+}
+details.pb-ed[open] > summary::before {
+  transform: rotate(90deg);
+}
+details.pb-ed .pb-ed-body {
+  padding-top: 12px;
+}
+
+/* memory v2 — the add row plus pinned-first item rows */
+.mem-add {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.mem-add select {
+  flex: 0 0 auto;
+}
+.mem-add input {
+  flex: 1 1 200px;
+}
+.mrow {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 8px 2px;
+  border-bottom: 1px solid var(--line);
+}
+.mrow .mpin {
+  flex-shrink: 0;
+  border: 1px solid var(--line);
+  background: var(--surface);
+  color: var(--muted);
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--r-sm);
+}
+.mrow .mpin:hover {
+  color: var(--ink);
+  border-color: var(--line-strong);
+}
+.mrow .mpin.on {
+  background: var(--lime-300);
+  border-color: var(--lime-300);
+  color: var(--forest-900);
+}
+.mrow .mtx {
+  flex: 1;
+  min-width: 0;
+}
+.mrow .mtxt {
+  display: block;
+  width: 100%;
+  border: 0;
+  background: transparent;
+  padding: 0;
+  text-align: left;
+  font-size: var(--t-sm);
+  line-height: 1.4;
+  color: var(--ink);
+  cursor: text;
+}
+.mrow .mtxt:hover {
+  color: var(--ink);
+}
+.mrow .mmeta {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  align-items: center;
+  margin-top: 4px;
+  font-family: var(--font-mono);
+  font-size: var(--t-2xs);
+  color: var(--muted);
+}
+.mrow .med textarea {
+  width: 100%;
+}
+.ovl .none {
+  padding: 12px 2px;
   color: var(--muted);
   font-size: var(--t-xs);
 }
@@ -2497,6 +2741,26 @@ details.raw textarea {
 }
 
 /* ---------- lead detail ---------- */
+/* agent panel — quiet group labels and secondary lines inside the card */
+.agp-t {
+  font-size: var(--t-2xs);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--muted);
+  margin: 16px 0 6px;
+  padding-top: 14px;
+  border-top: 1px solid var(--line);
+}
+.agp-none {
+  color: var(--muted);
+  font-size: var(--t-xs);
+  margin: 2px 0 8px;
+}
+.agp-sub {
+  color: var(--muted);
+  font-size: var(--t-xs);
+  margin-top: 3px;
+}
 .lead-acts {
   display: flex;
   gap: 10px;
