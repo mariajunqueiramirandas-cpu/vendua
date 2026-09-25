@@ -47,5 +47,7 @@ the per-kind prompts — were never editable anyway.
 
 Migration `0043_agent_setting.sql` builds `agent` from the old keys (supervised
 with `firstContactDraftOnly: false` → autopilot; hard rules and any
-per-playbook instructions become `instructions`), then drops `agent_autonomy`,
+per-playbook instructions become `instructions`), archives the old values
+under `agent_legacy` (instructions cap at 8000 chars; nothing is lost), stamps
+queued brief runs with `auto: 'brief'`, then drops `agent_autonomy`,
 `agent_playbooks`, `pitch.hardRules` and `guardrails.firstContactDraftOnly`.

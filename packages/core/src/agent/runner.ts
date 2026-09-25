@@ -2526,6 +2526,8 @@ export async function sweepBriefs(sql: Sql): Promise<number> {
       const runId = await insertRun(tx, {
         kind: 'discovery',
         params: {
+          // automation marker — a queued brief run parks when discovery is switched off
+          auto: 'brief',
           query: b.query,
           ...(b.segment ? { segment: b.segment } : {}),
           ...(b.city ? { city: b.city } : {}),

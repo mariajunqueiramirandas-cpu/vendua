@@ -687,10 +687,15 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('agent v2 (db)', () => {
       expect(byId[strat.id]!.enabled).toBe(false);
       expect(byId[strat.id]!.note).toContain('orçamento');
       expect(byId[staff.id]!.enabled).toBe(true);
-      const staffRun = await sql<{ id: string }[]>`
-        select id from agent_runs where kind = 'discovery' and params->>'briefId' = ${staff.id}
+      const staffRun = await sql<{ id: string; params: Record<string, unknown> }[]>`
+        select id, params from agent_runs where kind = 'discovery' and params->>'briefId' = ${staff.id}
       `;
       expect(staffRun).toHaveLength(1);
+      // a brief run is automation: switching discovery off after it queued must park it
+      expect(staffRun[0]!.params.auto).toBe('brief');
+      await setSetting('agent', { level: 'supervised', jobs: { discovery: false } });
+      const pp = await controlTx(sql, (tx) => parkPolicyTx(tx));
+      expect(parked(pp, 'discovery', staffRun[0]!.params)).toBe(true);
     } finally {
       // undo the seeded spend + sweep-queued runs — pre-queued rows stay
       await sql`update agent_runs set status = 'canceled', cost_cents = 0 where id = ${prior!}`;

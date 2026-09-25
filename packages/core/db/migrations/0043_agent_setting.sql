@@ -55,6 +55,26 @@ begin
   ));
 end $$;
 
+-- lossless archive of everything folded above — `instructions` caps at 8000 chars, the old
+-- fields allowed more (50×500 rules + 5×4000 playbook instructions)
+insert into control_settings (key, value)
+select 'agent_legacy', jsonb_build_object(
+  'agent_autonomy', (select value from control_settings where key = 'agent_autonomy'),
+  'agent_playbooks', (select value from control_settings where key = 'agent_playbooks'),
+  'hardRules', (select value->'hardRules' from control_settings where key = 'pitch'),
+  'firstContactDraftOnly', (select value->'firstContactDraftOnly' from control_settings where key = 'guardrails'))
+where exists (select 1 from control_settings
+              where key in ('agent_autonomy', 'agent_playbooks')
+                 or (key = 'pitch' and value ? 'hardRules')
+                 or (key = 'guardrails' and value ? 'firstContactDraftOnly'))
+on conflict (key) do nothing;
+
 delete from control_settings where key in ('agent_autonomy', 'agent_playbooks');
+
+-- brief runs queued before the marker existed are automation — stamp them so switching
+-- discovery off parks them (staff-triggered discovery never carries a briefId)
+update agent_runs set params = params || '{"auto": "brief"}'::jsonb
+where kind = 'discovery' and status = 'queued'
+  and params ? 'briefId' and not params ? 'auto';
 update control_settings set value = value - 'hardRules' where key = 'pitch';
 update control_settings set value = value - 'firstContactDraftOnly' where key = 'guardrails';
