@@ -293,4 +293,25 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('agent memory v2 wiring (db)', (
     `;
     expect(legacy).toHaveLength(0);
   });
+
+  test('an emptied v2 table stays empty — legacy facts don’t resurrect', async () => {
+    await setup();
+    // Staff deleting every item leaves an intentionally empty memory — the
+    // legacy setting still carries the pre-0035 facts, but once the table
+    // exists it's the only source: an empty feed must not fall back.
+    await sql`delete from agent_memory_items`;
+    await controlTx(
+      sql,
+      (tx) => tx`
+      insert into control_settings (key, value)
+      values ('agent_memory', ${tx.json({ facts: [nm('legacy-fact')] } as never)})
+      on conflict (key) do update set value = excluded.value
+    `,
+    );
+    const leadId = await mkLead('empty-mem');
+    const run = await mkRun('reply', leadId);
+    const feed = await memoryForPrompt(sql, run);
+    expect(feed.some((c) => c.includes(nm('legacy-fact')))).toBe(false);
+    expect(feed).toEqual([]);
+  });
 });

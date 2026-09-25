@@ -86,7 +86,9 @@ export async function sweepOrphanInbox(sql: Sql, limit = 10): Promise<number> {
   // keeps its rows, so scanning parked (paused/off) or already-served
   // (active run) leads here would re-pick them every tick and starve
   // anything younger. Only exclusions that NEVER self-clear are filtered;
-  // unsubscribed/archived leads stay selectable so their mail still drops.
+  // unsubscribed/archived leads stay selectable so their mail still drops —
+  // even while paused/off: a terminal state must still reach the drop, or
+  // the mail outlives its lead.
   const leads = await controlTx(
     sql,
     (tx) => tx<{ lead_id: string }[]>`
@@ -94,7 +96,11 @@ export async function sweepOrphanInbox(sql: Sql, limit = 10): Promise<number> {
       from agent_inbox i
       join leads l on l.id = i.lead_id
       where i.consumed_at is null
-        and l.agent_paused_at is null and l.agent_mode <> 'off'
+        and (
+          (l.agent_paused_at is null and l.agent_mode <> 'off')
+          or l.unsubscribed_at is not null
+          or l.archived_at is not null
+        )
         and not exists (
           select 1 from agent_runs r
           where r.lead_id = i.lead_id and r.status in ('queued', 'running')
