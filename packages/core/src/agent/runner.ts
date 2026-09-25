@@ -1565,6 +1565,11 @@ interface Attempt {
    *  playbook doesn't demand one (a triage run that picked up reply mail
    *  still owes the lead an answer). -1 = no action-mail drained. */
   actionInboxIdx: number;
+  /** The action-mail nudge's own per-attempt budget — independent of
+   *  `nudged` so discovery's produce-or-perish nudge can't consume it
+   *  (a zero-lead discovery nudge must not silence drained reply mail).
+   *  Resets on every drained batch like `nudged`. */
+  actionNudged: boolean;
   limit: number;
   lastProgress: number;
   loopNudged: boolean;
@@ -1817,6 +1822,7 @@ async function drainInbox(att: Attempt): Promise<number> {
   // arrives after an earlier nudge deserves its own action demand, or a
   // text-only close consumes it with nothing on the wire.
   att.nudged = false;
+  att.actionNudged = false;
   for (const s of att.landedSigs) {
     if (s.startsWith('["send_message",')) att.landedSigs.delete(s);
   }
@@ -1968,6 +1974,7 @@ async function openAttempt(sql: Sql, run: RunRow): Promise<Attempt> {
     i: 0,
     res: undefined as never,
     nudged: false,
+    actionNudged: false,
     // Re-seeded from the journal: a prior attempt's action-mail batch still
     // owes its answer after a reclaim — the flag rides the inbox entry.
     actionInboxIdx: priorSteps.reduce<number>(
@@ -2258,12 +2265,17 @@ async function finishGate(att: Attempt): Promise<'end' | 'again'> {
     -1,
   );
   const actionBar = att.playbook.requiresAction ? lastInbox : att.actionInboxIdx;
+  // The action nudge spends `nudged` for requiresAction playbooks (it IS the
+  // playbook's own nudge) but the independent `actionNudged` elsewhere — a
+  // discovery run's zero-lead nudge must not silence drained action-mail.
+  const actionSpent = att.playbook.requiresAction ? att.nudged : att.actionNudged;
   if (
-    !att.nudged &&
+    !actionSpent &&
     (att.playbook.requiresAction || actionBar >= 0) &&
     !runActed(steps.slice(actionBar + 1))
   ) {
-    att.nudged = true;
+    if (att.playbook.requiresAction) att.nudged = true;
+    else att.actionNudged = true;
     att.limit = att.i + 5;
     const nudge = `Ação pendente — a run ainda não teve efeito visível (send_message/draft, request_human, set_state, unsubscribe, update_lead, create_task). Pesquisar e sair sem agir deixa o lead falando sozinho — aja agora; se um guardrail ou canal morto trava a ação, request_human é a saída.`;
     messages.push({ role: 'assistant', content: res.text ?? 'ok' });

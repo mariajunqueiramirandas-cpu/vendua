@@ -8,9 +8,20 @@ import { capLockTx, insertRun } from './runner.ts';
 
 const agentLog = log.child({ mod: 'agent' });
 
-/** How far the orphan scan reads per tick — deeper than the serve limit so
- *  leads whose mail is all gated can't starve the servable tail behind them. */
+/** How far the orphan scan reads per page — the page size bounds each
+ *  candidate query, not the tick. */
 const SWEEP_SCAN = 100;
+
+/** Per-tick cap on per-lead serve attempts — a blocked backlog gets
+ *  re-checked once per cursor rotation instead of every tick. */
+const SWEEP_INSPECT = 100;
+
+/** The sweep's round-robin resume point: the last (first_at, lead_id)
+ *  inspected. Persisted across drain() ticks so a deep blocked prefix
+ *  rotates instead of re-scanning from the head every tick; a keyset
+ *  (not offset) cursor can't skip leads that shift when terminal mail
+ *  drops mid-scan. */
+let sweepAfter: { firstAt: Date; leadId: string } | null = null;
 
 /**
  * agent/inbox — the per-lead mailbox. Anything that wants the agent's
@@ -102,24 +113,39 @@ export function renderInboxItems(items: InboxItem[]): string {
  *  suppressions (unsubscribe/archive) drop the mail like drain()'s parked
  *  cancels; pauses and mode 'off' park it — the next run drains the backlog
  *  once the lead can work again. */
-export async function sweepOrphanInbox(sql: Sql, limit = 10): Promise<number> {
+export async function sweepOrphanInbox(
+  sql: Sql,
+  limit = 10,
+  opts?: { scan?: number; inspect?: number },
+): Promise<number> {
   // The window must reach leads it can actually serve — a skipped lead
   // keeps its rows, so scanning parked (paused/off) or already-served
   // (active run) leads here would re-pick them every tick and starve
   // anything younger. Only exclusions that NEVER self-clear are filtered;
   // unsubscribed/archived leads stay selectable so their mail still drops —
   // even while paused/off: a terminal state must still reach the drop, or
-  // the mail outlives its lead. And the scan pages past unservable leads
-  // (mail behind a disabled playbook, a dead thread, or a cost cap keeps
-  // its pending rows) until the serve budget fills or candidates run out —
-  // a fixed window would re-scan the same blocked prefix every tick and
-  // starve younger servable mail behind it. Each page is bounded; the
-  // offset walk only stops early once `limit` leads got runs.
+  // the mail outlives its lead. The scan walks the ordered candidates in
+  // bounded pages off a stable (first_at, lead_id) cursor that persists
+  // across ticks: leads that can't serve (disabled playbook, dead thread,
+  // cost cap) keep their rows, so a blocked prefix gets re-checked once per
+  // rotation instead of monopolizing every tick — and a keyset (not offset)
+  // page can't skip leads that shift when terminal mail drops mid-scan.
+  // Per-tick work stays bounded: at most SWEEP_INSPECT per-lead checks and
+  // `limit` minted runs, then the next tick resumes at the cursor.
   let served = 0;
-  for (let offset = 0; served < limit; offset += SWEEP_SCAN) {
+  let inspected = 0;
+  const pageSize = opts?.scan ?? SWEEP_SCAN;
+  const maxInspect = opts?.inspect ?? SWEEP_INSPECT;
+  let after = sweepAfter;
+  // Starting fresh (null) is already the rotation's head: a short/empty
+  // page then ends the pass; resuming mid-list wraps once back to the head.
+  let wrapped = after === null;
+  while (served < limit && inspected < maxInspect) {
+    const afterAt = after?.firstAt ?? new Date('1970-01-01T00:00:00.000Z');
+    const afterId = after?.leadId ?? '00000000-0000-0000-0000-000000000000';
     const leads = await controlTx(
       sql,
-      (tx) => tx<{ lead_id: string }[]>`
+      (tx) => tx<{ lead_id: string; first_at: Date }[]>`
         select i.lead_id, min(i.created_at) as first_at
         from agent_inbox i
         join leads l on l.id = i.lead_id
@@ -133,12 +159,21 @@ export async function sweepOrphanInbox(sql: Sql, limit = 10): Promise<number> {
             select 1 from agent_runs r
             where r.lead_id = i.lead_id and r.status in ('queued', 'running')
           )
-        group by i.lead_id order by first_at limit ${SWEEP_SCAN} offset ${offset}
+        group by i.lead_id
+        having (min(i.created_at), i.lead_id) > (${afterAt}, ${afterId}::uuid)
+        order by first_at, i.lead_id limit ${pageSize}
       `,
     );
-    if (!leads.length) break;
-    for (const { lead_id } of leads) {
-      if (served >= limit) break;
+    if (!leads.length) {
+      if (wrapped) break;
+      after = null;
+      wrapped = true;
+      continue;
+    }
+    for (const { lead_id, first_at } of leads) {
+      if (served >= limit || inspected >= maxInspect) break;
+      after = { firstAt: first_at, leadId: lead_id };
+      inspected++;
       const runId = await controlTx(sql, async (tx) => {
         await capLockTx(tx, lead_id);
         // A run claimed/queued since the scan owns the mail — it drains at
@@ -282,7 +317,13 @@ export async function sweepOrphanInbox(sql: Sql, limit = 10): Promise<number> {
       }
       for (const r of runId?.retired ?? []) emitControlEvent('run.update', r);
     }
-    if (leads.length < SWEEP_SCAN) break;
+    if (served >= limit || inspected >= maxInspect) continue;
+    if (leads.length < pageSize) {
+      if (wrapped) break;
+      after = null;
+      wrapped = true;
+    }
   }
+  sweepAfter = after;
   return served;
 }

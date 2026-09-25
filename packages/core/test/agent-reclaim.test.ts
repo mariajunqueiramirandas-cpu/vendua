@@ -2836,6 +2836,76 @@ dbDescribe('worker robustness (db)', () => {
     }
   });
 
+  test('a zero-lead discovery nudge must not silence drained reply mail', async () => {
+    await migrate(sql, MIGRATIONS);
+    const priorGuardrails = (
+      await sql<{ value: unknown }[]>`select value from control_settings where key = 'guardrails'`
+    )[0];
+    await sql`insert into control_settings (key, value) values ('guardrails', ${sql.json({
+      firstContactDraftOnly: false,
+      quietStart: '00:00',
+      quietEnd: '00:00',
+    } as never)})
+      on conflict (key) do update set value = excluded.value`;
+    try {
+      const lead = await controlTx(sql, (tx) =>
+        insertLeadTx(tx, { name: 'Discovery Mail', whatsapp: '5511910000097' }),
+      );
+      const leadId = lead.body.lead.id;
+      const [thread] = await sql<{ id: string }[]>`
+        insert into lead_threads (lead_id, channel) values (${leadId}, 'whatsapp') returning id
+      `;
+      await sql`delete from agent_runs where status = 'queued'`;
+      // Discovery's produce-or-perish nudge and the action-mail nudge spend
+      // different budgets: mail drained before the zero-lead nudge must
+      // still demand its own action on the next text-only close.
+      const runId = (await enqueueRun(sql, {
+        kind: 'discovery',
+        leadId,
+        threadId: thread!.id,
+        params: {
+          script: [
+            { text: 'buscando prospectos', delayMs: 1500 },
+            { text: 'nada ainda' },
+            { text: 'encerrando sem leads' },
+            { toolCalls: [{ name: 'send_message', args: { leadId, body: 'achei você' } }] },
+            { text: 'fim' },
+          ],
+        },
+      }))!;
+      const running = runOnce(sql);
+      await new Promise((r) => setTimeout(r, 200));
+      await controlTx(sql, (tx) =>
+        enqueueInboxTx(tx, leadId, 'inbound', {
+          text: 'oi, tô aqui',
+          threadId: thread!.id,
+          messageId: crypto.randomUUID(),
+          requestedKind: 'reply',
+          params: { origin: 'inbound' },
+        }),
+      );
+      expect(await running).toBe(true);
+      const r = await getRun(runId);
+      expect(r.status).toBe('done');
+      // Zero-lead nudge at turn 1, then the drained batch re-arms both
+      // budgets: a second zero-lead nudge at turn 2, the action-mail nudge
+      // at turn 3 (what the shared `nudged` flag used to suppress).
+      expect(r.steps.filter((s) => (s as { type?: string }).type === 'nudge')).toHaveLength(3);
+      const outs = await sql<{ body: string }[]>`
+        select m.body from lead_messages m
+        join lead_threads t on t.id = m.thread_id
+        where t.lead_id = ${leadId} and m.direction = 'out' order by m.created_at
+      `;
+      expect(outs.map((o) => o.body)).toEqual(['achei você']);
+    } finally {
+      if (priorGuardrails) {
+        await sql`update control_settings set value = ${sql.json(priorGuardrails.value as never)} where key = 'guardrails'`;
+      } else {
+        await sql`delete from control_settings where key = 'guardrails'`;
+      }
+    }
+  });
+
   test('the orphan sweep walks past unservable leads to reach servable mail', async () => {
     await migrate(sql, MIGRATIONS);
     const priorPlaybooks = (
@@ -2857,11 +2927,12 @@ dbDescribe('worker robustness (db)', () => {
         (tx) => tx`update agent_inbox set consumed_at = now()
           where consumed_at is null and payload->>'requestedKind' <> 'reply'`,
       );
-      // Eleven leads ahead of the servable one, each holding only mail the
-      // disabled 'reply' playbook can't spawn — past the old 10-lead window
-      // they'd starve every tick. Backdated so ambient shared-DB mail can't
+      // Five leads ahead of the servable one at page size 3 — the servable
+      // lead lands on page three, so the pass must cross two page
+      // transitions to reach it (a fixed window or a fresh-offset bug
+      // would starve it here). Backdated so ambient shared-DB mail can't
       // reorder the fixture.
-      for (let i = 0; i < 11; i++) {
+      for (let i = 0; i < 5; i++) {
         const lead = await controlTx(sql, (tx) => insertLeadTx(tx, { name: `Blocked ${i}` }));
         fixtureLeadIds.push(lead.body.lead.id);
         await controlTx(sql, (tx) =>
@@ -2889,7 +2960,7 @@ dbDescribe('worker robustness (db)', () => {
         (tx) => tx`update agent_inbox set created_at = now() - interval '1 day'
         where lead_id = ${servable.body.lead.id}`,
       );
-      expect(await sweepOrphanInbox(sql, 1)).toBe(1);
+      expect(await sweepOrphanInbox(sql, 1, { scan: 3, inspect: 1000 })).toBe(1);
       const spawned = await sql<{ kind: string }[]>`
         select kind from agent_runs where lead_id = ${servable.body.lead.id}
       `;
