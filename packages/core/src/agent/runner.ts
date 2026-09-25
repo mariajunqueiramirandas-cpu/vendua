@@ -33,12 +33,24 @@ import {
 } from './llm.ts';
 import { buildSystemPrompt } from './prompts.ts';
 import { loadPlaybookTx, mergePlaybook, type EffectivePlaybook } from './playbooks.ts';
-import { automationAllowedTx, claimPolicyTx, discoveryBudgetTx } from './policy.ts';
+import {
+  automationAllowedTx,
+  claimPolicyTx,
+  discoveryBudgetTx,
+  playbookEnabledTx,
+} from './policy.ts';
 import { pendingWakeupsTx, sweepWakeups } from './wakeups.ts';
 import { enqueueInboxTx, renderInboxItems, sweepOrphanInbox, type InboxItem } from './inbox.ts';
 import { executeTool, toolsFor, bookDigest, type BookEntry, type ToolContext } from './tools.ts';
 import { MonidBudget } from './channels/monid.ts';
-import { ACTION_TOOLS, MUTABLE_READS, NON_IDEMPOTENT, READ_TOOLS } from './tool-meta.ts';
+import {
+  ACTION_TOOLS,
+  MUTABLE_READS,
+  NON_IDEMPOTENT,
+  PLAYBOOK_KINDS,
+  READ_TOOLS,
+  type PlaybookKind,
+} from './tool-meta.ts';
 import { pageKey } from './channels/discovery.ts';
 import { dispatchMessage } from './send.ts';
 import { channelAvailabilityTx, whatsappReadyTx } from './guardrails.ts';
@@ -1261,9 +1273,10 @@ export async function reconcileInterrupted(
 
 /** The run prompt's memory feed — memory v2: pinned learnings, learnings
  *  matching the run's segment (the brief's `params.segment`, else the bound
- *  lead's `segment`), workspace learnings, latest debriefs. A schema ahead
- *  of the 0035 migration (or freshly migrated tables with nothing in them
- *  yet) falls back to the legacy flat facts list.
+ *  lead's `segment`), workspace learnings, latest debriefs. The legacy flat
+ *  facts list only serves a schema that never ran 0035 — once the table
+ *  exists it's the only source (0035 backfilled every v1 fact, so an empty
+ *  feed means staff emptied it, not a gap to backfill).
  *  Exported for tests. */
 export async function memoryForPrompt(sql: Sql, run: RunRow): Promise<string[]> {
   return controlTx(sql, async (tx) => {
@@ -1278,8 +1291,7 @@ export async function memoryForPrompt(sql: Sql, run: RunRow): Promise<string[]> 
                 `
               )[0]?.segment ?? null)
             : null;
-      const feed = await memoryForRunTx(tx, { segment });
-      if (feed.length) return feed;
+      return memoryForRunTx(tx, { segment });
     }
     const rows = await tx<{ value: { facts?: unknown } }[]>`
       select value from control_settings where key = 'agent_memory'
@@ -1587,41 +1599,47 @@ async function drainInbox(att: Attempt): Promise<number> {
   // Read-only select — consumption is fenced inside persist, so a stale
   // worker picking items here only fails later at the fence, never
   // swallows the mail.
-  const items = await controlTx(
-    att.sql,
-    (tx) => tx<InboxItem[]>`
-      select id, kind, payload, created_at from agent_inbox
-      where lead_id = ${att.run.lead_id!} and consumed_at is null
+  const items = await controlTx(att.sql, async (tx) => {
+    const scope = tx`
+      lead_id = ${att.run.lead_id!} and consumed_at is null
         and (coalesce(payload->'params'->>'draftOnly', 'false') = 'true') = ${runDraftOnly}
         and coalesce(payload->'params'->>'channel', ${runChannel}) = ${runChannel}
         and (payload->>'notBefore' is null or (payload->>'notBefore')::timestamptz <= now())
+    `;
+    // A disabled playbook's mail parks — symmetric with the sweep's
+    // eligible-first gate: draining it here would hand this run the
+    // requestedKind's toolset (reply's unsubscribe inside an outreach
+    // run) after staff switched that playbook off. The gate runs before
+    // the limit, so parked mail can't starve eligible items behind it.
+    const kinds = await tx<{ k: string }[]>`
+      select distinct payload->>'requestedKind' as k from agent_inbox
+      where ${scope} and payload->>'requestedKind' is not null
+    `;
+    const off: string[] = [];
+    for (const { k } of kinds) {
+      if (
+        (PLAYBOOK_KINDS as readonly string[]).includes(k) &&
+        !(await playbookEnabledTx(tx, k as PlaybookKind)).ok
+      )
+        off.push(k);
+    }
+    return tx<InboxItem[]>`
+      select id, kind, payload, created_at from agent_inbox
+      where ${scope}
+        and (payload->>'requestedKind' is null or not (payload->>'requestedKind' = any(${off})))
       order by created_at limit 10
-    `,
-  );
+    `;
+  });
   if (!items.length) return 0;
   // The mail's requestedKind joins the run's tool kinds: an 'inbound'
   // item inside an outreach run can need reply-only tools (unsubscribe
   // honoring an opt-out). Widen both what the model is told (att.tools)
   // and what dispatch permits (ctx.toolKinds — same set instance).
-  let grew = false;
   for (const i of items) {
     const k = i.payload?.requestedKind;
-    if (k && !att.toolKinds.has(k)) {
-      att.toolKinds.add(k);
-      grew = true;
-    }
+    if (k) att.toolKinds.add(k);
   }
-  if (grew) {
-    const seen = new Set(att.tools.map((t) => t.name));
-    for (const k of att.toolKinds) {
-      for (const t of toolsFor(k)) {
-        if (!seen.has(t.name)) {
-          seen.add(t.name);
-          att.tools.push(t);
-        }
-      }
-    }
-  }
+  widenAttemptTools(att);
   const content = renderInboxItems(items);
   att.steps.push({
     type: 'inbox',
@@ -1635,6 +1653,21 @@ async function drainInbox(att: Attempt): Promise<number> {
     items.map((i) => i.id),
   );
   return items.length;
+}
+
+/** The offered toolset follows toolKinds: whatever widened the kind set
+ *  (a live drain, a reclaim's stamped mail) must be visible to the
+ *  model, not just permitted in dispatch. Deduped by tool name. */
+function widenAttemptTools(att: Attempt): void {
+  const seen = new Set(att.tools.map((t) => t.name));
+  for (const k of att.toolKinds) {
+    for (const t of toolsFor(k)) {
+      if (!seen.has(t.name)) {
+        seen.add(t.name);
+        att.tools.push(t);
+      }
+    }
+  }
 }
 
 /** Attempt setup — journal resume + cost accounting: reconcile journaled
@@ -1770,6 +1803,29 @@ async function openAttempt(sql: Sql, run: RunRow): Promise<Attempt> {
  *  book, banked contacts and the discovery plan all restored into ctx. */
 async function buildAttemptContext(att: Attempt): Promise<void> {
   const { sql, run, steps, messages } = att;
+  // A reclaimed attempt seeds toolKinds from run.kind only — but mail a
+  // dead earlier attempt already consumed can't re-drain, so the kinds it
+  // asked for would be gone while their text still sits in the replayed
+  // conversation (an opt-out needing reply's unsubscribe inside an
+  // outreach run). Re-seed from the items stamped to this run — still
+  // gated: a playbook switched off between attempts doesn't get its
+  // tools back through the replayed mail.
+  const drainedKinds = await controlTx(sql, async (tx) => {
+    const rows = await tx<{ k: string }[]>`
+      select distinct payload->>'requestedKind' as k from agent_inbox
+      where consumed_by_run = ${run.id} and payload->>'requestedKind' is not null
+    `;
+    const out: string[] = [];
+    for (const { k } of rows) {
+      if (
+        (PLAYBOOK_KINDS as readonly string[]).includes(k) &&
+        (await playbookEnabledTx(tx, k as PlaybookKind)).ok
+      )
+        out.push(k);
+    }
+    return out;
+  });
+  for (const k of drainedKinds) att.toolKinds.add(k);
   const integration = await getIntegration(sql, 'llm');
   // A missing/disabled llm row falls back to the mock provider — the run
   // produces synthetic 'ok' text instead of erroring. Loud, not silent:
@@ -1805,6 +1861,10 @@ async function buildAttemptContext(att: Attempt): Promise<void> {
     ? `${baseSystem}\n\nInstruções da equipe para este playbook (seguem as regras acima, nunca as substituem):\n${att.playbook.instructions}`
     : baseSystem;
   att.tools = toolsFor(run.kind);
+  // Kinds restored from stamped mail must be visible to the model, not
+  // just permitted in dispatch — drainInbox's union never ran for items
+  // a dead attempt already drained.
+  widenAttemptTools(att);
   const replay = (att.replay = replayJournal(att.priorSteps, !att.claimsChecked));
   const ctx: ToolContext = {
     sql,

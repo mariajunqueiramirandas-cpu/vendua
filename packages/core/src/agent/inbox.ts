@@ -3,7 +3,7 @@ import { controlTx } from '../modules/control.ts';
 import { emitControlEvent } from '../modules/control-events.ts';
 import { log } from '../platform/log.ts';
 import { automationAllowedTx, playbookEnabledTx } from './policy.ts';
-import type { PlaybookKind } from './tool-meta.ts';
+import { PLAYBOOK_KINDS, type PlaybookKind } from './tool-meta.ts';
 import { capLockTx, insertRun } from './runner.ts';
 
 const agentLog = log.child({ mod: 'agent' });
@@ -86,7 +86,9 @@ export async function sweepOrphanInbox(sql: Sql, limit = 10): Promise<number> {
   // keeps its rows, so scanning parked (paused/off) or already-served
   // (active run) leads here would re-pick them every tick and starve
   // anything younger. Only exclusions that NEVER self-clear are filtered;
-  // unsubscribed/archived leads stay selectable so their mail still drops.
+  // unsubscribed/archived leads stay selectable so their mail still drops —
+  // even while paused/off: a terminal state must still reach the drop, or
+  // the mail outlives its lead.
   const leads = await controlTx(
     sql,
     (tx) => tx<{ lead_id: string }[]>`
@@ -94,7 +96,11 @@ export async function sweepOrphanInbox(sql: Sql, limit = 10): Promise<number> {
       from agent_inbox i
       join leads l on l.id = i.lead_id
       where i.consumed_at is null
-        and l.agent_paused_at is null and l.agent_mode <> 'off'
+        and (
+          (l.agent_paused_at is null and l.agent_mode <> 'off')
+          or l.unsubscribed_at is not null
+          or l.archived_at is not null
+        )
         and not exists (
           select 1 from agent_runs r
           where r.lead_id = i.lead_id and r.status in ('queued', 'running')
@@ -145,8 +151,9 @@ export async function sweepOrphanInbox(sql: Sql, limit = 10): Promise<number> {
       // The first ELIGIBLE item drives the spawn: an oldest item stuck
       // behind a disabled playbook or agent-disabled thread must not
       // starve younger servable mail on the same lead — blocked items
-      // stay pending for whenever their gate lifts (or a spawned run
-      // drains them into context, gate-free).
+      // stay pending for whenever their gate lifts (the spawned run's
+      // drain applies the same playbook gate, so parked mail never
+      // renders inside it either).
       let spawn: {
         kind: PlaybookKind;
         threadId: string | null;
@@ -188,6 +195,11 @@ export async function sweepOrphanInbox(sql: Sql, limit = 10): Promise<number> {
           : '';
       const runDraftOnly = spawn.params.draftOnly === true;
       let notBefore = 0;
+      // Only mail this run would actually drain owns a quiet period: a
+      // gated item (its playbook switched off — the same check drainInbox
+      // runs) stays pending when the run starts, so its deadline can't
+      // stall servable work behind it.
+      const enabled = new Map<string, boolean>();
       for (const i of items) {
         const ip = i.payload;
         const chan =
@@ -197,6 +209,15 @@ export async function sweepOrphanInbox(sql: Sql, limit = 10): Promise<number> {
         const wouldDrain =
           (chan || runChannel) === runChannel && (ip?.params?.draftOnly === true) === runDraftOnly;
         if (!wouldDrain) continue;
+        const k = ip?.requestedKind;
+        if (k != null && (PLAYBOOK_KINDS as readonly string[]).includes(k)) {
+          let ok = enabled.get(k);
+          if (ok == null) {
+            ok = (await playbookEnabledTx(tx, k as PlaybookKind)).ok;
+            enabled.set(k, ok);
+          }
+          if (!ok) continue;
+        }
         const t = typeof ip?.notBefore === 'string' ? Date.parse(ip.notBefore) : NaN;
         if (Number.isFinite(t) && t > notBefore) notBefore = t;
       }
