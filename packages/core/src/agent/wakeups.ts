@@ -3,7 +3,7 @@ import { HttpError } from '../platform/http.ts';
 import { log } from '../platform/log.ts';
 import { claimControl, controlTx } from '../modules/control.ts';
 import { emitControlEvent } from '../modules/control-events.ts';
-import { insertRun } from './runner.ts';
+import { insertRun, releaseInboxTx } from './runner.ts';
 import { enqueueInboxTx } from './inbox.ts';
 import { autonomyTx, playbookEnabledTx } from './policy.ts';
 import type { PlaybookKind } from './tool-meta.ts';
@@ -217,10 +217,23 @@ export async function cancelWakeup(sql: Sql, id: string, idemKey: string) {
       where consumed_at is null and payload->'params'->>'wakeupId' = ${id}
     `;
     if (row.fired_run_id) {
-      await tx`
+      const killed = await tx<{ id: string }[]>`
         update agent_runs set status = 'canceled', finished_at = now()
         where id = ${row.fired_run_id} and status = 'queued' and params->>'wakeupId' = ${id}
+        returning id
       `;
+      if (killed.length) {
+        // A requeued run can still carry mail an earlier (dead) attempt
+        // consumed — killing the row would strand it on a terminal run.
+        // This wakeup's own items tombstone instead of re-serving (the
+        // cancel kills that intent); everything else goes back to the
+        // sweep through the same release the staff run-cancel uses.
+        await tx`
+          update agent_inbox set consumed_by_run = null
+          where consumed_by_run = ${row.fired_run_id} and payload->'params'->>'wakeupId' = ${id}
+        `;
+        await releaseInboxTx(tx, row.fired_run_id);
+      }
     }
     return { status: 200, body: { wakeup: toWakeup(row) } };
   });

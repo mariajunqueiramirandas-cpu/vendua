@@ -3,11 +3,13 @@ import { join } from 'node:path';
 import postgres from 'postgres';
 import {
   claimRun,
+  contextFor,
   drain,
   enqueueRun,
   insertRun,
   replayJournal,
   runOnce,
+  type RunRow,
 } from '../src/agent/runner.ts';
 import { enqueueInboxTx } from '../src/agent/inbox.ts';
 import { cancelWakeup } from '../src/agent/wakeups.ts';
@@ -2816,10 +2818,19 @@ dbDescribe('worker robustness (db)', () => {
     // or its own later one.
     const running = runOnce(sql);
     await new Promise((r) => setTimeout(r, 150));
+    await sql`
+      insert into lead_messages (thread_id, direction, author, body, status)
+      values (${thread!.id}, 'in', 'lead', 'oi', 'received'),
+             (${thread!.id}, 'in', 'lead', 'sim, quero', 'received')
+    `;
+    const [deferredMsg] = await sql<{ id: string }[]>`
+      select id from lead_messages where thread_id = ${thread!.id} and body = 'sim, quero'
+    `;
     await controlTx(sql, (tx) =>
       enqueueInboxTx(tx, leadId, 'inbound', {
         text: 'sim, quero',
         threadId: thread!.id,
+        messageId: deferredMsg!.id,
         requestedKind: 'reply',
         params: { origin: 'inbound', channel: 'whatsapp' },
         notBefore: new Date(Date.now() + 3600e3).toISOString(),
@@ -2830,6 +2841,12 @@ dbDescribe('worker robustness (db)', () => {
       (await sql`select 1 from agent_inbox where lead_id = ${leadId} and consumed_at is null`)
         .length,
     ).toBe(1);
+    // The deferred text stays out of thread context too — a model can't
+    // read the quiet-period mail straight off the thread.
+    const [runRow] = await sql<RunRow[]>`select * from agent_runs where id = ${runId}`;
+    const { text } = await contextFor(sql, runRow!);
+    expect(text).toContain('"body":"oi"');
+    expect(text).not.toContain('sim, quero');
     // Past the deadline it drains normally — the sweep's spawned run takes it.
     await sql`
       update agent_inbox set payload = payload || ${sql.json({ notBefore: '2020-01-01T00:00:00Z' } as never)}
@@ -2872,13 +2889,41 @@ dbDescribe('worker robustness (db)', () => {
         params: { auto: 'wakeup', wakeupId: w!.id },
       }),
     );
-    const res = await cancelWakeup(sql, w!.id, 'cancel-fired-1');
+    // The requeued state: an earlier attempt of this run already consumed
+    // mail — this wakeup's tombstones, but other lead mail must release
+    // back to the sweep instead of stranding on a now-canceled row.
+    const [otherItem] = await sql<{ id: string }[]>`
+      insert into agent_inbox (lead_id, kind, payload, consumed_by_run, consumed_at)
+      values (${leadId}, 'inbound',
+        ${sql.json({ text: 'oi', requestedKind: 'reply', params: { origin: 'inbound', channel: 'whatsapp' } } as never)},
+        ${runId}, now())
+      returning id
+    `;
+    await sql`
+      insert into agent_inbox (lead_id, kind, payload, consumed_by_run, consumed_at)
+      values (${leadId}, 'wakeup',
+        ${sql.json({ text: 'retorno', requestedKind: 'outreach', params: { auto: 'wakeup', wakeupId: w!.id } } as never)},
+        ${runId}, now())
+    `;
+    const res = await cancelWakeup(sql, w!.id, `cancel-fired-${crypto.randomUUID()}`);
     expect(res.status).toBe(200);
     // The undrained mail drops like terminal suppression…
-    expect(
-      (await sql`select 1 from agent_inbox where lead_id = ${leadId} and consumed_at is null`)
-        .length,
-    ).toBe(0);
+    const items = await sql<
+      { id: string; consumed_at: Date | null; consumed_by_run: string | null }[]
+    >`
+      select id, consumed_at, consumed_by_run from agent_inbox where lead_id = ${leadId}
+    `;
+    for (const i of items) {
+      if (i.id === otherItem!.id) {
+        // released back to the sweep — pending again
+        expect(i.consumed_at).toBeNull();
+        expect(i.consumed_by_run).toBeNull();
+      } else {
+        // this wakeup's own mail — pending or previously consumed — drops
+        expect(i.consumed_at).not.toBeNull();
+        expect(i.consumed_by_run).toBeNull();
+      }
+    }
     // …and the dedicated parked run dies with it.
     const [run] = await sql<{ status: string }[]>`
       select status from agent_runs where id = ${runId}

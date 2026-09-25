@@ -728,6 +728,11 @@ export async function contextFor(
     }
   }
   if (run.thread_id) {
+    // Messages whose inbox item is still inside its quiet period stay out
+    // of context too — drainInbox holds the item, but the model could
+    // otherwise read the same text straight off the thread and reply
+    // before notBefore. Once the deadline passes the item drains and the
+    // message shows normally.
     const rows = await controlTx(
       sql,
       (tx) => tx`
@@ -737,6 +742,11 @@ export async function contextFor(
             select coalesce(jsonb_agg(m order by m.created_at), '[]'::jsonb)
             from (select direction, body, status, author, created_at
                   from lead_messages where thread_id = ${run.thread_id}
+                    and id::text not in (
+                      select i.payload->>'messageId' from agent_inbox i
+                      where i.consumed_at is null and i.payload->>'messageId' is not null
+                        and (i.payload->>'notBefore')::timestamptz > now()
+                    )
                   order by created_at desc limit 12) m
           )
         ) as j
