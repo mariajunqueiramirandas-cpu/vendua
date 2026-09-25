@@ -37,17 +37,17 @@
       document.body.style.overflow = '';
     };
 
-    Promise.all(animations.map((a) => a.finished)).then(
-      () => {
-        try {
-          sessionStorage.setItem('vnd-intro', '1');
-        } catch {}
-        document.documentElement.classList.add('seen');
-        release();
-        done = true;
-      },
-      () => {},
-    );
+    // Cancelled animations (e.g. reduced motion switched on mid-intro) reject; unlock either way.
+    const finish = () => {
+      if (released) return;
+      try {
+        sessionStorage.setItem('vnd-intro', '1');
+      } catch {}
+      document.documentElement.classList.add('seen');
+      release();
+      done = true;
+    };
+    Promise.all(animations.map((a) => a.finished)).then(finish, finish);
 
     return release;
   });
