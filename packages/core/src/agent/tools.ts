@@ -1481,7 +1481,21 @@ export async function executeTool(
         // A composed-but-failed send must not count as a landed action —
         // surfacing the failure as {error} keeps runActed's finish gate
         // honest and tells the model the send didn't land.
-        if (!sent.ok) sendError = sent.reason ?? 'send failed';
+        if (!sent.ok) {
+          sendError = sent.reason ?? 'send failed';
+        } else {
+          // A landed dispatch answers every inbound batch this run holds —
+          // record which message answered it so a later failure/cancel
+          // release re-serves only mail that never got its reply (the send
+          // dedup is run-scoped; a respawned run can't see this dispatch).
+          // Staff/event mail stays releasable — the send doesn't
+          // discharge it.
+          await sql`
+            update agent_inbox
+            set payload = payload || jsonb_build_object('answeredBy', ${out.composed.body.message.id}::text)
+            where consumed_by_run = ${ctx.runId} and kind = 'inbound'
+          `;
+        }
       }
       return {
         ...out.composed.body,

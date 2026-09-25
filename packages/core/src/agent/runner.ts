@@ -677,21 +677,13 @@ export async function releaseInboxTx(tx: Sql, runId: string, event?: boolean): P
             end
     where i.consumed_by_run = ${runId}
       and (${event === true} or coalesce((i.payload->>'deliveries')::int, 0) < 2)
-      -- an inbound the run already answered is never outstanding work:
-      -- re-serving it under a new run id re-sends, and the send dedup is
-      -- run-scoped so it can't see the earlier dispatch. An 'out' on the
-      -- same thread after the inbound's stamp counts any author — a
-      -- staff reply answers it too.
-      and not exists (
-        select 1
-        from lead_messages im
-        join lead_messages om
-          on om.thread_id = im.thread_id
-         and om.direction = 'out'
-         and om.created_at > im.created_at
-         and om.status in ('queued', 'sending', 'sent', 'delivered')
-        where im.id::text = i.payload->>'messageId'
-      )
+      -- an inbound a landed dispatch already answered is never
+      -- outstanding work: send_message stamps answeredBy on the run's
+      -- consumed inbound at dispatch, and run-scoped dedup can't see
+      -- that send under a respawned run's id — releasing it re-sends.
+      -- Only the durable marker counts: a later 'out' on the thread
+      -- (staff note, unrelated follow-up) doesn't answer it.
+      and not (i.payload ? 'answeredBy')
   `;
 }
 

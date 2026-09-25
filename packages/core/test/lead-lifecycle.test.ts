@@ -770,16 +770,36 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('lead lifecycle (db)', () => {
       );
       expect(run.status).toBe(201);
       const { runId } = (await run.json()) as { runId: string };
+      // An email-pinned request merely associated with this unpinned run —
+      // channel pinning keeps it pending for a matching run it must
+      // outlive, so the tombstone can't take it.
+      await sql`
+        insert into agent_inbox (lead_id, kind, payload)
+        values (${leadId}, 'staff', ${sql.json({
+          text: "a equipe pediu uma run 'reply'",
+          requestedKind: 'reply',
+          params: { channel: 'email', origin: 'staff' },
+          forRunId: runId,
+        })})
+      `;
       const cancel = await post(`/control/v1/agent/runs/${runId}/cancel`, {}, key('a4-cxl-cancel'));
       expect(cancel.status).toBe(200);
       // The request the queued run was minted for dies with it — a pending
       // 'staff' item would otherwise respawn the very run staff canceled.
-      const pending = await sql`
-        select 1 from agent_inbox where lead_id = ${leadId} and consumed_at is null
+      // The email request survives: it was never deliverable to this run.
+      const pending = await sql<{ payload: { params?: { channel?: string } } }[]>`
+        select payload from agent_inbox where lead_id = ${leadId} and consumed_at is null
       `;
-      expect(pending).toHaveLength(0);
+      expect(pending).toHaveLength(1);
+      expect(pending[0]!.payload.params?.channel).toBe('email');
+      // …and the survivor is not stranded: the sweep spawns a run for it —
+      // exactly the restart the canceled request must NOT get.
       await sweepOrphanInbox(sql);
-      expect(await runsFor(leadId)).toHaveLength(1); // the canceled row only
+      const runs = await runsFor(leadId);
+      expect(runs).toHaveLength(2);
+      expect(runs[1]!.status).toBe('queued');
+      expect(runs[1]!.kind).toBe('reply');
+      await sql`delete from agent_runs where status = 'queued'`;
     });
 
     test('POST /agent/dispatch skips a capped lead without committing its goal', async () => {

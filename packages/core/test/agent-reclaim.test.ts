@@ -3830,12 +3830,6 @@ dbDescribe('worker robustness (db)', () => {
       values ('reply', ${leadId}, 'running', 'stale', 1, 1, ${stale}, ${stale})
       returning id
     `;
-    // The answer the run committed before dying — the send dedup is
-    // run-scoped, so only the inbound's own identity keeps the resend out.
-    await sql`
-      insert into lead_messages (thread_id, direction, author, body, status, agent_run_id)
-      values (${thread!.id}, 'out', 'agent', 'oi!', 'sent', ${run!.id})
-    `;
     const itemId = await controlTx(sql, (tx) =>
       enqueueInboxTx(tx, leadId, 'inbound', {
         text: 'oi',
@@ -3844,17 +3838,34 @@ dbDescribe('worker robustness (db)', () => {
         params: { origin: 'inbound', channel: 'whatsapp' },
       }),
     );
-    await sql`update agent_inbox set consumed_by_run = ${run!.id}, consumed_at = now()
+    const nudgeId = await controlTx(sql, (tx) =>
+      enqueueInboxTx(tx, leadId, 'staff', { text: 'a equipe pediu atenção' }),
+    );
+    // send_message stamps answeredBy on the run's consumed inbound at a
+    // landed dispatch — the stamp is the durable record of which mail the
+    // run's send answered (any 'out' later than the inbound can't say
+    // that: a staff note or unrelated follow-up isn't a reply). The
+    // nudge carries no answer — it releases.
+    await sql`update agent_inbox set consumed_by_run = ${run!.id}, consumed_at = now(),
+      payload = payload || jsonb_build_object('answeredBy', ${inMsg!.id}::text)
       where id = ${itemId}`;
+    await sql`update agent_inbox set consumed_by_run = ${run!.id}, consumed_at = now()
+      where id = ${nudgeId}`;
     await drain(sql, 0);
-    const [it] = await sql<{ consumed_at: string | null; consumed_by_run: string | null }[]>`
-      select consumed_at, consumed_by_run from agent_inbox where id = ${itemId}
+    const rows = await sql<
+      { id: string; consumed_at: string | null; consumed_by_run: string | null }[]
+    >`
+      select id, consumed_at, consumed_by_run from agent_inbox
+      where id in (${itemId}, ${nudgeId})
     `;
-    // The dead run's reconcile releases what it can still answer — this
-    // inbound already got its reply, so it stays consumed history rather
-    // than respawning a run that re-sends under a fresh run id.
-    expect(it!.consumed_at).not.toBeNull();
-    expect(it!.consumed_by_run).toBe(run!.id);
+    const answered = rows.find((r) => r.id === itemId)!;
+    const nudge = rows.find((r) => r.id === nudgeId)!;
+    // The dead run's reconcile releases what it can still serve — the
+    // answered inbound stays consumed history (a re-serve re-sends under
+    // a fresh run id), the nudge returns to pending for the sweep.
+    expect(answered.consumed_at).not.toBeNull();
+    expect(answered.consumed_by_run).toBe(run!.id);
+    expect(nudge.consumed_at).toBeNull();
     await sql`delete from agent_runs where status = 'queued'`;
   });
 });
