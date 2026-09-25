@@ -28,6 +28,7 @@ export const qk = {
   meetings: (params?: Record<string, string>) => ['meetings', params ?? {}] as const,
   meetingsStatus: () => ['meetings-status'] as const,
   integrations: () => ['integrations'] as const,
+  waQr: () => ['integrations', 'wa'] as const,
   settings: () => ['settings'] as const,
   wakeups: (params?: Record<string, string>) => ['wakeups', params ?? {}] as const,
   playbooks: () => ['playbooks'] as const,

@@ -26,7 +26,7 @@ export const useChannelHealth = () =>
  * invalidates 'integrations') and every provider save refresh it too — the old
  * screen reloaded QR/status in the same sweep.
  */
-export const waQrKey = () => [...qk.integrations(), 'wa'] as const;
+export const waQrKey = qk.waQr;
 export const useWaQr = () => useQuery({ queryKey: waQrKey(), queryFn: api.waQr, retry: false });
 
 /** Everything this screen reads — the old page reloaded all of it after any write. */
