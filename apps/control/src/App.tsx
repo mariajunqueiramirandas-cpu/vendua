@@ -52,8 +52,7 @@ const NAV = [
   { to: '/config', label: 'Config', icon: SettingsIcon, k: 'c' },
 ] as const;
 
-// Phone shell: the daily-desk destinations become bottom tabs; everything
-// else lives in the slide-up "menu" sheet.
+// Phone shell: daily-desk destinations become bottom tabs; the rest go in the menu sheet.
 const TAB_PATHS = new Set<string>(['/', '/funil', '/leads', '/inbox']);
 const TABS = NAV.filter((n) => TAB_PATHS.has(n.to));
 const MORE = NAV.filter((n) => !TAB_PATHS.has(n.to));
@@ -89,11 +88,7 @@ export default function App() {
 
   useEffect(() => setNavOpen(false), [loc.pathname]);
 
-  // The menu sheet is a phone affordance — if the viewport widens past the
-  // breakpoint while it's open (rotation, window drag), dismiss it rather
-  // than leave an unstyled overlay up. Observes the same max-width query
-  // the CSS uses so fractional widths (zoom, display scaling) can't leave
-  // the sheet in the gap between two breakpoints.
+  // Dismiss the phone menu sheet when the viewport widens past the CSS breakpoint.
   useEffect(() => {
     const mq = window.matchMedia('(max-width: 760px)');
     const close = () => {
@@ -103,8 +98,7 @@ export default function App() {
     return () => mq.removeEventListener('change', close);
   }, []);
 
-  // PWA install offer — the browser only fires beforeinstallprompt when the
-  // app is installable (manifest + sw), so the button is its own detection.
+  // beforeinstallprompt only fires when installable — the button is its own detection.
   useEffect(() => {
     const onPrompt = (e: Event) => {
       e.preventDefault();
@@ -134,7 +128,6 @@ export default function App() {
       .catch(() => setAuthed(false));
   }, []);
 
-  // Rail badges + footer: what needs attention now, which brain is on.
   useEffect(() => {
     if (!authed) return;
     const tick = () =>
@@ -157,7 +150,7 @@ export default function App() {
     };
   }, [authed]);
 
-  // Keyboard-first: bare d/f/l/i/j/a/e/t/g/p/r/c navigate; only when not typing.
+  // Bare-letter nav keys; ignored while typing.
   const onKey = useCallback(
     (e: KeyboardEvent) => {
       const el = e.target as HTMLElement;

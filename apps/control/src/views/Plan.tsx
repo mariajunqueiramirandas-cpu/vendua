@@ -5,7 +5,6 @@ import { api, type AgentRun, type LeadListItem } from '../api.ts';
 import { onControlEvent } from '../events.ts';
 import { AGENT_GOAL_LABEL, Empty, Page, RUN_KIND_LABEL, fmtDateTime } from '../components.tsx';
 
-// One upcoming event: a queued run's run_at, or the lead's next_action_at.
 interface Pending {
   at: string;
   what: string;
@@ -34,12 +33,10 @@ export default function Plan() {
   const [now, setNow] = useState(() => Date.now());
 
   const loadingRef = useRef(false);
-  // An event arriving mid-load can't be dropped — the in-flight pages may
-  // have read data older than the event, so queue one trailing refresh.
+  // Events arriving mid-load queue one trailing refresh — in-flight pages may have read stale data.
   const pendingRef = useRef(false);
 
-  // silent refresh keeps the queue honest without flickering the page —
-  // a completed run disappears on the next tick instead of lingering overdue.
+  // Silent refresh keeps the queue honest without flickering the page.
   const load = (silent = false) => {
     if (loadingRef.current) {
       pendingRef.current = true;
@@ -65,15 +62,13 @@ export default function Plan() {
         );
     void Promise.all([page(), runsPage().then((rs) => rs.filter((x) => x.lead_id))])
       .then(([, queued]) => {
-        // Commit both datasets together — a failed half can't render beside the
-        // error state as if it were complete.
+        // Commit both datasets together — a half can't render as if complete.
         setLeads(all);
         setRuns(queued);
         setState('ok');
       })
       .catch(() => {
-        // A silent refresh failure keeps the last good snapshot; only an
-        // explicit load error surfaces the error state.
+        // Silent failures keep the last good snapshot.
         if (!silent) setState('error');
       })
       .finally(() => {
@@ -86,8 +81,7 @@ export default function Plan() {
   };
   useEffect(() => load(), []);
 
-  // Minute tick: re-derive countdowns and re-fetch while the tab is visible,
-  // so a claimed run drops off the queue without a manual reload.
+  // Minute tick: countdowns + silent re-fetch while the tab is visible.
   useEffect(() => {
     const t = setInterval(() => {
       setNow(Date.now());
@@ -97,7 +91,6 @@ export default function Plan() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // The same silent refresh, accelerated — run/lead/draft events trigger it.
   useEffect(
     () =>
       onControlEvent(['run.update', 'lead.change', 'draft.change'], () => {
@@ -109,18 +102,15 @@ export default function Plan() {
 
   const byId = new Map(leads.map((l) => [l.id, l]));
 
-  // Mirrors claimRun's suppression predicate — off, archived, unsubscribed,
-  // lead-wide handoff — so the queue only shows runs the worker can claim.
+  // Mirrors claimRun's suppression predicate — only runs the worker can claim show.
   const live = (id: string) => {
     const l = byId.get(id);
     return !!l && l.agentMode !== 'off' && !l.archivedAt && !l.unsubscribedAt && !l.agentPausedAt;
   };
 
-  // Flat timeline: every future agent move, soonest first.
   const pending: Pending[] = [
     ...runs
-      // thread-bound runs also hold on a staff pause — the second half of
-      // claimRun's gate the lead-level live() can't see.
+      // thread-bound runs also hold on a staff pause — the part of claimRun's gate live() can't see
       .filter((r) => live(r.lead_id!) && r.thread_agent_enabled !== false)
       .map((r) => ({
         at: r.run_at!,
@@ -140,7 +130,6 @@ export default function Plan() {
       })),
   ].sort((a, b) => a.at.localeCompare(b.at));
 
-  // Leads carrying a plan, most-progressed first.
   const planned = leads
     .filter((l) => live(l.id) && l.agentPlan.length > 0)
     .sort(
@@ -252,7 +241,7 @@ export default function Plan() {
 
 function PlanRow({ lead }: { lead: LeadListItem }) {
   const [open, setOpen] = useState(false);
-  // A skipped step is settled, not pending — progress counts resolved steps.
+  // A skipped step counts as resolved, not pending.
   const resolved = lead.agentPlan.filter((s) => s.status !== 'todo').length;
   const total = lead.agentPlan.length;
   return (

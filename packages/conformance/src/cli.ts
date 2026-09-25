@@ -1,13 +1,4 @@
 #!/usr/bin/env bun
-/**
- * vendua-conformance — Contract conformance checks for storefronts.
- *
- *   vendua-conformance static <storefrontDir>   K01–K04 contract checks
- *   vendua-conformance k05 <slug> [baseRef]     diff limited to storefronts/<slug>/**
- *   vendua-conformance e2e <storefrontDir>      build + serve + Playwright C/S/Q suite
- *
- * Exit non-zero on any failed check; per-check IDs are always printed.
- */
 import { anyFailed, printChecks } from './report.ts';
 import { runStatic } from './static.ts';
 import { runK05 } from './k05.ts';

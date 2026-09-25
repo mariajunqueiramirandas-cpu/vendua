@@ -144,12 +144,9 @@ const waLog = log.child({ mod: 'whatsapp' });
 export interface AppDeps {
   sql: Sql;
   sessionSecret: string;
-  /** Staff credential for /control/v1 — distinct from sessionSecret so a
-   *  shared staff key never doubles as the shopper-session signing key.
-   *  Falls back to sessionSecret in dev when unset. */
+  /** distinct from sessionSecret so a staff key never doubles as the session signing key */
   controlSecret?: string | undefined;
-  /** Endpoint enqueues kick a fire-and-forget queue drain by default. Tests
-   *  pass false — a background claim mid-assertion races the expectation. */
+  /** tests pass false — a background drain mid-assertion races expectations */
   autoDrain?: boolean | undefined;
 }
 
@@ -193,8 +190,7 @@ function currentStatus(settings: StoreSettingsRow | null) {
   );
 }
 
-// Every external probe in testIntegration runs inside this bound — a dead
-// provider must not pin the route (or its claim transaction) open.
+// Bounds every external probe — a dead provider must not pin the route open.
 const TEST_TIMEOUT_MS = 8_000;
 function timed<T>(p: Promise<T>, what: string): Promise<T> {
   return Promise.race([
@@ -208,8 +204,7 @@ function timed<T>(p: Promise<T>, what: string): Promise<T> {
   ]);
 }
 
-/** One cheap live call against the kind's ACTIVE driver. Never throws —
- *  failures are the diagnostic result. */
+/** One cheap live call against the kind's ACTIVE driver; never throws — failures are the result. */
 async function testIntegration(
   sql: Sql,
   kind: IntegrationKind,
@@ -243,9 +238,7 @@ async function testIntegration(
       if (!key) {
         return { ok: false, detail: `env ${integration.secret_ref ?? 'RESEND_API_KEY'} ausente` };
       }
-      // AbortSignal cancels the request itself — the race only abandons the
-      // await. SDK calls (llm, tinyfish, baileys) can't be aborted from
-      // here, so they keep the race bound.
+      // SDK calls can't be aborted from here, so they keep the race bound.
       const res = await timed(
         fetch('https://api.resend.com/domains', {
           headers: { authorization: `Bearer ${key}` },
@@ -297,13 +290,9 @@ export function createApp({ sql, sessionSecret, controlSecret, autoDrain }: AppD
 
   app.onError((err, c) => errorJson(err, c));
   app.use('*', requestLogger());
-  // VENDUA_TRUST_PROXY=1 marks a deployment behind the Venduá edge — only then
-  // do X-Forwarded-* headers carry routing truth (tenant spoofing otherwise).
+  // Only trust X-Forwarded-* behind the Venduá edge (tenant spoofing otherwise).
   const trustProxy = process.env.VENDUA_TRUST_PROXY === '1';
-  // CORS is not a blanket allow: the browser origin must be the request's own
-  // host (same-origin calls, incl. the vite dev proxy). Other registered
-  // tenant origins are deliberately NOT allowed — credentialed cross-tenant
-  // browser reads would follow from them (Review finding).
+  // Same-origin only — other tenant origins would enable credentialed cross-tenant reads.
   app.use(
     '*',
     cors({
@@ -326,15 +315,13 @@ export function createApp({ sql, sessionSecret, controlSecret, autoDrain }: AppD
 
   app.get('/healthz', (c) => c.json({ ok: true }));
 
-  // The last-resort loader. In production this is served from the CDN; in dev
-  // Core serves it so the contract-required script tag is real.
+  // CDN serves this in prod; dev serves it here so the contract script tag is real.
   app.get('/v1/v.js', (c) => {
     c.header('content-type', 'application/javascript');
     c.header('cache-control', 'no-store');
     return c.body(LOADER_JS);
   });
 
-  // ------------------------- /storefront/v1 (public, host-scoped) ----------
   const storefront = new Hono<{ Variables: { tenant: Tenant } }>();
   storefront.use('*', tenantMiddleware(resolver, { trustForwardedHost: trustProxy }));
 
@@ -398,8 +385,7 @@ export function createApp({ sql, sessionSecret, controlSecret, autoDrain }: AppD
     return c.json(envelope);
   });
 
-  // Public delivery-zone catalog — storefronts need it for address/zone UX
-  // (Phase 0 finding: no client could list covered neighborhoods).
+  // Public — storefronts need zones for address/zone UX.
   storefront.get('/zones', async (c) => {
     const tenant = c.get('tenant');
     const zones = await withTenant(sql, tenant.id, (tx) => loadZones(tx, tenant.id));
@@ -416,7 +402,7 @@ export function createApp({ sql, sessionSecret, controlSecret, autoDrain }: AppD
     });
   });
 
-  // Tiny loader-facing endpoint — cached snapshot shape per 05-system-surfaces.
+  // Loader-facing cached snapshot per 05-system-surfaces.
   storefront.get('/state', async (c) => {
     const tenant = c.get('tenant');
     const settings = await withTenant(sql, tenant.id, (tx) => loadSettings(tx, tenant.id));
@@ -431,13 +417,10 @@ export function createApp({ sql, sessionSecret, controlSecret, autoDrain }: AppD
     });
   });
 
-  // ------------------------- /checkout/v1 (session-scoped) -----------------
   const checkout = new Hono<{ Variables: { tenant: Tenant } }>();
   checkout.use('*', tenantMiddleware(resolver, { trustForwardedHost: trustProxy }));
-  // Public, unauthenticated mutation surface — bounded so a script can't grow
-  // carts/idempotency tables unboundedly (edge replaces this in prod).
-  // VENDUA_PROXY_HOPS = trusted proxies between client and Core beyond the
-  // one that appended the client's own XFF entry (Dokploy: nginx → 1).
+  // Unauthenticated mutation surface — bounded (edge replaces this in prod).
+  // VENDUA_PROXY_HOPS = trusted proxies beyond the client's own XFF entry.
   const proxyHops = Number(process.env.VENDUA_PROXY_HOPS ?? '0');
   checkout.use(
     '*',
@@ -452,9 +435,7 @@ export function createApp({ sql, sessionSecret, controlSecret, autoDrain }: AppD
 
   checkout.post('/session', async (c) => {
     const tenant = c.get('tenant');
-    // Re-attach: a Bearer token whose cart is still open returns that session
-    // unchanged; a completed/abandoned cart mints a fresh one (self-healing —
-    // otherwise a spent token strands the storefront on CART_NOT_FOUND).
+    // Re-attach a Bearer token whose cart is still open; a spent one mints fresh.
     const bearer = c.req.header('authorization')?.replace(/^bearer\s+/i, '');
     if (bearer) {
       const existing = await withTenant(sql, tenant.id, async (tx) => {
@@ -471,7 +452,6 @@ export function createApp({ sql, sessionSecret, controlSecret, autoDrain }: AppD
         );
         return c.json({ sessionToken: bearer, cart });
       }
-      // fall through to mint
     }
     return idempotency(sql, async (c, tx) => {
       const cartId = crypto.randomUUID();
@@ -497,9 +477,7 @@ export function createApp({ sql, sessionSecret, controlSecret, autoDrain }: AppD
       const cartId = await sessionCartId(c, sessionSecret);
       const body = await bodyJson(c);
       await assertCartOpen(tx, tenant.id, cartId);
-      // Identifier + array bounds: malformed productIds would raise 22P02 in
-      // the uuid comparison (INTERNAL instead of a contract 4xx), and the
-      // modifier list is bounded so oversized arrays can't burn validation.
+      // A malformed uuid would raise 22P02 (500, not a contract 4xx) — validate first.
       const productId = str(body.productId, 'productId', 64);
       if (!UUID_RE.test(productId)) {
         throw new HttpError(422, 'BAD_REQUEST', 'productId must be a uuid');
@@ -613,29 +591,20 @@ export function createApp({ sql, sessionSecret, controlSecret, autoDrain }: AppD
       const body = await bodyJson(c);
       validateCheckoutShape(body);
       const order = await (async () => {
-        // Lock the cart row before reading it — two concurrent checkouts
-        // would otherwise both observe 'open' and mint duplicate orders
-        // (Review finding). The loser rechecks status under the lock.
+        // Lock the cart row first — concurrent checkouts would both see 'open' and mint duplicates.
         await tx`select id from carts where tenant_id = ${tenant.id} and id = ${cartId} for update`;
         const cart = await loadCartView(tx, tenant.id, cartId);
-        // A completed cart must not mint a second order — the forn spike
-        // demonstrated a real duplicate otherwise.
+        // A completed cart must not mint a second order.
         if (cart.status !== 'open') {
           throw new HttpError(409, 'CART_NOT_OPEN', 'cart already checked out', {
             cartStatus: cart.status,
           });
         }
-        // Tenant-scoped advisory lock taken BEFORE reading eligibility: the
-        // documented choke point for every control-plane write that changes
-        // settings/zones/products/modifiers (REVIEW.md). Row locks below then
-        // pin the actual rows read, so even a non-cooperating writer can't
-        // slip a change between our read and commit under READ COMMITTED.
+        // Advisory lock before reading eligibility — choke point vs concurrent settings/zone/product writes.
         await tx`select pg_advisory_xact_lock(hashtext(${tenant.id}))`;
         const settings = await loadSettings(tx, tenant.id, { forUpdate: true });
         const zones = await loadZones(tx, tenant.id, { forUpdate: true });
-        // Re-validate every line's stored modifier ids against the CURRENT
-        // product definition — a deleted/retired modifier can't quietly drop
-        // out of the price and slip through as an underpriced order.
+        // Re-validate modifier ids against current defs — a retired modifier can't slip through underpriced.
         const products = new Map<string, Awaited<ReturnType<typeof getProductById>>>();
         for (const item of cart.items) {
           products.set(
@@ -660,9 +629,7 @@ export function createApp({ sql, sessionSecret, controlSecret, autoDrain }: AppD
           etaMax: zone?.eta_max_minutes ?? null,
         };
         const deliveryFee = body.delivery.mode === 'delivery' ? (zone?.fee_cents ?? 0) : 0;
-        // Order numbering runs under the tenant advisory lock acquired at
-        // the top of this transaction — without it two concurrent checkouts
-        // read the same max and the unique constraint eats a valid order.
+        // Numbering relies on the advisory lock above — else two checkouts read the same max.
         const number = (
           await tx<
             { n: number }[]
@@ -670,8 +637,7 @@ export function createApp({ sql, sessionSecret, controlSecret, autoDrain }: AppD
         )[0]!.n;
         const orderId = crypto.randomUUID();
         const payment = {
-          // 'sandbox' is the contract's dev provider name — the Phase-0
-          // pay-on-delivery stand-in stays until real orchestration lands.
+          // 'sandbox' = the contract's dev provider name (pay-on-delivery stand-in).
           provider: 'sandbox',
           method: body.payment.method,
           status: 'pending',
@@ -710,34 +676,18 @@ export function createApp({ sql, sessionSecret, controlSecret, autoDrain }: AppD
     return c.json({ order });
   });
 
-  // ------------------------- /control/v1 (internal/dev) --------------------
-  // Internal surface — shared-secret gated even in dev (public otherwise:
-  // it answers for arbitrary tenant slugs). Prod binds it to mTLS/private
-  // network on top of this.
-  //
-  // The gate: the X-Vendua-Control header is the canonical credential — its
-  // value is CONTROL_SECRET, a staff key distinct from the shopper-session
-  // signing secret (staff access must never enable session forgery). The
-  // `vendua_control` cookie — minted by POST /control/v1/board — is a staff
-  // convenience so the board page can call this API from the browser.
-  // 404 (not 401) keeps the surface invisible to scans.
+  // /control/v1: staff-gated internal surface — X-Vendua-Control key or
+  // vendua_control cookie; 404 (not 401) keeps it invisible to scans.
   const CONTROL_COOKIE = 'vendua_control';
   const staffSecret = controlSecret ?? sessionSecret;
-  // The cookie carries a derived token — never either secret itself: a leaked
-  // staff cookie opens the board without exposing a signing key, and rotating
-  // CONTROL_SECRET invalidates every cookie at once.
+  // Derived token, never the secret itself — rotating CONTROL_SECRET invalidates every cookie.
   const controlToken = createHmac('sha256', staffSecret).update('vendua.control').digest('hex');
   const controlAuthed = (c: Context) =>
     c.req.header('x-vendua-control') === staffSecret ||
     getCookie(c, CONTROL_COOKIE) === controlToken;
   const controlGate = (c: Context) => {
     if (!controlAuthed(c)) throw new HttpError(404, 'NOT_FOUND', 'not found');
-    // CSRF: a cookie-authenticated mutation must carry the custom
-    // `x-vendua-staff` marker — browsers can't add a custom header cross-site
-    // without a CORS preflight this API never answers — AND an Origin that
-    // matches the request host when one is present (the marker alone is a
-    // presence check a compromised same-site sibling could also send).
-    // SameSite=Lax already strips the cookie on cross-site POSTs.
+    // CSRF: cookie-authed mutations need the custom x-vendua-staff marker + same-host Origin.
     const viaHeader = c.req.header('x-vendua-control') === staffSecret;
     if (!viaHeader && c.req.method !== 'GET') {
       if (!c.req.header('x-vendua-staff')) throw new HttpError(404, 'NOT_FOUND', 'not found');
@@ -782,15 +732,10 @@ export function createApp({ sql, sessionSecret, controlSecret, autoDrain }: AppD
     });
   });
 
-  // Venduá CRM — Venduá's own intake pipeline + agentic control surface.
-  // Platform data, no tenant context; the gate above is the only boundary.
-  // All mutations take Idempotency-Key (claimControl — durable claims).
-
-  // Fixed-window per-IP login limiter — same shape as the checkout one.
+  // Platform data, no tenant context; all mutations take Idempotency-Key.
   const loginHits = new Map<string, { count: number; resetAt: number }>();
   app.post('/control/v1/login', async (c) => {
-    // Login guesses a shared secret — cap attempts at 10/min/IP so a
-    // reachable deployment isn't an oracle for a weak CONTROL_SECRET.
+    // Cap guesses at 10/min/IP so the endpoint isn't a weak-secret oracle.
     const ip = (() => {
       if (!trustProxy) return 'local';
       const xff = c.req
@@ -800,8 +745,7 @@ export function createApp({ sql, sessionSecret, controlSecret, autoDrain }: AppD
       return xff?.at(-1 - proxyHops) ?? 'unknown';
     })();
     const now = Date.now();
-    // Evict expired buckets — without this, rotating client addresses (each
-    // a new map key) grow the map until the process exhausts memory.
+    // Evict expired buckets or rotating IPs grow the map forever.
     for (const [k, v] of loginHits) if (v.resetAt <= now) loginHits.delete(k);
     const bucket = loginHits.get(ip);
     if (!bucket || bucket.resetAt <= now) {
@@ -814,9 +758,7 @@ export function createApp({ sql, sessionSecret, controlSecret, autoDrain }: AppD
     setCookie(c, CONTROL_COOKIE, controlToken, {
       httpOnly: true,
       sameSite: 'Lax',
-      // Secure whenever the request is TLS — directly, or behind a
-      // terminating proxy when VENDUA_TRUST_PROXY marks X-Forwarded-*
-      // trustworthy.
+      // TLS directly, or via trusted X-Forwarded-Proto.
       secure:
         c.req.url.startsWith('https://') ||
         (trustProxy && c.req.header('x-forwarded-proto') === 'https'),
@@ -831,20 +773,17 @@ export function createApp({ sql, sessionSecret, controlSecret, autoDrain }: AppD
     return c.json({ ok: true });
   });
 
-  // Boot probe for the SPA — 404 when unauthed keeps the surface invisible.
   app.get('/control/v1/session', (c) => {
     controlGate(c);
     return c.json({ ok: true });
   });
 
-  // Thin triggers over SSE — the board refetches on each frame; the
-  // connect-time `sync` covers events missed while reconnecting.
+  // SSE triggers; the connect-time 'sync' covers events missed while reconnecting.
   app.get('/control/v1/events', (c) => {
     controlGate(c);
     return controlSse(c);
   });
 
-  // ---- leads --------------------------------------------------------------
   app.get('/control/v1/leads', async (c) => {
     controlGate(c);
     const state = c.req.query('state');
@@ -874,29 +813,19 @@ export function createApp({ sql, sessionSecret, controlSecret, autoDrain }: AppD
         field: 'automation',
       });
     }
-    // Automation is opt-out per request: `automation:false` skips the run —
-    // the staff-managed equivalent of a CSV-imported lead, which never queues
-    // agent work. One outreach run does the new card's whole job: research →
-    // dossier → first contact.
+    // automation:false skips the run — the staff-managed equivalent of a CSV import.
     const res = await claimControl<{ lead: Lead; runId?: string; retired?: string[] }>(
       sql,
       requireIdemKey(c),
       async (tx) => {
-        // Lead + its run share ONE claim: a retried POST replays the
-        // stored body (lead + runId) instead of creating a second lead.
+        // Lead + run share one claim — a retry replays instead of duplicating.
         const created = await insertLeadTx(tx, leadInsert(body));
         if (
           created.body.lead.agentMode !== 'off' &&
           body.automation !== false &&
           (await automationAllowedTx(tx, 'outreach')).ok
         ) {
-          // guardrails.firstContactDelayMin paces the contact — the run waits
-          // out the delay in 'queued' (cancelable in Runs). The send itself is
-          // decided live by checkSendAllowedTx at send time (level +
-          // firstContactDraftOnly + first-contact, all read then) — no
-          // draftOnly is stamped here because a policy change between create
-          // and claim must take effect; draftOnly stays for explicit
-          // staff-assist requests only.
+          // Send policy is read live at send time, not stamped here — a change between create and claim must take effect.
           const g = await getSettingTx<Partial<Guardrails>>(tx, 'guardrails', {});
           const delay = g.firstContactDelayMin ?? DEFAULT_GUARDRAILS.firstContactDelayMin;
           const cap: { retired?: string[] } = {};
@@ -915,8 +844,7 @@ export function createApp({ sql, sessionSecret, controlSecret, autoDrain }: AppD
           );
           return {
             status: created.status,
-            // null when the lifetime cost cap refused the run — the card's
-            // cost-cap flag is the explanation staff sees.
+            // null when the cost cap refused the run — the card's flag is the explanation.
             body: {
               ...created.body,
               ...(runId ? { runId } : {}),
@@ -947,8 +875,7 @@ export function createApp({ sql, sessionSecret, controlSecret, autoDrain }: AppD
 
   app.post('/control/v1/leads/import', async (c) => {
     controlGate(c);
-    // Raw text/csv body — not the JSON cap — so bulk imports aren't capped
-    // at 32KB.
+    // Raw text/csv body so bulk imports aren't capped at the JSON size cap.
     if (!(c.req.header('content-type') ?? '').includes('text/csv')) {
       throw new HttpError(415, 'BAD_REQUEST', 'content-type must be text/csv');
     }
@@ -973,13 +900,11 @@ export function createApp({ sql, sessionSecret, controlSecret, autoDrain }: AppD
   app.get('/control/v1/stats', async (c) => {
     controlGate(c);
     const stats = await leadStats(sql);
-    // The forecast slice reuses this request's byState read — composed here
-    // (not inside leadStats) so leads.ts stays free of control-settings deps.
+    // Composed here so leads.ts stays free of control-settings deps.
     const forecast = await pipelineForecast(sql, stats.byState);
     return c.json({ ...stats, forecast });
   });
 
-  // Staff-forced pipeline snapshot — the worker also takes one daily. The
   // taken_on upsert makes a same-day re-shot a refresh, not a duplicate.
   app.post('/control/v1/stats/snapshot', async (c) => {
     controlGate(c);
@@ -1032,8 +957,7 @@ export function createApp({ sql, sessionSecret, controlSecret, autoDrain }: AppD
       if (!exists) throw new HttpError(404, 'LEAD_NOT_FOUND', 'lead not found');
       if (rows[0]) {
         transitioned = true;
-        // Opt-out never lifts — queued runs for this lead are dead weight
-        // the claim gate can never pick up, so cancel them now.
+        // Opt-out never lifts — the claim gate can never pick up queued runs, so cancel them.
         await tx`
           update agent_runs set status = 'canceled', finished_at = now(), error = 'descadastrado'
           where lead_id = ${id} and status = 'queued'
@@ -1054,9 +978,7 @@ export function createApp({ sql, sessionSecret, controlSecret, autoDrain }: AppD
     controlGate(c);
     const body = await bodyJson(c);
     const kind = str(body.kind, 'kind', 40);
-    // strategist stays out of the lead-scoped list — a suppressed lead would
-    // park the queued run and sweepStrategist would read its created_at as a
-    // filled cadence slot, skipping the real weekly review for 7 days
+    // No 'strategist' here — a suppressed lead's parked row would eat the weekly cadence slot.
     if (!['triage', 'reply', 'outreach', 'discovery'].includes(kind)) {
       throw new HttpError(422, 'BAD_REQUEST', 'kind must be triage|reply|outreach|discovery');
     }
@@ -1067,14 +989,8 @@ export function createApp({ sql, sessionSecret, controlSecret, autoDrain }: AppD
     }
     const retiredIds: string[] = [];
     const res = await claimControl(sql, requireIdemKey(c), async (tx) => {
-      // Mirror the claim gate's suppression predicate: a run queued for a
-      // suppressed lead/thread can never claim — it would park 'queued'
-      // forever. Reject with the reason like dispatch reports it. The row
-      // lock serializes with a concurrent unsubscribe — otherwise this tx
-      // could still insert a zombie run after the opt-out's cancel pass.
-      // capfin before the lead lock — the advisory must be this tx's first
-      // lock for the lead or a finisher holding it can cycle against us
-      // (see capLockTx).
+      // Mirror the claim gate's suppression predicate — a suppressed run would park 'queued' forever.
+      // capfin before the lead lock — a finisher holding it could cycle against us (see capLockTx).
       await capLockTx(tx, leadId);
       const lead = (
         await tx<
@@ -1119,9 +1035,7 @@ export function createApp({ sql, sessionSecret, controlSecret, autoDrain }: AppD
         ...((body.params as Record<string, unknown>) ?? {}),
         origin: 'staff',
       };
-      // Bound the params blob — it lands verbatim in agent_runs.params AND
-      // the inbox payload, so an unrestricted body would double-durable any
-      // size the caller sends.
+      // params lands verbatim in agent_runs.params and the inbox payload — bound it.
       if (JSON.stringify(params).length > 16_384)
         throw new HttpError(422, 'PARAMS_TOO_LARGE', 'run params exceed 16 KiB');
       const cap: { retired?: string[] } = {};
@@ -1131,16 +1045,13 @@ export function createApp({ sql, sessionSecret, controlSecret, autoDrain }: AppD
           kind: kind as 'triage' | 'reply' | 'outreach' | 'discovery',
           leadId,
           ...(threadId ? { threadId } : {}),
-          // origin stamps provenance — dedupe/audit distinguish a staff-queued
-          // run from an auto inbound one even when params carry no overrides
+          // origin stamps provenance even when params carry no overrides
           params,
         },
         cap,
       );
       retiredIds.push(...(cap.retired ?? []));
-      // A 422 body (not a throw): the claim tx COMMITS, so insertRun's
-      // cost-cap flag stays on the card and the stored refusal replays
-      // idempotently — a throw would roll the alert back with it.
+      // Return 422, don't throw — the committed claim keeps the cap flag and replays idempotently.
       if (!runId) {
         return {
           status: 422,
@@ -1153,9 +1064,7 @@ export function createApp({ sql, sessionSecret, controlSecret, autoDrain }: AppD
           } as never,
         };
       }
-      // The nudge is mail: when insertRun found the lead's already-active
-      // run (the 201 still reports that run's id) the item is what actually
-      // carries this intent into it — created or delivered, same audit.
+      // The item carries the intent into an already-active run insertRun adopted.
       await enqueueInboxTx(tx, leadId, 'staff', {
         text: `a equipe pediu uma run '${kind}'${typeof params.focus === 'string' ? ` — ${params.focus}` : ''}`,
         requestedKind: kind as PlaybookKind,
@@ -1169,15 +1078,13 @@ export function createApp({ sql, sessionSecret, controlSecret, autoDrain }: AppD
     if (!res.replayed) {
       emitControlEvent('run.update', res.body.runId);
       for (const r of retiredIds) emitControlEvent('run.update', r);
-      // The refusal committed a cap flag + staff task — only lead.change
-      // refreshes the Tasks view/badge, so a run.update alone hides it.
+      // The refusal wrote flag+task — only lead.change refreshes the Tasks badge.
       if (res.status === 422) emitControlEvent('lead.change', leadId);
     }
     kickDrain();
     return c.json(res.body, res.status as 201);
   });
 
-  // ---- activities / tasks ---------------------------------------------------
   app.get('/control/v1/leads/:id/activities', async (c) => {
     controlGate(c);
     return c.json({ activities: await listActivities(sql, uuidParam(c, 'id')) });
@@ -1261,7 +1168,6 @@ export function createApp({ sql, sessionSecret, controlSecret, autoDrain }: AppD
     return c.json(res.body);
   });
 
-  // ---- inbox / threads / messages -------------------------------------------
   app.get('/control/v1/threads', async (c) => {
     controlGate(c);
     const chan = c.req.query('channel');
@@ -1307,8 +1213,7 @@ export function createApp({ sql, sessionSecret, controlSecret, autoDrain }: AppD
     );
     if (!t[0]) throw new HttpError(404, 'THREAD_NOT_FOUND', 'thread not found');
     const wantSend = body.send === true;
-    // An explicit subject overrides the thread's — applied inside
-    // composeMessage's claim tx so a failed compose can't leave it behind.
+    // Applied inside composeMessage's claim tx so a failed compose can't leave it.
     const subject = typeof body.subject === 'string' ? str(body.subject, 'subject', 200) : null;
     const res = await composeMessage(
       sql,
@@ -1332,7 +1237,6 @@ export function createApp({ sql, sessionSecret, controlSecret, autoDrain }: AppD
     return c.json(res.body, res.status as 200);
   });
 
-  // ---- approvals queue --------------------------------------------------------
   app.get('/control/v1/approvals', async (c) => {
     controlGate(c);
     return c.json({ drafts: await listDrafts(sql) });
@@ -1342,12 +1246,9 @@ export function createApp({ sql, sessionSecret, controlSecret, autoDrain }: AppD
     controlGate(c);
     const res = await approveMessage(sql, uuidParam(c, 'id'), 'staff', requireIdemKey(c));
     if (res.replayed) c.header('x-idempotent-replay', 'true');
-    // A refusal carries its own body (e.g. LEAD_COST_CAP on a stale draft
-    // whose regen can't queue) — dispatch must not run on a message that
-    // stayed 'draft', or the refusal hides behind a fake success.
+    // A refusal's message stayed 'draft' — dispatching would hide it behind a fake success.
     if (res.status !== 200) return c.json(res.body, res.status as 422);
-    // A stale draft is superseded inside the claim — nothing ships from the
-    // expired copy. Kick the drain so the regen run recomposes it promptly.
+    // Stale draft superseded in-claim — kick drain so the regen recomposes promptly.
     if (res.body.stale) {
       kickDrain();
       return c.json(res.body);
@@ -1364,7 +1265,6 @@ export function createApp({ sql, sessionSecret, controlSecret, autoDrain }: AppD
     return c.json(res.body);
   });
 
-  // ---- integrations / settings ------------------------------------------------
   app.get('/control/v1/integrations', async (c) => {
     controlGate(c);
     return c.json({ integrations: await listIntegrations(sql) });
@@ -1387,9 +1287,7 @@ export function createApp({ sql, sessionSecret, controlSecret, autoDrain }: AppD
     );
     if (res.replayed) c.header('x-idempotent-replay', 'true');
     if (kind === 'whatsapp') {
-      // Reconcile the live socket now — a disable/switch must close the old
-      // Baileys session immediately, not whenever the next outbound or
-      // disconnect happens to trigger it.
+      // A disable/switch must close the old Baileys session now, not lazily.
       const { ensureSocket } = await import('./agent/channels/whatsapp.ts');
       void getIntegration(sql, 'whatsapp')
         .then((i) => ensureSocket(sql, i))
@@ -1398,11 +1296,7 @@ export function createApp({ sql, sessionSecret, controlSecret, autoDrain }: AppD
     return c.json(res.body);
   });
 
-  // Live driver check — exercises the ACTIVE provider for a kind for real
-  // (one cheap call), so Config can answer "is this actually working?"
-  // instead of only echoing config back. Claimed like every other control
-  // mutation — a retried POST replays the recorded result instead of
-  // spending another provider call.
+  // Exercises the ACTIVE provider for real; claimed so a retry replays instead of spending another call.
   app.post('/control/v1/integrations/:kind/test', async (c) => {
     controlGate(c);
     const kind = integrationKind(c.req.param('kind'));
@@ -1414,8 +1308,7 @@ export function createApp({ sql, sessionSecret, controlSecret, autoDrain }: AppD
   app.get('/control/v1/settings', async (c) => {
     controlGate(c);
     const rows = await listSettings(sql);
-    // guardrails/pitch return the EFFECTIVE objects (defaults merged into the
-    // stored row) — what the agent actually runs on, not the sparse override.
+    // guardrails/pitch return effective objects (defaults merged), not the sparse override.
     return c.json({
       settings: [
         ...rows.filter((r) => r.key !== 'guardrails' && r.key !== 'pitch'),
@@ -1432,17 +1325,12 @@ export function createApp({ sql, sessionSecret, controlSecret, autoDrain }: AppD
     validateSetting(key, body.value);
     const res = await putSetting(sql, key, body.value, requireIdemKey(c));
     if (res.replayed) c.header('x-idempotent-replay', 'true');
-    // A LOWERED cost cap strands already-over-cap leads (their queued runs
-    // park, no insert/finish ever fires the flag) — flag them now so staff
-    // sees the card instead of a silent stop. Deduped; await is fine.
+    // A lowered cap strands over-cap leads (queued runs park silently) — flag them now; deduped.
     if (key === 'guardrails' && !res.replayed) await flagCappedLeads(sql);
     return c.json(res.body);
   });
 
-  // ---- agent memory (ADR 0014) -------------------------------------------------
-  // Workspace/segment learnings + discovery debriefs, and structured
-  // per-lead facts — the memory v2 write surface for staff (the agent writes
-  // the same tables through rememberTx/upsertLeadFactTx inside its runs).
+  // Staff write surface for the same memory tables the agent writes via rememberTx/upsertLeadFactTx.
 
   app.get('/control/v1/agent/memory', async (c) => {
     controlGate(c);
@@ -1534,10 +1422,6 @@ export function createApp({ sql, sessionSecret, controlSecret, autoDrain }: AppD
     return c.json(res.body);
   });
 
-  // ---- meetings ---------------------------------------------------------------
-  // CRM-native booking: staff list/patch/manual-book, plus the booking-link
-  // mint the LeadDetail "copiar link" button uses.
-
   app.get('/control/v1/meetings/status', async (c) => {
     controlGate(c);
     return c.json(await meetingsStatus(sql));
@@ -1570,8 +1454,7 @@ export function createApp({ sql, sessionSecret, controlSecret, autoDrain }: AppD
     return c.json({ meetings });
   });
 
-  // Minted per lead — the agent and the UI share the same token format, so a
-  // link copied here and one sent by the agent resolve identically.
+  // Same token format as the agent's links — both resolve identically.
   app.get('/control/v1/meetings/link', async (c) => {
     controlGate(c);
     const leadId = str(c.req.query('lead_id'), 'lead_id', 64);
@@ -1586,18 +1469,13 @@ export function createApp({ sql, sessionSecret, controlSecret, autoDrain }: AppD
     return c.json({ url: await bookingLink(sql, leadId, staffSecret) });
   });
 
-  // Staff-side booking — same pipeline the public endpoint runs (grid check,
-  // buffer, gcal busy, room, confirm email).
+  // Same pipeline as the public booking endpoint.
   app.post('/control/v1/meetings', async (c) => {
     controlGate(c);
     const key = requireIdemKey(c);
     const body = await bodyJson(c);
-    // The claim wraps bookMeeting's insert step — a retried POST replays the
-    // stored meeting instead of re-validating against a now-taken slot.
-    // Single-connection claim: bookMeetingTx runs INSIDE the claim tx — a
-    // nested controlTx would grab a second pooled conn per request and ~10
-    // concurrent staff bookings would deadlock the (size-10) pool. The gcal
-    // busy read happens before the claim — no network call inside the tx.
+    // bookMeetingTx must run INSIDE the claim tx — a nested controlTx grabs a second
+    // pooled conn and ~10 concurrent bookings deadlock the pool; gcal read stays outside (no network in-tx).
     const input = parseBookInput({
       leadId: str(body.leadId, 'leadId', 64),
       start: str(body.start, 'start', 64),
@@ -1616,11 +1494,8 @@ export function createApp({ sql, sessionSecret, controlSecret, autoDrain }: AppD
       emitControlEvent('meeting.change', res.body.meeting.id);
       if (res.body.meeting.leadId) emitControlEvent('lead.change', res.body.meeting.leadId);
     }
-    // Post-commit effects run on fresh claims AND replays: room/gcal/email
-    // happen after commit, so a crash between them leaves the replay (or the
-    // first request that died right here) as the retry point. Fills only
-    // what's missing — safe to re-run. Re-read after effects so the response
-    // carries the provisioned roomUrl/gcalEventId, not the claim's snapshot.
+    // Effects run on fresh claims AND replays — a crash leaves replay as the retry point;
+    // re-read so the response carries the provisioned roomUrl/gcalEventId.
     await ensureMeetingEffects(sql, res.body.meeting.id);
     const fresh = await controlTx(
       sql,
@@ -1657,7 +1532,6 @@ export function createApp({ sql, sessionSecret, controlSecret, autoDrain }: AppD
     return c.json(res.body, res.status as 200);
   });
 
-  // ---- agent runs --------------------------------------------------------------
   app.get('/control/v1/agent/runs', async (c) => {
     controlGate(c);
     const kind = c.req.query('kind');
@@ -1673,15 +1547,10 @@ export function createApp({ sql, sessionSecret, controlSecret, autoDrain }: AppD
       return `$${params.length}`;
     };
     const scheduled = c.req.query('scheduled') === '1';
-    // Keyset pagination — scheduled walks (run_at, id) asc, the rest
-    // (created_at, id) desc. Cursors carry timestamptz::text so microseconds
-    // survive the round trip; JS Date/ISO would truncate to ms and re-match
-    // the boundary row. The key prefix keeps a cursor pinned to its view.
+    // Cursors carry timestamptz::text so microseconds survive (JS Date truncates to ms); the key pins the view.
     const cursor = c.req.query('cursor');
     const TS_RE = /^(\d{4})-(\d{2})-(\d{2}) (\d{2}):(\d{2}):(\d{2})(?:\.\d+)?[+-](\d{2})$/;
-    // Shape AND calendar sanity — '2026-99-99 25:61:61+99' would survive a
-    // loose regex and blow up Postgres' timestamptz cast with a 500. Offset
-    // ≤15 mirrors Postgres' own bound; day ≤ month length catches Feb 30.
+    // Calendar sanity too — a loose regex passes values that 500 the timestamptz cast.
     const tsOk = (ts: string) => {
       const m = TS_RE.exec(ts);
       if (!m) return false;
@@ -1729,8 +1598,7 @@ export function createApp({ sql, sessionSecret, controlSecret, autoDrain }: AppD
       if (key !== want || !tsOk(ts) || !UUID_RE.test(id)) {
         throw new HttpError(400, 'BAD_REQUEST', `cursor must be "${want}:<ts>|<run uuid>"`);
       }
-      // Bind as text and cast server-side — a timestamptz-inferred param is
-      // serialized through a JS Date upstream and loses its microseconds.
+      // Bind text + cast server-side — an inferred param goes through JS Date and loses µs.
       cursorCond = scheduled
         ? `(r.run_at > ${p(ts)}::text::timestamptz or (r.run_at = ${p(ts)}::text::timestamptz and r.id > ${p(id)}::uuid))`
         : `(r.created_at < ${p(ts)}::text::timestamptz or (r.created_at = ${p(ts)}::text::timestamptz and r.id < ${p(id)}::uuid))`;
@@ -1739,7 +1607,6 @@ export function createApp({ sql, sessionSecret, controlSecret, autoDrain }: AppD
       kind ? `kind = ${p(kind)}` : 'true',
       status ? `status = ${p(status)}` : 'true',
       leadId ? `r.lead_id = ${p(leadId)}` : 'true',
-      // scheduled=1 → only delayed runs, soonest first.
       scheduled ? 'r.run_at is not null' : 'true',
       cursorCond,
     ];
@@ -1779,8 +1646,7 @@ export function createApp({ sql, sessionSecret, controlSecret, autoDrain }: AppD
     return c.json({ run: rows[0] });
   });
 
-  // Cooperative cancel: flip queued/running → canceled; the worker's next
-  // journal write stops matching its claim fence and unwinds at the boundary.
+  // Cooperative cancel — the worker's next journal write fails the claim fence and unwinds.
   app.post('/control/v1/agent/runs/:id/cancel', async (c) => {
     controlGate(c);
     const id = uuidParam(c, 'id');
@@ -1801,25 +1667,10 @@ export function createApp({ sql, sessionSecret, controlSecret, autoDrain }: AppD
         // already terminal — report it, don't error (cancel is idempotent)
         return { status: 200, body: { ok: true, status: cur.status } };
       }
-      // Mail the canceled run already consumed but can no longer answer
-      // returns to pending — the orphan sweep respawns a run for it.
-      // No-op for a queued run (it never drained); staff pause/unsubscribe
-      // is the way to silence a lead, so a cancel never strands mail.
-      // event=true: cancel carries no failure signal — the deliveries
-      // bound is for poison mail, not for retired runs' outstanding work.
+      // Release consumed mail back to pending so the sweep respawns a run (event=true — cancel isn't a failure signal).
       await releaseInboxTx(tx, id, true);
-      // …but the request the canceled run was queued FOR dies with it —
-      // staff-run items stamp forRunId at enqueue (the run this request
-      // minted or adopted). Without the tombstone a pending-forRunId item
-      // (or one just released above) respawns under the sweep and the
-      // cancel silently restarts. The kill is scoped to items the run
-      // could actually serve — drainInbox's compatibility predicate:
-      // draftOnly + effective channel (params pin, else the bound
-      // thread's channel) + thread match for thread-bound runs — so a
-      // forRunId item merely associated with an adopted run (say an
-      // email request riding a whatsapp run) survives to spawn its own.
-      // Unowned mail still re-serves: the lead's own inbound isn't
-      // staff's canceled request.
+      // Tombstone the forRunId items that asked for this run or they'd respawn it — scoped to what
+      // the run could serve (draftOnly + effective channel + thread), so merely-associated mail survives.
       const runChan =
         rows[0].params?.channel === 'whatsapp' || rows[0].params?.channel === 'email'
           ? rows[0].params.channel
@@ -1875,19 +1726,13 @@ export function createApp({ sql, sessionSecret, controlSecret, autoDrain }: AppD
     ] as const) {
       if (v && !UUID_RE.test(v)) throw new HttpError(400, 'BAD_REQUEST', `${field} must be a uuid`);
     }
-    // strategist reviews the board, not a lead — binding it to one would also
-    // let a suppressed lead park the queued row and eat the weekly cadence
-    // slot (sweepStrategist keys on created_at)
+    // strategist takes no lead/thread — a suppressed lead's parked row would eat the weekly cadence slot.
     if (kind === 'strategist' && (leadId || threadId)) {
       throw new HttpError(422, 'BAD_REQUEST', 'strategist runs take no leadId/threadId');
     }
     const retiredIds2: string[] = [];
     const res = await claimControl(sql, requireIdemKey(c), async (tx) => {
-      // leadId and threadId aren't independent: a reply run bound to a thread
-      // must belong to that thread's lead, or thread content could be
-      // answered to the wrong lead's channel. A thread-only call adopts the
-      // thread's owner — claimRun gates on lead_id, so inserting null would
-      // skip suppression entirely.
+      // A thread-only call adopts the thread's owner — null lead_id would skip claimRun's suppression gate.
       let effLeadId = leadId;
       if (threadId) {
         const th = (
@@ -1902,11 +1747,9 @@ export function createApp({ sql, sessionSecret, controlSecret, autoDrain }: AppD
         if (!th.agent_enabled) throw new HttpError(422, 'THREAD_PAUSED', 'thread paused for agent');
         effLeadId = th.lead_id;
       }
-      // Same suppression mirror as the lead-scoped enqueue: a run queued
-      // under a suppressed lead can never claim — report instead of parking.
-      // The row lock serializes with a concurrent unsubscribe.
+      // Same suppression mirror as /leads/:id/run — report, don't park; row lock serializes vs unsubscribe.
       if (effLeadId) {
-        // capfin before the lead lock (see capLockTx's ordering rule).
+        // capfin before the lead lock (capLockTx ordering rule).
         await capLockTx(tx, effLeadId);
         const lead = (
           await tx<
@@ -1954,8 +1797,7 @@ export function createApp({ sql, sessionSecret, controlSecret, autoDrain }: AppD
         cap,
       );
       retiredIds2.push(...(cap.retired ?? []));
-      // Same cap refusal → error contract as /leads/:id/run (committed
-      // claim — the flag survives and the refusal replays).
+      // Same 422-not-throw contract as /leads/:id/run — the flag survives and replays.
       if (!runId) {
         return {
           status: 422,
@@ -1969,9 +1811,7 @@ export function createApp({ sql, sessionSecret, controlSecret, autoDrain }: AppD
         };
       }
       if (effLeadId) {
-        // Mail the nudge: a lead with an already-active run gets the staff
-        // intent delivered into it (insertRun's conflict path returned its
-        // id above); a fresh run just keeps the audit item beside its row.
+        // Mail the intent into the already-active run insertRun adopted.
         await enqueueInboxTx(tx, effLeadId, 'staff', {
           text: `a equipe pediu uma run '${kind}'${typeof params.focus === 'string' ? ` — ${params.focus}` : ''}`,
           requestedKind: kind as PlaybookKind,
@@ -1986,16 +1826,13 @@ export function createApp({ sql, sessionSecret, controlSecret, autoDrain }: AppD
     if (!res.replayed) {
       emitControlEvent('run.update', res.body.runId);
       for (const r of retiredIds2) emitControlEvent('run.update', r);
-      // Unscoped on a cap refusal: the effective lead can live behind a
-      // threadId, and one bare event refreshes every open card + the badge
-      // the flag+task write just changed.
+      // Unscoped on a cap refusal — the effective lead can live behind a threadId.
       if (res.status === 422) emitControlEvent('lead.change');
     }
     kickDrain();
     return c.json(res.body, res.status as 201);
   });
 
-  // ---- agent metrics -----------------------------------------------------------
   app.get('/control/v1/agent/metrics', async (c) => {
     controlGate(c);
     const days = c.req.query('days') ?? '7';
@@ -2005,11 +1842,6 @@ export function createApp({ sql, sessionSecret, controlSecret, autoDrain }: AppD
     return c.json(await agentMetrics(sql, Number(days) as 7 | 30));
   });
 
-  // ---- dispatch + briefs + segment stats -------------------------------------
-
-  // Manual batch dispatch — staff picks the leads and the goal; each eligible
-  // lead gets its agent_goal set and an outreach run queued. Ineligible leads
-  // come back named with the reason instead of silently skipped.
   app.post('/control/v1/agent/dispatch', async (c) => {
     controlGate(c);
     const body = await bodyJson(c);
@@ -2023,9 +1855,7 @@ export function createApp({ sql, sessionSecret, controlSecret, autoDrain }: AppD
       throw new HttpError(422, 'BAD_REQUEST', 'leadIds must be an array of ≤200 uuids');
     }
     const goal = agentGoal(body.goal);
-    // Optional staff channel override — 'auto' or absent lets the agent pick;
-    // 'whatsapp'/'email' pins every send in the dispatched runs to it. The
-    // resolver still blocks when that channel is unreachable for a lead.
+    // 'auto'/absent lets the agent pick; a pin still fails if unreachable.
     const wantChannel =
       body.channel === 'whatsapp' || body.channel === 'email' ? body.channel : null;
     if (body.channel != null && body.channel !== 'auto' && !wantChannel) {
@@ -2035,9 +1865,7 @@ export function createApp({ sql, sessionSecret, controlSecret, autoDrain }: AppD
     const res = await claimControl(sql, requireIdemKey(c), async (tx) => {
       let enqueued = 0;
       const skipped: { id: string; reason: string }[] = [];
-      // Every capfin first, in sorted order — a multi-lead tx taking the
-      // advisories in request order could AB-BA against another batch whose
-      // ids overlap in a different order (see capLockTx's ordering rule).
+      // All capfins first in sorted order — request order could AB-BA another batch (capLockTx).
       for (const id of [...new Set(ids as string[])].sort()) await capLockTx(tx, id);
       for (const id of ids as string[]) {
         const lead = (
@@ -2070,13 +1898,7 @@ export function createApp({ sql, sessionSecret, controlSecret, autoDrain }: AppD
           skipped.push({ id, reason });
           continue;
         }
-        // null = lifetime cost cap refused the run — surface it like every
-        // other ineligibility instead of counting a phantom enqueue. The
-        // goal update stays AFTER the run insert: a refused lead must not
-        // keep a goal every future lead-bound run would still read.
-        // A lead with an active run is no longer skipped: insertRun's
-        // conflict path returns its id and the goal mails to it through
-        // the inbox — one active run per lead, no second queue.
+        // The goal update stays after the insert — a cap-refused lead must not keep a goal future runs would read.
         const params: Record<string, unknown> = {
           goal,
           ...(wantChannel ? { channel: wantChannel } : {}),
@@ -2109,8 +1931,7 @@ export function createApp({ sql, sessionSecret, controlSecret, autoDrain }: AppD
     });
     if (res.replayed) c.header('x-idempotent-replay', 'true');
     if (!res.replayed) {
-      // Cap refusals committed flag+task writes for the skipped leads —
-      // lead.change is what refreshes the Tasks view/badge for them.
+      // Cap refusals wrote flag+task — lead.change refreshes the Tasks badge.
       const capSkipped = res.body.skipped.some((s) => s.reason === 'lead over its agent cost cap');
       if (res.body.enqueued || capSkipped) emitControlEvent('lead.change');
       if (res.body.enqueued) emitControlEvent('run.update');
@@ -2120,8 +1941,6 @@ export function createApp({ sql, sessionSecret, controlSecret, autoDrain }: AppD
     return c.json(res.body);
   });
 
-  // Discovery briefs — the daily-autopilot side of lead gathering: each
-  // enabled brief fires one discovery run every ~23h (see sweepBriefs).
   app.get('/control/v1/agent/playbooks', async (c) => {
     controlGate(c);
     const playbooks = await controlTx(sql, (tx) => listPlaybooksTx(tx));
@@ -2191,8 +2010,7 @@ export function createApp({ sql, sessionSecret, controlSecret, autoDrain }: AppD
   app.post('/control/v1/agent/briefs', async (c) => {
     controlGate(c);
     const body = await bodyJson(c);
-    // A blank definition would schedule a useless daily run — require real
-    // text for the two fields the sweep feeds to discovery.
+    // A blank definition would schedule a useless daily run.
     const name = str(body.name, 'name', 120).trim();
     const query = str(body.query, 'query', 500).trim();
     if (!name) throw new HttpError(422, 'BAD_REQUEST', 'name must be non-empty', { field: 'name' });
@@ -2274,12 +2092,8 @@ export function createApp({ sql, sessionSecret, controlSecret, autoDrain }: AppD
         >`select enabled from discovery_briefs where id = ${id} for update`
       )[0];
       if (!cur) throw new HttpError(404, 'BRIEF_NOT_FOUND', 'brief not found');
-      // A changed definition — or a paused brief switched back on — should
-      // refire promptly, not ride out the previous run's 23h cadence. The
-      // note (auto-pause reason or the strategist's rationale) is stale from
-      // that moment — clear it with the cadence stamp. rearmed_at restarts
-      // the dead-streak window so the pre-revival zero-yield history can't
-      // instantly re-pause the brief before its new run is judged.
+      // Refire promptly on definition change/re-enable; rearmed_at restarts
+      // the dead-streak window so old zero-yield history can't instantly re-pause.
       if (
         'query' in set ||
         'segment' in set ||
@@ -2319,23 +2133,17 @@ export function createApp({ sql, sessionSecret, controlSecret, autoDrain }: AppD
     return c.json(res.body);
   });
 
-  // Segment performance — the learning-loop read surface: which segments
-  // reply, which convert, what they cost.
   app.get('/control/v1/agent/segments', async (c) => {
     controlGate(c);
     return c.json({ segments: await segmentStats(sql) });
   });
 
-  // Channel health — 30d rollup of sends/failures/guardrail-blocks/bounces
-  // per channel, surfaced on the Settings provider cards.
   app.get('/control/v1/channels/health', async (c) => {
     controlGate(c);
     return c.json({ channels: await channelHealth(sql) });
   });
 
-  // WhatsApp pairing state for the Settings screen (Baileys QR handshake).
-  // `status` is the live socket state — 'off'/'connecting'/'qr'/'open' —
-  // so the UI can say "desligado" instead of guessing from QR presence.
+  // status = live socket state so the UI doesn't guess from QR presence.
   app.get('/control/v1/wa/qr', async (c) => {
     controlGate(c);
     const rows = await controlTx(
@@ -2349,16 +2157,12 @@ export function createApp({ sql, sessionSecret, controlSecret, autoDrain }: AppD
     return c.json({ qr: rows[0]?.value?.qr ?? null, status: waStatus(), me: waIdentity() });
   });
 
-  // Pairing-code alternative to scanning the QR — WhatsApp's
-  // "conectar com número" flow. Staff sends their phone digits, we ask
-  // Baileys for the 8-char code.
+  // WhatsApp "conectar com número" flow — staff sends digits, Baileys returns the code.
   app.post('/control/v1/wa/pair-code', async (c) => {
     controlGate(c);
     const body = await bodyJson(c);
     const phone = str(body.phone, 'phone', 40);
-    // Claimed: a retry must replay the issued code, not ask Baileys twice.
-    // Failures throw inside the tx so the claim rolls back and a retry is
-    // a genuinely fresh attempt.
+    // Claimed so a retry replays the issued code; failures throw for a genuinely fresh retry.
     const res = await claimControl(sql, requireIdemKey(c), async () => {
       const { pairCode } = await import('./agent/channels/whatsapp.ts');
       try {
@@ -2372,10 +2176,7 @@ export function createApp({ sql, sessionSecret, controlSecret, autoDrain }: AppD
     return c.json(res.body, res.status as 200);
   });
 
-  // Unpair the WhatsApp session (linked-device logout + auth-state wipe) so
-  // a different number can pair. Restarts the socket afterwards so a fresh
-  // QR is emitted right away. Claimed — a retried logout can't race the
-  // replacement pairing.
+  // Unpair + restart the socket so a fresh QR emits; claimed so a retried logout can't race re-pairing.
   app.post('/control/v1/wa/logout', async (c) => {
     controlGate(c);
     const res = await claimControl(sql, requireIdemKey(c), async () => {
@@ -2393,9 +2194,7 @@ export function createApp({ sql, sessionSecret, controlSecret, autoDrain }: AppD
     return c.json(res.body, res.status as 200);
   });
 
-  // ---- channel webhooks ---------------------------------------------------------
-  // A shared webhook secret (VENDUA_WEBHOOK_SECRET, derived from the staff key
-  // when unset) gates inbound posts — channels can't carry our staff cookie.
+  // Shared webhook secret gates inbound posts — channels can't carry the staff cookie.
   const webhookSecret =
     process.env.VENDUA_WEBHOOK_SECRET ||
     createHmac('sha256', staffSecret).update('vendua.webhook').digest('hex');
@@ -2406,17 +2205,13 @@ export function createApp({ sql, sessionSecret, controlSecret, autoDrain }: AppD
     h != null &&
     h.length === webhookSecret.length &&
     timingSafeEqual(Buffer.from(h, 'utf8'), webhookSecretBytes);
-  // Cap inbound volume — an accepted message writes CRM rows and launches an
-  // LLM run, so a guessed/leaked secret must not buy unbounded spend.
+  // Cap inbound — an accepted message writes rows and launches an LLM run.
   let webhookBucket = { count: 0, resetAt: 0 };
   app.post('/control/v1/webhooks/:channel', async (c) => {
-    // Two ways in: the shared x-vendua-webhook secret (manual relays, tests)
-    // or Resend's svix signature — real inbound email, since Resend can't
-    // set custom headers and signs the payload instead.
+    // Shared secret or Resend svix signature (Resend can't set custom headers).
     const sharedOk = webhookSecretOk(c.req.header('x-vendua-webhook'));
     const svix = svixHeaders(c);
-    // The svix signature covers the raw body, so verify before charging the
-    // rate bucket — forged headers must not spend the inbound quota.
+    // Verify svix before charging the bucket — forged headers must not spend quota.
     let raw: string | undefined;
     let svixOk = false;
     if (
@@ -2439,9 +2234,7 @@ export function createApp({ sql, sessionSecret, controlSecret, autoDrain }: AppD
     if (++webhookBucket.count > 240) {
       throw new HttpError(429, 'RATE_LIMITED', 'webhook rate exceeded — retry in a minute');
     }
-    // Only real providers hit this endpoint — 'manual' threads exist so staff
-    // can type inbound notes, and no webhook should mint inbound activity
-    // under that channel.
+    // 'manual' threads are staff notes — no webhook mints inbound activity under them.
     const chan = channel(c.req.param('channel'));
     if (chan !== 'email' && chan !== 'whatsapp') {
       throw new HttpError(422, 'BAD_REQUEST', 'channel must be email|whatsapp');
@@ -2451,8 +2244,7 @@ export function createApp({ sql, sessionSecret, controlSecret, autoDrain }: AppD
       return c.json(res, 'ignored' in res ? 200 : 201);
     }
     const body = parseJsonObject(raw ?? (await boundedText(c)));
-    // Providers deliver at-least-once: without a stable message id a retry
-    // would mint a second conversation and a second reply run. Require it.
+    // At-least-once delivery — a stable id or retries mint duplicates.
     const rawMsgId = body.messageId ?? body.message_id;
     if (rawMsgId == null || String(rawMsgId).trim() === '') {
       throw new HttpError(422, 'BAD_REQUEST', 'messageId is required for webhook dedupe', {
@@ -2472,10 +2264,7 @@ export function createApp({ sql, sessionSecret, controlSecret, autoDrain }: AppD
     return c.json(res, 'ignored' in res ? 200 : 201);
   });
 
-  // ---- public booking surface --------------------------------------------------
-  // UNAUTHENTICATED — the token IS the credential (HMAC lead id + exp).
-  // Invalid/expired tokens get a uniform 404: no oracle on whether a lead
-  // exists. Rate-limited per IP like /control/v1/login.
+  // Unauthenticated — the token IS the credential; uniform 404, rate-limited per IP.
   const bookHits = new Map<string, { count: number; resetAt: number }>();
   const bookRate = (c: Context) => {
     const ip = (() => {
@@ -2495,9 +2284,7 @@ export function createApp({ sql, sessionSecret, controlSecret, autoDrain }: AppD
       throw new HttpError(429, 'RATE_LIMITED', 'too many requests — retry in a minute');
     }
   };
-  // The booking token is a bearer credential in the body — CORS doesn't
-  // apply, but a browser request carrying a *foreign* Origin is never the
-  // page we served: enforce the same same-origin rule controlGate uses.
+  // A foreign Origin is never the page we served — same same-origin rule as controlGate.
   const bookSameOrigin = (c: Context) => {
     const origin = c.req.header('origin');
     if (!origin) return;
@@ -2516,8 +2303,7 @@ export function createApp({ sql, sessionSecret, controlSecret, autoDrain }: AppD
 
   app.get('/agendar', (c) => {
     c.header('cache-control', 'no-store');
-    // The ?t= token is the credential — don't let it ride Referer headers out
-    // to the fonts/CDN origins the page loads.
+    // no-referrer — the ?t= token must not leak via Referer.
     c.header('referrer-policy', 'no-referrer');
     return c.html(BOOKING_PAGE);
   });
@@ -2543,8 +2329,7 @@ export function createApp({ sql, sessionSecret, controlSecret, autoDrain }: AppD
     return c.json({
       leadName: lead.name,
       leadWhats: lead.whatsapp ?? lead.phone ?? null,
-      // roomConfigured drives the page's copy — true when either the static
-      // URL is set or the Daily provider will mint a room at book time.
+      // roomConfigured drives the page's copy.
       roomConfigured: Boolean(cfg.roomUrl) || rooms.dailyConfigured(),
       slotMinutes: cfg.slotMinutes,
       tz: cfg.tz,
@@ -2583,9 +2368,7 @@ export function createApp({ sql, sessionSecret, controlSecret, autoDrain }: AppD
     return c.json({ meeting: await cancelByLead(sql, leadId, m) });
   });
 
-  // ---- control SPA ---------------------------------------------------------------
-  // Prod: Core serves the built React app from apps/control/dist.
-  // Dev: the vite server on :5195 proxies /control/v1 here — hit it instead.
+  // Prod serves the built app; dev hits vite :5195 (proxies /control/v1 here).
   const CONTROL_DIST = join(import.meta.dir, '../../../apps/control/dist');
   const SPA_MIME: Record<string, string> = {
     '.html': 'text/html; charset=utf-8',
