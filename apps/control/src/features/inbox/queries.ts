@@ -82,7 +82,20 @@ export function useEditDraft() {
       } catch {
         throw new Error('falhou ao criar rascunho editado — original mantido');
       }
-      await api.reject(draft.id);
+      try {
+        await api.reject(draft.id);
+      } catch {
+        // both drafts pending would let the message go out twice — withdraw the replacement
+        const undone = await api.reject(replacement).then(
+          () => true,
+          () => false,
+        );
+        throw new Error(
+          undone
+            ? 'falhou ao descartar o original — edição desfeita, nada foi enviado'
+            : 'falhou ao descartar o original e ao desfazer a edição — há dois rascunhos na fila, descarte um',
+        );
+      }
       // "salvar + aprovar" sends the edited version — approve the replacement
       try {
         const res = await api.approve(replacement);

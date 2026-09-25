@@ -36,14 +36,21 @@ export function Composer({ view }: { view: ThreadView }) {
   const submit = (asDraft: boolean) => {
     if (!text.trim() || send.isPending) return;
     const subject = subjRef.current?.value.trim();
+    const body = text;
     send.mutate(
       {
         threadId: thread.id,
-        body: text,
+        body,
         send: !asDraft,
         ...(subject ? { subject } : {}),
       },
-      { onSuccess: () => setText('') },
+      {
+        // a failed dispatch still answers 200 — keep the text so staff can retry, and never
+        // clear what they typed while the request was in flight
+        onSuccess: (res) => {
+          if (asDraft || res.sent?.ok !== false) setText((t) => (t === body ? '' : t));
+        },
+      },
     );
   };
 
