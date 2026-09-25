@@ -4,13 +4,6 @@ import { matchZone, validateItemModifiers, type CartView } from './cart.ts';
 import type { ProductDetail } from './catalog.ts';
 import type { DerivedStatus, StoreSettingsRow } from './store.ts';
 
-/**
- * checkout module — Phase 0 stub. Real payment orchestration (Mercado Pago
- * OAuth + PIX + webhooks) is Phase 2 (docs/architecture/13-payments.md); what
- * exists here is the full validation path and the order-creation seam, so
- * storefronts and the Kernel exercise the real contract now.
- */
-
 export interface CheckoutInput {
   customer: { name: string; phone: string };
   delivery: { mode: 'pickup' | 'delivery'; neighborhood?: string; address?: string };
@@ -27,9 +20,7 @@ export interface ZoneRowLike {
   eta_max_minutes: number;
 }
 
-/**
- * Pure validation — unit-tested. Throws the typed error a client sees.
- */
+/** pure validation; throws the typed error a client sees */
 export function validateCheckout(
   status: DerivedStatus,
   settings: StoreSettingsRow | null,
@@ -43,18 +34,12 @@ export function validateCheckout(
       ...(status.resumesAt ? { resumesAt: status.resumesAt } : {}),
     });
   }
-  // Closed stores still take orders (preorder for the next window —
-  // documented closed-vs-paused semantics). Fulfillment capability is
-  // validated per requested mode, independent of open state.
+  // closed stores still take orders (preorder); capability is per-mode, independent of open state
   if (input.delivery.mode === 'pickup' && !(settings?.pickup_enabled ?? true)) {
     throw new HttpError(422, 'PICKUP_UNAVAILABLE', 'pickup is not available');
   }
   if (cart.items.length === 0) throw new HttpError(422, 'EMPTY_CART', 'cart is empty');
-  // Re-validate each line against the CURRENT product definition — a product
-  // or modifier can be sold_out, retired, or deleted between carting and
-  // payment, and a dropped modifier id must never quietly reprice the order
-  // (Review finding). Falls back to the cart view when no product map is
-  // passed (tests exercise the pure path either way).
+  // re-validate against the current product — a dropped modifier id must never quietly reprice the order
   for (const item of cart.items) {
     const product = products?.get(item.productId);
     if (product) {
@@ -68,8 +53,7 @@ export function validateCheckout(
       });
     }
     if (products?.has(item.productId)) {
-      // Product resolves in the map as null → deleted between carting and now;
-      // its stored modifier ids can't be trusted to have repriced honestly.
+      // null in the map = deleted between carting and now; stored modifier ids can't be trusted
       throw new HttpError(409, 'SOLD_OUT', `"${item.name}" is no longer available`, {
         productId: item.productId,
       });
@@ -104,7 +88,7 @@ export function validateCheckout(
   return { zone: null };
 }
 
-/** Bounded string check — public checkout input must not be unbounded. */
+/** public checkout input must not be unbounded */
 function bounded(v: unknown, max: number): v is string {
   return typeof v === 'string' && v.length <= max;
 }

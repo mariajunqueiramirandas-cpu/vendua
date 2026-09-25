@@ -1,11 +1,6 @@
 import type { CartItem, Order } from '@vendua/kernel';
 import { formatBRL } from './format.ts';
 
-/**
- * WhatsApp deep links (wa.me) — the reference storefront's main contact
- * channel for orders, waitlist and out-of-range delivery. The Kernel exposes
- * `store.whatsapp`; everything else is text building (OBSERVATIONS.md).
- */
 export function waLink(whatsapp: string | null | undefined, text?: string): string | null {
   const digits = whatsapp?.replace(/\D/g, '');
   if (!digits) return null;
