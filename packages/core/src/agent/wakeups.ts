@@ -5,7 +5,7 @@ import { claimControl, controlTx } from '../modules/control.ts';
 import { emitControlEvent } from '../modules/control-events.ts';
 import { insertRun } from './runner.ts';
 import { enqueueInboxTx } from './inbox.ts';
-import { automationAllowedTx } from './policy.ts';
+import { autonomyTx, playbookEnabledTx } from './policy.ts';
 import type { PlaybookKind } from './tool-meta.ts';
 import { capCentsOf, getSettingTx, type Guardrails } from '../modules/integrations.ts';
 
@@ -223,11 +223,19 @@ export async function sweepWakeups(sql: Sql): Promise<number> {
       where l.id = w.lead_id and w.status = 'pending'
         and (l.unsubscribed_at is not null or l.archived_at is not null)
     `;
-    if (!(await automationAllowedTx(tx, 'outreach')).ok) return;
+    // The playbook switch gates every wakeup; workspace autonomy gates
+    // only the automation kind — promised callbacks (lead-asked or
+    // staff-created) run unmarked like claimRun allows them to.
+    if (!(await playbookEnabledTx(tx, 'outreach')).ok) return;
+    const { level } = await autonomyTx(tx);
+    const autoOff = level === 'off';
     const g = await getSettingTx<Partial<Guardrails>>(tx, 'guardrails', {});
     const capCents = capCentsOf(g);
     // Over-cap leads stay out of the 20-row window (same reason as
     // sweepOutreach): a parked prefix must not starve later due wakeups.
+    // Same for autonomy-off — automation wakeups stay pending and would
+    // re-pick every tick, so the query excludes them rather than skipping
+    // them in-loop and letting 20 parked rows starve promised callbacks.
     // An already-active run is no longer "busy" — the fired wakeup mails
     // its intent to it through agent_inbox instead of waiting it out.
     const due = await tx<
@@ -237,6 +245,7 @@ export async function sweepWakeups(sql: Sql): Promise<number> {
       join leads l on l.id = w.lead_id
       where w.status = 'pending' and w.at <= now()
         and l.agent_mode != 'off' and l.agent_paused_at is null
+        and (not ${autoOff} or w.requested or w.created_by = 'staff')
         and (${capCents} <= 0 or
           coalesce((select sum(x.cost_cents) from agent_runs x
                     where x.lead_id = w.lead_id), 0) < ${capCents})
@@ -251,8 +260,12 @@ export async function sweepWakeups(sql: Sql): Promise<number> {
       if (!capFree[0]!.got) continue;
       const cap: { flagged?: boolean } = {};
       // Agent self-schedules are automation ('auto' — a reply retires them);
-      // lead-asked callbacks and staff wakeups are promises: unmarked.
+      // lead-asked callbacks and staff wakeups are promises: unmarked,
+      // so autonomy 'off' never stalls them (same exemption claimRun gives
+      // unmarked rows) — they park pending while autonomy is off only when
+      // the run itself is automation.
       const promised = w.requested || w.created_by === 'staff';
+      if (!promised && level === 'off') continue;
       const params: Record<string, unknown> = {
         ...(promised ? {} : { auto: 'wakeup' }),
         focus: `agendado por você: ${w.focus}`,

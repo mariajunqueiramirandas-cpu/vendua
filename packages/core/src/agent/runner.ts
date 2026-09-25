@@ -521,14 +521,23 @@ export async function claimRun(sql: Sql): Promise<RunRow | null> {
  *  intent in a failed journal. Bounded: `deliveries` counts respawns,
  *  and after 2 the item keeps its stamp — a permanently failing item
  *  would otherwise respawn forever, and the failed run's staff task is
- *  already the human path. Shared by finishRun's 'failed' branch and
- *  the terminal-reclaim commit. */
-async function releaseInboxTx(tx: Sql, runId: string): Promise<void> {
+ *  already the human path. Shared by finishRun's 'failed' branch, the
+ *  terminal-reclaim commit, and the staff-cancel endpoint. Delivery is
+ *  at-least-once — the first re-serve stamps a `resumed` marker and a
+ *  note in the rendered text so the serving run checks the thread
+ *  history for what the dead run already did (it may have sent). */
+export async function releaseInboxTx(tx: Sql, runId: string): Promise<void> {
   await tx`
     update agent_inbox
     set consumed_at = null, consumed_by_run = null,
         payload = payload || jsonb_build_object(
           'deliveries', coalesce((payload->>'deliveries')::int, 0) + 1)
+        || case when payload ? 'resumed' then '{}'::jsonb
+            else jsonb_build_object(
+              'text', coalesce(payload->>'text', '') ||
+                ' — (reentregue: a run anterior foi interrompida — confira o histórico antes de agir de novo)',
+              'resumed', true)
+            end
     where consumed_by_run = ${runId}
       and coalesce((payload->>'deliveries')::int, 0) < 2
   `;
@@ -575,8 +584,9 @@ async function finishRun(
       // Consumed mail a dead run can no longer answer returns to pending —
       // the orphan sweep respawns a run for it rather than stranding the
       // intent in a failed journal. 'done'/'canceled' keep their mail: a
-      // finished run rendered it; a canceled one's suppression is handled
-      // by the canceling side (unsubscribe clears pending mail itself).
+      // finished run rendered it; cancel paths handle their own (the
+      // staff-cancel endpoint releases consumed mail, unsubscribe drops
+      // pending mail itself).
       await releaseInboxTx(tx, run.id);
       const name =
         (await tx<{ name: string }[]>`select name from leads where id = ${r.lead_id}`)[0]?.name ??

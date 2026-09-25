@@ -391,8 +391,11 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('lead lifecycle (db)', () => {
       const res = await approveMessage(sql, messageId, 'staff', key('a3-active-run'));
       expect(res.body.stale).toBe(true);
       // One active run per lead: the regen intent can't spawn a second row —
-      // it lands as an 'event' item the parked outreach drains at claim.
-      expect(res.body.runId).toBe(generic);
+      // it lands as an 'event' item. But drainInbox defers draftOnly mail
+      // for a send-capable run, so the parked outreach never recomposes it —
+      // runId is absent rather than pointing at a run that won't produce
+      // the draft (the orphan sweep spawns the real draftOnly run later).
+      expect(res.body.runId).toBeUndefined();
       const runs = await runsFor(leadId);
       expect(runs).toHaveLength(1);
       const items = await sql<{ payload: Record<string, unknown> }[]>`
