@@ -21,6 +21,7 @@ select r.lead_id,
          'threadId', r.thread_id,
          'params', r.params,
          'notBefore', r.run_at,
+         'srcRunId', r.id,
          'src', 'migration-0039')
 from agent_runs r
 where r.error = 'superseded — single active run per lead'
