@@ -33,8 +33,10 @@ CHROMIUM=/opt/pw-browsers/chromium bun scripts/shots.ts /pipeline /inbox   # 375
   cookie (`/tmp/vendua-control-auth.json`); don't script UI logins in loops.
 - Don't `pkill -f <pattern>` where the pattern also appears in your own command line — it
   kills the shell running it.
-- No Docker daemon in cloud sessions; to validate the Core image, replay its Dockerfile steps
-  (copy only the listed manifests, `bun install --frozen-lockfile`, build `apps/control`).
+- Docker + Compose are installed but the daemon isn't running: start it on demand with
+  `(nohup dockerd > /tmp/dockerd.log 2>&1 &)`. It can pull from Docker Hub, so the real
+  Dokploy images can be checked with `docker compose build core crm` — images are large, so
+  mind the session's disk allowance and `docker system prune` afterwards.
 
 ## apps/control (CRM)
 
