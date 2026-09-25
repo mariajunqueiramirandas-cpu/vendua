@@ -1,8 +1,4 @@
-/**
- * api — typed client for /control/v1. Cookie session (vendua_control) +
- * the x-vendua-staff CSRF marker on mutations. Every mutation mints an
- * Idempotency-Key — claimControl makes retries safe.
- */
+// typed /control/v1 client — cookie session, x-vendua-staff CSRF marker, per-mutation Idempotency-Key
 
 export class ApiError extends Error {
   constructor(
@@ -48,7 +44,6 @@ async function req<T>(path: string, init: RequestInit = {}): Promise<T> {
   return (ct.includes('json') ? res.json() : res.text()) as Promise<T>;
 }
 
-// ---------- types ----------
 export interface AgentPlanStep {
   step: string;
   status: 'todo' | 'done' | 'skip';
@@ -339,9 +334,6 @@ export interface MeetingStatus {
   };
 }
 
-// ---------- lead agent panel ----------
-// ADR 0014 contracts — names mirror the ADR so the parallel `// agent v2`
-// section (another change, same types) merges without renames.
 export type AutonomyLevel = 'off' | 'copilot' | 'supervised' | 'autopilot';
 export interface AutonomyReason {
   code: string;
@@ -379,7 +371,6 @@ export interface LeadFact {
   updatedAt: string;
 }
 
-// ---------- calls ----------
 const apiBase = {
   login: (key: string) =>
     req<{ ok: true }>('/login', { method: 'POST', body: JSON.stringify({ key }) }),
@@ -526,7 +517,6 @@ const apiBase = {
   cancelRun: (id: string) =>
     req<{ ok: true; status?: string }>(`/agent/runs/${id}/cancel`, { method: 'POST' }),
 
-  // ---- agent metrics
   agentMetrics: (days: 7 | 30 = 7) => req<AgentMetrics>(`/agent/metrics?days=${days}`),
 
   dispatch: (
@@ -566,7 +556,6 @@ const apiBase = {
   patchMeeting: (id: string, patch: { status?: string; startsAt?: string; endsAt?: string }) =>
     req<{ meeting: Meeting }>(`/meetings/${id}`, { method: 'PATCH', body: JSON.stringify(patch) }),
 
-  // ---------- lead agent panel ----------
   leadAutonomy: (id: string) => req<AutonomyExplanation>(`/leads/${id}/autonomy`),
   leadFacts: (id: string) => req<{ facts: LeadFact[] }>(`/leads/${id}/facts`),
   putLeadFact: (id: string, key: string, body: { value: string; confidence?: number }) =>
@@ -585,14 +574,6 @@ const apiBase = {
   cancelWakeup: (id: string) =>
     req<{ wakeup: Wakeup }>(`/agent/wakeups/${id}/cancel`, { method: 'POST' }),
 };
-
-// ============================ agent v2 (ADR 0014) ============================
-// CRM agent v2 contract — the Studio's surface: settings shapes
-// (agent_playbooks, agent_autonomy), playbook catalog, memory v2, metrics.
-// Shared domain types (AutonomyLevel, PlaybookKind, Wakeup, LeadFact,
-// AutonomyExplanation) and the lead-panel calls live in the
-// `// ---------- lead agent panel ----------` sections above — declared
-// once, re-used here.
 
 export const PLAYBOOK_KINDS = ['triage', 'reply', 'outreach', 'discovery', 'strategist'] as const;
 
@@ -677,4 +658,3 @@ const agentV2 = {
 
 // one client — the v2 section merges in so callers keep a single import
 export const api = Object.assign(apiBase, agentV2);
-// ========================== end agent v2 (ADR 0014) ==========================

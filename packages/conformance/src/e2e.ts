@@ -1,9 +1,3 @@
-/**
- * e2e orchestrator — build the storefront artifact, seed the qa-* fixture
- * tenants, serve dist/ through the preview server (static + API proxy with
- * Host untouched), then run the Playwright suite against it. Exit code is the
- * suite's: non-zero when any check fails.
- */
 import { existsSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -46,8 +40,7 @@ export async function runE2E(storefrontDir: string): Promise<number> {
   const server = await startPreview({ distDir, port, coreOrigin });
   console.log(`[e2e] preview :${port} → core ${coreOrigin} (Host forwarded untouched)`);
   try {
-    // Harness sanity: the qa tenant must resolve through the proxy before the
-    // suite runs — otherwise every check would fail for a harness reason.
+    // the qa tenant must resolve through the proxy before the suite runs
     const probe = await fetch(`http://qa-open.localhost:${port}/storefront/v1/store`);
     if (!probe.ok) {
       console.error(`[e2e] qa tenant probe failed: ${probe.status} ${await probe.text()}`);

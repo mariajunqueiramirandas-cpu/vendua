@@ -25,10 +25,6 @@ import { ensureThread } from '../src/modules/threads.ts';
 import { rememberTx } from '../src/modules/agent-memory.ts';
 import { migrate } from '../src/platform/db.ts';
 
-// ---------------------------------------------------------------------------
-// replayJournal — pure journal → conversation rebuild (no DB).
-// ---------------------------------------------------------------------------
-
 describe('replayJournal', () => {
   test('empty journal replays nothing', () => {
     const r = replayJournal([]);
@@ -291,9 +287,8 @@ describe('replayJournal', () => {
         args: { leadId: 'l1', body: 'olá' },
         out: { message: { id: 'm1', status: 'sent' } },
       },
-      // a task journaled but never resolved — reconcileInterrupted only
-      // fills out when the claim proves it committed; unproven means it
-      // never ran, so it must stay retryable (not suppressible)
+      // pending task — reconcile fills out only when the claim proves it
+      // committed; unproven stays retryable
       {
         type: 'tool',
         name: 'create_task',
@@ -421,10 +416,6 @@ describe('replayJournal', () => {
   });
 });
 
-// ---------------------------------------------------------------------------
-// DB-backed — opt-in via TEST_DATABASE_URL (CI has no Postgres).
-// ---------------------------------------------------------------------------
-
 describe('mapPointerName', () => {
   test('reads the name a pointer already carries — else null (a redirect hop)', () => {
     expect(mapPointerName('https://www.google.com/maps/place/Acme+Pizza')).toBe('Acme Pizza');
@@ -460,12 +451,8 @@ describe('mapPointerName', () => {
   });
 
   test('a continue= chain is bounded — past the cap, null hands off to the fetch path', () => {
-    // continue= wraps another google url (or itself) — untrusted input; the
-    // peel is iterative (no recursion) but still bounded work. The contract
-    // under test is only the boundary: mapPointerName returning null is
-    // what hands the url to resolveMapPointer's per-hop fetch instead
-    // (that side needs live network). The bound is 8 — a peel is cheap,
-    // so names up to that depth resolve in-process with no fetch spent.
+    // the contract under test is the boundary only — past the bound (8),
+    // null hands the url to resolveMapPointer's per-hop fetch (live network)
     const wrap = (u: string) => `https://www.google.com/sorry/?continue=${encodeURIComponent(u)}`;
     // a wrapper chain that never reaches a name carrier — null, no crash
     let loop = 'https://www.google.com/sorry/';
@@ -491,9 +478,8 @@ describe('mapPointerName', () => {
     // whose own hops keep peeling (and run assertFetchable)
     chain = wrap(chain);
     expect(mapPointerName(chain)).toBeNull();
-    // a wrapper's own ?q is not the destination's name — if the peel cap
-    // leaves a leftover continue=, the carrier never resolved → null, not
-    // the wrapper's name
+    // a wrapper's own ?q is not the destination's name — leftover
+    // continue → null
     const tail = `https://www.google.com/sorry/?q=Wrong&continue=${encodeURIComponent('https://www.google.com/search?q=Acme')}`;
     let deep = tail;
     for (let i = 0; i < 8; i++) deep = wrap(deep);
@@ -503,9 +489,8 @@ describe('mapPointerName', () => {
     expect(mapPointerName(wrap(encodeURIComponent('https://www.google.com/search?q=Acme')))).toBe(
       'Acme',
     );
-    // the peel never crosses the pointer family — a continue= pointing at a
-    // foreign host keeps the wrapper (leftover continue → unresolved →
-    // null), so the foreign target never becomes a chase hop
+    // a continue= pointing at a foreign host keeps the wrapper unresolved
+    // → null — it never becomes a chase hop
     expect(
       mapPointerName(
         `https://www.google.com/sorry/?continue=${encodeURIComponent('https://evil.example/x?q=Acme')}`,
@@ -644,11 +629,8 @@ dbDescribe('worker robustness (db)', () => {
     `;
     const id = (await enqueueRun(sql, { kind: 'outreach', leadId }))!;
     const stale = new Date(Date.now() - 11 * 60_000);
-    // 15¢ of model usage + monid markers holding CUMULATIVE balances
-    // (3¢ then 10¢ — the budget's running total, not per-charge deltas):
-    // over the 20¢ cap, but only ever recorded in steps (the attempt died
-    // before finishRun). A sum would inflate to 28¢ — the fold must read
-    // the LAST marker like priorSpend does on resume.
+    // monid markers hold CUMULATIVE balances (3¢ then 10¢) — a sum would
+    // inflate to 28¢; the fold must read the LAST marker, like priorSpend
     await sql`
       update agent_runs set status = 'running', claim_token = 'stale',
         started_at = ${stale}, alive_at = ${stale}, max_attempts = 1,
@@ -816,7 +798,7 @@ dbDescribe('worker robustness (db)', () => {
     ];
     const id = await seedStaleRun(priorJournal);
     await sql`update agent_runs set lead_id = ${leadId} where id = ${id}`;
-    await drain(sql, 0); // reclaim → queued, attempts=1
+    await drain(sql, 0);
     // pull the backoff forward; the mock driver consumes params.script
     await sql`update agent_runs set run_at = now(),
       params = ${sql.json({
@@ -1044,9 +1026,8 @@ dbDescribe('worker robustness (db)', () => {
     `;
     await sql`delete from agent_runs where status = 'queued'`;
     const runId = (await enqueueRun(sql, { kind: 'reply', leadId, threadId: thread!.id }))!;
-    // A second connection holds an uncommitted pause — the claim's
-    // select sees enabled (pre-pause snapshot) but its FOR UPDATE on the
-    // thread row blocks until this commits and must re-read 'false'.
+    // a second connection holds an uncommitted pause — the claim's FOR
+    // UPDATE blocks until it commits and must re-read 'false'
     const blocker = await sql.reserve();
     try {
       await blocker`begin`;
@@ -1181,9 +1162,8 @@ dbDescribe('worker robustness (db)', () => {
     expect(enabled[0]!.n).toBe(2);
     const tasks = await sql`select 1 from lead_tasks where lead_id = ${leadId}`;
     expect(tasks.length).toBe(1);
-    // output on every channel is blocked while the flag stands — even on the
-    // channels whose threads were never individually paused ('manual' always
-    // resolves, so the pause check is what blocks)
+    // every channel is blocked while the flag stands — even threads never
+    // individually paused ('manual' always resolves)
     const draft = (await executeTool(
       mkCtx(crypto.randomUUID(), null, leadId),
       'd1',
@@ -1298,9 +1278,9 @@ dbDescribe('worker robustness (db)', () => {
       insert into lead_threads (lead_id, channel) values (${leadId}, 'whatsapp')
     `;
     await sql`update leads set agent_paused_at = now() where id = ${leadId}`;
-    // The flag alone carries the pause — a thread created during the handoff
-    // must NOT store agent_enabled=false, or clearing the flag would leave
-    // it permanently disabled (the pause marker blocks output regardless).
+    // the flag alone carries the pause — a thread created during the
+    // handoff must not store agent_enabled=false or it stays disabled after
+    // the flag clears
     const fresh = await controlTx(sql, (tx) => ensureThread(tx, leadId, 'email'));
     expect(fresh.agent_enabled).toBe(true);
     // and the send-side check blocks before composing on that channel at all
@@ -1359,9 +1339,8 @@ dbDescribe('worker robustness (db)', () => {
     for (const [k, id] of Object.entries({ archived, unsub, paused, off, live })) {
       runs[k] = (await enqueueRun(sql, { kind: 'outreach', leadId: id }))!;
     }
-    // a 'running' run on an archived lead is mid-flight — not the sweep's.
-    // One active row per lead → it needs its own lead (the queued row on
-    // `archived` already occupies the index slot).
+    // a 'running' run is mid-flight — and needs its own lead (one active
+    // run per lead; `archived` already occupies the slot)
     const runningLead = await mkLead('Swept Running', 'archived_at = now()');
     const running = (await enqueueRun(sql, { kind: 'outreach', leadId: runningLead }))!;
     await sql`update agent_runs set status = 'running', started_at = now(), alive_at = now(),
@@ -1389,9 +1368,8 @@ dbDescribe('worker robustness (db)', () => {
     const replyRun = (await enqueueRun(sql, { kind: 'reply', leadId }))!;
     const claimed = await claimRun(sql);
     expect(claimed?.id).toBe(replyRun);
-    // One active run per lead — "queued sibling" is no longer constructible;
-    // the lead's pending WORK now lives in the inbox, and the opt-out drops
-    // it so the next drain (or the running run itself) never sees it.
+    // one active run per lead — pending work lives in the inbox; the opt-out
+    // drops it so the next drain never sees it
     await controlTx(sql, (tx) =>
       enqueueInboxTx(tx, leadId, 'inbound', { text: 'mensagem pendente' }),
     );
@@ -1547,10 +1525,8 @@ dbDescribe('worker robustness (db)', () => {
 
   test('a composed-but-failed send is not a landed action — the finish nudge fires', async () => {
     await migrate(sql, MIGRATIONS);
-    // An enabled resend integration with no api key: the send composes
-    // (email reachable), then the driver throws 'missing RESEND_API_KEY'.
-    // A pre-existing resend row is restored at the end — the shared test
-    // DB must not lose its configuration.
+    // an enabled resend integration with no api key — the send composes,
+    // then the driver throws; the pre-existing row is restored at the end
     const prior = (
       await sql<{ enabled: boolean; config: unknown; secret_ref: string | null }[]>`
         select enabled, config, secret_ref from control_integrations
@@ -1568,9 +1544,8 @@ dbDescribe('worker robustness (db)', () => {
       `
     )[0];
     try {
-      // First contact must not be draft-forced and quiet hours must be
-      // empty (start == end → never quiet) — the send has to reach the
-      // dispatch stage to fail.
+      // first contact must not be draft-forced and quiet hours empty
+      // (start == end) — the send has to reach dispatch to fail
       await sql`
         insert into control_settings (key, value)
         values ('guardrails',
@@ -1607,9 +1582,8 @@ dbDescribe('worker robustness (db)', () => {
       expect(nudges).toHaveLength(1);
       expect((nudges[0] as { content?: string }).content).toContain('Ação pendente');
     } finally {
-      // Don't leak the keyless resend row — the shared DB would let it win
-      // getIntegrationTx over other tests' enabled email drivers. Restore
-      // whatever was there before (or drop our row entirely).
+      // don't leak the keyless resend row — it would win getIntegrationTx
+      // over other tests' drivers; restore whatever was there
       if (prior) {
         await sql`
           update control_integrations
@@ -1702,10 +1676,8 @@ dbDescribe('worker robustness (db)', () => {
 
   test('a repeated get_lead re-executes — external edits must not hide behind REPEAT', async () => {
     await migrate(sql, MIGRATIONS);
-    // A clean get_lead stays reusable only because nothing MUTATED — but
-    // stateVersion counts this run's writes, not a staff edit between
-    // turns. Mutable-CRM reads are exempt from suppression outright —
-    // but still count as repeats for the LOOP nudge.
+    // stateVersion counts this run's writes, not staff edits between turns
+    // — mutable reads are exempt from suppression but count for the nudge
     const lead = await controlTx(sql, (tx) => insertLeadTx(tx, { name: 'Fresh Read Lead' }));
     const leadId = lead.body.lead.id;
     await sql`delete from agent_runs where status = 'queued'`;
@@ -1739,10 +1711,8 @@ dbDescribe('worker robustness (db)', () => {
 
   test('a retried send after a dispatch-stage failure adopts the failed row — no second compose', async () => {
     await migrate(sql, MIGRATIONS);
-    // resend with no api key: the send composes, reaches 'sending', then
-    // the driver throws — the row is failed AND dispatch-attempted (the
-    // stamp is conservative: it can't tell whether the provider got the
-    // call), so an identical retry must adopt it, not compose a duplicate.
+    // the row is failed AND dispatch-attempted (the stamp is conservative —
+    // can't tell whether the provider got the call), so a retry adopts it
     const prior = (
       await sql<{ enabled: boolean; config: unknown; secret_ref: string | null }[]>`
         select enabled, config, secret_ref from control_integrations
@@ -1828,9 +1798,8 @@ dbDescribe('worker robustness (db)', () => {
 
   test('a channel-hop retry after an attempted failure is still adopted', async () => {
     await migrate(sql, MIGRATIONS);
-    // WhatsApp send attempted then failed; the channel died so the retry
-    // resolves email — the body match spans channels, or the lead would
-    // get the same text twice.
+    // the body match spans channels — otherwise the retry on email sends
+    // the lead the same text twice
     const lead = await controlTx(sql, (tx) =>
       insertLeadTx(tx, {
         name: 'Chan Hop Lead',
@@ -1902,11 +1871,8 @@ dbDescribe('worker robustness (db)', () => {
 
   test('a later pre-wire failure cannot mask an earlier attempted send', async () => {
     await migrate(sql, MIGRATIONS);
-    // Two failed rows share the body: the OLDER reached 'sending'
-    // (dispatch_attempted_at stamped — maybe on the wire), the NEWER died
-    // pre-wire (e.g. a refused staff retry). If the lookup only inspected
-    // the newest row, the unstamped one would mask the stamped one and the
-    // retry would compose a third copy.
+    // older row stamped 'sending', newer died pre-wire — if the lookup only
+    // inspected the newest, the unstamped one would mask it → third copy
     const lead = await controlTx(sql, (tx) =>
       insertLeadTx(tx, {
         name: 'Masked Send Lead',
@@ -1978,9 +1944,8 @@ dbDescribe('worker robustness (db)', () => {
 
   test('a pre-wire failed send stays retryable — the failure never left the building', async () => {
     await migrate(sql, MIGRATIONS);
-    // A 'failed' row with no dispatch_attempted_at provably never reached
-    // 'sending' — a deterministic pre-wire refusal. An identical retried
-    // send must be allowed to compose a fresh attempt, not adopted.
+    // a 'failed' row with no dispatch_attempted_at provably never reached
+    // 'sending' — the retried send must compose fresh, not adopt
     const priorGuardrails = (
       await sql<{ value: unknown }[]>`
         select value from control_settings where key = 'guardrails'
@@ -1993,9 +1958,8 @@ dbDescribe('worker robustness (db)', () => {
       `
     )[0];
     try {
-      // First-contact drafts must be off — the retry must compose 'queued'
-      // so it actually dispatches — and the email log driver must be
-      // reachable or the send dies at pick.
+      // first-contact drafts off + email log driver reachable — the retry
+      // must compose 'queued' and actually dispatch
       await sql`
         insert into control_settings (key, value)
         values ('guardrails',
@@ -2093,9 +2057,8 @@ dbDescribe('worker robustness (db)', () => {
           {
             toolCalls: [
               { name: 'create_task', args: { leadId, title: 'vip' } },
-              // a write lands between the task and its repeat — a
-              // versioned write would look stale, but a duplicate task
-              // mints a second row: never a restore, always suppressed
+              // a write lands between the task and its repeat — a duplicate
+              // task mints a second row: never a restore, always suppressed
               { name: 'update_lead', args: { id: leadId, city: 'Olinda' } },
             ],
           },
@@ -2271,9 +2234,8 @@ dbDescribe('worker robustness (db)', () => {
     await sql`update agent_runs set
       params = ${sql.json({
         script: [
-          // mixed batch: a fetchable url + an unfetchable private host —
-          // the result carries errors[], which must not count as a clean
-          // prior result
+          // mixed batch — the errors[] on a fetchable+unfetchable result
+          // must not count as a clean prior result
           {
             toolCalls: [
               {
@@ -2545,9 +2507,8 @@ dbDescribe('worker robustness (db)', () => {
         ],
       } as never)}
       where id = ${runId}`;
-      // The item must land mid-flight: fire the run, let claim+turn-1 start,
-      // then enqueue — the kernel drains it at the next step boundary and
-      // renders it to the model instead of cancelling the run.
+      // the item must land mid-flight — the kernel drains it at the next
+      // step boundary instead of cancelling the run
       const running = runOnce(sql);
       await new Promise((r) => setTimeout(r, 150));
       await controlTx(sql, (tx) =>
@@ -2596,9 +2557,8 @@ dbDescribe('worker robustness (db)', () => {
         ],
       },
     }))!;
-    // 'inbound' mail waits in the mailbox: the outreach toolset has no
-    // unsubscribe — draining the item must widen toolKinds or the opt-out
-    // bounces off the dispatch gate and the lead stays subscribed.
+    // the outreach toolset has no unsubscribe — draining must widen
+    // toolKinds or the opt-out bounces off the dispatch gate
     await controlTx(sql, (tx) =>
       enqueueInboxTx(tx, leadId, 'inbound', {
         text: 'para de me mandar mensagem',
@@ -2617,8 +2577,8 @@ dbDescribe('worker robustness (db)', () => {
 
   test('a fresh batch re-arms an identical reply — send sigs clear per drain', async () => {
     await migrate(sql, MIGRATIONS);
-    // Sends must reach compose: the shared DB's quiet hours would block
-    // them outright. Snapshot + neutralize, restore below.
+    // the shared DB's quiet hours would block sends outright — neutralize,
+    // restore below
     const priorGuardrails = (
       await sql<{ value: unknown }[]>`select value from control_settings where key = 'guardrails'`
     )[0];
@@ -2653,9 +2613,8 @@ dbDescribe('worker robustness (db)', () => {
           ],
         },
       }))!;
-      // Batch 1 rides the claim; batch 2 lands inside turn 1's delay and
-      // drains at the next boundary. The two replies are byte-identical —
-      // legitimate mail answers, not a loop.
+      // batch 2 lands inside turn 1's delay and drains at the next boundary
+      // — the byte-identical replies are mail answers, not a loop
       await controlTx(sql, (tx) =>
         enqueueInboxTx(tx, leadId, 'inbound', {
           text: 'oi',
@@ -2811,9 +2770,8 @@ dbDescribe('worker robustness (db)', () => {
         insert into lead_threads (lead_id, channel) values (${leadId}, 'whatsapp') returning id
       `;
       await sql`delete from agent_runs where status = 'queued'`;
-      // Triage requires no action — but the inbound it drains does (reply).
-      // A text-only close over that mail must nudge once instead of ending
-      // with the item consumed and nothing on the wire.
+      // triage needs no action but the drained inbound does (reply) — a
+      // text-only close must nudge once, not end with nothing on the wire
       const runId = (await enqueueRun(sql, {
         kind: 'triage',
         leadId,
@@ -2939,9 +2897,8 @@ dbDescribe('worker robustness (db)', () => {
       `;
       expect(outs2.map((o) => o.status)).toEqual(['draft']);
 
-      // Quiet hours pace sends, not drafts: a forced-draft first contact
-      // still lands in approvals overnight, while a send the live decision
-      // permits stays held.
+      // quiet hours pace sends, not drafts — a forced-draft contact still
+      // lands in approvals overnight
       await sql`update control_settings set value = ${sql.json({
         firstContactDraftOnly: true,
         quietStart: '00:00',
@@ -3037,9 +2994,8 @@ dbDescribe('worker robustness (db)', () => {
         insert into lead_threads (lead_id, channel) values (${leadId}, 'whatsapp') returning id
       `;
       await sql`delete from agent_runs where status = 'queued'`;
-      // Discovery's produce-or-perish nudge and the action-mail nudge spend
-      // different budgets: mail drained before the zero-lead nudge must
-      // still demand its own action on the next text-only close.
+      // produce-or-perish and action-mail nudges spend different budgets —
+      // mail drained before the zero-lead nudge must still demand action
       const runId = (await enqueueRun(sql, {
         kind: 'discovery',
         leadId,
@@ -3068,9 +3024,8 @@ dbDescribe('worker robustness (db)', () => {
       expect(await running).toBe(true);
       const r = await getRun(runId);
       expect(r.status).toBe('done');
-      // Zero-lead nudge at turn 1, then the drained batch re-arms both
-      // budgets: a second zero-lead nudge at turn 2, the action-mail nudge
-      // at turn 3 (what the shared `nudged` flag used to suppress).
+      // the drained batch re-arms both budgets — turn-2 zero-lead nudge +
+      // turn-3 action-mail nudge (a shared `nudged` flag would suppress it)
       expect(r.steps.filter((s) => (s as { type?: string }).type === 'nudge')).toHaveLength(3);
       const outs = await sql<{ body: string }[]>`
         select m.body from lead_messages m
@@ -3099,25 +3054,18 @@ dbDescribe('worker robustness (db)', () => {
     const fixtureLeadIds: string[] = [];
     try {
       await sql`delete from agent_runs where status = 'queued'`;
-      // With limit=1 the first servable lead wins — ambient mail requesting
-      // an ENABLED playbook would outservable the fixture, so tombstone just
-      // that class. 'reply'-class leftovers stay pending (unservable under
-      // the disabled gate) but must not sit inside the fixture's window or
-      // they inflate the inspect count — every fixture is backdated ≥1 day,
-      // so clearing anything older than an hour covers any wedged leftover
-      // while fresh reply mail (this hour) still sorts after the servable
-      // lead and can't reach it.
+      // ambient mail for an ENABLED playbook would outservable the fixture
+      // — tombstone that class; 'reply' leftovers stay pending but clearing
+      // >1h-old mail keeps them out of the backdated fixture's window
       await controlTx(
         sql,
         (tx) => tx`update agent_inbox set consumed_at = now()
           where consumed_at is null
             and (payload->>'requestedKind' <> 'reply' or created_at < now() - interval '1 hour')`,
       );
-      // Five leads ahead of the servable one at page size 3 — the servable
-      // lead lands on page three, so the pass must cross two page
-      // transitions to reach it (a fixed window or a fresh-offset bug
-      // would starve it here). Backdated so ambient shared-DB mail can't
-      // reorder the fixture.
+      // five leads ahead at page size 3 — the pass must cross two page
+      // transitions (a fixed window or fresh-offset bug would starve it);
+      // backdated so ambient mail can't reorder the fixture
       for (let i = 0; i < 5; i++) {
         const lead = await controlTx(sql, (tx) => insertLeadTx(tx, { name: `Blocked ${i}` }));
         fixtureLeadIds.push(lead.body.lead.id);
@@ -3146,10 +3094,8 @@ dbDescribe('worker robustness (db)', () => {
         (tx) => tx`update agent_inbox set created_at = now() - interval '1 day'
         where lead_id = ${servable.body.lead.id}`,
       );
-      // Exactly 6 inspections reach the servable lead — one more would mean
-      // a lead re-selected itself: the backdated created_at carries
-      // microseconds, and a cursor that drops them (JS Date is ms-only)
-      // compares lower than the row's real timestamp and repeats forever.
+      // exactly 6 inspections reach it — a cursor that drops the created_at
+      // microseconds (JS Date is ms-only) compares lower and repeats forever
       expect(await sweepOrphanInbox(sql, 1, { scan: 3, inspect: 6 })).toBe(1);
       const spawned = await sql<{ kind: string }[]>`
         select kind from agent_runs where lead_id = ${servable.body.lead.id}
@@ -3185,9 +3131,8 @@ dbDescribe('worker robustness (db)', () => {
       leadId,
       runAt: new Date(Date.now() + 3600e3),
     }))!;
-    // Staff draft request — draining it into the outreach run would let the
-    // reaction send unreviewed, so it must wait pending for its own
-    // draftOnly run (params carry the script the spawned run replays).
+    // draining into the outreach run would let the reaction send unreviewed
+    // — it waits for its own draftOnly run
     await controlTx(sql, (tx) =>
       enqueueInboxTx(tx, leadId, 'staff', {
         text: 'rascunho sugerido pela equipe',
@@ -3241,10 +3186,9 @@ dbDescribe('worker robustness (db)', () => {
       insert into lead_threads (lead_id, channel) values (${leadId}, 'email') returning id
     `;
     await sql`delete from agent_runs where status = 'queued'`;
-    // A whatsapp-bound reply run owns the lead for the next hour — ctx's
-    // threadId/channelOverride are fixed at claim, so an email item that
-    // drained into it would reply on whatsapp. It must stay pending for a
-    // run pinned to ITS channel + thread.
+    // threadId/channelOverride are fixed at claim — an email item drained
+    // into the whatsapp run would reply on whatsapp; it waits for a run
+    // pinned to its channel + thread
     const waRun = (await enqueueRun(sql, {
       kind: 'reply',
       leadId,
@@ -3294,10 +3238,9 @@ dbDescribe('worker robustness (db)', () => {
       insert into lead_threads (lead_id, channel) values (${leadId}, 'email') returning id
     `;
     await sql`delete from agent_runs where status = 'queued'`;
-    // The whatsapp run is mid-flight — a staff 'reply on the email thread'
-    // item carries payload.threadId but no params.channel: a channel-only
-    // compat check would drain it at the next boundary and answer on
-    // whatsapp. It must stay pending for its own thread's run.
+    // the item carries payload.threadId but no params.channel — a
+    // channel-only check would drain it and answer on whatsapp; it waits
+    // for its own thread's run
     (await enqueueRun(sql, {
       kind: 'reply',
       leadId,
@@ -3346,9 +3289,8 @@ dbDescribe('worker robustness (db)', () => {
       insert into lead_threads (lead_id, channel) values (${leadId}, 'email') returning id
     `;
     await sql`delete from agent_runs where status = 'queued'`;
-    // No thread_id, no channel pin — draining the email request here would
-    // answer it on whatever channel continuity picks (the lead's last
-    // inbound), not the email thread staff asked for. It waits for its own.
+    // no thread_id/channel pin — draining here would answer on whatever
+    // channel continuity picks, not the thread staff asked for
     (await enqueueRun(sql, {
       kind: 'reply',
       leadId,
@@ -3391,10 +3333,9 @@ dbDescribe('worker robustness (db)', () => {
     );
     const leadId = lead.body.lead.id;
     await sql`delete from agent_runs where status = 'queued'`;
-    // Auto outreach mid-flight with a composed draft. A real inbound from
-    // the lead retires it while the run still stands: the finish gate must
-    // not count the dead artifact, or the run closes leaving staff nothing
-    // to approve.
+    // a real inbound retires the composed draft mid-run — the finish gate
+    // must not count the dead artifact or the run closes with nothing to
+    // approve
     const runId = (await enqueueRun(sql, {
       kind: 'outreach',
       leadId,
@@ -3410,10 +3351,8 @@ dbDescribe('worker robustness (db)', () => {
       },
     }))!;
     const running = runOnce(sql);
-    // Wait for the draft to commit before rejecting it — step 2's delayMs
-    // keeps the run parked so the gate sees the dead artifact at close.
-    // The stamp is the mechanism under test: draft_message writes
-    // agent_run_id, which is how inbound's retire finds it at all.
+    // the draft must commit before rejection (delayMs parks the run);
+    // draft_message's agent_run_id stamp is how inbound's retire finds it
     for (let i = 0; i < 40; i++) {
       const d = await sql`
         select 1 from lead_messages m
@@ -3422,10 +3361,9 @@ dbDescribe('worker robustness (db)', () => {
       if (d.length) break;
       await new Promise((r) => setTimeout(r, 100));
     }
-    // The real inbound path: the lead's own reply lands mid-run, and
-    // ingestInbound retires the running outreach's draft under capfin —
-    // the same serialization the finish gate's liveness read relies on.
-    // The draft is findable BECAUSE it carries the run's stamp.
+    // the real inbound path — ingestInbound retires the running draft
+    // under capfin, the same serialization the finish gate's liveness read
+    // relies on
     await ingestInbound(sql, {
       channel: 'whatsapp',
       from: '5511910000094',
@@ -3461,9 +3399,8 @@ dbDescribe('worker robustness (db)', () => {
       runAt: new Date(Date.now() + 3600e3),
       params: { draftOnly: true, script: [{ text: 'pensando', delayMs: 1500 }, { text: 'fim' }] },
     }))!;
-    // Send-capable mail mid-flight in a draftOnly run must defer: draining
-    // it would render the reaction inside a run whose send_message only
-    // composes drafts — the reply would wait for approval it never asked for.
+    // send-capable mail must not drain into a draftOnly run — its
+    // send_message only composes drafts
     await sql`update agent_runs set run_at = now() where id = ${draft}`;
     const running = runOnce(sql);
     await new Promise((r) => setTimeout(r, 150));
@@ -3527,9 +3464,8 @@ dbDescribe('worker robustness (db)', () => {
       `;
       expect(runs).toHaveLength(1);
       expect(runs[0]!.kind).toBe('outreach');
-      // The disabled-playbook item parks everywhere — the spawn gate AND
-      // the drain gate, so its kind's tools never reach the spawned run.
-      // The eligible staff mail still drains into it.
+      // the disabled-playbook item parks at both gates; the eligible staff
+      // mail still drains into the spawned run
       const items = await sql<{ consumed_by_run: string | null }[]>`
         select consumed_by_run from agent_inbox where lead_id = ${leadId} order by created_at
       `;
@@ -3555,9 +3491,8 @@ dbDescribe('worker robustness (db)', () => {
       on conflict (key) do update set value = excluded.value
     `;
     try {
-      // Ten gated items fill the drain's window — the eligible staff mail
-      // behind them must still reach the spawned run, so the disabled-
-      // playbook predicate has to run before the limit, not after it.
+      // ten gated items fill the drain window — the disabled-playbook
+      // predicate must run before the limit, not after
       for (let i = 0; i < 10; i++) {
         await controlTx(sql, (tx) =>
           enqueueInboxTx(tx, leadId, 'event', {
@@ -3603,9 +3538,8 @@ dbDescribe('worker robustness (db)', () => {
     `;
     try {
       const deadline = new Date(Date.now() + 3600e3).toISOString();
-      // A gated item with a future notBefore sits ahead of servable mail —
-      // the run the staff item spawns must not wait out a deadline for
-      // mail it will never drain.
+      // the spawned run must not wait out a gated item's future notBefore
+      // for mail it will never drain
       await controlTx(sql, (tx) =>
         enqueueInboxTx(tx, leadId, 'event', {
           text: 'triage adiado',
@@ -3647,9 +3581,8 @@ dbDescribe('worker robustness (db)', () => {
     await sql`delete from agent_runs where status = 'queued'`;
     await sql`update agent_inbox set consumed_at = now() where consumed_at is null`;
     const deadline = new Date(Date.now() + 3600e3).toISOString();
-    // No live run — the sweep spawns for the item immediately, but the
-    // inbound quiet period stamped at enqueue must ride into run_at: a
-    // reply deferred by another run still can't skip the configured delay.
+    // the inbound quiet period stamped at enqueue must ride into run_at —
+    // a deferred reply can't skip the configured delay
     await controlTx(sql, (tx) =>
       enqueueInboxTx(tx, leadId, 'inbound', {
         text: 'mensagem do lead [email]',
@@ -3686,9 +3619,8 @@ dbDescribe('worker robustness (db)', () => {
         script: [{ text: 'a', delayMs: 1500 }, { text: 'b' }],
       },
     }))!;
-    // An item inside its quiet period must NOT drain into a mid-flight
-    // run — the inbound delay holds whether the mail waits for this run
-    // or its own later one.
+    // an item inside its quiet period must not drain mid-flight — the
+    // delay holds whether it waits for this run or its own
     const running = runOnce(sql);
     await new Promise((r) => setTimeout(r, 150));
     await sql`
@@ -3740,9 +3672,8 @@ dbDescribe('worker robustness (db)', () => {
     const leadId = lead.body.lead.id;
     await sql`delete from agent_runs where status = 'queued'`;
     await sql`update agent_inbox set consumed_at = now() where consumed_at is null`;
-    // A fired wakeup's materialized state: its own queued run + an
-    // undrained inbox item — the cancel must reach both or the follow-up
-    // the staff just canceled still lands.
+    // fired wakeup = queued run + undrained inbox item — the cancel must
+    // reach both
     const runId = (await enqueueRun(sql, {
       kind: 'outreach',
       leadId,
@@ -3762,9 +3693,8 @@ dbDescribe('worker robustness (db)', () => {
         params: { auto: 'wakeup', wakeupId: w!.id },
       }),
     );
-    // The requeued state: an earlier attempt of this run already consumed
-    // mail — this wakeup's tombstones, but other lead mail must release
-    // back to the sweep instead of stranding on a now-canceled row.
+    // an earlier attempt already consumed mail — this wakeup's tombstones,
+    // but other lead mail must release back to the sweep
     const [otherItem] = await sql<{ id: string }[]>`
       insert into agent_inbox (lead_id, kind, payload, consumed_by_run, consumed_at)
       values (${leadId}, 'inbound',
@@ -3822,10 +3752,9 @@ dbDescribe('worker robustness (db)', () => {
         ],
       },
     }))!;
-    // The dead attempt drained a reply-kind opt-out into its journal — the
-    // item is consumed, so the resume can't re-drain it: its requestedKind
+    // the dead attempt drained a reply-kind opt-out — its requestedKind
     // must come back off the stamped mail or the replayed opt-out has no
-    // unsubscribe to call.
+    // unsubscribe
     const [item] = await sql<{ id: string }[]>`
       insert into agent_inbox (lead_id, kind, payload, consumed_by_run, consumed_at)
       values (${leadId}, 'inbound',
@@ -3842,8 +3771,8 @@ dbDescribe('worker robustness (db)', () => {
     `;
     await drain(sql);
     await sql`update agent_runs set run_at = now() where id = ${runId}`;
-    // Record the offered toolset: dispatch permission alone isn't enough —
-    // the model can only pick unsubscribe if it's in the tools it sees.
+    // dispatch permission isn't enough — the model can only pick
+    // unsubscribe if it's in the offered toolset
     const offered: string[][] = [];
     const inner = mockProvider([
       { toolCalls: [{ name: 'unsubscribe', args: { leadId, reason: 'pediu para sair' } }] },
@@ -3929,9 +3858,8 @@ dbDescribe('worker robustness (db)', () => {
       insert into lead_threads (lead_id, channel) values (${leadId}, 'whatsapp') returning id
     `;
     await sql`delete from agent_runs where status = 'queued'`;
-    // Staff paused the thread AFTER the item was enqueued — the spawn gate
-    // consults lead_threads.agent_enabled, so the drain must recheck it
-    // too or an unbound run still serves mail the pause was meant to hide.
+    // the thread was paused after enqueue — the drain must recheck
+    // agent_enabled or an unbound run serves mail the pause was meant to hide
     await sql`update lead_threads set agent_enabled = false where id = ${thread!.id}`;
     await enqueueRun(sql, {
       kind: 'outreach',
@@ -3978,9 +3906,8 @@ dbDescribe('worker robustness (db)', () => {
       );
       const leadId = lead.body.lead.id;
       await sql`delete from agent_runs where status = 'queued'`;
-      // A runnable staff (unmarked) run claims under 'off' — mail riding
-      // it still answers to autonomy per item: automation-marked intents
-      // park for the switch exactly like claimRun parks their runs.
+      // a staff (unmarked) run claims under 'off', but automation-marked
+      // mail riding it still parks per item
       await enqueueRun(sql, {
         kind: 'outreach',
         leadId,
@@ -4165,9 +4092,8 @@ dbDescribe('worker robustness (db)', () => {
     await sql`update agent_runs set run_at = now(),
       params = ${sql.json({ auto: 'first-contact', script: [{ text: 'oi' }] } as never)}
       where id = ${runId}`;
-    // Re-imported context message stamped AFTER the claim — a provider
-    // clock ahead would land here too. historical=true means "context
-    // only": it never asked for a reply, so it must not cancel.
+    // a re-imported context message stamped after the claim (or a provider
+    // clock ahead) — historical=true means it never asked for a reply
     await sql`insert into lead_messages (thread_id, direction, author, body, status, created_at, historical)
       values (${thread!.id}, 'in', 'lead', 'contexto antigo', 'received',
               now() + interval '1 minute', true)`;
@@ -4188,11 +4114,9 @@ dbDescribe('worker robustness (db)', () => {
     await sql`update agent_runs set run_at = now(),
       params = ${sql.json({ auto: 'first-contact', script: [{ text: 'oi' }] } as never)}
       where id = ${runId}`;
-    // Post-0034 legacy shape: received_at NULL marks a row no server ingested
-    // (0030's backfill is erased to NULL; historical = false). A provider
-    // clock ahead lands created_at past the claim — without the real-ingest
-    // discriminator this cancels outreach on a message that isn't a live
-    // reply.
+    // received_at NULL marks a row no server ingested — without the
+    // real-ingest discriminator a provider clock ahead would cancel
+    // outreach on a non-reply
     await sql`insert into lead_messages (thread_id, direction, author, body, status, created_at, received_at)
       values (${thread!.id}, 'in', 'lead', 'contexto antigo', 'received',
               now() + interval '1 hour', null)`;
@@ -4235,8 +4159,8 @@ dbDescribe('worker robustness (db)', () => {
       values ('whatsapp', 'log', true)
       on conflict (kind, driver) do update set enabled = true
     `;
-    // The default first-contact draft-only gate would park the send in the
-    // approval queue before it ever reaches dispatch.
+    // the first-contact draft-only gate would park the send in approvals
+    // before dispatch
     await sql`
       insert into control_settings (key, value) values ('guardrails', ${sql.json({ firstContactDraftOnly: false, quietStart: '00:00', quietEnd: '00:00' } as never)})
       on conflict (key) do update set value = excluded.value
@@ -4335,9 +4259,8 @@ dbDescribe('worker robustness (db)', () => {
     const [thread] = await sql<{ id: string }[]>`
       insert into lead_threads (lead_id, channel) values (${leadId}, 'whatsapp') returning id
     `;
-    // now() freezes at tx start — a row inserted 50ms later must carry the
-    // wall-clock instant, or a started-before-claim tx would hide its
-    // inbound from every probe that compares on started_at.
+    // now() freezes at tx start — a row must carry the wall-clock instant
+    // or a started-before-claim tx hides it from started_at probes
     await sql.begin(async (tx) => {
       const [t0] = await tx<{ t0: string }[]>`select now() as t0`;
       await tx`select pg_sleep(0.05)`;
@@ -4381,8 +4304,8 @@ dbDescribe('worker robustness (db)', () => {
       select seq, kind, name, call_id, step, out
       from agent_run_steps where run_id = ${runId} order by seq
     `;
-    // One row per journal entry, in journal order — replay still reads
-    // agent_runs.steps, so equality is the dual-write contract.
+    // one row per journal entry in journal order — equality is the
+    // dual-write contract
     expect(rows.length).toBe(r.steps.length);
     expect(rows.map((x) => x.seq)).toEqual(r.steps.map((_, i) => i));
     expect(rows.map((x) => x.kind)).toEqual(r.steps.map((s) => (s as { type: string }).type));
@@ -4400,9 +4323,8 @@ dbDescribe('worker robustness (db)', () => {
     );
     const leadId = lead.body.lead.id;
     await controlTx(sql, (tx) => ensureThread(tx, leadId, 'email', {}));
-    // Real dispatches need a live channel — without one every send lands
-    // 'draft' and the run-scoped guard never sees it. The 'log' email
-    // driver is the seam the neighboring send tests use.
+    // real dispatches need a live channel or every send lands 'draft' —
+    // the 'log' email driver is the seam
     const priorLog = (
       await sql<{ enabled: boolean; config: unknown; secret_ref: string | null }[]>`
         select enabled, config, secret_ref from control_integrations
@@ -4434,9 +4356,8 @@ dbDescribe('worker robustness (db)', () => {
           ],
         },
       }))!;
-      // Deliver mail once the first send has landed — the duplicate-send
-      // guard is scoped to the latest consumed batch, so the drained item
-      // re-arms the run for exactly one more send.
+      // the duplicate-send guard is scoped to the latest consumed batch —
+      // the drained item re-arms the run for one more send
       const deliver = setInterval(() => {
         void controlTx(
           sql,
@@ -4561,9 +4482,8 @@ dbDescribe('worker robustness (db)', () => {
       await sql`update agent_inbox set consumed_by_run = ${r!.id}, consumed_at = now()
         where id = ${itemId}`;
       await drain(sql, 0);
-      // The release re-pends the item, and the same drain's orphan sweep
-      // respawns a 'queued' run for it — remove that spawn so the next
-      // dead-run stamp keeps the lead's single active-run slot free.
+      // remove the respawned 'queued' run so the next dead-run stamp keeps
+      // the lead's single active-run slot free
       await sql`delete from agent_runs where status = 'queued'`;
       return r!.id;
     };
@@ -4617,12 +4537,9 @@ dbDescribe('worker robustness (db)', () => {
     const retryId = await controlTx(sql, (tx) =>
       enqueueInboxTx(tx, leadId, 'inbound', { text: 'e ai', requestedKind: 'reply' }),
     );
-    // send_message stamps answeredBy on the run's consumed inbound when it
-    // composes the answering dispatch — the stamp is the durable record of
-    // which mail the run's send answered. It only suppresses a release
-    // while that message is live/landed: the landed 'sent' row keeps its
-    // mail consumed, a 'failed' answer never left and its mail re-serves.
-    // The nudge carries no answer — it releases.
+    // answeredBy suppresses release only while the answer is live/landed:
+    // a landed 'sent' keeps its mail consumed, a 'failed' answer re-serves;
+    // the nudge carries no answer — it releases
     const [sentOut] = await sql<{ id: string }[]>`
       insert into lead_messages (thread_id, direction, author, body, status, agent_run_id)
       values (${thread!.id}, 'out', 'agent', 'oi, posso ajudar?', 'sent', ${run!.id}) returning id
@@ -4631,9 +4548,8 @@ dbDescribe('worker robustness (db)', () => {
       insert into lead_messages (thread_id, direction, author, body, status, agent_run_id)
       values (${thread!.id}, 'out', 'agent', 'oi, posso ajudar?', 'failed', ${run!.id}) returning id
     `;
-    // An attempted-but-failed send is different: dispatch_attempted_at
-    // means it may already be on the wire — at-most-once keeps its mail
-    // consumed rather than risk a wire duplicate.
+    // dispatch_attempted_at means it may already be on the wire —
+    // at-most-once keeps the mail consumed
     const [attemptedOut] = await sql<{ id: string }[]>`
       insert into lead_messages (thread_id, direction, author, body, status, agent_run_id, dispatch_attempted_at)
       values (${thread!.id}, 'out', 'agent', 'oi, posso ajudar?', 'failed', ${run!.id}, now()) returning id
@@ -4663,11 +4579,9 @@ dbDescribe('worker robustness (db)', () => {
     const nudge = rows.find((r) => r.id === nudgeId)!;
     const retry = rows.find((r) => r.id === retryId)!;
     const attempted = rows.find((r) => r.id === attemptedId)!;
-    // The dead run's reconcile releases what it can still serve — the
-    // answered inbound stays consumed history (a re-serve re-sends under
-    // a fresh run id), the attempted-answer item stays consumed too (the
-    // reply may already be on the wire), the nudge and the
-    // failed-before-attempt item return to pending for the sweep.
+    // answered/attempted items stay consumed (a re-serve re-sends; the
+    // reply may be on the wire) — the nudge and pre-attempt item return to
+    // pending
     expect(answered.consumed_at).not.toBeNull();
     expect(answered.consumed_by_run).toBe(run!.id);
     expect(attempted.consumed_at).not.toBeNull();
