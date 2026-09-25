@@ -180,43 +180,75 @@ export async function insertRun(
   cap?: { flagged?: boolean },
 ): Promise<string | null> {
   // Adopt an already-active row as the mail's owner — or retire it when
-  // claim policy parks it (a queued auto row under workspace 'off', or a
-  // disabled playbook's kind): a parked row can never serve the caller's
-  // intent. The retire is an event retire — its dead-attempt mail releases
-  // into whatever comes next, and its own intent survives in the lead's
-  // pending items, which the new run drains through the same gates.
+  // it can't serve this mail: policy-parked (a queued auto row under
+  // workspace 'off', or a disabled playbook's kind) or SCHEDULED — a
+  // future-dated row whose own intent would fire early if the caller's
+  // earlier start pulled run_at forward (paced first contact has no mail
+  // carrying its delay — run_at is the only gate). A retire re-anchors
+  // the row's own intent as an 'event' item stamped with its deadline —
+  // pending items already covering it (same requestedKind, or a notBefore
+  // reaching its schedule) make that a no-op — then releases its consumed
+  // mail. The intent parks/fires under exactly the gates the row had.
+  const callerAt = input.runAt ?? new Date();
   const adopt = async (a: {
     id: string;
     status: string;
     kind: string;
+    thread_id: string | null;
     params: Record<string, unknown>;
+    run_at: Date | null;
   }): Promise<string | null> => {
     if (a.status !== 'queued') return a.id;
     const { disabledKinds, autoOff } = await claimPolicyTx(tx);
     const p = a.params ?? {};
-    const parked =
+    const parkedByPolicy =
       disabledKinds.includes(a.kind as PlaybookKind) ||
       (autoOff && ('auto' in p || p['origin'] === 'inbound'));
-    if (parked) {
-      await tx`
+    const scheduled = a.run_at !== null && a.run_at.getTime() > callerAt.getTime();
+    if (parkedByPolicy || scheduled) {
+      // Status-conditional — a worker claiming between our select and this
+      // update means the row already owns everything arriving for it.
+      const retired = await tx<{ id: string }[]>`
         update agent_runs
         set status = 'canceled',
-            error = 'policy-parked — a newer request replaced it',
+            error = ${parkedByPolicy ? 'policy-parked — a newer request replaced it' : 'a newer request takes over'},
             finished_at = now()
-        where id = ${a.id}
+        where id = ${a.id} and status = 'queued'
+        returning id
       `;
+      if (!retired.length) return a.id;
+      const covered = (
+        await tx<{ ok: boolean }[]>`
+          select exists (
+            select 1 from agent_inbox i
+            where i.lead_id = ${input.leadId ?? null} and i.consumed_at is null
+              and (i.payload->>'requestedKind' = ${a.kind}
+                   or (${scheduled}
+                       and coalesce(nullif(i.payload->>'notBefore', '')::timestamptz,
+                             '-infinity'::timestamptz) >= ${a.run_at ?? null}))
+          ) as ok
+        `
+      )[0]!.ok;
+      if (!covered) {
+        await enqueueInboxTx(tx, input.leadId!, 'event', {
+          text: `uma '${a.kind}' estava marcada${typeof p['focus'] === 'string' ? ` — ${p['focus']}` : ''}`,
+          requestedKind: a.kind as PlaybookKind,
+          threadId: a.thread_id,
+          params: p,
+          ...(scheduled ? { notBefore: a.run_at!.toISOString() } : {}),
+        });
+      }
       await releaseInboxTx(tx, a.id, true);
       return null;
     }
-    // A runnable owner keeps the mail — but a future-dated row mustn't
-    // make an immediate caller wait out its schedule. Pull the start to
-    // the earlier of the two intents; the mail merges into the active run
-    // either way, and each item's own notBefore still gates its drain, so
-    // inbound quiet periods hold.
+    // Runnable + no schedule conflict — keep the row, pull its start to
+    // the earlier of the two intents (status-conditional: a claim in
+    // flight owns the mail just the same). Each item's own notBefore
+    // still gates its drain, so inbound quiet periods hold.
     await tx`
       update agent_runs
-      set run_at = least(coalesce(run_at, now()), coalesce(${input.runAt ?? null}, now()))
-      where id = ${a.id}
+      set run_at = least(coalesce(run_at, now()), ${callerAt})
+      where id = ${a.id} and status = 'queued'
     `;
     return a.id;
   };
@@ -226,9 +258,16 @@ export async function insertRun(
     // check (a refused verdict must not strand an enqueue site that could
     // have delivered). Callers hold capfin — the read can't race a sibling.
     const active = await tx<
-      { id: string; status: string; kind: string; params: Record<string, unknown> }[]
+      {
+        id: string;
+        status: string;
+        kind: string;
+        thread_id: string | null;
+        params: Record<string, unknown>;
+        run_at: Date | null;
+      }[]
     >`
-      select id, status, kind, params from agent_runs
+      select id, status, kind, thread_id, params, run_at from agent_runs
       where lead_id = ${input.leadId} and status in ('queued', 'running')
       order by created_at limit 1
     `;
@@ -259,9 +298,16 @@ export async function insertRun(
   )[0];
   if (row) return row.id;
   const existing = await tx<
-    { id: string; status: string; kind: string; params: Record<string, unknown> }[]
+    {
+      id: string;
+      status: string;
+      kind: string;
+      thread_id: string | null;
+      params: Record<string, unknown>;
+      run_at: Date | null;
+    }[]
   >`
-    select id, status, kind, params from agent_runs
+    select id, status, kind, thread_id, params, run_at from agent_runs
     where lead_id = ${input.leadId ?? null} and status in ('queued', 'running')
     order by created_at limit 1
   `;
@@ -1694,11 +1740,20 @@ async function drainInbox(att: Attempt): Promise<number> {
           )
       `
     ).map((d) => d.t);
+    // Autonomy gates each item like the sweep's spawn gate: automation-
+    // marked mail ('auto' key or origin='inbound' — the same markers
+    // claimRun reads off run params) parks under workspace 'off' instead
+    // of riding an allowed staff run. Unmarked mail — staff's, promised
+    // work, the lead's own messages — still drains.
+    const autoOff = (await autonomyTx(tx)).level === 'off';
     return tx<InboxItem[]>`
       select id, kind, payload, created_at from agent_inbox
       where ${scope}
         and (payload->>'requestedKind' is null or not (payload->>'requestedKind' = any(${off})))
         and (payload->>'threadId' is null or not (payload->>'threadId' = any(${dead})))
+        and (not ${autoOff}
+             or not (coalesce(payload->'params', '{}'::jsonb) ? 'auto'
+                     or coalesce(payload->'params'->>'origin', '') = 'inbound'))
       order by created_at limit 10
     `;
   });

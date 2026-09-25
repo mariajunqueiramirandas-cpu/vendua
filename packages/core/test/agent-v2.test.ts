@@ -729,26 +729,73 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('agent v2 (db)', () => {
       expect(disRows.find((r) => r.id === disc)!.status).toBe('canceled');
       expect(disRows.find((r) => r.id === staffDisc!)!.status).toBe('queued');
 
-      // A runnable future-dated row keeps the mail — but an immediate
-      // caller pulls its run_at to the earlier start instead of waiting
-      // out the schedule (the parked intent survives, it just fires with
-      // the merged run).
+      // A future-dated runnable row can't be pulled early — its own pacing
+      // (run_at) is its intent's only gate. It retires and re-anchors as an
+      // 'event' item stamped with the same deadline; the immediate caller
+      // mints a runnable owner now.
       const dateLead = await mkLead('adopt-date');
       const later = new Date(Date.now() + 3_600_000);
       const parked = await controlTx(sql, (tx) =>
-        insertRun(tx, { kind: 'triage', leadId: dateLead, runAt: later }),
+        insertRun(tx, {
+          kind: 'triage',
+          leadId: dateLead,
+          runAt: later,
+          params: { focus: 'triagem marcada' },
+        }),
       );
       const immediate = await controlTx(sql, (tx) =>
         insertRun(tx, { kind: 'reply', leadId: dateLead }),
       );
-      expect(immediate).toBe(parked);
-      const runAt = (
-        await sql<{ run_at: Date }[]>`select run_at from agent_runs where id = ${parked!}`
-      )[0]!.run_at;
-      expect(runAt.getTime()).toBeLessThanOrEqual(Date.now() + 5_000);
+      expect(immediate).toBeTruthy();
+      expect(immediate).not.toBe(parked);
+      const dateRows = await sql<{ id: string; status: string }[]>`
+        select id, status from agent_runs where lead_id = ${dateLead}
+      `;
+      expect(dateRows.find((r) => r.id === parked)!.status).toBe('canceled');
+      expect(dateRows.find((r) => r.id === immediate!)!.status).toBe('queued');
+      const anchor = await sql<
+        { payload: { requestedKind?: string; notBefore?: string; params?: { focus?: string } } }[]
+      >`
+        select payload from agent_inbox
+        where lead_id = ${dateLead} and kind = 'event' and consumed_at is null
+      `;
+      expect(anchor).toHaveLength(1);
+      expect(anchor[0]!.payload.requestedKind).toBe('triage');
+      expect(anchor[0]!.payload.params?.focus).toBe('triagem marcada');
+      expect(Math.abs(Date.parse(anchor[0]!.payload.notBefore!) - later.getTime())).toBeLessThan(
+        5_000,
+      );
+
+      // Mail already carrying the parked row's deadline covers the intent —
+      // a parked reply's inbound items hold the quiet period themselves,
+      // so no anchor is written for it.
+      const replyLead = await mkLead('adopt-covered');
+      const quiet = new Date(Date.now() + 3_600_000);
+      const replyParked = await controlTx(sql, (tx) =>
+        insertRun(tx, { kind: 'reply', leadId: replyLead, runAt: quiet }),
+      );
+      await sql`
+        insert into agent_inbox (lead_id, kind, payload)
+        values (${replyLead}, 'inbound',
+          ${sql.json({ text: 'oi', notBefore: quiet.toISOString() } as never)})
+      `;
+      const staffReply = await controlTx(sql, (tx) =>
+        insertRun(tx, { kind: 'triage', leadId: replyLead, params: { origin: 'staff' } }),
+      );
+      expect(staffReply).not.toBe(replyParked);
+      const coveredMail = await sql<{ n: number }[]>`
+        select count(*)::int n from agent_inbox
+        where lead_id = ${replyLead} and kind = 'event'
+      `;
+      expect(coveredMail[0]!.n).toBe(0);
+      const replyRow = await sql<{ status: string }[]>`
+        select status from agent_runs where id = ${replyParked}
+      `;
+      expect(replyRow[0]!.status).toBe('canceled');
+
       await sql`
         update agent_runs set status = 'canceled'
-        where lead_id in (${offLead}, ${disLead}, ${dateLead})
+        where lead_id in (${offLead}, ${disLead}, ${dateLead}, ${replyLead})
       `;
     } finally {
       await unpinPolicy(prior);

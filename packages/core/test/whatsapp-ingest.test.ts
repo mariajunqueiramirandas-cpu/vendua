@@ -239,7 +239,7 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('whatsapp history + ignore list 
     expect(pending).toHaveLength(4);
   });
 
-  test('a far-future parked run comes due for delivered mail', async () => {
+  test('a far-future parked run re-anchors at its deadline for delivered mail', async () => {
     await migrate(sql, MIGRATIONS);
     await sql`
       insert into control_settings (key, value) values ('guardrails', ${sql.json({ inboundReplyDelayMin: 60 } as never)})
@@ -266,19 +266,33 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('whatsapp history + ignore list 
       providerMessageId: `${mid}-1`,
     });
     if ('ignored' in res) throw new Error('unexpected ignore');
-    // The single active slot means the item belongs to the parked outreach —
-    // and its run_at slid INTO the reply quiet window instead of a week out.
-    const pending = await sql`
-      select 1 from agent_inbox where lead_id = ${leadId} and consumed_at is null
+    // The single active slot forces a choice — and the week-out schedule
+    // must not slide forward to answer a reply (a pulled run_at would fire
+    // its intent early). The parked row retires and re-anchors as mail on
+    // its own deadline; the reply gets a runnable owner at the quiet
+    // window.
+    const pending = await sql<
+      { kind: string; payload: { requestedKind?: string; notBefore?: string } }[]
+    >`
+      select kind, payload from agent_inbox
+      where lead_id = ${leadId} and consumed_at is null
     `;
-    expect(pending).toHaveLength(1);
+    expect(pending).toHaveLength(2);
+    const anchor = pending.find((i) => i.kind === 'event');
+    expect(anchor!.payload.requestedKind).toBe('outreach');
+    expect(Date.parse(anchor!.payload.notBefore!) - Date.now()).toBeGreaterThan(6 * 86_400_000);
     const parkedRun = (
-      await sql<{ run_at: Date; status: string }[]>`
-        select run_at, status from agent_runs where id = ${parked}
+      await sql<{ status: string }[]>`
+        select status from agent_runs where id = ${parked}
       `
     )[0]!;
-    expect(parkedRun.status).toBe('queued');
-    const slideMs = parkedRun.run_at.getTime() - Date.now();
+    expect(parkedRun.status).toBe('canceled');
+    const reply = await sql<{ kind: string; run_at: Date }[]>`
+      select kind, run_at from agent_runs where lead_id = ${leadId} and status = 'queued'
+    `;
+    expect(reply).toHaveLength(1);
+    expect(reply[0]!.kind).toBe('reply');
+    const slideMs = reply[0]!.run_at.getTime() - Date.now();
     expect(slideMs).toBeGreaterThan(0);
     expect(slideMs).toBeLessThanOrEqual(61 * 60_000);
   });
@@ -601,7 +615,7 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('whatsapp history + ignore list 
     expect(events.some((e) => e.type === 'run.update' && e.ref === autoRun)).toBe(true);
   });
 
-  test('a queued regen run survives the inbound cancel', async () => {
+  test('a scheduled regen run re-anchors intact when the inbound cancels it', async () => {
     await migrate(sql, MIGRATIONS);
     const lead = await controlTx(sql, (tx) =>
       insertLeadTx(tx, { name: 'Regen', whatsapp: '5511955550002' }),
@@ -611,7 +625,10 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('whatsapp history + ignore list 
     // Regen is draftOnly composition work staff already approved — the
     // fresh inbound makes its recompose MORE relevant, so it must not die
     // with the disposable autos (its superseded draft has no replacement
-    // otherwise).
+    // otherwise). Sliding its run_at forward would also break the delay:
+    // instead the run retires and its intent re-anchors as mail on the
+    // SAME schedule — the respawned run inherits the regenerate+draftOnly
+    // params whole.
     const regen = (await enqueueRun(sql, {
       kind: 'outreach',
       leadId,
@@ -628,7 +645,25 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('whatsapp history + ignore list 
     const [r] = await sql<{ status: string }[]>`
       select status from agent_runs where id = ${regen}
     `;
-    expect(r!.status).toBe('queued');
+    expect(r!.status).toBe('canceled');
+    const anchors = await sql<
+      {
+        payload: {
+          requestedKind?: string;
+          notBefore?: string;
+          params?: Record<string, unknown>;
+        };
+      }[]
+    >`
+      select payload from agent_inbox
+      where lead_id = ${leadId} and kind = 'event' and consumed_at is null
+    `;
+    expect(anchors).toHaveLength(1);
+    const a = anchors[0]!.payload;
+    expect(a.requestedKind).toBe('outreach');
+    expect(a.params!.auto).toBe('regenerate');
+    expect(a.params!.draftOnly).toBe(true);
+    expect(Date.parse(a.notBefore!) - Date.now()).toBeGreaterThan(50 * 60_000);
   });
 
   test("the inbound still retires the auto run's unapproved drafts", async () => {
@@ -760,10 +795,20 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('whatsapp history + ignore list 
       select status from lead_messages where id = ${regenDraft!.id}
     `;
     expect(rd!.status).toBe('draft');
+    // The legacy row is a future-dated promise — not canceled by the
+    // draft sweep. The reply's insert DOES retire it (a runnable owner
+    // claims the slot), but the promise survives as mail re-anchored at
+    // the same deadline.
     const [lrun] = await sql<{ status: string }[]>`
       select status from agent_runs where id = ${legacyRun!.id}
     `;
-    expect(lrun!.status).toBe('queued');
+    expect(lrun!.status).toBe('canceled');
+    const [lanchor] = await sql<{ payload: { requestedKind?: string; notBefore?: string } }[]>`
+      select payload from agent_inbox
+      where lead_id = ${leadId} and kind = 'event' and consumed_at is null
+        and payload->>'requestedKind' = 'outreach'
+    `;
+    expect(Date.parse(lanchor!.payload.notBefore!) - Date.now()).toBeGreaterThan(50 * 60_000);
     const [ld] = await sql<{ status: string }[]>`
       select status from lead_messages where id = ${legacyDraft!.id}
     `;
@@ -803,8 +848,11 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('whatsapp history + ignore list 
     expect(l!.next_action_source).toBe('requested');
     // And when the date does come due it materializes UNMARKED — a promised
     // callback outranks a later reply exactly like a staff decision. The
-    // inbound already parked a reply run for this lead, so the sweep mails
-    // the callback INTO it ('event' item, unmarked params) — no second run.
+    // sweep's earlier start can't borrow the parked reply's slot without
+    // sliding its quiet window, so the reply retires — its intent stays
+    // covered by the inbound mail's own notBefore — while the overdue
+    // callback mints its own run ('event' mail, unmarked params) instead
+    // of waiting out the quiet period.
     await sql`
       update leads set next_action_at = now() - interval '1 hour' where id = ${leadId}
     `;
@@ -813,13 +861,26 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('whatsapp history + ignore list 
       select params from agent_runs
       where lead_id = ${leadId} and kind = 'outreach' and status = 'queued'
     `;
-    expect(swept).toHaveLength(0);
-    const mailed = await sql<{ payload: Record<string, unknown> }[]>`
+    expect(swept).toHaveLength(1);
+    expect(swept[0]!.params.auto).toBeUndefined();
+    const mailed = await sql<
+      {
+        payload: { notBefore?: string; requestedKind?: string; params?: Record<string, unknown> };
+      }[]
+    >`
       select payload from agent_inbox
       where lead_id = ${leadId} and kind = 'event' and consumed_at is null
     `;
     expect(mailed).toHaveLength(1);
     expect((mailed[0]!.payload.params as Record<string, unknown>).auto).toBeUndefined();
+    // The inbound mail still holds the reply intent at its quiet stamp —
+    // the orphan sweep respawns it there.
+    const [inb] = await sql<{ payload: { notBefore?: string; requestedKind?: string } }[]>`
+      select payload from agent_inbox
+      where lead_id = ${leadId} and kind = 'inbound' and consumed_at is null
+    `;
+    expect(inb!.payload.requestedKind).toBe('reply');
+    expect(Date.parse(inb!.payload.notBefore!) - Date.now()).toBeGreaterThan(50 * 60_000);
     const [date] = await sql<{ next_action_at: Date | null }[]>`
       select next_action_at from leads where id = ${leadId}
     `;
