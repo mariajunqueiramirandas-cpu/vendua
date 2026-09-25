@@ -4,9 +4,8 @@ import type { ModifierGroup, ProductDetail } from './catalog.ts';
 import type { StoreSettingsRow } from './store.ts';
 
 /**
- * cart module — server-side carts, the non-negotiable from
- * docs/architecture/01-core.md#server-side-cart--non-negotiable. All pricing
- * is computed here from live rows; the Kernel only renders what Core returns.
+ * Server-side carts (non-negotiable — docs/architecture/01-core.md): all
+ * pricing computed here from live rows; the Kernel only renders.
  */
 
 export interface CartItemIn {
@@ -36,12 +35,10 @@ export interface PricedItem {
   name: string;
   qty: number;
   unitPriceCents: number;
-  /** Live product status — storefronts badge lines that went unavailable
-   *  between carting and checkout; checkout revalidates against it. */
+  /** live product status — badge lines that went unavailable since carting */
   productStatus: string;
   modifiers: { id: string; name: string; priceDeltaCents: number; status: string }[];
-  /** Stored modifier ids as submitted — includes ids that no longer resolve
-   *  (deleted/retired). Checkout revalidates these against the live product. */
+  /** modifier ids as submitted; checkout revalidates against the live product */
   modifierIds: string[];
   lineTotalCents: number;
 }
@@ -52,8 +49,7 @@ export interface CartTotals {
   totalCents: number;
   itemCount: number;
   minOrderCents: number;
-  /** Cents short of the minimum order — the display value storefronts render
-   *  instead of subtracting in client code (Core owns money math). */
+  /** cents short of the minimum order (Core owns money math) */
   remainingMinOrderCents: number;
   belowMinOrder: boolean;
 }
@@ -71,7 +67,6 @@ export interface CartView {
   } | null;
 }
 
-/** Sum of base price + selected modifier deltas. Pure — unit-tested. */
 export function unitPriceCents(basePriceCents: number, deltas: number[]): number {
   return basePriceCents + deltas.reduce((sum, d) => sum + d, 0);
 }
@@ -94,10 +89,6 @@ export function computeTotals(
   };
 }
 
-/**
- * Validates a proposed item against the product's modifier rules. Pure —
- * unit-tested. Returns an HttpError code or null when valid.
- */
 export function validateItemModifiers(
   product: Pick<ProductDetail, 'status' | 'modifierGroups'>,
   modifierIds: string[],
@@ -145,8 +136,8 @@ async function loadPricedItems(tx: Sql, tenantId: string, cartId: string): Promi
     order by ci.created_at
   `;
   if (items.length === 0) return [];
-  // Live modifier read exists only for STATUS — names/prices come from the
-  // add-time snapshot so catalog edits never reprice an accepted line.
+  // live read is only for status — names/prices come from the add-time
+  // snapshot, never repriced
   const modifierIds = items.flatMap((i) => i.modifier_ids);
   const mods = modifierIds.length
     ? await tx<{ id: string; status: string }[]>`
@@ -176,14 +167,10 @@ async function loadPricedItems(tx: Sql, tenantId: string, cartId: string): Promi
   });
 }
 
-/**
- * Guards a mutation: the cart must exist and still be open. A completed cart
- * is a 409 (not 404) — the resource exists, it just isn't mutable.
- */
+/** Cart must exist and be open; a completed cart is 409, not 404. */
 export async function assertCartOpen(tx: Sql, tenantId: string, cartId: string): Promise<void> {
-  // FOR UPDATE serializes mutations with checkout: a concurrent checkout
-  // holds this lock while completing the cart, so a mutation either lands
-  // before it or re-reads the completed status and 409s.
+  // FOR UPDATE serializes mutations with checkout — a mutation lands
+  // before or re-reads the completed status and 409s
   const rows = await tx<{ status: string }[]>`
     select status from carts where tenant_id = ${tenantId} and id = ${cartId} for update
   `;
@@ -242,8 +229,7 @@ export async function loadCartView(tx: Sql, tenantId: string, cartId: string): P
     status: cart.status,
     items,
     totals: computeTotals(items, deliveryFee, effectiveMinOrder),
-    // zoneId is the server's zone-match verdict — a zero fee can mean a
-    // matched free zone, so clients must branch on zoneId, not the amount.
+    // a zero fee can mean a free zone — branch on zoneId, not the amount
     delivery: cart.delivery ? { ...cart.delivery, zoneId: zone?.id ?? null } : null,
   };
 }
@@ -260,14 +246,14 @@ export async function addItem(
   }
   const product = await getProductById(tx, tenantId, input.productId);
   if (!product) throw new HttpError(404, 'PRODUCT_NOT_FOUND', 'product not found');
-  // Dedupe + sort: a repeated id would charge the modifier twice, and
-  // order-independence makes reordered selections merge into the same line.
+  // dedupe + sort: a repeated id would double-charge; order-independence
+  // merges reordered selections into one line
   const modifierIds = [...new Set(input.modifierIds ?? [])].sort();
   const invalid = validateItemModifiers(product, modifierIds);
   if (invalid) throw invalid;
 
-  // Freeze the accepted price: unit + modifier names/deltas snapshot into the
-  // row. A later catalog edit changes neither this line nor a checkout total.
+  // freeze the accepted price — later catalog edits never reprice a line
+  // or checkout total
   const allModifiers = product.modifierGroups.flatMap((g) => g.modifiers);
   const chosen = modifierIds.map((id) => allModifiers.find((m) => m.id === id)!);
   const snapshot = chosen.map((m) => ({
@@ -280,9 +266,8 @@ export async function addItem(
     chosen.map((m) => m.priceDeltaCents),
   );
 
-  // Same product + same modifier set merges into one line. The merged qty is
-  // capped by cart_items' CHECK (qty <= 99) — a check_violation surfaces as
-  // INVALID_QTY, identical to the PATCH endpoint's contract.
+  // same product + modifier set merges into one line; merged qty capped by
+  // CHECK (qty <= 99) → INVALID_QTY like PATCH
   try {
     await tx`
       insert into cart_items (tenant_id, cart_id, product_id, qty, modifier_ids, unit_price_cents, modifier_snapshot)

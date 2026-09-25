@@ -1,15 +1,4 @@
--- 0039_agent_inbox_supersede_backfill.sql — 0038 retired coalesced runs
--- under the one-active-run-per-lead index but dropped their intents: a
--- queued run's request and a running run's consumed mail vanished with
--- the cancel. Backfill one inbox item per superseded run — its kind,
--- thread, and params ride as the pending intent (params keep the
--- auto/origin markers claimRun and the orphan sweep gate on), then
--- release mail the dead runs consumed back to pending so the surviving
--- run drains it. 'staff' vs 'event' mirrors claimRun's promised-run
--- marker: unmarked params = a human asked for it, marked = automation.
--- notBefore carries the canceled run's run_at: a future-dated queued run
--- (first-contact delay, scheduled reply) keeps its deadline instead of
--- becoming immediately drainable; past run_at degrades to eligible-now.
+-- backfill one inbox intent per run superseded by 0038's one-active-run index and release its consumed mail back to pending (notBefore preserves the canceled run's run_at)
 insert into agent_inbox (lead_id, kind, payload)
 select r.lead_id,
        case when r.params ? 'auto' or r.params->>'origin' = 'inbound'

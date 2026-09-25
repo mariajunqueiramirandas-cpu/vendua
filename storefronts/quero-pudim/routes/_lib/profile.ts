@@ -1,8 +1,4 @@
-/**
- * Customer profile remembered across visits (localStorage) — the reference
- * storefront did this via `lib/profile.ts`; the Kernel has no customer-
- * persistence primitive yet (OBSERVATIONS.md).
- */
+/** Customer profile in localStorage — the Kernel has no customer-persistence primitive (OBSERVATIONS.md). */
 const KEY = 'qp.profile';
 
 export interface Profile {
@@ -44,12 +40,11 @@ export function saveProfile(p: Partial<Profile>) {
   }
 }
 
-/** Digits-only phone, normalizing a pasted/formatted value. */
 export function phoneDigits(v: string): string {
   return v.replace(/\D/g, '');
 }
 
-/** (XX) XXXXX-XXXX mask, same as the reference storefront. */
+/** (XX) XXXXX-XXXX mask — same as the reference storefront. */
 export function maskPhone(v: string): string {
   const d = phoneDigits(v).slice(0, 11);
   if (d.length > 6) return `(${d.slice(0, 2)}) ${d.slice(2, 7)}-${d.slice(7)}`;
@@ -57,7 +52,6 @@ export function maskPhone(v: string): string {
   return d;
 }
 
-/** XXXXX-XXX mask. */
 export function maskCep(v: string): string {
   const d = v.replace(/\D/g, '').slice(0, 8);
   if (d.length > 5) return `${d.slice(0, 5)}-${d.slice(5)}`;

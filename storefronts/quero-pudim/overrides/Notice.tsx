@@ -1,16 +1,7 @@
 import { X } from 'lucide-react';
 import type { Notice, NoticeAction } from '@vendua/kernel';
 
-/**
- * system.Notice slot override — notices read as margin notes in the recipe
- * notebook: serif italic title, caramel rule, cream card. Blocking notices
- * render inside the Kernel's own overlay mount (`[data-vendua="blocking-
- * overlay"]`), so this only styles the card itself.
- *
- * The Kernel resolves overrides per notice kind (`system.PromoNotice` etc.) and
- * falls back to `system.Notice`, which is why this component must handle every
- * kind gracefully.
- */
+/** system.Notice override — Kernel falls back to it per notice kind, so this must handle every kind gracefully. */
 
 function actionHref(a: NoticeAction): { label: string; href: string } | null {
   if (a.type === 'link' && typeof a.href === 'string') return { label: a.label, href: a.href };

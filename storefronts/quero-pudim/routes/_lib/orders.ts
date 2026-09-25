@@ -1,12 +1,6 @@
 import type { CartItem, Order } from '@vendua/kernel';
 
-/**
- * Session-scoped order log. There is no "my orders" endpoint in Core, no
- * items list on the order view, and no client-storage utility in the Kernel —
- * so we persist the order payload plus a cart snapshot in sessionStorage,
- * matching the lifetime of the Kernel's own `vendua.session` token (a tab
- * session, LGPD-neutral: it dies with the tab). Recorded in OBSERVATIONS.md.
- */
+/** Session-scoped order log — Core has no "my orders" endpoint or items list; persist order+snapshot in sessionStorage (tab lifetime, LGPD-neutral). */
 const KEY = 'qp.orders';
 
 export interface StoredOrder {

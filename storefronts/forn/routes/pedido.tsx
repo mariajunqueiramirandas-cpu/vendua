@@ -6,11 +6,7 @@ import { getLastOrder } from '../components/last-order.ts';
 import { useResetSession } from '../components/session.tsx';
 import { brl, ORDER_STATE_LABELS, PAYMENT_LABELS, resumeLabel } from '../components/format.ts';
 
-/**
- * /pedido/:id — the stamped comanda. Instant paint comes from router state
- * or the local order cache; `useOrder` re-reads it from Core so reloads and
- * status updates stay honest.
- */
+/** /pedido/:id — instant paint from router state/local cache; useOrder re-reads it from Core. */
 export default function PedidoPage() {
   const { id } = useParams();
   const { state } = useLocation() as { state: { order?: Order } | null };
