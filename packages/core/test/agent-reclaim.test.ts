@@ -2762,6 +2762,34 @@ dbDescribe('worker robustness (db)', () => {
     }
   });
 
+  test('deferred mail keeps its quiet period — the spawned run waits for notBefore', async () => {
+    await migrate(sql, MIGRATIONS);
+    const lead = await controlTx(sql, (tx) =>
+      insertLeadTx(tx, { name: 'Quiet Period', agent_mode: 'auto' }),
+    );
+    const leadId = lead.body.lead.id;
+    await sql`delete from agent_runs where status = 'queued'`;
+    await sql`update agent_inbox set consumed_at = now() where consumed_at is null`;
+    const deadline = new Date(Date.now() + 3600e3).toISOString();
+    // No live run — the sweep spawns for the item immediately, but the
+    // inbound quiet period stamped at enqueue must ride into run_at: a
+    // reply deferred by another run still can't skip the configured delay.
+    await controlTx(sql, (tx) =>
+      enqueueInboxTx(tx, leadId, 'inbound', {
+        text: 'mensagem do lead [email]',
+        requestedKind: 'reply',
+        params: { origin: 'inbound', channel: 'email' },
+        notBefore: deadline,
+      }),
+    );
+    await drain(sql);
+    const [run] = await sql<{ run_at: Date; status: string }[]>`
+      select run_at, status from agent_runs where lead_id = ${leadId}
+    `;
+    expect(run!.status).toBe('queued');
+    expect(Math.abs(run!.run_at.getTime() - Date.parse(deadline))).toBeLessThan(2000);
+  });
+
   test('the orphan sweep window reaches younger leads past parked mail', async () => {
     await migrate(sql, MIGRATIONS);
     await sql`delete from agent_runs where status = 'queued'`;

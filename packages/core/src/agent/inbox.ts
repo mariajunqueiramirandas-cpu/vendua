@@ -31,6 +31,9 @@ export interface InboxPayload {
   requestedKind?: PlaybookKind;
   threadId?: string | null;
   params?: Record<string, unknown>;
+  /** ISO instant before which a spawned run must not claim (the enqueueing
+   *  path's quiet period — the sweep carries it into run_at). */
+  notBefore?: string;
   [k: string]: unknown;
 }
 
@@ -173,6 +176,30 @@ export async function sweepOrphanInbox(sql: Sql, limit = 10): Promise<number> {
         break;
       }
       if (!spawn) return null;
+      // The spawned run inherits the quiet period of the mail it serves:
+      // a deferred item's notBefore (the inbound delay stamped at enqueue)
+      // becomes run_at — without it a reply a run deferred minutes ago
+      // could fire immediately once that run ends. Max across the items
+      // this run would drain — the latest message owns the quiet period,
+      // mirroring the parked-run slide in ingestInbound.
+      const runChannel =
+        spawn.params.channel === 'whatsapp' || spawn.params.channel === 'email'
+          ? (spawn.params.channel as string)
+          : '';
+      const runDraftOnly = spawn.params.draftOnly === true;
+      let notBefore = 0;
+      for (const i of items) {
+        const ip = i.payload;
+        const chan =
+          ip?.params != null && typeof ip.params.channel === 'string'
+            ? (ip.params.channel as string)
+            : '';
+        const wouldDrain =
+          (chan || runChannel) === runChannel && (ip?.params?.draftOnly === true) === runDraftOnly;
+        if (!wouldDrain) continue;
+        const t = typeof ip?.notBefore === 'string' ? Date.parse(ip.notBefore) : NaN;
+        if (Number.isFinite(t) && t > notBefore) notBefore = t;
+      }
       // insertRun's cap check still applies — a refused lead keeps the
       // mail pending for a raised cap.
       return insertRun(tx, {
@@ -180,6 +207,7 @@ export async function sweepOrphanInbox(sql: Sql, limit = 10): Promise<number> {
         leadId: lead_id,
         threadId: spawn.threadId,
         params: spawn.params,
+        ...(notBefore ? { runAt: new Date(notBefore) } : {}),
       });
     }).catch((e) => {
       agentLog.warn({ err: e, leadId: lead_id }, 'orphan inbox sweep failed for lead');

@@ -145,12 +145,21 @@ export async function ingestInbound(
     // the wrong conversation. insertRun's on-conflict path returns the
     // already-active run's id, so a missing row here means the cap
     // refused — the item stays pending for the sweep when the cap lifts.
+    // notBefore carries the quiet period into the deferred path: if the
+    // mail waits for another run to finish, the sweep's replacement run
+    // still can't claim before this deadline (same slide the parked-run
+    // path gets).
     await enqueueInboxTx(tx, res.leadId, 'inbound', {
       text: `mensagem do lead [${input.channel}]: ${input.body.slice(0, 400)}`,
       threadId: res.threadId,
       messageId: res.messageId,
       requestedKind: 'reply',
       params: { origin: 'inbound', channel: input.channel },
+      ...(inboundReplyDelayMin > 0
+        ? {
+            notBefore: new Date(Date.now() + inboundReplyDelayMin * 60_000).toISOString(),
+          }
+        : {}),
     });
     const cap: { flagged?: boolean } = {};
     const id = await insertRun(

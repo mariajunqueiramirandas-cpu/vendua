@@ -2850,7 +2850,7 @@ export async function sweepOutreach(sql: Sql): Promise<number> {
         await tx`update leads set next_action_at = null, next_action_source = null where id = ${id}`;
         if (fold) {
           await tx`
-            update agent_wakeups set status = 'fired', fired_run_id = ${runId}, updated_at = now()
+            update agent_wakeups set status = 'fired', fired_run_id = ${runId}, fired_at = now(), updated_at = now()
             where id = ${fold.id}
           `;
         }

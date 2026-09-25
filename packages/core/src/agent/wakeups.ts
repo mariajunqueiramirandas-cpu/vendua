@@ -45,6 +45,9 @@ type WakeupRow = {
   at: Date;
   focus: string;
   status: Wakeup['status'];
+  /** Immutable stamp written at the fired flip — metrics attribute by it
+   *  (updated_at can't serve: cancelWakeup bumps it even on fired rows). */
+  fired_at: Date | null;
   requested: boolean;
   created_by: Wakeup['createdBy'];
   created_by_run_id: string | null;
@@ -292,7 +295,7 @@ export async function sweepWakeups(sql: Sql): Promise<number> {
           params,
         });
         await tx`
-          update agent_wakeups set status = 'fired', fired_run_id = ${runId}, updated_at = now()
+          update agent_wakeups set status = 'fired', fired_run_id = ${runId}, fired_at = now(), updated_at = now()
           where id = ${w.id}
         `;
         // One follow-up per lead: a due automation nudge (cadence/auto) is
