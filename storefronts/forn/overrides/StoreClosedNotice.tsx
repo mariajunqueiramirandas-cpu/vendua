@@ -1,11 +1,7 @@
 import { MoonMark } from '../components/marks.tsx';
 import type { Notice } from '@vendua/kernel';
 
-/**
- * system.StoreClosedNotice override — the closed state is this store's main
- * surface, so the generic banner becomes a lit shop sign: a dark card with a
- * warm interior glow, like the light left on inside a closed padoca.
- */
+/** Closed-state override: the generic banner becomes a lit shop sign — dark card with a warm interior glow. */
 export default function StoreClosedNotice(props: Record<string, unknown>) {
   const notice = props.notice as Notice | undefined;
   const onDismiss = props.onDismiss as (() => void) | undefined;

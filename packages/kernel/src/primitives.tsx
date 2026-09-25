@@ -2,18 +2,9 @@ import { cloneElement, isValidElement, useState, type ReactElement, type ReactNo
 import { useCart, useStore } from './hooks.ts';
 import type { CatalogProduct } from './api.ts';
 
-/**
- * Headless primitives (02-kernel.md#primitives): Kernel owns behavior, the
- * storefront owns visuals via `asChild` / render props. Each stamps its
- * `data-vendua` hook + ARIA semantics regardless of the delegated child.
- */
+/** Headless primitives (02-kernel.md): Kernel owns behavior, the storefront owns visuals via asChild — each stamps its data-vendua hook + ARIA regardless of the delegated child. */
 
-/**
- * Minimal asChild: compose props onto the single child element without
- * clobbering it — onClick chains (primitive's first), className concatenates,
- * disabled ORs, other child props win over the primitive's defaults except the
- * managed `data-vendua`/ARIA markers.
- */
+/** Minimal asChild: compose props onto the child — onClick chains (primitive first), className concatenates, disabled ORs, child props win except the managed data-vendua/ARIA markers. */
 type PrimitiveProps = Record<string, unknown> & { 'data-vendua': string };
 
 function withChild(asChild: boolean | undefined, props: PrimitiveProps, children: ReactNode) {
@@ -21,9 +12,7 @@ function withChild(asChild: boolean | undefined, props: PrimitiveProps, children
     const child = children as ReactElement<Record<string, unknown>>;
     const childProps = child.props;
     const merged: Record<string, unknown> = { ...props, ...childProps };
-    // `data-vendua` is always the primitive's marker; other aria-*/data-*
-    // pairs are primitive defaults the child may override with its own copy
-    // (e.g. a CartTrigger restating its count in brand voice).
+    // data-vendua stays the primitive's marker; other aria-*/data-* are defaults the child may override
     merged['data-vendua'] = props['data-vendua'];
     if (typeof props.onClick === 'function' || typeof childProps.onClick === 'function') {
       merged.onClick = (e: unknown) => {
@@ -50,7 +39,6 @@ export interface AddToCartProps {
   modifierIds?: string[];
   asChild?: boolean;
   children?: ReactNode;
-  /** Called after a successful add; Core's cart is the arg. */
   onAdded?: () => void;
   onError?: (err: { code: string; message: string }) => void;
 }
@@ -146,7 +134,7 @@ export interface CartTriggerProps {
 
 export function CartTrigger({ asChild, children, onOpen }: CartTriggerProps) {
   const { cart } = useCart();
-  // A completed cart is history, not a bag — count only open carts.
+  // a completed cart is history, not a bag — count only open carts
   const count = cart?.status === 'open' ? cart.totals.itemCount : 0;
   return withChild(
     asChild,

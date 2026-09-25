@@ -1,10 +1,6 @@
 import type { DerivedStatus, StoreSettingsRow } from './store.ts';
 
-/**
- * notices module — composeNotices, the Core-side producer of the `notices[]`
- * SDUI payload (docs/architecture/05-system-surfaces.md). New kinds MUST render
- * acceptably through the Kernel's generic path.
- */
+/** Core-side producer of the notices[] SDUI payload — new kinds must render through the Kernel's generic path (05-system-surfaces.md). */
 
 export interface NoticeAction {
   type: string;
@@ -77,8 +73,7 @@ export function composeNotices(
         : 'Estamos fechados no momento.',
       dismissible: true,
       priority: 50,
-      // resumesAt rides in payload so specialized slots can restyle the
-      // countdown without parsing the pt-BR body copy.
+      // resumesAt in payload lets specialized slots restyle the countdown without parsing pt-BR copy
       ...(derived.resumesAt ? { payload: { resumesAt: derived.resumesAt } } : {}),
     });
   }

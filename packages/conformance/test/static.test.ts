@@ -6,8 +6,7 @@ import { runStatic } from '../src/static.ts';
 const REPO = join(import.meta.dir, '../../..');
 const TMP_ROOT = join(import.meta.dir, '.tmp');
 
-/** A minimal fixture storefront inside the repo tree so node_modules
- *  resolution (@vendua/kernel, bunx tsc) works offline. */
+/** Fixture lives inside the repo tree so node_modules resolution (@vendua/kernel, bunx tsc) works offline. */
 const made: string[] = [];
 function fixture(files: Record<string, string>): string {
   mkdirSync(TMP_ROOT, { recursive: true });

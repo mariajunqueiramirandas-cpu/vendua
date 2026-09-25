@@ -136,7 +136,6 @@ describe('validateCheckout', () => {
     );
   });
   test('delivery uses max(store, zone) min order', () => {
-    // zone min is 1500, subtotal 1200 → fails
     expect(code(() => validateCheckout(open, settings, cart(1200), delivery, zones))).toBe(
       'ORDER_MIN_NOT_MET',
     );
