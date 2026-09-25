@@ -218,19 +218,22 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('agentMetrics (db)', () => {
     await clean();
     const stale = new Date(Date.now() - 20 * 86_400_000);
     await sql`
-      insert into agent_wakeups (kind, at, focus, status, created_by)
+      insert into agent_wakeups (kind, at, focus, status, created_by, fired_at)
       values
-        ('reply', now(), 'follow up', 'pending', 'agent'),
-        ('outreach', now() + interval '1 day', 'retry', 'pending', 'staff'),
-        ('reply', now(), 'follow up', 'fired', 'agent'),
-        ('reply', ${stale}, 'old fire', 'fired', 'agent'),
-        ('outreach', now(), 'gave up', 'canceled', 'staff')`;
+        ('reply', now(), 'follow up', 'pending', 'agent', null),
+        ('outreach', now() + interval '1 day', 'retry', 'pending', 'staff', null),
+        ('reply', now(), 'follow up', 'fired', 'agent', now()),
+        ('reply', ${stale}, 'old fire', 'fired', 'agent', ${stale}),
+        ('outreach', now(), 'gave up', 'canceled', 'staff', null)`;
     // A wakeup scheduled long ago that only fired now attributes to the
-    // firing run's created_at, not the requested `at`.
+    // fire, not the requested `at` — fired_at is the immutable flip stamp.
     const firedRun = await seedRun({ kind: 'outreach' });
     await sql`
-      insert into agent_wakeups (kind, at, focus, status, created_by, fired_run_id)
-      values ('reply', ${stale}, 'late fire', 'fired', 'agent', ${firedRun})`;
+      insert into agent_wakeups (kind, at, focus, status, created_by, fired_run_id, fired_at)
+      values ('reply', ${stale}, 'late fire', 'fired', 'agent', ${firedRun}, now())`;
+    // A post-fire cancellation bumps updated_at but the metric must not
+    // move: fired_at is immutable past the flip.
+    await sql`update agent_wakeups set updated_at = now() + interval '1 day' where focus = 'follow up' and status = 'fired'`;
     const m = await agentMetrics(sql, 7);
     expect(m.wakeups).toEqual({ pending: 2, fired: 2 });
     const m30 = await agentMetrics(sql, 30);

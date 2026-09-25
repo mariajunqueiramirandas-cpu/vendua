@@ -715,7 +715,9 @@ export async function contextFor(
         parts.push(`CANAIS: ${chanLine}`);
         const want = run.params.channel;
         if (want === 'whatsapp' || want === 'email') {
-          parts.push(`CANAL FORÇADO (staff escolheu): ${want}`);
+          // The pin's source is either a staff pick or the channel that
+          // delivered the mail — either way sends must ride this channel.
+          parts.push(`CANAL FORÇADO: ${want}`);
         }
         if (run.params.draftOnly === true) {
           parts.push(
@@ -1556,10 +1558,12 @@ async function persistAborted(att: Attempt): Promise<void> {
  *  the claim. Returns the item count so finishGate can buy another turn. */
 async function drainInbox(att: Attempt): Promise<number> {
   if (att.lost || !att.run.lead_id) return 0;
-  // Draft-only mail rides only a draft-only run: delivering it to a
-  // send-capable run would let the reaction ship unreviewed, so it waits
-  // pending and the orphan sweep spawns its own draftOnly run once the
-  // lead is free (the request itself is new work, not run context).
+  // Draft-only mail rides only a draft-only run and vice-versa:
+  // delivering draft-only mail to a send-capable run would let the
+  // reaction ship unreviewed, and delivering ordinary mail to a
+  // draft-only run would strand a reply as an unapproved draft. Both
+  // sides wait pending for a compatible run (the request itself is new
+  // work, not run context).
   const runDraftOnly = (att.run.params as { draftOnly?: unknown } | null)?.draftOnly === true;
   // Channel-pinned mail likewise defers to a run pinned the same way — a
   // delivered item can't re-point ctx.channelOverride mid-flight.
@@ -1575,7 +1579,7 @@ async function drainInbox(att: Attempt): Promise<number> {
     (tx) => tx<InboxItem[]>`
       select id, kind, payload, created_at from agent_inbox
       where lead_id = ${att.run.lead_id!} and consumed_at is null
-        and (${runDraftOnly} or coalesce(payload->'params'->>'draftOnly', 'false') <> 'true')
+        and (coalesce(payload->'params'->>'draftOnly', 'false') = 'true') = ${runDraftOnly}
         and coalesce(payload->'params'->>'channel', ${runChannel}) = ${runChannel}
       order by created_at limit 10
     `,
@@ -2846,7 +2850,7 @@ export async function sweepOutreach(sql: Sql): Promise<number> {
         await tx`update leads set next_action_at = null, next_action_source = null where id = ${id}`;
         if (fold) {
           await tx`
-            update agent_wakeups set status = 'fired', fired_run_id = ${runId}, updated_at = now()
+            update agent_wakeups set status = 'fired', fired_run_id = ${runId}, fired_at = now(), updated_at = now()
             where id = ${fold.id}
           `;
         }

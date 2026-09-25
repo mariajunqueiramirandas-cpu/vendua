@@ -31,6 +31,9 @@ export interface InboxPayload {
   requestedKind?: PlaybookKind;
   threadId?: string | null;
   params?: Record<string, unknown>;
+  /** ISO instant before which a spawned run must not claim (the enqueueing
+   *  path's quiet period — the sweep carries it into run_at). */
+  notBefore?: string;
   [k: string]: unknown;
 }
 
@@ -139,33 +142,72 @@ export async function sweepOrphanInbox(sql: Sql, limit = 10): Promise<number> {
       }
       // Paused or mode 'off' lifts — keep the mail pending.
       if (lead.agent_paused_at || lead.agent_mode === 'off') return null;
-      const first = items[0]!;
-      const p = first.payload;
-      const requestedKind = p?.requestedKind;
-      if (!requestedKind) return null;
-      // Automation intents answer to autonomy; staff and promised work
-      // only to the playbook switch — the same markers claimRun reads off
-      // run params ('auto' key or origin='inbound' = automation; unmarked
-      // = a human asked for it, which kind 'staff' always is).
-      const marked = p?.params != null && ('auto' in p.params || p.params.origin === 'inbound');
-      const gate =
-        first.kind === 'staff' || !marked
-          ? await playbookEnabledTx(tx, requestedKind)
-          : await automationAllowedTx(tx, requestedKind);
-      if (!gate.ok) return null;
-      if (p?.threadId) {
-        const th = await tx<{ agent_enabled: boolean }[]>`
-          select agent_enabled from lead_threads where id = ${p.threadId}
-        `;
-        if (!th[0]?.agent_enabled) return null;
+      // The first ELIGIBLE item drives the spawn: an oldest item stuck
+      // behind a disabled playbook or agent-disabled thread must not
+      // starve younger servable mail on the same lead — blocked items
+      // stay pending for whenever their gate lifts (or a spawned run
+      // drains them into context, gate-free).
+      let spawn: {
+        kind: PlaybookKind;
+        threadId: string | null;
+        params: Record<string, unknown>;
+      } | null = null;
+      for (const item of items) {
+        const p = item.payload;
+        const requestedKind = p?.requestedKind;
+        if (!requestedKind) continue;
+        // Automation intents answer to autonomy; staff and promised work
+        // only to the playbook switch — the same markers claimRun reads
+        // off run params ('auto' key or origin='inbound' = automation;
+        // unmarked = a human asked for it, which kind 'staff' always is).
+        const marked = p?.params != null && ('auto' in p.params || p.params.origin === 'inbound');
+        const gate =
+          item.kind === 'staff' || !marked
+            ? await playbookEnabledTx(tx, requestedKind)
+            : await automationAllowedTx(tx, requestedKind);
+        if (!gate.ok) continue;
+        if (p?.threadId) {
+          const th = await tx<{ agent_enabled: boolean }[]>`
+            select agent_enabled from lead_threads where id = ${p.threadId}
+          `;
+          if (!th[0]?.agent_enabled) continue;
+        }
+        spawn = { kind: requestedKind, threadId: p.threadId ?? null, params: p.params ?? {} };
+        break;
+      }
+      if (!spawn) return null;
+      // The spawned run inherits the quiet period of the mail it serves:
+      // a deferred item's notBefore (the inbound delay stamped at enqueue)
+      // becomes run_at — without it a reply a run deferred minutes ago
+      // could fire immediately once that run ends. Max across the items
+      // this run would drain — the latest message owns the quiet period,
+      // mirroring the parked-run slide in ingestInbound.
+      const runChannel =
+        spawn.params.channel === 'whatsapp' || spawn.params.channel === 'email'
+          ? (spawn.params.channel as string)
+          : '';
+      const runDraftOnly = spawn.params.draftOnly === true;
+      let notBefore = 0;
+      for (const i of items) {
+        const ip = i.payload;
+        const chan =
+          ip?.params != null && typeof ip.params.channel === 'string'
+            ? (ip.params.channel as string)
+            : '';
+        const wouldDrain =
+          (chan || runChannel) === runChannel && (ip?.params?.draftOnly === true) === runDraftOnly;
+        if (!wouldDrain) continue;
+        const t = typeof ip?.notBefore === 'string' ? Date.parse(ip.notBefore) : NaN;
+        if (Number.isFinite(t) && t > notBefore) notBefore = t;
       }
       // insertRun's cap check still applies — a refused lead keeps the
       // mail pending for a raised cap.
       return insertRun(tx, {
-        kind: requestedKind,
+        kind: spawn.kind,
         leadId: lead_id,
-        threadId: p.threadId ?? null,
-        params: p.params ?? {},
+        threadId: spawn.threadId,
+        params: spawn.params,
+        ...(notBefore ? { runAt: new Date(notBefore) } : {}),
       });
     }).catch((e) => {
       agentLog.warn({ err: e, leadId: lead_id }, 'orphan inbox sweep failed for lead');
