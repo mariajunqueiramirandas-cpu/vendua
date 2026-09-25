@@ -1,16 +1,17 @@
 import type { Sql } from '../platform/db.ts';
 import {
   DEFAULT_GUARDRAILS,
+  DEFAULT_AGENT_RULES,
   capCentsOf,
   getSettingTx,
   phoneIsIgnored,
   type Guardrails,
 } from '../modules/integrations.ts';
-import { loadPlaybookTx } from './playbooks.ts';
-import { PLAYBOOK_KINDS, type PlaybookKind } from './tool-meta.ts';
+import type { JobKind } from './tool-meta.ts';
 import { channelAvailabilityTx } from './guardrails.ts';
 
-// Autonomy policy: workspace level × lead flags × guardrails, consulted by claimRun / checkSendAllowedTx / enqueue gates.
+// The one agent setting (`agent`): autonomy preset × automatic jobs × staff instructions,
+// consulted by claimRun / checkSendAllowedTx / every enqueue gate.
 
 export type AutonomyLevel = 'off' | 'copilot' | 'supervised' | 'autopilot';
 export const AUTONOMY_LEVELS: readonly AutonomyLevel[] = [
@@ -20,63 +21,103 @@ export const AUTONOMY_LEVELS: readonly AutonomyLevel[] = [
   'autopilot',
 ];
 
-export interface AgentAutonomySetting {
+/** kinds automation can start; triage is staff-triggered only */
+export type AgentJob = Exclude<JobKind, 'triage'>;
+export const AGENT_JOBS: readonly AgentJob[] = ['reply', 'outreach', 'discovery', 'strategist'];
+
+export const AGENT_INSTRUCTIONS_MAX = 8000;
+export const DEFAULT_INSTRUCTIONS = DEFAULT_AGENT_RULES.map((r) => `- ${r}`).join('\n');
+
+export interface AgentSetting {
   level: AutonomyLevel;
-  strategistAutoApproveUsd?: number;
+  jobs: Record<AgentJob, boolean>;
+  instructions: string;
+  /** strategist may enable its own discovery briefs while trailing-7d discovery spend stays under this; 0 = never */
+  weeklyDiscoveryUsd: number;
 }
 
-export async function autonomyTx(tx: Sql): Promise<Required<AgentAutonomySetting>> {
-  const v = await getSettingTx<Partial<AgentAutonomySetting>>(tx, 'agent_autonomy', {});
-  const level = AUTONOMY_LEVELS.includes(v?.level as AutonomyLevel)
-    ? (v.level as AutonomyLevel)
-    : 'supervised';
-  const usd = Number(v?.strategistAutoApproveUsd);
+// Normalizes a stored row: bad/missing fields fall back to defaults so a hand-edited row can't poison policy.
+export function normalizeAgent(v: unknown): AgentSetting {
+  const o = (v && typeof v === 'object' && !Array.isArray(v) ? v : {}) as Record<string, unknown>;
+  const j = (o.jobs && typeof o.jobs === 'object' ? o.jobs : {}) as Record<string, unknown>;
+  const usd = Number(o.weeklyDiscoveryUsd);
   return {
-    level,
-    strategistAutoApproveUsd: Number.isFinite(usd) ? Math.min(50, Math.max(0, usd)) : 0,
+    level: AUTONOMY_LEVELS.includes(o.level as AutonomyLevel)
+      ? (o.level as AutonomyLevel)
+      : 'supervised',
+    jobs: Object.fromEntries(AGENT_JOBS.map((k) => [k, j[k] !== false])) as Record<
+      AgentJob,
+      boolean
+    >,
+    instructions:
+      typeof o.instructions === 'string'
+        ? o.instructions.slice(0, AGENT_INSTRUCTIONS_MAX)
+        : DEFAULT_INSTRUCTIONS,
+    weeklyDiscoveryUsd: Number.isFinite(usd) ? Math.min(50, Math.max(0, usd)) : 0,
   };
+}
+
+export async function agentSettingTx(tx: Sql): Promise<AgentSetting> {
+  return normalizeAgent(await getSettingTx<unknown>(tx, 'agent', {}));
 }
 
 export type AutomationVerdict = { ok: true } | { ok: false; code: string; reason: string };
 
-// Gate for automation-queued runs; staff-triggered runs only check playbookEnabledTx.
-export async function automationAllowedTx(tx: Sql, kind: PlaybookKind): Promise<AutomationVerdict> {
-  const { level } = await autonomyTx(tx);
-  if (level === 'off') {
+const JOB_LABEL: Record<AgentJob, string> = {
+  reply: 'responder mensagens',
+  outreach: 'prospecção e follow-ups',
+  discovery: 'descoberta',
+  strategist: 'revisão semanal',
+};
+
+// Gate for automation-queued work; staff-triggered runs are never gated by the preset or jobs.
+export async function automationAllowedTx(tx: Sql, kind: JobKind): Promise<AutomationVerdict> {
+  const a = await agentSettingTx(tx);
+  if (a.level === 'off') {
     return { ok: false, code: 'workspace_off', reason: 'autonomia do agente desligada' };
   }
-  return playbookEnabledTx(tx, kind);
-}
-
-export async function claimPolicyTx(
-  tx: Sql,
-): Promise<{ disabledKinds: PlaybookKind[]; autoOff: boolean }> {
-  const { level } = await autonomyTx(tx);
-  const disabledKinds: PlaybookKind[] = [];
-  for (const k of PLAYBOOK_KINDS) if (!(await loadPlaybookTx(tx, k)).enabled) disabledKinds.push(k);
-  return { disabledKinds, autoOff: level === 'off' };
-}
-
-export async function playbookEnabledTx(tx: Sql, kind: PlaybookKind): Promise<AutomationVerdict> {
-  const pb = await loadPlaybookTx(tx, kind);
-  if (!pb.enabled) {
-    return { ok: false, code: 'playbook_disabled', reason: `playbook ${kind} desativado` };
+  if (kind !== 'triage' && !a.jobs[kind]) {
+    return { ok: false, code: 'job_off', reason: `${JOB_LABEL[kind]} está desligado` };
   }
   return { ok: true };
 }
 
-// copilot/off force drafts; autopilot lifts firstContactDraftOnly.
+/** Automation markers ('auto' key / inbound origin); unmarked work is staff or a promise and always runs. */
+export function isAutomation(params: Record<string, unknown> | null | undefined): boolean {
+  return params != null && ('auto' in params || params['origin'] === 'inbound');
+}
+
+export interface ParkPolicy {
+  autoOff: boolean;
+  /** kinds whose automation parks (job switched off) */
+  offJobs: JobKind[];
+}
+
+export async function parkPolicyTx(tx: Sql): Promise<ParkPolicy> {
+  const a = await agentSettingTx(tx);
+  return { autoOff: a.level === 'off', offJobs: AGENT_JOBS.filter((k) => !a.jobs[k]) };
+}
+
+/** automation-marked work of a kind the preset/jobs switched off parks; everything else runs */
+export function parked(
+  p: ParkPolicy,
+  kind: string,
+  params: Record<string, unknown> | null | undefined,
+): boolean {
+  return isAutomation(params) && (p.autoOff || (p.offJobs as string[]).includes(kind));
+}
+
+// copilot/off force drafts; supervised drafts first contact; autopilot sends within guardrails.
 export function draftDecision(input: {
   level: AutonomyLevel;
   firstContact: boolean;
-  firstContactDraftOnly: boolean;
   leadMode: string;
 }): { forceDraft: boolean; code: string | null } {
   if (input.level === 'copilot' || input.level === 'off') {
     return { forceDraft: true, code: 'workspace_copilot' };
   }
   if (input.leadMode === 'draft') return { forceDraft: true, code: 'lead_mode_draft' };
-  if (input.level === 'supervised' && input.firstContact && input.firstContactDraftOnly) {
+  if (input.level === 'supervised' && input.firstContact) {
     return { forceDraft: true, code: 'first_contact_draft' };
   }
   return { forceDraft: false, code: null };
@@ -127,7 +168,7 @@ export async function explainAutonomyTx(
     `
   )[0];
   if (!lead) return null;
-  const { level } = await autonomyTx(tx);
+  const { level } = await agentSettingTx(tx);
   const g: Guardrails = {
     ...DEFAULT_GUARDRAILS,
     ...(await getSettingTx<Partial<Guardrails>>(tx, 'guardrails', {})),
@@ -168,7 +209,6 @@ export async function explainAutonomyTx(
     const d = draftDecision({
       level,
       firstContact: lead.prior_out === 0,
-      firstContactDraftOnly: g.firstContactDraftOnly,
       leadMode: lead.agent_mode,
     });
     sendMode = d.forceDraft ? 'draft' : 'auto';
@@ -197,7 +237,7 @@ export async function discoveryBudgetTx(
   tx: Sql,
   excludeBriefId?: string,
 ): Promise<{ capCents: number; spent: number; open: number; est: number }> {
-  const { strategistAutoApproveUsd } = await autonomyTx(tx);
+  const { weeklyDiscoveryUsd } = await agentSettingTx(tx);
   const excl = excludeBriefId ?? null;
   const row = (
     await tx<{ spent: number; open: number; est: number }[]>`
@@ -222,5 +262,5 @@ export async function discoveryBudgetTx(
           order by created_at desc limit 20) t), 50)::int as est
     `
   )[0]!;
-  return { capCents: Math.round(strategistAutoApproveUsd * 100), ...row };
+  return { capCents: Math.round(weeklyDiscoveryUsd * 100), ...row };
 }

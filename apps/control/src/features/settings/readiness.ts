@@ -129,15 +129,15 @@ export function computeReadiness({
   const g = obj(settings.guardrails);
   const pitch = obj(settings.pitch);
   const digest = obj(settings.digest);
-  const autonomy = obj(settings.agent_autonomy);
+  const autonomy = obj(settings.agent);
   // 'off' parks the agent; 'copilot' silently backs up the draft queue — both worth flagging
   const autoLevel = str(autonomy.level, 'supervised');
   const routine: Check[] = setErr
     ? (
         [
-          { key: 'autonomia', label: 'autonomia', route: `${STUDIO}?s=autonomia` },
-          { key: 'voz', label: 'voz do agente', route: `${STUDIO}?s=voz` },
-          { key: 'regras', label: 'regras', route: `${STUDIO}?s=regras` },
+          { key: 'autonomia', label: 'autonomia', route: STUDIO },
+          { key: 'voz', label: 'voz do agente', route: STUDIO },
+          { key: 'regras', label: 'limites', route: `${STUDIO}?s=limites` },
           { key: 'resumo', label: 'resumo diário', to: 'relatorios' },
         ] as const
       ).map((c): Check => ({ ...c, state: 'falha ao ler', tone: 'warn' }))
@@ -154,24 +154,24 @@ export function computeReadiness({
                   ? 'piloto automático — envia direto'
                   : 'supervisionado',
           tone: autoLevel === 'off' ? 'off' : autoLevel === 'copilot' ? 'warn' : 'live',
-          route: `${STUDIO}?s=autonomia`,
+          route: STUDIO,
         },
         {
           key: 'voz',
           label: 'voz do agente',
           state: str(pitch.product, '') ? 'definida' : 'vazia — o agente improvisa',
           tone: str(pitch.product, '') ? 'live' : 'off',
-          route: `${STUDIO}?s=voz`,
+          route: STUDIO,
         },
         {
           key: 'regras',
-          label: 'regras',
+          label: 'limites',
           state: `silêncio ${str(g.quietStart, '21:00')}–${str(g.quietEnd, '08:00')} · ${str(
             g.timezone,
             'America/Sao_Paulo',
           )}`,
           tone: 'live',
-          route: `${STUDIO}?s=regras`,
+          route: `${STUDIO}?s=limites`,
         },
         {
           key: 'resumo',

@@ -1,4 +1,4 @@
-import { describe, expect, test } from 'bun:test';
+import { afterAll, describe, expect, test } from 'bun:test';
 import { join } from 'node:path';
 import postgres from 'postgres';
 import { ingestInbound } from '../src/agent/inbound.ts';
@@ -69,6 +69,10 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('agent evals — golden runs (db
   const sql = postgres(process.env.TEST_DATABASE_URL!);
   const MIGRATIONS = join(import.meta.dir, '../db/migrations');
   const PHONE = () => `+5511${Math.floor(9_0000_0000 + Math.random() * 9999_999)}`;
+  // the pinned preset must not leak into later files (absent row = supervised default)
+  afterAll(async () => {
+    await sql`delete from control_settings where key = 'agent'`;
+  });
 
   const seedChannel = async () => {
     await upsertIntegration(
@@ -84,10 +88,11 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('agent evals — golden runs (db
         values ('guardrails', ${sql.json({ ...DEFAULT_GUARDRAILS, quietStart: '00:00', quietEnd: '00:00', ...patch } as never)})
         on conflict (key) do update set value = excluded.value`;
 
-  // pin agent_autonomy so sibling-file residue can't flip a send into a draft between runs
-  const pinAutonomy = () =>
+  // pin the preset so sibling-file residue can't flip a send into a draft between runs;
+  // autopilot = first contact sends, supervised = first contact drafts
+  const pinAutonomy = (level: 'supervised' | 'autopilot') =>
     sql`insert into control_settings (key, value)
-        values ('agent_autonomy', ${sql.json({ level: 'supervised' } as never)})
+        values ('agent', ${sql.json({ level } as never)})
         on conflict (key) do update set value = excluded.value`;
 
   const seedLead = async (whatsapp: string, fields: Record<string, unknown> = {}) => {
@@ -147,8 +152,8 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('agent evals — golden runs (db
     await migrate(sql, MIGRATIONS);
     await cancelQueued();
     await seedChannel();
-    await seedGuardrails({ firstContactDraftOnly: false });
-    await pinAutonomy();
+    await seedGuardrails();
+    await pinAutonomy('autopilot');
     const wa = PHONE();
     const leadId = await seedLead(wa);
     const p = scriptedProvider([
@@ -170,12 +175,12 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('agent evals — golden runs (db
     expect(last.messages.some((m) => m.role === 'tool' && m.name === 'send_message')).toBe(true);
   });
 
-  test('firstContactDraftOnly forces the first outbound into the approvals queue', async () => {
+  test('supervised forces the first outbound into the approvals queue', async () => {
     await migrate(sql, MIGRATIONS);
     await cancelQueued();
     await seedChannel();
-    await seedGuardrails({ firstContactDraftOnly: true });
-    await pinAutonomy();
+    await seedGuardrails();
+    await pinAutonomy('supervised');
     const wa = PHONE();
     const leadId = await seedLead(wa);
     const p = scriptedProvider([
@@ -198,8 +203,8 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('agent evals — golden runs (db
     await seedChannel();
     // farewell must reach the wire, so first contact can't be forced to
     // draft — the flag and the level both pin to send
-    await seedGuardrails({ firstContactDraftOnly: false });
-    await pinAutonomy();
+    await seedGuardrails();
+    await pinAutonomy('autopilot');
     const wa = PHONE();
     const leadId = await seedLead(wa);
     const p = scriptedProvider([
@@ -252,8 +257,8 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('agent evals — golden runs (db
     await migrate(sql, MIGRATIONS);
     await cancelQueued();
     await seedChannel();
-    await seedGuardrails({ firstContactDraftOnly: false });
-    await pinAutonomy();
+    await seedGuardrails();
+    await pinAutonomy('autopilot');
     const wa = PHONE();
     const leadId = await seedLead(wa);
     const call = { name: 'send_message', args: { leadId, body: 'Mesmo texto, de novo.' } };
@@ -273,8 +278,8 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('agent evals — golden runs (db
     await migrate(sql, MIGRATIONS);
     await cancelQueued();
     await seedChannel();
-    await seedGuardrails({ firstContactDraftOnly: false });
-    await pinAutonomy();
+    await seedGuardrails();
+    await pinAutonomy('autopilot');
     const wa = PHONE();
     const leadId = await seedLead(wa);
     const p = scriptedProvider([
@@ -299,8 +304,8 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('agent evals — golden runs (db
     await migrate(sql, MIGRATIONS);
     await cancelQueued();
     await seedChannel();
-    await seedGuardrails({ firstContactDraftOnly: false, leadLifetimeCostCapUsd: 0.05 });
-    await pinAutonomy();
+    await seedGuardrails({ leadLifetimeCostCapUsd: 0.05 });
+    await pinAutonomy('autopilot');
     const wa = PHONE();
     const leadId = await seedLead(wa);
     const p = scriptedProvider([

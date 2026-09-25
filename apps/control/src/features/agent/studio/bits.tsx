@@ -145,7 +145,7 @@ export function ListEditor({
   items: string[];
   placeholder: string;
   addLabel?: string | undefined;
-  /** item-count ceiling — matches the backend cap (hardRules 50, facts 100) */
+  /** item-count ceiling — matches the backend cap (ignored phones 100, facts 100) */
   max?: number | undefined;
   /** per-item char cap — backend rejects longer strings */
   maxLen?: number | undefined;

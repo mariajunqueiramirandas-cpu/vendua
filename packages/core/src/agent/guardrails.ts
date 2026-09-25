@@ -2,7 +2,7 @@ import type { Sql } from '../platform/db.ts';
 import { getIntegrationTx, type Guardrails } from '../modules/integrations.ts';
 import type { Channel } from '../modules/threads.ts';
 import { waStatus } from './channels/whatsapp.ts';
-import { autonomyTx, draftDecision } from './policy.ts';
+import { agentSettingTx, draftDecision } from './policy.ts';
 
 /**
  * Hard outbound rules enforced in code in the runner path, never in the
@@ -215,11 +215,10 @@ export async function checkSendAllowedTx(
           and m.status in ('queued', 'sending', 'sent', 'delivered')
       `
     )[0]!.n;
-    const { level } = await autonomyTx(tx);
+    const { level } = await agentSettingTx(tx);
     const d = draftDecision({
       level,
       firstContact: priorOut === 0,
-      firstContactDraftOnly: g.firstContactDraftOnly,
       leadMode: lead.agent_mode,
     });
     if (d.forceDraft) return { ok: true, forceDraft: true };

@@ -431,7 +431,6 @@ export const ERROR_CODES = [
   'LEAD_SUPPRESSED',
   'LEAD_COST_CAP',
   'THREAD_PAUSED',
-  'PLAYBOOK_DISABLED',
   'PARAMS_TOO_LARGE',
   'WAKEUP_NOT_FOUND',
   // memory v2 (agent memory items + lead facts)

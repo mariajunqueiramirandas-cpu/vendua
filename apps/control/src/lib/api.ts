@@ -346,12 +346,12 @@ export interface AutonomyExplanation {
   /** ordered — the first reason is the decisive one */
   reasons: AutonomyReason[];
 }
-export type PlaybookKind = 'triage' | 'reply' | 'outreach' | 'discovery' | 'strategist';
+export type RunKind = 'triage' | 'reply' | 'outreach' | 'discovery' | 'strategist';
 export interface Wakeup {
   id: string;
   leadId: string | null;
   leadName: string | null;
-  kind: PlaybookKind;
+  kind: RunKind;
   at: string;
   focus: string;
   status: 'pending' | 'fired' | 'canceled';
@@ -575,46 +575,21 @@ const apiBase = {
     req<{ wakeup: Wakeup }>(`/agent/wakeups/${id}/cancel`, { method: 'POST' }),
 };
 
-export const PLAYBOOK_KINDS = ['triage', 'reply', 'outreach', 'discovery', 'strategist'] as const;
-
-/** Staff override per kind, stored in the `agent_playbooks` setting and
- *  merged over the playbook's built-in defaults at insert time. */
-export interface PlaybookOverride {
-  /** false → insertRun refuses new runs of this kind */
-  enabled?: boolean;
-  /** integer 1..60 */
-  stepBudget?: number;
-  /** provider model id; null/absent = workspace llm default */
-  model?: string | null;
-  /** ≤4000 chars, appended to the system prompt */
-  instructions?: string;
-  /** 0..5 — default paid-enrichment cap for the kind */
-  monidCapUsd?: number;
-}
-export type AgentPlaybooksSetting = Partial<Record<PlaybookKind, PlaybookOverride>>;
-
-/** One entry of GET /agent/playbooks — catalog metadata + live override. */
-export interface AgentPlaybookInfo {
-  kind: PlaybookKind;
-  label: string;
-  description: string;
-  /** automatic enqueue paths the playbook owns */
-  triggers: string[];
-  /** writes a doctrine debrief line to memory at run end (ADR 0014) */
-  debrief: boolean;
-  defaults: { stepBudget: number; monidCapUsd: number };
-  tools: string[];
-  override: PlaybookOverride;
-}
-
 export const AUTONOMY_LEVELS = ['off', 'copilot', 'supervised', 'autopilot'] as const;
 
-/** The `agent_autonomy` setting — the workspace preset policy.ts reads. */
-export interface AgentAutonomySetting {
+/** Jobs automation can start (triage is staff-only). */
+export const AGENT_JOBS = ['reply', 'outreach', 'discovery', 'strategist'] as const;
+export type AgentJob = (typeof AGENT_JOBS)[number];
+
+/** The `agent` setting — the one agent config policy.ts reads (ADR 0015). */
+export interface AgentConfig {
   level: AutonomyLevel;
-  /** strategist self-approves proposed discovery briefs while trailing-7d
-   *  discovery spend stays under this cap. 0 = never. */
-  strategistAutoApproveUsd?: number;
+  /** false = that job's automation parks; staff runs and lead-asked callbacks still run */
+  jobs: Record<AgentJob, boolean>;
+  /** ≤8000 chars — standing rules every run carries in its system prompt */
+  instructions: string;
+  /** strategist self-approves proposed briefs while trailing-7d discovery spend stays under this. 0 = never. */
+  weeklyDiscoveryUsd: number;
 }
 
 export type MemoryScope = 'workspace' | 'segment' | 'debrief';
@@ -633,12 +608,8 @@ export interface MemoryItem {
 }
 
 const agentV2 = {
-  playbooks: () => req<{ playbooks: AgentPlaybookInfo[] }>('/agent/playbooks'),
-
-  /** workspace preset — server always returns both fields (defaults
-   *  supervised/0 when unset); the Studio writes via putSetting. */
-  autonomy: () =>
-    req<{ level: AutonomyLevel; strategistAutoApproveUsd: number }>('/agent/autonomy'),
+  /** the `agent` setting with defaults applied; the Studio writes via putSetting. */
+  agentConfig: () => req<AgentConfig>('/agent/config'),
 
   memory: (q: { scope?: MemoryScope; segment?: string } = {}) => {
     const params = new URLSearchParams(

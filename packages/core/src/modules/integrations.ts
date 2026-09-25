@@ -3,7 +3,7 @@ import { HttpError, str } from '../platform/http.ts';
 import { claimControl, controlTx, type ClaimResult } from './control.ts';
 import { emitControlEvent } from './control-events.ts';
 import { LEAD_STATES, type LeadState } from './leads.ts';
-import { PLAYBOOK_KINDS } from '../agent/tool-meta.ts';
+import { JOB_KINDS } from '../agent/tool-meta.ts';
 
 // modular provider config: `secret_ref` is the NAME of the env var holding the
 // credential — secret values never enter the DB
@@ -184,10 +184,8 @@ export const DEFAULT_GUARDRAILS = {
   quietStart: '21:00',
   quietEnd: '08:00',
   timezone: 'America/Sao_Paulo',
-  /** first outbound to a lead always goes through the approvals queue */
-  firstContactDraftOnly: true,
   /** a discovered lead ≥ discoveryContactMinScore with a phone channel gets an
-   *  outreach run (still obeys firstContactDraftOnly) */
+   *  outreach run (the autonomy preset still decides draft vs send) */
   discoveryAutoContact: true,
   discoveryContactMinScore: 8,
   /** reply run is queued with run_at = now() + N min; 0 = answer at once */
@@ -222,7 +220,6 @@ export type Guardrails = {
   quietStart: string;
   quietEnd: string;
   timezone: string;
-  firstContactDraftOnly: boolean;
   discoveryAutoContact: boolean;
   discoveryContactMinScore: number;
   inboundReplyDelayMin: number;
@@ -262,13 +259,15 @@ export const DEFAULT_PITCH = {
   /** the only commercial claims the agent may state verbatim; empty = nothing may be quoted */
   offer: '',
   goal: 'descobrir interesse e marcar uma conversa curta ou pedido de demonstração',
-  hardRules: [
-    'nunca invente funcionalidades, prazos ou preços',
-    'nunca pressione quem disse não ou pediu para parar',
-    'uma mensagem por vez; sem listas longas ou jargão',
-    'não se identifique como IA a menos que perguntem — e se perguntarem, seja honesto',
-  ],
 } as const;
+
+/** default `agent.instructions` (policy.ts) — the standing rules every run carries */
+export const DEFAULT_AGENT_RULES = [
+  'nunca invente funcionalidades, prazos ou preços',
+  'nunca pressione quem disse não ou pediu para parar',
+  'uma mensagem por vez; sem listas longas ou jargão',
+  'não se identifique como IA a menos que perguntem — e se perguntarem, seja honesto',
+] as const;
 
 export type Pitch = typeof DEFAULT_PITCH;
 
@@ -373,9 +372,6 @@ export function validateSetting(key: string, value: unknown): void {
         throw bad('timezone', `unknown IANA timezone '${tz}'`);
       }
     }
-    if (v.firstContactDraftOnly !== undefined && typeof v.firstContactDraftOnly !== 'boolean') {
-      throw bad('firstContactDraftOnly', 'must be a boolean');
-    }
     if (v.discoveryAutoContact !== undefined && typeof v.discoveryAutoContact !== 'boolean') {
       throw bad('discoveryAutoContact', 'must be a boolean');
     }
@@ -402,15 +398,6 @@ export function validateSetting(key: string, value: unknown): void {
       if (v[k] === undefined) continue;
       if (typeof v[k] !== 'string' || (v[k] as string).length > 4000) {
         throw bad(k, 'must be a string (≤4000 chars)');
-      }
-    }
-    if (v.hardRules !== undefined) {
-      if (
-        !Array.isArray(v.hardRules) ||
-        v.hardRules.length > 50 ||
-        v.hardRules.some((r) => typeof r !== 'string' || r.length > 500)
-      ) {
-        throw bad('hardRules', 'must be an array of ≤50 strings (≤500 chars each)');
       }
     }
     return;
@@ -540,67 +527,40 @@ export function validateSetting(key: string, value: unknown): void {
     return;
   }
 
-  if (key === 'agent_playbooks') {
-    if (!value || typeof value !== 'object' || Array.isArray(value)) {
-      throw bad('*', 'must be an object');
-    }
-    for (const [kind, o] of Object.entries(value as Record<string, unknown>)) {
-      if (!(PLAYBOOK_KINDS as readonly string[]).includes(kind))
-        throw bad(kind, 'unknown playbook');
-      if (!o || typeof o !== 'object' || Array.isArray(o)) throw bad(kind, 'must be an object');
-      const p = o as Record<string, unknown>;
-      for (const f of Object.keys(p)) {
-        if (!['enabled', 'stepBudget', 'model', 'instructions', 'monidCapUsd'].includes(f)) {
-          throw bad(`${kind}.${f}`, 'is not a playbook field');
-        }
-      }
-      if (p.enabled !== undefined && typeof p.enabled !== 'boolean') {
-        throw bad(`${kind}.enabled`, 'must be a boolean');
-      }
-      const sb = p.stepBudget;
-      if (
-        sb !== undefined &&
-        (typeof sb !== 'number' || !Number.isInteger(sb) || sb < 1 || sb > 60)
-      ) {
-        throw bad(`${kind}.stepBudget`, 'must be an integer in [1, 60]');
-      }
-      const mc = p.monidCapUsd;
-      if (
-        mc !== undefined &&
-        (typeof mc !== 'number' || !Number.isFinite(mc) || mc < 0 || mc > 5)
-      ) {
-        throw bad(`${kind}.monidCapUsd`, 'must be a number in [0, 5]');
-      }
-      const m = p.model;
-      if (m !== undefined && m !== null && (typeof m !== 'string' || !m.trim() || m.length > 100)) {
-        throw bad(`${kind}.model`, 'must be null or a model id (≤100 chars)');
-      }
-      const ins = p.instructions;
-      if (ins !== undefined && (typeof ins !== 'string' || ins.length > 4000)) {
-        throw bad(`${kind}.instructions`, 'must be a string (≤4000 chars)');
-      }
-    }
-    return;
-  }
-
-  if (key === 'agent_autonomy') {
+  if (key === 'agent') {
     if (!value || typeof value !== 'object' || Array.isArray(value)) {
       throw bad('*', 'must be an object');
     }
     const v = value as Record<string, unknown>;
     for (const f of Object.keys(v)) {
-      if (f !== 'level' && f !== 'strategistAutoApproveUsd')
-        throw bad(f, 'is not an autonomy field');
+      if (!['level', 'jobs', 'instructions', 'weeklyDiscoveryUsd'].includes(f))
+        throw bad(f, 'is not an agent field');
     }
     if (!['off', 'copilot', 'supervised', 'autopilot'].includes(v.level as string)) {
       throw bad('level', 'must be off | copilot | supervised | autopilot');
     }
-    const usd = v.strategistAutoApproveUsd;
+    if (v.jobs !== undefined) {
+      if (!v.jobs || typeof v.jobs !== 'object' || Array.isArray(v.jobs)) {
+        throw bad('jobs', 'must be an object');
+      }
+      for (const [k, on] of Object.entries(v.jobs as Record<string, unknown>)) {
+        if (k === 'triage' || !(JOB_KINDS as readonly string[]).includes(k))
+          throw bad(`jobs.${k}`, 'is not an automatic job');
+        if (typeof on !== 'boolean') throw bad(`jobs.${k}`, 'must be a boolean');
+      }
+    }
+    if (
+      v.instructions !== undefined &&
+      (typeof v.instructions !== 'string' || v.instructions.length > 8000)
+    ) {
+      throw bad('instructions', 'must be a string (≤8000 chars)');
+    }
+    const usd = v.weeklyDiscoveryUsd;
     if (
       usd !== undefined &&
       (typeof usd !== 'number' || !Number.isFinite(usd) || usd < 0 || usd > 50)
     ) {
-      throw bad('strategistAutoApproveUsd', 'must be a number in [0, 50]');
+      throw bad('weeklyDiscoveryUsd', 'must be a number in [0, 50]');
     }
     return;
   }

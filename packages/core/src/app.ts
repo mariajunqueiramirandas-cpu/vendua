@@ -1,12 +1,6 @@
 import { createHmac, timingSafeEqual } from 'node:crypto';
-import { listPlaybooksTx } from './agent/playbooks.ts';
-import {
-  autonomyTx,
-  automationAllowedTx,
-  explainAutonomyTx,
-  playbookEnabledTx,
-} from './agent/policy.ts';
-import type { PlaybookKind } from './agent/tool-meta.ts';
+import { agentSettingTx, automationAllowedTx, explainAutonomyTx } from './agent/policy.ts';
+import type { JobKind } from './agent/tool-meta.ts';
 import { cancelWakeup, listWakeups } from './agent/wakeups.ts';
 import { existsSync, statSync } from 'node:fs';
 import { extname, join, normalize } from 'node:path';
@@ -1029,8 +1023,6 @@ export function createApp({ sql, sessionSecret, controlSecret, autoDrain }: AppD
         }
         if (!th.agent_enabled) throw new HttpError(422, 'THREAD_PAUSED', 'thread paused for agent');
       }
-      const pv = await playbookEnabledTx(tx, kind as PlaybookKind);
-      if (!pv.ok) throw new HttpError(422, 'PLAYBOOK_DISABLED', pv.reason);
       const params: Record<string, unknown> = {
         ...((body.params as Record<string, unknown>) ?? {}),
         origin: 'staff',
@@ -1067,7 +1059,7 @@ export function createApp({ sql, sessionSecret, controlSecret, autoDrain }: AppD
       // The item carries the intent into an already-active run insertRun adopted.
       await enqueueInboxTx(tx, leadId, 'staff', {
         text: `a equipe pediu uma run '${kind}'${typeof params.focus === 'string' ? ` — ${params.focus}` : ''}`,
-        requestedKind: kind as PlaybookKind,
+        requestedKind: kind as JobKind,
         threadId: threadId ?? null,
         params,
         forRunId: runId,
@@ -1777,8 +1769,6 @@ export function createApp({ sql, sessionSecret, controlSecret, autoDrain }: AppD
                 : null;
         if (suppressed) throw new HttpError(422, 'LEAD_SUPPRESSED', suppressed);
       }
-      const pv = await playbookEnabledTx(tx, kind as PlaybookKind);
-      if (!pv.ok) throw new HttpError(422, 'PLAYBOOK_DISABLED', pv.reason);
       const params: Record<string, unknown> = {
         ...((body.params as Record<string, unknown>) ?? {}),
         origin: 'staff',
@@ -1814,7 +1804,7 @@ export function createApp({ sql, sessionSecret, controlSecret, autoDrain }: AppD
         // Mail the intent into the already-active run insertRun adopted.
         await enqueueInboxTx(tx, effLeadId, 'staff', {
           text: `a equipe pediu uma run '${kind}'${typeof params.focus === 'string' ? ` — ${params.focus}` : ''}`,
-          requestedKind: kind as PlaybookKind,
+          requestedKind: kind as JobKind,
           threadId: threadId ?? null,
           params,
           forRunId: runId,
@@ -1941,15 +1931,10 @@ export function createApp({ sql, sessionSecret, controlSecret, autoDrain }: AppD
     return c.json(res.body);
   });
 
-  app.get('/control/v1/agent/playbooks', async (c) => {
+  // the `agent` setting with defaults applied — what the runner actually reads
+  app.get('/control/v1/agent/config', async (c) => {
     controlGate(c);
-    const playbooks = await controlTx(sql, (tx) => listPlaybooksTx(tx));
-    return c.json({ playbooks });
-  });
-
-  app.get('/control/v1/agent/autonomy', async (c) => {
-    controlGate(c);
-    return c.json(await controlTx(sql, (tx) => autonomyTx(tx)));
+    return c.json(await controlTx(sql, (tx) => agentSettingTx(tx)));
   });
 
   app.get('/control/v1/leads/:id/autonomy', async (c) => {

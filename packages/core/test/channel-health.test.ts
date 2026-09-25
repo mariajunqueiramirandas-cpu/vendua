@@ -110,7 +110,12 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('channel health (db)', () => {
       await tx`
         insert into control_settings (key, value)
         values ('guardrails',
-                ${tx.json({ quietStart, quietEnd, firstContactDraftOnly: false } as never)})
+                ${tx.json({ quietStart, quietEnd } as never)})
+        on conflict (key) do update set value = excluded.value
+      `;
+      // autopilot: first contact isn't draft-forced, so quiet hours decide
+      await tx`
+        insert into control_settings (key, value) values ('agent', ${tx.json({ level: 'autopilot' } as never)})
         on conflict (key) do update set value = excluded.value
       `;
       return cur ?? null;
@@ -137,6 +142,7 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('channel health (db)', () => {
       expect(acts[0]!.meta).toEqual({ channel: 'email', reason: 'quiet hours' });
     } finally {
       await controlTx(sql, async (tx) => {
+        await tx`delete from control_settings where key = 'agent'`;
         if (prev === null) await tx`delete from control_settings where key = 'guardrails'`;
         else
           await tx`update control_settings set value = ${tx.json(prev as never)} where key = 'guardrails'`;
@@ -188,7 +194,7 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('channel health (db)', () => {
       await tx`
         insert into control_settings (key, value)
         values ('guardrails',
-                ${tx.json({ quietStart: `${hh((h + 23) % 24)}:00`, quietEnd: `${hh((h + 1) % 24)}:59`, firstContactDraftOnly: false } as never)})
+                ${tx.json({ quietStart: `${hh((h + 23) % 24)}:00`, quietEnd: `${hh((h + 1) % 24)}:59` } as never)})
         on conflict (key) do update set value = excluded.value
       `;
       return cur ?? null;

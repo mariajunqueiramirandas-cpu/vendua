@@ -66,12 +66,15 @@ async function seedSimEnv(
       quietStart: '00:00',
       quietEnd: '00:00',
       timezone: 'America/Sao_Paulo',
-      firstContactDraftOnly: false,
       discoveryAutoContact: false,
       discoveryContactMinScore: 8,
       inboundReplyDelayMin: 0,
       firstContactDelayMin: 0,
     })})
+    on conflict (key) do update set value = excluded.value`;
+  // autopilot: first contact sends instead of drafting, so scenarios reach the wire
+  await sql`
+    insert into control_settings (key, value) values ('agent', ${sql.json({ level: 'autopilot' })})
     on conflict (key) do update set value = excluded.value`;
   await sql`
     insert into control_settings (key, value) values ('meeting', ${sql.json({

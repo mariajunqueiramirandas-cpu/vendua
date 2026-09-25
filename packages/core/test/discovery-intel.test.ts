@@ -41,7 +41,7 @@ describe('discovery intelligence — pure', () => {
   });
 
   test('strategist prompt has its own section and skips the lead GOAL block', () => {
-    const p = buildSystemPrompt('strategist', DEFAULT_PITCH, {
+    const p = buildSystemPrompt('strategist', DEFAULT_PITCH, '', {
       facts: ['docerias respondem melhor à noite'],
     });
     expect(p).toContain('estrategista');

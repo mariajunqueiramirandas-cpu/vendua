@@ -5,8 +5,8 @@ import { claimControl, controlTx } from '../modules/control.ts';
 import { emitControlEvent } from '../modules/control-events.ts';
 import { insertRun, releaseInboxTx } from './runner.ts';
 import { enqueueInboxTx } from './inbox.ts';
-import { autonomyTx, playbookEnabledTx } from './policy.ts';
-import type { PlaybookKind } from './tool-meta.ts';
+import { parkPolicyTx } from './policy.ts';
+import type { JobKind } from './tool-meta.ts';
 import { capCentsOf, getSettingTx, type Guardrails } from '../modules/integrations.ts';
 
 const agentLog = log.child({ mod: 'agent' });
@@ -18,7 +18,7 @@ export interface Wakeup {
   id: string;
   leadId: string | null;
   leadName: string | null;
-  kind: PlaybookKind;
+  kind: JobKind;
   at: string;
   focus: string;
   status: 'pending' | 'fired' | 'canceled';
@@ -34,7 +34,7 @@ type WakeupRow = {
   id: string;
   lead_id: string | null;
   lead_name: string | null;
-  kind: PlaybookKind;
+  kind: JobKind;
   at: Date;
   focus: string;
   status: Wakeup['status'];
@@ -226,11 +226,10 @@ export async function sweepWakeups(sql: Sql): Promise<number> {
       where l.id = w.lead_id and w.status = 'pending'
         and (l.unsubscribed_at is not null or l.archived_at is not null)
     `;
-    // playbook switch gates every wakeup; autonomy gates only automation —
-    // promised callbacks run unmarked
-    if (!(await playbookEnabledTx(tx, 'outreach')).ok) return;
-    const { level } = await autonomyTx(tx);
-    const autoOff = level === 'off';
+    // preset 'off' / outreach job off park only the agent's own wakeups —
+    // promised callbacks (lead-asked, staff) run unmarked
+    const pp = await parkPolicyTx(tx);
+    const autoOff = pp.autoOff || pp.offJobs.includes('outreach');
     const g = await getSettingTx<Partial<Guardrails>>(tx, 'guardrails', {});
     const capCents = capCentsOf(g);
     // exclude over-cap and autonomy-off rows in the query so 20 parked
@@ -260,7 +259,7 @@ export async function sweepWakeups(sql: Sql): Promise<number> {
       // lead-asked/staff wakeups are promises: unmarked, so autonomy 'off'
       // never stalls them
       const promised = w.requested || w.created_by === 'staff';
-      if (!promised && level === 'off') continue;
+      if (!promised && autoOff) continue;
       const params: Record<string, unknown> = {
         ...(promised ? {} : { auto: 'wakeup' }),
         focus: `agendado por você: ${w.focus}`,

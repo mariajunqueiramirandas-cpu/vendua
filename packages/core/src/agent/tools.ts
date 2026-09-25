@@ -72,7 +72,7 @@ export interface ToolContext {
   markReadSpent?: (delta: number) => Promise<void>;
   /** staff-assist runs: send_message may only compose to the approvals queue. */
   draftOnly: boolean;
-  /** playbook kinds this run may call as — drained mail adds its requestedKind; the dispatcher gate reads this. */
+  /** job kinds this run may call as — drained mail adds its requestedKind; the dispatcher gate reads this. */
   toolKinds?: ReadonlySet<string>;
 }
 
@@ -1263,7 +1263,7 @@ export async function executeTool(
           body: String(args.body),
           subject: (args.subject as string) ?? undefined,
           author: 'agent',
-          // draftOnly composes like firstContactDraftOnly — the send just never leaves.
+          // draftOnly composes like the supervised first-contact draft — the send just never leaves.
           status: verdict.forceDraft || ctx.draftOnly ? 'draft' : 'queued',
           agentRunId: ctx.runId,
         });

@@ -1549,9 +1549,10 @@ dbDescribe('worker robustness (db)', () => {
       await sql`
         insert into control_settings (key, value)
         values ('guardrails',
-                ${sql.json({ firstContactDraftOnly: false, quietStart: '00:00', quietEnd: '00:00' } as never)})
+                ${sql.json({ quietStart: '00:00', quietEnd: '00:00' } as never)})
         on conflict (key) do update set value = excluded.value
       `;
+      await sql`insert into control_settings (key, value) values ('agent', ${sql.json({ level: 'autopilot' } as never)}) on conflict (key) do update set value = excluded.value`;
       const lead = await controlTx(sql, (tx) =>
         insertLeadTx(tx, {
           name: 'Unsendable Lead',
@@ -1596,6 +1597,7 @@ dbDescribe('worker robustness (db)', () => {
       }
       // Same for the guardrails row — later tests must not inherit
       // disabled first-contact drafts or empty quiet hours.
+      await sql`delete from control_settings where key = 'agent'`;
       if (priorGuardrails) {
         await sql`
           update control_settings set value = ${sql.json(priorGuardrails.value as never)}
@@ -1733,9 +1735,10 @@ dbDescribe('worker robustness (db)', () => {
       await sql`
         insert into control_settings (key, value)
         values ('guardrails',
-                ${sql.json({ firstContactDraftOnly: false, quietStart: '00:00', quietEnd: '00:00' } as never)})
+                ${sql.json({ quietStart: '00:00', quietEnd: '00:00' } as never)})
         on conflict (key) do update set value = excluded.value
       `;
+      await sql`insert into control_settings (key, value) values ('agent', ${sql.json({ level: 'autopilot' } as never)}) on conflict (key) do update set value = excluded.value`;
       const lead = await controlTx(sql, (tx) =>
         insertLeadTx(tx, {
           name: 'Dup Send Lead',
@@ -1785,6 +1788,7 @@ dbDescribe('worker robustness (db)', () => {
       } else {
         await sql`delete from control_integrations where kind = 'email' and driver = 'resend'`;
       }
+      await sql`delete from control_settings where key = 'agent'`;
       if (priorGuardrails) {
         await sql`
           update control_settings set value = ${sql.json(priorGuardrails.value as never)}
@@ -1963,9 +1967,10 @@ dbDescribe('worker robustness (db)', () => {
       await sql`
         insert into control_settings (key, value)
         values ('guardrails',
-                ${sql.json({ firstContactDraftOnly: false, quietStart: '00:00', quietEnd: '00:00' } as never)})
+                ${sql.json({ quietStart: '00:00', quietEnd: '00:00' } as never)})
         on conflict (key) do update set value = excluded.value
       `;
+      await sql`insert into control_settings (key, value) values ('agent', ${sql.json({ level: 'autopilot' } as never)}) on conflict (key) do update set value = excluded.value`;
       await sql`
         insert into control_integrations (kind, driver, enabled)
         values ('email', 'log', true)
@@ -2026,6 +2031,7 @@ dbDescribe('worker robustness (db)', () => {
       } else {
         await sql`delete from control_integrations where kind = 'email' and driver = 'log'`;
       }
+      await sql`delete from control_settings where key = 'agent'`;
       if (priorGuardrails) {
         await sql`
           update control_settings set value = ${sql.json(priorGuardrails.value as never)}
@@ -2481,11 +2487,11 @@ dbDescribe('worker robustness (db)', () => {
       await sql<{ value: unknown }[]>`select value from control_settings where key = 'guardrails'`
     )[0];
     await sql`insert into control_settings (key, value) values ('guardrails', ${sql.json({
-      firstContactDraftOnly: false,
       quietStart: '00:00',
       quietEnd: '00:00',
     } as never)})
       on conflict (key) do update set value = excluded.value`;
+    await sql`insert into control_settings (key, value) values ('agent', ${sql.json({ level: 'autopilot' } as never)}) on conflict (key) do update set value = excluded.value`;
     try {
       const lead = await controlTx(sql, (tx) =>
         insertLeadTx(tx, { name: 'Replied Mid-Run', whatsapp: '5511910000099' }),
@@ -2531,6 +2537,7 @@ dbDescribe('worker robustness (db)', () => {
     `;
       expect(items[0]!.consumed_by_run).toBe(runId);
     } finally {
+      await sql`delete from control_settings where key = 'agent'`;
       if (priorGuardrails) {
         await sql`update control_settings set value = ${sql.json(priorGuardrails.value as never)} where key = 'guardrails'`;
       } else {
@@ -2586,9 +2593,10 @@ dbDescribe('worker robustness (db)', () => {
       await sql`
         insert into control_settings (key, value)
         values ('guardrails',
-                ${sql.json({ firstContactDraftOnly: false, quietStart: '00:00', quietEnd: '00:00' } as never)})
+                ${sql.json({ quietStart: '00:00', quietEnd: '00:00' } as never)})
         on conflict (key) do update set value = excluded.value
       `;
+      await sql`insert into control_settings (key, value) values ('agent', ${sql.json({ level: 'autopilot' } as never)}) on conflict (key) do update set value = excluded.value`;
       const lead = await controlTx(sql, (tx) =>
         insertLeadTx(tx, { name: 'Same Words Twice', whatsapp: '5511910000042' }),
       );
@@ -2646,6 +2654,7 @@ dbDescribe('worker robustness (db)', () => {
       `;
       expect(outs).toHaveLength(2);
     } finally {
+      await sql`delete from control_settings where key = 'agent'`;
       if (priorGuardrails) {
         await sql`update control_settings set value = ${sql.json(priorGuardrails.value as never)} where key = 'guardrails'`;
       } else {
@@ -2663,9 +2672,10 @@ dbDescribe('worker robustness (db)', () => {
       await sql`
         insert into control_settings (key, value)
         values ('guardrails',
-                ${sql.json({ firstContactDraftOnly: false, quietStart: '00:00', quietEnd: '00:00' } as never)})
+                ${sql.json({ quietStart: '00:00', quietEnd: '00:00' } as never)})
         on conflict (key) do update set value = excluded.value
       `;
+      await sql`insert into control_settings (key, value) values ('agent', ${sql.json({ level: 'autopilot' } as never)}) on conflict (key) do update set value = excluded.value`;
       const lead = await controlTx(sql, (tx) =>
         insertLeadTx(tx, { name: 'Late Mail', whatsapp: '5511910000043' }),
       );
@@ -2742,6 +2752,7 @@ dbDescribe('worker robustness (db)', () => {
       `;
       expect(outs.map((o) => o.body)).toEqual(['primeiro oi', 'segundo oi', 'terceiro oi']);
     } finally {
+      await sql`delete from control_settings where key = 'agent'`;
       if (priorGuardrails) {
         await sql`update control_settings set value = ${sql.json(priorGuardrails.value as never)} where key = 'guardrails'`;
       } else {
@@ -2756,11 +2767,11 @@ dbDescribe('worker robustness (db)', () => {
       await sql<{ value: unknown }[]>`select value from control_settings where key = 'guardrails'`
     )[0];
     await sql`insert into control_settings (key, value) values ('guardrails', ${sql.json({
-      firstContactDraftOnly: false,
       quietStart: '00:00',
       quietEnd: '00:00',
     } as never)})
       on conflict (key) do update set value = excluded.value`;
+    await sql`insert into control_settings (key, value) values ('agent', ${sql.json({ level: 'autopilot' } as never)}) on conflict (key) do update set value = excluded.value`;
     try {
       const lead = await controlTx(sql, (tx) =>
         insertLeadTx(tx, { name: 'Triage Mail', whatsapp: '5511910000098' }),
@@ -2807,6 +2818,7 @@ dbDescribe('worker robustness (db)', () => {
       `;
       expect(outs.map((o) => o.body)).toEqual(['achei você']);
     } finally {
+      await sql`delete from control_settings where key = 'agent'`;
       if (priorGuardrails) {
         await sql`update control_settings set value = ${sql.json(priorGuardrails.value as never)} where key = 'guardrails'`;
       } else {
@@ -2818,17 +2830,16 @@ dbDescribe('worker robustness (db)', () => {
   test('first-contact draft is decided at send time — a level flip before claim takes effect', async () => {
     await migrate(sql, MIGRATIONS);
     const prior = await sql<{ key: string; value: unknown }[]>`
-      select key, value from control_settings where key in ('guardrails', 'agent_autonomy')
+      select key, value from control_settings where key in ('guardrails', 'agent')
     `;
     const priorOf = (k: string) => prior.find((r) => r.key === k);
     await sql`insert into control_settings (key, value) values ('guardrails', ${sql.json({
-      firstContactDraftOnly: true,
       quietStart: '00:00',
       quietEnd: '00:00',
     } as never)})
       on conflict (key) do update set value = excluded.value`;
     const setLevel = (level: string) =>
-      sql`insert into control_settings (key, value) values ('agent_autonomy', ${sql.json({ level } as never)})
+      sql`insert into control_settings (key, value) values ('agent', ${sql.json({ level } as never)})
         on conflict (key) do update set value = excluded.value`;
     try {
       await setLevel('supervised');
@@ -2861,13 +2872,13 @@ dbDescribe('worker robustness (db)', () => {
         join lead_threads t on t.id = m.thread_id
         where t.lead_id = ${leadId} and m.direction = 'out'
       `;
-      // Autopilot at send time lifts firstContactDraftOnly — the wire gets
+      // Autopilot at send time lifts the supervised first-contact draft — the wire gets
       // it, not the approvals queue.
       expect(outs.map((o) => o.status)).toEqual(['sent']);
       expect((await getRun(runId)).status).toBe('done');
 
       // And the supervised posture still drafts — the same run shape on a
-      // fresh lead under firstContactDraftOnly.
+      // fresh lead under supervised.
       await setLevel('supervised');
       const lead2 = await controlTx(sql, (tx) =>
         insertLeadTx(tx, { name: 'Flip Draft', whatsapp: '5511910000095', agent_mode: 'auto' }),
@@ -2900,7 +2911,6 @@ dbDescribe('worker robustness (db)', () => {
       // quiet hours pace sends, not drafts — a forced-draft contact still
       // lands in approvals overnight
       await sql`update control_settings set value = ${sql.json({
-        firstContactDraftOnly: true,
         quietStart: '00:00',
         quietEnd: '23:59',
       } as never)} where key = 'guardrails'`;
@@ -2963,7 +2973,7 @@ dbDescribe('worker robustness (db)', () => {
       `;
       expect(outs4.length).toBe(0);
     } finally {
-      for (const k of ['guardrails', 'agent_autonomy']) {
+      for (const k of ['guardrails', 'agent']) {
         const p = priorOf(k);
         if (p) {
           await sql`update control_settings set value = ${sql.json(p.value as never)} where key = ${k}`;
@@ -2980,11 +2990,11 @@ dbDescribe('worker robustness (db)', () => {
       await sql<{ value: unknown }[]>`select value from control_settings where key = 'guardrails'`
     )[0];
     await sql`insert into control_settings (key, value) values ('guardrails', ${sql.json({
-      firstContactDraftOnly: false,
       quietStart: '00:00',
       quietEnd: '00:00',
     } as never)})
       on conflict (key) do update set value = excluded.value`;
+    await sql`insert into control_settings (key, value) values ('agent', ${sql.json({ level: 'autopilot' } as never)}) on conflict (key) do update set value = excluded.value`;
     try {
       const lead = await controlTx(sql, (tx) =>
         insertLeadTx(tx, { name: 'Discovery Mail', whatsapp: '5511910000097' }),
@@ -3034,6 +3044,7 @@ dbDescribe('worker robustness (db)', () => {
       `;
       expect(outs.map((o) => o.body)).toEqual(['achei você']);
     } finally {
+      await sql`delete from control_settings where key = 'agent'`;
       if (priorGuardrails) {
         await sql`update control_settings set value = ${sql.json(priorGuardrails.value as never)} where key = 'guardrails'`;
       } else {
@@ -3044,17 +3055,15 @@ dbDescribe('worker robustness (db)', () => {
 
   test('the orphan sweep walks past unservable leads to reach servable mail', async () => {
     await migrate(sql, MIGRATIONS);
-    const priorPlaybooks = (
-      await sql<
-        { value: unknown }[]
-      >`select value from control_settings where key = 'agent_playbooks'`
+    const priorAgent = (
+      await sql<{ value: unknown }[]>`select value from control_settings where key = 'agent'`
     )[0];
-    await sql`insert into control_settings (key, value) values ('agent_playbooks', ${sql.json({ reply: { enabled: false } } as never)})
+    await sql`insert into control_settings (key, value) values ('agent', ${sql.json({ level: 'supervised', jobs: { reply: false } } as never)})
       on conflict (key) do update set value = excluded.value`;
     const fixtureLeadIds: string[] = [];
     try {
       await sql`delete from agent_runs where status = 'queued'`;
-      // ambient mail for an ENABLED playbook would outservable the fixture
+      // ambient mail for an ENABLED job would outservable the fixture
       // — tombstone that class; 'reply' leftovers stay pending but clearing
       // >1h-old mail keeps them out of the backdated fixture's window
       await controlTx(
@@ -3069,10 +3078,12 @@ dbDescribe('worker robustness (db)', () => {
       for (let i = 0; i < 5; i++) {
         const lead = await controlTx(sql, (tx) => insertLeadTx(tx, { name: `Blocked ${i}` }));
         fixtureLeadIds.push(lead.body.lead.id);
+        // automation mail for the switched-off reply job — parked, never served
         await controlTx(sql, (tx) =>
-          enqueueInboxTx(tx, lead.body.lead.id, 'staff', {
+          enqueueInboxTx(tx, lead.body.lead.id, 'inbound', {
             text: 'responde esse',
             requestedKind: 'reply',
+            params: { origin: 'inbound' },
           }),
         );
         await controlTx(
@@ -3102,14 +3113,14 @@ dbDescribe('worker robustness (db)', () => {
       `;
       expect(spawned.map((r) => r.kind)).toEqual(['triage']);
     } finally {
-      if (priorPlaybooks) {
-        await sql`update control_settings set value = ${sql.json(priorPlaybooks.value as never)} where key = 'agent_playbooks'`;
+      if (priorAgent) {
+        await sql`update control_settings set value = ${sql.json(priorAgent.value as never)} where key = 'agent'`;
       } else {
-        await sql`delete from control_settings where key = 'agent_playbooks'`;
+        await sql`delete from control_settings where key = 'agent'`;
       }
       await sql`delete from agent_runs where status = 'queued'`;
       // The fixture's pending mail would stay servable under the restored
-      // playbooks and hijack later sweep assertions.
+      // setting and hijack later sweep assertions.
       await controlTx(
         sql,
         (tx) => tx`update agent_inbox set consumed_at = now()
@@ -3436,18 +3447,18 @@ dbDescribe('worker robustness (db)', () => {
     const leadId = lead.body.lead.id;
     await sql`delete from agent_runs where status = 'queued'`;
     await sql`update agent_inbox set consumed_at = now() where consumed_at is null`;
-    // The oldest pending item asks for a switched-off playbook — it parks
-    // until triage is re-enabled, but it must NOT park the lead's newer mail.
+    // The oldest pending item is automation for a switched-off job — it parks
+    // until reply is re-enabled, but it must NOT park the lead's newer mail.
     await sql`
       insert into control_settings (key, value)
-      values ('agent_playbooks', ${sql.json({ triage: { enabled: false } } as never)})
+      values ('agent', ${sql.json({ level: 'supervised', jobs: { reply: false } } as never)})
       on conflict (key) do update set value = excluded.value
     `;
     try {
       await controlTx(sql, (tx) =>
         enqueueInboxTx(tx, leadId, 'event', {
-          text: 'triage pendente',
-          requestedKind: 'triage',
+          text: 'resposta pendente',
+          requestedKind: 'reply',
           params: { auto: 'cadence' },
         }),
       );
@@ -3464,7 +3475,7 @@ dbDescribe('worker robustness (db)', () => {
       `;
       expect(runs).toHaveLength(1);
       expect(runs[0]!.kind).toBe('outreach');
-      // the disabled-playbook item parks at both gates; the eligible staff
+      // the switched-off job's item parks at both gates; the eligible staff
       // mail still drains into the spawned run
       const items = await sql<{ consumed_by_run: string | null }[]>`
         select consumed_by_run from agent_inbox where lead_id = ${leadId} order by created_at
@@ -3473,7 +3484,7 @@ dbDescribe('worker robustness (db)', () => {
       expect(items[0]!.consumed_by_run).toBeNull();
       expect(items[1]!.consumed_by_run).toBe(runs[0]!.id);
     } finally {
-      await sql`delete from control_settings where key = 'agent_playbooks'`;
+      await sql`delete from control_settings where key = 'agent'`;
     }
   });
 
@@ -3487,17 +3498,17 @@ dbDescribe('worker robustness (db)', () => {
     await sql`update agent_inbox set consumed_at = now() where consumed_at is null`;
     await sql`
       insert into control_settings (key, value)
-      values ('agent_playbooks', ${sql.json({ triage: { enabled: false } } as never)})
+      values ('agent', ${sql.json({ level: 'supervised', jobs: { reply: false } } as never)})
       on conflict (key) do update set value = excluded.value
     `;
     try {
-      // ten gated items fill the drain window — the disabled-playbook
+      // ten gated items fill the drain window — the switched-off-job
       // predicate must run before the limit, not after
       for (let i = 0; i < 10; i++) {
         await controlTx(sql, (tx) =>
           enqueueInboxTx(tx, leadId, 'event', {
-            text: `triage ${i}`,
-            requestedKind: 'triage',
+            text: `resposta ${i}`,
+            requestedKind: 'reply',
             params: { auto: 'cadence' },
           }),
         );
@@ -3519,7 +3530,7 @@ dbDescribe('worker robustness (db)', () => {
       expect(items.slice(0, 10).every((i) => i.consumed_by_run === null)).toBe(true);
       expect(items[10]!.consumed_by_run).toBe(runs[0]!.id);
     } finally {
-      await sql`delete from control_settings where key = 'agent_playbooks'`;
+      await sql`delete from control_settings where key = 'agent'`;
     }
   });
 
@@ -3533,7 +3544,7 @@ dbDescribe('worker robustness (db)', () => {
     await sql`update agent_inbox set consumed_at = now() where consumed_at is null`;
     await sql`
       insert into control_settings (key, value)
-      values ('agent_playbooks', ${sql.json({ triage: { enabled: false } } as never)})
+      values ('agent', ${sql.json({ level: 'supervised', jobs: { reply: false } } as never)})
       on conflict (key) do update set value = excluded.value
     `;
     try {
@@ -3542,8 +3553,8 @@ dbDescribe('worker robustness (db)', () => {
       // for mail it will never drain
       await controlTx(sql, (tx) =>
         enqueueInboxTx(tx, leadId, 'event', {
-          text: 'triage adiado',
-          requestedKind: 'triage',
+          text: 'resposta adiada',
+          requestedKind: 'reply',
           params: { auto: 'cadence' },
           notBefore: deadline,
         }),
@@ -3564,11 +3575,11 @@ dbDescribe('worker robustness (db)', () => {
       expect(run!.run_at === null || run!.run_at.getTime() < Date.parse(deadline)).toBe(true);
       const [parked] = await sql<{ consumed_at: string | null }[]>`
         select consumed_at from agent_inbox
-        where lead_id = ${leadId} and payload->>'requestedKind' = 'triage'
+        where lead_id = ${leadId} and payload->>'requestedKind' = 'reply'
       `;
       expect(parked!.consumed_at).toBeNull();
     } finally {
-      await sql`delete from control_settings where key = 'agent_playbooks'`;
+      await sql`delete from control_settings where key = 'agent'`;
     }
   });
 
@@ -3734,7 +3745,7 @@ dbDescribe('worker robustness (db)', () => {
     expect(run!.status).toBe('canceled');
   });
 
-  test('a reclaimed run keeps the drained mail’s playbook tools', async () => {
+  test('a reclaimed run keeps the drained mail’s job tools', async () => {
     await migrate(sql, MIGRATIONS);
     const lead = await controlTx(sql, (tx) =>
       insertLeadTx(tx, { name: 'Reclaim OptOut', whatsapp: '5511910000009' }),
@@ -3797,7 +3808,7 @@ dbDescribe('worker robustness (db)', () => {
     expect(l!.unsubscribed_at).not.toBeNull();
   });
 
-  test('mail for a disabled playbook parks mid-run — it never grants the switched-off tools', async () => {
+  test('automation mail for a switched-off job parks mid-run — it never grants its tools', async () => {
     await migrate(sql, MIGRATIONS);
     const lead = await controlTx(sql, (tx) =>
       insertLeadTx(tx, { name: 'Gated Mail', whatsapp: '5511910000010' }),
@@ -3809,7 +3820,7 @@ dbDescribe('worker robustness (db)', () => {
     await sql`delete from agent_runs where status = 'queued'`;
     await sql`
       insert into control_settings (key, value)
-      values ('agent_playbooks', ${sql.json({ reply: { enabled: false } } as never)})
+      values ('agent', ${sql.json({ level: 'supervised', jobs: { reply: false } } as never)})
       on conflict (key) do update set value = excluded.value
     `;
     const runId = (await enqueueRun(sql, {
@@ -3825,8 +3836,8 @@ dbDescribe('worker robustness (db)', () => {
         ],
       },
     }))!;
-    // 'reply' is off at the workspace switch — the item parks instead of
-    // handing this run the disabled kind's toolset mid-flight.
+    // the reply job is off — the inbound item parks instead of handing this
+    // run the switched-off kind's toolset mid-flight.
     await controlTx(sql, (tx) =>
       enqueueInboxTx(tx, leadId, 'inbound', {
         text: 'para de me mandar mensagem',
@@ -3845,7 +3856,7 @@ dbDescribe('worker robustness (db)', () => {
       (await sql`select 1 from agent_inbox where lead_id = ${leadId} and consumed_at is null`)
         .length,
     ).toBe(1);
-    await sql`delete from control_settings where key = 'agent_playbooks'`;
+    await sql`delete from control_settings where key = 'agent'`;
   });
 
   test('mail for a thread paused after enqueue parks mid-run — the spawn gate and the drain agree', async () => {
@@ -3897,7 +3908,7 @@ dbDescribe('worker robustness (db)', () => {
   test('automation-marked mail parks mid-run under autonomy off — the drain gate and the spawn gate agree', async () => {
     await migrate(sql, MIGRATIONS);
     await sql`
-      insert into control_settings (key, value) values ('agent_autonomy', ${sql.json({ level: 'off' } as never)})
+      insert into control_settings (key, value) values ('agent', ${sql.json({ level: 'off' } as never)})
       on conflict (key) do update set value = excluded.value
     `;
     try {
@@ -3939,14 +3950,14 @@ dbDescribe('worker robustness (db)', () => {
         else expect(i.consumed_at).not.toBeNull();
       }
     } finally {
-      await sql`delete from control_settings where key = 'agent_autonomy'`;
+      await sql`delete from control_settings where key = 'agent'`;
     }
   });
 
   test("a parked auto item's deadline can't postpone a staff-eligible spawn under autonomy off", async () => {
     await migrate(sql, MIGRATIONS);
     await sql`
-      insert into control_settings (key, value) values ('agent_autonomy', ${sql.json({ level: 'off' } as never)})
+      insert into control_settings (key, value) values ('agent', ${sql.json({ level: 'off' } as never)})
       on conflict (key) do update set value = excluded.value
     `;
     try {
@@ -3986,7 +3997,7 @@ dbDescribe('worker robustness (db)', () => {
       ).toBe(2);
       await sql`update agent_runs set status = 'canceled' where lead_id = ${leadId}`;
     } finally {
-      await sql`delete from control_settings where key = 'agent_autonomy'`;
+      await sql`delete from control_settings where key = 'agent'`;
     }
   });
 
@@ -4162,9 +4173,10 @@ dbDescribe('worker robustness (db)', () => {
     // the first-contact draft-only gate would park the send in approvals
     // before dispatch
     await sql`
-      insert into control_settings (key, value) values ('guardrails', ${sql.json({ firstContactDraftOnly: false, quietStart: '00:00', quietEnd: '00:00' } as never)})
+      insert into control_settings (key, value) values ('guardrails', ${sql.json({ quietStart: '00:00', quietEnd: '00:00' } as never)})
       on conflict (key) do update set value = excluded.value
     `;
+    await sql`insert into control_settings (key, value) values ('agent', ${sql.json({ level: 'autopilot' } as never)}) on conflict (key) do update set value = excluded.value`;
     const lead = await controlTx(sql, (tx) =>
       insertLeadTx(tx, { name: 'Send Boundary', whatsapp: '5511955550001', agent_mode: 'auto' }),
     );
@@ -4195,6 +4207,8 @@ dbDescribe('worker robustness (db)', () => {
     `;
     expect(msgs).toHaveLength(1);
     expect(msgs[0]!.status).toBe('failed');
+    // autopilot was pinned above — absent row = supervised default
+    await sql`delete from control_settings where key = 'agent'`;
   });
 
   test('mail the run already drained does not refuse its answer', async () => {
@@ -4205,9 +4219,10 @@ dbDescribe('worker robustness (db)', () => {
       on conflict (kind, driver) do update set enabled = true
     `;
     await sql`
-      insert into control_settings (key, value) values ('guardrails', ${sql.json({ firstContactDraftOnly: false, quietStart: '00:00', quietEnd: '00:00' } as never)})
+      insert into control_settings (key, value) values ('guardrails', ${sql.json({ quietStart: '00:00', quietEnd: '00:00' } as never)})
       on conflict (key) do update set value = excluded.value
     `;
+    await sql`insert into control_settings (key, value) values ('agent', ${sql.json({ level: 'autopilot' } as never)}) on conflict (key) do update set value = excluded.value`;
     const lead = await controlTx(sql, (tx) =>
       insertLeadTx(tx, { name: 'Mail Answer', whatsapp: '5511955550002', agent_mode: 'auto' }),
     );
@@ -4250,6 +4265,8 @@ dbDescribe('worker robustness (db)', () => {
     `;
     expect(msgs).toHaveLength(1);
     expect(msgs[0]!.status).not.toBe('failed');
+    // autopilot was pinned above — absent row = supervised default
+    await sql`delete from control_settings where key = 'agent'`;
   });
 
   test('received_at is wall-clock — an open inbound tx stamps insert time, not tx start', async () => {
@@ -4336,6 +4353,8 @@ dbDescribe('worker robustness (db)', () => {
       values ('email', 'log', true)
       on conflict (kind, driver) do update set enabled = true
     `;
+    // first contact must reach the wire, not the approvals queue
+    await sql`insert into control_settings (key, value) values ('agent', ${sql.json({ level: 'autopilot' } as never)}) on conflict (key) do update set value = excluded.value`;
     try {
       await sql`delete from agent_runs where status = 'queued'`;
       const runId = (await enqueueRun(sql, {
@@ -4400,6 +4419,7 @@ dbDescribe('worker robustness (db)', () => {
       );
       expect(blocked.length).toBe(2);
     } finally {
+      await sql`delete from control_settings where key = 'agent'`;
       if (priorLog) {
         await sql`
           update control_integrations
