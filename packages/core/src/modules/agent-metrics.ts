@@ -37,9 +37,10 @@ export interface KindMetrics {
 export interface AgentMetrics {
   window: { from: string; to: string };
   byKind: KindMetrics[];
-  /** Agent-authored outbound messages composed in the window — funnel
-   *  counts, not a partition: an approved draft that later sent counts in
-   *  both `approved` and `sent`. */
+  /** Agent-authored outbound activity in the window — drafts attribute to
+   *  compose time, sent/delivered to dispatch time (a delayed approval
+   *  counts when it actually left). Funnel counts, not a partition: an
+   *  approved draft that later sent counts in both `approved` and `sent`. */
   outbound: { sent: number; drafted: number; approved: number; rejected: number };
   /** Leads the agent actually reached (sent/delivered) vs leads that wrote
    *  back in the same window. */
@@ -91,16 +92,32 @@ export async function agentMetrics(sql: Sql, days: 7 | 30): Promise<AgentMetrics
     `;
     const byKind = new Map(kindRows.map((r) => [r.kind, r]));
 
+    // Each aggregate takes its own event's timestamp — one row-level window
+    // would misattribute delayed work: a draft composed pre-window but
+    // approved and sent inside it WAS contact the agent made in the window,
+    // and its approval belongs to the day staff approved it, not the day it
+    // was composed or dispatched.
     const outbound = (
       await tx<{ sent: number; drafted: number; approved: number; rejected: number }[]>`
         select
-          count(*) filter (where status in ('sent', 'delivered'))::int as sent,
-          count(*) filter (where status = 'draft')::int as drafted,
-          count(*) filter (where approved_by is not null)::int as approved,
-          count(*) filter (where status = 'rejected')::int as rejected
+          count(*) filter (
+            where status in ('sent', 'delivered')
+              and coalesce(dispatch_attempted_at, created_at) >= ${from}
+              and coalesce(dispatch_attempted_at, created_at) <= ${to}
+          )::int as sent,
+          count(*) filter (
+            where status = 'draft' and created_at >= ${from} and created_at <= ${to}
+          )::int as drafted,
+          count(*) filter (
+            where approved_by is not null
+              and coalesce(approved_at, created_at) >= ${from}
+              and coalesce(approved_at, created_at) <= ${to}
+          )::int as approved,
+          count(*) filter (
+            where status = 'rejected' and updated_at >= ${from} and updated_at <= ${to}
+          )::int as rejected
         from lead_messages
         where direction = 'out' and author = 'agent'
-          and created_at >= ${from} and created_at <= ${to}
       `
     )[0]!;
 
@@ -110,12 +127,15 @@ export async function agentMetrics(sql: Sql, days: 7 | 30): Promise<AgentMetrics
           -- a lead counts as replied only when a non-historical inbound
           -- lands AFTER an agent-authored send — an inbound predating first
           -- contact is an unanswered lead, not a reply
-          select t.lead_id, min(m.created_at) as first_sent_at
+          select t.lead_id, min(coalesce(m.dispatch_attempted_at, m.created_at)) as first_sent_at
           from lead_messages m
           join lead_threads t on t.id = m.thread_id
           where m.direction = 'out' and m.author = 'agent'
             and m.status in ('sent', 'delivered')
-            and m.created_at >= ${from} and m.created_at <= ${to}
+            -- dispatch time, same as the sent count above — a delayed
+            -- approval still counts as contact in the window it sent in
+            and coalesce(m.dispatch_attempted_at, m.created_at) >= ${from}
+            and coalesce(m.dispatch_attempted_at, m.created_at) <= ${to}
           group by t.lead_id
         ), replied as (
           select distinct t.lead_id from lead_messages m

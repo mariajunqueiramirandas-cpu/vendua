@@ -13,6 +13,7 @@ import {
 } from '../src/agent/runner.ts';
 import { mockProvider, setTestProvider } from '../src/agent/llm.ts';
 import { enqueueInboxTx, sweepOrphanInbox } from '../src/agent/inbox.ts';
+import { ingestInbound } from '../src/agent/inbound.ts';
 import { cancelWakeup } from '../src/agent/wakeups.ts';
 import { executeTool, assertRunClaimTx, type ToolContext } from '../src/agent/tools.ts';
 import { mapPointerName, pageKey } from '../src/agent/channels/discovery.ts';
@@ -1183,11 +1184,16 @@ dbDescribe('worker robustness (db)', () => {
     // output on every channel is blocked while the flag stands — even on the
     // channels whose threads were never individually paused ('manual' always
     // resolves, so the pause check is what blocks)
-    const draft = (await executeTool(mkCtx('ghost-unbound', null, leadId), 'd1', 'draft_message', {
-      leadId,
-      channel: 'manual',
-      body: 'não deve compor',
-    })) as { blocked?: boolean; reason?: string };
+    const draft = (await executeTool(
+      mkCtx(crypto.randomUUID(), null, leadId),
+      'd1',
+      'draft_message',
+      {
+        leadId,
+        channel: 'manual',
+        body: 'não deve compor',
+      },
+    )) as { blocked?: boolean; reason?: string };
     expect(draft.blocked).toBe(true);
     expect(draft.reason).toContain('paused');
   });
@@ -1214,11 +1220,16 @@ dbDescribe('worker robustness (db)', () => {
       select agent_paused_at from leads where id = ${leadId}
     `;
     expect(l!.agent_paused_at).toBeNull();
-    const draft = (await executeTool(mkCtx('ghost-bound', null, leadId), 'd1', 'draft_message', {
-      leadId,
-      channel: 'manual',
-      body: 'canal novo deve compor',
-    })) as { blocked?: boolean };
+    const draft = (await executeTool(
+      mkCtx(crypto.randomUUID(), null, leadId),
+      'd1',
+      'draft_message',
+      {
+        leadId,
+        channel: 'manual',
+        body: 'canal novo deve compor',
+      },
+    )) as { blocked?: boolean };
     expect(draft.blocked).toBeUndefined();
   });
 
@@ -1262,11 +1273,16 @@ dbDescribe('worker robustness (db)', () => {
       insert into lead_threads (lead_id, channel, agent_enabled)
       values (${leadId}, 'manual', false)
     `;
-    const out = (await executeTool(mkCtx('ghost-run', null, leadId), 'd1', 'draft_message', {
-      leadId,
-      channel: 'manual',
-      body: 'não deve compor',
-    })) as { blocked?: boolean; reason?: string };
+    const out = (await executeTool(
+      mkCtx(crypto.randomUUID(), null, leadId),
+      'd1',
+      'draft_message',
+      {
+        leadId,
+        channel: 'manual',
+        body: 'não deve compor',
+      },
+    )) as { blocked?: boolean; reason?: string };
     expect(out.blocked).toBe(true);
     expect(out.reason).toContain('paused');
     const msgs = await sql`select 1 from lead_messages m join lead_threads t on t.id = m.thread_id
@@ -1288,11 +1304,16 @@ dbDescribe('worker robustness (db)', () => {
     const fresh = await controlTx(sql, (tx) => ensureThread(tx, leadId, 'email'));
     expect(fresh.agent_enabled).toBe(true);
     // and the send-side check blocks before composing on that channel at all
-    const out = (await executeTool(mkCtx('ghost-hop', null, leadId), 'd1', 'draft_message', {
-      leadId,
-      channel: 'manual',
-      body: 'não deve compor',
-    })) as { blocked?: boolean; reason?: string };
+    const out = (await executeTool(
+      mkCtx(crypto.randomUUID(), null, leadId),
+      'd1',
+      'draft_message',
+      {
+        leadId,
+        channel: 'manual',
+        body: 'não deve compor',
+      },
+    )) as { blocked?: boolean; reason?: string };
     expect(out.blocked).toBe(true);
     expect(out.reason).toContain('paused');
     // a lead with zero threads is fresh — not paused
@@ -3361,6 +3382,70 @@ dbDescribe('worker robustness (db)', () => {
     `;
     expect(spawned!.kind).toBe('reply');
     expect(spawned!.thread_id).toBe(emThread!.id);
+  });
+
+  test('a draft rejected mid-run no longer passes the finish gate — the run owes a replacement', async () => {
+    await migrate(sql, MIGRATIONS);
+    const lead = await controlTx(sql, (tx) =>
+      insertLeadTx(tx, { name: 'Dead Draft', whatsapp: '5511910000094' }),
+    );
+    const leadId = lead.body.lead.id;
+    await sql`delete from agent_runs where status = 'queued'`;
+    // Auto outreach mid-flight with a composed draft. A real inbound from
+    // the lead retires it while the run still stands: the finish gate must
+    // not count the dead artifact, or the run closes leaving staff nothing
+    // to approve.
+    const runId = (await enqueueRun(sql, {
+      kind: 'outreach',
+      leadId,
+      runAt: new Date(Date.now()),
+      params: {
+        auto: 'first-contact',
+        script: [
+          { toolCalls: [{ name: 'draft_message', args: { leadId, body: 'oi, primeira' } }] },
+          { text: 'aqui é a venduá de novo', delayMs: 4000 },
+          { toolCalls: [{ name: 'draft_message', args: { leadId, body: 'oi, segunda' } }] },
+          { text: 'pronto' },
+        ],
+      },
+    }))!;
+    const running = runOnce(sql);
+    // Wait for the draft to commit before rejecting it — step 2's delayMs
+    // keeps the run parked so the gate sees the dead artifact at close.
+    // The stamp is the mechanism under test: draft_message writes
+    // agent_run_id, which is how inbound's retire finds it at all.
+    for (let i = 0; i < 40; i++) {
+      const d = await sql`
+        select 1 from lead_messages m
+        where m.status = 'draft' and m.agent_run_id = ${runId}
+      `;
+      if (d.length) break;
+      await new Promise((r) => setTimeout(r, 100));
+    }
+    // The real inbound path: the lead's own reply lands mid-run, and
+    // ingestInbound retires the running outreach's draft under capfin —
+    // the same serialization the finish gate's liveness read relies on.
+    // The draft is findable BECAUSE it carries the run's stamp.
+    await ingestInbound(sql, {
+      channel: 'whatsapp',
+      from: '5511910000094',
+      body: 'opa, tenho interesse sim',
+    });
+    await running;
+    const r = await getRun(runId);
+    expect(r.status).toBe('done');
+    // The gate demanded a replacement: one live draft waits in the approval
+    // queue, the nudge is journaled, and the dead draft stayed rejected.
+    const drafts = await sql<{ body: string; status: string }[]>`
+      select m.body, m.status from lead_messages m
+      join lead_threads t on t.id = m.thread_id
+      where t.lead_id = ${leadId} and m.direction = 'out'
+    `;
+    expect(drafts.find((d) => d.body === 'oi, primeira')?.status).toBe('rejected');
+    expect(drafts.filter((d) => d.status === 'draft').map((d) => d.body)).toEqual(['oi, segunda']);
+    expect(
+      (r.steps as { type?: string }[]).filter((s) => s.type === 'nudge').length,
+    ).toBeGreaterThanOrEqual(1);
   });
 
   test('mail arriving during a draft-only run waits — a reply never strands as a draft', async () => {

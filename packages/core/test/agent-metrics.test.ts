@@ -46,16 +46,21 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('agentMetrics (db)', () => {
     status: string;
     author?: string;
     approvedBy?: string | null;
+    approvedAt?: Date | null;
+    dispatchAttemptedAt?: Date | null;
+    updatedAt?: Date | null;
     historical?: boolean;
     createdAt?: Date;
   }) => {
     await sql`
       insert into lead_messages
-        (thread_id, direction, author, body, status, approved_by, historical, created_at)
+        (thread_id, direction, author, body, status, approved_by, approved_at,
+         dispatch_attempted_at, updated_at, historical, created_at)
       values (
         ${opts.threadId}, ${opts.direction}, ${opts.author ?? 'agent'}, 'm',
-        ${opts.status}, ${opts.approvedBy ?? null}, ${opts.historical ?? false},
-        ${opts.createdAt ?? new Date()}
+        ${opts.status}, ${opts.approvedBy ?? null}, ${opts.approvedAt ?? null},
+        ${opts.dispatchAttemptedAt ?? null}, ${opts.updatedAt ?? new Date()},
+        ${opts.historical ?? false}, ${opts.createdAt ?? new Date()}
       )`;
   };
 
@@ -211,6 +216,47 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('agentMetrics (db)', () => {
     expect(m.replies).toEqual({ leadsContacted: 3, leadsReplied: 1, replyRate: 1 / 3 });
     const m30 = await agentMetrics(sql, 30);
     expect(m30.outbound.sent).toBe(6);
+  });
+
+  test('outbound attributes each event to its own timestamp — compose, approve, dispatch, reject', async () => {
+    await migrate(sql, MIGRATIONS);
+    await clean();
+    const a = await seedLead('Late Approve A');
+    const b = await seedLead('Late Approve B');
+    const stale = new Date(Date.now() - 20 * 86_400_000);
+    // Composed 20d ago, approved+dispatched today — every aggregate lands
+    // in the window its event happened in, none on compose day.
+    await seedMessage({
+      threadId: a.threadId,
+      direction: 'out',
+      status: 'sent',
+      approvedBy: 'staff',
+      approvedAt: new Date(),
+      dispatchAttemptedAt: new Date(),
+      createdAt: stale,
+    });
+    // Composed 20d ago, staff rejection today — rejected counts on the
+    // rejection day even though compose fell outside the window.
+    await seedMessage({
+      threadId: b.threadId,
+      direction: 'out',
+      status: 'rejected',
+      createdAt: stale,
+      updatedAt: new Date(),
+    });
+    // Draft composed in-window stays on compose time for drafted.
+    await seedMessage({ threadId: b.threadId, direction: 'out', status: 'draft' });
+    const m = await agentMetrics(sql, 7);
+    // sent: 1 (dispatch today, not compose); drafted: 1; approved: 1
+    // (approved_at today); rejected: 1 (rejected today)
+    expect(m.outbound).toEqual({ sent: 1, drafted: 1, approved: 1, rejected: 1 });
+    // the delayed send also counts as contact inside the window
+    expect(m.replies.leadsContacted).toBe(1);
+    // 30d window sees the same rows once — the compose-day aggregation
+    // would have counted them twice under the old single-window read
+    const m30 = await agentMetrics(sql, 30);
+    expect(m30.outbound.sent).toBe(1);
+    expect(m30.outbound.approved).toBe(1);
   });
 
   test('wakeups counts pending backlog and fired-in-window', async () => {

@@ -744,8 +744,22 @@ export async function rejectMessage(
   idemKey: string,
 ): Promise<ClaimResult<{ message: ReturnType<typeof messageJson> }>> {
   const res = await claimControl(sql, idemKey, async (tx) => {
+    // capfin before the reject, same ordering approveMessage keeps: the
+    // finish gate's artifact check serializes on it — a staff reject
+    // committing between the gate's liveness read and its 'done' flip
+    // would strand a finished run with nothing approvable. The lead read
+    // is lock-free; the advisory hold lands before the row update.
+    const leadRow = await tx<{ lead_id: string }[]>`
+      select t.lead_id from lead_messages m
+      join lead_threads t on t.id = m.thread_id
+      where m.id = ${messageId}
+    `;
+    if (leadRow[0]) {
+      const { capLockTx } = await import('../agent/runner.ts');
+      await capLockTx(tx, leadRow[0].lead_id);
+    }
     const rows = await tx<MessageRow[]>`
-      update lead_messages set status = 'rejected'
+      update lead_messages set status = 'rejected', updated_at = now()
       where id = ${messageId} and status = 'draft'
       returning *
     `;
