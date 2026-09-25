@@ -1,9 +1,5 @@
 import { useState } from 'react';
 
-/** Shared bits for the settings surfaces (Config + Estúdio): the list
- *  editor, the raw-JSON escape hatch, and the coercion/validation helpers
- *  the cards use to mirror validateSetting. */
-
 const TZ_SUGGESTIONS = [
   'America/Sao_Paulo',
   'America/Fortaleza',
@@ -14,8 +10,7 @@ const TZ_SUGGESTIONS = [
   'America/Rio_Branco',
 ];
 
-/** `<datalist id="tz-list">` for the timezone pickers (guardrails, meeting)
- *  — render once per view that mounts a `list="tz-list"` input. */
+/** datalist for the timezone pickers — render once per view using `list="tz-list"`. */
 export function TzList() {
   return (
     <datalist id="tz-list">
@@ -56,9 +51,8 @@ export function ListEditor({
   onChange: (items: string[]) => void;
 }) {
   const [draft, setDraft] = useState('');
-  // Settings come back as untyped jsonb — coerce non-string entries once so
-  // they render instead of crashing, and a later save re-sends strings the
-  // server-side validator accepts instead of raw jsonb it rejects.
+  // settings arrive as untyped jsonb — coerce non-strings once so a re-save
+  // passes the server-side validator
   const norm = items.map((it) => (typeof it === 'string' ? it : JSON.stringify(it)));
   const atMax = max !== undefined && items.length >= max;
   const add = () => {
@@ -106,8 +100,7 @@ export function ListEditor({
   );
 }
 
-/** Raw JSON escape hatch — the structured fields cover the known keys;
- *  this stays for anything else a future knob adds. */
+/** escape hatch for keys the structured fields don't cover */
 export function RawJson({
   value,
   onSave,

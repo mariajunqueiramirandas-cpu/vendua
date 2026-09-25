@@ -1,7 +1,5 @@
 #!/bin/sh
-# @vendua/core container entrypoint — migrate, optionally seed demo tenants,
-# then serve. Migrations are idempotent; the server's boot migrate() becomes
-# a no-op after this.
+# migrate (idempotent), optionally seed demo tenants, then serve
 set -e
 
 bun run migrate

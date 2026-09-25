@@ -8,19 +8,15 @@ export type Sql = postgres.Sql;
 const dbLog = log.child({ mod: 'db' });
 
 export function createSql(url: string): Sql {
-  // Route Postgres NOTICEs through pino at debug — the default onnotice
-  // prints a raw object, breaking the JSON-lines contract on stdout.
+  // route NOTICEs through pino — the default onnotice breaks stdout's JSON-lines contract
   return postgres(url, {
     max: 10,
     onnotice: (n) => dbLog.debug({ code: n.code, message: n.message }, 'notice'),
   });
 }
 
-/**
- * Runs `fn` inside a transaction with the tenant context set. SET LOCAL scopes
- * the GUC to the transaction, so the RLS context can never leak across requests
- * on a pooled connection.
- */
+// runs `fn` in a tx with the tenant GUC SET LOCAL — RLS context can't leak
+// across requests on a pooled connection
 export async function withTenant<T>(
   sql: Sql,
   tenantId: string,
@@ -45,21 +41,16 @@ export async function migrate(sql: Sql, dir: string): Promise<string[]> {
     )
   `;
   const files = (await readdir(dir)).filter((f) => f.endsWith('.sql')).sort();
-  // One transaction for the whole run: a transaction-scoped advisory lock
-  // serializes concurrent starters, each file's DDL + bookkeeping row commit
-  // atomically, and a failure rolls back everything so the next boot
-  // re-applies cleanly. xact-scoped locking can't strand a pooled session.
+  // one tx for the whole run: the xact advisory lock serializes concurrent
+  // starters, each file commits atomically, a failure rolls back cleanly
   return sql.begin(async (tx) => {
     await tx`select pg_advisory_xact_lock(hashtext('vendua.migrate'))`;
     const applied = new Set(
       (await tx<MigrationRow[]>`select name from schema_migrations`).map((r) => r.name),
     );
-    // Baseline squash: NNNN_baseline_thru_MMMM.sql carries the full schema
-    // through delta MMMM — the filename encodes the coverage bound so a file
-    // numbered past it (0018+) still runs normally on fresh installs. The
-    // baseline itself executes ONLY on a fresh database (empty ledger) — an
-    // existing DB came up through the deltas, so the baseline is marked
-    // covered without executing (replaying would collide with live tables).
+    // baseline squash: NNNN_baseline_thru_MMMM.sql carries the schema through
+    // MMMM — it executes ONLY on a fresh DB (empty ledger); on existing DBs it's
+    // marked covered without replaying (would collide with live tables)
     const baselineFile = files.find((f) => /^(\d+)_baseline_thru_(\d+)\.sql$/.test(f));
     const baselineThru = baselineFile ? Number(baselineFile.match(/_thru_(\d+)\.sql$/)![1]) : -1;
     const freshDb = applied.size === 0;
@@ -69,18 +60,17 @@ export async function migrate(sql: Sql, dir: string): Promise<string[]> {
       if (file !== baselineFile) {
         const num = Number(file.match(/^(\d+)/)?.[1]);
         if (baselineFile && freshDb && num <= baselineThru) {
-          // Covered by the baseline — ledger row only, the DDL already ran.
+          // covered by the baseline — ledger row only, the DDL already ran
           await tx`insert into schema_migrations (name) values (${file})`;
           continue;
         }
       } else if (!freshDb) {
-        // Existing DB: record the baseline as covered so it never replays.
+        // existing DB: mark the baseline covered so it never replays
         await tx`insert into schema_migrations (name) values (${file})`;
         continue;
       }
       const body = await readFile(join(dir, file), 'utf8');
-      // Migration files may create roles/policies that need the owner — run as
-      // the connecting (migration) user, which is intentionally NOT vendua_app.
+      // files may create roles/policies needing the owner — run as the migration user, NOT vendua_app
       await tx.unsafe(body);
       await tx`insert into schema_migrations (name) values (${file})`;
       ran.push(file);
