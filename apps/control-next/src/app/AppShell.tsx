@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react';
-import { NavLink, useNavigate } from 'react-router-dom';
+import { NavLink, useMatch, useNavigate } from 'react-router-dom';
 import {
   ChevronsUpDown,
   Download,
@@ -330,6 +330,8 @@ function Sidebar({
 }
 
 function TabBar({ badges }: { badges: Record<string, number> }) {
+  // an open conversation owns the bottom edge (composer above the keyboard)
+  if (useMatch('/inbox/:threadId')) return null;
   return (
     <nav
       aria-label="seções"
