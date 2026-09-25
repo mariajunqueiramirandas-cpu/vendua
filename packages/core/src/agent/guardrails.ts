@@ -227,6 +227,30 @@ export async function checkSendAllowedTx(
     if (channel === 'email' && lead.email_bounced_at)
       return { ok: false, forceDraft: false, reason: 'email bounced' };
 
+    // First contact is always human-approved — the lead has never seen an
+    // outbound from us, so this one must wait in the approvals queue. The
+    // draft decision runs before the send-only gates: a forced draft is an
+    // approval item, not a wire send — quiet hours and the daily cap pace
+    // sends, not drafts, so they only bind when the live decision permits
+    // an actual send (a zero-delay first contact at 22:00 must still leave
+    // something to approve).
+    const priorOut = (
+      await tx<{ n: number }[]>`
+        select count(*)::int as n from lead_messages m
+        join lead_threads t on t.id = m.thread_id
+        where t.lead_id = ${leadId} and m.direction = 'out'
+          and m.status in ('queued', 'sending', 'sent', 'delivered')
+      `
+    )[0]!.n;
+    const { level } = await autonomyTx(tx);
+    const d = draftDecision({
+      level,
+      firstContact: priorOut === 0,
+      firstContactDraftOnly: g.firstContactDraftOnly,
+      leadMode: lead.agent_mode,
+    });
+    if (d.forceDraft) return { ok: true, forceDraft: true };
+
     // Quiet hours — compared in the configured timezone (America/Sao_Paulo
     // default). Overnight window (21:00→08:00) wraps past midnight.
     const hh = (
@@ -256,24 +280,6 @@ export async function checkSendAllowedTx(
     if (sentToday >= g.maxOutboundPerLeadPerDay) {
       return { ok: false, forceDraft: false, reason: 'daily cap reached' };
     }
-
-    // First contact is always human-approved — the lead has never seen an
-    // outbound from us, so this one must wait in the approvals queue.
-    const priorOut = (
-      await tx<{ n: number }[]>`
-        select count(*)::int as n from lead_messages m
-        join lead_threads t on t.id = m.thread_id
-        where t.lead_id = ${leadId} and m.direction = 'out'
-          and m.status in ('queued', 'sending', 'sent', 'delivered')
-      `
-    )[0]!.n;
-    const { level } = await autonomyTx(tx);
-    const d = draftDecision({
-      level,
-      firstContact: priorOut === 0,
-      firstContactDraftOnly: g.firstContactDraftOnly,
-      leadMode: lead.agent_mode,
-    });
-    return { ok: true, forceDraft: d.forceDraft };
+    return { ok: true, forceDraft: false };
   }
 }

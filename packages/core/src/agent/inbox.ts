@@ -20,7 +20,9 @@ const SWEEP_INSPECT = 100;
  *  inspected. Persisted across drain() ticks so a deep blocked prefix
  *  rotates instead of re-scanning from the head every tick; a keyset
  *  (not offset) cursor can't skip leads that shift when terminal mail
- *  drops mid-scan. */
+ *  drops mid-scan. first_at is bucketed to milliseconds — PG carries
+ *  microseconds but a bound parameter (Date or text) arrives ms-only,
+ *  and a rounded-down cursor re-selects the same lead forever. */
 let sweepAfter: { firstAt: Date; leadId: string } | null = null;
 
 /**
@@ -147,7 +149,7 @@ export async function sweepOrphanInbox(
     const leads = await controlTx(
       sql,
       (tx) => tx<{ lead_id: string; first_at: Date }[]>`
-        select i.lead_id, min(i.created_at) as first_at
+        select i.lead_id, date_trunc('milliseconds', min(i.created_at)) as first_at
         from agent_inbox i
         join leads l on l.id = i.lead_id
         where i.consumed_at is null
@@ -161,7 +163,7 @@ export async function sweepOrphanInbox(
             where r.lead_id = i.lead_id and r.status in ('queued', 'running')
           )
         group by i.lead_id
-        having (min(i.created_at), i.lead_id) > (${afterAt}, ${afterId}::uuid)
+        having (date_trunc('milliseconds', min(i.created_at)), i.lead_id) > (${afterAt}, ${afterId}::uuid)
         order by first_at, i.lead_id limit ${pageSize}
       `,
     );

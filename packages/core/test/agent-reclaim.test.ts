@@ -2917,6 +2917,73 @@ dbDescribe('worker robustness (db)', () => {
         where t.lead_id = ${lead2Id} and m.direction = 'out'
       `;
       expect(outs2.map((o) => o.status)).toEqual(['draft']);
+
+      // Quiet hours pace sends, not drafts: a forced-draft first contact
+      // still lands in approvals overnight, while a send the live decision
+      // permits stays held.
+      await sql`update control_settings set value = ${sql.json({
+        firstContactDraftOnly: true,
+        quietStart: '00:00',
+        quietEnd: '23:59',
+      } as never)} where key = 'guardrails'`;
+      await setLevel('supervised');
+      const lead3 = await controlTx(sql, (tx) =>
+        insertLeadTx(tx, { name: 'Quiet Draft', whatsapp: '5511910000094', agent_mode: 'auto' }),
+      );
+      const lead3Id = lead3.body.lead.id;
+      const [thread3] = await sql<{ id: string }[]>`
+        insert into lead_threads (lead_id, channel) values (${lead3Id}, 'whatsapp') returning id
+      `;
+      await sql`delete from agent_runs where status = 'queued'`;
+      (await enqueueRun(sql, {
+        kind: 'outreach',
+        leadId: lead3Id,
+        threadId: thread3!.id,
+        params: {
+          auto: 'first-contact',
+          script: [
+            { toolCalls: [{ name: 'send_message', args: { leadId: lead3Id, body: 'oi' } }] },
+            { text: 'fim' },
+          ],
+        },
+      }))!;
+      expect(await runOnce(sql)).toBe(true);
+      const outs3 = await sql<{ status: string }[]>`
+        select m.status from lead_messages m
+        join lead_threads t on t.id = m.thread_id
+        where t.lead_id = ${lead3Id} and m.direction = 'out'
+      `;
+      expect(outs3.map((o) => o.status)).toEqual(['draft']);
+
+      // Same quiet window, send permitted — now the block binds.
+      await setLevel('autopilot');
+      const lead4 = await controlTx(sql, (tx) =>
+        insertLeadTx(tx, { name: 'Quiet Send', whatsapp: '5511910000093', agent_mode: 'auto' }),
+      );
+      const lead4Id = lead4.body.lead.id;
+      const [thread4] = await sql<{ id: string }[]>`
+        insert into lead_threads (lead_id, channel) values (${lead4Id}, 'whatsapp') returning id
+      `;
+      await sql`delete from agent_runs where status = 'queued'`;
+      (await enqueueRun(sql, {
+        kind: 'outreach',
+        leadId: lead4Id,
+        threadId: thread4!.id,
+        params: {
+          auto: 'first-contact',
+          script: [
+            { toolCalls: [{ name: 'send_message', args: { leadId: lead4Id, body: 'oi' } }] },
+            { text: 'fim' },
+          ],
+        },
+      }))!;
+      expect(await runOnce(sql)).toBe(true);
+      const outs4 = await sql<{ status: string }[]>`
+        select m.status from lead_messages m
+        join lead_threads t on t.id = m.thread_id
+        where t.lead_id = ${lead4Id} and m.direction = 'out'
+      `;
+      expect(outs4).toEqual([]);
     } finally {
       for (const k of ['guardrails', 'agent_autonomy']) {
         const p = priorOf(k);
@@ -3013,12 +3080,17 @@ dbDescribe('worker robustness (db)', () => {
       await sql`delete from agent_runs where status = 'queued'`;
       // With limit=1 the first servable lead wins — ambient mail requesting
       // an ENABLED playbook would outservable the fixture, so tombstone just
-      // that class (kindless or 'reply'-requesting leftovers are already
-      // unservable under the disabled 'reply' gate and stay pending).
+      // that class. 'reply'-class leftovers stay pending (unservable under
+      // the disabled gate) but must not sit inside the fixture's window or
+      // they inflate the inspect count — every fixture is backdated ≥1 day,
+      // so clearing anything older than an hour covers any wedged leftover
+      // while fresh reply mail (this hour) still sorts after the servable
+      // lead and can't reach it.
       await controlTx(
         sql,
         (tx) => tx`update agent_inbox set consumed_at = now()
-          where consumed_at is null and payload->>'requestedKind' <> 'reply'`,
+          where consumed_at is null
+            and (payload->>'requestedKind' <> 'reply' or created_at < now() - interval '1 hour')`,
       );
       // Five leads ahead of the servable one at page size 3 — the servable
       // lead lands on page three, so the pass must cross two page
@@ -3053,7 +3125,11 @@ dbDescribe('worker robustness (db)', () => {
         (tx) => tx`update agent_inbox set created_at = now() - interval '1 day'
         where lead_id = ${servable.body.lead.id}`,
       );
-      expect(await sweepOrphanInbox(sql, 1, { scan: 3, inspect: 1000 })).toBe(1);
+      // Exactly 6 inspections reach the servable lead — one more would mean
+      // a lead re-selected itself: the backdated created_at carries
+      // microseconds, and a cursor that drops them (JS Date is ms-only)
+      // compares lower than the row's real timestamp and repeats forever.
+      expect(await sweepOrphanInbox(sql, 1, { scan: 3, inspect: 6 })).toBe(1);
       const spawned = await sql<{ kind: string }[]>`
         select kind from agent_runs where lead_id = ${servable.body.lead.id}
       `;
