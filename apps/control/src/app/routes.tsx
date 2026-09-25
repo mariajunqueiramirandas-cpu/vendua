@@ -1,6 +1,37 @@
-import { lazy, Suspense, type ReactNode } from 'react';
+import { lazy as reactLazy, Suspense, type ComponentType, type ReactNode } from 'react';
 import { Navigate, Route, Routes, useLocation, useParams } from 'react-router-dom';
 import { LoadingRows } from '@/components/common.tsx';
+
+// Route chunks are content-hashed and a deploy replaces them — a tab opened before
+// the deploy would 404 on its next lazy import. Reload once to pick up the new build;
+// the sessionStorage flag stops a genuinely broken chunk from looping.
+const RELOAD_KEY = 'vendua-control-chunk-reload';
+function lazy<T extends ComponentType>(load: () => Promise<{ default: T }>) {
+  return reactLazy(() =>
+    load().then(
+      (m) => {
+        try {
+          sessionStorage.removeItem(RELOAD_KEY);
+        } catch {
+          /* storage blocked */
+        }
+        return m;
+      },
+      (err: unknown) => {
+        let reloaded = false;
+        try {
+          reloaded = sessionStorage.getItem(RELOAD_KEY) === '1';
+          if (!reloaded) sessionStorage.setItem(RELOAD_KEY, '1');
+        } catch {
+          reloaded = true; // can't guard against a loop — surface the error instead
+        }
+        if (reloaded) throw err;
+        window.location.reload();
+        return new Promise<never>(() => undefined);
+      },
+    ),
+  );
+}
 
 const HomePage = lazy(() => import('@/features/home/HomePage.tsx'));
 const PipelinePage = lazy(() => import('@/features/pipeline/PipelinePage.tsx'));
