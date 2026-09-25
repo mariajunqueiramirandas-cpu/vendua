@@ -10,13 +10,7 @@ import { loadPlaybookTx } from './playbooks.ts';
 import { PLAYBOOK_KINDS, type PlaybookKind } from './tool-meta.ts';
 import { channelAvailabilityTx } from './guardrails.ts';
 
-/**
- * agent/policy — the single answer to "may the agent act on its own, and may
- * it send without a human". Workspace level (agent_autonomy) × lead flags ×
- * guardrails. Enforcement stays at the existing choke points (claimRun,
- * checkSendAllowedTx, the automatic enqueue paths); this module is what they
- * consult and what the console renders as the explanation.
- */
+// Autonomy policy: workspace level × lead flags × guardrails, consulted by claimRun / checkSendAllowedTx / enqueue gates.
 
 export type AutonomyLevel = 'off' | 'copilot' | 'supervised' | 'autopilot';
 export const AUTONOMY_LEVELS: readonly AutonomyLevel[] = [
@@ -45,9 +39,7 @@ export async function autonomyTx(tx: Sql): Promise<Required<AgentAutonomySetting
 
 export type AutomationVerdict = { ok: true } | { ok: false; code: string; reason: string };
 
-/** Gate for runs the automation queues on its own (inbound replies, sweeps,
- *  wakeups, discovery autocontact, first contact). Staff-triggered runs only
- *  check the playbook switch (see playbookEnabledTx). */
+// Gate for automation-queued runs; staff-triggered runs only check playbookEnabledTx.
 export async function automationAllowedTx(tx: Sql, kind: PlaybookKind): Promise<AutomationVerdict> {
   const { level } = await autonomyTx(tx);
   if (level === 'off') {
@@ -56,8 +48,6 @@ export async function automationAllowedTx(tx: Sql, kind: PlaybookKind): Promise<
   return playbookEnabledTx(tx, kind);
 }
 
-/** Scan inputs for claimRun: playbooks switched off, and whether the
- *  workspace level holds automation-queued rows. */
 export async function claimPolicyTx(
   tx: Sql,
 ): Promise<{ disabledKinds: PlaybookKind[]; autoOff: boolean }> {
@@ -75,9 +65,7 @@ export async function playbookEnabledTx(tx: Sql, kind: PlaybookKind): Promise<Au
   return { ok: true };
 }
 
-/** Send-time draft decision — called by checkSendAllowedTx after every hard
- *  block passed. firstContactDraftOnly keeps its meaning under 'supervised'
- *  (the default); 'autopilot' lifts it, 'copilot' drafts everything. */
+// copilot/off force drafts; autopilot lifts firstContactDraftOnly.
 export function draftDecision(input: {
   level: AutonomyLevel;
   firstContact: boolean;
@@ -106,8 +94,7 @@ export interface AutonomyExplanation {
   reasons: AutonomyReason[];
 }
 
-/** Human-readable view of the policy for one lead. Reasons are ordered: the
- *  first one decides the outcome, the rest are context. Read-only. */
+// Reasons are ordered: the first decides the outcome, the rest are context.
 export async function explainAutonomyTx(
   tx: Sql,
   leadId: string,
@@ -203,16 +190,9 @@ export async function explainAutonomyTx(
   return { level, canRun, sendMode, reasons };
 }
 
-/** The strategist's rolling discovery budget — one arithmetic for proposal
- *  approval (propose_brief) and every refire (sweepBriefs): trailing-7d
- *  discovery spend plus a reservation per unit of work not yet booked
- *  (queued/running discovery runs, plus auto-approved briefs that never
- *  ran), each unit priced at the mean cost of recent discovery runs.
- *  `excludeBriefId` removes one brief from the open count — sweepBriefs
- *  evaluates a brief whose own imminent run IS the reservation being
- *  tested, so it must not be double-counted. Serialize the caller's
- *  check+write on the 'brief-proposals' advisory or two concurrent passes
- *  can both see spare cap. */
+// Rolling discovery budget: trailing-7d spend + reservation per unbooked work unit (mean recent
+// cost). excludeBriefId drops a brief whose own imminent run is the reservation under test.
+// Callers serialize check+write on the 'brief-proposals' advisory — else two passes both see spare cap.
 export async function discoveryBudgetTx(
   tx: Sql,
   excludeBriefId?: string,
@@ -235,10 +215,7 @@ export async function discoveryBudgetTx(
                 where r.kind = 'discovery' and r.status in ('queued', 'running', 'done')
                   and r.params->>'briefId' = d.id::text
               )))::int as open,
-        -- cost_cents > 0: a zero-cost done run carried no price signal
-        -- (sub-cent turns round to 0, synthetic providers charge nothing)
-        -- and would deflate the unit estimate to 0 — open units would then
-        -- reserve nothing against the ceiling. All-zero still falls to 50.
+        -- exclude zero-cost runs: they'd deflate the unit estimate to 0
         coalesce((select avg(c)::int from (
           select cost_cents as c from agent_runs
           where kind = 'discovery' and status = 'done' and cost_cents > 0
