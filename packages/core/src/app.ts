@@ -891,10 +891,12 @@ export function createApp({ sql, sessionSecret, controlSecret, autoDrain }: AppD
           (await automationAllowedTx(tx, 'outreach')).ok
         ) {
           // guardrails.firstContactDelayMin paces the contact — the run waits
-          // out the delay in 'queued' (cancelable in Runs), and the send still
-          // obeys agent_mode + firstContactDraftOnly. 0 = approval path: the
-          // run fires at once but draftOnly, so it still researches and
-          // drafts while nothing can send unreviewed.
+          // out the delay in 'queued' (cancelable in Runs). The send itself is
+          // decided live by checkSendAllowedTx at send time (level +
+          // firstContactDraftOnly + first-contact, all read then) — no
+          // draftOnly is stamped here because a policy change between create
+          // and claim must take effect; draftOnly stays for explicit
+          // staff-assist requests only.
           const g = await getSettingTx<Partial<Guardrails>>(tx, 'guardrails', {});
           const delay = g.firstContactDelayMin ?? DEFAULT_GUARDRAILS.firstContactDelayMin;
           const cap: { retired?: string[] } = {};
@@ -907,7 +909,6 @@ export function createApp({ sql, sessionSecret, controlSecret, autoDrain }: AppD
               params: {
                 auto: 'first-contact',
                 focus: 'primeiro contato — lead recém-criado pela equipe',
-                ...(delay > 0 ? {} : { draftOnly: true }),
               },
             },
             cap,
