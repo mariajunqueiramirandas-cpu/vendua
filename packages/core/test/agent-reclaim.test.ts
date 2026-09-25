@@ -2770,6 +2770,144 @@ dbDescribe('worker robustness (db)', () => {
     }
   });
 
+  test('reply mail inside a triage run still owes the lead a visible action', async () => {
+    await migrate(sql, MIGRATIONS);
+    const priorGuardrails = (
+      await sql<{ value: unknown }[]>`select value from control_settings where key = 'guardrails'`
+    )[0];
+    await sql`insert into control_settings (key, value) values ('guardrails', ${sql.json({
+      firstContactDraftOnly: false,
+      quietStart: '00:00',
+      quietEnd: '00:00',
+    } as never)})
+      on conflict (key) do update set value = excluded.value`;
+    try {
+      const lead = await controlTx(sql, (tx) =>
+        insertLeadTx(tx, { name: 'Triage Mail', whatsapp: '5511910000098' }),
+      );
+      const leadId = lead.body.lead.id;
+      const [thread] = await sql<{ id: string }[]>`
+        insert into lead_threads (lead_id, channel) values (${leadId}, 'whatsapp') returning id
+      `;
+      await sql`delete from agent_runs where status = 'queued'`;
+      // Triage requires no action — but the inbound it drains does (reply).
+      // A text-only close over that mail must nudge once instead of ending
+      // with the item consumed and nothing on the wire.
+      const runId = (await enqueueRun(sql, {
+        kind: 'triage',
+        leadId,
+        threadId: thread!.id,
+        params: {
+          script: [
+            { text: 'qualificando o card', delayMs: 1500 },
+            { text: 'só pesquisa' },
+            { toolCalls: [{ name: 'send_message', args: { leadId, body: 'achei você' } }] },
+            { text: 'fim' },
+          ],
+        },
+      }))!;
+      const running = runOnce(sql);
+      await new Promise((r) => setTimeout(r, 200));
+      await controlTx(sql, (tx) =>
+        enqueueInboxTx(tx, leadId, 'inbound', {
+          text: 'oi, tô aqui',
+          threadId: thread!.id,
+          messageId: crypto.randomUUID(),
+          requestedKind: 'reply',
+          params: { origin: 'inbound' },
+        }),
+      );
+      expect(await running).toBe(true);
+      const r = await getRun(runId);
+      expect(r.status).toBe('done');
+      expect(r.steps.filter((s) => (s as { type?: string }).type === 'nudge')).toHaveLength(1);
+      const outs = await sql<{ body: string }[]>`
+        select m.body from lead_messages m
+        join lead_threads t on t.id = m.thread_id
+        where t.lead_id = ${leadId} and m.direction = 'out' order by m.created_at
+      `;
+      expect(outs.map((o) => o.body)).toEqual(['achei você']);
+    } finally {
+      if (priorGuardrails) {
+        await sql`update control_settings set value = ${sql.json(priorGuardrails.value as never)} where key = 'guardrails'`;
+      } else {
+        await sql`delete from control_settings where key = 'guardrails'`;
+      }
+    }
+  });
+
+  test('the orphan sweep walks past unservable leads to reach servable mail', async () => {
+    await migrate(sql, MIGRATIONS);
+    const priorPlaybooks = (
+      await sql<
+        { value: unknown }[]
+      >`select value from control_settings where key = 'agent_playbooks'`
+    )[0];
+    await sql`insert into control_settings (key, value) values ('agent_playbooks', ${sql.json({ reply: { enabled: false } } as never)})
+      on conflict (key) do update set value = excluded.value`;
+    const fixtureLeadIds: string[] = [];
+    try {
+      await sql`delete from agent_runs where status = 'queued'`;
+      // Shared-DB ambient mail would reorder or outservable the fixture —
+      // tombstone all pending so this test's population is the whole scan.
+      await controlTx(
+        sql,
+        (tx) => tx`update agent_inbox set consumed_at = now() where consumed_at is null`,
+      );
+      // Eleven leads ahead of the servable one, each holding only mail the
+      // disabled 'reply' playbook can't spawn — past the old 10-lead window
+      // they'd starve every tick. Backdated so ambient shared-DB mail can't
+      // reorder the fixture.
+      for (let i = 0; i < 11; i++) {
+        const lead = await controlTx(sql, (tx) => insertLeadTx(tx, { name: `Blocked ${i}` }));
+        fixtureLeadIds.push(lead.body.lead.id);
+        await controlTx(sql, (tx) =>
+          enqueueInboxTx(tx, lead.body.lead.id, 'staff', {
+            text: 'responde esse',
+            requestedKind: 'reply',
+          }),
+        );
+        await controlTx(
+          sql,
+          (tx) => tx`update agent_inbox set created_at = now() - interval '2 days'
+          where lead_id = ${lead.body.lead.id}`,
+        );
+      }
+      const servable = await controlTx(sql, (tx) => insertLeadTx(tx, { name: 'Servable' }));
+      fixtureLeadIds.push(servable.body.lead.id);
+      await controlTx(sql, (tx) =>
+        enqueueInboxTx(tx, servable.body.lead.id, 'staff', {
+          text: 'qualifica esse',
+          requestedKind: 'triage',
+        }),
+      );
+      await controlTx(
+        sql,
+        (tx) => tx`update agent_inbox set created_at = now() - interval '1 day'
+        where lead_id = ${servable.body.lead.id}`,
+      );
+      expect(await sweepOrphanInbox(sql, 1)).toBe(1);
+      const spawned = await sql<{ kind: string }[]>`
+        select kind from agent_runs where lead_id = ${servable.body.lead.id}
+      `;
+      expect(spawned.map((r) => r.kind)).toEqual(['triage']);
+    } finally {
+      if (priorPlaybooks) {
+        await sql`update control_settings set value = ${sql.json(priorPlaybooks.value as never)} where key = 'agent_playbooks'`;
+      } else {
+        await sql`delete from control_settings where key = 'agent_playbooks'`;
+      }
+      await sql`delete from agent_runs where status = 'queued'`;
+      // The fixture's pending mail would stay servable under the restored
+      // playbooks and hijack later sweep assertions.
+      await controlTx(
+        sql,
+        (tx) => tx`update agent_inbox set consumed_at = now()
+          where consumed_at is null and lead_id in ${tx(fixtureLeadIds)}`,
+      );
+    }
+  });
+
   test('draft-only mail waits for its own run — it never ships through a send-capable one', async () => {
     await migrate(sql, MIGRATIONS);
     const lead = await controlTx(sql, (tx) =>

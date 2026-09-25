@@ -32,7 +32,7 @@ import {
   type ToolCall,
 } from './llm.ts';
 import { buildSystemPrompt } from './prompts.ts';
-import { loadPlaybookTx, mergePlaybook, type EffectivePlaybook } from './playbooks.ts';
+import { loadPlaybookTx, mergePlaybook, PLAYBOOKS, type EffectivePlaybook } from './playbooks.ts';
 import {
   automationAllowedTx,
   autonomyTx,
@@ -1560,6 +1560,11 @@ interface Attempt {
   i: number;
   res: LlmResult;
   nudged: boolean;
+  /** steps index of the latest drained batch carrying mail whose requestedKind
+   *  requiresAction — the finish gate's action bar inside a run whose own
+   *  playbook doesn't demand one (a triage run that picked up reply mail
+   *  still owes the lead an answer). -1 = no action-mail drained. */
+  actionInboxIdx: number;
   limit: number;
   lastProgress: number;
   loopNudged: boolean;
@@ -1825,11 +1830,23 @@ async function drainInbox(att: Attempt): Promise<number> {
   }
   widenAttemptTools(att);
   const content = renderInboxItems(items);
+  // Action-mail batches get their own finish-gate bar: reply/outreach mail
+  // drained into a run whose playbook doesn't demand action still owes the
+  // lead a visible answer — journaled so a reclaimed attempt re-seeds it.
+  const needsAction = items.some((i) => {
+    const k = i.payload?.requestedKind;
+    return (
+      typeof k === 'string' &&
+      (PLAYBOOKS as Record<string, { requiresAction?: boolean }>)[k]?.requiresAction === true
+    );
+  });
   att.steps.push({
     type: 'inbox',
     items: items.map((i) => ({ id: i.id, kind: i.kind })),
+    ...(needsAction ? { needsAction: true } : {}),
     content,
   });
+  if (needsAction) att.actionInboxIdx = att.steps.length - 1;
   att.messages.push({ role: 'user', content });
   await persist(
     att,
@@ -1951,6 +1968,18 @@ async function openAttempt(sql: Sql, run: RunRow): Promise<Attempt> {
     i: 0,
     res: undefined as never,
     nudged: false,
+    // Re-seeded from the journal: a prior attempt's action-mail batch still
+    // owes its answer after a reclaim — the flag rides the inbox entry.
+    actionInboxIdx: priorSteps.reduce<number>(
+      (acc, s, i) =>
+        typeof s === 'object' &&
+        s !== null &&
+        (s as { type?: string; needsAction?: boolean }).type === 'inbox' &&
+        (s as { needsAction?: boolean }).needsAction === true
+          ? i
+          : acc,
+      -1,
+    ),
     limit: playbook.stepBudget,
     // Last step index that produced something (lead/merge/new channel) —
     // starts at -1 so the first tick fires after 3 truly idle steps.
@@ -2219,12 +2248,21 @@ async function finishGate(att: Attempt): Promise<'end' | 'again'> {
   // batch: mail picked up mid-attempt demands its own action — a send
   // that answered an earlier batch can't close a text-only turn over
   // fresh mail, or that item ends consumed with nothing on the wire.
+  // And the bar exists even when the playbook doesn't demand one:
+  // action-mail (requestedKind requiring action) drained into a
+  // triage/discovery/strategist run would otherwise close consumed and
+  // unanswered — no later run ever re-picks a consumed item.
   const lastInbox = steps.reduce<number>(
     (acc, s, i) =>
       typeof s === 'object' && s !== null && (s as { type?: string }).type === 'inbox' ? i : acc,
     -1,
   );
-  if (!att.nudged && att.playbook.requiresAction && !runActed(steps.slice(lastInbox + 1))) {
+  const actionBar = att.playbook.requiresAction ? lastInbox : att.actionInboxIdx;
+  if (
+    !att.nudged &&
+    (att.playbook.requiresAction || actionBar >= 0) &&
+    !runActed(steps.slice(actionBar + 1))
+  ) {
     att.nudged = true;
     att.limit = att.i + 5;
     const nudge = `Ação pendente — a run ainda não teve efeito visível (send_message/draft, request_human, set_state, unsubscribe, update_lead, create_task). Pesquisar e sair sem agir deixa o lead falando sozinho — aja agora; se um guardrail ou canal morto trava a ação, request_human é a saída.`;

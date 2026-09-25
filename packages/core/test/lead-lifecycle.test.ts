@@ -155,23 +155,71 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('lead lifecycle (db)', () => {
 
     test('default — one outreach run, draft-only approval path', async () => {
       await setup();
-      const res = await postLead(
-        { name: 'Default Automation', whatsapp: '+55 85 90000-0003' },
-        key('a1-default'),
-      );
-      expect(res.status).toBe(201);
-      const { lead, runId } = (await res.json()) as {
-        lead: { id: string };
-        runId?: string;
-      };
-      expect(runId).toBeTruthy();
-      const runs = await runsFor(lead.id);
-      expect(runs).toHaveLength(1);
-      expect(runs[0]!.kind).toBe('outreach');
-      // firstContactDelayMin = 0 → the merged run researches and drafts but
-      // never sends — the approval path triage used to carry.
-      expect(runs[0]!.params.draftOnly).toBe(true);
-      expect(runs[0]!.params.auto).toBe('first-contact');
+      // The draft verdict is level-dependent now — pin supervised so an
+      // ambient agent_autonomy can't flip it.
+      const prior = (
+        await sql<
+          { value: unknown }[]
+        >`select value from control_settings where key = 'agent_autonomy'`
+      )[0];
+      await sql`insert into control_settings (key, value) values ('agent_autonomy', ${sql.json({ level: 'supervised' } as never)})
+        on conflict (key) do update set value = excluded.value`;
+      try {
+        const res = await postLead(
+          { name: 'Default Automation', whatsapp: '+55 85 90000-0003' },
+          key('a1-default'),
+        );
+        expect(res.status).toBe(201);
+        const { lead, runId } = (await res.json()) as {
+          lead: { id: string };
+          runId?: string;
+        };
+        expect(runId).toBeTruthy();
+        const runs = await runsFor(lead.id);
+        expect(runs).toHaveLength(1);
+        expect(runs[0]!.kind).toBe('outreach');
+        // firstContactDelayMin = 0 → the merged run researches and drafts but
+        // never sends — the approval path triage used to carry.
+        expect(runs[0]!.params.draftOnly).toBe(true);
+        expect(runs[0]!.params.auto).toBe('first-contact');
+      } finally {
+        if (prior) {
+          await sql`update control_settings set value = ${sql.json(prior.value as never)} where key = 'agent_autonomy'`;
+        } else {
+          await sql`delete from control_settings where key = 'agent_autonomy'`;
+        }
+      }
+    });
+
+    test('autopilot lifts the first-contact draft — zero-delay sends unreviewed', async () => {
+      await setup();
+      const prior = (
+        await sql<
+          { value: unknown }[]
+        >`select value from control_settings where key = 'agent_autonomy'`
+      )[0];
+      await sql`insert into control_settings (key, value) values ('agent_autonomy', ${sql.json({ level: 'autopilot' } as never)})
+        on conflict (key) do update set value = excluded.value`;
+      try {
+        const res = await postLead(
+          { name: 'Autopilot First', whatsapp: '+55 85 90000-0004' },
+          key('a1-autopilot'),
+        );
+        expect(res.status).toBe(201);
+        const { lead } = (await res.json()) as { lead: { id: string } };
+        const runs = await runsFor(lead.id);
+        expect(runs).toHaveLength(1);
+        expect(runs[0]!.kind).toBe('outreach');
+        // draftDecision lifts firstContactDraftOnly under autopilot — the
+        // stamped marker must not override the level back to drafts.
+        expect(runs[0]!.params.draftOnly).toBeUndefined();
+      } finally {
+        if (prior) {
+          await sql`update control_settings set value = ${sql.json(prior.value as never)} where key = 'agent_autonomy'`;
+        } else {
+          await sql`delete from control_settings where key = 'agent_autonomy'`;
+        }
+      }
     });
   });
 
