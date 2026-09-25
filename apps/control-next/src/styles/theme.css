@@ -1,0 +1,234 @@
+@import 'tailwindcss';
+
+@custom-variant dark (&:where(.dark, .dark *));
+
+:root {
+  --background: #f7f4ea;
+  --foreground: #123c32;
+  --card: #fffdf8;
+  --card-foreground: #123c32;
+  --popover: #fffdf8;
+  --popover-foreground: #123c32;
+  --muted: #efe9d8;
+  --muted-foreground: #4f6a5e;
+  --secondary: #ece7d5;
+  --secondary-foreground: #123c32;
+  --primary: #123c32;
+  --primary-foreground: #f7f4ea;
+  --agent: #d9f875;
+  --agent-foreground: #123c32;
+  --agent-soft: #eefbc4;
+  --warning: #e8b93c;
+  --warning-soft: #f6e7bd;
+  --warning-foreground: #6e500c;
+  --destructive: #c4453a;
+  --destructive-soft: #f5d9d4;
+  --destructive-foreground: #8c3229;
+  --success: #1a4f43;
+  --border: rgb(18 60 50 / 0.13);
+  --border-strong: rgb(18 60 50 / 0.24);
+  --input: rgb(18 60 50 / 0.22);
+  --ring: #1a4f43;
+  --hover: rgb(18 60 50 / 0.05);
+
+  --sidebar: #0c1410;
+  --sidebar-foreground: #efe9d8;
+  --sidebar-muted: #9dafa4;
+  --sidebar-accent: #17231e;
+  --sidebar-border: #1c2b25;
+
+  --stage-lead: #e2dbc4;
+  --stage-lead-fg: #4f6a5e;
+  --stage-contacted: #c9d6cc;
+  --stage-contacted-fg: #1a4f43;
+  --stage-invited: #e5f5a8;
+  --stage-invited-fg: #123c32;
+  --stage-live: #1a4f43;
+  --stage-live-fg: #f7f4ea;
+
+  --font-sans: 'Space Grotesk Variable', 'Manrope', Arial, sans-serif;
+  --font-serif: 'Instrument Serif', Georgia, serif;
+  --font-mono: ui-monospace, 'Cascadia Mono', Consolas, monospace;
+
+  color-scheme: light;
+}
+
+.dark {
+  --background: #0a100d;
+  --foreground: #ece7d5;
+  --card: #111a16;
+  --card-foreground: #ece7d5;
+  --popover: #141f1a;
+  --popover-foreground: #ece7d5;
+  --muted: #18241f;
+  --muted-foreground: #9dafa4;
+  --secondary: #1c2a24;
+  --secondary-foreground: #ece7d5;
+  --primary: #ece7d5;
+  --primary-foreground: #0c1410;
+  --agent: #d9f875;
+  --agent-foreground: #0c1410;
+  --agent-soft: rgb(217 248 117 / 0.14);
+  --warning: #e8b93c;
+  --warning-soft: rgb(232 185 60 / 0.16);
+  --warning-foreground: #f0cd6e;
+  --destructive: #e0655a;
+  --destructive-soft: rgb(224 101 90 / 0.16);
+  --destructive-foreground: #f09a91;
+  --success: #b9dcc8;
+  --border: rgb(236 231 213 / 0.09);
+  --border-strong: rgb(236 231 213 / 0.18);
+  --input: rgb(236 231 213 / 0.16);
+  --ring: #d9f875;
+  --hover: rgb(236 231 213 / 0.05);
+
+  --sidebar: #070b09;
+  --sidebar-foreground: #ece7d5;
+  --sidebar-muted: #8fa396;
+  --sidebar-accent: #131d18;
+  --sidebar-border: #16211c;
+
+  --stage-lead: #22302a;
+  --stage-lead-fg: #b5c4ba;
+  --stage-contacted: #243c33;
+  --stage-contacted-fg: #cfe3d6;
+  --stage-invited: rgb(217 248 117 / 0.2);
+  --stage-invited-fg: #e7ff9c;
+  --stage-live: #d9f875;
+  --stage-live-fg: #0c1410;
+
+  color-scheme: dark;
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-agent: var(--agent);
+  --color-agent-foreground: var(--agent-foreground);
+  --color-agent-soft: var(--agent-soft);
+  --color-warning: var(--warning);
+  --color-warning-soft: var(--warning-soft);
+  --color-warning-foreground: var(--warning-foreground);
+  --color-destructive: var(--destructive);
+  --color-destructive-soft: var(--destructive-soft);
+  --color-destructive-foreground: var(--destructive-foreground);
+  --color-success: var(--success);
+  --color-border: var(--border);
+  --color-border-strong: var(--border-strong);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --color-hover: var(--hover);
+  --color-sidebar: var(--sidebar);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-sidebar-muted: var(--sidebar-muted);
+  --color-sidebar-accent: var(--sidebar-accent);
+  --color-sidebar-border: var(--sidebar-border);
+  --color-stage-lead: var(--stage-lead);
+  --color-stage-lead-fg: var(--stage-lead-fg);
+  --color-stage-contacted: var(--stage-contacted);
+  --color-stage-contacted-fg: var(--stage-contacted-fg);
+  --color-stage-invited: var(--stage-invited);
+  --color-stage-invited-fg: var(--stage-invited-fg);
+  --color-stage-live: var(--stage-live);
+  --color-stage-live-fg: var(--stage-live-fg);
+
+  --font-sans: var(--font-sans);
+  --font-serif: var(--font-serif);
+  --font-mono: var(--font-mono);
+
+  --radius-sm: 4px;
+  --radius-md: 6px;
+  --radius-lg: 8px;
+  --radius-xl: 12px;
+}
+
+@layer base {
+  * {
+    border-color: var(--border);
+    -webkit-tap-highlight-color: transparent;
+  }
+  html {
+    overscroll-behavior-y: none;
+  }
+  html,
+  body,
+  #root {
+    height: 100%;
+  }
+  body {
+    background: var(--background);
+    color: var(--foreground);
+    font-family: var(--font-sans);
+    font-size: 0.875rem;
+    line-height: 1.45;
+    -webkit-font-smoothing: antialiased;
+    touch-action: manipulation;
+  }
+  ::selection {
+    background: var(--agent);
+    color: var(--agent-foreground);
+  }
+  :focus-visible {
+    outline: 2px solid var(--ring);
+    outline-offset: 1px;
+  }
+  button:not(:disabled),
+  [role='button']:not(:disabled) {
+    cursor: pointer;
+  }
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: var(--border-strong) transparent;
+  }
+  @media (prefers-reduced-motion: reduce) {
+    *,
+    *::before,
+    *::after {
+      animation-duration: 0.01ms !important;
+      transition-duration: 0.01ms !important;
+    }
+  }
+}
+
+@utility tnum {
+  font-variant-numeric: tabular-nums;
+}
+
+@utility pb-safe {
+  padding-bottom: env(safe-area-inset-bottom, 0px);
+}
+
+@utility pt-safe {
+  padding-top: env(safe-area-inset-top, 0px);
+}
+
+@utility px-safe {
+  padding-left: env(safe-area-inset-left, 0px);
+  padding-right: env(safe-area-inset-right, 0px);
+}
+
+/* phones pin the shell to the visual viewport (--vvh/--vvo from main.tsx) so the
+   tab bar and composers ride above the software keyboard */
+@utility h-vv {
+  position: fixed;
+  inset-inline: 0;
+  top: var(--vvo, 0px);
+  height: var(--vvh, 100dvh);
+}
+
+@utility no-scrollbar {
+  scrollbar-width: none;
+  &::-webkit-scrollbar {
+    display: none;
+  }
+}
