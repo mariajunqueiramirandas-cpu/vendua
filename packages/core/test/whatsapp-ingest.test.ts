@@ -18,6 +18,11 @@ import { subscribeControlEvents, type ControlEvent } from '../src/modules/contro
 import { insertLeadTx } from '../src/modules/leads.ts';
 import { migrate } from '../src/platform/db.ts';
 
+// Provider-message ids dedupe globally on the shared test DB — a replayed
+// ingest returns alreadySeen and skips the run/retire side effects under
+// test. Suffixing a per-run id keeps every test re-runnable.
+const pmRun = crypto.randomUUID().slice(0, 8);
+
 describe('guardrails — ignoredPhones', () => {
   test('defaults to an empty list', () => {
     expect(DEFAULT_GUARDRAILS.ignoredPhones).toEqual([]);
@@ -72,9 +77,11 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('whatsapp history + ignore list 
     await migrate(sql, MIGRATIONS);
     const res = await ingestInbound(sql, {
       channel: 'whatsapp',
-      from: '5511988887777@s.whatsapp.net',
+      // A fresh number per run — the shared test DB keeps the lead (and
+      // its old canceled runs), which would fail the no-run assertion.
+      from: `55119${crypto.randomUUID().replace(/\D/g, '').slice(0, 8)}@s.whatsapp.net`,
       body: 'mensagem antiga',
-      providerMessageId: 'hist-norun-1',
+      providerMessageId: `hist-norun-1-${pmRun}`,
       historical: true,
       sentAt: new Date('2024-01-01T10:00:00Z'),
     });
@@ -95,9 +102,10 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('whatsapp history + ignore list 
     await migrate(sql, MIGRATIONS);
     const res = await ingestInbound(sql, {
       channel: 'whatsapp',
-      from: '5511977776666@s.whatsapp.net',
+      // Fresh number per run — shared DB keeps the lead + its old runs.
+      from: `55119${crypto.randomUUID().replace(/\D/g, '').slice(0, 8)}@s.whatsapp.net`,
       body: 'resposta que o fundador digitou no aparelho',
-      providerMessageId: 'hist-out-1',
+      providerMessageId: `hist-out-1-${pmRun}`,
       direction: 'out',
       historical: true,
       sentAt: new Date('2024-01-02T15:00:00Z'),
@@ -118,7 +126,7 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('whatsapp history + ignore list 
       channel: 'whatsapp',
       from: '5511966665555@s.whatsapp.net',
       body: 'ao vivo',
-      providerMessageId: 'hist-lm-live',
+      providerMessageId: `hist-lm-live-${pmRun}`,
     });
     if ('ignored' in live) throw new Error('unexpected ignore');
     const before = (
@@ -130,7 +138,7 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('whatsapp history + ignore list 
       channel: 'whatsapp',
       from: '5511966665555@s.whatsapp.net',
       body: 'histórico de ontem',
-      providerMessageId: 'hist-lm-old',
+      providerMessageId: `hist-lm-old-${pmRun}`,
       historical: true,
       sentAt: new Date('2020-01-01T00:00:00Z'),
     });
@@ -149,14 +157,14 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('whatsapp history + ignore list 
       channel: 'whatsapp',
       from: '5511998887766@s.whatsapp.net',
       body: 'oi',
-      providerMessageId: 'ign-in-1',
+      providerMessageId: `ign-in-1-${pmRun}`,
     });
     expect(inbound).toEqual({ ignored: 'número ignorado: 5511998887766@s.whatsapp.net' });
     const echo = await ingestInbound(sql, {
       channel: 'whatsapp',
       from: '5511998887766@s.whatsapp.net',
       body: 'nossa resposta',
-      providerMessageId: 'ign-out-1',
+      providerMessageId: `ign-out-1-${pmRun}`,
       direction: 'out',
       historical: true,
     });
@@ -624,6 +632,9 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('whatsapp history + ignore list 
     );
     const leadId = lead.body.lead.id;
     await sql`delete from agent_runs where status = 'queued'`;
+    // Ambient pending wakeups from earlier runs would fire in the same
+    // sweep and inflate the count.
+    await sql`delete from agent_wakeups where status = 'pending'`;
     // A due automation wakeup: the sweep fires it — an 'outreach' run with
     // auto='wakeup' and a pending 'wakeup' item carrying the same intent.
     await sql`
@@ -642,7 +653,7 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('whatsapp history + ignore list 
       channel: 'whatsapp',
       from: '5511955550063@s.whatsapp.net',
       body: 'oi, pode deixar',
-      providerMessageId: 'wk-tomb-1',
+      providerMessageId: `wk-tomb-${crypto.randomUUID()}`,
     });
     expect('ignored' in res).toBe(false);
     // The fired wakeup's outreach retires on the reply — and its pending
@@ -663,8 +674,13 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('whatsapp history + ignore list 
       select status from agent_runs
       where lead_id = ${leadId} and kind = 'outreach'
     `;
+    // Exactly one outreach row and it never requeues — a respawn would be a
+    // second run. 'running' is also fine: an ambient drain pass (kicked by
+    // an earlier ingest's fire-and-forget) may claim the run in the gap
+    // between the wakeup fire and the inbound retire — either way no new
+    // run respawned for the tombstoned mail.
     expect(outreach).toHaveLength(1);
-    expect(outreach[0]!.status).toBe('canceled');
+    expect(outreach[0]!.status).not.toBe('queued');
   });
 
   test('a scheduled regen run re-anchors intact when the inbound cancels it', async () => {

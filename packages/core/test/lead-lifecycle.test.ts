@@ -781,14 +781,19 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('lead lifecycle (db)', () => {
     test('POST /agent/runs/:id/cancel tombstones the run’s own request — no sweep restart', async () => {
       await setup();
       const leadId = await mkLeadApi({ name: 'Cancel Owns' }, key('a4-cxl-lead'));
+      // The run rides the whatsapp thread — its effective channel is the
+      // thread's even with no params.channel pin.
+      const [waThread] = await sql<{ id: string }[]>`
+        insert into lead_threads (lead_id, channel) values (${leadId}, 'whatsapp') returning id
+      `;
       const run = await post(
         '/control/v1/agent/runs',
-        { kind: 'outreach', leadId },
+        { kind: 'outreach', leadId, threadId: waThread!.id },
         key('a4-cxl-run'),
       );
       expect(run.status).toBe(201);
       const { runId } = (await run.json()) as { runId: string };
-      // An email-pinned request merely associated with this unpinned run —
+      // An email-pinned request merely associated with this whatsapp run —
       // channel pinning keeps it pending for a matching run it must
       // outlive, so the tombstone can't take it.
       await sql`
@@ -801,8 +806,9 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('lead lifecycle (db)', () => {
         })})
       `;
       // An 'auto'-channeled request normalizes to unpinned at enqueue —
-      // "let the agent pick" is not a channel pin — so it IS deliverable
-      // to this unpinned run and dies with it like the minted request.
+      // "let the agent pick" is not a channel pin — and no threadId, so
+      // it IS deliverable to this whatsapp-bound run and dies with it
+      // like the minted request.
       const autoId = await controlTx(sql, (tx) =>
         enqueueInboxTx(tx, leadId, 'staff', {
           text: "a equipe pediu uma run 'discovery'",
