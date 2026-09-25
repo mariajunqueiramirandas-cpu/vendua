@@ -1,9 +1,7 @@
 import { useEffect, useState, type ReactNode } from 'react';
 import type { Meeting } from './api.ts';
 
-/** Canonical entity labels — one source so a copy change lands once. Pairs
- *  keep pipeline order for selects/columns; the Record serves chips and
- *  inline text. */
+/** Canonical entity labels — pair order = pipeline order for selects/columns. */
 export const LEAD_STATES = [
   ['lead', 'lead'],
   ['contacted', 'contatado'],
@@ -40,7 +38,6 @@ export const MEETING_STATUS_LABEL: Record<Meeting['status'], string> = {
   cancelled: 'cancelada',
 };
 
-/** Page chrome — serif display title + count/context line + actions. */
 export function Page({
   title,
   sub,
@@ -78,7 +75,6 @@ export function StateChip({ state }: { state: string }) {
   return <span className={`chip state-${state}`}>{LEAD_STATE_LABEL[state] ?? state}</span>;
 }
 
-/** Monogram puck — marks a person/thread across the app. */
 export function Avatar({ name, lg }: { name: string; lg?: boolean }) {
   const init = name
     .trim()
@@ -94,7 +90,6 @@ export function Avatar({ name, lg }: { name: string; lg?: boolean }) {
   );
 }
 
-/** Score 0–100 as a sliver + tabular number. */
 export function ScoreBar({ score }: { score: number }) {
   const pct = Math.max(0, Math.min(100, score));
   return (
@@ -141,9 +136,7 @@ export const fmtMoney = (cents: number | null | undefined) =>
     ? '—'
     : (cents / 100).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
 
-/** Agent spend (agent_runs.cost_cents and every stat derived from it) is
- *  metered in USD — model/tool pricing — unlike lead deal values, which are
- *  BRL. Showing it through fmtMoney would print the same cents as R$. */
+/** Agent spend is metered in USD (model/tool pricing), unlike BRL deal values — don't use fmtMoney. */
 export const fmtUsd = (usd: number) => `US$ ${usd.toFixed(2)}`;
 
 export const fmtUsdCents = (cents: number | null | undefined) =>
@@ -152,9 +145,7 @@ export const fmtUsdCents = (cents: number | null | undefined) =>
 export const fmtDate = (iso: string | null | undefined) =>
   iso ? new Date(iso).toLocaleDateString('pt-BR', { day: '2-digit', month: 'short' }) : '—';
 
-/** Date-only values ('YYYY-MM-DD') — `new Date(s)` parses them as UTC
- *  midnight, which renders as the previous day anywhere west of UTC.
- *  Build a local-day Date instead. */
+/** 'YYYY-MM-DD' parses as UTC midnight — build a local-day Date to avoid the day-shift. */
 export const fmtDay = (iso: string | null | undefined) => {
   const m = iso?.match(/^(\d{4})-(\d{2})-(\d{2})/);
   if (!m) return fmtDate(iso);
@@ -199,6 +190,5 @@ export const relDue = (iso: string | null | undefined) => {
   return ms < 0 ? `há ${v}` : `em ${v}`;
 };
 
-/** True when the timestamp is in the past — pairs with .due.bad styling. */
 export const isLate = (iso: string | null | undefined) =>
   !!iso && new Date(iso).getTime() < Date.now();
