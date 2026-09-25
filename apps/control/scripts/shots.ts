@@ -1,10 +1,10 @@
 // Screenshot + layout smoke for the control app.
 //   bun scripts/shots.ts [route ...]      (defaults to every hub)
-// Env: CHROMIUM, BASE (http://localhost:5196/control/), CONTROL_KEY (dev), OUT (./shots), THEME (light|dark)
+// Env: CHROMIUM, BASE (http://localhost:5195/control/), CONTROL_KEY (dev), OUT (./shots), THEME (light|dark)
 import { chromium } from '@playwright/test';
 import { existsSync, mkdirSync } from 'node:fs';
 
-const BASE = process.env.BASE ?? 'http://localhost:5196/control/';
+const BASE = process.env.BASE ?? 'http://localhost:5195/control/';
 const KEY = process.env.CONTROL_KEY ?? 'dev';
 const OUT = process.env.OUT ?? 'shots';
 const THEME = process.env.THEME === 'dark' ? 'dark' : 'light';

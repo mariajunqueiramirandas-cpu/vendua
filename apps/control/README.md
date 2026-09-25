@@ -1,10 +1,10 @@
-# apps/control-next — the redesigned CRM console
+# apps/control — venduá CRM console
 
-Replaces `apps/control` at cutover (the folder gets renamed back). Same API
-(`/control/v1`, `src/lib/api.ts`), same base path (`/control/`), same PWA.
+Staff CRM + agent ops console. Served by Core at `/control/` in prod (built into
+`dist/`), talks to `/control/v1` through the typed client in `src/lib/api.ts`.
 
 ```sh
-bun run dev      # http://localhost:5196/control/  (proxies /control/v1 → Core :8787)
+bun run dev      # http://localhost:5195/control/  (proxies /control/v1 → Core :8787)
 bun run check    # tsc
 bun run build
 bun scripts/dev-seed.ts   # 40 leads + threads/drafts/tasks into a local Core

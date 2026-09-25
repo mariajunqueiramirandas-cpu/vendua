@@ -15,27 +15,6 @@
       "name": "@vendua/control",
       "version": "0.0.0",
       "dependencies": {
-        "@fontsource-variable/space-grotesk": "5.3.0",
-        "@fontsource/instrument-serif": "5.3.0",
-        "@types/qrcode": "^1.5.6",
-        "lucide-react": "0.468.0",
-        "qrcode": "^1.5.4",
-        "react": "18.3.1",
-        "react-dom": "18.3.1",
-        "react-router-dom": "6.30.0",
-      },
-      "devDependencies": {
-        "@types/react": "18.3.18",
-        "@types/react-dom": "18.3.5",
-        "@vitejs/plugin-react": "4.3.4",
-        "typescript": "6.0.3",
-        "vite": "5.4.19",
-      },
-    },
-    "apps/control-next": {
-      "name": "@vendua/control-next",
-      "version": "0.0.0",
-      "dependencies": {
         "@fontsource-variable/inter": "5.3.0",
         "@fontsource/instrument-serif": "5.3.0",
         "@radix-ui/react-checkbox": "1.3.11",
@@ -687,8 +666,6 @@
     "@vendua/conformance": ["@vendua/conformance@workspace:packages/conformance"],
 
     "@vendua/control": ["@vendua/control@workspace:apps/control"],
-
-    "@vendua/control-next": ["@vendua/control-next@workspace:apps/control-next"],
 
     "@vendua/core": ["@vendua/core@workspace:packages/core"],
 
