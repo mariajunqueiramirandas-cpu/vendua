@@ -3810,4 +3810,97 @@ dbDescribe('worker robustness (db)', () => {
     expect(it.consumed_by_run).toBe(dead3);
     expect(it.deliveries).toBe(2);
   });
+
+  test('failed-run release keeps answered mail — a re-serve would double-send', async () => {
+    await migrate(sql, MIGRATIONS);
+    const lead = await controlTx(sql, (tx) =>
+      insertLeadTx(tx, { name: 'Answered Mail', whatsapp: '5511910000022' }),
+    );
+    const leadId = lead.body.lead.id;
+    const [thread] = await sql<{ id: string }[]>`
+      insert into lead_threads (lead_id, channel) values (${leadId}, 'whatsapp') returning id
+    `;
+    const [inMsg] = await sql<{ id: string }[]>`
+      insert into lead_messages (thread_id, direction, author, body, status)
+      values (${thread!.id}, 'in', 'lead', 'oi', 'received') returning id
+    `;
+    const stale = new Date(Date.now() - 11 * 60_000);
+    const [run] = await sql<{ id: string }[]>`
+      insert into agent_runs (kind, lead_id, status, claim_token, attempts, max_attempts, started_at, alive_at)
+      values ('reply', ${leadId}, 'running', 'stale', 1, 1, ${stale}, ${stale})
+      returning id
+    `;
+    const itemId = await controlTx(sql, (tx) =>
+      enqueueInboxTx(tx, leadId, 'inbound', {
+        text: 'oi',
+        requestedKind: 'reply',
+        messageId: inMsg!.id,
+        params: { origin: 'inbound', channel: 'whatsapp' },
+      }),
+    );
+    const nudgeId = await controlTx(sql, (tx) =>
+      enqueueInboxTx(tx, leadId, 'staff', { text: 'a equipe pediu atenção' }),
+    );
+    const retryId = await controlTx(sql, (tx) =>
+      enqueueInboxTx(tx, leadId, 'inbound', { text: 'e ai', requestedKind: 'reply' }),
+    );
+    // send_message stamps answeredBy on the run's consumed inbound when it
+    // composes the answering dispatch — the stamp is the durable record of
+    // which mail the run's send answered. It only suppresses a release
+    // while that message is live/landed: the landed 'sent' row keeps its
+    // mail consumed, a 'failed' answer never left and its mail re-serves.
+    // The nudge carries no answer — it releases.
+    const [sentOut] = await sql<{ id: string }[]>`
+      insert into lead_messages (thread_id, direction, author, body, status, agent_run_id)
+      values (${thread!.id}, 'out', 'agent', 'oi, posso ajudar?', 'sent', ${run!.id}) returning id
+    `;
+    const [failedOut] = await sql<{ id: string }[]>`
+      insert into lead_messages (thread_id, direction, author, body, status, agent_run_id)
+      values (${thread!.id}, 'out', 'agent', 'oi, posso ajudar?', 'failed', ${run!.id}) returning id
+    `;
+    // An attempted-but-failed send is different: dispatch_attempted_at
+    // means it may already be on the wire — at-most-once keeps its mail
+    // consumed rather than risk a wire duplicate.
+    const [attemptedOut] = await sql<{ id: string }[]>`
+      insert into lead_messages (thread_id, direction, author, body, status, agent_run_id, dispatch_attempted_at)
+      values (${thread!.id}, 'out', 'agent', 'oi, posso ajudar?', 'failed', ${run!.id}, now()) returning id
+    `;
+    const attemptedId = await controlTx(sql, (tx) =>
+      enqueueInboxTx(tx, leadId, 'inbound', { text: 'oi de novo', requestedKind: 'reply' }),
+    );
+    await sql`update agent_inbox set consumed_by_run = ${run!.id}, consumed_at = now(),
+      payload = payload || jsonb_build_object('answeredBy', ${sentOut!.id}::text)
+      where id = ${itemId}`;
+    await sql`update agent_inbox set consumed_by_run = ${run!.id}, consumed_at = now()
+      where id = ${nudgeId}`;
+    await sql`update agent_inbox set consumed_by_run = ${run!.id}, consumed_at = now(),
+      payload = payload || jsonb_build_object('answeredBy', ${failedOut!.id}::text)
+      where id = ${retryId}`;
+    await sql`update agent_inbox set consumed_by_run = ${run!.id}, consumed_at = now(),
+      payload = payload || jsonb_build_object('answeredBy', ${attemptedOut!.id}::text)
+      where id = ${attemptedId}`;
+    await drain(sql, 0);
+    const rows = await sql<
+      { id: string; consumed_at: string | null; consumed_by_run: string | null }[]
+    >`
+      select id, consumed_at, consumed_by_run from agent_inbox
+      where id in (${itemId}, ${nudgeId}, ${retryId}, ${attemptedId})
+    `;
+    const answered = rows.find((r) => r.id === itemId)!;
+    const nudge = rows.find((r) => r.id === nudgeId)!;
+    const retry = rows.find((r) => r.id === retryId)!;
+    const attempted = rows.find((r) => r.id === attemptedId)!;
+    // The dead run's reconcile releases what it can still serve — the
+    // answered inbound stays consumed history (a re-serve re-sends under
+    // a fresh run id), the attempted-answer item stays consumed too (the
+    // reply may already be on the wire), the nudge and the
+    // failed-before-attempt item return to pending for the sweep.
+    expect(answered.consumed_at).not.toBeNull();
+    expect(answered.consumed_by_run).toBe(run!.id);
+    expect(attempted.consumed_at).not.toBeNull();
+    expect(attempted.consumed_by_run).toBe(run!.id);
+    expect(nudge.consumed_at).toBeNull();
+    expect(retry.consumed_at).toBeNull();
+    await sql`delete from agent_runs where status = 'queued'`;
+  });
 });

@@ -1160,6 +1160,7 @@ export function createApp({ sql, sessionSecret, controlSecret, autoDrain }: AppD
         requestedKind: kind as PlaybookKind,
         threadId: threadId ?? null,
         params,
+        forRunId: runId,
       });
       return { status: 201, body: { runId } };
     });
@@ -1784,10 +1785,10 @@ export function createApp({ sql, sessionSecret, controlSecret, autoDrain }: AppD
     const id = uuidParam(c, 'id');
     let transitioned = false;
     const res = await claimControl(sql, requireIdemKey(c), async (tx) => {
-      const rows = await tx`
+      const rows = await tx<{ params: { channel?: unknown; draftOnly?: unknown } | null }[]>`
         update agent_runs set status = 'canceled', finished_at = now(), error = 'cancelado'
         where id = ${id} and status in ('queued', 'running')
-        returning id
+        returning id, params
       `;
       if (!rows[0]) {
         const cur = (
@@ -1804,6 +1805,28 @@ export function createApp({ sql, sessionSecret, controlSecret, autoDrain }: AppD
       // event=true: cancel carries no failure signal — the deliveries
       // bound is for poison mail, not for retired runs' outstanding work.
       await releaseInboxTx(tx, id, true);
+      // …but the request the canceled run was queued FOR dies with it —
+      // staff-run items stamp forRunId at enqueue (the run this request
+      // minted or adopted). Without the tombstone a pending-forRunId item
+      // (or one just released above) respawns under the sweep and the
+      // cancel silently restarts. The kill is scoped to items the run
+      // could actually serve — drainInbox's channel/draftOnly predicate
+      // verbatim ('auto'/empty channels pin only an unpinned run) — so a
+      // forRunId item merely associated with an adopted run (say an
+      // email request riding a whatsapp run) survives to spawn its own.
+      // Unowned mail still re-serves: the lead's own inbound isn't
+      // staff's canceled request.
+      const runChan =
+        rows[0].params?.channel === 'whatsapp' || rows[0].params?.channel === 'email'
+          ? rows[0].params.channel
+          : '';
+      const runDraftOnly = rows[0].params?.draftOnly === true;
+      await tx`
+        update agent_inbox set consumed_at = now()
+        where payload->>'forRunId' = ${id} and consumed_at is null
+          and coalesce(payload->'params'->>'channel', ${runChan}) = ${runChan}
+          and (coalesce(payload->'params'->>'draftOnly', 'false') = 'true') = ${runDraftOnly}
+      `;
       transitioned = true;
       return { status: 200, body: { ok: true, status: 'canceled' } };
     });
@@ -1935,6 +1958,7 @@ export function createApp({ sql, sessionSecret, controlSecret, autoDrain }: AppD
           requestedKind: kind as PlaybookKind,
           threadId: threadId ?? null,
           params,
+          forRunId: runId,
         });
       }
       return { status: 201, body: { runId } };
@@ -2057,6 +2081,7 @@ export function createApp({ sql, sessionSecret, controlSecret, autoDrain }: AppD
           text: `a equipe definiu a meta '${goal}'`,
           requestedKind: 'outreach',
           params,
+          forRunId: runId,
         });
         await tx`update leads set agent_goal = ${goal}, updated_at = now() where id = ${id}`;
         enqueued++;

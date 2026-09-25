@@ -1442,6 +1442,36 @@ export async function executeTool(
           status: verdict.forceDraft || ctx.draftOnly ? 'draft' : 'queued',
           agentRunId: ctx.runId,
         });
+        if (!verdict.forceDraft && !ctx.draftOnly) {
+          // A dispatch committed to the wire answers the inbound batches
+          // this run still holds — record which message answered them NOW,
+          // inside the claim tx (RLS-safe — agent_inbox needs
+          // vendua.control): writing it post-dispatch would run outside
+          // controlTx AND race a cancel that releases the mail before the
+          // provider call resolves. The marker lands before the send can
+          // land, so a released item can never hide an in-flight answer.
+          // Scope: every still-unanswered inbound the run holds — the model
+          // saw them all when composing; a fallback or deliberate
+          // cross-channel reply answers mail received on another thread,
+          // so thread scoping would re-serve exactly those sends. An
+          // existing marker wins while its answer is live or on the wire
+          // (the same predicate releaseInboxTx uses) — but a marker onto a
+          // provably-dead send (failed before the provider call) re-points
+          // here, so a retry's landed send can't strand answered mail.
+          await tx`
+            update agent_inbox
+            set payload = payload || jsonb_build_object('answeredBy', ${composed.body.message.id}::text)
+            where consumed_by_run = ${ctx.runId} and kind = 'inbound'
+              and not exists (
+                select 1 from lead_messages m
+                where m.id::text = payload->>'answeredBy'
+                  and (
+                    m.status in ('queued', 'sending', 'sent', 'delivered')
+                    or m.dispatch_attempted_at is not null
+                  )
+              )
+          `;
+        }
         return {
           status: 200,
           body: { blocked: false as const, verdict, composed, pick },

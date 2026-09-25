@@ -4,6 +4,7 @@ import postgres from 'postgres';
 import { createApp } from '../src/app.ts';
 import { dispatchMessage } from '../src/agent/send.ts';
 import { claimRun, drain, flagCappedLeads, insertRun, runOnce } from '../src/agent/runner.ts';
+import { enqueueInboxTx, sweepOrphanInbox } from '../src/agent/inbox.ts';
 import { estimateModelCostUsd } from '../src/agent/llm.ts';
 import {
   capCentsOf,
@@ -757,6 +758,65 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('lead lifecycle (db)', () => {
         select lead_id from agent_runs where lead_id = ${leadId}
       `;
       expect(run!.lead_id?.toLowerCase()).toBe(leadId.toLowerCase());
+    });
+
+    test('POST /agent/runs/:id/cancel tombstones the run’s own request — no sweep restart', async () => {
+      await setup();
+      const leadId = await mkLeadApi({ name: 'Cancel Owns' }, key('a4-cxl-lead'));
+      const run = await post(
+        '/control/v1/agent/runs',
+        { kind: 'outreach', leadId },
+        key('a4-cxl-run'),
+      );
+      expect(run.status).toBe(201);
+      const { runId } = (await run.json()) as { runId: string };
+      // An email-pinned request merely associated with this unpinned run —
+      // channel pinning keeps it pending for a matching run it must
+      // outlive, so the tombstone can't take it.
+      await sql`
+        insert into agent_inbox (lead_id, kind, payload)
+        values (${leadId}, 'staff', ${sql.json({
+          text: "a equipe pediu uma run 'reply'",
+          requestedKind: 'reply',
+          params: { channel: 'email', origin: 'staff' },
+          forRunId: runId,
+        })})
+      `;
+      // An 'auto'-channeled request normalizes to unpinned at enqueue —
+      // "let the agent pick" is not a channel pin — so it IS deliverable
+      // to this unpinned run and dies with it like the minted request.
+      const autoId = await controlTx(sql, (tx) =>
+        enqueueInboxTx(tx, leadId, 'staff', {
+          text: "a equipe pediu uma run 'discovery'",
+          requestedKind: 'discovery',
+          params: { channel: 'auto', origin: 'staff' },
+          forRunId: runId,
+        }),
+      );
+      const autoRow = await sql<{ payload: { params?: { channel?: string } } }[]>`
+        select payload from agent_inbox where id = ${autoId}
+      `;
+      expect(autoRow[0]!.payload.params?.channel).toBeUndefined();
+      const cancel = await post(`/control/v1/agent/runs/${runId}/cancel`, {}, key('a4-cxl-cancel'));
+      expect(cancel.status).toBe(200);
+      // The request the queued run was minted for dies with it — a pending
+      // 'staff' item would otherwise respawn the very run staff canceled.
+      // The email request survives: it was never deliverable to this run.
+      // The 'auto' request normalized to unpinned → deliverable → tombstoned.
+      const pending = await sql<{ payload: { params?: { channel?: string } } }[]>`
+        select payload from agent_inbox where lead_id = ${leadId} and consumed_at is null
+        order by created_at
+      `;
+      expect(pending).toHaveLength(1);
+      expect(pending[0]!.payload.params?.channel).toBe('email');
+      // …and the survivor is not stranded: the sweep spawns a run for it —
+      // exactly the restart the canceled request must NOT get.
+      await sweepOrphanInbox(sql);
+      const runs = await runsFor(leadId);
+      expect(runs).toHaveLength(2);
+      expect(runs[1]!.status).toBe('queued');
+      expect(runs[1]!.kind).toBe('reply');
+      await sql`delete from agent_runs where status = 'queued'`;
     });
 
     test('POST /agent/dispatch skips a capped lead without committing its goal', async () => {
