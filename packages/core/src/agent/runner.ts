@@ -60,17 +60,10 @@ import { emitControlEvent } from '../modules/control-events.ts';
 
 const agentLog = log.child({ mod: 'agent' });
 
-/**
- * agent/runner — the Hermes-style agent loop, CRM-sized: claim a queued run
- * (FOR UPDATE SKIP LOCKED — no double-runs across replicas), converge an
- * OpenAI-style tool loop, write the whole trajectory into agent_runs.steps.
- * Every step is a journal entry; a crashed run resumes as `failed` but its
- * steps are the audit trail.
- */
+// Agent loop: claim queued runs (SKIP LOCKED), converge the tool loop, journal the trajectory in agent_runs.steps.
 
 const HEARTBEAT_MS = 20_000;
-/** Per-run lead ceiling for discovery runs launched without a meta — the
- *  safety bound the prompt can't talk past. Runs WITH a meta cap at it. */
+/** Lead ceiling for meta-less discovery runs; runs with a meta cap at it. */
 const DISCOVERY_LEAD_CAP = 20;
 
 export interface RunRow {
@@ -79,53 +72,30 @@ export interface RunRow {
   lead_id: string | null;
   thread_id: string | null;
   params: Record<string, unknown>;
-  /** Minted at claim; every worker write is conditioned on it so a worker
-   *  that loses its lease (reclaimed row) can't overwrite the new owner. */
+  /** Fencing token: every worker write is conditioned on it so a reclaimed worker can't overwrite the new owner. */
   claim_token: string;
-  /** Journal from prior attempts — a reclaimed row keeps it; the next
-   *  execution replays it into the conversation (see replayJournal) and
-   *  monid_spend markers rebuild the enrichment budget. */
+  /** Prior-attempts journal — replayed into the conversation on reclaim (see replayJournal). */
   steps: unknown[];
-  /** Executions consumed — each drain() reclaim +1; at max_attempts the
-   *  reclaim lands 'failed' instead of requeuing. */
+  /** Executions consumed; at max_attempts the reclaim lands 'failed'. */
   attempts: number;
   max_attempts: number;
 }
 
-/** Per-lead lifetime spend ceiling (leadLifetimeCostCapUsd guardrail) —
- *  enforced at insert, not claim: a capped lead must not even queue (the
- *  row would park in 'queued' forever and every sweep tick would re-spend
- *  the evaluation). The card is flagged once — a system activity plus the
- *  same '[humano] <reason>' task request_human writes — so staff sees why
- *  the agent went quiet and can raise the cap or retire the lead. */
+// Cost cap enforced at insert, not claim — a capped lead must not even queue.
 type CapVerdict = 'under' | 'flagged' | 'already';
 
-/** 'capfin' ordering rule: this blocking advisory must be a tx's FIRST
- *  lock for a lead — before any lead_threads/leads FOR UPDATE or agent_runs
- *  writes that target the same lead. A tx that takes it empty-handed can
- *  never deadlock: its later row-lock waits (a finisher's flag insert takes
- *  key-share on leads through the FK; an inbound's l,t lock is FOR UPDATE)
- *  always resolve against holders that never wait on capfin themselves —
- *  claims only TRY it, and every other evaluator holds it first too.
- *  Conversely a tx that grabbed row locks first and then waits here CAN
- *  cycle (inbound holds the lead → wants capfin; finisher holds capfin →
- *  wants the lead's key-share). */
+// 'capfin' must be a tx's FIRST lock for a lead — taken empty-handed it can't deadlock;
+// taken after row locks it can cycle (inbound holds lead → wants capfin; finisher vice-versa).
 export async function capLockTx(tx: Sql, leadId: string): Promise<void> {
   await tx`select pg_advisory_xact_lock(hashtext(${'capfin:' + leadId}))`;
 }
 
-/** 'under' admits the run; the rest refuse it. Only 'flagged' means THIS
- *  call wrote the flag + staff task — 'already' saw the flag committed at
- *  this level. */
+// 'flagged' = this call wrote the flag; 'already' = flag existed at this cap level.
 export async function leadUnderCostCapTx(tx: Sql, leadId: string): Promise<CapVerdict> {
   const g = await getSettingTx<Partial<Guardrails>>(tx, 'guardrails', {});
   const capUsd = g.leadLifetimeCostCapUsd ?? DEFAULT_GUARDRAILS.leadLifetimeCostCapUsd;
   if (capUsd <= 0) return 'under';
-  // Serialize same-lead cap decisions: two concurrent finishers each see
-  // the other's uncommitted cost_cents as absent — both under-cap, no
-  // flag, parked siblings with no task. The blocking xact advisory makes
-  // the second evaluator read the first's COMMITTED total (its own spend
-  // is visible to itself, committed or not).
+  // Blocking xact advisory serializes same-lead cap eval across concurrent finishers.
   await capLockTx(tx, leadId);
   const spent = (
     await tx<{ cents: number }[]>`
@@ -134,8 +104,7 @@ export async function leadUnderCostCapTx(tx: Sql, leadId: string): Promise<CapVe
     `
   )[0]!.cents;
   if (spent < capCentsOf(g)) return 'under';
-  // Dedupe is per cap LEVEL — after staff raises the cap, hitting the new
-  // ceiling flags again; re-crossing the same level doesn't re-alert.
+  // Dedupe per cap level — a raised cap re-flags on the next cross.
   const flagged = await tx`
     select 1 from lead_activities
     where lead_id = ${leadId} and kind = 'system' and meta->>'type' = 'cost-cap'
@@ -160,10 +129,7 @@ export async function leadUnderCostCapTx(tx: Sql, leadId: string): Promise<CapVe
   return 'flagged';
 }
 
-/** Transaction-local insert — call inside an existing tx (e.g. claimControl's)
- *  to atomically pair a run with another write. postgres.js transaction
- *  handles have no .begin(), so callers holding one must not use enqueueRun.
- *  Returns null when the lead's lifetime cost cap refuses the run. */
+// Transaction-local insert (postgres.js tx handles have no .begin()); null = cost-cap refusal.
 export async function insertRun(
   tx: Sql,
   input: {
@@ -171,28 +137,15 @@ export async function insertRun(
     leadId?: string | null;
     threadId?: string | null;
     params?: Record<string, unknown>;
-    /** earliest start — the row sits 'queued' until run_at is due
-     *  (guardrails-configured pacing); null = claimable immediately. */
+    /** earliest start; null = claimable immediately */
     runAt?: Date | null;
   },
-  /** Out-box for tx-owning callers: `flagged` set when a refusal wrote a
-   *  FRESH cap flag (emit lead.change post-commit); `retired` collects the
-   *  ids of rows `adopt` canceled — emit run.update for each post-commit,
-   *  or a Runs view watching only the new owner keeps them as queued. */
+  /** out-box: flagged = fresh cap flag (emit lead.change post-commit); retired = adopt-canceled ids (emit run.update each). */
   cap?: { flagged?: boolean; retired?: string[] },
 ): Promise<string | null> {
-  // Adopt an already-active row as the mail's owner — or retire it when
-  // it can't serve this mail: policy-parked (a queued auto row under
-  // workspace 'off', or a disabled playbook's kind) or SCHEDULED — a
-  // future-dated row never slides earlier for a caller (paced first
-  // contact has no mail carrying its delay — run_at is the only gate),
-  // so adoption can't pull its start forward. A retire re-anchors
-  // the row's own intent as an 'event' item carrying its params and
-  // deadline — unless pending mail already carries that SAME intent
-  // (matching kind, provenance marker, channel and draftOnly — and for a
-  // scheduled row a notBefore at least its deadline, e.g. the reply-quiet
-  // mail that parked it) — then releases its consumed mail. The intent
-  // parks/fires under exactly the gates the row had.
+  // Adopt an already-active row as the mail's owner — or retire it when it can't serve: policy-parked,
+  // or scheduled (its run_at never slides earlier). A retire re-anchors the row's intent as an 'event'
+  // item unless pending mail already covers it, then releases its consumed mail.
   const callerAt = input.runAt ?? new Date();
   const adopt = async (a: {
     id: string;
@@ -210,8 +163,7 @@ export async function insertRun(
       (autoOff && ('auto' in p || p['origin'] === 'inbound'));
     const scheduled = a.run_at !== null && a.run_at.getTime() > callerAt.getTime();
     if (parkedByPolicy || scheduled) {
-      // Status-conditional — a worker claiming between our select and this
-      // update means the row already owns everything arriving for it.
+      // Status-conditional: a claim in flight owns arriving mail just the same.
       const retired = await tx<{ id: string }[]>`
         update agent_runs
         set status = 'canceled',
@@ -222,13 +174,8 @@ export async function insertRun(
       `;
       if (!retired.length) return a.id;
       if (cap) (cap.retired ??= []).push(a.id);
-      // A pending item only stands in for the retired row when it carries
-      // the same intent whole: same kind, same thread, and EQUAL params —
-      // the sweep respawns from the item's own params, so a missing key
-      // loses intent while an extra gating key ('auto', channel,
-      // draftOnly) makes it spawn or drain under different constraints
-      // than the row had. A scheduled row also needs a notBefore reaching
-      // its deadline or the schedule evaporates with it.
+      // A pending item stands in only if it carries the same intent whole (kind, thread, equal
+      // params, and for a scheduled row a notBefore reaching its deadline).
       const covered = (
         await tx<{ ok: boolean }[]>`
           select exists (
@@ -256,10 +203,7 @@ export async function insertRun(
       await releaseInboxTx(tx, a.id, true);
       return null;
     }
-    // Runnable + no schedule conflict — keep the row, pull its start to
-    // the earlier of the two intents (status-conditional: a claim in
-    // flight owns the mail just the same). Each item's own notBefore
-    // still gates its drain, so inbound quiet periods hold.
+    // Runnable + no schedule conflict: keep the row, pull its start to the earlier intent.
     await tx`
       update agent_runs
       set run_at = least(coalesce(run_at, now()), ${callerAt})
@@ -268,10 +212,7 @@ export async function insertRun(
     return a.id;
   };
   if (input.leadId) {
-    // An already-active run owns the mail regardless of the cap — delivery
-    // into it costs nothing extra, so the active row wins before the cap
-    // check (a refused verdict must not strand an enqueue site that could
-    // have delivered). Callers hold capfin — the read can't race a sibling.
+    // An already-active run owns the mail regardless of the cap — delivery into it costs nothing.
     const active = await tx<
       {
         id: string;
@@ -296,13 +237,7 @@ export async function insertRun(
       return null;
     }
   }
-  // One active run per lead (agent_runs_one_active_per_lead). The mailbox
-  // model means a second insert is never an error: the caller's intent
-  // already lives in an agent_inbox item, so a conflicting row just owns
-  // the delivery — return its id. ON CONFLICT's arbiter does the check
-  // atomically inside the insert; on hit the row aborts and DO NOTHING
-  // returns nothing (the plain INSERT would instead abort the whole tx on
-  // the unique violation).
+  // One active run per lead (agent_runs_one_active_per_lead); on conflict the existing row owns the mail's delivery.
   const row = (
     await tx<{ id: string }[]>`
       insert into agent_runs (kind, lead_id, thread_id, params, run_at)
@@ -326,9 +261,7 @@ export async function insertRun(
     where lead_id = ${input.leadId ?? null} and status in ('queued', 'running')
     order by created_at limit 1
   `;
-  // Same adopt path — if the just-appearing row is policy-parked it retires
-  // and the caller's item waits for the orphan sweep (same disposition as a
-  // cap refusal: the mail is pending, the sweep mints its owner).
+  // Same adopt path — a policy-parked row retires and the caller's item waits for the orphan sweep.
   return existing[0] ? await adopt(existing[0]) : null;
 }
 
@@ -352,38 +285,21 @@ export async function enqueueRun(
   });
   if (id) emitControlEvent('run.update', id);
   for (const r of retired) emitControlEvent('run.update', r);
-  // A fresh flag committed a [humano] task — emit lead.change (unscoped;
-  // the coalescer drops middle refs on bursts) or Tasks stays stale.
+  // A fresh flag committed a [humano] task — unscoped emit or Tasks stays stale.
   if (capFlagged) emitControlEvent('lead.change');
   return id;
 }
 
-/** Flags leads already over the lifetime cap whose crossing no insert or
- *  finish will ever see (e.g. staff LOWERED leadLifetimeCostCapUsd below
- *  existing spend): without this pass their queued runs park silently.
- *  leadUnderCostCapTx dedupes per (lead, cap level) — re-runs are cheap.
- *  Called after a committed guardrails write; emits lead.change for leads
- *  that got a NEW flag so the task list refreshes at once. */
+// Flags leads already over the cap whose crossing no insert/finish will see (e.g. cap lowered
+// below existing spend); emits lead.change for fresh flags.
 export async function flagCappedLeads(sql: Sql, limit = 200): Promise<number> {
   const fresh: string[] = [];
   const excluded: string[] = [];
-  // One COMMITTED tx per batch: the xact-scoped 'capfin:' advisories
-  // leadUnderCostCapTx takes pile up until commit, so a single sweep tx on
-  // a populated DB would hold every flagged lead's lock for the whole
-  // request. Per-batch commits release them incrementally — and the
-  // not-exists dedupe makes chunking safe: a flag batch N wrote drops the
-  // lead out of batch N+1's fresh snapshot.
-  // Only UNFLAGGED-at-this-cap leads come back — without the filter a
-  // window full of already-flagged leads would let every lead beyond
-  // `limit` park silently, pass after pass. No round cap: a settings write
-  // is the only trigger, so every unflagged over-cap lead must flag or it
-  // stays parked with no staff task. Lead order is fixed (lead_id) so two
-  // concurrent sweeps take the per-lead advisories in the same order and
-  // can't cross-lock each other.
+  // One committed tx per batch so xact-scoped capfin advisories release incrementally.
+  // Scan only returns unflagged-at-this-cap leads, in fixed lead_id order so concurrent sweeps can't cross-lock.
   for (;;) {
     const batch = await controlTx(sql, async (tx) => {
-      // Settings are re-read per batch — a cap write mid-sweep is honored
-      // on the next chunk instead of being masked by the stale threshold.
+      // Settings re-read per batch so a mid-sweep cap write is honored.
       const g = await getSettingTx<Partial<Guardrails>>(tx, 'guardrails', {});
       const capUsd = g.leadLifetimeCostCapUsd ?? DEFAULT_GUARDRAILS.leadLifetimeCostCapUsd;
       const capCents = capCentsOf(g);
@@ -410,9 +326,7 @@ export async function flagCappedLeads(sql: Sql, limit = 200): Promise<number> {
       for (const { lead_id } of capped) {
         const verdict = await leadUnderCostCapTx(tx, lead_id);
         if (verdict === 'flagged') flagged.push(lead_id);
-        // 'under' means the cap ROSE mid-sweep — exclude it or a later
-        // batch re-selects it. 'already' drops out of the next batch's
-        // not-exists on its own.
+        // 'under' = cap rose mid-sweep — exclude or a later batch re-selects it.
         if (verdict === 'under') excluded.push(lead_id);
       }
       return { flagged, done: capped.length < limit };
@@ -420,9 +334,7 @@ export async function flagCappedLeads(sql: Sql, limit = 200): Promise<number> {
     fresh.push(...batch.flagged);
     if (batch.done) break;
   }
-  // Unscoped: the console coalesces a burst of events into one pending
-  // event and keeps a single ref — per-lead refs would drop intermediate
-  // cards' refreshes; one bare event refreshes every open card + the badge.
+  // Unscoped: the coalescer drops per-lead refs on bursts; one bare event refreshes all open cards.
   if (fresh.length) emitControlEvent('lead.change');
   return fresh.length;
 }
@@ -430,25 +342,14 @@ export async function flagCappedLeads(sql: Sql, limit = 200): Promise<number> {
 export async function claimRun(sql: Sql): Promise<RunRow | null> {
   const capFlagged: string[] = [];
   const run = await controlTx(sql, async (tx) => {
-    // Staff/founder numbers never run — ingest already refuses to mint
-    // them, this covers leads created before the list existed.
+    // Staff/founder numbers never run (covers leads predating the list).
     const g = await getSettingTx<Partial<Guardrails>>(tx, 'guardrails', {});
     const ignoredPhones = g.ignoredPhones ?? [];
     const ignoredDigits = ignoredPhones.map(phoneDigits).filter((d) => d.length >= 6);
-    // Over-cap leads are excluded in the SCAN — not just rejected post-pick —
-    // so a prefix of parked capped runs can't monopolize the 8-attempt loop
-    // and starve runnable leads queued behind them. The locked revalidation
-    // below still catches spend landing between scan and claim.
+    // Over-cap leads excluded in the scan itself so parked capped runs can't starve the 8-attempt loop.
     const capCents = capCentsOf(g);
-    // Autonomy/playbook switches park queued work in the scan (like the
-    // other suppressions): a disabled playbook holds every row of its kind,
-    // workspace 'off' holds only automation-queued rows (auto marker or
-    // inbound origin) — staff runs and promised callbacks stay eligible.
+    // Autonomy 'off' parks only automation-queued rows (auto marker / inbound origin); staff runs stay eligible.
     const { disabledKinds, autoOff } = await claimPolicyTx(tx);
-    // Outreach is serial per lead: a 'running' outreach row is the durable
-    // ownership token — it outlives the claim tx, so a queued same-lead
-    // outreach can only claim once the owner finishes (a crashed owner is
-    // reclaimed by lease first).
     const rejected: string[] = [];
     for (let attempt = 0; attempt < 8; attempt++) {
       const cand = await tx<RunRow[]>`
@@ -456,41 +357,30 @@ export async function claimRun(sql: Sql): Promise<RunRow | null> {
         from agent_runs r
         where r.status = 'queued'
           and (r.run_at is null or r.run_at <= now())
-          -- suppressed leads hold their queue: 'off' is a human veto, archived
-          -- and unsubscribed are suppressed everywhere else already. Runs stay
-          -- queued (pause semantics — they resume if the flag lifts).
+          -- suppressed leads park 'queued' (pause semantics — they resume if the flag lifts)
           and (r.lead_id is null or exists (
             select 1 from leads l
             where l.id = r.lead_id
               and l.agent_mode <> 'off'
               and l.archived_at is null
               and l.unsubscribed_at is null
-              -- lead-wide handoff (unbound request_human): parked like the
-              -- other suppressions — claims resume when staff lifts the flag.
               and l.agent_paused_at is null
-              -- ignored numbers park in the scan itself — rejected rows
-              -- would still consume the 8-attempt loop and a parked prefix
-              -- could starve the whole queue.
+              -- ignored numbers park in the scan so rejected rows can't starve the 8-attempt loop
               and (l.whatsapp is null or
                 regexp_replace(l.whatsapp, '\D', '', 'g') <> all(${ignoredDigits}::text[]))
               and (l.phone is null or
                 regexp_replace(l.phone, '\D', '', 'g') <> all(${ignoredDigits}::text[]))
-              -- lifetime cost cap in the scan itself (0 = uncapped): a
-              -- capped lead never becomes a candidate, it parks until the
-              -- ceiling moves.
+              -- cost cap in the scan itself: a capped lead parks until the ceiling moves
               and (${capCents} <= 0 or
                 coalesce((select sum(x.cost_cents) from agent_runs x
                           where x.lead_id = l.id), 0) < ${capCents})
           ))
-          -- a staff-paused thread suppresses the same way — revalidated here
-          -- on a fresh snapshot so a pause landing after enqueue still holds
-          -- the run (the enqueue gate can't close the post-insert window).
+          -- staff-paused threads suppress the same way
           and (r.thread_id is null or exists (
             select 1 from lead_threads t
             where t.id = r.thread_id and t.agent_enabled
           ))
-          -- the busy-lead exclusion lives in the scan itself so a durably
-          -- blocked lead never becomes a candidate — no queue-wide barrier
+          -- outreach serial per lead: a running same-lead outreach excludes the candidate
           and (r.kind <> 'outreach' or r.lead_id is null or not exists (
             select 1 from agent_runs x
             where x.lead_id = r.lead_id and x.kind = 'outreach'
@@ -505,14 +395,8 @@ export async function claimRun(sql: Sql): Promise<RunRow | null> {
       `;
       const run = cand[0];
       if (!run) return null;
-      // 'capfin' must be a tx's first lock for a lead (see capLockTx) — a
-      // claim holding this row and BLOCKING on it would cycle against a
-      // finisher's key-share. Try-only: a live evaluator means "flagging
-      // or about to be capped" — parking this candidate is the right
-      // disposition anyway, so contention just means reject. It also
-      // serializes the claim against ingestInbound's gate (which holds
-      // capfin through its cancel): while the gate runs, every same-lead
-      // candidate rejects here and the queued cancel always wins.
+      // capfin first-lock rule (see capLockTx) — try-only, contention = about to be capped, so reject.
+      // Also serializes the claim against ingestInbound's gate so the queued cancel always wins.
       if (run.lead_id) {
         const capFree = await tx<{ got: boolean }[]>`
           select pg_try_advisory_xact_lock(hashtext(${'capfin:' + run.lead_id})) as got
@@ -522,12 +406,8 @@ export async function claimRun(sql: Sql): Promise<RunRow | null> {
           continue;
         }
       }
-      // Both row revalidations fail fast under one savepoint — a contended
-      // lock means the pause/suppression writer wins, so park instead of
-      // waiting (a blocking wait on rows while holding this candidate's
-      // lock is how claims and the inbound cancel deadlocked each other).
-      // The savepoint is load-bearing: a 55P03 outside it would abort the
-      // whole claim tx, failing every later statement with 25P02.
+      // Revalidations fail fast under a savepoint: contention = suppression writer wins, park instead
+      // of waiting; the savepoint is load-bearing (a bare 55P03 would poison the claim tx).
       await tx`savepoint cand_check`;
       let lockLost = false;
       let lead:
@@ -541,11 +421,7 @@ export async function claimRun(sql: Sql): Promise<RunRow | null> {
           }
         | undefined;
       try {
-        // The scan predicate reads t.agent_enabled on the select snapshot —
-        // a pause committed between it and the status flip below would
-        // still claim. Revalidate under the thread row lock — nowait for
-        // the same reason as the lead leg: contention is "about to be
-        // suppressed", so reject.
+        // Revalidate thread/lead under row locks — a pause committed after the scan's snapshot must still hold.
         if (run.thread_id) {
           const enabled = await tx<{ agent_enabled: boolean }[]>`
             select agent_enabled from lead_threads where id = ${run.thread_id} for update nowait
@@ -593,10 +469,7 @@ export async function claimRun(sql: Sql): Promise<RunRow | null> {
           rejected.push(run.id);
           continue;
         }
-        // Lifetime cost cap, re-checked at claim: runs queued while the lead
-        // was under budget must not sail past it — parked like the other
-        // suppressions so raising the cap resumes the queued work. The lead
-        // row lock above serializes this with same-lead claim decisions.
+        // Re-check the lifetime cap at claim — runs queued under budget must not sail past it.
         const capVerdict = await leadUnderCostCapTx(tx, run.lead_id);
         if (capVerdict !== 'under') {
           if (capVerdict === 'flagged') capFlagged.push(run.lead_id);
@@ -605,11 +478,7 @@ export async function claimRun(sql: Sql): Promise<RunRow | null> {
         }
       }
       if (run.kind === 'outreach' && run.lead_id) {
-        // Serialization point for concurrent claims on one lead: the scan's
-        // not-exists only sees committed owners — a claim still mid-flight
-        // would slip past it, so the decision is made atomic under a
-        // try-advisory (it never waits → no deadlock) and 'running' is
-        // re-checked under it on a fresh snapshot.
+        // Serialize concurrent same-lead claims under a try-advisory; 'running' re-checked under it.
         const got = await tx<{ got: boolean }[]>`
           select pg_try_advisory_xact_lock(hashtext(${'claimrun:' + run.lead_id})) as got
         `;
@@ -629,10 +498,7 @@ export async function claimRun(sql: Sql): Promise<RunRow | null> {
         }
       }
       const rows = await tx<RunRow[]>`
-        -- run_at re-checks atomically: the scan's due filter is a stale
-        -- snapshot — an inbound quiet floor or a test park can push run_at
-        -- forward between scan and claim, and claiming anyway would fire a
-        -- send inside the quiet period.
+        -- run_at re-checks atomically — the scan's due filter is a stale snapshot
         update agent_runs set status = 'running', started_at = now(), alive_at = now(),
           claim_token = gen_random_uuid()::text
         where id = ${run.id} and status = 'queued'
@@ -645,29 +511,13 @@ export async function claimRun(sql: Sql): Promise<RunRow | null> {
     return null;
   });
   if (run) emitControlEvent('run.update', run.id);
-  // Claim-time refusals commit fresh flags in the same tx — the task
-  // refresh rides lead.change, unscoped like the other flag emitters.
+  // Claim-time refusals commit fresh flags in the same tx — refresh via unscoped lead.change.
   if (capFlagged.length) emitControlEvent('lead.change');
   return run;
 }
 
-/** Consumed mail a dead run can no longer answer returns to pending —
- *  the orphan sweep respawns a run for it rather than stranding the
- *  intent in a failed journal. Bounded: `deliveries` counts respawns,
- *  and after 2 the item keeps its stamp — a permanently failing item
- *  would otherwise respawn forever, and the failed run's staff task is
- *  already the human path. Shared by finishRun's 'failed' branch, the
- *  terminal-reclaim commit, and the staff-cancel endpoint. Delivery is
- *  at-least-once — the first re-serve stamps a `resumed` marker and a
- *  note in the rendered text so the serving run checks the thread
- *  history for what the dead run already did (it may have sent).
- *
- *  `event` retirements (staff cancel, wakeup cancel, inbound cancel,
- *  promised-work takeover) carry no failure signal — the run didn't die
- *  serving the mail, an event retired it — so the bound lifts: every
- *  outstanding request returns for another serve rather than stranding
- *  consumed by a canceled run. Failure retirements keep the bound —
- *  that's where poison mail lives. */
+// Re-pends consumed mail a dead/retired run can no longer answer. `deliveries` bounds respawns
+// (poison mail); `event` retirements carry no failure signal so the bound lifts.
 export async function releaseInboxTx(tx: Sql, runId: string, event?: boolean): Promise<void> {
   await tx`
     update agent_inbox i
@@ -682,14 +532,8 @@ export async function releaseInboxTx(tx: Sql, runId: string, event?: boolean): P
             end
     where i.consumed_by_run = ${runId}
       and (${event === true} or coalesce((i.payload->>'deliveries')::int, 0) < 2)
-      -- an inbound whose stamped answer is live, landed, or merely
-      -- ATTEMPTED is never outstanding work: send_message writes
-      -- answeredBy at compose-commit, and run-scoped dedup can't see
-      -- that send under a respawned run's id — releasing it re-sends.
-      -- 'failed' with dispatch_attempted_at went to the wire (timeout
-      -- after accept, worker death mid-call): at-most-once says don't
-      -- re-serve on an uncertain outcome. 'failed'/'draft' with no
-      -- attempt provably never left, so that mail re-serves.
+      -- a stamped answeredBy that is live or merely attempted means the mail was answered
+      -- (at-most-once on uncertain outcomes) — never re-serve it
       and not exists (
         select 1 from lead_messages m
         where m.id::text = i.payload->>'answeredBy'
@@ -711,19 +555,12 @@ async function finishRun(
     tokensOut: number;
     costCents: number;
     error?: string;
-    /** When set on a 'done' finish, the flip is refused unless at least
-     *  one listed message row is still alive (not rejected/failed) — the
-     *  read rides the same capfin hold as the terminal update, so an
-     *  inbound rejection serialized before it nudges instead of stranding
-     *  a 'done' run on a dead draft. */
+    /** 'done' is refused unless a listed message is still alive — the read rides the same capfin hold, so an inbound rejection serialized before it nudges instead of stranding a 'done' run on a dead draft. */
     liveMessageIds?: string[] | undefined;
   },
 ): Promise<{ matched: boolean; deadAction: boolean }> {
   const out = await controlTx(sql, async (tx) => {
-    // capfin before the run-row update — the cap evaluator that takes it
-    // first can never deadlock (see capLockTx); grabbing it after locking
-    // the run row would invert against inbound's cancel predicate, which
-    // now covers 'running' auto rows too.
+    // capfin before the run-row update (first-lock rule, see capLockTx).
     if (run.leadId) await capLockTx(tx, run.leadId);
     const liveRows =
       result.status === 'done' && result.liveMessageIds?.length
@@ -749,19 +586,11 @@ async function finishRun(
     returning id, lead_id, kind
     `;
     const r = updated[0];
-    // Same commit: the journaled trajectory lands in agent_run_steps too.
+    // Dual-write the journal into agent_run_steps in the same commit.
     if (r) await syncRunStepsTx(tx, run.id, result.steps);
-    // Failed-run visibility — a run dying here only ever showed in the Runs
-    // UI. Lead-bound failures flag the card with the same '[humano] <reason>'
-    // task request_human writes; board-scoped failures have no card and roll
-    // up into the daily digest counter instead.
+    // Lead-bound failures flag the card with a '[humano]' task; board-scoped ones roll into the digest.
     if (r?.lead_id && result.status === 'failed') {
-      // Consumed mail a dead run can no longer answer returns to pending —
-      // the orphan sweep respawns a run for it rather than stranding the
-      // intent in a failed journal. 'done'/'canceled' keep their mail: a
-      // finished run rendered it; cancel paths handle their own (the
-      // staff-cancel endpoint releases consumed mail, unsubscribe drops
-      // pending mail itself).
+      // A dead run's consumed mail re-pends for the orphan sweep; 'done'/'canceled' keep theirs.
       await releaseInboxTx(tx, run.id);
       const name =
         (await tx<{ name: string }[]>`select name from leads where id = ${r.lead_id}`)[0]?.name ??
@@ -773,24 +602,13 @@ async function finishRun(
                 null, 'agent')
       `;
     }
-    // The run that CROSSES the cap is where the alert must land — queued
-    // siblings are scan-excluded and never reach the claim check, so this
-    // is the only flag write that covers "spent past the ceiling".
-    // A SUCCESSFUL crossing flags too — the verdict distinguishes "we
-    // wrote the flag" from "it already existed", which the post-commit
-    // emit needs.
+    // The crossing run is the only flag write covering "spent past the ceiling" (queued siblings never reach claim).
     const cap = r?.lead_id ? await leadUnderCostCapTx(tx, r.lead_id) : 'under';
     return { updated, cap, deadAction };
   });
   if (out.updated.length) {
     emitControlEvent('run.update', run.id);
-    // The [humano] task lands in the tx — the task list/badge refresh on
-    // lead.change, so mirror the event a real lead update would emit. A
-    // fresh cap flag writes the same kind of task — emit on that too, or
-    // open Tasks views stay stale on a successful crossing. Fresh flags go
-    // UNSCOPED: the console coalesces a burst into one pending event with a
-    // single ref, so scoped emits would strand the middle leads' refreshes
-    // (the same reason flagCappedLeads emits bare).
+    // Emit lead.change when the tx wrote a task (failure or fresh cap flag); fresh flags emit unscoped (burst coalescing).
     const r = out.updated[0];
     if (r?.lead_id && (result.status === 'failed' || out.cap === 'flagged'))
       emitControlEvent('lead.change', out.cap === 'flagged' ? undefined : r.lead_id);
@@ -816,25 +634,17 @@ export async function contextFor(
     if (rows[0]) {
       parts.push(`LEAD: ${JSON.stringify(rows[0].j)}`);
       goal = rows[0].j.agent_goal === 'meeting' ? 'meeting' : 'negotiation';
-      // Run params can override the lead's standing goal for a one-off run —
-      // dispatch writes agent_goal; ad-hoc callers may pass params.goal only.
+      // params.goal overrides the lead's standing goal for a one-off run.
       if (run.params.goal === 'meeting' || run.params.goal === 'negotiation') {
         goal = run.params.goal;
       }
       if (run.kind === 'triage' || run.kind === 'reply' || run.kind === 'outreach') {
         parts.push(`GOAL: ${goal}`);
-        // The negotiation plan lives on the lead — surface it as its own block
-        // so the model ticks it instead of re-deriving strategy each run.
         const plan = rows[0].j.agent_plan;
         if (Array.isArray(plan) && plan.length) {
           parts.push(`PLANO: ${JSON.stringify(plan)}`);
         }
-        // Structured per-lead memory (memory v2): durable key/value facts
-        // set by set_fact calls and staff PUTs — survives plan rewrites and
-        // note churn. Low-confidence entries are marked so the model knows
-        // to re-verify before asserting them. Bounded + recent-first: a
-        // lead with >50 facts still surfaces the freshest ones. Pre-0035
-        // schemas have no table — omit the block, don't fail the run.
+        // Durable key/value lead facts (memory v2); pre-0035 schemas have no table — omit, don't fail.
         const facts = await controlTx(sql, async (tx) =>
           (await hasMemoryTablesTx(tx))
             ? leadFactsTx(tx, run.lead_id!, { limit: 50, order: 'recent' })
@@ -850,8 +660,6 @@ export async function contextFor(
               .join('\n')}`,
           );
         }
-        // Dossier: recent notes + research findings — the agent must know the
-        // business it's negotiating with, not just the raw lead row.
         const dossier = await controlTx(
           sql,
           (tx) => tx<{ kind: string; body: string | null }[]>`
@@ -869,8 +677,7 @@ export async function contextFor(
         }
         if (goal === 'meeting') {
           const meeting = await getSetting<{ bookingUrl?: string }>(sql, 'meeting', {});
-          // CRM-native link: /agendar?t=<per-lead signed token>. The stored
-          // bookingUrl stays as the fallback — mint needs the boot secret.
+          // CRM-native token link; stored bookingUrl is the fallback.
           try {
             bookingUrl =
               (await bookingLinkForRunner(sql, run.lead_id!)) ?? meeting.bookingUrl ?? null;
@@ -880,9 +687,7 @@ export async function contextFor(
           }
           parts.push(`BOOKING_URL: ${bookingUrl ?? '(não configurado)'}`);
         }
-        // Ground truth on reachable channels — the model must not compose on
-        // a channel the lead can't be reached on (the classic bug: draft on
-        // whatsapp when the lead has no number or the driver is off).
+        // Reachable-channel truth — never compose on a channel the lead can't be reached on.
         const avail = await controlTx(sql, (tx) => channelAvailabilityTx(tx, run.lead_id!));
         const chanLine = (['whatsapp', 'email'] as const)
           .map((ch) => `${ch} ${avail[ch].ok ? 'ok' : `indisponível (${avail[ch].reason})`}`)
@@ -890,8 +695,6 @@ export async function contextFor(
         parts.push(`CANAIS: ${chanLine}`);
         const want = run.params.channel;
         if (want === 'whatsapp' || want === 'email') {
-          // The pin's source is either a staff pick or the channel that
-          // delivered the mail — either way sends must ride this channel.
           parts.push(`CANAL FORÇADO: ${want}`);
         }
         if (run.params.draftOnly === true) {
@@ -903,11 +706,7 @@ export async function contextFor(
     }
   }
   if (run.thread_id) {
-    // Messages whose inbox item is still inside its quiet period stay out
-    // of context too — drainInbox holds the item, but the model could
-    // otherwise read the same text straight off the thread and reply
-    // before notBefore. Once the deadline passes the item drains and the
-    // message shows normally.
+    // Items inside their quiet period stay out of context — else the model reads them off the thread and replies before notBefore.
     const rows = await controlTx(
       sql,
       (tx) => tx`
@@ -949,8 +748,7 @@ export async function contextFor(
     parts.push(`DISCOVERY QUERY: ${String(run.params.query)}`);
     if (run.params.segment) parts.push(`SEGMENT: ${String(run.params.segment)}`);
     if (run.params.city) parts.push(`CITY: ${String(run.params.city)}`);
-    // Caller-chosen lead goal — the prompt turns it into the stop condition
-    // and create_lead enforces it as the per-run cap (ctx.leadCap).
+    // params.target is the caller-chosen lead goal (create_lead enforces it as ctx.leadCap).
     const target = Number(run.params.target);
     if (Number.isFinite(target) && target > 0) {
       parts.push(`META: criar até ${Math.floor(target)} leads`);
@@ -958,15 +756,13 @@ export async function contextFor(
     if (run.params.briefName) {
       parts.push(`BRIEF: ${String(run.params.briefName)}`);
     }
-    // What already converts — the learning loop. Discovery should lean toward
-    // segments that reply, not just the brief's default.
+    // Learning loop: lean toward segments that reply.
     const stats = await segmentStats(sql);
     if (stats.length) {
       parts.push(
         `SEGMENTOS (leads · responderam · ativos · custo):\n${stats
           .map(
             (s) =>
-              // costCents is agent spend — metered in USD, unlike deal values.
               `- ${s.segment}: ${s.leads} leads · ${s.replied} responderam · ${s.live} ativos · US$${(s.costCents / 100).toFixed(2)}`,
           )
           .join('\n')}`,
@@ -974,9 +770,7 @@ export async function contextFor(
     }
   }
   if (run.kind === 'strategist') {
-    // The weekly review's inputs: what converts (same segment table
-    // discovery sees) plus every current brief — the model proposes only
-    // gaps, so it must read the coverage it would be duplicating.
+    // The weekly review reads what converts plus every current brief.
     const stats = await segmentStats(sql);
     if (stats.length) {
       parts.push(
@@ -1004,13 +798,7 @@ export async function contextFor(
         >`select name, query, segment, city, target, enabled, created_by
            from discovery_briefs order by created_at desc`,
     );
-    // Every brief contributes one complete signature line — name, query,
-    // segment, and city are the fields overlap is judged on, so none can be
-    // truncated (a shared 80-char prefix could hide a distinguishing suffix).
-    // The section itself fits a char budget, newest first: a board that
-    // outgrows it degrades to a count rather than overflowing the context
-    // window. Exact dup checking stays deterministic in propose_brief's DB
-    // check.
+    // One full signature line per brief — name/query/segment/city are the overlap fields, none truncated.
     const BRIEFS_BUDGET = 12_000;
     let budget = BRIEFS_BUDGET;
     const lines: string[] = [];
@@ -1033,8 +821,7 @@ export async function contextFor(
   return { text: parts.join('\n\n') || '(no extra context)', goal, bookingUrl };
 }
 
-/** Journal mining — every query fired and url read this run, for the
- *  reflection tick and finish nudge ("don't re-walk dead ends"). */
+// Journal mining — queries/urls fired this run, for the reflection tick and finish nudge.
 function mineAttempts(steps: unknown[]): { queries: Set<string>; urls: Set<string> } {
   const queries = new Set<string>();
   const urls = new Set<string>();
@@ -1065,13 +852,7 @@ function mineAttempts(steps: unknown[]): { queries: Set<string>; urls: Set<strin
   return { queries, urls };
 }
 
-/** Tool-behaviour sets (ACTION/READ/MUTABLE_READS/NON_IDEMPOTENT) are
- *  derived from agent/tool-meta.ts. */
-
-/** True once this run's journal holds a landed action call — a result that
- *  neither errored, came back {blocked} (a blocked send produced nothing
- *  visible) nor {ignored} (an update_lead stripped of every field changed
- *  nothing). */
+// True once the journal holds a landed action call (non-errored, non-blocked, non-ignored).
 function runActed(steps: unknown[]): boolean {
   return steps.some((s) => {
     if (typeof s !== 'object' || s === null) return false;
@@ -1088,19 +869,9 @@ function runActed(steps: unknown[]): boolean {
   });
 }
 
-/** runActed's durable half: collects the lead_messages ids the slice's
- *  actions minted (send_message, draft_message, a farewell). A run closes
- *  'done' only while one of those artifacts is alive — inbound retire
- *  rejects stale drafts mid-run, so flipping 'done' on a dead draft would
- *  leave staff nothing to approve and the lead's mail unanswered. The
- *  liveness read happens inside finishRun's tx under capfin, serialized
- *  against ingestInbound's reject (which holds the same lock through its
- *  cancel): a plain journal-side read could see the row live and commit
- *  'done' while the rejection commits underneath it. `onlyMessages` tells
- *  the caller the slice minted ONLY messages — an action with no message
- *  artifact (request_human, set_state, create_task, update_lead) is its
- *  own effect and stays live unconditionally, so those slices skip the
- *  durable check entirely. */
+// Message ids a slice's actions minted; 'done' is refused if all are dead (an inbound rejection
+// can commit under a journal-side read — the liveness read rides finishRun's capfin hold).
+// onlyMessages = the slice minted ONLY messages; non-message actions are live unconditionally.
 function actedMessageIds(steps: unknown[]): { ids: string[]; onlyMessages: boolean } {
   const ids: string[] = [];
   let onlyMessages = true;
@@ -1129,47 +900,29 @@ function actedMessageIds(steps: unknown[]): { ids: string[]; onlyMessages: boole
   return { ids, onlyMessages };
 }
 
-/** Max chars of a replayed tool result — the model needs the call's outcome
- *  (contacts found, blocked reason, ids), not a full page dump. */
+// Cap on replayed tool-result chars — the outcome, not the full page dump.
 const REPLAY_OUT_MAX = 3000;
 
 export interface JournalReplay {
-  /** Model turns across ALL prior attempts — seeds ctx.step so a resumed
-   *  run's idempotency keys (agent:run:step:name:callId) keep their per-step
-   *  uniqueness instead of colliding with the earlier attempt's step 0..k. */
+  /** Model turns across ALL prior attempts — seeds ctx.step so idempotency keys stay unique. */
   baseStep: number;
-  /** Assistant/tool/user turns from the MOST RECENT attempt (entries after
-   *  the last 'resumed' marker), ready to append to the conversation. */
+  /** Most recent attempt's turns (entries after the last 'resumed' marker). */
   messages: AgentMessage[];
-  /** Prior attempt's prospect ledger + banked contacts — the discovery
-   *  reflection/nudge read these; without them a resumed run re-walks. */
+  /** Prior attempts' prospect ledger + banked contacts. */
   book: Map<string, BookEntry>;
   seenContacts: Set<string>;
-  /** Latest stored discovery plan — lives only in ctx (no durable field), so
-   *  the journal's plan tool output is the only place it survives a crash. */
+  /** Latest discovery plan — lives only in ctx; survives a crash only via the journal. */
   plan: string | null;
-  /** Reply's read_pages spend carries over — the cap is per RUN, not per
-   *  attempt, or a reclaim would hand back a fresh budget. */
+  /** read_pages spend carries over — the cap is per RUN, not per attempt. */
   pageReads: number;
-  /** Pages the journal already fetched — a reread after recovery hits the
-   *  rebuilt cache instead of spending against the cap twice. */
+  /** Pages already fetched — a reread hits the rebuilt cache instead of spending twice. */
   pageCache: Map<string, Promise<unknown>>;
-  /** Signatures of artifact-minting calls the journal proves landed
-   *  (clean result — pending entries whose durable claim proves they
-   *  committed are resolved into clean outs by reconcileInterrupted
-   *  before this runs; unclaimed pendings minted nothing and stay
-   *  retryable): a re-emitted one would mint a second row. */
+  /** Sigs of artifact-minting calls the journal proves landed — a re-emit would mint a second row. */
   landedSigs: Set<string>;
 }
 
-/** Replay a reclaimed run's journal into live conversation + harness state.
- *  A requeued run used to restart blind — the model redid the work and
- *  could double-contact (idempotency keys only dedupe the identical call at
- *  the identical step, which a fresh index sequence can't express). Entries
- *  land verbatim: assistant turns keep their toolCalls (id + Gemini
- *  thoughtSignature ride along), tool results replay truncated, and calls
- *  that crashed mid-batch (pending, no out) close with an explicit
- *  interrupted marker so the model re-checks state instead of assuming. */
+// Replay a reclaimed run's journal into conversation + harness state so it doesn't redo work or
+// double-contact. Entries land verbatim (toolCalls + thoughtSignatures); crashed pending calls close with an interrupted marker.
 export function replayJournal(prior: unknown[], claimsUnverified = false): JournalReplay {
   const replay: JournalReplay = {
     baseStep: 0,
@@ -1189,9 +942,7 @@ export function replayJournal(prior: unknown[], claimsUnverified = false): Journ
       if (typeof v === 'string' && v) replay.seenContacts.add(v);
     }
   };
-  /** Every contact-bearing tool output shape — mirrors what the live tools
-   *  push through ctx.seenContacts (book channels, maps candidates,
-   *  instagram foundContacts, serp result contacts). */
+  // Every contact-bearing tool output shape — mirrors what live tools push through ctx.seenContacts.
   const bankOut = (out: unknown) => {
     if (typeof out !== 'object' || out === null) return;
     const o = out as {
@@ -1225,11 +976,7 @@ export function replayJournal(prior: unknown[], claimsUnverified = false): Journ
       }
     }
   };
-  // Harness reconstruction scans the WHOLE journal — unlike the
-  // conversation (bounded to the latest attempt below), the ledger and
-  // banked contacts accumulate across attempts. Skipping earlier attempts
-  // would re-bank a phone attempt 1 already found and reset the
-  // no-progress detector.
+  // Harness scans the WHOLE journal — ledger and banked contacts accumulate across attempts.
   for (const s of prior) {
     const t = s as {
       type?: string;
@@ -1240,13 +987,8 @@ export function replayJournal(prior: unknown[], claimsUnverified = false): Journ
     if (t?.type !== 'tool') continue;
     bankOut(t.out);
     if (NON_IDEMPOTENT.has(t.name ?? '')) {
-      // Clean result = definitely landed (reconcileInterrupted resolved
-      // committed pendings into their stored responses upstream, so
-      // they arrive here as clean outs too). Errored/blocked/ignored
-      // minted nothing, and an unclaimed still-pending entry never
-      // executed — both stay retryable. Exception: when the claim
-      // lookup itself failed, an out-less entry might have committed —
-      // suppressing the re-emission beats a possible duplicate row.
+      // Clean result = landed; errored/blocked/ignored stay retryable. claimsUnverified →
+      // suppress out-less entries (they may have committed — better than a duplicate row).
       const o = t.out as { error?: unknown; blocked?: unknown; ignored?: unknown } | null;
       if (
         o === undefined
@@ -1261,20 +1003,8 @@ export function replayJournal(prior: unknown[], claimsUnverified = false): Journ
       }
     }
     if (t.name === 'read_pages') {
-      // The journaled marker is authoritative: it's the fetch spend the
-      // call charged (0 for a fully-cached read — the cap prices fetches,
-      // not calls). Current code stamps readSpent: 0 at journal time and
-      // increments it per reservation, so a dead pending entry carries
-      // its real spend — and one stamped 0 provably died before
-      // validation. Markerless entries are pre-marker legacy journals:
-      // completed calls count one spend (that era charged per call), and
-      // a still-pending/out-less entry reserves one too — the legacy
-      // runner may have died mid-fetch, and whether its fetch issued is
-      // unknowable from the journal; reserving is the conservative side
-      // for a spend cap (it can only under-fetch recovery, never breach
-      // the budget the entry's run was charged against). The two
-      // pre-check rejections (REPEAT suppression; a malformed 'needs
-      // urls' call) never reached the counter.
+      // readSpent marker is authoritative (cap prices fetches, not calls). Markerless = legacy
+      // journal: reserve one conservatively, except pre-check rejections that never fetched.
       const spent = (t as { readSpent?: number | boolean }).readSpent;
       if (typeof spent === 'number') {
         replay.pageReads += spent;
@@ -1287,9 +1017,7 @@ export function replayJournal(prior: unknown[], claimsUnverified = false): Journ
           (e.startsWith('REPEAT') || e.startsWith('read_pages needs urls'));
         if (!preCheck) replay.pageReads++;
       }
-      // Re-bank fetched pages under both request and final url — a
-      // recovered run's reread then hits the rebuilt cache instead of
-      // paying for a page the run already holds.
+      // Re-bank pages under request + final url so a reread hits the rebuilt cache.
       const ro = t.out as { pages?: { url?: unknown; finalUrl?: unknown }[] } | null;
       for (const pg of ro?.pages ?? []) {
         const rec = Promise.resolve({ page: pg });
@@ -1300,19 +1028,13 @@ export function replayJournal(prior: unknown[], claimsUnverified = false): Journ
       }
     }
     const p = t.out as { stored?: boolean; plan?: unknown } | null;
-    // Last stored plan wins — including an empty one: a cleared plan must
-    // clear, not resurrect the previous string.
+    // Last stored plan wins, including empty — a cleared plan must clear.
     if (t.name === 'plan' && p?.stored === true && typeof p.plan === 'string') {
       replay.plan = p.plan;
     }
   }
-  // Boundary = the last 'resumed' marker whose attempt actually reached the
-  // model: replay only that attempt. Earlier attempts' effects are already
-  // in CRM state (fresh contextFor output) — replaying them too would just
-  // bloat context each retry. A 'resumed' marker with no 'model' after it is
-  // an attempt that died between claim and first chat — skipping past it
-  // would hide the last substantive attempt's journal entirely, so keep
-  // walking back to one that did work.
+  // Replay only the last 'resumed' attempt that reached the model; a marker with no model
+  // after it died pre-chat — keep walking back to one that did work.
   let start = 0;
   for (let i = prior.length - 1; i >= 0; i--) {
     if ((prior[i] as { type?: string } | null)?.type !== 'resumed') continue;
@@ -1329,8 +1051,7 @@ export function replayJournal(prior: unknown[], claimsUnverified = false): Journ
       break;
     }
   }
-  // Calls the last model turn announced that still lack a journaled result.
-  // Flushed at the next model entry / end: each gets an interrupted result.
+  // Calls the last model turn announced that lack a result — each flushes as 'interrupted'.
   let pending: ToolCall[] | null = null;
   let consumed = 0;
   const flush = () => {
@@ -1356,8 +1077,7 @@ export function replayJournal(prior: unknown[], claimsUnverified = false): Journ
       args?: Record<string, unknown>;
       out?: unknown;
       content?: string;
-      // journals before replay shipped names-only; current entries carry the
-      // full ToolCall (id + thoughtSignature keep Gemini replay verbatim).
+      // legacy entries ship names-only; current carry full ToolCall (id + thoughtSignature)
       toolCalls?: (string | ToolCall)[];
       pending?: boolean;
     } | null;
@@ -1417,14 +1137,8 @@ export function replayJournal(prior: unknown[], claimsUnverified = false): Journ
   return replay;
 }
 
-/** Reconcile journaled-but-unresolved tool calls against the durable claim
- *  table. A mutation commits through claimControl under key
- *  `agent:run:step:name:callId` BEFORE the runner can journal the result —
- *  a worker that died inside that window left a real, applied effect marked
- *  pending. The stored response IS the call's result: writing it into the
- *  journal entry turns a would-be 'interrupted — verify before re-doing'
- *  into the true outcome, which is stronger than dedupe (the model never
- *  thinks the effect is missing, so it won't emit a fresh call at all). */
+// Resolve journaled-but-pending tool calls against the claim table — a worker dying between
+// the mutation's commit and the result's journal left a real applied effect marked pending.
 export async function reconcileInterrupted(
   sql: Sql,
   runId: string,
@@ -1475,13 +1189,7 @@ export async function reconcileInterrupted(
   }
 }
 
-/** The run prompt's memory feed — memory v2: pinned learnings, learnings
- *  matching the run's segment (the brief's `params.segment`, else the bound
- *  lead's `segment`), workspace learnings, latest debriefs. The legacy flat
- *  facts list only serves a schema that never ran 0035 — once the table
- *  exists it's the only source (0035 backfilled every v1 fact, so an empty
- *  feed means staff emptied it, not a gap to backfill).
- *  Exported for tests. */
+// Memory feed: pinned + segment + workspace learnings + debriefs; legacy flat list only for pre-0035 schemas.
 export async function memoryForPrompt(sql: Sql, run: RunRow): Promise<string[]> {
   return controlTx(sql, async (tx) => {
     if (await hasMemoryTablesTx(tx)) {
@@ -1505,10 +1213,7 @@ export async function memoryForPrompt(sql: Sql, run: RunRow): Promise<string[]> 
   });
 }
 
-/** Doctrine write-back — a deterministic debrief line stored as a
- *  scope='debrief' memory item on a finished run: what the segment/city
- *  yielded, which tools resolved whatsapp, which prospects dead-ended.
- *  Next run's memory feed includes recent debriefs, so runs compound. */
+// Deterministic debrief line stored as scope='debrief' memory on a finished run — next runs' feed includes it.
 export async function writeDebrief(
   sql: Sql,
   run: RunRow,
@@ -1545,12 +1250,8 @@ export async function writeDebrief(
     `${resolvers.size ? `; canais via ${[...resolvers].join('+')}` : ''}` +
     `${dead.length ? `; beco sem saída: ${dead.slice(0, 4).join(', ')}` : ''}` +
     `${ctx.monid?.spent ? `; monid $${ctx.monid.spent.toFixed(3)}` : ''}`;
-  // memory v2: debriefs are their own capped scope — they no longer evict
-  // the learnings the way the shared facts list let them. A schema ahead
-  // of the 0035 migration has no debrief sink — skip (the deploy-ordering
-  // window is hours, not a state worth alerting on). Never throws:
-  // doctrine write-back must not fail a finished run, but warn so a broken
-  // write doesn't go silent.
+  // debriefs are their own capped scope post-0035 (they no longer evict learnings);
+  // a pre-0035 schema has no sink — skip. Never throws: warn so a broken write isn't silent.
   await controlTx(sql, async (tx) => {
     if (!(await hasMemoryTablesTx(tx))) return;
     await appendDebriefTx(tx, {
@@ -1561,72 +1262,46 @@ export async function writeDebrief(
   }).catch((e) => agentLog.warn({ err: e, runId: run.id }, 'debrief write failed'));
 }
 
-// ---------------------------------------------------------------------------
-// runOnce kernel — the agent loop decomposed into named phases that share
-// one Attempt bag. runOnce itself is the spine: claim → openAttempt
-// (journal resume + cost accounting) → buildAttemptContext → runKernel
-// (model call → guards → finish gate → tool dispatch) → endgame.
-// ---------------------------------------------------------------------------
-
-/** One execution of a claimed run. The kernel phases mutate this bag so
- *  the loop reads as its spine instead of one ~700-line block. None of
- *  it is a public contract — phases own their own fields. */
 interface Attempt {
   sql: Sql;
   run: RunRow;
   claim: { id: string; claimToken: string; leadId: string | null };
-  /** reconcileInterrupted ran — false leaves pending artifact-mints
-   *  replayed conservatively (see replayJournal). */
+  /** reconcileInterrupted ran — false leaves pending artifact-mints replayed conservatively. */
   claimsChecked: boolean;
   /** The row's journal at claim time — a prefix of `steps`. */
   priorSteps: unknown[];
-  /** journal: the whole trajectory across attempts (the audit trail). */
+  /** whole trajectory across attempts (the audit trail) */
   steps: unknown[];
   messages: AgentMessage[];
-  /** Set when the row stops matching this execution: canceled via the API,
-   *  or reclaimed and re-queued after going stale. The loop unwinds at the
-   *  next boundary — in-flight tool calls finish but nothing else is
-   *  persisted or sent. */
+  /** row no longer owned by this execution — the loop unwinds at the next boundary */
   lost: boolean;
-  /** Serializes journal writes — see persist. */
+  /** serializes journal writes — see persist */
   tail: Promise<void>;
-  /** agent_run_steps cursors — entries committed so far, and the earliest
-   *  seq still pending (its row re-writes until the call's `out` lands). */
+  /** agent_run_steps cursors: entries committed / earliest pending seq (re-writes until `out` lands) */
   synced: number;
   dirtyFrom: number;
-  /** cost accounting: prior attempts' usage folded back in (finishRun
-   *  overwrites the columns wholesale) plus this attempt's deltas;
-   *  monidBudget is the live enrichment ledger. */
+  /** cost accounting: prior attempts folded in (finishRun overwrites wholesale) + this attempt's deltas */
   tokensIn: number;
   tokensOut: number;
   costUsd: number;
   monidBudget: MonidBudget;
   playbook: EffectivePlaybook;
   heartbeat: ReturnType<typeof setInterval>;
-  /** context build — provider/prompt plus the journal-replayed harness. */
+  /** context build — provider/prompt plus the journal-replayed harness */
   replay: JournalReplay;
   ctx: ToolContext;
   provider: LlmProvider;
   system: string;
   tools: AgentTool[];
-  /** Playbook kinds whose toolsets this attempt may serve — seeded with
-   *  run.kind; drainInbox adds a drained item's requestedKind so mail
-   *  asking for another kind's work (a reply intent inside an outreach
-   *  run) keeps its tools — e.g. an opt-out needs reply's unsubscribe. */
+  /** Playbook kinds this attempt may serve — drainInbox adds a drained item's requestedKind. */
   toolKinds: Set<string>;
-  /** kernel-loop state — res is the current chat() result. */
+  /** kernel-loop state — res is the current chat() result */
   i: number;
   res: LlmResult;
   nudged: boolean;
-  /** steps index of the latest drained batch carrying mail whose requestedKind
-   *  requiresAction — the finish gate's action bar inside a run whose own
-   *  playbook doesn't demand one (a triage run that picked up reply mail
-   *  still owes the lead an answer). -1 = no action-mail drained. */
+  /** steps index of the latest drained action-mail batch; -1 = none */
   actionInboxIdx: number;
-  /** The action-mail nudge's own per-attempt budget — independent of
-   *  `nudged` so discovery's produce-or-perish nudge can't consume it
-   *  (a zero-lead discovery nudge must not silence drained reply mail).
-   *  Resets on every drained batch like `nudged`. */
+  /** action-mail nudge budget, independent of `nudged`; resets per drained batch */
   actionNudged: boolean;
   limit: number;
   lastProgress: number;
@@ -1636,20 +1311,14 @@ interface Attempt {
   stateVersion: number;
 }
 
-/** Non-terminal tool entries — their row re-writes until `out` lands (the
- *  same predicate reconcileInterrupted heals on). */
+// Non-terminal tool entries — the row re-writes until `out` lands.
 const pendingToolEntry = (e: unknown): boolean => {
   const s = e as { type?: string; pending?: boolean; out?: unknown } | null;
   return s?.type === 'tool' && (s.pending === true || s.out === undefined);
 };
 
-/** Dual-write the journal into agent_run_steps inside the same commit as
- *  the agent_runs.steps write, so the two stores can't diverge mid-crash.
- *  seq is the entry's index in the committed snapshot; a committed entry
- *  is immutable except pending→out, which `on conflict` carries. `from`
- *  skips the terminal prefix. A batch entry can shift positions when a
- *  spend marker lands mid-flight — the delete first re-seats that call's
- *  row instead of doubling it under a new seq. */
+// Dual-write the journal into agent_run_steps in the same commit — the stores can't diverge
+// mid-crash. seq = index in the snapshot; pending→out upserts via on conflict; `from` skips the terminal prefix.
 async function syncRunStepsTx(
   tx: Sql,
   runId: string,
@@ -1666,9 +1335,7 @@ async function syncRunStepsTx(
       out?: unknown;
       usage?: { costUsd?: number };
     };
-    // Monetary cost only — model usage carries real USD. readSpent is a
-    // fetch count, not money, and monid_spend markers are cumulative
-    // snapshots, so neither maps to a per-row cost_cents.
+    // Monetary cost only — only model usage carries real USD.
     const costUsd = s.type === 'model' ? s.usage?.costUsd : undefined;
     return {
       step: typeof s.step === 'number' ? s.step : null,
@@ -1682,10 +1349,7 @@ async function syncRunStepsTx(
     };
   });
   if (!rows.length) return;
-  // Ghost rows: a mid-batch spend marker commits a snapshot that doesn't
-  // carry the pending `extra` batch, so previously-synced entries past the
-  // committed length are stale — drop them. Always keyed on the full
-  // snapshot length, not `from`.
+  // Drop stale rows past the committed length — a mid-batch spend marker can commit a shorter snapshot.
   await tx`
     delete from agent_run_steps where run_id = ${runId} and seq >= ${snapshot.length}
   `;
@@ -1714,14 +1378,8 @@ async function syncRunStepsTx(
   `;
 }
 
-/** Streaming journal: every write commits the steps so far — staff watch
- *  the trajectory live instead of a silent 'running' chip — AND refreshes
- *  alive_at, the reclaim lease in drain() (started_at stays the real
- *  attempt-start timestamp — UIs read it for elapsed time). Fenced by
- *  claim_token: a stale worker's write no-ops once a new claim owns the
- *  row. Writes serialize on `tail` and each snapshots [...steps, ...extra]
- *  when its turn begins, so parallel tool resolutions can only advance the
- *  journal — a delayed write never re-commits an older pending state. */
+// Streaming journal: every write commits steps-so-far + refreshes alive_at (the reclaim lease),
+// fenced by claim_token and serialized on `tail` so a delayed write never re-commits older state.
 function persist(att: Attempt, extra: unknown[] = [], consumeInbox: string[] = []): Promise<void> {
   const p = att.tail.then(async () => {
     if (att.lost) return;
@@ -1733,10 +1391,7 @@ function persist(att: Attempt, extra: unknown[] = [], consumeInbox: string[] = [
         returning id
       `;
       if (r.length) {
-        // Inbox items render exactly once: the drain's 'inbox' entry is
-        // already inside `snap`, so stamping consumed inside THIS fenced
-        // commit ties "rendered" to "journaled" — a run that loses the
-        // fence or dies before commit leaves them pending for the next.
+        // Stamp consumption inside THIS fenced commit so rendered = journaled.
         if (consumeInbox.length) {
           await tx`
             update agent_inbox set consumed_by_run = ${att.run.id}, consumed_at = now()
@@ -1760,15 +1415,11 @@ function persist(att: Attempt, extra: unknown[] = [], consumeInbox: string[] = [
   return p;
 }
 
-/** Journal write for an aborted run — the trajectory up to cancellation is
- *  still the audit trail, so keep it when the cancel endpoint flipped the
- *  row mid-flight. Fenced by claim_token like every other write: a stale
- *  worker can't overwrite the newer execution's journal. */
+// Journal write for an aborted run — keeps the trajectory as audit trail, fenced by claim_token.
 async function persistAborted(att: Attempt): Promise<void> {
   await att.tail.catch(() => undefined);
   const cap = await controlTx(att.sql, async (tx) => {
-    // capfin before the run-row update — same first-lock ordering as
-    // finishRun (see capLockTx) so the wait can never cycle.
+    // capfin first-lock ordering (see capLockTx).
     if (att.run.lead_id) await capLockTx(tx, att.run.lead_id);
     const rows = await tx<{ id: string }[]>`
       update agent_runs set steps = ${tx.json(att.steps as never[])}, finished_at = now(),
@@ -1778,8 +1429,7 @@ async function persistAborted(att: Attempt): Promise<void> {
       returning id
     `;
     if (rows.length) await syncRunStepsTx(tx, att.run.id, att.steps);
-    // The persisted spend can itself push the lead over the cap — without
-    // this check the lead's queued siblings park silently with no task.
+    // The persisted spend can itself push the lead over the cap.
     if (!rows.length || !att.run.lead_id) return 'under' as CapVerdict;
     return leadUnderCostCapTx(tx, att.run.lead_id);
   }).catch((): CapVerdict => 'under');
@@ -1787,45 +1437,23 @@ async function persistAborted(att: Attempt): Promise<void> {
   if (cap === 'flagged') emitControlEvent('lead.change');
 }
 
-/** Drain the lead's mailbox into this run: pending agent_inbox items become
- *  one 'inbox' journal entry + a user message, and are stamped consumed in
- *  the same fenced commit that journals them (persist's consumeInbox path)
- *  — an item is rendered exactly once, and only by a run that actually owns
- *  the claim. Returns the item count so finishGate can buy another turn. */
+// Drain the lead's mailbox: pending items become one 'inbox' entry + user message, stamped
+// consumed in the same fenced commit that journals them.
 async function drainInbox(att: Attempt): Promise<number> {
   if (att.lost || !att.run.lead_id) return 0;
-  // Draft-only mail rides only a draft-only run and vice-versa:
-  // delivering draft-only mail to a send-capable run would let the
-  // reaction ship unreviewed, and delivering ordinary mail to a
-  // draft-only run would strand a reply as an unapproved draft. Both
-  // sides wait pending for a compatible run (the request itself is new
-  // work, not run context).
+  // Draft-only mail rides only draft-only runs and vice-versa — a mismatch either ships
+  // unreviewed or strands a reply as an unapproved draft.
   const runDraftOnly = (att.run.params as { draftOnly?: unknown } | null)?.draftOnly === true;
-  // Channel-pinned mail likewise defers to a run pinned the same way — a
-  // delivered item can't re-point ctx.channelOverride mid-flight. A
-  // thread-bound run speaks its thread's channel even unpinned: sends
-  // route through the thread, so compatibility is judged on that channel.
+  // Channel-pinned mail defers to a run pinned the same way; a thread-bound run speaks its thread's channel.
   const runChannel =
     att.run.params?.channel === 'whatsapp' || att.run.params?.channel === 'email'
       ? att.run.params.channel
       : '';
-  // And a thread pin is a channel pin by another name — staff's 'reply on
-  // the email thread' carries payload.threadId, often without params.channel;
-  // judged on channel alone it would drain into the whatsapp run and answer
-  // on the wrong conversation. Both sides derive their effective channel
-  // from their thread (run below via runThread, item inside the scope), and
-  // a thread-bound run only takes its own thread's mail — an unbound run
-  // stays channel-compatible (its sends resolve the item's thread) — and
-  // an UNBOUND UNPINNED run can't take thread-bound mail at all: the
-  // derived channels would mismatch, which is right, since a send picked
-  // by continuity could answer the request on the wrong conversation.
+  // A thread pin is a channel pin: both sides derive effective channel from their thread;
+  // an unbound unpinned run can't take thread-bound mail (the derived channels would mismatch).
   const runThread = att.run.thread_id ?? '';
-  // Mail still inside its quiet period (payload.notBefore, stamped at
-  // enqueue) doesn't drain mid-flight either — the inbound delay holds
-  // uniformly whether the item waits for this run or its own later one.
-  // Read-only select — consumption is fenced inside persist, so a stale
-  // worker picking items here only fails later at the fence, never
-  // swallows the mail.
+  // Quiet-period mail (notBefore) doesn't drain mid-flight; consumption is fenced inside
+  // persist, so this read-only select can never swallow mail.
   const items = await controlTx(att.sql, async (tx) => {
     const effChannel =
       runChannel ||
@@ -1847,11 +1475,7 @@ async function drainInbox(att: Attempt): Promise<number> {
         and (${runThread} = '' or coalesce(payload->>'threadId', ${runThread}) = ${runThread})
         and (payload->>'notBefore' is null or (payload->>'notBefore')::timestamptz <= now())
     `;
-    // A disabled playbook's mail parks — symmetric with the sweep's
-    // eligible-first gate: draining it here would hand this run the
-    // requestedKind's toolset (reply's unsubscribe inside an outreach
-    // run) after staff switched that playbook off. The gate runs before
-    // the limit, so parked mail can't starve eligible items behind it.
+    // A disabled playbook's mail parks — draining it would hand this run its toolset anyway.
     const kinds = await tx<{ k: string }[]>`
       select distinct payload->>'requestedKind' as k from agent_inbox
       where ${scope} and payload->>'requestedKind' is not null
@@ -1864,9 +1488,7 @@ async function drainInbox(att: Attempt): Promise<number> {
       )
         off.push(k);
     }
-    // Same recheck for a thread staff paused after the item enqueued —
-    // the spawn gate consults lead_threads.agent_enabled, so the drain
-    // must too or an unbound run still serves that thread's mail.
+    // Same recheck for threads staff paused after the item enqueued.
     const dead = (
       await tx<{ t: string }[]>`
         select distinct payload->>'threadId' as t from agent_inbox
@@ -1876,11 +1498,7 @@ async function drainInbox(att: Attempt): Promise<number> {
           )
       `
     ).map((d) => d.t);
-    // Autonomy gates each item like the sweep's spawn gate: automation-
-    // marked mail ('auto' key or origin='inbound' — the same markers
-    // claimRun reads off run params) parks under workspace 'off' instead
-    // of riding an allowed staff run. Unmarked mail — staff's, promised
-    // work, the lead's own messages — still drains.
+    // Autonomy gates items like the spawn gate: automation-marked mail parks under workspace 'off'.
     const autoOff = (await autonomyTx(tx)).level === 'off';
     return tx<InboxItem[]>`
       select id, kind, payload, created_at from agent_inbox
@@ -1894,36 +1512,23 @@ async function drainInbox(att: Attempt): Promise<number> {
     `;
   });
   if (!items.length) return 0;
-  // Fresh mail is a state change for the repeat gate: bump the version so
-  // a repeated call after the batch can't match its pre-drain twin's
-  // stamp, and re-arm send_message's sig — its own dedupe keys the newest
-  // consumption stamp, so the loop gate must not hold an earlier batch's
-  // sig over a legitimately identical reply ('Obrigado!' is a valid
-  // answer twice). 'mint' sigs keep run-wide suppression — a new batch
-  // never makes a duplicate create_lead/draft legitimate, and
-  // replay-seeded sigs for THIS batch stay until it answers.
+  // New batch = new state: re-arm send_message's sig (its dedupe keys the newest consumption stamp)
+  // so a legitimate repeat reply isn't blocked; 'mint' sigs keep run-wide suppression.
   att.stateVersion++;
-  // The finish gate's one-nudge budget resets with the batch: mail that
-  // arrives after an earlier nudge deserves its own action demand, or a
-  // text-only close consumes it with nothing on the wire.
+  // Each batch gets its own finish-gate nudge budget.
   att.nudged = false;
   att.actionNudged = false;
   for (const s of att.landedSigs) {
     if (s.startsWith('["send_message",')) att.landedSigs.delete(s);
   }
-  // The mail's requestedKind joins the run's tool kinds: an 'inbound'
-  // item inside an outreach run can need reply-only tools (unsubscribe
-  // honoring an opt-out). Widen both what the model is told (att.tools)
-  // and what dispatch permits (ctx.toolKinds — same set instance).
+  // A drained item's requestedKind widens both att.tools and ctx.toolKinds (same set instance).
   for (const i of items) {
     const k = i.payload?.requestedKind;
     if (k) att.toolKinds.add(k);
   }
   widenAttemptTools(att);
   const content = renderInboxItems(items);
-  // Action-mail batches get their own finish-gate bar: reply/outreach mail
-  // drained into a run whose playbook doesn't demand action still owes the
-  // lead a visible answer — journaled so a reclaimed attempt re-seeds it.
+  // Action-mail batches get their own finish-gate bar — journaled so a reclaim re-seeds it.
   const needsAction = items.some((i) => {
     const k = i.payload?.requestedKind;
     return (
@@ -1947,9 +1552,7 @@ async function drainInbox(att: Attempt): Promise<number> {
   return items.length;
 }
 
-/** The offered toolset follows toolKinds: whatever widened the kind set
- *  (a live drain, a reclaim's stamped mail) must be visible to the
- *  model, not just permitted in dispatch. Deduped by tool name. */
+// The offered toolset follows toolKinds — deduped by tool name.
 function widenAttemptTools(att: Attempt): void {
   const seen = new Set(att.tools.map((t) => t.name));
   for (const k of att.toolKinds) {
@@ -1962,19 +1565,11 @@ function widenAttemptTools(att: Attempt): void {
   }
 }
 
-/** Attempt setup — journal resume + cost accounting: reconcile journaled
- *  calls that outlived their worker, fold prior attempts' spend back into
- *  the ledger, seed the journal (resumed marker + restored monid balance),
- *  then start the lease heartbeat. */
+// Attempt setup — journal resume + cost accounting + lease heartbeat.
 async function openAttempt(sql: Sql, run: RunRow): Promise<Attempt> {
   const priorSteps = Array.isArray(run.steps) ? run.steps : [];
-  // Heal pending entries whose mutation actually committed before the
-  // worker died — the stored claim response is the real result, not an
-  // 'interrupted' guess. Best-effort: a failed lookup just leaves them
-  // pending and they replay as interrupted like before.
-  // Whether the claim lookup actually ran — a swallowed failure means
-  // pending artifact-mints couldn't be verified, and replayJournal must
-  // suppress them conservatively rather than risk a duplicate row.
+  // Heal pending entries whose mutation committed before the worker died; if the claim lookup
+  // fails, replayJournal must suppress artifact-mints conservatively.
   const claimsChecked = await reconcileInterrupted(sql, run.id, priorSteps).then(
     () => true,
     () => false,
@@ -1984,14 +1579,10 @@ async function openAttempt(sql: Sql, run: RunRow): Promise<Attempt> {
     steps.push({ type: 'resumed', attempt: run.attempts, at: new Date().toISOString() });
   }
   const messages: AgentMessage[] = [];
-  // finishRun overwrites tokens_*/cost_cents wholesale, so a reclaimed run
-  // would lose everything its dead attempts already spent. Model entries
-  // journal per-call usage deltas — sum them back in before this attempt
-  // adds its own. Journals predating the usage field contribute 0.
+  // finishRun overwrites cost columns wholesale — fold prior attempts' journaled usage deltas back in.
   let tokensIn = 0;
   let tokensOut = 0;
-  // accumulate fractional dollars — rounding to cents per step would zero out
-  // sub-cent calls and skew the run total.
+  // accumulate fractional dollars — per-step cents rounding would zero sub-cent calls
   let costUsd = 0;
   for (const s of priorSteps) {
     const e = s as {
@@ -2004,33 +1595,24 @@ async function openAttempt(sql: Sql, run: RunRow): Promise<Attempt> {
       costUsd += e.usage.costUsd ?? 0;
     }
   }
-  // Paid-enrichment budget — hoisted beside costUsd so the catch-path
-  // finishRun can fold monid spend into the run's stored cost. A reclaimed
-  // run rebuilds from the journal's monid_spend markers — the provider
-  // re-bills whether or not the local counter survived the crash.
+  // Paid-enrichment budget — a reclaim rebuilds it from the journal's monid_spend markers.
   const priorSpend = (run.steps ?? []).reduce<number>((acc, s) => {
     const e = s as { type?: string; spentUsd?: number } | null;
     return e?.type === 'monid_spend' && typeof e.spentUsd === 'number' ? e.spentUsd : acc;
   }, 0);
-  // Every kind gets a cap — research tools aren't discovery-only anymore
-  // (triage/outreach enrich fresh cards, reply falls back to them), so a
-  // null budget would silently mean uncapped monid calls. Discovery
-  // prospecting keeps the bigger default.
-  // Playbook = code defaults merged with the staff override. A failed
-  // settings read falls back to the code defaults — never an uncapped run.
+  // Every kind gets a cap — a null budget would silently mean uncapped monid calls.
+  // A failed settings read falls back to code defaults — never an uncapped run.
   const playbook = await controlTx(sql, (tx) => loadPlaybookTx(tx, run.kind)).catch(() =>
     mergePlaybook(run.kind),
   );
   const monidBudget = new MonidBudget(
-    // 0 is a real cap (free tools only) — only an absent/non-numeric
-    // param gets the playbook default
+    // 0 is a real cap — only an absent/non-numeric param gets the playbook default
     run.params.monidCapUsd == null || !Number.isFinite(Number(run.params.monidCapUsd))
       ? playbook.monidCapUsd
       : Math.min(5, Math.max(0, Number(run.params.monidCapUsd))),
     priorSpend,
   );
-  // The restored balance must survive another crash: seed the NEW journal
-  // with it before the first persist, or a second reclaim restores zero.
+  // Seed the new journal with the restored balance before first persist — a second reclaim needs it.
   if (priorSpend > 0) steps.push({ type: 'monid_spend', spentUsd: priorSpend });
   const att: Attempt = {
     sql,
@@ -2060,8 +1642,7 @@ async function openAttempt(sql: Sql, run: RunRow): Promise<Attempt> {
     res: undefined as never,
     nudged: false,
     actionNudged: false,
-    // Re-seeded from the journal: a prior attempt's action-mail batch still
-    // owes its answer after a reclaim — the flag rides the inbox entry.
+    // re-seeded from the journal — a prior batch still owes its answer after a reclaim
     actionInboxIdx: priorSteps.reduce<number>(
       (acc, s, i) =>
         typeof s === 'object' &&
@@ -2073,23 +1654,19 @@ async function openAttempt(sql: Sql, run: RunRow): Promise<Attempt> {
       -1,
     ),
     limit: playbook.stepBudget,
-    // Last step index that produced something (lead/merge/new channel) —
-    // starts at -1 so the first tick fires after 3 truly idle steps.
+    // starts at -1 so the first tick fires after 3 truly idle steps
     lastProgress: -1,
     loopNudged: false,
     prevSigs: new Map(),
     landedSigs: new Set(),
     stateVersion: 0,
   };
-  // Every reserve/reconcile journals a monid_spend marker — a future
-  // retried attempt reads it back into the budget before it can re-spend.
+  // monid_spend markers let a retried attempt rebuild the budget before re-spending.
   monidBudget.onChange = (spent) => {
     att.steps.push({ type: 'monid_spend', spentUsd: spent });
     void persist(att);
   };
-  // A single tool/model call can outlive the 10-min lease on its own — the
-  // timer keeps alive_at fresh through it, so reclaim means a dead worker,
-  // never a live one stuck inside a slow provider call.
+  // A single call can outlive the 10-min lease — the timer keeps alive_at fresh through it.
   att.heartbeat = setInterval(() => {
     void controlTx(
       sql,
@@ -2103,18 +1680,11 @@ async function openAttempt(sql: Sql, run: RunRow): Promise<Attempt> {
   return att;
 }
 
-/** Context build — provider, system prompt (pitch + memory + lead context
- *  + playbook instructions), toolset, and the journal replay: conversation,
- *  book, banked contacts and the discovery plan all restored into ctx. */
+// Context build — provider, system prompt, toolset, journal replay into ctx.
 async function buildAttemptContext(att: Attempt): Promise<void> {
   const { sql, run, steps, messages } = att;
-  // A reclaimed attempt seeds toolKinds from run.kind only — but mail a
-  // dead earlier attempt already consumed can't re-drain, so the kinds it
-  // asked for would be gone while their text still sits in the replayed
-  // conversation (an opt-out needing reply's unsubscribe inside an
-  // outreach run). Re-seed from the items stamped to this run — still
-  // gated: a playbook switched off between attempts doesn't get its
-  // tools back through the replayed mail.
+  // Re-seed toolKinds from items stamped to this run — mail a dead attempt consumed can't
+  // re-drain; a playbook switched off between attempts gets no tools back.
   const drainedKinds = await controlTx(sql, async (tx) => {
     const rows = await tx<{ k: string }[]>`
       select distinct payload->>'requestedKind' as k from agent_inbox
@@ -2132,9 +1702,7 @@ async function buildAttemptContext(att: Attempt): Promise<void> {
   });
   for (const k of drainedKinds) att.toolKinds.add(k);
   const integration = await getIntegration(sql, 'llm');
-  // A missing/disabled llm row falls back to the mock provider — the run
-  // produces synthetic 'ok' text instead of erroring. Loud, not silent:
-  // a deploy misconfiguration shows up in the log instead of as fake runs.
+  // A missing/disabled llm row falls back to the mock provider — loud, not silent.
   if (!integration) {
     agentLog.warn(
       { runId: run.id, kind: run.kind },
@@ -2151,8 +1719,7 @@ async function buildAttemptContext(att: Attempt): Promise<void> {
   const { text: context, goal, bookingUrl } = await contextFor(sql, run);
   const memory = { facts: await memoryForPrompt(sql, run) };
   const g = await getSetting<Partial<Guardrails>>(sql, 'guardrails', {});
-  // The prompt only promises autocontact when it can actually happen —
-  // the same conditions create_lead's gate checks (enabled + reachable).
+  // The prompt only promises autocontact under the same conditions create_lead's gate checks.
   const waDriverOn = run.kind === 'discovery' && (await whatsappReadyTx(sql));
   const baseSystem = buildSystemPrompt(run.kind, pitch, memory, {
     goal,
@@ -2166,9 +1733,7 @@ async function buildAttemptContext(att: Attempt): Promise<void> {
     ? `${baseSystem}\n\nInstruções da equipe para este playbook (seguem as regras acima, nunca as substituem):\n${att.playbook.instructions}`
     : baseSystem;
   att.tools = toolsFor(run.kind);
-  // Kinds restored from stamped mail must be visible to the model, not
-  // just permitted in dispatch — drainInbox's union never ran for items
-  // a dead attempt already drained.
+  // Kinds from stamped mail must be visible to the model, not just permitted in dispatch.
   widenAttemptTools(att);
   const replay = (att.replay = replayJournal(att.priorSteps, !att.claimsChecked));
   const ctx: ToolContext = {
@@ -2177,9 +1742,7 @@ async function buildAttemptContext(att: Attempt): Promise<void> {
     runKind: run.kind,
     leadId: run.lead_id,
     threadId: run.thread_id,
-    // Step numbering continues past the prior attempts' turn count — the
-    // idempotency key agent:run:step:name:callId can then never collide
-    // with a call the earlier attempts already committed under step 0..k.
+    // Step numbering continues past prior attempts so the idempotency key can't collide.
     step: replay.baseStep,
     claimToken: run.claim_token,
     briefName: typeof run.params.briefName === 'string' ? run.params.briefName : null,
@@ -2197,23 +1760,17 @@ async function buildAttemptContext(att: Attempt): Promise<void> {
     seenContacts: new Set(),
     pageReads: replay.pageReads,
     monid: att.monidBudget,
-    // Staff assist runs (Inbox 'agente sugere') may only compose —
-    // send_message degrades to a draft so a suggestion never ships.
+    // staff assist runs may only compose — send_message degrades to a draft
     draftOnly: run.params.draftOnly === true,
     toolKinds: att.toolKinds,
   };
   att.ctx = ctx;
-  // Resume state — the journal hands back the ledger + banked contacts so
-  // the reflection tick and progress gates see the prior attempt's field.
-  // Entries are cloned on the way in: the book tool mutates its stored
-  // entry in place, and without a copy that mutation would rewrite the
-  // earlier attempt's journaled out.entry (audit trail lying about when
-  // a channel/tried entry appeared).
+  // Clone book entries on the way in — in-place mutation would rewrite the earlier
+  // attempt's journaled out.entry.
   for (const [k, e] of replay.book)
     ctx.book.set(k, { ...e, channels: { ...e.channels }, tried: [...e.tried] });
   for (const v of replay.seenContacts) ctx.seenContacts.add(v);
-  // Discovery plan is harness state with no durable home — rebuild from the
-  // journal or reflection falsely reports '(nenhum)' after a resume.
+  // No durable home for the plan — rebuild from the journal or reflection reports '(nenhum)'.
   if (replay.plan) ctx.plan = replay.plan;
 
   steps.push({ type: 'system_prompt', content: att.system });
@@ -2229,8 +1786,7 @@ async function buildAttemptContext(att: Attempt): Promise<void> {
   await persist(att);
 }
 
-/** Model call — one chat() turn: usage folds into the ledger and the turn
- *  journals verbatim (ids + thoughtSignature make replay byte-identical). */
+// One chat() turn: usage folds into the ledger and the turn journals verbatim.
 async function modelTurn(att: Attempt): Promise<void> {
   const res = (att.res = await att.provider.chat({
     system: att.system,
@@ -2239,15 +1795,11 @@ async function modelTurn(att: Attempt): Promise<void> {
   }));
   att.tokensIn += res.tokensIn;
   att.tokensOut += res.tokensOut;
-  // Provider-reported USD wins; when it reports none (gemini/anthropic/
-  // openai all return null), estimate from tokens × list rate — else a
-  // model-only lead never reaches the lifetime cost cap.
+  // Provider-reported USD wins; else estimate from tokens × list rate.
   const callCostUsd =
     res.costUsd ?? estimateModelCostUsd(att.provider.name, res.tokensIn, res.tokensOut);
   att.costUsd += callCostUsd;
-  // Full ToolCall objects, not just names: a resumed run replays this
-  // turn verbatim into the conversation — ids pair with the tool results
-  // and Gemini 3 400s without each call's thoughtSignature.
+  // Full ToolCall objects — a resumed run replays this verbatim (ids + thoughtSignature).
   att.steps.push({
     type: 'model',
     content: res.text,
@@ -2257,12 +1809,8 @@ async function modelTurn(att: Attempt): Promise<void> {
   await persist(att);
 }
 
-/** Finish gate — a no-toolCalls turn either ends the run or buys it ONE
- *  enforcement nudge: discovery's produce-or-perish pressure, or the
- *  messaging kinds' visible-action requirement. A nudge sets its own
- *  absolute limit (i + 5 → four follow-up calls plus the finishing turn)
- *  so it can't strand a run in 'max steps reached' late NOR inflate an
- *  early finish into a full second budget. */
+// Finish gate — a no-toolCalls turn either ends the run or buys it ONE nudge, with an
+// absolute limit (i + 5) so it can't strand the run late or inflate an early finish.
 async function finishGate(att: Attempt): Promise<'end' | 'again'> {
   const { sql, run, steps, messages, res } = att;
   if (run.kind === 'discovery' && !att.nudged) {
@@ -2275,9 +1823,7 @@ async function finishGate(att: Attempt): Promise<'end' | 'again'> {
           typeof (s as { out?: { lead?: { id?: string } } }).out?.lead?.id === 'string',
       )
       .map((s) => (s as { out: { lead: Record<string, unknown> } }).out.lead);
-    // A duplicate merge isn't a create — but it did merge contacts +
-    // findings into an existing lead, so a merge-only run produced
-    // work and escapes the zero-lead nudge.
+    // A merge-only run produced work — escapes the zero-lead nudge.
     const merged = steps.some(
       (s) =>
         typeof s === 'object' &&
@@ -2286,9 +1832,7 @@ async function finishGate(att: Attempt): Promise<'end' | 'again'> {
         (s as { out?: { duplicate?: boolean } }).out?.duplicate === true,
     );
     const missingWa = created.filter((l) => !(typeof l.whatsapp === 'string' && l.whatsapp.trim()));
-    // The journal knows every query fired and url read — feed it back
-    // so the extra round tries new angles instead of re-walking the
-    // dead ends that got the run here.
+    // Feed back tried queries/urls so the extra round doesn't re-walk dead ends.
     const { queries: triedQueries, urls: readUrls } = mineAttempts(steps);
     const tried =
       triedQueries.size || readUrls.size
@@ -2299,8 +1843,7 @@ async function finishGate(att: Attempt): Promise<'end' | 'again'> {
               ', ',
             )}${readUrls.size ? `; leituras ${[...readUrls].slice(0, 8).join(', ')}` : ''}.`
         : '';
-    // Per-prospect untried moves from the ledger — 'serp'/'dir' left on
-    // a wa-less lead is a concrete next step, not a generic recipe.
+    // Per-prospect untried moves from the ledger.
     const LADDER = ['maps', 'ig', 'hub', 'serp', 'dir'];
     const untried = (leadName: string): string => {
       const e = att.ctx.book.get(leadName.toLowerCase());
@@ -2321,10 +1864,7 @@ async function finishGate(att: Attempt): Promise<'end' | 'again'> {
           : null;
     if (nudge) {
       att.nudged = true;
-      // Exactly four calls after this turn: search + read +
-      // create_lead + a closing response. Firing early shrinks the
-      // remaining budget to that allowance; firing on the last step
-      // extends it just enough to process the nudge.
+      // Four calls after this turn: search + read + create_lead + a closing response.
       att.limit = att.i + 5;
       messages.push({ role: 'assistant', content: res.text ?? 'ok' });
       messages.push({ role: 'user', content: nudge });
@@ -2333,26 +1873,18 @@ async function finishGate(att: Attempt): Promise<'end' | 'again'> {
       return 'again';
     }
   }
-  // Messaging finish gate — the playbook already requires every
-  // reply/outreach run to end on a visible action; a run trying to
-  // close having only researched gets ONE nudge (same i+5 allowance
-  // as discovery's), then ends on its own. The bar resets per drained
-  // batch: mail picked up mid-attempt demands its own action — a send
-  // that answered an earlier batch can't close a text-only turn over
-  // fresh mail, or that item ends consumed with nothing on the wire.
-  // And the bar exists even when the playbook doesn't demand one:
-  // action-mail (requestedKind requiring action) drained into a
-  // triage/discovery/strategist run would otherwise close consumed and
-  // unanswered — no later run ever re-picks a consumed item.
+  // Messaging finish gate: one nudge (same i+5 allowance), resetting per drained batch —
+  // a send answering an earlier batch can't close over fresh mail. The bar exists even when
+  // the playbook doesn't demand one: action-mail drained into another kind would otherwise
+  // close consumed and unanswered — no later run re-picks a consumed item.
   const lastInbox = steps.reduce<number>(
     (acc, s, i) =>
       typeof s === 'object' && s !== null && (s as { type?: string }).type === 'inbox' ? i : acc,
     -1,
   );
   const actionBar = att.playbook.requiresAction ? lastInbox : att.actionInboxIdx;
-  // The action nudge spends `nudged` for requiresAction playbooks (it IS the
-  // playbook's own nudge) but the independent `actionNudged` elsewhere — a
-  // discovery run's zero-lead nudge must not silence drained action-mail.
+  // requiresAction playbooks spend `nudged`; others spend the independent `actionNudged` —
+  // a zero-lead nudge must not silence drained action-mail.
   const actionSpent = att.playbook.requiresAction ? att.nudged : att.actionNudged;
   const actedSlice = steps.slice(actionBar + 1);
   const gated = !actionSpent && (att.playbook.requiresAction || actionBar >= 0);
@@ -2368,26 +1900,13 @@ async function finishGate(att: Attempt): Promise<'end' | 'again'> {
     return 'again';
   };
   if (gated && !runActed(actedSlice)) return actionNudge();
-  // Mail that landed mid-attempt rides this run instead of a second one:
-  // drain before finishing so the run answers what arrived while it
-  // worked, not just what it started with. Only when a turn remains —
-  // consuming mail with no model turn left strands it in a dead journal
-  // (pending items instead fall to the orphan sweep's respawned run).
+  // Drain mid-attempt mail before finishing — but only when a turn remains, else it strands
+  // consumed in a dead journal.
   if (att.i + 1 < att.limit && (await drainInbox(att))) return 'again';
-  // A cancel landing between the last persist and now leaves the row
-  // 'canceled' — finishRun matches nothing; persistAborted's canceled-
-  // fence still stores the usage so the spend isn't lost. Debrief runs
-  // ONLY after a matched finish: work a staff member canceled must not
-  // leak into the next run's doctrine.
-  // The journal check above is stale by the time the finish flips — a
-  // draft that passed it can die to inbound retire before the commit.
-  // When every action the slice minted was a message (no artifact-free
-  // effect), their ids ride into finishRun's tx: under capfin the liveness
-  // read serializes with the reject writers (inbound retire, staff
-  // rejectMessage), so a dead-at-commit run nudges here instead of
-  // closing 'done' on nothing approvable. The check is independent of the
-  // nudge budget — a second rejection after the one-shot nudge still
-  // can't count as success.
+  // A cancel landing since the last persist leaves the row 'canceled' — finishRun matches
+  // nothing; persistAborted still stores the usage. Message ids ride into finishRun's tx so
+  // an artifact rejected under capfin before commit makes the run nudge/fail instead of
+  // closing 'done' on nothing approvable.
   const actedIds =
     att.playbook.requiresAction || actionBar >= 0 ? actedMessageIds(actedSlice) : null;
   const liveMessageIds =
@@ -2402,10 +1921,8 @@ async function finishGate(att: Attempt): Promise<'end' | 'again'> {
   });
   if (fin.deadAction) {
     if (gated) return actionNudge();
-    // Nudge already spent and every artifact is dead — 'done' would claim
-    // a visible effect that never landed. 'failed' is honest: it releases
-    // the run's consumed mail back to pending for the orphan sweep and
-    // flags the miss for staff.
+    // 'failed' releases consumed mail for the orphan sweep; 'done' would claim a
+    // visible effect that never landed.
     const dead = await finishRun(sql, att.claim, {
       status: 'failed',
       steps,
@@ -2419,8 +1936,7 @@ async function finishGate(att: Attempt): Promise<'end' | 'again'> {
   }
   if (fin.matched) {
     if (att.playbook.debrief) {
-      // debrief → agent_memory_items: the doctrine that makes the next run
-      // start smarter. Best-effort — never fail a finished run on it.
+      // debrief → agent_memory_items; best-effort — never fail a finished run on it.
       await writeDebrief(sql, run, att.ctx, steps).catch(() => undefined);
     }
   } else {
@@ -2429,20 +1945,15 @@ async function finishGate(att: Attempt): Promise<'end' | 'again'> {
   return 'end';
 }
 
-/** Tool dispatch — parallel for discovery-style playbooks (remote reads +
- *  idempotent inserts; one provider automation per call would take
- *  minutes), sequential for messaging kinds (calls in one response may
- *  depend on each other's ordering — draft before send). */
+// Parallel for discovery-style playbooks, sequential for messaging kinds (calls may
+// depend on each other's ordering — draft before send).
 async function dispatchStep(att: Attempt): Promise<void> {
   if (att.playbook.parallelTools) await dispatchParallel(att);
   else await dispatchSequential(att);
 }
 
-/** Parallel dispatch — pending entries journal callId+step BEFORE
- *  execution: a crash mid-batch leaves entries reconcileInterrupted can
- *  resolve against the durable claim table (key agent:run:step:name:callId).
- *  After the batch lands, the reflection tick pressures the model when
- *  four steps passed without progress. */
+// Pending entries journal callId+step BEFORE execution so reconcileInterrupted can resolve
+// a mid-batch crash against the claim table; the reflection tick follows the batch.
 async function dispatchParallel(att: Attempt): Promise<void> {
   const { res, steps, messages } = att;
   const batch: unknown[] = res.toolCalls.map((call, callIndex) => ({
@@ -2483,10 +1994,8 @@ async function dispatchParallel(att: Attempt): Promise<void> {
   steps.push(...batch);
   messages.push(...toolMsgs);
 
-  // Reflection tick — progress = a lead created/merged, a channel
-  // landed on the book, or an enrichment hit. 4 steps of drift and the
-  // harness reflects the field state back and asks for the next move;
-  // what to do stays the model's call, this is just pressure.
+  // Reflection tick — 4 steps without progress (no lead/merge, new channel, or enrichment
+  // hit) reflects the field state back and asks for the next move.
   if (!att.lost) {
     const progressed = batch.some((b) => {
       if (typeof b !== 'object' || !b) return false;
@@ -2497,10 +2006,8 @@ async function dispatchParallel(att: Attempt): Promise<void> {
       const out = s.out;
       if (!out) return false;
       if (s.name === 'create_lead' && (out.lead || out.duplicate)) return true;
-      // book: only NEWLY added channels count — a repeat upsert of the
-      // same instagram isn't progress
+      // book: only NEWLY added channels count; enrichment: only non-banked contacts
       if (s.name === 'book' && (out.addedChannels as string[] | undefined)?.length) return true;
-      // enrichment: only contacts not already banked count
       if (typeof out.newContacts === 'number' && out.newContacts > 0) return true;
       return false;
     });
@@ -2521,22 +2028,15 @@ async function dispatchParallel(att: Attempt): Promise<void> {
   }
 }
 
-/** Sequential dispatch + loop guard — re-emitting a call whose previous
- *  result was clean can't produce anything new, and re-running a
- *  side-effecting call would duplicate it (send_message has no
- *  cross-step dedupe — a re-emitted identical send literally re-sends).
- *  Suppress per call — each repeated call gets a "já executada" result —
- *  and when the whole turn repeated, nudge once: act differently or
- *  finish. */
+// Sequential dispatch + loop guard: a repeated clean call can't produce anything new and
+// re-running a side-effecting call would duplicate it — suppress per call; nudge when the whole turn repeats.
 async function dispatchSequential(att: Attempt): Promise<void> {
   const { res, steps, messages } = att;
   const curSigs = new Map<string, { ok: boolean; v: number }>();
   let allRepeat = res.toolCalls.length > 0;
   for (const [callIndex, call] of res.toolCalls.entries()) {
     const callId = call.id ?? String(callIndex);
-    // Journal the pending call BEFORE executing: a crash between the
-    // mutation's commit and the result's journal write leaves an
-    // entry the next attempt reconciles against the claim table.
+    // Journal the pending call BEFORE executing — a crash leaves it reconcilable.
     const entry: {
       type: 'tool';
       name: string;
@@ -2554,30 +2054,21 @@ async function dispatchSequential(att: Attempt): Promise<void> {
       step: att.ctx.step,
       pending: true,
     };
-    // read_pages carries its spend marker from birth — 0 until a
-    // reservation stamps it. A markerless entry in a replayed
-    // journal can therefore only be a pre-marker legacy read, which
-    // replay counts conservatively (that era charged per call).
+    // A markerless read_pages entry in a replayed journal is a legacy pre-marker read,
+    // counted conservatively.
     if (call.name === 'read_pages') entry.readSpent = 0;
     steps.push(entry);
     await persist(att);
     const sig = JSON.stringify([call.name, call.args ?? {}]);
     const prev = att.prevSigs.get(sig);
-    // Suppress only while NOTHING landed since the prior clean
-    // result — reads AND writes share the version check, since a
-    // repeated write after an intervening mutation can be a
-    // legitimate state-restore. Artifact-minters are the exception:
-    // a duplicate is never legitimate, always suppressed.
+    // Suppress only while nothing landed since the prior clean result; artifact-minters
+    // are the exception — a duplicate is never legitimate.
     const repeatHit = att.landedSigs.has(sig) || (prev?.ok === true && prev.v === att.stateVersion);
-    // Mutable reads re-execute on a repeat so external edits stay
-    // visible — but they still count toward allRepeat, or a
-    // read-only loop would dodge the LOOP nudge entirely.
+    // Mutable reads re-execute but still count toward allRepeat.
     const suppress = !MUTABLE_READS.has(call.name) && repeatHit;
     const readsBefore = att.ctx.pageReads;
-    // Let a read_pages call stamp each fetch reservation onto its
-    // pending journal entry the moment it validates — a worker that
-    // dies mid-batch leaves the real spend persisted, and an entry
-    // without one provably never reached validation.
+    // read_pages stamps each fetch reservation onto its pending journal entry the moment
+    // it validates — a mid-batch death leaves the real spend persisted.
     if (call.name === 'read_pages') {
       att.ctx.markReadSpent = async (delta: number) => {
         entry.readSpent = (entry.readSpent ?? 0) + delta;
@@ -2593,8 +2084,6 @@ async function dispatchSequential(att: Attempt): Promise<void> {
           'REPEAT — chamada idêntica à anterior já foi executada nesta run; o resultado já está no contexto e não muda. Faça algo diferente ou encerre.',
       };
     } else {
-      // A proven repeat that isn't suppressed (a mutable read) still
-      // counts as a repeat for the loop nudge.
       if (!repeatHit) allRepeat = false;
       try {
         out = await executeTool(att.ctx, callId, call.name, call.args);
@@ -2602,8 +2091,7 @@ async function dispatchSequential(att: Attempt): Promise<void> {
         out = { error: e instanceof Error ? e.message : String(e) };
       }
     }
-    // Journal whether the call spent a read: the cap charges fetches,
-    // not calls, so a cached read_pages entry must not count on replay.
+    // The cap charges fetches, not calls — a cached read_pages entry must not count on replay.
     if (call.name === 'read_pages') entry.readSpent = att.ctx.pageReads - readsBefore;
     const res_ = out as {
       error?: unknown;
@@ -2611,9 +2099,7 @@ async function dispatchSequential(att: Attempt): Promise<void> {
       ignored?: unknown;
       errors?: unknown;
     } | null;
-    // Per-url failures ride in errors[] (read_pages), not top-level
-    // error — a result that reports fetch failures isn't a clean
-    // prior result, so its retry must reissue, not suppress.
+    // Per-url fetch failures ride in errors[] — such a result isn't a clean prior, retry reissues.
     const clean =
       typeof res_ === 'object' &&
       res_ !== null &&
@@ -2621,13 +2107,9 @@ async function dispatchSequential(att: Attempt): Promise<void> {
       res_.blocked !== true &&
       res_.ignored !== true &&
       !(Array.isArray(res_.errors) && res_.errors.length > 0);
-    // A suppressed call stands on its earlier clean result — its own
-    // REPEAT error must not mark the signature retryable or the next
-    // identical emission would execute again.
+    // A suppressed call's REPEAT error must not mark the signature retryable.
     if (clean && !READ_TOOLS.has(call.name)) att.stateVersion++;
-    // Writes record the POST-call version — 'nothing landed since it
-    // ran' must not count the call's own write, or every repeated
-    // write would look stale to itself.
+    // Writes record the post-call version — 'nothing landed since' must not count the call's own write.
     curSigs.set(sig, suppress ? prev! : { ok: clean, v: att.stateVersion });
     if (clean && NON_IDEMPOTENT.has(call.name)) att.landedSigs.add(sig);
     delete entry.pending;
@@ -2651,10 +2133,7 @@ async function dispatchSequential(att: Attempt): Promise<void> {
   }
 }
 
-/** Endgame — the loop unwound: lost fencing journals the abort; otherwise
- *  step exhaustion is a failure — the model never converged. For
- *  discovery the trajectory still reports what it produced: the create
- *  count keeps a lead-yielding run from reading as a dead loss. */
+// Loop unwound: step exhaustion is a failure; the create count still reports what it produced.
 async function endAttempt(att: Attempt): Promise<void> {
   if (att.lost) {
     await persistAborted(att);
@@ -2679,8 +2158,6 @@ async function endAttempt(att: Attempt): Promise<void> {
       })
     ).matched
   ) {
-    // A budget-exhausted run still taught the field something — its leads
-    // and dead ends belong in the doctrine too.
     if (att.playbook.debrief)
       await writeDebrief(att.sql, att.run, att.ctx, att.steps).catch(() => undefined);
   } else {
@@ -2688,8 +2165,7 @@ async function endAttempt(att: Attempt): Promise<void> {
   }
 }
 
-/** Error path — any throw lands as a failed run; losing the fence degrades
- *  to persistAborted so the trajectory + spend still commit. */
+// Any throw lands as a failed run; a lost fence degrades to persistAborted.
 async function failAttempt(att: Attempt, e: unknown): Promise<void> {
   if (
     !(
@@ -2706,15 +2182,10 @@ async function failAttempt(att: Attempt, e: unknown): Promise<void> {
     await persistAborted(att);
 }
 
-/** The kernel loop — the phases as middleware: inbox drain → model turn →
- *  finish gate → tool dispatch, for `limit` steps or until the run loses
- *  its fence. Draining first covers both "items queued while the run sat
- *  parked" (first iteration) and "items landed mid-attempt" (every step
- *  boundary after). */
+// Kernel loop: inbox drain → model turn → finish gate → tool dispatch, for `limit` steps
+// or until the run loses its fence.
 async function runKernel(att: Attempt): Promise<void> {
-  // Artifact-minters get a run-wide window instead: a duplicate row is
-  // never a state-restore no matter how many turns passed, and the
-  // journal-seeded set survives reclaim.
+  // Artifact-minters get a run-wide window — a duplicate is never a state-restore.
   att.landedSigs = new Set(att.replay.landedSigs);
   for (att.i = 0; att.i < att.limit && !att.lost; att.i++) {
     await drainInbox(att);
@@ -2775,24 +2246,16 @@ export async function runOnce(sql: Sql): Promise<boolean> {
   return true;
 }
 
-/** Drain the queue — called by the worker loop and after enqueues. First
- *  reclaims runs whose worker died mid-flight (crash/restart leaves them
- *  'running' forever): past the lease they're requeued, not failed, so a
- *  crashed outreach still reaches the lead. */
+// Drain the queue; reclaims runs whose worker died (requeued past the lease, not failed).
 const RUN_LEASE_MIN = 10;
 
 export async function drain(sql: Sql, limit = 20): Promise<number> {
-  // Reclaim consumes an attempt: the row requeues behind an exponential
-  // backoff (run_at = now + 2^attempts min) so a poisoned run stops jumping
-  // ahead of healthy work, and the attempt that exhausts max_attempts lands
-  // 'failed' — journal kept — instead of looping the lease forever.
+  // Requeue behind exponential backoff (2^attempts min); exhausting max_attempts lands 'failed'.
   const capFlaggedIds: string[] = [];
-  // Track task writes separately from cap flags — a normal failed run's
-  // [humano] task needs the same lead.change refresh a fresh flag earns.
+  // A normal failed run's [humano] task needs the same lead.change refresh a fresh flag earns.
   let taskLanded = false;
   const { requeued, terminal } = await controlTx(sql, async (tx) => {
-    // Requeue below-cap attempts in one bulk pass — nothing else needs to
-    // commit with them (the retry's own finishRun folds its total spend).
+    // Bulk requeue below-cap attempts; the retry's own finishRun folds its total spend.
     const requeued = await tx<{ id: string }[]>`
       update agent_runs set
         attempts = attempts + 1,
@@ -2805,11 +2268,8 @@ export async function drain(sql: Sql, limit = 20): Promise<number> {
         and coalesce(alive_at, started_at) < now() - make_interval(mins => ${RUN_LEASE_MIN})
       returning id
     `;
-    // Terminal rows are finalized one tx each below — the 'running' row
-    // itself is the pending marker: a crash between rows leaves the rest
-    // stale, and the next drain re-picks them (spend fold + task + cap
-    // check all retry with it). A bulk mark-then-finalize split would
-    // strand a 'failed' row with no spend and no task on restart.
+    // Finalize terminal rows one tx each — the 'running' row is the pending marker,
+    // so a crash mid-finalize leaves the rest for the next drain to re-pick.
     const terminal = await tx<{ id: string; lead_id: string | null; kind: RunRow['kind'] }[]>`
       select id, lead_id, kind from agent_runs
       where status = 'running' and attempts + 1 >= max_attempts
@@ -2820,13 +2280,9 @@ export async function drain(sql: Sql, limit = 20): Promise<number> {
   for (const r of requeued) emitControlEvent('run.update', r.id);
   for (const f of terminal) {
     const flagged = await controlTx(sql, async (tx) => {
-      // capfin before the row write — the bulk pass holds every reclaimed
-      // row's lock, so a capfin wait in there could cycle against an
-      // inbound gate (see capLockTx); inside each small tx it's first.
+      // capfin first inside each small tx (see capLockTx).
       if (f.lead_id) await capLockTx(tx, f.lead_id);
-      // The 'failed' transition, spend fold, staff task, and cap check are
-      // one commit — fenced on staleness so a row revived between the
-      // select and here skips the whole finalize instead of half of it.
+      // One commit, fenced on staleness — a revived row skips the whole finalize.
       const rows = await tx<{ id: string; lead_id: string | null }[]>`
         update agent_runs set
           attempts = attempts + 1,
@@ -2850,20 +2306,11 @@ export async function drain(sql: Sql, limit = 20): Promise<number> {
         returning id, lead_id
       `;
       const row = rows[0];
-      // A stale row revived between select and update skips the whole
-      // finalize — no task, no flag, no emit, and consumed mail stays
-      // stamped to the (still-living) run.
       if (!row) return { task: false, cap: false };
-      // Mail the dead run consumed goes back to pending in the same
-      // fenced commit — the inbox sweep respawns it.
+      // The dead run's consumed mail re-pends in the same commit — the inbox sweep respawns it.
       await releaseInboxTx(tx, row.id);
-      // A dead attempt never reached finishRun — its spend lives only in
-      // the journal. Model entries are usage DELTAS (sum them); monid_spend
-      // markers carry the CUMULATIVE budget balance at each write — the
-      // fold above reads the LAST marker like runOnce's priorSpend, never
-      // a sum (summing cumulative balances would inflate cost_cents).
-      // Same failed-run visibility as finishRun's path; board-scoped
-      // failures roll into the digest instead — no task, no emit.
+      // Spend lives only in the journal: model entries are DELTAS (sum), monid_spend markers
+      // are CUMULATIVE (read the last). Board-scoped failures roll into the digest — no task, no emit.
       if (!row.lead_id) return { task: false, cap: false };
       const name =
         (await tx<{ name: string }[]>`select name from leads where id = ${row.lead_id}`)[0]?.name ??
@@ -2874,8 +2321,7 @@ export async function drain(sql: Sql, limit = 20): Promise<number> {
                 ${`[humano] ${name}: run ${f.kind} falhou — tentativas esgotadas, a run morria no meio`.slice(0, 300)},
                 null, 'agent')
       `;
-      // And now that the spend persisted, run the same cap check every
-      // other terminal path does — dead-run spend can itself cross the cap.
+      // Dead-run spend can itself cross the cap.
       return {
         task: true,
         cap: (await leadUnderCostCapTx(tx, row.lead_id)) === 'flagged',
@@ -2886,12 +2332,8 @@ export async function drain(sql: Sql, limit = 20): Promise<number> {
     emitControlEvent('run.update', f.id);
   }
   if (capFlaggedIds.length || taskLanded) emitControlEvent('lead.change');
-  // Terminal suppressions strand queued runs forever — the claim gate's
-  // pause semantics never lifts them. unsubscribe writers cancel inline,
-  // archive doesn't, so this sweep is the catch-all for both (a writer
-  // that forgets, or rows parked before the inline cancels existed).
-  // agent_paused_at and agent_mode='off' are NOT touched: those flags
-  // lift and their parked runs must resume.
+  // Terminal suppressions strand queued runs forever — the catch-all for writers that
+  // didn't cancel inline. agent_paused_at / agent_mode='off' lift, so their parked runs must resume.
   const parked = await controlTx(
     sql,
     (tx) => tx<{ id: string }[]>`
@@ -2904,9 +2346,8 @@ export async function drain(sql: Sql, limit = 20): Promise<number> {
     `,
   );
   for (const r of parked) emitControlEvent('run.update', r.id);
-  // 'sending' past the lease = worker died between provider call and status
-  // write. Fail it visibly — staff redrafts — instead of silently requeuing
-  // (at-most-once: the provider may already have accepted it).
+  // 'sending' past the lease = worker died mid-send — fail visibly (at-most-once: the
+  // provider may already have accepted it).
   const failedSending = await controlTx(
     sql,
     (tx) => tx<{ thread_id: string }[]>`
@@ -2916,14 +2357,9 @@ export async function drain(sql: Sql, limit = 20): Promise<number> {
     `,
   );
   for (const m of failedSending) emitControlEvent('thread.message', m.thread_id);
-  // Queued messages outlive the request that queued them — a crash between
-  // approve/commit and dispatch must not strand one. The 20s grace lets the
-  // inline request-path dispatch win first.
-  // Agent-authored rows die with their run first: the tool path's claim
-  // fence leaves a canceled/cap-exhausted run's message 'queued' on purpose
-  // — picking it up here unguarded would outflank the fence 20s later.
-  // Staff-approved drafts are staff-owned (approved_by set) even though
-  // they keep agent_run_id — approval is the explicit decision to send.
+  // Queued messages outlive their request; the 20s grace lets the inline dispatch win.
+  // Agent-authored rows stay 'queued' under the claim fence until the run is terminal;
+  // staff-approved drafts are staff-owned.
   const failedQueued = await controlTx(
     sql,
     (tx) => tx<{ thread_id: string }[]>`
@@ -2938,18 +2374,9 @@ export async function drain(sql: Sql, limit = 20): Promise<number> {
     `,
   );
   for (const m of failedQueued) emitControlEvent('thread.message', m.thread_id);
-  // Mail a dead run still holds re-pends. Reconcile/cancel releases ran
-  // once, when the run's answering send may still have been in flight —
-  // a suppressed answeredBy marker that later flips 'failed' never gets
-  // another pass and strands the item forever. Re-running the same
-  // release on dead owners picks up exactly those flips; live/attempted
-  // markers still suppress, so a landed (or on-the-wire) answer keeps
-  // its mail consumed. Canceled owners release unbounded like the cancel
-  // endpoint — a cancel carries no failure signal, so the poison-mail
-  // deliveries bound doesn't apply. The 2h bound keeps the scan
-  // proportional to recent deaths: every post-death flip (queued→failed,
-  // stale sending→failed) resolves within the message lease horizon, so
-  // older dead runs are settled history.
+  // Re-run release on dead owners: a suppressed answeredBy that later flips 'failed'
+  // otherwise strands its mail forever. Canceled owners release unbounded (no failure
+  // signal → deliveries bound doesn't apply). 2h bound keeps the scan proportional to recent deaths.
   await controlTx(sql, async (tx) => {
     const deadOwners = await tx<{ id: string; status: string }[]>`
       select distinct i.consumed_by_run as id, r.status
@@ -2975,13 +2402,8 @@ export async function drain(sql: Sql, limit = 20): Promise<number> {
       `,
   );
   for (const m of stranded) {
-    // Agent-authored rows only recover once the run is 'done': a 'queued' or
-    // 'running' run still owns its send — the owning attempt dispatches it
-    // under the new claim (a replayed compose re-runs dispatch with the new
-    // token, and an already-sent row no-ops on status). The terminal-mark
-    // above already failed canceled/failed runs; approved rows are staff-
-    // owned. The guard locks the run row inside the dispatch claim tx so a
-    // cancel landing in the mark→dispatch gap still can't send.
+    // Agent-authored rows recover only once the run is 'done' — a live run still owns its
+    // send; the run-row lock inside the claim tx keeps a cancel in the gap from sending.
     const runId = m.approved_by ? null : m.agent_run_id;
     const guard = runId
       ? async (tx: Sql) => {
@@ -3001,9 +2423,7 @@ export async function drain(sql: Sql, limit = 20): Promise<number> {
       agentLog.error({ err: e, messageId: m.id }, 'dispatch failed'),
     );
   }
-  // Orphaned mail: items whose enqueueing side never got a run for them
-  // (cap refusal, the run they rode died before draining, a lost race).
-  // The sweep creates the fallback run each payload describes.
+  // Orphaned mail: the sweep creates the fallback run each payload describes.
   await sweepOrphanInbox(sql).catch((e) => agentLog.error({ err: e }, 'inbox sweep failed'));
   let ran = 0;
   while (ran < limit && (await runOnce(sql))) ran++;
@@ -3013,15 +2433,11 @@ export async function drain(sql: Sql, limit = 20): Promise<number> {
 let workerTimer: ReturnType<typeof setInterval> | null = null;
 let draining = false;
 
-/** Persistent in-process worker: polls the durable queue, plus the periodic
- *  outreach sweep. Queue lives in Postgres, so queued runs survive reboots. */
+// In-process worker: durable Postgres queue + periodic sweeps.
 export function startAgentWorker(sql: Sql, intervalMs = 15_000) {
   if (workerTimer) return;
-  // Leads already over the cap before this deploy (or stranded by a
-  // direct-db spend write) park all queued work until flagged — the
-  // settings-write sweep can't reach them without a write. The boot pass
-  // covers the deploy case now; keeping it in the tick chain means a
-  // failed pass retries next interval instead of waiting for a restart.
+  // Over-cap leads without a settings write park queued work until flagged;
+  // keeping the pass in the tick chain retries a failure next interval.
   void flagCappedLeads(sql).catch((e) => agentLog.error({ err: e }, 'boot cap flag failed'));
   workerTimer = setInterval(() => {
     if (draining) return;
@@ -3045,11 +2461,8 @@ export function startAgentWorker(sql: Sql, intervalMs = 15_000) {
   workerTimer.unref?.();
 }
 
-/** Scheduled discovery: each enabled brief past its 23h cadence gets a
- *  discovery run carrying its query/segment/city/target + briefId (the
- *  not-exists check keeps a still-queued brief run from double-firing). Leads
- *  it creates land tagged 'descoberto' — whether they also get called now is
- *  the guardrails.discoveryAutoContact gate in tools.ts. */
+// Each enabled brief past its 23h cadence gets a discovery run (not-exists prevents
+// double-fire); new leads tag 'descoberto'.
 export async function sweepBriefs(sql: Sql): Promise<number> {
   const queuedIds: string[] = [];
   const pausedIds: string[] = [];
@@ -3080,19 +2493,14 @@ export async function sweepBriefs(sql: Sql): Promise<number> {
     if (!(await automationAllowedTx(tx, 'discovery')).ok) return 0;
     const g = await getSettingTx<Partial<Guardrails>>(tx, 'guardrails', {});
     const autoPauseRuns = g.briefAutoPauseRuns ?? DEFAULT_GUARDRAILS.briefAutoPauseRuns;
-    // An auto-approved brief keeps firing on its original reservation
-    // forever — the approval only checked the budget ONCE. Re-run the same
-    // spent+open*est check before each refire and disable the brief the
-    // moment the rolling 7d window no longer fits. serialized on the
-    // 'brief-proposals' advisory so the check serializes with proposals
-    // and other sweep passes exactly like it does across runs.
+    // Re-check the budget before each refire — approval checked it once — and disable
+    // the brief when the rolling 7d window no longer fits; serialized on 'brief-proposals'.
     if (due.some((b) => b.created_by === 'strategist' && !b.rearmed_at)) {
       await tx`select pg_advisory_xact_lock(hashtext('brief-proposals'))`;
     }
     let fired = 0;
     for (const b of due) {
-      // rearmed_at marks a staff re-arm — the enablement is then a human
-      // decision, not autopilot spend, and exempt from the budget gate.
+      // rearmed_at = staff re-arm — a human decision, exempt from the budget gate.
       if (b.created_by === 'strategist' && !b.rearmed_at) {
         const bdg = await discoveryBudgetTx(tx, b.id);
         if (!(bdg.capCents > 0 && bdg.spent + (bdg.open + 1) * bdg.est <= bdg.capCents)) {
@@ -3109,19 +2517,9 @@ export async function sweepBriefs(sql: Sql): Promise<number> {
           continue;
         }
       }
-      // Dead-brief gate: a brief whose last N finished runs produced zero
-      // leads pauses itself (enabled=false + a note) instead of burning the
-      // daily run forever. The journal is the source of truth — a
-      // create_lead step with out.lead.id is what "produced" means (merge-
-      // only runs still count as dead: no NEW lead entered the board).
-      // rearmed_at bounds the window: staff re-enabling or editing the
-      // brief starts a fresh evaluation. The bound is on created_at (when
-      // the run was enqueued with its params), not finished_at — a run
-      // queued before the edit still carries the old definition even if it
-      // finishes afterward, so its zero-yield isn't evidence against the
-      // new one. Only 'done' counts as an observation: a 'failed' run can
-      // die before discovery ever evaluated the brief — provider outages
-      // must not masquerade as zero-yield.
+      // Dead-brief gate: N finished runs with zero new leads → pause itself. rearmed_at
+      // bounds the window; the bound is on created_at (a pre-edit run still carries the old
+      // definition), and only 'done' counts — a 'failed' run isn't zero-yield evidence.
       if (autoPauseRuns > 0) {
         const stat = (
           await tx<{ runs: number; with_leads: number }[]>`
@@ -3174,17 +2572,13 @@ export async function sweepBriefs(sql: Sql): Promise<number> {
     return fired;
   });
   for (const id of queuedIds) emitControlEvent('run.update', id);
-  // A budget pause lands no run — but it changed the board, so the
-  // discovery view refreshes on the same event it polls.
+  // A budget pause lands no run but still refreshes the discovery view.
   for (const id of pausedIds) emitControlEvent('run.update', id);
   return fired;
 }
 
-/** Weekly strategist cadence: one 'strategist' run every 7 days, stamped by
- *  the run's own created_at (a manual fire resets the clock — same enqueue-
- *  stamp idiom sweepBriefs uses for its 23h cadence). The advisory lock is
- *  the row-lock equivalent on a sweep with no anchor row: two workers in the
- *  same tick can't both pass the emptiness check and double-fire. */
+// Weekly strategist cadence, stamped by created_at; the advisory lock substitutes for a
+// missing anchor row so two workers can't double-fire.
 export async function sweepStrategist(sql: Sql): Promise<boolean> {
   let queuedId: string | null = null;
   const fired = await controlTx(sql, async (tx) => {
@@ -3193,9 +2587,7 @@ export async function sweepStrategist(sql: Sql): Promise<boolean> {
     `;
     if (!locked[0]?.ok) return false;
     if (!(await automationAllowedTx(tx, 'strategist')).ok) return false;
-    // only board-scoped runs fill the cadence slot — a lead-bound strategist
-    // (rejected at the API, still possible via direct insertRun) can park in
-    // queue forever and must not suppress the weekly review
+    // only board-scoped runs fill the cadence slot
     const recent = await tx`
       select 1 from agent_runs
       where kind = 'strategist' and lead_id is null
@@ -3215,20 +2607,13 @@ export async function sweepOutreach(sql: Sql): Promise<number> {
   const queuedIds: string[] = [];
   const capFlagged: string[] = [];
   const fired = await controlTx(sql, async (tx) => {
-    // Autonomy 'off' parks only the automation's own nudges — promised
-    // work ('staff'/'requested'/'agent' sources, materialized unmarked
-    // below) is a human's schedule or a lead-asked callback and still
-    // fires. The playbook switch gates everyone.
+    // Autonomy 'off' parks only the automation's own nudges — promised work still fires.
     const level = (await autonomyTx(tx)).level;
     if (!(await playbookEnabledTx(tx, 'outreach')).ok) return 0;
     const g = await getSettingTx<Partial<Guardrails>>(tx, 'guardrails', {});
     const capCents = capCentsOf(g);
-    // for update skip locked — concurrent sweeps on different replicas take
-    // disjoint lead sets instead of both inserting a run for the same due
-    // lead (the not-exists check alone only sees committed runs). The cap
-    // predicate keeps over-cap leads OUT of the 20-row window — otherwise a
-    // wall of capped leads would starve every eligible lead behind them
-    // (their due dates stay untouched, so a raised cap resumes them).
+    // skip locked: concurrent sweeps take disjoint lead sets; the cap predicate keeps
+    // over-cap leads out of the 20-row window so they can't starve eligible leads.
     const due = await tx<{ id: string; next_action_source: string }[]>`
       select l.id, l.next_action_source from leads l
       where l.next_action_at is not null and l.next_action_at <= now()
@@ -3242,39 +2627,18 @@ export async function sweepOutreach(sql: Sql): Promise<number> {
       for update skip locked
     `;
     for (const { id, next_action_source } of due) {
-      // The select's for-update already holds THIS lead's row lock, so a
-      // blocking capfin wait here would invert against ingestInbound's
-      // gate (capfin first, then the lead lock — see capLockTx). Try the
-      // advisory instead: a busy capfin means an inbound gate or a cost
-      // finalizer is serializing the lead right now — skip this pass; the
-      // due date stays for the next sweep.
+      // for-update already holds this lead's row lock — a blocking capfin would invert
+      // against ingestInbound (see capLockTx), so try the advisory and skip when busy.
       const capFree = await tx<{ got: boolean }[]>`
         select pg_try_advisory_xact_lock(hashtext(${'capfin:' + id})) as got
       `;
       if (!capFree[0]!.got) continue;
-      // params.auto marks automation-scheduled work — a fresh inbound cancels
-      // it (ingestInbound). 'cadence' AND 'auto' sources are the
-      // automation's own nudges (the prompt writes nextActionAt as the
-      // "próxima cadência"): obsolete the moment the lead writes back — the
-      // reply run re-commits any still-wanted follow-up with fresh context.
-      // 'staff', 'requested' AND legacy 'agent' materialize UNMARKED like
-      // every staff-triggered run: a human's schedule and a lead-asked
-      // callback ("me chama terça") are promises a reply can't cancel —
-      // they outrank the reply exactly like an explicit staff decision.
-      // 'agent' is legacy-only: 0025 backfilled every pre-existing date to
-      // it (self-schedules AND asked callbacks, unrecoverably mixed), so it
-      // takes the preserved side like 'requested'. insertRun also
-      // applies the lifetime cost cap — a capped lead returns null and
-      // KEEPS its due action (claimRun parks it anyway, so no run executes
-      // over budget).
-      // The agent's own due wakeup is the same follow-up — fold it into
-      // this run instead of firing a second outreach after it, carrying
-      // its focus into the run's params (at most one pending agent wakeup
-      // exists per lead — the unique index enforces it). Read it BEFORE
-      // insertRun so the focus lands in the run's context, not the floor.
-      // Under autonomy 'off' the model's self-schedule is parked — the
-      // wakeup stays pending for sweepWakeups' own gate, never rides an
-      // allowed staff/requested run.
+      // 'cadence'/'auto' sources are automation nudges a fresh inbound cancels;
+      // 'staff'/'requested' AND legacy 'agent' (the unrecoverably mixed 0025 backfill)
+      // materialize UNMARKED — promises a reply can't cancel. insertRun applies the cost
+      // cap; a capped lead keeps its due action.
+      // The agent's own due wakeup folds into this run (read BEFORE insertRun); under
+      // autonomy 'off' it stays pending for sweepWakeups' own gate.
       const fold =
         level === 'off'
           ? undefined
@@ -3290,10 +2654,8 @@ export async function sweepOutreach(sql: Sql): Promise<number> {
         next_action_source === 'staff' ||
         next_action_source === 'requested' ||
         next_action_source === 'agent';
-      // Under autonomy 'off' an already-queued auto outreach can never
-      // claim — delivering the promised date into it would park the
-      // promise forever. Retire the disposable autos so insertRun mints
-      // the runnable unmarked row; their dead-attempt mail releases too.
+      // Under 'off' a queued auto outreach can never claim — retire it so the promise
+      // mints an unmarked row; dead-attempt mail releases too.
       if (promised && level === 'off') {
         const retired = await tx<{ id: string }[]>`
           update agent_runs
@@ -3321,14 +2683,11 @@ export async function sweepOutreach(sql: Sql): Promise<number> {
         cap,
       );
       if (cap.flagged) capFlagged.push(id);
-      // Retired rows changed too — same run.update refresh the minted run
-      // gets, or the view keeps showing them queued.
+      // retired rows need the same run.update refresh
       if (cap.retired) queuedIds.push(...cap.retired);
       if (runId) {
         queuedIds.push(runId);
-        // The cadence intent rides the mailbox too: when insertRun found an
-        // already-active run (same or another kind) the item is what carries
-        // the intent into it — and it doubles as the audit trail either way.
+        // the item carries the cadence intent into an already-active run — audit trail either way
         await enqueueInboxTx(tx, id, 'event', {
           text: `a cadência disparou${fold ? ` — ${params.focus}` : ''}`,
           requestedKind: 'outreach',
