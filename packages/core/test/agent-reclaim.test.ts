@@ -3391,19 +3391,27 @@ dbDescribe('worker robustness (db)', () => {
     const running = runOnce(sql);
     // Wait for the draft to commit before rejecting it — step 2's delayMs
     // keeps the run parked so the gate sees the dead artifact at close.
-    // (draft_message rows don't stamp agent_run_id — scope by the lead.)
+    // The stamp is the mechanism under test: draft_message writes
+    // agent_run_id, which is how inbound's retire finds it at all.
     for (let i = 0; i < 40; i++) {
       const d = await sql`
-        select 1 from lead_messages m join lead_threads t on t.id = m.thread_id
-        where t.lead_id = ${leadId} and m.status = 'draft'
+        select 1 from lead_messages m
+        where m.status = 'draft' and m.agent_run_id = ${runId}
       `;
       if (d.length) break;
       await new Promise((r) => setTimeout(r, 100));
     }
+    // ingestInbound's retire predicate verbatim — the draft is findable
+    // BECAUSE it carries the run's stamp.
     await sql`
       update lead_messages m set status = 'rejected', error = 'lead respondeu', updated_at = now()
       where m.status = 'draft'
-        and m.thread_id in (select id from lead_threads where lead_id = ${leadId})
+        and m.agent_run_id in (
+          select r.id from agent_runs r
+          where r.lead_id = ${leadId} and r.kind = 'outreach'
+            and r.params->>'auto' is not null
+            and r.params->>'auto' not in ('regenerate', 'agent')
+        )
     `;
     await running;
     const r = await getRun(runId);

@@ -711,15 +711,32 @@ async function finishRun(
     tokensOut: number;
     costCents: number;
     error?: string;
+    /** When set on a 'done' finish, the flip is refused unless at least
+     *  one listed message row is still alive (not rejected/failed) — the
+     *  read rides the same capfin hold as the terminal update, so an
+     *  inbound rejection serialized before it nudges instead of stranding
+     *  a 'done' run on a dead draft. */
+    liveMessageIds?: string[] | undefined;
   },
-): Promise<boolean> {
+): Promise<{ matched: boolean; deadAction: boolean }> {
   const out = await controlTx(sql, async (tx) => {
     // capfin before the run-row update — the cap evaluator that takes it
     // first can never deadlock (see capLockTx); grabbing it after locking
     // the run row would invert against inbound's cancel predicate, which
     // now covers 'running' auto rows too.
     if (run.leadId) await capLockTx(tx, run.leadId);
-    const updated = await tx<{ id: string; lead_id: string | null; kind: RunRow['kind'] }[]>`
+    const liveRows =
+      result.status === 'done' && result.liveMessageIds?.length
+        ? await tx<{ id: string }[]>`
+          select id::text as id from lead_messages
+          where id = any(${result.liveMessageIds}::uuid[])
+            and status not in ('rejected', 'failed') limit 1
+        `
+        : null;
+    const deadAction = liveRows !== null && liveRows.length === 0;
+    const updated = deadAction
+      ? []
+      : await tx<{ id: string; lead_id: string | null; kind: RunRow['kind'] }[]>`
     update agent_runs set
       status = ${result.status},
       steps = ${tx.json(result.steps as never[])},
@@ -763,7 +780,7 @@ async function finishRun(
     // wrote the flag" from "it already existed", which the post-commit
     // emit needs.
     const cap = r?.lead_id ? await leadUnderCostCapTx(tx, r.lead_id) : 'under';
-    return { updated, cap };
+    return { updated, cap, deadAction };
   });
   if (out.updated.length) {
     emitControlEvent('run.update', run.id);
@@ -778,7 +795,7 @@ async function finishRun(
     if (r?.lead_id && (result.status === 'failed' || out.cap === 'flagged'))
       emitControlEvent('lead.change', out.cap === 'flagged' ? undefined : r.lead_id);
   }
-  return out.updated.length > 0;
+  return { matched: out.updated.length > 0, deadAction: out.deadAction };
 }
 
 export async function contextFor(
@@ -1071,14 +1088,22 @@ function runActed(steps: unknown[]): boolean {
   });
 }
 
-/** runActed's durable half: an action that minted a message (send_message,
- *  draft_message, a farewell) counts only while the row is alive — inbound
- *  retire rejects stale drafts mid-run, so a run closing on its dead draft
- *  would leave staff nothing to approve and the lead's mail unanswered.
- *  Actions with no message artifact (request_human, set_state, create_task,
- *  update_lead) are their own effect and stay live unconditionally. */
-async function actionsStillLive(att: Attempt, steps: unknown[]): Promise<boolean> {
+/** runActed's durable half: collects the lead_messages ids the slice's
+ *  actions minted (send_message, draft_message, a farewell). A run closes
+ *  'done' only while one of those artifacts is alive — inbound retire
+ *  rejects stale drafts mid-run, so flipping 'done' on a dead draft would
+ *  leave staff nothing to approve and the lead's mail unanswered. The
+ *  liveness read happens inside finishRun's tx under capfin, serialized
+ *  against ingestInbound's reject (which holds the same lock through its
+ *  cancel): a plain journal-side read could see the row live and commit
+ *  'done' while the rejection commits underneath it. `onlyMessages` tells
+ *  the caller the slice minted ONLY messages — an action with no message
+ *  artifact (request_human, set_state, create_task, update_lead) is its
+ *  own effect and stays live unconditionally, so those slices skip the
+ *  durable check entirely. */
+function actedMessageIds(steps: unknown[]): { ids: string[]; onlyMessages: boolean } {
   const ids: string[] = [];
+  let onlyMessages = true;
   for (const s of steps) {
     if (typeof s !== 'object' || s === null) continue;
     const st = s as { type?: string; name?: string; out?: unknown };
@@ -1099,17 +1124,9 @@ async function actionsStillLive(att: Attempt, steps: unknown[]): Promise<boolean
           ? out.messageId
           : null;
     if (mid) ids.push(mid);
-    else return true;
+    else onlyMessages = false;
   }
-  if (!ids.length) return false;
-  const rows = await controlTx(
-    att.sql,
-    (tx) => tx<{ id: string }[]>`
-      select id::text as id from lead_messages
-      where id = any(${ids}::uuid[]) and status not in ('rejected', 'failed')
-    `,
-  );
-  return rows.length > 0;
+  return { ids, onlyMessages };
 }
 
 /** Max chars of a replayed tool result — the model needs the call's outcome
@@ -2338,11 +2355,8 @@ async function finishGate(att: Attempt): Promise<'end' | 'again'> {
   // discovery run's zero-lead nudge must not silence drained action-mail.
   const actionSpent = att.playbook.requiresAction ? att.nudged : att.actionNudged;
   const actedSlice = steps.slice(actionBar + 1);
-  if (
-    !actionSpent &&
-    (att.playbook.requiresAction || actionBar >= 0) &&
-    (!runActed(actedSlice) || !(await actionsStillLive(att, actedSlice)))
-  ) {
+  const gated = !actionSpent && (att.playbook.requiresAction || actionBar >= 0);
+  const actionNudge = async (): Promise<'again'> => {
     if (att.playbook.requiresAction) att.nudged = true;
     else att.actionNudged = true;
     att.limit = att.i + 5;
@@ -2352,7 +2366,8 @@ async function finishGate(att: Attempt): Promise<'end' | 'again'> {
     steps.push({ type: 'nudge', content: nudge });
     await persist(att);
     return 'again';
-  }
+  };
+  if (gated && !runActed(actedSlice)) return actionNudge();
   // Mail that landed mid-attempt rides this run instead of a second one:
   // drain before finishing so the run answers what arrived while it
   // worked, not just what it started with. Only when a turn remains —
@@ -2364,15 +2379,25 @@ async function finishGate(att: Attempt): Promise<'end' | 'again'> {
   // fence still stores the usage so the spend isn't lost. Debrief runs
   // ONLY after a matched finish: work a staff member canceled must not
   // leak into the next run's doctrine.
-  if (
-    await finishRun(sql, att.claim, {
-      status: 'done',
-      steps,
-      tokensIn: att.tokensIn,
-      tokensOut: att.tokensOut,
-      costCents: Math.round((att.costUsd + att.monidBudget.spent) * 100),
-    })
-  ) {
+  // The journal check above is stale by the time the finish flips — a
+  // draft that passed it can die to inbound retire before the commit.
+  // When every action the slice minted was a message (no artifact-free
+  // effect), their ids ride into finishRun's tx: under capfin the liveness
+  // read serializes with ingestInbound's reject, so a dead-at-commit run
+  // nudges here instead of closing 'done' on nothing approvable.
+  const actedIds = gated ? actedMessageIds(actedSlice) : null;
+  const liveMessageIds =
+    actedIds && actedIds.onlyMessages && actedIds.ids.length ? actedIds.ids : undefined;
+  const fin = await finishRun(sql, att.claim, {
+    status: 'done',
+    steps,
+    tokensIn: att.tokensIn,
+    tokensOut: att.tokensOut,
+    costCents: Math.round((att.costUsd + att.monidBudget.spent) * 100),
+    liveMessageIds,
+  });
+  if (fin.deadAction) return actionNudge();
+  if (fin.matched) {
     if (att.playbook.debrief) {
       // debrief → agent_memory_items: the doctrine that makes the next run
       // start smarter. Best-effort — never fail a finished run on it.
@@ -2623,14 +2648,16 @@ async function endAttempt(att: Attempt): Promise<void> {
       typeof (s as { out?: { lead?: { id?: string } } }).out?.lead?.id === 'string',
   ).length;
   if (
-    await finishRun(att.sql, att.claim, {
-      status: 'failed',
-      steps: att.steps,
-      tokensIn: att.tokensIn,
-      tokensOut: att.tokensOut,
-      costCents: Math.round((att.costUsd + att.monidBudget.spent) * 100),
-      error: `max steps reached${created ? ` — ${created} lead(s) created` : ''}`,
-    })
+    (
+      await finishRun(att.sql, att.claim, {
+        status: 'failed',
+        steps: att.steps,
+        tokensIn: att.tokensIn,
+        tokensOut: att.tokensOut,
+        costCents: Math.round((att.costUsd + att.monidBudget.spent) * 100),
+        error: `max steps reached${created ? ` — ${created} lead(s) created` : ''}`,
+      })
+    ).matched
   ) {
     // A budget-exhausted run still taught the field something — its leads
     // and dead ends belong in the doctrine too.
@@ -2645,14 +2672,16 @@ async function endAttempt(att: Attempt): Promise<void> {
  *  to persistAborted so the trajectory + spend still commit. */
 async function failAttempt(att: Attempt, e: unknown): Promise<void> {
   if (
-    !(await finishRun(att.sql, att.claim, {
-      status: 'failed',
-      steps: att.steps,
-      tokensIn: att.tokensIn,
-      tokensOut: att.tokensOut,
-      costCents: Math.round((att.costUsd + att.monidBudget.spent) * 100),
-      error: e instanceof Error ? e.message : String(e),
-    }))
+    !(
+      await finishRun(att.sql, att.claim, {
+        status: 'failed',
+        steps: att.steps,
+        tokensIn: att.tokensIn,
+        tokensOut: att.tokensOut,
+        costCents: Math.round((att.costUsd + att.monidBudget.spent) * 100),
+        error: e instanceof Error ? e.message : String(e),
+      })
+    ).matched
   )
     await persistAborted(att);
 }
