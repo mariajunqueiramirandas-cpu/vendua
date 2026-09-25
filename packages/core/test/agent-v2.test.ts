@@ -295,6 +295,51 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('agent v2 (db)', () => {
     expect(await controlTx(sql, (tx) => retireWakeupsOnInboundTx(tx, kept))).toBe(0);
   });
 
+  test('an autonomous reschedule keeps the lead-requested callback; a new promise supersedes it', async () => {
+    const leadId = await mkLead('wk-keep');
+    const day = 86_400_000;
+    // The lead asked for a callback — a promise, not the agent's plan.
+    await executeTool(mkCtx('reply', leadId, 'k1'), 's1', 'schedule', {
+      leadId,
+      at: new Date(Date.now() + 2 * day).toISOString(),
+      focus: 'me chama terça',
+      requested: true,
+    });
+    // The agent's own reminder replaces only autonomous rows — canceling
+    // the promise would let a later inbound retire the reminder and leave
+    // the lead's requested callback silently dead.
+    await executeTool(mkCtx('reply', leadId, 'k2'), 's1', 'schedule', {
+      leadId,
+      at: new Date(Date.now() + day).toISOString(),
+      focus: 'cadência',
+    });
+    const pending = await sql<{ focus: string; requested: boolean }[]>`
+      select focus, requested from agent_wakeups
+      where lead_id = ${leadId} and status = 'pending' order by at
+    `;
+    expect(pending.length).toBe(2);
+    expect(pending.filter((p) => p.requested).map((p) => p.focus)).toEqual(['me chama terça']);
+    // A second promise supersedes the first (new date wins) while the
+    // autonomous row still isn't the promise's business.
+    await executeTool(mkCtx('reply', leadId, 'k3'), 's1', 'schedule', {
+      leadId,
+      at: new Date(Date.now() + 3 * day).toISOString(),
+      focus: 'melhor sexta',
+      requested: true,
+    });
+    const rows = await sql<{ focus: string; status: string }[]>`
+      select focus, status from agent_wakeups where lead_id = ${leadId}
+    `;
+    expect(
+      rows
+        .filter((r) => r.status === 'pending')
+        .map((r) => r.focus)
+        .sort(),
+    ).toEqual(['cadência', 'melhor sexta']);
+    expect(rows.some((r) => r.status === 'canceled' && r.focus === 'me chama terça')).toBe(true);
+    await sql`update agent_wakeups set status = 'canceled' where lead_id = ${leadId}`;
+  });
+
   test('autonomy off and disabled playbooks stop automation; explanation reflects level', async () => {
     const prior = await pinPolicy();
     const priorEmail = (

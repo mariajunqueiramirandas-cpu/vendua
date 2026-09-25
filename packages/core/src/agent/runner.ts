@@ -1071,6 +1071,47 @@ function runActed(steps: unknown[]): boolean {
   });
 }
 
+/** runActed's durable half: an action that minted a message (send_message,
+ *  draft_message, a farewell) counts only while the row is alive — inbound
+ *  retire rejects stale drafts mid-run, so a run closing on its dead draft
+ *  would leave staff nothing to approve and the lead's mail unanswered.
+ *  Actions with no message artifact (request_human, set_state, create_task,
+ *  update_lead) are their own effect and stay live unconditionally. */
+async function actionsStillLive(att: Attempt, steps: unknown[]): Promise<boolean> {
+  const ids: string[] = [];
+  for (const s of steps) {
+    if (typeof s !== 'object' || s === null) continue;
+    const st = s as { type?: string; name?: string; out?: unknown };
+    if (st.type !== 'tool' || !st.name || !ACTION_TOOLS.has(st.name)) continue;
+    const out = st.out as {
+      error?: unknown;
+      blocked?: unknown;
+      ignored?: unknown;
+      message?: { id?: unknown };
+      messageId?: unknown;
+    } | null;
+    if (typeof out !== 'object' || out === null) continue;
+    if (out.error || out.blocked === true || out.ignored === true) continue;
+    const mid =
+      typeof out.message?.id === 'string'
+        ? out.message.id
+        : typeof out.messageId === 'string'
+          ? out.messageId
+          : null;
+    if (mid) ids.push(mid);
+    else return true;
+  }
+  if (!ids.length) return false;
+  const rows = await controlTx(
+    att.sql,
+    (tx) => tx<{ id: string }[]>`
+      select id::text as id from lead_messages
+      where id = any(${ids}::uuid[]) and status not in ('rejected', 'failed')
+    `,
+  );
+  return rows.length > 0;
+}
+
 /** Max chars of a replayed tool result — the model needs the call's outcome
  *  (contacts found, blocked reason, ids), not a full page dump. */
 const REPLAY_OUT_MAX = 3000;
@@ -2296,10 +2337,11 @@ async function finishGate(att: Attempt): Promise<'end' | 'again'> {
   // playbook's own nudge) but the independent `actionNudged` elsewhere — a
   // discovery run's zero-lead nudge must not silence drained action-mail.
   const actionSpent = att.playbook.requiresAction ? att.nudged : att.actionNudged;
+  const actedSlice = steps.slice(actionBar + 1);
   if (
     !actionSpent &&
     (att.playbook.requiresAction || actionBar >= 0) &&
-    !runActed(steps.slice(actionBar + 1))
+    (!runActed(actedSlice) || !(await actionsStillLive(att, actedSlice)))
   ) {
     if (att.playbook.requiresAction) att.nudged = true;
     else att.actionNudged = true;

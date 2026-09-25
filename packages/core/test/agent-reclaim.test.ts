@@ -3363,6 +3363,64 @@ dbDescribe('worker robustness (db)', () => {
     expect(spawned!.thread_id).toBe(emThread!.id);
   });
 
+  test('a draft rejected mid-run no longer passes the finish gate — the run owes a replacement', async () => {
+    await migrate(sql, MIGRATIONS);
+    const lead = await controlTx(sql, (tx) =>
+      insertLeadTx(tx, { name: 'Dead Draft', whatsapp: '5511910000094' }),
+    );
+    const leadId = lead.body.lead.id;
+    await sql`delete from agent_runs where status = 'queued'`;
+    // Auto outreach mid-flight with a composed draft. The inbound retire
+    // (applied directly below — same predicate ingestInbound runs) rejects
+    // it while the run still stands: the finish gate must not count the
+    // dead artifact, or the run closes leaving staff nothing to approve.
+    const runId = (await enqueueRun(sql, {
+      kind: 'outreach',
+      leadId,
+      runAt: new Date(Date.now()),
+      params: {
+        auto: 'first-contact',
+        script: [
+          { toolCalls: [{ name: 'draft_message', args: { leadId, body: 'oi, primeira' } }] },
+          { text: 'aqui é a venduá de novo', delayMs: 4000 },
+          { toolCalls: [{ name: 'draft_message', args: { leadId, body: 'oi, segunda' } }] },
+          { text: 'pronto' },
+        ],
+      },
+    }))!;
+    const running = runOnce(sql);
+    // Wait for the draft to commit before rejecting it — step 2's delayMs
+    // keeps the run parked so the gate sees the dead artifact at close.
+    // (draft_message rows don't stamp agent_run_id — scope by the lead.)
+    for (let i = 0; i < 40; i++) {
+      const d = await sql`
+        select 1 from lead_messages m join lead_threads t on t.id = m.thread_id
+        where t.lead_id = ${leadId} and m.status = 'draft'
+      `;
+      if (d.length) break;
+      await new Promise((r) => setTimeout(r, 100));
+    }
+    await sql`
+      update lead_messages m set status = 'rejected', error = 'lead respondeu', updated_at = now()
+      where m.status = 'draft'
+        and m.thread_id in (select id from lead_threads where lead_id = ${leadId})
+    `;
+    await running;
+    const r = await getRun(runId);
+    expect(r.status).toBe('done');
+    // The gate demanded a replacement: one live draft waits in the approval
+    // queue, the nudge is journaled, and the dead draft stayed rejected.
+    const drafts = await sql<{ body: string; status: string }[]>`
+      select m.body, m.status from lead_messages m
+      join lead_threads t on t.id = m.thread_id
+      where t.lead_id = ${leadId} and m.direction = 'out'
+    `;
+    expect(drafts.filter((d) => d.status === 'draft').map((d) => d.body)).toEqual(['oi, segunda']);
+    expect(
+      (r.steps as { type?: string }[]).filter((s) => s.type === 'nudge').length,
+    ).toBeGreaterThanOrEqual(1);
+  });
+
   test('mail arriving during a draft-only run waits — a reply never strands as a draft', async () => {
     await migrate(sql, MIGRATIONS);
     const lead = await controlTx(sql, (tx) =>

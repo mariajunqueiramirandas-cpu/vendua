@@ -127,9 +127,15 @@ export async function scheduleWakeupTx(
   const createdBy = input.createdBy ?? 'agent';
   let replaced: string | null = null;
   if (createdBy === 'agent') {
+    // Replace within the class only: an autonomous reminder supersedes the
+    // agent's prior plan but never a `requested` callback the LEAD was
+    // promised (retireWakeupsOnInboundTx already spares it — a cancel here
+    // would let the next inbound retire the reminder too and the promise
+    // dies twice). A new promise likewise supersedes only older promises.
     const prev = await tx<{ id: string }[]>`
       update agent_wakeups set status = 'canceled', cancel_reason = 'substituído', updated_at = now()
       where lead_id = ${input.leadId} and status = 'pending' and created_by = 'agent'
+        and requested = ${input.requested}
       returning id
     `;
     replaced = prev[0]?.id ?? null;

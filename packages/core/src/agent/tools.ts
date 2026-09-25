@@ -1303,6 +1303,10 @@ export async function executeTool(
           subject: (args.subject as string) ?? undefined,
           author: 'agent',
           status: 'draft',
+          // Stamped like the send paths — inbound retire scopes stale
+          // drafts by authoring run, and an unstamped draft_message was
+          // invisible to it (staff could approve a pre-inbound draft).
+          agentRunId: ctx.runId,
         });
         return {
           status: composed.status,
