@@ -3,7 +3,6 @@ import { useStore } from '@vendua/kernel';
 import { BagButton } from './bag-button.tsx';
 import { DayClock } from './day-clock.tsx';
 
-/** Inner-page chrome: small wordmark, the fornada clock, the sacola button. */
 export function Shell({ children }: { children: React.ReactNode }) {
   const { store } = useStore();
   return (

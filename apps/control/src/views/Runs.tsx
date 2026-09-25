@@ -24,10 +24,7 @@ const STATUS_CHIP: Record<string, string> = {
 
 const pct = (v: number) => `${Math.round(v * 100)}%`;
 
-/** Ops readout above the run list — the ADR-0014 metrics endpoint
- *  rendered in the console's own stat/table grammar. The window toggle
- *  (7|30d) is scoped to the panel; the run list below keeps its own
- *  filters. */
+// ops readout (ADR-0014); the 7|30d window toggle is scoped to this panel
 function MetricsPanel() {
   const [m, setM] = useState<AgentMetrics | null>(null);
   const [err, setErr] = useState('');
@@ -42,9 +39,7 @@ function MetricsPanel() {
     api
       .agentMetrics(forDays)
       .then((r) => {
-        // Only the latest-issued request may write — an older response
-        // landing mid-toggle must not repaint the panel with stale-window
-        // data while the chips show the new selection.
+        // only the latest request for the current window may paint
         if (req !== seq.current || forDays !== daysRef.current) return;
         setM(r);
         setErr('');
@@ -165,8 +160,7 @@ function MetricsPanel() {
   );
 }
 
-// Filter strip — 'agendados' is the delayed queue (scheduled=1), not a status:
-// it flips the endpoint to run_at ordering and its own pagination cursor.
+// 'agendados' is the delayed queue (scheduled=1), not a status — own cursor/ordering
 const VIEWS = [
   ['', 'todos'],
   ['queued', 'na fila'],
@@ -177,10 +171,7 @@ const VIEWS = [
   ['canceled', 'cancelados'],
 ] as const;
 
-/** Journal step types that carry user-injected content rather than a tool
- *  call or model turn — mail drained from the lead's inbox, engine nudges,
- *  reflection ticks. They render with their own label so the mailbox reads
- *  as what it is instead of an anonymous `tool · #N`. */
+// injected-content steps render with their own label instead of an anonymous `tool · #N`
 const STEP_LABELS: Record<string, string> = {
   system_prompt: 'prompt',
   model: 'modelo',
@@ -211,9 +202,7 @@ export default function Runs() {
   const [view, setView] = useState('');
   const [cancelledIds, setCancelledIds] = useState<Set<string>>(new Set());
 
-  // Newest-successful wins, scoped to the current filter — an older
-  // response may still paint when a newer request failed, but never one
-  // whose captured filter no longer matches what's displayed.
+  // newest success wins, scoped to the current filter
   const listSeq = useRef(0);
   const listOk = useRef(0);
   const listView = useRef('');
@@ -239,9 +228,7 @@ export default function Runs() {
     },
     [kind, view],
   );
-  // Same success-watermark for the detail — a failed newer fetch lets an
-  // older good response through, a stale 'running' snapshot still can't
-  // paint over 'done'.
+  // same success-watermark for the detail fetch
   const runSeq = useRef(0);
   const runOk = useRef(0);
   const runFor = useRef('');
@@ -267,8 +254,7 @@ export default function Runs() {
     return undefined;
   }, [id, loadRun]);
 
-  // run.update accelerates the list and the open run — a ref naming another
-  // run still refreshes the list, only the detail refetch is skipped.
+  // run.update: a ref for another run still refreshes the list; only the detail refetch is skipped
   useEffect(
     () =>
       onControlEvent('run.update', (e) => {

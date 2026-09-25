@@ -1,16 +1,6 @@
--- 0007_crm.sql — Founder CRM → full agentic CRM (docs/roadmap.md, Phase 1→4
--- bridge). Grows the v0 intake board into the tool the founder actually runs
--- the pipeline in: richer lead fields, an activity timeline, tasks, channel
--- threads/messages, state history for funnel metrics, agent runs, provider
--- integrations, and workspace settings.
---
--- Same isolation posture as 0006: every table here is PLATFORM data — no
--- tenant_id, RLS keyed on the `vendua.control` GUC, the /control/v1 gate is
--- the access boundary and RLS the second line of defense. Mutations keep
--- claiming Idempotency-Keys via control_idempotency_keys.
---
--- leads.notes (v0 jsonb) migrates into lead_activities rows below, and the
--- column is dropped — one timeline, not two shapes of history.
+-- 0007 — agentic CRM schema: lead fields, activities, tasks, threads/messages,
+-- state history, agent runs, integrations, settings. Platform tables, RLS on
+-- vendua.control like 0006; leads.notes folds into lead_activities.
 
 alter table leads
   add column if not exists whatsapp text,
@@ -30,8 +20,7 @@ alter table leads
 create table if not exists lead_activities (
   id uuid primary key default gen_random_uuid(),
   lead_id uuid not null references leads (id) on delete cascade,
-  -- 'email'/'call'/'meeting' are staff-logged touchpoints; 'agent' marks
-  -- runner actions; 'system' for imported/migrated events.
+  -- kind: staff touchpoints / 'agent' runner actions / 'system' imported events
   kind text not null check (kind in ('note', 'call', 'meeting', 'state_change', 'agent', 'system')),
   body text,
   meta jsonb not null default '{}',
@@ -51,8 +40,7 @@ create table if not exists lead_tasks (
 );
 create index if not exists lead_tasks_open_due on lead_tasks (due_at) where done_at is null;
 
--- One thread per lead per channel; external_id is the provider-side chat /
--- conversation id when one exists (baileys jid, resend thread).
+-- one thread per lead per channel; external_id is the provider-side conversation id
 create table if not exists lead_threads (
   id uuid primary key default gen_random_uuid(),
   lead_id uuid not null references leads (id) on delete cascade,
@@ -71,19 +59,13 @@ create table if not exists lead_messages (
   direction text not null check (direction in ('in', 'out')),
   author text not null check (author in ('staff', 'agent', 'lead', 'system')),
   body text not null,
-  -- drafts wait in the Approvals queue; 'rejected' keeps the audit trail.
-  -- 'sending' = dispatch in flight: a crash between provider call and status
-  -- write lands here, never back in 'queued' — at-most-once delivery.
+  -- 'sending' = dispatch in flight (crash-safe at-most-once); 'rejected' keeps the audit trail
   status text not null check (status in ('draft', 'queued', 'sending', 'sent', 'delivered', 'received', 'failed', 'rejected')),
-  -- Channel-namespaced on write ('whatsapp:AB12…') — a provider id must be
-  -- unique per channel, but ids across providers share no namespace, so the
-  -- unique index below can't let one channel's ids suppress another's.
+  -- channel-namespaced on write — provider ids share no namespace across channels
   provider_message_id text,
-  -- run that authored this message — lets a re-executed agent run recognize
-  -- its own already-queued send instead of composing a duplicate.
+  -- lets a re-executed run recognize its own already-queued send
   agent_run_id uuid,
-  -- why a 'failed' send failed — kept out of provider_message_id, which is
-  -- unique and would collide on repeated same-reason failures.
+  -- kept out of unique provider_message_id, which would collide on repeated failures
   error text,
   approved_by text,
   approved_at timestamptz,
@@ -105,9 +87,7 @@ create table if not exists lead_state_history (
 );
 create index if not exists lead_state_history_lead on lead_state_history (lead_id, at);
 
--- Funnel reads `everReached` from this table only, so pre-existing leads
--- need their history backfilled: every stage up to their current state,
--- stamped at created_at. Leads with an out-of-funnel state are untouched.
+-- funnel reads `everReached` only from here — backfill pre-existing leads' history
 insert into lead_state_history (lead_id, from_state, to_state, actor, at)
 select l.id, prev.s, cur.s, 'system', l.created_at
 from leads l
@@ -124,8 +104,7 @@ left join lateral (
   where p.ord = cur.ord - 1
 ) prev on true;
 
--- Agent harness queue: every run is an auditable row. steps[] is the full
--- tool-call + model-io transcript; tokens/cost make spend a first-class read.
+-- auditable run queue: steps[] = tool-call/model transcript, tokens/cost = spend
 create table if not exists agent_runs (
   id uuid primary key default gen_random_uuid(),
   kind text not null check (kind in ('triage', 'reply', 'outreach', 'discovery')),
@@ -144,8 +123,7 @@ create table if not exists agent_runs (
 );
 create index if not exists agent_runs_queue on agent_runs (created_at) where status = 'queued';
 
--- Modular provider configs. secret_ref is the NAME of an env var holding the
--- credential — values never live in this table.
+-- provider configs; secret_ref names an env var — credential values never live here
 create table if not exists control_integrations (
   id uuid primary key default gen_random_uuid(),
   kind text not null check (kind in ('llm', 'email', 'whatsapp', 'discovery')),
@@ -158,9 +136,7 @@ create table if not exists control_integrations (
   unique (kind, driver)
 );
 
--- Baileys auth state: the driver's multi-key credential store (replaces
--- useMultiFileAuthState so the socket survives rebuilds and restarts).
--- Keyed the way SignalKeyStore addresses keys: (account, category, name).
+-- Baileys multi-key credential store, keyed like SignalKeyStore (account, category, name)
 create table if not exists wa_auth_state (
   account_id text not null,
   category text not null,

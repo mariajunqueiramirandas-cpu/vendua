@@ -9,7 +9,6 @@ export function brl(cents: number): string {
   return BRL.format(cents / 100);
 }
 
-/** "06:30" → "6h30" — padoca shorthand. */
 export function hhmm(hhmmString: string): string {
   const [h = '', m = ''] = hhmmString.split(':');
   return `${Number(h)}h${m === '00' ? '' : m}`;
@@ -17,7 +16,6 @@ export function hhmm(hhmmString: string): string {
 
 const DAY_ABBR = ['dom', 'seg', 'ter', 'qua', 'qui', 'sex', 'sáb'] as const;
 
-/** Compact day-range label: [0..6] → "todos os dias", [1..5] → "seg — sex". */
 export function daysLabel(days: number[]): string {
   if (days.length === 7) return 'todos os dias';
   const sorted = [...days].sort((a, b) => a - b);
@@ -28,7 +26,6 @@ export function daysLabel(days: number[]): string {
   return sorted.map((d) => DAY_ABBR[d] ?? '').join(' · ');
 }
 
-/** Windows → display lines, e.g. "todos os dias · 6h30 às 11h30". */
 export function hoursLines(store: StoreProfile): string[] {
   return store.hours.windows.map(
     (w) => `${daysLabel(w.days)} · ${hhmm(w.open)} às ${hhmm(w.close)}`,
@@ -46,7 +43,6 @@ function localYMD(d: Date, tz: string): string {
   return `${get('year')}-${get('month')}-${get('day')}`;
 }
 
-/** resumesAt → "hoje 6h30" | "amanhã 6h30" | "sáb 6h30". */
 export function resumeLabel(iso: string, tz: string): string {
   const d = new Date(iso);
   const time = new Intl.DateTimeFormat('pt-BR', {
@@ -71,7 +67,6 @@ export function resumeLabel(iso: string, tz: string): string {
   return `${day} ${time}`;
 }
 
-/** Minutes since midnight in the store's tz, for the clock needle. */
 export function localMinutesNow(tz: string): number {
   const parts = new Intl.DateTimeFormat('en-US', {
     timeZone: tz,

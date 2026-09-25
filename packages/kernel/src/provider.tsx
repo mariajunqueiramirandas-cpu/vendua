@@ -10,18 +10,14 @@ import {
 import { createApi, type VenduaApi } from './api.ts';
 import type { StorefrontConfig, StorefrontTokens } from './config.ts';
 
-/**
- * VenduaProvider — tenant context, api client, token emission. Every
- * storefront root mounts it once (03-storefront-contract.md#required-mounts).
- *
- * Phase 0: data hooks use a minimal in-flight/result cache rather than
- * TanStack — the public hook shape is what the contract pins, not the cache.
- */
+// tenant context, api client, token emission — mounted once per storefront root
+// (03-storefront-contract.md#required-mounts); Phase 0 uses a minimal in-flight
+// cache, not TanStack — the contract pins the hook shape, not the cache
 
 interface KernelCtx {
   api: VenduaApi;
   config: StorefrontConfig;
-  /** Shared invalidation counter — bumps refetch hooks subscribed to a key. */
+  /** bumps refetch hooks subscribed to a key */
   invalidate: (key: string) => void;
   subscribe: (key: string, fn: () => void) => () => void;
 }
@@ -74,9 +70,8 @@ export function VenduaProvider({
 }) {
   const apiRef = useRef<{ api: VenduaApi; baseUrl: string }>();
   if (!apiRef.current || apiRef.current.baseUrl !== baseUrl) {
-    // baseUrl is effectively static — but if it ever changes, the old
-    // client's cache and session belong to the previous backend: drop the
-    // session and mint a fresh client (its WeakMap cache is separate).
+    // baseUrl change: the old client's cache/session belong to the previous
+    // backend — drop the session and mint a fresh client
     apiRef.current?.api.clearSession();
     apiRef.current = { api: createApi(baseUrl), baseUrl };
   }
@@ -110,8 +105,7 @@ export function VenduaProvider({
     };
   }, [config]);
 
-  // font.srcs → @font-face (03 §vendua.config.ts). font-display: swap is the
-  // contract default — brand fonts must never block first paint.
+  // font-display: swap — contract default; brand fonts must never block first paint
   useEffect(() => {
     const srcs = config.tokens.font.srcs;
     if (!srcs?.length) return;
@@ -133,9 +127,8 @@ export function VenduaProvider({
     };
   }, [config]);
 
-  // Track this provider's cache + subscriber notifier while mounted so
-  // module-level invalidateQuery can evict AND refetch on live providers
-  // without pinning unmounted ones.
+  // track this provider's cache + notifier while mounted so invalidateQuery
+  // reaches live providers only
   useEffect(() => {
     const live = { cache: cacheFor(api), invalidate: ctx.invalidate };
     liveProviders.add(live);
@@ -144,10 +137,8 @@ export function VenduaProvider({
     };
   }, [api, ctx.invalidate]);
 
-  // Kernel mounted → v.js (the last-resort loader) yields: it removes its
-  // blocking overlay and stops owning surfaces. Without the handoff, a
-  // blocking notice would render twice — the loader's generic card at max
-  // z-index hides the storefront's override.
+  // mounted → v.js (the last-resort loader) yields and removes its overlay;
+  // without the handoff a blocking notice renders twice
   useEffect(() => {
     (globalThis as Record<string, unknown>).__VENDUA_KERNEL_MOUNTED__ = true;
     document.getElementById('vendua-loader-overlay')?.remove();
@@ -155,8 +146,6 @@ export function VenduaProvider({
 
   return <Ctx.Provider value={ctx}>{children}</Ctx.Provider>;
 }
-
-// ---- minimal query primitive ----------------------------------------------
 
 interface QueryState<T> {
   data: T | undefined;
@@ -171,23 +160,18 @@ interface ApiErrorShape {
   details?: Record<string, unknown>;
 }
 
-// `resolved` is tracked separately from `data`: a fetcher that legitimately
-// resolves `undefined` (e.g. useCart without a session) must not read as
-// still-loading forever.
-//
-// The cache is scoped per api client (one per provider): a module-global map
-// would leak the previous tenant's store/cart into a remounted provider.
+// `resolved` tracked separately from `data`: a fetcher resolving undefined
+// (useCart w/o session) must not stay loading forever. Cache is per-api-client:
+// a module-global map would leak the previous tenant's data into a remount.
 type CacheEntry = {
   resolved?: boolean;
   data?: unknown;
   error?: ApiErrorShape;
   inflight?: Promise<void>;
-  /** Identifies the current fetch — a superseded request (refetch during
-   *  flight) must not write its stale result over the replacement. */
+  /** superseded requests must not write over the replacement */
   runToken?: symbol;
 };
-// WeakMap so an unmounted provider's cache is GC'd with its api client —
-// a strong Map would retain every remount forever.
+// WeakMap so an unmounted provider's cache GCs with its api client
 const caches = new WeakMap<VenduaApi, Map<string, CacheEntry>>();
 
 function cacheFor(api: VenduaApi): Map<string, CacheEntry> {
@@ -211,8 +195,7 @@ export function useQuery<T>(
     let alive = true;
     const run = () => {
       const e = cache.get(key) ?? {};
-      // One fetch per key: a second subscriber's run() during flight just
-      // rides the existing promise instead of issuing a duplicate request.
+      // one fetch per key: concurrent subscribers ride the in-flight promise
       if (e.inflight) {
         e.inflight.finally(() => {
           if (alive) setTick((t) => t + 1);
@@ -235,12 +218,9 @@ export function useQuery<T>(
         });
       cache.set(key, e);
     };
-    // Errored entries are retryable — a mount (page reload) or invalidate
-    // re-runs them. Without this a transient failure (Core restarting under
-    // `bun --watch` during a page load) wedged the query permanently.
+    // errored entries retry on mount/invalidate — else a transient failure wedges
     if (!entry.inflight && (!entry.resolved || entry.error)) run();
-    // A subscriber that mounts while a fetch is in flight still needs a tick
-    // when it lands — otherwise it can hold a stale cache read.
+    // a subscriber mounting mid-flight still needs a tick when it lands
     entry.inflight?.finally(() => {
       if (alive) setTick((t) => t + 1);
     });
@@ -249,8 +229,8 @@ export function useQuery<T>(
       alive = false;
       unsub();
     };
-    // `api` is a dep: a baseUrl change mints a new client with a fresh cache —
-    // without re-running, entries stay unresolved and queries hang loading.
+    // `api` dep: a baseUrl change mints a fresh client/cache — without
+    // re-running, queries hang loading
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [key, api]);
 
@@ -258,8 +238,7 @@ export function useQuery<T>(
     data: entry.data as T | undefined,
     error: entry.error,
     loading: !entry.resolved && !entry.error,
-    // Deleting alone leaves the key stable so the effect never re-fires —
-    // notify subscribers (this hook's `run` included) to actually fetch.
+    // delete alone keeps the key stable so the effect never re-fires — notify
     refetch: () => {
       cache.delete(key);
       invalidate(key);
@@ -267,21 +246,16 @@ export function useQuery<T>(
   };
 }
 
-// Live providers — maintained by VenduaProvider's mount effect so
-// invalidateQuery evicts and notifies mounted providers only (unmounted
-// caches are unreachable through the WeakMap and get GC'd).
+// mounted providers only — unmounted caches are WeakMap-GC'd
 const liveProviders = new Set<{
   cache: Map<string, CacheEntry>;
   invalidate: (key: string) => void;
 }>();
 
 export function invalidateQuery(key: string, data?: unknown) {
-  // Evict alone leaves mounted hooks rendering their stale snapshot —
-  // notifying subscribers is what reruns the fetch. When the mutation already
-  // holds the fresh value (every cart mutation returns the Cart), seed it
-  // instead of evicting: the hook goes straight to the new data and never
-  // renders a null flicker — an evict→refetch gap re-fires checkout's
-  // `items.length` effects and loops setDelivery calls (surfaced by e2e).
+  // evict + notify so mounted hooks refetch; seed when the mutation already
+  // holds the fresh value (cart mutations return Cart) — an evict→refetch gap
+  // re-fires checkout's `items.length` effects and loops setDelivery calls
   for (const live of liveProviders) {
     if (data !== undefined) {
       live.cache.set(key, { resolved: true, data });

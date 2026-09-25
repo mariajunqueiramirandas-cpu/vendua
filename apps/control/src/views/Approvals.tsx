@@ -11,8 +11,7 @@ export default function Approvals() {
   const [editBody, setEditBody] = useState('');
   const [results, setResults] = useState<Record<string, string>>({});
 
-  // Newest applied load wins — a stalled earlier response still commits
-  // unless a newer SUCCESS already landed; a failed refresh loses nothing.
+  // newest successful load wins
   const reqSeq = useRef(0);
   const okSeq = useRef(0);
   const load = useCallback(() => {
@@ -42,8 +41,7 @@ export default function Approvals() {
             : `falhou: ${res.sent?.reason ?? 'desconhecido'}`,
       }));
     } catch (e) {
-      // Refusals keep the draft pending — surface why so staff knows to
-      // edit or reject it instead of retrying a click that can never land.
+      // refusals keep the draft pending — surface why
       setResults((r) => ({
         ...r,
         [d.id]:
@@ -59,9 +57,7 @@ export default function Approvals() {
     load();
   };
   const saveEdit = async (d: Draft) => {
-    // Edit = create the replacement draft first, then reject the original —
-    // if compose fails the original draft survives and nothing is lost.
-    // The audit trail keeps both versions.
+    // create the replacement before rejecting the original, so a failed compose loses nothing
     let replacement: string;
     try {
       const res = await api.sendThreadMessage(d.threadId, editBody, false, d.subject ?? undefined);
@@ -71,8 +67,7 @@ export default function Approvals() {
       return;
     }
     await api.reject(d.id);
-    // "salvar + aprovar" means the edited version goes out — approve the
-    // replacement, not just leave it pending for a second pass.
+    // "salvar + aprovar" sends the edited version — approve the replacement
     try {
       const res = await api.approve(replacement);
       setResults((r) => ({

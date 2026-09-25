@@ -21,8 +21,6 @@ const MON_0900 = new Date('2026-09-21T12:00:00Z'); // seg 09:00 BRT
 
 const cfg = (over: Record<string, unknown> = {}) => normalizeMeetingConfig({ ...over });
 
-// ---------- tz helpers ----------
-
 describe('tz helpers', () => {
   test('zonedInstant: 09:00 São Paulo = 12:00 UTC (UTC-3)', () => {
     const t = zonedInstant('America/Sao_Paulo', { year: 2026, month: 9, day: 21, weekday: 1 }, 540);
@@ -37,8 +35,6 @@ describe('tz helpers', () => {
     expect(localDateOf(SUN, 'America/Sao_Paulo').weekday).toBe(0);
   });
 });
-
-// ---------- config ----------
 
 describe('normalizeMeetingConfig', () => {
   test('empty row → defaults', () => {
@@ -83,8 +79,6 @@ describe('normalizeMeetingConfig', () => {
     expect(normalizeMeetingConfig({ weekly: j }).weekly).toEqual(c.weekly);
   });
 });
-
-// ---------- onGrid / slotFits ----------
 
 describe('onGrid', () => {
   const c = cfg();
@@ -132,8 +126,6 @@ describe('isFree/slotFits', () => {
     expect(slotFits(c, new Date('2026-09-21T12:15:00Z'), 30, SUN, [])).toBe(false);
   });
 });
-
-// ---------- computeSlots ----------
 
 describe('computeSlots', () => {
   const c = cfg();
@@ -196,8 +188,6 @@ describe('computeSlots', () => {
   });
 });
 
-// ---------- booking tokens ----------
-
 describe('bookingToken / verifyBookingToken', () => {
   const leadId = 'a1b2c3d4-0000-4000-8000-000000000000';
   test('roundtrip', () => {
@@ -226,8 +216,6 @@ describe('bookingToken / verifyBookingToken', () => {
   });
 });
 
-// ---------- cancel window ----------
-
 describe('selfCancelAllowed', () => {
   test('>12h ok, inside 12h not, past not', () => {
     const now = SUN.getTime();
@@ -237,8 +225,6 @@ describe('selfCancelAllowed', () => {
     expect(selfCancelAllowed(now - 1000, now)).toBe(false);
   });
 });
-
-// ---------- defaults sanity ----------
 
 describe('MEETING_DEFAULTS', () => {
   test('publicBaseUrl is https, tz is São Paulo', () => {

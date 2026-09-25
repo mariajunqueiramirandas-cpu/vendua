@@ -4,15 +4,9 @@ import { useKernel, useQuery } from './provider.tsx';
 import type { Notice, NoticeAction, SurfacesEnvelope } from './api.ts';
 import type { SlotKey } from './config.ts';
 
-/**
- * <SystemSurfaces /> — renders server-driven surfaces at fixed mount points
- * (05-system-surfaces.md#placement-points). Phase 0 ships ONLY the generic
- * `system.Notice` renderer: unknown kinds, severities, and action types must
- * degrade gracefully per the forward-compat rules.
- *
- * Overrides: each surface consults the slot registry; an override renders
- * inside an error boundary and falls back to the Kernel default on throw.
- */
+// server-driven surfaces at fixed mount points (05-system-surfaces.md);
+// unknown kinds/severities/action types degrade per the forward-compat rules,
+// overrides render inside an error boundary with the generic notice as fallback
 
 const SEVERITIES = new Set(['info', 'warning', 'blocking']);
 
@@ -23,8 +17,7 @@ function severityOf(n: Notice): 'info' | 'warning' | 'blocking' {
 }
 
 function actionToLink(a: NoticeAction): { label: string; href: string } | null {
-  // Forward-compat rule 3: unknown action types render as a link if they
-  // carry an href, else are omitted.
+  // forward-compat: unknown action types render as a link if they carry href
   if (a.type === 'link' && typeof a.href === 'string') return { label: a.label, href: a.href };
   if (typeof (a as Record<string, unknown>).href === 'string') {
     return { label: a.label, href: (a as Record<string, unknown>).href as string };
@@ -77,14 +70,13 @@ export function GenericNotice({
   );
 }
 
-/** Props every `system.*` notice override receives — type overrides as
- *  `ComponentType<NoticeOverrideProps>` instead of hand-narrowing. */
+// props every `system.*` notice override receives
 export interface NoticeOverrideProps {
   notice: Notice;
   onDismiss?: () => void;
 }
 
-/** Renders a notice through the slot registry: override → error boundary → generic. */
+// override → error boundary → generic fallback
 function SlotNotice({ notice, onDismiss }: { notice: Notice; onDismiss?: () => void }) {
   const { config } = useKernel();
   const slotForKind = `system.${notice.kind
@@ -121,16 +113,13 @@ export function SystemSurfaces({ zoneMatched }: { zoneMatched?: boolean } = {}) 
   // First paint uses edge-injected state when present (zero flicker).
   const injected = (globalThis as Record<string, unknown>).__VENDUA_STATE__ as
     SurfacesEnvelope | undefined;
-  // The key carries zoneMatched: a cached envelope from the previous address
-  // result must not render for the new one (Review finding).
+  // key carries zoneMatched so a cached envelope can't render for a new result
   const key = `surfaces:${zoneMatched === undefined ? 'any' : zoneMatched}`;
   const q = useQuery(key, () => api.surfaces(zoneMatched));
   // Injected state is only a valid first paint for the unscoped query.
   const envelope = q.data ?? (zoneMatched === undefined ? injected : undefined);
 
-  // Notice visibility is computed from Date.now() at render — schedule one
-  // re-render at the nearest future startsAt/endsAt boundary so scheduled
-  // notices appear and expired ones disappear on time.
+  // schedule one re-render at the nearest future startsAt/endsAt boundary
   const [, setTick] = useState(0);
   useEffect(() => {
     if (!envelope) return;
@@ -159,13 +148,13 @@ export function SystemSurfaces({ zoneMatched }: { zoneMatched?: boolean } = {}) 
 
   return (
     <>
-      {/* Mount point 1: banner-stack — non-blocking notices, top of viewport. */}
+      {/* mount point 1 */}
       <div className="v-banner-stack" data-vendua="banner-stack">
         {banners.map((n) => (
           <NoticeView key={n.id} notice={n} />
         ))}
       </div>
-      {/* Mount point 2: blocking-overlay — covers the page. */}
+      {/* mount point 2 */}
       {blocking.length > 0 ? (
         <div className="v-blocking-overlay" data-vendua="blocking-overlay">
           {blocking.map((n) => (
@@ -173,12 +162,12 @@ export function SystemSurfaces({ zoneMatched }: { zoneMatched?: boolean } = {}) 
           ))}
         </div>
       ) : null}
-      {/* Mount points 3 (consent) and 4 (emergency/loader-owned) are Phase 1+. */}
+      {/* mount points 3 (consent) and 4 (emergency/loader-owned) are Phase 1+ */}
     </>
   );
 }
 
-/** Inline surface region for brand pages (05: SurfaceRegion). */
+// inline surface region (05: SurfaceRegion)
 export function SurfaceRegion({ name }: { name: string }): ReactNode {
   const { api } = useKernel();
   const q = useQuery(`surfaces:region:${name}`, () => api.surfaces());

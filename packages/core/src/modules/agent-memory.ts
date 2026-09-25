@@ -1,18 +1,8 @@
-/**
- * agent-memory — memory v2 (ADR 0014): workspace/segment learnings,
- * discovery debriefs, and structured per-lead facts.
- *
- * Control-plane tables (workspace-global, no tenant_id) — every function
- * here runs inside a control tx: the runner's claim tx for the *Tx exports,
- * controlTx/claimControl for the route helpers.
- *
- * Caps: workspace+segment learnings share one 200-item cap, debriefs a
- * separate 60 — discovery history can no longer flush learnings the way
- * the old shared facts list let it. Eviction prefers the oldest UNPINNED
- * item; a pinned item is staff's "never forget". rememberTx dedupes
- * case-insensitively on (scope, segment, content) — a re-learned fact
- * refreshes updated_at, which is also its eviction protection.
- */
+// memory v2 (ADR 0014): workspace/segment learnings, discovery debriefs,
+// per-lead facts — control-plane tables (no tenant_id).
+// Caps: learnings share one 200-item cap, debriefs 60. Eviction prefers oldest
+// UNPINNED (pinned = staff "never forget"); dedupe on (scope, segment, content)
+// refreshes updated_at, which doubles as eviction protection.
 import { HttpError, UUID_RE } from '../platform/http.ts';
 import type { Sql } from '../platform/db.ts';
 import { claimControl, controlTx, type ClaimResult } from './control.ts';
@@ -47,7 +37,7 @@ export interface MemoryItemRow {
   updated_at: string;
 }
 
-/** camelCase API view — the ADR 0014 MemoryItem contract. */
+// camelCase API view (ADR 0014 contract)
 export interface MemoryItem {
   id: string;
   scope: MemoryScope;
@@ -71,7 +61,7 @@ export interface LeadFactRow {
   updated_at: string;
 }
 
-/** camelCase API view — the ADR 0014 LeadFact contract. */
+// camelCase API view (ADR 0014 contract)
 export interface LeadFact {
   key: string;
   value: string;
@@ -107,9 +97,8 @@ export function leadFactJson(row: LeadFactRow): LeadFact {
   };
 }
 
-/** True when the 0035 memory tables are deployed — a control box ahead of
- *  its migrations keeps the legacy `control_settings.agent_memory` read
- *  path and turns the write tools into no-op errors instead of 42P01s. */
+// a control box ahead of its migrations keeps the legacy settings read path
+// and turns writes into no-op errors instead of 42P01s
 export async function hasMemoryTablesTx(tx: Sql): Promise<boolean> {
   const r = await tx<{ r: string | null }[]>`select to_regclass('agent_memory_items') as r`;
   return r[0]!.r !== null;
@@ -118,7 +107,6 @@ export async function hasMemoryTablesTx(tx: Sql): Promise<boolean> {
 const bad = (field: string, why: string) =>
   new HttpError(422, 'BAD_REQUEST', `${field} ${why}`, { field });
 
-/** Validated scope enum for query/body fields — 422 outside the contract. */
 export function memoryScope(v: unknown): MemoryScope {
   return checkScope(v);
 }
@@ -156,12 +144,8 @@ function checkSourceRunId(v: unknown): string | null {
   return v;
 }
 
-/** Cap enforcement inside the remember tx: keep ⌊cap − pinned⌋ newest
- *  unpinned items of the class. Pinning is the staff override — a class
- *  entirely pinned leaves no room at all, so a write into it is rejected
- *  (MEMORY_CAP_PINNED) rather than silently evicting what was just stored.
- *  Learnings evict by updated_at (a dedupe-hit refresh is an anti-eviction
- *  signal); debriefs are an append log, evict by created_at. */
+// keep ⌊cap − pinned⌋ newest unpinned items; learnings evict by updated_at
+// (a dedupe-hit refresh is anti-eviction), debriefs (append log) by created_at
 async function enforceMemoryCapTx(
   tx: Sql,
   cls: 'learning' | 'debrief',
@@ -199,7 +183,6 @@ async function enforceMemoryCapTx(
   return rows;
 }
 
-/** Shared insert + dedupe + cap for learnings and debriefs. */
 export async function rememberTx(
   tx: Sql,
   input: {
@@ -225,22 +208,17 @@ export async function rememberTx(
       });
     }
   }
-  // Serialize writers: concurrent remembers must see each other's committed
-  // row before computing cap eviction or two txs could each keep an
-  // over-cap set (the old settings-row FOR UPDATE had the same job).
+  // serialize writers so concurrent remembers can't each keep an over-cap set
   await tx`select pg_advisory_xact_lock(hashtext('vendua.agent_memory'))`;
-  // clock_timestamp() (not now()): this tx may have started BEFORE waiting on
-  // the lock — a tx-start stamp would sort the new row behind the previous
-  // winner's commits and eviction could delete the row being written.
+  // clock_timestamp(): a tx-start stamp could sort the new row behind the
+  // previous winner's commits, and eviction could delete the row being written
   const rows = await tx<MemoryItemRow[]>`
     insert into agent_memory_items (scope, segment, content, source, source_run_id, created_at, updated_at)
     values (${scope}, ${segment}, ${content}, ${input.source}, ${sourceRunId}, clock_timestamp(), clock_timestamp())
     on conflict (scope, (coalesce(segment, '')), (lower(content)))
     do update set
       updated_at = clock_timestamp(),
-      -- Debriefs are an append log: a repeat means THIS run produced it —
-      -- restamp created_at (feeds and eviction order by it) and point at
-      -- the new run. Learnings keep their original created_at.
+      -- debriefs are an append log: restamp created_at + source_run_id on repeat
       created_at = case
         when agent_memory_items.scope = 'debrief' then clock_timestamp()
         else agent_memory_items.created_at
@@ -252,9 +230,7 @@ export async function rememberTx(
     returning *
   `;
   const evicted = await enforceMemoryCapTx(tx, scope === 'debrief' ? 'debrief' : 'learning');
-  // Fully-pinned class: every unpinned row gets evicted — including the one
-  // just written. Roll back (this throw undoes the insert AND the evictions)
-  // rather than return a phantom item the next read can't find.
+  // fully-pinned class: roll back rather than return a phantom item
   if (evicted.some((r) => r.id === rows[0]!.id)) {
     throw new HttpError(
       422,
@@ -266,10 +242,8 @@ export async function rememberTx(
   return { item: memoryItemJson(rows[0]!), evicted: evicted.map((r) => r.content) };
 }
 
-/** Discovery debrief line (the runner's writeDebrief successor): own scope,
- *  own cap — appended under the same dedupe/eviction rules as learnings.
- *  `segment` tags the run's niche so the feed ranks segment-matched debriefs
- *  first (same normalization as segment learnings). */
+// discovery debrief line: own scope/cap; `segment` tags the niche so the feed
+// ranks segment-matched debriefs first
 export async function appendDebriefTx(
   tx: Sql,
   input: { content: string; sourceRunId?: string | null; segment?: string | null },
@@ -283,10 +257,8 @@ export async function appendDebriefTx(
   });
 }
 
-/** The run's memory feed (runner system prompt): pinned first, then
- *  segment-matched learnings, then workspace learnings by recency/uses,
- *  then the latest debriefs (segment-matched first). Returned learnings
- *  get their `uses` bumped — proven knowledge keeps surfacing. */
+// the run's memory feed: pinned → segment-matched learnings → workspace by
+// recency/uses → latest debriefs; returned learnings get `uses` bumped
 export async function memoryForRunTx(
   tx: Sql,
   opts: { segment?: string | null; limit?: number } = {},
@@ -296,10 +268,8 @@ export async function memoryForRunTx(
       ? opts.segment.trim().toLowerCase()
       : null;
   const limit = Math.max(1, Math.min(Math.floor(opts.limit ?? 60), 260));
-  // Bucket order: pinned of any scope (0) → segment-matched learnings (1)
-  // → workspace learnings (2) → latest debriefs (3, capped at DEBRIEF_FEED,
-  // segment-matched first). rn ranks inside each bucket: learnings by
-  // recency/uses, debriefs by match then recency.
+  // buckets: pinned(0) → segment learnings(1) → workspace(2) → debriefs(3,
+  // capped at DEBRIEF_FEED, segment-matched first); rn ranks inside each bucket
   const rows = await tx<{ id: string; content: string; learning: boolean }[]>`
     with feed as (
       select id, content, scope, segment, updated_at, uses, created_at,
@@ -337,10 +307,8 @@ export async function memoryForRunTx(
   return rows.map((r) => r.content);
 }
 
-/** Structured per-lead facts — the agent's keyed dossier memory.
- *  `order: 'key'` for the staff listing (stable alphabetical); 'recent' for
- *  the prompt read — a bounded feed must prefer the freshest facts, or a
- *  late-sorting key past the bound never reaches the agent. */
+// 'key' for the staff listing; 'recent' for the bounded prompt read so a
+// late-sorting key isn't cut off by the limit
 export async function leadFactsTx(
   tx: Sql,
   leadId: string,
@@ -413,8 +381,6 @@ export async function upsertLeadFactTx(
   return leadFactJson(rows[0]!);
 }
 
-// ---- route helpers (controlTx/claimControl wrappers used by app.ts) ------
-
 export async function listMemoryItems(
   sql: Sql,
   q: { scope?: MemoryScope | null; segment?: string | null },
@@ -464,8 +430,7 @@ export async function patchMemoryItem(
         update agent_memory_items set ${tx(set)} where id = ${id} returning *
       `;
     } catch (e) {
-      // A content edit that collides with another item's (scope, segment,
-      // content) dedupe key must 4xx, not surface the 23505 as a 500.
+      // a dedupe-key collision must 4xx, not surface 23505 as a 500
       if ((e as { code?: string }).code === '23505') {
         throw bad('content', 'duplicates an existing memory item');
       }

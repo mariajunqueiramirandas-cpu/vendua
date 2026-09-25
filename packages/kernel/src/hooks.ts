@@ -12,12 +12,8 @@ import type {
 } from './api.ts';
 import { ApiError } from './api.ts';
 
-/**
- * Data hooks — thin typed wrappers over Core reads (02-kernel.md#hooks).
- * They never compute prices or eligibility; they surface Core's answer.
- * Every read hook exposes `refetch` — storefronts use it for order
- * tracking polls and retry affordances.
- */
+// data hooks — thin typed wrappers over Core reads (02-kernel.md#hooks);
+// they never compute prices or eligibility, and every read exposes `refetch`
 
 export interface QueryError {
   status?: number | undefined;
@@ -121,9 +117,8 @@ export function useCart(): {
 
   const bump = useCallback(
     (cart: Cart) => {
-      // Seed, don't evict: the mutation's response IS the fresh cart — an
-      // evict→refetch gap drops cart to null mid-render, which re-fires
-      // checkout delivery-sync effects (`items.length` dep) into a POST loop.
+      // seed, don't evict: an evict→refetch gap drops cart to null mid-render,
+      // re-firing checkout effects into a POST loop
       invalidateQuery('cart', cart);
       invalidate('cart');
       return cart;
@@ -165,8 +160,7 @@ export function useOrder(id: string): {
 export function useCheckout(): {
   submit: (input: CheckoutInput) => Promise<Order>;
   pending: boolean;
-  /** Structured failure from the last submit — `code`/`details.field` are
-   *  stable for form-level error display. */
+  /** structured failure; `code`/`details.field` stable for form display */
   error: QueryError | undefined;
   reset: () => void;
 } {
@@ -180,8 +174,7 @@ export function useCheckout(): {
       setError(undefined);
       try {
         const order = await api.checkout(input);
-        // The cart behind this session is now completed — drop it so the next
-        // read doesn't show a stale finished cart.
+        // drop the now-completed cart so the next read isn't stale
         invalidateQuery('cart');
         invalidate('cart');
         return order;
