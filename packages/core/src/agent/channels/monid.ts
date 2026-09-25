@@ -1,8 +1,4 @@
-/** agent/channels/monid — monid.ai gateway driver: one REST surface
- *  (discover/inspect/run) over a catalog of scraper endpoints (apify actors,
- *  serp, enrichment). Async providers return 202 + runId → poll /v1/runs/{id}.
- *  Cost is tracked per call against a per-run cap so a live balance can't be
- *  drained by a looping agent. */
+// monid.ai gateway driver — async providers return 202 + runId → poll /v1/runs/{id}.
 
 const BASE = 'https://api.monid.ai';
 const POLL_MS = 3_000;
@@ -37,9 +33,6 @@ function costOf(data: MonidRunResponse | MonidPollResponse, results: number): nu
   return 0;
 }
 
-/** Execute a monid endpoint. Returns the output array (providers differ in
- *  envelope; normalized to a plain array here) plus the reported/estimated
- *  USD cost. Throws on transport, provider, or timeout failures. */
 export async function monidRun(
   endpoint: { provider: string; endpoint: string },
   input: Record<string, unknown>,
@@ -59,7 +52,6 @@ export async function monidRun(
   }
   let data = (await res.json()) as MonidRunResponse;
 
-  // async providers (apify): poll until the run settles
   if (res.status === 202 && data.runId) {
     const deadline = Date.now() + RUN_TIMEOUT_MS;
     for (;;) {
@@ -92,14 +84,11 @@ export async function monidRun(
   return { output, costUsd: costOf(data, output.length) };
 }
 
-/** Per-run spend guard — tools RESERVE the estimate synchronously before the
- *  remote call (parallel batches can't see a stale balance), then reconcile to
- *  the reported cost after it settles. A failed call keeps the reservation:
- *  monid may still bill an accepted run. */
+// Tools reserve the estimate synchronously (parallel batches can't see a stale
+// balance); a failed call keeps it — monid may still bill an accepted run.
 export class MonidBudget {
   spent: number;
-  /** Invoked whenever spend moves — the runner journals it so a reclaimed
-   *  run's next attempt rebuilds the balance instead of re-spending the cap. */
+  /** runner journals it so a reclaimed run rebuilds the balance instead of re-spending the cap */
   onChange?: (spent: number) => void;
   constructor(
     private capUsd: number,

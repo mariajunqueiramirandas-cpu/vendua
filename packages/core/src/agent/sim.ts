@@ -8,17 +8,8 @@ import { providerFor, type AgentMessage, type LlmProvider } from './llm.ts';
 import type { SimScenario } from './sim-scenarios.ts';
 import { log } from '../platform/log.ts';
 
-/**
- * agent/sim — the negotiation simulator. Drives a real end-to-end negotiation:
- * the vendua agent runs its actual run loop (outreach → reply → …), while a
- * second LLM plays the lead from a hidden persona. Everything rides the real
- * plumbing — ingestInbound, guardrails, dispatchMessage — on a `log` channel
- * driver, so "sent" messages never leave the building and the transcript is
- * just the lead_messages thread.
- *
- * A judge pass then scores the negotiation against the scenario's success
- * criteria and the result lands in `sim_runs` for quality tracking.
- */
+// Negotiation simulator: the real agent run loop vs an LLM persona on the `log`
+// channel (sent messages never leave), then a judge pass scores the transcript.
 
 const simLog = log.child({ mod: 'sim' });
 
@@ -41,9 +32,8 @@ export interface SimResult {
 
 type Terminal = { outcome: string; why: string } | null;
 
-/** Wait until no queued/running agent run remains for the lead. ingestInbound
- *  kicks a floating drain of its own, so the reply run may already be claimed
- *  when our drain() returns — polling the row is the only honest signal. */
+// Polling the row is the only honest signal — ingestInbound kicks its own drain,
+// so the reply run may already be claimed when our drain() returns.
 async function settle(sql: Sql, leadId: string): Promise<boolean> {
   for (let i = 0; i < 90; i++) {
     await drain(sql);
@@ -136,7 +126,7 @@ export async function runSim(
   let tokensIn = 0;
   let tokensOut = 0;
 
-  // Seed: the lead + its dossier land exactly where real research puts them.
+  // The lead + dossier land exactly where real research puts them.
   const leadId = await controlTx(sql, async (tx) => {
     const created = await insertLeadTx(
       tx,
@@ -157,7 +147,6 @@ export async function runSim(
   const transcript: SimTurn[] = [];
   const maxTurns = scenario.maxTurns ?? 8;
 
-  // Turn 0: the agent makes first contact.
   await enqueueRun(sql, { kind: 'outreach', leadId });
   const firstSettled = await settle(sql, leadId);
 
@@ -202,9 +191,7 @@ export async function runSim(
       (await terminalState(sql, leadId)) ??
       (settled ? null : { outcome: 'stalled', why: 'settle timeout — run still active' });
     if (terminal) {
-      // A run can go terminal on the same step that sends (send_message +
-      // set_state together) — harvest that closing message before ending, or
-      // the judge scores a transcript missing the agent's last word.
+      // A run can go terminal on the same step that sends — harvest the closing message.
       const out = await latestOutbound(sql, leadId, lastSeenId);
       if (out) {
         lastSeenId = out.id;
@@ -214,8 +201,7 @@ export async function runSim(
     }
   }
   terminal = terminal ?? { outcome: 'stalled', why: `turn cap ${maxTurns}` };
-  // A run that went terminal before the loop (e.g. failed after its send)
-  // still left a message on the wire — harvest it so the record isn't empty.
+  // A run that went terminal before the loop may still have left a message — harvest it.
   if (!transcript.length) {
     const out = await latestOutbound(sql, leadId, lastSeenId);
     if (out) {
@@ -225,19 +211,14 @@ export async function runSim(
     }
   }
 
-  // Judge: score the agent's side of the transcript against the scenario.
-  // FATOS PERMITIDOS mirrors exactly what the agent's prompt claims is
-  // quotable — the judge calls fabrication when a price/link strays from it.
+  // FATOS PERMITIDOS mirrors the agent prompt's quotable facts — straying from them = fabrication.
   const pitch = await getPitch(sql);
   const meeting = await getSetting<{ bookingUrl?: string }>(sql, 'meeting', {});
   const facts = [
     `OFERTA: ${pitch.offer?.trim() ? pitch.offer : '(não configurada — nada comercial é citável)'}`,
     `BOOKING_URL: ${meeting.bookingUrl ?? '(não configurado)'}`,
   ].join('\n');
-  // Judge: score the agent's side of the transcript against the scenario.
-  // An empty transcript has nothing to score — don't let the judge invent a
-  // review for a conversation that never happened (observed: it praised an
-  // opt-out that was actually a stalled no-send).
+  // An empty transcript has nothing to score — don't let the judge invent a review.
   let judgeRes: Awaited<ReturnType<LlmProvider['chat']>> = {
     text: null,
     toolCalls: [],
@@ -270,8 +251,7 @@ export async function runSim(
       judge = { parse_error: judgeRes.text ?? 'empty' };
     }
   }
-  // Deterministic endings (db facts) beat the judge's guess; the judge only
-  // refines the fuzzy ones (stalled/ended/progress).
+  // Deterministic endings (db facts) beat the judge's guess on the fuzzy ones.
   const PINNED = new Set(['optout', 'run_failed', 'booked', 'handoff']);
   const JUDGED = new Set(['booked', 'progress', 'lost', 'optout', 'handoff', 'stalled']);
   const outcome = PINNED.has(terminal.outcome)

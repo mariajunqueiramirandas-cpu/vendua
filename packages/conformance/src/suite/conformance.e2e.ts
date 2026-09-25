@@ -1,14 +1,5 @@
-/**
- * Conformance Suite v1 — docs/architecture/10-qa-pipeline.md C/S/Q IDs.
- * Every test title starts with its stable ID; the custom reporter maps them
- * into qa-report/report.json. Determinism: seeded qa-* tenants, fixed data,
- * no network beyond the preview server and Core on this machine.
- *
- * Where the normative check needs something no storefront hook exposes yet
- * (checkout fields, a crashing slot override, (vendua)/* system routes), the
- * test either drives a documented pt-BR convention fallback or is marked
- * skipped-with-reason — never faked green.
- */
+// Conformance suite — every test title starts with its stable docs/architecture/10 ID,
+// mapped into qa-report/report.json. Skips carry a reason, never fake green.
 import { mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { gzipSync } from 'node:zlib';
@@ -90,10 +81,8 @@ async function uiAddToCart(
   if (!(await add.isEnabled().catch(() => false)))
     return { ok: false, detail: 'add-to-cart stayed disabled after required selection' };
   await add.dispatchEvent('click');
-  // Verify the add actually landed server-side — a UI that "clicks" without
-  // mutating the server cart must surface here, not downstream on an empty
-  // cart page. Poll: the session token + cart write take a round-trip, and
-  // a single fixed wait misreads a slow-but-healthy add as a UI failure.
+  // poll the server cart — a single fixed wait misreads a slow-but-healthy
+  // add as a UI failure
   const deadline = Date.now() + 12_000;
   while (Date.now() < deadline) {
     const tok = await sessionToken(page);
@@ -140,8 +129,6 @@ async function orderCountByCart(cartId: string): Promise<number> {
   }
 }
 
-// ---------------------------------------------------------------- C-series
-
 test('[C01] catalog browsable; product cards expose data-vendua="product-link" and resolve', async ({
   page,
   request,
@@ -167,7 +154,7 @@ test('[C01] catalog browsable; product cards expose data-vendua="product-link" a
       bad.push(`${href} → ${res?.status()}`);
       continue;
     }
-    // Wait for real content — goto resolves at load, before React mounts.
+    // goto resolves at load, before React mounts
     const rendered = await page
       .waitForSelector('[data-vendua="add-to-cart"], h1', { timeout: 10_000 })
       .then(() => true)
@@ -188,7 +175,6 @@ test('[C02] modifiers: required-group validation blocks; valid selection adds; t
     'could not reach qa-modular product page',
   ).toBeTruthy();
 
-  // 1. validation blocks: untouched required group → no cart item lands
   const add = page.locator('[data-vendua="add-to-cart"]').first();
   expect(await add.count(), 'no add-to-cart primitive on product page').toBeGreaterThan(0);
   if (!(await add.isDisabled().catch(() => false))) {
@@ -202,7 +188,6 @@ test('[C02] modifiers: required-group validation blocks; valid selection adds; t
     'required-group validation did not block: item was added without modifiers',
   ).toBe(0);
 
-  // 2. valid selection adds through the UI
   const detail = await getProduct(request, OPEN, MOD_PRODUCT);
   for (const g of detail?.modifierGroups ?? []) {
     if (!g.required) continue;
@@ -227,7 +212,6 @@ test('[C02] modifiers: required-group validation blocks; valid selection adds; t
   const { cart } = await getCart(request, OPEN, token!);
   expect(cart?.items.length, 'server cart empty after UI add').toBeGreaterThan(0);
 
-  // 3. totals shown in the storefront equal Core's cart totals
   await gotoCart(page, O);
   const shown = brl(cart!.totals.totalCents);
   const bodyText = (await page.evaluate(() => document.body.innerText)).replace(/ /g, ' ');
@@ -384,8 +368,7 @@ test('[C07] idempotent retry: double-submit of checkout produces exactly one ord
   page,
   request,
 }) => {
-  // deterministic half: ONE idempotency key retried twice — the second call
-  // must replay the stored response, not re-execute the mutation.
+  // deterministic half: same-key retry must replay the stored response
   const { sessionToken: tok, cart } = await apiAddItem(request, OPEN, SIMPLE_PRODUCT);
   const input = {
     customer: { name: 'QA Retry', phone: '22999990000' },
@@ -407,7 +390,7 @@ test('[C07] idempotent retry: double-submit of checkout produces exactly one ord
   expect(second.body?.order?.id, 'replay returned a different order').toBe(first.body?.order?.id);
   expect(await orderCountByCart(cart.id), 'double-submit produced ≠1 order').toBe(1);
 
-  // UI half: rapid double-submit on the storefront must also collapse
+  // UI half: rapid double-submit must also collapse
   const added = await uiAddToCart(page, request, OPEN, SIMPLE_PRODUCT);
   expect(added.ok, added.ok === false ? added.detail : 'uiAddToCart failed').toBeTruthy();
   await gotoCart(page, O);
@@ -430,22 +413,17 @@ test('[C07] idempotent retry: double-submit of checkout produces exactly one ord
   expect(ids.length, 'UI double-submit produced multiple orders').toBe(1);
 });
 
-// ---------------------------------------------------------------- S-series
-
 test('[S01] paused fixture → blocking overlay, primitives disabled, checkout rejects STORE_PAUSED', async ({
   page,
   request,
 }) => {
   const errs = trackPageErrors(page);
   await page.goto(base(PAUSED));
-  // The kernel fetches surfaces post-mount in this harness (production injects
-  // state at the edge): assert the overlay renders shortly after load.
+  // this harness fetches surfaces post-mount — assert shortly after load
   const overlay = page.locator('[data-vendua="blocking-overlay"]');
   await expect(overlay, 'no blocking overlay on paused store').toBeVisible({ timeout: 15_000 });
 
-  // A working blocking overlay means interactive page content must be
-  // unreachable — playwright's trial click is the idiomatic way to prove the
-  // overlay intercepts pointer input over a real storefront link.
+  // a working overlay must intercept pointer input — trial-click a real link
   const navLink = page.locator('main a[href], nav a[href]').first();
   if ((await navLink.count()) > 0) {
     const verdict = await navLink
@@ -545,8 +523,7 @@ test('[S04] unknown severity/action types → degrade per spec, never crash', as
     text.includes('QA: unknown severity'),
     `unknown-severity notice not rendered: "${text.slice(0, 160)}"`,
   ).toBeTruthy();
-  // unknown action type carrying href degrades to a plain link; one without
-  // a target is dropped silently
+  // unknown action type: href degrades to a link, no target is dropped
   const link = stack.locator('a[href]', { hasText: 'Teleport' }).first();
   await expect(link, 'unknown action with href should degrade to a link').toBeVisible();
   expect(errs, `uncaught page errors: ${errs.join('; ')}`).toHaveLength(0);
@@ -566,8 +543,7 @@ test('[S06] v.js present, health ping responds, blocking overlay renders with Ke
   request,
   context,
 }) => {
-  // Kernel JS disabled = the storefront bundle never runs; v.js must still
-  // render the paused overlay straight from /storefront/v1/state.
+  // with the storefront bundle aborted, v.js must still render the overlay
   await context.route('**/*', (route) => {
     const u = new URL(route.request().url());
     if (u.pathname.endsWith('.js') && !u.pathname.startsWith('/v1/')) return route.abort();
@@ -598,8 +574,6 @@ test('[S07] (vendua)/* system routes all resolve and render Kernel defaults', as
   });
   test.skip();
 });
-
-// ---------------------------------------------------------------- Q-series
 
 const VIEWPORTS = [320, 360, 390, 768, 1280, 1440];
 
@@ -782,10 +756,7 @@ test('[Q07] contrast AA on token pairs used by default surfaces', async ({ page 
     return out;
   });
 
-  // Resolve each token through the browser: a probe element's computed color
-  // normalizes hex/rgb()/hsl()/named into `rgb(r, g, b)` — anything the page
-  // can render, this can parse; anything it can't parse is a failure, not a
-  // skip.
+  // a probe's computed color normalizes any renderable value to rgb()
   const resolved: Record<string, string | null> = await page.evaluate((vars) => {
     const probe = document.createElement('div');
     document.body.appendChild(probe);
@@ -896,8 +867,7 @@ test('[Q09] focus order + visible focus; skip link works', async ({ page }) => {
     });
     if (!info) break;
     stops.push(info);
-    // A skip link jumps to page content — an in-page anchor whose text or
-    // target reads as "skip to content"/"pular para…", not any '#' href.
+    // a skip link's text or target reads as "skip to content", not any '#' href
     if (
       !skipHref &&
       info.href?.includes('#') &&
@@ -942,8 +912,6 @@ test('[Q10] zoom 200% CSS: no loss of function', async ({ page, request }) => {
     await expect(add, 'add-to-cart not interactable at 200% zoom').toBeEnabled();
 });
 
-// ------------------------------------------------------------- artifacts
-
 test('[artifacts] screenshots at 390/1440 for the QA report', async ({ page }) => {
   mkdirSync(SHOTS, { recursive: true });
   const shots: [QaHost, string][] = [
@@ -957,7 +925,7 @@ test('[artifacts] screenshots at 390/1440 for the QA report', async ({ page }) =
       await page.setViewportSize({ width: w, height: 900 });
       await page.goto(base(host));
       await page.waitForLoadState('networkidle').catch(() => {});
-      await page.waitForTimeout(800); // let the surfaces fetch land
+      await page.waitForTimeout(800);
       await page.screenshot({ path: join(SHOTS, `${name}-${w}.png`), fullPage: false });
     }
   }

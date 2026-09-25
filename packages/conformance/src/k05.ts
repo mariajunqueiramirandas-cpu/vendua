@@ -1,7 +1,3 @@
-/**
- * K05 — the PR's diff may only touch storefronts/<slug>/**. Runs in the repo
- * checkout (CI changed-paths job calls `vendua-conformance k05 <slug>`).
- */
 import type { CheckResult } from './report.ts';
 
 export async function runK05(slug: string, baseRef?: string): Promise<CheckResult[]> {

@@ -1,10 +1,5 @@
-/**
- * Shared helpers for the conformance suite. Everything keys off two public
- * surfaces only: the Storefront/Checkout API (via the preview proxy, per QA
- * host) and the `data-vendua` hooks primitives stamp (docs/architecture/02,
- * ADR 0007). Where a check needs something no hook exposes (a checkout form
- * field), a documented pt-BR convention fallback is used and reported.
- */
+// checks key off the public API + `data-vendua` hooks only (ADR 0007);
+// pt-BR conventions are the documented fallback where no hook exists
 import { expect, type APIRequestContext, type Page } from '@playwright/test';
 
 export const PORT = Number(process.env.VENDUA_PREVIEW_PORT ?? 5199);
@@ -14,12 +9,9 @@ export const DATABASE_URL =
 export type QaHost = 'qa-open' | 'qa-paused' | 'qa-closed' | 'qa-edge';
 export const base = (host: QaHost) => `http://${host}.localhost:${PORT}`;
 
-// ---- API helpers (through the preview proxy, honoring Host tenancy) -------
-
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
-/** Core's fixed-window limiter (240/min per tenant on /checkout/v1/*) can trip
- *  when the suite bursts sessions; honor it instead of dying on the 429. */
+// core's 240/min/tenant checkout limiter trips under suite bursts — honor 429s
 async function withRetry429<T extends { status(): number }>(fn: () => Promise<T>): Promise<T> {
   const waits = [12_000, 28_000, 50_000]; // last wait crosses the 60s window
   for (let attempt = 0; ; attempt++) {
@@ -128,13 +120,8 @@ export async function sessionToken(page: Page): Promise<string | null> {
   return page.evaluate(() => globalThis.sessionStorage?.getItem('vendua.session') ?? null);
 }
 
-// ---- storefront navigation ------------------------------------------------
-
-/**
- * Find the catalog listing page. On each candidate route, count the
- * product-link hooks and slug-matching anchors (the hook may be absent —
- * that is what C01 measures). Returns the first page exposing either.
- */
+// first candidate route exposing product-link hooks or slug anchors
+// (a missing hook is itself what C01 measures)
 export async function discoverProductLinks(page: Page, products: CatalogProduct[], origin: string) {
   const candidates = ['/catalog', '/catalogo', '/cardapio', '/menu', '/produtos', '/'];
   const slugs = new Set(products.map((p) => p.slug));
@@ -154,8 +141,6 @@ export async function discoverProductLinks(page: Page, products: CatalogProduct[
   return { path: null as string | null, hookCount: 0, slugHits: 0, byHook: false };
 }
 
-/** Navigate to a product page for `slug`: product-link hooks first, then any
- *  anchor whose last path segment is the slug. Returns whether we got there. */
 export async function gotoProductPage(
   page: Page,
   listingPath: string | null,
@@ -179,8 +164,6 @@ export async function gotoProductPage(
   return false;
 }
 
-// ---- checkout driver ------------------------------------------------------
-
 async function fillFirst(page: Page, selectors: string[], value: string): Promise<boolean> {
   for (const sel of selectors) {
     const el = page.locator(sel).first();
@@ -198,15 +181,13 @@ async function clickByText(page: Page, re: RegExp): Promise<boolean> {
     .or(page.getByRole('link', { name: re }))
     .first();
   if ((await el.count()) > 0 && (await el.isEnabled().catch(() => false))) {
-    // dispatchEvent: multi-step wizards replace the button's DOM node on
-    // submit, which puts actionability .click() into a detach-retry loop.
+    // dispatchEvent: wizards replace the button node on submit — .click() detach-retries
     await el.dispatchEvent('click');
     return true;
   }
   return false;
 }
 
-/** Open the cart page: cart-trigger hook first, then common pt-BR paths. */
 export async function gotoCart(page: Page, origin: string): Promise<void> {
   const trigger = page.locator('[data-vendua="cart-trigger"]').first();
   if ((await trigger.count()) > 0) {
@@ -220,8 +201,6 @@ export async function gotoCart(page: Page, origin: string): Promise<void> {
   }
 }
 
-/** Open checkout: CheckoutButton hook if present, else a link/button whose
- *  click lands on a checkout-ish route. Returns the post-click URL or null. */
 export async function openCheckout(page: Page): Promise<string | null> {
   const hook = page.locator('[data-vendua="checkout-button"]').first();
   if ((await hook.count()) > 0) {
@@ -240,7 +219,6 @@ export async function openCheckout(page: Page): Promise<string | null> {
   return page.url() === before ? null : page.url();
 }
 
-/** Fill the customer step (name + phone) and advance. */
 export async function fillCustomerStep(page: Page): Promise<{ ok: boolean; detail?: string }> {
   const nameOk = await fillFirst(
     page,
@@ -275,7 +253,6 @@ export async function fillCustomerStep(page: Page): Promise<{ ok: boolean; detai
   return { ok: true, ...(advanced ? {} : { detail: 'no "continuar" button found after dados' }) };
 }
 
-/** Choose fulfillment. For 'delivery' also fills neighborhood/address. */
 export async function fillDeliveryStep(
   page: Page,
   mode: 'pickup' | 'delivery',
@@ -334,7 +311,6 @@ export async function fillDeliveryStep(
   return { ok: true };
 }
 
-/** Pick payment 'pix' and submit. */
 export async function submitPaymentStep(
   page: Page,
 ): Promise<{ clicked: boolean; detail?: string }> {
@@ -360,7 +336,6 @@ export async function submitPaymentStep(
   return { clicked: true };
 }
 
-/** Assert a page actually rendered store content (not an error boundary). */
 export async function expectStoreContent(page: Page) {
   await expect(page.locator('body')).not.toBeEmpty();
   const errors = await page.evaluate(() => (document.body.innerText ?? '').trim().length);

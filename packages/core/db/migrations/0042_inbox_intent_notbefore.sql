@@ -1,19 +1,4 @@
--- 0042_inbox_intent_notbefore.sql — the first shipped 0039 dropped each
--- superseded run's run_at, so on databases that already applied it the
--- backfilled intents (future first-contacts, scheduled replies) became
--- immediately drainable. Re-arm the still-pending ones.
---
--- Pairing rules, exact before positional:
---   1. Items stamped with 'srcRunId' (fixed 0039 onward) link straight to
---      their source run — no identity ambiguity at all.
---   2. Old rows have no link, so same-identity groups pair POSITIONALLY:
---      the k-th earliest-inserted item takes the k-th earliest future
---      run_at. Deadlines keep their multiplicity — one past-due item
---      doesn't stretch to a later sibling's deadline, and leftovers
---      (fewer source rows than items) stay eligible-now instead of
---      inheriting a deadline that may not be theirs.
--- Runs whose run_at already passed can't defer anything — excluded; the
--- item stays eligible. Consumed items already acted; skipped.
+-- re-arm still-pending intents left drainable by the first shipped 0039
 with src as (
   select r.lead_id, r.id::text as run_id, r.kind, r.thread_id, r.params, r.run_at,
          row_number() over (

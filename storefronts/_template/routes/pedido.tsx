@@ -1,11 +1,8 @@
 import { Link, useParams } from 'react-router-dom';
 import { formatCents, useOrder, useStore } from '@vendua/kernel';
 
-/**
- * Pedido — confirmation + live state. `useOrder(id)` rides the checkout-time
- * token the Kernel keeps per order, so refetch stays authorized after the
- * session rotates onto a fresh cart.
- */
+// `useOrder(id)` rides the checkout-time token the Kernel keeps per order, so refetch
+// stays authorized after the session rotates onto a fresh cart.
 
 const STATE_LABEL: Record<string, string> = {
   placed: 'Recebido',

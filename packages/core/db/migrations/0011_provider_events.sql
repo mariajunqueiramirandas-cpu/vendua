@@ -1,8 +1,4 @@
--- Delivery events can beat dispatch's finalize — Resend emits
--- email.delivered/bounced before our send call returns the provider id. When
--- no lead_messages row carries the pmid yet, the event is parked here; the
--- dispatch finalize drains pending rows once the pmid lands. Keyed by
--- (channel, provider_id, event) so provider retries dedupe.
+-- provider_events: parks provider delivery events that arrive before the lead_messages pmid lands.
 create table provider_events (
   id bigserial primary key,
   channel text not null,

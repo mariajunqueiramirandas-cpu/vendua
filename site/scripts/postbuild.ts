@@ -1,15 +1,13 @@
 import { copyFileSync, existsSync, writeFileSync } from 'node:fs';
 import { site } from '../src/lib/content/site';
 
-// adapter-static pré-renderiza /404/ como rota; a cópia plana é o que o nginx
-// (e o servidor de prévia) usa como error_page.
+// a cópia plana do 404 é o que o nginx serve como error_page
 const notFound = 'build/404/index.html';
 if (!existsSync(notFound))
   throw new Error('build/404/index.html não encontrado — rode `vite build` antes do pós-build.');
 copyFileSync(notFound, 'build/404.html');
 
-// Mesma lista de páginas indexáveis descrita em VALIDACAO.md (F05): /privacidade/
-// e /404/ ficam fora do sitemap de propósito.
+// sitemap = só páginas indexáveis; /privacidade/ e /404/ ficam fora (VALIDACAO.md F05)
 const routes = ['/', '/contato/'];
 if (site.publicDomain) {
   let domain: URL;

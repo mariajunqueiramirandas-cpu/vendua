@@ -2,11 +2,7 @@ import { Link, Outlet, useNavigate } from 'react-router-dom';
 import { CartTrigger, StoreStatusBadge, useCart, useStore } from '@vendua/kernel';
 import { cents, closedDays } from './_ui';
 
-/**
- * Shell — the fixed rail that makes this a dispatch board, not a landing page:
- * stenciled wordmark, status plate (Kernel's live badge inside), address,
- * and the comanda button. Collapses to a sticky bar under 960px.
- */
+// fixed rail shell — dispatch-board chrome; collapses to a sticky bar under 960px
 export function Shell() {
   const { store } = useStore();
   const { cart } = useCart();

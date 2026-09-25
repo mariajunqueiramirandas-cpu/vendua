@@ -1,14 +1,7 @@
-/**
- * events — one shared SSE channel to GET /control/v1/events for the whole
- * console. Events are thin triggers with no payload: each subscriber runs
- * the refetch it already runs on a poll, so a dead stream is invisible —
- * the views' slow polls remain the floor, and the server-sent `sync` on
- * (re)connect catches anything missed. The cookie rides same-origin, so
- * an unauthenticated stream simply never delivers.
- */
+// Shared SSE channel to /control/v1/events; events are payload-free triggers
+// that accelerate the views' polls, which remain the floor.
 
-// Mirrors CONTROL_EVENT_TYPES in packages/core — the app can't import
-// across the package boundary; the wire is the contract.
+// Mirrors CONTROL_EVENT_TYPES in packages/core — can't import across the package boundary.
 export type ControlEventType =
   | 'thread.message'
   | 'run.update'
@@ -36,9 +29,7 @@ interface Sub {
   timer: ReturnType<typeof setTimeout> | undefined;
 }
 
-// Bursts (a run's step stream, a fan-out of lead changes) shouldn't turn
-// into a burst of fetches — the stream accelerates the polls, it doesn't
-// multiply them.
+// Throttle so event bursts don't turn into a burst of fetches.
 const QUIET_MS = 300;
 
 const subs = new Set<Sub>();
@@ -46,7 +37,7 @@ let source: EventSource | null = null;
 
 function dispatch(e: ControlEvent): void {
   for (const s of subs) {
-    // sync lands on every subscriber — it means "you may have missed things"
+    // sync means "you may have missed things" — lands on every subscriber
     if (e.type !== 'sync' && !s.types.has(e.type)) continue;
     const wait = QUIET_MS - (Date.now() - s.last);
     if (wait <= 0) {
@@ -95,8 +86,7 @@ function close(): void {
   source = null;
 }
 
-/** Subscribe to control events. `sync` always reaches the handler; other
- *  types only when listed. Returns the unsubscribe. */
+/** `sync` always reaches the handler; other types only when listed. */
 export function onControlEvent(
   types: ControlEventType | readonly ControlEventType[],
   fn: ControlEventHandler,

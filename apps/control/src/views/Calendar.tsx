@@ -8,15 +8,13 @@ import { ConfirmBtn, Empty, MEETING_STATUS_LABEL, Page } from '../components.tsx
 const DAY = 86_400_000;
 const WD = ['seg', 'ter', 'qua', 'qui', 'sex', 'sáb', 'dom'];
 
-// Meetings live in the configured meeting tz, not the browser's — staff
-// outside America/Sao_Paulo would otherwise see calls on shifted days.
-// A DayKey is a calendar-day identity in that tz (not an instant).
+// DayKey: calendar-day identity in the meeting tz, not the browser's (off-tz staff would see shifted days).
 interface DayKey {
   y: number;
   m: number;
   d: number;
   key: string;
-  /** weekday 0=Sun … 6=Sat, from the tz-local date */
+  /** weekday 0=Sun … 6=Sat */
   wd: number;
 }
 
@@ -48,7 +46,6 @@ function dayKeyOf(d: Date, tz: string): DayKey {
   };
 }
 
-/** Pure calendar-day arithmetic on the tz-local identity (no tz involved). */
 function shiftDay(k: DayKey, days: number): DayKey {
   const x = new Date(Date.UTC(k.y, k.m - 1, k.d) + days * DAY);
   return {
@@ -80,7 +77,6 @@ const dayInstant = (k: DayKey) => new Date(Date.UTC(k.y, k.m - 1, k.d)).toISOStr
 const fmtTime = (iso: string, tz: string) =>
   new Date(iso).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit', timeZone: tz });
 
-/** Minutes since midnight in the meeting tz — the week grid's y-axis. */
 const dayMinutes = (iso: string, tz: string) => {
   const p = new Intl.DateTimeFormat('en-GB', {
     timeZone: tz,
@@ -130,17 +126,14 @@ export default function Calendar() {
   const [meetings, setMeetings] = useState<Meeting[]>([]);
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState('');
-  // Ignore late responses from superseded week requests — a slow previous
-  // week must not overwrite the current one.
+  // reqSeq drops responses from superseded week requests.
   const reqSeq = useRef(0);
   const scrollRef = useRef<HTMLDivElement>(null);
 
   const load = useCallback(() => {
     const seq = ++reqSeq.current;
     setLoading(true);
-    // Fetch what the current mode renders: the week strip on desktop, the
-    // whole visible month grid on phones. Pad the bounds by a day on each
-    // side — grouping renders tz-local days, so extra rows land off-grid.
+    // Fetch the rendered window + 1-day pad each side (tz-local grouping can land rows off-grid).
     const pad = (monthStart.wd + 6) % 7;
     const gridStart = shiftDay(monthStart, -pad);
     const gridDays = Math.ceil((pad + daysInMonth(monthStart)) / 7) * 7;
@@ -167,17 +160,13 @@ export default function Calendar() {
       });
   }, [weekStart, monthStart, mobile]);
   useEffect(load, [load]);
-  // patch() runs after the PATCH resolves — possibly after the user has
-  // navigated away. Calling the captured `load` would refetch the OLD
-  // window and (with a newer reqSeq) overwrite the current view. Always
-  // refresh through the ref so the reload targets the displayed period.
+  // Refresh via ref: a post-PATCH reload must target the displayed window, not the captured one.
   const loadRef = useRef(load);
   useEffect(() => {
     loadRef.current = load;
   }, [load]);
 
-  // meeting.change accelerates the reload — always through the ref so it
-  // targets the displayed window; the slow poll floors a dead stream.
+  // meeting.change accelerates reloads; the 60s poll below floors a dead event stream.
   useEffect(() => onControlEvent('meeting.change', () => loadRef.current()), []);
   useEffect(() => {
     const t = setInterval(() => loadRef.current(), 60_000);
@@ -200,8 +189,7 @@ export default function Calendar() {
     () => Array.from({ length: 7 }, (_, i) => shiftDay(weekStart, i)),
     [weekStart],
   );
-  // Month-grid cells: Monday-leading rows covering the whole month, padded
-  // with the neighboring months' days so the grid stays rectangular.
+  // Monday-leading cells padded to full weeks.
   const cells = useMemo(() => {
     const pad = (monthStart.wd + 6) % 7;
     const n = Math.ceil((pad + daysInMonth(monthStart)) / 7) * 7;
@@ -210,7 +198,6 @@ export default function Calendar() {
   }, [monthStart]);
   const todayKey = dayKeyOf(new Date(), tz).key;
 
-  // ---- week grid geometry (desktop): shared hour ruler + positioned lanes ----
   const HOUR_PX = 54;
   const PX_PER_MIN = HOUR_PX / 60;
   const span = useMemo(() => {
@@ -222,14 +209,12 @@ export default function Calendar() {
         e = Math.max(e, dayMinutes(m.endsAt, tz) + 30);
       }
     }
-    // Snap to whole hours — the ruler labels each hour row, so a partial
-    // start would offset every label below it.
+    // Snap to whole hours so the ruler labels align.
     s = Math.max(0, Math.floor(Math.min(s, 20 * 60) / 60) * 60);
     e = Math.min(24 * 60, Math.ceil(Math.max(e, s + 4 * 60) / 60) * 60);
     return { s, e, hours: (e - s) / 60 };
   }, [days, byDay, tz]);
-  // Greedy lane assignment per day: overlapping calls sit side by side —
-  // every card keeps its own full lane instead of stacking illegibly.
+  // Overlapping calls get side-by-side lanes.
   const laneLayout = (list: Meeting[]) => {
     const ends: number[] = [];
     const laid = list.map((m) => {
@@ -242,9 +227,7 @@ export default function Calendar() {
     });
     return { laid, lanes: Math.max(ends.length, 1) };
   };
-  // Anchor the pane on the interesting part of the day: 'now' when viewing
-  // the live week, otherwise the first call — so a 22:00 booking doesn't
-  // leave staff staring at an empty morning.
+  // Scroll anchor: 'now' in the live week, else the first upcoming call.
   useEffect(() => {
     if (mobile || loading) return;
     const el = scrollRef.current;
@@ -256,8 +239,6 @@ export default function Calendar() {
       .flatMap((d) => byDay.get(d.key) ?? [])
       .filter((m) => m.status === 'scheduled' && new Date(m.endsAt).getTime() > now.getTime())
       .sort((a, b) => a.startsAt.localeCompare(b.startsAt))[0];
-    // 'now' normally anchors; an upcoming call earlier pulls the anchor up
-    // so it lands on screen too.
     let target = inWeek ? nowMin - 90 : 0;
     if (upcoming) target = Math.min(target, dayMinutes(upcoming.startsAt, tz) - 60);
     el.scrollTop = Math.max(0, (target - span.s) * PX_PER_MIN);
@@ -269,9 +250,7 @@ export default function Calendar() {
       .then(() => loadRef.current())
       .catch((e) => setErr(e instanceof ApiError ? e.message : 'falha ao atualizar'));
 
-  // Day-key → pt-BR label. The key is a calendar-day identity, not an
-  // instant — format in UTC or UTC+13/+14 browsers would read a month-
-  // boundary cell as the next day ("31 de fevereiro").
+  // Format the day-key in UTC — tz formatting would shift boundary days.
   const dayLabel = (k: DayKey, opts: Intl.DateTimeFormatOptions) =>
     new Date(Date.UTC(k.y, k.m - 1, k.d, 12)).toLocaleDateString('pt-BR', {
       ...opts,
@@ -279,8 +258,7 @@ export default function Calendar() {
     });
   const weekLabel = `${days[0]!.d} ${dayLabel(days[0]!, { month: 'short' })} – ${days[6]!.d} ${dayLabel(days[6]!, { month: 'short' })}`;
   const monthLabel = dayLabel(monthStart, { month: 'long', year: 'numeric' });
-  // Count only calls whose tz-local day has a visible cell — the fetch
-  // window is padded beyond the grid, so raw-length counts inflate.
+  // Count only calls on visible cells — the fetch window is padded beyond the grid.
   const visibleKeys = useMemo(
     () => new Set((mobile ? cells : days).map((d) => d.key)),
     [mobile, cells, days],

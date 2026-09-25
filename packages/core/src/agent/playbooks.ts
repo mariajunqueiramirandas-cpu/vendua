@@ -2,12 +2,7 @@ import type { Sql } from '../platform/db.ts';
 import { getSettingTx } from '../modules/integrations.ts';
 import { PLAYBOOK_KINDS, TOOL_META, type PlaybookKind } from './tool-meta.ts';
 
-/**
- * agent/playbooks — every run kind as data: what it is for, its budgets, how
- * its tools execute and which finish gates apply. Staff tune a playbook
- * through the `agent_playbooks` setting (ADR 0014); code defaults below are
- * the floor every override is merged onto.
- */
+// Run-kind defs; staff overrides (agent_playbooks setting, ADR 0014) merge onto these defaults.
 
 export interface PlaybookOverride {
   enabled?: boolean;

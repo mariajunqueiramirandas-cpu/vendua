@@ -2,10 +2,7 @@
 <html lang="pt-BR">
   <head>
     <meta charset="utf-8" />
-    <!-- interactive-widget=resizes-content: Chrome Android resizes the layout
-         viewport for the software keyboard, so bottom-pinned UI (tab bar,
-         composer) lifts with it. iOS Safari ignores it — main.tsx covers
-         that case via visualViewport + --vvh/--vvo. -->
+    <!-- resizes-content lifts bottom-pinned UI with the keyboard; iOS covered via visualViewport -->
     <meta
       name="viewport"
       content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content"

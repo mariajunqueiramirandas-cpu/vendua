@@ -16,8 +16,7 @@
 
     document.body.style.overflow = 'hidden';
 
-    // Keep the page under the veil out of the tab order and pointer reach while
-    // the intro plays — otherwise Tab lands on controls hidden behind it.
+    // keep the covered page inert — otherwise Tab lands on controls hidden behind the veil
     const covered = [...(el.parentElement?.children ?? [])].filter(
       (child): child is HTMLElement => child !== el && child instanceof HTMLElement,
     );

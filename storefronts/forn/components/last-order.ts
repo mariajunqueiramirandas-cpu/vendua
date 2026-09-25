@@ -4,11 +4,7 @@ let lastOrder: Order | null = null;
 
 const key = (id: string) => `vendua.forn.order.${id}`;
 
-/**
- * The checkout response is the only reliable order read: api.order() is
- * unauthenticated while Core requires the session token (OBSERVATIONS.md),
- * so we persist the comanda in sessionStorage for reload/back-button.
- */
+/** Core order reads need the session token — persist the comanda in sessionStorage for reload/back-button. */
 export function setLastOrder(order: Order) {
   lastOrder = order;
   try {

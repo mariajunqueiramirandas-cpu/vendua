@@ -7,14 +7,9 @@ export interface Tenant {
   status: string;
 }
 
-/**
- * Host → tenant resolution, the same lookup the edge performs
- * (docs/architecture/01-core.md#multi-tenancy). The public API never accepts a
- * tenant id from the client — identity comes from `Host` / `X-Forwarded-Host`.
- *
- * Matches the full host header first (so `localhost:5174` can pin a tenant in
- * dev), then the bare hostname (`quero-pudim.localhost`, `slug.vendua.com.br`).
- */
+// Host → tenant (docs/architecture/01-core.md#multi-tenancy). The public API
+// never accepts a client tenant id — identity comes from Host/X-Forwarded-Host.
+// Full host matches first (dev can pin a tenant via `localhost:5174`), then bare hostname.
 export class TenantResolver {
   private cache = new Map<string, { tenant: Tenant | null; at: number }>();
 

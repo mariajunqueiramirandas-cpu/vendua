@@ -1,11 +1,5 @@
-# Dokploy-ready compose for the whole platform.
-# Docs: deploy/dokploy.md. Env: copy .env.example → .env and fill it in.
-#
-#   dokploy: new Compose service → this repo → docker-compose.yml → set envs
-#            → attach a domain to site + each storefront → deploy.
-#
-# `core` is internal-only (no public domain needed): storefront nginx proxies
-# /storefront/v1, /checkout/v1, /v1 to it, forwarding Host for tenant routing.
+# Dokploy compose (docs: deploy/dokploy.md). `core` is internal-only — storefront
+# nginx proxies /storefront/v1, /checkout/v1, /v1 to it, forwarding Host for tenant routing.
 
 services:
   db:
@@ -40,34 +34,25 @@ services:
       CONTROL_SECRET: ${CONTROL_SECRET:?set CONTROL_SECRET in .env}
       # Traefik fronts everything — X-Forwarded-* carries routing truth.
       VENDUA_TRUST_PROXY: '1'
-      # Chain is client → Traefik → storefront nginx → core: nginx's append
-      # is the one trusted entry after the client IP (skip 1 from the right).
+      # Chain is client → Traefik → nginx → core; trust nginx's append (1 hop from the right).
       VENDUA_PROXY_HOPS: ${VENDUA_PROXY_HOPS:-1}
       # 1 = seed the three demo tenants + catalog on first boot; 0 = empty.
       SEED_DEMO: ${SEED_DEMO:-1}
-      # slug:public-host[,slug:host2] — registers each storefront's real
-      # domain at seed time (tenant routing is Host-header based).
+      # slug:public-host[,slug:host2] — registers each storefront's real domain at seed time.
       SEED_DOMAINS: ${SEED_DOMAINS:-}
-      # Integration driver keys — a driver reads these when its Config row's
-      # secret_ref names the var (or falls back to the driver default). Unset
-      # = that driver reports "ausente" in /control Config.
+      # Driver reads the key its Config row's secret_ref names; unset = driver reports "ausente".
       OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
       GEMINI_API_KEY: ${GEMINI_API_KEY:-}
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
       RESEND_API_KEY: ${RESEND_API_KEY:-}
-      # Svix signing secret for the inbound email.received webhook (Resend
-      # dashboard/API → webhooks). Unset = inbound email events are rejected.
+      # Svix signing secret for the inbound email webhook; unset = inbound events rejected.
       RESEND_WEBHOOK_SECRET: ${RESEND_WEBHOOK_SECRET:-}
       TINYFISH_API_KEY: ${TINYFISH_API_KEY:-}
       VENDUA_WEBHOOK_SECRET: ${VENDUA_WEBHOOK_SECRET:-}
-      # monid.ai gateway for the agent's paid enrichment tools
-      # (maps_lookup/instagram_profile/serp) — read directly, not via a
-      # control_integrations row. Unset = those three tools report missing.
+      # monid.ai gateway for the agent's paid enrichment tools — read directly; unset = tools report missing.
       MONID_API_KEY: ${MONID_API_KEY:-}
-      # Meeting integrations — optional. B64 variant = whole service-account
-      # key base64'd (deploy-friendly); plain JSON for local dev. Unset =
-      # gcal sync off (warn-logged at boot); DAILY unset = static roomUrl.
+      # Meeting integrations (optional): B64 SA key for deploy, plain JSON for dev; unset = gcal off, static roomUrl.
       GOOGLE_CALENDAR_SERVICE_ACCOUNT_JSON_B64: ${GOOGLE_CALENDAR_SERVICE_ACCOUNT_JSON_B64:-}
       GOOGLE_CALENDAR_SERVICE_ACCOUNT_JSON: ${GOOGLE_CALENDAR_SERVICE_ACCOUNT_JSON:-}
       GOOGLE_CALENDAR_ID: ${GOOGLE_CALENDAR_ID:-}
@@ -138,8 +123,7 @@ services:
       driver: json-file
       options: { max-size: '10m', max-file: '3' }
 
-  # Staff CRM — thin nginx in front of core serving /control only. Attach
-  # the staff domain here (never directly on core: that shortens the proxy
+  # Staff CRM — attach the staff domain here, never on core (shortens the proxy
   # chain and breaks VENDUA_PROXY_HOPS accounting for the login limiter).
   crm:
     image: nginx:1.28-alpine

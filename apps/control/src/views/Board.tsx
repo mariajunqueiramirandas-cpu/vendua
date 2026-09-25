@@ -17,14 +17,12 @@ export default function BoardView() {
   const [over, setOver] = useState<string | null>(null);
   const nav = useNavigate();
 
-  // Newest applied load wins: an older response commits unless a newer
-  // SUCCESS already landed — a failed refresh never discards good data.
+  // Newest committed load wins — a failed refresh never discards good data.
   const reqSeq = useRef(0);
   const okSeq = useRef(0);
   const load = useCallback(() => {
     const seq = ++reqSeq.current;
-    // Follow the keyset cursor — the board IS the pipeline, so a partial page
-    // would silently hide leads and misreport column totals.
+    // The board IS the pipeline — a partial page would hide leads and misreport column totals.
     const all: LeadListItem[] = [];
     const page = (cursor?: string): Promise<void> =>
       api.leads({ limit: '200', ...(cursor ? { cursor } : {}) }).then((r) => {
@@ -45,9 +43,7 @@ export default function BoardView() {
     return () => clearInterval(t);
   }, [load]);
 
-  // Refs, not state: in-flight checks must be synchronous — a move that lands
-  // between the chain ending and a state flush would queue a write nothing
-  // drains, silently diverging the board from the server.
+  // Refs, not state — in-flight checks must be synchronous or a queued write goes undrained.
   const inflightMoves = useRef(new Set<string>());
   const queuedMoves = useRef(new Map<string, LeadListItem['state']>());
 
@@ -55,9 +51,7 @@ export default function BoardView() {
     if (lead.state === state) return;
     // Optimistic: the column swap is immediate; a failure snaps it back.
     setLeads((ls) => ls.map((l) => (l.id === lead.id ? { ...l, state } : l)));
-    // A PATCH is in flight for this lead — fire-and-forget would let a slow
-    // earlier write overwrite the newer stage. Queue the latest target; the
-    // in-flight chain drains it in order.
+    // A PATCH in flight — queue the latest target so a slow earlier write can't overwrite the newer stage.
     if (inflightMoves.current.has(lead.id)) {
       queuedMoves.current.set(lead.id, state);
       return;
@@ -71,8 +65,7 @@ export default function BoardView() {
         queuedMoves.current.delete(lead.id);
       }
     } catch {
-      // drop the pending target — the reload restores server truth and a
-      // stale queue would otherwise leak into the next chain
+      // drop the pending target — the reload restores server truth
       queuedMoves.current.delete(lead.id);
       load();
     } finally {

@@ -1,9 +1,5 @@
-/**
- * Fallback illustration for products with no photo — the reference brand's
- * plated pudim ("default") and bagged sacolé ("alt") shapes. Core returns a
- * `figureVariant` per product; the Kernel type doesn't surface it yet, so the
- * field is read through a widening type (see OBSERVATIONS.md).
- */
+// Fallback illustration for products with no photo. The Kernel type doesn't surface
+// `figureVariant` yet, so callers read it through a widening type (see OBSERVATIONS.md).
 
 export type FigureVariant = 'default' | 'alt';
 

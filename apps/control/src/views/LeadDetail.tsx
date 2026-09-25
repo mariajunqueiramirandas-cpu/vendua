@@ -37,8 +37,7 @@ const KIND_LABEL: Record<string, string> = {
   blocked: 'envio bloqueado',
 };
 
-// Timeline groups — a kind label exists per event, but the filter answers
-// the staff question ("o que o agente fez?", "quando mudou de estágio?").
+// groups map kinds to the staff question ("o que o agente fez?", "quando mudou de estágio?")
 const ACT_GROUPS: [string, (a: Activity) => boolean][] = [
   ['tudo', () => true],
   ['notas', (a) => a.kind === 'note'],
@@ -74,11 +73,8 @@ export default function LeadDetail() {
   const [actGroup, setActGroup] = useState('tudo');
   const [notFound, setNotFound] = useState(false);
 
-  // Each endpoint keeps its own applied watermark — an older response still
-  // commits unless a newer SUCCESS for that same resource already landed,
-  // so one failed endpoint can't discard another's usable data. Only an
-  // explicit 404 is a missing lead — a transient refresh failure must not
-  // swap the page for the not-found state.
+  // per-endpoint watermarks: a stalled response can't clobber a newer success;
+  // only an explicit 404 means a missing lead
   const reqSeq = useRef(0);
   const okSeq = useRef<Record<string, number>>({});
   const load = useCallback(() => {
@@ -111,12 +107,10 @@ export default function LeadDetail() {
     api.meetings({ leadId: id, scope: 'all' }).then((r) => {
       if (ok('meetings')) setMeetings(r.meetings);
     });
-    // Agent-owned reads (autonomy, facts, wakeups, runs) live in
-    // LeadAgentPanel — it fetches and refreshes them itself.
+    // agent-owned reads (autonomy, facts, wakeups, runs) live in LeadAgentPanel
   }, [id]);
   useEffect(load, [load]);
-  // The page renders lead, meetings, and queued runs — all three types map
-  // to the same load; a lead.change ref for another lead skips the reload.
+  // a lead.change ref for another lead skips the reload
   useEffect(
     () =>
       onControlEvent(['lead.change', 'meeting.change', 'run.update'], (e) => {
@@ -487,8 +481,7 @@ export default function LeadDetail() {
   );
 }
 
-/** Click-to-edit text — reads as a value, opens an input on click. Enter or
- *  blur-out commits via onSave; Escape cancels. Empty commits null. */
+// click-to-edit text: Enter/blur commits via onSave, Escape cancels, empty → null
 function EditableText({
   value,
   onSave,
@@ -541,7 +534,6 @@ function EditableText({
   );
 }
 
-/** Deal value — reads as a number, edits inline on click. */
 function MoneyEdit({
   cents,
   onSave,
@@ -592,8 +584,7 @@ function MoneyEdit({
   );
 }
 
-/** Mints the per-lead booking link and copies it — token sign happens
- *  server-side so the URL the lead gets is the same one the agent sends. */
+// per-lead booking link, copied — token is signed server-side
 function CopyLinkBtn({ leadId }: { leadId: string }) {
   const [copied, setCopied] = useState(false);
   return (

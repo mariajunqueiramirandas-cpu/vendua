@@ -14,9 +14,7 @@ import { controlTx } from '../src/modules/control.ts';
 import { insertLeadTx, leadInsert } from '../src/modules/leads.ts';
 import { migrate } from '../src/platform/db.ts';
 
-// DB-backed — opt-in via TEST_DATABASE_URL (CI has no Postgres). Covers the
-// run-side wiring of memory v2: the remember/set_fact tools, the prompt feed
-// (memoryForPrompt) and the discovery writeDebrief — all against real rows.
+// DB-backed — opt-in via TEST_DATABASE_URL (CI has no Postgres)
 describe.skipIf(!process.env.TEST_DATABASE_URL)('agent memory v2 wiring (db)', () => {
   const sql = postgres(process.env.TEST_DATABASE_URL!);
   const uniq = crypto.randomUUID().slice(0, 8);
@@ -40,7 +38,7 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('agent memory v2 wiring (db)', (
     leadId,
     threadId: null,
     step: 0,
-    // No live claim in tests — assertRunClaimTx skips its fence on null.
+    // no live claim in tests — assertRunClaimTx skips its fence on null
     claimToken: null,
     pageCache: new Map(),
     briefName: null,
@@ -69,9 +67,8 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('agent memory v2 wiring (db)', (
   ): Promise<RunRow> => {
     const id = await controlTx(sql, (tx) => insertRun(tx, { kind, leadId, params }));
     if (!id) throw new Error('insertRun refused');
-    // Leave the run 'done' — the suite shares one DB, and a queued discovery
-    // run inflates discoveryBudgetTx's open-work reservation for tests that
-    // check auto-approval.
+    // leave the run 'done' — a queued discovery run inflates the open-work
+    // reservation for tests that check auto-approval
     await sql`update agent_runs set status = 'done' where id = ${id}`;
     return (await sql<RunRow[]>`select * from agent_runs where id = ${id}`)[0]!;
   };
@@ -102,14 +99,12 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('agent memory v2 wiring (db)', (
     })) as { remembered: string };
     expect(out.remembered).toBe(nm('docerias respondem melhor à noite'));
 
-    // dedupe — same content twice stays one row
     await executeTool(ctx, 's2', 'remember', { fact: nm('docerias respondem melhor à noite') });
     const rows = await myItems('workspace');
     expect(rows.map((r) => r.content)).toEqual([nm('docerias respondem melhor à noite')]);
     expect(rows[0]!.source).toBe('agent');
     expect(rows[0]!.source_run_id).toBe(run.id);
 
-    // segment scope carries the segment; workspace ignores it
     await executeTool(ctx, 's3', 'remember', {
       fact: nm('padarias têm pico antes das 9h'),
       scope: 'segment',
@@ -129,7 +124,6 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('agent memory v2 wiring (db)', (
     };
     expect(empty.error).toBeTruthy();
 
-    // the tool never touches the legacy flat list anymore
     const legacy = await sql`
       select 1 from control_settings
       where key = 'agent_memory' and value::text like ${`%wm-${uniq}%`}
@@ -179,13 +173,11 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('agent memory v2 wiring (db)', (
       sourceRunId: run.id,
     });
 
-    // upsert — same key refreshes value/confidence
     await executeTool(ctx, 's3', 'set_fact', { leadId, key: 'fleet_size', value: '14' });
     const facts = await controlTx(sql, (tx) => leadFactsTx(tx, leadId));
     expect(facts).toHaveLength(1);
     expect(facts[0]).toMatchObject({ key: 'fleet_size', value: '14', confidence: 1 });
 
-    // lead-binding — a run bound to another lead can't write this one's facts
     const other = await mkLead('fact-other');
     const denied = (await executeTool(mkCtx('reply', other, run.id), 's4', 'set_fact', {
       leadId,
@@ -194,7 +186,6 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('agent memory v2 wiring (db)', (
     })) as { error?: string };
     expect(denied.error).toContain('LEAD_MISMATCH');
 
-    // unbound ctx (sim-like): a ghost lead id is a clean error, not an FK 500
     const ghost = (await executeTool(mkCtx('reply', null, run.id), 's5', 'set_fact', {
       leadId: crypto.randomUUID(),
       key: 'size',
@@ -274,11 +265,9 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('agent memory v2 wiring (db)', (
     expect(rows[0]!.content).toContain('1 leads (1 c/ whatsapp)');
     expect(rows[0]!.segment).toBe(nm('padarias'));
 
-    // the debrief lands in the next run's feed
     const feed = await memoryForPrompt(sql, run);
     expect(feed.some((c) => c.includes(nm('docerias')))).toBe(true);
 
-    // no debrief when the run produced nothing
     const dry = await mkRun('discovery', null, { query: nm('dry') });
     await writeDebrief(sql, dry, mkCtx('discovery', null, dry.id), []);
     const dryRows = await sql`
@@ -286,7 +275,6 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('agent memory v2 wiring (db)', (
     `;
     expect(dryRows).toHaveLength(0);
 
-    // and nothing lands on the legacy row
     const legacy = await sql`
       select 1 from control_settings
       where key = 'agent_memory' and value::text like ${`%wm-${uniq}%`}
@@ -296,9 +284,8 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('agent memory v2 wiring (db)', (
 
   test('an emptied v2 table stays empty — legacy facts don’t resurrect', async () => {
     await setup();
-    // Staff deleting every item leaves an intentionally empty memory — the
-    // legacy setting still carries the pre-0035 facts, but once the table
-    // exists it's the only source: an empty feed must not fall back.
+    // once the v2 table exists it's the only source — an empty feed must
+    // not fall back to the legacy setting
     await sql`delete from agent_memory_items`;
     await controlTx(
       sql,

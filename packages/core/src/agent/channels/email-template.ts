@@ -1,12 +1,4 @@
-/**
- * agent/channels/email-template — branded HTML shell for outbound mail.
- *
- * Wraps the plain-text reply body in the Venduá letter identity (cream
- * paper, forest ink, lime accent, mono eyebrows, serif signature). Email
- * clients render a decade-old HTML dialect: table layout, inline styles,
- * no flex/grid, no CSS vars. Web fonts load progressively — Outlook falls
- * back to the declared stacks.
- */
+// Branded HTML shell for outbound mail; email clients need table layout + inline styles (no flex/grid/CSS vars).
 
 const esc = (s: string): string =>
   s
@@ -16,7 +8,7 @@ const esc = (s: string): string =>
     .replaceAll('"', '&quot;')
     .replaceAll("'", '&#39;');
 
-/** Plain-text body → paragraphs (blank line) + <br> (single newline). */
+// blank line = paragraph break, single newline = <br>
 const bodyHtml = (body: string): string =>
   esc(body)
     .split(/\r?\n\s*\r?\n/)
@@ -65,7 +57,6 @@ export function renderReplyEmail(opts: { body: string; subject?: string; from?: 
 <!--[if mso]><table role="presentation" width="600" align="center" cellpadding="0" cellspacing="0" border="0"><tr><td><![endif]-->
 <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="width:100%;max-width:600px;">
 
-  <!-- eyebrow row -->
   <tr>
     <td style="padding:0 4px 14px;font-family:ui-monospace,'Cascadia Mono',Consolas,monospace;font-size:11px;letter-spacing:2.5px;text-transform:uppercase;color:#4f6a5e;">
       <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
@@ -77,11 +68,9 @@ export function renderReplyEmail(opts: { body: string; subject?: string; from?: 
     </td>
   </tr>
 
-  <!-- letter card -->
   <tr>
     <td style="background-color:#efe9d8;border:1px solid #d9d2ba;">
 
-      <!-- letterhead -->
       <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
         <tr>
           <td class="lh-pad" style="background-color:#123c32;padding:30px 40px;">
@@ -104,12 +93,10 @@ export function renderReplyEmail(opts: { body: string; subject?: string; from?: 
         </tr>
       </table>
 
-      <!-- lime rule -->
       <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
         <tr><td style="height:3px;line-height:3px;font-size:0;background-color:#d9f875;">&nbsp;</td></tr>
       </table>
 
-      <!-- body -->
       <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
         <tr>
           <td class="body-pad" style="padding:36px 40px 8px;font-family:'Space Grotesk',Manrope,'Segoe UI',Arial,sans-serif;font-size:17px;line-height:1.65;color:#123c32;">
@@ -119,7 +106,6 @@ export function renderReplyEmail(opts: { body: string; subject?: string; from?: 
         </tr>
       </table>
 
-      <!-- signature -->
       <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
         <tr>
           <td class="body-pad" style="padding:14px 40px 36px;">
@@ -131,7 +117,6 @@ export function renderReplyEmail(opts: { body: string; subject?: string; from?: 
     </td>
   </tr>
 
-  <!-- footer -->
   <tr>
     <td style="padding:28px 4px 0;">
       <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">

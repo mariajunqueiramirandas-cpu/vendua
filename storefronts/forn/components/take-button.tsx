@@ -2,11 +2,7 @@ import { useRef, useState } from 'react';
 import { AddToCart } from '@vendua/kernel';
 import type { FornProduct } from './catalog-ext.ts';
 
-/**
- * "pegar" — the case-card take button. AddToCart owns the behavior (disable on
- * paused/sold-out, the mutation, data-vendua); we own the skin and the
- * "na sacola" confirmation flash.
- */
+/** Case-card take button: AddToCart owns the behavior; we own the skin and the "na sacola" confirmation flash. */
 export function TakeButton({
   product,
   qty = 1,

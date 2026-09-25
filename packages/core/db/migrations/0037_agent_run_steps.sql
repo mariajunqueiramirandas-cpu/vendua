@@ -1,10 +1,4 @@
--- 0037_agent_run_steps.sql — per-entry journal table: every agent_runs.steps
--- entry is also written here so the trajectory is queryable without
--- unpacking the jsonb array. Replay still reads agent_runs.steps — this
--- table is a shadow index, dual-written at each journal commit.
--- seq is the entry's index in the committed journal snapshot; step is the
--- model-step a tool call belongs to (ctx.step). A pending tool row is
--- upserted with its result at the same seq once the call resolves.
+-- Per-entry journal shadow table, dual-written at each commit; replay still reads agent_runs.steps.
 create table if not exists agent_run_steps (
   run_id uuid not null references agent_runs (id) on delete cascade,
   step integer,
@@ -22,11 +16,7 @@ create unique index if not exists agent_run_steps_call_uq
   on agent_run_steps (run_id, step, call_id) where call_id is not null;
 create index if not exists agent_run_steps_name on agent_run_steps (name) where name is not null;
 
--- Backfill historical journals: finished runs never get another journal
--- write, so without this their trajectories stay invisible to the shadow
--- table. seq = ordinality - 1 to match syncRunStepsTx; cost_cents maps only
--- model usage (real USD) — readSpent is a fetch count, monid_spend markers
--- are cumulative snapshots, neither is a per-row cost.
+-- Backfill finished runs (they never get another journal write); cost_cents maps only model usage.
 insert into agent_run_steps (run_id, step, seq, kind, name, call_id, args, out, cost_cents)
 select r.id,
        case when jsonb_typeof(e.v->'step') = 'number' then (e.v->>'step')::int end,

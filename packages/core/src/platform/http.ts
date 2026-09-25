@@ -5,10 +5,7 @@ import type { Tenant, TenantResolver } from './tenancy.ts';
 
 const httpLog = log.child({ mod: 'http' });
 
-/**
- * Typed error model — `code` is the contract, `message` is human-readable and
- * may change (docs/architecture/01-core.md).
- */
+/** `code` is the contract; `message` is human-readable and may change (01-core.md). */
 export class HttpError extends Error {
   constructor(
     public status: number,
@@ -40,15 +37,8 @@ export function errorJson(err: unknown, c: Context) {
   return c.json({ error: { code: 'INTERNAL', message: 'internal error' } }, 500);
 }
 
-/**
- * Per-request log line + x-request-id correlation. Registers first in
- * createApp so every request (incl. CORS rejects) is counted. Incoming
- * x-request-id is echoed when plausible (<128 chars) so edge-generated ids
- * correlate end-to-end; anything else gets a fresh UUID.
- * Levels: reads are quiet — successful GET/HEAD/OPTIONS poll at debug
- * (the control UI refetches every few seconds; info would bury real
- * events), mutations log at info, 4xx warn, 5xx error.
- */
+// x-request-id correlation: echoes a plausible incoming id (<128 chars), else mints a UUID.
+// Reads (GET/HEAD/OPTIONS) log at debug — the control UI polls; mutations info, 4xx warn, 5xx error.
 export function requestLogger(): MiddlewareHandler<{ Variables: { requestId: string } }> {
   return async (c, next) => {
     const incoming = c.req.header('x-request-id');
@@ -82,9 +72,7 @@ export function tenantMiddleware(
   Variables: Vars;
 }> {
   return async (c, next) => {
-    // X-Forwarded-Host is only meaningful when a trusted edge sets it —
-    // honoring it blindly lets any client pick a tenant (host-scoped
-    // spoofing). Off unless VENDUA_TRUST_PROXY=1.
+    // honoring X-Forwarded-Host blindly lets any client pick a tenant — only behind a trusted edge (VENDUA_TRUST_PROXY=1)
     const forwarded = opts.trustForwardedHost ? c.req.header('x-forwarded-host') : undefined;
     const host = forwarded ?? c.req.header('host') ?? '';
     const tenant = await resolver.resolve(host);
@@ -99,15 +87,10 @@ export function tenantMiddleware(
   };
 }
 
-/**
- * Idempotency for mutations: the first response for (tenant, Idempotency-Key)
- * is stored and replayed. Missing key → 400 (docs require the header on every
- * mutation). Replays return the stored status/body verbatim.
- */
+/** First response for (tenant, Idempotency-Key) is stored; replays return it verbatim. Missing key → 400. */
 export function idempotency(
   sql: Sql,
-  // Structured result only — a raw Response would commit writes without a
-  // recorded result, so the pending claim could rerun the mutation later.
+  // structured result only — a raw Response could commit writes without a recorded result for the claim to replay
   run: (c: Context, tx: Sql) => Promise<{ status: number; body: unknown }>,
 ): (c: Context) => Promise<Response> {
   return async (c) => {
@@ -119,11 +102,8 @@ export function idempotency(
     if (key.length > 200) {
       throw new HttpError(400, 'BAD_REQUEST', 'Idempotency-Key too long');
     }
-    // Claim the key atomically under a unique owner token: exactly one
-    // handler owns (tenant, key). `on conflict` only "steals" a claim whose
-    // owner died mid-handler (pending >30s) — a live owner's row makes the
-    // insert return nothing. The claim commits in its own tx so peers see
-    // the pending row; the expiry sweep keeps the table bounded.
+    // one owner per (tenant,key): on-conflict "steals" only a dead claim (pending >30s);
+    // the claim commits in its own tx so peers see the pending row; the sweep below bounds the table
     const owner = crypto.randomUUID();
     const claimed = await withTenant(sql, tenant.id, async (tx) => {
       const rows = await tx<{ key: string }[]>`
@@ -137,8 +117,7 @@ export function idempotency(
       return rows;
     });
     if (!claimed[0]) {
-      // Someone else owns the key: replay their stored response, or wait
-      // briefly for it to land before telling the client to retry.
+      // another owner holds the key: replay its stored response, waiting briefly for it to land
       const replay = await withTenant(sql, tenant.id, async (tx) => {
         for (let i = 0; i < 25; i++) {
           const rows = await tx<{ response: unknown; status_code: number }[]>`
@@ -162,11 +141,8 @@ export function idempotency(
         'a request with this Idempotency-Key is still in flight — retry',
       );
     }
-    // The handler's writes and its recorded response commit in one tx — a
-    // crash between them can't leave a committed mutation behind a pending
-    // claim that would later rerun it. A per-key advisory lock serializes
-    // owners: a request that stole a stale claim waits for the original's
-    // tx to end, then replays its stored result instead of double-applying.
+    // handler writes + recorded response commit in one tx; the per-key advisory lock serializes owners,
+    // so a stale-claim stealer waits for the original's tx then replays its result instead of double-applying
     type Outcome =
       | { kind: 'replay'; response: unknown; status: number }
       | { kind: 'result'; status: number; body: unknown };
@@ -184,8 +160,7 @@ export function idempotency(
           return { kind: 'replay', response: cur.response, status: cur.status_code };
         }
         if (cur?.owner !== owner) {
-          // Our claim was itself stolen (>30s between claim and lock) — the
-          // other owner is committing behind the lock; abort, don't double up.
+          // our claim was stolen (>30s between claim and lock) — the other owner is committing; abort, don't double up
           throw new HttpError(
             409,
             'IDEMPOTENCY_IN_PROGRESS',
@@ -207,12 +182,8 @@ export function idempotency(
         return { kind: 'result', status: r.status, body: r.body };
       });
     } catch (err) {
-      // The work tx rolled back, but the claim row committed in the claim
-      // tx — a pending claim would poison same-key retries with
-      // IDEMPOTENCY_IN_PROGRESS for the 30s stale window. Release OUR claim
-      // so an immediate retry re-executes (failed responses are not
-      // persisted — retries rerun deterministically). The owner predicate
-      // keeps cleanup from removing a claim a peer stole.
+      // release our pending claim so an immediate retry re-executes instead of hitting IDEMPOTENCY_IN_PROGRESS
+      // for the 30s stale window (failed responses aren't persisted); the owner predicate spares a stolen claim
       try {
         await withTenant(
           sql,
@@ -235,10 +206,7 @@ export function idempotency(
   };
 }
 
-/**
- * Fixed-window rate limit, per (tenant, client-ip). In-memory — Phase 0 is a
- * single-node skeleton; the distributed limiter lives at the edge in prod.
- */
+/** Fixed-window per-(tenant, ip) limit, in-memory (single node) — the distributed limiter lives at the edge in prod. */
 export function rateLimit(
   opts: { windowMs: number; max: number },
   flags: { trustForwardedFor?: boolean; proxyHops?: number } = {},
@@ -246,21 +214,13 @@ export function rateLimit(
   Variables: Vars;
 }> {
   const hits = new Map<string, { count: number; resetAt: number }>();
-  // Buckets reset lazily per request — without a sweep, every distinct client
-  // IP leaves a permanent entry (the map would grow with lifetime traffic).
-  // Sweep expired entries at most once per window.
+  // lazy sweep of expired buckets at most once per window — distinct client IPs would otherwise accumulate forever
   let nextSweep = 0;
   return async (c, next) => {
     const tenant = c.get('tenant') as Tenant;
-    // X-Forwarded-For is client-supplied without a trusted edge — key on it
-    // only when VENDUA_TRUST_PROXY=1, else a shared bucket per tenant. When
-    // trusted, the client is the entry immediately BEFORE the suffix our own
-    // proxies appended: each trusted hop adds its observed peer to the right,
-    // so we skip `proxyHops` entries from the right. e.g. client→Traefik→
-    // nginx→core arrives as [client, traefik], and hops=1 yields the client;
-    // entries left of it stay attacker-settable but unusable for rotation
-    // bypass. A chain shorter than configured fails closed to 'unknown' —
-    // one shared bucket — rather than falling back to a spoofable entry.
+    // trusted-edge XFF (VENDUA_TRUST_PROXY=1): the client is the entry just before the suffix our proxies
+    // appended, i.e. skip proxyHops from the right; a chain shorter than configured fails closed to 'unknown'
+    // rather than trusting a spoofable entry. Without a trusted edge all clients share one bucket per tenant.
     const xff = c.req
       .header('x-forwarded-for')
       ?.split(',')
@@ -300,9 +260,7 @@ async function hmac(secret: string, msg: string): Promise<string> {
     .replace(/=+$/, '');
 }
 
-/** `vst.<cartId>.<hmac>` — the anonymous checkout session token. The HMAC
- *  input binds the tenant, so a token minted on one host can't be replayed
- *  against another tenant even if a cart UUID collides. */
+/** `vst.<cartId>.<hmac>` checkout session token — the HMAC input binds the tenant, so tokens can't cross tenants. */
 export async function mintSessionToken(
   cartId: string,
   tenantId: string,
@@ -336,22 +294,17 @@ export async function sessionCartId(c: Context, secret: string): Promise<string>
   return cartId;
 }
 
-/** Bounded `c.req.json()` — 400s on malformed input, 413s on oversized bodies. */
 const MAX_BODY_BYTES = 32 * 1024;
 
 export async function boundedText(c: Context): Promise<string> {
-  // Public mutation endpoints take attacker-controlled bodies; cap the raw
-  // text before parsing so oversized payloads can't burn parse time/memory.
-  // Content-Length is a free pre-filter — reject before buffering when the
-  // header already overruns the cap (absent/lying headers still hit the
-  // post-read byte check below).
+  // cap raw bytes before parsing attacker-controlled bodies; Content-Length is a free pre-filter
+  // (absent/lying headers still hit the post-read check)
   const declared = Number(c.req.header('content-length'));
   if (Number.isFinite(declared) && declared > MAX_BODY_BYTES) {
     throw new HttpError(413, 'PAYLOAD_TOO_LARGE', `body exceeds ${MAX_BODY_BYTES} bytes`);
   }
   const raw = await c.req.text();
-  // Bytes, not UTF-16 units — multibyte input would otherwise slip past
-  // the cap (string.length undercounts).
+  // byte length, not string.length — multibyte input would slip the cap
   if (new TextEncoder().encode(raw).byteLength > MAX_BODY_BYTES) {
     throw new HttpError(413, 'PAYLOAD_TOO_LARGE', `body exceeds ${MAX_BODY_BYTES} bytes`);
   }
@@ -377,14 +330,13 @@ export async function bodyJson(c: Context): Promise<Record<string, unknown>> {
 
 export const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
-/** `param()` that 400s on malformed ids instead of letting Postgres 22P02 500. */
+/** 400s on a malformed id instead of letting Postgres 22P02 500. */
 export function uuidParam(c: Context, name: string): string {
   const v = c.req.param(name) ?? '';
   if (!UUID_RE.test(v)) throw new HttpError(400, 'BAD_REQUEST', `${name} must be a uuid`);
   return v;
 }
 
-/** Bounded string field — `name` must be a string of at most `max` chars. */
 export function str(v: unknown, name: string, max = 500): string {
   if (typeof v !== 'string' || v.length > max) {
     throw new HttpError(422, 'BAD_REQUEST', `${name} must be a string of at most ${max} chars`);

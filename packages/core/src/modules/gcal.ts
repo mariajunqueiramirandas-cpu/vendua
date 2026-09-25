@@ -1,23 +1,7 @@
-/**
- * modules/gcal — Google Calendar sync for CRM meetings.
- *
- * Auth is OAuth2 JWT-bearer directly (no googleapis client): an RS256 JWT
- * signed with the service account's private_key is exchanged at its
- * token_uri for a ~1h access token, cached in-process for ~55min.
- *
- * Meet links are intentionally NOT created here — service accounts can't
- * provision conferenceData on consumer calendars (verified: the API rejects
- * `conferenceData.createRequest` with `Invalid conference type value`). The
- * video room is a configured static URL (settings `meeting.roomUrl`).
- *
- * Credentials come from GOOGLE_CALENDAR_SERVICE_ACCOUNT_JSON_B64
- * (base64-encoded minified JSON — survives dotenv-style parsers that choke
- * on raw JSON's spaces/newlines) falling back to raw
- * GOOGLE_CALENDAR_SERVICE_ACCOUNT_JSON for local dev. If neither that nor
- * GOOGLE_CALENDAR_ID is set the module is disabled: warn-log once, booking
- * keeps working with rules as the only availability source, and
- * insertEvent() returns null.
- */
+// Google Calendar sync via OAuth2 JWT-bearer (no googleapis client). Meet links are
+// NOT created — service accounts can't provision conferenceData on consumer calendars;
+// the video room is settings `meeting.roomUrl`. Credentials: GOOGLE_CALENDAR_SERVICE_ACCOUNT_JSON_B64
+// (dotenv-safe) falling back to raw _JSON; unset + no CALENDAR_ID = disabled (warn once, insertEvent returns null).
 import { createSign } from 'node:crypto';
 import { log } from '../platform/log.ts';
 
@@ -70,8 +54,7 @@ function gcalEnv(): GcalEnv {
     try {
       const json = source.b64 ? Buffer.from(source.raw, 'base64').toString('utf8') : source.raw;
       key = parseSaKey(json);
-      // A working fallback source must clear the error a broken primary set —
-      // otherwise status reports lastError while the calendar actually works.
+      // A working fallback must clear the error a broken primary set.
       keyError = key
         ? null
         : (keyError ?? 'service account json missing client_email/private_key/token_uri');
@@ -233,13 +216,8 @@ export async function insertEvent(input: GcalEventInput): Promise<string | null>
   }
 }
 
-/**
- * In-place reschedule — PATCH the existing event's window. Preferred over
- * delete+insert: the meeting row keeps tracking the same id, so a failed
- * update can't strand an anonymous old event that no row remembers.
- * Returns true on 2xx; false otherwise (caller falls back to delete+insert,
- * which only overwrites the stored id when the old event is actually gone).
- */
+// PATCH preferred over delete+insert: the meeting row keeps tracking the same id, so
+// a failed update can't strand an anonymous event. False → caller falls back to delete+insert.
 export async function updateEvent(
   gcalEventId: string,
   input: { start: string; end: string; tz: string },
@@ -274,8 +252,7 @@ export async function updateEvent(
 export type EventProbe =
   { state: 'ok'; start: Date; end: Date } | { state: 'gone' } | { state: 'unknown' };
 
-/** One event's live window — 'gone' on 404/410/cancelled, 'unknown' on any
- *  transient failure (callers must never treat 'unknown' as missing). */
+/** 'gone' on 404/410/cancelled; 'unknown' on transient failure — never treat 'unknown' as missing. */
 export async function eventWindow(gcalEventId: string): Promise<EventProbe> {
   if (disabled()) return { state: 'unknown' };
   const { calendarId } = gcalEnv();
@@ -295,9 +272,8 @@ export async function eventWindow(gcalEventId: string): Promise<EventProbe> {
       end?: { dateTime?: string; date?: string };
     };
     if (ev.status === 'cancelled') return { state: 'gone' };
-    // All-day events carry `date`, not `dateTime` — reporting them 'gone'
-    // would insert a duplicate while the live all-day block stays. They parse
-    // as a drifted window instead: the caller PATCHes them back to timed.
+    // All-day events carry `date`, not `dateTime` — treat as a drifted window, never 'gone'
+    // (a 'gone' would insert a duplicate while the live all-day block stays).
     const start = ev.start?.dateTime ?? ev.start?.date;
     const end = ev.end?.dateTime ?? ev.end?.date;
     if (!start || !end) return { state: 'unknown' };
@@ -332,11 +308,7 @@ export async function deleteEvent(gcalEventId: string): Promise<boolean> {
   }
 }
 
-/**
- * Busy windows from freebusy.query — returns [{start,end}] instants of
- * events on the shared calendar between the two bounds. Empty array when the
- * module is disabled or the query fails (availability falls back to rules).
- */
+// freebusy.query busy windows; empty array when disabled or failed (availability falls back to rules).
 export async function busyWindows(
   timeMin: Date,
   timeMax: Date,
@@ -370,12 +342,8 @@ export async function busyWindows(
   }
 }
 
-/**
- * Busy windows for a PATCH/reschedule — freebusy can't say WHICH event owns a
- * window, so when the meeting already has a gcal event the query switches to
- * events.list and drops that id (a same-day nudge must not conflict with the
- * event it is moving). Without an exclude id this is exactly `busyWindows`.
- */
+// For a reschedule: freebusy can't say WHICH event owns a window, so events.list drops
+// the id being moved — a same-day nudge must not conflict with the event it is moving.
 export async function busyWindowsExceptEvent(
   timeMin: Date,
   timeMax: Date,

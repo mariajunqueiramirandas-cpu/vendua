@@ -117,10 +117,7 @@ describe('agent v2 — pure', () => {
 
   test('wakeup `at` must be ISO-8601 — Date.parse leniency stays out', () => {
     const now = Date.parse('2026-01-01T00:00:00Z');
-    // Strings Date.parse accepts but that are not unambiguous ISO
-    // datetimes — a silently-guessed wakeup date is worse than an error
-    // the model retries. Date-only and offset-less forms guess too
-    // (UTC midnight / server tz), so they reject like non-ISO strings.
+    // a silently-guessed wakeup date is worse than an error the model retries — Date-only/offset-less forms reject too
     for (const v of [
       'January 2, 2026',
       '01/02/2026',
@@ -195,11 +192,7 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('agent v2 (db)', () => {
       on conflict (key) do update set value = excluded.value
     `;
   const clearSetting = (key: string) => sql`delete from control_settings where key = ${key}`;
-  // Shared-DB discipline: every test that reads workspace-global state
-  // (settings, integrations, budget inputs) pins what it reads and restores
-  // the prior rows in finally — never assumes defaults, never destroys
-  // another file's leftovers. suite order and accumulated state must not
-  // change the outcome.
+  // shared-DB discipline — pin what a test reads and restore it in finally so ambient state can't change the outcome
   const getSetting = async (key: string) =>
     (await sql<{ value: unknown }[]>`select value from control_settings where key = ${key}`)[0]
       ?.value;
@@ -224,8 +217,7 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('agent v2 (db)', () => {
     const leadId = await mkLead('wk');
     const soon = new Date(Date.now() + 20 * 60_000).toISOString();
     try {
-      // sweepWakeups gates on automationAllowedTx('outreach') — ambient
-      // autonomy/playbooks leftovers must not be able to hold the fire.
+      // ambient leftovers must not block the fire — sweepWakeups gates on automationAllowedTx('outreach')
       await setSetting('agent_autonomy', { level: 'supervised' });
       await setSetting('agent_playbooks', { outreach: { enabled: true } });
       await setSetting('guardrails', {});
@@ -305,9 +297,7 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('agent v2 (db)', () => {
       focus: 'me chama terça',
       requested: true,
     });
-    // The agent's own reminder replaces only autonomous rows — canceling
-    // the promise would let a later inbound retire the reminder and leave
-    // the lead's requested callback silently dead.
+    // a reminder replaces only autonomous rows — canceling the promise would kill the requested callback
     await executeTool(mkCtx('reply', leadId, 'k2'), 's1', 'schedule', {
       leadId,
       at: new Date(Date.now() + day).toISOString(),
@@ -319,8 +309,7 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('agent v2 (db)', () => {
     `;
     expect(pending.length).toBe(2);
     expect(pending.filter((p) => p.requested).map((p) => p.focus)).toEqual(['me chama terça']);
-    // A second promise supersedes the first (new date wins) while the
-    // autonomous row still isn't the promise's business.
+    // a second promise supersedes the first — the autonomous row stays
     await executeTool(mkCtx('reply', leadId, 'k3'), 's1', 'schedule', {
       leadId,
       at: new Date(Date.now() + 3 * day).toISOString(),
@@ -372,9 +361,7 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('agent v2 (db)', () => {
       const st = await sql`select status from agent_wakeups where lead_id = ${leadId}`;
       expect(st[0]!.status).toBe('pending');
 
-      // an enabled email integration must exist for the channel to be
-      // reachable — seed it: other files' cleanup can leave none behind,
-      // or a disabled 'log' row may linger — upsert past both
+      // an enabled email integration must exist — upsert past ambient cleanup leftovers
       await sql`insert into control_integrations (kind, driver, enabled)
                 values ('email', 'log', true)
                 on conflict (kind, driver) do update set enabled = true`;
@@ -401,11 +388,7 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('agent v2 (db)', () => {
 
   test('strategist auto-approve activates a proposal within the weekly budget', async () => {
     const priorAuto = await getSetting('agent_autonomy');
-    // discoveryBudgetTx reads ambient numbers: trailing-7d discovery
-    // spend, queued/running discovery runs, unbacked enabled strategist
-    // briefs, and the mean of the last 20 done runs (no window on that
-    // one). On a shared test DB they accumulate past the $50 cap clamp,
-    // so snapshot + neutralize them for the assertion and restore after.
+    // ambient budget inputs accumulate on the shared DB — snapshot, neutralize, restore
     const prevCosts = await sql<{ id: string; cost_cents: number }[]>`
       select id, cost_cents from agent_runs where kind = 'discovery' and cost_cents <> 0
     `;
@@ -445,9 +428,7 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('agent v2 (db)', () => {
   });
 
   test('the discovery unit estimate ignores zero-cost done runs', async () => {
-    // Zero-cost finishes carry no price signal (sub-cent rounds to 0, the
-    // mock charges nothing) — averaging them into `est` deflates the unit
-    // price until open work reserves ~nothing against the weekly cap.
+    // zero-cost finishes carry no price signal — averaging them in deflates the unit price
     const priorAuto = await getSetting('agent_autonomy');
     const prevCosts = await sql<{ id: string; cost_cents: number }[]>`
       select id, cost_cents from agent_runs where kind = 'discovery' and cost_cents <> 0
@@ -485,8 +466,7 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('agent v2 (db)', () => {
 
   test('scheduleWakeupTx re-checks the 10-minute floor against db now() inside the tx', async () => {
     const leadId = await mkLead('wk-floor');
-    // Bypasses parseWakeupAt — the point: a tx that sat on the advisory (or
-    // a conflicting writer) past the floor can't insert an expired wakeup.
+    // a tx delayed past the floor can't insert an expired wakeup
     const expired = await controlTx(sql, (tx) =>
       scheduleWakeupTx(tx, {
         leadId,
@@ -534,8 +514,7 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('agent v2 (db)', () => {
     try {
       const leadId = await mkLead('unsub');
       await sql`update leads set whatsapp = ${'+5511999' + uniq} where id = ${leadId}`;
-      // agent_run_id is a uuid column — a real run row also exercises that
-      // the opt-out's own cancel-queued pass leaves the composed draft.
+      // a real run row also exercises that the opt-out's cancel-queued pass leaves the draft
       const runId = (await controlTx(sql, (tx) => insertRun(tx, { kind: 'reply', leadId })))!;
       const out = (await executeTool(
         { ...mkCtx('reply', leadId, 'u'), runId },
@@ -643,9 +622,7 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('agent v2 (db)', () => {
     // ambient spend on the shared test DB.
     const prior = await controlTx(sql, (tx) => insertRun(tx, { kind: 'discovery' }));
     await sql`update agent_runs set status = 'done', cost_cents = 60 where id = ${prior!}`;
-    // The sweep also fires ambient due briefs and pauses ambient
-    // over-budget ones — snapshot both so finally touches only this run's
-    // own effect and undoes the rest.
+    // the sweep touches ambient briefs too — snapshot so finally restores only the rest
     const preQueued = new Set(
       (
         await sql<{ id: string }[]>`
@@ -653,8 +630,7 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('agent v2 (db)', () => {
         `
       ).map((r) => r.id),
     );
-    // Firing an ambient brief also advances its last_run_at (a canceled
-    // run doesn't roll the cadence back), so keep the stamp to restore.
+    // firing advances last_run_at — keep the stamp to restore
     const preEnabled = new Map(
       (
         await sql<{ id: string; last_run_at: string | null }[]>`
@@ -680,9 +656,7 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('agent v2 (db)', () => {
       `;
       expect(staffRun).toHaveLength(1);
     } finally {
-      // Undo the seeded spend (a 'done' row keeps feeding spent/est reads)
-      // and every discovery run this sweep queued (feeds 'open' reads) —
-      // runs already queued before the test stay queued.
+      // undo the seeded spend + sweep-queued runs — pre-queued rows stay
       await sql`update agent_runs set status = 'canceled', cost_cents = 0 where id = ${prior!}`;
       const spawned = (
         await sql<{ id: string }[]>`
@@ -694,8 +668,7 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('agent v2 (db)', () => {
       if (spawned.length) {
         await sql`update agent_runs set status = 'canceled' where id in ${sql(spawned)}`;
       }
-      // Re-enable ambient briefs the sweep auto-paused and roll their
-      // cadence stamp back (ours get deleted right after).
+      // re-enable ambient briefs the sweep paused and roll their cadence back
       for (const [id, lastRunAt] of preEnabled) {
         if (id === strat.id || id === staff.id) continue;
         await sql`
@@ -748,8 +721,7 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('agent v2 (db)', () => {
       expect(p.autoOff).toBe(true);
       expect(p.disabledKinds).toEqual(['discovery']);
       const leadId = await mkLead('claim');
-      // One active run per lead — the staff row parks on a second lead or
-      // insertRun would deliver it into the auto run instead of inserting.
+      // one active run per lead — a second lead or insertRun would deliver into the auto run
       const staffLead = await mkLead('claim-staff');
       const auto = await controlTx(sql, (tx) =>
         insertRun(tx, { kind: 'triage', leadId, params: { auto: 'x' } }),
@@ -773,15 +745,12 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('agent v2 (db)', () => {
     const prior = await pinPolicy();
     try {
       await setSetting('agent_autonomy', { level: 'off' });
-      // Autonomy-off parks the auto row — a staff request can't inherit
-      // a run that will never claim, so the parked row retires and the
-      // request mints a runnable unmarked owner.
+      // a staff request can't inherit a run that will never claim — the parked row retires
       const offLead = await mkLead('adopt-off');
       const auto = await controlTx(sql, (tx) =>
         insertRun(tx, { kind: 'triage', leadId: offLead, params: { auto: 'x' } }),
       );
-      // A same-kind staff item is NOT a stand-in for the retired auto
-      // intent — provenance differs, so the retire still writes its anchor.
+      // a same-kind staff item isn't the retired intent's stand-in — the retire still anchors
       await sql`
         insert into agent_inbox (lead_id, kind, payload)
         values (${offLead}, 'staff',
@@ -823,10 +792,7 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('agent v2 (db)', () => {
       expect(disRows.find((r) => r.id === disc)!.status).toBe('canceled');
       expect(disRows.find((r) => r.id === staffDisc!)!.status).toBe('queued');
 
-      // A future-dated runnable row can't be pulled early — its own pacing
-      // (run_at) is its intent's only gate. It retires and re-anchors as an
-      // 'event' item stamped with the same deadline; the immediate caller
-      // mints a runnable owner now.
+      // a future-dated runnable row can't be pulled early — it retires and re-anchors at its own deadline
       const dateLead = await mkLead('adopt-date');
       const later = new Date(Date.now() + 3_600_000);
       const parked = await controlTx(sql, (tx) =>
@@ -837,8 +803,7 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('agent v2 (db)', () => {
           params: { focus: 'triagem marcada' },
         }),
       );
-      // An undated same-intent item can't cover the schedule — the retire
-      // still anchors at the row's own deadline.
+      // an undated same-intent item can't cover the schedule — the retire still anchors
       await sql`
         insert into agent_inbox (lead_id, kind, payload)
         values (${dateLead}, 'staff',
@@ -871,9 +836,7 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('agent v2 (db)', () => {
         5_000,
       );
 
-      // Mail already carrying the parked row's deadline covers the intent —
-      // a parked reply's inbound items hold the quiet period themselves,
-      // so no anchor is written for it.
+      // mail already carrying the deadline covers the intent — no anchor written
       const replyLead = await mkLead('adopt-covered');
       const quiet = new Date(Date.now() + 3_600_000);
       const replyParked = await controlTx(sql, (tx) =>

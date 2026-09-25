@@ -5,18 +5,13 @@ import { emitControlEvent } from './control-events.ts';
 import { LEAD_STATES, type LeadState } from './leads.ts';
 import { PLAYBOOK_KINDS } from '../agent/tool-meta.ts';
 
-/**
- * integrations module — modular provider configuration for the agentic CRM.
- * Each row: a driver of one kind (llm/email/whatsapp/discovery), enabled
- * flag, non-secret config, and `secret_ref` = the NAME of the env var that
- * holds the credential. Secret values never enter the DB.
- */
+// modular provider config: `secret_ref` is the NAME of the env var holding the
+// credential — secret values never enter the DB
 
 export const INTEGRATION_KINDS = ['llm', 'email', 'whatsapp', 'discovery'] as const;
 export type IntegrationKind = (typeof INTEGRATION_KINDS)[number];
 
-/** Drivers each kind can load. Validation lives here so the API and the
- *  driver registry agree on names. */
+// driver names per kind — the API and the driver registry agree here
 export const DRIVERS: Record<IntegrationKind, readonly string[]> = {
   llm: ['gemini', 'openrouter', 'anthropic', 'openai', 'mock'],
   email: ['resend', 'log'],
@@ -24,9 +19,8 @@ export const DRIVERS: Record<IntegrationKind, readonly string[]> = {
   discovery: ['tinyfish', 'mock'],
 };
 
-/** Fallback env var each secret-bearing driver reads when the row's
- *  secret_ref is null — mirrors the `?? process.env.X` fallback in the
- *  channel/driver code so the UI reports what's actually in effect. */
+// fallback env var per driver when secret_ref is null — mirrors the drivers'
+// `?? process.env.X` fallback so the UI reports what's actually in effect
 export const DEFAULT_SECRET: Record<string, string> = {
   gemini: 'GEMINI_API_KEY',
   openrouter: 'OPENROUTER_API_KEY',
@@ -36,9 +30,8 @@ export const DEFAULT_SECRET: Record<string, string> = {
   tinyfish: 'TINYFISH_API_KEY',
 };
 
-/** Drivers whose credential lookup is `(env[ref]) ?? env[DEFAULT]` — a
- *  configured-but-unset ref still authenticates via the default var.
- *  LLM providers are strict: a set secret_ref that env lacks = missing. */
+// drivers that read `(env[ref]) ?? env[DEFAULT]` — a configured-but-missing
+// ref still authenticates via the default; LLM drivers are strict
 const SECRET_FALLBACK: ReadonlySet<string> = new Set(['resend', 'tinyfish']);
 
 export interface IntegrationRow {
@@ -52,15 +45,11 @@ export interface IntegrationRow {
   updated_at: string;
 }
 
-/** API view — secret_ref masked to the env var name only (never a value). */
+// API view — secret names only, never values
 export function integrationJson(row: IntegrationRow) {
-  // The env var the driver will actually read — the row's override or its
-  // built-in default when the override is unset/fallbackable. Fallbackable
-  // drivers (resend/tinyfish do `(env[ref]) ?? env[DEFAULT]`) report the
-  // name they'd actually read, so a configured-but-missing custom ref never
-  // displays as "present"; strict LLM drivers keep naming the custom ref.
-  // `!== undefined`, not truthy — `??` in the drivers falls through only on
-  // absent vars; an EMPTY custom var is what the driver actually reads.
+  // the var the driver actually reads: fallbackable drivers report the default
+  // when the custom ref is unset; `!== undefined` because an EMPTY custom var
+  // is what the driver reads
   const secretName =
     row.secret_ref &&
     (process.env[row.secret_ref] !== undefined || !SECRET_FALLBACK.has(row.driver))
@@ -73,9 +62,6 @@ export function integrationJson(row: IntegrationRow) {
     driver: row.driver,
     enabled: row.enabled,
     config: row.config ?? {},
-    /** whether process.env actually provides the referenced secret.
-     *  `secretName` is the var the driver reads today — the configured ref
-     *  unless a fallback driver falls through to its built-in default. */
     secretRef: row.secret_ref,
     secretName,
     secretPresent: present,
@@ -99,9 +85,7 @@ export async function getIntegration(
   return controlTx(sql, (tx) => getIntegrationTx(tx, kind));
 }
 
-/** Tx-local variant — the enabled row for a kind is THE provider (one active
- *  driver per kind). Use inside an existing control tx; `sql.begin` does not
- *  exist on transaction handles. */
+// tx-local — the enabled row is THE provider; `sql.begin` doesn't exist on tx handles
 export async function getIntegrationTx(
   tx: Sql,
   kind: IntegrationKind,
@@ -188,17 +172,12 @@ export async function upsertIntegration(
     }
     return { status: 200, body: { integration: integrationJson(rows[0]!) } };
   });
-  // A driver/enable flip on a messaging channel changes what its health
-  // cards and the live socket should be doing — material, not per-counter.
+  // a driver/enable flip changes what the channel's health cards and live socket do
   if (!res.replayed && (kind === 'whatsapp' || kind === 'email')) {
     emitControlEvent('channel.health', kind);
   }
   return res;
 }
-
-// ---------------------------------------------------------------------------
-// control_settings — workspace knobs (guardrails, pitch, autopilot default)
-// ---------------------------------------------------------------------------
 
 export const DEFAULT_GUARDRAILS = {
   maxOutboundPerLeadPerDay: 3,
@@ -207,47 +186,32 @@ export const DEFAULT_GUARDRAILS = {
   timezone: 'America/Sao_Paulo',
   /** first outbound to a lead always goes through the approvals queue */
   firstContactDraftOnly: true,
-  /** discovery: a created lead with fitScore >= discoveryContactMinScore and
-   *  a whatsapp/phone channel gets an outreach run queued on it (the send
-   *  still obeys firstContactDraftOnly). */
+  /** a discovered lead ≥ discoveryContactMinScore with a phone channel gets an
+   *  outreach run (still obeys firstContactDraftOnly) */
   discoveryAutoContact: true,
   discoveryContactMinScore: 8,
-  /** pacing before the agent answers an inbound message — the reply run is
-   *  queued with run_at = now() + this many minutes. 0 = answer at once. */
+  /** reply run is queued with run_at = now() + N min; 0 = answer at once */
   inboundReplyDelayMin: 0,
-  /** staff-created lead (POST /leads) gets the outreach run scheduled this
-   *  many minutes after creation — one run does research → dossier → first
-   *  contact. 0 = approval path: the run fires at once but draft-only, so
-   *  the work still lands while nothing can send unreviewed. */
+  /** staff-created lead's outreach run is scheduled N min after create;
+   *  0 = fire at once but draft-only */
   firstContactDelayMin: 0,
-  /** cadence floor: after an agent send the lead waits at most this many
-   *  days for a reply before sweepOutreach picks it up — stamped only when
-   *  next_action_at is still NULL (an agent/staff-set value wins). 0 = off. */
+  /** after an agent send, wait ≤N days for a reply before sweepOutreach picks
+   *  the lead up; stamped only when next_action_at is NULL; 0 = off */
   followupCadenceDays: 2,
-  /** approving an agent draft older than this many days never sends the
-   *  week-old copy — the draft is superseded and a draftOnly run recomposes
-   *  it against current state. 0 = off (approve always sends). */
+  /** approving a draft older than N days supersedes it and recomposes against
+   *  current state; 0 = approve always sends */
   staleDraftDays: 7,
-  /** discovery briefs: a brief whose last N finished runs produced zero
-   *  leads pauses itself (enabled=false + a note) instead of burning runs
-   *  forever. 0 = never auto-pause. */
+  /** a brief whose last N runs produced zero leads auto-pauses; 0 = never */
   briefAutoPauseRuns: 5,
-  /** staff/founder numbers the agent must never touch: inbound/history
-   *  from one of these drops silently (no lead minted), outbound sends and
-   *  queued runs to a matching lead are suppressed. Compared on digits. */
+  /** staff/founder numbers the agent never touches — compared on digits */
   ignoredPhones: [] as string[],
-  /** per-lead lifetime agent spend ceiling (USD): once a lead's runs
-   *  accumulate ≥ this in cost_cents, insertRun refuses new lead-bound
-   *  runs and flags the card — staff raises the cap or retires the lead.
-   *  0 = uncapped. */
+  /** per-lead agent spend ceiling (USD): ≥ cap refuses new runs and flags the
+   *  card; 0 = uncapped */
   leadLifetimeCostCapUsd: 5,
 } as const;
 
-/** Canonical cap-usd → cap-cents conversion for every enforcement site
- *  (insert gate, claim scan, sweep exclusion, flag pass, stale-draft
- *  check). Ceil — never round-to-zero: a positive-but-sub-cent cap must
- *  still bind (a run that spent ≥1¢ is over it), or the insert gate would
- *  refuse leads the claim scan treats as uncapped. ≤0 stays ≤0 = uncapped. */
+// canonical cap-usd → cap-cents for every enforcement site; ceil so a positive
+// sub-cent cap still binds; ≤0 = uncapped
 export function capCentsOf(g: Partial<Guardrails>): number {
   const usd = g.leadLifetimeCostCapUsd ?? DEFAULT_GUARDRAILS.leadLifetimeCostCapUsd;
   return usd <= 0 ? 0 : Math.ceil(usd * 100);
@@ -270,8 +234,7 @@ export type Guardrails = {
   leadLifetimeCostCapUsd: number;
 };
 
-/** Phone digits match: strip everything non-digit on both sides; an entry
- *  needs ≥6 digits to be meaningful (shorter runs are noise). */
+// digits-only match on both sides; entries need ≥6 digits to be meaningful
 export function phoneDigits(v: string): string {
   return v.replace(/\D/g, '');
 }
@@ -296,9 +259,7 @@ export const DEFAULT_PITCH = {
   tone: 'direto, caloroso, português brasileiro, mensagens curtas estilo WhatsApp',
   offerRange:
     'pode oferecer teste gratuito e desconto de lançamento; nunca prometa preço final nem isenção — escale para humano quando pedirem desconto além do lançamento',
-  /** Verbatim quotable facts — the only commercial claims the agent may
-   *  state (price, plan, trial length, signup URL, example storefront).
-   *  Empty = nothing may be quoted; the agent must confirm with staff. */
+  /** the only commercial claims the agent may state verbatim; empty = nothing may be quoted */
   offer: '',
   goal: 'descobrir interesse e marcar uma conversa curta ou pedido de demonstração',
   hardRules: [
@@ -311,12 +272,10 @@ export const DEFAULT_PITCH = {
 
 export type Pitch = typeof DEFAULT_PITCH;
 
-/** agent_memory.facts bound — validateSetting, the `remember` tool and the
- *  discovery debrief all truncate to this; keep the three readers in sync. */
+// shared bound — validateSetting, the `remember` tool and the discovery debrief all truncate to this
 export const AGENT_MEMORY_MAX_FACTS = 100;
 
-/** Stage close-probabilities that turn pipeline value into a forecast —
- *  the 'forecast' setting stores overrides under `probabilities`. */
+// stage close-probabilities; the 'forecast' setting stores overrides under `probabilities`
 export const DEFAULT_FORECAST_PROBABILITIES: Record<LeadState, number> = {
   lead: 0.05,
   contacted: 0.2,
@@ -324,9 +283,8 @@ export const DEFAULT_FORECAST_PROBABILITIES: Record<LeadState, number> = {
   live: 1,
 };
 
-/** Effective close-probability per state — defaults merged with the stored
- *  'forecast' row; unknown keys and out-of-range values are ignored so a
- *  hand-edited row can't poison the math. */
+// defaults merged with the stored row; unknown/out-of-range keys ignored so a
+// hand-edited row can't poison the math
 export function forecastProbabilities(stored: unknown): Record<LeadState, number> {
   const out = { ...DEFAULT_FORECAST_PROBABILITIES };
   const p = (stored as { probabilities?: unknown } | null)?.probabilities;
@@ -339,8 +297,7 @@ export function forecastProbabilities(stored: unknown): Record<LeadState, number
   return out;
 }
 
-/** Tx-local read of the forecast probabilities — use inside an existing
- *  control tx (leadStats, snapshotPipelineTx). */
+// tx-local read inside an existing control tx
 export async function getForecastConfigTx(tx: Sql): Promise<Record<LeadState, number>> {
   return forecastProbabilities(await getSettingTx<unknown>(tx, 'forecast', null));
 }
@@ -349,7 +306,7 @@ export async function getSetting<T>(sql: Sql, key: string, fallback: T): Promise
   return controlTx(sql, (tx) => getSettingTx(tx, key, fallback));
 }
 
-/** Tx-local variant — call inside an existing control tx. */
+// tx-local — call inside an existing control tx
 export async function getSettingTx<T>(tx: Sql, key: string, fallback: T): Promise<T> {
   const rows = await tx<{ value: T }[]>`select value from control_settings where key = ${key}`;
   return (rows[0]?.value as T | undefined) ?? fallback;
@@ -365,10 +322,8 @@ export async function getPitch(sql: Sql): Promise<Pitch> {
   return { ...DEFAULT_PITCH, ...stored };
 }
 
-/** Write-time validation for the settings the safety layer reads — a
- *  malformed guardrails object must never silently disable the caps.
- *  Unknown keys pass through (settings is a schemaless store), but the three
- *  keys the agent depends on get their shape checked. */
+// write-time validation for the settings the safety layer reads — a malformed
+// guardrails object must never silently disable the caps; unknown keys pass
 export function validateSetting(key: string, value: unknown): void {
   const bad = (field: string, why: string) =>
     new HttpError(422, 'BAD_REQUEST', `settings.${key}.${field} ${why}`, { field });
@@ -461,12 +416,8 @@ export function validateSetting(key: string, value: unknown): void {
     return;
   }
 
-  // 'meeting' — CRM-native booking config. bookingUrl is the legacy static
-  // link the agent prompt falls back on when token minting fails; roomUrl is
-  // the static video room used when the Daily provider isn't configured;
-  // publicBaseUrl is where /agendar links point. All URLs https-only — a
-  // prompt-injected javascript:/data: URL would ride out in an outbound
-  // message.
+  // 'meeting' booking config; URLs https-only so a prompt-injected
+  // javascript:/data: URL can't ride out in an outbound message
   if (key === 'meeting') {
     if (!value || typeof value !== 'object' || Array.isArray(value)) {
       throw bad('*', 'must be an object');
@@ -505,8 +456,7 @@ export function validateSetting(key: string, value: unknown): void {
     if (slotMinutes !== undefined && (slotMinutes < 5 || slotMinutes > 120)) {
       throw bad('slotMinutes', 'must be 5–120');
     }
-    // normalizeMeetingConfig clamps to [0,180] — a wider stored value would
-    // silently read back different, so validation must not accept it
+    // normalizeMeetingConfig clamps to [0,180] — a wider value would silently read back different
     if (bufferMinutes !== undefined && bufferMinutes > 180) {
       throw bad('bufferMinutes', 'must be 0–180');
     }
@@ -559,8 +509,7 @@ export function validateSetting(key: string, value: unknown): void {
     return;
   }
 
-  // 'digest' — daily staff email. `to` is the only staff-address field in the
-  // schema; the worker reads hour in the guardrails timezone.
+  // 'digest' daily staff email; `to` is the only staff-address field
   if (key === 'digest') {
     if (!value || typeof value !== 'object' || Array.isArray(value)) {
       throw bad('*', 'must be an object');
@@ -687,8 +636,7 @@ export async function putSetting(
     `;
     return { status: 200, body: { key, value } };
   });
-  // Meeting windows/tz/slot changes alter the availability grid the
-  // meetings surface renders.
+  // meeting window changes alter the availability grid
   if (!res.replayed && key === 'meeting') emitControlEvent('meeting.change');
   return res;
 }

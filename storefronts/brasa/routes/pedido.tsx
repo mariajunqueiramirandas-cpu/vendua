@@ -15,12 +15,8 @@ const STATE_LABEL: Record<string, string> = {
   refunded: 'estornado',
 };
 
-/**
- * Pedido — the dispatch receipt: giant order number like a called senha.
- * Order data arrives via router state from checkout; on a bare reload we ask
- * the Kernel client for it (currently 401 — no auth header on api.order;
- * see OBSERVATIONS.md — so we degrade to the "off the hook" state).
- */
+// order data arrives via router state from checkout; on bare reload api.order
+// is currently 401 (no auth header — OBSERVATIONS.md), so we degrade gracefully
 export function Pedido() {
   const { id = '' } = useParams();
   const { state } = useLocation() as { state: { order?: Order } | null };

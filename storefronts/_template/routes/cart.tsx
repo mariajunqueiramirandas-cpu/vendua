@@ -1,11 +1,7 @@
 import { Link, useNavigate } from 'react-router-dom';
 import { formatCents, QuantityStepper, useCart, useStore } from '@vendua/kernel';
 
-/**
- * Cart — Core's cart rendered verbatim: items, modifier lines, Kernel's
- * QuantityStepper for qty, and totals straight from `cart.totals` (subtotal,
- * fee, min-order). No client-side money math.
- */
+// Totals come straight from `cart.totals` — no client-side money math.
 export function CartPage() {
   const { cart, loading, mutations } = useCart();
   const { store } = useStore();

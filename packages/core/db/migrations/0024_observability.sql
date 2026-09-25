@@ -1,7 +1,4 @@
--- 0022_observability.sql — channel-health observability. Every guardrail
--- block of an agent send now lands on lead_activities with kind 'blocked'
--- (meta.channel + meta.reason) so the per-channel rollup can count them
--- alongside lead_messages failures and email bounces.
+-- adds 'blocked' to lead_activities kinds (+ index) so channel health can count guardrail-blocked sends
 
 alter table lead_activities
   drop constraint if exists lead_activities_kind_check,

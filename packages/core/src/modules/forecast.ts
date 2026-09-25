@@ -4,14 +4,7 @@ import { emitControlEvent } from './control-events.ts';
 import { getForecastConfigTx } from './integrations.ts';
 import { LEAD_STATES, pipelineByStateTx, type StateBucket } from './leads.ts';
 
-/**
- * forecast module — deal-value forecasting + pipeline snapshots.
- *
- * The math: every open lead's deal_value_cents × the close-probability of its
- * stage (the 'forecast' setting, DEFAULT_FORECAST_PROBABILITIES otherwise).
- * `pipeline_snapshots` freezes that picture once a day so Reports can draw a
- * trend; the worker takes it, POST /control/v1/stats/snapshot forces it.
- */
+// deal_value × per-stage close probability; snapshots freeze the picture once a day
 
 export interface ForecastByState extends StateBucket {
   probability: number;
@@ -43,8 +36,7 @@ interface SnapshotRow {
   created_at: string;
 }
 
-/** byState map + probabilities → per-state weighted value + the headline
- *  total. Pure — the rounding lives here so display and storage agree. */
+/** rounding lives here so display and storage agree */
 export function applyProbabilities(
   byState: Record<string, StateBucket>,
   probabilities: Record<string, number>,
@@ -72,9 +64,7 @@ function snapshotJson(r: SnapshotRow): Snapshot {
   };
 }
 
-/** Measure the pipeline NOW and upsert today's row — the unique taken_on
- *  makes same-day re-runs idempotent (the row refreshes, never duplicates).
- *  Call inside a control tx. */
+/** measure the pipeline now and upsert today's row — unique taken_on makes re-runs idempotent; call inside a control tx */
 export async function snapshotPipelineTx(tx: Sql): Promise<Snapshot> {
   const byState = await pipelineByStateTx(tx);
   const { weightedCents } = applyProbabilities(byState, await getForecastConfigTx(tx));
@@ -98,7 +88,7 @@ export async function snapshotPipelineTx(tx: Sql): Promise<Snapshot> {
   return snapshotJson(row);
 }
 
-/** Once-a-day cadence for the worker tick — no-op once today's row exists. */
+/** no-op once today's row exists */
 export async function sweepPipelineSnapshots(sql: Sql): Promise<boolean> {
   const taken = await controlTx(sql, async (tx) => {
     const done = await tx`select 1 from pipeline_snapshots where taken_on = current_date`;
@@ -110,8 +100,7 @@ export async function sweepPipelineSnapshots(sql: Sql): Promise<boolean> {
   return taken;
 }
 
-/** The forecast slice of /control/v1/stats — composed by the route so this
- *  shares the request's byState read instead of re-querying it. */
+/** shares the request's byState read instead of re-querying it */
 export async function pipelineForecast(
   sql: Sql,
   byState: Record<string, StateBucket>,

@@ -1,6 +1,4 @@
--- Cart items snapshot their price at add time: a catalog price edit must not
--- retroactively reprice lines a customer already accepted (order integrity).
--- Live availability still revalidates at checkout — this freezes only money.
+-- snapshot cart item price/modifiers at add time — only money freezes, availability revalidates at checkout
 
 alter table cart_items
   add column unit_price_cents integer,

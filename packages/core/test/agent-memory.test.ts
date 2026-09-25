@@ -21,8 +21,7 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('agent memory v2 (db)', () => {
   const nonce = crypto.randomUUID().slice(0, 8);
   // Memory content carries the nonce so assertions ignore rows from other runs.
   const nm = (s: string) => `zzm-${nonce}-${s}`;
-  // Idem keys are nonce-scoped too — claims persist in the shared test DB and
-  // a bare key would replay a previous run's response instead of writing.
+  // idem keys nonce-scoped — claims persist in the shared test DB
   const idem = (s: string) => `mem-${nonce}-${s}`;
   let migrated = false;
   const setup = async () => {
@@ -80,8 +79,6 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('agent memory v2 (db)', () => {
       from agent_memory_items where content like ${`zzm-${nonce}-%`} order by created_at
     `;
 
-  // ---- routes: memory items -------------------------------------------------
-
   test('GET /agent/memory requires control auth and validates scope', async () => {
     await setup();
     const unauth = await app.request('/control/v1/agent/memory');
@@ -130,7 +127,6 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('agent memory v2 (db)', () => {
     expect(item.pinned).toBe(false);
     expect(item.sourceRunId).toBeNull();
 
-    // Replay: same idem key → same item, replay header, no second row.
     const replay = await post(
       '/control/v1/agent/memory',
       { scope: 'segment', segment: 'Pudim São Paulo', content: nm('created') },
@@ -173,8 +169,6 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('agent memory v2 (db)', () => {
     const again = await del(`/control/v1/agent/memory/${item.id}`, idem('k11'));
     expect(again.status).toBe(404);
   });
-
-  // ---- routes: lead facts ---------------------------------------------------
 
   test('lead facts routes: 404s, key regex, round-trip', async () => {
     await setup();
@@ -237,8 +231,6 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('agent memory v2 (db)', () => {
     const again = await del(`/control/v1/leads/${leadId}/facts/size`, idem('f8'));
     expect(again.status).toBe(404);
   });
-
-  // ---- module behaviour -----------------------------------------------------
 
   test('rememberTx dedupes case-insensitively per scope/segment', async () => {
     await setup();
@@ -443,14 +435,9 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('agent memory v2 (db)', () => {
     expect(n[0]!.n).toBe(9); // dedupe hit, not a second row
   });
 
-  // ---- migration backfill ---------------------------------------------------
-
   test('0035 backfill classifies agent_memory.facts into debrief vs workspace', async () => {
     await setup();
-    // Re-run the migration's backfill against a controlled settings row on the
-    // shared DB: clear the two tables (they're new — no other suite reads
-    // them), pull the ledger row, seed facts, migrate again. Tables/policies
-    // stay put — the migration's create/RLS statements are all idempotent.
+    // re-run the migration's backfill against a controlled settings row — its DDL is idempotent
     const prior = await sql<
       { value: unknown }[]
     >`select value from control_settings where key = 'agent_memory'`;
@@ -461,8 +448,7 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('agent memory v2 (db)', () => {
       await sql`
         insert into control_settings (key, value) values ('agent_memory', ${sql.json({
           facts: [
-            // 62 debriefs first so the class lands over the 60 cap — the
-            // migration itself must trim them (newest 60 kept).
+            // 62 debriefs so the class lands over the 60 cap — the migration must trim them
             ...Array.from({ length: 62 }, (_, i) => `run ${nonce}x${i}: ${i} leads`),
             `run ${nonce}a: 12 leads (3 c/ whatsapp)`,
             `run ${nonce}b/centro: 0 leads`,
@@ -480,9 +466,7 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('agent memory v2 (db)', () => {
       const learning = rows.filter((r) => r.scope === 'workspace');
       const debriefs = rows.filter((r) => r.scope === 'debrief');
       expect(learning.map((r) => [r.content, r.source])).toEqual([[nm('plain learning'), 'staff']]);
-      // 64 debriefs backfilled (62 x + a + b) — migration trims to the
-      // newest 60: x0–x3 go, x4..x61 and a + b (newer, later ordinality)
-      // stay.
+      // trimmed to newest 60 — x0–x3 go, x4+ and a/b stay
       expect(debriefs).toHaveLength(60);
       expect(debriefs.every((r) => r.source === 'staff')).toBe(true);
       const dc = debriefs.map((r) => r.content);

@@ -1,17 +1,9 @@
-/* ============================================================================
-   BRASA BURGER — "quadro de embarque da chapa"
-   The storefront reads as the night dispatch board of a port-side grill:
-   stenciled cargo marks over soot and steel, one ember accent doing all the
-   fire, and the cart rendered as the paper comanda spiked on the rail.
-
-   Color, type, radius and motion come from the --v-* tokens that
-   VenduaProvider emits from vendua.config.ts — Kernel surfaces and these
-   styles drink from the same tokens. v-* classes and [data-vendua] internals
-   are never styled (contract); we only place them.
-   ========================================================================== */
+/* Brasa — the night dispatch board of a port-side grill: stenciled cargo marks over
+   soot and steel, one ember accent. --v-* tokens come from vendua.config.ts; v-*
+   classes and [data-vendua] internals are never styled (contract), only placed. */
 
 :root {
-  /* Local layer on top of the contract tokens — same names everywhere. */
+  /* local aliases over the contract tokens */
   --paper: #f2e7d0;
   --ink: #241a10;
   --ember: var(--v-color-accent);
@@ -71,8 +63,6 @@ a {
   border-radius: var(--v-radius-sm);
 }
 
-/* ---------- type utilities -------------------------------------------------- */
-
 .stencil {
   font-family: var(--v-font-display);
   text-transform: uppercase;
@@ -90,8 +80,6 @@ a {
   color: var(--ash);
 }
 
-/* ---------- hazard tape ------------------------------------------------------ */
-
 .hazard {
   height: 6px;
   background: repeating-linear-gradient(-45deg, var(--ember) 0 7px, transparent 7px 14px);
@@ -107,8 +95,6 @@ a {
     transparent 10px 16px
   );
 }
-
-/* ---------- rail (the plate column) ----------------------------------------- */
 
 .rail {
   position: fixed;
@@ -230,8 +216,6 @@ a {
 .rail-links a:hover {
   color: var(--ember);
 }
-
-/* ---------- board (menu content) -------------------------------------------- */
 
 .board {
   margin-left: var(--rail-w);
@@ -411,8 +395,6 @@ a {
   pointer-events: none;
 }
 
-/* ---------- skeleton / error states ----------------------------------------- */
-
 @keyframes ember-flicker {
   0%,
   100% {
@@ -481,8 +463,6 @@ a {
   border-color: var(--ember);
   color: var(--ember);
 }
-
-/* ---------- product spec sheet ---------------------------------------------- */
 
 .spec {
   margin-left: var(--rail-w);
@@ -723,7 +703,6 @@ a {
   border-style: dashed;
 }
 
-/* sticky action bar on the product page */
 .actionbar {
   position: fixed;
   left: var(--rail-w);
@@ -835,8 +814,6 @@ a {
 .added-note a {
   color: var(--v-color-success);
 }
-
-/* ---------- comanda (cart/checkout ticket) ----------------------------------- */
 
 .page {
   margin-left: var(--rail-w);
@@ -1011,8 +988,6 @@ a {
   color: color-mix(in srgb, var(--ink) 62%, transparent);
 }
 
-/* ---------- checkout --------------------------------------------------------- */
-
 .ck-grid {
   display: grid;
   grid-template-columns: 1fr 360px;
@@ -1134,7 +1109,6 @@ a {
   background: color-mix(in srgb, var(--ember) 10%, var(--soot));
 }
 
-/* payment plates */
 .paygrid {
   display: flex;
   flex-direction: column;
@@ -1205,8 +1179,6 @@ a {
 .zonehint.warn {
   color: var(--v-color-danger);
 }
-
-/* ---------- order page -------------------------------------------------------- */
 
 .order-hero {
   border: 1px solid var(--hairline-strong);
@@ -1283,8 +1255,6 @@ a {
   margin: 0;
 }
 
-/* ---------- footer ------------------------------------------------------------ */
-
 .foot {
   margin-top: 90px;
   border-top: 1px solid var(--hairline);
@@ -1309,8 +1279,6 @@ a {
   color: var(--v-color-text);
   font-weight: 600;
 }
-
-/* ---------- responsive --------------------------------------------------------- */
 
 @media (max-width: 960px) {
   :root {

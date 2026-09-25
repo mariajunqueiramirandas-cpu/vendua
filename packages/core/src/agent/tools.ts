@@ -39,11 +39,7 @@ import { leadBoundArg, toolAvailable } from './tool-meta.ts';
 import { parseWakeupAt, scheduleWakeupTx } from './wakeups.ts';
 import { automationAllowedTx, discoveryBudgetTx } from './policy.ts';
 
-/**
- * agent/tools — the central tool registry (Hermes-style: one registry, gated
- * per run kind like `enabled_toolsets`). Every tool validates its args and
- * executes against modules — the model never touches SQL.
- */
+/** central tool registry — every tool validates args and executes against modules; the model never touches SQL. */
 
 export interface ToolContext {
   sql: Sql;
@@ -53,58 +49,34 @@ export interface ToolContext {
   threadId: string | null;
   /** tool call index within the run — seeds deterministic idempotency keys */
   step: number;
-  /** The worker's live claim on agent_runs — mutating tools fence on it
-   *  (assertRunClaimTx): a run reclaimed or canceled mid-tool turns the
-   *  call into an aborted no-op instead of a duplicate effect. Null outside
-   *  a real claim (tests, sims) — no fence there. */
+  /** live claim on agent_runs — mutating tools fence on it; null outside a real claim (tests/sims). */
   claimToken: string | null;
-  /** In-flight/finished read_pages calls by page identity — a repeat read
-   *  (same step's batch or a later step) shares the same provider call
-   *  instead of paying for the identical page twice. */
+  /** in-flight/finished read_pages calls by page identity — a repeat read shares the same provider call. */
   pageCache: Map<string, Promise<unknown>>;
-  /** Discovery-brief runs stamp created leads' discovered_via with the brief
-   *  name so the board can tell scheduled-autopilot finds from ad-hoc ones. */
+  /** stamps created leads' discovered_via so the board tells brief finds from ad-hoc ones. */
   briefName: string | null;
-  /** Hard per-run ceiling on created leads — the run's meta (params.target),
-   *  enforced in code so the prompt can't talk past it. */
+  /** hard per-run ceiling on created leads — enforced in code so the prompt can't talk past it. */
   leadCap: number;
-  /** Staff channel override from dispatch (`params.channel`) — trumps the
-   *  model's own channel pick on send_message/draft_message. */
+  /** staff channel override (params.channel) — trumps the model's pick on send/draft. */
   channelOverride: 'email' | 'whatsapp' | null;
-  /** Working memory — the prospect ledger the agent maintains via `book`
-   *  and its self-authored campaign plan via `plan`. Run-scoped; the runner
-   *  renders it into reflection ticks and the finish nudge. */
+  /** run-scoped working memory — the `book` prospect ledger + `plan` campaign plan. */
   book: Map<string, BookEntry>;
   plan: string | null;
-  /** monid.ai spend guard — enrichment calls charge against a per-run cap
-   *  (`params.monidCapUsd`; the runner's default is per-kind) so a live
-   *  balance can't loop-drain. Never null in a real run. */
+  /** monid.ai spend guard — enrichment charges against a per-run cap; never null in a real run. */
   monid: import('./channels/monid.ts').MonidBudget | null;
-  /** Contact values already banked this run (book channels + enrichment
-   *  hits) — a repeated phone/email isn't progress, only a fresh one is. */
+  /** contact values already banked this run — a repeat isn't progress. */
   seenContacts: Set<string>;
-  /** read_pages fetches spent this run — reply's bound (REPLY_READ_PAGES_CAP):
-   *  a lead can send a link the agent must read, but a live conversation
-   *  can't afford an unbounded page-reading rabbit hole. Counts fetches,
-   *  not calls: each cache miss and every auto-chased hop spends one. */
+  /** read_pages fetches spent this run — reply's cap; counts fetches (cache misses + chased hops), not calls. */
   pageReads: number;
-  /** Reservation stamp — the runner binds this to the call's pending
-   *  journal entry so a read_pages reservation is persisted the moment
-   *  it validates, not only when the result does; a reclaim mid-batch
-   *  then replays real spend. Undefined outside a claimed run. */
+  /** binds spend to the call's pending journal entry so a reclaim mid-batch replays real spend. */
   markReadSpent?: (delta: number) => Promise<void>;
-  /** Staff-assist runs (params.draftOnly): send_message may only compose —
-   *  a suggestion goes to the approvals queue, never on the wire. */
+  /** staff-assist runs: send_message may only compose to the approvals queue. */
   draftOnly: boolean;
-  /** Playbook kinds this run may call tools as — starts as {runKind};
-   *  drained inbox mail adds its requestedKind so a lead's mid-run intent
-   *  (e.g. an opt-out arriving as 'reply' mail inside an outreach run)
-   *  stays servable. The dispatcher gate reads this, not just runKind. */
+  /** playbook kinds this run may call as — drained mail adds its requestedKind; the dispatcher gate reads this. */
   toolKinds?: ReadonlySet<string>;
 }
 
-/** One prospect in the agent's ledger — what it found and which moves it
- *  already spent, so the strategist can decide instead of re-walking. */
+/** One prospect in the agent's ledger — what it found and which moves it already spent. */
 export interface BookEntry {
   name: string;
   city: string | null;
@@ -132,11 +104,7 @@ export function bookDigest(book: Map<string, BookEntry>): string {
     .join('\n');
 }
 
-/** Per-run read_pages fetch budget for reply runs — enough to read the
- *  link a lead sent (catálogo, site, perfil), never a research rabbit
- *  hole mid-conversation. Charged per fetch issued: every cache miss and
- *  every auto-chased hop spends one; a call served entirely from cache
- *  is free. */
+/** Per-run read_pages budget for reply runs — enough for a sent link, never a rabbit hole; charged per fetch (cache misses + chased hops). */
 const REPLY_READ_PAGES_CAP = 2;
 
 const UUID_LIKE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -326,8 +294,7 @@ const REGISTRY: { def: AgentTool }[] = [
     },
   },
   {
-    // triage included: the first-contact draft IS triage's write-up — but
-    // send_message stays out, so a new lead can never be sent unreviewed.
+    // triage gets draft_message (its first-contact write-up) but never send_message — a new lead can't be sent unreviewed.
     def: {
       name: 'draft_message',
       description:
@@ -427,10 +394,7 @@ const REGISTRY: { def: AgentTool }[] = [
     },
   },
   {
-    // Staff cards and inbound senders get researched before the agent writes
-    // anything — outreach carries that job on fresh cards, triage on manual
-    // re-research. Reply keeps it as a fallback only: in a live conversation
-    // asking beats searching.
+    // reply keeps web_search as fallback only — in a live conversation asking beats searching.
     def: {
       name: 'web_search',
       description:
@@ -446,9 +410,7 @@ const REGISTRY: { def: AgentTool }[] = [
     },
   },
   {
-    // triage/outreach read deep (site/perfil do prospect). Reply gets it too
-    // but capped (REPLY_READ_PAGES_CAP): a lead can send a link the agent
-    // must read — a live conversation still can't afford a rabbit hole.
+    // reply gets read_pages too but capped — a live conversation can't afford a rabbit hole.
     def: {
       name: 'read_pages',
       description:
@@ -569,26 +531,16 @@ const REGISTRY: { def: AgentTool }[] = [
   },
 ];
 
-/** Toolset filter — the Hermes enabled_toolsets pattern: each run kind sees
- *  only the tools its job needs. */
 export function toolsFor(kind: string): AgentTool[] {
   return REGISTRY.filter((t) => toolAvailable(kind, t.def.name)).map((t) => t.def);
 }
 
-/** Registered tool names — the meta table must cover exactly these. */
 export function registeredToolNames(): string[] {
   return REGISTRY.map((t) => t.def.name);
 }
 
-/** Side-effect fence on the live claim. claim_token already guards the
- *  journal/finish writes, but a worker that lost the row (reclaimed past the
- *  lease, or canceled mid-flight) could still land a mutating tool — the
- *  classic double-send. Run FIRST inside the mutation's own claim tx: the
- *  FOR UPDATE on the run row serializes against drain()'s reclaim UPDATE, so
- *  the mutation either commits strictly before the reclaim (the resumed
- *  attempt's dedupe then absorbs it) or throws before writing anything.
- *  Throws (never returns) so the claim rolls back un-stored — a recorded
- *  'stale' response would replay-poison the next attempt's identical key. */
+/** Side-effect fence on the live claim — runs FIRST inside the mutation's claim
+ *  tx so it commits strictly before a reclaim or throws un-stored. */
 export async function assertRunClaimTx(tx: Sql, ctx: ToolContext): Promise<void> {
   if (!ctx.claimToken) return;
   const row = (
@@ -601,11 +553,8 @@ export async function assertRunClaimTx(tx: Sql, ctx: ToolContext): Promise<void>
   }
 }
 
-/** Auto outreach's dispatch-boundary recheck — the same predicate the
- *  mid-run probe uses (live inbound ingested after this attempt's claim),
- *  re-evaluated inside the send-claim tx under the capfin lead lock so
- *  ingest and send serialize: a committed inbound can never be followed by
- *  the auto nudge it already answered. Returns the refusal reason. */
+/** Auto outreach's dispatch-boundary recheck — re-evaluated inside the send-claim
+ *  tx under capfin so a committed inbound can't be followed by the auto nudge it answered. */
 export async function refuseOnFresherInboundTx(tx: Sql, ctx: ToolContext): Promise<string | null> {
   if (ctx.runKind !== 'outreach' || !ctx.leadId || !ctx.claimToken) return null;
   const run = (
@@ -613,9 +562,7 @@ export async function refuseOnFresherInboundTx(tx: Sql, ctx: ToolContext): Promi
       select params->>'auto' as auto, started_at from agent_runs where id = ${ctx.runId}
     `
   )[0];
-  // 'agent' exempt like 'regenerate': the pre-'auto' sweep marker is
-  // ambiguous (self-schedule or lead-asked callback) → treated as a
-  // possible promise, so the send boundary doesn't refuse it.
+  // 'agent' exempt like 'regenerate' — the pre-'auto' marker is ambiguous, so treated as a possible promise.
   if (!run?.started_at || run.auto == null || run.auto === 'regenerate' || run.auto === 'agent')
     return null;
   const { capLockTx } = await import('./runner.ts');
@@ -633,8 +580,7 @@ export async function refuseOnFresherInboundTx(tx: Sql, ctx: ToolContext): Promi
       )
     limit 1
   `;
-  // Mail this run already drained doesn't refuse its answer — the obsolete-
-  // auto guard still bites on any inbound that arrived unhandled.
+  // Mail this run already drained doesn't refuse its answer.
   return replied.length ? 'lead respondeu' : null;
 }
 
@@ -645,28 +591,19 @@ export async function executeTool(
   args: Record<string, unknown>,
 ): Promise<unknown> {
   const { sql, runId, step } = ctx;
-  // deterministic per call — a retried call replays, a batched second call
-  // with the same name in one step gets its own key.
+  // deterministic per call — a retried call replays, a batched same-name call gets its own key.
   const key = `agent:${runId}:${step}:${name}:${callId}`;
-  // Forwarded to module-level mutations (updateLead/createTask/...) so their
-  // own claim transaction fences on the live claim before writing.
+  // forwarded to module mutations so their claim tx fences on the live claim.
   const guard = (tx: Sql) => assertRunClaimTx(tx, ctx);
 
-  // toolsFor() only decides what the model is TOLD about — nothing stops it
-  // emitting another name. Enforce the toolset here too, or a discovery run
-  // can emit send_message and reach the real dispatch path. Mail that
-  // drained mid-run widens the set through ctx.toolKinds (its requested
-  // kind joins) — the model only ever saw tools that union produces.
+  // toolsFor() is only what the model is told — enforce it here too; drained mail widens the set via ctx.toolKinds.
   const kinds = ctx.toolKinds ?? new Set([ctx.runKind]);
   const allowed = [...kinds].some((k) => toolAvailable(k, name));
   if (!allowed || !REGISTRY.some((t) => t.def.name === name)) {
     return { error: `tool ${name} not available for ${ctx.runKind} runs` };
   }
 
-  // Lead-bound runs (triage/reply/outreach) may only mutate THEIR lead — the
-  // model picks the leadId arg, so enforce the binding in code. Read-only
-  // tools (search_leads, get_lead) stay unscoped: triage legitimately inspects
-  // other leads, e.g. to spot duplicates.
+  // lead-bound runs may only mutate their own lead — reads stay unscoped (triage inspects other leads for dupes).
   const boundArg = leadBoundArg(name);
   if (ctx.leadId && boundArg) {
     const target = String(args[boundArg] ?? '');
@@ -694,8 +631,7 @@ export async function executeTool(
         score: l.score,
         city: l.city,
         segment: l.segment,
-        // Channel flags (not the raw values — get_lead has those) so the
-        // agent sees what the card ALREADY holds before deciding to hunt.
+        // channel flags — the agent sees what the card already holds before hunting.
         hasWhatsapp: Boolean(l.whatsapp),
         whatsappVerified: l.whatsappVerified,
         hasPhone: Boolean(l.phone),
@@ -716,24 +652,16 @@ export async function executeTool(
       const findings = typeof args.findings === 'string' ? args.findings.trim() : '';
       const sources = (Array.isArray(args.sources) ? args.sources : [])
         .map((s) => String(s ?? '').trim())
-        // Count and length are both bounded — a multi-megabyte "source" is
-        // dropped, not truncated, so a stored URL is never a silent fragment.
+        // over-long "sources" are dropped, not truncated — a stored URL is never a fragment.
         .filter((s) => s.length > 0 && s.length <= 500)
         .slice(0, 10);
-      // findings/sources are writeup args, not lead columns — strip them so
-      // leadInsert/leadPatch never see them.
+      // findings/sources are writeup args, not lead columns — strip them.
       delete payload.findings;
       delete payload.sources;
-      // true when whatsapp was auto-filled from a mobile phone — reachable,
-      // but NOT verified whatsapp evidence; the autocontact gate must not
-      // treat it as a confirmed wa.me channel.
+      // phone-derived whatsapp is reachable but NOT verified evidence — the autocontact gate must not treat it as confirmed.
       let whatsappDerived = false;
       if (ctx.runKind === 'discovery') {
-        // A wa.me/whatsapp URL pasted into phone/whatsapp is a channel
-        // mention, not a dialable number — resolve it through contactFromUrl
-        // (path-segment aware, so a wa.me/message code or a ?text= full of
-        // digits can't masquerade as a phone) or drop it BEFORE the channel
-        // gate counts it, or a link-only card would slip through as reachable.
+        // a pasted wa.me/whatsapp URL is a channel mention, not a number — resolve or drop it before the channel gate counts it.
         const { contactFromUrl, phoneFromText, isBrMobilePhone } =
           await import('./channels/discovery.ts');
         for (const f of ['phone', 'whatsapp'] as const) {
@@ -750,15 +678,12 @@ export async function executeTool(
             }
             payload[f] = u ? contactFromUrl(u).phone : undefined;
           } else if (typeof v === 'string' && /^[\d\s()+.-]+$/.test(v.trim())) {
-            // digit-ish values normalize like the extractors: 10-11 digits =
-            // BR local → +55…, 12+ w/ country code → +…, unparseable kept as-is.
+            // digit-ish values normalize like the extractors (10-11 digits = BR local, 12+ = intl).
             const p = phoneFromText(v.trim());
             if (p) payload[f] = p;
           }
         }
-        // instagram lands one shape only — '@handle'. A profile URL
-        // (instagram.com/x) or a bare 'x' would otherwise dodge dedupe's
-        // handle comparison and split the column into two formats.
+        // instagram lands one shape — '@handle' — or dedupe's comparison splits the column into two formats.
         const ig = payload.instagram;
         if (typeof ig === 'string' && ig.trim()) {
           let u: URL | null = null;
@@ -778,18 +703,11 @@ export async function executeTool(
             payload.instagram = m ? `@${m[1]}` : undefined;
           }
         }
-        // A BR mobile IS whatsapp-reachable — maps listings and directories
-        // print "phone" for what is the whatsapp line. Fill the channel when
-        // the model left it empty instead of shipping a wa-less lead that the
-        // finish gate then has to recover. Marked derived so the autocontact
-        // gate keeps requiring REAL whatsapp evidence (wa.me/api.whatsapp.com,
-        // or an explicit whatsapp arg) — a maps phone is eligible, not proven.
+        // a BR mobile IS whatsapp-reachable — fill it, marked derived so the autocontact gate still requires real evidence (eligible, not proven).
         whatsappDerived =
           !payload.whatsapp && typeof payload.phone === 'string' && isBrMobilePhone(payload.phone);
         if (whatsappDerived) payload.whatsapp = payload.phone;
-        // The bar for a discovered lead, enforced where the prompt can't be
-        // talked around: it must carry a research dossier AND a reachable
-        // channel — a name-only row is a dead card on the board.
+        // discovered-lead bar, enforced in code: a dossier AND a reachable channel — a name-only row is a dead card.
         if (findings.length < 20) {
           return {
             error:
@@ -807,26 +725,17 @@ export async function executeTool(
           payload.discoveredVia = ctx.briefName
             ? `agente·${ctx.briefName}`.slice(0, 120)
             : 'agente';
-        // The Discovery UI panel queries `tag=descoberto` — tag it here so
-        // agent-found leads are always findable there.
+        // the Discovery panel queries `tag=descoberto` — tag it here.
         const tags = Array.isArray(payload.tags) ? [...payload.tags] : [];
         if (!tags.includes('descoberto')) tags.push('descoberto');
         payload.tags = tags;
       }
       const input = leadInsert(payload);
-      // Provenance column: explicit whatsapp (wa.me-normalized or raw) is
-      // verified; the mobile-derived fill stays unverified for the gate.
+      // explicit whatsapp is verified; the mobile-derived fill stays unverified.
       input.whatsapp_verified = Boolean(input.whatsapp) && !whatsappDerived;
-      // Derived-but-promotable: maps prints "phone" for what is usually the
-      // whatsapp line. Ask the live socket whether the digits are actually
-      // registered — a registered answer clears `derived` and the whole
-      // verified/autocontact path treats the number as proven evidence.
-      // Runs BEFORE the claim tx: this is a network call and network calls
-      // never sit inside a DB transaction (post-commit would also lose the
-      // flag on a claim replay). Only probed when autocontact could fire
-      // anyway — otherwise the flag can't change the outcome. null = can't
-      // tell (socket down/probe failed): the number stays unverified, never
-      // deleted.
+      // derived-but-promotable: probe the live socket for registration —
+      // registered clears `derived`. Runs before the claim tx (network never
+      // inside a DB tx); null = can't tell, stays unverified.
       if (whatsappDerived && typeof input.whatsapp === 'string' && input.whatsapp) {
         const g = await getSetting<Partial<Guardrails>>(sql, 'guardrails', {});
         const score = typeof input.fit_score === 'number' ? input.fit_score : null;
@@ -843,9 +752,7 @@ export async function executeTool(
           }
         }
       }
-      // Tx outbox — retirements queueOutreach's insertRun collects emit
-      // post-commit; emitting inside the claim would leak a false event on
-      // rollback.
+      // retired runs emit post-commit — emitting inside the claim would leak a false event on rollback.
       const retiredOutreach: string[] = [];
       const res = await claimControl(sql, key, async (tx) => {
         await assertRunClaimTx(tx, ctx);
@@ -855,9 +762,7 @@ export async function executeTool(
         let autoOn = false;
         let minScore: number = DEFAULT_GUARDRAILS.discoveryContactMinScore;
         let waDriverOn = false;
-        /** The autocontact gate, evaluated on whatever contact data the lead
-         *  ends up with — a verified whatsapp (never a guessed phone), a live
-         *  whatsapp driver, and fitScore ≥ the configured minimum. */
+        /** autocontact gate: verified whatsapp (never a guessed phone), live wa driver, fitScore ≥ min. */
         const gateFires = (score: number | null, wa: string) =>
           ctx.runKind === 'discovery' &&
           autoOn &&
@@ -865,11 +770,8 @@ export async function executeTool(
           score !== null &&
           score >= minScore &&
           Boolean(wa);
-        /** Autocontact is a first-contact, so it suppresses on live runs —
-         *  and on ANY outbound message row for the lead: 'failed' sends may
-         *  have been accepted by the provider before the crash (recovery
-         *  deliberately never retries them), 'rejected' is a staff veto.
-         *  A 'done' run that produced no message doesn't count. */
+        /** first-contact suppresses on live runs AND any outbound row — a
+         *  'failed' send may still have reached the wire; 'rejected' is a veto. */
         const outreachActive = async (leadId: string) => {
           const live = (
             await tx`
@@ -904,11 +806,7 @@ export async function executeTool(
           const runId = await insertRun(tx, { kind: 'outreach', leadId, params }, cap);
           retiredOutreach.push(...(cap.retired ?? []));
           if (!runId) return null;
-          // The intent rides the mailbox too: insertRun returns the lead's
-          // already-active NON-outreach row when one exists, and the item is
-          // what actually carries the first contact into it (created or
-          // delivered, same audit). One pending discovery event per lead is
-          // enough — repeated dedup-merges don't pile duplicates.
+          // the intent rides the mailbox too — one pending discovery event per lead is enough.
           const pending = (
             await tx<{ n: number }[]>`
               select count(*)::int n from agent_inbox
@@ -936,22 +834,14 @@ export async function executeTool(
           `;
         };
         if (ctx.runKind === 'discovery') {
-          // A single advisory key serializes dedupe + cap + insert across ALL
-          // runs: batched calls in a step and concurrent discovery runs (brief
-          // sweep + manual launch) must not observe the same empty dedupe read
-          // and then insert the same prospect twice.
+          // one advisory key serializes dedupe + cap + insert — concurrent runs must not insert the same prospect twice.
           await tx`select pg_advisory_xact_lock(hashtext('lead-dedupe'))`;
           guardrails = await getSettingTx<Partial<Guardrails>>(tx, 'guardrails', {});
           autoOn = guardrails.discoveryAutoContact ?? DEFAULT_GUARDRAILS.discoveryAutoContact;
           minScore =
             guardrails.discoveryContactMinScore ?? DEFAULT_GUARDRAILS.discoveryContactMinScore;
           waDriverOn = await whatsappReadyTx(tx);
-          // Dedupe before the cap check so a repeat prospect can't burn cap:
-          // each phone/whatsapp number is normalized independently and matched
-          // against BOTH stored columns (a landline and a WhatsApp can differ),
-          // instagram handles compare case-folded, and a name/business hit only
-          // counts when the incoming city is present and equal — common names
-          // alone don't merge distinct businesses.
+          // dedupe before the cap check so a repeat can't burn cap — name/business hits only merge when city matches too.
           const digits = (v: unknown) =>
             typeof v === 'string' && v.replace(/\D/g, '').length >= 8 ? v.replace(/\D/g, '') : null;
           const phones = [digits(input.phone), digits(input.whatsapp)].filter(
@@ -990,16 +880,10 @@ export async function executeTool(
             `
           )[0];
           if (dup) {
-            // capfin first — this tx writes the lead row (merge update,
-            // findings FK insert) and may queueOutreach → insertRun, which
-            // takes the advisory itself. It must be the tx's first lock for
-            // the lead or an inbound gate holding it can cycle (see
-            // capLockTx's ordering rule).
+            // capfin first — must be the tx's first lead lock or an inbound gate holding it can cycle.
             const { capLockTx } = await import('./runner.ts');
             await capLockTx(tx, dup.id as string);
-            // Known prospect, new research: fill still-empty contact/profile
-            // columns (never overwrite what a human or earlier run set) and
-            // append the dossier to its timeline instead of dropping it.
+            // fill still-empty columns (never overwrite) and append the dossier to the timeline.
             const FILL_COLS = [
               'business_name',
               'phone',
@@ -1028,21 +912,17 @@ export async function executeTool(
                 merged.push(col);
               }
             }
-            // The score columns aren't text — fill each separately when the
-            // existing card never got scored.
+            // fill score columns separately when the card was never scored.
             for (const col of ['fit_score', 'intent_score'] as const) {
               if (typeof input[col] === 'number' && (dup[col] === null || dup[col] === undefined)) {
                 set[col] = input[col];
                 merged.push(col);
               }
             }
-            // Provenance travels with the merge: a whatsapp landed this call
-            // is verified only when it wasn't auto-derived from a phone.
+            // a merged whatsapp is verified only when it wasn't auto-derived.
             if ('whatsapp' in set) set.whatsapp_verified = !whatsappDerived;
-            // Confirmation upgrade: an explicit whatsapp that digit-matches a
-            // stored UNVERIFIED value confirms it (e.g. wa.me found for a
-            // mobile we derived earlier) — the column was already filled, so
-            // the fill loop alone would never flip the flag.
+            // an explicit whatsapp digit-matching a stored UNVERIFIED value
+            // confirms it — the fill loop alone can't flip the flag.
             if (
               !whatsappDerived &&
               input.whatsapp &&
@@ -1053,13 +933,10 @@ export async function executeTool(
               set.whatsapp_verified = true;
               if (!merged.includes('whatsapp_verified')) merged.push('whatsapp_verified');
             }
-            // An enriched dup clears the same gate a fresh lead would — but
-            // only while the card is still untouched ('lead'), nobody
-            // switched its agent off ('off' is a human veto, never override),
-            // and no outreach is already live for it.
+            // an enriched dup clears the same gate — but only while untouched
+            // ('lead'), agent not 'off' (human veto), and no live outreach.
             const dupScore = (set.fit_score ?? dup.fit_score) as number | null;
-            // Only VERIFIED whatsapp unlocks autocontact: a stored value whose
-            // provenance flag is set, or a non-derived merge from this call.
+            // only VERIFIED whatsapp unlocks autocontact.
             const dupWa =
               (dup.whatsapp_verified === true || set.whatsapp_verified === true
                 ? String(dup.whatsapp ?? '').trim()
@@ -1069,10 +946,7 @@ export async function executeTool(
               dup.state === 'lead' &&
               dup.agent_mode !== 'off' &&
               !(await outreachActive(dup.id as string));
-            // agent_mode promotes only after the run is admitted: a cap
-            // refusal (insertRun → null) must not commit 'auto' with no
-            // outreach behind it — the mode is automation's own flag and a
-            // refused queue leaves nothing to drive it.
+            // agent_mode promotes only after the run is admitted — a cap refusal must not commit 'auto' with no outreach.
             if (merged.length) {
               await tx`update leads set ${tx(set)}, updated_at = now() where id = ${dup.id as string}`;
             }
@@ -1089,19 +963,12 @@ export async function executeTool(
                 merged,
                 ...(contactRun ? { contactRun } : {}),
                 existing: { id: dup.id, name: dup.name, state: dup.state },
-                // A merge confirms an existing card — it does NOT advance the
-                // run's lead goal. Say so, or the model counts the same
-                // prospects as delivered and stops hunting new ones.
+                // a merge does NOT count toward META — say so or the model stops hunting.
                 next: 'duplicado — NÃO conta pra META; siga o plano e traga prospects novos',
               } as never,
             };
           }
-          // Hard cap, enforced in code the prompt can't talk away: count this
-          // run's claim keys whose stored response actually created a lead
-          // (`response.lead.id`) — duplicate/no-op responses commit a claim
-          // row but must not burn cap slots. This call's own claim row has no
-          // response yet, so n = leads already created. The cap IS the run's
-          // meta — "criar até N" enforced, no separate guardrail setting.
+          // hard cap in code: count claim keys whose response created a lead — duplicate/no-op rows don't burn cap slots.
           const cap = ctx.leadCap;
           const n =
             (
@@ -1119,11 +986,8 @@ export async function executeTool(
             );
           }
         }
-        // Score gate → first contact without a human round-trip: a high-fit
-        // lead with a VERIFIED whatsapp (never a guessed phone — a `phone`
-        // can be a landline) and a live whatsapp driver gets agent autonomy
-        // + an outreach run queued in the same claim. The send still obeys
-        // the messaging guardrails (firstContactDraftOnly → approval queue).
+        // score gate → first contact without a human: verified whatsapp + live
+        // driver → autonomy + queued outreach; messaging guardrails still apply.
         const newScore = typeof input.fit_score === 'number' ? input.fit_score : null;
         const autoContact = gateFires(
           newScore,
@@ -1137,9 +1001,7 @@ export async function executeTool(
             'whatsapp derivado do celular — um wa.me/link-in-bio confirma de verdade (e destrava autocontato)';
         }
         if (autoContact) {
-          // agent_mode follows the admitted run, not the gate: a cap refusal
-          // (insertRun → null) must not leave 'auto' with no outreach behind
-          // it — same rule as the dup-merge promotion above.
+          // agent_mode follows the admitted run — a cap refusal must not leave 'auto' with no outreach.
           const contactRun = await queueOutreach(created.body.lead.id, newScore);
           if (contactRun) {
             await tx`update leads set agent_mode = 'auto', updated_at = now()
@@ -1166,22 +1028,15 @@ export async function executeTool(
     }
     case 'update_lead': {
       const { id, ...rest } = args;
-      // The staff-set autonomy knobs are write-only-above for the model:
-      // agent_mode='auto' would self-promote past the approval gates,
-      // archived:false would resurrect a suppressed lead, and agentPaused
-      // is staff's resume switch — the model hands off via request_human,
-      // it never lifts a handoff itself. archived:true stays — the prompts
-      // use it to bin off-ICP leads.
+      // staff-set autonomy knobs are refused: agentMode (self-promotion),
+      // agentPaused (staff's resume), archived:false (un-suppress); archived:true stays for off-ICP binning.
       delete rest.agentMode;
       delete rest.agentPaused;
       if (rest.archived === false) delete rest.archived;
-      // Provenance marker, not a column: pull it off the patch and hand it
-      // to leadPatch — 'requested' dates survive a fresh inbound, the
-      // agent's own 'agent'-stamped cadence does not.
+      // provenance marker, not a column — 'requested' dates survive a fresh inbound; 'agent'-stamped cadence doesn't.
       const nextActionRequested = rest.nextActionRequested === true;
       delete rest.nextActionRequested;
-      // A patch reduced to nothing shouldn't 422 back at the model — say
-      // what was refused instead of erroring the tool call.
+      // an emptied patch returns a refusal note instead of erroring.
       if (Object.keys(rest).length === 0) {
         return {
           ignored: true,
@@ -1266,9 +1121,7 @@ export async function executeTool(
     }
     case 'draft_message': {
       const leadId = String(args.leadId);
-      // Resolve inside the same claim that writes the draft — a bounce or
-      // contact edit landing between resolution and insert can't strand a
-      // draft on a dead channel for staff to approve into a failure.
+      // resolve + write in one claim — a bounce between resolution and insert can't strand a draft on a dead channel.
       type DraftBody =
         | { blocked: true; reason: string | undefined; use?: string | null }
         | (Awaited<ReturnType<typeof composeMessageTx>>['body'] & {
@@ -1288,8 +1141,7 @@ export async function executeTool(
             body: { blocked: true as const, reason: pick.reason, use: pick.available[0] ?? null },
           };
         }
-        // Same per-(lead, channel) pause check send_message enforces — a
-        // staff-paused thread gets no agent output at all, drafts included.
+        // same pause check as send_message — a staff-paused thread gets no output, drafts included.
         if (await agentPausedForChannelTx(tx, leadId, pick.channel)) {
           return {
             status: 200,
@@ -1303,9 +1155,7 @@ export async function executeTool(
           subject: (args.subject as string) ?? undefined,
           author: 'agent',
           status: 'draft',
-          // Stamped like the send paths — inbound retire scopes stale
-          // drafts by authoring run, and an unstamped draft_message was
-          // invisible to it (staff could approve a pre-inbound draft).
+          // stamped like send paths — inbound retire scopes stale drafts by authoring run.
           agentRunId: ctx.runId,
         });
         return {
@@ -1322,9 +1172,7 @@ export async function executeTool(
     case 'send_message': {
       const leadId = String(args.leadId);
       const chanArg = args.channel ? channel(args.channel) : null;
-      // Claimed: a retried tool call replays the recorded decision instead of
-      // composing again. The advisory lock serializes concurrent sends on the
-      // lead so the daily-cap count sees the winner's queued row.
+      // claimed — retries replay; the advisory lock serializes concurrent sends so the daily cap sees the winner's row.
       type SendBody =
         | { blocked: true; reason: string | undefined; use?: string | null }
         | {
@@ -1336,13 +1184,8 @@ export async function executeTool(
       const res = await claimControl<SendBody>(sql, key, async (tx) => {
         await assertRunClaimTx(tx, ctx);
         await tx`select pg_advisory_xact_lock(hashtext(${`send:${leadId}`}))`;
-        // Run-scoped dedupe: a run reclaimed after a mid-send crash re-executes
-        // the whole conversation — the model may emit a different callId, so
-        // `key` can't catch it. The run's own prior dispatch can. Scoped to
-        // the latest delivered mail batch: a drained inbox batch re-arms the
-        // run for exactly one answer — without it a run that already sent
-        // could never reply to mail it just read, and replay still can't
-        // double-send (the consumed_at stamp predates the prior dispatch).
+        // run-scoped dedupe — a reclaimed run re-executes and may emit a
+        // different callId; scoped to the latest mail batch so a drained batch re-arms exactly one answer.
         const already = await tx`
           select 1 from lead_messages m
           join lead_threads t on t.id = m.thread_id
@@ -1360,10 +1203,7 @@ export async function executeTool(
             body: { blocked: true as const, reason: 'already dispatched by this run' },
           };
         }
-        // Channel resolution inside the same claim: staff override > the
-        // model's arg > continuity > whatsapp > email. A dead channel blocks
-        // with the reachable alternative so the model retries on it — never
-        // compose on air.
+        // channel resolution in-claim: override > arg > continuity > whatsapp > email; a dead channel blocks with the alternative.
         const pick = await resolveChannelTx(tx, leadId, {
           requested: chanArg,
           override: ctx.channelOverride,
@@ -1376,16 +1216,8 @@ export async function executeTool(
           };
         }
         const chan = pick.channel;
-        // A retried send reuses this claim key, so `key` replays — but a
-        // NEW callId for the same logical send (same body) lands here — and
-        // channel fallback can move that send between rows: an attempted
-        // whatsapp failure followed by an email retry would dispatch a
-        // second copy of the same text. Match on the body across channels,
-        // like `already` above. ANY attempted copy masks the retry — a
-        // newer pre-wire failure must not hide an older maybe-sent one:
-        // composing again could put a second copy on the wire. A failure
-        // stamped pre-wire (no dispatch_attempted_at) provably never left
-        // and stays retryable.
+        // a new callId with the same body would dispatch a second copy — match
+        // on body across channels; pre-wire failures (no dispatch_attempted_at) stay retryable.
         const attemptedFailed = await tx<{ id: string }[]>`
           select m.id from lead_messages m
           join lead_threads t on t.id = m.thread_id
@@ -1401,23 +1233,14 @@ export async function executeTool(
             body: { blocked: true as const, reason: 'already dispatched by this run' },
           };
         }
-        // Pause applies per (lead, channel) — staff disabling the DESTINATION
-        // thread (or request_human earlier in this same run) must stop sends
-        // even when the lead's agent_mode still allows them. A missing thread
-        // also blocks when every conversation of the lead is paused — that
-        // lead-wide handoff survives a channel hop (ensureThread then creates
-        // the fresh channel already paused).
+        // pause applies per (lead, channel) — a lead-wide handoff survives a channel hop.
         if (await agentPausedForChannelTx(tx, leadId, chan)) {
           return {
             status: 200,
             body: { blocked: true as const, reason: 'thread paused for agent' },
           };
         }
-        // Draft-only runs compose like draft_message: everything inside
-        // checkSendAllowedTx exists to stop a message leaving the building,
-        // and a draft never does — the approval click is where those gates
-        // apply. Running the verdict anyway lets quiet hours eat the draft
-        // the run was queued to write.
+        // draft-only runs skip the verdict — its gates stop wire sends and a draft never leaves anyway.
         const verdict = ctx.draftOnly
           ? ({ ok: true, forceDraft: false } as const)
           : await checkSendAllowedTx(
@@ -1430,8 +1253,7 @@ export async function executeTool(
               chan,
             );
         if (!verdict.ok) {
-          // Durable signal for the channel-health rollup — quiet hours and
-          // daily-cap blocks otherwise leave no record a rollup can count.
+          // durable signal for the channel-health rollup — blocks otherwise leave no record.
           await recordBlockedSendTx(tx, leadId, chan, verdict.reason ?? 'guardrail');
           return { status: 200, body: { blocked: true as const, reason: verdict.reason } };
         }
@@ -1441,27 +1263,14 @@ export async function executeTool(
           body: String(args.body),
           subject: (args.subject as string) ?? undefined,
           author: 'agent',
-          // draftOnly (staff assist) composes like firstContactDraftOnly —
-          // the send just never leaves.
+          // draftOnly composes like firstContactDraftOnly — the send just never leaves.
           status: verdict.forceDraft || ctx.draftOnly ? 'draft' : 'queued',
           agentRunId: ctx.runId,
         });
         if (!verdict.forceDraft && !ctx.draftOnly) {
-          // A dispatch committed to the wire answers the inbound batches
-          // this run still holds — record which message answered them NOW,
-          // inside the claim tx (RLS-safe — agent_inbox needs
-          // vendua.control): writing it post-dispatch would run outside
-          // controlTx AND race a cancel that releases the mail before the
-          // provider call resolves. The marker lands before the send can
-          // land, so a released item can never hide an in-flight answer.
-          // Scope: every still-unanswered inbound the run holds — the model
-          // saw them all when composing; a fallback or deliberate
-          // cross-channel reply answers mail received on another thread,
-          // so thread scoping would re-serve exactly those sends. An
-          // existing marker wins while its answer is live or on the wire
-          // (the same predicate releaseInboxTx uses) — but a marker onto a
-          // provably-dead send (failed before the provider call) re-points
-          // here, so a retry's landed send can't strand answered mail.
+          // record which message answered held inbound NOW inside the claim tx —
+          // a released item can never hide an in-flight answer; a marker onto a
+          // provably-dead send re-points here.
           await tx`
             update agent_inbox
             set payload = payload || jsonb_build_object('answeredBy', ${composed.body.message.id}::text)
@@ -1488,33 +1297,21 @@ export async function executeTool(
         emitControlEvent('thread.message', tid);
         if (out.verdict.forceDraft || ctx.draftOnly) emitControlEvent('draft.change', tid);
       }
-      // dispatchMessage no-ops unless the row is still 'queued' — safe when
-      // this response replays. Replayed and fresh both dispatch under THIS
-      // attempt's claim: a replayed compose that never reached dispatch is
-      // the owning attempt finishing its own send (the stranded sweep defers
-      // to any run that isn't 'done'), and a cancel/reclaim between
-      // compose-commit and this send stops the message via the guard.
+      // no-ops unless still 'queued'; replayed and fresh both dispatch under
+      // this attempt's claim — a cancel/reclaim stops the message via the guard.
       let sendError: string | undefined;
       if (out.verdict.forceDraft === false && !ctx.draftOnly) {
         const sent = await dispatchMessage(sql, out.composed.body.message.id, async (tx) => {
-          // capfin BEFORE the claim fence: finishRun (and the inbound gate)
-          // take capfin first and touch run/message rows after — a run-row →
-          // capfin order here is the AB-BA the capfin-first rule exists to
-          // prevent, and a losing dispatch abort drops the send.
+          // capfin BEFORE the claim fence — a run-row → capfin order is the AB-BA the capfin-first rule prevents.
           if (ctx.leadId) {
             const { capLockTx } = await import('./runner.ts');
             await capLockTx(tx, ctx.leadId);
           }
           await assertRunClaimTx(tx, ctx);
-          // The probe only runs at step boundaries — an inbound committed
-          // between the last probe and this send would escape it, and the
-          // ingest gate can't see the locked run. Recheck under capfin so
-          // ingest and send serialize on the same lead lock.
+          // recheck fresher inbound under capfin — the step-boundary probe can't see one committed since.
           return refuseOnFresherInboundTx(tx, ctx);
         });
-        // A composed-but-failed send must not count as a landed action —
-        // surfacing the failure as {error} keeps runActed's finish gate
-        // honest and tells the model the send didn't land.
+        // a composed-but-failed send isn't a landed action — {error} keeps the finish gate honest.
         if (!sent.ok) sendError = sent.reason ?? 'send failed';
       }
       return {
@@ -1552,8 +1349,7 @@ export async function executeTool(
             ...(scope === 'segment' ? { segment } : {}),
             content: fact,
             source: 'agent',
-            // stamped only when the caller is a real claimed run — sims and
-            // tests carry synthetic run ids that have no agent_runs row
+            // stamped only for a real claimed run — sims/tests carry synthetic ids
             sourceRunId: UUID_RE.test(ctx.runId) ? ctx.runId : null,
           });
         });
@@ -1564,8 +1360,7 @@ export async function executeTool(
           ...(evicted.length ? { evicted } : {}),
         };
       } catch (e) {
-        // Validation, cap-pinned and pre-migration rejections are
-        // model-relevant feedback (consolidate or move on), not run failures.
+        // validation/cap/pre-migration rejections are model feedback, not run failures.
         return { error: e instanceof Error ? e.message : String(e) };
       }
     }
@@ -1645,14 +1440,9 @@ export async function executeTool(
         key,
         async (tx): Promise<{ status: number; body: Record<string, unknown> }> => {
           await assertRunClaimTx(tx, ctx);
-          // claimControl only serializes THIS call's retries — two strategist
-          // runs carry different idempotency keys and can both pass the dup
-          // check before either insert commits. One shared advisory lock
-          // makes check+insert atomic across runs (same idiom as
-          // 'lead-dedupe' in create_lead).
+          // one shared advisory lock makes dup-check+insert atomic across runs (same idiom as 'lead-dedupe').
           await tx`select pg_advisory_xact_lock(hashtext('brief-proposals'))`;
-          // Proposing what already runs (or is already a draft) adds board
-          // noise, not options — name/query dupes come back as a skip.
+          // name/query dupes come back as a skip — proposing what exists adds noise.
           const dup = (
             await tx<{ id: string; name: string }[]>`
               select id, name from discovery_briefs
@@ -1667,12 +1457,7 @@ export async function executeTool(
               body: { proposed: false, duplicate: true, existingName: dup.name },
             };
           }
-          // Budgeted auto-approval: with agent_autonomy.strategistAutoApproveUsd
-          // set, a proposal goes live only if trailing-7d discovery spend plus
-          // a reservation for work not yet booked (queued/running discovery
-          // and auto-approved briefs with no finished run) plus this brief
-          // fits the ceiling. Reservation = mean cost of recent discovery
-          // runs. The brief-proposals lock above serializes the check.
+          // budgeted auto-approval: goes live only when 7d spend + open-work reservation + this brief fits the ceiling; the lock serializes the check.
           const b = await discoveryBudgetTx(tx);
           const autoOn = b.capCents > 0 && b.spent + (b.open + 1) * b.est <= b.capCents;
           const row = (
@@ -1703,13 +1488,8 @@ export async function executeTool(
     case 'request_human': {
       const leadId = String(args.leadId);
       const reason = String(args.reason).slice(0, 500);
-      // The whole handoff (pause thread + task + timeline note) commits under
-      // ONE claim keyed like the journal entry. Suffixed sub-claims would
-      // leave a crash mid-handoff half-committed, and resume-reconcile finds
-      // no `key` response — it would replay the call interrupted and a retry
-      // under a new step key would duplicate the task/note. The handoff also
-      // lands on the lead timeline so staff reading the card see why the
-      // agent stepped aside, not just a task title.
+      // the whole handoff commits under ONE claim — sub-claims could half-commit
+      // on crash and a retry would duplicate the task/note.
       await claimControl(sql, key, async (tx) => {
         await assertRunClaimTx(tx, ctx);
         const exists = await tx`select 1 from leads where id = ${leadId}`;
@@ -1721,11 +1501,7 @@ export async function executeTool(
           `;
           if (!rows[0]) throw new HttpError(404, 'THREAD_NOT_FOUND', 'thread not found');
         } else {
-          // Unbound run (outreach/triage): there is no "this thread" — the
-          // handoff is for the lead. The explicit marker blocks output on
-          // every channel (and parks queued runs at claim) until staff lifts
-          // it; per-thread toggles stay untouched, so resuming never
-          // resurrects a thread staff had already paused.
+          // unbound run: lead-wide pause marker — blocks every channel until staff lifts it; per-thread toggles untouched.
           await tx`
             update leads set agent_paused_at = now(), updated_at = now()
             where id = ${leadId} and agent_paused_at is null
@@ -1747,12 +1523,8 @@ export async function executeTool(
       const leadId = String(args.leadId);
       const reason = typeof args.reason === 'string' ? args.reason.slice(0, 200) : null;
       const reply = typeof args.reply === 'string' ? args.reply.slice(0, 500) : null;
-      // The whole transition is ONE claimed tx holding the send:lead advisory
-      // lock: compose the farewell (lead still subscribed → guardrails pass
-      // it), stamp unsubscribed_at, write the note — all before the lock
-      // releases. A concurrent send serializes behind this claim and sees the
-      // lead already opted out; only the farewell (is_farewell) survives the
-      // dispatch suppression re-check. Replays return the recorded result.
+      // ONE claimed tx under the send:lead lock: farewell + opt-out stamp + note —
+      // a concurrent send serializes behind and sees the opt-out; only is_farewell survives.
       type UnsubBody = {
         messageId: string | null;
         threadId: string | null;
@@ -1777,9 +1549,7 @@ export async function executeTool(
             sendBlocked = pick.reason ?? 'no channel';
           } else {
             const g = await getSettingTx(tx, 'guardrails', {} as Partial<Guardrails>);
-            // Draft-only runs compose like draft_message — everything inside
-            // checkSendAllowedTx exists to stop a message leaving the
-            // building, and the farewell draft never does.
+            // draft-only runs skip the verdict — a draft never leaves anyway.
             const verdict = ctx.draftOnly
               ? ({ ok: true, forceDraft: false } as const)
               : await checkSendAllowedTx(tx, { ...DEFAULT_GUARDRAILS, ...g }, leadId, pick.channel);
@@ -1787,10 +1557,7 @@ export async function executeTool(
               sendBlocked = verdict.reason ?? 'guardrail';
               await recordBlockedSendTx(tx, leadId, pick.channel, sendBlocked);
             } else {
-              // Copilot mode (forceDraft) keeps the opt-out but the farewell
-              // becomes an approval draft instead of queueing — approving it
-              // still sends (is_farewell survives the dispatch suppression
-              // re-check), it just never leaves unreviewed.
+              // forceDraft keeps the opt-out but the farewell becomes an approval draft.
               drafted = verdict.forceDraft || ctx.draftOnly;
               const composed = await composeMessageTx(tx, {
                 leadId,
@@ -1812,14 +1579,12 @@ export async function executeTool(
           returning id
         `;
         if (changed.length) {
-          // Opt-out never lifts — runs still queued for this lead can never
-          // claim again, so die now instead of parking as zombies forever.
+          // opt-out never lifts — kill queued runs now instead of parking them as zombies.
           await tx`
             update agent_runs set status = 'canceled', finished_at = now(), error = 'descadastrado'
             where lead_id = ${leadId} and status = 'queued'
           `;
-          // Pending mail dies with the opt-out too — delivered items are
-          // work the lead will never want served.
+          // pending mail dies with the opt-out.
           await tx`
             update agent_inbox set consumed_at = now()
             where lead_id = ${leadId} and consumed_at is null
@@ -1848,8 +1613,7 @@ export async function executeTool(
         if (res.body.changed) emitControlEvent('lead.change', leadId);
       }
       if (res.body.messageId && !res.body.drafted) {
-        // Same compose→dispatch gap as send_message: the farewell must die
-        // with the run that queued it.
+        // same compose→dispatch gap as send_message — the farewell dies with the run that queued it.
         await dispatchMessage(sql, res.body.messageId, guard);
       }
       return {
@@ -1885,22 +1649,16 @@ export async function executeTool(
         .filter(Boolean)
         .slice(0, 6);
       if (!urls.length) return { error: 'read_pages needs urls: ["https://…"] (1–6)' };
-      // Dedupe by page identity across the run cache AND this call — the
-      // same page twice in one batch (https vs https://www, trailing slash)
-      // resolves to one fetch, not two. The same assertFetchable guard
-      // the provider runs validates each miss before the reservation:
-      // a rejected url never batches, never spends, and never claims a
-      // page slot — pageKey drops the scheme, so caching an ftp://
-      // rejection would mask its fetchable https:// twin all run long.
+      // dedupe by page identity across run cache and this batch — same page
+      // twice = one fetch; validate each miss before it reserves a slot.
       type PageResult = { page: ReadPage | null; error?: string };
       const missOut = new Map<string, Promise<PageResult>>(); // url → its slice
       const fetchable: string[] = [];
       const mapDirects: string[] = [];
       const queued = new Set<string>();
       const replyBound = ctx.runKind === 'reply';
-      // Reserve-and-charge for every real request the resolver issues —
-      // named map pointers never trigger it (in-process, free); a nameless
-      // shortlink's hop chain spends one slot per issued fetch.
+      // reserve-and-charge per real fetch — named map pointers are free
+      // (in-process); a nameless shortlink's hop chain pays per issued fetch.
       const reserve = replyBound
         ? async (): Promise<boolean> => {
             if (ctx.pageReads >= REPLY_READ_PAGES_CAP) return false;
@@ -1911,9 +1669,8 @@ export async function executeTool(
         : undefined;
       for (const url of urls) {
         const id = pageKey(url) ?? url;
-        // Validation precedes the cache short-circuit — pageKey drops the
-        // scheme, so an ftp:// miss could otherwise inherit a cached
-        // https:// page it never earned.
+        // validate before the cache short-circuit — pageKey drops the scheme,
+        // so an ftp:// miss could inherit a cached https:// page.
         try {
           assertFetchable(url);
         } catch (e) {
@@ -1928,24 +1685,16 @@ export async function executeTool(
         }
         if (ctx.pageCache.has(id) || queued.has(id)) continue;
         queued.add(id);
-        // A direct map pointer resolves through the pointer path — a named
-        // carrier costs zero fetches, so a provider fetch would only buy a
-        // captcha page. Collected here, resolved below — starting it now
-        // would spend hop reservations before the batch's own admission
-        // check, and its result would be discarded if the batch refuses.
+        // direct map pointers collect here, resolve after admission —
+        // starting now would spend reservations on a batch that may refuse.
         if (isMapPointer(url)) {
           mapDirects.push(url);
           continue;
         }
         fetchable.push(url);
       }
-      // Reply's bound prices fetches, not calls — one call can fetch up
-      // to six pages, so the fetchable count itself is the spend. All-or-
-      // nothing, checked before any fetch issues: a call that doesn't
-      // fit the remaining budget is refused whole, a call served fully
-      // from the run's pageCache spends nothing. Map pointers never reach
-      // this count — they resolve through the pointer path, after this
-      // admission decision, so a refused call spends nothing at all.
+      // reply's bound prices fetches, not calls — all-or-nothing before any
+      // fetch issues; cache hits and map pointers spend nothing.
       if (replyBound && fetchable.length) {
         if (ctx.pageReads + fetchable.length > REPLY_READ_PAGES_CAP) {
           return {
@@ -1953,14 +1702,12 @@ export async function executeTool(
           };
         }
         ctx.pageReads += fetchable.length;
-        // Stamp the reservation on the pending journal entry — a reclaim
-        // mid-batch replays the spend the call already made, not a guess.
+        // stamp the reservation on the pending journal entry — a reclaim
+        // mid-batch replays the real spend.
         await ctx.markReadSpent?.(fetchable.length);
       }
-      // Admission settled — now the pointer resolutions can start. Each
-      // slice behaves like any other miss: cached under the pointer's key,
-      // error on failure. A failed resolve doesn't bank — a later retry
-      // must reissue the chase, matching the provider-miss behavior.
+      // admission settled — pointer resolutions behave like any other miss:
+      // cached under the pointer's key, a failed resolve doesn't bank.
       for (const url of mapDirects) {
         const key2 = pageKey(url);
         const p: Promise<PageResult> = resolveMapPointer(url, reserve)
@@ -1984,8 +1731,7 @@ export async function executeTool(
       const provider = await discoveryFor(sql);
       const goal = String(args.goal ?? '');
       if (fetchable.length) {
-        // One provider call for the whole miss batch — the Fetch API is
-        // natively batched, so N misses still cost a single HTTP round-trip.
+        // one provider call for the whole miss batch — the Fetch API is natively batched.
         const batch: Promise<import('./channels/discovery.ts').ReadPagesResult> = provider
           .readPages(fetchable, goal)
           .then(
@@ -2006,9 +1752,7 @@ export async function executeTool(
             );
             if (page) return { page };
             const err = res.errors.find((er) => pageKey(er.url) === key2);
-            // A failed fetch doesn't bank — a later retry must reissue it,
-            // not serve the error forever. Good pages in the same batch
-            // still cache.
+            // a failed fetch doesn't bank — a retry must reissue it.
             if (key2) ctx.pageCache.delete(key2);
             return { page: null, error: err?.error ?? 'no result for url' };
           });
@@ -2020,16 +1764,14 @@ export async function executeTool(
       const errs: { url: string; error: string }[] = [];
       for (const url of urls) {
         const key2 = pageKey(url);
-        // This url's own slot first — a validation rejection must report
-        // its error even when a fetchable twin banked the same scheme-free
-        // pageKey, never inherit the twin's page.
+        // this url's own slot first — a rejection must never inherit a
+        // fetchable twin's page.
         const p =
           missOut.get(url) ??
           (key2 ? (ctx.pageCache.get(key2) as Promise<PageResult> | undefined) : undefined);
         const out = p ? await p : null;
         if (out?.page) {
-          // fresh this call only when the url itself was queued — a shared
-          // identity means the output came from another slot's fetch.
+          // fresh only when the url itself was queued — a shared identity came from another slot's fetch.
           const shared = key2 !== null && queued.has(key2) && !missOut.has(url);
           const fromCache = key2 !== null && !queued.has(key2);
           pages.push({ ...out.page, ...(shared || fromCache ? { cached: true } : {}) });
@@ -2037,11 +1779,8 @@ export async function executeTool(
           errs.push({ url, error: out?.error ?? 'no result for url' });
         }
       }
-      // One free hop on the pointer-only links a page surfaces — link-in-bio
-      // hubs and google-business/maps entries exist solely to hold the real
-      // contact block. Chasing them inline keeps the profile → hub → wa.me
-      // path inside a single tool call instead of spending a model step on
-      // a read we already know pays off.
+      // one free hop on pointer-only links (link-in-bio hubs, google-business)
+      // — chasing inline keeps profile → hub → wa.me in one call.
       const chaseOf: { url: string; from: string }[] = [];
       const chaseSeen = new Set<string>();
       for (const pg of pages as ReadPage[]) {
@@ -2052,11 +1791,8 @@ export async function executeTool(
           chaseOf.push({ url: link, from: pg.url });
         }
       }
-      // Chases are fetches too and spend the same reply budget — paid
-      // candidates are bounded by what's left, but a named map pointer
-      // resolves in-process: free pointers neither spend nor displace
-      // spendable slots, and the run simply stops chasing paid hops
-      // when the budget's gone.
+      // chases spend the same reply budget — free map pointers neither spend
+      // nor displace slots; paid hops stop when the budget's gone.
       const chases: typeof chaseOf = [];
       if (replyBound) {
         let slots = Math.max(0, REPLY_READ_PAGES_CAP - ctx.pageReads);
@@ -2064,9 +1800,7 @@ export async function executeTool(
           if (chases.length >= 4) break;
           const free = mapPointerName(c.url) !== null;
           if (!free) {
-            // A paid candidate validates before it claims a slot — a url
-            // no provider could issue just reports its rejection, it
-            // never displaces a later valid link.
+            // a paid candidate validates before claiming a slot.
             try {
               assertFetchable(c.url);
             } catch (e) {
@@ -2086,8 +1820,7 @@ export async function executeTool(
       }
       const hubChases = chases.filter((c) => !isMapPointer(c.url));
       const mapChases = chases.filter((c) => isMapPointer(c.url));
-      // Non-reply selections never ran the guard — same rule as the
-      // direct batch: un-fetchable chase urls spend nothing.
+      // non-reply selections never ran the guard — un-fetchable chase urls spend nothing.
       const fetchableHubs = hubChases.filter((c) => {
         try {
           assertFetchable(c.url);
@@ -2136,12 +1869,8 @@ export async function executeTool(
           }
         }
       }
-      // Maps/google-business pointers captcha the fetch provider — resolve the
-      // 302 in-process instead: the target URL names the business profile,
-      // which is the exact web_search query that exposes its phone. Second
-      // wave: chased hub pages surface these pointers too (instagram →
-      // linktr.ee → g.co/kgs), and in-process resolution is free, so map
-      // pointers on chased pages resolve as well (no extra provider call).
+      // maps/google-business pointers captcha the fetch provider — resolve
+      // the 302 in-process (free); chased hub pages surface them too.
       const mapWave = [...mapChases];
       for (const pg of pages.filter((p) => (p as ReadPage).chasedFrom) as ReadPage[]) {
         for (const link of chaseLinks(pg)) {
@@ -2170,14 +1899,12 @@ export async function executeTool(
         ctx.plan = String(args.content ?? '').slice(0, 2000);
         return { stored: true, plan: ctx.plan, book: bookDigest(ctx.book) };
       }
-      // Lead kinds: the negotiation checklist persists on the lead. Writes merge
-      // by step under a row lock — 'skip' is how an item leaves the list; an
-      // omitted step survives (a concurrent run's ticks are never clobbered).
+      // lead kinds: the checklist persists on the lead; writes merge by step
+      // under a row lock — omitted steps survive, 'skip' removes.
       if (!ctx.leadId) return { error: 'plan needs a run bound to a lead' };
       const raw = args.items;
       if (!Array.isArray(raw)) return { error: 'items must be an array' };
-      // Patch-merge: status/note omitted by the writer keep their stored value —
-      // re-sending a bare step must not un-tick progress.
+      // patch-merge: omitted status/note keep their stored value — a bare step must not un-tick progress.
       const norm = (
         it: unknown,
       ): {
@@ -2233,8 +1960,7 @@ export async function executeTool(
             };
           }
         }
-        // 'skip' frees its slot under the cap: skipped steps ride at the tail as
-        // history while there's room, evicted first once open items fill it.
+        // 'skip' frees its cap slot — skipped steps ride the tail as history, evicted first.
         const open = merged.filter((s) => s.status !== 'skip');
         const next = open.concat(merged.filter((s) => s.status === 'skip')).slice(0, 12);
         await tx`update leads set agent_plan = ${tx.json(next)}, updated_at = now() where id = ${ctx.leadId!}`;
@@ -2434,7 +2160,6 @@ export async function executeTool(
           ...(next.length ? { next } : {}),
         };
       }
-      // serp — one cheap google page for a named prospect
       ctx.monid?.reserve(0.001);
       const res = await monidRun(
         { provider: 'mrscraper', endpoint: '/serp/google' },

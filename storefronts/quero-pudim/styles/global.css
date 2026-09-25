@@ -1,7 +1,4 @@
-/* Quero Pudim — "caderno de receitas" surface.
- * Cream paper, 2px ink rules, prints taped into the margin, Newsreader
- * marginalia, caramel ink for actions. Brand tokens arrive via vendua.config
- * → --v-* vars; the scales below are the storefront's own palette ramps. */
+/* Quero Pudim — "caderno de receitas" surface; brand tokens arrive via vendua.config → --v-* vars. */
 
 :root {
   --cream: #fcfbf8;
@@ -89,8 +86,6 @@ button {
   color: var(--brand-800);
 }
 
-/* ---------- layout primitives ---------- */
-
 .container {
   width: 100%;
   max-width: 72rem;
@@ -146,8 +141,6 @@ button {
 .tnum {
   font-variant-numeric: tabular-nums;
 }
-
-/* ---------- header ---------- */
 
 .site-header {
   position: sticky;
@@ -305,8 +298,6 @@ button {
   }
 }
 
-/* ---------- buttons ---------- */
-
 .btn {
   display: inline-flex;
   align-items: center;
@@ -382,7 +373,6 @@ button {
   background: var(--caramel-200);
 }
 
-/* The floating "sacola" bar — ink-bordered rose block with offset shadow. */
 .floating-sacola {
   position: fixed;
   inset: auto 16px 16px;
@@ -417,8 +407,6 @@ button {
   box-shadow: none;
 }
 
-/* ---------- type ---------- */
-
 .display {
   font-family: var(--v-font-display, 'Newsreader', serif);
   font-weight: 400;
@@ -452,8 +440,6 @@ button {
   font-size: 0.875rem;
   color: var(--zinc-600);
 }
-
-/* ---------- catalog cards ---------- */
 
 .card-grid {
   list-style: none;
@@ -573,8 +559,6 @@ button {
   opacity: 0.6;
 }
 
-/* ---------- forms ---------- */
-
 .field {
   display: block;
   margin-bottom: 20px;
@@ -668,7 +652,6 @@ textarea.input {
   color: var(--zinc-950);
 }
 
-/* choice cards — delivery mode / payment method */
 .choices {
   display: grid;
   gap: 10px;
@@ -732,7 +715,6 @@ textarea.input {
   background: var(--caramel-700);
 }
 
-/* modifier groups */
 .mod-group {
   margin-bottom: 24px;
 }
@@ -822,7 +804,6 @@ textarea.input {
   background: var(--caramel-700);
 }
 
-/* ---------- qty selector (pre-cart) ---------- */
 .qty {
   display: inline-flex;
   align-items: center;
@@ -859,8 +840,6 @@ textarea.input {
   font-weight: 600;
   font-variant-numeric: tabular-nums;
 }
-
-/* ---------- cart / checkout layout ---------- */
 
 .two-col {
   display: grid;
@@ -995,13 +974,10 @@ textarea.input {
   color: var(--danger);
 }
 
-/* Kernel stepper (data-vendua hooks are unstyleable per contract) sits inside
-   .stepper-slot — layout only, no visual overrides. */
+/* Kernel stepper hooks are unstyleable per contract — layout only */
 .stepper-slot {
   display: inline-flex;
 }
-
-/* ---------- notices & states ---------- */
 
 .empty-state {
   padding: 64px 16px;
@@ -1094,8 +1070,6 @@ textarea.input {
   }
 }
 
-/* ---------- brand notice override (slot: system.Notice) ---------- */
-
 .qp-notice {
   position: relative;
   display: block;
@@ -1162,8 +1136,6 @@ textarea.input {
   padding: 28px;
 }
 
-/* ---------- footer ---------- */
-
 .site-footer {
   border-top: 2px solid var(--zinc-950);
   background: var(--cream);
@@ -1221,8 +1193,6 @@ textarea.input {
     justify-content: space-between;
   }
 }
-
-/* ---------- landing ---------- */
 
 .hero-grid {
   display: grid;
@@ -1351,8 +1321,6 @@ textarea.input {
   position: relative;
 }
 
-/* ---------- product detail ---------- */
-
 .pd-grid {
   display: grid;
   gap: 32px;
@@ -1409,8 +1377,6 @@ textarea.input {
 .back-link:hover {
   color: var(--zinc-950);
 }
-
-/* ---------- order pages ---------- */
 
 .order-head-num {
   font-family: var(--v-font-display, 'Newsreader', serif);
@@ -1512,8 +1478,6 @@ textarea.input {
   margin-top: 2px;
 }
 
-/* ---------- motion ---------- */
-
 @keyframes rise-in {
   from {
     opacity: 0;
@@ -1552,8 +1516,6 @@ textarea.input {
   }
 }
 
-/* ---------- feature-parity additions ---------- */
-
 .sr-label {
   position: absolute;
   width: 1px;
@@ -1566,7 +1528,6 @@ textarea.input {
   white-space: nowrap;
 }
 
-/* category tabs */
 .cat-tabs {
   display: flex;
   gap: 8px;
@@ -1605,7 +1566,6 @@ textarea.input {
   outline-offset: 2px;
 }
 
-/* product images (forward-compat imageUrl) */
 .card-img {
   width: 100%;
   height: 100%;
@@ -1619,14 +1579,12 @@ textarea.input {
   display: block;
 }
 
-/* deep-link highlight on catalog cards */
 .print-frame--hit {
   outline: 2px solid var(--brand-600, #e06a6d);
   outline-offset: 3px;
   transition: outline-color 0.6s ease;
 }
 
-/* sold-out flag variants */
 .soldout-flag--preorder {
   background: var(--caramel-700, #a05010);
   color: var(--cream);
@@ -1675,7 +1633,6 @@ textarea.input {
   font-weight: 400;
 }
 
-/* checkout step nav */
 .step-nav {
   display: flex;
   align-items: center;
@@ -1765,7 +1722,6 @@ textarea.input {
   color: var(--caramel-700, #a05010);
 }
 
-/* order confirmation */
 .order-hero {
   text-align: center;
   padding: 8px 0 8px;
@@ -1796,7 +1752,6 @@ textarea.input {
   padding-top: 8px;
 }
 
-/* my orders */
 .phone-search {
   border: 1px solid var(--zinc-200);
   border-radius: 12px;
@@ -1865,7 +1820,6 @@ textarea.input {
   }
 }
 
-/* ---------- QR cardápio (print) ---------- */
 .qr-page {
   min-height: 100vh;
   display: flex;

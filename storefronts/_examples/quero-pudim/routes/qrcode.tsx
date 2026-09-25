@@ -5,13 +5,6 @@ import QRCode from 'qrcode';
 import { useCatalog, useStore } from '@vendua/kernel';
 import { formatBRL } from './_lib/format.ts';
 
-/**
- * Cardápio QR Code — printable A4 sheet pointing at /catalog or a product.
- * Ported verbatim in spirit from the reference's QRCodePage: the QR encodes a
- * storefront URL, generated fully client-side (the `qrcode` package); Core
- * data only supplies the product list and store contacts.
- */
-
 function buildTarget(baseUrl: string, slug: string): string {
   const base = baseUrl.trim().replace(/\/+$/, '');
   return slug ? `${base}/produto/${encodeURIComponent(slug)}` : `${base}/catalog`;

@@ -1,10 +1,7 @@
 import { useStore, StoreStatusBadge } from '@vendua/kernel';
 import { hhmm, localDayNow, localMinutesNow, resumeLabel, toMinutes } from './format.ts';
 
-/**
- * The fornada strip — the storefront's spine. A 24h bar with the bake window
- * lit and a needle at "now"; the closed state reads natively here.
- */
+/** Fornada strip — 24h bar, bake window lit, needle at "now"; the closed state reads natively here. */
 export function DayClock({ compact = false }: { compact?: boolean }) {
   const { store, status, resumesAt } = useStore();
   const tz = store?.hours.timezone ?? 'America/Sao_Paulo';

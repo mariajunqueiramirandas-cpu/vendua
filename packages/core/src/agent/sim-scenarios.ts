@@ -1,25 +1,14 @@
-/**
- * agent/sim-scenarios — the cast of the negotiation simulator. Each scenario
- * seeds a lead (with the dossier a real discovery/triage would have produced)
- * plus the persona an LLM plays on the other end of the WhatsApp thread, and
- * the success criteria the judge scores against.
- *
- * Personas are written in PT-BR to match what the negotiation agent sees.
- * `hidden` is the truth the agent does NOT get — the persona only reveals it
- * if the agent earns it (good questions, actual listening). That gap is what
- * makes the sim a negotiation test instead of a chat test.
- */
+/** Sim scenario: seeded lead + dossier + a PT-BR persona the LLM plays + judge
+ *  criteria. `hidden` is truth the agent must earn — that's what makes it a
+ *  negotiation test instead of a chat test. */
 export interface SimScenario {
   name: string;
-  /** one line — what this scenario is testing */
   description: string;
   /** lead fields (leadInsert camelCase) + agentGoal; agentMode forced 'auto' */
   lead: Record<string, unknown>;
   /** research notes seeded as lead_activities — becomes DOSSIÊ in context */
   dossier: string[];
-  /** who answers — personality, situation, how they behave on WhatsApp */
   persona: string;
-  /** hidden facts the agent can surface by asking well */
   hidden: string;
   /** what a good run achieves — judge scores against this */
   success: string;

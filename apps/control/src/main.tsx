@@ -13,11 +13,8 @@ if (import.meta.env.PROD && 'serviceWorker' in navigator) {
   });
 }
 
-// Visual viewport → --vvh/--vvo on :root. The software keyboard doesn't
-// shrink the layout viewport on iOS Safari (and on Chrome without
-// interactive-widget=resizes-content), so styles.css pins the shell and
-// overlays to these vars instead of 100dvh. On desktop they just mirror
-// the window size and are never consumed outside the phone breakpoints.
+// --vvh/--vvo: iOS Safari's software keyboard doesn't shrink the layout
+// viewport, so styles.css pins the shell to these vars instead of 100dvh.
 const vv = window.visualViewport;
 if (vv) {
   const sync = () => {
@@ -30,8 +27,7 @@ if (vv) {
   sync();
 }
 
-// HashRouter: the SPA is served by Core at /control/* — hash routes keep
-// deep links working under any path prefix without server rewrites.
+// hash routes keep deep links working under the /control/* prefix without server rewrites
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
     <HashRouter>

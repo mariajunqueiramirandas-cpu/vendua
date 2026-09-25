@@ -64,8 +64,7 @@ describe('book — working memory', () => {
     expect(e.tried).toEqual(['ig', 'hub']);
     expect(e.status).toBe('resolved');
     expect(bookDigest(c.book)).toContain('instagram+whatsapp');
-    // re-upserting the same channel is not progress — reflection must not
-    // count it, so the tool reports what actually landed
+    // re-upserting a known channel isn't progress — the tool reports only what actually landed
     const again = (await executeTool(c, '3', 'book', {
       action: 'upsert',
       name: 'Padaria da Ponte',

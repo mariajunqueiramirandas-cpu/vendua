@@ -1,20 +1,5 @@
--- 0006_leads.sql — Founder CRM v0 (docs/roadmap.md, Phase 1): Venduá's own
--- merchant-intake pipeline (lead → contacted → invited → live, notes per
--- merchant).
---
--- `leads` is a PLATFORM table like tenants/domains (see 0001): it is not
--- merchant data, so it carries no tenant_id. But unlike a permissive
--- `using (true)` policy, its RLS keys on the `vendua.control` GUC — the
--- control routes set it `set local` inside their transactions, so a stray
--- vendua_app query on the tenant path can never read or write CRM data even
--- though the role carries the grant. The HTTP boundary stays the
--- /control/v1 shared-secret gate; RLS is the second line of defense, same
--- shape as the tenant GUC.
--- Mutations claim an Idempotency-Key like every other mutating endpoint.
--- Tenant mutations claim in idempotency_keys (tenant-scoped, FK to tenants) —
--- leads is a platform table, so its claims live here instead: key → stored
--- first response, never evicted, so a retried mutation replays rather than
--- re-applies.
+-- leads + control_idempotency_keys: platform CRM tables — RLS keys on the
+-- vendua.control GUC (second line of defense behind the /control/v1 gate)
 create table if not exists control_idempotency_keys (
   key text primary key,
   response jsonb,

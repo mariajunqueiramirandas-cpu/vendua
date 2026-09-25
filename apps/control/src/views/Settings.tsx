@@ -6,15 +6,9 @@ import { onControlEvent } from '../events.ts';
 import { ConfirmBtn, LEAD_STATES, Page } from '../components.tsx';
 import { RawJson, TzList, num, str, tzValid } from './settings-bits.tsx';
 
-/** Config — "sala de máquinas". An index rail splits the wall into named
- *  areas ('conexões' = provider cards, 'regras' = guardrails, etc.) shown
- *  one at a time and deep-linked via ?s=. The landing area, 'visão geral',
- *  is a readiness checklist: one line per piece the agent needs, each line
- *  a jump into the area that fixes it. Card state is the REAL runtime
- *  state, not the saved config: 'enabled' is a fact about the row, 'live'
- *  means the driver can actually work right now (secret present; for
- *  baileys, socket open). Raw JSON stays under a toggle for the long tail
- *  of setting keys. */
+/** Config "sala de máquinas" — one area at a time, deep-linked via ?s=;
+ *  card state is real runtime state ('live' = driver can work now), not
+ *  saved config. */
 
 type Driver = {
   d: string;
@@ -24,9 +18,8 @@ type Driver = {
   secret?: boolean;
   /** default env-var name the backend falls back to */
   secretName?: string;
-  // placeholder doubles as the driver's runtime default — the head chip shows
-  // it as the effective value when the field is unset, so keep it in sync with
-  // the `?? 'default'` in packages/core (llm.ts, channels/*).
+  // placeholder doubles as the runtime default — keep it in sync with the
+  // `?? 'default'` in packages/core (llm.ts, channels/*)
   fields?: {
     key: string;
     label: string;
@@ -164,8 +157,7 @@ type WaState = {
 };
 const WA_IDLE: WaState = { qr: null, status: 'off', me: null };
 
-/** 'ativo' means the driver can work NOW — not just that a row is enabled.
- *  baileys enabled with an unscanned QR is 'warn', not live. */
+/** 'ativo' = driver can work NOW, not just an enabled row (baileys + unscanned QR = 'warn'). */
 type ProvTone = 'off' | 'warn' | 'live';
 function providerStatus(
   kindKey: string,
@@ -188,7 +180,6 @@ function providerStatus(
 }
 
 const fmtPhone = (digits: string) => {
-  // '5511988887777' → '+55 11 98888-7777'; anything else → '+<digits>'
   if (digits.startsWith('55') && digits.length === 13)
     return `+55 ${digits.slice(2, 4)} ${digits.slice(4, 9)}-${digits.slice(9)}`;
   if (digits.startsWith('55') && digits.length === 12)
@@ -196,9 +187,8 @@ const fmtPhone = (digits: string) => {
   return `+${digits}`;
 };
 
-/** The index rail. Order follows how you'd bring the machine up:
- *  check it → wire it → book it → report it. The agent itself (voz,
- *  playbooks, memória, autonomia, guardrails) lives in the Estúdio. */
+/** Index rail; the agent itself (voz, playbooks, memória, autonomia,
+ *  guardrails) lives in the Estúdio. */
 const SECTIONS = [
   { key: 'visao', label: 'visão geral', sub: 'o que falta' },
   { key: 'conexoes', label: 'conexões', sub: 'canais' },
@@ -207,7 +197,6 @@ const SECTIONS = [
 ] as const;
 type SectionKey = (typeof SECTIONS)[number]['key'];
 
-/** One checklist row on visão geral — a piece, its live state, where to fix it. */
 type Check = {
   key: string;
   label: string;
@@ -227,19 +216,15 @@ export default function Settings() {
   const [notice, setNotice] = useState<Notice>(null);
   const [loading, setLoading] = useState(true);
   const [searchParams, setSearchParams] = useSearchParams();
-  // 'err' = the status probe itself failed — the checklist says so instead
-  // of guessing at the wiring from the settings map.
+  // 'err' = the status probe itself failed — report it instead of guessing
   const [mStatus, setMStatus] = useState<MeetingStatus | 'err' | null>(null);
 
-  // Independent fetches — a failed settings read must not discard a
-  // successful integrations response (it alone proves whatsapp state).
-  // Per-resource success watermarks: event-driven + floor loads overlap.
+  // per-resource success watermarks — a failed fetch must not discard a
+  // good one; loads overlap
   const loadSeq = useRef(0);
   const loadOk = useRef<Record<string, number>>({});
-  // The checklist reads integrations + settings + meetingsStatus — until
-  // they answer once, empty defaults would read as real "não configurado"
-  // states. A failed first read still ungates, but the rows then show
-  // 'falha ao ler' instead of fake states (loadErr bitmask).
+  // gate the checklist on first answers so empty defaults don't read as
+  // 'não configurado'; failed reads show 'falha ao ler' (loadErr bitmask)
   const settled = useRef(0);
   const [loadErr, setLoadErr] = useState(0);
   const settle = (bit: number) => {
@@ -259,8 +244,7 @@ export default function Settings() {
         }
       })
       .catch((e: unknown) => {
-        // Failure is the newer outcome — record it so an older in-flight
-        // success can't overwrite it with stale data afterwards.
+        // record failure freshness so an older in-flight success can't overwrite it
         if (fresh('integrations')) {
           loadOk.current['integrations'] = my;
           setLoadErr((m) => m | 0b001);
@@ -321,8 +305,7 @@ export default function Settings() {
       .finally(() => settle(0b100));
   }, []);
   useEffect(load, [load]);
-  // channel.health accelerates everything the card renders — integration
-  // rows flip on the same events as pairing state. The slow poll is the floor.
+  // channel.health accelerates refresh; the slow poll is the floor
   useEffect(() => {
     const off = onControlEvent('channel.health', load);
     const t = setInterval(load, 60_000);
@@ -382,7 +365,6 @@ export default function Settings() {
   const digest = (settings.digest ?? {}) as Record<string, unknown>;
   const autonomy = (settings.agent_autonomy ?? {}) as Record<string, unknown>;
 
-  // ---------- section selection (?s=) + provider anchor scroll (?p=) ----------
   const section: SectionKey = SECTIONS.find((s) => s.key === searchParams.get('s'))?.key ?? 'visao';
   const anchor = searchParams.get('p');
   // retired sections moved to the Estúdio — old bookmarks follow them
@@ -411,7 +393,6 @@ export default function Settings() {
     return () => clearTimeout(t);
   }, [section, anchor]);
 
-  // ---------- checklist: one line per piece, read off live state ----------
   const integErr = (loadErr & 0b001) !== 0;
   const setErr = (loadErr & 0b010) !== 0;
   const provCheck = (k: (typeof KINDS)[number]): Check => {
@@ -469,8 +450,7 @@ export default function Settings() {
               tone: 'off',
               to: 'agenda',
             }
-          : // booking needs somewhere to meet — Daily room or the static
-            // link; google is an optional sync layer, not the readiness gate
+          : // booking needs a room (daily or static link); google is optional sync
             mStatus.room.provider === 'daily' && mStatus.room.lastError
             ? {
                 key: 'agenda',
@@ -510,8 +490,7 @@ export default function Settings() {
 
   const essential: Check[] = [...KINDS.map(provCheck), agendaCheck];
   const g = guardrails;
-  // autonomy level reads like readiness: 'off' parks the agent, 'copilot'
-  // drafts everything (the queue backs up silently) — both worth a look.
+  // 'off' parks the agent; 'copilot' silently backs up the draft queue — both worth flagging
   const autoLevel = str(autonomy.level, 'supervised');
   const routine: Check[] = setErr
     ? (
@@ -565,7 +544,6 @@ export default function Settings() {
   const ready = essential.filter((c) => c.tone === 'live').length;
   const attn = [...essential, ...routine].filter((c) => c.tone === 'warn').length;
 
-  // index-rail trailing marks — only where live state exists to report
   const connMark: ProvTone = integErr
     ? 'warn'
     : provTones.includes('warn')
@@ -604,8 +582,7 @@ export default function Settings() {
             <span className="idx-s">o agente todo ›</span>
           </Link>
         </nav>
-        {/* Areas stay mounted — switching sections hides, not unmounts, so
-            unsaved edits inside a card survive a round trip on the rail. */}
+        {/* areas stay mounted — switching hides, not unmounts, so unsaved edits survive */}
         <div className="set-panel">
           <div hidden={section !== 'visao'}>
             <section className="set-sec">
@@ -701,14 +678,11 @@ export default function Settings() {
           </div>
         </div>
       </div>
-      {/* shared by the guardrails + meeting tz pickers */}
       <TzList />
     </Page>
   );
 }
 
-/** Checklist row on visão geral — the whole line jumps to where it's fixed
- *  (an area here, or the Estúdio for agent pieces). */
 function CheckRow({ c, onGo }: { c: Check; onGo: (s: SectionKey, p?: string) => void }) {
   const nav = useNavigate();
   return (
@@ -725,8 +699,6 @@ function CheckRow({ c, onGo }: { c: Check; onGo: (s: SectionKey, p?: string) => 
     </button>
   );
 }
-
-// ---------- provider card ----------
 
 function ProviderCard({
   kind,
@@ -745,8 +717,8 @@ function ProviderCard({
   ) => void;
 }) {
   const current = rows.find((r) => r.enabled);
-  // Nothing enabled → seed the form from the first driver's saved row, so
-  // 'usar X' re-enables WITH its config instead of wiping it to {}.
+  // nothing enabled → seed the form from the first driver's saved row so
+  // 'usar X' re-enables WITH its config
   const baseRow = current ?? rows.find((r) => r.driver === kind.drivers[0]?.d);
   const baseline = {
     driver: baseRow?.driver ?? kind.drivers[0]?.d ?? '',
@@ -767,8 +739,7 @@ function ProviderCard({
     setDriver(baseline.driver);
     setSecretRef(baseline.secretRef);
     setConfig(baseline.config);
-    // A saved-row change restarts the socket / swaps the driver — any probe
-    // result or pair code on screen belongs to the old config.
+    // a saved-row change restarts the socket — on-screen probe/pair state belongs to the old config
     setTest(null);
     setPairCode(null);
     setPairErr(null);
@@ -792,15 +763,12 @@ function ProviderCard({
     };
   }, [wa.qr]);
   useEffect(() => {
-    // 'open': paired — the code is spent. 'off': the socket died and its
-    // pending registration died with it — a shown code can never complete,
-    // so clear it instead of leaving a dead one on screen.
+    // 'open' spends the code; 'off' means a shown code can never complete — clear it
     if (wa.status === 'open' || wa.status === 'off') setPairCode(null);
   }, [wa.status]);
 
   const drv = kind.drivers.find((x) => x.d === driver) ?? kind.drivers[0];
-  // The saved row for the SELECTED driver — its secretName/secretPresent
-  // reflect what's actually on the server, independent of `enabled`.
+  // the saved row for the SELECTED driver — secret state reflects the server, not `enabled`
   const selRow = rows.find((r) => r.driver === driver);
   const selIsActive = !!current && driver === current.driver;
   const dirty =
@@ -808,7 +776,6 @@ function ProviderCard({
     secretRef !== baseline.secretRef ||
     JSON.stringify(config) !== JSON.stringify(baseline.config);
   const st = providerStatus(kind.key, rows, wa);
-  // What's live, at a glance: `gemini · gemini-3.5-flash-lite`.
   const liveDetail = current
     ? [
         current.driver,
@@ -829,7 +796,7 @@ function ProviderCard({
       setSecretRef(baseline.secretRef);
       setConfig(baseline.config);
     } else {
-      // Preload that driver's own saved row — not the live one's leftovers.
+      // preload that driver's own saved row, not the live one's leftovers
       const row = rows.find((r) => r.driver === dd.d);
       setSecretRef(row?.secretRef ?? dd.secretName ?? '');
       setConfig({ ...(row?.config ?? {}) } as Record<string, string | number>);
@@ -1111,11 +1078,8 @@ function ProviderCard({
   );
 }
 
-// ---------- channel health ----------
-
-/** 30d outbound rollup per channel. Alert = failureRate ≥ 20% on ≥5 resolved
- *  sends — flags the problem on the board, never pauses sends on its own
- *  (a global per-channel pause flag doesn't exist; staff stays in the loop). */
+/** 30d channel rollup; alert = failureRate ≥20% on ≥5 sends — advisory only,
+ *  never pauses sends (no global pause flag exists). */
 function ChannelHealthCard() {
   const [rows, setRows] = useState<ChannelHealth[] | null>(null);
   const [err, setErr] = useState('');
@@ -1189,8 +1153,6 @@ function ChannelHealthCard() {
   );
 }
 
-// ---------- meeting ----------
-
 const DAY_NAMES: [string, string][] = [
   ['seg', 'mon'],
   ['ter', 'tue'],
@@ -1201,11 +1163,9 @@ const DAY_NAMES: [string, string][] = [
   ['dom', 'sun'],
 ];
 
-/** Availability used by /agendar + the agent's booking link. Weekly windows
- *  per weekday (lists of HH:MM–HH:MM pairs), slot grid, buffer, horizon; the
- *  roomUrl is the static video room unless DAILY_API_KEY mints per-meeting
- *  rooms; status chips report the gcal + room wiring — the page owns that
- *  fetch so the checklist and the card read the same snapshot. */
+/** Availability for /agendar + booking link; roomUrl is the static room
+ *  unless DAILY_API_KEY mints per-meeting rooms; the page owns the status
+ *  fetch so checklist and card share one snapshot. */
 function MeetingCard({
   value,
   status,
@@ -1240,9 +1200,8 @@ function MeetingCard({
     weekly: normWeekly(value.weekly ?? status?.cfg.weekly),
   };
   const [edit, setEdit] = useState(cur);
-  // `touched` gates hydration, not `dirty`: a late `value`/`status` response
-  // changes `cur` and would otherwise mark an untouched form dirty and block
-  // the sync (and a save would persist the stale, all-closed weekly).
+  // `touched` gates hydration: a late response must not mark an untouched
+  // form dirty or persist the all-closed weekly
   const [touched, setTouched] = useState(false);
   const update = (next: typeof cur) => {
     setTouched(true);
@@ -1260,8 +1219,7 @@ function MeetingCard({
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [status, JSON.stringify(cur)]);
-  // Saving converges edit === cur — clear the flag so a later refresh can
-  // hydrate again; without this the first edit would lock out all future syncs.
+  // clear the flag on save convergence so later refreshes can hydrate again
   useEffect(() => {
     if (touched && JSON.stringify(edit) === JSON.stringify(cur)) setTouched(false);
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -1467,8 +1425,6 @@ function MeetingCard({
   );
 }
 
-// ---------- forecast ----------
-
 /** Percent defaults mirrored from DEFAULT_FORECAST_PROBABILITIES (core). */
 const FORECAST_DEFAULT_PCT: Record<(typeof LEAD_STATES)[number][0], number> = {
   lead: 5,
@@ -1485,9 +1441,8 @@ function ForecastCard({
   onSave: (v: Record<string, unknown>) => void;
 }) {
   const stored = (value.probabilities ?? {}) as Record<string, unknown>;
-  // Stored as 0..1 fractions; the card edits percent — staff reads %.
-  // ×10000/100 keeps two decimal places so a hand-set 55.5% isn't silently
-  // rounded to 56 on the next save of an untouched field.
+  // stored as 0..1 fractions, edited as %; ×10000/100 keeps decimals through
+  // a save round-trip
   const cur = Object.fromEntries(
     LEAD_STATES.map(([k]) => [
       k,
@@ -1552,8 +1507,6 @@ function ForecastCard({
     </div>
   );
 }
-
-// ---------- digest ----------
 
 function DigestCard({
   value,

@@ -22,19 +22,10 @@ import { rememberOrder } from './_lib/orders.ts';
 import { loadProfile, maskCep, maskPhone, phoneDigits, saveProfile } from './_lib/profile.ts';
 import { waLink } from './_lib/whatsapp.ts';
 
-/**
- * Fechar o pedido — the reference storefront's 3-step wizard (Dados → Entrega
- * → Pagamento), ported onto Kernel primitives: `setDelivery` keeps the server
- * cart's zone/fee in sync, `useCheckout().submit` places the order.
- *
- * Reference features without platform support (OBSERVATIONS.md, FEATURE-GAP):
- * CEP lookup/geolocation, scheduled encomendas (no scheduledFor on
- * CheckoutInput), coupons (no endpoint), order notes (no field — kept locally
- * and carried into the confirmation WhatsApp message).
- *
- * Delivery neighborhoods come from Core's /zones (delivery_zones) — the
- * reference's client-side BAIRROS list is gone.
- */
+// 3-step wizard on Kernel primitives; `setDelivery` keeps the server cart's
+// zone/fee in sync. Unsupported reference features (OBSERVATIONS.md): CEP lookup,
+// scheduled encomendas, coupons, order notes — notes stay local, folded into the
+// confirmation WhatsApp message. Neighborhoods come from Core's /zones.
 
 type Mode = 'pickup' | 'delivery';
 type Pay = 'pix' | 'card_on_delivery' | 'cash';
@@ -84,19 +75,16 @@ export function CheckoutPage() {
 
   const items = cart?.items ?? [];
   const totals = cart?.totals;
-  // Display follows the SYNCED server cart (Core owns the math): while a
-  // setDelivery call is in flight the totals still reflect the previous mode —
-  // the confirm button stays disabled until deliverySync lands.
+  // display follows the SYNCED server cart: during a setDelivery call totals
+  // still reflect the previous mode — confirm stays disabled until it lands
   const syncedMode = cart?.delivery?.mode ?? mode;
   const feeCents = syncedMode === 'delivery' ? (totals?.deliveryFeeCents ?? 0) : 0;
   const totalCents = totals?.totalCents ?? 0;
   const zoneMin = totals?.minOrderCents ?? store?.minOrderCents ?? 0;
 
-  // Keep the server cart's delivery in sync so the zone fee/min-order that
-  // Core resolves (matchZone inside loadCartView) shows up in cart.totals.
-  // Track the sync: a failed setDelivery leaves totals priced for the OLD
-  // neighborhood — block placing until the latest selection lands, and let
-  // the sequence guard ignore superseded responses.
+  // sync the server cart so Core's zone fee/min-order lands in totals; a
+  // failed setDelivery leaves totals priced for the OLD neighborhood — block
+  // placing until the latest lands; seq drops superseded responses
   const syncSeq = useRef(0);
   const [deliverySync, setDeliverySync] = useState<'syncing' | 'ok' | 'error'>('ok');
   useEffect(() => {
@@ -169,8 +157,7 @@ export function CheckoutPage() {
       });
       saveProfile({ name: name.trim(), phone, street, number, neighborhood, complement, cep });
       rememberOrder(order, items, notes.trim() || undefined);
-      // submit() already invalidates 'cart' — the completed cart drops out
-      // of the sacola badge without storefront plumbing.
+      // submit() already invalidates 'cart'
       navigate(`/pedido/${order.id}`);
     } catch (err) {
       if (err instanceof ApiError) {

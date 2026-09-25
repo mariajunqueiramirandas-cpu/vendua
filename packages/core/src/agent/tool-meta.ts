@@ -1,16 +1,9 @@
-/**
- * agent/tool-meta — the one place a tool's behavioural contract lives. The
- * dispatcher, the runner's loop guard / finish gate and journal replay all
- * derive their sets from here, so adding a tool is one entry, not five
- * scattered Set literals that drift.
+/** agent/tool-meta — the one place a tool's behavioural contract lives; the
+ *  dispatcher, loop guard, finish gate and journal replay all derive from here.
  *
- * effect:
- *  - read  — no durable writes (a result stays reusable until a write lands)
- *  - write — state write; an identical repeat may legitimately restore state
- *  - mint  — creates a new durable artifact per call; a landed duplicate is
- *            never legitimate and is suppressed run-wide
- *  - send  — mint that can put a message on the wire
- */
+ *  effect: read = no durable writes; write = state write (an identical repeat
+ *  may legitimately restore); mint = new durable artifact per call — a landed
+ *  duplicate is suppressed run-wide; send = mint that can hit the wire. */
 
 export type PlaybookKind = 'triage' | 'reply' | 'outreach' | 'discovery' | 'strategist';
 export const PLAYBOOK_KINDS: readonly PlaybookKind[] = [
@@ -25,7 +18,6 @@ export type ToolEffect = 'read' | 'write' | 'mint' | 'send';
 
 export interface ToolMeta {
   effect: ToolEffect;
-  /** playbooks whose model may see and call the tool */
   playbooks: readonly PlaybookKind[];
   /** arg carrying the lead id a lead-bound run may only mutate */
   leadBound?: string;
@@ -34,7 +26,6 @@ export interface ToolMeta {
   /** local read of mutable CRM state — re-executes on repeat so external
    *  edits between turns stay visible (still counts toward the LOOP nudge) */
   mutableRead?: boolean;
-  /** calls a paid/remote provider */
   remote?: boolean;
 }
 

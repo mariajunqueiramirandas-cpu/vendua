@@ -1,27 +1,11 @@
 #!/usr/bin/env bun
-// Maps a git diff to the workspaces it affects — the affected graph from
-// docs/architecture/06-monorepo.md. Prints
-// `{"packages": [<workspace dirs>], "allStorefronts": <bool>}`.
-//
+// Maps a git diff to the workspaces it affects (affected graph from
+// docs/architecture/06-monorepo.md). Prints
+// `{"packages": [<workspace dirs>], "allStorefronts": <bool>}` — `packages` lists
+// directories consumers `cd` into; `allStorefronts: true` expands to every
+// `storefronts/*/` and `storefronts/_examples/*/` dir.
 //   bun tools/affected.mjs [--base <ref>]     (default base: origin/main)
-//
-// `packages` lists workspace *directories* (e.g. `storefronts/quero-pudim`),
-// not package names — consumers `cd` into them. `allStorefronts: true`
-// expands to every `storefronts/*/` and `storefronts/_examples/*/` dir.
 // Consumed by the `check` job's Builds step in .github/workflows/ci.yml.
-//
-// Mapping:
-//   packages/{kernel,cli,conformance,ui-defaults}/** and root
-//     package.json / bun.lock / tsconfig.base.json → allStorefronts
-//     (shared inputs; the triggering workspace is still listed)
-//   storefronts/<slug>/**                          → that dir only
-//   storefronts/_examples/<slug>/**                → that dir only
-//   other paths under storefronts/ (Dockerfile, nginx.conf — shared infra
-//     that can't be attributed to one slug)        → allStorefronts
-//   packages/<other>/**                            → that dir only
-//   apps/<name>/**                                 → that dir only
-//   site/**                                        → site
-//   docs/, tools/, .github/, other root files      → nothing
 
 import { execFileSync } from 'node:child_process';
 

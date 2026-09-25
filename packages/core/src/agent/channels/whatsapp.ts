@@ -6,24 +6,17 @@ import { log } from '../../platform/log.ts';
 
 const waLog = log.child({ mod: 'whatsapp' });
 
-/**
- * agent/channels/whatsapp — Baileys v7, in-process. Auth state persists in
- * the `wa_auth_state` table (DB-backed replacement for the removed
- * useMultiFileAuthState), so session survives restarts/redeploys without a
- * filesystem. `log` driver is the zero-credential dev path.
- */
+// baileys v7 in-process; auth state persists in wa_auth_state (survives
+// restarts/redeploys with no filesystem). 'log' is the zero-credential dev driver.
 
 interface BaileysSocket {
   sendMessage(jid: string, content: { text: string }): Promise<{ key?: { id?: string } }>;
-  /** Server-side existence probe — [{jid, exists}] — free and sends
-   *  nothing; the autocontact gate verifies derived numbers through it. */
+  /** free server-side existence probe — the autocontact gate verifies numbers through it */
   onWhatsApp(jid: string): Promise<{ jid: string; exists: boolean }[] | undefined>;
   end(err?: Error): void;
-  /** 8-char pairing code as an alternative to scanning the QR — only valid
-   *  while the socket is unregistered (pre-`open`). */
+  /** QR-scan alternative — only valid while the socket is unregistered (pre-'open') */
   requestPairingCode(phone: string): Promise<string>;
-  /** Server-side unpair — WhatsApp drops the linked device, then the
-   *  socket closes with a 401 (no auto-reconnect). */
+  /** server-side unpair — the socket then closes with a 401 (no auto-reconnect) */
   logout(): Promise<unknown>;
   /** The account once `open` — id/phoneNumber are jids ('5511…:dev@s.whatsapp.net'). */
   user?: { id?: string; phoneNumber?: string; name?: string } | undefined;
@@ -33,8 +26,7 @@ interface BaileysSocket {
       cb: (u: {
         connection?: string;
         qr?: string;
-        /** QR pairing confirmed server-side — whatsapp drops the stream
-         *  with a 515 right after, and the reconnect must log in. */
+        /** QR pair confirmed server-side — whatsapp drops the stream with a 515 right after */
         isNewLogin?: boolean;
         lastDisconnect?: { error?: { output?: { statusCode?: number } } };
       }) => void,
@@ -83,23 +75,17 @@ interface BaileysSocket {
 
 let socket: BaileysSocket | null = null;
 let starting: Promise<BaileysSocket> | null = null;
-/** Fingerprint of the config `starting` is building + its generation — a
- *  ensureSocket call wanting something else bumps startGen so the in-flight
- *  startSocket self-terminates before publishing globals for a stale config. */
+// config fingerprint + gen of the in-flight start — a mismatched ensureSocket
+// bumps startGen so the stale start self-terminates before publishing globals
 let startingFingerprint: string | null = null;
 let startingGen = 0;
 let startGen = 0;
-/** Last connection state the socket reported — 'off' when no socket is
- *  running or the session dropped/logged out. The Settings screen renders
- *  this instead of guessing from QR presence. */
+// last state the socket reported — 'off' when none runs or the session dropped/logged out
 let connState: 'off' | 'connecting' | 'qr' | 'open' = 'off';
-/** The socket that currently owns a live reg stream — set with connState
- *  'qr', cleared on open/close/replace. pairCode binds its readiness to
- *  this identity: a 'qr' that belonged to a dead predecessor must not arm
- *  a code on the connecting replacement. */
+// socket owning the live reg stream — pairCode binds to this identity so a
+// dead predecessor's 'qr' can't arm a code on the connecting replacement
 let qrSocket: BaileysSocket | null = null;
-/** One-shot waiters resolved on every connState transition — pairCode parks
- *  on them until the reg stream is live. */
+// one-shot waiters resolved on each connState transition — pairCode parks on them
 const connWaiters = new Set<() => void>();
 function notifyConnWaiters() {
   for (const w of connWaiters) w();
@@ -118,17 +104,13 @@ function waitForConnChange(ms: number): Promise<void> {
     connWaiters.add(onFire);
   });
 }
-/** The paired account once the socket is `open` — lets the Config screen
- *  say WHO is connected instead of implying enabled == working. */
+// paired account once the socket is 'open' — lets Config show WHO is connected
 let waMe: { phone: string | null; name: string | null } | null = null;
-/** Held while any logoutWa call is queued or running: ensureSocket refuses
- *  to install a replacement the wipe would orphan, and auth writes are
- *  no-ops — nothing may commit after the table delete and resurrect the
- *  wiped session. Managed by the logoutDepth refcount inside logoutWa. */
+// held while any logoutWa is queued or running: nothing may install a socket
+// or commit an auth write that would resurrect the wiped session
 let loggingOut = false;
-/** Every write issued through `auth` lands here so logoutWa can drain
- *  in-flight commits before wiping: a write queued before `loggingOut`
- *  went up could otherwise commit after the delete. */
+// in-flight auth writes — logoutWa drains them before wiping (a late commit
+// would resurrect the session)
 const pendingAuthWrites = new Set<Promise<unknown>>();
 function trackAuthWrite<T>(p: Promise<T>): Promise<T> {
   pendingAuthWrites.add(p);
@@ -142,20 +124,15 @@ export function waStatus(): string {
   return connState;
 }
 
-/** Free "is this number on WhatsApp" probe over the live socket — a
- *  registered answer upgrades a discovery-derived number to verified so
- *  the autocontact gate can treat it like a real wa.me find. null = can't
- *  tell (socket not open, probe failed): callers keep the number
- *  unverified, never treat it as a negative. Never boots the socket — a
- *  probe isn't worth a handshake. */
+/** free existence probe — 'true' upgrades a derived number to verified;
+ *  null = can't tell (never a negative). Never boots the socket. */
 export async function whatsappRegistered(phone: string): Promise<boolean | null> {
   const digits = phone.replace(/\D/g, '');
   if (digits.length < 10 || digits.length > 15) return false;
   const sock = socket;
   if (!sock || connState !== 'open') return null;
   try {
-    // Bounded wait — baileys's own query timeout is ~60s, far too long to
-    // hold a discovery step hostage to an unresponsive socket.
+    // bounded wait — baileys's own ~60s timeout would hold discovery hostage
     const res = await Promise.race([
       sock.onWhatsApp(`${digits}@s.whatsapp.net`),
       new Promise<undefined>((r) => setTimeout(r, 8000)),
@@ -170,16 +147,11 @@ export async function whatsappRegistered(phone: string): Promise<boolean | null>
 export function waIdentity(): { phone: string | null; name: string | null } | null {
   return waMe;
 }
-/** identity of the integration that opened `socket` — config changes must
- *  close it, not keep sending through the old account. */
+// identity of the integration that opened `socket` — config changes must close it
 let socketFingerprint: string | null = null;
 let socketAccountId: string | null = null;
-/** Socket generation — bumps on every ownership transition. `wa_qr` is a
- *  single global row and last writer wins, so QR writes carry the writer's
- *  gen and the upsert drops strictly-older ones: a detached socket's late
- *  clear can't erase the replacement's fresh QR (or vice versa).
- *  Seeded by the wall clock so a process restart can't collide with the
- *  gen the surviving row carries; the counter breaks same-ms ties. */
+// generation bumped on each ownership transition — wa_qr is one global row and
+// upserts drop strictly-older gens; wall-clock seeded + counter breaks same-ms ties
 let waGen = 0;
 function nextWaGen(): number {
   return (waGen = Math.max(Date.now(), waGen + 1));
@@ -189,13 +161,8 @@ function fingerprintOf(integration: IntegrationRow): string {
   return `${integration.id}:${(integration.config.accountId as string) ?? 'default'}:${integration.updated_at}`;
 }
 
-/** A `me` only counts once the pairing is server-confirmed — baileys marks
- *  that two ways: `registered` flips true on the link-code notification
- *  path, `account` is decoded out of the QR pair-success stanza (rc14 never
- *  sets `registered` for QR pairs). A `me` with neither is a pending
- *  requestPairingCode claim: persisting it makes the next start take the
- *  LOGIN branch (creds.me → generateLoginNode) for an account that was
- *  never registered → 401 → dead socket, no QR. */
+// a `me` only counts once pairing is server-confirmed (registered || account)
+// — persisting an unconfirmed `me` forces the next start into a LOGIN → 401 dead-end
 function pairingConfirmed(creds: { registered?: boolean; account?: unknown }): boolean {
   return !!creds.registered || !!creds.account;
 }
@@ -205,9 +172,7 @@ type MessageHandler = (
   text: string,
   providerId: string | null,
   pushName?: string,
-  /** The sender's complementary address (the LID when `jid` is the PN form,
-   *  or vice versa) so persistence can converge a contact it first saw
-   *  under the other alias. */
+  /** sender's complementary address (LID↔PN) so persistence converges a contact first seen under the other alias */
   altJid?: string,
 ) => Promise<void>;
 
@@ -216,9 +181,7 @@ export function onInboundMessage(fn: MessageHandler) {
   handlers.push(fn);
 }
 
-/** One message out of a `messaging-history.set` chunk — already filtered to
- *  DM text the same way the live upsert path filters. `fromMe` marks the
- *  account's own copy (recorded as an outbound echo, never answered). */
+// one message out of a messaging-history.set chunk — fromMe = the account's own echo, never answered
 export interface HistoryMessage {
   jid: string;
   text: string;
@@ -230,25 +193,16 @@ export interface HistoryMessage {
 }
 type HistoryHandler = (m: HistoryMessage) => Promise<void>;
 const historyHandlers: HistoryHandler[] = [];
-/** Subscribed once per history event — the pairing-time sync is the ONLY
- *  source of pre-socket messages; chunks arrive a few times per account
- *  lifetime and each is deduped by providerMessageId downstream. */
+// pairing-time sync is the only source of pre-socket messages; chunks dedupe by providerMessageId downstream
 export function onHistoryMessage(fn: HistoryHandler) {
   historyHandlers.push(fn);
 }
 
-/** One queue for every socket's history chunks — Baileys emits several
- *  messaging-history.set events per pairing, each with up to thousands of
- *  stanzas, and a reconnect spawns a fresh socket while old chunks may still
- *  be draining. Serializing through a single tail is what keeps two
- *  concurrent drains carrying the same unknown contact from both missing
- *  the lookup and minting duplicate leads. */
+// one drain queue for every socket's history chunks — serializing keeps
+// concurrent drains on the same unknown contact from minting duplicate leads
 let historyTail: Promise<void> = Promise.resolve();
 
-/** DB-backed auth state. Baileys v7's initAuthCreds() +
- * SignalKeyStore-style read/write map onto our wa_auth_state rows. Creds and
- * signal keys carry Buffers — round-trip through BufferJSON so binary data
- * survives jsonb storage. */
+// DB-backed auth state — creds/signal keys round-trip through BufferJSON so Buffers survive jsonb
 function dbAuthState(
   sql: Sql,
   accountId: string,
@@ -271,9 +225,8 @@ function dbAuthState(
       return JSON.parse(JSON.stringify(raw), bufferJSON.reviver);
     },
     write: async (category: string, name: string, data: unknown) => {
-      // During logoutWa the table delete must be the last write — a commit
-      // landing after it resurrects the dead session, so writes are a no-op
-      // for the window and the ones already in flight get drained there.
+      // during logoutWa the table delete must be the last write — writes no-op
+      // in the window, in-flight ones get drained there
       if (loggingOut) return;
       const serialized = JSON.parse(JSON.stringify(data, bufferJSON.replacer));
       await trackAuthWrite(
@@ -314,18 +267,14 @@ async function startSocket(sql: Sql, integration: IntegrationRow): Promise<Baile
       replacer(k: string, v: unknown): unknown;
       reviver(k: string, v: unknown): unknown;
     };
-    /** Unwraps ephemeral/viewOnce/edited/documentWithCaption envelopes to
-     *  the inner content — rc14 exports it from Utils/messages. */
+    /** unwraps ephemeral/viewOnce/edited/documentWithCaption envelopes to the inner content */
     normalizeMessageContent(content: unknown): unknown;
   };
   const accountId = (integration.config.accountId as string) ?? 'default';
   const auth = dbAuthState(sql, accountId, baileys.BufferJSON);
 
-  // WhatsApp rejects stale client versions at link/login (405; phone shows
-  // "Couldn't link device") — the bundled version lags upstream, so fetch the
-  // live WA Web version. Bounded timeout: a hung fetch must not stall the
-  // socket. On failure baileys resolves with the bundled default + isLatest
-  // false — fall back to it silently-identical to today, just logged.
+  // fetch the live WA Web version — whatsapp rejects stale clients at
+  // link/login (405); bounded timeout, bundled default on failure
   let version: [number, number, number] | undefined;
   try {
     const res = await baileys.fetchLatestWaWebVersion({ signal: AbortSignal.timeout(8_000) });
@@ -338,10 +287,8 @@ async function startSocket(sql: Sql, integration: IntegrationRow): Promise<Baile
     waLog.warn({ err: e }, 'wa web version fetch failed — using bundled default');
   }
 
-  // Strip an unconfirmed `me` claim at load AND keep it out of the writes
-  // below — see pairingConfirmed(). A QR-confirmed `me` (account present)
-  // survives: that is what lets the post-pairing 515 restart come back
-  // through the LOGIN branch instead of re-emitting a QR.
+  // strip unconfirmed creds.me at load and in the writes below — see
+  // pairingConfirmed; a QR-confirmed me survives so the 515 restart comes back through LOGIN
   const creds = ((await auth.read('creds', 'main')) ?? baileys.initAuthCreds()) as {
     registered?: boolean;
     account?: unknown;
@@ -349,10 +296,8 @@ async function startSocket(sql: Sql, integration: IntegrationRow): Promise<Baile
     platform?: unknown;
     signalIdentities?: unknown;
   };
-  // `account` without `me` is residue from rows persisted before QR
-  // pair-success kept its `me` — it never accompanies a live session (the
-  // two are written atomically). Dropped, or it would falsely confirm the
-  // next provisional claim into the same 401 loop it just escaped.
+  // 'account' without 'me' is legacy residue — drop it or it falsely
+  // confirms the next provisional claim into the same 401 loop
   if (!creds.registered && creds.account && !creds.me) {
     waLog.warn('dropping orphaned creds.account — legacy incomplete QR state');
     delete creds.account;
@@ -369,7 +314,7 @@ async function startSocket(sql: Sql, integration: IntegrationRow): Promise<Baile
     auth: {
       creds,
       keys: {
-        // SignalKeyStore contract: id → key map (not an array).
+        // SignalKeyStore contract: id → key map
         get: async (type: string, ids: string[]) => {
           const out: Record<string, unknown> = {};
           for (const id of ids) out[id] = await auth.read(type, id);
@@ -386,25 +331,20 @@ async function startSocket(sql: Sql, integration: IntegrationRow): Promise<Baile
       },
     },
     printQRInTerminal: false,
-    // Canonical OS label — WhatsApp validates companion_platform_display
-    // strictly in the pairing-code IQ (400 bad-request, and the un-awaited
-    // sendNode still returns a dead code). QR tolerates custom labels; the
-    // code path doesn't. Custom branding here is what got us dead codes.
+    // canonical OS label — whatsapp validates it strictly in the pairing-code
+    // iq (custom labels got dead codes); QR tolerates them
     browser: baileys.Browsers.ubuntu('Chrome'),
     logger: log.child({ mod: 'baileys' }, { level: process.env.BAILEYS_LOG_LEVEL ?? 'warn' }),
   });
 
-  // A newer ensureSocket superseded this start while we awaited — end the
-  // socket rather than publishing globals for a stale config.
+  // superseded while awaiting — end rather than publish globals for a stale config
   if (myGen !== startGen) {
     sock.end();
     throw new Error('socket start superseded by newer config');
   }
-  // Claim module state synchronously — Baileys' first connection.update
-  // fires on ws connect (always async, after this returns), so by then
-  // `socket === sock` and every handler can identity-check against it. A
-  // replaced socket's late `close` then can't erase the replacement's
-  // globals or report it offline.
+  // claim globals synchronously — the first connection.update only fires after
+  // this returns, so handlers can identity-check and a replaced socket's late
+  // close can't erase them
   socket = sock;
   socketFingerprint = fingerprintOf(integration);
   socketAccountId = accountId;
@@ -424,12 +364,11 @@ async function startSocket(sql: Sql, integration: IntegrationRow): Promise<Baile
       connState = 'qr';
       qrSocket = sock;
       notifyConnWaiters();
-      // Emit after the QR write lands — the refetch it triggers must read it.
+      // emit after the QR write lands — the refetch it triggers must read it
       void persistQr(sql, accountId, u.qr, gen).then(() => emitControlEvent('channel.health'));
     }
     if (u.isNewLogin) {
-      // The 515 that follows is the expected post-pairing restart, not a
-      // failure — say so in the log and drop the now-dead QR from the UI.
+      // the 515 that follows is the expected post-pairing restart — drop the dead QR
       waLog.info('pairing confirmed — whatsapp will restart the socket (515)');
       void persistQr(sql, accountId, null, gen).then(() => emitControlEvent('channel.health'));
     }
@@ -451,18 +390,14 @@ async function startSocket(sql: Sql, integration: IntegrationRow): Promise<Baile
       socketAccountId = null;
       waMe = null;
       emitControlEvent('channel.health');
-      // Baileys 401 = logged out — nothing to reconnect to until re-paired.
-      // Otherwise the stream dropped: restart inbound delivery instead of
-      // staying offline until an outbound send happens to reopen it.
+      // 401 = logged out (nothing to reconnect to until re-paired); otherwise
+      // restart inbound instead of staying offline until an outbound send reopens it
       const statusCode = u.lastDisconnect?.error?.output?.statusCode;
       if (statusCode === 401) {
         waLog.warn({ statusCode }, 'socket closed by whatsapp (logged out) — re-pair required');
-        // The persisted identity is dead: drop the server-granted fields so
-        // the next start takes the registration branch and can offer a QR —
-        // otherwise every reconnect re-runs login → 401 and re-pairing is
-        // impossible without a logout() wipe. Crypto keys stay; only the
-        // identity whatsapp granted that session goes. Skipped during
-        // logoutWa — it deletes the whole table itself.
+        // drop the server-granted identity so the next start re-registers and
+        // can offer a QR (else login → 401 loop); crypto keys stay. Skipped
+        // during logoutWa — it deletes the whole table itself.
         if (!loggingOut) {
           const tombstone = { ...creds };
           delete tombstone.me;
@@ -477,9 +412,8 @@ async function startSocket(sql: Sql, integration: IntegrationRow): Promise<Baile
       }
       if (statusCode !== 401) {
         setTimeout(() => {
-          // Re-read the integration instead of reconnecting with the config
-          // captured at startSocket time — a disabled or re-pointed driver
-          // must not come back on the old settings.
+          // re-read the integration — a disabled/re-pointed driver must not
+          // come back on the captured config
           void getIntegration(sql, 'whatsapp')
             .then((fresh) => ensureSocket(sql, fresh))
             .catch((e) => waLog.error({ err: e }, 'reconnect failed'));
@@ -488,24 +422,18 @@ async function startSocket(sql: Sql, integration: IntegrationRow): Promise<Baile
     }
   });
   sock.ev.on('messages.upsert', ({ type, messages }) => {
-    // A detached socket (replaced or post-logout) must not keep delivering
-    // inbound messages — its creds may already be wiped.
+    // a detached socket (replaced or post-logout) must not keep delivering — its creds may be wiped
     if (socket !== sock) return;
-    // 'append' is real inbound too: whatsapp marks stanzas delivered while
-    // the socket was offline/still syncing `offline`, and baileys emits them
-    // as 'append' upserts. Replay safety comes from providerMessageId dedupe
-    // downstream — a notify-only filter silently eats those messages.
+    // 'append' is real inbound too — stanzas delivered while offline/syncing;
+    // providerMessageId dedupes retries downstream
     if (type !== 'notify' && type !== 'append') return;
     for (const m of messages) {
       const key = m.key;
-      // Only direct chats — group (@g.us) and broadcast JIDs would mint leads
-      // for every participant and reply into the group. DMs increasingly
-      // arrive addressed by LID ('…@lid'): the phone-number jid then rides
-      // in remoteJidAlt, which is the form lead digit-matching needs.
+      // DMs only — group/broadcast JIDs would mint a lead per participant;
+      // LID-addressed DMs carry the phone-number jid in remoteJidAlt
       const dm = key ? dmJid(key.remoteJid, key.remoteJidAlt) : null;
       if (!key || key.fromMe || !dm) continue;
-      // No provider id = nothing to dedupe a retry on — skip rather than
-      // insert a message we may see again.
+      // no provider id = nothing to dedupe a retry on
       if (!key.id) continue;
       const text = extractText(baileys.normalizeMessageContent(m.message) ?? m.message);
       if (!text) continue;
@@ -518,17 +446,15 @@ async function startSocket(sql: Sql, integration: IntegrationRow): Promise<Baile
   sock.ev.on(
     'messaging-history.set',
     ({ messages, contacts, lidPnMappings, progress, isLatest }) => {
-      // A detached socket (replaced or post-logout) must not keep importing —
-      // its creds may already be wiped.
+      // a detached socket must not keep importing — its creds may be wiped
       if (socket !== sock) return;
-      // contact map → fromName fallback when the stanza carries no pushName.
+      // contact map → fromName fallback when the stanza carries no pushName
       const names = new Map<string, string>();
       for (const c of contacts ?? []) {
         const n = c.name ?? c.notify ?? c.verifiedName;
         if (c.id && n) names.set(c.id, n);
       }
-      // LID ↔ PN pairs from the sync itself — an alias when the stanza didn't
-      // carry remoteJidAlt.
+      // LID↔PN pairs from the sync itself — alias when the stanza lacks remoteJidAlt
       const lidPn = new Map<string, string>();
       for (const m of lidPnMappings ?? []) {
         if (m.lid && m.pn) {
@@ -536,17 +462,14 @@ async function startSocket(sql: Sql, integration: IntegrationRow): Promise<Baile
           lidPn.set(m.pn, m.lid);
         }
       }
-      // Identity comes off the live socket, not the module cache — history
-      // can arrive before connState 'open' populates waMe.
+      // identity comes off the live socket — history can arrive before 'open' populates waMe
       const ownDigits = readIdentity(sock).phone;
       waLog.info(
         { msgs: messages?.length ?? 0, progress, isLatest },
         'history sync chunk received',
       );
-      // The accepted chunk joins the module tail and always drains — the
-      // payload is already in-process and ingest needs no creds (it's
-      // jid-attributed CRM writes), so teardown can't corrupt it, only lose
-      // it. Disconnects and re-pairs never drop received history.
+      // accepted chunks always drain — ingest is jid-attributed CRM writes
+      // needing no creds; teardown can lose it, not corrupt it
       historyTail = historyTail
         .then(async () => {
           for (const m of messages ?? []) {
@@ -554,13 +477,11 @@ async function startSocket(sql: Sql, integration: IntegrationRow): Promise<Baile
               const key = m.key;
               const dm = key ? dmJid(key.remoteJid, key.remoteJidAlt) : null;
               if (!key?.id || !dm) continue;
-              // Self-chat ("mensagens para você mesmo") is the account's own
-              // number — never a lead.
+              // self-chat = the account's own number — never a lead
               if (ownDigits && dm.jid.replace(/\D/g, '') === ownDigits) continue;
               const text = extractText(baileys.normalizeMessageContent(m.message) ?? m.message);
               if (!text) continue;
-              // pushName on a fromMe stanza is OUR account name — a lead minted
-              // from it would be named after the sender, not the contact.
+              // pushName on a fromMe stanza is OUR account name — use the contact map instead
               const pushName = key.fromMe
                 ? names.get(key.remoteJid ?? '')
                 : (m.pushName ?? names.get(key.remoteJid ?? ''));
@@ -576,8 +497,7 @@ async function startSocket(sql: Sql, integration: IntegrationRow): Promise<Baile
                 ...(sentAt ? { sentAt } : {}),
               };
               for (const fn of historyHandlers) {
-                // Isolated per subscriber — one rejecting consumer must not
-                // skip the entry for the rest.
+                // isolate per subscriber — one rejecting consumer must not skip the rest
                 try {
                   await fn(entry);
                 } catch (e) {
@@ -596,8 +516,7 @@ async function startSocket(sql: Sql, integration: IntegrationRow): Promise<Baile
   return sock;
 }
 
-/** proto uint64 seconds → Date; tolerates Long-ish objects and a stray ms
- *  value (anything past 1e12 is already milliseconds). */
+// proto uint64 seconds → Date; tolerates Long-ish objects and stray ms (>1e12)
 function messageTs(ts: number | string | { toNumber(): number } | undefined): Date | undefined {
   const n =
     typeof ts === 'number' ? ts : typeof ts === 'string' ? Number(ts) : (ts?.toNumber?.() ?? NaN);
@@ -605,11 +524,8 @@ function messageTs(ts: number | string | { toNumber(): number } | undefined): Da
   return new Date(n > 1e12 ? n : n * 1000);
 }
 
-/** The direct-chat jid pair for an inbound message: `jid` prefers the
- *  phone-number form (@s.whatsapp.net — the shape lead digit-matching
- *  wants), `alias` is the complementary address when the stanza carried one
- *  (remoteJid '…@lid' ↔ remoteJidAlt PN). A lid-only message still lands —
- *  group/broadcast/newsletter JIDs match neither form and are rejected. */
+// DM jid pair — jid prefers the PN form (@s.whatsapp.net, what lead
+// digit-matching wants), alias is the LID↔PN complement; group/broadcast reject
 function dmJid(remoteJid?: string, remoteJidAlt?: string): { jid: string; alias?: string } | null {
   const dm = (j?: string) =>
     j && (j.endsWith('@s.whatsapp.net') || j.endsWith('@lid')) ? j : null;
@@ -621,13 +537,13 @@ function dmJid(remoteJid?: string, remoteJidAlt?: string): { jid: string; alias?
   return alias && alias !== jid ? { jid, alias } : { jid };
 }
 
-/** Phone digits → '55…9988' for logs — correlatable without full PII. */
+// phone digits → '55…9988' for logs — correlatable without full PII
 function maskPhone(digits: string): string {
   const d = digits.replace(/\D/g, '');
   return d.length > 6 ? `${d.slice(0, 2)}…${d.slice(-4)}` : '…';
 }
 
-/** '5511…:dev@s.whatsapp.net' / lid jids → bare digits for display. */
+// '5511…:dev@s.whatsapp.net' / lid jids → bare digits for display
 function readIdentity(sock: BaileysSocket): {
   phone: string | null;
   name: string | null;
@@ -666,8 +582,7 @@ export async function ensureSocket(
     integration && integration.driver === 'baileys' && integration.enabled
       ? fingerprintOf(integration)
       : null;
-  // Config changed or driver disabled — the live socket belongs to the old
-  // config; close it instead of silently sending through the stale account.
+  // config changed or driver disabled — close rather than keep sending through the stale account
   if (socket && socketFingerprint !== wanted) {
     waLog.info(
       { accountId: socketAccountId },
@@ -681,9 +596,8 @@ export async function ensureSocket(
     socket = null;
     socketFingerprint = null;
     waMe = null;
-    // The detached socket's own close event early-returns (it no longer
-    // owns globals) — reset state here or waStatus()/wa_qr keep reporting
-    // a socket that no longer exists.
+    // the detached socket's own close early-returns — reset state here or
+    // waStatus()/wa_qr keep reporting a dead socket
     connState = 'off';
     qrSocket = null;
     notifyConnWaiters();
@@ -691,12 +605,9 @@ export async function ensureSocket(
     socketAccountId = null;
     emitControlEvent('channel.health');
   }
-  // A pending start for different config — or one already superseded (its
-  // generation is stale even when the fingerprint matches again, e.g.
-  // disable→re-enable mid-start) — can't serve this request. Bump the
-  // generation so startSocket self-terminates before publishing globals,
-  // then reconcile once it settles (also kills a socket that raced to
-  // publish).
+  // a pending start for a different config (or a superseded gen — e.g.
+  // disable→re-enable mid-start) can't serve this request — bump the gen so
+  // startSocket self-terminates, then reconcile once it settles
   const startUsable =
     starting !== null && startingFingerprint === wanted && startingGen === startGen;
   if (starting !== null && !startUsable) {
@@ -717,14 +628,13 @@ export async function ensureSocket(
     startingGen = startGen;
     starting = startSocket(sql, integration!).then(
       (s) => {
-        // globals were assigned inside startSocket — only the flag clears
+        // globals were assigned inside startSocket — only the flag clears here
         starting = null;
         startingFingerprint = null;
         return s;
       },
       (err) => {
-        // a failed start must not poison the flag — clear it so the next
-        // send/pair attempt can retry.
+        // a failed start must not poison the flag — clear so the next attempt retries
         starting = null;
         startingFingerprint = null;
         connState = 'off';
@@ -738,16 +648,12 @@ export async function ensureSocket(
   return starting;
 }
 
-/** Concurrent pair requests for the same number must share one in-flight
- *  call — each requestPairingCode overwrites creds.pairingCode, so an
- *  overlapping call would silently kill the code the first caller is
- *  already typing. Different numbers proceed: last request wins is what a
- *  deliberate "novo código" click means. */
+// same-number pair requests share one in-flight call — an overlapping
+// requestPairingCode would silently kill the code the first caller is typing
 const pairInFlight = new Map<string, Promise<string>>();
 
-/** Pairing-code alternative to scanning the QR — staff enters their number
- *  and types the returned code in WhatsApp → aparelhos conectados →
- *  "conectar com número". Only works while the socket is unregistered. */
+// pairing-code alternative to the QR scan — staff types the code in WhatsApp
+// (aparelhos conectados → 'conectar com número'); only while unregistered
 export async function pairCode(sql: Sql, phone: string): Promise<string> {
   const digits = phone.replace(/\D/g, '');
   if (digits.length < 10 || digits.length > 15) {
@@ -758,19 +664,16 @@ export async function pairCode(sql: Sql, phone: string): Promise<string> {
   const p = (async () => {
     const deadline = Date.now() + 20_000;
     for (;;) {
-      // Re-read config and socket every pass — settings can change mid-wait
-      // (a stale integration row would revive the old account), and the
-      // socket resolved last pass may have been replaced since.
+      // re-read config + socket every pass — settings can change mid-wait
       const integration = await getIntegration(sql, 'whatsapp');
       const sock = await ensureSocket(sql, integration);
       if (!sock) throw new Error('driver baileys não está ativo');
       if (connState === 'open') throw new Error('whatsapp já está conectado');
-      // The link_code iq only registers while the server-side reg stream is
-      // live on THIS socket — signaled by its own first pair-device (qr).
-      // Before that the send races the handshake and dies.
+      // the link_code iq registers only while the reg stream is live on THIS
+      // socket (signaled by its first qr) — earlier sends race the handshake and die
       if (qrSocket === sock) {
         const code = await sock.requestPairingCode(digits);
-        // The code is a short-lived bearer credential — never log it.
+        // short-lived bearer credential — never log it
         waLog.info({ phone: maskPhone(digits) }, 'pairing code issued');
         return code;
       }
@@ -786,23 +689,19 @@ export async function pairCode(sql: Sql, phone: string): Promise<string> {
   return p;
 }
 
-// Logouts serialize on a chain: two concurrent calls must never interleave
-// their wipes, and loggingOut has to stay held while ANY call is queued or
-// running — a queued call still owns the window, so a replacement socket or
-// auth write in that gap would be wiped mid-flight.
+// logouts serialize on a chain; loggingOut stays held while ANY call is
+// queued or running — a socket or auth write in the gap would be wiped mid-flight
 let logoutDepth = 0;
 let logoutChain: Promise<unknown> = Promise.resolve();
 
-/** Unpair the linked device and wipe stored auth state — the QR/pair flow
- *  can then pair a different number from scratch. logout() tells WhatsApp
- *  the device is gone (its close event is a 401, which the reconnect logic
- *  already leaves dead). */
+// unpair the linked device + wipe auth state so a different number can pair;
+// logout()'s close is a 401 the reconnect logic leaves dead
 export function logoutWa(sql: Sql, accountId: string): Promise<void> {
   logoutDepth += 1;
   loggingOut = true;
   const run = logoutChain.then(() => logoutOnce(sql, accountId));
-  // Swallow for the chain — the caller still gets their own `run` result,
-  // but a failed logout must not poison later calls' serialization.
+  // swallow for the chain — the caller keeps their `run` result; a failed
+  // logout must not poison serialization
   logoutChain = run.then(
     () => undefined,
     () => undefined,
@@ -815,17 +714,12 @@ export function logoutWa(sql: Sql, accountId: string): Promise<void> {
 
 async function logoutOnce(sql: Sql, accountId: string): Promise<void> {
   const s = socket;
-  // Remote unlink while the socket is still tracked — if logout() rejects,
-  // `socket` stays owned and `wa_auth_state` survives, so a retry retries
-  // the unlink on the same live socket. s's own close event clears globals
-  // mid-await; loggingOut is held for the whole wipe so its close can't
-  // resurrect anything. A socket that wasn't tracked (null) just wipes.
+  // unlink while the socket is still tracked — a rejected logout() leaves it
+  // owned for retry; its close clears globals mid-await under the held flag
   if (s) {
     await s.logout();
   }
-  // Clear only what's still owned by s — its close event may already have
-  // done it (idempotent), and nothing else could install a replacement
-  // while the flag was held.
+  // clear only what s still owns — its close may already have (idempotent)
   if (socket === s) {
     socket = null;
     socketFingerprint = null;
@@ -841,14 +735,12 @@ async function logoutOnce(sql: Sql, accountId: string): Promise<void> {
   } catch {
     /* already closed */
   }
-  // Writes queued before the flag went up can still be in flight — drain
-  // so none commits after the wipe.
+  // drain pre-flag writes so none commits after the wipe
   await Promise.allSettled([...pendingAuthWrites]);
   await controlTx(sql, async (tx) => {
     await tx`delete from wa_auth_state where account_id = ${accountId}`;
   });
-  // Clear through the gen-guarded path — a plain delete could be followed
-  // by a stale in-flight QR write that re-creates the row.
+  // gen-guarded clear — a plain delete could race a stale in-flight QR write
   await persistQr(sql, accountId, null, nextWaGen());
   waLog.info({ accountId }, 'logged out — auth state wiped');
 }

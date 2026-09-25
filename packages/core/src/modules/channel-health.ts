@@ -1,20 +1,9 @@
 import type { Sql } from '../platform/db.ts';
 import { controlTx } from './control.ts';
 
-/**
- * channel-health module — per-channel outbound rollup for the board. Counts
- * are computed on read over a 30d window from three durable signals:
- *  - lead_messages (sent/delivered vs failed) joined to its thread's channel;
- *  - lead_activities kind='blocked' — guardrail blocks recorded by
- *    recordBlockedSendTx with meta {channel, reason};
- *  - leads.email_bounced_at — provider-confirmed bounce markers.
- * All authors count: a failing send is a channel problem whoever sent it.
- * 'manual' threads are excluded — they're not a delivery channel.
- */
-
+// 30d outbound rollup from sent/failed messages, 'blocked' activities, and email bounce markers; 'manual' excluded
 export const HEALTH_WINDOW_DAYS = 30;
-/** Alert when a channel has real volume and ≥20% of resolved attempts fail.
- *  The volume floor keeps one bad send on an idle channel from paging. */
+// volume floor keeps one bad send on an idle channel from paging
 const MIN_ATTEMPTS = 5;
 const FAILURE_RATE_ALERT = 0.2;
 
@@ -31,8 +20,7 @@ export interface ChannelHealth {
   alert: boolean;
 }
 
-/** Records a guardrail-blocked agent send on the lead's timeline — inside the
- *  caller's claim tx so a replayed decision doesn't double-count. */
+// must run inside the caller's claim tx — a replayed decision must not double-count
 export async function recordBlockedSendTx(
   tx: Sql,
   leadId: string,

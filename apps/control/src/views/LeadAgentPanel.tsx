@@ -57,8 +57,7 @@ const RUN_CHIP: Record<string, string> = {
   canceled: 'bad',
 };
 
-/** 'loading' stays until the first response; 'missing' = the route doesn't
- *  exist yet (the v2 backend lands in parallel) — a real state, not an error. */
+// 'missing' = the API route doesn't exist yet — a real state, not an error.
 type FetchState = 'loading' | 'ok' | 'missing' | 'error';
 
 export default function LeadAgentPanel({
@@ -85,8 +84,7 @@ export default function LeadAgentPanel({
   const [acting, setActing] = useState(false);
   const [factErr, setFactErr] = useState('');
 
-  // Latest load wins — responses from before the newest load() (or for the
-  // previous lead) are dropped so a slow endpoint can't paint stale data.
+  // Latest load wins — a slow endpoint can't paint stale data.
   const reqSeq = useRef(0);
   const leadId = lead.id;
   const load = useCallback(() => {
@@ -125,8 +123,7 @@ export default function LeadAgentPanel({
         if (!alive()) return;
         setWakeupsState(e instanceof ApiError && e.status === 404 ? 'missing' : 'error');
       });
-    // Scheduled runs for this lead — scheduled=1 → run_at asc + keyset
-    // cursor, so a queue deeper than one page can't hide follow-ups.
+    // scheduled=1 → run_at asc + keyset cursor — a deep queue can't hide follow-ups.
     const schedPage = (cursor?: string): Promise<AgentRun[]> =>
       api
         .runs({
@@ -154,8 +151,6 @@ export default function LeadAgentPanel({
       .catch(() => undefined);
   }, [leadId]);
   useEffect(load, [load]);
-  // lead.change covers the lead itself and wakeup cancels; run.update covers
-  // queued/finished runs — both mean this panel's data may have moved.
   useEffect(
     () =>
       onControlEvent(['lead.change', 'run.update'], (e) => {
@@ -487,9 +482,6 @@ export default function LeadAgentPanel({
   );
 }
 
-/** A structured fact the agent (or staff) knows about the lead. Value edits
- *  inline; confidence and source stay visible so staff can tell agent
- *  guesses from verified notes. */
 function FactRow({
   leadId,
   fact,
@@ -551,8 +543,7 @@ function FactRow({
               title="confiança 0–1"
               style={{ width: 52 }}
             />
-            {/* No blur-save — clicking × while editing must not race a PUT
-             *  against the DELETE and resurrect the fact. */}
+            {/* No blur-save — clicking × must not race a PUT against the DELETE. */}
             <button className="btn ghost" style={{ padding: '1px 8px' }} onClick={save}>
               ok
             </button>
@@ -605,8 +596,7 @@ function FactRow({
   );
 }
 
-/** New fact — key in snake_case like the agent writes; confidence optional
- *  (staff notes default to full confidence server-side). */
+// Keys use snake_case like the agent writes; confidence is optional (staff defaults to full).
 function FactAdd({
   leadId,
   onSaved,
@@ -682,8 +672,6 @@ function FactAdd({
   );
 }
 
-/** Failed read — the 60s poll and SSE retry on their own, this is the
- *  explicit escape hatch so staff isn't stuck watching a dead section. */
 function FetchErr({ what, retry }: { what: string; retry: () => void }) {
   return (
     <div className="agp-none">

@@ -20,16 +20,7 @@ import { formatBRL } from './_lib/format.ts';
 import { maskPhone, phoneDigits } from './_lib/profile.ts';
 import { waLink } from './_lib/whatsapp.ts';
 
-/**
- * Product detail — the ficha page: framed figure left, choices right.
- * Modifier groups render from Core's shape (required/min/max); the Kernel has
- * no modifier-picker primitive yet, so selection state lives here and the
- * chosen ids go into AddToCart untouched.
- *
- * Reference parity: stock badge and waitlist are defensive — Core does not
- * expose stockQuantity/requiresPreorder, and there is no waitlist endpoint,
- * so the sold-out state offers a WhatsApp deep link instead (OBSERVATIONS.md).
- */
+/** Product detail — modifier selection lives here (Kernel has no picker); stock/waitlist defensive — sold-out offers a WhatsApp deep link (OBSERVATIONS.md). */
 
 type Detail = ProductDetail & {
   figureVariant?: FigureVariant;
@@ -66,9 +57,7 @@ export function ProductPage() {
   const lowStock = !soldOut && !preorder && stockQty !== null && stockQty > 0 && stockQty <= 5;
   const maxQty = preorder ? 99 : stockQty !== null ? Math.max(1, Math.min(99, stockQty)) : 99;
 
-  // No client-computed totals anywhere: the CTA shows the unit price field
-  // as catalog data and each option carries its own signed delta; the payable
-  // total is Core's answer (checkout + committed cart snapshots).
+  // no client-computed totals — the payable total is Core's answer
 
   useEffect(() => {
     if (product && store) document.title = `${product.name} · ${store.name}`;

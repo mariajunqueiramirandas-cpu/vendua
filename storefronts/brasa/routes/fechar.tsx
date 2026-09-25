@@ -4,12 +4,8 @@ import { useCart, useCheckout, useStore } from '@vendua/kernel';
 import type { Order } from '@vendua/kernel';
 import { cents, ErrorPlate } from './_ui';
 
-/**
- * Fechar — checkout as a dispatch manifest: identification, route (retirada /
- * entrega), payment plate. Delivery choice syncs through setDelivery so Core
- * prices the fee into cart.totals; submit() lets Core validate for real.
- * '/checkout' is a reserved API prefix — this page lives at /fechar.
- */
+// '/checkout' is a reserved API prefix — this page lives at /fechar.
+// setDelivery syncs so Core prices the fee into cart.totals.
 const BAIRROS = ['Centro', 'Gamboa', 'Saúde', 'Santo Cristo', 'Caju'];
 
 type Pay = 'pix' | 'card_on_delivery' | 'cash';
@@ -43,10 +39,8 @@ export function Fechar() {
   const items = cart?.status === 'open' ? cart.items : [];
   const totals = cart?.totals;
 
-  // Sync delivery choice into the server cart so the fee is Core-priced.
-  // Track it: a failed setDelivery leaves totals priced for the OLD bairro —
-  // block submit while a sync is in flight or errored (editing the field
-  // retries), and let the sequence guard ignore superseded responses.
+  // a failed setDelivery leaves totals priced for the OLD bairro — block submit
+  // while a sync is in flight/errored (editing retries); seq drops superseded responses
   const syncSeq = useRef(0);
   const [deliverySync, setDeliverySync] = useState<'syncing' | 'ok' | 'error'>('ok');
   useEffect(() => {
@@ -90,8 +84,7 @@ export function Fechar() {
             : { mode, neighborhood: bairro.trim(), address: address.trim() },
         payment: { method: pay },
       });
-      // submit() already invalidates 'cart' — the completed cart drops out
-      // of the badge without storefront plumbing.
+      // submit() already invalidates 'cart'
       navigate(`/pedido/${order.id}`, { state: { order } });
     } catch (e) {
       setErr(e as { code: string; message: string; details?: Record<string, unknown> });

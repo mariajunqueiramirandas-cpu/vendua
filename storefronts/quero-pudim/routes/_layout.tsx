@@ -132,10 +132,7 @@ export function Layout() {
   );
 }
 
-/**
- * "Nossa história" — in-page anchor on the landing page, highlighted while its
- * section is in view (ported scroll-spy, reduced to a viewport check).
- */
+/** "Nossa história" anchor — highlighted while its section is in view. */
 function StoryLink() {
   const { pathname } = useLocation();
   const [active, setActive] = useState(false);
@@ -174,8 +171,7 @@ function StoryLink() {
 }
 
 function SacolaCount() {
-  // CartTrigger stamps data-count on the child but does not pass it as a prop —
-  // the badge reads the cart itself.
+  // CartTrigger stamps data-count, not a prop — the badge reads the cart
   const { cart } = useCart();
   return <span className="sacola-count">{cart?.totals.itemCount ?? 0}</span>;
 }

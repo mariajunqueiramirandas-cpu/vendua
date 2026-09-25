@@ -18,13 +18,7 @@ import { getContinueShoppingUrl } from './_lib/lastSeen.ts';
 import { findOrder, rememberOrder, type StoredOrder } from './_lib/orders.ts';
 import { orderWhatsAppMessage, waLink } from './_lib/whatsapp.ts';
 
-/**
- * Pedido — confirmation + tracking. `api.order(id)` sends the checkout-time
- * token the Kernel stored per-order — it stays authorized after the session
- * rotates onto a fresh cart, so "Atualizar" refetches live state. Core's
- * order view still has no items (OBSERVATIONS.md): the item list and the
- * fallback order come from the session snapshot written at checkout.
- */
+// api.order uses the checkout-time token (survives session rotation); items + fallback come from the session snapshot
 
 const STATE_INFO: Record<string, { label: string; description: string; tone: string }> = {
   placed: { label: 'Recebido', description: 'Aguardando a cozinha confirmar.', tone: 'warn' },
@@ -75,7 +69,6 @@ export function OrderPage() {
             : { order: live, items: [], savedAt: new Date().toISOString() };
           return next;
         });
-        // Keep the session cache in sync if this order was placed here.
         const cached = findOrder(id);
         if (cached) rememberOrder(live, cached.items, cached.notes);
         setRefreshNote(null);

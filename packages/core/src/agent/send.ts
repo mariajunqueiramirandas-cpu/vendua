@@ -15,31 +15,17 @@ import { sendWhatsApp } from './channels/whatsapp.ts';
 import { applyDeliveryEventTx } from './channels/email-inbound.ts';
 
 /**
- * agent/send — outbound dispatch, two transactions around the provider call:
- *
- *  1. claim tx — row-lock the message, re-check suppression, resolve the
- *     enabled integration, flip queued → 'sending', commit. A dispatcher that
- *     loses the race sees 'sending' instead of 'queued' and bails.
- *  2. provider call — outside any transaction; slow providers never hold a
- *     row lock or a pooled connection hostage.
- *  3. finalize tx — mark sent/failed.
- *
- * A crash between 1 and 3 leaves 'sending' (drain fails it past the lease),
- * never 'queued' again — at-most-once delivery by construction.
+ * Outbound dispatch: claim tx (row-lock → 'sending'), provider call outside
+ * any tx, finalize tx. A crash mid-flight leaves 'sending', never 'queued'
+ * again — at-most-once delivery by construction.
  */
 export async function dispatchMessage(
   sql: Sql,
   messageId: string,
-  /** Optional fence run first inside the claim tx — agent-run dispatches
-   *  pass a live-claim check so a canceled/reclaimed run can't still push a
-   *  queued message to the provider; auto-outreach dispatches also return a
-   *  refusal reason when a live inbound postdates the claim (a string means
-   *  "mark the message failed and don't send"). Staff approvals, meeting
-   *  sends, and the stranded-message recovery in drain() pass nothing: they
-   *  legitimately dispatch messages whose authoring run already finished. */
+  /** Optional fence inside the claim tx — a returned string marks the
+   *  message failed without sending. */
   guard?: (tx: Sql) => Promise<string | null | void>,
 ): Promise<{ ok: boolean; reason?: string }> {
-  // Phase 1: claim.
   let wroteTid: string | null = null;
   const job = await controlTx(sql, async (tx) => {
     const refused = (await guard?.(tx)) || null;
@@ -58,8 +44,8 @@ export async function dispatchMessage(
       >`select id, thread_id, body, status, author, subject, is_farewell, meeting_id from lead_messages where id = ${messageId} for update`
     )[0];
     if (!msg) return { fail: 'message not found' as const };
-    // Terminal/in-flight states are honest outcomes, not errors — a replayed
-    // approve/compose hits this and must report the real result, not a failure.
+    // terminal/in-flight states are honest outcomes — a replayed approve
+    // must report the real result, not fail
     if (msg.status === 'sent' || msg.status === 'delivered') {
       return { fail: null, alreadySent: true as const };
     }
@@ -97,11 +83,9 @@ export async function dispatchMessage(
       `
     )[0]!;
 
-    // Re-check suppression at dispatch time — a draft approved after the lead
-    // was archived, unsubscribed, handed to a human, or had its email bounce
-    // must not leave the building. The handoff marker only mutes the AGENT:
-    // staff replies and system notices (meeting confirmations) still flow —
-    // a paused lead is a lead the human is working, not a dead lead.
+    // re-check suppression at dispatch — an approved draft must not send
+    // after archive/unsub/handoff/bounce; handoff mutes the AGENT only
+    // (staff + system notices still flow)
     const suppressed = lead.archived_at
       ? 'lead archived'
       : lead.unsubscribed_at && !msg.is_farewell
@@ -117,10 +101,8 @@ export async function dispatchMessage(
       return { fail: suppressed };
     }
 
-    // Meeting-bound messages (confirmations, reminders) die with the meeting:
-    // the row lock serializes the check against a cancel/reschedule that
-    // commits between compose and this claim — including the stranded-message
-    // recovery path in drain(), which re-checks the same durable link.
+    // meeting-bound messages die with the meeting — the row lock serializes
+    // against a cancel/reschedule (incl. drain's stranded-message recovery)
     if (msg.meeting_id) {
       const meeting = (
         await tx<
@@ -134,9 +116,8 @@ export async function dispatchMessage(
       }
     }
 
-    // A disabled/absent integration must fail loudly — never fall through to
-    // the dev `log` driver and record `sent` for a message nobody received.
-    // `log` is still usable when explicitly configured + enabled.
+    // a disabled/absent integration must fail loudly — never fall through
+    // to `log` and record `sent` for a message nobody received
     let integration: IntegrationRow | null = null;
     let to: string | null = null;
     if (thread.channel === 'email') {
@@ -154,9 +135,8 @@ export async function dispatchMessage(
         wroteTid = msg.thread_id;
         return { fail: 'lead has no whatsapp' };
       }
-      // Staff/founder numbers never receive agent traffic — ingest drops
-      // them before a lead exists, this is the net for leads created before
-      // the list (or reached through the phone column).
+      // staff/founder numbers never get agent traffic — the net for leads
+      // created before the ignore list
       const g = await getSettingTx<Partial<Guardrails>>(tx, 'guardrails', {});
       if (phoneIsIgnored(g.ignoredPhones ?? [], to, lead.whatsapp, lead.phone)) {
         await markMessageFailed(tx, messageId, 'número ignorado');
@@ -172,18 +152,16 @@ export async function dispatchMessage(
       return { fail: reason };
     }
 
-    // Caller-refused sends (a live inbound postdating an auto-outreach
-    // claim) fail durably like suppression — 'failed' also keeps the
-    // stranded-message recovery from resending the dead nudge.
+    // caller-refused sends fail durably — 'failed' keeps stranded-message
+    // recovery from resending
     if (refused) {
       await markMessageFailed(tx, messageId, refused);
       wroteTid = msg.thread_id;
       return { fail: refused };
     }
 
-    // 'sending' is the point of no return: the provider call follows, so a
-    // failure after this transition may already be on the wire — stamp the
-    // attempt durably so a later dedupe can tell it from a pre-wire refusal.
+    // 'sending' is the point of no return — stamp the attempt so dedupe
+    // can tell it from a pre-wire refusal
     const upd = await tx<{ sending_at: string }[]>`
       update lead_messages set status = 'sending', dispatch_attempted_at = clock_timestamp(),
         updated_at = clock_timestamp()
@@ -193,16 +171,12 @@ export async function dispatchMessage(
     return {
       send: {
         threadId: thread.id,
-        // Dispatch boundary for the cadence race check: created_at marks
-        // composition (drafts can sit for days); the 'sending' transition is
-        // what an inbound must post-date to count as answering this send.
-        // clock_timestamp() above — now() freezes at tx start and a waiting
-        // claim would misdate the boundary.
+        // 'sending' is the dispatch boundary an inbound must post-date to
+        // count as answering; clock_timestamp() since now() freezes at tx start
         sendingAt: upd[0]!.sending_at,
         channel: thread.channel,
         to,
-        // The compose-time snapshot wins; the thread subject is only the
-        // fallback for rows written before message-level subjects existed.
+        // compose-time subject wins; thread subject is the fallback
         subject: msg.subject ?? thread.subject ?? 'Venduá',
         body: msg.body,
         integration,
@@ -218,12 +192,10 @@ export async function dispatchMessage(
   if ('fail' in job && job.fail != null) return { ok: false, reason: job.fail };
   const { send } = job;
 
-  // Phase 2: provider call, no transaction held.
   let providerMessageId: string | null = null;
   let sendError: string | null = null;
   try {
     if (send.channel === 'email') {
-      // Phase 1 guarantees a non-null enabled integration for email/whatsapp.
       providerMessageId = await sendEmail(send.integration!, {
         to: send.to!,
         subject: send.subject,
@@ -232,14 +204,12 @@ export async function dispatchMessage(
     } else if (send.channel === 'whatsapp') {
       providerMessageId = await sendWhatsApp(sql, send.integration!, send.to!, send.body);
     }
-    // manual: nothing to dispatch — staff copies it elsewhere.
   } catch (e) {
     sendError = e instanceof Error ? e.message : 'send failed';
   }
 
-  // Phase 3: finalize. Provider ids are channel-namespaced — they share no
-  // global namespace, so a Resend id must not collide with a Baileys id in
-  // the dedupe index.
+  // provider ids are channel-namespaced so e.g. a Resend id can't collide
+  // with a Baileys id in the dedupe index
   const threadsTouched = new Set<string>();
   const leadsTouched = new Set<string>();
   const out = await controlTx(sql, async (tx) => {
@@ -248,26 +218,15 @@ export async function dispatchMessage(
       return { ok: false, reason: sendError };
     }
     const pmid = providerMessageId ? `${send.channel}:${providerMessageId}` : null;
-    // The webhook parks events that find no pmid — serialize both sides on
-    // this advisory key so a parker can't slip between our pmid write and
-    // the drain below (its pmid check happens under the same lock).
+    // advisory key serializes against webhook parkers so one can't slip
+    // between the pmid write and the drain replay
     if (providerMessageId) {
       await tx`select pg_advisory_xact_lock(hashtext(${`pev:${send.channel}:${providerMessageId}`}))`;
     }
     await markMessageSent(tx, messageId, pmid);
-    // Cadence floor: an agent send leaves the lead awaiting a reply — stamp
-    // the default cadence so a run that forgot nextActionAt still gets a
-    // follow-up. NULL-only fill: an agent- or staff-set value always wins,
-    // and the suppression fields mirror claimRun's lead gate so the stamp
-    // lands only on leads the sweeps would actually pick up.
-    // The not-exists closes the provider-call race: the lead can reply while
-    // Resend/Baileys is still on the wire — that inbound already ran its
-    // clearing update (nothing to clear yet), so finalization must not stamp
-    // a floor on an answered send. `historical` rows are context imports,
-    // never answers — a history sync mid-call must not suppress the floor.
-    // `received_at is not null` counts only real server-ingest stamps:
-    // 0034 NULLed the 0030 backfill — a real ingest always rides the
-    // clock_timestamp() default, so NULL is the legacy marker.
+    // cadence floor: NULL-only fill (agent/staff values win) gated like
+    // claimRun; skip when a real inbound post-dates 'sending' — 'historical'
+    // imports and NULL received_at (0030 backfill legacy) are never answers
     if (send.author === 'agent') {
       const g = await getSettingTx<Partial<Guardrails>>(tx, 'guardrails', {});
       const days = g.followupCadenceDays ?? DEFAULT_GUARDRAILS.followupCadenceDays;
@@ -292,10 +251,8 @@ export async function dispatchMessage(
         `;
       }
     }
-    // A delivery event can beat this finalize — Resend emits it before our
-    // send call returns the provider id. Webhook ingest parks those in
-    // provider_events; now that the pmid exists, replay them in-order so the
-    // message/lead land in the state the event described.
+    // replay provider_events parked before the pmid existed so the message
+    // lands in the event-described state
     if (providerMessageId) {
       const pending = await tx<{ event: string; payload: { to?: string[] } }[]>`
         select event, payload from provider_events
@@ -330,15 +287,10 @@ export async function dispatchMessage(
           where channel = ${send.channel} and provider_id = ${providerMessageId}`;
       }
     }
-    // Deterministic lead→contacted: a sent outbound IS first contact — the
-    // funnel can't wait on the model remembering set_state. Runs AFTER the
-    // parked-event replay above so a bounce that beat the send response
-    // can't promote: exists() admits only messages still standing 'sent' or
-    // 'delivered'. Forward-only ('lead' rows only): invited/live states stay
-    // the agent's call and a staff-set state never demotes. History/activity
-    // land in the same tx, same writes updateLead's own transition makes.
-    // 'manual' is excluded: it dispatches nothing — staff copies the text
-    // elsewhere — so it can't be treated as contact confirmed.
+    // sent outbound IS first contact → deterministic lead→contacted (model
+    // can't be relied on); runs after the parked-event replay so a bounced
+    // send can't promote; forward-only, and 'manual' never counts
+    // (it dispatches nothing)
     const promoted =
       send.channel === 'manual'
         ? []

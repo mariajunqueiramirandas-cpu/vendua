@@ -2,10 +2,7 @@ import { Link } from 'react-router-dom';
 import { CartTrigger, useCart } from '@vendua/kernel';
 import { BagMark } from './marks.tsx';
 
-/**
- * Cart trigger styled as the paper sacola. CartTrigger stamps the hook and
- * wires the click; the Link provides navigation to /sacola.
- */
+// CartTrigger stamps the data-vendua hook + wires the click; Link navigates
 export function BagButton() {
   const { cart } = useCart();
   const count = cart?.status === 'open' ? (cart?.totals.itemCount ?? 0) : 0;

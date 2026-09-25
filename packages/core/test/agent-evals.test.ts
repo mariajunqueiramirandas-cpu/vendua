@@ -10,13 +10,8 @@ import { DEFAULT_GUARDRAILS, upsertIntegration } from '../src/modules/integratio
 import { insertLeadTx } from '../src/modules/leads.ts';
 import { migrate } from '../src/platform/db.ts';
 
-/**
- * Golden evals — the real pipeline (ingestInbound → drain → runOnce → tools
- * → dispatch) driven by a scripted provider instead of a paid model. Every
- * send goes through the dev `log` channel driver, so nothing leaves the
- * box and nothing costs a cent. CI runs these via plain `bun test`; the
- * live harness (`bun run sim`) stays manual.
- */
+// golden evals — the real pipeline (ingestInbound → drain → tools → dispatch)
+// driven by a scripted provider through the `log` driver: nothing leaves the box
 
 // Pure-provider contract — no DB needed, runs everywhere.
 describe('scriptedProvider — replay and record', () => {
@@ -83,16 +78,13 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('agent evals — golden runs (db
     );
   };
 
-  /** Guardrails with the sim-cli trick: quiet hours 00:00→00:00 = never
-   *  quiet, plus the per-scenario override. */
+  // quiet hours 00:00→00:00 = never quiet (sim-cli trick), plus the per-scenario override
   const seedGuardrails = async (patch: Record<string, unknown> = {}) =>
     sql`insert into control_settings (key, value)
         values ('guardrails', ${sql.json({ ...DEFAULT_GUARDRAILS, quietStart: '00:00', quietEnd: '00:00', ...patch } as never)})
         on conflict (key) do update set value = excluded.value`;
 
-  /** draftDecision also reads agent_autonomy: 'copilot' drafts every
-   *  outbound, 'autopilot' lifts firstContactDraftOnly. Pin the default so
-   *  sibling-file residue can't flip a send into a draft between runs. */
+  // pin agent_autonomy so sibling-file residue can't flip a send into a draft between runs
   const pinAutonomy = () =>
     sql`insert into control_settings (key, value)
         values ('agent_autonomy', ${sql.json({ level: 'supervised' } as never)})
@@ -105,16 +97,13 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('agent evals — golden runs (db
     return created.body.lead.id;
   };
 
-  /** Park leftovers from earlier tests so drain only picks up ours —
-   *  pending mail too: the orphan sweep would otherwise spawn runs for it,
-   *  and those runs feed the scripted provider, polluting `requests`. */
+  // park leftovers (incl. pending mail the orphan sweep would respawn) so
+  // drain only picks up this test's work — stray runs would pollute `requests`
   const cancelQueued = async () => {
     await sql`update agent_runs set status = 'canceled' where status = 'queued'`;
     await sql`update agent_inbox set consumed_at = now() where consumed_at is null`;
   };
 
-  /** Drive a scripted inbound → drain until the run reaches a terminal
-   *  status; returns the finished run row. */
   const runInbound = async (provider: ScriptedProvider, whatsapp: string, pmid: string) => {
     setTestProvider(provider);
     try {
@@ -125,8 +114,7 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('agent evals — golden runs (db
         providerMessageId: pmid,
       });
       if ('ignored' in res) throw new Error(`inbound ignored: ${res.ignored}`);
-      // ingest kicks a floating drain; ours waits on the row — either way
-      // the run ends terminal before this returns.
+      // ingest kicks a floating drain; ours waits on the row — either way it ends terminal
       await drain(sql);
       const deadline = Date.now() + 15_000;
       for (;;) {
@@ -142,10 +130,8 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('agent evals — golden runs (db
       }
     } finally {
       setTestProvider(null);
-      // Leave the queue empty: ingestInbound's floating drain outlives the
-      // test and would claim anything still queued — including rows the
-      // NEXT file is about to assert on. Terminal rows are history; queued
-      // is the only status stray drains can claim.
+      // ingestInbound's floating drain outlives the test and would claim
+      // anything still queued — including rows the NEXT file asserts on
       await cancelQueued();
     }
   };

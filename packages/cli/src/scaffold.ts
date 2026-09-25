@@ -4,14 +4,8 @@ import { randomBytes } from 'node:crypto';
 import postgres from 'postgres';
 import { die, isStorefrontDir, nextPort } from './paths.ts';
 
-/**
- * `vendua scaffold <slug>` — copy the always-green _template into
- * storefronts/<slug>, give it a free dev port, and register a dev tenant so
- * `vendua dev <slug>` works immediately.
- *
- * Order matters: the DB registration runs BEFORE any file is written, so an
- * unreachable Postgres can never leave behind a package with no tenant.
- */
+/** `vendua scaffold <slug>` — the DB registration runs BEFORE any file is
+ *  written, so an unreachable Postgres can never leave a package with no tenant. */
 
 const SLUG_RE = /^[a-z0-9][a-z0-9-]{0,39}$/;
 const DEFAULT_DB_URL = 'postgres://vendua:vendua@localhost:5433/vendua';
@@ -37,8 +31,7 @@ interface SeedProduct {
   groups?: SeedGroup[];
 }
 
-/** The seeded sample catalog — one category, a few items, one required
- * modifier group so the product page's required-selection path is exercised. */
+/** Seeded catalog — the one required modifier group exercises the product page's required-selection path. */
 const SAMPLE_PRODUCTS: SeedProduct[] = [
   {
     slug: 'item-exemplo-1',
@@ -83,13 +76,11 @@ export async function cmdScaffold(slug: string | undefined, root: string): Promi
   const port = nextPort(root);
   await registerTenant(slug, port);
 
-  // Build in a temp sibling and rename atomically — a copy/rewrite failure
-  // must leave no `storefronts/<slug>` behind, or the existsSync guard above
-  // would permanently reject the retry (the tenant rows already committed).
+  // Build in a temp sibling and rename — a failed scaffold must leave no
+  // storefronts/<slug> behind or the existsSync guard blocks the retry.
   const tmp = join(root, 'storefronts', `.scaffold-${slug}-${randomBytes(4).toString('hex')}`);
   try {
-    // Build/install artifacts must not leak into a scaffold — a stale dist/ or
-    // a template-local node_modules/ shipped into a fresh package is garbage.
+    // Build/install artifacts must not leak into the fresh package.
     cpSync(template, tmp, {
       recursive: true,
       filter: (src) => !/([\\/])(node_modules|dist|qa-report)([\\/]|$)/.test(src),
@@ -120,19 +111,14 @@ export async function cmdScaffold(slug: string | undefined, root: string): Promi
   console.log(`  bunx vendua dev ${slug}      # → http://localhost:${port}`);
 }
 
-/**
- * Idempotent dev-tenant registration against DATABASE_URL — mirrors the row
- * shapes in packages/core/src/platform/seed.ts: tenant + domains +
- * store_settings + one zone + a small catalog. On conflict it leaves existing
- * rows alone (scaffold only fills what is missing).
- */
+/** Idempotent dev-tenant registration — mirrors the row shapes in
+ *  platform/seed.ts; on conflict leaves existing rows alone. */
 async function registerTenant(slug: string, port: number): Promise<void> {
   const url = process.env.DATABASE_URL ?? DEFAULT_DB_URL;
   let sql: postgres.Sql;
   try {
     sql = postgres(url, { max: 1, connect_timeout: 5 });
-    // Force a connection up-front so an unreachable DB fails here, before any
-    // storefront files exist.
+    // Force a connection up-front — an unreachable DB must fail before files exist.
     await sql`select 1`;
   } catch {
     dbUnreachable(url, slug);
@@ -150,8 +136,7 @@ async function registerTenant(slug: string, port: number): Promise<void> {
       const tid = tenant.id;
 
       for (const host of [`localhost:${port}`, `127.0.0.1:${port}`]) {
-        // Never silently rebind a host: a scaffold racing another tenant's
-        // port must fail loudly, not steal the domain row mid-transaction.
+        // Never silently rebind a host — a port race must fail loudly.
         const inserted = await tx`
           insert into domains (host, tenant_id) values (${host}, ${tid})
           on conflict (host) do nothing
@@ -208,7 +193,7 @@ async function registerTenant(slug: string, port: number): Promise<void> {
               returning id
             `
           )[0];
-          if (!prod) continue; // product slug already present
+          if (!prod) continue;
           for (const [gi, g] of (p.groups ?? []).entries()) {
             const grp = (
               await tx<{ id: string }[]>`
@@ -230,8 +215,7 @@ async function registerTenant(slug: string, port: number): Promise<void> {
     });
   } catch (err) {
     await sql.end().catch(() => {});
-    // Connected but the schema isn't there or the write failed — still no
-    // storefront files on disk, so this is a clean failure.
+    // Schema missing or write failed — still clean: no files on disk.
     console.error(
       `vendua: tenant registration failed — ${err instanceof Error ? err.message : err}`,
     );

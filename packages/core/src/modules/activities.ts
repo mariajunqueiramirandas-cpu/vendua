@@ -3,13 +3,6 @@ import { HttpError, str } from '../platform/http.ts';
 import { claimControl, controlTx, type ClaimResult } from './control.ts';
 import { emitControlEvent } from './control-events.ts';
 
-/**
- * activities module — the lead timeline and follow-up tasks.
- * `lead_activities` is the single history stream (notes, touchpoints, state
- * changes, agent actions); `lead_tasks` holds open/done follow-ups that both
- * staff and the agent create.
- */
-
 export const ACTIVITY_KINDS = [
   'note',
   'call',
@@ -70,8 +63,7 @@ export async function addActivity(
     createdBy?: 'staff' | 'agent' | 'system';
   },
   idemKey: string,
-  /** Optional fence run first inside the claim tx — agent tool calls pass a
-   *  live-claim check so a reclaimed run can't still mutate. */
+  /** live-claim fence so a reclaimed run can't still mutate */
   guard?: (tx: Sql) => Promise<void>,
 ): Promise<ClaimResult<{ activity: ReturnType<typeof activityJson> }>> {
   const body = input.body === undefined ? null : str(input.body, 'body', 4000).trim() || null;
@@ -91,8 +83,6 @@ export async function addActivity(
   if (!res.replayed) emitControlEvent('lead.change', leadId);
   return res;
 }
-
-// ---------------------------------------------------------------------------
 
 export interface TaskRow {
   id: string;
@@ -154,8 +144,7 @@ export async function createTask(
   leadId: string,
   input: { title: string; dueAt?: string | null; createdBy?: 'staff' | 'agent' },
   idemKey: string,
-  /** Optional fence run first inside the claim tx — agent tool calls pass a
-   *  live-claim check so a reclaimed run can't still mutate. */
+  /** live-claim fence so a reclaimed run can't still mutate */
   guard?: (tx: Sql) => Promise<void>,
 ): Promise<ClaimResult<{ task: ReturnType<typeof taskJson> }>> {
   const title = str(input.title, 'title', 300).trim();

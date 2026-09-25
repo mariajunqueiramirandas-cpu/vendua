@@ -1,19 +1,8 @@
--- 0001_init.sql — Core schema, Phase 0 skeleton.
---
--- Rule from docs/architecture/01-core.md: every tenant-owned row carries
--- tenant_id and Postgres row-level security enforces it as a second line of
--- defense. The application connects as `vendua_app` (a non-owner role), sets
--- `vendua.tenant_id` per transaction via SET LOCAL, and still scopes every
--- query explicitly.
---
--- `tenants` and `domains` are the exception: they are the resolver's routing
--- data, needed *before* a tenant context exists. They get a read-only
--- `USING (true)` policy for the app role and no write policy.
-
+-- 0001_init.sql — core schema + vendua_app role; tenant tables get tenant_id RLS,
+-- resolver tables (tenants/domains) get read-only open policies instead.
 create extension if not exists pgcrypto;
 
--- App role: non-owner, subject to RLS. Local dev password; deployments inject
--- their own. DO-block keeps the migration idempotent.
+-- vendua_app: non-owner so RLS applies; DO-block keeps this idempotent.
 do $$
 begin
   if not exists (select 1 from pg_roles where rolname = 'vendua_app') then
@@ -191,11 +180,6 @@ create table if not exists outbox (
   created_at timestamptz not null default now(),
   published_at timestamptz
 );
-
--- ---------------------------------------------------------------------------
--- Row-level security. Applied to every table with tenant-owned rows; the
--- resolver tables get read-only open policies instead (see header comment).
--- ---------------------------------------------------------------------------
 
 do $$
 declare

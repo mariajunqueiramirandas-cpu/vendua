@@ -1,10 +1,5 @@
 import { defineStorefront } from '@vendua/kernel';
 
-/**
- * Quero Pudim — roseCopper palette, recipe-notebook type stack.
- * Tokens mirror the reference brand (Newsreader display, Inter Tight body,
- * Geist Mono numeric accents) and feed the Kernel's --v-* emission.
- */
 export default defineStorefront({
   contract: 1,
   ring: 'stable',
