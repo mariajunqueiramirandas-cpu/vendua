@@ -32,15 +32,7 @@ import {
 } from '../components.tsx';
 import { ListEditor, RawJson, TzList, num, str, tzValid } from './settings-bits.tsx';
 
-/** Estúdio — everything the agent is made of, in one place: how far it
- *  decides (autonomia), how it talks (voz), the modes it works in
- *  (playbooks), what it remembers (memória), what it scheduled (agenda),
- *  and the hard limits (regras). Same index-rail grammar as Config; the
- *  agent sections moved out of there because they describe the worker,
- *  not the machine's wiring. The v2 routes land in steps — each endpoint
- *  reports 'loading | ok | missing | err' independently and the cards
- *  degrade into honest states, never fake data. */
-
+// each v2 endpoint reports loading|ok|missing|err independently — cards degrade into honest states
 const SECTIONS = [
   { key: 'autonomia', label: 'autonomia', sub: 'o que ele decide' },
   { key: 'voz', label: 'voz', sub: 'o pitch' },
@@ -54,11 +46,7 @@ type SectionKey = (typeof SECTIONS)[number]['key'];
 type Notice = { kind: 'ok' | 'err'; text: string } | null;
 type Load = 'loading' | 'ok' | 'missing' | 'err';
 
-/** Endpoint fetch with a success watermark: a late failure can't clobber a
- *  newer success, and a 404 reports 'missing' — a route that hasn't shipped
- *  to this server yet is a state, not an error. `enabled=false` keeps it
- *  dormant — section-scoped endpoints only fetch while their section is
- *  open, so an unvisited panel costs zero requests. */
+// fetch with a success watermark — a late failure can't clobber a newer success; 404 = 'missing'; enabled=false keeps it dormant
 function useAgent<T>(fn: () => Promise<T>, deps: unknown[] = [], enabled = true) {
   const [data, setData] = useState<T | null>(null);
   const [st, setSt] = useState<Load>('loading');
@@ -84,13 +72,11 @@ function useAgent<T>(fn: () => Promise<T>, deps: unknown[] = [], enabled = true)
       });
   }, [enabled, ...deps]);
   useEffect(reload, [reload]);
-  // write lets a caller push a freshly-saved value into `data` ahead of the
-  // next fetch — closes the PUT→refetch window where a stale map shows.
+  // write closes the PUT→refetch window where a stale map shows
   return { data, st, reload, write: setData };
 }
 
-/** The card shown while an endpoint hasn't landed (404) or failed — the
- *  panel states what will live here, never invents content. */
+// card for an unlanded/failed endpoint — states what will live here, never invents content
 function EndpointCard({
   st,
   title,
@@ -143,7 +129,6 @@ export default function AgentStudio() {
   const [searchParams, setSearchParams] = useSearchParams();
   const [notice, setNotice] = useState<Notice>(null);
 
-  // ---------- section selection (?s=) — same grammar as Config ----------
   const section: SectionKey =
     SECTIONS.find((s) => s.key === searchParams.get('s'))?.key ?? 'autonomia';
   const go = (s: SectionKey) => {
@@ -153,11 +138,7 @@ export default function AgentStudio() {
     setSearchParams(next);
   };
 
-  // settings map — pitch, guardrails, agent_memory, agent_playbooks,
-  // agent_autonomy all live here; PUT /settings/:key is the write path.
-  // Each GET stamps the write version it was issued at (v0) — a response
-  // that predates a committed PUT is dropped instead of rolling the map
-  // back over a newer save.
+  // each GET stamps writeV — a response predating a committed PUT is dropped
   const writeV = useRef(0);
   const settings = useAgent(() => {
     const v0 = writeV.current;
@@ -167,9 +148,7 @@ export default function AgentStudio() {
     }));
   }, []);
   const autonomy = useAgent(() => api.autonomy(), []);
-  // section-scoped fetches stay dormant until their section is opened —
-  // memory fans out to three calls, and a 404-per-visit per scope adds up
-  // while the route hasn't shipped.
+  // section-scoped fetches stay dormant until their section opens
   const playbooks = useAgent(
     () => api.playbooks().then((r) => r.playbooks),
     [],
@@ -197,11 +176,7 @@ export default function AgentStudio() {
     memory.reload();
   }, [settings, autonomy, playbooks, memory]);
 
-  // PUT /settings/:key sends the WHOLE value — a save must never build on a
-  // pre-save map. Writes are serialized (saveQ) and merge off mapRef, which
-  // is the freshest local picture: synced from the last accepted fetch and
-  // updated optimistically the moment a PUT lands, before the refetch.
-  // liveMap is what editors render — same freshness guarantee as mapRef.
+  // writes serialize through saveQ and merge off mapRef (the freshest picture) — PUT sends the whole value
   const mapRef = useRef<Record<string, unknown>>({});
   const [liveMap, setLiveMap] = useState<Record<string, unknown> | null>(null);
   useEffect(() => {
@@ -236,8 +211,7 @@ export default function AgentStudio() {
     return task;
   };
 
-  // Editors that PUT a whole setting only render once the map is live —
-  // before that the map is {} and a save would erase what's already stored.
+  // PUT sends the whole setting — render only once the map is live or a save erases stored data
   const settingsOk = liveMap !== null;
   const settingsGate = (title: string) => (
     <EndpointCard
@@ -262,10 +236,7 @@ export default function AgentStudio() {
       return next;
     });
 
-  // v1 memory auto-saves each add/remove — two quick edits both build off
-  // the displayed list, so the write is a three-way merge: the editor's
-  // target vs what it showed at click time, applied to the freshest mapRef
-  // value inside the serialized queue. Rapid clicks accumulate.
+  // three-way merge inside saveQ — rapid clicks accumulate against the freshest mapRef value
   const saveFacts = (next: string[]) => {
     const base = memoryV1.facts;
     void saveSetting('agent_memory', (cur: unknown) => {
@@ -431,8 +402,6 @@ export default function AgentStudio() {
   );
 }
 
-// ---------- autonomia ----------
-
 const LEVELS: {
   key: AutonomyLevel;
   label: string;
@@ -486,9 +455,7 @@ function AutonomyCard({
   saved: Record<string, unknown>;
   onSave: (v: AgentAutonomySetting) => void;
 }) {
-  // The settings map is the freshest read — after a save it already carries
-  // the PUT value while `server` may still hold the previous GET's answer.
-  // Per-field precedence: saved wins when valid, server fills what's absent.
+  // saved wins per-field when valid; server fills what's absent — the map is fresher than the GET
   const savedLevel = AUTONOMY_LEVELS.includes(saved.level as AutonomyLevel)
     ? (saved.level as AutonomyLevel)
     : null;
@@ -593,8 +560,6 @@ function AutonomyCard({
     </div>
   );
 }
-
-// ---------- playbooks ----------
 
 const TRIGGER_LABEL: Record<string, string> = {
   staff: 'equipe',
@@ -771,8 +736,6 @@ function PlaybookCard({
   );
 }
 
-// ---------- memória v2 ----------
-
 function MemoryPanel({
   st,
   data,
@@ -793,8 +756,7 @@ function MemoryPanel({
   const [editId, setEditId] = useState<string | null>(null);
   const [editText, setEditText] = useState('');
 
-  // resolves whether the write landed — callers clear their local edit
-  // state only on success so a failed save never discards typed text
+  // resolves success — a failed save never discards typed text
   const run = async (fn: () => Promise<unknown>) => {
     try {
       await fn();
@@ -912,7 +874,6 @@ function MemoryPanel({
     </div>
   );
 
-  // segment items regroup by their segment name
   const segGroups = new Map<string, MemoryItem[]>();
   for (const m of data.segment) {
     const k = m.segment ?? '(sem nome)';
@@ -977,8 +938,6 @@ function MemoryPanel({
     </>
   );
 }
-
-// ---------- agenda (wakeups) ----------
 
 const WAKEUP_FILTERS: { key: string; label: string; empty: string }[] = [
   { key: 'pending', label: 'pendentes', empty: 'nada agendado' },
@@ -1129,8 +1088,6 @@ function WakeupList({
     </div>
   );
 }
-
-// ---------- movidos do Config ----------
 
 function PitchCard({
   value,
@@ -1439,8 +1396,7 @@ function GuardrailsCard({
         </div>
       </div>
       <div className="actions">
-        {/* merge over `value` — PUT replaces the whole setting and unknown
-            keys managed via raw JSON would otherwise be silently dropped */}
+        {/* PUT replaces the whole setting — merge over value or raw-JSON keys would be dropped */}
         <button
           className="btn primary"
           disabled={!dirty || invalid}

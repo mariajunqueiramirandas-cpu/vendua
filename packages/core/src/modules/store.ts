@@ -1,11 +1,3 @@
-/**
- * store module — store profile, hours, status.
- *
- * `status` is derived from `hours` unless manually overridden, per
- * docs/architecture/01-core.md#key-domain-behaviors. This is the logic that
- * drives blocking UI fleet-wide, so it is a pure, unit-tested function.
- */
-
 export interface WeeklyWindow {
   /** Days of week, 0=Sunday .. 6=Saturday. */
   days: number[];
@@ -91,20 +83,14 @@ function withinWindow(dayMinutes: number, w: WeeklyWindow, day: number): boolean
   const open = hhmmToMinutes(w.open);
   const close = hhmmToMinutes(w.close);
   if (close > open) return w.days.includes(day) && dayMinutes >= open && dayMinutes < close;
-  // Overnight window (e.g. 18:00–02:00): open portion on `day`, close lands
-  // on day+1, so a 01:00 visit counts as the *previous* day's window.
+  // overnight window: close lands day+1, so early-morning counts as the previous day's window
   const inOpenPart = w.days.includes(day) && dayMinutes >= open;
   const prevDay = (day + 6) % 7;
   const inClosePart = w.days.includes(prevDay) && dayMinutes < close;
   return inOpenPart || inClosePart;
 }
 
-/**
- * Next instant the store opens — exact window boundary, not a probe grid.
- * For each day offset (0–8) and each window, the candidate is that day's local
- * `open` wall time converted back to an instant; one correction pass absorbs
- * tz-offset drift between now and the candidate.
- */
+// next opening instant — wall-clock open converted back to an instant; one pass absorbs tz drift
 function nextOpen(hours: StoreHours, now: Date): Date | undefined {
   const tz = hours.timezone;
   let best: { t: number; openMin: number } | undefined;
@@ -114,14 +100,10 @@ function nextOpen(hours: StoreHours, now: Date): Date | undefined {
     for (const w of hours.windows) {
       if (!w.days.includes(day)) continue;
       const openMin = hhmmToMinutes(w.open);
-      // `probe` carries `now`'s time-of-day, so candidate = probe + (open −
-      // tod) − probe's local seconds/millis → lands on the wall-clock minute.
-      // A negative delta is fine for d>=1 — it just rewinds the probe to
-      // that day's opening wall time. What matters is whether the resulting
-      // instant is still in the future.
+      // candidate = probe + (open − tod) − local seconds/millis — lands on the wall-clock minute
       const t =
         probe.getTime() + (openMin - minutes) * 60_000 - seconds * 1000 - (probe.getTime() % 1000);
-      if (t <= now.getTime()) continue; // opening already passed
+      if (t <= now.getTime()) continue;
       if (!best || t < best.t) best = { t, openMin };
     }
     if (best && d === 0) break; // a same-day open is the earliest possible
@@ -143,8 +125,7 @@ export function deriveStatus(
     return resumesAt ? { status: 'paused', resumesAt } : { status: 'paused' };
   }
   if (override === 'closed') {
-    // A manual close persists until explicitly cleared — the next scheduled
-    // window can't predict it, so only a configured resumes_at is honest.
+    // manual close persists until cleared — only a configured resumes_at is honest
     return resumesAt ? { status: 'closed', resumesAt } : { status: 'closed' };
   }
   const tz = hours.timezone || 'America/Sao_Paulo';

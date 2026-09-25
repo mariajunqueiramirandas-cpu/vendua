@@ -1,13 +1,4 @@
-/**
- * modules/booking-page — the public /agendar page. Self-contained HTML +
- * vanilla JS (no build step, no React) served by app.ts. Reads ?t=, fetches
- * /book/v1/slots, books via /book/v1/book, cancels via /book/v1/cancel.
- *
- * Brand: cream paper, forest ink, lime accent — Space Grotesk for UI,
- * Instrument Serif italic for the greeting, mono eyebrows. The same tokens
- * apps/control and the email template use, inlined so the page has zero
- * asset dependencies beyond Google Fonts.
- */
+// public /agendar page — self-contained HTML+JS template (no build step) served by app.ts
 export const BOOKING_PAGE = `<!doctype html>
 <html lang="pt-BR">
 <head>
@@ -104,7 +95,6 @@ h1 {
   margin-block: 14px 8px;
 }
 .sub { color: var(--ink-2); font-size: 14px; }
-/* day groups */
 .day { margin-block-start: 30px; }
 .day-head {
   font-family: var(--mono);
@@ -136,8 +126,7 @@ h1 {
   border-color: var(--ink);
   transform: translateY(-1px);
 }
-/* details form — revealed on slot pick; sticky so the confirm action is
-   never parked below the fold of the day list */
+/* sticky so the confirm action stays above the fold of the day list */
 .details { margin-block-start: 30px; display: none; }
 .details.show {
   display: block;
@@ -196,7 +185,6 @@ h1 {
 .confirm:hover:not(:disabled) { background: var(--forest, #1a4f43); }
 .confirm:disabled { opacity: .5; cursor: default; }
 .confirm .when { font-weight: 400; opacity: .75; }
-/* states */
 .state { padding-block: 30px 10px; }
 .state p { color: var(--ink-2); font-size: 14px; }
 .center { text-align: center; }
@@ -299,8 +287,7 @@ footer {
   var MESES = ['jan','fev','mar','abr','mai','jun','jul','ago','set','out','nov','dez'];
   var DOW = { Sun: 0, Mon: 1, Tue: 2, Wed: 3, Thu: 4, Fri: 5, Sat: 6 };
 
-  // All wall-clock display is in the configured meeting tz (state.tz) —
-  // never the visitor's browser tz.
+  // all wall-clock display in meeting tz — never the browser tz
   function parts(iso) {
     var p = {};
     new Intl.DateTimeFormat('en-US', {
@@ -486,8 +473,7 @@ footer {
   function doCancel() {
     var btn = document.getElementById('doCancel');
     btn.disabled = true;
-    // Pin the meeting the page is showing — a retry must cancel THIS one,
-    // never the lead's next scheduled call.
+    // cancel the shown meeting, never the lead's next scheduled call
     api('/book/v1/cancel', { t: token, m: state.existing && state.existing.id }).then(function (r) {
       if (r.status === 200) {
         state.existing = null;

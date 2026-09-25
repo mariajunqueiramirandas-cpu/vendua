@@ -2,18 +2,11 @@ import { existsSync } from 'node:fs';
 import { join, relative } from 'node:path';
 import { storefrontDir } from './paths.ts';
 
-/**
- * dev / check / build / qa — thin wrappers around each storefront's own
- * package scripts plus the conformance suite when @vendua/conformance is
- * installed. Children inherit stdio; the command exits with the child code.
- */
-
 async function run(cmd: string[], cwd: string): Promise<number> {
   const proc = Bun.spawn(cmd, { cwd, stdio: ['inherit', 'inherit', 'inherit'] });
   return proc.exited;
 }
 
-/** The conformance bin, when the sibling workspace package is installed. */
 function conformanceBin(root: string): string | null {
   const local = join(root, 'node_modules', '.bin', 'vendua-conformance');
   if (existsSync(local)) return local;

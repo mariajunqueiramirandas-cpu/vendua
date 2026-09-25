@@ -1,8 +1,3 @@
-/**
- * Hand-cut marks — stroke-only SVG, drawn for Forn. `LoafMark` is the scored
- * country loaf; `CupMark` the small-goods/café figure; `MoonMark` the closed
- * sign; `BagMark` the paper sacola.
- */
 export function LoafMark({ size = 22 }: { size?: number }) {
   return (
     <svg width={size} height={size} viewBox="0 0 48 48" fill="none" aria-hidden="true">

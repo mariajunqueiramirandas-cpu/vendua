@@ -20,8 +20,7 @@
     if (!dialogEl) return;
     dialogEl.showModal();
     document.body.style.overflow = 'hidden';
-    // showModal() does not move focus in Safari — land it explicitly on the
-    // first control so keyboard users are never left on the inert background.
+    // Safari's showModal() doesn't move focus — land it on the first control explicitly
     dialogEl.querySelector<HTMLElement>('.tx-modal-close')?.focus();
     if (matchMedia('(prefers-reduced-motion: reduce)').matches) return;
     gsap.fromTo(
@@ -85,11 +84,9 @@
   onMount(() => {
     gsap.registerPlugin(ScrollTrigger);
     ScrollTrigger.config({ ignoreMobileResize: true });
-    // IntroVeil.svelte starts parting at ~1.6s; the hero timeline leads in slightly
-    // early so the reveal overlaps the veil opening instead of starting behind it.
+    // hero timeline leads slightly early so the reveal overlaps IntroVeil's ~1.6s parting
     const VEIL_LEAD_S = 1.5;
-    // Pinned tx timeline: durations are relative segment weights (travel vs. exit),
-    // and the tail adds scroll runway after the last panel, in viewport fractions.
+    // pinned tx timeline: durations are relative segment weights; tail adds scroll runway (viewport fractions)
     const TX_TRAVEL = 100;
     const TX_EXIT = 20;
     const TX_TAIL_VH = 0.38;
@@ -103,7 +100,7 @@
         ease: 'none',
         scrollTrigger: { trigger: root, start: 'top top', end: 'bottom bottom', scrub: 0.3 },
       });
-      // .intro-veil lives in +layout (IntroVeil.svelte), outside `root` — document scope is required.
+      // .intro-veil lives in +layout, outside `root` — document scope required
       const veil = document.querySelector<HTMLElement>('.intro-veil');
       const introDelay = veil && getComputedStyle(veil).display !== 'none' ? VEIL_LEAD_S : 0;
 
@@ -330,8 +327,7 @@
     return () => {
       mm.revert();
       summaries.forEach((s) => s.removeEventListener('click', onSummary));
-      // Modal tweens live outside the matchMedia context — kill them on unmount
-      // so mid-flight open/close animations and the body scroll-lock don't leak.
+      // modal tweens live outside matchMedia — kill them so mid-flight animations and the scroll-lock don't leak
       if (dialogEl) gsap.killTweensOf([dialogEl, ...dialogEl.querySelectorAll('*')]);
       document.body.style.overflow = '';
     };

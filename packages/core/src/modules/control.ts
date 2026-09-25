@@ -1,13 +1,6 @@
 import type { Sql } from '../platform/db.ts';
 
-/**
- * control module — shared plumbing for the staff surface (/control/v1).
- *
- * Every control-plane query runs inside a transaction with the
- * `vendua.control` GUC set — the RLS policies on leads/crm tables require it,
- * so tenant-path code running as the same vendua_app role can never touch
- * CRM tables.
- */
+// sets the vendua.control GUC — RLS policies on CRM tables require it
 export function controlTx<T>(sql: Sql, work: (tx: Sql) => Promise<T>): Promise<T> {
   return sql.begin(async (t) => {
     const tx = t as unknown as Sql;
@@ -22,14 +15,7 @@ export interface ClaimResult<T> {
   replayed: boolean;
 }
 
-/** Durable Idempotency-Key claim for control mutations — the platform
- *  counterpart of the tenant-scoped `idempotency()` wrapper (these tables
- *  have no tenant FK for that table's composite key). The first execution
- *  runs `work` in the claim transaction and stores its status+body; every
- *  retry replays that stored response. Claims are never evicted — a replay
- *  can never re-apply — and a concurrent same-key request blocks on the
- *  row's write lock until the winner commits. If `work` throws the claim
- *  rolls back with it, so errors are re-evaluated, never replayed. */
+// durable idempotency claim — first run stores status+body, retries replay it; claims never evicted, concurrent same-key blocks on the row lock
 export async function claimControl<T>(
   sql: Sql,
   key: string,

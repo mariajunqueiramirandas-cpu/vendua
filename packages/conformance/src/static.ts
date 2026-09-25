@@ -1,11 +1,3 @@
-/**
- * Static contract checks K01–K04 (docs/architecture/10-qa-pipeline.md).
- * K05 lives in k05.ts — it is a repo-diff check, not a storefront-source check.
- *
- * Deliberately boring: source scans + package.json allow-lists + one bun
- * subprocess that actually evaluates vendua.config.ts so override keys are
- * read from the real export, not regexed.
- */
 import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
 import { basename, join, resolve } from 'node:path';
 import { SLOT_KEYS } from '@vendua/kernel/config';
@@ -14,9 +6,7 @@ import type { CheckResult } from './report.ts';
 const SRC_EXT = new Set(['.ts', '.tsx', '.js', '.jsx', '.mts', '.cts']);
 const SKIP_DIRS = new Set(['node_modules', 'dist', 'qa-report', '.git', '.vite']);
 
-// Contract allow-list (03-storefront-contract.md): calibrated against the
-// storefront package.jsons in this repo. Runtime deps are a closed set;
-// devDeps allow build tooling + @types/* only.
+// dep allow-list per the storefront contract (03-storefront-contract.md)
 const DEP_ALLOW = new Set([
   'react',
   'react-dom',
@@ -34,8 +24,7 @@ const DEP_ALLOW_PREFIX = ['@react-three/'];
 const DEVDEP_ALLOW = new Set(['typescript', 'vite', '@vitejs/plugin-react']);
 const DEVDEP_ALLOW_PREFIX = ['@types/'];
 
-// Kernel subpath exports a storefront may legally import (kernel package.json
-// exports map). Everything deeper is a contract violation.
+// kernel subpaths a storefront may import — deeper is a contract violation
 const KERNEL_IMPORT_ALLOW = new Set([
   '@vendua/kernel',
   '@vendua/kernel/config',
@@ -44,11 +33,7 @@ const KERNEL_IMPORT_ALLOW = new Set([
 
 const RESERVED_ROUTE_PREFIXES = ['v1', 'storefront', 'checkout/v1', 'control'];
 
-// Contract v1 (03): the dev proxy may only forward the reserved API
-// prefixes, in object form — vite's string shorthand forces
-// `changeOrigin: true` and rewrites the Host header tenant resolution
-// depends on. Only the versioned mounts are legal: a bare '/storefront'
-// or '/checkout' proxy would swallow same-named page routes.
+// only versioned API prefixes — a bare '/storefront' or '/checkout' key would swallow same-named page routes
 const PROXY_KEY_ALLOW = new Set(['/storefront/v1', '/checkout/v1', '/v1', '/control']);
 
 function sourceFiles(dir: string): string[] {
@@ -61,8 +46,7 @@ function sourceFiles(dir: string): string[] {
       if (st.isDirectory()) {
         walk(p);
       } else if (SRC_EXT.has(p.slice(p.lastIndexOf('.')))) {
-        // Root-level *.config.* is infrastructure, not storefront source —
-        // vite.config.ts legitimately mentions API prefixes in proxy config.
+        // root *.config.* is infrastructure, not storefront source
         if (d === dir && /\.config\.[^.]+$/.test(name)) continue;
         out.push(p);
       }
@@ -107,8 +91,7 @@ async function k01(dir: string): Promise<CheckResult> {
   const cfg = join(dir, 'vendua.config.ts');
   if (!existsSync(cfg)) return fail(id, title, 'vendua.config.ts missing');
 
-  // Whole-package typecheck — the config is only meaningful if it compiles in
-  // its own project (kernel types, override factories, storefront tsconfig).
+  // the config must compile inside its own project context
   const pkgPath = join(dir, 'package.json');
   const hasCheck =
     existsSync(pkgPath) && Boolean((JSON.parse(readFileSync(pkgPath, 'utf8')).scripts ?? {}).check);
@@ -122,8 +105,6 @@ async function k01(dir: string): Promise<CheckResult> {
       `typecheck failed (${hasCheck ? 'bun run check' : 'tsc'}):\n${t.output.slice(-3000)}`,
     );
 
-  // Evaluate the real module in the storefront's own resolution context and
-  // read the override keys off the default export.
   const ev = await run(
     [
       'bun',
@@ -164,7 +145,6 @@ function k02(dir: string): CheckResult {
   if (!/<script[^>]+src=["']\/v1\/v\.js/.test(html))
     problems.push('index.html lacks <script src="/v1/v.js">');
 
-  // Entry = the module script in index.html; fall back to common entry names.
   const m = /<script[^>]+type=["']module["'][^>]+src=["']([^"']+)["']/.exec(html);
   const candidates = [m?.[1], 'main.tsx', 'src/main.tsx', 'main.ts', 'src/main.ts']
     .filter((x): x is string => Boolean(x))
@@ -177,20 +157,13 @@ function k02(dir: string): CheckResult {
     const src = readFileSync(entry, 'utf8')
       .replace(/\/\*[\s\S]*?\*\//g, '')
       .replace(/(^|[^:'"`])\/\/[^\n]*/g, '$1');
-    // Structural mount check: exactly one <VenduaProvider> element whose
-    // children contain <SystemSurfaces /> before the router mount. Source-order
-    // on the flat JSX text — not a full AST, but it catches the realistic
-    // failure shapes: missing/duplicated mounts, surfaces outside the provider,
-    // surfaces after the router.
+    // flat source-order mount check — one <VenduaProvider> wrapping <SystemSurfaces /> then the router
     const provOpen = /<VenduaProvider[\s>]/.exec(src)?.index;
     const provOpens = src.match(/<VenduaProvider[\s>]/g) ?? [];
     const provClose = src.indexOf('</VenduaProvider>');
     const surf = /<SystemSurfaces[\s/>]/.exec(src)?.index;
     const surfs = src.match(/<SystemSurfaces[\s/>]/g) ?? [];
-    // The router mount is whichever local name a react-router-dom import binds
-    // a router component to — `BrowserRouter as Router` makes `<Router>` the
-    // mount. <Routes> is a route table, not a router mount — it can legally
-    // live in a child component above the provider in source order.
+    // router mount = local name bound to a router import; <Routes> is a route table, not a mount
     const routerLocals = new Set<string>();
     for (const m of src.matchAll(/import\s*\{([^}]+)\}\s*from\s*['"]react-router-dom['"]/g))
       for (const spec of m[1]!.split(',')) {
@@ -299,8 +272,7 @@ function k04(dir: string): CheckResult {
         if (RESERVED_ROUTE_PREFIXES.some((pre) => p === pre || p.startsWith(`${pre}/`)))
           problems.push(`${loc}: route path '${m[1]}' mounts under reserved API prefix`);
       }
-      // Literal calls into commerce API paths — any call shape (fetch, axios,
-      // custom wrappers). /v1/v.js in index.html is a script tag, not a call.
+      // literal calls into commerce API paths — any call shape
       for (const m of line.matchAll(
         /\(\s*[`'"]([^`'"]*\/(?:checkout\/v1|storefront\/v1|control\/v1)[^`'"]*)[`'"]/g,
       )) {
@@ -321,8 +293,6 @@ async function k06(dir: string): Promise<CheckResult> {
   const vitePath = join(dir, 'vite.config.ts');
   if (!existsSync(vitePath)) return fail(id, title, 'vite.config.ts missing');
 
-  // Evaluate the real config (defineConfig may be an object, function, or
-  // promise) and read server.proxy off the resolved value.
   const ev = await run(
     [
       'bun',

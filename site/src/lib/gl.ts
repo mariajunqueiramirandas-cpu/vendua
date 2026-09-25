@@ -1,11 +1,7 @@
 const VERT = `#version 300 es
 void main(){vec2 v=vec2(float((gl_VertexID<<1)&2),float(gl_VertexID&2));gl_Position=vec4(v*2.-1.,0.,1.);}`;
 
-/**
- * Shared fragment prelude: GLSL version, float precision, the uniforms that
- * mountShaderCanvas drives itself (u_res/u_time/u_mouse/u_dark) and the output.
- * Compose as `const FRAG = FRAG_HEAD + '...extra uniforms...' + NOISE_GLSL + 'void main(){...}'`.
- */
+// shared fragment prelude — compose as FRAG_HEAD + extra uniforms + NOISE_GLSL + main()
 export const FRAG_HEAD = `#version 300 es
 precision highp float;
 uniform vec2 u_res;
@@ -15,7 +11,6 @@ uniform float u_dark;
 out vec4 O;
 `;
 
-/** Shared hash / value-noise / fbm helpers used by the shader components. */
 export const NOISE_GLSL = `
 float h21(vec2 p){return fract(sin(dot(p,vec2(127.1,311.7)))*43758.5453123);}
 vec2 h22(vec2 p){
@@ -44,11 +39,7 @@ export type ShaderCanvasOptions = {
   resScale?: number;
   /** Frozen u_time used for the static prefers-reduced-motion frame (default 14s). */
   stillTime?: number;
-  /**
-   * 'window' tracks the pointer across the viewport; 'local' maps it into
-   * canvas-relative coords and drives u_hover — works through overlaying
-   * elements because it listens on window and hit-tests the canvas rect.
-   */
+  /** 'window' = viewport coords; 'local' = canvas-relative + drives u_hover. */
   pointer?: 'window' | 'local';
   /** Runs every drawn frame — for uniforms that animate (u_open, u_hover…). */
   bindUniforms?: (
@@ -63,10 +54,7 @@ export type ShaderCanvasOptions = {
   ) => void;
 };
 
-/**
- * Frame-rate independent exponential smoothing: the same perceptual ease at
- * 30/60/120Hz. `lambda` ~ -60*ln(1-k) to match a per-frame factor k at 60fps.
- */
+// frame-rate independent exponential easing; lambda ~ -60*ln(1-k) for per-frame factor k @60fps
 export const damp = (current: number, target: number, lambda: number, dt: number): number =>
   target + (current - target) * Math.exp(-lambda * dt);
 

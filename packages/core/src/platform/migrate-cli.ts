@@ -8,9 +8,7 @@ const ran = await migrate(sql, join(import.meta.dir, '../../db/migrations'));
 const mlog = log.child({ mod: 'migrate' });
 if (ran.length) mlog.info({ applied: ran }, 'migrations applied');
 else mlog.info('already up to date');
-// Migration 0001 creates the vendua_app role with a local-dev password.
-// Deployments inject VENDUA_APP_DB_PASSWORD to rotate it — the literal in the
-// migration must never be the production credential.
+// the literal password in migration 0001 is dev-only — prod rotates it via VENDUA_APP_DB_PASSWORD
 const appPassword = process.env.VENDUA_APP_DB_PASSWORD;
 if (appPassword) {
   await sql.unsafe(

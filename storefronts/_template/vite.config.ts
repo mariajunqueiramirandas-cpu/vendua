@@ -1,13 +1,7 @@
 import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
 
-/**
- * Dev server. Port is tenant-significant: `vendua scaffold` registers a
- * `localhost:<port>` domain row and Core resolves tenants from the Host
- * header — so proxies MUST stay object-form (changeOrigin stays false) and
- * must use the narrow '/checkout/v1' key, never bare '/checkout' (that would
- * swallow the SPA route on reload).
- */
+// port is tenant-significant; object-form proxies keep Host intact — bare '/checkout' would swallow the SPA route
 export default defineConfig({
   plugins: [react()],
   publicDir: 'assets',

@@ -6,12 +6,6 @@ import { Price } from './_components/Price.tsx';
 import { ProductFigure, type FigureVariant } from './_components/ProductFigure.tsx';
 import { Skeleton } from './_components/Skeleton.tsx';
 
-/**
- * Landing — the opening spread of the recipe notebook: overline, serif
- * masthead, a taped print, marginal numbered values, then live highlights
- * from the Core catalog.
- */
-
 const FEATURED_LIMIT = 4;
 
 const twoDigits = (n: number) => String(n).padStart(2, '0');
@@ -55,8 +49,7 @@ export function LandingPage() {
     .flatMap((c) => c.products)
     .filter((p) => p.status === 'active')
     .slice(0, FEATURED_LIMIT);
-  // Combos don't exist in Core (OBSERVATIONS.md) — the seeded "Kits" category
-  // carries the equivalent products, so it gets the reference's combos strip.
+  // no combos concept in Core — the seeded "Kits" category carries them
   const kits = categories.find((c) => (c as { slug?: string }).slug === 'kits')?.products ?? [];
   const city = store?.city ?? 'Saquarema · RJ';
 
@@ -71,7 +64,6 @@ export function LandingPage() {
 
   return (
     <main>
-      {/* Opening spread */}
       <section className="container" style={{ paddingBlock: '40px 48px' }}>
         <p className="eyebrow rise-in rise-in-1">Feito à mão em {city}</p>
         <div className="hero-grid" style={{ marginTop: 16 }}>
@@ -126,7 +118,6 @@ export function LandingPage() {
         </dl>
       </section>
 
-      {/* Highlights from the live catalog */}
       <section className="container ficha-rule" style={{ paddingBlock: '32px 64px' }}>
         <div className="section-head">
           <p className="eyebrow">Ficha do dia</p>
@@ -178,7 +169,6 @@ export function LandingPage() {
         </Link>
       </section>
 
-      {/* Kits — the combos strip, on the category that holds kit products */}
       {kits.length > 0 ? (
         <section className="container ficha-rule" style={{ paddingBlock: '32px 64px' }}>
           <div className="section-head">
@@ -218,7 +208,6 @@ export function LandingPage() {
         </section>
       ) : null}
 
-      {/* Nossa história */}
       <section id="nossa-historia" className="ficha-rule" style={{ scrollMarginTop: 120 }}>
         <div className="container" style={{ paddingBlock: 64 }}>
           <p className="eyebrow" style={{ marginBottom: 24 }}>
@@ -253,7 +242,6 @@ export function LandingPage() {
         </div>
       </section>
 
-      {/* Como pedir */}
       <section className="container ficha-rule" style={{ paddingBlock: '32px 64px' }}>
         <div className="section-head">
           <p className="eyebrow">Como pedir</p>
@@ -277,7 +265,6 @@ export function LandingPage() {
         </p>
       </section>
 
-      {/* Fecho */}
       <section className="ficha-rule closing">
         <div className="container" style={{ paddingBlock: 64 }}>
           <p className="eyebrow">Feito à mão em Saquarema</p>

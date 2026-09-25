@@ -2,12 +2,6 @@ import { useMemo, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { AddToCart, ApiError, formatCents, useKernel, useProduct, useStore } from '@vendua/kernel';
 
-/**
- * Product — modifier selection straight from Core's group shape
- * (required/min/max); single-select groups render radios, multi groups render
- * checkboxes capped at maxSelect. The chosen modifier ids go into the
- * AddToCart primitive untouched — Core prices the line.
- */
 export function ProductPage() {
   const { slug = '' } = useParams();
   const { product, loading, error } = useProduct(slug);

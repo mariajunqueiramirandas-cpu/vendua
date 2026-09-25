@@ -1,8 +1,6 @@
 import { defineStorefront } from '@vendua/kernel';
 
-// Brasa Burger — a smash-burger bar in Rio's Zona Portuária. Night service,
-// chapa, port-side industrial warmth. Tokens drive the Kernel's system
-// surfaces AND the storefront's own styles (--v-* vars on :root).
+// tokens drive Kernel system surfaces AND the storefront's own --v-* styles
 export default defineStorefront({
   contract: 1,
   ring: 'stable',

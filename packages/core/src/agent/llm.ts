@@ -1,21 +1,11 @@
 import { OpenRouter } from '@openrouter/sdk';
 import type { IntegrationRow } from '../modules/integrations.ts';
 
-/**
- * agent/llm — the provider-agnostic model layer. `LlmProvider` is a small
- * tool-use chat interface; drivers: `gemini` (AI Studio generateContent —
- * the default deployment driver), `openrouter` (official @openrouter/sdk),
- * `anthropic` and `openai` (raw fetch), and `mock` (deterministic,
- * scriptable — dev and tests).
- */
-
 export interface ToolCall {
   id: string;
   name: string;
   args: Record<string, unknown>;
-  /** Gemini 3 signs model-emitted function calls; the signature must be
-   *  replayed verbatim on the functionCall part in subsequent history or the
-   *  API 400s. Other drivers ignore it. */
+  /** Gemini-signed call — replay verbatim on the functionCall part or the API 400s. */
   thoughtSignature?: string;
 }
 
@@ -43,14 +33,7 @@ export interface LlmProvider {
   chat(input: { system: string; messages: AgentMessage[]; tools: AgentTool[] }): Promise<LlmResult>;
 }
 
-// ---------------------------------------------------------------------------
-// cost estimation — every driver but OpenRouter reports costUsd: null, so a
-// model-only lead would never reach the lifetime cost cap. When the provider
-// reports no USD we estimate from journaled tokens × per-1M list prices,
-// keyed by the model id provider.name embeds (`driver:model`). Free-tier
-// models rate 0; an unmatched model gets a conservative mid-tier default —
-// a cost cap must err toward counting spend, not ignoring it.
-// ---------------------------------------------------------------------------
+// cost estimation — providers that don't report USD get tokens × per-1M list prices so cost caps still fire
 const MODEL_USD_PER_1M: Record<string, { in: number; out: number }> = {
   'gemini-3.5-flash-lite': { in: 0.1, out: 0.4 },
   'claude-sonnet-4-5': { in: 3.0, out: 15.0 },
@@ -63,8 +46,7 @@ export function estimateModelCostUsd(
   tokensIn: number,
   tokensOut: number,
 ): number {
-  // provider.name is `driver:model` (openrouter's model can itself contain
-  // a ':' — `liquid/lfm-2.5-2.6b:free` → strip the FIRST segment only).
+  // strip the FIRST segment only — openrouter model ids can contain ':'
   const model = providerName.includes(':')
     ? providerName.slice(providerName.indexOf(':') + 1)
     : providerName;
@@ -73,14 +55,7 @@ export function estimateModelCostUsd(
   return (tokensIn * rate.in + tokensOut * rate.out) / 1_000_000;
 }
 
-// ---------------------------------------------------------------------------
-// rate limiting — providerFor builds a fresh provider per run, so the throttle
-// lives at module level and keys by driver: a shared slot chain spaces calls
-// to at most RPM, and every call retries 429/5xx honoring Retry-After. This is
-// what keeps parallel drain batches, the sim persona, and the judge under
-// Gemini's free-tier 15 RPM cap instead of every caller bursting at once.
-// ---------------------------------------------------------------------------
-
+// rate limiting — module-level slot chain spaces calls to RPM; retries honor Retry-After
 const slotChains = new Map<string, Promise<void>>();
 const lastCallAt = new Map<string, number>();
 const sleepMs = (ms: number) => new Promise((r) => setTimeout(r, ms));
@@ -97,14 +72,10 @@ async function takeSlot(key: string, minGapMs: number) {
 
 const RETRYABLE = /429|quota|rate.?limit|resource_exhausted|overload|temporarily|5\d\d/i;
 
-/** Hard bound on a single provider call — a hung socket would otherwise
- *  stall forever while the heartbeat keeps alive_at fresh, so the run
- *  could never reclaim. Provider config may override via `timeoutMs`. */
+// hard bound per provider call — a hung socket would stall the run forever; config may override via timeoutMs
 const LLM_CALL_TIMEOUT_MS = 120_000;
 
-// AbortSignal.timeout takes an integer within its platform range — a
-// fractional or oversized integration config value would throw at every
-// fetch, so anything outside the valid shape falls back to the default.
+// AbortSignal.timeout needs a valid positive int32 — invalid config falls back to the default
 const configTimeoutMs = (config: Record<string, unknown>): number =>
   typeof config.timeoutMs === 'number' &&
   Number.isInteger(config.timeoutMs) &&
@@ -124,9 +95,7 @@ function retryAfterMs(e: unknown): number | null {
   return Number.isFinite(at) ? Math.min(Math.max(at - Date.now(), 0), 90_000) : null;
 }
 
-/** Calls `fn` through the driver's slot chain, retrying provider-side 429/5xx
- *  up to 6 attempts (Retry-After header first, else capped exp. backoff).
- *  Non-retryable errors (400s, auth) throw on the first pass. */
+// runs fn through the slot chain; retries 429/5xx honoring Retry-After
 async function llmCall<T>(key: string, minGapMs: number, fn: () => Promise<T>): Promise<T> {
   const maxAttempts = 6;
   for (let attempt = 0; ; attempt++) {
@@ -138,8 +107,7 @@ async function llmCall<T>(key: string, minGapMs: number, fn: () => Promise<T>): 
       const retryable =
         status === 429 ||
         (typeof status === 'number' && status >= 500) ||
-        // AbortSignal.timeout's DOMException — a hung provider socket is a
-        // transient fault like a 5xx, so retry instead of insta-failing.
+        // a hung provider socket is transient like a 5xx — retry
         (e as { name?: string }).name === 'TimeoutError' ||
         RETRYABLE.test(e instanceof Error ? e.message : String(e));
       if (!retryable || attempt >= maxAttempts - 1) throw e;
@@ -148,8 +116,7 @@ async function llmCall<T>(key: string, minGapMs: number, fn: () => Promise<T>): 
   }
 }
 
-/** fetch wrapper that throws a headers-carrying error on non-2xx so llmCall
- *  can read Retry-After. */
+// throws a headers-carrying error on non-2xx so llmCall can read Retry-After
 async function llmFetch(
   url: string,
   init: RequestInit,
@@ -167,10 +134,7 @@ async function llmFetch(
   return res;
 }
 
-// ---------------------------------------------------------------------------
-// openrouter — official SDK, OpenAI-compatible tool calling
-// ---------------------------------------------------------------------------
-
+// openrouter — official SDK
 function openrouterProvider(
   config: Record<string, unknown>,
   secretRef: string | null,
@@ -203,9 +167,7 @@ function openrouterProvider(
           orMessages.push({ role: m.role, content: m.content });
         }
       }
-      // stream:false inside chatRequest → the response is ChatResult; the
-      // SDK's union type only narrows on a top-level `stream` flag, so the
-      // cast is the honest read of what came back.
+      // the SDK narrows on a top-level stream flag, so the cast is the honest read
       const res = (await llmCall('openrouter', 0, () =>
         client.chat.send({
           chatRequest: {
@@ -257,16 +219,7 @@ function openrouterProvider(
   };
 }
 
-// ---------------------------------------------------------------------------
-// gemini — AI Studio generateContent. Gemini turns are (role, parts[]) with
-// roles user/model only: function calls ride in model parts and EVERY
-// functionResponse for a model turn's calls must sit in the single user turn
-// that follows — consecutive `tool` messages therefore merge into one user
-// turn. Gemini 3 also requires each functionCall part's thoughtSignature
-// replayed verbatim (captured on ToolCall.thoughtSignature), and echoes
-// its own call ids — we pass both back through.
-// ---------------------------------------------------------------------------
-
+// gemini generateContent — functionResponses merge into one user turn; thoughtSignature replays verbatim
 function geminiProvider(config: Record<string, unknown>, secretRef: string | null): LlmProvider {
   const apiKey = secretRef ? process.env[secretRef] : process.env.GEMINI_API_KEY;
   if (!apiKey) throw new Error(`missing API key — set ${secretRef ?? 'GEMINI_API_KEY'}`);
@@ -282,16 +235,13 @@ function geminiProvider(config: Record<string, unknown>, secretRef: string | nul
       const contents: { role: string; parts: Part[] }[] = [];
       for (const m of messages) {
         if (m.role === 'tool') {
-          // tool result → functionResponse part in the pending user turn (the
-          // previous one when it's all functionResponses, else a fresh one).
+          // functionResponse joins the pending all-responses user turn, else a fresh one
           let turn = contents[contents.length - 1];
           if (!turn || turn.role !== 'user' || !turn.parts.every((p) => 'functionResponse' in p)) {
             turn = { role: 'user', parts: [] };
             contents.push(turn);
           }
-          // response must be an object — the tool log stores a JSON string,
-          // so parse back and wrap anything that isn't a plain object (tools
-          // like search_leads return arrays) under `result`.
+          // functionResponse.response must be an object — wrap arrays/strings under result
           let result: unknown = m.content;
           try {
             result = JSON.parse(m.content);
@@ -320,9 +270,7 @@ function geminiProvider(config: Record<string, unknown>, secretRef: string | nul
         contents.push({ role: 'user', parts: [{ text: m.content }] });
       }
       const data = await llmCall('gemini', minGapMs, async () => {
-        // Body read stays inside the retry wrapper — the abort signal is
-        // armed until the deadline, so a stalled body must retry the same
-        // as a stalled request.
+        // body read stays inside the retry wrapper — a stalled body retries like a stalled request
         const res = await llmFetch(
           `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`,
           {
@@ -374,11 +322,7 @@ function geminiProvider(config: Record<string, unknown>, secretRef: string | nul
         );
       }
       const parts = cand.content?.parts ?? [];
-      // An empty STOP candidate is a legal 'done' ONLY mid-run, after the
-      // model already acted (tool results in history prove it). Empty STOP on
-      // the first turn means the model silently produced nothing — keep it a
-      // visible error so the run fails instead of ending a real conversation
-      // with no answer. Abnormal finishes (SAFETY/RECITATION) always throw.
+      // empty STOP is legal 'done' only mid-run (tool results in history) — first-turn empty means the model produced nothing
       if (
         !parts.some((p) => p.text || p.functionCall) &&
         !(cand.finishReason === 'STOP' && messages.some((m) => m.role === 'tool'))
@@ -406,10 +350,7 @@ function geminiProvider(config: Record<string, unknown>, secretRef: string | nul
   };
 }
 
-// ---------------------------------------------------------------------------
-// anthropic / openai — thin fetch drivers, same normalized shape
-// ---------------------------------------------------------------------------
-
+// anthropic / openai — thin fetch drivers
 function anthropicProvider(config: Record<string, unknown>, secretRef: string | null): LlmProvider {
   const apiKey = secretRef ? process.env[secretRef] : process.env.ANTHROPIC_API_KEY;
   if (!apiKey) throw new Error(`missing API key — set ${secretRef ?? 'ANTHROPIC_API_KEY'}`);
@@ -562,21 +503,13 @@ function openaiProvider(config: Record<string, unknown>, secretRef: string | nul
   };
 }
 
-// ---------------------------------------------------------------------------
-// mock — deterministic scripted provider for dev and tests. The script comes
-// from run params (`script`) or integration config: an array of steps, each
-// {text?, toolCalls?: [{name, args}]}, consumed in order per chat() call.
-// ---------------------------------------------------------------------------
-
+// mock — deterministic scripted provider; steps consumed in order per chat()
 export interface MockStep {
   text?: string;
   toolCalls?: { name: string; args?: Record<string, unknown> }[];
-  /** Dev/demo pacing — sleep before this step lands, so scripted runs read
-   *  live on the launch stage (and in recordings) instead of flashing past. */
+  /** sleep before this step lands — demo pacing for live-looking scripted runs. */
   delayMs?: number;
-  /** Reported token usage (default 0) — lets tests exercise the token→USD
-   *  cost-estimation path without a live provider. costUsd stays null
-   *  unless set, like the real drivers. */
+  /** reported token usage — exercises the cost-estimation path without a live provider. */
   tokensIn?: number;
   tokensOut?: number;
   costUsd?: number | null;
@@ -607,12 +540,7 @@ export function mockProvider(script: MockStep[], name = 'mock'): LlmProvider {
   };
 }
 
-// ---------------------------------------------------------------------------
-// test seam — evals install a scripted provider that must reach EVERY run
-// kind, including runs whose params are minted inside the pipeline
-// (ingestInbound's {origin:'inbound'} carries no script). Production code
-// never sets it; it exists only for `bun test`.
-// ---------------------------------------------------------------------------
+// test seam — a scripted provider reachable by every run kind; production never sets it
 let testProvider: LlmProvider | null = null;
 
 /** Test-only provider override — consulted by providerFor ahead of every
@@ -621,9 +549,7 @@ export function setTestProvider(provider: LlmProvider | null): void {
   testProvider = provider;
 }
 
-/** Resolve the active LLM provider for a run: enabled 'llm' integration's
- *  driver, or `mock` when none is configured (dev default). Run params may
- *  carry a `script` that a mock driver consumes. */
+// provider for a run — integration driver, or mock (params/config may carry a script)
 export function providerFor(
   integration: IntegrationRow | null,
   runParams: Record<string, unknown> = {},
@@ -643,8 +569,7 @@ export function providerFor(
       return openaiProvider(config, secretRef);
     case 'mock': {
       const script = (runParams.script ?? config.script ?? []) as MockStep[];
-      // Tests may masquerade the mock as a priced driver — provider.name is
-      // what the token-rate lookup keys on for cost estimation.
+      // tests may masquerade the mock as a priced driver — provider.name keys the rate lookup
       const name = (runParams.providerName ?? config.providerName) as string | undefined;
       return mockProvider(script, name ?? 'mock');
     }
