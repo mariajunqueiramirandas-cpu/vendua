@@ -4,11 +4,7 @@ import { AddToCart, SurfaceRegion, useProduct, useStore } from '@vendua/kernel';
 import type { ProductDetail } from '@vendua/kernel';
 import { BoardError, cents, EmberBars, ErrorPlate } from './_ui';
 
-/**
- * Produto — a spec plate: stencil name, mono price, and the "Ponto" dial —
- * doneness as fire exposure. Required groups gate the CTA client-side for UX;
- * Core still enforces (MODIFIER_REQUIRED is rendered if it ever fires).
- */
+// Required groups gate the CTA client-side for UX; Core still enforces.
 export function Produto() {
   const { slug = '' } = useParams();
   const { product, loading, error } = useProduct(slug);

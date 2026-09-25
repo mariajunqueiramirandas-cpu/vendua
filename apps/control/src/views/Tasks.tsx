@@ -23,10 +23,7 @@ export default function Tasks() {
   const [tasks, setTasks] = useState<Task[]>([]);
   const [showDone, setShowDone] = useState(false);
 
-  // A response is usable only for the filter it was fetched under: reject
-  // it when that filter is no longer displayed, but otherwise an older
-  // same-filter success still commits unless a newer success already did —
-  // a failed refresh never discards usable tasks.
+  // A response commits only while its filter is still displayed and no newer success landed.
   const reqSeq = useRef(0);
   const okSeq = useRef(0);
   const shownFilter = useRef(showDone);

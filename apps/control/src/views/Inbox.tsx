@@ -6,8 +6,7 @@ import { onControlEvent } from '../events.ts';
 import { Avatar, Empty, Page, StateChip, rel } from '../components.tsx';
 
 const CH_LABEL: Record<string, string> = { email: 'email', whatsapp: 'whatsapp', manual: 'manual' };
-/** Channels a fresh conversation can start on — gated by what the lead card
- *  actually carries (manual is always available: it never dispatches). */
+// Channels a fresh conversation can start on — gated by lead data (manual never dispatches).
 const CH_PICK: { ch: string; has: (l: LeadListItem) => boolean }[] = [
   { ch: 'whatsapp', has: (l) => Boolean(l.whatsapp) },
   { ch: 'email', has: (l) => Boolean(l.email) },
@@ -29,9 +28,7 @@ export default function InboxView() {
   const endRef = useRef<HTMLDivElement>(null);
   const subjRef = useRef<HTMLInputElement>(null);
 
-  // Newest-successful wins, scoped to the current filter — an older
-  // response still commits unless a newer success already landed, but never
-  // one whose captured filter is no longer displayed.
+  // Newest-successful wins, scoped to the current filter.
   const listSeq = useRef(0);
   const listOk = useRef(0);
   const listFor = useRef('');
@@ -47,7 +44,6 @@ export default function InboxView() {
   }, [chan, q]);
   useEffect(refreshList, [refreshList]);
 
-  // "nova conversa" picker — debounced lead search while the panel is open.
   const pickSeq = useRef(0);
   useEffect(() => {
     if (!newOpen) return;
@@ -55,7 +51,7 @@ export default function InboxView() {
     const t = setTimeout(() => {
       api
         .leads({ ...(leadQ ? { q: leadQ } : {}) })
-        // a slower response for an earlier query can't overwrite the latest
+        // a slower response can't overwrite a newer query's
         .then((r) => {
           if (req === pickSeq.current) setLeadHits(r.leads);
         });
@@ -71,10 +67,7 @@ export default function InboxView() {
     nav(`/inbox/${r.thread.id}`);
   };
 
-  // Same success-watermark scoped to the URL's thread — a stale response
-  // commits only while its thread is still the open one and no newer
-  // success landed, so the composer can never send to threadId while the
-  // screen shows another conversation.
+  // Same watermark scoped to the open thread — the composer can't send to a stale threadId.
   const reqSeq = useRef(0);
   const okSeq = useRef(0);
   const viewFor = useRef<string | undefined>(threadId);
@@ -95,8 +88,7 @@ export default function InboxView() {
   }, [threadId]);
   useEffect(loadThread, [loadThread]);
 
-  // thread.message accelerates both reads — a ref naming another thread
-  // still refreshes the row, only the open-thread refetch is skipped.
+  // thread.message refreshes the list always; the open thread only when ref matches.
   useEffect(
     () =>
       onControlEvent('thread.message', (e) => {
@@ -129,10 +121,7 @@ export default function InboxView() {
     refreshList();
   };
 
-  // "agente sugere" — a draftOnly run bound to this thread: the agent reads
-  // lead + conversation and leaves a draft in the approvals lane instead of
-  // sending. reply when there's an inbound to answer, outreach for the first
-  // touch on an empty thread.
+  // draftOnly run bound to this thread — 'reply' when an inbound exists, 'outreach' otherwise.
   const suggest = () => {
     const v = view;
     if (!v || v.thread.id !== threadId || assistBusy) return;

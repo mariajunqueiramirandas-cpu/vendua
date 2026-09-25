@@ -5,13 +5,8 @@ import { emitControlEvent } from './control-events.ts';
 import { leadJson, type LeadRow } from './leads.ts';
 import { DEFAULT_GUARDRAILS, getSettingTx, type Guardrails } from './integrations.ts';
 
-/**
- * threads module — the unified inbox. One thread per (lead, channel):
- * `email`, `whatsapp` (Baileys), `manual` (staff-logged side conversations).
- * Provider sends live in src/agent/channels — this module owns persistence
- * and the draft→approve→dispatch lifecycle only, so modules never import the
- * agent layer (the agent's tools call INTO these functions).
- */
+// Unified inbox: one thread per (lead, channel); owns persistence + the
+// draft→approve→dispatch lifecycle — provider sends live in agent/channels.
 
 export const CHANNELS = ['email', 'whatsapp', 'manual'] as const;
 export type Channel = (typeof CHANNELS)[number];
@@ -213,8 +208,7 @@ export async function threadsForLead(sql: Sql, leadId: string) {
   return rows.map(threadJson);
 }
 
-/** find-or-create inside the caller's transaction — the unique (lead_id,
- *  channel) key makes concurrent inbounds converge on one thread. */
+/** The unique (lead_id, channel) key makes concurrent inbounds converge on one thread. */
 export async function ensureThread(
   tx: Sql,
   leadId: string,
@@ -243,19 +237,16 @@ export interface InboundResult {
   alreadySeen: boolean;
 }
 
-/** Inbound message → lead lookup by contact point → thread → message →
- *  activity. Unknown contacts create a fresh `lead` row — inbound interest
- *  is the best kind of lead. Returns ids so the caller can enqueue a reply
- *  run. Idempotent on provider_message_id. */
+// Lead lookup → thread → message → activity; unknown contacts create a lead.
+// Idempotent on provider_message_id.
 export async function addInboundMessage(
   sql: Sql,
   input: {
     channel: Channel;
     /** sender's address/jid as the provider reports it */
     from: string;
-    /** the sender's complementary provider address when the channel carried
-     *  one — whatsapp LID ↔ phone-number jid pairs — matched as an alias so
-     *  a contact first seen under the other form doesn't re-mint a lead */
+    /** the sender's complementary provider address (whatsapp LID ↔ phone jid) —
+     *  matched as an alias so a contact first seen under the other form doesn't re-mint a lead */
     fromAlias?: string;
     fromName?: string;
     subject?: string;
@@ -278,9 +269,7 @@ export async function addInboundMessage(
   if (!body) throw new HttpError(422, 'BAD_REQUEST', 'body is required');
   const direction = input.direction ?? 'in';
   const result = await controlTx(sql, async (tx) => {
-    // Provider ids are namespaced per channel ('whatsapp:AB12…') — they share
-    // no global namespace, so a raw id stored from one channel could suppress
-    // a legitimate inbound on another.
+    // Provider ids are namespaced per channel — they share no global namespace.
     const pmid = input.providerMessageId ? `${input.channel}:${input.providerMessageId}` : null;
     if (pmid) {
       const seen = await tx`
@@ -310,11 +299,8 @@ export async function addInboundMessage(
       leadId = rows[0]?.id ?? null;
     } else {
       const digits = from.replace(/\D/g, '');
-      // `fromAlias` is the same sender's complementary provider address —
-      // whatsapp stanzas carry LID ↔ phone-number jid pairs. `whatsapp`
-      // matches on either alias so a contact first seen under its lid isn't
-      // re-minted when a stanza later arrives PN-addressed; `phone` stays
-      // primary-only since the lid is not a phone number.
+      // `whatsapp` matches on either alias (LID ↔ PN jid pair) so a lid-first contact
+      // isn't re-minted; `phone` stays primary-only — the lid is not a phone number.
       const altDigits = input.fromAlias?.replace(/\D/g, '') ?? '';
       const whatsappDigits = [digits, altDigits].filter((d) => d.length >= 6);
       if (whatsappDigits.length) {
@@ -326,13 +312,9 @@ export async function addInboundMessage(
         `;
         leadId = rows[0]?.id ?? null;
       }
-      // The sender number is proven for a matched lead too: an empty
-      // whatsapp (e.g. phone-only match) takes it verified; a digit-matching
-      // stored value gets verified; a different stored value keeps its own
-      // provenance — inbound proves `from`, not that other number. The one
-      // exception: when the stored value is the message's own alias, the
-      // provider proved both addresses are this contact — canonicalize to
-      // `from` so later messages converge instead of splitting the lead.
+      // Inbound proves `from`: an empty or digit-matching whatsapp takes it verified;
+      // a different stored value keeps provenance — unless it IS the message's own alias
+      // (provider proved both), then canonicalize to `from` so later messages converge.
       if (leadId && input.channel === 'whatsapp') {
         const hasAlt = altDigits.length >= 6;
         await tx`
@@ -361,8 +343,7 @@ export async function addInboundMessage(
       };
       if (input.channel === 'email') fields.email = from;
       else {
-        // An inbound whatsapp number is self-evidencing — they messaged us
-        // from it — so the provenance flag lands with the value.
+        // An inbound whatsapp number is self-evidencing.
         fields.whatsapp = from;
         fields.whatsapp_verified = true;
       }
@@ -394,29 +375,22 @@ export async function addInboundMessage(
       `
     )[0]!;
 
-    // greatest(): history chunks arrive out of order — an older timestamp
-    // must not walk last_message_at backwards past a live message.
+    // greatest(): history chunks arrive out of order.
     await tx`
       update lead_threads set last_message_at = greatest(last_message_at, ${input.sentAt ?? new Date()})
       where id = ${thread.id}
     `;
     await tx`update leads set updated_at = now() where id = ${leadId}`;
     if (direction === 'in' && !input.historical) {
-      // A reply retires the automation's pending nudge — cadence floors and
-      // agent-self-scheduled dates ('auto') alike are its own bookkeeping;
-      // the reply run re-commits any still-wanted follow-up with fresh
-      // context. 'requested', 'staff' AND legacy 'agent' survive: 0025
-      // backfilled every pre-existing date to 'agent', mixing self-schedules
-      // with lead-asked callbacks ("me chama terça") — provenance is
-      // unrecoverable, so those rows are treated as promises a reply can't
-      // cancel. New self-schedules stamp 'auto' and clear normally.
+      // A reply clears 'cadence'/'auto' nudges (the reply run re-commits what's still
+      // wanted); 'requested'/'staff'/legacy 'agent' survive — 0025 made their provenance
+      // unrecoverable, so they're treated as promises a reply can't cancel.
       await tx`
         update leads set next_action_at = null, next_action_source = null
         where id = ${leadId} and next_action_source in ('cadence', 'auto')
       `;
     }
-    // History import would flood the activity feed with one row per old
-    // message — the messages themselves already live in lead_messages.
+    // History import would flood the activity feed.
     if (!input.historical) {
       await tx`
         insert into lead_activities (lead_id, kind, body, meta, created_by)
@@ -435,8 +409,7 @@ export async function addInboundMessage(
   return result;
 }
 
-/** Staff/agent compose → status 'draft' when approval is required, 'queued'
- *  when it can ship. Dispatch happens in src/agent/send.ts. */
+/** 'draft' when approval is required, 'queued' when it can ship. Dispatch is in agent/send.ts. */
 export async function composeMessage(
   sql: Sql,
   input: {
@@ -473,8 +446,7 @@ export async function composeMessage(
   return res;
 }
 
-/** Tx-local compose — the send_message tool calls this inside the same
- *  transaction that took the lead's advisory lock and checked guardrails. */
+// Tx-local compose — send_message calls this under the lead's advisory lock.
 export async function composeMessageTx(
   tx: Sql,
   input: {
@@ -509,10 +481,7 @@ export async function composeMessageTx(
     await tx`update lead_threads set subject = ${input.subjectOverride} where id = ${thread.id}`;
     thread.subject = input.subjectOverride;
   }
-  // Snapshot the effective subject on the row — dispatch must send what was
-  // approved. thread.subject is already the effective value: ensureThread
-  // coalesced a plain `subject` into an empty thread, and subjectOverride
-  // above replaced it outright.
+  // Snapshot the effective subject — dispatch must send what was approved (thread.subject is already effective).
   const messageSubject = thread.subject;
   const message = (
     await tx<MessageRow[]>`
@@ -548,11 +517,8 @@ export async function approveMessage(
     const g = await getSettingTx<Partial<Guardrails>>(tx, 'guardrails', {});
     const staleDays = g.staleDraftDays ?? DEFAULT_GUARDRAILS.staleDraftDays;
     if (staleDays > 0) {
-      // capfin BEFORE the draft row lock: the inbound gate takes capfin
-      // first and locks this same message (its draft supersede) — a
-      // message-lock → capfin order here is the AB-BA the capfin-first
-      // rule exists to prevent, and an aborted gate leaves a recorded
-      // inbound with no reply run.
+      // capfin BEFORE the draft row lock — the inbound gate takes capfin first; the
+      // reverse order here is the AB-BA deadlock the capfin-first rule prevents.
       const leadRow = await tx<{ lead_id: string }[]>`
         select t.lead_id from lead_messages m
         join lead_threads t on t.id = m.thread_id
@@ -562,16 +528,10 @@ export async function approveMessage(
         const { capLockTx } = await import('../agent/runner.ts');
         await capLockTx(tx, leadRow[0].lead_id);
       }
-      // A stale AGENT draft never ships: the copy was written against
-      // week-old lead state. Supersede it and enqueue a draftOnly outreach
-      // run — the recomposed draft lands back in this queue for a second
-      // review. Staff drafts are exempt (staff owns their own cadence).
-      // The exists() mirrors claimRun's lead gate + the compose-time thread
-      // gate: a lead that can't run (off/archived/unsubscribed/disabled
-      // thread) falls through to a normal approve — the alternative is
-      // losing the draft to a run queued forever. The gate deliberately
-      // skips the cost cap: a capped lead's regen refusal is handled below
-      // as an approve refusal, never as a silent send of the expired text.
+      // A stale AGENT draft never ships — supersede and enqueue a draftOnly regen
+      // (staff drafts exempt). The exists() mirrors claimRun's lead gate: an unrunnable
+      // lead falls through to a normal approve. The cap is skipped — a capped lead is
+      // refused below, never silently sent.
       const stale = await tx<MessageRow[]>`
         update lead_messages
         set status = 'rejected',
@@ -597,12 +557,8 @@ export async function approveMessage(
             select lead_id from lead_threads where id = ${stale[0].thread_id}
           `
         )[0]!;
-        // Dedupe on the SAME intent only: an already-queued regen (or its
-        // undrained inbox item) covers this one. A generic outreach run
-        // (first-contact/cadence sweep) does NOT — it lacks draftOnly + the
-        // expired-copy focus, so the regen mails as an 'event' item into it
-        // instead: the item carries the recompose intent and the active run
-        // handles it in-context.
+        // Dedupe on the same regen intent only — a generic outreach run lacks draftOnly,
+        // so for it the regen mails as an 'event' inbox item handled in-context instead.
         const active = await tx<{ id: string; src: 'run' | 'mail' }[]>`
           select 'run' as src, id::text as id, created_at from agent_runs
           where lead_id = ${thread.lead_id} and kind = 'outreach'
@@ -616,16 +572,13 @@ export async function approveMessage(
             and payload->>'src' = ${messageId}
           order by created_at limit 1
         `;
-        // `queued` tracks whether the regen intent is covered; `runId` is
-        // only ever an agent_runs id — an undrained inbox item queues the
-        // intent but has no run to point the UI at.
+        // runId is only ever an agent_runs id — an undrained inbox item has no run to point the UI at.
         let queued = false;
         let runId: string | null = null;
         const cap: { flagged?: boolean; retired?: string[] } = {};
         if (active[0]) {
-          // A queued regen is reusable only while it can still claim: if the
-          // lead crossed the cap AFTER queueing, claimRun parks it forever
-          // and rejecting this draft leaves nothing behind — refuse instead.
+          // A queued regen is reusable only while it can still claim — if the lead
+          // crossed the cap after queueing, claimRun parks it forever; refuse instead.
           const { leadUnderCostCapTx } = await import('../agent/runner.ts');
           const verdict = await leadUnderCostCapTx(tx, thread.lead_id);
           cap.flagged = verdict === 'flagged';
@@ -661,12 +614,9 @@ export async function approveMessage(
               params,
             });
             queued = true;
-            // insertRun also returns the already-active run's id on the
-            // one-run-per-lead conflict — report it only when that run can
-            // actually drain this item. drainInbox defers draftOnly mail
-            // for a send-capable run, so a generic active run would finish
-            // without ever recomposing the draft; in that case the item
-            // waits pending for the orphan sweep's own draftOnly run.
+            // insertRun may return an already-active run's id — report it only when that
+            // run is draftOnly and can actually drain this item; a generic run would finish
+            // without recomposing and the item waits for the orphan sweep's draftOnly run.
             const drains = await tx<{ id: string }[]>`
               select id from agent_runs
               where id = ${runId}
@@ -676,10 +626,8 @@ export async function approveMessage(
           }
         }
         if (!queued) {
-          // The lifetime cost cap refused the regen — the draft can never
-          // be recomposed by the agent, but the expired text must NOT go
-          // out either. Keep it a draft (its own 'expired' error says why)
-          // and refuse the approve: staff rewrites the copy or rejects it.
+          // The cap refused the regen and the expired text must not send — keep it
+          // a draft and refuse the approve; staff rewrites or rejects it.
           capFlagged = cap.flagged === true;
           const kept = await tx<MessageRow[]>`
             update lead_messages
@@ -744,11 +692,8 @@ export async function rejectMessage(
   idemKey: string,
 ): Promise<ClaimResult<{ message: ReturnType<typeof messageJson> }>> {
   const res = await claimControl(sql, idemKey, async (tx) => {
-    // capfin before the reject, same ordering approveMessage keeps: the
-    // finish gate's artifact check serializes on it — a staff reject
-    // committing between the gate's liveness read and its 'done' flip
-    // would strand a finished run with nothing approvable. The lead read
-    // is lock-free; the advisory hold lands before the row update.
+    // capfin before the reject (same ordering as approveMessage): a reject committing
+    // between the finish gate's liveness read and 'done' flip would strand a finished run.
     const leadRow = await tx<{ lead_id: string }[]>`
       select t.lead_id from lead_messages m
       join lead_threads t on t.id = m.thread_id
@@ -778,8 +723,7 @@ export async function setThreadAgent(
   threadId: string,
   enabled: boolean,
   idemKey: string,
-  /** Optional fence run first inside the claim tx — agent tool calls pass a
-   *  live-claim check so a reclaimed run can't still mutate. */
+  /** Optional fence run first inside the claim tx — a live-claim check so a reclaimed run can't still mutate. */
   guard?: (tx: Sql) => Promise<void>,
 ): Promise<ClaimResult<{ thread: ReturnType<typeof threadJson> }>> {
   const res = await claimControl(sql, idemKey, async (tx) => {
@@ -788,8 +732,7 @@ export async function setThreadAgent(
       update lead_threads set agent_enabled = ${enabled} where id = ${threadId} returning *
     `;
     if (!rows[0]) throw new HttpError(404, 'THREAD_NOT_FOUND', 'thread not found');
-    // Re-enabling any conversation is staff's resume signal — a lead-wide
-    // handoff marker set by an unbound request_human clears with it.
+    // Re-enabling is staff's resume signal — clears the lead-wide handoff marker.
     if (enabled) {
       await tx`
         update leads set agent_paused_at = null, updated_at = now()
@@ -802,8 +745,7 @@ export async function setThreadAgent(
   return res;
 }
 
-/** Pending drafts for the Approvals queue — joined to lead context so the
- *  reviewer doesn't have to open each lead. */
+/** Approvals queue — joined to lead context so the reviewer doesn't open each lead. */
 export async function listDrafts(sql: Sql) {
   return controlTx(
     sql,
@@ -849,9 +791,7 @@ export async function listDrafts(sql: Sql) {
   );
 }
 
-/** Marks a queued outbound as dispatched/failed — tx-local: call inside the
- *  dispatch tx (agent/send.ts holds the row lock). No controlTx wrapper —
- *  transaction handles lack `.begin()`. */
+// Tx-local — call inside the dispatch tx (no controlTx: tx handles lack `.begin()`).
 export async function markMessageSent(
   tx: Sql,
   messageId: string,
@@ -865,9 +805,7 @@ export async function markMessageSent(
 }
 
 export async function markMessageFailed(tx: Sql, messageId: string, reason: string): Promise<void> {
-  // Reason goes to `error`, not provider_message_id — failure text isn't a
-  // provider id and repeated same-reason failures would collide on the unique
-  // index, leaving the second message stuck queued.
+  // Reason goes to `error` — provider_message_id is unique-indexed and same-reason failures would collide.
   await tx`
     update lead_messages set status = 'failed', error = ${reason.slice(0, 300)}, updated_at = now()
     where id = ${messageId}

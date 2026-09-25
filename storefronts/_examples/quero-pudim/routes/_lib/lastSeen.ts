@@ -1,8 +1,4 @@
-/**
- * "Last seen" catalogue item + continue-shopping anchor — ported from the
- * reference storefront's `lib/lastSeenItem.ts`. sessionStorage-scoped (same
- * lifetime as the Kernel session token).
- */
+// sessionStorage-scoped (same lifetime as the Kernel session token), memory fallback.
 const KEY = 'qp.lastSeen';
 
 export interface LastSeen {

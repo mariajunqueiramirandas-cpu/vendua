@@ -2,10 +2,7 @@ import { Link } from 'react-router-dom';
 import { SurfaceRegion, useCatalog, useStore } from '@vendua/kernel';
 import { BoardError, cents, closedDays, ManifestCode, SkeletonRows, windowLines } from './_ui';
 
-/**
- * Board — the menu as a night-shift dispatch manifest: numbered cargo lines
- * under stenciled category headers. No hero, no cards — the list IS the idea.
- */
+// The menu as a night-shift dispatch manifest — no hero, no cards; the list IS the idea.
 export function Board() {
   const { store, status } = useStore();
   const { categories, loading, error } = useCatalog();
