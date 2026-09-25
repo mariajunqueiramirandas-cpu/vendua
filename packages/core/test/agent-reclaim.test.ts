@@ -3841,31 +3841,49 @@ dbDescribe('worker robustness (db)', () => {
     const nudgeId = await controlTx(sql, (tx) =>
       enqueueInboxTx(tx, leadId, 'staff', { text: 'a equipe pediu atenção' }),
     );
-    // send_message stamps answeredBy on the run's consumed inbound at a
-    // landed dispatch — the stamp is the durable record of which mail the
-    // run's send answered (any 'out' later than the inbound can't say
-    // that: a staff note or unrelated follow-up isn't a reply). The
-    // nudge carries no answer — it releases.
+    const retryId = await controlTx(sql, (tx) =>
+      enqueueInboxTx(tx, leadId, 'inbound', { text: 'e ai', requestedKind: 'reply' }),
+    );
+    // send_message stamps answeredBy on the run's consumed inbound when it
+    // composes the answering dispatch — the stamp is the durable record of
+    // which mail the run's send answered. It only suppresses a release
+    // while that message is live/landed: the landed 'sent' row keeps its
+    // mail consumed, a 'failed' answer never left and its mail re-serves.
+    // The nudge carries no answer — it releases.
+    const [sentOut] = await sql<{ id: string }[]>`
+      insert into lead_messages (thread_id, direction, author, body, status, agent_run_id)
+      values (${thread!.id}, 'out', 'agent', 'oi, posso ajudar?', 'sent', ${run!.id}) returning id
+    `;
+    const [failedOut] = await sql<{ id: string }[]>`
+      insert into lead_messages (thread_id, direction, author, body, status, agent_run_id)
+      values (${thread!.id}, 'out', 'agent', 'oi, posso ajudar?', 'failed', ${run!.id}) returning id
+    `;
     await sql`update agent_inbox set consumed_by_run = ${run!.id}, consumed_at = now(),
-      payload = payload || jsonb_build_object('answeredBy', ${inMsg!.id}::text)
+      payload = payload || jsonb_build_object('answeredBy', ${sentOut!.id}::text)
       where id = ${itemId}`;
     await sql`update agent_inbox set consumed_by_run = ${run!.id}, consumed_at = now()
       where id = ${nudgeId}`;
+    await sql`update agent_inbox set consumed_by_run = ${run!.id}, consumed_at = now(),
+      payload = payload || jsonb_build_object('answeredBy', ${failedOut!.id}::text)
+      where id = ${retryId}`;
     await drain(sql, 0);
     const rows = await sql<
       { id: string; consumed_at: string | null; consumed_by_run: string | null }[]
     >`
       select id, consumed_at, consumed_by_run from agent_inbox
-      where id in (${itemId}, ${nudgeId})
+      where id in (${itemId}, ${nudgeId}, ${retryId})
     `;
     const answered = rows.find((r) => r.id === itemId)!;
     const nudge = rows.find((r) => r.id === nudgeId)!;
+    const retry = rows.find((r) => r.id === retryId)!;
     // The dead run's reconcile releases what it can still serve — the
     // answered inbound stays consumed history (a re-serve re-sends under
-    // a fresh run id), the nudge returns to pending for the sweep.
+    // a fresh run id), the nudge and the failed-answer item return to
+    // pending for the sweep.
     expect(answered.consumed_at).not.toBeNull();
     expect(answered.consumed_by_run).toBe(run!.id);
     expect(nudge.consumed_at).toBeNull();
+    expect(retry.consumed_at).toBeNull();
     await sql`delete from agent_runs where status = 'queued'`;
   });
 });

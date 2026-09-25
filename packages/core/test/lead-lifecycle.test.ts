@@ -4,7 +4,7 @@ import postgres from 'postgres';
 import { createApp } from '../src/app.ts';
 import { dispatchMessage } from '../src/agent/send.ts';
 import { claimRun, drain, flagCappedLeads, insertRun, runOnce } from '../src/agent/runner.ts';
-import { sweepOrphanInbox } from '../src/agent/inbox.ts';
+import { enqueueInboxTx, sweepOrphanInbox } from '../src/agent/inbox.ts';
 import { estimateModelCostUsd } from '../src/agent/llm.ts';
 import {
   capCentsOf,
@@ -782,13 +782,30 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('lead lifecycle (db)', () => {
           forRunId: runId,
         })})
       `;
+      // An 'auto'-channeled request normalizes to unpinned at enqueue —
+      // "let the agent pick" is not a channel pin — so it IS deliverable
+      // to this unpinned run and dies with it like the minted request.
+      const autoId = await controlTx(sql, (tx) =>
+        enqueueInboxTx(tx, leadId, 'staff', {
+          text: "a equipe pediu uma run 'discovery'",
+          requestedKind: 'discovery',
+          params: { channel: 'auto', origin: 'staff' },
+          forRunId: runId,
+        }),
+      );
+      const autoRow = await sql<{ payload: { params?: { channel?: string } } }[]>`
+        select payload from agent_inbox where id = ${autoId}
+      `;
+      expect(autoRow[0]!.payload.params?.channel).toBeUndefined();
       const cancel = await post(`/control/v1/agent/runs/${runId}/cancel`, {}, key('a4-cxl-cancel'));
       expect(cancel.status).toBe(200);
       // The request the queued run was minted for dies with it — a pending
       // 'staff' item would otherwise respawn the very run staff canceled.
       // The email request survives: it was never deliverable to this run.
+      // The 'auto' request normalized to unpinned → deliverable → tombstoned.
       const pending = await sql<{ payload: { params?: { channel?: string } } }[]>`
         select payload from agent_inbox where lead_id = ${leadId} and consumed_at is null
+        order by created_at
       `;
       expect(pending).toHaveLength(1);
       expect(pending[0]!.payload.params?.channel).toBe('email');

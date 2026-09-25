@@ -677,13 +677,17 @@ export async function releaseInboxTx(tx: Sql, runId: string, event?: boolean): P
             end
     where i.consumed_by_run = ${runId}
       and (${event === true} or coalesce((i.payload->>'deliveries')::int, 0) < 2)
-      -- an inbound a landed dispatch already answered is never
-      -- outstanding work: send_message stamps answeredBy on the run's
-      -- consumed inbound at dispatch, and run-scoped dedup can't see
-      -- that send under a respawned run's id — releasing it re-sends.
-      -- Only the durable marker counts: a later 'out' on the thread
-      -- (staff note, unrelated follow-up) doesn't answer it.
-      and not (i.payload ? 'answeredBy')
+      -- an inbound whose stamped answer is live or landed is never
+      -- outstanding work: send_message writes answeredBy at compose-
+      -- commit, and run-scoped dedup can't see that send under a
+      -- respawned run's id — releasing it re-sends. A 'failed' or
+      -- 'draft' answer never left, so it doesn't count; a 'queued'
+      -- answer is still in flight and must suppress the release.
+      and not exists (
+        select 1 from lead_messages m
+        where m.id::text = i.payload->>'answeredBy'
+          and m.status in ('queued', 'sending', 'sent', 'delivered')
+      )
   `;
 }
 
@@ -2732,6 +2736,21 @@ export async function drain(sql: Sql, limit = 20): Promise<number> {
     `,
   );
   for (const m of failedQueued) emitControlEvent('thread.message', m.thread_id);
+  // Mail a dead run still holds re-pends. Reconcile/cancel releases ran
+  // once, when the run's answering send may still have been in flight —
+  // a suppressed answeredBy marker that later flips 'failed' never gets
+  // another pass and strands the item forever. Re-running the same
+  // release on dead owners picks up exactly those flips; a live-status
+  // marker still suppresses, so a landed answer keeps its mail consumed.
+  await controlTx(sql, async (tx) => {
+    const deadOwners = await tx<{ id: string }[]>`
+      select distinct i.consumed_by_run as id
+      from agent_inbox i
+      join agent_runs r on r.id = i.consumed_by_run
+      where i.consumed_at is not null and r.status in ('canceled', 'failed')
+    `;
+    for (const r of deadOwners) await releaseInboxTx(tx, r.id);
+  });
   const stranded = await controlTx(
     sql,
     (tx) =>

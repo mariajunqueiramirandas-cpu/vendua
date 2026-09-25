@@ -55,6 +55,19 @@ export async function enqueueInboxTx(
   if (typeof payload.text === 'string' && payload.text.length > 500) {
     payload = { ...payload, text: payload.text.slice(0, 500) };
   }
+  // `channel: 'auto'` is "let the agent pick" — not a pin. Stored verbatim
+  // it would be a channel no run ever matches (drainInbox only normalizes
+  // to whatsapp|email|''), leaving the item undrainable: it would respawn
+  // forever and never die with the run it rode in on.
+  if (
+    payload.params != null &&
+    typeof payload.params === 'object' &&
+    payload.params.channel === 'auto'
+  ) {
+    const params = { ...payload.params };
+    delete params.channel;
+    payload = { ...payload, params };
+  }
   return (
     await tx<{ id: string }[]>`
       insert into agent_inbox (lead_id, kind, payload)

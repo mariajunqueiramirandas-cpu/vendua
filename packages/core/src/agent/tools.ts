@@ -1442,6 +1442,24 @@ export async function executeTool(
           status: verdict.forceDraft || ctx.draftOnly ? 'draft' : 'queued',
           agentRunId: ctx.runId,
         });
+        if (!verdict.forceDraft && !ctx.draftOnly) {
+          // A dispatch committed to the wire answers the inbound batches
+          // this run holds on the destination thread — record which
+          // message answered them NOW, inside the claim tx (RLS-safe —
+          // agent_inbox needs vendua.control): writing it post-dispatch
+          // would run outside controlTx AND race a cancel that releases
+          // the mail before the provider call resolves. The marker lands
+          // before the send can land, so a released item can never hide
+          // an in-flight answer. Unconsumed mail on other threads isn't
+          // discharged by this thread's reply — scope to the sent thread
+          // plus unpinned items.
+          await tx`
+            update agent_inbox
+            set payload = payload || jsonb_build_object('answeredBy', ${composed.body.message.id}::text)
+            where consumed_by_run = ${ctx.runId} and kind = 'inbound'
+              and (payload->>'threadId' is null or payload->>'threadId' = ${composed.body.thread.id})
+          `;
+        }
         return {
           status: 200,
           body: { blocked: false as const, verdict, composed, pick },
@@ -1481,21 +1499,7 @@ export async function executeTool(
         // A composed-but-failed send must not count as a landed action —
         // surfacing the failure as {error} keeps runActed's finish gate
         // honest and tells the model the send didn't land.
-        if (!sent.ok) {
-          sendError = sent.reason ?? 'send failed';
-        } else {
-          // A landed dispatch answers every inbound batch this run holds —
-          // record which message answered it so a later failure/cancel
-          // release re-serves only mail that never got its reply (the send
-          // dedup is run-scoped; a respawned run can't see this dispatch).
-          // Staff/event mail stays releasable — the send doesn't
-          // discharge it.
-          await sql`
-            update agent_inbox
-            set payload = payload || jsonb_build_object('answeredBy', ${out.composed.body.message.id}::text)
-            where consumed_by_run = ${ctx.runId} and kind = 'inbound'
-          `;
-        }
+        if (!sent.ok) sendError = sent.reason ?? 'send failed';
       }
       return {
         ...out.composed.body,
