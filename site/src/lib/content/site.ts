@@ -5,7 +5,7 @@ export const site = {
   instagramDmUrl: 'https://ig.me/m/vendua.digital',
   instagramHandle: '@vendua.digital',
   emails: ['vinicius.junquira@vendua.com.br', 'jorge.andre@vendua.com.br'],
-  publicDomain: '',
+  publicDomain: 'https://vendua.com.br',
   publicCaseUrl: '',
   whatsappNumber: '',
   analyticsEnabled: false,
