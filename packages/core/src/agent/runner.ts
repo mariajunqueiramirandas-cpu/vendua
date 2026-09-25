@@ -629,9 +629,14 @@ export async function claimRun(sql: Sql): Promise<RunRow | null> {
         }
       }
       const rows = await tx<RunRow[]>`
+        -- run_at re-checks atomically: the scan's due filter is a stale
+        -- snapshot — an inbound quiet floor or a test park can push run_at
+        -- forward between scan and claim, and claiming anyway would fire a
+        -- send inside the quiet period.
         update agent_runs set status = 'running', started_at = now(), alive_at = now(),
           claim_token = gen_random_uuid()::text
         where id = ${run.id} and status = 'queued'
+          and (run_at is null or run_at <= now())
         returning id, kind, lead_id, thread_id, params, claim_token, steps, attempts, max_attempts
       `;
       if (rows[0]) return rows[0];
