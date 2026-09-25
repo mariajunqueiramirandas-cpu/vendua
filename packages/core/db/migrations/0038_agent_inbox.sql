@@ -1,11 +1,4 @@
--- 0038_agent_inbox.sql — per-lead agent mailbox plus one active run per
--- lead. Anything that wants the agent's attention for a lead (an inbound
--- message, a fired wakeup, a staff nudge, a scheduled event) enqueues an
--- item here instead of racing to own a run. The lead's active run drains
--- pending items between steps and renders them to the model; items stay
--- pending until a run's fenced journal commit stamps consumed_by_run —
--- a run that dies without draining hands the mail to the next run via
--- the orphan sweep in drain().
+-- 0038_agent_inbox.sql — agent_inbox (per-lead pending items) + one active run per lead.
 create table if not exists agent_inbox (
   id uuid primary key default gen_random_uuid(),
   lead_id uuid not null references leads (id) on delete cascade,
@@ -20,11 +13,8 @@ create index if not exists agent_inbox_pending
 create index if not exists agent_inbox_run on agent_inbox (consumed_by_run)
   where consumed_by_run is not null;
 
--- One active (queued|running) run per lead. Old coalescing allowed
--- parallel active rows; retire the extras first (earliest wins — it owns
--- the most context) so the unique index can build on real world data.
--- Cancelling a 'running' row flips its claim fence: the owning worker's
--- next persist no-ops and the attempt unwinds — a clean stop, not a kill.
+-- Retire extra active rows (earliest wins — it owns the most context) so the
+-- unique index builds; canceling flips the claim fence — a clean stop, not a kill.
 update agent_runs set
   status = 'canceled',
   error = 'superseded — single active run per lead',

@@ -1,20 +1,6 @@
-/**
- * QA fixture tenants — seeded directly via postgres.js as the owner role
- * (bypasses RLS), idempotent: each e2e run wipes the qa tenants' mutable
- * state (orders, carts, idempotency keys) and rewrites domains/settings/
- * zones/catalog so every run starts from the same truth.
- *
- *   slug       | state produced                                   | checks fed
- *   ---------- | ------------------------------------------------ | ----------
- *   qa-open    | windows 00:00–23:59 daily + promo                | C*, S02-adjacent, Q*
- *   qa-paused  | status_override='paused'                         | S01, S06
- *   qa-closed  | window ending ~30min ago today (dynamic)         | S02
- *   qa-edge    | open; preview server injects hostile surfaces    | S03, S04
- *
- * qa-closed computes its window at seed time in the settings timezone:
- * [now-120min, now-30min] — always ended ~30min ago, never flaky at a fixed
- * wall-clock minute. resumesAt lands on tomorrow's identical window.
- */
+// QA fixtures seeded as the owner role (bypasses RLS); idempotent — each run
+// wipes mutable state and rewrites domains/settings/zones/catalog. qa-closed's
+// window is computed at seed time so it never flakes on wall-clock.
 import postgres from 'postgres';
 
 export const QA_SLUGS = ['qa-open', 'qa-paused', 'qa-closed', 'qa-edge'] as const;
@@ -53,7 +39,6 @@ interface SeedCategory {
 const ALL = [0, 1, 2, 3, 4, 5, 6];
 const TZ = 'America/Sao_Paulo';
 
-/** minutes-since-midnight in the settings timezone, right now */
 function nowMinutes(): number {
   const parts = new Intl.DateTimeFormat('en-GB', {
     timeZone: TZ,
@@ -124,7 +109,7 @@ function catalog(): SeedCategory[] {
 }
 
 const ZONES: SeedZone[] = [
-  // 'Nowhere-land' is never a neighborhood — typing it must yield OUT_OF_ZONE.
+  // 'Nowhere-land' is never seeded — typing it must yield OUT_OF_ZONE.
   {
     name: 'Centro',
     neighborhoods: ['Centro', 'Bacaxá'],
@@ -145,8 +130,7 @@ const ZONES: SeedZone[] = [
 
 export interface QaSeedOptions {
   databaseUrl?: string;
-  /** Host entries are seeded for this port AND the bare hostname so the
-   *  Host-header resolver matches with or without the port. */
+  /** seeded for this port AND the bare hostname so the Host resolver matches either */
   previewPort?: number;
 }
 
@@ -192,7 +176,7 @@ export async function seedQaTenants(opts: QaSeedOptions = {}): Promise<void> {
           `
         )[0]!.id;
 
-        // Deterministic re-run: drop all mutable state for the qa tenants.
+        // Wipe mutable state so re-runs are deterministic.
         await tx`delete from order_events where tenant_id = ${tid}`;
         await tx`delete from orders where tenant_id = ${tid}`;
         await tx`delete from outbox where tenant_id = ${tid}`;

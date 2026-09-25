@@ -1,14 +1,5 @@
--- 0010_agent_goals.sql — goal-driven agent + scheduled discovery (AutoGTM
--- parity pass). `leads.agent_goal` is the standing objective staff picks at
--- dispatch time ('negotiation' closes in-thread, 'meeting' drives toward the
--- founders' Google Meet booking link); reply/outreach runs read it so
--- inbound replies stay on-goal. `fit_score`/`fit_reason` is the model-judged
--- ICP match — separate from the SQL completeness `score`. `email_bounced_at`
--- is the deliverability flag Resend bounce/failed events set, blocking later
--- email sends. `discovery_briefs` are the daily autopilot briefs — the worker
--- sweep enqueues one discovery run per due brief.
---
--- Same isolation posture as 0007: platform data, RLS keyed on vendua.control.
+-- 0010_agent_goals.sql — leads.agent_goal/fit_score/fit_reason/email_bounced_at +
+-- discovery_briefs (daily-autopilot briefs; RLS on vendua.control like 0007).
 
 alter table leads
   add column if not exists agent_goal text not null default 'negotiation'
@@ -24,8 +15,7 @@ create table if not exists discovery_briefs (
   query text not null,
   segment text,
   city text,
-  -- target leads per daily run; the run prompt turns it into the stop
-  -- condition and the guardrail cap still bounds it from above.
+  -- target leads per daily run; the guardrail cap still bounds it
   target int check (target is null or (target between 1 and 1000)),
   enabled boolean not null default true,
   last_run_at timestamptz,
