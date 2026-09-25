@@ -1808,6 +1808,10 @@ async function drainInbox(att: Attempt): Promise<number> {
   // never makes a duplicate create_lead/draft legitimate, and
   // replay-seeded sigs for THIS batch stay until it answers.
   att.stateVersion++;
+  // The finish gate's one-nudge budget resets with the batch: mail that
+  // arrives after an earlier nudge deserves its own action demand, or a
+  // text-only close consumes it with nothing on the wire.
+  att.nudged = false;
   for (const s of att.landedSigs) {
     if (s.startsWith('["send_message",')) att.landedSigs.delete(s);
   }
