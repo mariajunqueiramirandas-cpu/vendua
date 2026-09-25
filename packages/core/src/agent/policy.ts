@@ -235,9 +235,13 @@ export async function discoveryBudgetTx(
                 where r.kind = 'discovery' and r.status in ('queued', 'running', 'done')
                   and r.params->>'briefId' = d.id::text
               )))::int as open,
+        -- cost_cents > 0: a zero-cost done run carried no price signal
+        -- (sub-cent turns round to 0, synthetic providers charge nothing)
+        -- and would deflate the unit estimate to 0 — open units would then
+        -- reserve nothing against the ceiling. All-zero still falls to 50.
         coalesce((select avg(c)::int from (
           select cost_cents as c from agent_runs
-          where kind = 'discovery' and status = 'done'
+          where kind = 'discovery' and status = 'done' and cost_cents > 0
           order by created_at desc limit 20) t), 50)::int as est
     `
   )[0]!;

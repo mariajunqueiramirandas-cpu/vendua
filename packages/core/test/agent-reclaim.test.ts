@@ -2494,39 +2494,67 @@ dbDescribe('worker robustness (db)', () => {
 
   test('a mid-run inbound mails into the running outreach between steps', async () => {
     await migrate(sql, MIGRATIONS);
-    const lead = await controlTx(sql, (tx) => insertLeadTx(tx, { name: 'Replied Mid-Run' }));
-    const leadId = lead.body.lead.id;
-    const [thread] = await sql<{ id: string }[]>`
-      insert into lead_threads (lead_id, channel) values (${leadId}, 'whatsapp') returning id
-    `;
-    await sql`delete from agent_runs where status = 'queued'`;
-    const runId = (await enqueueRun(sql, { kind: 'outreach', leadId }))!;
-    await sql`update agent_runs set run_at = now(),
-      params = ${sql.json({ auto: 'first-contact', script: [{ text: 'oi', delayMs: 1500 }, { text: 'outra' }] } as never)}
+    const priorGuardrails = (
+      await sql<{ value: unknown }[]>`select value from control_settings where key = 'guardrails'`
+    )[0];
+    await sql`insert into control_settings (key, value) values ('guardrails', ${sql.json({
+      firstContactDraftOnly: false,
+      quietStart: '00:00',
+      quietEnd: '00:00',
+    } as never)})
+      on conflict (key) do update set value = excluded.value`;
+    try {
+      const lead = await controlTx(sql, (tx) =>
+        insertLeadTx(tx, { name: 'Replied Mid-Run', whatsapp: '5511910000099' }),
+      );
+      const leadId = lead.body.lead.id;
+      const [thread] = await sql<{ id: string }[]>`
+        insert into lead_threads (lead_id, channel) values (${leadId}, 'whatsapp') returning id
+      `;
+      await sql`delete from agent_runs where status = 'queued'`;
+      const runId = (await enqueueRun(sql, { kind: 'outreach', leadId }))!;
+      await sql`update agent_runs set run_at = now(),
+      params = ${sql.json({
+        auto: 'first-contact',
+        channel: 'whatsapp',
+        script: [
+          { text: 'oi', delayMs: 1500 },
+          // acts over the drained mail — a text-only close would nudge
+          { toolCalls: [{ name: 'send_message', args: { leadId, body: 'outra' } }] },
+        ],
+      } as never)}
       where id = ${runId}`;
-    // The item must land mid-flight: fire the run, let claim+turn-1 start,
-    // then enqueue — the kernel drains it at the next step boundary and
-    // renders it to the model instead of cancelling the run.
-    const running = runOnce(sql);
-    await new Promise((r) => setTimeout(r, 150));
-    await controlTx(sql, (tx) =>
-      enqueueInboxTx(tx, leadId, 'inbound', {
-        text: 'sim, quero',
-        threadId: thread!.id,
-        requestedKind: 'reply',
-      }),
-    );
-    expect(await running).toBe(true);
-    const r = await getRun(runId);
-    expect(r.status).toBe('done');
-    // both scripted turns ran — the drain journal entry sits between them
-    const inboxSteps = r.steps.filter((s) => (s as { type?: string }).type === 'inbox');
-    expect(inboxSteps).toHaveLength(1);
-    expect(r.steps.filter((s) => (s as { type?: string }).type === 'model')).toHaveLength(2);
-    const items = await sql<{ consumed_by_run: string | null }[]>`
+      // The item must land mid-flight: fire the run, let claim+turn-1 start,
+      // then enqueue — the kernel drains it at the next step boundary and
+      // renders it to the model instead of cancelling the run.
+      const running = runOnce(sql);
+      await new Promise((r) => setTimeout(r, 150));
+      await controlTx(sql, (tx) =>
+        enqueueInboxTx(tx, leadId, 'inbound', {
+          text: 'sim, quero',
+          threadId: thread!.id,
+          requestedKind: 'reply',
+        }),
+      );
+      expect(await running).toBe(true);
+      const r = await getRun(runId);
+      expect(r.status).toBe('done');
+      // both scripted turns ran — the drain journal entry sits between them
+      // (the exhausted-script close turn adds a third model step)
+      const inboxSteps = r.steps.filter((s) => (s as { type?: string }).type === 'inbox');
+      expect(inboxSteps).toHaveLength(1);
+      expect(r.steps.filter((s) => (s as { type?: string }).type === 'model')).toHaveLength(3);
+      const items = await sql<{ consumed_by_run: string | null }[]>`
       select consumed_by_run from agent_inbox where lead_id = ${leadId}
     `;
-    expect(items[0]!.consumed_by_run).toBe(runId);
+      expect(items[0]!.consumed_by_run).toBe(runId);
+    } finally {
+      if (priorGuardrails) {
+        await sql`update control_settings set value = ${sql.json(priorGuardrails.value as never)} where key = 'guardrails'`;
+      } else {
+        await sql`delete from control_settings where key = 'guardrails'`;
+      }
+    }
   });
 
   test('a mid-run opt-out lands — drained reply mail widens the toolset', async () => {
@@ -2564,6 +2592,182 @@ dbDescribe('worker robustness (db)', () => {
       select unsubscribed_at from leads where id = ${leadId}
     `;
     expect(l!.unsubscribed_at).not.toBeNull();
+  });
+
+  test('a fresh batch re-arms an identical reply — send sigs clear per drain', async () => {
+    await migrate(sql, MIGRATIONS);
+    // Sends must reach compose: the shared DB's quiet hours would block
+    // them outright. Snapshot + neutralize, restore below.
+    const priorGuardrails = (
+      await sql<{ value: unknown }[]>`select value from control_settings where key = 'guardrails'`
+    )[0];
+    try {
+      await sql`
+        insert into control_settings (key, value)
+        values ('guardrails',
+                ${sql.json({ firstContactDraftOnly: false, quietStart: '00:00', quietEnd: '00:00' } as never)})
+        on conflict (key) do update set value = excluded.value
+      `;
+      const lead = await controlTx(sql, (tx) =>
+        insertLeadTx(tx, { name: 'Same Words Twice', whatsapp: '5511910000042' }),
+      );
+      const leadId = lead.body.lead.id;
+      const [thread] = await sql<{ id: string }[]>`
+        insert into lead_threads (lead_id, channel) values (${leadId}, 'whatsapp') returning id
+      `;
+      await sql`delete from agent_runs where status = 'queued'`;
+      const runId = (await enqueueRun(sql, {
+        kind: 'reply',
+        leadId,
+        threadId: thread!.id,
+        params: {
+          channel: 'whatsapp',
+          script: [
+            {
+              toolCalls: [{ name: 'send_message', args: { leadId, body: 'obrigado' } }],
+              delayMs: 1500,
+            },
+            { toolCalls: [{ name: 'send_message', args: { leadId, body: 'obrigado' } }] },
+            { text: 'fim' },
+          ],
+        },
+      }))!;
+      // Batch 1 rides the claim; batch 2 lands inside turn 1's delay and
+      // drains at the next boundary. The two replies are byte-identical —
+      // legitimate mail answers, not a loop.
+      await controlTx(sql, (tx) =>
+        enqueueInboxTx(tx, leadId, 'inbound', {
+          text: 'oi',
+          threadId: thread!.id,
+          messageId: crypto.randomUUID(),
+          requestedKind: 'reply',
+          params: { origin: 'inbound', channel: 'whatsapp' },
+        }),
+      );
+      const running = runOnce(sql);
+      await new Promise((r) => setTimeout(r, 200));
+      await controlTx(sql, (tx) =>
+        enqueueInboxTx(tx, leadId, 'inbound', {
+          text: 'e aí?',
+          threadId: thread!.id,
+          messageId: crypto.randomUUID(),
+          requestedKind: 'reply',
+          params: { origin: 'inbound', channel: 'whatsapp' },
+        }),
+      );
+      expect(await running).toBe(true);
+      const r = await getRun(runId);
+      expect(r.status).toBe('done');
+      expect(r.steps.filter((s) => (s as { type?: string }).type === 'inbox')).toHaveLength(2);
+      const outs = await sql<{ status: string }[]>`
+        select m.status from lead_messages m
+        join lead_threads t on t.id = m.thread_id
+        where t.lead_id = ${leadId} and m.direction = 'out' and m.body = 'obrigado'
+      `;
+      expect(outs).toHaveLength(2);
+    } finally {
+      if (priorGuardrails) {
+        await sql`update control_settings set value = ${sql.json(priorGuardrails.value as never)} where key = 'guardrails'`;
+      } else {
+        await sql`delete from control_settings where key = 'guardrails'`;
+      }
+    }
+  });
+
+  test('a text-only close over fresh mail nudges per batch — nudge budget resets on drain', async () => {
+    await migrate(sql, MIGRATIONS);
+    const priorGuardrails = (
+      await sql<{ value: unknown }[]>`select value from control_settings where key = 'guardrails'`
+    )[0];
+    try {
+      await sql`
+        insert into control_settings (key, value)
+        values ('guardrails',
+                ${sql.json({ firstContactDraftOnly: false, quietStart: '00:00', quietEnd: '00:00' } as never)})
+        on conflict (key) do update set value = excluded.value
+      `;
+      const lead = await controlTx(sql, (tx) =>
+        insertLeadTx(tx, { name: 'Late Mail', whatsapp: '5511910000043' }),
+      );
+      const leadId = lead.body.lead.id;
+      const [thread] = await sql<{ id: string }[]>`
+        insert into lead_threads (lead_id, channel) values (${leadId}, 'whatsapp') returning id
+      `;
+      await sql`delete from agent_runs where status = 'queued'`;
+      const runId = (await enqueueRun(sql, {
+        kind: 'reply',
+        leadId,
+        threadId: thread!.id,
+        params: {
+          channel: 'whatsapp',
+          script: [
+            {
+              toolCalls: [{ name: 'send_message', args: { leadId, body: 'primeiro oi' } }],
+              delayMs: 1500,
+            },
+            // tries to close on text over the drained second batch — the
+            // turn-1 send predates that batch, so the gate must nudge once
+            { text: 'só conferindo' },
+            {
+              toolCalls: [{ name: 'send_message', args: { leadId, body: 'segundo oi' } }],
+              delayMs: 1500,
+            },
+            // a THIRD batch lands during the turn-3 send; its drain resets
+            // the nudge budget, so this text-only turn nudges a second time
+            { text: 'quase lá' },
+            { toolCalls: [{ name: 'send_message', args: { leadId, body: 'terceiro oi' } }] },
+            { text: 'agora sim' },
+          ],
+        },
+      }))!;
+      await controlTx(sql, (tx) =>
+        enqueueInboxTx(tx, leadId, 'inbound', {
+          text: 'oi',
+          threadId: thread!.id,
+          messageId: crypto.randomUUID(),
+          requestedKind: 'reply',
+          params: { origin: 'inbound', channel: 'whatsapp' },
+        }),
+      );
+      const running = runOnce(sql);
+      await new Promise((r) => setTimeout(r, 200));
+      await controlTx(sql, (tx) =>
+        enqueueInboxTx(tx, leadId, 'inbound', {
+          text: 'voltou',
+          threadId: thread!.id,
+          messageId: crypto.randomUUID(),
+          requestedKind: 'reply',
+          params: { origin: 'inbound', channel: 'whatsapp' },
+        }),
+      );
+      // second drop lands inside the turn-3 send's delayMs window
+      await new Promise((r) => setTimeout(r, 1800));
+      await controlTx(sql, (tx) =>
+        enqueueInboxTx(tx, leadId, 'inbound', {
+          text: 'de novo',
+          threadId: thread!.id,
+          messageId: crypto.randomUUID(),
+          requestedKind: 'reply',
+          params: { origin: 'inbound', channel: 'whatsapp' },
+        }),
+      );
+      expect(await running).toBe(true);
+      const r = await getRun(runId);
+      expect(r.status).toBe('done');
+      expect(r.steps.filter((s) => (s as { type?: string }).type === 'nudge')).toHaveLength(2);
+      const outs = await sql<{ body: string }[]>`
+        select m.body from lead_messages m
+        join lead_threads t on t.id = m.thread_id
+        where t.lead_id = ${leadId} and m.direction = 'out' order by m.created_at
+      `;
+      expect(outs.map((o) => o.body)).toEqual(['primeiro oi', 'segundo oi', 'terceiro oi']);
+    } finally {
+      if (priorGuardrails) {
+        await sql`update control_settings set value = ${sql.json(priorGuardrails.value as never)} where key = 'guardrails'`;
+      } else {
+        await sql`delete from control_settings where key = 'guardrails'`;
+      }
+    }
   });
 
   test('draft-only mail waits for its own run — it never ships through a send-capable one', async () => {

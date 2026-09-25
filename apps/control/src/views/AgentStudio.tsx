@@ -445,7 +445,7 @@ const LEVELS: {
     key: 'off',
     label: 'desligado',
     tag: 'só no manual',
-    runs: 'nenhum run automático — só quando alguém dispara na mão',
+    runs: 'nada automático — só callbacks prometidos ao lead e disparos na mão',
     sends: 'nada sai sozinho; se um run manual escrever, vira rascunho',
     queue: 'a fila de aprovação não anda',
   },

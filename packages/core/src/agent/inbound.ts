@@ -143,14 +143,17 @@ export async function ingestInbound(
     // release it so the reply serves it (event retire: the deliveries
     // bound is for failure paths), then tombstone the pending cadence
     // events those runs minted: 'a cadência disparou' is obsolete the
-    // moment the lead writes. Scoped to requestedKind='outreach' — an
+    // moment the lead writes. 'wakeup' mail rides the same predicate — a
+    // fired automation wakeup queued an outreach this inbound just
+    // canceled; leaving its item pending would let the orphan sweep
+    // respawn the dead reminder. Scoped to requestedKind='outreach' — an
     // auto discovery/strategist event owes the lead nothing and waits
-    // for its own run.
+    // for its own run; promised wakeups carry no auto marker and stay.
     for (const rid of canceledRunIds) await releaseInboxTx(tx, rid, true);
     await tx`
       update agent_inbox
       set consumed_at = now(), consumed_by_run = null
-      where lead_id = ${res.leadId} and kind = 'event' and consumed_at is null
+      where lead_id = ${res.leadId} and kind in ('event', 'wakeup') and consumed_at is null
         and payload->>'requestedKind' = 'outreach'
         and payload->'params'->>'auto' is not null
         and payload->'params'->>'auto' not in ('regenerate', 'agent')
