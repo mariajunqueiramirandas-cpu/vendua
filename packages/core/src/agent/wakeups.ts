@@ -228,10 +228,14 @@ export async function sweepWakeups(sql: Sql): Promise<number> {
     // staff-created) run unmarked like claimRun allows them to.
     if (!(await playbookEnabledTx(tx, 'outreach')).ok) return;
     const { level } = await autonomyTx(tx);
+    const autoOff = level === 'off';
     const g = await getSettingTx<Partial<Guardrails>>(tx, 'guardrails', {});
     const capCents = capCentsOf(g);
     // Over-cap leads stay out of the 20-row window (same reason as
     // sweepOutreach): a parked prefix must not starve later due wakeups.
+    // Same for autonomy-off — automation wakeups stay pending and would
+    // re-pick every tick, so the query excludes them rather than skipping
+    // them in-loop and letting 20 parked rows starve promised callbacks.
     // An already-active run is no longer "busy" — the fired wakeup mails
     // its intent to it through agent_inbox instead of waiting it out.
     const due = await tx<
@@ -241,6 +245,7 @@ export async function sweepWakeups(sql: Sql): Promise<number> {
       join leads l on l.id = w.lead_id
       where w.status = 'pending' and w.at <= now()
         and l.agent_mode != 'off' and l.agent_paused_at is null
+        and (not ${autoOff} or w.requested or w.created_by = 'staff')
         and (${capCents} <= 0 or
           coalesce((select sum(x.cost_cents) from agent_runs x
                     where x.lead_id = w.lead_id), 0) < ${capCents})

@@ -522,13 +522,22 @@ export async function claimRun(sql: Sql): Promise<RunRow | null> {
  *  and after 2 the item keeps its stamp — a permanently failing item
  *  would otherwise respawn forever, and the failed run's staff task is
  *  already the human path. Shared by finishRun's 'failed' branch, the
- *  terminal-reclaim commit, and the staff-cancel endpoint. */
+ *  terminal-reclaim commit, and the staff-cancel endpoint. Delivery is
+ *  at-least-once — the first re-serve stamps a `resumed` marker and a
+ *  note in the rendered text so the serving run checks the thread
+ *  history for what the dead run already did (it may have sent). */
 export async function releaseInboxTx(tx: Sql, runId: string): Promise<void> {
   await tx`
     update agent_inbox
     set consumed_at = null, consumed_by_run = null,
         payload = payload || jsonb_build_object(
           'deliveries', coalesce((payload->>'deliveries')::int, 0) + 1)
+        || case when payload ? 'resumed' then '{}'::jsonb
+            else jsonb_build_object(
+              'text', coalesce(payload->>'text', '') ||
+                ' — (reentregue: a run anterior foi interrompida — confira o histórico antes de agir de novo)',
+              'resumed', true)
+            end
     where consumed_by_run = ${runId}
       and coalesce((payload->>'deliveries')::int, 0) < 2
   `;

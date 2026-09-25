@@ -12,7 +12,8 @@ select r.lead_id,
        case when r.params ? 'auto' or r.params->>'origin' = 'inbound'
             then 'event' else 'staff' end,
        jsonb_build_object(
-         'text', 'intenção pendente de uma run substituída (kind: ' || r.kind || ') — retome o trabalho',
+         'text', 'retome o trabalho de uma run substituída (kind: ' || r.kind || ')' ||
+                 coalesce(' — foco original: ' || left(r.params->>'focus', 300), ''),
          'requestedKind', r.kind,
          'threadId', r.thread_id,
          'params', r.params,
@@ -25,6 +26,12 @@ update agent_inbox i
 set consumed_at = null, consumed_by_run = null,
     payload = i.payload || jsonb_build_object(
       'deliveries', coalesce((i.payload->>'deliveries')::int, 0) + 1)
+    || case when i.payload ? 'resumed' then '{}'::jsonb
+        else jsonb_build_object(
+          'text', coalesce(i.payload->>'text', '') ||
+            ' — (reentregue: a run anterior foi interrompida — confira o histórico antes de agir de novo)',
+          'resumed', true)
+        end
 where i.consumed_by_run in (
   select id from agent_runs
   where error = 'superseded — single active run per lead')
