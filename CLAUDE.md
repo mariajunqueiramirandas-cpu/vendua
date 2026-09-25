@@ -2,8 +2,17 @@
 
 Monorepo (bun workspaces): `packages/core` (Hono + Postgres API), `packages/kernel`
 (storefront runtime), `apps/control` (staff CRM console, React), `storefronts/*`, `site/`.
-Read `REVIEW.md` for the invariants that matter (tenant isolation, money in cents,
-idempotency) and `docs/README.md` for architecture.
+`docs/README.md` has the architecture.
+
+## Invariants (bugs if broken)
+
+- Tenant isolation: every table has `tenant_id` + an RLS policy; every request-scoped query
+  runs under `SET LOCAL app.tenant_id` (`platform/db.ts`).
+- Money is integer cents, computed only in Core — clients never recompute totals.
+- Every mutating endpoint takes an `Idempotency-Key` through the claim pattern in
+  `platform/http.ts`; checkout creates at most one order per cart.
+- Storefronts talk to Core only through the kernel api client (never raw `fetch`).
+- Inputs are bounded (length/size caps) and bad ids return stable 4xx, never a 500.
 
 ## Toolchain
 
