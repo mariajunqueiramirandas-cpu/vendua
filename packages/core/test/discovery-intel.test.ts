@@ -9,8 +9,6 @@ import { controlTx } from '../src/modules/control.ts';
 import { insertLeadTx, leadInsert, leadPatch } from '../src/modules/leads.ts';
 import { migrate } from '../src/platform/db.ts';
 
-// ------- pure (no DB) -------------------------------------------------------
-
 describe('discovery intelligence — pure', () => {
   test('guardrails: briefAutoPauseRuns defaults on, validates range', () => {
     expect(DEFAULT_GUARDRAILS.briefAutoPauseRuns).toBe(5);
@@ -25,7 +23,7 @@ describe('discovery intelligence — pure', () => {
     const names = toolsFor('strategist').map((t) => t.name);
     expect(names).toContain('propose_brief');
     expect(names).toContain('remember');
-    // proposing is its whole job — lead mutation stays out of a board run
+    // lead mutation stays out of a board run — proposing is the strategist's whole job
     for (const t of ['create_lead', 'update_lead', 'send_message', 'draft_message']) {
       expect(names).not.toContain(t);
     }
@@ -53,20 +51,16 @@ describe('discovery intelligence — pure', () => {
   });
 });
 
-// ------- DB-backed ----------------------------------------------------------
-// Opt-in via TEST_DATABASE_URL (CI has no Postgres).
-
+// DB-backed tests opt in via TEST_DATABASE_URL (CI has no Postgres).
 describe.skipIf(!process.env.TEST_DATABASE_URL)('discovery intelligence (db)', () => {
   const sql = postgres(process.env.TEST_DATABASE_URL!);
   const uniq = Date.now().toString(36);
-  // shared phones/whatsapps dedupe across suite re-runs — keep them unique
+  // phones/whatsapps dedupe — keep them unique across suite re-runs
   const wa = `wa.me/55${String(Date.now()).slice(-9)}`;
 
   const mkCtx = (runKind: ToolContext['runKind']): ToolContext => ({
     sql,
-    // claimControl keys are deterministic (runId:step:name:callId) — a
-    // unique runId per suite run, or a re-run replays the stored response
-    // and the assertions see stale rows instead of this run's writes
+    // unique runId per suite run — claimControl keys are deterministic (runId:step:name:callId), a re-run would replay stale responses
     runId: `test-${uniq}`,
     runKind,
     leadId: null,
@@ -85,7 +79,7 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('discovery intelligence (db)', (
     claimToken: null,
   });
 
-  /** A finished discovery run for the brief — `lead` = it produced one. */
+  // a finished discovery run for the brief; lead = it produced a lead
   const doneRun = (briefId: string, lead: boolean) =>
     controlTx(sql, async (tx) => {
       const id = await insertRun(tx, {
@@ -133,12 +127,7 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('discovery intelligence (db)', (
     for (let i = 0; i < 4; i++) await doneRun(live, false);
     await doneRun(live, true);
 
-    // A dev environment's own worker (`bun run dev` starts the 15s sweep
-    // chain) can interleave between arrange and act: it may fire a queued
-    // run for the brief mid-test, which makes `not exists queued` skip it
-    // that sweep. Converge instead of asserting on one invocation — each
-    // iteration either pauses the brief or turns its queued run into a
-    // dead-finished journal row, so the streak always lands.
+    // a dev worker's 15s sweep can interleave mid-test — converge by re-sweeping instead of asserting on one invocation
     for (let i = 0; i < 12; i++) {
       await sweepBriefs(sql);
       if (!(await briefRow(dead)).enabled) break;
@@ -155,8 +144,7 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('discovery intelligence (db)', (
     const l = await briefRow(live);
     expect(l.enabled).toBe(true);
     expect(l.note).toBeNull();
-    // the live brief fired — last_run_at is stamped at enqueue and stays
-    // even if the ambient worker already claimed the run
+    // last_run_at stamps at enqueue — stays even if the ambient worker already claimed the run
     const liveRow = (
       await sql<{ last_run_at: string | null }[]>`
         select last_run_at from discovery_briefs where id = ${live}
@@ -164,9 +152,7 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('discovery intelligence (db)', (
     )[0]!;
     expect(liveRow.last_run_at).not.toBeNull();
 
-    // revival restarts the streak window (rearmed_at): staff flips the
-    // dead brief back on and the next sweep fires a fresh run instead of
-    // instantly re-pausing on the pre-revival zero-yield history
+    // revival (rearmed_at) restarts the streak window — the next sweep fires a run instead of instantly re-pausing
     await sql`
       update discovery_briefs set enabled = true, note = null, rearmed_at = now()
       where id = ${dead}
@@ -174,8 +160,6 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('discovery intelligence (db)', (
     await sweepBriefs(sql);
     const revived = await briefRow(dead);
     expect(revived.enabled).toBe(true);
-    // fired, not re-paused — last_run_at stamps at enqueue (queued rows can
-    // already be claimed by the ambient worker when we read)
     expect(
       (
         await sql<{ last_run_at: string | null }[]>`
@@ -187,9 +171,7 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('discovery intelligence (db)', (
 
   test('C1: runs queued before a re-arm do not eat the fresh streak', async () => {
     const stale = await mkBrief(`stale-${uniq}`);
-    // The boundary is created_at (enqueue = the params the run carries), not
-    // finished_at: these 5 runs were queued BEFORE the edit but finish
-    // AFTER it — under a finished_at bound they'd instantly re-pause.
+    // the bound is created_at (enqueue), not finished_at — these runs were queued before the rearm but finish after it
     await controlTx(sql, async (tx) => {
       for (let i = 0; i < 5; i++) {
         const id = await insertRun(tx, {
@@ -205,8 +187,7 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('discovery intelligence (db)', (
           where id = ${id}
         `;
       }
-      // rearmed strictly after the runs' created_at but strictly before
-      // their finished_at — the timeline the bug needs to reproduce
+      // rearm lands between created_at and finished_at — the timeline the bug needs
       await tx`
         update discovery_briefs set rearmed_at = now() - interval '30 minutes',
           enabled = true
@@ -262,7 +243,6 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('discovery intelligence (db)', (
         `
       )[0]!.last_run_at,
     ).not.toBeNull();
-    // restore defaults for the other tests
     await controlTx(
       sql,
       (tx) =>
@@ -273,8 +253,7 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('discovery intelligence (db)', (
   });
 
   test('C2: sweepStrategist fires once per week', async () => {
-    // any strategist row (even canceled) counts as "fired this week" — age
-    // leftovers from previous suite runs out of the window for idempotence
+    // age out leftover strategist rows so suite re-runs stay idempotent (any row counts as "fired this week")
     await sql`
       update agent_runs set created_at = now() - interval '8 days'
       where kind = 'strategist'
@@ -296,7 +275,7 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('discovery intelligence (db)', (
     const name = `prop-${uniq}`;
     const out = (await executeTool(c, 'pb1', 'propose_brief', {
       name,
-      // query dedupes too — keep it unique across suite re-runs
+      // queries dedupe too — keep it unique across suite re-runs
       query: `docerias ${uniq} com whatsapp em fortaleza`,
       segment: 'doceria',
       city: 'Fortaleza',
@@ -313,7 +292,6 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('discovery intelligence (db)', (
     expect(row.created_by).toBe('strategist');
     expect(row.note).toContain('docerias respondem');
 
-    // same name or query → skip, not a second row
     const dup = (await executeTool(c, 'pb2', 'propose_brief', {
       name: name.toUpperCase(),
       query: 'qualquer outra',
@@ -322,8 +300,7 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('discovery intelligence (db)', (
     expect(dup.proposed).toBe(false);
     expect(dup.duplicate).toBe(true);
 
-    // a blank rationale can't land — staff approve on the note, so the tool
-    // requires the reason it stores there
+    // staff approve on the note, so a blank reason can't land
     const blank = (await executeTool(c, 'pb4', 'propose_brief', {
       name: `blank-${uniq}`,
       query: `blank q ${uniq}`,
@@ -331,7 +308,6 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('discovery intelligence (db)', (
     })) as { error?: string };
     expect(blank.error).toContain('reason');
 
-    // toolset enforcement: a discovery run can't call it
     const denied = (await executeTool(mkCtx('discovery'), 'pb3', 'propose_brief', {
       name: 'sneaky',
       query: 'q',
@@ -360,8 +336,7 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('discovery intelligence (db)', (
     expect(row.intent_score).toBe(9);
     expect(row.intent_reason).toContain('reviews recentes');
 
-    // a dup with a DIFFERENT intent score doesn't overwrite the scored card —
-    // the merge only fills still-empty columns
+    // the merge only fills still-empty columns — a dup's score can't overwrite the scored card
     const empty = `Empty Intent ${uniq}`;
     const blank = (
       await controlTx(sql, (tx) =>
@@ -389,7 +364,7 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('discovery intelligence (db)', (
 
   test('C4: dup-merge promotes agent_mode only when the outreach run is admitted', async () => {
     const c = mkCtx('discovery');
-    // The autocontact gate needs a live whatsapp driver — log driver counts.
+    // the autocontact gate needs a live whatsapp driver — log driver counts
     await sql`
       insert into control_integrations (kind, driver, enabled)
       values ('whatsapp', 'log', true)
@@ -422,9 +397,7 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('discovery intelligence (db)', (
     const capped = await seedDup(`Capped Merge ${uniq}`, cappedWa);
     const open = await seedDup(`Open Merge ${uniq}`, openWa);
     try {
-      // Spend already over the tiny cap → insertRun must refuse the merge's
-      // first contact; 'auto' with no run behind it would leave the lead
-      // driven by nothing (raising the cap later never recreates it).
+      // spend over the cap → insertRun must refuse the first contact; 'auto' with no run behind it would leave the lead undriven
       await sql`
         insert into agent_runs (kind, lead_id, status, cost_cents, finished_at)
         values ('outreach', ${capped.id}, 'done', 50, now())
@@ -439,7 +412,7 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('discovery intelligence (db)', (
 
       const refused = await createDup(`Capped Merge ${uniq}`, cappedWa);
       expect(refused.duplicate).toBe(true);
-      // the merge itself still lands — only the automation flag is refused
+      // the merge still lands — only the automation flag is refused
       expect(refused.merged).toContain('website');
       expect(refused.merged).not.toContain('agent_mode');
       expect(refused.contactRun).toBeUndefined();
@@ -452,7 +425,7 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('discovery intelligence (db)', (
       `;
       expect(parked[0]!.n).toBe(0);
 
-      // A lead under the cap still promotes — run admitted, mode follows.
+      // a lead under the cap still promotes — run admitted, mode follows
       const admitted = await createDup(`Open Merge ${uniq}`, openWa);
       expect(admitted.duplicate).toBe(true);
       expect(admitted.merged).toContain('agent_mode');
@@ -462,10 +435,8 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('discovery intelligence (db)', (
       )[0]!;
       expect(openLead.agent_mode).toBe('auto');
 
-      // Fresh path — same invariant: 'auto' lands only with the run behind
-      // it. (A brand-new lead has no prior spend, so its insert can never
-      // refuse on the cap — the ordering still guards the invariant for any
-      // refusal source.)
+      // fresh path, same invariant: 'auto' lands only with the run behind it (a new lead can't hit the cap,
+      // but the ordering guards any refusal source)
       const freshWa = `55119${String(Date.now()).slice(-7)}03`;
       const fresh = (await executeTool(c, `cf-${freshWa.slice(-4)}`, 'create_lead', {
         name: `Fresh Auto ${uniq}`,
@@ -483,10 +454,7 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('discovery intelligence (db)', (
       )[0]!;
       expect(freshLead.agent_mode).toBe('auto');
 
-      // A merged lead with an active NON-outreach run: insertRun returns
-      // that run's id (one active row per lead), so the first-contact
-      // intent has to ride the mailbox — the 'event' item is what carries
-      // it into the owning run.
+      // one active run per lead — a busy lead's first-contact intent rides the mailbox 'event' item into the owning run
       const busyWa = `55119${String(Date.now()).slice(-7)}05`;
       const busy = await seedDup(`Busy Merge ${uniq}`, busyWa);
       const owner = (

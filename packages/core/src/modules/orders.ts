@@ -1,11 +1,6 @@
 import type { Sql } from '../platform/db.ts';
 import { HttpError } from '../platform/http.ts';
 
-/**
- * orders module — strict state machine + events
- * (docs/architecture/01-core.md#key-domain-behaviors).
- */
-
 export const ORDER_STATES = [
   'placed',
   'confirmed',
@@ -29,7 +24,6 @@ const TRANSITIONS: Record<OrderState, OrderState[]> = {
   refunded: [],
 };
 
-/** Pure transition check — unit-tested. */
 export function canTransition(from: OrderState, to: OrderState): boolean {
   return TRANSITIONS[from].includes(to);
 }
@@ -122,10 +116,7 @@ export async function loadOrderView(
   };
 }
 
-/**
- * Applies a state transition inside the current tenant transaction: updates
- * the order, appends the event, emits the outbox topic — atomically.
- */
+/** Applies a transition inside the tenant tx — order update + event + outbox commit atomically. */
 export async function transitionOrder(
   tx: Sql,
   tenantId: string,

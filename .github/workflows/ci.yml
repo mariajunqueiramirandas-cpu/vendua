@@ -4,20 +4,12 @@ on:
   push:
     branches: [main]
   pull_request:
-    # labeled/unlabeled rerun the pipeline so storefront-isolation can't go
-    # stale — adding/removing a storefront: label changes what the check
-    # enforces on the same head commit.
+    # label events must rerun the pipeline — a storefront: label changes what storefront-isolation enforces on the same head
     types: [opened, synchronize, reopened, labeled, unlabeled]
-  # The format job self-dispatches after pushing an autofix commit:
-  # GITHUB_TOKEN pushes can't trigger synchronize, but workflow_dispatch IS
-  # in the exception — the dispatched run's checks attach to the fixed head.
+  # format self-dispatches after its autofix push — workflow_dispatch is the GITHUB_TOKEN exception that re-runs checks on the fixed head
   workflow_dispatch:
     inputs:
-      # The PR's base, forwarded by the format job — github.base_ref doesn't
-      # exist under workflow_dispatch and without it the Builds step would
-      # rebuild the whole storefront fleet on every autofix. Empty means a
-      # main-push autofix: there is no stable base behind the new commit, so
-      # Builds keeps the push semantics of building every storefront.
+      # PR base forwarded by the format job; empty = main-push autofix, so Builds builds every storefront
       base_ref:
         type: string
         default: ''
@@ -26,11 +18,7 @@ permissions:
   contents: read
 
 jobs:
-  # Runs prettier --write and commits style-only diffs back to the branch, so
-  # formatting can never be the reason a change is blocked. Same-repo branches
-  # only: a fork's head_ref doesn't exist in this repo (checkout would fail)
-  # and the token can't push to forks anyway. This job is the only holder of
-  # a write token; validation stays read-only.
+  # prettier autofix commits back to the branch; same-repo branches only (can't checkout/push fork heads) — the sole write-token job
   format:
     runs-on: ubuntu-latest
     permissions:
@@ -56,9 +44,7 @@ jobs:
             git config user.name 'github-actions[bot]'
             git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
             git add -A
-            # No [skip ci] — but GITHUB_TOKEN pushes can't trigger
-            # synchronize regardless; the dispatch below is what actually
-            # re-runs checks on the fixed head.
+            # no [skip ci]: GITHUB_TOKEN pushes can't retrigger synchronize anyway — the dispatch below does that
             git commit -m 'style: prettier auto-fix'
             git push
             echo "pushed=true" >> "$GITHUB_OUTPUT"
@@ -67,20 +53,10 @@ jobs:
         if: steps.autofix.outputs.pushed == 'true'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        # workflow_dispatch is the documented GITHUB_TOKEN exception — its
-        # run executes on the branch ref, so checks attach to the autofix
-        # commit and surface on the PR. check/conformance pass their `if`
-        # under workflow_dispatch; format skips (tree is already clean) and
-        # storefront-isolation skips (the autofix never changes the path
-        # set — the earlier synchronize already vetted boundaries).
+        # workflow_dispatch runs on the branch ref, so checks attach to the autofix commit and surface on the PR
         run: gh workflow run ci.yml --ref "${{ github.head_ref || github.ref_name }}" -f base_ref="${{ github.base_ref }}"
 
-  # Storefront write-scope boundary (docs/architecture/06-monorepo.md): a PR
-  # labelled `storefront:<slug>` may only touch `storefronts/<slug>/**`. No
-  # `storefront:` label → no-op pass, so platform PRs don't need labels.
-  # The only job gated on label events: labeled/unlabeled MUST rerun it (the
-  # whole point of the trigger above); check/format skip those events since
-  # the head commit is unchanged.
+  # a `storefront:<slug>` PR may only touch storefronts/<slug>/** (unlabeled = no-op pass) — the only job label events must rerun
   storefront-isolation:
     runs-on: ubuntu-latest
     if: github.event_name == 'pull_request'
@@ -93,12 +69,10 @@ jobs:
           bun-version: '1.4.2'
       - run: bun tools/check-storefront-paths.mjs
 
-  # Validates GitHub's merge ref (PR) / the pushed commit (main) — the code
-  # that will actually land.
+  # validates the merge ref (PR) / pushed commit (main) — the code that lands
   check:
     runs-on: ubuntu-latest
-    # Label events only matter to storefront-isolation — check/format run the
-    # same unchanged head commit.
+    # label events matter only to storefront-isolation; check/format run the same unchanged head
     if: >-
       github.event_name == 'push' ||
       !contains(fromJSON('["labeled","unlabeled"]'), github.event.action)
@@ -112,8 +86,7 @@ jobs:
       - run: bun install --frozen-lockfile
       - name: Typecheck
         run: |
-          # Every workspace dir with a `check` script — a new package or
-          # storefront needs zero CI edits.
+          # every workspace dir with a `check` script — new packages need zero CI edits
           for dir in packages/* site apps/* storefronts/* storefronts/_examples/*; do
             [ -d "$dir" ] || continue
             [ -f "$dir/package.json" ] || continue
@@ -122,9 +95,7 @@ jobs:
               (cd "$dir" && bun run check)
             fi
           done
-      # DB-backed tests opt in via TEST_DATABASE_URL — without Postgres they
-      # skip silently. Boot the same compose Postgres the conformance job
-      # uses so they actually run in CI.
+      # boot compose Postgres so TEST_DATABASE_URL tests actually run instead of skipping
       - name: Postgres for core tests
         run: |
           docker compose -f packages/core/docker-compose.yml up -d postgres
@@ -132,8 +103,7 @@ jobs:
             docker compose -f packages/core/docker-compose.yml exec -T postgres pg_isready -h localhost -p 5432 -U vendua && break
             sleep 1
           done
-          # Assert readiness — a broken container must fail HERE, not as an
-          # indirect connection error inside the test step.
+          # a broken container must fail here, not as an indirect test-step error
           docker compose -f packages/core/docker-compose.yml exec -T postgres pg_isready -h localhost -p 5432 -U vendua
       - name: Core tests
         run: cd packages/core && TEST_DATABASE_URL=postgres://vendua:vendua@localhost:5433/vendua bun test
@@ -141,13 +111,11 @@ jobs:
         run: bun test tools/
       - name: Builds
         run: |
-          # Storefront builds follow the affected graph (tools/affected.mjs)
-          # against the PR base; a push to main builds every storefront.
+          # PRs build the affected graph (tools/affected.mjs) against the base; a main push builds every storefront
           if [ "${{ github.event_name }}" = "pull_request" ]; then
             affected="$(bun tools/affected.mjs --base "origin/${{ github.base_ref }}")"
           elif [ "${{ github.event_name }}" = "workflow_dispatch" ] && [ -n "${{ github.event.inputs.base_ref }}" ]; then
-            # PR autofix retrigger: the base comes through the input, not
-            # github.base_ref — keep the same affected scoping as the PR run.
+            # autofix retrigger: base arrives via the input, not github.base_ref — same affected scoping as the PR run
             affected="$(bun tools/affected.mjs --base "origin/${{ github.event.inputs.base_ref }}")"
           else
             affected='{"packages":["site"],"allStorefronts":true}'
@@ -177,10 +145,7 @@ jobs:
             fi
           done
 
-  # The phase's exit criterion enforced in CI: scaffold a fresh storefront,
-  # boot real Postgres + Core, and run the full conformance e2e (C/S/Q
-  # Playwright suite) against it — the preview proxy forwards Host exactly
-  # like the production edge.
+  # exit criterion: scaffold a fresh storefront, boot Postgres + Core, run the conformance e2e through the preview proxy
   conformance:
     runs-on: ubuntu-latest
     if: >-
@@ -195,8 +160,7 @@ jobs:
       - name: Postgres + migrate
         run: |
           docker compose -f packages/core/docker-compose.yml up -d postgres
-          # pg_isready on the unix socket is answered by the image's temporary
-          # init server too — check TCP, which only the real server listens on.
+          # check TCP not the unix socket — the image's init server also answers pg_isready there
           for i in $(seq 1 30); do
             docker compose -f packages/core/docker-compose.yml exec -T postgres pg_isready -h localhost -p 5432 -U vendua && break
             sleep 1

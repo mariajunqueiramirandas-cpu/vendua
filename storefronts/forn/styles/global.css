@@ -1,5 +1,4 @@
-/* Forn do Bairro — "a vitrine": the storefront as the bakery case.
-   Day palette = flour paper; closed hours pull the site into dusk. */
+/* Forn do Bairro — "a vitrine": the storefront as the bakery case; closed hours pull the site to dusk. */
 
 @font-face {
   font-family: 'Fraunces Variable';
@@ -175,8 +174,6 @@ body {
   text-transform: uppercase;
 }
 
-/* ---------- masthead ---------- */
-
 .masthead {
   padding: 34px 0 8px;
 }
@@ -227,8 +224,6 @@ body {
   font-style: italic;
   font-variation-settings: 'opsz' 14;
 }
-
-/* ---------- the fornada clock ---------- */
 
 .dial {
   margin: 18px 0 8px;
@@ -310,8 +305,6 @@ body {
 .dial-next {
   color: var(--mute);
 }
-
-/* ---------- ledger (catalog) ---------- */
 
 .ledger {
   padding: 26px 0 10px;
@@ -452,8 +445,6 @@ body {
   color: #fdf8ec;
 }
 
-/* ---------- "a casa" strip ---------- */
-
 .casa {
   margin: 44px 0 0;
   border-top: 1.5px solid var(--line-strong);
@@ -500,8 +491,6 @@ body {
   text-decoration-style: dotted;
   text-underline-offset: 3px;
 }
-
-/* ---------- header (inner pages) ---------- */
 
 .subhead {
   display: flex;
@@ -569,8 +558,6 @@ body {
   border: 1px dashed var(--line-strong);
 }
 
-/* ---------- footer ---------- */
-
 .colophon {
   margin-top: 56px;
   border-top: 1.5px solid var(--line-strong);
@@ -582,8 +569,6 @@ body {
   font-size: 13px;
   flex-wrap: wrap;
 }
-
-/* ---------- states ---------- */
 
 .skeleton-row {
   padding: 15px 10px 15px 6px;
@@ -646,8 +631,6 @@ body {
   background: transparent;
   color: var(--ember);
 }
-
-/* ---------- comanda (cart + checkout) ---------- */
 
 .comanda {
   position: relative;
@@ -773,8 +756,6 @@ body {
   opacity: 0.5;
   cursor: not-allowed;
 }
-
-/* ---------- product page ---------- */
 
 .product-page {
   margin-top: 26px;
@@ -909,8 +890,6 @@ body {
   padding: 16px 18px;
   font-style: italic;
 }
-
-/* ---------- checkout ---------- */
 
 .checkout-grid {
   display: grid;
@@ -1067,8 +1046,6 @@ body {
   font-size: 16px;
 }
 
-/* ---------- confirmation ---------- */
-
 .confirm-wrap {
   margin-top: 30px;
   text-align: center;
@@ -1167,8 +1144,6 @@ body {
   flex-wrap: wrap;
 }
 
-/* ---------- system.StoreClosedNotice override: the lit shop sign ---------- */
-
 .forn-sign {
   display: flex;
   align-items: center;
@@ -1229,8 +1204,6 @@ body {
   border-color: rgba(242, 230, 208, 0.7);
   color: #f2e6d0;
 }
-
-/* ---------- misc ---------- */
 
 .page-fade {
   animation: forn-fade 0.35s ease both;

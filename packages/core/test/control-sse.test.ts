@@ -5,8 +5,7 @@ import { createApp } from '../src/app.ts';
 import { controlEventListenerCount, emitControlEvent } from '../src/modules/control-events.ts';
 import { controlSse } from '../src/modules/control-sse.ts';
 
-// The events stream never touches sql — a lazy client (postgres.js only
-// dials on first query) stands in for AppDeps without a database.
+// the events stream never queries — a lazy postgres.js client (dials on first query) stands in for AppDeps
 const app = createApp({
   sql: postgres('postgres://localhost:1/vendua'),
   sessionSecret: 's',
@@ -15,7 +14,6 @@ const app = createApp({
 });
 const authed = { 'x-vendua-control': 'ctl-secret' };
 
-/** Read SSE frames (text up to the blank-line boundary) off a stream. */
 function frameReader(res: Response) {
   const reader = res.body!.getReader();
   const dec = new TextDecoder();
@@ -60,14 +58,13 @@ describe('GET /control/v1/events', () => {
 
     const frames = frameReader(res);
     try {
-      // The connect-time sync frame — also the resync signal on reconnect.
+      // the connect-time sync frame doubles as the resync signal on reconnect
       const sync = await frames.next();
       expect(sync).toContain('event: sync');
       expect(sync).toContain('data: {}');
       await expectListeners(baseline + 1);
 
-      // A bus event is forwarded verbatim: type → event name, payload → data,
-      // monotonic id → SSE id for ordering/dedupe within the connection.
+      // bus event → SSE verbatim: type→event, payload→data, monotonic id→SSE id for ordering/dedupe
       emitControlEvent('lead.change', 'lead-1');
       const frame = await frames.next();
       expect(frame).toContain('event: lead.change');
@@ -102,8 +99,7 @@ describe('GET /control/v1/events', () => {
   });
 
   test('heartbeat comment frames keep the stream warm', async () => {
-    // Mount the handler with a short interval — the route uses the 20s
-    // default, which no test wants to wait through.
+    // mount with a short interval — the route's 20s default is too slow to test
     const h = new Hono();
     h.get('/events', (c) => controlSse(c, 20));
     const res = await h.request('/events');

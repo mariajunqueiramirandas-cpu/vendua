@@ -1,27 +1,11 @@
--- 0000_baseline_thru_0017.sql — FRESH-INSTALL SCHEMA (covers 0001–0017).
--- migrate() runs this file ONLY when schema_migrations is empty and marks
--- the covered deltas applied; existing databases never see it. Regenerate
--- by concatenating the covered files when squashing further.
+-- Fresh-install schema covering 0001–0017; runs only when schema_migrations is empty. Regenerate by concatenating the covered files.
 
-
--- ============ 0001_init.sql ============
-
--- 0001_init.sql — Core schema, Phase 0 skeleton.
---
--- Rule from docs/architecture/01-core.md: every tenant-owned row carries
--- tenant_id and Postgres row-level security enforces it as a second line of
--- defense. The application connects as `vendua_app` (a non-owner role), sets
--- `vendua.tenant_id` per transaction via SET LOCAL, and still scopes every
--- query explicitly.
---
--- `tenants` and `domains` are the exception: they are the resolver's routing
--- data, needed *before* a tenant context exists. They get a read-only
--- `USING (true)` policy for the app role and no write policy.
+-- 0001_init.sql — core schema. Every tenant-owned table gets tenant_id + RLS as a second line of defense;
+-- resolver tables tenants/domains get read-only USING (true) policies (needed before a tenant context exists).
 
 create extension if not exists pgcrypto;
 
--- App role: non-owner, subject to RLS. Local dev password; deployments inject
--- their own. DO-block keeps the migration idempotent.
+-- vendua_app: non-owner role subject to RLS (dev password; DO-block keeps this idempotent).
 do $$
 begin
   if not exists (select 1 from pg_roles where rolname = 'vendua_app') then
@@ -200,10 +184,7 @@ create table if not exists outbox (
   published_at timestamptz
 );
 
--- ---------------------------------------------------------------------------
--- Row-level security. Applied to every table with tenant-owned rows; the
--- resolver tables get read-only open policies instead (see header comment).
--- ---------------------------------------------------------------------------
+-- Tenant-isolation RLS on every tenant-owned table.
 
 do $$
 declare
@@ -243,48 +224,32 @@ alter default privileges in schema public
 alter default privileges in schema public
   grant usage on sequences to vendua_app;
 
--- ============ 0002_store_surface_fields.sql ============
+-- 0002_store_surface_fields.sql — store_settings.currency + vocabulary (per-tenant pt-BR copy deck).
 
--- 0002 — store surface fields observed in the Phase-0 storefront spikes
--- (docs/phase-0-findings.md): currency (forn hardcoded BRL) and per-tenant
--- pt-BR vocabulary (quero-pudim's "doce"/"sacola" copy deck).
 alter table store_settings add column currency text not null default 'BRL';
 alter table store_settings add column vocabulary jsonb not null default '{}';
 
--- ============ 0003_review_hardening.sql ============
+-- 0003_review_hardening.sql — DB-layer invariants.
 
--- 0003_review_hardening.sql — invariants the PR-review findings need at the
--- database layer.
-
--- One order per cart, period. The checkout tx locks the cart row FOR UPDATE
--- before validating, but the index is the last line of defense if a path ever
--- skips the lock.
+-- one order per cart — the index backs the checkout tx's FOR UPDATE lock
 create unique index if not exists orders_cart_unique on orders (cart_id);
 
--- Line quantity cap enforced atomically — on-conflict increments can't bypass
--- the 99-per-line maximum the PATCH endpoint advertises. Violations surface
--- as INVALID_QTY (23514 check_violation).
+-- atomic 99-per-line qty cap — on-conflict increments can't bypass it (violations surface as INVALID_QTY)
 alter table cart_items drop constraint if exists cart_items_qty_check;
 alter table cart_items add constraint cart_items_qty_range check (qty > 0 and qty <= 99);
 
--- ============ 0004_idempotency_lease.sql ============
+-- 0004_idempotency_lease.sql — claims carry an owner token so a stale-claim steal can't double-commit a mutation.
 
--- 0004_idempotency_lease.sql — idempotency claims carry an owner token so a
--- stale-claim steal can't let two handlers commit the same mutation.
 alter table idempotency_keys add column if not exists owner uuid;
 create index if not exists idempotency_keys_created_idx on idempotency_keys (created_at);
 
--- ============ 0005_cart_price_snapshots.sql ============
-
--- Cart items snapshot their price at add time: a catalog price edit must not
--- retroactively reprice lines a customer already accepted (order integrity).
--- Live availability still revalidates at checkout — this freezes only money.
+-- 0005_cart_price_snapshots.sql — cart items snapshot price at add time so catalog edits can't reprice accepted lines.
 
 alter table cart_items
   add column unit_price_cents integer,
   add column modifier_snapshot jsonb not null default '[]'::jsonb;
 
--- Backfill existing dev carts at current catalog prices (base + chosen deltas).
+-- backfill dev carts at current catalog prices (base + chosen deltas)
 update cart_items ci
 set unit_price_cents = p.base_price_cents + coalesce(
   (
@@ -314,25 +279,9 @@ set modifier_snapshot = coalesce(
 
 alter table cart_items alter column unit_price_cents set not null;
 
--- ============ 0006_leads.sql ============
+-- 0006_leads.sql — founder CRM v0 intake pipeline. Platform tables (no tenant_id): RLS keys on the vendua.control
+-- GUC instead, so stray tenant-path queries can't touch CRM data; control mutations claim keys in control_idempotency_keys.
 
--- 0006_leads.sql — Founder CRM v0 (docs/roadmap.md, Phase 1): Venduá's own
--- merchant-intake pipeline (lead → contacted → invited → live, notes per
--- merchant).
---
--- `leads` is a PLATFORM table like tenants/domains (see 0001): it is not
--- merchant data, so it carries no tenant_id. But unlike a permissive
--- `using (true)` policy, its RLS keys on the `vendua.control` GUC — the
--- control routes set it `set local` inside their transactions, so a stray
--- vendua_app query on the tenant path can never read or write CRM data even
--- though the role carries the grant. The HTTP boundary stays the
--- /control/v1 shared-secret gate; RLS is the second line of defense, same
--- shape as the tenant GUC.
--- Mutations claim an Idempotency-Key like every other mutating endpoint.
--- Tenant mutations claim in idempotency_keys (tenant-scoped, FK to tenants) —
--- leads is a platform table, so its claims live here instead: key → stored
--- first response, never evicted, so a retried mutation replays rather than
--- re-applies.
 create table if not exists control_idempotency_keys (
   key text primary key,
   response jsonb,
@@ -370,21 +319,9 @@ create policy staff_all on control_idempotency_keys for all
 grant select, insert, update on leads to vendua_app;
 grant select, insert on control_idempotency_keys to vendua_app;
 
--- ============ 0007_crm.sql ============
-
--- 0007_crm.sql — Founder CRM → full agentic CRM (docs/roadmap.md, Phase 1→4
--- bridge). Grows the v0 intake board into the tool the founder actually runs
--- the pipeline in: richer lead fields, an activity timeline, tasks, channel
--- threads/messages, state history for funnel metrics, agent runs, provider
--- integrations, and workspace settings.
---
--- Same isolation posture as 0006: every table here is PLATFORM data — no
--- tenant_id, RLS keyed on the `vendua.control` GUC, the /control/v1 gate is
--- the access boundary and RLS the second line of defense. Mutations keep
--- claiming Idempotency-Keys via control_idempotency_keys.
---
--- leads.notes (v0 jsonb) migrates into lead_activities rows below, and the
--- column is dropped — one timeline, not two shapes of history.
+-- 0007_crm.sql — v0 intake → agentic CRM: richer leads, activity timeline, tasks, threads/messages, state history,
+-- agent runs, integrations, settings. Same posture as 0006: platform data, vendua.control-gated RLS.
+-- leads.notes (v0 jsonb) folds into lead_activities and drops — one timeline, not two shapes of history.
 
 alter table leads
   add column if not exists whatsapp text,
@@ -404,8 +341,7 @@ alter table leads
 create table if not exists lead_activities (
   id uuid primary key default gen_random_uuid(),
   lead_id uuid not null references leads (id) on delete cascade,
-  -- 'email'/'call'/'meeting' are staff-logged touchpoints; 'agent' marks
-  -- runner actions; 'system' for imported/migrated events.
+  -- kinds: staff touchpoints (note/call/meeting), runner actions (agent), imported events (system)
   kind text not null check (kind in ('note', 'call', 'meeting', 'state_change', 'agent', 'system')),
   body text,
   meta jsonb not null default '{}',
@@ -425,8 +361,7 @@ create table if not exists lead_tasks (
 );
 create index if not exists lead_tasks_open_due on lead_tasks (due_at) where done_at is null;
 
--- One thread per lead per channel; external_id is the provider-side chat /
--- conversation id when one exists (baileys jid, resend thread).
+-- one thread per (lead, channel); external_id = provider-side conversation id (baileys jid, resend thread)
 create table if not exists lead_threads (
   id uuid primary key default gen_random_uuid(),
   lead_id uuid not null references leads (id) on delete cascade,
@@ -445,19 +380,13 @@ create table if not exists lead_messages (
   direction text not null check (direction in ('in', 'out')),
   author text not null check (author in ('staff', 'agent', 'lead', 'system')),
   body text not null,
-  -- drafts wait in the Approvals queue; 'rejected' keeps the audit trail.
-  -- 'sending' = dispatch in flight: a crash between provider call and status
-  -- write lands here, never back in 'queued' — at-most-once delivery.
+  -- 'sending' = dispatch in flight: a crash lands here, never back in 'queued' (at-most-once delivery)
   status text not null check (status in ('draft', 'queued', 'sending', 'sent', 'delivered', 'received', 'failed', 'rejected')),
-  -- Channel-namespaced on write ('whatsapp:AB12…') — a provider id must be
-  -- unique per channel, but ids across providers share no namespace, so the
-  -- unique index below can't let one channel's ids suppress another's.
+  -- channel-namespaced on write ('whatsapp:AB12…') so provider ids can't collide across channels in the unique index
   provider_message_id text,
-  -- run that authored this message — lets a re-executed agent run recognize
-  -- its own already-queued send instead of composing a duplicate.
+  -- lets a re-executed run recognize its own already-queued send instead of composing a duplicate
   agent_run_id uuid,
-  -- why a 'failed' send failed — kept out of provider_message_id, which is
-  -- unique and would collide on repeated same-reason failures.
+  -- failure reason kept out of provider_message_id, which is unique and would collide on repeated failures
   error text,
   approved_by text,
   approved_at timestamptz,
@@ -466,7 +395,7 @@ create table if not exists lead_messages (
 );
 create index if not exists lead_messages_thread_at on lead_messages (thread_id, created_at);
 create index if not exists lead_messages_pending_drafts on lead_messages (created_at) where status = 'draft';
--- Provider retries must never insert a second copy of the same inbound.
+-- provider retries must never insert a second copy of the same inbound
 create unique index if not exists lead_messages_provider_id on lead_messages (provider_message_id) where provider_message_id is not null;
 
 create table if not exists lead_state_history (
@@ -479,9 +408,7 @@ create table if not exists lead_state_history (
 );
 create index if not exists lead_state_history_lead on lead_state_history (lead_id, at);
 
--- Funnel reads `everReached` from this table only, so pre-existing leads
--- need their history backfilled: every stage up to their current state,
--- stamped at created_at. Leads with an out-of-funnel state are untouched.
+-- backfill every funnel stage up to each lead's current state (stamped at created_at); out-of-funnel states untouched
 insert into lead_state_history (lead_id, from_state, to_state, actor, at)
 select l.id, prev.s, cur.s, 'system', l.created_at
 from leads l
@@ -498,8 +425,7 @@ left join lateral (
   where p.ord = cur.ord - 1
 ) prev on true;
 
--- Agent harness queue: every run is an auditable row. steps[] is the full
--- tool-call + model-io transcript; tokens/cost make spend a first-class read.
+-- agent run queue; steps[] = tool-call + model-io transcript, tokens/cost = spend ledger
 create table if not exists agent_runs (
   id uuid primary key default gen_random_uuid(),
   kind text not null check (kind in ('triage', 'reply', 'outreach', 'discovery')),
@@ -518,8 +444,7 @@ create table if not exists agent_runs (
 );
 create index if not exists agent_runs_queue on agent_runs (created_at) where status = 'queued';
 
--- Modular provider configs. secret_ref is the NAME of an env var holding the
--- credential — values never live in this table.
+-- secret_ref names the env var holding the credential — values never live in this table
 create table if not exists control_integrations (
   id uuid primary key default gen_random_uuid(),
   kind text not null check (kind in ('llm', 'email', 'whatsapp', 'discovery')),
@@ -532,9 +457,7 @@ create table if not exists control_integrations (
   unique (kind, driver)
 );
 
--- Baileys auth state: the driver's multi-key credential store (replaces
--- useMultiFileAuthState so the socket survives rebuilds and restarts).
--- Keyed the way SignalKeyStore addresses keys: (account, category, name).
+-- Baileys credential store keyed like SignalKeyStore: (account, category, name); survives rebuilds/restarts
 create table if not exists wa_auth_state (
   account_id text not null,
   category text not null,
@@ -543,13 +466,13 @@ create table if not exists wa_auth_state (
   primary key (account_id, category, name)
 );
 
--- Workspace-level knobs: 'guardrails', 'pitch', 'autopilot_default'.
+-- workspace knobs: 'guardrails', 'pitch', 'autopilot_default'
 create table if not exists control_settings (
   key text primary key,
   value jsonb not null
 );
 
--- Fold v0 notes into the timeline, then drop the jsonb column.
+-- fold v0 notes into the timeline, then drop the jsonb column
 insert into lead_activities (lead_id, kind, body, created_by, at)
 select id, 'note', n ->> 'body', 'staff', (n ->> 'at')::timestamptz
 from leads, jsonb_array_elements(notes) n
@@ -581,18 +504,11 @@ begin
 end
 $$;
 
--- ============ 0008_message_subject.sql ============
-
--- 0008_message_subject.sql — outbound subject snapshots on the message row.
--- lead_threads.subject is the conversation default; a queued message keeps the
--- subject effective at compose time so a later override can't rewrite an
--- in-flight send (dispatch reads m.subject, falling back to the thread's).
+-- 0008_message_subject.sql — snapshot the compose-time thread subject onto the message so a later override can't rewrite an in-flight send.
 
 alter table lead_messages add column if not exists subject text;
 
--- Only rows that can still dispatch inherit the thread's current subject —
--- a completed send used whatever the thread said back then, so stamping it
--- now would fabricate history.
+-- only still-dispatchable rows inherit — stamping a completed send would fabricate history
 update lead_messages m
 set subject = t.subject
 from lead_threads t
@@ -601,28 +517,12 @@ where m.thread_id = t.id
   and m.status in ('draft', 'queued')
   and m.subject is null;
 
--- ============ 0009_agent_claim.sql ============
+-- 0009_agent_claim.sql — claim_token fences heartbeat/journal/finish writes to the owning execution; a stale worker can't overwrite a requeued run.
 
--- agent_runs.claim_token fences writes to the running execution that owns
--- the row: the reclaimer clears it, each new claim mints one, and the
--- worker's heartbeat/journal/finish writes are conditioned on it — so a
--- stale worker waking after its run was requeued can no longer overwrite
--- the live execution's status or journal.
 alter table agent_runs add column if not exists claim_token text;
 
--- ============ 0010_agent_goals.sql ============
-
--- 0010_agent_goals.sql — goal-driven agent + scheduled discovery (AutoGTM
--- parity pass). `leads.agent_goal` is the standing objective staff picks at
--- dispatch time ('negotiation' closes in-thread, 'meeting' drives toward the
--- founders' Google Meet booking link); reply/outreach runs read it so
--- inbound replies stay on-goal. `fit_score`/`fit_reason` is the model-judged
--- ICP match — separate from the SQL completeness `score`. `email_bounced_at`
--- is the deliverability flag Resend bounce/failed events set, blocking later
--- email sends. `discovery_briefs` are the daily autopilot briefs — the worker
--- sweep enqueues one discovery run per due brief.
---
--- Same isolation posture as 0007: platform data, RLS keyed on vendua.control.
+-- 0010_agent_goals.sql — leads.agent_goal (reply/outreach runs stay on-goal), model fit_score/fit_reason,
+-- email_bounced_at deliverability flag, daily discovery_briefs. Platform data, vendua.control-gated RLS.
 
 alter table leads
   add column if not exists agent_goal text not null default 'negotiation'
@@ -638,8 +538,7 @@ create table if not exists discovery_briefs (
   query text not null,
   segment text,
   city text,
-  -- target leads per daily run; the run prompt turns it into the stop
-  -- condition and the guardrail cap still bounds it from above.
+  -- target leads per daily run; the guardrail cap still bounds it from above
   target int check (target is null or (target between 1 and 1000)),
   enabled boolean not null default true,
   last_run_at timestamptz,
@@ -660,13 +559,9 @@ begin
 end
 $$;
 
--- ============ 0011_provider_events.sql ============
+-- 0011_provider_events.sql — parks delivery events that beat dispatch's finalize (pmid not yet on the message);
+-- the finalize drains them once it lands; (channel, provider_id, event) key dedupes provider retries.
 
--- Delivery events can beat dispatch's finalize — Resend emits
--- email.delivered/bounced before our send call returns the provider id. When
--- no lead_messages row carries the pmid yet, the event is parked here; the
--- dispatch finalize drains pending rows once the pmid lands. Keyed by
--- (channel, provider_id, event) so provider retries dedupe.
 create table provider_events (
   id bigserial primary key,
   channel text not null,
@@ -693,28 +588,14 @@ begin
 end
 $$;
 
--- ============ 0012_run_alive.sql ============
+-- 0012_run_alive.sql — split the reclaim lease from the real start: alive_at is the lease (heartbeats move it);
+-- started_at is when the attempt began and never moves again.
 
--- 0012 — split the reclaim lease from the real start time.
--- started_at used to double as the lease: every journal write + heartbeat
--- overwrote it, so it was never the actual start (the launch stage's clock
--- and Runs detail's 'início' both read ≈0 elapsed). alive_at is the lease;
--- started_at now means "when this attempt began" and never moves again.
 alter table agent_runs add column alive_at timestamptz;
 update agent_runs set alive_at = started_at where alive_at is null;
 
--- ============ 0013_meetings.sql ============
-
--- 0013_meetings.sql — CRM-native meeting booking. `meetings` is platform
--- data like the rest of the CRM: no tenant_id, RLS keyed on the
--- `vendua.control` GUC, the /control/v1 gate + booking tokens are the access
--- boundary.
---
--- Meetings are booked three ways: the public token-guarded link the agent
--- sends ('link'), staff on the Calendar view ('staff'), and future agent
--- tools ('agent'). The unique partial index on (lead_id, starts_at) makes
--- POST /book/v1/book replay-safe — a retried submission returns the same
--- row instead of double-booking the slot.
+-- 0013_meetings.sql — CRM meeting booking (link/staff/agent sources); the unique (lead_id, starts_at) partial index
+-- makes POST /book/v1/book replay-safe. Platform data, vendua.control-gated RLS.
 
 create table if not exists meetings (
   id uuid primary key default gen_random_uuid(),
@@ -728,8 +609,7 @@ create table if not exists meetings (
   booker_contact text,
   source text not null default 'link' check (source in ('link', 'staff', 'agent')),
   gcal_event_id text,
-  -- send markers: set once the 24h / 1h reminder went out so the worker
-  -- sweep never re-sends.
+  -- set once the 24h/1h reminder went out so the sweep never re-sends
   reminder_24h_at timestamptz,
   reminder_1h_at timestamptz,
   cancelled_at timestamptz,
@@ -741,14 +621,13 @@ create table if not exists meetings (
 create index if not exists meetings_lead on meetings (lead_id);
 create index if not exists meetings_starts on meetings (starts_at);
 create index if not exists meetings_status on meetings (status);
--- One scheduled meeting per (lead, slot) — the idempotent-booking anchor.
+-- one scheduled meeting per (lead, slot) — the idempotent-booking anchor
 create unique index if not exists meetings_lead_slot
   on meetings (lead_id, starts_at) where status = 'scheduled' and lead_id is not null;
--- Reminder sweep reads scheduled meetings approaching their start.
+-- reminder sweep reads scheduled meetings approaching their start
 create index if not exists meetings_reminders on meetings (status, starts_at);
 
--- Meeting lifecycle events on the lead timeline get their own kinds so the
--- UI can label them distinctly from a staff-logged 'meeting' touchpoint.
+-- meeting lifecycle kinds stay distinct from a staff-logged 'meeting' touchpoint
 alter table lead_activities drop constraint if exists lead_activities_kind_check;
 alter table lead_activities
   add constraint lead_activities_kind_check
@@ -771,27 +650,18 @@ begin
 end
 $$;
 
--- ============ 0014_pipeline_snapshots.sql ============
-
--- 0014_pipeline_snapshots.sql — daily pipeline snapshots for deal-value
--- forecasting. The worker sweep writes one row per day (taken_on is unique):
--- the funnel's per-state count + deal value at that moment, the weighted
--- value under the configured stage probabilities, and the trailing 30d agent
--- spend — the "expected revenue vs. agent cost" pair the Reports view reads.
--- Re-runs on the same day UPDATE the row (a snapshot is a point-in-time
--- measurement, not an event log).
---
--- Same isolation posture as 0007: platform data, RLS keyed on vendua.control.
+-- 0014_pipeline_snapshots.sql — one row/day: funnel count + deal value, probability-weighted value, trailing 30d agent
+-- spend (the Reports "expected revenue vs agent cost" pair). Same-day re-runs update the row. vendua.control-gated RLS.
 
 create table if not exists pipeline_snapshots (
   id uuid primary key default gen_random_uuid(),
-  -- the day the snapshot covers (server-local current_date) — one row/day.
+  -- the covered day (server-local current_date) — one row/day
   taken_on date not null unique,
-  -- {"lead": {"count": n, "valueCents": n}, ...} — all four LEAD_STATES keys.
+  -- {"lead": {"count": n, "valueCents": n}, ...} — all four LEAD_STATES keys
   by_state jsonb not null,
-  -- sum(valueCents * stage probability) at snapshot time.
+  -- sum(valueCents * stage probability) at snapshot time
   weighted_cents int not null default 0,
-  -- agent_runs cost_cents over the trailing 30d, frozen with the snapshot.
+  -- agent_runs cost_cents over the trailing 30d, frozen with the snapshot
   agent_cost_cents int not null default 0,
   created_at timestamptz not null default now()
 );
@@ -810,44 +680,25 @@ begin
 end
 $$;
 
--- ============ 0015_lead_history_value.sql ============
-
--- 0015_lead_history_value.sql — deal-value snapshot per state transition.
--- Stamps the lead's deal_value_cents onto the history row so won30d reports
--- the value effective at win time — editing the deal later can't rewrite
--- already-reported revenue.
+-- 0015_lead_history_value.sql — stamps deal_value_cents on each history row so later edits can't rewrite reported revenue.
 
 alter table lead_state_history add column if not exists value_cents int;
 
--- Freeze pre-column rows at the best estimate available — the deal value
--- current at migration — so wins already reported keep reporting the same
--- number and later edits can't move it. A null deal value stays null
--- (unknown at transition), which after this stamp reads as "captured null",
--- not "missing column", so won30d can drop its coalesce entirely.
+-- freeze pre-column rows at the current deal value; null stays null ("captured null", not "missing column")
 update lead_state_history h
 set value_cents = l.deal_value_cents
 from leads l
 where h.lead_id = l.id and h.value_cents is null;
 
--- ============ 0016_message_meeting_link.sql ============
-
--- 0016_message_meeting_link.sql — durable link between an outbound message
--- and the meeting it belongs to. Confirmations and reminders carry it so the
--- dispatch claim (and the stranded-message recovery in drain()) can suppress
--- sends once the meeting is no longer scheduled — a caller-supplied guard
--- never reaches the recovery path.
+-- 0016_message_meeting_link.sql — durable message→meeting link; confirmations/reminders and drain() recovery suppress sends once the meeting isn't scheduled.
 
 alter table lead_messages
   add column if not exists meeting_id uuid references meetings(id) on delete set null;
 
--- ============ 0017_lead_whatsapp_verified.sql ============
+-- 0017_lead_whatsapp_verified.sql — whatsapp provenance: auto-filled BR mobiles are unverified; wa.me links/explicit sets are verified (autocontact gates on it).
 
--- 0017_lead_whatsapp_verified.sql — whatsapp provenance. Discovery auto-fills
--- whatsapp from a BR mobile phone (reachable, not proven); wa.me/api.whatsapp
--- links and explicit sets are verified evidence. Autocontact gates on the flag.
 alter table leads
   add column if not exists whatsapp_verified boolean not null default false;
 
--- Rows that already carried whatsapp got it from real evidence (this flag
--- predates only the auto-fill path) — don't regress them to unverified.
+-- pre-existing whatsapp values came from real evidence — don't regress them to unverified
 update leads set whatsapp_verified = true where whatsapp is not null and whatsapp <> '';

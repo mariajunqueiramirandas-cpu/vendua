@@ -33,7 +33,6 @@
   --tx-frame-bg: var(--cream-200);
   --shadow-pop: 0 24px 72px color-mix(in srgb, var(--night-950) 22%, transparent);
 
-  /* Type */
   --font-sans: 'Space Grotesk Variable', 'Manrope', Arial, sans-serif;
   --font-serif: 'Instrument Serif', Georgia, serif;
   --font-mono: ui-monospace, 'Cascadia Mono', Consolas, monospace;
@@ -45,12 +44,10 @@
   --text-lg: 1.125rem;
   --text-xl: 1.5rem;
 
-  /* Shape & motion */
   --radius-pill: 999px;
   --motion-fast: 180ms;
   --motion-med: 240ms;
 
-  /* Layout */
   --header-h: 96px;
   --layout-max: 1200px;
   --layout-inline: 40px;

@@ -1,15 +1,5 @@
-/**
- * modules/rooms — video room provisioning for meetings.
- *
- * Two providers, chosen by env:
- *  - daily.co when DAILY_API_KEY is set: each booking gets its own
- *    `vendua-<meetingId>` room (unguessable name ⇒ 'public' privacy is fine —
- *    the lead joins without a token). exp = meeting end + 30min so the room
- *    dies shortly after the call.
- *  - static fallback otherwise (or on any Daily failure): the configured
- *    `meeting.roomUrl` — booking must never fail over a room, so a Daily
- *    error logs and degrades to the static URL.
- */
+// Daily.co room per meeting when DAILY_API_KEY is set (unguessable name ⇒ 'public' is fine), else the
+// static meeting.roomUrl — a booking must never fail over a room, so a Daily error degrades to static.
 import { log } from '../platform/log.ts';
 
 const rlog = log.child({ mod: 'rooms' });
@@ -20,30 +10,23 @@ export function dailyConfigured(): boolean {
   return Boolean(process.env.DAILY_API_KEY?.trim());
 }
 
-/** For /control/v1/meetings/status — which provider is active. */
 export function roomProvider(): 'daily' | 'static' | 'none' {
   return dailyConfigured() ? 'daily' : 'static';
 }
 
 export interface RoomResult {
   url: string | null;
-  /** 'daily' when a per-meeting room was created, 'static' on fallback */
   provider: 'daily' | 'static';
   error?: string;
 }
 
-/** Last provisioning failure — lets meetingsStatus tell "Daily configured"
- *  from "Daily actually working". Cleared on the next successful create. */
+// lets meetingsStatus tell "Daily configured" from "Daily actually working"; cleared on the next success
 let lastRoomError: string | null = null;
 
 export function roomLastError(): string | null {
   return lastRoomError;
 }
 
-/**
- * Provision a room for a freshly booked meeting. `fallback` is the static
- * meeting.roomUrl — returned whenever Daily is unset or errors.
- */
 export async function createRoom(
   meetingId: string,
   endsAt: Date,
@@ -70,8 +53,7 @@ export async function createRoom(
     });
     if (!res.ok) {
       const text = (await res.text()).slice(0, 300);
-      // Retry path: the room can already exist if an earlier attempt created
-      // it but failed before the URL reached the meeting row — recover it.
+      // a prior attempt may have created the room but died before saving the URL — recover it
       if (res.status === 400) {
         const existing = await fetchRoom(`vendua-${meetingId}`);
         if (existing) {
@@ -99,7 +81,6 @@ export async function createRoom(
   }
 }
 
-/** Fetch an existing room's URL by name — recovery for create-collision. */
 async function fetchRoom(name: string): Promise<string | null> {
   try {
     const res = await fetch(`${DAILY_API}/rooms/${encodeURIComponent(name)}`, {
@@ -114,8 +95,6 @@ async function fetchRoom(name: string): Promise<string | null> {
   }
 }
 
-/** Keep a rescheduled meeting's room alive to the new end + 30min. No-op
- *  when the room isn't a Daily room or the key is gone. */
 export async function bumpRoomExpiry(roomUrl: string | null, endsAt: Date): Promise<void> {
   if (!roomUrl || !dailyConfigured()) return;
   let name: string | undefined;

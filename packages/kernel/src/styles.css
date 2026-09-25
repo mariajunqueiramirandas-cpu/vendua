@@ -1,6 +1,4 @@
-/* Kernel default styles — @layer vendua + v- classes, self-contained resets
- * (02-kernel.md#css-isolation). All colors/type/radii come from --v-* vars the
- * provider emits on :root from vendua.config.ts tokens. */
+/* Kernel defaults in @layer vendua; colors/type/radii come from --v-* vars the provider emits from vendua.config.ts tokens. */
 
 @layer vendua {
   .v-banner-stack,

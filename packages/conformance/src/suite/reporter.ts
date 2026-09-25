@@ -1,8 +1,3 @@
-/**
- * Playwright reporter — writes <storefrontDir>/qa-report/report.json with one
- * entry per check ID (status + detail + duration) and prints the same compact
- * per-check lines to stdout. IDs come from the test titles' `[ID]` prefix.
- */
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import type {
