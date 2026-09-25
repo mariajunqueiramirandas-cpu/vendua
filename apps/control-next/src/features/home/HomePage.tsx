@@ -7,7 +7,6 @@ import { Segmented } from '@/components/ui/controls.tsx';
 import { Skeleton } from '@/components/ui/controls.tsx';
 import type { Stats } from '@/lib/api.ts';
 import { BreakdownTables, FunnelBar } from './Breakdown.tsx';
-import { KPI_FIT } from './kpi.ts';
 import { NeedsYou } from './NeedsYou.tsx';
 import { TasksView } from './TasksView.tsx';
 import { TodayPanel } from './TodayPanel.tsx';
@@ -89,7 +88,7 @@ export default function HomePage() {
       ) : (
         <div className="flex flex-col gap-3">
           {s ? (
-            <KpiStrip items={kpis(s)} className={KPI_FIT} />
+            <KpiStrip items={kpis(s)} />
           ) : stats.isError ? (
             <ErrorState error={stats.error} onRetry={() => void stats.refetch()} />
           ) : (

@@ -218,7 +218,7 @@ export function KpiStrip({ items, className }: { items: Kpi[]; className?: strin
               )}
             </>
           );
-          const cls = 'flex min-w-32 flex-1 flex-col gap-1 px-4 py-3';
+          const cls = 'flex min-w-fit flex-1 flex-col gap-1 px-4 py-3';
           return k.to ? (
             <Link key={k.label} to={k.to} className={cn(cls, 'transition-colors hover:bg-hover')}>
               {body}

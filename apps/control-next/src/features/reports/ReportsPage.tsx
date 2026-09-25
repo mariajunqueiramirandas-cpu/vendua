@@ -14,7 +14,6 @@ import { Button } from '@/components/ui/button.tsx';
 import { Panel } from '@/components/ui/card.tsx';
 import { Segmented } from '@/components/ui/controls.tsx';
 import { PIPELINE_TABS } from '@/features/pipeline/tabs.ts';
-import { KPI_FIT } from '@/features/home/kpi.ts';
 import { AgentMetricsPanel, ChannelHealthPanel, SegmentsPanel } from './OpsPanels.tsx';
 import { TrendChart } from './TrendChart.tsx';
 import { ValueBars } from './ValueBars.tsx';
@@ -110,7 +109,6 @@ export default function ReportsPage() {
       ) : (
         <div className="flex flex-col gap-3">
           <KpiStrip
-            className={KPI_FIT}
             items={[
               { label: 'previsão ponderada', value: fmtMoney(fc.weightedCents) },
               { label: 'pipeline total', value: fmtMoney(pipelineTotal) },
