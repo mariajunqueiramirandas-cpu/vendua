@@ -1,5 +1,6 @@
 <script lang="ts">
   import { onMount } from 'svelte';
+  import { VEIL_SKIP_EVENT } from '$lib/intro';
 
   const SKIP_RATE = 4;
 
@@ -24,7 +25,10 @@
     covered.forEach((child) => (child.inert = true));
 
     const animations = el.getAnimations({ subtree: true });
-    const skip = () => animations.forEach((a) => (a.playbackRate = SKIP_RATE));
+    const skip = () => {
+      animations.forEach((a) => (a.playbackRate = SKIP_RATE));
+      dispatchEvent(new Event(VEIL_SKIP_EVENT));
+    };
     const skipEvents = ['pointerdown', 'keydown', 'wheel', 'touchstart'] as const;
     skipEvents.forEach((type) => addEventListener(type, skip, { once: true, passive: true }));
 

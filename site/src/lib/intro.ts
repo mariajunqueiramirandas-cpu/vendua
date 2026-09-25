@@ -3,6 +3,9 @@
 
 const PART_ANIMATION = 'veil-part';
 
+/** Dispatched on `window` when the visitor skips (fast-forwards) the veil. */
+export const VEIL_SKIP_EVENT = 'vnd:veil-skip';
+
 function partAnimation(): CSSAnimation | undefined {
   const half = document.querySelector<HTMLElement>('.intro-veil .veil-left');
   if (!half || getComputedStyle(half).display === 'none') return undefined;
