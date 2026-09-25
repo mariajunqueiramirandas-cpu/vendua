@@ -8,15 +8,8 @@ import { emitControlEvent } from '../../modules/control-events.ts';
 import type { InboundResult } from '../../modules/threads.ts';
 import { ingestInbound } from '../inbound.ts';
 
-/**
- * agent/channels/email-inbound — the Resend half of the inbound email path.
- * Resend can't set custom headers: its events arrive signed (svix scheme)
- * and carry metadata only, so this module verifies the svix signature
- * against RESEND_WEBHOOK_SECRET — `email.received` pulls the body from the
- * received-emails API into the shared ingestInbound; `email.delivered`,
- * `email.bounced`, `email.failed` and `email.complained` are deliverability
- * feedback applied straight to the message/lead they name.
- */
+// Resend inbound webhook: verifies svix signatures (Resend can't set custom
+// headers), pulls received emails into ingestInbound, applies deliverability events.
 
 export interface SvixHeaders {
   id: string;
@@ -32,8 +25,7 @@ export function svixHeaders(c: Context): SvixHeaders | null {
 }
 
 // svix signs `${id}.${timestamp}.${rawBody}` with HMAC-SHA256 keyed by the
-// base64 half of `whsec_…`; the header lists `v1,<b64>` candidates (key
-// rotation). The 5-minute timestamp window bounds replay.
+// base64 half of `whsec_…`; the timestamp window bounds replay.
 const SVIX_TOLERANCE_S = 5 * 60;
 
 export function svixVerified(rawBody: string, h: SvixHeaders, secret: string): boolean {
@@ -92,11 +84,8 @@ function htmlToText(html: string): string {
 export type ResendWebhookResult =
   InboundResult | { ok: true; leadId?: string } | { ignored: string };
 
-/** Verify the svix signature, then route: received → fetch+ingest; delivered
- *  → mark sent message delivered; bounced/failed/complained → flag the lead.
- *  Signature failures throw 404 — the route must not reveal that it exists
- *  to unsigned callers. Unknown types ack-and-ignore so Resend doesn't
- *  retry them forever. */
+// Signature failures throw 404 — don't reveal the route to unsigned callers.
+// Unknown types ack-and-ignore so Resend doesn't retry them forever.
 export async function ingestResendEvent(
   sql: Sql,
   rawBody: string,
@@ -114,24 +103,19 @@ export async function ingestResendEvent(
     throw new HttpError(400, 'BAD_REQUEST', 'body is not valid JSON');
   }
   if (event.type !== 'email.received') {
-    // Deliverability feedback events carry the send's email_id (+ recipient
-    // for bounce/complaint) — nothing to fetch, apply and ack. Unknown types
-    // ack too so Resend doesn't retry them forever.
+    // Deliverability events carry the send's email_id — nothing to fetch, apply and ack.
     const deliveryId = typeof event.data?.email_id === 'string' ? event.data.email_id : null;
     if (event.type === 'email.delivered' && deliveryId) {
       // The provider id stored on dispatch is channel-namespaced ('email:<id>').
       const threadIds = await controlTx(sql, async (tx) => {
-        // Serialize with dispatch's finalize on the same advisory key — a
-        // parked event can't slip between its pmid write and its drain.
+        // Advisory-lock with dispatch's finalize so a parked event can't slip between pmid write and drain.
         await tx`select pg_advisory_xact_lock(hashtext(${`pev:email:${deliveryId}`}))`;
         const hit = await tx<{ thread_id: string }[]>`
           update lead_messages set status = 'delivered', updated_at = now()
           where provider_message_id = ${`email:${deliveryId}`} and status = 'sent'
           returning thread_id`;
         if (!hit.length) {
-          // A retry after 'delivered' (or a failed send) also updates zero
-          // rows — only park when NO message owns this pmid yet, i.e. the
-          // event genuinely beat dispatch's finalize.
+          // Park only when no message owns this pmid — i.e. the event beat dispatch's finalize.
           const exists = await tx`
             select 1 from lead_messages
             where provider_message_id = ${`email:${deliveryId}`} limit 1`;
@@ -167,16 +151,13 @@ export async function ingestResendEvent(
     signal: AbortSignal.timeout(10_000),
   });
   if (!res.ok) {
-    // 5xx so Resend retries — the received email may not be readable the
-    // instant the event fires.
+    // 5xx so Resend retries — the email may not be readable the instant the event fires.
     throw new HttpError(502, 'EMAIL_FETCH_FAILED', `resend responded ${res.status}`);
   }
   const mail = (await res.json()) as ReceivedEmail;
   const { from, fromName } = splitFrom(mail.headers?.from, mail.from ?? '');
   if (!from) throw new HttpError(422, 'BAD_REQUEST', 'received email has no sender');
-  // The sender doesn't control our limits — clip to the message contract
-  // (body 8000, subject 300) instead of dropping the email. Replies keep
-  // quoted history at the bottom, so the head holds the newest content.
+  // Clip to the message contract instead of dropping; quoted history sits at the bottom.
   let body = mail.text?.trim() || (mail.html ? htmlToText(mail.html) : '');
   if (!body) throw new HttpError(422, 'BAD_REQUEST', 'received email has no readable body');
   if (body.length > 8000) body = `${body.slice(0, 7950).trimEnd()}\n[… truncado]`;
@@ -191,9 +172,7 @@ export async function ingestResendEvent(
   });
 }
 
-/** Park a delivery event that arrived before dispatch stored the provider
- *  id — finalize drains these once the pmid lands. Deduped on
- *  (channel, provider_id, event) so provider retries don't pile up. */
+// Parks a delivery event that beat the pmid write; deduped so provider retries don't pile up.
 async function parkProviderEventTx(
   tx: Sql,
   providerId: string,
@@ -206,12 +185,8 @@ async function parkProviderEventTx(
     on conflict do nothing`;
 }
 
-/** Deliverability feedback for outbound sends: bounce/fail flags the lead's
- *  address dead (email_bounced_at blocks further email sends via guardrails
- *  and dispatch), complaint = legal unsubscribe. Also fails any email still
- *  queued to the dead address so it never leaves the building. Unknown
- *  recipients ack-and-ignore — we only send to leads we recorded.
- *  Tx-local so dispatch's finalize can replay parked events in its own tx. */
+// Bounce/fail flags the lead's address dead; complaint = unsubscribe; queued sends to the
+// dead address are failed too. Tx-local so dispatch's finalize can replay parked events.
 export async function applyDeliveryEventTx(
   tx: Sql,
   type: 'email.bounced' | 'email.failed' | 'email.complained',
@@ -223,14 +198,10 @@ export async function applyDeliveryEventTx(
     .filter(Boolean);
   const threadIds: string[] = [];
   {
-    // Serialize with dispatch's finalize on the same advisory key — the
-    // pmid-existence check and the park must be atomic against its
-    // store-pmid-then-drain sequence.
+    // Advisory-lock with dispatch's finalize so the pmid check + park are atomic against its store-then-drain.
     await tx`select pg_advisory_xact_lock(hashtext(${`pev:email:${emailId}`}))`;
-    // provider_message_id names the exact send — thread → lead resolves the
-    // real owner. Recipient email is only a fallback for sends without a
-    // stored provider id, and leads can share an address, so it must match
-    // exactly one lead to flag anything.
+    // provider_message_id names the exact send; the recipient-email fallback must match
+    // exactly one lead to flag anything (leads can share an address).
     const owned = (
       await tx<{ lead_id: string }[]>`
         select t.lead_id from lead_messages m
@@ -240,9 +211,7 @@ export async function applyDeliveryEventTx(
       `
     )[0];
     if (!owned) {
-      // The event beat dispatch's finalize — the pmid isn't stored yet. Park
-      // it so finalize can apply the per-message part later; lead-level
-      // effects below still apply now via the recipient fallback.
+      // pmid not stored yet — park so finalize applies the per-message part later.
       await parkProviderEventTx(tx, emailId, type, { to: recipients });
     }
     let leadId = owned?.lead_id ?? null;
@@ -257,8 +226,7 @@ export async function applyDeliveryEventTx(
       leadId = byEmail[0]!.id;
     }
 
-    // Fail the sending row when the event names it — keeps message status
-    // honest even for sends that predate the flag.
+    // Keeps message status honest even for sends that predate the flag.
     const flagged = await tx<{ thread_id: string }[]>`
       update lead_messages set status = 'failed', error = ${type}, updated_at = now()
       where provider_message_id = ${`email:${emailId}`} and status in ('sent', 'queued', 'sending')
@@ -266,14 +234,9 @@ export async function applyDeliveryEventTx(
     `;
     for (const m of flagged) threadIds.push(m.thread_id);
 
-    // A spam complaint is about the person, not the address — it applies even
-    // if the email changed since the send. A bounce/fail, though, belongs to
-    // the rejected address: when the event names recipients and none is the
-    // lead's current email (staff swapped it after the send), fail the named
-    // send but don't flag the new address or purge its queue. The FOR UPDATE
-    // lock serializes the check-and-flag with a concurrent email patch —
-    // otherwise a committed replacement could still get re-flagged by a
-    // stale read taken before it.
+    // Complaint is about the person; bounce/fail belongs to the rejected address —
+    // skip flagging when staff already swapped the email. FOR UPDATE serializes
+    // the check-and-flag with a concurrent email patch.
     if (type !== 'email.complained') {
       const curEmail = (
         await tx<{ email: string | null }[]>`
@@ -286,17 +249,14 @@ export async function applyDeliveryEventTx(
     }
 
     if (type === 'email.complained') {
-      // Transition-only writes: provider retries re-deliver the same event,
-      // and `returning` keeps the activity single-shot + preserves the first
-      // event's timestamp.
+      // Transition-only write: `returning` keeps the activity single-shot across retries.
       const upd = await tx`
         update leads set unsubscribed_at = now(), updated_at = now()
         where id = ${leadId} and unsubscribed_at is null
         returning id
       `;
       if (upd.length) {
-        // Opt-out never lifts — queued runs for this lead are dead weight
-        // the claim gate can never pick up, so cancel them now.
+        // Opt-out never lifts — cancel the lead's queued runs.
         await tx`
           update agent_runs set status = 'canceled', finished_at = now(), error = 'descadastrado'
           where lead_id = ${leadId} and status = 'queued'
@@ -318,7 +278,6 @@ export async function applyDeliveryEventTx(
           values (${leadId}, 'system', ${`Email ${type === 'email.bounced' ? 'bounce' : 'falhou'} — endereço morto, agente muda de canal`}, 'system')
         `;
       }
-      // Nothing still queued should go out to a dead address.
       const purged = await tx<{ thread_id: string }[]>`
         update lead_messages m set status = 'failed', error = 'email bounced', updated_at = now()
         from lead_threads t
@@ -332,7 +291,7 @@ export async function applyDeliveryEventTx(
   }
 }
 
-/** Webhook entry — opens its own control tx around the tx-local worker. */
+// Opens its own control tx around the tx-local worker.
 async function applyDeliveryEvent(
   sql: Sql,
   type: 'email.bounced' | 'email.failed' | 'email.complained',

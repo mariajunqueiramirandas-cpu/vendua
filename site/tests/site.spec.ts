@@ -94,8 +94,7 @@ test('tema claro por padrão, alternável e persistente', async ({ page }) => {
 });
 
 test('modal de transmissão: abre, fecha por todas as vias e devolve o foco', async ({ page }) => {
-  // Movimento reduzido torna abertura/fechamento síncronos — o que se testa é o
-  // comportamento do <dialog> (Esc, backdrop, foco), não a animação.
+  // Reduced motion makes open/close synchronous — this tests the <dialog>, not the animation.
   await page.emulateMedia({ reducedMotion: 'reduce' });
   await page.setViewportSize({ width: 390, height: 844 });
   await page.goto('/');
@@ -110,10 +109,9 @@ test('modal de transmissão: abre, fecha por todas as vias e devolve o foco', as
   await expect(dialog).toBeHidden();
   await expect(trigger).toHaveAttribute('aria-haspopup', 'dialog');
 
-  // Clique abre o modal com título, detalhe e especificações da transmissão.
   await trigger.click();
   await expect(dialog).toBeVisible();
-  // O foco entra no modal — o fundo fica inerte para quem navega por teclado.
+  // Focus enters the modal — the background stays inert for keyboard users.
   await expect(closeButton).toBeFocused();
   await expect(dialog.locator('.tx-modal-title')).toHaveText('Ingestão do negócio');
   await expect(dialog.locator('.tx-modal-detail')).not.toBeEmpty();
@@ -122,22 +120,21 @@ test('modal de transmissão: abre, fecha por todas as vias e devolve o foco', as
   await page.screenshot({ path: 'artifacts/modal-390.png' });
   await axeClean(page);
 
-  // Esc fecha (handler usa 'cancel'), libera o scroll e devolve o foco ao cartão.
+  // Esc closes (handler uses 'cancel'), frees scroll, returns focus to the card.
   await page.keyboard.press('Escape');
   await expect(dialog).toBeHidden();
   await expect.poll(overflow).toBe('');
   await expect(trigger).toBeFocused();
 
-  // O cartão é um <button>: Enter também abre — não há interação só de mouse.
+  // The card is a <button>: Enter opens too — no mouse-only interaction.
   await page.keyboard.press('Enter');
   await expect(dialog).toBeVisible();
 
-  // Botão "Fechar" fecha e devolve o foco.
   await closeButton.click();
   await expect(dialog).toBeHidden();
   await expect(trigger).toBeFocused();
 
-  // Clique no backdrop (fora da caixa do dialog) fecha.
+  // Click outside the dialog box = backdrop → closes.
   await trigger.click();
   await expect(dialog).toBeVisible();
   await page.mouse.click(5, 5);
@@ -171,7 +168,7 @@ test('skip link é o primeiro foco e leva ao conteúdo', async ({ page }) => {
 });
 
 test('véu de introdução aparece uma vez e some', async ({ browser, baseURL }) => {
-  // Contexto próprio, sem a semente de sessionStorage do beforeEach.
+  // Own context — without the beforeEach sessionStorage seed.
   const context = await browser.newContext({ baseURL });
   const page = await context.newPage();
   const errors: string[] = [];

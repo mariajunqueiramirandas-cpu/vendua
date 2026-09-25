@@ -6,10 +6,6 @@ import { Skeleton } from './_components/Skeleton.tsx';
 import { formatBRL } from './_lib/format.ts';
 import { getContinueShoppingUrl } from './_lib/lastSeen.ts';
 
-/**
- * Sacola — Core's cart rendered verbatim: items, modifier lines, stepper
- * (Kernel primitive), totals from `cart.totals` (subtotal, fee, min order).
- */
 export function CartPage() {
   const { cart, loading, mutations } = useCart();
   const { store } = useStore();

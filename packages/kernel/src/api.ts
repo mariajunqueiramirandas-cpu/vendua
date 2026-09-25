@@ -1,11 +1,5 @@
-/**
- * Kernel API client — the only supported path from a storefront to Core
- * (03-storefront-contract.md: no fetch/axios in storefront code). Same-origin
- * by default; `baseUrl` exists for non-proxied dev setups.
- *
- * Mutations on /checkout/v1 always send a fresh Idempotency-Key; the session
- * token minted by POST /checkout/v1/session rides as Bearer auth.
- */
+// The only supported path from a storefront to Core (no fetch/axios in storefront
+// code). Mutations send a fresh Idempotency-Key; the session token rides as Bearer.
 
 export interface ApiErrorBody {
   error: { code: string; message: string; details?: Record<string, unknown> };
@@ -21,8 +15,6 @@ export class ApiError extends Error {
     super(message);
   }
 }
-
-// ---- storefront reads -----------------------------------------------------
 
 export interface StoreProfile {
   slug: string;
@@ -77,8 +69,6 @@ export interface ProductDetail extends CatalogProduct {
   }[];
 }
 
-// ---- surfaces (05-system-surfaces.md, envelope v1) -------------------------
-
 export type NoticeSeverity = 'info' | 'warning' | 'blocking';
 
 export type NoticeAction =
@@ -106,8 +96,6 @@ export interface SurfacesEnvelope {
   store: { status: 'open' | 'closed' | 'paused'; resumesAt?: string };
   notices: Notice[];
 }
-
-// ---- checkout session -----------------------------------------------------
 
 export interface CartItem {
   id: string;
@@ -191,9 +179,8 @@ export interface Order {
 const SESSION_KEY = 'vendua.session';
 const ORDER_TOKENS_KEY = 'vendua.orderTokens';
 
-// Per-order credentials: the checkout-time token stays authorized to read
-// THAT order after ensureSession rotates the session onto a fresh cart —
-// without it, order tracking dies the moment a customer starts a new cart.
+// The checkout-time token stays authorized to read that order even after the
+// session rotates onto a fresh cart.
 function readOrderTokens(): Record<string, string> {
   try {
     return JSON.parse(globalThis.sessionStorage?.getItem(ORDER_TOKENS_KEY) ?? '{}') as Record<
@@ -241,8 +228,7 @@ async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> {
       headers: { 'content-type': 'application/json', ...(init?.headers ?? {}) },
     });
   } catch {
-    // Transport-level failure (DNS/offline/CORS) — wrap so read hooks always
-    // expose a `code`, never a bare TypeError.
+    // Wrap transport failures so callers always get a `code`, never a bare TypeError.
     throw new ApiError(0, 'NETWORK_ERROR', 'could not reach the store backend');
   }
   const body = (await res.json().catch(() => ({}))) as T & ApiErrorBody;
@@ -267,17 +253,13 @@ export function createApi(baseUrl = '') {
   const co = (path: string) => `${baseUrl}/checkout/v1${path}`;
   let token: string | null = readStoredToken();
   let sessionPromise: Promise<{ cart: Cart }> | null = null;
-  // Per-order checkout tokens — memory first (survives sessionStorage
-  // write failures), persisted copy is the refresh-across-navigation layer.
+  // Memory first (survives sessionStorage failures); the persisted copy covers refresh.
   const orderTokenMem = new Map<string, string>();
-  // Serial delivery writes: rapid neighborhood/mode switches must land on
-  // the server in issue order — an earlier in-flight response otherwise
-  // overwrites the newer cart state when it resolves last.
+  // Serial delivery writes — a slower earlier write must not overwrite the newer cart.
   let deliveryQueue: Promise<unknown> = Promise.resolve();
   const auth = () => (token ? { authorization: `Bearer ${token}` } : {});
 
-  // Closure-scoped so public methods never depend on the call-site receiver —
-  // a destructured `checkout` must behave identically to `api.checkout()`.
+  // Closure-scoped so a destructured `checkout` behaves identically to `api.checkout()`.
   const cartGet = () => apiFetch<{ cart: Cart }>(co('/cart'), { headers: auth() });
 
   const clearSessionNow = () => {
@@ -290,13 +272,10 @@ export function createApi(baseUrl = '') {
   };
 
   const ensureSessionNow = async (): Promise<{ cart: Cart }> => {
-    // Single-flight: concurrent first mutations must share ONE session
-    // creation, or each would mint its own cart and only the last token
-    // would survive (losing the others' items).
+    // Single-flight: concurrent first mutations share ONE session creation,
+    // or each would mint its own cart and only the last token would survive.
     sessionPromise ??= (async () => {
-      // Fast path: an open cart reuses its token. A token pinned to a
-      // completed/abandoned cart rotates through POST /session (the server
-      // re-attaches open carts and mints fresh ones for spent tokens).
+      // An open cart reuses its token; a spent token rotates through POST /session.
       if (token) {
         try {
           const { cart } = await cartGet();
@@ -323,7 +302,6 @@ export function createApi(baseUrl = '') {
       return token;
     },
 
-    // storefront reads
     store: () => apiFetch<StoreProfile>(sf('/store')),
     catalog: () => apiFetch<{ categories: CatalogCategory[] }>(sf('/catalog')),
     product: (slug: string) => apiFetch<{ product: ProductDetail }>(sf(`/products/${slug}`)),
@@ -339,7 +317,6 @@ export function createApi(baseUrl = '') {
         body: JSON.stringify({ neighborhood }),
       }),
 
-    // checkout session
     clearSession: clearSessionNow,
     ensureSession: ensureSessionNow,
     cart: cartGet,
@@ -364,10 +341,8 @@ export function createApi(baseUrl = '') {
         headers: { ...auth(), 'idempotency-key': idemKey() },
       }).then((r) => r.cart),
     setDelivery: (delivery: { mode: 'pickup' | 'delivery'; neighborhood?: string }) => {
-      // Bind the token at call time: a queued write must target the cart it
-      // was issued for — if checkout rotated the session before it runs, the
-      // server rejects it against the completed cart (CART_NOT_OPEN) instead
-      // of silently redirecting the delivery choice onto the fresh cart.
+      // Bind the token at call time — a queued write must target the cart it was
+      // issued for, not a session rotated by a completed checkout.
       const bound = token;
       const bearer = bound ? { authorization: `Bearer ${bound}` } : {};
       const p = deliveryQueue.then(() =>
@@ -387,16 +362,12 @@ export function createApi(baseUrl = '') {
         headers: { ...auth(), 'idempotency-key': idemKey() },
         body: JSON.stringify(input),
       });
-      // The token used to place the order is its tracking credential —
-      // keep it before session rotation swaps `token` to the next cart.
+      // The order's token is its tracking credential — keep it before rotation swaps `token`.
       if (token) {
         orderTokenMem.set(r.order.id, token);
         storeOrderToken(r.order.id, token);
       }
-      // The cart is completed server-side — rotate the session now so the
-      // next `cart()` read returns a fresh empty cart instead of surfacing
-      // the purchased items. A rotation failure must not mask a successful
-      // checkout: the next mutation re-mints on demand.
+      // Rotate now so the next `cart()` reads a fresh cart; a rotation failure must not mask a placed order.
       try {
         clearSessionNow();
         await ensureSessionNow();
@@ -487,11 +458,7 @@ export type ErrorCode = (typeof ERROR_CODES)[number];
 
 export type VenduaApi = ReturnType<typeof createApi>;
 
-/**
- * Money formatting — the one formatter every storefront would otherwise
- * rewrite (Phase-0 finding #3). Reads the tenant currency from
- * `useStore().store.currency`.
- */
+// The shared money formatter — pass the tenant currency from `useStore().store.currency`.
 export function formatCents(cents: number, currency = 'BRL', locale = 'pt-BR'): string {
   return new Intl.NumberFormat(locale, { style: 'currency', currency }).format(cents / 100);
 }

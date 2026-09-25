@@ -1,12 +1,4 @@
--- 0014_pipeline_snapshots.sql — daily pipeline snapshots for deal-value
--- forecasting. The worker sweep writes one row per day (taken_on is unique):
--- the funnel's per-state count + deal value at that moment, the weighted
--- value under the configured stage probabilities, and the trailing 30d agent
--- spend — the "expected revenue vs. agent cost" pair the Reports view reads.
--- Re-runs on the same day UPDATE the row (a snapshot is a point-in-time
--- measurement, not an event log).
---
--- Same isolation posture as 0007: platform data, RLS keyed on vendua.control.
+-- pipeline_snapshots: one row/day of per-state count + value, weighted value, and trailing-30d agent spend.
 
 create table if not exists pipeline_snapshots (
   id uuid primary key default gen_random_uuid(),

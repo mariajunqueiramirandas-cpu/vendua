@@ -13,8 +13,7 @@ import {
   fmtUsdCents,
 } from '../components.tsx';
 
-/** R$ compact for chart axis labels — "R$ 4,9 mil" fits where the full
- *  currency string wouldn't. */
+// Compact R$ for chart axis labels.
 const fmtCompact = (cents: number) =>
   (cents / 100).toLocaleString('pt-BR', {
     style: 'currency',
@@ -27,9 +26,7 @@ export default function Reports() {
   const [s, setS] = useState<Stats | null>(null);
   const [err, setErr] = useState('');
   const [snapping, setSnapping] = useState(false);
-  // Loads overlap (mount + snapNow refresh) — newest-successful wins: an
-  // older response still commits unless a newer success already landed, so
-  // a failed refresh never discards good stats.
+  // Newest-successful wins — a failed refresh never discards good stats.
   const reqSeq = useRef(0);
   const okSeq = useRef(0);
 
@@ -173,8 +170,7 @@ export default function Reports() {
   );
 }
 
-/** Weighted forecast (area) vs raw pipeline value (line) over the daily
- *  snapshots — hand-rolled SVG, no chart dep. */
+// Weighted forecast (area) vs raw pipeline (line) — hand-rolled SVG, no chart dep.
 function TrendChart({ trend }: { trend: Stats['forecast']['trend'] }) {
   if (!trend.length)
     return (

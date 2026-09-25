@@ -1,6 +1,5 @@
-/* _template baseline — deliberately plain. Consumes the --v-* vars the
- * provider emits from vendua.config.ts tokens; every value has a fallback so
- * the stylesheet also renders before hydration. */
+/* Baseline consumes the --v-* vars the provider emits from vendua.config.ts
+ * tokens — every value has a fallback so the stylesheet renders pre-hydration. */
 
 :root {
   color-scheme: light;
@@ -59,8 +58,7 @@ img {
   font-size: 0.875rem;
 }
 
-/* -- skip link: first focusable, invisible until it takes focus (Q09) ------ */
-
+/* First focusable; invisible until it takes focus (Q09). */
 .skip-link {
   position: absolute;
   top: -100%;
@@ -77,8 +75,6 @@ img {
 .skip-link:focus-visible {
   top: 8px;
 }
-
-/* -- header / footer ------------------------------------------------------ */
 
 .site-header {
   border-bottom: 1px solid color-mix(in srgb, var(--v-color-text, #1c1b1a) 10%, transparent);
@@ -103,7 +99,7 @@ img {
   font-size: 1.125rem;
   color: inherit;
   text-decoration: none;
-  /* let the name shrink/ellipsize — status + cart keep their size at 320px */
+  /* name shrinks so status + cart keep their size at 320px */
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -116,17 +112,13 @@ img {
   gap: 12px;
 }
 
-/* NOTE: storefront CSS never targets `v-*` or `[data-vendua]` (Contract v1).
- * Kernel primitives' baseline lives in @vendua/kernel/styles.css. */
-
+/* Storefront CSS never targets `v-*` or `[data-vendua]` (Contract v1). */
 .site-footer {
   border-top: 1px solid color-mix(in srgb, var(--v-color-text, #1c1b1a) 10%, transparent);
   padding-block: 32px;
   display: grid;
   gap: 8px;
 }
-
-/* -- buttons --------------------------------------------------------------- */
 
 .btn,
 .btn-ghost {
@@ -174,8 +166,6 @@ img {
   margin-bottom: 24px;
 }
 
-/* -- catalog grid ---------------------------------------------------------- */
-
 .cat-section {
   margin-bottom: 48px;
 }
@@ -205,8 +195,7 @@ img {
   text-decoration: none;
 }
 
-/* sold-out dims the figure only — dimming the whole card drags the name,
-   * description and flag under WCAG AA contrast (axe color-contrast). */
+/* figure only — dimming the whole card drops text under WCAG AA contrast */
 .card[data-status='sold_out'] .card-figure {
   opacity: 0.55;
 }
@@ -256,8 +245,6 @@ img {
   border-radius: var(--v-radius-sm, 4px);
   background: color-mix(in srgb, var(--v-color-danger, #a33b32) 12%, transparent);
 }
-
-/* -- product page ----------------------------------------------------------- */
 
 .product-grid {
   display: grid;
@@ -358,8 +345,6 @@ img {
   text-align: center;
   font-variant-numeric: tabular-nums;
 }
-
-/* -- cart / checkout --------------------------------------------------------- */
 
 .cart-grid {
   display: grid;
@@ -514,8 +499,6 @@ img {
   opacity: 0.45;
   cursor: not-allowed;
 }
-
-/* -- states ------------------------------------------------------------------- */
 
 .alert {
   padding: 12px 14px;

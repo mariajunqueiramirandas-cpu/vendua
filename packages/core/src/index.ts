@@ -13,12 +13,8 @@ const databaseUrl =
 const migrationUrl =
   process.env.MIGRATION_DATABASE_URL ?? 'postgres://vendua:vendua@localhost:5433/vendua';
 const port = Number(process.env.PORT ?? 8787);
-// SESSION_SECRET is the HMAC key for cart session tokens AND the dev fallback
-// for the control gate — a checked-in default would let anyone forge both.
-// Unset = random per boot: dev carts re-mint via POST /session, but restarts
-// and replicas disagree — deployments must set it. CONTROL_SECRET is the
-// staff key for /control/v1; set it wherever staff access is shared so it
-// never doubles as the shopper-signing key.
+// SESSION_SECRET signs cart session tokens and is the dev fallback for the control
+// gate — deployments must set it. CONTROL_SECRET is the staff key for /control/v1.
 const sessionSecret = process.env.SESSION_SECRET ?? crypto.randomUUID();
 if (!process.env.SESSION_SECRET) {
   log.warn(
@@ -26,7 +22,7 @@ if (!process.env.SESSION_SECRET) {
   );
 }
 
-// Boot: apply migrations as the owner role, then serve as vendua_app (RLS on).
+// Migrate as the owner role, then serve as vendua_app (RLS on).
 const migrator = createSql(migrationUrl);
 const applied = await migrate(migrator, join(import.meta.dir, '../db/migrations'));
 if (applied.length) log.child({ mod: 'migrate' }).info({ applied }, 'migrations applied');
@@ -35,12 +31,10 @@ await migrator.end();
 const sql = createSql(databaseUrl);
 const app = createApp({ sql, sessionSecret, controlSecret: process.env.CONTROL_SECRET });
 
-// Booking links minted by the agent worker sign with the same staff key the
-// app uses (controlSecret ?? sessionSecret) — set before the worker starts.
+// Booking links sign with the same staff key the app verifies — set before the worker starts.
 setBookingSecret(process.env.CONTROL_SECRET ?? sessionSecret);
 
-// Agent harness: in-process worker (durable Postgres queue — runs survive
-// restarts) + WhatsApp socket when the baileys driver is enabled.
+// In-process worker (durable pg queue) + WhatsApp socket when the baileys driver is enabled.
 startAgentWorker(sql);
 onInboundMessage(async (jid, text, providerId, pushName, altJid) => {
   await ingestInbound(sql, {
@@ -52,10 +46,7 @@ onInboundMessage(async (jid, text, providerId, pushName, altJid) => {
     providerMessageId: providerId,
   });
 });
-// Pairing-time history sync: the bounded slice WhatsApp pushes when the
-// device links. Landed as context only (historical — never queues a reply)
-// in both directions: fromMe echoes surface the replies staff typed on the
-// phone itself.
+// Pairing-time history lands as context only (never queues a reply); fromMe echoes staff's phone replies.
 onHistoryMessage(async (m) => {
   await ingestInbound(sql, {
     channel: 'whatsapp',

@@ -1,12 +1,7 @@
 import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
 
-/**
- * Dev server for the control app. The proxy keeps /control/v1 same-origin
- * (cookie auth + the CSRF marker both expect it); object-form entries keep
- * the Host header intact — string shorthand sets changeOrigin and breaks
- * tenant resolution conventions elsewhere in the repo.
- */
+// Object-form proxy keeps the Host header intact; string shorthand would set changeOrigin and break tenant resolution.
 export default defineConfig({
   plugins: [react()],
   base: '/control/',
@@ -18,7 +13,7 @@ export default defineConfig({
     },
   },
   build: {
-    // Prod: Core serves these assets itself at /control/*.
+    // Prod: Core serves these assets at /control/*.
     outDir: 'dist',
     assetsDir: 'assets',
   },

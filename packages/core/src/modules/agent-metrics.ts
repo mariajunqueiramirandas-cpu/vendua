@@ -2,21 +2,12 @@ import type { Sql } from '../platform/db.ts';
 import { ACTION_TOOLS } from '../agent/tool-meta.ts';
 import { controlTx } from './control.ts';
 
-/**
- * modules/agent-metrics — the ops readout behind
- * GET /control/v1/agent/metrics?days=7|30 (ADR 0014). One pass over
- * agent_runs + lead_messages answers: is the agent acting when it finishes,
- * what is it spending, how much outbound needs a human, and do contacted
- * leads write back.
- */
+// Ops readout behind GET /control/v1/agent/metrics (ADR 0014).
 
 export type MetricsKind = 'triage' | 'reply' | 'outreach' | 'discovery' | 'strategist';
 const KINDS: MetricsKind[] = ['triage', 'reply', 'outreach', 'discovery', 'strategist'];
 
-// runActed expressed in SQL against the journal: a tool result counts as
-// "acted" only when it landed a visible effect — a result object carrying
-// no `error`, `blocked !== true`, `ignored !== true`. The name set is
-// tool-meta's ACTION_TOOLS.
+// "acted" = an ACTION_TOOLS journal result with no error / blocked / ignored.
 const ACTION_TOOL_NAMES = [...ACTION_TOOLS];
 
 export interface KindMetrics {
@@ -37,10 +28,7 @@ export interface KindMetrics {
 export interface AgentMetrics {
   window: { from: string; to: string };
   byKind: KindMetrics[];
-  /** Agent-authored outbound activity in the window — drafts attribute to
-   *  compose time, sent/delivered to dispatch time (a delayed approval
-   *  counts when it actually left). Funnel counts, not a partition: an
-   *  approved draft that later sent counts in both `approved` and `sent`. */
+  /** Funnel counts, not a partition: an approved draft that later sent counts in both. */
   outbound: { sent: number; drafted: number; approved: number; rejected: number };
   /** Leads the agent actually reached (sent/delivered) vs leads that wrote
    *  back in the same window. */
@@ -52,8 +40,7 @@ export interface AgentMetrics {
 
 export async function agentMetrics(sql: Sql, days: 7 | 30): Promise<AgentMetrics> {
   const to = new Date();
-  // `to` compares as <= everywhere: rows written in the same millisecond as
-  // the request are inside the window, never just past it.
+  // Inclusive `to`: same-ms rows fall inside the window, never just past it.
   const from = new Date(to.getTime() - days * 86_400_000);
   return controlTx(sql, async (tx) => {
     const kindRows = await tx<
@@ -92,11 +79,8 @@ export async function agentMetrics(sql: Sql, days: 7 | 30): Promise<AgentMetrics
     `;
     const byKind = new Map(kindRows.map((r) => [r.kind, r]));
 
-    // Each aggregate takes its own event's timestamp — one row-level window
-    // would misattribute delayed work: a draft composed pre-window but
-    // approved and sent inside it WAS contact the agent made in the window,
-    // and its approval belongs to the day staff approved it, not the day it
-    // was composed or dispatched.
+    // Each aggregate uses its own event timestamp — a pre-window draft approved and sent
+    // in-window counts as in-window contact, its approval on the day staff approved it.
     const outbound = (
       await tx<{ sent: number; drafted: number; approved: number; rejected: number }[]>`
         select
@@ -124,16 +108,13 @@ export async function agentMetrics(sql: Sql, days: 7 | 30): Promise<AgentMetrics
     const replies = (
       await tx<{ leads_contacted: number; leads_replied: number }[]>`
         with contacted as (
-          -- a lead counts as replied only when a non-historical inbound
-          -- lands AFTER an agent-authored send — an inbound predating first
-          -- contact is an unanswered lead, not a reply
+          -- replied = non-historical inbound landing after the agent's first send
           select t.lead_id, min(coalesce(m.dispatch_attempted_at, m.created_at)) as first_sent_at
           from lead_messages m
           join lead_threads t on t.id = m.thread_id
           where m.direction = 'out' and m.author = 'agent'
             and m.status in ('sent', 'delivered')
-            -- dispatch time, same as the sent count above — a delayed
-            -- approval still counts as contact in the window it sent in
+            -- dispatch time, same as the sent count
             and coalesce(m.dispatch_attempted_at, m.created_at) >= ${from}
             and coalesce(m.dispatch_attempted_at, m.created_at) <= ${to}
           group by t.lead_id
@@ -150,8 +131,7 @@ export async function agentMetrics(sql: Sql, days: 7 | 30): Promise<AgentMetrics
       `
     )[0]!;
 
-    // The table only exists once the wakeups migration deploys — a control
-    // box ahead of schema must report absence, not error.
+    // agent_wakeups may not exist yet — report absence, not error.
     const hasWakeups =
       (await tx<{ r: string | null }[]>`select to_regclass('agent_wakeups') as r`)[0]!.r !== null;
     const wakeups = hasWakeups
@@ -159,10 +139,7 @@ export async function agentMetrics(sql: Sql, days: 7 | 30): Promise<AgentMetrics
           await tx<{ pending: number; fired: number }[]>`
         select count(*) filter (where status = 'pending')::int as pending,
               count(*) filter (
-                -- attribute a fire to fired_at — the immutable flip stamp.
-                -- updated_at can't serve (cancelWakeup bumps it on fired
-                -- rows), w.at is the request, and fired_run_id's created_at
-                -- predates mail delivered into a pre-existing run.
+                -- fired_at is the immutable flip stamp (updated_at moves on cancel)
                 where status = 'fired' and w.fired_at >= ${from} and w.fired_at <= ${to}
               )::int as fired
             from agent_wakeups w
