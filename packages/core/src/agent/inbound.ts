@@ -3,7 +3,7 @@ import { controlTx } from '../modules/control.ts';
 import { emitControlEvent } from '../modules/control-events.ts';
 import { getGuardrails, phoneIsIgnored } from '../modules/integrations.ts';
 import { addInboundMessage, type Channel, type InboundResult } from '../modules/threads.ts';
-import { capLockTx, drain, insertRun } from './runner.ts';
+import { capLockTx, drain, insertRun, releaseInboxTx } from './runner.ts';
 import { enqueueInboxTx } from './inbox.ts';
 import { automationAllowedTx } from './policy.ts';
 import { retireWakeupsOnInboundTx } from './wakeups.ts';
@@ -139,6 +139,18 @@ export async function ingestInbound(
       returning id
     `;
     canceledRunIds.push(...canceled.map((c) => c.id));
+    // A canceled requeued run keeps mail consumed in its dead attempt —
+    // release it so the reply serves it, then tombstone the pending
+    // cadence events those runs minted: 'a cadência disparou' is obsolete
+    // the moment the lead writes (same disposable-auto predicate).
+    for (const rid of canceledRunIds) await releaseInboxTx(tx, rid);
+    await tx`
+      update agent_inbox
+      set consumed_at = now(), consumed_by_run = null
+      where lead_id = ${res.leadId} and kind = 'event' and consumed_at is null
+        and payload->'params'->>'auto' is not null
+        and payload->'params'->>'auto' not in ('regenerate', 'agent')
+    `;
     await retireWakeupsOnInboundTx(tx, res.leadId);
     const gate = gateRows[0];
 

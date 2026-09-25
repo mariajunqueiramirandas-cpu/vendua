@@ -2866,6 +2866,7 @@ export async function sweepOutreach(sql: Sql): Promise<number> {
       where l.next_action_at is not null and l.next_action_at <= now()
         and l.archived_at is null and l.unsubscribed_at is null
         and l.agent_mode != 'off'
+        and (l.next_action_source in ('staff', 'requested', 'agent') or ${level !== 'off'})
         and (${capCents} <= 0 or
           coalesce((select sum(x.cost_cents) from agent_runs x
                     where x.lead_id = l.id), 0) < ${capCents})
@@ -2915,7 +2916,22 @@ export async function sweepOutreach(sql: Sql): Promise<number> {
         next_action_source === 'staff' ||
         next_action_source === 'requested' ||
         next_action_source === 'agent';
-      if (!promised && level === 'off') continue;
+      // Under autonomy 'off' an already-queued auto outreach can never
+      // claim — delivering the promised date into it would park the
+      // promise forever. Retire the disposable autos so insertRun mints
+      // the runnable unmarked row; their dead-attempt mail releases too.
+      if (promised && level === 'off') {
+        const retired = await tx<{ id: string }[]>`
+          update agent_runs
+          set status = 'canceled', error = 'promised work takes over', finished_at = now()
+          where lead_id = ${id} and kind = 'outreach' and status = 'queued'
+            and params->>'auto' is not null
+            and params->>'auto' not in ('regenerate', 'agent')
+          returning id
+        `;
+        for (const r of retired) await releaseInboxTx(tx, r.id);
+        queuedIds.push(...retired.map((r) => r.id));
+      }
       const params: Record<string, unknown> = {
         ...(promised ? {} : { auto: next_action_source }),
         ...(fold ? { focus: `agendado por você: ${fold.focus}`, wakeupId: fold.id } : {}),

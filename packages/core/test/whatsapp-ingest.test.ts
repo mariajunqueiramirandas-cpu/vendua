@@ -524,6 +524,23 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('whatsapp history + ignore list 
       params: { auto: 'cadence' },
       runAt: new Date(Date.now() + 3_600_000),
     }))!;
+    // The cadence event that run minted is as disposable as the run —
+    // tombstoned with it. A staff note and a staff instruction the dead
+    // attempt already consumed are NOT: the note waits for the reply,
+    // the instruction releases back to pending (deliveries-stamped).
+    await sql`
+      insert into agent_inbox (lead_id, kind, payload)
+      values (${leadId}, 'event',
+        ${sql.json({ text: 'a cadência disparou', requestedKind: 'outreach', params: { auto: 'cadence' } } as never)}),
+             (${leadId}, 'event',
+        ${sql.json({ text: 'nota da equipe', requestedKind: 'outreach', params: {} } as never)}),
+             (${leadId}, 'staff',
+        ${sql.json({ text: 'prioridade', requestedKind: 'outreach', params: {} } as never)})
+    `;
+    await sql`
+      update agent_inbox set consumed_by_run = ${autoRun}, consumed_at = now()
+      where lead_id = ${leadId} and kind = 'staff'
+    `;
     const events: ControlEvent[] = [];
     const unsub = subscribeControlEvents((e) => events.push(e));
     let res;
@@ -542,14 +559,27 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('whatsapp history + ignore list 
       select status from agent_runs where id = ${autoRun}
     `;
     expect(r!.status).toBe('canceled');
-    // The pending 'inbound' item waits for the reply run's quiet period.
-    const items = await sql<{ kind: string; payload: { requestedKind?: string } }[]>`
-      select kind, payload from agent_inbox
-      where lead_id = ${leadId} and consumed_at is null
+    const items = await sql<
+      {
+        kind: string;
+        consumed_at: Date | null;
+        payload: { requestedKind?: string; params?: Record<string, unknown> };
+      }[]
+    >`
+      select kind, consumed_at, payload from agent_inbox where lead_id = ${leadId}
     `;
-    expect(items).toHaveLength(1);
-    expect(items[0]!.kind).toBe('inbound');
-    expect(items[0]!.payload.requestedKind).toBe('reply');
+    expect(items).toHaveLength(4);
+    const pending = items.filter((i) => i.consumed_at === null);
+    expect(pending).toHaveLength(3);
+    // The disposable cadence event tombstoned with its run…
+    const tomb = items.find((i) => i.kind === 'event' && i.payload.params?.auto);
+    expect(tomb!.consumed_at).not.toBeNull();
+    // …the pending 'inbound' carries the message…
+    const inbound = pending.find((i) => i.kind === 'inbound');
+    expect(inbound!.payload.requestedKind).toBe('reply');
+    // …and the staff note + the released staff mail wait for the reply
+    // run's quiet period alongside it.
+    expect(pending.filter((i) => i.kind !== 'inbound')).toHaveLength(2);
     // The reply run exists to serve it, parked at the quiet period.
     const reply = await sql<{ kind: string; status: string }[]>`
       select kind, status from agent_runs where lead_id = ${leadId} and kind = 'reply'
@@ -940,14 +970,27 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('whatsapp history + ignore list 
         where id = ${auto.body.lead.id}
       `;
       await sql`delete from agent_runs where status = 'queued'`;
+      // A queued auto outreach parked under 'off' can never claim — the
+      // promised date retires it so insertRun mints a runnable owner.
+      const parked = (await enqueueRun(sql, {
+        kind: 'outreach',
+        leadId: promisedId,
+        params: { auto: 'first-contact' },
+        runAt: new Date(Date.now() + 3_600_000),
+      }))!;
       expect(await sweepOutreach(sql)).toBeGreaterThanOrEqual(1);
+      const [pr] = await sql<{ status: string }[]>`
+        select status from agent_runs where id = ${parked}
+      `;
+      expect(pr!.status).toBe('canceled');
       // The lead-asked callback fires unmarked — a promise outranks the
       // workspace switch the same way a staff decision does.
-      const swept = await sql<{ params: Record<string, unknown> }[]>`
-        select params from agent_runs
+      const swept = await sql<{ id: string; params: Record<string, unknown> }[]>`
+        select id, params from agent_runs
         where lead_id = ${promisedId} and kind = 'outreach' and status = 'queued'
       `;
       expect(swept).toHaveLength(1);
+      expect(swept[0]!.id).not.toBe(parked);
       expect(swept[0]!.params.auto).toBeUndefined();
       // …while the model's own cadence nudge parks under autonomy 'off'.
       const skipped = await sql`
