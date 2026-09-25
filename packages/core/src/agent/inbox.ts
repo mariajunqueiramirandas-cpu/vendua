@@ -3,7 +3,7 @@ import { controlTx } from '../modules/control.ts';
 import { emitControlEvent } from '../modules/control-events.ts';
 import { log } from '../platform/log.ts';
 import { automationAllowedTx, playbookEnabledTx } from './policy.ts';
-import type { PlaybookKind } from './tool-meta.ts';
+import { PLAYBOOK_KINDS, type PlaybookKind } from './tool-meta.ts';
 import { capLockTx, insertRun } from './runner.ts';
 
 const agentLog = log.child({ mod: 'agent' });
@@ -151,8 +151,9 @@ export async function sweepOrphanInbox(sql: Sql, limit = 10): Promise<number> {
       // The first ELIGIBLE item drives the spawn: an oldest item stuck
       // behind a disabled playbook or agent-disabled thread must not
       // starve younger servable mail on the same lead — blocked items
-      // stay pending for whenever their gate lifts (or a spawned run
-      // drains them into context, gate-free).
+      // stay pending for whenever their gate lifts (the spawned run's
+      // drain applies the same playbook gate, so parked mail never
+      // renders inside it either).
       let spawn: {
         kind: PlaybookKind;
         threadId: string | null;
@@ -194,6 +195,11 @@ export async function sweepOrphanInbox(sql: Sql, limit = 10): Promise<number> {
           : '';
       const runDraftOnly = spawn.params.draftOnly === true;
       let notBefore = 0;
+      // Only mail this run would actually drain owns a quiet period: a
+      // gated item (its playbook switched off — the same check drainInbox
+      // runs) stays pending when the run starts, so its deadline can't
+      // stall servable work behind it.
+      const enabled = new Map<string, boolean>();
       for (const i of items) {
         const ip = i.payload;
         const chan =
@@ -203,6 +209,15 @@ export async function sweepOrphanInbox(sql: Sql, limit = 10): Promise<number> {
         const wouldDrain =
           (chan || runChannel) === runChannel && (ip?.params?.draftOnly === true) === runDraftOnly;
         if (!wouldDrain) continue;
+        const k = ip?.requestedKind;
+        if (k != null && (PLAYBOOK_KINDS as readonly string[]).includes(k)) {
+          let ok = enabled.get(k);
+          if (ok == null) {
+            ok = (await playbookEnabledTx(tx, k as PlaybookKind)).ok;
+            enabled.set(k, ok);
+          }
+          if (!ok) continue;
+        }
         const t = typeof ip?.notBefore === 'string' ? Date.parse(ip.notBefore) : NaN;
         if (Number.isFinite(t) && t > notBefore) notBefore = t;
       }

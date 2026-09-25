@@ -2815,6 +2815,56 @@ dbDescribe('worker robustness (db)', () => {
     }
   });
 
+  test('parked mail’s quiet period does not stall the run serving eligible mail', async () => {
+    await migrate(sql, MIGRATIONS);
+    const lead = await controlTx(sql, (tx) =>
+      insertLeadTx(tx, { name: 'Parked Deadline', agent_mode: 'auto' }),
+    );
+    const leadId = lead.body.lead.id;
+    await sql`delete from agent_runs where status = 'queued'`;
+    await sql`update agent_inbox set consumed_at = now() where consumed_at is null`;
+    await sql`
+      insert into control_settings (key, value)
+      values ('agent_playbooks', ${sql.json({ triage: { enabled: false } } as never)})
+      on conflict (key) do update set value = excluded.value
+    `;
+    try {
+      const deadline = new Date(Date.now() + 3600e3).toISOString();
+      // A gated item with a future notBefore sits ahead of servable mail —
+      // the run the staff item spawns must not wait out a deadline for
+      // mail it will never drain.
+      await controlTx(sql, (tx) =>
+        enqueueInboxTx(tx, leadId, 'event', {
+          text: 'triage adiado',
+          requestedKind: 'triage',
+          params: { auto: 'cadence' },
+          notBefore: deadline,
+        }),
+      );
+      await controlTx(sql, (tx) =>
+        enqueueInboxTx(tx, leadId, 'staff', {
+          text: 'a equipe pediu um contato',
+          requestedKind: 'outreach',
+          params: { script: [{ text: 'ok' }] },
+        }),
+      );
+      await drain(sql);
+      const [run] = await sql<{ run_at: Date | null }[]>`
+        select run_at from agent_runs where lead_id = ${leadId}
+      `;
+      // run_at stays ≈ now (null = immediately claimable) — never the
+      // gated item's deadline.
+      expect(run!.run_at === null || run!.run_at.getTime() < Date.parse(deadline)).toBe(true);
+      const [parked] = await sql<{ consumed_at: string | null }[]>`
+        select consumed_at from agent_inbox
+        where lead_id = ${leadId} and payload->>'requestedKind' = 'triage'
+      `;
+      expect(parked!.consumed_at).toBeNull();
+    } finally {
+      await sql`delete from control_settings where key = 'agent_playbooks'`;
+    }
+  });
+
   test('deferred mail keeps its quiet period — the spawned run waits for notBefore', async () => {
     await migrate(sql, MIGRATIONS);
     const lead = await controlTx(sql, (tx) =>
