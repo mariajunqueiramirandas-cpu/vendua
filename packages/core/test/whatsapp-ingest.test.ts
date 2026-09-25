@@ -502,17 +502,22 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('whatsapp history + ignore list 
     expect(await whatsappRegistered('5511999990000')).toBeNull();
   });
 
-  test('a fresh inbound mails to the queued outreach — never a second run', async () => {
+  test('a fresh inbound retires the queued auto outreach — the reply takes over', async () => {
     await migrate(sql, MIGRATIONS);
+    // 60-min quiet period parks the reply run — deterministic assertions.
+    await sql`
+      insert into control_settings (key, value) values ('guardrails', ${sql.json({ inboundReplyDelayMin: 60 } as never)})
+      on conflict (key) do update set value = excluded.value
+    `;
     const lead = await controlTx(sql, (tx) =>
       insertLeadTx(tx, { name: 'Replier', whatsapp: '5511955550001' }),
     );
     const leadId = lead.body.lead.id;
     await sql`delete from agent_runs where status = 'queued'`;
-    // Automation-queued runs carry params.auto. One active run per lead:
-    // the reply mails into the parked run instead of superseding it — the
-    // run reads the message when it claims and answers it directly.
-    // Future-dated so an in-flight drain can't claim it mid-assertion.
+    // A QUEUED auto outreach can never serve the mail — drainInbox only
+    // runs inside an executing run, its channel pin may not match the
+    // item's, and it would fire before the inbound's quiet period ends.
+    // It retires with the drafts; the reply run carries the message.
     const autoRun = (await enqueueRun(sql, {
       kind: 'outreach',
       leadId,
@@ -536,9 +541,8 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('whatsapp history + ignore list 
     const [r] = await sql<{ status: string }[]>`
       select status from agent_runs where id = ${autoRun}
     `;
-    expect(r!.status).toBe('queued');
-    // The message itself is the delivery — a pending 'inbound' item the
-    // parked run drains at claim.
+    expect(r!.status).toBe('canceled');
+    // The pending 'inbound' item waits for the reply run's quiet period.
     const items = await sql<{ kind: string; payload: { requestedKind?: string } }[]>`
       select kind, payload from agent_inbox
       where lead_id = ${leadId} and consumed_at is null
@@ -546,8 +550,14 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('whatsapp history + ignore list 
     expect(items).toHaveLength(1);
     expect(items[0]!.kind).toBe('inbound');
     expect(items[0]!.payload.requestedKind).toBe('reply');
-    // Delivering to the parked run emits run.update on it — otherwise the
-    // Runs view never shows the new mail arrived.
+    // The reply run exists to serve it, parked at the quiet period.
+    const reply = await sql<{ kind: string; status: string }[]>`
+      select kind, status from agent_runs where lead_id = ${leadId} and kind = 'reply'
+    `;
+    expect(reply).toHaveLength(1);
+    expect(reply[0]!.status).toBe('queued');
+    // Retiring the queued outreach emits run.update on it — otherwise the
+    // Runs view keeps showing it as live.
     expect(events.some((e) => e.type === 'run.update' && e.ref === autoRun)).toBe(true);
   });
 
@@ -778,6 +788,12 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('whatsapp history + ignore list 
 
   test('a staff-scheduled sweep run carries no auto marker and survives', async () => {
     await migrate(sql, MIGRATIONS);
+    // 60-min quiet period parks every reply run — the kicked drain can't
+    // claim it mid-assertion, so mailed items stay pending deterministically.
+    await sql`
+      insert into control_settings (key, value) values ('guardrails', ${sql.json({ inboundReplyDelayMin: 60 } as never)})
+      on conflict (key) do update set value = excluded.value
+    `;
     const lead = await controlTx(sql, (tx) =>
       insertLeadTx(tx, { name: 'Staff Slot', whatsapp: '5511955550003' }),
     );
@@ -858,13 +874,18 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('whatsapp history + ignore list 
     const [ar] = await sql<{ status: string }[]>`
       select status from agent_runs where id = ${autoSwept[0]!.id}
     `;
-    // The disposable 'auto' nudge is not canceled anymore — the reply
-    // mails into it as an item; the run answers the lead directly when it
-    // claims. The date itself was already cleared at materialization.
-    expect(ar!.status).toBe('queued');
+    // The disposable 'auto' nudge retires with the drafts — a queued run
+    // can never drain the mail (drainInbox only runs inside an executing
+    // run) and would fire stale copy before the quiet period ends. The
+    // reply run takes over and carries the item. The date itself was
+    // already cleared at materialization.
+    expect(ar!.status).toBe('canceled');
     const autoMail = await sql`select 1 from agent_inbox
       where lead_id = ${autoLead.body.lead.id} and kind = 'inbound' and consumed_at is null`;
     expect(autoMail).toHaveLength(1);
+    const autoReply = await sql`select 1 from agent_runs
+      where lead_id = ${autoLead.body.lead.id} and kind = 'reply'`;
+    expect(autoReply).toHaveLength(1);
     const autoDate = await sql<{ next_action_at: Date | null }[]>`
       select next_action_at from leads where id = ${autoLead.body.lead.id}
     `;
@@ -892,6 +913,50 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('whatsapp history + ignore list 
       select next_action_source from leads where id = ${legacyLead.body.lead.id}
     `;
     expect(legacyDate[0]!.next_action_source).toBe('agent');
+  });
+
+  test('autonomy-off stalls only the model’s own sweep — promised work still materializes', async () => {
+    await migrate(sql, MIGRATIONS);
+    await sql`
+      insert into control_settings (key, value) values ('agent_autonomy', ${sql.json({ level: 'off' } as never)})
+      on conflict (key) do update set value = excluded.value
+    `;
+    try {
+      const promised = await controlTx(sql, (tx) =>
+        insertLeadTx(tx, { name: 'Asked Back', whatsapp: '5511955550013' }),
+      );
+      const promisedId = promised.body.lead.id;
+      await sql`
+        update leads set next_action_at = now() - interval '1 hour',
+                         next_action_source = 'requested'
+        where id = ${promisedId}
+      `;
+      const auto = await controlTx(sql, (tx) =>
+        insertLeadTx(tx, { name: 'Auto Cadence', whatsapp: '5511955550014' }),
+      );
+      await sql`
+        update leads set next_action_at = now() - interval '1 hour',
+                         next_action_source = 'auto'
+        where id = ${auto.body.lead.id}
+      `;
+      await sql`delete from agent_runs where status = 'queued'`;
+      expect(await sweepOutreach(sql)).toBeGreaterThanOrEqual(1);
+      // The lead-asked callback fires unmarked — a promise outranks the
+      // workspace switch the same way a staff decision does.
+      const swept = await sql<{ params: Record<string, unknown> }[]>`
+        select params from agent_runs
+        where lead_id = ${promisedId} and kind = 'outreach' and status = 'queued'
+      `;
+      expect(swept).toHaveLength(1);
+      expect(swept[0]!.params.auto).toBeUndefined();
+      // …while the model's own cadence nudge parks under autonomy 'off'.
+      const skipped = await sql`
+        select 1 from agent_runs where lead_id = ${auto.body.lead.id}
+      `;
+      expect(skipped).toHaveLength(0);
+    } finally {
+      await sql`delete from control_settings where key = 'agent_autonomy'`;
+    }
   });
 
   test('a capped inbound flags the lead and emits lead.change', async () => {

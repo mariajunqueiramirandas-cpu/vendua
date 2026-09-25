@@ -35,6 +35,7 @@ import { buildSystemPrompt } from './prompts.ts';
 import { loadPlaybookTx, mergePlaybook, type EffectivePlaybook } from './playbooks.ts';
 import {
   automationAllowedTx,
+  autonomyTx,
   claimPolicyTx,
   discoveryBudgetTx,
   playbookEnabledTx,
@@ -1623,10 +1624,23 @@ async function drainInbox(att: Attempt): Promise<number> {
       )
         off.push(k);
     }
+    // Same recheck for a thread staff paused after the item enqueued —
+    // the spawn gate consults lead_threads.agent_enabled, so the drain
+    // must too or an unbound run still serves that thread's mail.
+    const dead = (
+      await tx<{ t: string }[]>`
+        select distinct payload->>'threadId' as t from agent_inbox
+        where ${scope} and payload->>'threadId' is not null
+          and payload->>'threadId' in (
+            select id::text from lead_threads where not agent_enabled
+          )
+      `
+    ).map((d) => d.t);
     return tx<InboxItem[]>`
       select id, kind, payload, created_at from agent_inbox
       where ${scope}
         and (payload->>'requestedKind' is null or not (payload->>'requestedKind' = any(${off})))
+        and (payload->>'threadId' is null or not (payload->>'threadId' = any(${dead})))
       order by created_at limit 10
     `;
   });
@@ -2833,7 +2847,12 @@ export async function sweepOutreach(sql: Sql): Promise<number> {
   const queuedIds: string[] = [];
   const capFlagged: string[] = [];
   const fired = await controlTx(sql, async (tx) => {
-    if (!(await automationAllowedTx(tx, 'outreach')).ok) return 0;
+    // Autonomy 'off' parks only the automation's own nudges — promised
+    // work ('staff'/'requested'/'agent' sources, materialized unmarked
+    // below) is a human's schedule or a lead-asked callback and still
+    // fires. The playbook switch gates everyone.
+    const level = (await autonomyTx(tx)).level;
+    if (!(await playbookEnabledTx(tx, 'outreach')).ok) return 0;
     const g = await getSettingTx<Partial<Guardrails>>(tx, 'guardrails', {});
     const capCents = capCentsOf(g);
     // for update skip locked — concurrent sweeps on different replicas take
@@ -2892,12 +2911,13 @@ export async function sweepOutreach(sql: Sql): Promise<number> {
           for update skip locked
         `
       )[0];
-      const params: Record<string, unknown> = {
-        ...(next_action_source === 'staff' ||
+      const promised =
+        next_action_source === 'staff' ||
         next_action_source === 'requested' ||
-        next_action_source === 'agent'
-          ? {}
-          : { auto: next_action_source }),
+        next_action_source === 'agent';
+      if (!promised && level === 'off') continue;
+      const params: Record<string, unknown> = {
+        ...(promised ? {} : { auto: next_action_source }),
         ...(fold ? { focus: `agendado por você: ${fold.focus}`, wakeupId: fold.id } : {}),
       };
       const cap: { flagged?: boolean } = {};

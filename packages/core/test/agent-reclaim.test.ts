@@ -3146,6 +3146,53 @@ dbDescribe('worker robustness (db)', () => {
     await sql`delete from control_settings where key = 'agent_playbooks'`;
   });
 
+  test('mail for a thread paused after enqueue parks mid-run — the spawn gate and the drain agree', async () => {
+    await migrate(sql, MIGRATIONS);
+    const lead = await controlTx(sql, (tx) =>
+      insertLeadTx(tx, { name: 'Paused Mid', whatsapp: '5511910000012' }),
+    );
+    const leadId = lead.body.lead.id;
+    const [thread] = await sql<{ id: string }[]>`
+      insert into lead_threads (lead_id, channel) values (${leadId}, 'whatsapp') returning id
+    `;
+    await sql`delete from agent_runs where status = 'queued'`;
+    // Staff paused the thread AFTER the item was enqueued — the spawn gate
+    // consults lead_threads.agent_enabled, so the drain must recheck it
+    // too or an unbound run still serves mail the pause was meant to hide.
+    await sql`update lead_threads set agent_enabled = false where id = ${thread!.id}`;
+    await enqueueRun(sql, {
+      kind: 'outreach',
+      leadId,
+      params: { auto: 'first-contact', script: [{ text: 'fim' }] },
+    });
+    await controlTx(sql, (tx) =>
+      enqueueInboxTx(tx, leadId, 'inbound', {
+        text: 'oi',
+        threadId: thread!.id,
+        requestedKind: 'reply',
+        params: { origin: 'inbound' },
+      }),
+    );
+    await controlTx(sql, (tx) =>
+      enqueueInboxTx(tx, leadId, 'staff', {
+        text: 'prioridade: reengajar',
+        requestedKind: 'outreach',
+        params: {},
+      }),
+    );
+    expect(await runOnce(sql)).toBe(true);
+    // The paused thread's item waits for the sweep; the unbound staff
+    // mail still drains — the gate is per-thread, not per-lead.
+    const items = await sql<{ consumed_at: Date | null; payload: { threadId?: string } }[]>`
+      select consumed_at, payload from agent_inbox where lead_id = ${leadId}
+    `;
+    expect(items).toHaveLength(2);
+    for (const i of items) {
+      if (i.payload.threadId === thread!.id) expect(i.consumed_at).toBeNull();
+      else expect(i.consumed_at).not.toBeNull();
+    }
+  });
+
   test('terminal leads drop their mail even while paused', async () => {
     await migrate(sql, MIGRATIONS);
     const lead = await controlTx(sql, (tx) =>
