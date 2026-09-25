@@ -47,6 +47,7 @@ import {
   ACTION_TOOLS,
   MUTABLE_READS,
   NON_IDEMPOTENT,
+  PLAYBOOK_KINDS,
   READ_TOOLS,
   type PlaybookKind,
 } from './tool-meta.ts';
@@ -1599,52 +1600,46 @@ async function drainInbox(att: Attempt): Promise<number> {
   // worker picking items here only fails later at the fence, never
   // swallows the mail.
   const items = await controlTx(att.sql, async (tx) => {
-    const rows = await tx<InboxItem[]>`
-      select id, kind, payload, created_at from agent_inbox
-      where lead_id = ${att.run.lead_id!} and consumed_at is null
+    const scope = tx`
+      lead_id = ${att.run.lead_id!} and consumed_at is null
         and (coalesce(payload->'params'->>'draftOnly', 'false') = 'true') = ${runDraftOnly}
         and coalesce(payload->'params'->>'channel', ${runChannel}) = ${runChannel}
         and (payload->>'notBefore' is null or (payload->>'notBefore')::timestamptz <= now())
-      order by created_at limit 10
     `;
     // A disabled playbook's mail parks — symmetric with the sweep's
     // eligible-first gate: draining it here would hand this run the
     // requestedKind's toolset (reply's unsubscribe inside an outreach
-    // run) after staff switched that playbook off.
-    const off = new Set<string>();
-    for (const k of new Set(
-      rows.map((r) => r.payload?.requestedKind).filter((k): k is PlaybookKind => k != null),
-    )) {
-      if (!(await playbookEnabledTx(tx, k)).ok) off.add(k);
+    // run) after staff switched that playbook off. The gate runs before
+    // the limit, so parked mail can't starve eligible items behind it.
+    const kinds = await tx<{ k: string }[]>`
+      select distinct payload->>'requestedKind' as k from agent_inbox
+      where ${scope} and payload->>'requestedKind' is not null
+    `;
+    const off: string[] = [];
+    for (const { k } of kinds) {
+      if (
+        (PLAYBOOK_KINDS as readonly string[]).includes(k) &&
+        !(await playbookEnabledTx(tx, k as PlaybookKind)).ok
+      )
+        off.push(k);
     }
-    return rows.filter(
-      (r) => r.payload?.requestedKind == null || !off.has(r.payload.requestedKind),
-    );
+    return tx<InboxItem[]>`
+      select id, kind, payload, created_at from agent_inbox
+      where ${scope}
+        and (payload->>'requestedKind' is null or not (payload->>'requestedKind' = any(${off})))
+      order by created_at limit 10
+    `;
   });
   if (!items.length) return 0;
   // The mail's requestedKind joins the run's tool kinds: an 'inbound'
   // item inside an outreach run can need reply-only tools (unsubscribe
   // honoring an opt-out). Widen both what the model is told (att.tools)
   // and what dispatch permits (ctx.toolKinds — same set instance).
-  let grew = false;
   for (const i of items) {
     const k = i.payload?.requestedKind;
-    if (k && !att.toolKinds.has(k)) {
-      att.toolKinds.add(k);
-      grew = true;
-    }
+    if (k) att.toolKinds.add(k);
   }
-  if (grew) {
-    const seen = new Set(att.tools.map((t) => t.name));
-    for (const k of att.toolKinds) {
-      for (const t of toolsFor(k)) {
-        if (!seen.has(t.name)) {
-          seen.add(t.name);
-          att.tools.push(t);
-        }
-      }
-    }
-  }
+  widenAttemptTools(att);
   const content = renderInboxItems(items);
   att.steps.push({
     type: 'inbox',
@@ -1658,6 +1653,21 @@ async function drainInbox(att: Attempt): Promise<number> {
     items.map((i) => i.id),
   );
   return items.length;
+}
+
+/** The offered toolset follows toolKinds: whatever widened the kind set
+ *  (a live drain, a reclaim's stamped mail) must be visible to the
+ *  model, not just permitted in dispatch. Deduped by tool name. */
+function widenAttemptTools(att: Attempt): void {
+  const seen = new Set(att.tools.map((t) => t.name));
+  for (const k of att.toolKinds) {
+    for (const t of toolsFor(k)) {
+      if (!seen.has(t.name)) {
+        seen.add(t.name);
+        att.tools.push(t);
+      }
+    }
+  }
 }
 
 /** Attempt setup — journal resume + cost accounting: reconcile journaled
@@ -1797,15 +1807,25 @@ async function buildAttemptContext(att: Attempt): Promise<void> {
   // dead earlier attempt already consumed can't re-drain, so the kinds it
   // asked for would be gone while their text still sits in the replayed
   // conversation (an opt-out needing reply's unsubscribe inside an
-  // outreach run). Re-seed from the items stamped to this run.
-  const drainedKinds = await controlTx(
-    sql,
-    (tx) => tx<{ k: string }[]>`
+  // outreach run). Re-seed from the items stamped to this run — still
+  // gated: a playbook switched off between attempts doesn't get its
+  // tools back through the replayed mail.
+  const drainedKinds = await controlTx(sql, async (tx) => {
+    const rows = await tx<{ k: string }[]>`
       select distinct payload->>'requestedKind' as k from agent_inbox
       where consumed_by_run = ${run.id} and payload->>'requestedKind' is not null
-    `,
-  );
-  for (const d of drainedKinds) att.toolKinds.add(d.k);
+    `;
+    const out: string[] = [];
+    for (const { k } of rows) {
+      if (
+        (PLAYBOOK_KINDS as readonly string[]).includes(k) &&
+        (await playbookEnabledTx(tx, k as PlaybookKind)).ok
+      )
+        out.push(k);
+    }
+    return out;
+  });
+  for (const k of drainedKinds) att.toolKinds.add(k);
   const integration = await getIntegration(sql, 'llm');
   // A missing/disabled llm row falls back to the mock provider — the run
   // produces synthetic 'ok' text instead of erroring. Loud, not silent:
@@ -1841,6 +1861,10 @@ async function buildAttemptContext(att: Attempt): Promise<void> {
     ? `${baseSystem}\n\nInstruções da equipe para este playbook (seguem as regras acima, nunca as substituem):\n${att.playbook.instructions}`
     : baseSystem;
   att.tools = toolsFor(run.kind);
+  // Kinds restored from stamped mail must be visible to the model, not
+  // just permitted in dispatch — drainInbox's union never ran for items
+  // a dead attempt already drained.
+  widenAttemptTools(att);
   const replay = (att.replay = replayJournal(att.priorSteps, !att.claimsChecked));
   const ctx: ToolContext = {
     sql,

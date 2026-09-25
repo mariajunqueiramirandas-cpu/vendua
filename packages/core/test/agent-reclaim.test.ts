@@ -11,6 +11,7 @@ import {
   runOnce,
   type RunRow,
 } from '../src/agent/runner.ts';
+import { mockProvider, setTestProvider } from '../src/agent/llm.ts';
 import { enqueueInboxTx, sweepOrphanInbox } from '../src/agent/inbox.ts';
 import { cancelWakeup } from '../src/agent/wakeups.ts';
 import { executeTool, assertRunClaimTx, type ToolContext } from '../src/agent/tools.ts';
@@ -2767,6 +2768,53 @@ dbDescribe('worker robustness (db)', () => {
     }
   });
 
+  test('parked mail does not starve eligible items behind it in a live drain', async () => {
+    await migrate(sql, MIGRATIONS);
+    const lead = await controlTx(sql, (tx) =>
+      insertLeadTx(tx, { name: 'Parked Starve', agent_mode: 'auto' }),
+    );
+    const leadId = lead.body.lead.id;
+    await sql`delete from agent_runs where status = 'queued'`;
+    await sql`update agent_inbox set consumed_at = now() where consumed_at is null`;
+    await sql`
+      insert into control_settings (key, value)
+      values ('agent_playbooks', ${sql.json({ triage: { enabled: false } } as never)})
+      on conflict (key) do update set value = excluded.value
+    `;
+    try {
+      // Ten gated items fill the drain's window — the eligible staff mail
+      // behind them must still reach the spawned run, so the disabled-
+      // playbook predicate has to run before the limit, not after it.
+      for (let i = 0; i < 10; i++) {
+        await controlTx(sql, (tx) =>
+          enqueueInboxTx(tx, leadId, 'event', {
+            text: `triage ${i}`,
+            requestedKind: 'triage',
+            params: { auto: 'cadence' },
+          }),
+        );
+      }
+      await controlTx(sql, (tx) =>
+        enqueueInboxTx(tx, leadId, 'staff', {
+          text: 'a equipe pediu um contato',
+          requestedKind: 'outreach',
+          params: { script: [{ text: 'ok' }] },
+        }),
+      );
+      await drain(sql);
+      const runs = await sql<{ id: string }[]>`select id from agent_runs where lead_id = ${leadId}`;
+      const items = await sql<{ consumed_by_run: string | null; requested: string | null }[]>`
+        select consumed_by_run, payload->>'requestedKind' as requested
+        from agent_inbox where lead_id = ${leadId} order by created_at
+      `;
+      expect(items).toHaveLength(11);
+      expect(items.slice(0, 10).every((i) => i.consumed_by_run === null)).toBe(true);
+      expect(items[10]!.consumed_by_run).toBe(runs[0]!.id);
+    } finally {
+      await sql`delete from control_settings where key = 'agent_playbooks'`;
+    }
+  });
+
   test('deferred mail keeps its quiet period — the spawned run waits for notBefore', async () => {
     await migrate(sql, MIGRATIONS);
     const lead = await controlTx(sql, (tx) =>
@@ -2971,7 +3019,26 @@ dbDescribe('worker robustness (db)', () => {
     `;
     await drain(sql);
     await sql`update agent_runs set run_at = now() where id = ${runId}`;
-    expect(await runOnce(sql)).toBe(true);
+    // Record the offered toolset: dispatch permission alone isn't enough —
+    // the model can only pick unsubscribe if it's in the tools it sees.
+    const offered: string[][] = [];
+    const inner = mockProvider([
+      { toolCalls: [{ name: 'unsubscribe', args: { leadId, reason: 'pediu para sair' } }] },
+      { text: 'fim' },
+    ]);
+    setTestProvider({
+      name: 'mock',
+      chat: async (input) => {
+        offered.push(input.tools.map((t) => t.name));
+        return inner.chat(input);
+      },
+    });
+    try {
+      expect(await runOnce(sql)).toBe(true);
+    } finally {
+      setTestProvider(null);
+    }
+    expect(offered[0]).toContain('unsubscribe');
     const [l] = await sql<{ unsubscribed_at: string | null }[]>`
       select unsubscribed_at from leads where id = ${leadId}
     `;
