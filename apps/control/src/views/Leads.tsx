@@ -38,8 +38,7 @@ const SORTS = [
 ] as const;
 type LeadSort = (typeof SORTS)[number][0];
 
-/** Reachability glyph — lit when the channel exists, amber when the value is
- *  suspect (unverified whatsapp), red when it has failed (email bounce). */
+/** Reachability glyph: lit = channel exists, warn = suspect, bad = failed. */
 function Chan({
   on,
   tone,
@@ -77,11 +76,9 @@ export default function Leads() {
   const [dispatchBusy, setDispatchBusy] = useState(false);
   const nav = useNavigate();
   const fileRef = useRef<HTMLInputElement>(null);
-  // Bumps on every filter change — a late dispatch result only renders if it
-  // still belongs to the filter set it was launched under.
+  // Bumped on filter change — invalidates in-flight dispatch results.
   const filterGen = useRef(0);
-  // Last-issued load wins: a stale response must not replace a newer result
-  // set under the same filters (it would dispatch hidden leads from `sel`).
+  // Last-issued load wins — a stale response must not clobber a newer result set.
   const loadGen = useRef(0);
 
   const params = useCallback(
@@ -105,8 +102,7 @@ export default function Leads() {
         setCursor(r.nextCursor);
         setLoading(false);
         if (!cur) {
-          // The visible set was replaced — keep only selections that
-          // survived, so dispatch never acts on leads staff can't see.
+          // Prune selections to the new visible set — dispatch must never act on hidden leads.
           const ids = new Set(r.leads.map((l) => l.id));
           setSel((s) => new Set([...s].filter((id) => ids.has(id))));
         }
@@ -126,10 +122,8 @@ export default function Leads() {
       .catch(() => {});
   }, []);
   useEffect(loadStats, [loadStats]);
-  // Refresh preserves the visible depth: pages are re-read from the top and
-  // swapped in atomically, so an expanded list refreshes in place instead
-  // of collapsing back to page one (and selections survive in the same
-  // way the plain load prunes them).
+  // Refresh preserves visible depth — re-read pages from the top so an
+  // expanded list doesn't collapse back to page one.
   const refresh = useCallback(() => {
     const depth = Math.max(1, Math.ceil(leads.length / 100));
     const gen = ++loadGen.current;
@@ -156,10 +150,8 @@ export default function Leads() {
     const t = setInterval(refresh, 60_000);
     return () => clearInterval(t);
   }, [refresh]);
-  // Filter changes swap the result set — drop hidden selections so dispatch
-  // only ever acts on leads the staff can see selected. The generation bump
-  // also invalidates an in-flight dispatch result, which would otherwise
-  // land under the new lead set after the filters changed.
+  // Filter change: drop hidden selections (dispatch only acts on visible leads)
+  // and invalidate in-flight dispatch results.
   useEffect(() => {
     filterGen.current++;
     setSel(new Set());
@@ -504,8 +496,7 @@ export default function Leads() {
         </div>
       )}
 
-      {/* Sticky bottom of the scrollport: pinned while a selection exists, so
-          the dispatch controls ride with a long list instead of scrolling away. */}
+      {/* Pinned to the scrollport bottom so dispatch controls ride with a long list. */}
       {sel.size > 0 && (
         <div className="card leads-bulk">
           <b>
@@ -595,8 +586,7 @@ function NewLead({
   const [dupes, setDupes] = useState<LeadListItem[]>([]);
   const nav = useNavigate();
 
-  // Soft duplicate guard — any channel or the name itself is probed against
-  // the same q-search the list uses.
+  // Soft duplicate guard — probe any channel or the name via the list's q-search.
   useEffect(() => {
     const probe = [f.whatsapp, f.email, f.instagram]
       .map((v) => v.trim())
@@ -606,8 +596,7 @@ function NewLead({
       setDupes([]);
       return;
     }
-    // cleanup marks the probe stale — a late response must not overwrite
-    // matches for a newer term or re-fill after the fields were cleared.
+    // Stale flag keeps a late response from overwriting newer matches.
     let stale = false;
     const t = setTimeout(() => {
       api
@@ -656,8 +645,7 @@ function NewLead({
         onClose(true);
         nav(`/leads/${res.lead.id}`);
       } else {
-        // "criar + outro" — the parent reloads the list while this drawer
-        // stays open on a blank form.
+        // "criar + outro" — parent reloads the list; drawer stays open on a blank form.
         onCreated();
         setF(EMPTY_FORM);
         setCreatedMsg('lead criado — cadastre o próximo');

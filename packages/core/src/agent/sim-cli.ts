@@ -6,23 +6,12 @@ import { runSim } from './sim.ts';
 import { SIM_SCENARIOS, getScenario } from './sim-scenarios.ts';
 import { log } from '../platform/log.ts';
 
-/**
- * agent/sim-cli — `bun run sim` — drives the negotiation simulator.
+/** `bun run sim` — negotiation simulator on an isolated `vendua_sim` db (log
+ *  drivers, loosened guardrails; needs the driver's API key in env). Writes
+ *  sim-results/<scenario>-<ts>.json + a sim_runs row.
  *
- *   bun run sim -- --all                      every scenario
- *   bun run sim -- --scenario padaria-cetica  one scenario
- *   bun run sim -- --list                     names only
- *   --driver gemini|openrouter|anthropic|openai  (default gemini)
- *   --model <id>                               provider model override
- *
- * Runs against an isolated `vendua_sim` database (created + migrated on the
- * same docker postgres): the `whatsapp`/`email` drivers are `log` (messages
- * record 'sent' without leaving the building), `llm` is gemini, and guardrails
- * are loosened so the sim can actually talk (no quiet hours, no first-contact
- * draft gate, high daily cap). Needs GEMINI_API_KEY in env.
- *
- * Each run writes sim-results/<scenario>-<ts>.json (transcript + judge) and a
- * sim_runs row.
+ *    bun run sim -- --all | --scenario <name> | --list
+ *    --driver gemini|openrouter|anthropic|openai   --model <id>
  */
 
 const BASE_URL =
@@ -32,10 +21,8 @@ const SIM_URL = process.env.SIM_DATABASE_URL ?? BASE_URL.replace(/\/[^/]+$/, '/v
 const cliLog = log.child({ mod: 'sim-cli' });
 
 async function ensureSimDb() {
-  // Honor SIM_DATABASE_URL's server AND target db: admin connects to that
-  // server's maintenance db ('postgres'), not BASE_URL's — a custom SIM_URL
-  // elsewhere would otherwise create the db on the wrong host. The name is
-  // interpolated into raw SQL, so restrict it to a bare identifier.
+  // Admin connects to SIM_URL's own server ('postgres' db); dbName interpolates
+  // into raw SQL, so restrict it to a bare identifier.
   const dbName = SIM_URL.replace(/\?.*$/, '').split('/').pop() ?? 'vendua_sim';
   if (!/^[a-zA-Z_][a-zA-Z0-9_]*$/.test(dbName)) {
     throw new Error(`SIM_DATABASE_URL has an invalid database name: '${dbName}'`);

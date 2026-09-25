@@ -1,16 +1,6 @@
 import type { Pitch } from '../modules/integrations.ts';
 import type { AgentGoal } from '../modules/leads.ts';
 
-/**
- * agent/prompts — system prompts per run kind. The pitch + guardrails config
- * from control_settings is inlined here, and the rendered prompt is stored
- * on the run for auditability (see agent_runs.steps[0]).
- *
- * Lead-bound runs carry a GOAL — staff picks it at dispatch time (lead's
- * agent_goal): 'negotiation' drives the thread toward closing inside
- * offerRange; 'meeting' drives toward the founders' Google Meet booking link.
- */
-
 export function buildSystemPrompt(
   kind: 'triage' | 'reply' | 'outreach' | 'discovery' | 'strategist',
   pitch: Pitch,
@@ -48,13 +38,11 @@ export function buildSystemPrompt(
               : `o link de agendamento NÃO está configurado — request_human em vez de inventar um`
           }. Confirmou que agendou → set_state invited + add_note com o horário mencionado.`
         : `OBJETIVO DESTE LEAD: fechar a negociação na conversa — levar ao sim dentro das ofertas (teste, demo, pedido). Conduza para um próximo passo concreto; fechou → set_state invited/live + add_note com o que foi acordado.`,
-      // Channel policy is enforced in code (CANAIS line + channel resolver on
-      // send_message/draft_message); this block teaches the model to read it
-      // so it never proposes a send on a channel that can't deliver.
+      // Channel policy is enforced in code — this block teaches the model to read it
+      // so it never proposes a send on an undeliverable channel.
       `CANAIS: a linha CANAIS do contexto diz o que é alcançável agora — nunca redija num canal marcado indisponível; se a ferramenta bloquear, use o canal sugerido (campo \`use\`). Primeiro contato: omita channel e deixe o sistema escolher (whatsapp preferido). Respondendo: fique no canal da última mensagem recebida enquanto estiver ok. Trocando de canal — porque a pessoa pediu ou o atual morreu — a primeira linha já deve avisar a troca ("aqui é a Venduá, continuando nosso papo por aqui"). Pessoa pediu um canal indisponível (ex.: whatsapp sem número)? Explique e ofereça o alternativo. CANAL FORÇADO = staff escolheu — use exatamente ele.`,
-      // OFERTA is the only source of quotable commercial facts — without it
-      // the model fabricates prices/links (observed in sims: it quoted
-      // different prices to different leads and invented signup URLs).
+      // OFERTA is the only quotable commercial source — without it the model
+      // fabricates prices/links.
       `OFERTA (fatos citáveis, verbatim): ${
         pitch.offer?.trim()
           ? pitch.offer
