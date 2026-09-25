@@ -1757,11 +1757,11 @@ async function drainInbox(att: Attempt): Promise<number> {
   // on the wrong conversation. Both sides derive their effective channel
   // from their thread (run below via runThread, item inside the scope), and
   // a thread-bound run only takes its own thread's mail — an unbound run
-  // stays channel-compatible (its sends resolve the item's thread).
+  // stays channel-compatible (its sends resolve the item's thread) — and
+  // an UNBOUND UNPINNED run can't take thread-bound mail at all: the
+  // derived channels would mismatch, which is right, since a send picked
+  // by continuity could answer the request on the wrong conversation.
   const runThread = att.run.thread_id ?? '';
-  // A run with neither pin is a wildcard: it serves any thread the item
-  // asks for, so channel/thread compat doesn't restrict what drains.
-  const unpinned = runChannel === '' && runThread === '';
   // Mail still inside its quiet period (payload.notBefore, stamped at
   // enqueue) doesn't drain mid-flight either — the inbound delay holds
   // uniformly whether the item waits for this run or its own later one.
@@ -1781,12 +1781,11 @@ async function drainInbox(att: Attempt): Promise<number> {
     const scope = tx`
       lead_id = ${att.run.lead_id!} and consumed_at is null
         and (coalesce(payload->'params'->>'draftOnly', 'false') = 'true') = ${runDraftOnly}
-        and (${unpinned}
-             or coalesce(
-               payload->'params'->>'channel',
-               (select lt.channel::text from lead_threads lt where lt.id::text = payload->>'threadId'),
-               ${effChannel}
-             ) = ${effChannel})
+        and coalesce(
+              payload->'params'->>'channel',
+              (select lt.channel::text from lead_threads lt where lt.id::text = payload->>'threadId'),
+              ${effChannel}
+            ) = ${effChannel}
         and (${runThread} = '' or coalesce(payload->>'threadId', ${runThread}) = ${runThread})
         and (payload->>'notBefore' is null or (payload->>'notBefore')::timestamptz <= now())
     `;

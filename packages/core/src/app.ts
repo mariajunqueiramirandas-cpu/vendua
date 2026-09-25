@@ -1834,18 +1834,16 @@ export function createApp({ sql, sessionSecret, controlSecret, autoDrain }: AppD
             `
             )[0]?.c ?? '')
           : '');
-      const unpinned = runChan === '' && runThread === '';
       const runDraftOnly = rows[0].params?.draftOnly === true;
       await tx`
         update agent_inbox set consumed_at = now()
         where payload->>'forRunId' = ${id} and consumed_at is null
           and (coalesce(payload->'params'->>'draftOnly', 'false') = 'true') = ${runDraftOnly}
-          and (${unpinned}
-               or coalesce(
-                 payload->'params'->>'channel',
-                 (select lt.channel::text from lead_threads lt where lt.id::text = payload->>'threadId'),
-                 ${effChan}
-               ) = ${effChan})
+          and coalesce(
+               payload->'params'->>'channel',
+               (select lt.channel::text from lead_threads lt where lt.id::text = payload->>'threadId'),
+               ${effChan}
+             ) = ${effChan}
           and (${runThread} = '' or coalesce(payload->>'threadId', ${runThread}) = ${runThread})
       `;
       transitioned = true;

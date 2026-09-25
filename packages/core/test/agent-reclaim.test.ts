@@ -3315,19 +3315,20 @@ dbDescribe('worker robustness (db)', () => {
     expect(spawned!.thread_id).toBe(emThread!.id);
   });
 
-  test('an unpinned unbound run drains thread-bound mail — no pin is a wildcard', async () => {
+  test('thread-bound mail does not ride an unpinned run — routing would misroute it', async () => {
     await migrate(sql, MIGRATIONS);
     const lead = await controlTx(sql, (tx) =>
-      insertLeadTx(tx, { name: 'Wildcard Run', whatsapp: '5511910000093', email: 'wc@y.br' }),
+      insertLeadTx(tx, { name: 'No Wildcard', whatsapp: '5511910000093', email: 'wc@y.br' }),
     );
     const leadId = lead.body.lead.id;
     const [emThread] = await sql<{ id: string }[]>`
       insert into lead_threads (lead_id, channel) values (${leadId}, 'email') returning id
     `;
     await sql`delete from agent_runs where status = 'queued'`;
-    // No thread_id, no channel pin — the run serves whatever thread the
-    // item asks for, so the email request must not wait for a later run.
-    const runId = (await enqueueRun(sql, {
+    // No thread_id, no channel pin — draining the email request here would
+    // answer it on whatever channel continuity picks (the lead's last
+    // inbound), not the email thread staff asked for. It waits for its own.
+    (await enqueueRun(sql, {
       kind: 'reply',
       leadId,
       runAt: new Date(Date.now()),
@@ -3346,10 +3347,20 @@ dbDescribe('worker robustness (db)', () => {
       }),
     );
     await running;
+    expect(
+      (await sql`select 1 from agent_inbox where lead_id = ${leadId} and consumed_at is null`)
+        .length,
+    ).toBe(1);
+    await drain(sql);
     const [item] = await sql<{ consumed_by_run: string | null }[]>`
       select consumed_by_run from agent_inbox where lead_id = ${leadId}
     `;
-    expect(item!.consumed_by_run).toBe(runId);
+    expect(item!.consumed_by_run).not.toBeNull();
+    const [spawned] = await sql<{ kind: string; thread_id: string }[]>`
+      select kind, thread_id from agent_runs where id = ${item!.consumed_by_run!}
+    `;
+    expect(spawned!.kind).toBe('reply');
+    expect(spawned!.thread_id).toBe(emThread!.id);
   });
 
   test('mail arriving during a draft-only run waits — a reply never strands as a draft', async () => {
