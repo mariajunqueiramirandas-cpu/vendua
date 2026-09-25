@@ -3260,6 +3260,61 @@ dbDescribe('worker robustness (db)', () => {
     expect(spawned!.params.channel).toBe('email');
   });
 
+  test('thread-bound mail waits for its own thread run even with no channel pin', async () => {
+    await migrate(sql, MIGRATIONS);
+    const lead = await controlTx(sql, (tx) =>
+      insertLeadTx(tx, { name: 'Thread Pin', whatsapp: '5511910000092', email: 'tp@y.br' }),
+    );
+    const leadId = lead.body.lead.id;
+    const [waThread] = await sql<{ id: string }[]>`
+      insert into lead_threads (lead_id, channel) values (${leadId}, 'whatsapp') returning id
+    `;
+    const [emThread] = await sql<{ id: string }[]>`
+      insert into lead_threads (lead_id, channel) values (${leadId}, 'email') returning id
+    `;
+    await sql`delete from agent_runs where status = 'queued'`;
+    // The whatsapp run is mid-flight — a staff 'reply on the email thread'
+    // item carries payload.threadId but no params.channel: a channel-only
+    // compat check would drain it at the next boundary and answer on
+    // whatsapp. It must stay pending for its own thread's run.
+    (await enqueueRun(sql, {
+      kind: 'reply',
+      leadId,
+      threadId: waThread!.id,
+      runAt: new Date(Date.now()),
+      params: {
+        origin: 'inbound',
+        channel: 'whatsapp',
+        script: [{ text: 'pensando', delayMs: 1500 }, { text: 'fim' }],
+      },
+    }))!;
+    const running = runOnce(sql);
+    await new Promise((r) => setTimeout(r, 150));
+    await controlTx(sql, (tx) =>
+      enqueueInboxTx(tx, leadId, 'staff', {
+        text: 'responde no email',
+        threadId: emThread!.id,
+        requestedKind: 'reply',
+        params: { origin: 'staff' },
+      }),
+    );
+    await running;
+    expect(
+      (await sql`select 1 from agent_inbox where lead_id = ${leadId} and consumed_at is null`)
+        .length,
+    ).toBe(1);
+    await drain(sql);
+    const [item] = await sql<{ consumed_by_run: string | null }[]>`
+      select consumed_by_run from agent_inbox where lead_id = ${leadId}
+    `;
+    expect(item!.consumed_by_run).not.toBeNull();
+    const [spawned] = await sql<{ kind: string; thread_id: string }[]>`
+      select kind, thread_id from agent_runs where id = ${item!.consumed_by_run!}
+    `;
+    expect(spawned!.kind).toBe('reply');
+    expect(spawned!.thread_id).toBe(emThread!.id);
+  });
+
   test('mail arriving during a draft-only run waits — a reply never strands as a draft', async () => {
     await migrate(sql, MIGRATIONS);
     const lead = await controlTx(sql, (tx) =>

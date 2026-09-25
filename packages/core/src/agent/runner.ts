@@ -1744,11 +1744,21 @@ async function drainInbox(att: Attempt): Promise<number> {
   // work, not run context).
   const runDraftOnly = (att.run.params as { draftOnly?: unknown } | null)?.draftOnly === true;
   // Channel-pinned mail likewise defers to a run pinned the same way — a
-  // delivered item can't re-point ctx.channelOverride mid-flight.
+  // delivered item can't re-point ctx.channelOverride mid-flight. A
+  // thread-bound run speaks its thread's channel even unpinned: sends
+  // route through the thread, so compatibility is judged on that channel.
   const runChannel =
     att.run.params?.channel === 'whatsapp' || att.run.params?.channel === 'email'
       ? att.run.params.channel
       : '';
+  // And a thread pin is a channel pin by another name — staff's 'reply on
+  // the email thread' carries payload.threadId, often without params.channel;
+  // judged on channel alone it would drain into the whatsapp run and answer
+  // on the wrong conversation. Both sides derive their effective channel
+  // from their thread (run below via runThread, item inside the scope), and
+  // a thread-bound run only takes its own thread's mail — an unbound run
+  // stays channel-compatible (its sends resolve the item's thread).
+  const runThread = att.run.thread_id ?? '';
   // Mail still inside its quiet period (payload.notBefore, stamped at
   // enqueue) doesn't drain mid-flight either — the inbound delay holds
   // uniformly whether the item waits for this run or its own later one.
@@ -1756,10 +1766,24 @@ async function drainInbox(att: Attempt): Promise<number> {
   // worker picking items here only fails later at the fence, never
   // swallows the mail.
   const items = await controlTx(att.sql, async (tx) => {
+    const effChannel =
+      runChannel ||
+      (runThread
+        ? ((
+            await tx<{ c: string }[]>`
+            select channel::text as c from lead_threads where id = ${runThread}::uuid
+          `
+          )[0]?.c ?? '')
+        : '');
     const scope = tx`
       lead_id = ${att.run.lead_id!} and consumed_at is null
         and (coalesce(payload->'params'->>'draftOnly', 'false') = 'true') = ${runDraftOnly}
-        and coalesce(payload->'params'->>'channel', ${runChannel}) = ${runChannel}
+        and coalesce(
+              payload->'params'->>'channel',
+              (select lt.channel::text from lead_threads lt where lt.id::text = payload->>'threadId'),
+              ${effChannel}
+            ) = ${effChannel}
+        and (${runThread} = '' or coalesce(payload->>'threadId', ${runThread}) = ${runThread})
         and (payload->>'notBefore' is null or (payload->>'notBefore')::timestamptz <= now())
     `;
     // A disabled playbook's mail parks — symmetric with the sweep's
