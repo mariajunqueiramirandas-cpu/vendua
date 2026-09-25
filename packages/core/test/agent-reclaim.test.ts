@@ -2983,7 +2983,7 @@ dbDescribe('worker robustness (db)', () => {
         join lead_threads t on t.id = m.thread_id
         where t.lead_id = ${lead4Id} and m.direction = 'out'
       `;
-      expect(outs4).toEqual([]);
+      expect(outs4.length).toBe(0);
     } finally {
       for (const k of ['guardrails', 'agent_autonomy']) {
         const p = priorOf(k);
