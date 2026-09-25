@@ -597,20 +597,24 @@ export async function approveMessage(
         // expired-copy focus, so the regen mails as an 'event' item into it
         // instead: the item carries the recompose intent and the active run
         // handles it in-context.
-        const active = await tx<{ id: string }[]>`
-          select id::text as id, created_at from agent_runs
+        const active = await tx<{ id: string; src: 'run' | 'mail' }[]>`
+          select 'run' as src, id::text as id, created_at from agent_runs
           where lead_id = ${thread.lead_id} and kind = 'outreach'
             and status in ('queued', 'running')
             and params->>'auto' = 'regenerate'
             and params->>'src' = ${messageId}
           union all
-          select id::text, created_at from agent_inbox
+          select 'mail' as src, id::text, created_at from agent_inbox
           where lead_id = ${thread.lead_id} and consumed_at is null
             and payload->>'auto' = 'regenerate'
             and payload->>'src' = ${messageId}
           order by created_at limit 1
         `;
-        let runId: string | null;
+        // `queued` tracks whether the regen intent is covered; `runId` is
+        // only ever an agent_runs id — an undrained inbox item queues the
+        // intent but has no run to point the UI at.
+        let queued = false;
+        let runId: string | null = null;
         const cap: { flagged?: boolean } = {};
         if (active[0]) {
           // A queued regen is reusable only while it can still claim: if the
@@ -619,7 +623,8 @@ export async function approveMessage(
           const { leadUnderCostCapTx } = await import('../agent/runner.ts');
           const verdict = await leadUnderCostCapTx(tx, thread.lead_id);
           cap.flagged = verdict === 'flagged';
-          runId = verdict === 'under' ? active[0].id : null;
+          queued = verdict === 'under';
+          runId = queued && active[0].src === 'run' ? active[0].id : null;
         } else {
           const { insertRun } = await import('../agent/runner.ts');
           const { enqueueInboxTx } = await import('../agent/inbox.ts');
@@ -649,9 +654,22 @@ export async function approveMessage(
               src: messageId,
               params,
             });
+            queued = true;
+            // insertRun also returns the already-active run's id on the
+            // one-run-per-lead conflict — report it only when that run can
+            // actually drain this item. drainInbox defers draftOnly mail
+            // for a send-capable run, so a generic active run would finish
+            // without ever recomposing the draft; in that case the item
+            // waits pending for the orphan sweep's own draftOnly run.
+            const drains = await tx<{ id: string }[]>`
+              select id from agent_runs
+              where id = ${runId}
+                and coalesce(params->>'draftOnly', 'false') = 'true'
+            `;
+            if (!drains.length) runId = null;
           }
         }
-        if (!runId) {
+        if (!queued) {
           // The lifetime cost cap refused the regen — the draft can never
           // be recomposed by the agent, but the expired text must NOT go
           // out either. Keep it a draft (its own 'expired' error says why)
@@ -685,7 +703,11 @@ export async function approveMessage(
           `;
           return {
             status: 200,
-            body: { message: messageJson(stale[0]), stale: true, runId },
+            body: {
+              message: messageJson(stale[0]),
+              stale: true,
+              ...(runId ? { runId } : {}),
+            },
           };
         }
       }

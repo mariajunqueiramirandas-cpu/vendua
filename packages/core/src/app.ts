@@ -131,7 +131,7 @@ import {
 } from './modules/meetings.ts';
 import { BOOKING_PAGE } from './modules/booking-page.ts';
 import * as rooms from './modules/rooms.ts';
-import { capLockTx, drain, flagCappedLeads, insertRun } from './agent/runner.ts';
+import { capLockTx, drain, flagCappedLeads, insertRun, releaseInboxTx } from './agent/runner.ts';
 import { enqueueInboxTx } from './agent/inbox.ts';
 import { ingestInbound } from './agent/inbound.ts';
 import { ingestResendEvent, svixHeaders, svixVerified } from './agent/channels/email-inbound.ts';
@@ -1779,6 +1779,11 @@ export function createApp({ sql, sessionSecret, controlSecret, autoDrain }: AppD
         // already terminal — report it, don't error (cancel is idempotent)
         return { status: 200, body: { ok: true, status: cur.status } };
       }
+      // Mail the canceled run already consumed but can no longer answer
+      // returns to pending — the orphan sweep respawns a run for it.
+      // No-op for a queued run (it never drained); staff pause/unsubscribe
+      // is the way to silence a lead, so a cancel never strands mail.
+      await releaseInboxTx(tx, id);
       transitioned = true;
       return { status: 200, body: { ok: true, status: 'canceled' } };
     });

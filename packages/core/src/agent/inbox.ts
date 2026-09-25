@@ -143,10 +143,13 @@ export async function sweepOrphanInbox(sql: Sql, limit = 10): Promise<number> {
       const p = first.payload;
       const requestedKind = p?.requestedKind;
       if (!requestedKind) return null;
-      // Automation intents answer to autonomy; staff intents only to the
-      // playbook switch — same gates the enqueueing sites apply.
+      // Automation intents answer to autonomy; staff and promised work
+      // only to the playbook switch — the same markers claimRun reads off
+      // run params ('auto' key or origin='inbound' = automation; unmarked
+      // = a human asked for it, which kind 'staff' always is).
+      const marked = p?.params != null && ('auto' in p.params || p.params.origin === 'inbound');
       const gate =
-        first.kind === 'staff'
+        first.kind === 'staff' || !marked
           ? await playbookEnabledTx(tx, requestedKind)
           : await automationAllowedTx(tx, requestedKind);
       if (!gate.ok) return null;

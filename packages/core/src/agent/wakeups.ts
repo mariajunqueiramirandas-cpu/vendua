@@ -5,7 +5,7 @@ import { claimControl, controlTx } from '../modules/control.ts';
 import { emitControlEvent } from '../modules/control-events.ts';
 import { insertRun } from './runner.ts';
 import { enqueueInboxTx } from './inbox.ts';
-import { automationAllowedTx } from './policy.ts';
+import { autonomyTx, playbookEnabledTx } from './policy.ts';
 import type { PlaybookKind } from './tool-meta.ts';
 import { capCentsOf, getSettingTx, type Guardrails } from '../modules/integrations.ts';
 
@@ -223,7 +223,11 @@ export async function sweepWakeups(sql: Sql): Promise<number> {
       where l.id = w.lead_id and w.status = 'pending'
         and (l.unsubscribed_at is not null or l.archived_at is not null)
     `;
-    if (!(await automationAllowedTx(tx, 'outreach')).ok) return;
+    // The playbook switch gates every wakeup; workspace autonomy gates
+    // only the automation kind — promised callbacks (lead-asked or
+    // staff-created) run unmarked like claimRun allows them to.
+    if (!(await playbookEnabledTx(tx, 'outreach')).ok) return;
+    const { level } = await autonomyTx(tx);
     const g = await getSettingTx<Partial<Guardrails>>(tx, 'guardrails', {});
     const capCents = capCentsOf(g);
     // Over-cap leads stay out of the 20-row window (same reason as
@@ -251,8 +255,12 @@ export async function sweepWakeups(sql: Sql): Promise<number> {
       if (!capFree[0]!.got) continue;
       const cap: { flagged?: boolean } = {};
       // Agent self-schedules are automation ('auto' — a reply retires them);
-      // lead-asked callbacks and staff wakeups are promises: unmarked.
+      // lead-asked callbacks and staff wakeups are promises: unmarked,
+      // so autonomy 'off' never stalls them (same exemption claimRun gives
+      // unmarked rows) — they park pending while autonomy is off only when
+      // the run itself is automation.
       const promised = w.requested || w.created_by === 'staff';
+      if (!promised && level === 'off') continue;
       const params: Record<string, unknown> = {
         ...(promised ? {} : { auto: 'wakeup' }),
         focus: `agendado por você: ${w.focus}`,
