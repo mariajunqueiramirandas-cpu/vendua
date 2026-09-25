@@ -12,4 +12,5 @@ storefronts/*/dist/
 packages/conformance/test/.tmp/
 apps/control/dist/
 apps/control-next/dist/
+.claude/worktrees/
 packages/core/sim-results/
