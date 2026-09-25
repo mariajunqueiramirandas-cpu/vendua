@@ -3858,6 +3858,16 @@ dbDescribe('worker robustness (db)', () => {
       insert into lead_messages (thread_id, direction, author, body, status, agent_run_id)
       values (${thread!.id}, 'out', 'agent', 'oi, posso ajudar?', 'failed', ${run!.id}) returning id
     `;
+    // An attempted-but-failed send is different: dispatch_attempted_at
+    // means it may already be on the wire — at-most-once keeps its mail
+    // consumed rather than risk a wire duplicate.
+    const [attemptedOut] = await sql<{ id: string }[]>`
+      insert into lead_messages (thread_id, direction, author, body, status, agent_run_id, dispatch_attempted_at)
+      values (${thread!.id}, 'out', 'agent', 'oi, posso ajudar?', 'failed', ${run!.id}, now()) returning id
+    `;
+    const attemptedId = await controlTx(sql, (tx) =>
+      enqueueInboxTx(tx, leadId, 'inbound', { text: 'oi de novo', requestedKind: 'reply' }),
+    );
     await sql`update agent_inbox set consumed_by_run = ${run!.id}, consumed_at = now(),
       payload = payload || jsonb_build_object('answeredBy', ${sentOut!.id}::text)
       where id = ${itemId}`;
@@ -3866,22 +3876,29 @@ dbDescribe('worker robustness (db)', () => {
     await sql`update agent_inbox set consumed_by_run = ${run!.id}, consumed_at = now(),
       payload = payload || jsonb_build_object('answeredBy', ${failedOut!.id}::text)
       where id = ${retryId}`;
+    await sql`update agent_inbox set consumed_by_run = ${run!.id}, consumed_at = now(),
+      payload = payload || jsonb_build_object('answeredBy', ${attemptedOut!.id}::text)
+      where id = ${attemptedId}`;
     await drain(sql, 0);
     const rows = await sql<
       { id: string; consumed_at: string | null; consumed_by_run: string | null }[]
     >`
       select id, consumed_at, consumed_by_run from agent_inbox
-      where id in (${itemId}, ${nudgeId}, ${retryId})
+      where id in (${itemId}, ${nudgeId}, ${retryId}, ${attemptedId})
     `;
     const answered = rows.find((r) => r.id === itemId)!;
     const nudge = rows.find((r) => r.id === nudgeId)!;
     const retry = rows.find((r) => r.id === retryId)!;
+    const attempted = rows.find((r) => r.id === attemptedId)!;
     // The dead run's reconcile releases what it can still serve — the
     // answered inbound stays consumed history (a re-serve re-sends under
-    // a fresh run id), the nudge and the failed-answer item return to
-    // pending for the sweep.
+    // a fresh run id), the attempted-answer item stays consumed too (the
+    // reply may already be on the wire), the nudge and the
+    // failed-before-attempt item return to pending for the sweep.
     expect(answered.consumed_at).not.toBeNull();
     expect(answered.consumed_by_run).toBe(run!.id);
+    expect(attempted.consumed_at).not.toBeNull();
+    expect(attempted.consumed_by_run).toBe(run!.id);
     expect(nudge.consumed_at).toBeNull();
     expect(retry.consumed_at).toBeNull();
     await sql`delete from agent_runs where status = 'queued'`;

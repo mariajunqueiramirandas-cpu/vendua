@@ -677,16 +677,21 @@ export async function releaseInboxTx(tx: Sql, runId: string, event?: boolean): P
             end
     where i.consumed_by_run = ${runId}
       and (${event === true} or coalesce((i.payload->>'deliveries')::int, 0) < 2)
-      -- an inbound whose stamped answer is live or landed is never
-      -- outstanding work: send_message writes answeredBy at compose-
-      -- commit, and run-scoped dedup can't see that send under a
-      -- respawned run's id — releasing it re-sends. A 'failed' or
-      -- 'draft' answer never left, so it doesn't count; a 'queued'
-      -- answer is still in flight and must suppress the release.
+      -- an inbound whose stamped answer is live, landed, or merely
+      -- ATTEMPTED is never outstanding work: send_message writes
+      -- answeredBy at compose-commit, and run-scoped dedup can't see
+      -- that send under a respawned run's id — releasing it re-sends.
+      -- 'failed' with dispatch_attempted_at went to the wire (timeout
+      -- after accept, worker death mid-call): at-most-once says don't
+      -- re-serve on an uncertain outcome. 'failed'/'draft' with no
+      -- attempt provably never left, so that mail re-serves.
       and not exists (
         select 1 from lead_messages m
         where m.id::text = i.payload->>'answeredBy'
-          and m.status in ('queued', 'sending', 'sent', 'delivered')
+          and (
+            m.status in ('queued', 'sending', 'sent', 'delivered')
+            or m.dispatch_attempted_at is not null
+          )
       )
   `;
 }
@@ -2740,16 +2745,23 @@ export async function drain(sql: Sql, limit = 20): Promise<number> {
   // once, when the run's answering send may still have been in flight —
   // a suppressed answeredBy marker that later flips 'failed' never gets
   // another pass and strands the item forever. Re-running the same
-  // release on dead owners picks up exactly those flips; a live-status
-  // marker still suppresses, so a landed answer keeps its mail consumed.
+  // release on dead owners picks up exactly those flips; live/attempted
+  // markers still suppress, so a landed (or on-the-wire) answer keeps
+  // its mail consumed. Canceled owners release unbounded like the cancel
+  // endpoint — a cancel carries no failure signal, so the poison-mail
+  // deliveries bound doesn't apply. The 2h bound keeps the scan
+  // proportional to recent deaths: every post-death flip (queued→failed,
+  // stale sending→failed) resolves within the message lease horizon, so
+  // older dead runs are settled history.
   await controlTx(sql, async (tx) => {
-    const deadOwners = await tx<{ id: string }[]>`
-      select distinct i.consumed_by_run as id
+    const deadOwners = await tx<{ id: string; status: string }[]>`
+      select distinct i.consumed_by_run as id, r.status
       from agent_inbox i
       join agent_runs r on r.id = i.consumed_by_run
       where i.consumed_at is not null and r.status in ('canceled', 'failed')
+        and coalesce(r.finished_at, r.alive_at, r.created_at) > now() - interval '2 hours'
     `;
-    for (const r of deadOwners) await releaseInboxTx(tx, r.id);
+    for (const r of deadOwners) await releaseInboxTx(tx, r.id, r.status === 'canceled');
   });
   const stranded = await controlTx(
     sql,

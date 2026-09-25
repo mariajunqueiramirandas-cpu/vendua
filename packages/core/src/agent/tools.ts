@@ -1444,20 +1444,24 @@ export async function executeTool(
         });
         if (!verdict.forceDraft && !ctx.draftOnly) {
           // A dispatch committed to the wire answers the inbound batches
-          // this run holds on the destination thread — record which
-          // message answered them NOW, inside the claim tx (RLS-safe —
-          // agent_inbox needs vendua.control): writing it post-dispatch
-          // would run outside controlTx AND race a cancel that releases
-          // the mail before the provider call resolves. The marker lands
-          // before the send can land, so a released item can never hide
-          // an in-flight answer. Unconsumed mail on other threads isn't
-          // discharged by this thread's reply — scope to the sent thread
-          // plus unpinned items.
+          // this run still holds — record which message answered them NOW,
+          // inside the claim tx (RLS-safe — agent_inbox needs
+          // vendua.control): writing it post-dispatch would run outside
+          // controlTx AND race a cancel that releases the mail before the
+          // provider call resolves. The marker lands before the send can
+          // land, so a released item can never hide an in-flight answer.
+          // Scope: every still-unanswered inbound the run holds — the model
+          // saw them all when composing; a fallback or deliberate
+          // cross-channel reply answers mail received on another thread,
+          // so thread scoping would re-serve exactly those sends. `not
+          // answeredBy` keeps the FIRST answer: a later send claims only
+          // what no send answered yet — a failed second send can't erase
+          // the record of a landed one.
           await tx`
             update agent_inbox
             set payload = payload || jsonb_build_object('answeredBy', ${composed.body.message.id}::text)
             where consumed_by_run = ${ctx.runId} and kind = 'inbound'
-              and (payload->>'threadId' is null or payload->>'threadId' = ${composed.body.thread.id})
+              and not (payload ? 'answeredBy')
           `;
         }
         return {
