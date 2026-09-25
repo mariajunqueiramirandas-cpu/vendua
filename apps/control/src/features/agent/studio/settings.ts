@@ -46,7 +46,7 @@ export function useSaveSetting() {
         };
       });
       toast.success(`${key} salvo`);
-      for (const queryKey of [qk.settings(), qk.autonomy(), qk.playbooks(), qk.memory()])
+      for (const queryKey of [qk.settings(), qk.agentConfig(), qk.memory()])
         void qc.invalidateQueries({ queryKey });
     },
     onError: (e, { key }) => {

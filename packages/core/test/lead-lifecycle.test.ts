@@ -149,13 +149,11 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('lead lifecycle (db)', () => {
 
     test('default — one outreach run, draft-only approval path', async () => {
       await setup();
-      // pin supervised so an ambient agent_autonomy can't flip the verdict
+      // pin supervised so an ambient agent preset can't flip the verdict
       const prior = (
-        await sql<
-          { value: unknown }[]
-        >`select value from control_settings where key = 'agent_autonomy'`
+        await sql<{ value: unknown }[]>`select value from control_settings where key = 'agent'`
       )[0];
-      await sql`insert into control_settings (key, value) values ('agent_autonomy', ${sql.json({ level: 'supervised' } as never)})
+      await sql`insert into control_settings (key, value) values ('agent', ${sql.json({ level: 'supervised' } as never)})
         on conflict (key) do update set value = excluded.value`;
       try {
         const res = await postLead(
@@ -177,9 +175,9 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('lead lifecycle (db)', () => {
         expect(runs[0]!.params.auto).toBe('first-contact');
       } finally {
         if (prior) {
-          await sql`update control_settings set value = ${sql.json(prior.value as never)} where key = 'agent_autonomy'`;
+          await sql`update control_settings set value = ${sql.json(prior.value as never)} where key = 'agent'`;
         } else {
-          await sql`delete from control_settings where key = 'agent_autonomy'`;
+          await sql`delete from control_settings where key = 'agent'`;
         }
       }
     });

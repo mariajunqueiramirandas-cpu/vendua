@@ -6,30 +6,34 @@ import { Page } from '@/components/Page.tsx';
 import { tabTriggerClass } from '@/components/ui/controls.tsx';
 import { AGENT_TABS } from '../tabs.ts';
 import { AgendaArea } from './AgendaArea.tsx';
-import { AutonomyArea, useAutonomy } from './AutonomyArea.tsx';
+import { AgentArea, useAgentConfig } from './AgentArea.tsx';
 import { EndpointState, TzList } from './bits.tsx';
+import { LimitsArea } from './LimitsArea.tsx';
 import { MemoryArea } from './MemoryArea.tsx';
-import { PlaybooksArea } from './PlaybooksArea.tsx';
-import { RulesArea } from './RulesArea.tsx';
 import { obj, str, useSaveSetting, useSettingsMap } from './settings.ts';
-import { VoiceArea } from './VoiceArea.tsx';
 
 const SECTIONS = [
-  { key: 'autonomia', label: 'autonomia', sub: 'o que ele decide' },
-  { key: 'voz', label: 'voz', sub: 'o pitch' },
-  { key: 'playbooks', label: 'playbooks', sub: 'modos de trabalho' },
+  { key: 'agente', label: 'agente', sub: 'autonomia, voz e instruções' },
+  { key: 'limites', label: 'limites', sub: 'o que o código impõe' },
   { key: 'memoria', label: 'memória', sub: 'o que ele lembra' },
   { key: 'agenda', label: 'agenda', sub: 'retornos marcados' },
-  { key: 'regras', label: 'regras', sub: 'limites' },
 ] as const;
 type SectionKey = (typeof SECTIONS)[number]['key'];
+// pre-ADR-0015 links (?s=autonomia|voz|playbooks|regras) land on their new home
+const LEGACY: Record<string, SectionKey> = {
+  autonomia: 'agente',
+  voz: 'agente',
+  playbooks: 'agente',
+  regras: 'limites',
+};
 
 export default function StudioPage() {
   const [sp, setSp] = useSearchParams();
-  const section: SectionKey = SECTIONS.find((s) => s.key === sp.get('s'))?.key ?? 'autonomia';
+  const raw = sp.get('s') ?? '';
+  const section: SectionKey = SECTIONS.find((s) => s.key === raw)?.key ?? LEGACY[raw] ?? 'agente';
   const go = (s: SectionKey) => {
     const next = new URLSearchParams(sp);
-    if (s === 'autonomia') next.delete('s');
+    if (s === 'agente') next.delete('s');
     else next.set('s', s);
     setSp(next);
   };
@@ -40,13 +44,13 @@ export default function StudioPage() {
 
   const settings = useSettingsMap();
   const { save, pending } = useSaveSetting();
-  const autonomyLevel = useAutonomy().data?.level;
+  const autonomyLevel = useAgentConfig().data?.level;
   const map = settings.data;
 
   const marks: Partial<Record<SectionKey, 'off' | 'warn'>> = {};
-  if (autonomyLevel === 'off') marks.autonomia = 'off';
-  if (autonomyLevel === 'autopilot') marks.autonomia = 'warn';
-  if (map && !str(obj(map.pitch).product, '')) marks.voz = 'warn';
+  if (autonomyLevel === 'off') marks.agente = 'off';
+  if (autonomyLevel === 'autopilot' || (map && !str(obj(map.pitch).product, '')))
+    marks.agente = 'warn';
 
   // PUT sends the whole setting — forms render only once the map is live, or a save erases stored data
   const gated = (title: string, body: (m: NonNullable<typeof map>) => ReactNode) =>
@@ -62,13 +66,8 @@ export default function StudioPage() {
     );
 
   const areas: Record<SectionKey, () => ReactNode> = {
-    autonomia: () =>
-      gated('autonomia', (m) => <AutonomyArea map={m} save={save} pending={pending} />),
-    voz: () => gated('voz', (m) => <VoiceArea map={m} save={save} pending={pending} />),
-    playbooks: () =>
-      gated('playbooks', (m) => (
-        <PlaybooksArea map={m} save={save} active={section === 'playbooks'} />
-      )),
+    agente: () => gated('agente', (m) => <AgentArea map={m} save={save} pending={pending} />),
+    limites: () => gated('limites', (m) => <LimitsArea map={m} save={save} pending={pending} />),
     memoria: () => (
       <MemoryArea
         map={map}
@@ -78,7 +77,6 @@ export default function StudioPage() {
       />
     ),
     agenda: () => <AgendaArea active={section === 'agenda'} />,
-    regras: () => gated('guardrails', (m) => <RulesArea map={m} save={save} pending={pending} />),
   };
 
   return (
@@ -124,7 +122,7 @@ export default function StudioPage() {
             </section>
           ),
       )}
-      {/* the timezone picker in "regras" reads this datalist */}
+      {/* the timezone picker in "limites" reads this datalist */}
       <TzList />
     </Page>
   );

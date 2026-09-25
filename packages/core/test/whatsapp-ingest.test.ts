@@ -1058,7 +1058,7 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('whatsapp history + ignore list 
   test('autonomy-off stalls only the model’s own sweep — promised work still materializes', async () => {
     await migrate(sql, MIGRATIONS);
     await sql`
-      insert into control_settings (key, value) values ('agent_autonomy', ${sql.json({ level: 'off' } as never)})
+      insert into control_settings (key, value) values ('agent', ${sql.json({ level: 'off' } as never)})
       on conflict (key) do update set value = excluded.value
     `;
     try {
@@ -1134,7 +1134,7 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('whatsapp history + ignore list 
       `;
       expect(skipped).toHaveLength(0);
     } finally {
-      await sql`delete from control_settings where key = 'agent_autonomy'`;
+      await sql`delete from control_settings where key = 'agent'`;
     }
   });
 

@@ -32,13 +32,13 @@ import {
   type ToolCall,
 } from './llm.ts';
 import { buildSystemPrompt } from './prompts.ts';
-import { loadPlaybookTx, mergePlaybook, PLAYBOOKS, type EffectivePlaybook } from './playbooks.ts';
+import { JOBS, type JobDef } from './jobs.ts';
 import {
+  agentSettingTx,
   automationAllowedTx,
-  autonomyTx,
-  claimPolicyTx,
   discoveryBudgetTx,
-  playbookEnabledTx,
+  parked,
+  parkPolicyTx,
 } from './policy.ts';
 import { pendingWakeupsTx, sweepWakeups } from './wakeups.ts';
 import { enqueueInboxTx, renderInboxItems, sweepOrphanInbox, type InboxItem } from './inbox.ts';
@@ -48,9 +48,9 @@ import {
   ACTION_TOOLS,
   MUTABLE_READS,
   NON_IDEMPOTENT,
-  PLAYBOOK_KINDS,
+  JOB_KINDS,
   READ_TOOLS,
-  type PlaybookKind,
+  type JobKind,
 } from './tool-meta.ts';
 import { pageKey } from './channels/discovery.ts';
 import { dispatchMessage } from './send.ts';
@@ -156,11 +156,8 @@ export async function insertRun(
     run_at: Date | null;
   }): Promise<string | null> => {
     if (a.status !== 'queued') return a.id;
-    const { disabledKinds, autoOff } = await claimPolicyTx(tx);
     const p = a.params ?? {};
-    const parkedByPolicy =
-      disabledKinds.includes(a.kind as PlaybookKind) ||
-      (autoOff && ('auto' in p || p['origin'] === 'inbound'));
+    const parkedByPolicy = parked(await parkPolicyTx(tx), a.kind, p);
     const scheduled = a.run_at !== null && a.run_at.getTime() > callerAt.getTime();
     if (parkedByPolicy || scheduled) {
       // Status-conditional: a claim in flight owns arriving mail just the same.
@@ -194,7 +191,7 @@ export async function insertRun(
       if (!covered) {
         await enqueueInboxTx(tx, input.leadId!, 'event', {
           text: `uma '${a.kind}' estava marcada${typeof p['focus'] === 'string' ? ` — ${p['focus']}` : ''}`,
-          requestedKind: a.kind as PlaybookKind,
+          requestedKind: a.kind as JobKind,
           threadId: a.thread_id,
           params: p,
           ...(scheduled ? { notBefore: a.run_at!.toISOString() } : {}),
@@ -348,8 +345,9 @@ export async function claimRun(sql: Sql): Promise<RunRow | null> {
     const ignoredDigits = ignoredPhones.map(phoneDigits).filter((d) => d.length >= 6);
     // Over-cap leads excluded in the scan itself so parked capped runs can't starve the 8-attempt loop.
     const capCents = capCentsOf(g);
-    // Autonomy 'off' parks only automation-queued rows (auto marker / inbound origin); staff runs stay eligible.
-    const { disabledKinds, autoOff } = await claimPolicyTx(tx);
+    // Preset 'off' / a job switched off parks only automation-queued rows (auto marker / inbound origin);
+    // staff runs and promises stay eligible.
+    const { offJobs, autoOff } = await parkPolicyTx(tx);
     const rejected: string[] = [];
     for (let attempt = 0; attempt < 8; attempt++) {
       const cand = await tx<RunRow[]>`
@@ -386,8 +384,8 @@ export async function claimRun(sql: Sql): Promise<RunRow | null> {
             where x.lead_id = r.lead_id and x.kind = 'outreach'
               and x.status = 'running'
           ))
-          and not (r.kind = any(${disabledKinds}::text[]))
-          and not (${autoOff} and (r.params ? 'auto' or r.params->>'origin' = 'inbound'))
+          and not ((${autoOff} or r.kind = any(${offJobs}::text[]))
+                   and (r.params ? 'auto' or r.params->>'origin' = 'inbound'))
           and not (r.id = any(${rejected}::uuid[]))
         order by r.created_at
         limit 1
@@ -1285,7 +1283,7 @@ interface Attempt {
   tokensOut: number;
   costUsd: number;
   monidBudget: MonidBudget;
-  playbook: EffectivePlaybook;
+  job: JobDef;
   heartbeat: ReturnType<typeof setInterval>;
   /** context build — provider/prompt plus the journal-replayed harness */
   replay: JournalReplay;
@@ -1293,7 +1291,7 @@ interface Attempt {
   provider: LlmProvider;
   system: string;
   tools: AgentTool[];
-  /** Playbook kinds this attempt may serve — drainInbox adds a drained item's requestedKind. */
+  /** Job kinds this attempt may serve — drainInbox adds a drained item's requestedKind. */
   toolKinds: Set<string>;
   /** kernel-loop state — res is the current chat() result */
   i: number;
@@ -1475,19 +1473,6 @@ async function drainInbox(att: Attempt): Promise<number> {
         and (${runThread} = '' or coalesce(payload->>'threadId', ${runThread}) = ${runThread})
         and (payload->>'notBefore' is null or (payload->>'notBefore')::timestamptz <= now())
     `;
-    // A disabled playbook's mail parks — draining it would hand this run its toolset anyway.
-    const kinds = await tx<{ k: string }[]>`
-      select distinct payload->>'requestedKind' as k from agent_inbox
-      where ${scope} and payload->>'requestedKind' is not null
-    `;
-    const off: string[] = [];
-    for (const { k } of kinds) {
-      if (
-        (PLAYBOOK_KINDS as readonly string[]).includes(k) &&
-        !(await playbookEnabledTx(tx, k as PlaybookKind)).ok
-      )
-        off.push(k);
-    }
     // Same recheck for threads staff paused after the item enqueued.
     const dead = (
       await tx<{ t: string }[]>`
@@ -1498,16 +1483,15 @@ async function drainInbox(att: Attempt): Promise<number> {
           )
       `
     ).map((d) => d.t);
-    // Autonomy gates items like the spawn gate: automation-marked mail parks under workspace 'off'.
-    const autoOff = (await autonomyTx(tx)).level === 'off';
+    // Same gate as the spawn: automation-marked mail parks under preset 'off' or its job off.
+    const { autoOff, offJobs } = await parkPolicyTx(tx);
     return tx<InboxItem[]>`
       select id, kind, payload, created_at from agent_inbox
       where ${scope}
-        and (payload->>'requestedKind' is null or not (payload->>'requestedKind' = any(${off})))
         and (payload->>'threadId' is null or not (payload->>'threadId' = any(${dead})))
-        and (not ${autoOff}
-             or not (coalesce(payload->'params', '{}'::jsonb) ? 'auto'
-                     or coalesce(payload->'params'->>'origin', '') = 'inbound'))
+        and not ((${autoOff} or coalesce(payload->>'requestedKind', '') = any(${offJobs}::text[]))
+                 and (coalesce(payload->'params', '{}'::jsonb) ? 'auto'
+                      or coalesce(payload->'params'->>'origin', '') = 'inbound'))
       order by created_at limit 10
     `;
   });
@@ -1533,7 +1517,7 @@ async function drainInbox(att: Attempt): Promise<number> {
     const k = i.payload?.requestedKind;
     return (
       typeof k === 'string' &&
-      (PLAYBOOKS as Record<string, { requiresAction?: boolean }>)[k]?.requiresAction === true
+      (JOBS as Record<string, { requiresAction?: boolean }>)[k]?.requiresAction === true
     );
   });
   att.steps.push({
@@ -1601,14 +1585,11 @@ async function openAttempt(sql: Sql, run: RunRow): Promise<Attempt> {
     return e?.type === 'monid_spend' && typeof e.spentUsd === 'number' ? e.spentUsd : acc;
   }, 0);
   // Every kind gets a cap — a null budget would silently mean uncapped monid calls.
-  // A failed settings read falls back to code defaults — never an uncapped run.
-  const playbook = await controlTx(sql, (tx) => loadPlaybookTx(tx, run.kind)).catch(() =>
-    mergePlaybook(run.kind),
-  );
+  const job = JOBS[run.kind];
   const monidBudget = new MonidBudget(
-    // 0 is a real cap — only an absent/non-numeric param gets the playbook default
+    // 0 is a real cap — only an absent/non-numeric param gets the job default
     run.params.monidCapUsd == null || !Number.isFinite(Number(run.params.monidCapUsd))
-      ? playbook.monidCapUsd
+      ? job.monidCapUsd
       : Math.min(5, Math.max(0, Number(run.params.monidCapUsd))),
     priorSpend,
   );
@@ -1630,7 +1611,7 @@ async function openAttempt(sql: Sql, run: RunRow): Promise<Attempt> {
     tokensOut,
     costUsd,
     monidBudget,
-    playbook,
+    job,
     heartbeat: undefined as never,
     replay: undefined as never,
     ctx: undefined as never,
@@ -1653,7 +1634,7 @@ async function openAttempt(sql: Sql, run: RunRow): Promise<Attempt> {
           : acc,
       -1,
     ),
-    limit: playbook.stepBudget,
+    limit: job.stepBudget,
     // starts at -1 so the first tick fires after 3 truly idle steps
     lastProgress: -1,
     loopNudged: false,
@@ -1684,7 +1665,7 @@ async function openAttempt(sql: Sql, run: RunRow): Promise<Attempt> {
 async function buildAttemptContext(att: Attempt): Promise<void> {
   const { sql, run, steps, messages } = att;
   // Re-seed toolKinds from items stamped to this run — mail a dead attempt consumed can't
-  // re-drain; a playbook switched off between attempts gets no tools back.
+  // re-drain.
   const drainedKinds = await controlTx(sql, async (tx) => {
     const rows = await tx<{ k: string }[]>`
       select distinct payload->>'requestedKind' as k from agent_inbox
@@ -1692,11 +1673,7 @@ async function buildAttemptContext(att: Attempt): Promise<void> {
     `;
     const out: string[] = [];
     for (const { k } of rows) {
-      if (
-        (PLAYBOOK_KINDS as readonly string[]).includes(k) &&
-        (await playbookEnabledTx(tx, k as PlaybookKind)).ok
-      )
-        out.push(k);
+      if ((JOB_KINDS as readonly string[]).includes(k)) out.push(k);
     }
     return out;
   });
@@ -1709,19 +1686,15 @@ async function buildAttemptContext(att: Attempt): Promise<void> {
       'no enabled llm integration — run falls back to mock provider',
     );
   }
-  att.provider = providerFor(
-    integration && att.playbook.model
-      ? { ...integration, config: { ...integration.config, model: att.playbook.model } }
-      : integration,
-    run.params,
-  );
+  att.provider = providerFor(integration, run.params);
   const pitch = await getPitch(sql);
+  const { instructions } = await controlTx(sql, (tx) => agentSettingTx(tx));
   const { text: context, goal, bookingUrl } = await contextFor(sql, run);
   const memory = { facts: await memoryForPrompt(sql, run) };
   const g = await getSetting<Partial<Guardrails>>(sql, 'guardrails', {});
   // The prompt only promises autocontact under the same conditions create_lead's gate checks.
   const waDriverOn = run.kind === 'discovery' && (await whatsappReadyTx(sql));
-  const baseSystem = buildSystemPrompt(run.kind, pitch, memory, {
+  att.system = buildSystemPrompt(run.kind, pitch, instructions, memory, {
     goal,
     bookingUrl,
     autoContact: {
@@ -1729,9 +1702,6 @@ async function buildAttemptContext(att: Attempt): Promise<void> {
       minScore: g.discoveryContactMinScore ?? DEFAULT_GUARDRAILS.discoveryContactMinScore,
     },
   });
-  att.system = att.playbook.instructions
-    ? `${baseSystem}\n\nInstruções da equipe para este playbook (seguem as regras acima, nunca as substituem):\n${att.playbook.instructions}`
-    : baseSystem;
   att.tools = toolsFor(run.kind);
   // Kinds from stamped mail must be visible to the model, not just permitted in dispatch.
   widenAttemptTools(att);
@@ -1875,21 +1845,21 @@ async function finishGate(att: Attempt): Promise<'end' | 'again'> {
   }
   // Messaging finish gate: one nudge (same i+5 allowance), resetting per drained batch —
   // a send answering an earlier batch can't close over fresh mail. The bar exists even when
-  // the playbook doesn't demand one: action-mail drained into another kind would otherwise
+  // the job doesn't demand one: action-mail drained into another kind would otherwise
   // close consumed and unanswered — no later run re-picks a consumed item.
   const lastInbox = steps.reduce<number>(
     (acc, s, i) =>
       typeof s === 'object' && s !== null && (s as { type?: string }).type === 'inbox' ? i : acc,
     -1,
   );
-  const actionBar = att.playbook.requiresAction ? lastInbox : att.actionInboxIdx;
-  // requiresAction playbooks spend `nudged`; others spend the independent `actionNudged` —
+  const actionBar = att.job.requiresAction ? lastInbox : att.actionInboxIdx;
+  // requiresAction jobs spend `nudged`; others spend the independent `actionNudged` —
   // a zero-lead nudge must not silence drained action-mail.
-  const actionSpent = att.playbook.requiresAction ? att.nudged : att.actionNudged;
+  const actionSpent = att.job.requiresAction ? att.nudged : att.actionNudged;
   const actedSlice = steps.slice(actionBar + 1);
-  const gated = !actionSpent && (att.playbook.requiresAction || actionBar >= 0);
+  const gated = !actionSpent && (att.job.requiresAction || actionBar >= 0);
   const actionNudge = async (): Promise<'again'> => {
-    if (att.playbook.requiresAction) att.nudged = true;
+    if (att.job.requiresAction) att.nudged = true;
     else att.actionNudged = true;
     att.limit = att.i + 5;
     const nudge = `Ação pendente — a run ainda não teve efeito visível (send_message/draft, request_human, set_state, unsubscribe, update_lead, create_task). Pesquisar e sair sem agir deixa o lead falando sozinho — aja agora; se um guardrail ou canal morto trava a ação, request_human é a saída.`;
@@ -1907,8 +1877,7 @@ async function finishGate(att: Attempt): Promise<'end' | 'again'> {
   // nothing; persistAborted still stores the usage. Message ids ride into finishRun's tx so
   // an artifact rejected under capfin before commit makes the run nudge/fail instead of
   // closing 'done' on nothing approvable.
-  const actedIds =
-    att.playbook.requiresAction || actionBar >= 0 ? actedMessageIds(actedSlice) : null;
+  const actedIds = att.job.requiresAction || actionBar >= 0 ? actedMessageIds(actedSlice) : null;
   const liveMessageIds =
     actedIds && actedIds.onlyMessages && actedIds.ids.length ? actedIds.ids : undefined;
   const fin = await finishRun(sql, att.claim, {
@@ -1935,7 +1904,7 @@ async function finishGate(att: Attempt): Promise<'end' | 'again'> {
     return 'end';
   }
   if (fin.matched) {
-    if (att.playbook.debrief) {
+    if (att.job.debrief) {
       // debrief → agent_memory_items; best-effort — never fail a finished run on it.
       await writeDebrief(sql, run, att.ctx, steps).catch(() => undefined);
     }
@@ -1945,10 +1914,10 @@ async function finishGate(att: Attempt): Promise<'end' | 'again'> {
   return 'end';
 }
 
-// Parallel for discovery-style playbooks, sequential for messaging kinds (calls may
+// Parallel for discovery-style jobs, sequential for messaging kinds (calls may
 // depend on each other's ordering — draft before send).
 async function dispatchStep(att: Attempt): Promise<void> {
-  if (att.playbook.parallelTools) await dispatchParallel(att);
+  if (att.job.parallelTools) await dispatchParallel(att);
   else await dispatchSequential(att);
 }
 
@@ -2158,7 +2127,7 @@ async function endAttempt(att: Attempt): Promise<void> {
       })
     ).matched
   ) {
-    if (att.playbook.debrief)
+    if (att.job.debrief)
       await writeDebrief(att.sql, att.run, att.ctx, att.steps).catch(() => undefined);
   } else {
     await persistAborted(att);
@@ -2557,6 +2526,8 @@ export async function sweepBriefs(sql: Sql): Promise<number> {
       const runId = await insertRun(tx, {
         kind: 'discovery',
         params: {
+          // automation marker — a queued brief run parks when discovery is switched off
+          auto: 'brief',
           query: b.query,
           ...(b.segment ? { segment: b.segment } : {}),
           ...(b.city ? { city: b.city } : {}),
@@ -2607,9 +2578,9 @@ export async function sweepOutreach(sql: Sql): Promise<number> {
   const queuedIds: string[] = [];
   const capFlagged: string[] = [];
   const fired = await controlTx(sql, async (tx) => {
-    // Autonomy 'off' parks only the automation's own nudges — promised work still fires.
-    const level = (await autonomyTx(tx)).level;
-    if (!(await playbookEnabledTx(tx, 'outreach')).ok) return 0;
+    // Preset 'off' / outreach job off parks only the automation's own nudges — promised work still fires.
+    const pp = await parkPolicyTx(tx);
+    const autoOff = pp.autoOff || pp.offJobs.includes('outreach');
     const g = await getSettingTx<Partial<Guardrails>>(tx, 'guardrails', {});
     const capCents = capCentsOf(g);
     // skip locked: concurrent sweeps take disjoint lead sets; the cap predicate keeps
@@ -2619,7 +2590,7 @@ export async function sweepOutreach(sql: Sql): Promise<number> {
       where l.next_action_at is not null and l.next_action_at <= now()
         and l.archived_at is null and l.unsubscribed_at is null
         and l.agent_mode != 'off'
-        and (l.next_action_source in ('staff', 'requested', 'agent') or ${level !== 'off'})
+        and (l.next_action_source in ('staff', 'requested', 'agent') or ${!autoOff})
         and (${capCents} <= 0 or
           coalesce((select sum(x.cost_cents) from agent_runs x
                     where x.lead_id = l.id), 0) < ${capCents})
@@ -2638,25 +2609,24 @@ export async function sweepOutreach(sql: Sql): Promise<number> {
       // materialize UNMARKED — promises a reply can't cancel. insertRun applies the cost
       // cap; a capped lead keeps its due action.
       // The agent's own due wakeup folds into this run (read BEFORE insertRun); under
-      // autonomy 'off' it stays pending for sweepWakeups' own gate.
-      const fold =
-        level === 'off'
-          ? undefined
-          : (
-              await tx<{ id: string; focus: string }[]>`
+      // preset 'off' / outreach off it stays pending for sweepWakeups' own gate.
+      const fold = autoOff
+        ? undefined
+        : (
+            await tx<{ id: string; focus: string }[]>`
                 select id, focus from agent_wakeups
                 where lead_id = ${id} and status = 'pending' and at <= now()
                   and created_by = 'agent' and not requested
                 for update skip locked
               `
-            )[0];
+          )[0];
       const promised =
         next_action_source === 'staff' ||
         next_action_source === 'requested' ||
         next_action_source === 'agent';
-      // Under 'off' a queued auto outreach can never claim — retire it so the promise
+      // Parked (preset 'off' / outreach off), a queued auto outreach can never claim — retire it so the promise
       // mints an unmarked row; dead-attempt mail releases too.
-      if (promised && level === 'off') {
+      if (promised && autoOff) {
         const retired = await tx<{ id: string }[]>`
           update agent_runs
           set status = 'canceled', error = 'promised work takes over', finished_at = now()

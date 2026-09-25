@@ -2,8 +2,8 @@ import type { Sql } from '../platform/db.ts';
 import { controlTx } from '../modules/control.ts';
 import { emitControlEvent } from '../modules/control-events.ts';
 import { log } from '../platform/log.ts';
-import { automationAllowedTx, autonomyTx, playbookEnabledTx } from './policy.ts';
-import { PLAYBOOK_KINDS, type PlaybookKind } from './tool-meta.ts';
+import { automationAllowedTx, isAutomation, parked, parkPolicyTx } from './policy.ts';
+import type { JobKind } from './tool-meta.ts';
 import { capLockTx, insertRun } from './runner.ts';
 
 const agentLog = log.child({ mod: 'agent' });
@@ -26,7 +26,7 @@ export type InboxKind = 'inbound' | 'wakeup' | 'staff' | 'event';
 // params must carry the auto/origin markers claimRun gates on.
 export interface InboxPayload {
   text?: string;
-  requestedKind?: PlaybookKind;
+  requestedKind?: JobKind;
   threadId?: string | null;
   params?: Record<string, unknown>;
   /** ISO instant before which a spawned run must not claim — sweep carries it into run_at */
@@ -79,7 +79,7 @@ export function renderInboxItems(items: InboxItem[]): string {
 }
 
 // Spawns bounded fallback runs for items whose lead has no active run;
-// automation kinds gate on autonomy, staff items on the playbook switch.
+// automation items gate on the preset + jobs; staff items always run.
 // Terminal suppressions drop the mail; pauses/mode 'off' park it.
 export async function sweepOrphanInbox(
   sql: Sql,
@@ -168,7 +168,7 @@ export async function sweepOrphanInbox(
         if (lead.agent_paused_at || lead.agent_mode === 'off') return null;
         // First eligible item drives the spawn — a blocked oldest item must not starve younger mail.
         let spawn: {
-          kind: PlaybookKind;
+          kind: JobKind;
           threadId: string | null;
           params: Record<string, unknown>;
         } | null = null;
@@ -177,12 +177,12 @@ export async function sweepOrphanInbox(
           const requestedKind = p?.requestedKind;
           if (!requestedKind) continue;
           // Same markers claimRun reads: 'auto' key or origin='inbound' = automation; unmarked = staff.
-          const marked = p?.params != null && ('auto' in p.params || p.params.origin === 'inbound');
-          const gate =
-            item.kind === 'staff' || !marked
-              ? await playbookEnabledTx(tx, requestedKind)
-              : await automationAllowedTx(tx, requestedKind);
-          if (!gate.ok) continue;
+          if (
+            item.kind !== 'staff' &&
+            isAutomation(p?.params) &&
+            !(await automationAllowedTx(tx, requestedKind)).ok
+          )
+            continue;
           if (p?.threadId) {
             const th = await tx<{ agent_enabled: boolean }[]>`
             select agent_enabled from lead_threads where id = ${p.threadId}
@@ -199,10 +199,9 @@ export async function sweepOrphanInbox(
             ? (spawn.params.channel as string)
             : '';
         const runDraftOnly = spawn.params.draftOnly === true;
-        const autoOff = (await autonomyTx(tx)).level === 'off';
+        const pp = await parkPolicyTx(tx);
         let notBefore = 0;
         // A gated item stays pending when the run starts — its deadline can't stall servable work.
-        const enabled = new Map<string, boolean>();
         for (const i of items) {
           const ip = i.payload;
           const chan =
@@ -213,22 +212,8 @@ export async function sweepOrphanInbox(
             (chan || runChannel) === runChannel &&
             (ip?.params?.draftOnly === true) === runDraftOnly;
           if (!wouldDrain) continue;
-          // Same gate drainInbox applies: under autonomy 'off' an auto item stays pending.
-          if (
-            autoOff &&
-            ip?.params != null &&
-            ('auto' in ip.params || ip.params.origin === 'inbound')
-          )
-            continue;
-          const k = ip?.requestedKind;
-          if (k != null && (PLAYBOOK_KINDS as readonly string[]).includes(k)) {
-            let ok = enabled.get(k);
-            if (ok == null) {
-              ok = (await playbookEnabledTx(tx, k as PlaybookKind)).ok;
-              enabled.set(k, ok);
-            }
-            if (!ok) continue;
-          }
+          // Same gate drainInbox applies: parked automation stays pending.
+          if (parked(pp, ip?.requestedKind ?? '', ip?.params)) continue;
           const t = typeof ip?.notBefore === 'string' ? Date.parse(ip.notBefore) : NaN;
           if (Number.isFinite(t) && t > notBefore) notBefore = t;
         }

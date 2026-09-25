@@ -1,6 +1,6 @@
 # ADR 0014 — CRM agent v2 (playbooks, autonomy policy, wakeups, memory v2)
 
-Status: accepted (implementation in progress on `staging`)
+Status: accepted — playbook overrides and `agent_autonomy` superseded by ADR 0015
 
 ## Context
 

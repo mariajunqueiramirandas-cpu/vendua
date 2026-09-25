@@ -11,17 +11,20 @@ import {
 import {
   ACTION_TOOLS,
   NON_IDEMPOTENT,
-  PLAYBOOK_KINDS,
+  JOB_KINDS,
   READ_TOOLS,
   TOOL_META,
 } from '../src/agent/tool-meta.ts';
-import { PLAYBOOKS, mergePlaybook, playbookTools } from '../src/agent/playbooks.ts';
+import { JOBS, jobTools } from '../src/agent/jobs.ts';
 import {
   automationAllowedTx,
-  claimPolicyTx,
+  DEFAULT_INSTRUCTIONS,
   discoveryBudgetTx,
   draftDecision,
   explainAutonomyTx,
+  normalizeAgent,
+  parked,
+  parkPolicyTx,
 } from '../src/agent/policy.ts';
 import { validateSetting } from '../src/modules/integrations.ts';
 import {
@@ -61,8 +64,8 @@ describe('agent v2 — pure', () => {
         .map((t) => t.name)
         .sort(),
     ).toEqual(['propose_brief', 'remember']);
-    for (const k of PLAYBOOK_KINDS) {
-      expect(playbookTools(k).sort()).toEqual(
+    for (const k of JOB_KINDS) {
+      expect(jobTools(k).sort()).toEqual(
         toolsFor(k)
           .map((t) => t.name)
           .sort(),
@@ -70,31 +73,47 @@ describe('agent v2 — pure', () => {
     }
   });
 
-  test('playbook merge clamps overrides and keeps code defaults', () => {
-    expect(mergePlaybook('reply').stepBudget).toBe(14);
-    expect(mergePlaybook('discovery').monidCapUsd).toBe(0.25);
-    const pb = mergePlaybook('reply', {
-      stepBudget: 500,
-      monidCapUsd: -1,
-      model: '  ',
-      enabled: false,
+  test('the agent setting normalizes to safe defaults; job defs stay in code', () => {
+    const d = normalizeAgent(undefined);
+    expect(d).toEqual({
+      level: 'supervised',
+      jobs: { reply: true, outreach: true, discovery: true, strategist: true },
+      instructions: DEFAULT_INSTRUCTIONS,
+      weeklyDiscoveryUsd: 0,
     });
-    expect(pb.stepBudget).toBe(60);
-    expect(pb.monidCapUsd).toBe(0);
-    expect(pb.model).toBeNull();
-    expect(pb.enabled).toBe(false);
-    expect(mergePlaybook('outreach', { stepBudget: 2.5 }).stepBudget).toBe(
-      PLAYBOOKS.outreach.stepBudget,
-    );
-    // debrief is a playbook flag (ADR 0014) — only discovery writes doctrine
-    expect(PLAYBOOKS.discovery.debrief).toBe(true);
-    expect(
-      PLAYBOOK_KINDS.filter((k) => k !== 'discovery').every((k) => !PLAYBOOKS[k].debrief),
-    ).toBe(true);
+    const n = normalizeAgent({
+      level: 'yolo',
+      jobs: { discovery: false, reply: 'no' },
+      instructions: 'x'.repeat(9000),
+      weeklyDiscoveryUsd: 99,
+    });
+    expect(n.level).toBe('supervised');
+    // only an explicit false switches a job off
+    expect(n.jobs).toEqual({ reply: true, outreach: true, discovery: false, strategist: true });
+    expect(n.instructions).toHaveLength(8000);
+    expect(n.weeklyDiscoveryUsd).toBe(50);
+    // an explicitly emptied instructions box stays empty
+    expect(normalizeAgent({ level: 'off', instructions: '' }).instructions).toBe('');
+    expect(JOBS.reply.stepBudget).toBe(14);
+    expect(JOBS.discovery.monidCapUsd).toBe(0.25);
+    // debrief is a job flag — only discovery writes doctrine
+    expect(JOBS.discovery.debrief).toBe(true);
+    expect(JOB_KINDS.filter((k) => k !== 'discovery').every((k) => !JOBS[k].debrief)).toBe(true);
   });
 
-  test('draft decision: supervised keeps firstContactDraftOnly, autopilot lifts it, copilot drafts all', () => {
-    const base = { firstContact: true, firstContactDraftOnly: true, leadMode: 'auto' };
+  test('parking: only automation of a switched-off job (or preset off) parks', () => {
+    const jobOff = { autoOff: false, offJobs: ['discovery' as const] };
+    expect(parked(jobOff, 'discovery', { auto: 'brief' })).toBe(true);
+    expect(parked(jobOff, 'discovery', { origin: 'staff' })).toBe(false);
+    expect(parked(jobOff, 'discovery', {})).toBe(false);
+    expect(parked(jobOff, 'reply', { origin: 'inbound' })).toBe(false);
+    const off = { autoOff: true, offJobs: [] };
+    expect(parked(off, 'reply', { origin: 'inbound' })).toBe(true);
+    expect(parked(off, 'outreach', { wakeupId: 'w' })).toBe(false);
+  });
+
+  test('draft decision: supervised drafts first contact, autopilot sends, copilot drafts all', () => {
+    const base = { firstContact: true, leadMode: 'auto' };
     expect(draftDecision({ ...base, level: 'supervised' }).forceDraft).toBe(true);
     expect(draftDecision({ ...base, level: 'autopilot' }).forceDraft).toBe(false);
     expect(draftDecision({ ...base, firstContact: false, level: 'supervised' }).forceDraft).toBe(
@@ -140,19 +159,23 @@ describe('agent v2 — pure', () => {
 });
 
 describe('agent v2 — settings validation', () => {
-  test('agent_playbooks and agent_autonomy are bounded', () => {
-    expect(() => validateSetting('agent_playbooks', { reply: { stepBudget: 20 } })).not.toThrow();
-    expect(() => validateSetting('agent_playbooks', { reply: { stepBudget: 61 } })).toThrow();
-    expect(() => validateSetting('agent_playbooks', { nope: {} })).toThrow();
-    expect(() => validateSetting('agent_playbooks', { reply: { extra: 1 } })).toThrow();
+  test('the agent setting is bounded', () => {
     expect(() =>
-      validateSetting('agent_playbooks', { reply: { instructions: 'x'.repeat(4001) } }),
-    ).toThrow();
-    expect(() => validateSetting('agent_autonomy', { level: 'autopilot' })).not.toThrow();
-    expect(() => validateSetting('agent_autonomy', { level: 'yolo' })).toThrow();
+      validateSetting('agent', {
+        level: 'autopilot',
+        jobs: { discovery: false },
+        instructions: 'x',
+        weeklyDiscoveryUsd: 5,
+      }),
+    ).not.toThrow();
+    expect(() => validateSetting('agent', { level: 'yolo' })).toThrow();
+    expect(() => validateSetting('agent', { level: 'off', stepBudget: 3 })).toThrow();
+    expect(() => validateSetting('agent', { level: 'off', jobs: { triage: false } })).toThrow();
+    expect(() => validateSetting('agent', { level: 'off', jobs: { reply: 'no' } })).toThrow();
     expect(() =>
-      validateSetting('agent_autonomy', { level: 'supervised', strategistAutoApproveUsd: 51 }),
+      validateSetting('agent', { level: 'off', instructions: 'x'.repeat(8001) }),
     ).toThrow();
+    expect(() => validateSetting('agent', { level: 'off', weeklyDiscoveryUsd: 51 })).toThrow();
   });
 });
 
@@ -202,13 +225,11 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('agent v2 (db)', () => {
   };
   /** Pin the policy inputs every sweep/policy read consults. */
   const pinPolicy = async () => ({
-    autonomy: await getSetting('agent_autonomy'),
-    playbooks: await getSetting('agent_playbooks'),
+    agent: await getSetting('agent'),
     guardrails: await getSetting('guardrails'),
   });
-  const unpinPolicy = async (s: { autonomy: unknown; playbooks: unknown; guardrails: unknown }) => {
-    await restoreSetting('agent_autonomy', s.autonomy);
-    await restoreSetting('agent_playbooks', s.playbooks);
+  const unpinPolicy = async (s: { agent: unknown; guardrails: unknown }) => {
+    await restoreSetting('agent', s.agent);
     await restoreSetting('guardrails', s.guardrails);
   };
 
@@ -218,8 +239,7 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('agent v2 (db)', () => {
     const soon = new Date(Date.now() + 20 * 60_000).toISOString();
     try {
       // ambient leftovers must not block the fire — sweepWakeups gates on automationAllowedTx('outreach')
-      await setSetting('agent_autonomy', { level: 'supervised' });
-      await setSetting('agent_playbooks', { outreach: { enabled: true } });
+      await setSetting('agent', { level: 'supervised', jobs: { outreach: true } });
       await setSetting('guardrails', {});
       const a = (await executeTool(mkCtx('reply', leadId, 'a'), 's1', 'schedule', {
         leadId,
@@ -329,7 +349,7 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('agent v2 (db)', () => {
     await sql`update agent_wakeups set status = 'canceled' where lead_id = ${leadId}`;
   });
 
-  test('autonomy off and disabled playbooks stop automation; explanation reflects level', async () => {
+  test('preset off and a switched-off job stop automation; explanation reflects level', async () => {
     const prior = await pinPolicy();
     const priorEmail = (
       await sql<{ enabled: boolean }[]>`
@@ -339,19 +359,18 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('agent v2 (db)', () => {
     )[0];
     const leadId = await mkLead('pol');
     try {
-      await setSetting('agent_autonomy', { level: 'off' });
+      await setSetting('agent', { level: 'off' });
       expect((await controlTx(sql, (tx) => automationAllowedTx(tx, 'outreach'))).ok).toBe(false);
       const ex = await controlTx(sql, (tx) => explainAutonomyTx(tx, leadId));
       expect(ex!.canRun).toBe(false);
       expect(ex!.reasons[0]!.code).toBe('workspace_off');
 
-      await setSetting('agent_autonomy', { level: 'autopilot' });
-      await setSetting('agent_playbooks', { outreach: { enabled: false } });
+      await setSetting('agent', { level: 'autopilot', jobs: { outreach: false } });
       const v = await controlTx(sql, (tx) => automationAllowedTx(tx, 'outreach'));
       expect(v.ok).toBe(false);
       expect((await controlTx(sql, (tx) => automationAllowedTx(tx, 'reply'))).ok).toBe(true);
 
-      // a due wakeup stays pending while its playbook is off
+      // the agent's own due wakeup stays pending while its job is off
       await controlTx(
         sql,
         (tx) =>
@@ -361,11 +380,30 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('agent v2 (db)', () => {
       const st = await sql`select status from agent_wakeups where lead_id = ${leadId}`;
       expect(st[0]!.status).toBe('pending');
 
+      // …but a callback the lead asked for is a promise — it fires with the job off
+      const promisedLead = await mkLead('pol-promised');
+      await controlTx(
+        sql,
+        (tx) =>
+          tx`insert into agent_wakeups (lead_id, at, focus, requested)
+             values (${promisedLead}, now() - interval '1 minute', 'me chama hoje', true)`,
+      );
+      await sweepWakeups(sql);
+      const fired = await sql<{ status: string; params: Record<string, unknown> }[]>`
+        select w.status, r.params from agent_wakeups w
+        join agent_runs r on r.id = w.fired_run_id
+        where w.lead_id = ${promisedLead}
+      `;
+      expect(fired).toHaveLength(1);
+      expect(fired[0]!.status).toBe('fired');
+      expect('auto' in fired[0]!.params).toBe(false);
+      await sql`update agent_runs set status = 'canceled' where lead_id = ${promisedLead} and status = 'queued'`;
+
       // an enabled email integration must exist — upsert past ambient cleanup leftovers
       await sql`insert into control_integrations (kind, driver, enabled)
                 values ('email', 'log', true)
                 on conflict (kind, driver) do update set enabled = true`;
-      await setSetting('agent_autonomy', { level: 'copilot' });
+      await setSetting('agent', { level: 'copilot' });
       const cp = await controlTx(sql, (tx) => explainAutonomyTx(tx, leadId));
       expect(cp!.sendMode).toBe('blocked'); // no channel on this lead
       await sql`update leads set email = ${`pol-${uniq}@example.com`} where id = ${leadId}`;
@@ -387,7 +425,7 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('agent v2 (db)', () => {
   });
 
   test('strategist auto-approve activates a proposal within the weekly budget', async () => {
-    const priorAuto = await getSetting('agent_autonomy');
+    const priorAuto = await getSetting('agent');
     // ambient budget inputs accumulate on the shared DB — snapshot, neutralize, restore
     const prevCosts = await sql<{ id: string; cost_cents: number }[]>`
       select id, cost_cents from agent_runs where kind = 'discovery' and cost_cents <> 0
@@ -404,7 +442,7 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('agent v2 (db)', () => {
       await sql`update agent_runs set status = 'canceled'
                 where kind = 'discovery' and status in ('queued', 'running')`;
       await sql`update discovery_briefs set enabled = false where created_by = 'strategist' and enabled`;
-      await setSetting('agent_autonomy', { level: 'supervised', strategistAutoApproveUsd: 1000 });
+      await setSetting('agent', { level: 'supervised', weeklyDiscoveryUsd: 1000 });
       const out = (await executeTool(
         { ...mkCtx('strategist', '', 'f'), leadId: null },
         'p1',
@@ -414,7 +452,7 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('agent v2 (db)', () => {
       expect(out.enabled).toBe(true);
       await sql`update discovery_briefs set enabled = false where id = ${out.brief.id}`;
     } finally {
-      await restoreSetting('agent_autonomy', priorAuto);
+      await restoreSetting('agent', priorAuto);
       for (const r of prevCosts) {
         await sql`update agent_runs set cost_cents = ${r.cost_cents} where id = ${r.id}`;
       }
@@ -429,7 +467,7 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('agent v2 (db)', () => {
 
   test('the discovery unit estimate ignores zero-cost done runs', async () => {
     // zero-cost finishes carry no price signal — averaging them in deflates the unit price
-    const priorAuto = await getSetting('agent_autonomy');
+    const priorAuto = await getSetting('agent');
     const prevCosts = await sql<{ id: string; cost_cents: number }[]>`
       select id, cost_cents from agent_runs where kind = 'discovery' and cost_cents <> 0
     `;
@@ -449,7 +487,7 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('agent v2 (db)', () => {
       expect(bdg.est).toBe(200);
       seededRunId = ins!.id;
     } finally {
-      await restoreSetting('agent_autonomy', priorAuto);
+      await restoreSetting('agent', priorAuto);
       for (const r of prevCosts) {
         await sql`update agent_runs set cost_cents = ${r.cost_cents} where id = ${r.id}`;
       }
@@ -502,7 +540,7 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('agent v2 (db)', () => {
         select value from control_settings where key = 'guardrails'
       `
     )[0];
-    const priorAutonomy = await getSetting('agent_autonomy');
+    const priorAutonomy = await getSetting('agent');
     await sql`
       insert into control_integrations (kind, driver, enabled)
       values ('whatsapp', 'log', true)
@@ -510,7 +548,7 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('agent v2 (db)', () => {
     `;
     // quiet hours off — a blocked verdict would hide the forceDraft path.
     await setSetting('guardrails', { quietStart: '00:00', quietEnd: '00:00' });
-    await setSetting('agent_autonomy', { level: 'copilot' });
+    await setSetting('agent', { level: 'copilot' });
     try {
       const leadId = await mkLead('unsub');
       await sql`update leads set whatsapp = ${'+5511999' + uniq} where id = ${leadId}`;
@@ -555,7 +593,7 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('agent v2 (db)', () => {
       }
       if (priorGuardrails) await setSetting('guardrails', priorGuardrails.value);
       else await clearSetting('guardrails');
-      await restoreSetting('agent_autonomy', priorAutonomy);
+      await restoreSetting('agent', priorAutonomy);
     }
   });
 
@@ -564,8 +602,7 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('agent v2 (db)', () => {
     const leadId = await mkLead('fold');
     try {
       // sweepOutreach gates on automationAllowedTx('outreach').
-      await setSetting('agent_autonomy', { level: 'supervised' });
-      await setSetting('agent_playbooks', { outreach: { enabled: true } });
+      await setSetting('agent', { level: 'supervised', jobs: { outreach: true } });
       await setSetting('guardrails', {});
       await sql`
         update leads set next_action_at = now() - interval '1 minute',
@@ -640,8 +677,7 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('agent v2 (db)', () => {
     );
     try {
       // sweepBriefs gates on automationAllowedTx('discovery').
-      await setSetting('agent_autonomy', { level: 'supervised', strategistAutoApproveUsd: 0.5 });
-      await setSetting('agent_playbooks', { discovery: { enabled: true } });
+      await setSetting('agent', { level: 'supervised', weeklyDiscoveryUsd: 0.5 });
       await setSetting('guardrails', {});
       await sweepBriefs(sql);
       const rows = await sql<{ id: string; enabled: boolean; note: string | null }[]>`
@@ -651,10 +687,15 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('agent v2 (db)', () => {
       expect(byId[strat.id]!.enabled).toBe(false);
       expect(byId[strat.id]!.note).toContain('orçamento');
       expect(byId[staff.id]!.enabled).toBe(true);
-      const staffRun = await sql<{ id: string }[]>`
-        select id from agent_runs where kind = 'discovery' and params->>'briefId' = ${staff.id}
+      const staffRun = await sql<{ id: string; params: Record<string, unknown> }[]>`
+        select id, params from agent_runs where kind = 'discovery' and params->>'briefId' = ${staff.id}
       `;
       expect(staffRun).toHaveLength(1);
+      // a brief run is automation: switching discovery off after it queued must park it
+      expect(staffRun[0]!.params.auto).toBe('brief');
+      await setSetting('agent', { level: 'supervised', jobs: { discovery: false } });
+      const pp = await controlTx(sql, (tx) => parkPolicyTx(tx));
+      expect(parked(pp, 'discovery', staffRun[0]!.params)).toBe(true);
     } finally {
       // undo the seeded spend + sweep-queued runs — pre-queued rows stay
       await sql`update agent_runs set status = 'canceled', cost_cents = 0 where id = ${prior!}`;
@@ -679,6 +720,40 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('agent v2 (db)', () => {
       }
       await sql`delete from discovery_briefs where id in (${strat.id}, ${staff.id})`;
       await unpinPolicy(priorPolicy);
+    }
+  });
+
+  test('staff-triggered runs ignore the job switches', async () => {
+    const prior = await pinPolicy();
+    const app = createApp({
+      sql,
+      sessionSecret: 's',
+      controlSecret: 'ctl-secret',
+      autoDrain: false,
+    });
+    const leadId = await mkLead('staff-run');
+    try {
+      await setSetting('agent', {
+        level: 'supervised',
+        jobs: { reply: false, outreach: false, discovery: false, strategist: false },
+      });
+      const res = await app.request(`/control/v1/leads/${leadId}/run`, {
+        method: 'POST',
+        headers: {
+          'x-vendua-control': 'ctl-secret',
+          'content-type': 'application/json',
+          'idempotency-key': `staff-run-${uniq}`,
+        },
+        body: JSON.stringify({ kind: 'outreach' }),
+      });
+      expect(res.status).toBe(201);
+      const cfg = await app.request('/control/v1/agent/config', {
+        headers: { 'x-vendua-control': 'ctl-secret' },
+      });
+      expect(((await cfg.json()) as { jobs: Record<string, boolean> }).jobs.outreach).toBe(false);
+    } finally {
+      await sql`update agent_runs set status = 'canceled' where lead_id = ${leadId} and status = 'queued'`;
+      await unpinPolicy(prior);
     }
   });
 
@@ -712,14 +787,13 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('agent v2 (db)', () => {
     await sql`update agent_wakeups set status = 'canceled' where lead_id = ${leadId}`;
   });
 
-  test('claim policy parks disabled playbooks and, at level off, automation rows only', async () => {
+  test('claim policy parks automation rows only — preset off or a switched-off job', async () => {
     const prior = await pinPolicy();
     try {
-      await setSetting('agent_autonomy', { level: 'off' });
-      await setSetting('agent_playbooks', { discovery: { enabled: false } });
-      const p = await controlTx(sql, (tx) => claimPolicyTx(tx));
+      await setSetting('agent', { level: 'off', jobs: { discovery: false } });
+      const p = await controlTx(sql, (tx) => parkPolicyTx(tx));
       expect(p.autoOff).toBe(true);
-      expect(p.disabledKinds).toEqual(['discovery']);
+      expect(p.offJobs).toEqual(['discovery']);
       const leadId = await mkLead('claim');
       // one active run per lead — a second lead or insertRun would deliver into the auto run
       const staffLead = await mkLead('claim-staff');
@@ -731,8 +805,8 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('agent v2 (db)', () => {
       );
       const rows = await sql<{ id: string }[]>`
         select r.id from agent_runs r where r.id in (${auto!}, ${staff!})
-          and not (r.kind = any(${p.disabledKinds}::text[]))
-          and not (${p.autoOff} and (r.params ? 'auto' or r.params->>'origin' = 'inbound'))
+          and not ((${p.autoOff} or r.kind = any(${p.offJobs}::text[]))
+                   and (r.params ? 'auto' or r.params->>'origin' = 'inbound'))
       `;
       expect(rows.map((r) => r.id)).toEqual([staff!]);
       await sql`update agent_runs set status = 'canceled' where id in (${auto!}, ${staff!})`;
@@ -744,7 +818,7 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('agent v2 (db)', () => {
   test('insertRun retires a policy-parked row, and pulls a runnable row to the earlier start', async () => {
     const prior = await pinPolicy();
     try {
-      await setSetting('agent_autonomy', { level: 'off' });
+      await setSetting('agent', { level: 'off' });
       // a staff request can't inherit a run that will never claim — the parked row retires
       const offLead = await mkLead('adopt-off');
       const auto = await controlTx(sql, (tx) =>
@@ -776,11 +850,11 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('agent v2 (db)', () => {
       expect(offAnchor[0]!.payload.requestedKind).toBe('triage');
       expect(offAnchor[0]!.payload.params?.auto).toBe('x');
 
-      // Same retire for a disabled playbook's queued row.
-      await setSetting('agent_playbooks', { discovery: { enabled: false } });
+      // Same retire for a switched-off job's automation row.
+      await setSetting('agent', { level: 'supervised', jobs: { discovery: false } });
       const disLead = await mkLead('adopt-disabled');
       const disc = await controlTx(sql, (tx) =>
-        insertRun(tx, { kind: 'discovery', leadId: disLead }),
+        insertRun(tx, { kind: 'discovery', leadId: disLead, params: { auto: 'brief' } }),
       );
       const staffDisc = await controlTx(sql, (tx) =>
         insertRun(tx, { kind: 'triage', leadId: disLead, params: { origin: 'staff' } }),

@@ -7,7 +7,7 @@ import { num, obj, str, tzValid, type SettingsMap, type SettingWrite } from './s
 
 type Save = (key: string, v: SettingWrite) => Promise<boolean>;
 
-export function RulesArea({
+export function LimitsArea({
   map,
   save,
   pending,
@@ -18,44 +18,9 @@ export function RulesArea({
 }) {
   return (
     <>
-      <AreaIntro>regras duras — o código impõe, não o prompt</AreaIntro>
-      <div className="flex flex-col gap-3">
-        <HardRules pitch={obj(map.pitch)} save={save} pending={pending} />
-        <Guardrails value={obj(map.guardrails)} save={save} pending={pending} />
-      </div>
+      <AreaIntro>limites que o código impõe em todo run — não dependem do prompt</AreaIntro>
+      <Guardrails value={obj(map.guardrails)} save={save} pending={pending} />
     </>
-  );
-}
-
-function HardRules({
-  pitch,
-  save,
-  pending,
-}: {
-  pitch: Record<string, unknown>;
-  save: Save;
-  pending: boolean;
-}) {
-  const cur = Array.isArray(pitch.hardRules) ? (pitch.hardRules as string[]) : [];
-  const { edit, setEdit, dirty, reset } = useDraft(cur);
-  return (
-    <Panel title="regras do pitch" aside={`${edit.length}/50 · entram no system prompt`}>
-      <ListEditor
-        items={edit}
-        placeholder="ex.: nunca prometa data de entrega"
-        max={50}
-        maxLen={500}
-        onChange={setEdit}
-      />
-      <SaveBar
-        label="salvar regras"
-        dirty={dirty}
-        pending={pending}
-        onReset={reset}
-        // stored inside `pitch` — merge over the freshest value so the voz fields survive
-        onSave={() => void save('pitch', (c: unknown) => ({ ...obj(c), hardRules: edit }))}
-      />
-    </Panel>
   );
 }
 
@@ -90,7 +55,6 @@ function Guardrails({
     quietStart: str(value.quietStart, '21:00'),
     quietEnd: str(value.quietEnd, '08:00'),
     timezone: str(value.timezone, 'America/Sao_Paulo'),
-    firstContactDraftOnly: value.firstContactDraftOnly !== false,
     discoveryAutoContact: value.discoveryAutoContact !== false,
     discoveryContactMinScore: num(value.discoveryContactMinScore, 8),
     inboundReplyDelayMin: num(value.inboundReplyDelayMin, 0),
@@ -134,7 +98,7 @@ function Guardrails({
   );
 
   return (
-    <Panel title="guardrails">
+    <Panel title="limites">
       <div className="grid gap-x-4 gap-y-3 lg:grid-cols-2">
         <Field label="msgs/dia por lead" htmlFor="gr-maxOutboundPerLeadPerDay">
           {numIn('maxOutboundPerLeadPerDay', 1, 100, 1)}
@@ -169,17 +133,6 @@ function Guardrails({
             onChange={(e) => setEdit({ ...edit, timezone: e.target.value })}
           />
           {!tzOk && <FieldError>fuso IANA inválido</FieldError>}
-        </Field>
-        <Field
-          label="primeiro contato"
-          hint="quem nunca recebeu mensagem nossa passa pela fila de aprovação — a autonomia 'autopilot' sobe isso pra todo mundo"
-        >
-          <Toggle
-            checked={edit.firstContactDraftOnly}
-            onChange={(v) => setEdit({ ...edit, firstContactDraftOnly: v })}
-          >
-            {edit.firstContactDraftOnly ? 'sempre vira rascunho' : 'agente pode enviar direto'}
-          </Toggle>
         </Field>
         <Field
           label="autocontato no discovery"
@@ -250,7 +203,7 @@ function Guardrails({
         </Field>
       </div>
       <SaveBar
-        label="salvar guardrails"
+        label="salvar limites"
         dirty={dirty}
         disabled={invalid}
         pending={pending}

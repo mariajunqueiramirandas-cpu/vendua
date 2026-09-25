@@ -40,8 +40,8 @@ export default function SettingsPage() {
   const legacy = params.get('s');
   useEffect(() => {
     if (!legacy) return;
-    if (legacy === 'agente') return nav(`${STUDIO}?s=voz`, { replace: true });
-    if (legacy === 'regras') return nav(`${STUDIO}?s=regras`, { replace: true });
+    if (legacy === 'agente') return nav(STUDIO, { replace: true });
+    if (legacy === 'regras') return nav(`${STUDIO}?s=limites`, { replace: true });
     const next = new URLSearchParams(params);
     next.delete('s');
     if (AREAS.some((a) => a.key === legacy) && legacy !== 'visao') next.set('a', legacy);
@@ -141,7 +141,7 @@ export default function SettingsPage() {
         <Link
           to={STUDIO}
           className={cn(tabTriggerClass, 'ml-auto')}
-          title="autonomia, voz, playbooks, memória e regras do agente"
+          title="autonomia, voz, instruções, limites e memória do agente"
         >
           estúdio do agente <ArrowUpRight />
         </Link>
