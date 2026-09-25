@@ -65,7 +65,9 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('agent memory v2 wiring (db)', (
     leadId: string | null = null,
     params: Record<string, unknown> = {},
   ): Promise<RunRow> => {
-    const id = await controlTx(sql, (tx) => insertRun(tx, { kind, leadId, params }));
+    const id = await controlTx(sql, (tx) =>
+      insertRun(tx, { source: 'staff', kind, leadId, params }),
+    );
     if (!id) throw new Error('insertRun refused');
     // leave the run 'done' — a queued discovery run inflates the open-work
     // reservation for tests that check auto-approval

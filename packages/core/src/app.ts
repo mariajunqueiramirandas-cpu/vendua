@@ -1,6 +1,7 @@
 import { createHmac, timingSafeEqual } from 'node:crypto';
 import { agentSettingTx, automationAllowedTx, explainAutonomyTx } from './agent/policy.ts';
-import type { JobKind } from './agent/tool-meta.ts';
+import { JOB_KINDS, type JobKind } from './agent/tool-meta.ts';
+import { requestAgentTx } from './agent/dispatch.ts';
 import { cancelWakeup, listWakeups } from './agent/wakeups.ts';
 import { existsSync, statSync } from 'node:fs';
 import { extname, join, normalize } from 'node:path';
@@ -125,8 +126,7 @@ import {
 } from './modules/meetings.ts';
 import { BOOKING_PAGE } from './modules/booking-page.ts';
 import * as rooms from './modules/rooms.ts';
-import { capLockTx, drain, flagCappedLeads, insertRun, releaseInboxTx } from './agent/runner.ts';
-import { enqueueInboxTx } from './agent/inbox.ts';
+import { capLockTx, drain, flagCappedLeads, releaseInboxTx } from './agent/runner.ts';
 import { ingestInbound } from './agent/inbound.ts';
 import { ingestResendEvent, svixHeaders, svixVerified } from './agent/channels/email-inbound.ts';
 import { LOADER_JS } from './loader.ts';
@@ -822,20 +822,16 @@ export function createApp({ sql, sessionSecret, controlSecret, autoDrain }: AppD
           // Send policy is read live at send time, not stamped here — a change between create and claim must take effect.
           const g = await getSettingTx<Partial<Guardrails>>(tx, 'guardrails', {});
           const delay = g.firstContactDelayMin ?? DEFAULT_GUARDRAILS.firstContactDelayMin;
-          const cap: { retired?: string[] } = {};
-          const runId = await insertRun(
-            tx,
-            {
-              kind: 'outreach',
-              leadId: created.body.lead.id,
-              ...(delay > 0 ? { runAt: new Date(Date.now() + delay * 60_000) } : {}),
-              params: {
-                auto: 'first-contact',
-                focus: 'primeiro contato — lead recém-criado pela equipe',
-              },
-            },
-            cap,
-          );
+          const d = await requestAgentTx(tx, {
+            kind: 'outreach',
+            source: 'first_contact',
+            leadId: created.body.lead.id,
+            text: 'lead criado pela equipe — primeiro contato',
+            params: { focus: 'primeiro contato — lead recém-criado pela equipe' },
+            ...(delay > 0 ? { at: new Date(Date.now() + delay * 60_000) } : {}),
+          });
+          const runId = d.runId;
+          const cap = { retired: d.retired };
           return {
             status: created.status,
             // null when the cost cap refused the run — the card's flag is the explanation.
@@ -966,115 +962,6 @@ export function createApp({ sql, sessionSecret, controlSecret, autoDrain }: AppD
     if (res.replayed) c.header('x-idempotent-replay', 'true');
     if (!res.replayed && transitioned) emitControlEvent('lead.change', id);
     return c.json(res.body);
-  });
-
-  app.post('/control/v1/leads/:id/run', async (c) => {
-    controlGate(c);
-    const body = await bodyJson(c);
-    const kind = str(body.kind, 'kind', 40);
-    // No 'strategist' here — a suppressed lead's parked row would eat the weekly cadence slot.
-    if (!['triage', 'reply', 'outreach', 'discovery'].includes(kind)) {
-      throw new HttpError(422, 'BAD_REQUEST', 'kind must be triage|reply|outreach|discovery');
-    }
-    const leadId = uuidParam(c, 'id');
-    const threadId = body.threadId ? str(body.threadId, 'threadId', 64) : null;
-    if (threadId && !UUID_RE.test(threadId)) {
-      throw new HttpError(400, 'BAD_REQUEST', 'threadId must be a uuid');
-    }
-    const retiredIds: string[] = [];
-    const res = await claimControl(sql, requireIdemKey(c), async (tx) => {
-      // Mirror the claim gate's suppression predicate — a suppressed run would park 'queued' forever.
-      // capfin before the lead lock — a finisher holding it could cycle against us (see capLockTx).
-      await capLockTx(tx, leadId);
-      const lead = (
-        await tx<
-          {
-            agent_mode: string;
-            archived_at: string | null;
-            unsubscribed_at: string | null;
-            agent_paused_at: string | null;
-          }[]
-        >`
-          select agent_mode, archived_at, unsubscribed_at, agent_paused_at from leads
-          where id = ${leadId}
-          for update
-        `
-      )[0];
-      if (!lead) throw new HttpError(404, 'LEAD_NOT_FOUND', 'lead not found');
-      const suppressed = lead.archived_at
-        ? 'lead archived'
-        : lead.unsubscribed_at
-          ? 'lead unsubscribed'
-          : lead.agent_paused_at
-            ? 'agent paused'
-            : lead.agent_mode === 'off'
-              ? 'agent off'
-              : null;
-      if (suppressed) throw new HttpError(422, 'LEAD_SUPPRESSED', suppressed);
-      if (threadId) {
-        const th = (
-          await tx<{ lead_id: string; agent_enabled: boolean }[]>`
-            select lead_id, agent_enabled from lead_threads where id = ${threadId}
-          `
-        )[0];
-        if (!th) throw new HttpError(404, 'THREAD_NOT_FOUND', 'thread not found');
-        if (th.lead_id.toLowerCase() !== leadId.toLowerCase()) {
-          throw new HttpError(422, 'BAD_REQUEST', 'threadId does not belong to leadId');
-        }
-        if (!th.agent_enabled) throw new HttpError(422, 'THREAD_PAUSED', 'thread paused for agent');
-      }
-      const params: Record<string, unknown> = {
-        ...((body.params as Record<string, unknown>) ?? {}),
-        origin: 'staff',
-      };
-      // params lands verbatim in agent_runs.params and the inbox payload — bound it.
-      if (JSON.stringify(params).length > 16_384)
-        throw new HttpError(422, 'PARAMS_TOO_LARGE', 'run params exceed 16 KiB');
-      const cap: { retired?: string[] } = {};
-      const runId = await insertRun(
-        tx,
-        {
-          kind: kind as 'triage' | 'reply' | 'outreach' | 'discovery',
-          leadId,
-          ...(threadId ? { threadId } : {}),
-          // origin stamps provenance even when params carry no overrides
-          params,
-        },
-        cap,
-      );
-      retiredIds.push(...(cap.retired ?? []));
-      // Return 422, don't throw — the committed claim keeps the cap flag and replays idempotently.
-      if (!runId) {
-        return {
-          status: 422,
-          body: {
-            error: {
-              code: 'LEAD_COST_CAP',
-              message:
-                'lead over its agent cost cap — raise guardrails.leadLifetimeCostCapUsd or retire the lead',
-            },
-          } as never,
-        };
-      }
-      // The item carries the intent into an already-active run insertRun adopted.
-      await enqueueInboxTx(tx, leadId, 'staff', {
-        text: `a equipe pediu uma run '${kind}'${typeof params.focus === 'string' ? ` — ${params.focus}` : ''}`,
-        requestedKind: kind as JobKind,
-        threadId: threadId ?? null,
-        params,
-        forRunId: runId,
-      });
-      return { status: 201, body: { runId } };
-    });
-    if (res.replayed) c.header('x-idempotent-replay', 'true');
-    if (!res.replayed) {
-      emitControlEvent('run.update', res.body.runId);
-      for (const r of retiredIds) emitControlEvent('run.update', r);
-      // The refusal wrote flag+task — only lead.change refreshes the Tasks badge.
-      if (res.status === 422) emitControlEvent('lead.change', leadId);
-    }
-    kickDrain();
-    return c.json(res.body, res.status as 201);
   });
 
   app.get('/control/v1/leads/:id/activities', async (c) => {
@@ -1699,50 +1586,103 @@ export function createApp({ sql, sessionSecret, controlSecret, autoDrain }: AppD
     return c.json(res.body);
   });
 
-  app.post('/control/v1/agent/runs', async (c) => {
+  // The one staff entry point (ADR 0016): "agent, do <kind> for these leads / the board".
+  // Single-lead asks fail loudly (404/422); bulk asks report what they skipped and why.
+  app.post('/control/v1/agent/requests', async (c) => {
     controlGate(c);
     const body = await bodyJson(c);
     const kind = str(body.kind, 'kind', 40);
-    if (!['triage', 'reply', 'outreach', 'discovery', 'strategist'].includes(kind)) {
-      throw new HttpError(
-        422,
-        'BAD_REQUEST',
-        'kind must be triage|reply|outreach|discovery|strategist',
-      );
+    if (!(JOB_KINDS as readonly string[]).includes(kind)) {
+      throw new HttpError(422, 'BAD_REQUEST', `kind must be ${JOB_KINDS.join('|')}`);
     }
-    const leadId = body.leadId ? str(body.leadId, 'leadId', 64) : null;
-    const threadId = body.threadId ? str(body.threadId, 'threadId', 64) : null;
-    for (const [field, v] of [
-      ['leadId', leadId],
-      ['threadId', threadId],
-    ] as const) {
-      if (v && !UUID_RE.test(v)) throw new HttpError(400, 'BAD_REQUEST', `${field} must be a uuid`);
+    const rawIds =
+      body.leadIds !== undefined ? body.leadIds : body.leadId !== undefined ? [body.leadId] : [];
+    if (
+      !Array.isArray(rawIds) ||
+      rawIds.length > 200 ||
+      rawIds.some((id) => typeof id !== 'string' || !UUID_RE.test(id))
+    ) {
+      throw new HttpError(422, 'BAD_REQUEST', 'leadIds must be an array of ≤200 uuids');
     }
-    // strategist takes no lead/thread — a suppressed lead's parked row would eat the weekly cadence slot.
-    if (kind === 'strategist' && (leadId || threadId)) {
-      throw new HttpError(422, 'BAD_REQUEST', 'strategist runs take no leadId/threadId');
+    const threadId = body.threadId != null ? str(body.threadId, 'threadId', 64) : null;
+    if (threadId && !UUID_RE.test(threadId)) {
+      throw new HttpError(400, 'BAD_REQUEST', 'threadId must be a uuid');
     }
-    const retiredIds2: string[] = [];
-    const res = await claimControl(sql, requireIdemKey(c), async (tx) => {
-      // A thread-only call adopts the thread's owner — null lead_id would skip claimRun's suppression gate.
-      let effLeadId = leadId;
+    if (threadId && rawIds.length > 1) {
+      throw new HttpError(422, 'BAD_REQUEST', 'threadId takes a single lead');
+    }
+    // strategist reviews the whole board — a lead-bound row would eat the weekly slot
+    if (kind === 'strategist' && (rawIds.length || threadId)) {
+      throw new HttpError(422, 'BAD_REQUEST', 'strategist requests take no leads');
+    }
+    if (body.focus != null) str(body.focus, 'focus', 2000);
+    const wantChannel =
+      body.channel === 'whatsapp' || body.channel === 'email' ? body.channel : null;
+    if (body.channel != null && body.channel !== 'auto' && !wantChannel) {
+      throw new HttpError(422, 'BAD_REQUEST', 'channel must be auto|whatsapp|email');
+    }
+    if (body.draftOnly != null && typeof body.draftOnly !== 'boolean') {
+      throw new HttpError(422, 'BAD_REQUEST', 'draftOnly must be a boolean');
+    }
+    const goal = body.goal != null ? agentGoal(body.goal) : null;
+    if (body.params != null && (typeof body.params !== 'object' || Array.isArray(body.params))) {
+      throw new HttpError(422, 'BAD_REQUEST', 'params must be an object');
+    }
+    const params: Record<string, unknown> = {
+      ...((body.params as Record<string, unknown>) ?? {}),
+      ...(typeof body.focus === 'string' && body.focus.trim() ? { focus: body.focus.trim() } : {}),
+      ...(wantChannel ? { channel: wantChannel } : {}),
+      ...(body.draftOnly === true ? { draftOnly: true } : {}),
+      ...(goal ? { goal } : {}),
+    };
+    // params lands verbatim in agent_runs.params and the inbox payload — bound it.
+    if (JSON.stringify(params).length > 16_384)
+      throw new HttpError(422, 'PARAMS_TOO_LARGE', 'run params exceed 16 KiB');
+    const text =
+      (goal ? `a equipe definiu a meta '${goal}'` : `a equipe pediu '${kind}'`) +
+      (typeof params.focus === 'string' ? ` — ${params.focus}` : '');
+    type Out = {
+      runId?: string;
+      runs: { leadId: string | null; runId: string; startAt: string | null }[];
+      skipped: { leadId: string; code: string; reason: string }[];
+    };
+    const events: { retired: string[]; capFlagged: boolean } = { retired: [], capFlagged: false };
+    const res = await claimControl<Out>(sql, requireIdemKey(c), async (tx) => {
+      const out: Out = { runs: [], skipped: [] };
+      let leadIds = [...new Set(rawIds as string[])];
       if (threadId) {
+        // A thread-only ask adopts the thread's owner — null lead_id would skip the suppression gate.
         const th = (
           await tx<{ lead_id: string; agent_enabled: boolean }[]>`
             select lead_id, agent_enabled from lead_threads where id = ${threadId}
           `
         )[0];
         if (!th) throw new HttpError(404, 'THREAD_NOT_FOUND', 'thread not found');
-        if (leadId && th.lead_id.toLowerCase() !== leadId.toLowerCase()) {
+        if (leadIds[0] && th.lead_id.toLowerCase() !== leadIds[0].toLowerCase()) {
           throw new HttpError(422, 'BAD_REQUEST', 'threadId does not belong to leadId');
         }
         if (!th.agent_enabled) throw new HttpError(422, 'THREAD_PAUSED', 'thread paused for agent');
-        effLeadId = th.lead_id;
+        leadIds = [th.lead_id];
       }
-      // Same suppression mirror as /leads/:id/run — report, don't park; row lock serializes vs unsubscribe.
-      if (effLeadId) {
-        // capfin before the lead lock (capLockTx ordering rule).
-        await capLockTx(tx, effLeadId);
+      const single = leadIds.length === 1;
+      if (!leadIds.length) {
+        const d = await requestAgentTx(tx, {
+          kind: kind as JobKind,
+          source: 'staff',
+          text,
+          params,
+        });
+        events.retired.push(...d.retired);
+        if (d.runId)
+          out.runs.push({
+            leadId: null,
+            runId: d.runId,
+            startAt: d.startAt?.toISOString() ?? null,
+          });
+      }
+      // capfins first, in sorted order — request order could AB-BA another batch (capLockTx)
+      for (const id of [...leadIds].sort()) await capLockTx(tx, id);
+      for (const id of leadIds) {
         const lead = (
           await tx<
             {
@@ -1753,42 +1693,58 @@ export function createApp({ sql, sessionSecret, controlSecret, autoDrain }: AppD
             }[]
           >`
             select agent_mode, archived_at, unsubscribed_at, agent_paused_at from leads
-            where id = ${effLeadId}
-            for update
+            where id = ${id} for update
           `
         )[0];
-        if (!lead) throw new HttpError(404, 'LEAD_NOT_FOUND', 'lead not found');
-        const suppressed = lead.archived_at
-          ? 'lead archived'
-          : lead.unsubscribed_at
-            ? 'lead unsubscribed'
-            : lead.agent_paused_at
-              ? 'agent paused'
-              : lead.agent_mode === 'off'
-                ? 'agent off'
-                : null;
-        if (suppressed) throw new HttpError(422, 'LEAD_SUPPRESSED', suppressed);
-      }
-      const params: Record<string, unknown> = {
-        ...((body.params as Record<string, unknown>) ?? {}),
-        origin: 'staff',
-      };
-      if (JSON.stringify(params).length > 16_384)
-        throw new HttpError(422, 'PARAMS_TOO_LARGE', 'run params exceed 16 KiB');
-      const cap: { retired?: string[] } = {};
-      const runId = await insertRun(
-        tx,
-        {
-          kind: kind as 'triage' | 'reply' | 'outreach' | 'discovery' | 'strategist',
-          leadId: effLeadId,
+        // mirror the claim gate's suppression — a suppressed run would park 'queued' forever
+        const suppressed = !lead
+          ? null
+          : lead.archived_at
+            ? 'lead archived'
+            : lead.unsubscribed_at
+              ? 'lead unsubscribed'
+              : lead.agent_paused_at
+                ? 'agent paused'
+                : lead.agent_mode === 'off'
+                  ? 'agent off'
+                  : null;
+        if (single && !lead) throw new HttpError(404, 'LEAD_NOT_FOUND', 'lead not found');
+        if (single && suppressed) throw new HttpError(422, 'LEAD_SUPPRESSED', suppressed);
+        if (!lead || suppressed) {
+          out.skipped.push({
+            leadId: id,
+            code: lead ? 'LEAD_SUPPRESSED' : 'LEAD_NOT_FOUND',
+            reason: suppressed ?? 'lead not found',
+          });
+          continue;
+        }
+        const d = await requestAgentTx(tx, {
+          kind: kind as JobKind,
+          source: 'staff',
+          leadId: id,
           threadId,
+          text,
           params,
-        },
-        cap,
-      );
-      retiredIds2.push(...(cap.retired ?? []));
-      // Same 422-not-throw contract as /leads/:id/run — the flag survives and replays.
-      if (!runId) {
+        });
+        events.retired.push(...d.retired);
+        if (d.capFlagged) events.capFlagged = true;
+        if (!d.runId) {
+          // the request stays filed; the cap flag (and its [humano] task) is the explanation
+          out.skipped.push({
+            leadId: id,
+            code: 'LEAD_COST_CAP',
+            reason: 'lead over its agent cost cap',
+          });
+          continue;
+        }
+        // the goal sticks only once the lead is actually served
+        if (goal)
+          await tx`update leads set agent_goal = ${goal}, updated_at = now() where id = ${id}`;
+        out.runs.push({ leadId: id, runId: d.runId, startAt: d.startAt?.toISOString() ?? null });
+      }
+      if (out.runs[0]) out.runId = out.runs[0].runId;
+      // Return 422, don't throw — the committed claim keeps the cap flag and replays idempotently.
+      if (single && !out.runs.length) {
         return {
           status: 422,
           body: {
@@ -1800,26 +1756,17 @@ export function createApp({ sql, sessionSecret, controlSecret, autoDrain }: AppD
           } as never,
         };
       }
-      if (effLeadId) {
-        // Mail the intent into the already-active run insertRun adopted.
-        await enqueueInboxTx(tx, effLeadId, 'staff', {
-          text: `a equipe pediu uma run '${kind}'${typeof params.focus === 'string' ? ` — ${params.focus}` : ''}`,
-          requestedKind: kind as JobKind,
-          threadId: threadId ?? null,
-          params,
-          forRunId: runId,
-        });
-      }
-      return { status: 201, body: { runId } };
+      return { status: out.runs.length ? 201 : 200, body: out };
     });
     if (res.replayed) c.header('x-idempotent-replay', 'true');
     if (!res.replayed) {
-      emitControlEvent('run.update', res.body.runId);
-      for (const r of retiredIds2) emitControlEvent('run.update', r);
-      // Unscoped on a cap refusal — the effective lead can live behind a threadId.
-      if (res.status === 422) emitControlEvent('lead.change');
+      for (const r of res.body.runs ?? []) emitControlEvent('run.update', r.runId);
+      for (const r of events.retired) emitControlEvent('run.update', r);
+      // cap refusals wrote flag+task; goals changed the card — lead.change refreshes both
+      if (events.capFlagged || res.status === 422 || (goal && res.body.runs?.length))
+        emitControlEvent('lead.change');
     }
-    kickDrain();
+    if (res.body.runs?.length) kickDrain();
     return c.json(res.body, res.status as 201);
   });
 
@@ -1830,105 +1777,6 @@ export function createApp({ sql, sessionSecret, controlSecret, autoDrain }: AppD
       throw new HttpError(422, 'BAD_REQUEST', 'days must be 7 or 30');
     }
     return c.json(await agentMetrics(sql, Number(days) as 7 | 30));
-  });
-
-  app.post('/control/v1/agent/dispatch', async (c) => {
-    controlGate(c);
-    const body = await bodyJson(c);
-    const ids = body.leadIds;
-    if (
-      !Array.isArray(ids) ||
-      !ids.length ||
-      ids.length > 200 ||
-      ids.some((id) => typeof id !== 'string' || !UUID_RE.test(id))
-    ) {
-      throw new HttpError(422, 'BAD_REQUEST', 'leadIds must be an array of ≤200 uuids');
-    }
-    const goal = agentGoal(body.goal);
-    // 'auto'/absent lets the agent pick; a pin still fails if unreachable.
-    const wantChannel =
-      body.channel === 'whatsapp' || body.channel === 'email' ? body.channel : null;
-    if (body.channel != null && body.channel !== 'auto' && !wantChannel) {
-      throw new HttpError(422, 'BAD_REQUEST', 'channel must be auto|whatsapp|email');
-    }
-    const retiredIds3: string[] = [];
-    const res = await claimControl(sql, requireIdemKey(c), async (tx) => {
-      let enqueued = 0;
-      const skipped: { id: string; reason: string }[] = [];
-      // All capfins first in sorted order — request order could AB-BA another batch (capLockTx).
-      for (const id of [...new Set(ids as string[])].sort()) await capLockTx(tx, id);
-      for (const id of ids as string[]) {
-        const lead = (
-          await tx<
-            {
-              archived_at: string | null;
-              unsubscribed_at: string | null;
-              agent_mode: string;
-              agent_paused_at: string | null;
-            }[]
-          >`
-            select archived_at, unsubscribed_at, agent_mode, agent_paused_at from leads
-            where id = ${id} for update
-          `
-        )[0];
-        if (!lead) {
-          skipped.push({ id, reason: 'lead not found' });
-          continue;
-        }
-        const reason = lead.archived_at
-          ? 'lead archived'
-          : lead.unsubscribed_at
-            ? 'lead unsubscribed'
-            : lead.agent_paused_at
-              ? 'agent paused'
-              : lead.agent_mode === 'off'
-                ? 'agent off'
-                : null;
-        if (reason) {
-          skipped.push({ id, reason });
-          continue;
-        }
-        // The goal update stays after the insert — a cap-refused lead must not keep a goal future runs would read.
-        const params: Record<string, unknown> = {
-          goal,
-          ...(wantChannel ? { channel: wantChannel } : {}),
-        };
-        const cap: { retired?: string[] } = {};
-        const runId = await insertRun(
-          tx,
-          {
-            kind: 'outreach',
-            leadId: id,
-            params,
-          },
-          cap,
-        );
-        retiredIds3.push(...(cap.retired ?? []));
-        if (!runId) {
-          skipped.push({ id, reason: 'lead over its agent cost cap' });
-          continue;
-        }
-        await enqueueInboxTx(tx, id, 'staff', {
-          text: `a equipe definiu a meta '${goal}'`,
-          requestedKind: 'outreach',
-          params,
-          forRunId: runId,
-        });
-        await tx`update leads set agent_goal = ${goal}, updated_at = now() where id = ${id}`;
-        enqueued++;
-      }
-      return { status: 200, body: { enqueued, skipped } };
-    });
-    if (res.replayed) c.header('x-idempotent-replay', 'true');
-    if (!res.replayed) {
-      // Cap refusals wrote flag+task — lead.change refreshes the Tasks badge.
-      const capSkipped = res.body.skipped.some((s) => s.reason === 'lead over its agent cost cap');
-      if (res.body.enqueued || capSkipped) emitControlEvent('lead.change');
-      if (res.body.enqueued) emitControlEvent('run.update');
-      for (const r of retiredIds3) emitControlEvent('run.update', r);
-    }
-    if (res.body.enqueued) kickDrain();
-    return c.json(res.body);
   });
 
   // the `agent` setting with defaults applied — what the runner actually reads

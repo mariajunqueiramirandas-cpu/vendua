@@ -1,7 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 import postgres from 'postgres';
 import { createApp } from '../src/app.ts';
-import { insertRun, sweepBriefs, sweepOutreach } from '../src/agent/runner.ts';
+import { insertRun, sweepBriefs } from '../src/agent/runner.ts';
 import {
   executeTool,
   registeredToolNames,
@@ -31,6 +31,7 @@ import {
   parseWakeupAt,
   retireWakeupsOnInboundTx,
   scheduleWakeupTx,
+  setNextActionTx,
   sweepWakeups,
 } from '../src/agent/wakeups.ts';
 import { controlTx } from '../src/modules/control.ts';
@@ -103,13 +104,13 @@ describe('agent v2 — pure', () => {
 
   test('parking: only automation of a switched-off job (or preset off) parks', () => {
     const jobOff = { autoOff: false, offJobs: ['discovery' as const] };
-    expect(parked(jobOff, 'discovery', { auto: 'brief' })).toBe(true);
-    expect(parked(jobOff, 'discovery', { origin: 'staff' })).toBe(false);
-    expect(parked(jobOff, 'discovery', {})).toBe(false);
-    expect(parked(jobOff, 'reply', { origin: 'inbound' })).toBe(false);
+    expect(parked(jobOff, 'discovery', { source: 'brief', promised: false })).toBe(true);
+    expect(parked(jobOff, 'discovery', { source: 'staff', promised: false })).toBe(false);
+    expect(parked(jobOff, 'reply', { source: 'inbound', promised: false })).toBe(false);
     const off = { autoOff: true, offJobs: [] };
-    expect(parked(off, 'reply', { origin: 'inbound' })).toBe(true);
-    expect(parked(off, 'outreach', { wakeupId: 'w' })).toBe(false);
+    expect(parked(off, 'reply', { source: 'inbound', promised: false })).toBe(true);
+    expect(parked(off, 'outreach', { source: 'callback', promised: true })).toBe(false);
+    expect(parked(off, 'outreach', { source: 'followup', promised: false })).toBe(true);
   });
 
   test('draft decision: supervised drafts first contact, autopilot sends, copilot drafts all', () => {
@@ -275,12 +276,12 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('agent v2 (db)', () => {
       )[0]!;
       expect(w.status).toBe('fired');
       const run = (
-        await sql<{ kind: string; params: Record<string, unknown> }[]>`
-      select kind, params from agent_runs where id = ${w.fired_run_id}
+        await sql<{ kind: string; source: string; params: Record<string, unknown> }[]>`
+      select kind, source, params from agent_runs where id = ${w.fired_run_id}
       `
       )[0]!;
       expect(run.kind).toBe('outreach');
-      expect(run.params.auto).toBe('wakeup');
+      expect(run.source).toBe('followup');
       expect(String(run.params.focus)).toContain('segunda tentativa');
     } finally {
       await sql`update agent_wakeups set status = 'canceled' where lead_id = ${leadId}`;
@@ -389,14 +390,15 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('agent v2 (db)', () => {
              values (${promisedLead}, now() - interval '1 minute', 'me chama hoje', true)`,
       );
       await sweepWakeups(sql);
-      const fired = await sql<{ status: string; params: Record<string, unknown> }[]>`
-        select w.status, r.params from agent_wakeups w
+      const fired = await sql<{ status: string; source: string; promised: boolean }[]>`
+        select w.status, r.source, r.promised from agent_wakeups w
         join agent_runs r on r.id = w.fired_run_id
         where w.lead_id = ${promisedLead}
       `;
       expect(fired).toHaveLength(1);
       expect(fired[0]!.status).toBe('fired');
-      expect('auto' in fired[0]!.params).toBe(false);
+      expect(fired[0]!.source).toBe('callback');
+      expect(fired[0]!.promised).toBe(true);
       await sql`update agent_runs set status = 'canceled' where lead_id = ${promisedLead} and status = 'queued'`;
 
       // an enabled email integration must exist — upsert past ambient cleanup leftovers
@@ -497,7 +499,9 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('agent v2 (db)', () => {
 
   test('insertRun still works for a lead with no settings rows', async () => {
     const leadId = await mkLead('ins');
-    const id = await controlTx(sql, (tx) => insertRun(tx, { kind: 'triage', leadId }));
+    const id = await controlTx(sql, (tx) =>
+      insertRun(tx, { source: 'staff', kind: 'triage', leadId }),
+    );
     expect(id).toBeTruthy();
     await sql`update agent_runs set status = 'canceled' where id = ${id}`;
   });
@@ -553,7 +557,9 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('agent v2 (db)', () => {
       const leadId = await mkLead('unsub');
       await sql`update leads set whatsapp = ${'+5511999' + uniq} where id = ${leadId}`;
       // a real run row also exercises that the opt-out's cancel-queued pass leaves the draft
-      const runId = (await controlTx(sql, (tx) => insertRun(tx, { kind: 'reply', leadId })))!;
+      const runId = (await controlTx(sql, (tx) =>
+        insertRun(tx, { source: 'staff', kind: 'reply', leadId }),
+      ))!;
       const out = (await executeTool(
         { ...mkCtx('reply', leadId, 'u'), runId },
         's1',
@@ -597,44 +603,48 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('agent v2 (db)', () => {
     }
   });
 
-  test('sweepOutreach folds a due agent wakeup into the cadence run — focus survives', async () => {
+  test('the agenda: a staff date replaces the agent plan, mirrors next_action_at, fires as a promise', async () => {
     const prior = await pinPolicy();
-    const leadId = await mkLead('fold');
+    const leadId = await mkLead('agenda');
     try {
-      // sweepOutreach gates on automationAllowedTx('outreach').
-      await setSetting('agent', { level: 'supervised', jobs: { outreach: true } });
+      await setSetting('agent', { level: 'supervised' });
       await setSetting('guardrails', {});
-      await sql`
-        update leads set next_action_at = now() - interval '1 minute',
-                         next_action_source = 'cadence'
-        where id = ${leadId}
+      // the agent's own plan, then a staff date over it
+      await controlTx(sql, (tx) =>
+        setNextActionTx(tx, leadId, new Date(Date.now() + 86_400_000), 'agent'),
+      );
+      const staffAt = new Date(Date.now() - 60_000);
+      await controlTx(sql, (tx) => setNextActionTx(tx, leadId, staffAt, 'staff'));
+      const pending = await sql<{ created_by: string; requested: boolean }[]>`
+        select created_by, requested from agent_wakeups where lead_id = ${leadId} and status = 'pending'
       `;
-      const w = (
-        await sql<{ id: string }[]>`
-        insert into agent_wakeups (lead_id, at, focus)
-        values (${leadId}, now() - interval '1 minute', 'cobrar o orçamento')
-        returning id
-      `
-      )[0]!;
-      await sweepOutreach(sql);
-      const fired = (
-        await sql<{ status: string; fired_run_id: string | null }[]>`
-        select status, fired_run_id from agent_wakeups where id = ${w.id}
-      `
-      )[0]!;
-      expect(fired.status).toBe('fired');
-      expect(fired.fired_run_id).toBeTruthy();
+      expect([...pending]).toEqual([{ created_by: 'staff', requested: false }]);
+      const [mirror] = await sql<{ next_action_at: Date; next_action_source: string }[]>`
+        select next_action_at, next_action_source from leads where id = ${leadId}
+      `;
+      expect(mirror!.next_action_source).toBe('staff');
+      expect(Math.abs(mirror!.next_action_at.getTime() - staffAt.getTime())).toBeLessThan(1000);
+      await sweepWakeups(sql);
       const run = (
-        await sql<{ kind: string; params: Record<string, unknown> }[]>`
-        select kind, params from agent_runs where id = ${fired.fired_run_id!}
-      `
+        await sql<
+          { kind: string; source: string; promised: boolean; params: Record<string, unknown> }[]
+        >`
+          select kind, source, promised, params from agent_runs
+          where lead_id = ${leadId} and status = 'queued'
+        `
       )[0]!;
       expect(run.kind).toBe('outreach');
-      expect(run.params.auto).toBe('cadence');
-      expect(String(run.params.focus)).toContain('cobrar o orçamento');
-      expect(run.params.wakeupId).toBe(w.id);
+      expect(run.source).toBe('callback');
+      expect(run.promised).toBe(true);
+      expect(String(run.params.focus)).toContain('equipe');
+      // fired → nothing pending → the mirror clears
+      const [after] = await sql<{ next_action_at: Date | null }[]>`
+        select next_action_at from leads where id = ${leadId}
+      `;
+      expect(after!.next_action_at).toBeNull();
     } finally {
       await sql`update agent_runs set status = 'canceled' where lead_id = ${leadId} and status = 'queued'`;
+      await sql`update agent_wakeups set status = 'canceled' where lead_id = ${leadId} and status = 'pending'`;
       await unpinPolicy(prior);
     }
   });
@@ -657,7 +667,9 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('agent v2 (db)', () => {
     )[0]!;
     // 60c spent in the rolling window vs a $0.50 cap — over regardless of
     // ambient spend on the shared test DB.
-    const prior = await controlTx(sql, (tx) => insertRun(tx, { kind: 'discovery' }));
+    const prior = await controlTx(sql, (tx) =>
+      insertRun(tx, { source: 'staff', kind: 'discovery' }),
+    );
     await sql`update agent_runs set status = 'done', cost_cents = 60 where id = ${prior!}`;
     // the sweep touches ambient briefs too — snapshot so finally restores only the rest
     const preQueued = new Set(
@@ -687,15 +699,15 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('agent v2 (db)', () => {
       expect(byId[strat.id]!.enabled).toBe(false);
       expect(byId[strat.id]!.note).toContain('orçamento');
       expect(byId[staff.id]!.enabled).toBe(true);
-      const staffRun = await sql<{ id: string; params: Record<string, unknown> }[]>`
-        select id, params from agent_runs where kind = 'discovery' and params->>'briefId' = ${staff.id}
+      const staffRun = await sql<{ id: string; source: 'brief'; promised: boolean }[]>`
+        select id, source, promised from agent_runs where kind = 'discovery' and params->>'briefId' = ${staff.id}
       `;
       expect(staffRun).toHaveLength(1);
       // a brief run is automation: switching discovery off after it queued must park it
-      expect(staffRun[0]!.params.auto).toBe('brief');
+      expect(staffRun[0]!.source).toBe('brief');
       await setSetting('agent', { level: 'supervised', jobs: { discovery: false } });
       const pp = await controlTx(sql, (tx) => parkPolicyTx(tx));
-      expect(parked(pp, 'discovery', staffRun[0]!.params)).toBe(true);
+      expect(parked(pp, 'discovery', staffRun[0]!)).toBe(true);
     } finally {
       // undo the seeded spend + sweep-queued runs — pre-queued rows stay
       await sql`update agent_runs set status = 'canceled', cost_cents = 0 where id = ${prior!}`;
@@ -737,14 +749,14 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('agent v2 (db)', () => {
         level: 'supervised',
         jobs: { reply: false, outreach: false, discovery: false, strategist: false },
       });
-      const res = await app.request(`/control/v1/leads/${leadId}/run`, {
+      const res = await app.request('/control/v1/agent/requests', {
         method: 'POST',
         headers: {
           'x-vendua-control': 'ctl-secret',
           'content-type': 'application/json',
           'idempotency-key': `staff-run-${uniq}`,
         },
-        body: JSON.stringify({ kind: 'outreach' }),
+        body: JSON.stringify({ kind: 'outreach', leadId }),
       });
       expect(res.status).toBe(201);
       const cfg = await app.request('/control/v1/agent/config', {
@@ -798,15 +810,15 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('agent v2 (db)', () => {
       // one active run per lead — a second lead or insertRun would deliver into the auto run
       const staffLead = await mkLead('claim-staff');
       const auto = await controlTx(sql, (tx) =>
-        insertRun(tx, { kind: 'triage', leadId, params: { auto: 'x' } }),
+        insertRun(tx, { source: 'followup', kind: 'triage', leadId, params: {} }),
       );
       const staff = await controlTx(sql, (tx) =>
-        insertRun(tx, { kind: 'triage', leadId: staffLead, params: { origin: 'staff' } }),
+        insertRun(tx, { source: 'staff', kind: 'triage', leadId: staffLead, params: {} }),
       );
       const rows = await sql<{ id: string }[]>`
         select r.id from agent_runs r where r.id in (${auto!}, ${staff!})
           and not ((${p.autoOff} or r.kind = any(${p.offJobs}::text[]))
-                   and (r.params ? 'auto' or r.params->>'origin' = 'inbound'))
+                   and r.source <> 'staff' and not r.promised)
       `;
       expect(rows.map((r) => r.id)).toEqual([staff!]);
       await sql`update agent_runs set status = 'canceled' where id in (${auto!}, ${staff!})`;
@@ -822,16 +834,16 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('agent v2 (db)', () => {
       // a staff request can't inherit a run that will never claim — the parked row retires
       const offLead = await mkLead('adopt-off');
       const auto = await controlTx(sql, (tx) =>
-        insertRun(tx, { kind: 'triage', leadId: offLead, params: { auto: 'x' } }),
+        insertRun(tx, { source: 'followup', kind: 'triage', leadId: offLead, params: {} }),
       );
       // a same-kind staff item isn't the retired intent's stand-in — the retire still anchors
       await sql`
         insert into agent_inbox (lead_id, kind, payload)
         values (${offLead}, 'staff',
-          ${sql.json({ text: 'pedido', requestedKind: 'triage', params: { origin: 'staff' } } as never)})
+          ${sql.json({ text: 'pedido', requestedKind: 'triage', params: {} } as never)})
       `;
       const staff = await controlTx(sql, (tx) =>
-        insertRun(tx, { kind: 'triage', leadId: offLead, params: { origin: 'staff' } }),
+        insertRun(tx, { source: 'staff', kind: 'triage', leadId: offLead, params: {} }),
       );
       expect(staff).toBeTruthy();
       expect(staff).not.toBe(auto);
@@ -840,24 +852,23 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('agent v2 (db)', () => {
       `;
       expect(offRows.find((r) => r.id === auto)!.status).toBe('canceled');
       expect(offRows.find((r) => r.id === staff!)!.status).toBe('queued');
-      const offAnchor = await sql<
-        { payload: { requestedKind?: string; params?: { auto?: string } } }[]
-      >`
-        select payload from agent_inbox
+      const offAnchor = await sql<{ source: string; payload: { requestedKind?: string } }[]>`
+        select source, payload from agent_inbox
         where lead_id = ${offLead} and kind = 'event' and consumed_at is null
       `;
       expect(offAnchor).toHaveLength(1);
       expect(offAnchor[0]!.payload.requestedKind).toBe('triage');
-      expect(offAnchor[0]!.payload.params?.auto).toBe('x');
+      // the retired row's provenance travels with its re-anchored intent
+      expect(offAnchor[0]!.source).toBe('followup');
 
       // Same retire for a switched-off job's automation row.
       await setSetting('agent', { level: 'supervised', jobs: { discovery: false } });
       const disLead = await mkLead('adopt-disabled');
       const disc = await controlTx(sql, (tx) =>
-        insertRun(tx, { kind: 'discovery', leadId: disLead, params: { auto: 'brief' } }),
+        insertRun(tx, { source: 'brief', kind: 'discovery', leadId: disLead, params: {} }),
       );
       const staffDisc = await controlTx(sql, (tx) =>
-        insertRun(tx, { kind: 'triage', leadId: disLead, params: { origin: 'staff' } }),
+        insertRun(tx, { source: 'staff', kind: 'triage', leadId: disLead, params: {} }),
       );
       expect(staffDisc).not.toBe(disc);
       const disRows = await sql<{ id: string; status: string }[]>`
@@ -871,6 +882,7 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('agent v2 (db)', () => {
       const later = new Date(Date.now() + 3_600_000);
       const parked = await controlTx(sql, (tx) =>
         insertRun(tx, {
+          source: 'staff',
           kind: 'triage',
           leadId: dateLead,
           runAt: later,
@@ -884,11 +896,11 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('agent v2 (db)', () => {
           ${sql.json({
             text: 'pedido',
             requestedKind: 'triage',
-            params: { origin: 'staff', focus: 'triagem marcada' },
+            params: { focus: 'triagem marcada' },
           } as never)})
       `;
       const immediate = await controlTx(sql, (tx) =>
-        insertRun(tx, { kind: 'reply', leadId: dateLead }),
+        insertRun(tx, { source: 'staff', kind: 'reply', leadId: dateLead }),
       );
       expect(immediate).toBeTruthy();
       expect(immediate).not.toBe(parked);
@@ -915,24 +927,25 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('agent v2 (db)', () => {
       const quiet = new Date(Date.now() + 3_600_000);
       const replyParked = await controlTx(sql, (tx) =>
         insertRun(tx, {
+          source: 'inbound',
           kind: 'reply',
           leadId: replyLead,
           runAt: quiet,
-          params: { origin: 'inbound', channel: 'whatsapp' },
+          params: { channel: 'whatsapp' },
         }),
       );
       await sql`
-        insert into agent_inbox (lead_id, kind, payload)
+        insert into agent_inbox (lead_id, kind, payload, source)
         values (${replyLead}, 'inbound',
           ${sql.json({
             text: 'oi',
             requestedKind: 'reply',
-            params: { origin: 'inbound', channel: 'whatsapp' },
+            params: { channel: 'whatsapp' },
             notBefore: quiet.toISOString(),
-          } as never)})
+          } as never)}, 'inbound')
       `;
       const staffReply = await controlTx(sql, (tx) =>
-        insertRun(tx, { kind: 'triage', leadId: replyLead, params: { origin: 'staff' } }),
+        insertRun(tx, { source: 'staff', kind: 'triage', leadId: replyLead, params: {} }),
       );
       expect(staffReply).not.toBe(replyParked);
       const coveredMail = await sql<{ n: number }[]>`

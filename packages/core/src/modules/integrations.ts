@@ -193,8 +193,8 @@ export const DEFAULT_GUARDRAILS = {
   /** staff-created lead's outreach run is scheduled N min after create;
    *  0 = fire at once but draft-only */
   firstContactDelayMin: 0,
-  /** after an agent send, wait ≤N days for a reply before sweepOutreach picks
-   *  the lead up; stamped only when next_action_at is NULL; 0 = off */
+  /** after an agent send with no reply, book a follow-up N days out on the lead's
+   *  agenda unless something is already there; 0 = off */
   followupCadenceDays: 2,
   /** approving a draft older than N days supersedes it and recomposes against
    *  current state; 0 = approve always sends */

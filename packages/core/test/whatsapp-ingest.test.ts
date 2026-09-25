@@ -4,9 +4,9 @@ import postgres from 'postgres';
 import { ingestInbound } from '../src/agent/inbound.ts';
 import { whatsappRegistered } from '../src/agent/channels/whatsapp.ts';
 import { dispatchMessage } from '../src/agent/send.ts';
-import { claimRun, enqueueRun, sweepOutreach } from '../src/agent/runner.ts';
-import { sweepWakeups } from '../src/agent/wakeups.ts';
-import { sweepOrphanInbox } from '../src/agent/inbox.ts';
+import { claimRun, enqueueRun } from '../src/agent/runner.ts';
+import { setNextActionTx, sweepWakeups } from '../src/agent/wakeups.ts';
+import { sweepOrphanInbox } from '../src/agent/dispatch.ts';
 import { composeMessageTx } from '../src/modules/threads.ts';
 import {
   DEFAULT_GUARDRAILS,
@@ -326,7 +326,7 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('whatsapp history + ignore list 
       kind: 'reply',
       leadId,
       threadId: thread!.id,
-      params: { origin: 'staff', draftOnly: true },
+      params: { draftOnly: true },
       runAt: new Date(Date.now() + 3_600_000),
     });
     const mid = crypto.randomUUID();
@@ -337,13 +337,13 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('whatsapp history + ignore list 
       providerMessageId: `${mid}-1`,
     });
     if ('ignored' in first) throw new Error('unexpected ignore');
-    const queued = await sql<{ params: { origin?: string } }[]>`
-      select params from agent_runs where thread_id = ${thread!.id} and status = 'queued'
+    const queued = await sql<{ source: string }[]>`
+      select source from agent_runs where thread_id = ${thread!.id} and status = 'queued'
       order by created_at
     `;
     // Still exactly the staff run — the inbound went to its mailbox.
     expect(queued).toHaveLength(1);
-    expect(queued[0]!.params.origin).toBe('staff');
+    expect(queued[0]!.source).toBe('staff');
     const mailed = await sql<{ kind: string }[]>`
       select kind from agent_inbox where lead_id = ${leadId} and consumed_at is null
     `;
@@ -531,25 +531,26 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('whatsapp history + ignore list 
     // a queued auto outreach can't serve the mail (drainInbox only runs
     // inside an executing run) — it retires; the reply run carries the message
     const autoRun = (await enqueueRun(sql, {
+      source: 'followup',
       kind: 'outreach',
       leadId,
-      params: { auto: 'cadence' },
+      params: {},
       runAt: new Date(Date.now() + 3_600_000),
     }))!;
     // the cadence event tombstones with its run — the staff note waits for
     // the reply, the consumed staff instruction releases back (deliveries-stamped)
     await sql`
-      insert into agent_inbox (lead_id, kind, payload)
+      insert into agent_inbox (lead_id, kind, payload, source)
       values (${leadId}, 'event',
-        ${sql.json({ text: 'a cadência disparou', requestedKind: 'outreach', params: { auto: 'cadence' } } as never)}),
+        ${sql.json({ text: 'a cadência disparou', requestedKind: 'outreach', params: {} } as never)}, 'followup'),
              (${leadId}, 'event',
-        ${sql.json({ text: 'nota da equipe', requestedKind: 'outreach', params: {} } as never)}),
+        ${sql.json({ text: 'nota da equipe', requestedKind: 'outreach', params: {} } as never)}, 'staff'),
              (${leadId}, 'event',
-        ${sql.json({ text: 'retome a descoberta', requestedKind: 'discovery', params: { auto: 'discovery' } } as never)}),
+        ${sql.json({ text: 'retome a descoberta', requestedKind: 'discovery', params: {} } as never)}, 'brief'),
              (${leadId}, 'staff',
-        ${sql.json({ text: 'prioridade', requestedKind: 'outreach', params: {} } as never)}),
+        ${sql.json({ text: 'prioridade', requestedKind: 'outreach', params: {} } as never)}, 'staff'),
              (${leadId}, 'staff',
-        ${sql.json({ text: 'insiste na proposta', requestedKind: 'outreach', params: {}, deliveries: 2 } as never)})
+        ${sql.json({ text: 'insiste na proposta', requestedKind: 'outreach', params: {}, deliveries: 2 } as never)}, 'staff')
     `;
     await sql`
       update agent_inbox set consumed_by_run = ${autoRun}, consumed_at = now()
@@ -576,11 +577,12 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('whatsapp history + ignore list 
     const items = await sql<
       {
         kind: string;
+        source: string;
         consumed_at: Date | null;
         payload: { requestedKind?: string; params?: Record<string, unknown> };
       }[]
     >`
-      select kind, consumed_at, payload from agent_inbox where lead_id = ${leadId}
+      select kind, source, consumed_at, payload from agent_inbox where lead_id = ${leadId}
     `;
     expect(items).toHaveLength(6);
     const pending = items.filter((i) => i.consumed_at === null);
@@ -588,7 +590,7 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('whatsapp history + ignore list 
     // The disposable cadence event tombstoned with its run — scoped to
     // outreach intent, so the auto DISCOVERY event survives for its run…
     const tomb = items.find(
-      (i) => i.kind === 'event' && i.payload.requestedKind === 'outreach' && i.payload.params?.auto,
+      (i) => i.payload.requestedKind === 'outreach' && i.source === 'followup',
     );
     expect(tomb!.consumed_at).not.toBeNull();
     const discovery = items.find((i) => i.payload.requestedKind === 'discovery');
@@ -675,9 +677,10 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('whatsapp history + ignore list 
     // — it must not die with the disposable autos: the run retires and
     // re-anchors as mail on the SAME schedule (sliding run_at would break the delay)
     const regen = (await enqueueRun(sql, {
+      source: 'regenerate',
       kind: 'outreach',
       leadId,
-      params: { auto: 'regenerate', draftOnly: true },
+      params: { draftOnly: true },
       runAt: new Date(Date.now() + 3_600_000),
     }))!;
     const res = await ingestInbound(sql, {
@@ -693,6 +696,7 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('whatsapp history + ignore list 
     expect(r!.status).toBe('canceled');
     const anchors = await sql<
       {
+        source: string;
         payload: {
           requestedKind?: string;
           notBefore?: string;
@@ -700,13 +704,13 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('whatsapp history + ignore list 
         };
       }[]
     >`
-      select payload from agent_inbox
+      select source, payload from agent_inbox
       where lead_id = ${leadId} and kind = 'event' and consumed_at is null
     `;
     expect(anchors).toHaveLength(1);
     const a = anchors[0]!.payload;
     expect(a.requestedKind).toBe('outreach');
-    expect(a.params!.auto).toBe('regenerate');
+    expect(anchors[0]!.source).toBe('regenerate');
     expect(a.params!.draftOnly).toBe(true);
     expect(Date.parse(a.notBefore!) - Date.now()).toBeGreaterThan(50 * 60_000);
   });
@@ -724,9 +728,10 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('whatsapp history + ignore list 
     // A draftOnly auto parked far ahead + the draft it already committed —
     // "first contact" copy that now answers nothing.
     const autoRun = (await enqueueRun(sql, {
+      source: 'first_contact',
       kind: 'outreach',
       leadId,
-      params: { auto: 'first-contact', draftOnly: true },
+      params: { draftOnly: true },
       runAt: new Date(Date.now() + 3_600_000),
     }))!;
     // control: a FINISHED staff run's draft — 'done' rows sit outside the
@@ -785,23 +790,23 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('whatsapp history + ignore list 
     // A FINISHED draftOnly run: nothing to cancel, but its unapproved
     // "first contact" draft answers nothing after the lead replies.
     const [doneRun] = await sql<{ id: string }[]>`
-      insert into agent_runs (kind, lead_id, status, params, finished_at)
+      insert into agent_runs (kind, lead_id, status, params, finished_at, source)
       values ('outreach', ${leadId}, 'done',
-              ${sql.json({ auto: 'first-contact', draftOnly: true } as never)}, now())
+              ${sql.json({ draftOnly: true } as never)}, now(), 'first_contact')
       returning id
     `;
     const [regenRun] = await sql<{ id: string }[]>`
-      insert into agent_runs (kind, lead_id, status, params, finished_at)
+      insert into agent_runs (kind, lead_id, status, params, finished_at, source)
       values ('outreach', ${leadId}, 'done',
-              ${sql.json({ auto: 'regenerate', draftOnly: true } as never)}, now())
+              ${sql.json({ draftOnly: true } as never)}, now(), 'regenerate')
       returning id
     `;
-    // pre-'auto' sweeps stamped params.auto='agent' — same unrecoverable mix:
-    // a live row carrying it is a possible promise, never canceled/superseded
+    // a promised callback (the 0044 backfill maps legacy 'agent' here): never
+    // canceled or superseded by an inbound
     const [legacyRun] = await sql<{ id: string }[]>`
-      insert into agent_runs (kind, lead_id, status, params, run_at)
+      insert into agent_runs (kind, lead_id, status, params, run_at, source, promised, priority)
       values ('outreach', ${leadId}, 'queued',
-              ${sql.json({ auto: 'agent' } as never)}, now() + interval '1 hour')
+              ${sql.json({} as never)}, now() + interval '1 hour', 'callback', true, 1)
       returning id
     `;
     const [legacyDraft] = await sql<{ id: string }[]>`
@@ -855,7 +860,7 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('whatsapp history + ignore list 
     expect(ld!.status).toBe('draft');
   });
 
-  test("a 'requested' callback survives the inbound reply and mails unmarked", async () => {
+  test('a requested callback survives the inbound reply and fires as a promise', async () => {
     await migrate(sql, MIGRATIONS);
     // inboundReplyDelayMin parks the reply run (run_at future — the kicked
     // drain can't claim it) so the sweep's delivery target is deterministic.
@@ -868,13 +873,11 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('whatsapp history + ignore list 
     );
     const leadId = lead.body.lead.id;
     await sql`delete from agent_runs where status = 'queued'`;
-    // "me chama semana que vem" — provenance 'requested': the reply run
-    // re-commits its own cadence but can't wipe a lead-asked promise.
-    await sql`
-      update leads set next_action_at = now() + interval '2 days',
-                       next_action_source = 'requested'
-      where id = ${leadId}
-    `;
+    // "me chama semana que vem" — a requested callback: the reply retires the
+    // agent's own follow-ups but can't wipe a lead-asked promise.
+    await controlTx(sql, (tx) =>
+      setNextActionTx(tx, leadId, new Date(Date.now() + 2 * 86_400_000), 'requested'),
+    );
     const res = await ingestInbound(sql, {
       channel: 'whatsapp',
       from: '5511955550012@s.whatsapp.net',
@@ -886,29 +889,23 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('whatsapp history + ignore list 
       select next_action_source from leads where id = ${leadId}
     `;
     expect(l!.next_action_source).toBe('requested');
-    // the due promised callback materializes UNMARKED (outranks the later
-    // reply): the parked reply retires — its intent covered by the inbound
-    // mail's notBefore — while the callback mints its own run
+    // the due callback outranks the parked reply: the reply retires — its intent
+    // covered by the inbound mail's notBefore — while the callback mints its own run
     await sql`
-      update leads set next_action_at = now() - interval '1 hour' where id = ${leadId}
+      update agent_wakeups set at = now() - interval '1 hour'
+      where lead_id = ${leadId} and status = 'pending' and requested
     `;
-    expect(await sweepOutreach(sql)).toBeGreaterThanOrEqual(1);
-    const swept = await sql<{ params: Record<string, unknown> }[]>`
-      select params from agent_runs
+    expect(await sweepWakeups(sql)).toBeGreaterThanOrEqual(1);
+    const swept = await sql<{ source: string; promised: boolean; priority: number }[]>`
+      select source, promised, priority from agent_runs
       where lead_id = ${leadId} and kind = 'outreach' and status = 'queued'
     `;
-    expect(swept).toHaveLength(1);
-    expect(swept[0]!.params.auto).toBeUndefined();
-    const mailed = await sql<
-      {
-        payload: { notBefore?: string; requestedKind?: string; params?: Record<string, unknown> };
-      }[]
-    >`
-      select payload from agent_inbox
-      where lead_id = ${leadId} and kind = 'event' and consumed_at is null
+    expect([...swept]).toEqual([{ source: 'callback', promised: true, priority: 1 }]);
+    const mailed = await sql<{ source: string; promised: boolean }[]>`
+      select source, promised from agent_inbox
+      where lead_id = ${leadId} and kind = 'wakeup' and consumed_at is null
     `;
-    expect(mailed).toHaveLength(1);
-    expect((mailed[0]!.payload.params as Record<string, unknown>).auto).toBeUndefined();
+    expect([...mailed]).toEqual([{ source: 'callback', promised: true }]);
     // The inbound mail still holds the reply intent at its quiet stamp —
     // the orphan sweep respawns it there.
     const [inb] = await sql<{ payload: { notBefore?: string; requestedKind?: string } }[]>`
@@ -923,7 +920,7 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('whatsapp history + ignore list 
     expect(date!.next_action_at).toBeNull();
   });
 
-  test('a staff-scheduled sweep run carries no auto marker and survives', async () => {
+  test('staff and requested dates fire as promises that survive a reply; the agent plan retires', async () => {
     await migrate(sql, MIGRATIONS);
     // 60-min quiet period parks every reply run — the kicked drain can't
     // claim it mid-assertion, so mailed items stay pending deterministically.
@@ -931,131 +928,91 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('whatsapp history + ignore list 
       insert into control_settings (key, value) values ('guardrails', ${sql.json({ inboundReplyDelayMin: 60 } as never)})
       on conflict (key) do update set value = excluded.value
     `;
-    const lead = await controlTx(sql, (tx) =>
-      insertLeadTx(tx, { name: 'Staff Slot', whatsapp: '5511955550003' }),
-    );
-    const leadId = lead.body.lead.id;
+    const mk = async (name: string, wa: string, who: 'staff' | 'agent' | 'requested') => {
+      const l = await controlTx(sql, (tx) => insertLeadTx(tx, { name, whatsapp: wa }));
+      await controlTx(sql, (tx) =>
+        setNextActionTx(tx, l.body.lead.id, new Date(Date.now() - 3_600_000), who),
+      );
+      return l.body.lead.id;
+    };
     await sql`delete from agent_runs where status = 'queued'`;
-    // staff dates materialize unmarked (a reply can't cancel them); 'auto'
-    // dates are the model's disposable cadence; legacy 'agent' (0025's
-    // unrecoverable mix) takes the preserved side
-    await sql`
-      update leads set next_action_at = now() - interval '1 hour',
-                       next_action_source = 'staff'
-      where id = ${leadId}
-    `;
-    const autoLead = await controlTx(sql, (tx) =>
-      insertLeadTx(tx, { name: 'Auto Slot', whatsapp: '5511955550004' }),
-    );
-    await sql`
-      update leads set next_action_at = now() - interval '1 hour',
-                       next_action_source = 'auto'
-      where id = ${autoLead.body.lead.id}
-    `;
-    const legacyLead = await controlTx(sql, (tx) =>
-      insertLeadTx(tx, { name: 'Legacy Slot', whatsapp: '5511955550005' }),
-    );
-    await sql`
-      update leads set next_action_at = now() - interval '1 hour',
-                       next_action_source = 'agent'
-      where id = ${legacyLead.body.lead.id}
-    `;
+    const staffLead = await mk('Staff Slot', '5511955550003', 'staff');
+    const autoLead = await mk('Auto Slot', '5511955550004', 'agent');
+    const askedLead = await mk('Asked Slot', '5511955550005', 'requested');
     // an in-flight drain could claim a materialized run in the sweep→park
     // gap: hold each lead's `claimrun:` advisory so same-lead claims reject
-    // at pg_try_ — the rows stay parked 'queued' (sweepOutreach only tries `capfin:`)
-    const leadIds = [leadId, autoLead.body.lead.id, legacyLead.body.lead.id];
-    let swept: { id: string; lead_id: string; params: Record<string, unknown> }[] = [];
-    let autoSwept: { id: string; lead_id: string; params: Record<string, unknown> }[] = [];
-    let legacySwept: { id: string; lead_id: string; params: Record<string, unknown> }[] = [];
+    // at pg_try_ — the rows stay parked 'queued' (the sweep only tries `capfin:`)
+    const leadIds = [staffLead, autoLead, askedLead];
+    type Row = { id: string; lead_id: string; source: string; promised: boolean };
+    let parked: Row[] = [];
     const gate = await sql.reserve();
     try {
       for (const id of leadIds) await gate`select pg_advisory_lock(hashtext(${'claimrun:' + id}))`;
-      expect(await sweepOutreach(sql)).toBeGreaterThanOrEqual(3);
+      expect(await sweepWakeups(sql)).toBeGreaterThanOrEqual(3);
       // Park + fetch in one statement — no cross-statement window left
       // for a late claim to slip into after the advisory releases.
-      const parked = await sql<{ id: string; lead_id: string; params: Record<string, unknown> }[]>`
+      parked = await sql<Row[]>`
         update agent_runs set run_at = now() + interval '1 hour'
-        where kind = 'outreach' and status = 'queued'
-          and lead_id in ${sql(leadIds)}
-        returning id, lead_id, params
+        where kind = 'outreach' and status = 'queued' and lead_id in ${sql(leadIds)}
+        returning id, lead_id, source, promised
       `;
-      swept = parked.filter((r) => r.lead_id === leadId);
-      autoSwept = parked.filter((r) => r.lead_id === autoLead.body.lead.id);
-      legacySwept = parked.filter((r) => r.lead_id === legacyLead.body.lead.id);
     } finally {
       await gate`select pg_advisory_unlock_all()`;
       gate.release();
     }
-    expect(swept).toHaveLength(1);
-    expect(swept[0]!.params.auto).toBeUndefined();
-    expect(autoSwept).toHaveLength(1);
-    expect(autoSwept[0]!.params.auto).toBe('auto');
-    expect(legacySwept).toHaveLength(1);
-    // Provenance unrecoverable → preserved: the run carries no auto marker
-    // so a reply can't cancel the possible promise.
-    expect(legacySwept[0]!.params.auto).toBeUndefined();
-    const res = await ingestInbound(sql, {
-      channel: 'whatsapp',
-      from: '5511955550003@s.whatsapp.net',
-      body: 'oi',
-      providerMessageId: `fx10c-${crypto.randomUUID()}`,
-    });
-    if ('ignored' in res) throw new Error('unexpected ignore');
-    const [r] = await sql<{ status: string }[]>`
-      select status from agent_runs where id = ${swept[0]!.id}
-    `;
-    expect(r!.status).not.toBe('canceled');
-    // The 'auto' nudge is disposable: canceled on the lead's own inbound,
-    // and the unswept date clears the same way.
-    const res2 = await ingestInbound(sql, {
-      channel: 'whatsapp',
-      from: '5511955550004@s.whatsapp.net',
-      body: 'oi',
-      providerMessageId: `fx10d-${crypto.randomUUID()}`,
-    });
-    if ('ignored' in res2) throw new Error('unexpected ignore');
-    const [ar] = await sql<{ status: string }[]>`
-      select status from agent_runs where id = ${autoSwept[0]!.id}
-    `;
-    // the disposable 'auto' nudge retires with the drafts (a queued run
-    // can't drain mail); the reply run carries the item — the date already
-    // cleared at materialization
-    expect(ar!.status).toBe('canceled');
+    const of = (id: string) => parked.filter((r) => r.lead_id === id);
+    expect(of(staffLead)).toEqual([
+      expect.objectContaining({ source: 'callback', promised: true }),
+    ]);
+    expect(of(askedLead)).toEqual([
+      expect.objectContaining({ source: 'callback', promised: true }),
+    ]);
+    expect(of(autoLead)).toEqual([
+      expect.objectContaining({ source: 'followup', promised: false }),
+    ]);
+    const reply = async (wa: string, tag: string) => {
+      const r = await ingestInbound(sql, {
+        channel: 'whatsapp',
+        from: `${wa}@s.whatsapp.net`,
+        body: 'oi',
+        providerMessageId: `${tag}-${crypto.randomUUID()}`,
+      });
+      if ('ignored' in r) throw new Error('unexpected ignore');
+    };
+    const status = async (id: string) =>
+      (await sql<{ status: string }[]>`select status from agent_runs where id = ${id}`)[0]!.status;
+    await reply('5511955550003', 'fx10c');
+    expect(await status(of(staffLead)[0]!.id)).not.toBe('canceled');
+    await reply('5511955550005', 'fx10e');
+    expect(await status(of(askedLead)[0]!.id)).not.toBe('canceled');
+    // the agent's own nudge is disposable: canceled on the lead's inbound; the
+    // reply run carries the item
+    await reply('5511955550004', 'fx10d');
+    expect(await status(of(autoLead)[0]!.id)).toBe('canceled');
     const autoMail = await sql`select 1 from agent_inbox
-      where lead_id = ${autoLead.body.lead.id} and kind = 'inbound' and consumed_at is null`;
+      where lead_id = ${autoLead} and kind = 'inbound' and consumed_at is null`;
     expect(autoMail).toHaveLength(1);
-    const autoReply = await sql`select 1 from agent_runs
-      where lead_id = ${autoLead.body.lead.id} and kind = 'reply'`;
+    const autoReply =
+      await sql`select 1 from agent_runs where lead_id = ${autoLead} and kind = 'reply'`;
     expect(autoReply).toHaveLength(1);
-    const autoDate = await sql<{ next_action_at: Date | null }[]>`
-      select next_action_at from leads where id = ${autoLead.body.lead.id}
+    // a pending agent date retires on inbound; a requested one stays
+    await controlTx(sql, (tx) =>
+      setNextActionTx(tx, autoLead, new Date(Date.now() + 2 * 86_400_000), 'agent'),
+    );
+    await controlTx(sql, (tx) =>
+      setNextActionTx(tx, askedLead, new Date(Date.now() + 2 * 86_400_000), 'requested'),
+    );
+    await reply('5511955550004', 'fx10g');
+    await reply('5511955550005', 'fx10h');
+    const dates = await sql<{ id: string; next_action_source: string | null }[]>`
+      select id, next_action_source from leads where id in ${sql([autoLead, askedLead])}
     `;
-    expect(autoDate[0]!.next_action_at).toBeNull();
-    // the legacy 'agent' run and a still-pending 'agent' date both survive —
-    // clearing could delete a callback the lead itself asked for
-    await sql`
-      update leads set next_action_at = now() + interval '2 days',
-                       next_action_source = 'agent'
-      where id = ${legacyLead.body.lead.id}
-    `;
-    const res3 = await ingestInbound(sql, {
-      channel: 'whatsapp',
-      from: '5511955550005@s.whatsapp.net',
-      body: 'oi',
-      providerMessageId: `fx10e-${crypto.randomUUID()}`,
-    });
-    if ('ignored' in res3) throw new Error('unexpected ignore');
-    const [lr] = await sql<{ status: string }[]>`
-      select status from agent_runs where id = ${legacySwept[0]!.id}
-    `;
-    expect(lr!.status).not.toBe('canceled');
-    const legacyDate = await sql<{ next_action_source: string | null }[]>`
-      select next_action_source from leads where id = ${legacyLead.body.lead.id}
-    `;
-    expect(legacyDate[0]!.next_action_source).toBe('agent');
+    const src = Object.fromEntries(dates.map((d) => [d.id, d.next_action_source]));
+    expect(src[autoLead]).toBeNull();
+    expect(src[askedLead]).toBe('requested');
   });
 
-  test('autonomy-off stalls only the model’s own sweep — promised work still materializes', async () => {
+  test('preset off stalls only the agent’s own plans — promised work still materializes', async () => {
     await migrate(sql, MIGRATIONS);
     await sql`
       insert into control_settings (key, value) values ('agent', ${sql.json({ level: 'off' } as never)})
@@ -1066,26 +1023,17 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('whatsapp history + ignore list 
         insertLeadTx(tx, { name: 'Asked Back', whatsapp: '5511955550013' }),
       );
       const promisedId = promised.body.lead.id;
-      await sql`
-        update leads set next_action_at = now() - interval '1 hour',
-                         next_action_source = 'requested'
-        where id = ${promisedId}
-      `;
       const auto = await controlTx(sql, (tx) =>
         insertLeadTx(tx, { name: 'Auto Cadence', whatsapp: '5511955550014' }),
       );
-      await sql`
-        update leads set next_action_at = now() - interval '1 hour',
-                         next_action_source = 'auto'
-        where id = ${auto.body.lead.id}
-      `;
       await sql`delete from agent_runs where status = 'queued'`;
-      // A queued auto outreach parked under 'off' can never claim — the
-      // promised date retires it so insertRun mints a runnable owner.
+      // A queued automated outreach parked under 'off' can never claim — the
+      // promised callback retires it so insertRun mints a runnable owner.
       const parked = (await enqueueRun(sql, {
+        source: 'first_contact',
         kind: 'outreach',
         leadId: promisedId,
-        params: { auto: 'first-contact' },
+        params: {},
         runAt: new Date(Date.now() + 3_600_000),
       }))!;
       // Mail the parked run already consumed — even at the deliveries
@@ -1096,14 +1044,16 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('whatsapp history + ignore list 
           ${sql.json({ text: 'liga amanhã', requestedKind: 'outreach', params: {}, deliveries: 2 } as never)},
           ${parked}, now())
       `;
-      // the model's own due wakeup parks under the same switch — it must
-      // NOT fold its focus into the allowed promised run
+      const due = new Date(Date.now() - 3_600_000);
+      await controlTx(sql, (tx) => setNextActionTx(tx, promisedId, due, 'requested'));
+      await controlTx(sql, (tx) => setNextActionTx(tx, auto.body.lead.id, due, 'agent'));
+      // the agent's own due plan on the promised lead parks under the same switch
       await sql`
         insert into agent_wakeups (lead_id, kind, at, focus, created_by, requested, status)
         values (${promisedId}, 'outreach', now() - interval '1 minute',
                 'sondagem de cadência', 'agent', false, 'pending')
       `;
-      expect(await sweepOutreach(sql)).toBeGreaterThanOrEqual(1);
+      expect(await sweepWakeups(sql)).toBeGreaterThanOrEqual(1);
       const [pr] = await sql<{ status: string }[]>`
         select status from agent_runs where id = ${parked}
       `;
@@ -1113,22 +1063,21 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('whatsapp history + ignore list 
         where lead_id = ${promisedId} and kind = 'staff'
       `;
       expect(released!.consumed_at).toBeNull();
-      // The lead-asked callback fires unmarked — a promise outranks the
-      // workspace switch the same way a staff decision does.
-      const swept = await sql<{ id: string; params: Record<string, unknown> }[]>`
-        select id, params from agent_runs
+      // The lead-asked callback fires — a promise outranks the preset the same
+      // way a staff decision does.
+      const swept = await sql<{ id: string; source: string; params: Record<string, unknown> }[]>`
+        select id, source, params from agent_runs
         where lead_id = ${promisedId} and kind = 'outreach' and status = 'queued'
       `;
       expect(swept).toHaveLength(1);
       expect(swept[0]!.id).not.toBe(parked);
-      expect(swept[0]!.params.auto).toBeUndefined();
-      // The wakeup stayed pending for its own sweep's gate — no fold.
-      expect(swept[0]!.params.focus).toBeUndefined();
+      expect(swept[0]!.source).toBe('callback');
+      expect(String(swept[0]!.params.focus)).not.toContain('sondagem');
       const [wk] = await sql<{ status: string }[]>`
-        select status from agent_wakeups where lead_id = ${promisedId}
+        select status from agent_wakeups where lead_id = ${promisedId} and not requested
       `;
       expect(wk!.status).toBe('pending');
-      // …while the model's own cadence nudge parks under autonomy 'off'.
+      // …while the agent's own follow-up parks under 'off'.
       const skipped = await sql`
         select 1 from agent_runs where lead_id = ${auto.body.lead.id}
       `;

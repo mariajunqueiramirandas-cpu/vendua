@@ -9,6 +9,7 @@ import {
 } from '../modules/integrations.ts';
 import type { JobKind } from './tool-meta.ts';
 import { channelAvailabilityTx } from './guardrails.ts';
+import { isAutomated, type Provenance } from './sources.ts';
 
 // The one agent setting (`agent`): autonomy preset × automatic jobs × staff instructions,
 // consulted by claimRun / checkSendAllowedTx / every enqueue gate.
@@ -82,11 +83,6 @@ export async function automationAllowedTx(tx: Sql, kind: JobKind): Promise<Autom
   return { ok: true };
 }
 
-/** Automation markers ('auto' key / inbound origin); unmarked work is staff or a promise and always runs. */
-export function isAutomation(params: Record<string, unknown> | null | undefined): boolean {
-  return params != null && ('auto' in params || params['origin'] === 'inbound');
-}
-
 export interface ParkPolicy {
   autoOff: boolean;
   /** kinds whose automation parks (job switched off) */
@@ -98,13 +94,13 @@ export async function parkPolicyTx(tx: Sql): Promise<ParkPolicy> {
   return { autoOff: a.level === 'off', offJobs: AGENT_JOBS.filter((k) => !a.jobs[k]) };
 }
 
-/** automation-marked work of a kind the preset/jobs switched off parks; everything else runs */
+/** automated work of a kind the preset/jobs switched off parks; staff asks and promises always run */
 export function parked(
   p: ParkPolicy,
   kind: string,
-  params: Record<string, unknown> | null | undefined,
+  prov: Pick<Provenance, 'source' | 'promised'>,
 ): boolean {
-  return isAutomation(params) && (p.autoOff || (p.offJobs as string[]).includes(kind));
+  return isAutomated(prov) && (p.autoOff || (p.offJobs as string[]).includes(kind));
 }
 
 // copilot/off force drafts; supervised drafts first contact; autopilot sends within guardrails.

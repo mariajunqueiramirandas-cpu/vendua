@@ -283,8 +283,8 @@ export function leadInsert(body: Record<string, unknown>): Record<string, unknow
 export function leadPatch(
   body: Record<string, unknown>,
   actor: 'agent' | 'staff' = 'staff',
-  /** true marks nextActionAt as lead-requested — 'requested' survives an
-   *  inbound reply, unlike 'cadence'/'auto'. */
+  /** true marks nextActionAt as lead-requested — a promised callback that
+   *  survives an inbound reply, unlike the agent's own follow-up. */
   nextActionRequested = false,
 ): Record<string, unknown> {
   const set: Record<string, unknown> = {};
@@ -309,8 +309,7 @@ export function leadPatch(
   if ('dealValueCents' in body) set.deal_value_cents = dealValue(body.dealValueCents);
   if ('nextActionAt' in body) {
     set.next_action_at = timestampValue(body.nextActionAt, 'nextActionAt');
-    // provenance: 'requested'/'staff' survive inbound replies; 'auto' for
-    // tool calls since 'agent' is the unrecoverable 0025 backfill legacy
+    // who set it — updateLead turns this into an agenda entry (ADR 0016)
     set.next_action_source =
       set.next_action_at === null
         ? null
@@ -689,11 +688,18 @@ export async function insertLeadTx(
   tx: Sql,
   fields: Record<string, unknown>,
 ): Promise<{ status: number; body: { lead: Lead } }> {
-  const rows = await tx<LeadRow[]>`insert into leads ${tx(fields)} returning *`;
+  const { next_action_at: nextAt, next_action_source: _src, ...cols } = fields;
+  let rows = await tx<LeadRow[]>`insert into leads ${tx(cols)} returning *`;
   await tx`
     insert into lead_state_history (lead_id, from_state, to_state, actor, value_cents)
     values (${rows[0]!.id}, null, ${rows[0]!.state}, 'staff', ${rows[0]!.deal_value_cents})
   `;
+  // a next-action date is an agenda entry (ADR 0016) — the column only mirrors it
+  if (nextAt) {
+    const { setNextActionTx } = await import('../agent/wakeups.ts');
+    await setNextActionTx(tx, rows[0]!.id, nextAt as string, 'staff');
+    rows = await tx<LeadRow[]>`select * from leads where id = ${rows[0]!.id}`;
+  }
   return { status: 201, body: { lead: leadJson(rows[0]!) } };
 }
 
@@ -717,9 +723,27 @@ export async function updateLead(
     if ('email' in set && normEmail(set.email) !== normEmail(cur.email)) {
       set.email_bounced_at = null;
     }
-    const rows = await tx<LeadRow[]>`
-      update leads set ${tx(set)}, updated_at = now() where id = ${id} returning *
-    `;
+    // a next-action date is an agenda entry (ADR 0016) — the column only mirrors it
+    let nextAction: { at: string | null; who: 'staff' | 'agent' | 'requested' } | null = null;
+    if ('next_action_at' in set) {
+      const src = set.next_action_source;
+      nextAction = {
+        at: (set.next_action_at as string | null) ?? null,
+        who: src === 'requested' ? 'requested' : actor === 'agent' ? 'agent' : 'staff',
+      };
+      delete set.next_action_at;
+      delete set.next_action_source;
+    }
+    let rows = Object.keys(set).length
+      ? await tx<LeadRow[]>`
+          update leads set ${tx(set)}, updated_at = now() where id = ${id} returning *
+        `
+      : await tx<LeadRow[]>`update leads set updated_at = now() where id = ${id} returning *`;
+    if (nextAction) {
+      const { setNextActionTx } = await import('../agent/wakeups.ts');
+      await setNextActionTx(tx, id, nextAction.at, nextAction.who);
+      rows = await tx<LeadRow[]>`select * from leads where id = ${id}`;
+    }
     if (typeof set.state === 'string' && set.state !== cur.state) {
       // value_cents stamps the post-update deal value at the transition
       await tx`

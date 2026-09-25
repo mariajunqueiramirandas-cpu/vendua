@@ -3,10 +3,11 @@ import { controlTx } from '../modules/control.ts';
 import { emitControlEvent } from '../modules/control-events.ts';
 import { getGuardrails, phoneIsIgnored } from '../modules/integrations.ts';
 import { addInboundMessage, type Channel, type InboundResult } from '../modules/threads.ts';
-import { capLockTx, drain, insertRun, releaseInboxTx } from './runner.ts';
-import { enqueueInboxTx } from './inbox.ts';
+import { capLockTx, drain, releaseInboxTx } from './runner.ts';
+import { requestAgentTx } from './dispatch.ts';
 import { automationAllowedTx } from './policy.ts';
 import { retireWakeupsOnInboundTx } from './wakeups.ts';
+import { RETIRED_BY_INBOUND } from './sources.ts';
 import { log } from '../platform/log.ts';
 
 const agentLog = log.child({ mod: 'agent' });
@@ -72,7 +73,7 @@ export async function ingestInbound(
   // suppression writers so a suppression committed mid-flight is seen here
   const supersededThreads: string[] = [];
   const canceledRunIds: string[] = [];
-  const { runId, capFlagged, retired } = await controlTx(sql, async (tx) => {
+  const { runId, capFlagged, retired, startAt } = await controlTx(sql, async (tx) => {
     // 'capfin' advisory first: serializes this gate against claims and cap
     // evaluators; must precede the l,t lock to avoid a lock-order cycle. See capLockTx.
     await capLockTx(tx, res.leadId);
@@ -82,8 +83,8 @@ export async function ingestInbound(
       where t.id = ${res.threadId}
       for update of l, t
     `;
-    // retire composed auto-outreach drafts — obsolete once the lead writes;
-    // 'regenerate'/'agent' exempt (possibly a promise), running runs untouched
+    // retire the agent's own unanswered outreach drafts — obsolete once the lead writes;
+    // promises and staff asks survive, running runs untouched
     const drafts = await tx<{ thread_id: string }[]>`
       update lead_messages m
       set status = 'rejected', error = 'lead respondeu', updated_at = now()
@@ -91,8 +92,7 @@ export async function ingestInbound(
         and m.agent_run_id in (
           select r.id from agent_runs r
           where r.lead_id = ${res.leadId} and r.kind = 'outreach'
-            and r.params->>'auto' is not null
-            and r.params->>'auto' not in ('regenerate', 'agent')
+            and r.source = any(${RETIRED_BY_INBOUND as string[]}::text[]) and not r.promised
         )
       returning m.thread_id
     `;
@@ -103,22 +103,19 @@ export async function ingestInbound(
       update agent_runs
       set status = 'canceled', error = 'lead respondeu', finished_at = now()
       where lead_id = ${res.leadId} and kind = 'outreach' and status = 'queued'
-        and params->>'auto' is not null
-        and params->>'auto' not in ('regenerate', 'agent')
+        and source = any(${RETIRED_BY_INBOUND as string[]}::text[]) and not promised
       returning id
     `;
     canceledRunIds.push(...canceled.map((c) => c.id));
-    // release mail consumed in the dead attempts, then tombstone pending
-    // cadence/'wakeup' inbox items those runs minted — scoped to
-    // requestedKind='outreach' so promised wakeups stay
+    // release mail consumed in the dead attempts, then tombstone the same class of pending
+    // outreach requests — promised callbacks stay
     for (const rid of canceledRunIds) await releaseInboxTx(tx, rid, true);
     await tx`
       update agent_inbox
       set consumed_at = now(), consumed_by_run = null
-      where lead_id = ${res.leadId} and kind in ('event', 'wakeup') and consumed_at is null
+      where lead_id = ${res.leadId} and consumed_at is null
         and payload->>'requestedKind' = 'outreach'
-        and payload->'params'->>'auto' is not null
-        and payload->'params'->>'auto' not in ('regenerate', 'agent')
+        and source = any(${RETIRED_BY_INBOUND as string[]}::text[]) and not promised
     `;
     await retireWakeupsOnInboundTx(tx, res.leadId);
     const gate = gateRows[0];
@@ -130,50 +127,38 @@ export async function ingestInbound(
       gate.unsubscribed_at ||
       gate.archived_at
     ) {
-      return { runId: null, capFlagged: false, retired: [] };
+      return { runId: null, capFlagged: false, retired: [], startAt: null };
     }
     if (!(await automationAllowedTx(tx, 'reply')).ok) {
-      return { runId: null, capFlagged: false, retired: [] };
+      return { runId: null, capFlagged: false, retired: [], startAt: null };
     }
-    // enqueue as an inbox item: an active run drains it between steps (burst
-    // coalescing); a channel mismatch defers to a sweep-spawned run pinned to
-    // this channel. notBefore carries the quiet period into the deferred path.
-    await enqueueInboxTx(tx, res.leadId, 'inbound', {
-      text: `mensagem do lead [${input.channel}]: ${input.body.slice(0, 400)}`,
+    // an active run drains the item between steps (burst coalescing); a channel mismatch
+    // defers to a sweep-spawned run pinned to this channel. The dispatcher carries the
+    // reply delay — and quiet hours, when the answer would go out live — into the start.
+    const d = await requestAgentTx(tx, {
+      kind: 'reply',
+      source: 'inbound',
+      leadId: res.leadId,
       threadId: res.threadId,
-      messageId: res.messageId,
-      requestedKind: 'reply',
-      params: { origin: 'inbound', channel: input.channel },
+      text: `mensagem do lead [${input.channel}]: ${input.body.slice(0, 400)}`,
+      params: { channel: input.channel },
+      ref: { messageId: res.messageId },
+      // a capped lead's message waits for budget — raising the cap answers it
+      holdIfRefused: true,
       ...(inboundReplyDelayMin > 0
-        ? {
-            notBefore: new Date(Date.now() + inboundReplyDelayMin * 60_000).toISOString(),
-          }
+        ? { at: new Date(Date.now() + inboundReplyDelayMin * 60_000) }
         : {}),
     });
-    const cap: { flagged?: boolean; retired?: string[] } = {};
-    const id = await insertRun(
-      tx,
-      {
-        kind: 'reply',
-        leadId: res.leadId,
-        threadId: res.threadId,
-        params: { origin: 'inbound', channel: input.channel },
-        ...(inboundReplyDelayMin > 0
-          ? { runAt: new Date(Date.now() + inboundReplyDelayMin * 60_000) }
-          : {}),
-      },
-      cap,
-    );
-    return { runId: id, capFlagged: cap.flagged === true, retired: cap.retired ?? [] };
+    return { runId: d.runId, capFlagged: d.capFlagged, retired: d.retired, startAt: d.startAt };
   });
   for (const tid of new Set(supersededThreads)) emitControlEvent('draft.change', tid);
   for (const id of [...canceledRunIds, ...retired]) emitControlEvent('run.update', id);
   if (capFlagged) emitControlEvent('lead.change');
   if (runId) {
-    // slide the parked reply's quiet period to now+delay — outside the l,t tx
+    // slide the parked reply's quiet period to its start — outside the l,t tx
     // because claimRun locks run→thread while the gate holds thread→run
-    if (inboundReplyDelayMin > 0) {
-      const due = new Date(Date.now() + inboundReplyDelayMin * 60_000);
+    if (startAt && startAt.getTime() > Date.now()) {
+      const due = startAt;
       await controlTx(sql, async (tx) => {
         await tx`
           update agent_runs
