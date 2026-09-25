@@ -223,12 +223,12 @@ export async function insertRun(
       if (!retired.length) return a.id;
       if (cap) (cap.retired ??= []).push(a.id);
       // A pending item only stands in for the retired row when it carries
-      // the same intent whole: same kind, same thread, and the item's
-      // params containing every param the row had (provenance, channel,
-      // draftOnly, focus, src, wakeupId — the sweep respawns from the
-      // item's own params, so anything missing is lost intent). A
-      // scheduled row also needs a notBefore reaching its deadline or
-      // the schedule evaporates with it.
+      // the same intent whole: same kind, same thread, and EQUAL params —
+      // the sweep respawns from the item's own params, so a missing key
+      // loses intent while an extra gating key ('auto', channel,
+      // draftOnly) makes it spawn or drain under different constraints
+      // than the row had. A scheduled row also needs a notBefore reaching
+      // its deadline or the schedule evaporates with it.
       const covered = (
         await tx<{ ok: boolean }[]>`
           select exists (
@@ -236,7 +236,7 @@ export async function insertRun(
             where i.lead_id = ${input.leadId ?? null} and i.consumed_at is null
               and i.payload->>'requestedKind' = ${a.kind}
               and coalesce(i.payload->>'threadId', '') = ${a.thread_id ?? ''}
-              and coalesce(i.payload->'params', '{}'::jsonb) @> ${tx.json(p as never)}::jsonb
+              and coalesce(i.payload->'params', '{}'::jsonb) = ${tx.json(p as never)}::jsonb
               and (not ${scheduled}
                    or coalesce(nullif(i.payload->>'notBefore', '')::timestamptz,
                         '-infinity'::timestamptz)
