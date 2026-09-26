@@ -1,6 +1,6 @@
 # ADR 0005: System surfaces are server-driven
 
-- Status: Proposed
+- Status: Proposed — brand-page boundary amended by [ADR 0018](0018-page-composition.md)
 - Date: 2026-09-11
 
 ## Context
@@ -23,6 +23,11 @@ generic renderings per fixed rules.
 
 This is deliberately bounded: SDUI applies **only** to system surfaces. Brand
 pages are real code and never go through a JSON schema.
+
+> **Amended by [ADR 0018](0018-page-composition.md):** brand pages become
+> templates, meaning data listing sections and blocks. The design inside a store
+> section stays real code. Only the page's composition is data; visuals are
+> never rendered from a schema.
 
 ## Consequences
 

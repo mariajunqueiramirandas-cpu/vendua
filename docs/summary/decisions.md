@@ -1,7 +1,7 @@
 # Decisions — all ADRs in brief
 
 0001–0013: **Proposed** (2026-09-11); 0014–0017: **Accepted** (2026-09-25/26,
-CRM agent). Full text in [`../adr/`](../adr/).
+CRM agent); 0018: **Proposed** (2026-09-26). Full text in [`../adr/`](../adr/).
 
 | #    | Decision                                             | Why                                                                                                                                          | Main cost                                                                                   |
 | ---- | ---------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------- |
@@ -22,6 +22,7 @@ CRM agent). Full text in [`../adr/`](../adr/).
 | 0015 | One agent, several jobs                              | ~50 overlapping playbook knobs; jobs stay in code, staff set one `agent` setting (preset + job switches)                                     | Less per-kind tuning; prompt changes are code changes                                       |
 | 0016 | One dispatcher, one agenda                           | 12 paths started runs via `params` markers; `requestAgentTx` + `source` provenance make it one path                                          | Every new trigger must name a `source` and go through the dispatcher                        |
 | 0017 | Scheduler sleeps until due, wakes on change          | 15-s tick did constant idle work and hid missed transitions                                                                                  | Every future-work source needs a due time and a `pg_notify` trigger                         |
+| 0018 | Pages composed from SDK + store sections             | New features must reach brand pages with no per-store code; fixed regions can't anticipate the future                                        | Bigger Kernel scope; page skeleton becomes data (Contract v2)                               |
 
 ## Rejected alternatives worth remembering
 
@@ -29,7 +30,8 @@ CRM agent). Full text in [`../adr/`](../adr/).
 - **Multi-framework / Web Components** (0002): per-framework tax; primitives/SDUI collapse to lowest common denominator.
 - **Container per storefront / shared SSR now** (0003): economically fatal / premature; SSR host is the documented upgrade path if static-first fails.
 - **Custom or hosted-redirect checkout** (0004): unbounded risk / breaks the premium illusion.
-- **SDUI for everything** (0005): kills the bespoke differentiator.
+- **SDUI for everything** (0005): kills the bespoke differentiator. (0018 makes only page _composition_ data; section design stays code.)
+- **Fixed required regions / per-store adoption PRs** (0018): can't anticipate new regions / agent cost × N per feature.
 - **Agents as the migration mechanism** (0008): unbounded nondeterministic cost; agents handle only the codemod failure tail.
 - **Venduá as payment aggregator** (0009): custody + compliance burden — rejected outright.
 - **Deep single-agent-vendor integration** (0012): strategic dead-end.

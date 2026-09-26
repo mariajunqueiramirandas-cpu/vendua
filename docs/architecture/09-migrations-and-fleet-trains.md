@@ -9,14 +9,15 @@ The design goal: a train is a boring, scheduled non-event.
 
 ## Change classes → process map
 
-| Change                                        | Mechanism                                                 | Storefront code touched?        |
-| --------------------------------------------- | --------------------------------------------------------- | ------------------------------- |
-| Backend rule/content                          | Deploy Core. Done.                                        | Never                           |
-| New notice kind / SDUI field                  | Deploy Core; generic render covers old Kernels            | Never                           |
-| New Kernel default / new slot                 | Kernel minor → fleet train (rebuild all, promote by ring) | Never                           |
-| Additive hook/prop                            | Kernel minor → train; adoption optional                   | Never (opt-in)                  |
-| Slot rename, config shape change, removed API | Contract major → codemod → train                          | Codemod; failures → agent queue |
-| New brand page / redesign                     | Storefront PR (agent or human)                            | That storefront only            |
+| Change                                        | Mechanism                                                                                            | Storefront code touched?        |
+| --------------------------------------------- | ---------------------------------------------------------------------------------------------------- | ------------------------------- |
+| Backend rule/content                          | Deploy Core. Done.                                                                                   | Never                           |
+| New notice kind / SDUI field                  | Deploy Core; generic render covers old Kernels                                                       | Never                           |
+| New Kernel default / new slot                 | Kernel minor → fleet train (rebuild all, promote by ring)                                            | Never                           |
+| Additive hook/prop                            | Kernel minor → train; adoption optional                                                              | Never (opt-in)                  |
+| New SDK section/block on brand pages          | Kernel minor → train → template migration by ring ([17](17-page-composition.md#template-migrations)) | Never                           |
+| Slot rename, config shape change, removed API | Contract major → codemod → train                                                                     | Codemod; failures → agent queue |
+| New brand page / redesign                     | Storefront PR (agent or human)                                                                       | That storefront only            |
 
 ## Fleet trains
 
