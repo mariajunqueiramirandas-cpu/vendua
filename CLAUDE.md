@@ -13,6 +13,8 @@ Monorepo (bun workspaces): `packages/core` (Hono + Postgres API), `packages/kern
   `platform/http.ts`; checkout creates at most one order per cart.
 - Storefronts talk to Core only through the kernel api client (never raw `fetch`).
 - Inputs are bounded (length/size caps) and bad ids return stable 4xx, never a 500.
+- Agent work is requested only through `requestAgentTx` (`agent/dispatch.ts`) with a `source`;
+  nothing else inserts runs. Future touches on a lead are `agent_wakeups` rows (ADR 0016).
 
 ## Toolchain
 

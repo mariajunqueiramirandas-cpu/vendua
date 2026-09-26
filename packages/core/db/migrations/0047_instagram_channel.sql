@@ -1,4 +1,4 @@
--- 0044_instagram_channel.sql — Instagram DMs through the ig-sidecar (services/ig-sidecar):
+-- 0047_instagram_channel.sql — Instagram DMs through the ig-sidecar (services/ig-sidecar):
 -- a thread channel, an integration kind, and the sidecar's session store.
 alter table lead_threads drop constraint if exists lead_threads_channel_check;
 alter table lead_threads add constraint lead_threads_channel_check

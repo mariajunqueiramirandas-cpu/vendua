@@ -1,15 +1,12 @@
 import type { Sql } from '../platform/db.ts';
 import { HttpError } from '../platform/http.ts';
-import { log } from '../platform/log.ts';
 import { claimControl, controlTx } from '../modules/control.ts';
 import { emitControlEvent } from '../modules/control-events.ts';
-import { insertRun, releaseInboxTx } from './runner.ts';
-import { enqueueInboxTx } from './inbox.ts';
+import { releaseInboxTx } from './runner.ts';
+import { requestAgentTx } from './dispatch.ts';
 import { parkPolicyTx } from './policy.ts';
 import type { JobKind } from './tool-meta.ts';
 import { capCentsOf, getSettingTx, type Guardrails } from '../modules/integrations.ts';
-
-const agentLog = log.child({ mod: 'agent' });
 
 export const WAKEUP_MIN_LEAD_MS = 10 * 60_000;
 export const WAKEUP_MAX_AHEAD_MS = 90 * 86_400_000;
@@ -84,7 +81,26 @@ export function parseWakeupAt(v: unknown, now = Date.now()): Date | string {
   return new Date(t);
 }
 
-/** replace the lead's pending agent wakeup inside the tool's claim tx; the per-lead advisory makes replace+insert atomic across concurrent runs */
+// The agenda (ADR 0016): every future touch on a lead is a wakeup — the agent's own
+// follow-up (cadence or a date it picked), a callback the lead asked for, or a date staff
+// set. leads.next_action_at is only a mirror of the earliest pending one.
+
+/** keep leads.next_action_at/source pointing at the earliest pending wakeup */
+export async function syncNextActionTx(tx: Sql, leadId: string): Promise<void> {
+  await tx`
+    update leads set (next_action_at, next_action_source) = (
+      select w.at,
+        case when w.created_by = 'staff' then 'staff' when w.requested then 'requested' else 'auto' end
+      from agent_wakeups w
+      where w.lead_id = ${leadId} and w.status = 'pending'
+      order by w.at limit 1
+    )
+    where id = ${leadId}
+  `;
+}
+
+/** replace the lead's pending wakeup of the same class; the per-lead advisory makes
+ *  replace+insert atomic across concurrent runs */
 export async function scheduleWakeupTx(
   tx: Sql,
   input: {
@@ -94,30 +110,34 @@ export async function scheduleWakeupTx(
     requested: boolean;
     runId: string | null;
     createdBy?: 'agent' | 'staff';
+    /** the `schedule` tool keeps a 10-minute floor; staff dates and update_lead may be due now */
+    floor?: boolean;
   },
 ): Promise<{ wakeup: Wakeup; replaced: string | null } | { error: string }> {
   await tx`select pg_advisory_xact_lock(hashtext(${'wakeup:' + input.leadId}))`;
-  // recheck the floor inside the lock — the wait can push `at` stale;
-  // clock_timestamp(), not now() (tx-start time, already outlived)
-  const soon = (
-    await tx<{ soon: boolean }[]>`
-      select (${input.at}::timestamptz < clock_timestamp() + make_interval(secs => ${WAKEUP_MIN_LEAD_MS / 1000})) as soon
-    `
-  )[0]!.soon;
-  if (soon) return { error: 'at must be at least 10 minutes from now' };
-  const createdBy = input.createdBy ?? 'agent';
-  let replaced: string | null = null;
-  if (createdBy === 'agent') {
-    // replace within the class only: automation supersedes prior plans but
-    // never a requested callback — that promise would die twice
-    const prev = await tx<{ id: string }[]>`
-      update agent_wakeups set status = 'canceled', cancel_reason = 'substituído', updated_at = now()
-      where lead_id = ${input.leadId} and status = 'pending' and created_by = 'agent'
-        and requested = ${input.requested}
-      returning id
-    `;
-    replaced = prev[0]?.id ?? null;
+  if (input.floor !== false) {
+    // recheck the floor inside the lock — the wait can push `at` stale;
+    // clock_timestamp(), not now() (tx-start time, already outlived)
+    const soon = (
+      await tx<{ soon: boolean }[]>`
+        select (${input.at}::timestamptz < clock_timestamp() + make_interval(secs => ${WAKEUP_MIN_LEAD_MS / 1000})) as soon
+      `
+    )[0]!.soon;
+    if (soon) return { error: 'at must be at least 10 minutes from now' };
   }
+  const createdBy = input.createdBy ?? 'agent';
+  // replace within the class only: the agent's plans supersede each other but never a
+  // requested callback; a staff date supersedes the agent's own plan and the prior staff date
+  const prev = await tx<{ id: string }[]>`
+    update agent_wakeups set status = 'canceled', cancel_reason = 'substituído', updated_at = now()
+    where lead_id = ${input.leadId} and status = 'pending'
+      and (
+        (created_by = 'agent' and requested = ${input.requested} and ${createdBy === 'agent'})
+        or (${createdBy === 'staff'} and (created_by = 'staff' or (created_by = 'agent' and not requested)))
+      )
+    returning id
+  `;
+  const replaced = prev[0]?.id ?? null;
   const row = (
     await tx<WakeupRow[]>`
       insert into agent_wakeups (lead_id, kind, at, focus, requested, created_by, created_by_run_id)
@@ -126,7 +146,67 @@ export async function scheduleWakeupTx(
       returning *, (select name from leads where id = ${input.leadId}) as lead_name
     `
   )[0]!;
+  await syncNextActionTx(tx, input.leadId);
   return { wakeup: toWakeup(row), replaced };
+}
+
+const NEXT_ACTION_FOCUS = {
+  staff: 'a equipe marcou esta data para retomar o lead',
+  requested: 'o lead pediu retorno nesta data',
+  agent: 'retomar a conversa na data que você marcou',
+} as const;
+
+/** The lead's "next action" date, written from a lead patch (staff date picker or the
+ *  agent's update_lead nextActionAt). null clears that actor's dates; promises survive
+ *  an agent clear. */
+export async function setNextActionTx(
+  tx: Sql,
+  leadId: string,
+  at: string | Date | null,
+  who: 'staff' | 'agent' | 'requested',
+): Promise<void> {
+  if (at === null) {
+    await tx`select pg_advisory_xact_lock(hashtext(${'wakeup:' + leadId}))`;
+    await tx`
+      update agent_wakeups set status = 'canceled', cancel_reason = ${who === 'staff' ? 'removido pela equipe' : 'removido pelo agente'},
+        updated_at = now()
+      where lead_id = ${leadId} and status = 'pending'
+        and (created_by = 'agent' and not requested or ${who === 'staff'} and created_by = 'staff')
+    `;
+    await syncNextActionTx(tx, leadId);
+    return;
+  }
+  await scheduleWakeupTx(tx, {
+    leadId,
+    at: at instanceof Date ? at : new Date(at),
+    focus: NEXT_ACTION_FOCUS[who],
+    requested: who === 'requested',
+    runId: null,
+    createdBy: who === 'staff' ? 'staff' : 'agent',
+    floor: false,
+  });
+}
+
+/** After an agent send: book the follow-up cadence unless something is already on the
+ *  lead's agenda (the agent's own date or a promise wins). */
+export async function scheduleCadenceTx(
+  tx: Sql,
+  leadId: string,
+  days: number,
+  runId: string | null,
+): Promise<boolean> {
+  if (days <= 0) return false;
+  await tx`select pg_advisory_xact_lock(hashtext(${'wakeup:' + leadId}))`;
+  const rows = await tx`
+    insert into agent_wakeups (lead_id, kind, at, focus, requested, created_by, created_by_run_id)
+    select ${leadId}, 'outreach', now() + make_interval(days => ${days}),
+      ${`sem resposta há ${days} dia(s) desde o último envio — retome com um gancho novo`}, false, 'agent', ${runId}
+    where not exists (select 1 from agent_wakeups where lead_id = ${leadId} and status = 'pending')
+    on conflict (lead_id) where status = 'pending' and created_by = 'agent' and not requested do nothing
+    returning id
+  `;
+  if (rows.length) await syncNextActionTx(tx, leadId);
+  return rows.length > 0;
 }
 
 /** rendered into lead-bound run context so the agent knows what it promised */
@@ -151,6 +231,7 @@ export async function retireWakeupsOnInboundTx(tx: Sql, leadId: string): Promise
     )
     returning id
   `;
+  if (rows.length) await syncNextActionTx(tx, leadId);
   return rows.length;
 }
 
@@ -186,6 +267,7 @@ export async function cancelWakeup(sql: Sql, id: string, idemKey: string) {
       `
     )[0];
     if (!row) throw new HttpError(404, 'WAKEUP_NOT_FOUND', 'wakeup not found');
+    if (row.lead_id) await syncNextActionTx(tx, row.lead_id);
     // a fired wakeup already materialized — cancel its pending inbox mail
     // and its still-queued run (a running run owns its in-flight steps)
     await tx`
@@ -219,15 +301,17 @@ export async function sweepWakeups(sql: Sql): Promise<number> {
   const queuedIds: string[] = [];
   let capFlagged = false;
   await controlTx(sql, async (tx) => {
-    await tx`
+    const dead = await tx<{ lead_id: string }[]>`
       update agent_wakeups w set status = 'canceled', updated_at = now(),
         cancel_reason = case when l.unsubscribed_at is not null then 'descadastrado' else 'arquivado' end
       from leads l
       where l.id = w.lead_id and w.status = 'pending'
         and (l.unsubscribed_at is not null or l.archived_at is not null)
+      returning w.lead_id
     `;
+    for (const id of new Set(dead.map((d) => d.lead_id))) await syncNextActionTx(tx, id);
     // preset 'off' / outreach job off park only the agent's own wakeups —
-    // promised callbacks (lead-asked, staff) run unmarked
+    // promised callbacks (lead-asked, staff) always fire
     const pp = await parkPolicyTx(tx);
     const autoOff = pp.autoOff || pp.offJobs.includes('outreach');
     const g = await getSettingTx<Partial<Guardrails>>(tx, 'guardrails', {});
@@ -255,50 +339,36 @@ export async function sweepWakeups(sql: Sql): Promise<number> {
         select pg_try_advisory_xact_lock(hashtext(${'capfin:' + w.lead_id})) as got
       `;
       if (!capFree[0]!.got) continue;
-      const cap: { flagged?: boolean; retired?: string[] } = {};
-      // lead-asked/staff wakeups are promises: unmarked, so autonomy 'off'
-      // never stalls them
+      // lead-asked and staff dates are promises — the preset/job switches never stall them
       const promised = w.requested || w.created_by === 'staff';
       if (!promised && autoOff) continue;
-      const params: Record<string, unknown> = {
-        ...(promised ? {} : { auto: 'wakeup' }),
-        focus: `agendado por você: ${w.focus}`,
-        wakeupId: w.id,
-      };
-      const runId = await insertRun(
-        tx,
-        {
-          kind: 'outreach',
-          leadId: w.lead_id,
-          params,
-        },
-        cap,
-      );
-      if (cap.flagged) capFlagged = true;
-      if (cap.retired) queuedIds.push(...cap.retired);
-      if (runId) {
-        queuedIds.push(runId);
-        // fired wakeup mails the focus into the lead's run, new or active
-        await enqueueInboxTx(tx, w.lead_id, 'wakeup', {
-          text: `agendado por você: ${w.focus}`,
-          requestedKind: 'outreach',
-          params,
-        });
+      const focus =
+        w.created_by === 'staff'
+          ? `data marcada pela equipe: ${w.focus}`
+          : w.requested
+            ? `retorno que o lead pediu: ${w.focus}`
+            : `agendado por você: ${w.focus}`;
+      // the dispatcher mails the focus into the lead's run, new or active
+      const d = await requestAgentTx(tx, {
+        kind: 'outreach',
+        source: promised ? 'callback' : 'followup',
+        leadId: w.lead_id,
+        text: focus,
+        params: { focus, wakeupId: w.id },
+      });
+      if (d.capFlagged) capFlagged = true;
+      queuedIds.push(...d.retired);
+      if (d.runId) {
+        queuedIds.push(d.runId);
         await tx`
-          update agent_wakeups set status = 'fired', fired_run_id = ${runId}, fired_at = now(), updated_at = now()
+          update agent_wakeups set status = 'fired', fired_run_id = ${d.runId}, fired_at = now(), updated_at = now()
           where id = ${w.id}
         `;
-        // the wakeup run consumes a due cadence/auto nudge — same intent;
-        // capfin held, lead lock second per capLockTx
-        await tx`
-          update leads set next_action_at = null, next_action_source = null
-          where id = ${w.lead_id} and next_action_at <= now()
-            and next_action_source in ('cadence', 'auto')
-        `;
+        await syncNextActionTx(tx, w.lead_id);
       }
       // insertRun refusing (cost cap) leaves the wakeup pending — a raised cap resumes it
     }
-  }).catch((e) => agentLog.error({ err: e }, 'wakeup sweep failed'));
+  });
   for (const id of queuedIds) emitControlEvent('run.update', id);
   if (capFlagged) emitControlEvent('lead.change');
   return queuedIds.length;

@@ -3,7 +3,7 @@ import { log } from './platform/log.ts';
 import { createSql, migrate } from './platform/db.ts';
 import { join } from 'node:path';
 import { ingestInbound } from './agent/inbound.ts';
-import { startAgentWorker } from './agent/runner.ts';
+import { startScheduler, stopScheduler } from './agent/scheduler.ts';
 import { ensureSocket, onHistoryMessage, onInboundMessage } from './agent/channels/whatsapp.ts';
 import { startInstagramReconcile } from './agent/channels/instagram.ts';
 import { getIntegration } from './modules/integrations.ts';
@@ -35,8 +35,9 @@ const app = createApp({ sql, sessionSecret, controlSecret: process.env.CONTROL_S
 // Booking links sign with the same staff key the app verifies — set before the worker starts.
 setBookingSecret(process.env.CONTROL_SECRET ?? sessionSecret);
 
-// In-process worker (durable pg queue) + WhatsApp socket when the baileys driver is enabled.
-startAgentWorker(sql);
+// Scheduler (work loop + job loop over the durable pg queue) + WhatsApp socket when the
+// baileys driver is enabled.
+startScheduler(sql);
 onInboundMessage(async (jid, text, providerId, pushName, altJid) => {
   await ingestInbound(sql, {
     channel: 'whatsapp',
@@ -66,6 +67,20 @@ void getIntegration(sql, 'whatsapp')
   .catch((e) => log.child({ mod: 'whatsapp' }).error({ err: e }, 'socket start failed'));
 // Instagram's live session sits in the ig-sidecar; this re-pushes the stored one after a sidecar restart.
 startInstagramReconcile(sql);
+
+// Deploys send SIGTERM: stop claiming, let the run in hand finish (bounded), then exit —
+// a run cut off anyway is recovered by its lease on the next boot.
+let shuttingDown = false;
+for (const sig of ['SIGTERM', 'SIGINT'] as const) {
+  process.on(sig, () => {
+    if (shuttingDown) return;
+    shuttingDown = true;
+    log.info({ sig }, 'shutting down — draining the scheduler');
+    void stopScheduler()
+      .then(() => sql.end({ timeout: 5 }))
+      .finally(() => process.exit(0));
+  });
+}
 
 log.info({ port }, 'listening');
 // idleTimeout must clear the SSE heartbeat (20s): Bun's default 10s kills a

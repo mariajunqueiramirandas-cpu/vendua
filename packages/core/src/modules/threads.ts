@@ -433,13 +433,10 @@ export async function addInboundMessage(
     `;
     await tx`update leads set updated_at = now() where id = ${leadId}`;
     if (direction === 'in' && !input.historical) {
-      // A reply clears 'cadence'/'auto' nudges (the reply run re-commits what's still
-      // wanted); 'requested'/'staff'/legacy 'agent' survive — 0025 made their provenance
-      // unrecoverable, so they're treated as promises a reply can't cancel.
-      await tx`
-        update leads set next_action_at = null, next_action_source = null
-        where id = ${leadId} and next_action_source in ('cadence', 'auto')
-      `;
+      // A reply retires the agent's own pending follow-ups (the reply run re-commits what's
+      // still wanted); callbacks the lead asked for and staff dates are promises and stay.
+      const { retireWakeupsOnInboundTx } = await import('../agent/wakeups.ts');
+      await retireWakeupsOnInboundTx(tx, leadId);
     }
     // History import would flood the activity feed.
     if (!input.historical) {
@@ -614,12 +611,12 @@ export async function approveMessage(
           select 'run' as src, id::text as id, created_at from agent_runs
           where lead_id = ${thread.lead_id} and kind = 'outreach'
             and status in ('queued', 'running')
-            and params->>'auto' = 'regenerate'
+            and source = 'regenerate'
             and params->>'src' = ${messageId}
           union all
           select 'mail' as src, id::text, created_at from agent_inbox
           where lead_id = ${thread.lead_id} and consumed_at is null
-            and payload->>'auto' = 'regenerate'
+            and source = 'regenerate'
             and payload->>'src' = ${messageId}
           order by created_at limit 1
         `;
@@ -636,34 +633,21 @@ export async function approveMessage(
           queued = verdict === 'under';
           runId = queued && active[0].src === 'run' ? active[0].id : null;
         } else {
-          const { insertRun } = await import('../agent/runner.ts');
-          const { enqueueInboxTx } = await import('../agent/inbox.ts');
+          const { requestAgentTx } = await import('../agent/dispatch.ts');
           const focus = `o rascunho anterior expirou (${staleDays}d sem envio) — reescreva a mesma intenção com o estado atual do lead. Texto anterior: ${stale[0].body.slice(0, 500)}`;
-          const params = {
-            draftOnly: true,
-            auto: 'regenerate',
-            src: messageId,
-            focus,
-          };
-          runId = await insertRun(
-            tx,
-            {
-              kind: 'outreach',
-              leadId: thread.lead_id,
-              threadId: stale[0].thread_id,
-              params,
-            },
-            cap,
-          );
+          const d = await requestAgentTx(tx, {
+            kind: 'outreach',
+            source: 'regenerate',
+            leadId: thread.lead_id,
+            threadId: stale[0].thread_id,
+            text: focus,
+            params: { draftOnly: true, src: messageId, focus },
+            ref: { src: messageId },
+          });
+          runId = d.runId;
+          cap.flagged = d.capFlagged;
+          cap.retired = d.retired;
           if (runId) {
-            await enqueueInboxTx(tx, thread.lead_id, 'event', {
-              text: focus,
-              requestedKind: 'outreach',
-              threadId: stale[0].thread_id,
-              auto: 'regenerate',
-              src: messageId,
-              params,
-            });
             queued = true;
             // insertRun may return an already-active run's id — report it only when that
             // run is draftOnly and can actually drain this item; a generic run would finish

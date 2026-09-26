@@ -256,21 +256,18 @@ export async function dispatchMessage(
         update lead_threads set external_id = coalesce(external_id, ${igFbid})
         where id = ${send.threadId}`;
     }
-    // cadence floor: NULL-only fill (agent/staff values win) gated like
-    // claimRun; skip when a real inbound post-dates 'sending' — 'historical'
-    // imports and NULL received_at (0030 backfill legacy) are never answers
+    // cadence: an agent send with no answer books a follow-up on the lead's agenda unless
+    // something is already there (the agent's own date or a promise wins); skipped when a
+    // real inbound post-dates 'sending' — 'historical' imports and NULL received_at
+    // (0030 backfill legacy) are never answers
     if (send.author === 'agent') {
       const g = await getSettingTx<Partial<Guardrails>>(tx, 'guardrails', {});
       const days = g.followupCadenceDays ?? DEFAULT_GUARDRAILS.followupCadenceDays;
-      if (days > 0) {
+      const eligible = (
         await tx`
-          update leads set next_action_at = now() + make_interval(days => ${days}),
-                           next_action_source = 'cadence'
-          where id = ${send.leadId}
-            and next_action_at is null
-            and archived_at is null
-            and unsubscribed_at is null
-            and agent_mode <> 'off'
+          select 1 from leads l
+          where l.id = ${send.leadId}
+            and l.archived_at is null and l.unsubscribed_at is null and l.agent_mode <> 'off'
             and not exists (
               select 1 from lead_messages im
               join lead_threads it on it.id = im.thread_id
@@ -280,7 +277,11 @@ export async function dispatchMessage(
                 and im.received_at is not null
                 and im.received_at > ${send.sendingAt}::timestamptz
             )
-        `;
+        `
+      ).length;
+      if (days > 0 && eligible) {
+        const { scheduleCadenceTx } = await import('./wakeups.ts');
+        await scheduleCadenceTx(tx, send.leadId, days, null);
       }
     }
     // replay provider_events parked before the pmid existed so the message

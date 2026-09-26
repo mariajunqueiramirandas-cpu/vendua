@@ -83,6 +83,7 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('discovery intelligence (db)', (
   const doneRun = (briefId: string, lead: boolean) =>
     controlTx(sql, async (tx) => {
       const id = await insertRun(tx, {
+        source: 'staff',
         kind: 'discovery',
         params: { briefId, query: 'q' },
       });
@@ -175,6 +176,7 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('discovery intelligence (db)', (
     await controlTx(sql, async (tx) => {
       for (let i = 0; i < 5; i++) {
         const id = await insertRun(tx, {
+          source: 'staff',
           kind: 'discovery',
           params: { briefId: stale, query: 'q' },
         });
@@ -262,11 +264,11 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('discovery intelligence (db)', (
     expect(first).toBe(true);
     const second = await sweepStrategist(sql);
     expect(second).toBe(false);
-    const queued = await sql<{ kind: string; params: { auto: string } }[]>`
-      select kind, params from agent_runs where kind = 'strategist' and status = 'queued'
+    const queued = await sql<{ kind: string; source: string }[]>`
+      select kind, source from agent_runs where kind = 'strategist' and status = 'queued'
     `;
     expect(queued.length).toBe(1);
-    expect(queued[0]!.params.auto).toBe('weekly');
+    expect(queued[0]!.source).toBe('weekly');
     await sql`update agent_runs set status = 'canceled' where kind = 'strategist' and status = 'queued'`;
   });
 
@@ -470,7 +472,7 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('discovery intelligence (db)', (
         select count(*)::int n from agent_inbox
         where lead_id = ${busy.id} and kind = 'event' and consumed_at is null
           and payload->>'requestedKind' = 'outreach'
-          and payload->'params'->>'auto' = 'discovery'
+          and source = 'first_contact'
       `;
       expect(mail[0]!.n).toBe(1);
     } finally {

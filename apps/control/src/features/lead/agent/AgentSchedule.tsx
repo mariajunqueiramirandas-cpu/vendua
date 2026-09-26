@@ -79,11 +79,12 @@ export function AgentAgenda({ lead }: { lead: LeadListItem }) {
 
   return (
     <Section title="agenda">
-      {lead.nextActionAt && (
+      {/* next_action_at mirrors the earliest agenda entry — shown only when the entries aren't */}
+      {lead.nextActionAt && !wakeups.length && (
         <Row>
           <Badge>próxima ação</Badge>
           <span className="min-w-0 flex-1 truncate text-xs text-muted-foreground">
-            o que o agente marcou como próximo passo
+            próximo passo marcado para este lead
           </span>
           <Due at={lead.nextActionAt} full />
         </Row>
@@ -129,7 +130,9 @@ export function AgentAgenda({ lead }: { lead: LeadListItem }) {
       {wake.error && !isMissing(wake.error) && (
         <FetchErr what="os despertares" retry={() => void wake.refetch()} />
       )}
-      {empty && <Hint>nada agendado — follow-ups e despertares aparecem aqui</Hint>}
+      {empty && (
+        <Hint>nada agendado — follow-ups, retornos pedidos e datas da equipe aparecem aqui</Hint>
+      )}
     </Section>
   );
 }

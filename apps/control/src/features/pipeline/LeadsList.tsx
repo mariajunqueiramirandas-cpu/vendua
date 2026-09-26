@@ -134,7 +134,12 @@ export function LeadsList({
   const filterGen = useRef(0);
   const dispatchM = useMutation({
     mutationFn: (v: { ids: string[]; goal: typeof goal; channel: typeof channel }) =>
-      api.dispatch(v.ids, v.goal, v.channel),
+      api.requestAgent({
+        kind: 'outreach',
+        leadIds: v.ids,
+        goal: v.goal,
+        channel: v.channel,
+      }),
   });
 
   // Filter change: drop hidden selections (dispatch only acts on visible leads)
@@ -164,10 +169,11 @@ export function LeadsList({
       if (gen !== filterGen.current) return; // filters changed mid-flight — stale result
       const names = new Map(leads.map((l) => [l.id, l.name]));
       const skips = r.skipped
-        .map((s) => `${names.get(s.id) ?? s.id.slice(0, 8)}: ${s.reason}`)
+        .map((s) => `${names.get(s.leadId) ?? s.leadId.slice(0, 8)}: ${s.reason}`)
         .join(' · ');
+      const n = r.runs.length;
       setDispatchMsg(
-        `${r.enqueued} disparado${r.enqueued === 1 ? '' : 's'}${r.skipped.length ? ` · ${r.skipped.length} ignorado${r.skipped.length === 1 ? '' : 's'}${skips ? ` (${skips})` : ''}` : ''}`,
+        `${n} disparado${n === 1 ? '' : 's'}${r.skipped.length ? ` · ${r.skipped.length} ignorado${r.skipped.length === 1 ? '' : 's'}${skips ? ` (${skips})` : ''}` : ''}`,
       );
       setSel(new Set());
     } catch (e) {

@@ -40,6 +40,7 @@ import { whatsappRegistered } from './channels/whatsapp.ts';
 import { leadBoundArg, toolAvailable } from './tool-meta.ts';
 import { parseWakeupAt, scheduleWakeupTx } from './wakeups.ts';
 import { automationAllowedTx, discoveryBudgetTx } from './policy.ts';
+import { RETIRED_BY_INBOUND, type TriggerSource } from './sources.ts';
 
 /** central tool registry — every tool validates args and executes against modules; the model never touches SQL. */
 
@@ -560,13 +561,12 @@ export async function assertRunClaimTx(tx: Sql, ctx: ToolContext): Promise<void>
 export async function refuseOnFresherInboundTx(tx: Sql, ctx: ToolContext): Promise<string | null> {
   if (ctx.runKind !== 'outreach' || !ctx.leadId || !ctx.claimToken) return null;
   const run = (
-    await tx<{ auto: string | null; started_at: string | null }[]>`
-      select params->>'auto' as auto, started_at from agent_runs where id = ${ctx.runId}
+    await tx<{ source: TriggerSource; promised: boolean; started_at: string | null }[]>`
+      select source, promised, started_at from agent_runs where id = ${ctx.runId}
     `
   )[0];
-  // 'agent' exempt like 'regenerate' — the pre-'auto' marker is ambiguous, so treated as a possible promise.
-  if (!run?.started_at || run.auto == null || run.auto === 'regenerate' || run.auto === 'agent')
-    return null;
+  // only the agent's own unanswered outreach yields to a fresher inbound — promises and staff asks go out
+  if (!run?.started_at || run.promised || !RETIRED_BY_INBOUND.includes(run.source)) return null;
   const { capLockTx } = await import('./runner.ts');
   await capLockTx(tx, ctx.leadId);
   const replied = await tx<{ id: string }[]>`
@@ -810,34 +810,21 @@ export async function executeTool(
         ) => {
           if (await outreachActive(leadId)) return null;
           if (!(await automationAllowedTx(tx, 'outreach')).ok) return null;
-          const { insertRun } = await import('./runner.ts');
-          const params = {
-            channel: chan,
-            auto: 'discovery',
-            focus: `primeiro contato — lead descoberto (fitScore ${String(score)}). O dossiê de pesquisa está na timeline do lead.`,
-          };
-          const cap: { retired?: string[] } = {};
-          const runId = await insertRun(tx, { kind: 'outreach', leadId, params }, cap);
-          retiredOutreach.push(...(cap.retired ?? []));
-          if (!runId) return null;
-          // the intent rides the mailbox too — one pending discovery event per lead is enough.
-          const pending = (
-            await tx<{ n: number }[]>`
-              select count(*)::int n from agent_inbox
-              where lead_id = ${leadId} and kind = 'event' and consumed_at is null
-                and payload->>'requestedKind' = 'outreach'
-                and payload->'params'->>'auto' = 'discovery'
-            `
-          )[0]!.n;
-          if (!pending) {
-            const { enqueueInboxTx } = await import('./inbox.ts');
-            await enqueueInboxTx(tx, leadId, 'event', {
-              text: 'lead descoberto — primeiro contato',
-              requestedKind: 'outreach',
-              params,
-            });
-          }
-          return runId;
+          const { requestAgentTx } = await import('./dispatch.ts');
+          // one pending first-contact request per lead is enough (dedupe)
+          const d = await requestAgentTx(tx, {
+            kind: 'outreach',
+            source: 'first_contact',
+            leadId,
+            text: 'lead descoberto — primeiro contato',
+            params: {
+              channel: chan,
+              focus: `primeiro contato — lead descoberto (fitScore ${String(score)}). O dossiê de pesquisa está na timeline do lead.`,
+            },
+            dedupe: true,
+          });
+          retiredOutreach.push(...d.retired);
+          return d.runId;
         };
         const writeFindings = async (leadId: string, extra: Record<string, unknown> = {}) => {
           if (!findings) return;

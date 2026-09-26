@@ -46,13 +46,16 @@ export function HuntForm({
       [segment.trim(), city.trim()].filter(Boolean).join(' em ') ||
       'negócios de alimentação no instagram';
     try {
-      const r = await api.startRun('discovery', {
-        query,
-        ...(segment.trim() ? { segment: segment.trim() } : {}),
-        ...(city.trim() ? { city: city.trim() } : {}),
-        target,
+      const r = await api.requestAgent({
+        kind: 'discovery',
+        params: {
+          query,
+          ...(segment.trim() ? { segment: segment.trim() } : {}),
+          ...(city.trim() ? { city: city.trim() } : {}),
+          target,
+        },
       });
-      onLaunched(r.runId);
+      if (r.runId) onLaunched(r.runId);
       void client.invalidateQueries({ queryKey: ['runs'] });
     } catch (e) {
       setErr(errorMessage(e) || 'falhou ao lançar');
