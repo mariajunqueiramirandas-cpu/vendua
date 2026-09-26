@@ -1,6 +1,6 @@
 # Roadmap
 
-> Status: In progress · Last reviewed: 2026-09-22
+> Status: In progress · Last reviewed: 2026-09-26
 
 ## Where we are
 
@@ -17,19 +17,35 @@
 ops surface, and the sales-side agent engine shipped on `packages/core` —
 the same `agent_runs` machinery the Phase-6 generation pipeline will reuse:
 
-- **Outbound negotiation loop** — triage / reply / outreach / discovery /
-  strategist run kinds; per-lead negotiation checklist (`leads.agent_plan`),
-  dossier + intent/goal fields, agent-driven `unsubscribe` with a farewell,
-  `request_human` escalation, quotable-facts offer (`pitch.offer`).
+- **Outbound negotiation loop** — reply / outreach / discovery / strategist
+  jobs (staff-card triage folded into outreach); per-lead negotiation
+  checklist (`leads.agent_plan`), dossier + intent/goal fields, agent-driven
+  `unsubscribe` with a farewell, `request_human` escalation, quotable-facts
+  offer (`pitch.offer`).
+- **Agent v2** ([ADR 0014](adr/0014-crm-agent-v2.md)) — one module per tool
+  with metadata, autonomy policy, self-scheduled `agent_wakeups`, memory v2
+  (`agent_memory_items` + structured `lead_facts`), `agent_run_steps` journal,
+  per-lead inbox with one active run per lead, lifetime per-lead cost cap.
+- **One agent, one dispatcher, one scheduler** — a single `agent` setting
+  (preset slider + job switches, [ADR 0015](adr/0015-one-agent-config.md));
+  `requestAgentTx` is the only producer and runs carry `source` provenance
+  ([ADR 0016](adr/0016-agent-dispatch-and-scheduler.md)); the scheduler sleeps
+  until the next due time and wakes on `pg_notify`, no tick
+  ([ADR 0017](adr/0017-due-time-scheduler.md)).
+- **Channels** — email, WhatsApp (pair code/QR, history-sync ingest, LID/PN
+  alias merge) and Instagram cold-outreach DMs via the `ig-sidecar`; tools
+  the install can't run are hidden from the model instead of erroring.
 - **Simulation harness** — `bun run sim` drives the real pipeline against
-  persona-LLM leads and an LLM judge; results persist to `sim_runs`.
+  persona-LLM leads and an LLM judge; results persist to `sim_runs`. Scripted
+  provider tests cover the agent deterministically in CI.
 - **Worker robustness** — attempt caps + backoff, journal replay/resume,
   claim-fenced mutating tools, stranded-run recovery, per-lead serialization.
-- **Ops surfaces** — Planos board (queued actions + plan checklists), daily
-  digest email, channel-health chip, CPL per segment, stale-draft regen,
-  cadence follow-ups with provenance (`next_action_source`).
+- **Ops surfaces** — the redesigned console (Hoje, Pipeline, Inbox +
+  approvals, Planos, Estúdio, Relatórios, Config) with SSE live updates and
+  real phone layouts; daily digest email, channel-health chip, CPL per
+  segment, stale-draft regen, run provenance labels.
 - **Backlog** — [`agent-improvements.md`](agent-improvements.md) is the
-  maintained list; nearly all items shipped as of the `cool-fixes` batch.
+  maintained list; every numbered item has shipped, two follow-ups remain.
 
 The product bet in the Phase 3/4 gap: the sales agent above is the
 acquisition engine, and "ad → paid plan → agent-built store live in ~1 hour"
@@ -113,8 +129,8 @@ Goal: storefronts are _produced_, not hand-built — and the repo enforces it.
       spreadsheet is exactly the manual-ops debt this roadmap avoids. Phase 4
       merges it into the Control Plane's provisioner states.
       **Grown far past v0** — `apps/control` is now the agent ops console
-      (threads + approvals, Planos board, discovery segments + CPL, digest
-      settings); see [Where we are](#where-we-are).
+      (inbox + approvals, Planos, Estúdio, discovery segments + CPL, digest
+      and schedule settings); see [Where we are](#where-we-are).
 
 Exit: `vendua scaffold && vendua build && vendua qa` is green on a fresh
 storefront without any custom code — and a storefront PR physically cannot

@@ -3,10 +3,14 @@
 Working list of improvements to the agent engine (`packages/core/src/agent/`),
 collected from a competitive review of Explee's AutoGTM and a walkthrough of
 our own worker. Ordered by theme; each item names the code it touches.
-Updated after the `cool-fixes` batch (PRs #70–#73): every item below is now
-shipped except the remaining gaps noted inside items 2 and 3. `run_at`
-delayed runs, reply/inbound pacing, research kit, and `draftOnly` shipped in
-#65.
+Last reviewed 2026-09-26: every numbered item is shipped; the open follow-ups
+are listed under [Still open](#still-open). `run_at` delayed runs,
+reply/inbound pacing, research kit, and `draftOnly` shipped in #65; the
+agent v2 contracts (ADRs 0014–0017) landed in #134–#176.
+
+Since the list was written, run kinds are fixed _jobs_ in `agent/jobs.ts`
+(ADR 0015) and every run is requested through `requestAgentTx` with a
+`source` (ADR 0016) — read "run kind" below with that in mind.
 
 ## Behavior changes (user-requested)
 
@@ -62,10 +66,12 @@ kit and `draftOnly` copilot mode; the negotiation-SOTA PR adds the rest:
 - ~~**Eval harness**~~: `bun run sim` — seeded leads + hidden personas, the
   agent runs the real pipeline on a `log` driver, an LLM judge scores the
   transcript; results land in `sim_runs` + `sim-results/`.
-- Remaining: a deeper per-lead memory than notes+plan (structured facts
-  keyed to the lead), and a negotiation finish-gate/reflection like
-  discovery's (the run ends when the model stops, not when the checklist
-  says done).
+- ~~**Per-lead memory**~~: `lead_facts` (memory v2, ADR 0014) holds
+  structured facts keyed to the lead, beside notes + plan.
+- Partly shipped: reply/outreach have a finish gate (`requiresAction` — the
+  run must end on a visible lead-facing action, one nudge otherwise). Still
+  missing: a reflection step that checks the negotiation checklist, so the
+  run ends when the plan says done, not when the model stops.
 
 ## Worker robustness (from the run-reclaim review)
 
@@ -137,3 +143,11 @@ copy.
 ### 15. Per-segment cost-per-lead on the board — shipped (PR #71)
 
 `cpl` column on the Descoberta segment table.
+
+## Still open
+
+- **Negotiation reflection** — see item 3: a checklist-aware finish step for
+  reply/outreach, like discovery's debrief.
+- **Reply research kit** — `reply` still lacks `read_pages`/`maps_lookup`/
+  `instagram_profile` by design (item 2); revisit only if sims show inbound
+  runs stalling on facts the thread can't produce.
