@@ -45,6 +45,25 @@ export async function runE2E(storefrontDir: string): Promise<number> {
   }
   await seedQaTenants({ databaseUrl, previewPort: port, templates });
 
+  // S05's fixture storefront (every override throws) — built and served beside the target
+  const fixtureDir = join(PKG_DIR, 'fixtures', 'override-crash');
+  const fixturePort = Number(process.env.VENDUA_FIXTURE_PORT ?? port - 10);
+  const fixtureBuild = Bun.spawn(['bun', 'run', 'build'], {
+    cwd: fixtureDir,
+    stdout: 'ignore',
+    stderr: 'inherit',
+    env: { ...process.env, VENDUA_CORE_ORIGIN: '' },
+  });
+  if ((await fixtureBuild.exited) !== 0) {
+    console.error('[e2e] S05 fixture storefront failed to build');
+    return 2;
+  }
+  const fixtureServer = await startPreview({
+    distDir: join(fixtureDir, 'dist'),
+    port: fixturePort,
+    coreOrigin,
+    snapshotTemplates: true,
+  });
   const server = await startPreview({ distDir, port, coreOrigin });
   console.log(`[e2e] preview :${port} → core ${coreOrigin} (Host forwarded untouched)`);
   try {
@@ -68,6 +87,7 @@ export async function runE2E(storefrontDir: string): Promise<number> {
       env: {
         ...process.env,
         VENDUA_PREVIEW_PORT: String(port),
+        VENDUA_FIXTURE_PORT: String(fixturePort),
         VENDUA_QA_REPORT_DIR: reportDir,
         VENDUA_QA_TRACES: join(reportDir, 'traces'),
         VENDUA_STOREFRONT_DIR: dir,
@@ -78,6 +98,7 @@ export async function runE2E(storefrontDir: string): Promise<number> {
     return code;
   } finally {
     server.close();
+    fixtureServer.close();
     if (proxyStats.requests.size) {
       console.log('[e2e] proxied request/status totals:');
       for (const [k, n] of [...proxyStats.requests.entries()].sort()) {

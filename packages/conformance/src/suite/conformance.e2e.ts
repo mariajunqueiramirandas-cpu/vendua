@@ -1,6 +1,6 @@
 // Conformance suite — every test title starts with its stable docs/architecture/10 ID,
 // mapped into qa-report/report.json. Skips carry a reason, never fake green.
-import { mkdirSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { gzipSync } from 'node:zlib';
 import { AxeBuilder } from '@axe-core/playwright';
@@ -9,6 +9,7 @@ import {
   apiGet,
   apiPost,
   base,
+  PORT,
   brl,
   discoverProductLinks,
   expectStoreContent,
@@ -27,6 +28,7 @@ import {
   type QaHost,
 } from './helpers.ts';
 import postgres from 'postgres';
+import { checkCompat } from '@vendua/templates';
 
 const REPORT_DIR = process.env.VENDUA_QA_REPORT_DIR ?? 'qa-report';
 const SHOTS = join(REPORT_DIR, 'screenshots');
@@ -529,13 +531,59 @@ test('[S04] unknown severity/action types → degrade per spec, never crash', as
   expect(errs, `uncaught page errors: ${errs.join('; ')}`).toHaveLength(0);
 });
 
-test('[S05] override crash → error boundary renders Kernel default, failure reported', async () => {
-  test.info().annotations.push({
-    type: 'reason',
-    description:
-      'needs a fixture storefront whose slot override throws at render — none exists under storefronts/ and this slice may only touch packages/conformance',
+const FIXTURE_PORT = Number(process.env.VENDUA_FIXTURE_PORT ?? PORT - 10);
+const fixtureBase = (host: QaHost) => `http://${host}.localhost:${FIXTURE_PORT}`;
+
+test('[S05] override crash → error boundary renders Kernel default, failure reported', async ({
+  page,
+}) => {
+  const errs = trackPageErrors(page);
+  // fixture storefront: every override throws (incl. one under a deprecated alias), one store section throws
+  await page.goto(fixtureBase(OPEN));
+  const stack = page.locator('[data-vendua="banner-stack"]');
+  await expect(
+    stack.locator('[data-vendua="notice"]').first(),
+    'no Kernel default notice',
+  ).toBeVisible({
+    timeout: 15_000,
   });
-  test.skip();
+  await expect(
+    page.locator('a[data-vendua="product-link"]').first(),
+    'catalog cards fell over with their override instead of degrading',
+  ).toBeVisible();
+  await expect(
+    page.getByText('Cardápio do fixture'),
+    'a crashing section took its siblings down',
+  ).toBeVisible();
+  const reports = await page.evaluate(
+    () => ((window as any).__VENDUA_REPORTS__ ?? []) as { kind: string; target: string }[],
+  );
+  const got = new Set(reports.map((r) => `${r.kind}:${r.target}`));
+  for (const want of [
+    'slot_error:system.PromoNotice',
+    'slot_error:catalog.ProductCard',
+    'section_error:store:boom#boom',
+    'section_unknown:sdk:not-shipped-yet',
+  ])
+    expect(
+      got.has(want),
+      `failure not reported: ${want} (got ${[...got].join(', ')})`,
+    ).toBeTruthy();
+
+  // blocking path: the paused override (registered under its old alias) throws too
+  await page.goto(fixtureBase(PAUSED));
+  const overlay = page.locator('[data-vendua="blocking-overlay"]');
+  await expect(
+    overlay.locator('[data-vendua="notice"]'),
+    'paused default did not render',
+  ).toBeVisible({
+    timeout: 15_000,
+  });
+  const pausedReports = await page.evaluate(
+    () => ((window as any).__VENDUA_REPORTS__ ?? []) as { target: string }[],
+  );
+  expect(pausedReports.some((r) => r.target === 'system.PauseNotice')).toBeTruthy();
+  expect(errs, `uncaught page errors: ${errs.join('; ')}`).toHaveLength(0);
 });
 
 test('[S06] v.js present, health ping responds, blocking overlay renders with Kernel JS disabled', async ({
@@ -566,13 +614,128 @@ test('[S06] v.js present, health ping responds, blocking overlay renders with Ke
   expect(hasContent, 'loader overlay mounted but empty').toBeTruthy();
 });
 
-test('[S07] (vendua)/* system routes all resolve and render Kernel defaults', async () => {
-  test.info().annotations.push({
-    type: 'reason',
-    description:
-      'the Phase-0 kernel mounts no (vendua)/* system route group — nothing exists to exercise yet',
-  });
-  test.skip();
+test('[S07] (vendua)/* system routes all resolve and render Kernel defaults', async ({
+  page,
+  request,
+}) => {
+  const errs = trackPageErrors(page);
+  // an order this browser "placed": its tracking token goes where the Kernel keeps it
+  const { sessionToken: tok } = await apiAddItem(request, OPEN, SIMPLE_PRODUCT);
+  const placed = await apiPost(
+    request,
+    OPEN,
+    '/checkout/v1/checkout',
+    {
+      customer: { name: 'QA S07', phone: '22999990000' },
+      delivery: { mode: 'pickup' },
+      payment: { method: 'pix' },
+    },
+    tok,
+  );
+  expect([200, 201]).toContain(placed.status);
+  const orderId = placed.body.order.id as string;
+  await page.addInitScript(
+    ([id, t]) => sessionStorage.setItem('vendua.orderTokens', JSON.stringify({ [id!]: t })),
+    [orderId, tok],
+  );
+
+  const routes: [string, string, RegExp][] = [
+    ['/sacola', 'cart', /sacola|vazia/i],
+    ['/checkout', 'checkout', /sacola|pedido|vazia/i],
+    [`/pedido/${orderId}`, 'order', /pedido #\d+/i],
+    ['/pedidos', 'orders', /pedido #\d+/i],
+  ];
+  const bad: string[] = [];
+  for (const [path, marker, text] of routes) {
+    const res = await page.goto(`${O}${path}`);
+    if (!res?.ok()) {
+      bad.push(`${path} → HTTP ${res?.status()}`);
+      continue;
+    }
+    const el = page.locator(`[data-vendua-page="${marker}"]`);
+    if (!(await el.isVisible({ timeout: 10_000 }).catch(() => false))) {
+      bad.push(`${path}: no [data-vendua-page="${marker}"]`);
+      continue;
+    }
+    await page.waitForLoadState('networkidle').catch(() => {});
+    const body = await el.innerText();
+    if (!text.test(body))
+      bad.push(`${path}: Kernel default content missing (${body.slice(0, 80)})`);
+  }
+  expect(bad, bad.join('\n')).toHaveLength(0);
+  expect(errs, `uncaught page errors: ${errs.join('; ')}`).toHaveLength(0);
+});
+
+test('[S08] kill switch: maintenance overlay renders on a broken build and over a live Kernel', async ({
+  page,
+  context,
+}) => {
+  const sql = postgres(DATABASE_URL);
+  const tid = (await sql<{ id: string }[]>`select id from tenants where slug = ${EDGE}`)[0]!.id;
+  const setLoader = (state: 'normal' | 'maintenance') => sql`
+    insert into storefront_ops (tenant_id, loader_state, loader_message)
+    values (${tid}, ${state}, ${state === 'maintenance' ? 'Instabilidade — peça pelo WhatsApp' : null})
+    on conflict (tenant_id) do update set loader_state = excluded.loader_state, loader_message = excluded.loader_message
+  `;
+  try {
+    await setLoader('maintenance');
+    const shadowText = () =>
+      page.evaluate(
+        () => document.getElementById('vendua-loader-overlay')?.shadowRoot?.textContent ?? '',
+      );
+
+    // healthy Kernel: the kill switch still wins
+    await page.goto(base(EDGE));
+    await page.waitForSelector('#vendua-loader-overlay', { timeout: 20_000, state: 'attached' });
+    await page.waitForTimeout(1500); // Kernel mount + handoff must not strip it
+    expect(await shadowText()).toContain('Instabilidade');
+
+    // broken build: storefront JS aborted, only v.js runs
+    await context.route('**/*', (route) => {
+      const u = new URL(route.request().url());
+      if (u.pathname.endsWith('.js') && !u.pathname.startsWith('/v1/')) return route.abort();
+      return route.continue();
+    });
+    await page.goto(base(EDGE));
+    await page.waitForSelector('#vendua-loader-overlay', { timeout: 20_000, state: 'attached' });
+    expect(await shadowText()).toContain('Instabilidade');
+    expect(await page.evaluate(() => (window as any).__VENDUA_LOADER__?.mode)).toBe('maintenance');
+  } finally {
+    await setLoader('normal');
+    await sql.end();
+  }
+});
+
+test('[S09] a notice kind newer than this build (high_demand) renders through the generic path', async ({
+  page,
+}) => {
+  const sql = postgres(DATABASE_URL);
+  const tid = (await sql<{ id: string }[]>`select id from tenants where slug = ${CLOSED}`)[0]!.id;
+  try {
+    await sql`update store_settings set demand_level = 'high' where tenant_id = ${tid}`;
+    const errs = trackPageErrors(page);
+    await page.goto(base(CLOSED));
+    const n = page.locator('[data-vendua="banner-stack"] [data-kind="high_demand"]');
+    await expect(n, 'high_demand notice missing from the banner stack').toBeVisible({
+      timeout: 15_000,
+    });
+    expect(await n.innerText()).toMatch(/muitos pedidos/i);
+    expect(errs).toHaveLength(0);
+  } finally {
+    await sql`update store_settings set demand_level = 'normal' where tenant_id = ${tid}`;
+    await sql.end();
+  }
+});
+
+test('[K16] artifact manifest: Kernel × Contract × Core API is a valid compat-matrix row', async () => {
+  const dir = process.env.VENDUA_STOREFRONT_DIR ?? '.';
+  const file = join(dir, 'dist', 'vendua-manifest.json');
+  const raw = existsSync(file) ? readFileSync(file, 'utf8') : '';
+  expect(raw, 'dist/vendua-manifest.json missing — build without the vendua() plugin?').not.toBe(
+    '',
+  );
+  const manifest = JSON.parse(raw);
+  expect(checkCompat(manifest)).toEqual([]);
 });
 
 const VIEWPORTS = [320, 360, 390, 768, 1280, 1440];

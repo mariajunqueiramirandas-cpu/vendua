@@ -77,6 +77,9 @@ export interface PreviewOptions {
   port: number;
   coreOrigin: string;
   edgeHost?: string;
+  /** compose from the build's snapshot: the Kernel's `/state?templates=1` read gets no live
+   *  templates (a fixture sharing qa tenants must not render the target's composition) */
+  snapshotTemplates?: boolean;
 }
 
 function isApiPath(pathname: string): boolean {
@@ -140,6 +143,8 @@ export function startPreview(opts: PreviewOptions): Promise<Server> {
         res.end(JSON.stringify(HOSTILE_SURFACES));
         return;
       }
+      if (opts.snapshotTemplates && pathname === '/storefront/v1/state')
+        req.url = '/storefront/v1/state';
       proxy(req, res, coreOrigin);
       return;
     }

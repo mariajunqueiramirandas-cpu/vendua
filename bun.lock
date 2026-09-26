@@ -83,6 +83,23 @@
         "typescript": "6.0.3",
       },
     },
+    "packages/conformance/fixtures/override-crash": {
+      "name": "@vendua/fixture-override-crash",
+      "version": "0.0.0",
+      "dependencies": {
+        "@vendua/kernel": "workspace:*",
+        "react": "18.3.1",
+        "react-dom": "18.3.1",
+        "react-router-dom": "6.30.0",
+      },
+      "devDependencies": {
+        "@types/react": "18.3.18",
+        "@types/react-dom": "18.3.5",
+        "@vitejs/plugin-react": "4.3.4",
+        "typescript": "6.0.3",
+        "vite": "5.4.19",
+      },
+    },
     "packages/core": {
       "name": "@vendua/core",
       "version": "0.0.0",
@@ -687,6 +704,8 @@
     "@vendua/core": ["@vendua/core@workspace:packages/core"],
 
     "@vendua/example-quero-pudim": ["@vendua/example-quero-pudim@workspace:storefronts/_examples/quero-pudim"],
+
+    "@vendua/fixture-override-crash": ["@vendua/fixture-override-crash@workspace:packages/conformance/fixtures/override-crash"],
 
     "@vendua/kernel": ["@vendua/kernel@workspace:packages/kernel"],
 
