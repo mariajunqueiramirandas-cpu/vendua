@@ -127,6 +127,41 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)(
       }
     });
 
+    test('a due wakeup hidden by another tx’s row lock asks for a quick retry', async () => {
+      await migrate(sql, MIGRATIONS);
+      const leadId = await mkLead();
+      try {
+        const [w] = await sql<{ id: string }[]>`
+        insert into agent_wakeups (lead_id, at, focus, created_by)
+        values (${leadId}, now() - interval '1 second', 'retomar', 'staff')
+        returning id
+      `;
+        let release!: () => void;
+        const held = new Promise<void>((r) => (release = r));
+        let locked!: () => void;
+        const isLocked = new Promise<void>((r) => (locked = r));
+        const holder = sql.begin(async (tx) => {
+          await tx`select 1 from agent_wakeups where id = ${w!.id} for update`;
+          locked();
+          await held;
+          throw new Error('rollback');
+        });
+        await isLocked;
+        const r = await fireDueWakeups(sql);
+        expect(r.contended).toBe(true);
+        release();
+        await holder.catch(() => {});
+        // the holder rolled back — the retry fires it
+        await fireDueWakeups(sql);
+        const [row] = await sql<
+          { status: string }[]
+        >`select status from agent_wakeups where id = ${w!.id}`;
+        expect(row!.status).toBe('fired');
+      } finally {
+        await cleanup(leadId);
+      }
+    });
+
     test('serveOrphan spawns a run for one lead’s pending mail', async () => {
       await migrate(sql, MIGRATIONS);
       const leadId = await mkLead();

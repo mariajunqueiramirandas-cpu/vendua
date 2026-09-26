@@ -1179,6 +1179,7 @@ export async function patchMeeting(
 
 const REMINDER_24H_MS = 24 * 3600_000;
 const REMINDER_1H_MS = 3600_000;
+const REMINDER_PAGE = 50;
 
 // in-memory scan watermark — on restart the scan resumes from id 0
 let reconcileCursor: string | null = null;
@@ -1223,20 +1224,30 @@ export async function sendMeetingReminders(sql: Sql): Promise<{ sent: number; bl
 
   let sent = 0;
   let blocked = false;
-  const due = await controlTx(
-    sql,
-    (tx) => tx<MeetingRow[]>`
-      select * from meetings
-      where status = 'scheduled'
-        and (reminder_24h_at is null or reminder_1h_at is null)
-        and starts_at > now() - interval '10 minutes'
-        and starts_at < now() + interval '24 hours'
-      order by starts_at asc
-      limit 50
-    `,
-  );
-  for (const m of due) {
-    if (!m.lead_id) continue;
+  // paged past rows already looked at — blocked meetings at the head can't starve later ones
+  const seen: string[] = [];
+  for (let page = 0; page < 20; page++) {
+    const due = await controlTx(
+      sql,
+      (tx) => tx<MeetingRow[]>`
+        select * from meetings
+        where status = 'scheduled'
+          and (reminder_24h_at is null or reminder_1h_at is null)
+          and starts_at > now() - interval '10 minutes'
+          and starts_at < now() + interval '24 hours'
+          and not (id = any(${seen}::uuid[]))
+        order by starts_at asc
+        limit ${REMINDER_PAGE}
+      `,
+    );
+    for (const m of due) await remindOne(m);
+    if (due.length < REMINDER_PAGE) break;
+  }
+  return { sent, blocked };
+
+  async function remindOne(m: MeetingRow): Promise<void> {
+    seen.push(m.id);
+    if (!m.lead_id) return;
     const claim = await controlTx(sql, async (tx) => {
       // lock and re-derive under the lock — a concurrent sweep or cancel can't double-send
       const cur = (await tx<MeetingRow[]>`select * from meetings where id = ${m.id} for update`)[0];
@@ -1272,7 +1283,7 @@ export async function sendMeetingReminders(sql: Sql): Promise<{ sent: number; bl
       return { messageId: composed.body.message.id, kind, claimed24 };
     });
     if (claim === 'blocked') blocked = true;
-    if (!claim || claim === 'blocked') continue;
+    if (!claim || claim === 'blocked') return;
     const dispatch = await dispatchMessage(sql, claim.messageId);
     if (dispatch.ok) {
       sent++;
@@ -1291,7 +1302,6 @@ export async function sendMeetingReminders(sql: Sql): Promise<{ sent: number; bl
       mlog.warn({ meetingId: m.id, reason: dispatch.reason }, 'meeting reminder dispatch failed');
     }
   }
-  return { sent, blocked };
 }
 
 /** Heal bookings whose post-commit effects never ran and calendar events that drifted —

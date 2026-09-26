@@ -358,22 +358,35 @@ async function sweepWakeupsBatch(
     // exclude over-cap and autonomy-off rows in the query so 20 parked
     // rows can't starve later due wakeups; an active run gets the fired
     // intent by mail
+    const servable = tx`
+      w.status = 'pending' and w.at <= now()
+      and l.agent_mode != 'off' and l.agent_paused_at is null
+      and (not ${autoOff} or w.requested or w.created_by = 'staff')
+      and (${capCents} <= 0 or
+        coalesce((select sum(x.cost_cents) from agent_runs x
+                  where x.lead_id = w.lead_id), 0) < ${capCents})
+      and not (w.id = any(${seen}::uuid[]))
+    `;
     const due = await tx<
       { id: string; lead_id: string; focus: string; requested: boolean; created_by: string }[]
     >`
       select w.id, w.lead_id, w.focus, w.requested, w.created_by from agent_wakeups w
       join leads l on l.id = w.lead_id
-      where w.status = 'pending' and w.at <= now()
-        and l.agent_mode != 'off' and l.agent_paused_at is null
-        and (not ${autoOff} or w.requested or w.created_by = 'staff')
-        and (${capCents} <= 0 or
-          coalesce((select sum(x.cost_cents) from agent_runs x
-                    where x.lead_id = w.lead_id), 0) < ${capCents})
-        and not (w.id = any(${seen}::uuid[]))
+      where ${servable}
       order by w.at
       limit ${WAKEUP_BATCH}
       for update of w skip locked
     `;
+    // SKIP LOCKED hides rows another tx holds; if that tx rolls back nothing notifies, so a
+    // servable row left over (not seen, not beyond this page) means "look again shortly"
+    if (due.length < WAKEUP_BATCH) {
+      const hidden = await tx`
+        select 1 from agent_wakeups w join leads l on l.id = w.lead_id
+        where ${servable} and not (w.id = any(${due.map((d) => d.id)}::uuid[]))
+        limit 1
+      `;
+      if (hidden.length) out.contended = true;
+    }
     for (const w of due) {
       seen.push(w.id);
       const capFree = await tx<{ got: boolean }[]>`

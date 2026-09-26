@@ -76,8 +76,10 @@ drop trigger if exists agent_notify on discovery_briefs;
 create trigger agent_notify after insert or update of enabled, last_run_at, rearmed_at on discovery_briefs
   for each row execute function vendua_agent_notify();
 
+-- not the reminder markers: the routine writes those itself, and a marker released after a
+-- failed send must wait for its retry, not re-wake the routine at once
 drop trigger if exists agent_notify on meetings;
-create trigger agent_notify after insert or update of status, starts_at, reminder_24h_at, reminder_1h_at on meetings
+create trigger agent_notify after insert or update of status, starts_at on meetings
   for each row execute function vendua_agent_notify();
 
 -- next-due lookups
