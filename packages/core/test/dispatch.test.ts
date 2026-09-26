@@ -302,10 +302,16 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('dispatch + scheduler (db)', () 
       // the weekly review fires once, then waits for the next anchor
       await sql`delete from agent_runs where kind = 'strategist' and lead_id is null
                 and created_at >= now() - interval '8 days'`;
+      // no model configured → no review; one set up before the anchor → it fires
+      expect(await sweepStrategist(sql)).toBe(false);
+      await sql`insert into control_integrations (kind, driver, enabled, updated_at)
+                values ('llm', 'mock', true, now() - interval '30 days')
+                on conflict (kind, driver) do update set enabled = true, updated_at = excluded.updated_at`;
       expect(await sweepStrategist(sql)).toBe(true);
       expect(await sweepStrategist(sql)).toBe(false);
       await sql`delete from discovery_briefs where id in ${sql([due!.id, done!.id])}`;
     } finally {
+      await sql`delete from control_integrations where kind = 'llm' and driver = 'mock'`;
       await sql`update agent_runs set status = 'canceled'
                 where status = 'queued' and kind in ('discovery', 'strategist')`;
       if (enabled.length)

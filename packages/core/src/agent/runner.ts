@@ -4,6 +4,7 @@ import { log } from '../platform/log.ts';
 import { controlTx } from '../modules/control.ts';
 import {
   getIntegration,
+  getIntegrationTx,
   getPitch,
   getSetting,
   getSettingTx,
@@ -2740,7 +2741,7 @@ export async function sweepBriefs(sql: Sql): Promise<number> {
 }
 
 // Weekly review at agent.schedule weekday/hour (workspace time): due once per anchor, stamped
-// by created_at; the advisory lock serializes workers so two can't double-fire.
+// by created_at, and only once an llm integration is enabled; the advisory lock serializes workers so two can't double-fire.
 export async function sweepStrategist(sql: Sql): Promise<boolean> {
   let queuedId: string | null = null;
   const fired = await controlTx(sql, async (tx) => {
@@ -2754,6 +2755,10 @@ export async function sweepStrategist(sql: Sql): Promise<boolean> {
       hour: schedule.weeklyHour,
       weekday: schedule.weeklyDay,
     });
+    // A fresh install has no model yet — the review would just run on the mock fallback. And a
+    // slot that passed before the model was set up isn't owed: the first review is the next one.
+    const llm = await getIntegrationTx(tx, 'llm');
+    if (!llm || new Date(llm.updated_at) > anchor) return false;
     // only board-scoped runs fill the cadence slot
     const recent = await tx`
       select 1 from agent_runs
