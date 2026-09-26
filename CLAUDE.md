@@ -64,5 +64,6 @@ CHROMIUM=/opt/pw-browsers/chromium bun scripts/shots.ts /pipeline /inbox   # 375
 
 ## PRs
 
-Devin posts automated reviews on PRs — verify each finding against the code, fix real ones,
-reply on every thread (with the commit) and resolve it.
+No automated reviewer runs on PRs — don't wait for review comments. Once CI is green the PR
+is ready to merge. If a human leaves review comments, fix real ones, reply on every thread
+(with the commit) and resolve it.
