@@ -1,21 +1,26 @@
 {
-  "name": "@vendua/templates",
+  "name": "@vendua/ui-defaults",
   "version": "1.0.0",
   "private": true,
   "type": "module",
   "exports": {
     ".": "./src/index.ts",
-    "./node": "./src/node.ts",
-    "./client": {
-      "types": "./src/virtual.d.ts"
-    }
+    "./styles.css": "./src/styles.css"
   },
   "scripts": {
     "check": "tsc --noEmit -p tsconfig.json",
     "test": "bun test test/"
   },
+  "peerDependencies": {
+    "react": "^18.3.1 || ^19.0.0"
+  },
   "devDependencies": {
     "@types/bun": "1.4.2",
+    "@types/react": "18.3.18",
+    "@types/react-dom": "18.3.5",
+    "@vendua/kernel": "workspace:*",
+    "react": "18.3.1",
+    "react-dom": "18.3.1",
     "typescript": "6.0.3"
   }
 }

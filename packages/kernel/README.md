@@ -1,40 +1,16 @@
 # @vendua/kernel
 
-Shared frontend runtime every storefront builds on (docs/architecture/02-kernel.md).
-Phase 0 rough cut — provider, hooks, primitives, `<SystemSurfaces />` with the
-generic notice renderer only.
+The shared frontend runtime every storefront builds on (docs/architecture/02-kernel.md).
+Kernel 1.x implements **Contract 2** — page composition from SDK and store sections
+(ADR 0018, docs/architecture/17-page-composition.md).
 
-## Mount contract (per 03)
+- **Public surface:** [API.md](API.md) — frozen for v1; `test/api-surface.test.ts` guards it.
+- **Defaults:** every slot's default lives in `@vendua/ui-defaults` (token-driven, `@layer vendua`).
+- **Build:** `@vendua/kernel/vite` — template/token snapshot, WCAG AA gate, artifact manifest.
+- **Versioning:** real semver. Minors/patches never need a storefront edit; the compat
+  matrix lives in `@vendua/templates` (`COMPAT_MATRIX`) and CI checks every manifest.
 
-```tsx
-import '@vendua/kernel/src/styles.css';
-
-<VenduaProvider config={config}>
-  <SystemSurfaces />
-  <App />
-</VenduaProvider>;
+```sh
+bun run check   # typecheck
+bun test        # DOM tests (happy-dom) + API freeze
 ```
-
-## What's here
-
-- `defineStorefront` + `StorefrontConfig` (contract: 1), `SLOT_KEYS` registry.
-- `VenduaProvider` — api client, in-memory+sessionStorage checkout session,
-  token → `--v-*` CSS vars on `:root`, query cache.
-- Hooks: `useStore`, `useCatalog`, `useProduct`, `useNotices`, `useCart`,
-  `useCheckout`.
-- Primitives (headless, `data-vendua` hooks + ARIA, `asChild`): `AddToCart`,
-  `QuantityStepper`, `CartTrigger`, `StoreStatusBadge`.
-- `SystemSurfaces` + `SurfaceRegion` — forward-compat rules implemented:
-  unknown `kind` → generic `system.Notice`, unknown severity → info,
-  unknown action → link-if-href else omitted; overrides via slot registry
-  inside an error boundary.
-- `src/styles.css` — `@layer vendua`, `v-` classes, all values from `--v-*`.
-
-## Deliberate Phase 0 gaps (recorded for Contract v1)
-
-- Data hooks use a minimal internal cache, not TanStack — swap underneath the
-  same hook signatures.
-- `useCheckout().submit` exists but no step state machine, no Bricks mount.
-- Consent surface (LGPD) and `system.EmergencyOverlay` are loader-only today.
-- `Img` primitive, analytics beacon, SurfaceRegion context filtering are stubs.
-- No package `exports` map enforcement yet (source imports); cli will pin it.
