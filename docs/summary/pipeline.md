@@ -51,6 +51,7 @@ migrate → generate → scale), Control Plane lands in Phase 4 (before the firs
 real tenant), and growth is gated by fleet stages (1 / 5 / 25 / 100 / 1000
 stores), not just phase exits. As of 2026-09-26 Phases 0–1 are done. Next is
 Phase 1b — Kernel v1 complete and updatable (every slot default, the missing
-primitives/hooks, codemods, stale-storefront CI, a Contract-major rehearsal)
-— which gates the first customer; 2–8 follow. The sales-side agent engine
+primitives/hooks, codemods, stale-storefront CI, a Contract-major rehearsal,
+and Contract v2 page composition per ADR 0018 so post-launch agent coding stays
+near zero) — which gates the first customer; 2–8 follow. The sales-side agent engine
 (ADRs 0014–0017) runs ahead of the plan and is the machinery Phase 6 reuses.
