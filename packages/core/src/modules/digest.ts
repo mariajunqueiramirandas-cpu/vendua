@@ -3,6 +3,7 @@ import { log } from '../platform/log.ts';
 import { sendEmail } from '../agent/channels/email.ts';
 import { getIntegrationTx, getSettingTx, type IntegrationRow } from './integrations.ts';
 import { controlTx } from './control.ts';
+import { anchorTx } from '../agent/schedule-anchors.ts';
 
 // daily staff email — sweep claims the day via digest_state once the local hour passes, sends via sendEmail
 export interface DigestConfig {
@@ -154,6 +155,28 @@ interface DigestClaim {
   fails: number;
   tok: string;
   integration: IntegrationRow;
+}
+
+/** When the digest next has work (ADR 0017): today's hour until it's sent, a retry after a
+ *  failed send (backing off per failure), a stale claim's reclaim, then tomorrow's hour. */
+export async function digestNextAtTx(tx: Sql): Promise<Date> {
+  const cfg = await digestConfigTx(tx);
+  const { next, timezone } = await anchorTx(tx, { hour: cfg.hour });
+  const now = (
+    await tx<{ date: string; hour: number }[]>`
+      select (now() at time zone ${timezone})::date::text as date,
+             extract(hour from now() at time zone ${timezone})::int as hour
+    `
+  )[0]!;
+  if (now.hour < cfg.hour || !cfg.enabled || !cfg.to) return next;
+  const st = await getSettingTx<DigestState>(tx, 'digest_state', {});
+  if (st.date !== now.date) return new Date();
+  const at = st.at ? Date.parse(st.at) : Date.now();
+  if (st.status === 'claimed') return new Date(at + RECLAIM_AFTER_MINUTES * 60_000);
+  if (st.status === 'error' && (st.fails ?? 0) < MAX_SEND_ATTEMPTS) {
+    return new Date(Date.now() + 60_000 * 2 ** (st.fails ?? 0));
+  }
+  return next;
 }
 
 export async function sweepDigest(sql: Sql): Promise<boolean> {

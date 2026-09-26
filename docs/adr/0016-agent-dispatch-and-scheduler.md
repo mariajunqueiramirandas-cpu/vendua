@@ -1,6 +1,6 @@
 # ADR 0016 — One dispatcher, one agenda, one scheduler
 
-Status: accepted
+Status: accepted — decision 7 (the 15-second loops) superseded by ADR 0017
 
 ## Context
 

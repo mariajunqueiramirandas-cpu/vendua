@@ -38,7 +38,7 @@ import {
   parked,
   parkPolicyTx,
 } from './policy.ts';
-import { pendingWakeupsTx, sweepWakeups } from './wakeups.ts';
+import { pendingWakeupsTx } from './wakeups.ts';
 import { enqueueInboxTx, renderInboxItems, type InboxItem } from './inbox.ts';
 import { requestAgentTx, sweepOrphanInbox } from './dispatch.ts';
 import { anchorTx } from './schedule-anchors.ts';
@@ -347,6 +347,15 @@ export async function flagCappedLeads(sql: Sql, limit = 200): Promise<number> {
   return fresh.length;
 }
 
+// Set when a claim skipped a due row only because a lock was busy — the row is claimable
+// a moment later, and nothing will notify about it, so the scheduler retries shortly.
+let claimContended = false;
+export function takeClaimContention(): boolean {
+  const c = claimContended;
+  claimContended = false;
+  return c;
+}
+
 export async function claimRun(sql: Sql): Promise<RunRow | null> {
   const capFlagged: string[] = [];
   const run = await controlTx(sql, async (tx) => {
@@ -411,6 +420,7 @@ export async function claimRun(sql: Sql): Promise<RunRow | null> {
           select pg_try_advisory_xact_lock(hashtext(${'capfin:' + run.lead_id})) as got
         `;
         if (!capFree[0]!.got) {
+          claimContended = true;
           rejected.push(run.id);
           continue;
         }
@@ -463,6 +473,7 @@ export async function claimRun(sql: Sql): Promise<RunRow | null> {
         lockLost = true;
       }
       if (lockLost) {
+        claimContended = true;
         rejected.push(run.id);
         continue;
       }
@@ -492,6 +503,7 @@ export async function claimRun(sql: Sql): Promise<RunRow | null> {
           select pg_try_advisory_xact_lock(hashtext(${'claimrun:' + run.lead_id})) as got
         `;
         if (!got[0]!.got) {
+          claimContended = true;
           rejected.push(run.id);
           continue;
         }
@@ -2220,15 +2232,17 @@ export async function runOnce(sql: Sql): Promise<boolean> {
 }
 
 // Drain the queue; reclaims runs whose worker died (requeued past the lease, not failed).
-const RUN_LEASE_MIN = 10;
+export const RUN_LEASE_MIN = 10;
 
-// Every drain — the scheduler's tick, an HTTP kick, an inbound kick — registers here so a
+// Every drain — a scheduler pass, an HTTP kick, an inbound kick — registers here so a
 // shutdown can wait for all of them, not just the scheduler's own.
 const drainsInFlight = new Set<Promise<number>>();
 
-export function drain(sql: Sql, limit = 20): Promise<number> {
+/** Recover, then claim and run what's due. `orphans: false` skips the full orphan scan —
+ *  the scheduler serves orphaned mail per lead from notifications (ADR 0017). */
+export function drain(sql: Sql, limit = 20, opts?: { orphans?: boolean }): Promise<number> {
   if (claimsStopped) return Promise.resolve(0);
-  const p = drainOnce(sql, limit);
+  const p = drainOnce(sql, limit, opts?.orphans !== false);
   drainsInFlight.add(p);
   void p.then(
     () => drainsInFlight.delete(p),
@@ -2242,7 +2256,7 @@ export function drainsSettled(): Promise<unknown> {
   return Promise.allSettled([...drainsInFlight]);
 }
 
-async function drainOnce(sql: Sql, limit: number): Promise<number> {
+async function drainOnce(sql: Sql, limit: number, orphans: boolean): Promise<number> {
   // Requeue behind exponential backoff (2^attempts min); exhausting max_attempts lands 'failed'.
   const capFlaggedIds: string[] = [];
   // A normal failed run's [humano] task needs the same lead.change refresh a fresh flag earns.
@@ -2417,7 +2431,9 @@ async function drainOnce(sql: Sql, limit: number): Promise<number> {
     );
   }
   // Orphaned mail: the sweep creates the fallback run each payload describes.
-  await sweepOrphanInbox(sql).catch((e) => agentLog.error({ err: e }, 'inbox sweep failed'));
+  if (orphans) {
+    await sweepOrphanInbox(sql).catch((e) => agentLog.error({ err: e }, 'inbox sweep failed'));
+  }
   let ran = 0;
   while (ran < limit && !claimsStopped && (await runOnce(sql))) ran++;
   return ran;

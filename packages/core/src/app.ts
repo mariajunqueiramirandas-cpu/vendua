@@ -284,7 +284,10 @@ export function createApp({ sql, sessionSecret, controlSecret, autoDrain }: AppD
   const kickDrain =
     autoDrain === false
       ? () => {}
-      : () => void drain(sql).catch((e) => agentLog.error({ err: e }, 'drain failed'));
+      : () =>
+          void drain(sql, 20, { orphans: false }).catch((e) =>
+            agentLog.error({ err: e }, 'drain failed'),
+          );
   const resolver = new TenantResolver(sql);
   const app = new Hono<{ Variables: { tenant: Tenant } }>();
 

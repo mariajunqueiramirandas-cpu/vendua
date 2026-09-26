@@ -180,11 +180,11 @@ export function emitDispatched(d: Pick<Dispatched, 'runId' | 'retired' | 'capFla
 
 // ── recovery: pending mail whose lead has no active run ─────────────────────
 
-// Page size for the orphan scan — bounds each candidate query, not the tick.
+// Page size for the full orphan scan — bounds each candidate query, not the call.
 const SWEEP_SCAN = 100;
-// Per-tick cap on serve attempts — a blocked backlog re-checks once per rotation.
+// Per-call cap on serve attempts — a blocked backlog re-checks once per rotation.
 const SWEEP_INSPECT = 100;
-// Round-robin resume point persisted across ticks. first_at is bucketed to ms — bound
+// Round-robin resume point persisted across calls. first_at is bucketed to ms — bound
 // params arrive ms-only and a finer cursor re-selects the same lead forever.
 let sweepAfter: { firstAt: Date; leadId: string } | null = null;
 
@@ -198,7 +198,8 @@ type PendingItem = {
 
 // Spawns a run for mail no active run owns (a request that was parked, capped, or
 // deferred). The highest-priority servable item drives it; terminal suppressions drop
-// the mail, pauses/mode 'off' keep it pending.
+// the mail, pauses/mode 'off' keep it pending. Full scan — the scheduler runs it after a
+// config change and on reconcile; per-lead events go through serveOrphan (ADR 0017).
 export async function sweepOrphanInbox(
   sql: Sql,
   limit = 10,
@@ -247,15 +248,7 @@ export async function sweepOrphanInbox(
       if (served >= limit || inspected >= maxInspect) break;
       after = { firstAt: first_at, leadId: lead_id };
       inspected++;
-      const res = await controlTx(sql, (tx) => serveOrphanTx(tx, lead_id)).catch((e) => {
-        agentLog.warn({ err: e, leadId: lead_id }, 'orphan inbox sweep failed for lead');
-        return null;
-      });
-      if (res?.runId) {
-        served++;
-        emitControlEvent('run.update', res.runId);
-      }
-      for (const r of res?.retired ?? []) emitControlEvent('run.update', r);
+      if (await serveOrphan(sql, lead_id)) served++;
     }
     if (served >= limit || inspected >= maxInspect) continue;
     if (leads.length < pageSize) {
@@ -266,6 +259,18 @@ export async function sweepOrphanInbox(
   }
   sweepAfter = after;
   return served;
+}
+
+/** Serve one lead's pending mail when no run owns it — the event path: the scheduler calls
+ *  this for every lead a notification names. True when a run was spawned. */
+export async function serveOrphan(sql: Sql, leadId: string): Promise<boolean> {
+  const res = await controlTx(sql, (tx) => serveOrphanTx(tx, leadId)).catch((e) => {
+    agentLog.warn({ err: e, leadId }, 'orphan inbox serve failed for lead');
+    return null;
+  });
+  if (res?.runId) emitControlEvent('run.update', res.runId);
+  for (const r of res?.retired ?? []) emitControlEvent('run.update', r);
+  return Boolean(res?.runId);
 }
 
 async function serveOrphanTx(
@@ -296,7 +301,7 @@ async function serveOrphanTx(
   )[0];
   if (!lead) return null;
   if (lead.unsubscribed_at || lead.archived_at) {
-    // Terminal suppression: consume with no run so the mail doesn't retry every tick.
+    // Terminal suppression: consume with no run so the mail doesn't retry on every pass.
     await tx`update agent_inbox set consumed_at = now() where lead_id = ${leadId} and consumed_at is null`;
     return null;
   }

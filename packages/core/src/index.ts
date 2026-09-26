@@ -35,8 +35,8 @@ const app = createApp({ sql, sessionSecret, controlSecret: process.env.CONTROL_S
 // Booking links sign with the same staff key the app verifies — set before the worker starts.
 setBookingSecret(process.env.CONTROL_SECRET ?? sessionSecret);
 
-// Scheduler (work loop + job loop over the durable pg queue) + WhatsApp socket when the
-// baileys driver is enabled.
+// Scheduler (work loop + job loop over the durable pg queue, woken by LISTEN/NOTIFY) +
+// WhatsApp socket when the baileys driver is enabled.
 startScheduler(sql);
 onInboundMessage(async (jid, text, providerId, pushName, altJid) => {
   await ingestInbound(sql, {
