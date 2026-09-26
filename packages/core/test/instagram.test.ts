@@ -11,7 +11,7 @@ import {
   resolveChannelTx,
 } from '../src/agent/guardrails.ts';
 import { igEventSignatureOk, igStatus, parseIgEvent } from '../src/agent/channels/instagram.ts';
-import { composeMessageTx, instagramHandle } from '../src/modules/threads.ts';
+import { approveMessage, composeMessageTx, instagramHandle } from '../src/modules/threads.ts';
 import {
   DEFAULT_GUARDRAILS,
   upsertIntegration,
@@ -186,6 +186,11 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('instagram channel (db)', () => 
     if ('ignored' in renamed) throw new Error('unexpected ignore');
     expect(renamed.leadId).toBe(first.leadId);
     expect(renamed.leadCreated).toBe(false);
+    // the account-id match proves the new handle — the freed old one must not linger
+    const after = (
+      await sql<{ instagram: string }[]>`select instagram from leads where id = ${first.leadId}`
+    )[0]!;
+    expect(after.instagram).toBe(`@ig${nonce}renamed`);
 
     // provider retry is a no-op
     const replay = await ingestInbound(sql, {
@@ -252,6 +257,25 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('instagram channel (db)', () => 
     expect(row.provider_message_id.startsWith('instagram:log:')).toBe(true);
   });
 
+  // the shared test DB holds other runs' rows — budgets are measured relative to this
+  // (mirrors instagramColdCapTx: threads whose first outbound, agent-authored and
+  // unprompted, landed in the last day)
+  const coldUsed = async () =>
+    (
+      await sql<{ n: number }[]>`
+        select count(distinct o.id)::int as n from (
+          select t.id, min(m.created_at) as opened_at from lead_messages m
+          join lead_threads t on t.id = m.thread_id
+          where t.channel = 'instagram' and m.direction = 'out'
+            and m.status in ('queued', 'sending', 'sent', 'delivered')
+          group by t.id
+        ) o
+        join lead_messages f on f.thread_id = o.id and f.created_at = o.opened_at
+        where o.opened_at > now() - interval '1 day' and f.author = 'agent'
+          and not exists (select 1 from lead_messages i where i.thread_id = o.id
+                          and i.direction = 'in' and i.created_at < o.opened_at)`
+    )[0]!.n;
+
   test('cold-DM cap is account-wide, replies are exempt, 0 turns cold DMs off', async () => {
     await sql`
       insert into control_settings (key, value)
@@ -259,19 +283,7 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('instagram channel (db)', () => 
       on conflict (key) do update set value = excluded.value`;
     const g = { ...DEFAULT_GUARDRAILS, instagramColdDmsPerDay: 1 };
     const g0 = { ...DEFAULT_GUARDRAILS, instagramColdDmsPerDay: 0 };
-    // budget already used by other suites' rows in the last day would skew counts —
-    // measure relative to what's there now
-    const used = (
-      await sql<{ n: number }[]>`
-        select count(distinct t.id)::int as n from lead_messages m
-        join lead_threads t on t.id = m.thread_id
-        where t.channel = 'instagram' and m.direction = 'out' and m.author = 'agent'
-          and m.status in ('queued', 'sending', 'sent', 'delivered')
-          and m.created_at > now() - interval '1 day'
-          and not exists (select 1 from lead_messages i where i.thread_id = t.id
-                          and i.direction = 'in' and i.created_at < m.created_at)`
-    )[0]!.n;
-    const gCap = { ...g, instagramColdDmsPerDay: used + 1 };
+    const gCap = { ...g, instagramColdDmsPerDay: (await coldUsed()) + 1 };
 
     const a = await newLead({ name: `Frio A ${nonce}`, instagram: `@ig${nonce}e` });
     const b = await newLead({ name: `Frio B ${nonce}`, instagram: `@ig${nonce}f` });
@@ -303,6 +315,106 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('instagram channel (db)', () => 
       externalThreadId: `${fbBase}6`,
     });
     expect(await controlTx(sql, (tx) => instagramColdCapTx(tx, g0, b))).toBeNull();
+  });
+
+  test('a conversation counts once: an old cold DM frees its slot, follow-ups stay free', async () => {
+    const g = { ...DEFAULT_GUARDRAILS, instagramColdDmsPerDay: (await coldUsed()) + 1 };
+    const a = await newLead({ name: `Velho A ${nonce}`, instagram: `@ig${nonce}h` });
+    const b = await newLead({ name: `Novo B ${nonce}`, instagram: `@ig${nonce}i` });
+    const first = await controlTx(sql, (tx) =>
+      composeMessageTx(tx, {
+        leadId: a,
+        channel: 'instagram',
+        body: 'primeiro contato',
+        author: 'agent',
+        status: 'queued',
+      }),
+    );
+    // A was opened two days ago; today's follow-up must not re-open it
+    await sql`update lead_messages set created_at = now() - interval '2 days'
+              where id = ${first.body.message.id}`;
+    await controlTx(sql, (tx) =>
+      composeMessageTx(tx, {
+        leadId: a,
+        channel: 'instagram',
+        body: 'retomando',
+        author: 'agent',
+        status: 'queued',
+      }),
+    );
+    expect(await controlTx(sql, (tx) => instagramColdCapTx(tx, g, b))).toBeNull();
+    expect(await controlTx(sql, (tx) => instagramColdCapTx(tx, g, a))).toBeNull();
+  });
+
+  test('approving an agent cold draft over the cap is refused and keeps the draft', async () => {
+    await sql`
+      insert into control_settings (key, value)
+      values ('guardrails', ${sql.json({ instagramColdDmsPerDay: 1 } as never)})
+      on conflict (key) do update set value = excluded.value`;
+    const filler = await newLead({ name: `Cota ${nonce}`, instagram: `@ig${nonce}j` });
+    // make sure at least one cold conversation is open today
+    await controlTx(sql, (tx) =>
+      composeMessageTx(tx, {
+        leadId: filler,
+        channel: 'instagram',
+        body: 'oi',
+        author: 'agent',
+        status: 'queued',
+      }),
+    );
+    const c = await newLead({ name: `Rascunho ${nonce}`, instagram: `@ig${nonce}k` });
+    const draft = await controlTx(sql, (tx) =>
+      composeMessageTx(tx, {
+        leadId: c,
+        channel: 'instagram',
+        body: 'primeiro contato revisado',
+        author: 'agent',
+        status: 'draft',
+      }),
+    );
+    let code = '';
+    try {
+      await approveMessage(sql, draft.body.message.id, 'staff', `ig-approve-${nonce}`);
+    } catch (e) {
+      code = (e as { code?: string }).code ?? '';
+    }
+    expect(code).toBe('IG_COLD_CAP');
+    const row = (
+      await sql<
+        { status: string }[]
+      >`select status from lead_messages where id = ${draft.body.message.id}`
+    )[0]!;
+    expect(row.status).toBe('draft');
+    await sql`delete from control_settings where key = 'guardrails'`;
+  });
+
+  test('an instagram DM over 1000 chars is refused at compose', async () => {
+    const d = await newLead({ name: `Longa ${nonce}`, instagram: `@ig${nonce}l` });
+    let status = 0;
+    try {
+      await controlTx(sql, (tx) =>
+        composeMessageTx(tx, {
+          leadId: d,
+          channel: 'instagram',
+          body: 'á'.repeat(1001),
+          author: 'staff',
+          status: 'draft',
+        }),
+      );
+    } catch (e) {
+      status = (e as { status?: number }).status ?? -1;
+    }
+    expect(status).toBe(422);
+    // exactly the limit (counted in characters, not bytes) is fine
+    await controlTx(sql, (tx) =>
+      composeMessageTx(tx, {
+        leadId: d,
+        channel: 'instagram',
+        body: 'á'.repeat(1000),
+        author: 'staff',
+        status: 'draft',
+      }),
+    );
   });
 
   test('signed sidecar events: 404 unsigned, state updates, message ingests', async () => {
@@ -379,5 +491,18 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('instagram channel (db)', () => 
       >`select session from ig_auth_state where account_id = 'default'`
     )[0]!;
     expect(row.session).toBeNull();
+
+    // signed but oddly-shaped fields degrade to null, never a 500
+    const odd = await post({ type: 'state', state: 'connecting', error: 'boom', account: 5 });
+    expect(odd.status).toBe(200);
+    expect(igStatus()).toMatchObject({ state: 'connecting', error: null, account: null });
+
+    // a disabled driver drops even correctly signed events
+    await sql`update control_integrations set enabled = false where kind = 'instagram'`;
+    const late = await post({
+      type: 'message',
+      message: { id: `mid-z-${nonce}`, fromFbid: `${fbBase}9`, text: 'atrasada' },
+    });
+    expect(late.status).toBe(404);
   });
 });

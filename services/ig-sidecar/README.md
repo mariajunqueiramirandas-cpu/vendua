@@ -22,8 +22,9 @@ Core ◀─HMAC events── ig-sidecar   (inbound DMs, connection state, rotate
   `x-ig-signature: hex(HMAC-SHA256(secret, "<x-ig-timestamp>.<body>"))`. Core rejects
   timestamps more than 5 minutes off.
 - Only 1:1 text DMs from other people are forwarded: no own echoes, groups, or
-  media-only messages. After a restart, DMs newer than Core's latest recorded
-  inbound are replayed (up to 25 threads). Core dedupes by message id.
+  media-only messages. After a restart, DMs newer than Core's floor (its newest
+  recorded Instagram message either way, else the login time) are replayed, up to 25
+  threads. Core dedupes by message id.
 - Sends are paced account-wide: `IG_MIN_SEND_GAP_SECONDS` (default 20) plus up to 50%
   jitter. A cold DM (no thread yet) is sent by recipient id.
 

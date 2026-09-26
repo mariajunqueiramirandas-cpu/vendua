@@ -288,36 +288,45 @@ export async function checkSendAllowedTx(
 
 /** Account-wide cold-DM budget: opening a conversation with a lead who never
  *  wrote on instagram counts against instagramColdDmsPerDay (rolling 24h, agent
- *  sends only); replies and a lead's own follow-ups don't open a new one.
- *  Returns the refusal reason, or null. */
+ *  sends only). A conversation counts once, by its first outbound — replies and
+ *  follow-ups to an already-opened thread are free. Returns the refusal reason, or null. */
 export async function instagramColdCapTx(
   tx: Sql,
   g: Guardrails,
   leadId: string,
 ): Promise<string | null> {
-  const wrote = (
-    await tx<{ n: number }[]>`
-      select count(*)::int as n from lead_messages m
+  const lead = (
+    await tx<{ wrote: number; opened: number }[]>`
+      select
+        count(*) filter (where m.direction = 'in')::int as wrote,
+        count(*) filter (where m.direction = 'out'
+          and m.status in ('queued', 'sending', 'sent', 'delivered'))::int as opened
+      from lead_messages m
       join lead_threads t on t.id = m.thread_id
-      where t.lead_id = ${leadId} and t.channel = 'instagram' and m.direction = 'in'
+      where t.lead_id = ${leadId} and t.channel = 'instagram'
     `
-  )[0]!.n;
-  if (wrote > 0) return null;
+  )[0]!;
+  if (lead.wrote > 0 || lead.opened > 0) return null;
   const cap = g.instagramColdDmsPerDay ?? DEFAULT_GUARDRAILS.instagramColdDmsPerDay;
   if (cap <= 0) return 'instagram cold DMs off';
   // account-wide count — serialize concurrent leads' checks or both see spare budget
   await tx`select pg_advisory_xact_lock(hashtext('ig-cold-cap'))`;
   const used = (
     await tx<{ n: number }[]>`
-      select count(distinct t.id)::int as n from lead_messages m
-      join lead_threads t on t.id = m.thread_id
-      where t.channel = 'instagram' and m.direction = 'out' and m.author = 'agent'
-        and m.status in ('queued', 'sending', 'sent', 'delivered')
-        and m.created_at > now() - interval '1 day'
-        and t.lead_id <> ${leadId}
+      select count(distinct o.id)::int as n from (
+        select t.id, min(m.created_at) as opened_at
+        from lead_messages m
+        join lead_threads t on t.id = m.thread_id
+        where t.channel = 'instagram' and m.direction = 'out'
+          and m.status in ('queued', 'sending', 'sent', 'delivered')
+        group by t.id
+      ) o
+      join lead_messages first on first.thread_id = o.id and first.created_at = o.opened_at
+      where o.opened_at > now() - interval '1 day'
+        and first.author = 'agent'
         and not exists (
           select 1 from lead_messages i
-          where i.thread_id = t.id and i.direction = 'in' and i.created_at < m.created_at
+          where i.thread_id = o.id and i.direction = 'in' and i.created_at < o.opened_at
         )
     `
   )[0]!.n;

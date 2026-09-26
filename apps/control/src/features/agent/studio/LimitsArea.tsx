@@ -192,7 +192,7 @@ function Guardrails({
         <Field
           label="DMs frias no instagram / dia"
           htmlFor="gr-instagramColdDmsPerDay"
-          hint="teto da conta inteira pra DM do agente a quem nunca escreveu (24h corridas) — respostas não contam; 0 = sem DM fria"
+          hint="teto da conta inteira pra conversas que o agente abre com quem nunca escreveu (24h corridas) — rascunho do agente aprovado também conta; respostas e follow-ups não; 0 = sem DM fria"
         >
           {numIn('instagramColdDmsPerDay', 0, 200, 0)}
         </Field>

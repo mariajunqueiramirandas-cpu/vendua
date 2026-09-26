@@ -182,15 +182,17 @@ async function loadAuth(
   };
 }
 
+// a completed login — rotations go through applyIgEvent and never move connected_at
 async function saveSession(sql: Sql, session: IgSession) {
   await controlTx(
     sql,
     (tx) => tx`
-      insert into ig_auth_state (account_id, session, device, updated_at)
-      values (${ACCOUNT}, ${tx.json(session as never)}, ${session.device ? tx.json(session.device as never) : null}, now())
+      insert into ig_auth_state (account_id, session, device, connected_at, updated_at)
+      values (${ACCOUNT}, ${tx.json(session as never)}, ${session.device ? tx.json(session.device as never) : null}, now(), now())
       on conflict (account_id) do update set
         session = excluded.session,
         device = coalesce(excluded.device, ig_auth_state.device),
+        connected_at = now(),
         updated_at = now()`,
   );
 }
@@ -203,14 +205,19 @@ async function clearSession(sql: Sql) {
   );
 }
 
-// newest recorded instagram inbound — the sidecar's catch-up floor after a restart
-async function lastInboundMs(sql: Sql): Promise<number> {
+// the sidecar's catch-up floor after a restart: newest recorded instagram message
+// either way (a reply to our cold DM post-dates the send), else the login itself —
+// never 0 once connected, or a first reply during downtime would be skipped
+export async function catchUpFloorMs(sql: Sql): Promise<number> {
   const rows = await controlTx(
     sql,
     (tx) => tx<{ ms: string | null }[]>`
-      select (extract(epoch from max(m.created_at)) * 1000)::bigint as ms
-      from lead_messages m join lead_threads t on t.id = m.thread_id
-      where t.channel = 'instagram' and m.direction = 'in'`,
+      select (extract(epoch from greatest(
+        (select max(m.created_at) from lead_messages m
+          join lead_threads t on t.id = m.thread_id
+          where t.channel = 'instagram'),
+        (select connected_at from ig_auth_state where account_id = ${ACCOUNT})
+      )) * 1000)::bigint as ms`,
   );
   return Number(rows[0]?.ms ?? 0);
 }
@@ -232,9 +239,12 @@ export function reconcileInstagram(sql: Sql, integration: IntegrationRow | null)
 async function reconcileOnce(sql: Sql, integration: IntegrationRow | null): Promise<void> {
   if (!sidecarActive(integration)) {
     if (!stopSent || last.state !== 'off') {
-      // the sidecar must stop answering as the account; best-effort — dev runs without one
-      await call(integration, 'DELETE', '/v1/session').catch(() => undefined);
-      stopSent = true;
+      // the sidecar must stop answering as the account; only a confirmed stop (or no
+      // secret — nothing can hold a session) ends the retries on later ticks
+      stopSent = await call(integration, 'DELETE', '/v1/session').then(
+        () => true,
+        (e) => e instanceof SidecarError && e.code === 'no_secret',
+      );
     }
     setStatus({ state: 'off' });
     return;
@@ -248,7 +258,7 @@ async function reconcileOnce(sql: Sql, integration: IntegrationRow | null): Prom
       if (session) {
         st = await call<IgStatus>(integration, 'PUT', '/v1/session', {
           session,
-          sinceMs: await lastInboundMs(sql),
+          sinceMs: await catchUpFloorMs(sql),
         });
         igLog.info('stored session pushed to sidecar');
       }
@@ -432,6 +442,10 @@ type IgEvent =
   | { type: 'session'; session: IgSession }
   | { type: 'message'; message: IgInbound };
 
+function asObject(v: unknown): Record<string, unknown> | null {
+  return v && typeof v === 'object' && !Array.isArray(v) ? (v as Record<string, unknown>) : null;
+}
+
 /** Shape-check a signed sidecar event; bad shapes are a stable 422, never a 500. */
 export function parseIgEvent(raw: unknown): IgEvent {
   const bad = (why: string) => new HttpError(422, 'BAD_REQUEST', `instagram event: ${why}`);
@@ -444,8 +458,8 @@ export function parseIgEvent(raw: unknown): IgEvent {
     if (state !== 'off' && state !== 'connecting' && state !== 'open' && state !== 'error') {
       throw bad('state');
     }
-    const err = e.error as { code?: unknown; message?: unknown } | undefined;
-    const acct = e.account as Record<string, unknown> | undefined;
+    const err = asObject(e.error);
+    const acct = asObject(e.account);
     return {
       type: 'state',
       status: {
@@ -472,7 +486,7 @@ export function parseIgEvent(raw: unknown): IgEvent {
     return { type: 'session', session };
   }
   if (e.type === 'message') {
-    const m = e.message as Record<string, unknown> | undefined;
+    const m = asObject(e.message);
     const id = str(m?.id, 200);
     const fromFbid = str(m?.fromFbid, 40);
     const text = str(m?.text, 8000);

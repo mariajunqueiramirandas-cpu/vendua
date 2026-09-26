@@ -331,6 +331,13 @@ func (m *Manager) onIndexLoaded(ctx context.Context, gen uint64, cli *instameow.
 	m.log.Info().Str("username", acct.Username).Msg("index loaded")
 	m.persistCookies(gen)
 	m.catchUp(ctx, gen, cli, mailbox)
+	// the first connect after a login skips catch-up (no floor); from here on this
+	// process has a floor, so a resnapshot/reconnect replays what it missed
+	m.mu.Lock()
+	if gen == m.gen && m.lastInboundMS == 0 {
+		m.lastInboundMS = time.Now().UnixMilli()
+	}
+	m.mu.Unlock()
 }
 
 func marshalCookies(cli *instameow.Client) string {

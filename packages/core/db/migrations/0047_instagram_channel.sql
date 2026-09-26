@@ -15,8 +15,12 @@ create table if not exists ig_auth_state (
   account_id text primary key,
   session jsonb,
   device jsonb,
+  -- set by a fresh login, never by cookie rotation: the sidecar's catch-up floor
+  -- before the account has any recorded message
+  connected_at timestamptz,
   updated_at timestamptz not null default now()
 );
+alter table ig_auth_state add column if not exists connected_at timestamptz;
 
 do $$
 begin
