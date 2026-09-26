@@ -281,10 +281,30 @@ describe('unconfigured tools — hidden, refused, never named', () => {
     expect(p).toContain('- web_search(query, purpose)');
   });
 
-  test('no research at all → lead kinds ask instead of searching', () => {
-    const tools = new Set(toolsFor('reply', GATES.noResearch!).map((t) => t.name));
-    const p = buildSystemPrompt('reply', DEFAULT_PITCH, '', { facts: [] }, { tools });
-    expect(p).toContain('Sem pesquisa externa nesta instalação');
+  test('no research at all → reply asks only on inbound, outreach sends nothing blind', () => {
+    const reply = buildSystemPrompt(
+      'reply',
+      DEFAULT_PITCH,
+      '',
+      { facts: [] },
+      {
+        tools: new Set(toolsFor('reply', GATES.noResearch!).map((t) => t.name)),
+      },
+    );
+    expect(reply).toContain('DOSSIÊ fraco num outbound e sem pesquisa externa nesta instalação');
+    expect(reply).toContain('ORIGEM inbound (ela nos procurou)');
+    const outreach = buildSystemPrompt(
+      'outreach',
+      DEFAULT_PITCH,
+      '',
+      { facts: [] },
+      {
+        tools: new Set(toolsFor('outreach', GATES.noResearch!).map((t) => t.name)),
+      },
+    );
+    expect(outreach).toContain('sem pesquisa externa nesta instalação');
+    expect(outreach).toContain('Não mande nada: create_task para humano');
+    expect(outreach).not.toContain('a primeira mensagem já chega perguntando quem é');
   });
 
   test('channel args list only live channels; none → manual drafts only', () => {
