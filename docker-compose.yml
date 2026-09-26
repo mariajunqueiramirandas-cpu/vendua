@@ -123,6 +123,9 @@ services:
   # chain and breaks VENDUA_PROXY_HOPS accounting for the login limiter).
   crm:
     image: nginx:1.28-alpine
+    environment:
+      # silences the entrypoint's per-boot script chatter; nginx's own warnings still show
+      NGINX_ENTRYPOINT_QUIET_LOGS: '1'
     volumes:
       - ./apps/control/nginx.conf:/etc/nginx/conf.d/default.conf:ro
     depends_on:

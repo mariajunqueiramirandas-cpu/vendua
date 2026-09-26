@@ -23,12 +23,14 @@ COPY storefronts storefronts
 RUN bun --filter @vendua/site build && bun --filter './storefronts/*' build
 
 FROM nginx:1.28-alpine AS site
+ENV NGINX_ENTRYPOINT_QUIET_LOGS=1
 COPY site/nginx.conf /etc/nginx/conf.d/default.conf
 COPY --from=build /app/site/build /usr/share/nginx/html
 EXPOSE 80
 
 # SPA fallback + proxies reserved API prefixes to `core` forwarding Host (tenant routing)
 FROM nginx:1.28-alpine AS storefront
+ENV NGINX_ENTRYPOINT_QUIET_LOGS=1
 ARG STOREFRONT
 COPY storefronts/nginx.conf /etc/nginx/conf.d/default.conf
 COPY --from=build /app/storefronts/${STOREFRONT}/dist /usr/share/nginx/html
