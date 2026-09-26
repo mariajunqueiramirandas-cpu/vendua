@@ -1193,7 +1193,8 @@ function reminderBody(kind: '24h' | '1h', meeting: MeetingRow, cfg: MeetingConfi
 }
 
 /** Earliest reminder still to come (24h / 1h before a scheduled call). */
-export async function nextReminderAtTx(tx: Sql): Promise<Date | null> {
+/** `since` as in nextWakeupAtTx — a reminder that came due mid-pass still counts. */
+export async function nextReminderAtTx(tx: Sql, since?: Date): Promise<Date | null> {
   const [row] = await tx<{ at: Date | null }[]>`
     select min(t) as at from (
       select starts_at - interval '24 hours' as t from meetings
@@ -1203,7 +1204,7 @@ export async function nextReminderAtTx(tx: Sql): Promise<Date | null> {
       select starts_at - interval '1 hour' from meetings
       where status = 'scheduled' and lead_id is not null and reminder_1h_at is null
     ) x
-    where t > now()
+    where t > coalesce(${since ?? null}::timestamptz, now())
   `;
   return row?.at ? new Date(row.at) : null;
 }

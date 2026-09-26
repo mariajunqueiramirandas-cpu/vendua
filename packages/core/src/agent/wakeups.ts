@@ -300,9 +300,12 @@ const WAKEUP_BATCH = 20;
 
 /** Earliest pending wakeup still in the future — the agenda's next due time. Due-but-parked
  *  rows (paused lead, preset off, cost cap) are left out: the change that frees them notifies. */
-export async function nextWakeupAtTx(tx: Sql): Promise<Date | null> {
+/** `since` = when the caller's pass started: a row that came due during the pass wasn't
+ *  seen by it and must still count, while one already due before it (parked) must not. */
+export async function nextWakeupAtTx(tx: Sql, since?: Date): Promise<Date | null> {
   const [row] = await tx<{ at: Date | null }[]>`
-    select min(at) as at from agent_wakeups where status = 'pending' and at > now()
+    select min(at) as at from agent_wakeups
+    where status = 'pending' and at > coalesce(${since ?? null}::timestamptz, now())
   `;
   return row?.at ? new Date(row.at) : null;
 }

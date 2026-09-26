@@ -54,8 +54,9 @@ export interface ScheduledJob {
   label: string;
   /** human cadence for the CRM */
   cadence: (tx: Sql) => Promise<string>;
-  /** next time it has work by the clock (null = only when an event says so) */
-  nextAt?: (tx: Sql) => Promise<Date | null>;
+  /** next time it has work by the clock (null = only when an event says so); `since` is
+   *  when the pass that just ran started — work that came due after it still counts */
+  nextAt?: (tx: Sql, since?: Date) => Promise<Date | null>;
   /** the changes that can give it work now */
   wakesOn?: (ev: WakeEvent) => boolean;
   /** recovery only — runs at boot and on the reconcile pass, never from events */
@@ -438,6 +439,7 @@ async function jobPass(s: SchedulerState): Promise<Date | null> {
     s.reconcileJobs.delete(j.name);
   }
   for (const j of due) {
+    const started = Date.now();
     const out = await execJob(sql, j);
     let retry = Infinity;
     if (!out.ok) {
@@ -456,16 +458,21 @@ async function jobPass(s: SchedulerState): Promise<Date | null> {
     }
     let next = Infinity;
     if (j.nextAt) {
-      next = await controlTx(sql, (tx) => j.nextAt!(tx))
+      next = await controlTx(sql, (tx) => j.nextAt!(tx, new Date(started)))
         .then((d) => d?.getTime() ?? Infinity)
         .catch((e) => {
           agentLog.warn({ err: e, job: j.name }, 'could not compute next due time');
           return Date.now() + 30_000;
         });
     }
+    // came due while the pass ran (it started before the due time — early timer, the
+    // driver's ms truncation, an event just before): the pass couldn't see it, run again now.
+    // `>=`: next is truncated to the ms, so a row due within the pass's first ms reads as equal
+    // (a parked one costs at most one extra pass — the next one starts after it)
+    if (out.ok && next >= started && next <= Date.now()) next = Date.now();
     // still "due now" right after running would spin: after a failure the backoff decides;
     // after a success it's a nextAt bug, not work
-    if (next <= Date.now()) {
+    else if (next <= Date.now()) {
       if (out.ok) agentLog.warn({ job: j.name }, 'job still due right after running — backing off');
       next = out.ok ? Date.now() + 30_000 : Infinity;
     }
