@@ -8,7 +8,7 @@
 | ----------------------------- | ------- | -------------------------------------------------------------------------------------------------------------------------- |
 | 0 — Foundations               | ✅ Done | Monorepo, Core skeleton, Kernel, 3 spike storefronts, Contract v1 drafted                                                  |
 | 1 — Storefront factory        | ✅ Done | Contract frozen, conformance, CLI, fleet isolation, Founder CRM — which has since grown well past its v0 scope (see below) |
-| 1b — Kernel v1 + updatability | ⬜ Next | **Current priority.** Complete SDK surface + proven update path, before any customer                                       |
+| 1b — Kernel v1 + updatability | ⬜ Next | **Current priority.** Complete SDK, page composition (Contract v2), proven update path — before any customer               |
 | 2 — Commerce completeness     | ⬜ Open | Order lifecycle, catalog depth, growth surfaces — all unchecked                                                            |
 | 3 — Payments + merchant admin | ⬜ Open | The "buy a plan → provisioned store" self-serve path; starts once 1b's exit is met                                         |
 | 4 — First tenant operated     | ⬜ Open | Edge, Control Plane v0, provisioner — the other half of the 1-hour signup→store promise                                    |
@@ -57,6 +57,13 @@ before the "ad → paid plan → agent-built store live in ~1 hour" path
 (Phases 3/4) — the sales agent keeps building pipeline meanwhile, but nobody
 is onboarded until 1b's exit is met.
 
+**After a store is created, agent coding is kept to a minimum**
+([ADR 0018](adr/0018-page-composition.md)). Pages are templates composed of
+Kernel-owned `sdk:*` sections and the store's bespoke `store:*` sections;
+content is data; new features are placed on every store by template migrations.
+Agents code a store once, at creation. After that, only a merchant-requested
+redesign or a codemod failure tail should need them.
+
 **Organizing principle: the fleet is the product.** This roadmap is not "build
 the platform, then learn to operate 1000 stores". Every phase must leave the
 fleet _operable at its current size_ — we never ship a capability we can't
@@ -80,13 +87,13 @@ migrate → generate → scale**. Two consequences versus a naive build order:
 Phases build capability; these stages gate _growth_. Do not grow past a stage
 until its row is true.
 
-| Stage        | N     | Must be true before growing past it                                                                                                                                                                                                   |
-| ------------ | ----- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| First store  | 1     | Phase 1b exit met (Kernel v1 complete; a Kernel minor and a Contract-major rehearsal reached every in-repo storefront untouched); real paid order taken; provision/promote/rollback ran through the Control Plane — zero manual steps |
-| Pilot cohort | ~5    | Conformance + changed-path CI green on every storefront PR; probes live on all hostnames; `_examples/` seeded                                                                                                                         |
-| Early fleet  | ~25   | One boring train shipped; one codemod rehearsal done; runbook covers the top 5 incidents                                                                                                                                              |
-| Growth       | ~100  | Agent pipeline is the default intake; Core HA + LKG proven by a real failover drill; train cost measured                                                                                                                              |
-| Fleet        | ~1000 | `fleet-*` shard rehearsed; Kernel publishing path proven; train economics budgeted                                                                                                                                                    |
+| Stage        | N     | Must be true before growing past it                                                                                                                                                                                                                                                            |
+| ------------ | ----- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| First store  | 1     | Phase 1b exit met (Kernel v1 complete; Contract v2 page composition live; a template migration, a Kernel minor and a Contract-major rehearsal reached every in-repo storefront untouched); real paid order taken; provision/promote/rollback ran through the Control Plane — zero manual steps |
+| Pilot cohort | ~5    | Conformance + changed-path CI green on every storefront PR; probes live on all hostnames; `_examples/` seeded                                                                                                                                                                                  |
+| Early fleet  | ~25   | One boring train shipped; one codemod rehearsal done; runbook covers the top 5 incidents                                                                                                                                                                                                       |
+| Growth       | ~100  | Agent pipeline is the default intake; Core HA + LKG proven by a real failover drill; train cost measured                                                                                                                                                                                       |
+| Fleet        | ~1000 | `fleet-*` shard rehearsed; Kernel publishing path proven; train economics budgeted                                                                                                                                                                                                             |
 
 ## Phase 0 — Fleet-shaped foundations (weeks 0–4) ✅
 
@@ -205,11 +212,44 @@ because they are what "updatable" means; the ones that need real merchants
 - [ ] Design updates through tokens: changing a storefront's tokens restyles
       every Kernel default and every `var(--v-*)` in its own CSS on the next
       build, with no component edits — asserted by a conformance visual
-      check.
+      check. Tokens move into Core as store data; an edit triggers the
+      rebuild.
+
+### 1b-iii — Page composition, Contract v2 ([17](architecture/17-page-composition.md), [ADR 0018](adr/0018-page-composition.md))
+
+- [ ] Page templates in Core: `storefront_templates` (RLS, version history),
+      delivered in the store state, with the build-time snapshot bundled in
+      the artifact as last-known-good.
+- [ ] Kernel composition runtime: template renderer, `defineSection`,
+      `<BlockArea>` with category acceptance, an error boundary per section
+      and block, and unknown types rendering nothing (reported).
+- [ ] SDK sections v1, each with variants, documented parts and fixtures:
+      purchase panel, catalog grid, product list, store status + hours,
+      header cart, announcement bar. Initial blocks: stock counter,
+      notify-me, promo badge.
+- [ ] Content as data: section settings schemas; conformance flags hard-coded
+      copy in `store:*` sections.
+- [ ] Kernel pages under `/(vendua)/*` render inside the store's `layout`
+      template (order history first).
+- [ ] Styling API: `data-part` + `--v-<component>-*` hooks documented and
+      exempted from `no-v-namespace`; generation QA reports the override
+      count per store.
+- [ ] Template migrations: format, per-store dry-run report, apply by ring,
+      rollback to the previous template version, never re-adding what a
+      merchant removed.
+- [ ] Template editing API in Core (staff first; the merchant editor lands with
+      the Phase 3 admin).
+- [ ] Freeze Contract v2 and port every in-repo storefront (`_template`,
+      `_examples/*`, `quero-pudim`, `forn`, `brasa`) from `routes/` to
+      `sections/` + templates, moving their copy into settings.
+- [ ] Proof: ship a new SDK block in a Kernel minor and place it on every
+      in-repo storefront's product page with a template migration — zero
+      store edits.
 
 Exit: every slot, primitive and hook in the v1 spec exists with a default and a
-fixture; a Kernel minor and a Contract-major rehearsal both reached every
-in-repo storefront with zero hand edits; the stale reference storefront is green
+fixture; every in-repo storefront runs on Contract v2 (templates + sections);
+a new SDK block reached all of them through a template migration, and a Kernel
+minor and a Contract-major rehearsal both reached them, with zero hand edits; the stale reference storefront is green
 in CI; `v.js` renders the kill switch on a broken build. **Gate for the first
 customer.**
 
@@ -272,7 +312,8 @@ without touching a repo.
 - [ ] Mercado Pago OAuth + `application_fee` + PIX + webhook-driven order
       state machine ([13](architecture/13-payments.md)).
 - [ ] Merchant admin MVP: catalog CRUD (incl. Phase-2 fields), hours,
-      zones/fees, orders, MP connect.
+      zones/fees, orders, MP connect, and the page editor (section order,
+      section settings/content, tokens, toggling what migrations placed).
 - [ ] **Self-serve signup + subscription billing** — the core product path
       once 1b is done: a visitor goes from plan selection on the site to a paid
       Venduá subscription and a provisioned store with zero staff
@@ -339,6 +380,9 @@ Goal: agents produce storefronts through the exact path humans use — the PR
 interface is the only interface.
 
 - [ ] DesignSpec schema + validation ([14](architecture/14-agent-pipeline.md)).
+- [ ] Generation targets Contract v2: the agent writes `store:*` sections,
+      initial templates, content and tokens — never whole pages
+      ([17](architecture/17-page-composition.md#generation-under-v2)).
 - [ ] Agent task runner: sparse checkout per the contract
       ([06](architecture/06-monorepo.md#agents-in-the-monorepo)) → scaffold →
       agent PR → conformance + generation QA → fix loop → human approval →
@@ -417,14 +461,16 @@ Two landed during Phase-0 review; the rest are scheduled.
 
 ## Metrics that gate growth
 
-| Metric                                | Watch for                             | Source          |
-| ------------------------------------- | ------------------------------------- | --------------- |
-| Agent-minutes per launched storefront | the business-model number             | `agent_tasks`   |
-| Iterations-to-green                   | scaffold/spec quality                 | `agent_tasks`   |
-| Codemod failure tail                  | >20% → fix the codemod, not the queue | train reports   |
-| Kernel skew                           | stores >2 minors behind               | Control Plane   |
-| Train wall time + gate rejections     | train health trend                    | Control Plane   |
-| Probe failure rate per hostname       | serving health                        | `health_checks` |
+| Metric                                    | Watch for                                              | Source          |
+| ----------------------------------------- | ------------------------------------------------------ | --------------- |
+| Agent-minutes per launched storefront     | the business-model number                              | `agent_tasks`   |
+| Iterations-to-green                       | scaffold/spec quality                                  | `agent_tasks`   |
+| Post-launch agent-minutes per store/month | ~0; rising → something that should be data/SDK is code | `agent_tasks`   |
+| Overrides per store                       | high → SDK styling API is missing range                | generation QA   |
+| Codemod failure tail                      | >20% → fix the codemod, not the queue                  | train reports   |
+| Kernel skew                               | stores >2 minors behind                                | Control Plane   |
+| Train wall time + gate rejections         | train health trend                                     | Control Plane   |
+| Probe failure rate per hostname           | serving health                                         | `health_checks` |
 
 ## Explicitly deferred
 
