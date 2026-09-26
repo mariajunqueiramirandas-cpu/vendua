@@ -661,6 +661,26 @@ export async function contextFor(
       }
       if (run.kind === 'triage' || run.kind === 'reply' || run.kind === 'outreach') {
         parts.push(`GOAL: ${goal}`);
+        // Who spoke first decides whether "what do you sell?" is allowed: fine when the
+        // lead came to us, amateur on a cold approach. Only what reached the wire counts —
+        // not drafts, not queued sends, not manual-thread notes.
+        const first = (
+          await controlTx(
+            sql,
+            (tx) => tx<{ direction: 'in' | 'out' }[]>`
+              select m.direction from lead_messages m
+              join lead_threads t on t.id = m.thread_id
+              where t.lead_id = ${run.lead_id} and t.channel <> 'manual'
+                and (m.direction = 'in' or m.status in ('sending', 'sent', 'delivered'))
+              order by m.created_at, m.id limit 1
+            `,
+          )
+        )[0];
+        parts.push(
+          first?.direction === 'in'
+            ? 'ORIGEM: inbound — o lead nos procurou primeiro'
+            : 'ORIGEM: outbound — nós abordamos primeiro (ou ainda não houve conversa)',
+        );
         const plan = rows[0].j.agent_plan;
         if (Array.isArray(plan) && plan.length) {
           parts.push(`PLANO: ${JSON.stringify(plan)}`);
