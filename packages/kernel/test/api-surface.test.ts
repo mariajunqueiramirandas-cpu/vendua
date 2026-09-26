@@ -71,7 +71,6 @@ describe('public surface', () => {
   test('the exports map hides internals', () => {
     expect(Object.keys(pkg.exports).sort()).toEqual([
       '.',
-      './client',
       './config',
       './package.json',
       './sdk-catalog',

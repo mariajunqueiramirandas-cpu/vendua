@@ -2,7 +2,7 @@
 
 Kernel 1.x serves **Contract 2** (ADR 0018). Everything a storefront may touch is
 listed here; the package `exports` map (`.`, `./config`, `./styles.css`, `./vite`,
-`./client`, `./sdk-catalog`) hides everything else, and `test/api-surface.test.ts`
+`./sdk-catalog`) hides everything else, and `test/api-surface.test.ts`
 fails on any unlisted runtime export. Within Contract 2, changes are additive:
 new exports, optional props, new slots/sections/blocks — never removals, renames or
 retypes (those need a Contract major, a codemod and an alias window).
@@ -43,8 +43,9 @@ createRoot(document.getElementById('root')!).render(
 );
 ```
 
-`vite.config.ts` adds `vendua({ config })` from `@vendua/kernel/vite`; `tsconfig.json`
-adds `"types": ["@vendua/kernel/client"]` for the virtual module.
+`vite.config.ts` adds `vendua({ config })` from `@vendua/kernel/vite`. `vendua.config.ts`
+imports `defineStorefront` from `@vendua/kernel/config` (Vite loads it in plain Node).
+The `virtual:vendua/storefront` module is typed by the Kernel entry itself.
 
 ## Hooks
 
@@ -78,7 +79,7 @@ the default error surface.
 `defineSection`, `defineBlock` and the settings builders `text`, `richText`, `number`,
 `boolean`, `select`, `image`, `url`, `product`, `category`, `list`. `BlockArea` renders
 a section's area. Types: `SectionProps`, `BlockProps`, `SectionSchema`, `BlockSchema`,
-`SettingsValues`, `AreaSpec`, `StorefrontBundle`, `StorefrontSnapshot`,
+`SettingsValues`, `AreaSpec`, the field types (`Field`, `TextField`, … `ListField`), `StorefrontBundle`, `StorefrontSnapshot`,
 `PageContextValue`.
 
 Store modules live in `sections/*.tsx`, export `schema` + a default component, and

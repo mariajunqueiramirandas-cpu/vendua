@@ -1,3 +1,4 @@
+/// <reference path="./virtual.d.ts" />
 // @vendua/kernel v1 — the frozen public surface (docs/architecture/02-kernel.md,
 // packages/kernel/API.md). Everything a storefront may touch is exported here;
 // the package `exports` map hides the rest. Additive-only within Contract 2.
@@ -83,7 +84,23 @@ export {
   category,
   list,
 } from './composition/schema.ts';
-export type { AreaSpec, BlockSchema, SectionSchema, SettingsValues } from './composition/schema.ts';
+export type {
+  AreaSpec,
+  BlockSchema,
+  BooleanField,
+  CategoryField,
+  Field,
+  ImageField,
+  ListField,
+  NumberField,
+  ProductField,
+  RichTextField,
+  SectionSchema,
+  SelectField,
+  SettingsValues,
+  TextField,
+  UrlField,
+} from './composition/schema.ts';
 export { BlockArea, usePageContext } from './composition/runtime.tsx';
 export type { PageContextValue } from './composition/runtime.tsx';
 export type {

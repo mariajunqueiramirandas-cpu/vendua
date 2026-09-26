@@ -166,8 +166,13 @@ export function startPreview(opts: PreviewOptions): Promise<Server> {
   });
 
   return new Promise((resolvePromise, reject) => {
-    server.once('error', reject);
-    // dual-stack '::': Chromium reaches 127.0.0.1 while Node/Playwright resolves *.localhost to ::1
+    // dual-stack '::': Chromium reaches 127.0.0.1 while Node/Playwright resolves *.localhost to ::1;
+    // hosts without IPv6 (some containers) fall back to IPv4
+    server.once('error', (err: NodeJS.ErrnoException) => {
+      if (err.code !== 'EAFNOSUPPORT') return reject(err);
+      server.once('error', reject);
+      server.listen(port, '0.0.0.0', () => resolvePromise(server));
+    });
     server.listen(port, '::', () => resolvePromise(server));
   });
 }

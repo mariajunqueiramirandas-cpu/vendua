@@ -12,8 +12,8 @@
     --v-card-radius: var(--v-radius-lg, 14px);
     --v-card-media-ratio: 1 / 1;
     --v-card-gap: 12px;
-    --v-grid-min: 220px;
-    --v-grid-gap: 24px;
+    --v-grid-min: clamp(148px, 40vw, 240px);
+    --v-grid-gap: clamp(16px, 3vw, 24px);
     --v-section-pad: 48px;
     --v-page-max: 1120px;
     --v-purchase-panel-gap: 40px;

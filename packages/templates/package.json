@@ -5,10 +5,7 @@
   "type": "module",
   "exports": {
     ".": "./src/index.ts",
-    "./node": "./src/node.ts",
-    "./client": {
-      "types": "./src/virtual.d.ts"
-    }
+    "./node": "./src/node.ts"
   },
   "scripts": {
     "check": "tsc --noEmit -p tsconfig.json",

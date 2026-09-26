@@ -1,0 +1,20 @@
+{
+  "version": 1,
+  "page": "product",
+  "sections": [
+    {
+      "id": "purchase",
+      "type": "sdk:purchase-panel",
+      "settings": { "variant": "split" },
+      "blocks": {
+        "after-price": [{ "id": "stock", "type": "sdk:stock-counter" }],
+        "after-cta": [{ "id": "notify", "type": "sdk:notify-me" }]
+      }
+    },
+    {
+      "id": "more",
+      "type": "sdk:product-list",
+      "settings": { "title": "Você também pode gostar", "limit": 4 }
+    }
+  ]
+}

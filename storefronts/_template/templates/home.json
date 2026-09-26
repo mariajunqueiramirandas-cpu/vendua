@@ -1,0 +1,28 @@
+{
+  "version": 1,
+  "page": "home",
+  "sections": [
+    {
+      "id": "intro",
+      "type": "store:intro",
+      "settings": {
+        "eyebrow": "Bem-vindo",
+        "title": "Feito na hora, do nosso jeito.",
+        "text": "Escolha no cardápio, retire na loja ou receba em casa.",
+        "ctaLabel": "Ver cardápio",
+        "ctaHref": "/cardapio"
+      }
+    },
+    {
+      "id": "featured",
+      "type": "sdk:product-list",
+      "settings": {
+        "title": "Destaques",
+        "limit": 4,
+        "ctaLabel": "Ver tudo",
+        "ctaHref": "/cardapio"
+      }
+    },
+    { "id": "status", "type": "sdk:store-status" }
+  ]
+}
