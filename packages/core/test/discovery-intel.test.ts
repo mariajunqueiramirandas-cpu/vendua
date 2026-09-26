@@ -2,7 +2,7 @@ import { describe, expect, test } from 'bun:test';
 import { join } from 'node:path';
 import postgres from 'postgres';
 import { insertRun, sweepBriefs, sweepStrategist } from '../src/agent/runner.ts';
-import { executeTool, toolsFor, type ToolContext } from '../src/agent/tools.ts';
+import { disabledTools, executeTool, toolsFor, type ToolContext } from '../src/agent/tools.ts';
 import { buildSystemPrompt } from '../src/agent/prompts.ts';
 import { DEFAULT_GUARDRAILS, DEFAULT_PITCH, validateSetting } from '../src/modules/integrations.ts';
 import { controlTx } from '../src/modules/control.ts';
@@ -57,6 +57,35 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('discovery intelligence (db)', (
   const uniq = Date.now().toString(36);
   // phones/whatsapps dedupe — keep them unique across suite re-runs
   const wa = `wa.me/55${String(Date.now()).slice(-9)}`;
+
+  test('disabledTools — unconfigured providers are reported, mock LLM keeps mock discovery', async () => {
+    const monid = process.env.MONID_API_KEY;
+    delete process.env.MONID_API_KEY;
+    const ref = `VENDUA_TEST_TF_${uniq}`;
+    try {
+      const real = await disabledTools(sql, { simulated: false });
+      expect([...real.keys()].sort()).toEqual(
+        ['instagram_profile', 'maps_lookup', 'read_pages', 'serp', 'web_search'].sort(),
+      );
+      const sim = await disabledTools(sql, { simulated: true });
+      expect(sim.has('web_search')).toBe(false);
+      expect(sim.has('serp')).toBe(true);
+
+      await sql`
+        insert into control_integrations (kind, driver, enabled, secret_ref)
+        values ('discovery', 'tinyfish', true, ${ref})
+      `;
+      expect((await disabledTools(sql, { simulated: true })).get('web_search')).toContain(ref);
+      process.env[ref] = 'k';
+      process.env.MONID_API_KEY = 'k';
+      expect((await disabledTools(sql, { simulated: false })).size).toBe(0);
+    } finally {
+      await sql`delete from control_integrations where kind = 'discovery' and secret_ref = ${ref}`;
+      delete process.env[ref];
+      if (monid === undefined) delete process.env.MONID_API_KEY;
+      else process.env.MONID_API_KEY = monid;
+    }
+  });
 
   const mkCtx = (runKind: ToolContext['runKind']): ToolContext => ({
     sql,

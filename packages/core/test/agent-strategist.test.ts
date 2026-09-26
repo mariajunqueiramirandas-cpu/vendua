@@ -1,5 +1,7 @@
 import { describe, expect, test, beforeEach, afterEach } from 'bun:test';
-import { executeTool, bookDigest, type ToolContext } from '../src/agent/tools.ts';
+import { executeTool, bookDigest, toolsFor, type ToolContext } from '../src/agent/tools.ts';
+import { buildSystemPrompt } from '../src/agent/prompts.ts';
+import { DEFAULT_PITCH } from '../src/modules/integrations.ts';
 import { MonidBudget } from '../src/agent/channels/monid.ts';
 
 // book/plan never touch sql; monid tools hit fetch — stub it per test.
@@ -159,5 +161,65 @@ describe('monid enrichment tools', () => {
     const c = ctx();
     const out = (await executeTool(c, 's', 'serp', { query: 'x' })) as { error: string };
     expect(out.error).toContain('MONID_API_KEY');
+  });
+});
+
+describe('unconfigured tools — hidden, refused, and named in the prompt', () => {
+  const off = new Map([
+    ['serp', 'MONID_API_KEY não configurada'],
+    ['maps_lookup', 'MONID_API_KEY não configurada'],
+    ['instagram_profile', 'MONID_API_KEY não configurada'],
+  ]);
+
+  test('toolsFor drops disabled tools', () => {
+    const names = toolsFor('discovery', off).map((t) => t.name);
+    expect(names).not.toContain('serp');
+    expect(names).not.toContain('maps_lookup');
+    expect(names).toContain('web_search');
+  });
+
+  test('a disabled tool called anyway is refused before it runs', async () => {
+    let fetched = false;
+    globalThis.fetch = (async () => {
+      fetched = true;
+      return new Response('{}');
+    }) as unknown as typeof fetch;
+    const c = { ...ctx(), disabledTools: off };
+    const out = (await executeTool(c, 's', 'serp', { query: 'x' })) as { error: string };
+    expect(out.error).toMatch(/^TOOL_DISABLED/);
+    expect(fetched).toBe(false);
+  });
+
+  test('the prompt drops their arsenal lines and says they do not exist', () => {
+    const p = buildSystemPrompt(
+      'discovery',
+      DEFAULT_PITCH,
+      '',
+      { facts: [] },
+      {
+        disabledTools: [...off.keys()],
+      },
+    );
+    expect(p).not.toContain('- maps_lookup(query, city)');
+    expect(p).not.toContain('- serp(query)');
+    expect(p).toContain('- web_search(query, purpose)');
+    expect(p).toContain(
+      'FERRAMENTAS DESATIVADAS nesta instalação: serp, maps_lookup, instagram_profile',
+    );
+    const full = buildSystemPrompt('discovery', DEFAULT_PITCH, '', { facts: [] });
+    expect(full).not.toContain('FERRAMENTAS DESATIVADAS');
+  });
+
+  test('no research at all → lead kinds are told to ask instead', () => {
+    const p = buildSystemPrompt(
+      'reply',
+      DEFAULT_PITCH,
+      '',
+      { facts: [] },
+      {
+        disabledTools: ['web_search', 'read_pages', 'serp'],
+      },
+    );
+    expect(p).toContain('pergunte à pessoa o que falta');
   });
 });

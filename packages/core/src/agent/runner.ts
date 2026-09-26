@@ -43,7 +43,14 @@ import { enqueueInboxTx, renderInboxItems, type InboxItem } from './inbox.ts';
 import { requestAgentTx, sweepOrphanInbox } from './dispatch.ts';
 import { anchorTx } from './schedule-anchors.ts';
 import { provenance, SOURCE_PRIORITY, type TriggerSource } from './sources.ts';
-import { executeTool, toolsFor, bookDigest, type BookEntry, type ToolContext } from './tools.ts';
+import {
+  executeTool,
+  toolsFor,
+  bookDigest,
+  disabledTools,
+  type BookEntry,
+  type ToolContext,
+} from './tools.ts';
 import { MonidBudget } from './channels/monid.ts';
 import {
   ACTION_TOOLS,
@@ -1316,6 +1323,8 @@ interface Attempt {
   tools: AgentTool[];
   /** Job kinds this attempt may serve — drainInbox adds a drained item's requestedKind. */
   toolKinds: Set<string>;
+  /** unconfigured tools (name → why) — hidden from every kind this attempt serves */
+  disabledTools: Map<string, string>;
   /** kernel-loop state — res is the current chat() result */
   i: number;
   res: LlmResult;
@@ -1559,7 +1568,7 @@ async function drainInbox(att: Attempt): Promise<number> {
 function widenAttemptTools(att: Attempt): void {
   const seen = new Set(att.tools.map((t) => t.name));
   for (const k of att.toolKinds) {
-    for (const t of toolsFor(k)) {
+    for (const t of toolsFor(k, att.disabledTools)) {
       if (!seen.has(t.name)) {
         seen.add(t.name);
         att.tools.push(t);
@@ -1638,6 +1647,7 @@ async function openAttempt(sql: Sql, run: RunRow): Promise<Attempt> {
     system: '',
     tools: [],
     toolKinds: new Set([run.kind]),
+    disabledTools: new Map(),
     i: 0,
     res: undefined as never,
     nudged: false,
@@ -1713,6 +1723,11 @@ async function buildAttemptContext(att: Attempt): Promise<void> {
   const g = await getSetting<Partial<Guardrails>>(sql, 'guardrails', {});
   // The prompt only promises autocontact under the same conditions create_lead's gate checks.
   const waDriverOn = run.kind === 'discovery' && (await whatsappReadyTx(sql));
+  // A mock LLM runs against discovery's mock pages; a real one only gets tools that can work.
+  att.disabledTools = await disabledTools(sql, {
+    simulated: !integration || integration.driver === 'mock',
+  });
+  const offered = new Set(toolsFor(run.kind).map((t) => t.name));
   att.system = buildSystemPrompt(run.kind, pitch, instructions, memory, {
     goal,
     bookingUrl,
@@ -1720,8 +1735,9 @@ async function buildAttemptContext(att: Attempt): Promise<void> {
       enabled: (g.discoveryAutoContact ?? DEFAULT_GUARDRAILS.discoveryAutoContact) && waDriverOn,
       minScore: g.discoveryContactMinScore ?? DEFAULT_GUARDRAILS.discoveryContactMinScore,
     },
+    disabledTools: [...att.disabledTools.keys()].filter((n) => offered.has(n)),
   });
-  att.tools = toolsFor(run.kind);
+  att.tools = toolsFor(run.kind, att.disabledTools);
   // Kinds from stamped mail must be visible to the model, not just permitted in dispatch.
   widenAttemptTools(att);
   const replay = (att.replay = replayJournal(att.priorSteps, !att.claimsChecked));
@@ -1749,6 +1765,7 @@ async function buildAttemptContext(att: Attempt): Promise<void> {
     // staff assist runs may only compose — send_message degrades to a draft
     draftOnly: run.params.draftOnly === true,
     toolKinds: att.toolKinds,
+    disabledTools: att.disabledTools,
   };
   att.ctx = ctx;
   // Clone book entries on the way in — in-place mutation would rewrite the earlier
@@ -1830,7 +1847,10 @@ async function finishGate(att: Attempt): Promise<'end' | 'again'> {
             )}${readUrls.size ? `; leituras ${[...readUrls].slice(0, 8).join(', ')}` : ''}.`
         : '';
     // Per-prospect untried moves from the ledger.
-    const LADDER = ['maps', 'ig', 'hub', 'serp', 'dir'];
+    const off = att.disabledTools;
+    const LADDER = ['maps', 'ig', 'hub', 'serp', 'dir'].filter(
+      (m) => !(m === 'maps' && off.has('maps_lookup')) && !(m === 'serp' && off.has('serp')),
+    );
     const untried = (leadName: string): string => {
       const e = att.ctx.book.get(leadName.toLowerCase());
       if (!e) return '';
@@ -1846,7 +1866,7 @@ async function finishGate(att: Attempt): Promise<'end' | 'again'> {
               .slice(0, 6)
               .join(
                 ', ',
-              )}.${tried} Uma rodada por nome antes de encerrar: serp "<nome> <cidade>" telefone/whatsapp (ângulo novo, não repita as buscas listadas); e no resultado que citar o nome — mesmo diretório/guia local — read_pages vale (é onde telefone e endereço moram).`
+              )}.${tried} Uma rodada por nome antes de encerrar: ${off.has('serp') ? 'web_search' : 'serp'} "<nome> <cidade>" telefone/whatsapp (ângulo novo, não repita as buscas listadas); e no resultado que citar o nome — mesmo diretório/guia local — read_pages vale (é onde telefone e endereço moram).`
           : null;
     if (nudge) {
       att.nudged = true;
@@ -2006,7 +2026,11 @@ async function dispatchParallel(att: Attempt): Promise<void> {
           .slice(0, 8)
           .map((q) => `"${q}"`)
           .join(', ') || 'nenhuma'
-      }; leituras ${[...urls].slice(0, 8).join(', ') || 'nenhuma'}.\nPassos restantes: ~${Math.max(0, att.limit - att.i)}. Qual o próximo melhor movimento — novo ângulo de busca, maps_lookup, instagram_profile num @ que sobrou, ou fechar um prospect como dead? Responda e siga.`;
+      }; leituras ${[...urls].slice(0, 8).join(', ') || 'nenhuma'}.\nPassos restantes: ~${Math.max(0, att.limit - att.i)}. Qual o próximo melhor movimento — novo ângulo de busca, ${
+        att.disabledTools.has('maps_lookup')
+          ? 'read_pages num @ ou site que sobrou'
+          : 'maps_lookup, instagram_profile num @ que sobrou'
+      }, ou fechar um prospect como dead? Responda e siga.`;
       steps.push({ type: 'reflection', content: reflection });
       messages.push({ role: 'user', content: reflection });
     }

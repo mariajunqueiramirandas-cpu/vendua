@@ -13,6 +13,8 @@ export function buildSystemPrompt(
     /** discovery: score gate for auto-contact — mirrors the create_lead
      *  guardrail so the model knows what its fitScore decides. */
     autoContact?: { enabled: boolean; minScore: number };
+    /** tools this kind would normally get but whose provider isn't configured */
+    disabledTools?: string[];
   } = {},
 ): string {
   const base = [
@@ -100,5 +102,20 @@ Cada proposta leva name (curto — 'docerias fortaleza'), query (a busca como um
 
 Nada convincente? Saia sem propor — uma rodada zerada vale mais que um quadro cheio de rascunho fraco. Aprendizado durável sobre o que converte (segmento que respondeu, ângulo que falhou) → remember.`,
   };
-  return `${base.join('\n')}\n\n${perKind[kind]}`;
+  const off = opts.disabledTools ?? [];
+  if (!off.length) return `${base.join('\n')}\n\n${perKind[kind]}`;
+  // The playbooks name every research tool — drop the arsenal lines and say loudly the rest doesn't apply.
+  const body = perKind[kind]
+    .split('\n')
+    .filter((l) => !off.some((t) => l.startsWith(`- ${t}(`)))
+    .join('\n');
+  // serp shares monid's key with maps_lookup/instagram_profile — all three go together.
+  const noResearch = ['web_search', 'read_pages', 'serp'].every((t) => off.includes(t));
+  return `${base.join('\n')}\n\n${body}\n\nFERRAMENTAS DESATIVADAS nesta instalação: ${off.join(', ')}. Não estão configuradas e NÃO existem nesta run — qualquer menção a elas acima não vale, não tente chamá-las nem planeje com elas. Trabalhe só com as ferramentas que você recebeu${
+    noResearch
+      ? kind === 'discovery'
+        ? '; sem busca nem leitura de páginas não há como achar prospect novo — registre no remember e encerre a run sem inventar leads'
+        : '; sem pesquisa externa: use o que está no LEAD/DOSSIÊ e, na conversa, pergunte à pessoa o que falta'
+      : ''
+  }.`;
 }

@@ -77,6 +77,8 @@ export interface ToolContext {
   draftOnly: boolean;
   /** job kinds this run may call as — drained mail adds its requestedKind; the dispatcher gate reads this. */
   toolKinds?: ReadonlySet<string>;
+  /** tools whose provider isn't configured (name → why) — never offered, refused if called anyway. */
+  disabledTools?: ReadonlyMap<string, string>;
 }
 
 /** One prospect in the agent's ledger — what it found and which moves it already spent. */
@@ -534,8 +536,30 @@ const REGISTRY: { def: AgentTool }[] = [
   },
 ];
 
-export function toolsFor(kind: string): AgentTool[] {
-  return REGISTRY.filter((t) => toolAvailable(kind, t.def.name)).map((t) => t.def);
+export function toolsFor(kind: string, disabled?: ReadonlyMap<string, string>): AgentTool[] {
+  return REGISTRY.filter((t) => toolAvailable(kind, t.def.name) && !disabled?.has(t.def.name)).map(
+    (t) => t.def,
+  );
+}
+
+const MONID_TOOLS = ['maps_lookup', 'instagram_profile', 'serp'] as const;
+const DISCOVERY_TOOLS = ['web_search', 'read_pages'] as const;
+
+/** Tools that would only error (or return canned data) because their provider isn't
+ *  configured — the model must not be offered them. `simulated` = mock LLM, where
+ *  discovery's mock pages are the intended fixture. */
+export async function disabledTools(
+  sql: Sql,
+  opts: { simulated: boolean },
+): Promise<Map<string, string>> {
+  const out = new Map<string, string>();
+  if (!process.env.MONID_API_KEY) {
+    for (const n of MONID_TOOLS) out.set(n, 'MONID_API_KEY não configurada');
+  }
+  const { discoveryUnavailable } = await import('./channels/discovery.ts');
+  const why = await discoveryUnavailable(sql, opts.simulated);
+  if (why) for (const n of DISCOVERY_TOOLS) out.set(n, why);
+  return out;
 }
 
 export function registeredToolNames(): string[] {
@@ -604,6 +628,8 @@ export async function executeTool(
   if (!allowed || !REGISTRY.some((t) => t.def.name === name)) {
     return { error: `tool ${name} not available for ${ctx.runKind} runs` };
   }
+  const off = ctx.disabledTools?.get(name);
+  if (off) return { error: `TOOL_DISABLED — ${name} está desativada (${off}); não chame de novo` };
 
   // lead-bound runs may only mutate their own lead — reads stay unscoped (triage inspects other leads for dupes).
   const boundArg = leadBoundArg(name);

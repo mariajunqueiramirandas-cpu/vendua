@@ -1118,6 +1118,21 @@ function isTruncatedText(text: string): boolean {
   );
 }
 
+/** Why web_search/read_pages can't reach the real web, or null when they can. With no
+ *  enabled integration discoveryFor serves canned mock pages — fine for a mock LLM
+ *  (`simulated`), fabricated prospects for a real one. */
+export async function discoveryUnavailable(sql: Sql, simulated: boolean): Promise<string | null> {
+  const integration = await getIntegration(sql, 'discovery');
+  if (integration?.driver === 'tinyfish') {
+    const ref = integration.secret_ref;
+    return ((ref && process.env[ref]) ?? process.env.TINYFISH_API_KEY)
+      ? null
+      : `${ref ?? 'TINYFISH_API_KEY'} não configurada`;
+  }
+  if (integration?.driver === 'mock' || simulated) return null;
+  return 'integração de descoberta (busca/leitura de páginas) não configurada';
+}
+
 export async function discoveryFor(sql: Sql): Promise<DiscoveryProvider> {
   const integration = await getIntegration(sql, 'discovery');
   if (!integration || !integration.enabled) return mock();
