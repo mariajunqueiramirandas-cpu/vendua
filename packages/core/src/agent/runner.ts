@@ -662,15 +662,16 @@ export async function contextFor(
       if (run.kind === 'triage' || run.kind === 'reply' || run.kind === 'outreach') {
         parts.push(`GOAL: ${goal}`);
         // Who spoke first decides whether "what do you sell?" is allowed: fine when the
-        // lead came to us, amateur on a cold approach. Unsent drafts don't count.
+        // lead came to us, amateur on a cold approach. Only what reached the wire counts —
+        // not drafts, not queued sends, not manual-thread notes.
         const first = (
           await controlTx(
             sql,
             (tx) => tx<{ direction: 'in' | 'out' }[]>`
               select m.direction from lead_messages m
               join lead_threads t on t.id = m.thread_id
-              where t.lead_id = ${run.lead_id}
-                and (m.direction = 'in' or m.status in ('queued', 'sending', 'sent', 'delivered'))
+              where t.lead_id = ${run.lead_id} and t.channel <> 'manual'
+                and (m.direction = 'in' or m.status in ('sending', 'sent', 'delivered'))
               order by m.created_at, m.id limit 1
             `,
           )

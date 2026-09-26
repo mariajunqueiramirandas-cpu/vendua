@@ -211,7 +211,7 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('agent memory v2 wiring (db)', (
     expect(text).toContain('team_size: 4 people (confiança 0.5)');
   });
 
-  test('contextFor stamps ORIGEM from who spoke first — unsent drafts do not count', async () => {
+  test('contextFor stamps ORIGEM from who spoke first — only what reached the wire counts', async () => {
     await setup();
     const cold = await mkLead('origem-cold');
     const warm = await mkLead('origem-warm');
@@ -232,6 +232,17 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('agent memory v2 wiring (db)', (
       values (${wt!.id}, 'out', 'agent', 'rascunho', 'rejected', now() - interval '2 hours'),
              (${wt!.id}, 'in', 'lead', 'vocês fazem loja?', 'received', now() - interval '1 hour')`;
     expect((await contextFor(sql, await mkRun('reply', warm))).text).toContain('ORIGEM: inbound');
+    // a send still queued when the lead wrote, and a staff note on a manual thread, never reached them
+    const early = await mkLead('origem-early');
+    const [et] = await sql<{ id: string }[]>`
+      insert into lead_threads (lead_id, channel) values (${early}, 'whatsapp') returning id`;
+    const [mt] = await sql<{ id: string }[]>`
+      insert into lead_threads (lead_id, channel) values (${early}, 'manual') returning id`;
+    await sql`insert into lead_messages (thread_id, direction, author, body, status, created_at)
+      values (${mt!.id}, 'out', 'staff', 'nota', 'sent', now() - interval '3 hours'),
+             (${et!.id}, 'out', 'agent', 'oi', 'queued', now() - interval '2 hours'),
+             (${et!.id}, 'in', 'lead', 'oi, vi o anúncio', 'received', now() - interval '1 hour')`;
+    expect((await contextFor(sql, await mkRun('reply', early))).text).toContain('ORIGEM: inbound');
   });
 
   test('memoryForPrompt feeds segment learnings from the bound lead', async () => {
