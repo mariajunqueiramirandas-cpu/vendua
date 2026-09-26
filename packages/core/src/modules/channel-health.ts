@@ -8,12 +8,12 @@ const MIN_ATTEMPTS = 5;
 const FAILURE_RATE_ALERT = 0.2;
 
 export interface ChannelHealth {
-  channel: 'whatsapp' | 'email';
+  channel: 'whatsapp' | 'instagram' | 'email';
   sent: number;
   failed: number;
   blocked: number;
   blockedByReason: Record<string, number>;
-  /** leads whose email bounce marker was set inside the window (0 on whatsapp). */
+  /** leads whose email bounce marker was set inside the window (0 elsewhere). */
   bounced: number;
   /** failed / (sent + failed); null when nothing resolved yet. */
   failureRate: number | null;
@@ -42,7 +42,7 @@ export async function channelHealth(sql: Sql): Promise<ChannelHealth[]> {
              count(*) filter (where m.status = 'failed')::int as failed
       from lead_messages m
       join lead_threads t on t.id = m.thread_id
-      where m.direction = 'out' and t.channel in ('whatsapp', 'email')
+      where m.direction = 'out' and t.channel in ('whatsapp', 'instagram', 'email')
         and m.created_at > now() - make_interval(days => ${HEALTH_WINDOW_DAYS})
       group by 1
     `;
@@ -50,7 +50,7 @@ export async function channelHealth(sql: Sql): Promise<ChannelHealth[]> {
       select meta->>'channel' as channel, meta->>'reason' as reason, count(*)::int as n
       from lead_activities
       where kind = 'blocked' and at > now() - make_interval(days => ${HEALTH_WINDOW_DAYS})
-        and meta->>'channel' in ('whatsapp', 'email')
+        and meta->>'channel' in ('whatsapp', 'instagram', 'email')
       group by 1, 2
     `;
     const bounced = (
@@ -65,7 +65,7 @@ export async function channelHealth(sql: Sql): Promise<ChannelHealth[]> {
     for (const b of blocks) {
       (blockedBy[b.channel] ??= {})[b.reason] = b.n;
     }
-    return (['whatsapp', 'email'] as const).map((channel) => {
+    return (['whatsapp', 'instagram', 'email'] as const).map((channel) => {
       const a = byChannel.get(channel);
       const sent = a?.sent ?? 0;
       const failed = a?.failed ?? 0;

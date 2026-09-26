@@ -195,15 +195,13 @@ export async function explainAutonomyTx(
     reasons.push({ code: 'workspace_off', message: 'autonomia do workspace desligada' });
   reasons.push(...blockers);
   const ch = await channelAvailabilityTx(tx, leadId);
-  const waOk = ch.whatsapp.ok;
-  const emailOk = ch.email.ok;
   let sendMode: AutonomyExplanation['sendMode'];
   if (blockers.length) sendMode = 'blocked';
-  else if (!waOk && !emailOk) {
+  else if (!ch.whatsapp.ok && !ch.instagram.ok && !ch.email.ok) {
     sendMode = 'blocked';
     reasons.push({
       code: 'no_channel',
-      message: `sem canal utilizável (whatsapp: ${ch.whatsapp.ok ? 'ok' : ch.whatsapp.reason}; email: ${ch.email.ok ? 'ok' : ch.email.reason})`,
+      message: `sem canal utilizável (whatsapp: ${ch.whatsapp.reason}; instagram: ${ch.instagram.reason}; email: ${ch.email.reason})`,
     });
   } else {
     const d = draftDecision({

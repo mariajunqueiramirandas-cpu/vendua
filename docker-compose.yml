@@ -57,6 +57,9 @@ services:
       GOOGLE_CALENDAR_SERVICE_ACCOUNT_JSON: ${GOOGLE_CALENDAR_SERVICE_ACCOUNT_JSON:-}
       GOOGLE_CALENDAR_ID: ${GOOGLE_CALENDAR_ID:-}
       DAILY_API_KEY: ${DAILY_API_KEY:-}
+      # Instagram DMs via the ig-sidecar service below; the same secret signs both directions.
+      IG_SIDECAR_URL: http://ig-sidecar:8790
+      IG_SIDECAR_SECRET: ${IG_SIDECAR_SECRET:-}
       # pino level for core itself / the Baileys socket logger.
       LOG_LEVEL: ${LOG_LEVEL:-info}
       BAILEYS_LOG_LEVEL: ${BAILEYS_LOG_LEVEL:-warn}
@@ -118,6 +121,29 @@ services:
     depends_on:
       core:
         condition: service_healthy
+    restart: unless-stopped
+    logging:
+      driver: json-file
+      options: { max-size: '10m', max-file: '3' }
+
+  # Instagram DM transport (services/ig-sidecar, Go + mautrix-meta, AGPL-3.0). Internal
+  # only: Core pushes the stored session in and it posts signed events back. Without
+  # IG_SIDECAR_SECRET it idles and refuses every call.
+  ig-sidecar:
+    build:
+      context: ./services/ig-sidecar
+    environment:
+      IG_SIDECAR_SECRET: ${IG_SIDECAR_SECRET:-}
+      CORE_EVENTS_URL: http://core:8787/control/v1/ig/events
+      # static residential proxy (http:// or socks5://) — Instagram flags datacenter IPs
+      IG_PROXY: ${IG_PROXY:-}
+      IG_MIN_SEND_GAP_SECONDS: ${IG_MIN_SEND_GAP_SECONDS:-20}
+      LOG_LEVEL: ${IG_SIDECAR_LOG_LEVEL:-info}
+    healthcheck:
+      test: ['CMD-SHELL', 'wget -qO- http://127.0.0.1:8790/healthz || exit 1']
+      interval: 10s
+      timeout: 5s
+      retries: 6
     restart: unless-stopped
     logging:
       driver: json-file

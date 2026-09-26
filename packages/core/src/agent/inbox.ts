@@ -5,6 +5,7 @@ import { log } from '../platform/log.ts';
 import { automationAllowedTx, isAutomation, parked, parkPolicyTx } from './policy.ts';
 import type { JobKind } from './tool-meta.ts';
 import { capLockTx, insertRun } from './runner.ts';
+import { isSendChannel } from '../modules/threads.ts';
 
 const agentLog = log.child({ mod: 'agent' });
 
@@ -194,10 +195,7 @@ export async function sweepOrphanInbox(
         }
         if (!spawn) return null;
         // Spawned run inherits the max notBefore of the items it would drain (mirrors ingestInbound).
-        const runChannel =
-          spawn.params.channel === 'whatsapp' || spawn.params.channel === 'email'
-            ? (spawn.params.channel as string)
-            : '';
+        const runChannel = isSendChannel(spawn.params.channel) ? spawn.params.channel : '';
         const runDraftOnly = spawn.params.draftOnly === true;
         const pp = await parkPolicyTx(tx);
         let notBefore = 0;

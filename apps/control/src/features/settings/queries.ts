@@ -28,6 +28,9 @@ export const useChannelHealth = () =>
  */
 export const waQrKey = qk.waQr;
 export const useWaQr = () => useQuery({ queryKey: waQrKey(), queryFn: api.waQr, retry: false });
+/** Same 'integrations' root — a sidecar state event (channel.health) refreshes it. */
+export const useIgStatus = () =>
+  useQuery({ queryKey: qk.igStatus(), queryFn: api.igStatus, retry: false });
 
 /** Everything this screen reads — the old page reloaded all of it after any write. */
 function useRefresh() {
@@ -76,6 +79,16 @@ export function useWaLogout() {
     mutationFn: api.waLogout,
     onSuccess: () => toast.success('whatsapp desconectado — QR novo a caminho'),
     onError: (e) => toast.error(`whatsapp: ${errorMessage(e)}`),
+    onSettled: () => refresh(),
+  });
+}
+
+export function useIgLogout() {
+  const refresh = useRefresh();
+  return useMutation({
+    mutationFn: api.igLogout,
+    onSuccess: () => toast.success('instagram desconectado — sessão apagada'),
+    onError: (e) => toast.error(`instagram: ${errorMessage(e)}`),
     onSettled: () => refresh(),
   });
 }

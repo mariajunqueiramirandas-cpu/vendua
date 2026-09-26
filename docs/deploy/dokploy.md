@@ -29,6 +29,8 @@ Copy `.env.example` into the service's environment and fill it in:
 | `GOOGLE_CALENDAR_SERVICE_ACCOUNT_JSON_B64` | service-account key, base64'd — meeting → gcal sync (optional)  |
 | `GOOGLE_CALENDAR_ID`                       | target calendar id for the gcal sync                            |
 | `DAILY_API_KEY`                            | daily.co per-meeting video rooms (unset → static roomUrl)       |
+| `IG_SIDECAR_SECRET`                        | Instagram DMs — Core↔ig-sidecar shared secret (see below)       |
+| `IG_PROXY`                                 | static residential proxy for the ig-sidecar (recommended)       |
 
 Generate secrets with `openssl rand -hex 32`.
 
@@ -74,6 +76,26 @@ points at Resend inbound) and pushed to Core:
 `VENDUA_WEBHOOK_SECRET` is a separate shared secret for manual/relay posts
 (`x-vendua-webhook` header) — unset, it's derived from `CONTROL_SECRET`.
 
+## Instagram DMs (agent cold outreach)
+
+The `ig-sidecar` service (`services/ig-sidecar`, Go on mautrix-meta's Instagram
+client) holds the logged-in Instagram session; Core stores the credential in
+`ig_auth_state` and pushes it back whenever the sidecar restarts empty.
+This is Instagram's private web API, not the official Graph API — it can DM
+people who never wrote first, and Instagram can challenge or restrict the account.
+
+1. Set `IG_SIDECAR_SECRET` (one value — compose hands it to both services) and,
+   ideally, `IG_PROXY` pointing at a static residential proxy in Brazil.
+2. CRM → config → conexões → instagram → **usar sidecar**, then **entrar com
+   usuário e senha** (2FA and in-app approvals are answered on the same card),
+   or paste browser cookies / a "Copy as cURL" if Instagram asks for a CAPTCHA.
+3. Estúdio → limites → **DMs frias no instagram / dia** caps agent first
+   contacts account-wide (default 15; replies don't count). Start low on a
+   young account.
+
+A logged-out session shows up on the card as "reconectar conta" — log in again
+there. The sidecar is AGPL-3.0 (its `LICENSE`); keep it a separate service.
+
 ## 4. Deploy
 
 Boot order is handled by healthchecks: `db` healthy → `core` migrates
@@ -88,6 +110,7 @@ Boot order is handled by healthchecks: `db` healthy → `core` migrates
 | `quero-pudim` / `brasa` / `forn` | `storefronts/Dockerfile` `target: storefront` (vite→nginx) | 80             |
 | `crm`                            | `nginx:1.28-alpine` + `apps/control/nginx.conf`            | 80             |
 | `site`                           | `storefronts/Dockerfile` `target: site` (SvelteKit→nginx)  | 80             |
+| `ig-sidecar`                     | `services/ig-sidecar/Dockerfile` (Go)                      | 8790, internal |
 
 All web services share the Dockerfile's `build` stage, so a deploy runs one
 `bun install` + one vite pass total (compose/bake dedupe the shared stage).

@@ -1,7 +1,8 @@
 import type { Sql } from '../platform/db.ts';
-import { getIntegrationTx, type Guardrails } from '../modules/integrations.ts';
-import type { Channel } from '../modules/threads.ts';
+import { DEFAULT_GUARDRAILS, getIntegrationTx, type Guardrails } from '../modules/integrations.ts';
+import { instagramHandle, SEND_CHANNELS, type Channel } from '../modules/threads.ts';
 import { waStatus } from './channels/whatsapp.ts';
+import { igState } from './channels/instagram.ts';
 import { agentSettingTx, draftDecision } from './policy.ts';
 
 /**
@@ -22,6 +23,13 @@ export async function whatsappReadyTx(tx: Sql): Promise<boolean> {
   return wa.driver === 'baileys' ? waStatus() === 'open' : true;
 }
 
+/** Enabled row + live sidecar session ('log' needs none). */
+export async function instagramReadyTx(tx: Sql): Promise<boolean> {
+  const ig = await getIntegrationTx(tx, 'instagram');
+  if (!ig) return false;
+  return ig.driver === 'sidecar' ? igState() === 'open' : true;
+}
+
 /** Channels that can carry a message now: contact data + enabled
  *  integration + deliverability; 'manual' always works. */
 export async function channelAvailabilityTx(
@@ -36,13 +44,14 @@ export async function channelAvailabilityTx(
       {
         email: string | null;
         whatsapp: string | null;
+        instagram: string | null;
         email_bounced_at: string | null;
       }[]
-    >`select email, whatsapp, email_bounced_at from leads where id = ${leadId} ${opts.lock ? tx.unsafe('for update') : tx.unsafe('')}`
+    >`select email, whatsapp, instagram, email_bounced_at from leads where id = ${leadId} ${opts.lock ? tx.unsafe('for update') : tx.unsafe('')}`
   )[0];
   if (!lead) {
     const dead = { ok: false, reason: 'lead not found' };
-    return { whatsapp: dead, email: dead, manual: dead };
+    return { whatsapp: dead, instagram: dead, email: dead, manual: dead };
   }
   // an inbound whatsapp thread carries the sender on external_id — reachable
   // even without lead.whatsapp
@@ -52,8 +61,17 @@ export async function channelAvailabilityTx(
       where lead_id = ${leadId} and channel = 'whatsapp' and external_id is not null
     `
   )[0]!.n;
-  const [waInt, emInt] = await Promise.all([
+  // an inbound/sent instagram thread carries the account id — reachable even
+  // if lead.instagram was cleared or renamed
+  const igThread = (
+    await tx<{ n: number }[]>`
+      select count(*)::int as n from lead_threads
+      where lead_id = ${leadId} and channel = 'instagram' and external_id is not null
+    `
+  )[0]!.n;
+  const [waInt, igInt, emInt] = await Promise.all([
     getIntegrationTx(tx, 'whatsapp'),
+    getIntegrationTx(tx, 'instagram'),
     getIntegrationTx(tx, 'email'),
   ]);
   return {
@@ -64,6 +82,14 @@ export async function channelAvailabilityTx(
           ? { ok: false, reason: 'whatsapp integration off' }
           : waInt.driver === 'baileys' && waStatus() !== 'open'
             ? { ok: false, reason: 'whatsapp disconnected' }
+            : { ok: true },
+    instagram:
+      !instagramHandle(lead.instagram) && !igThread
+        ? { ok: false, reason: 'lead has no instagram' }
+        : !igInt
+          ? { ok: false, reason: 'instagram integration off' }
+          : igInt.driver === 'sidecar' && igState() !== 'open'
+            ? { ok: false, reason: 'instagram disconnected' }
             : { ok: true },
     email: !lead.email
       ? { ok: false, reason: 'lead has no email' }
@@ -87,7 +113,7 @@ export type ChannelPick =
   | { ok: false; reason: string; available: Channel[] };
 
 /** Send channel: staff override > model arg > last-inbound continuity >
- *  whatsapp > email; 'manual' only when explicitly requested. */
+ *  whatsapp > instagram > email; 'manual' only when explicitly requested. */
 export async function resolveChannelTx(
   tx: Sql,
   leadId: string,
@@ -100,7 +126,7 @@ export async function resolveChannelTx(
   },
 ): Promise<ChannelPick> {
   const avail = await channelAvailabilityTx(tx, leadId, { lock: true });
-  const usable = (['whatsapp', 'email'] as const).filter((ch) => avail[ch].ok);
+  const usable = SEND_CHANNELS.filter((ch) => avail[ch].ok);
   // continuity channel — for continuity picks and mid-conversation-switch flags
   const lastIn =
     (
@@ -114,7 +140,7 @@ export async function resolveChannelTx(
       ) as channel
     `
     )[0]?.channel ?? null;
-  const prev = lastIn === 'whatsapp' || lastIn === 'email' ? lastIn : null;
+  const prev = lastIn && lastIn !== 'manual' ? lastIn : null;
   const want = args.override ?? args.requested ?? null;
   if (want) {
     // 'manual' never auto-picks — only the model/staff may draft to it.
@@ -134,12 +160,12 @@ export async function resolveChannelTx(
   if (prev && avail[prev].ok) {
     return { ok: true, channel: prev, via: 'continuity', prevChannel: prev };
   }
-  // first contact / stale channel: whatsapp is the stronger channel, email the fallback
+  // first contact / stale channel: whatsapp is the stronger channel, then an instagram DM, email last
   const first = usable[0];
   if (first) return { ok: true, channel: first, via: 'fallback', prevChannel: prev };
   return {
     ok: false,
-    reason: 'no reachable channel (whatsapp/email both unavailable)',
+    reason: 'no reachable channel (whatsapp/instagram/email all unavailable)',
     available: [],
   };
 }
@@ -251,6 +277,49 @@ export async function checkSendAllowedTx(
     if (sentToday >= g.maxOutboundPerLeadPerDay) {
       return { ok: false, forceDraft: false, reason: 'daily cap reached' };
     }
+
+    if (channel === 'instagram') {
+      const cold = await instagramColdCapTx(tx, g, leadId);
+      if (cold) return { ok: false, forceDraft: false, reason: cold };
+    }
     return { ok: true, forceDraft: false };
   }
+}
+
+/** Account-wide cold-DM budget: opening a conversation with a lead who never
+ *  wrote on instagram counts against instagramColdDmsPerDay (rolling 24h, agent
+ *  sends only); replies and a lead's own follow-ups don't open a new one.
+ *  Returns the refusal reason, or null. */
+export async function instagramColdCapTx(
+  tx: Sql,
+  g: Guardrails,
+  leadId: string,
+): Promise<string | null> {
+  const wrote = (
+    await tx<{ n: number }[]>`
+      select count(*)::int as n from lead_messages m
+      join lead_threads t on t.id = m.thread_id
+      where t.lead_id = ${leadId} and t.channel = 'instagram' and m.direction = 'in'
+    `
+  )[0]!.n;
+  if (wrote > 0) return null;
+  const cap = g.instagramColdDmsPerDay ?? DEFAULT_GUARDRAILS.instagramColdDmsPerDay;
+  if (cap <= 0) return 'instagram cold DMs off';
+  // account-wide count — serialize concurrent leads' checks or both see spare budget
+  await tx`select pg_advisory_xact_lock(hashtext('ig-cold-cap'))`;
+  const used = (
+    await tx<{ n: number }[]>`
+      select count(distinct t.id)::int as n from lead_messages m
+      join lead_threads t on t.id = m.thread_id
+      where t.channel = 'instagram' and m.direction = 'out' and m.author = 'agent'
+        and m.status in ('queued', 'sending', 'sent', 'delivered')
+        and m.created_at > now() - interval '1 day'
+        and t.lead_id <> ${leadId}
+        and not exists (
+          select 1 from lead_messages i
+          where i.thread_id = t.id and i.direction = 'in' and i.created_at < m.created_at
+        )
+    `
+  )[0]!.n;
+  return used >= cap ? 'instagram cold-DM daily cap reached' : null;
 }

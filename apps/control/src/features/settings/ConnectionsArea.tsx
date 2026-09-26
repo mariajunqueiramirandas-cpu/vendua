@@ -1,23 +1,26 @@
-import type { Integration } from '@/lib/api.ts';
+import type { IgStatus, Integration } from '@/lib/api.ts';
 import { Skeleton } from '@/components/ui/controls.tsx';
 import { SectionHead } from './bits.tsx';
 import { KINDS, WA_IDLE, type WaState } from './providers.ts';
 import { ProviderCard } from './ProviderCard.tsx';
-import { useSaveIntegration, useWaLogout } from './queries.ts';
+import { useIgLogout, useSaveIntegration, useWaLogout } from './queries.ts';
 
 export function ConnectionsArea({
   integrations,
   loading,
   wa,
+  ig,
   provLive,
 }: {
   integrations: Integration[];
   loading: boolean;
   wa: WaState;
+  ig: IgStatus | null;
   provLive: number;
 }) {
   const save = useSaveIntegration();
   const logout = useWaLogout();
+  const igLogout = useIgLogout();
   return (
     <section>
       <SectionHead
@@ -35,6 +38,9 @@ export function ConnectionsArea({
                   wa={k.key === 'whatsapp' ? wa : WA_IDLE}
                   onWaLogout={k.key === 'whatsapp' ? () => logout.mutate() : undefined}
                   waLoggingOut={logout.isPending}
+                  ig={k.key === 'instagram' ? ig : null}
+                  onIgLogout={() => igLogout.mutate()}
+                  igLoggingOut={igLogout.isPending}
                   saving={save.isPending && save.variables.kind === k.key}
                   onSave={(d, enable) => save.mutate({ kind: k.key, d, enable })}
                 />

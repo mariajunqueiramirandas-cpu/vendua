@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Check, FlaskConical, Loader2, X } from 'lucide-react';
 import { toast } from 'sonner';
-import { api, type Integration } from '@/lib/api.ts';
+import { api, type IgStatus, type Integration } from '@/lib/api.ts';
 import { cn } from '@/lib/cn.ts';
 import { errorMessage } from '@/lib/query.ts';
 import { Badge } from '@/components/ui/badge.tsx';
@@ -20,6 +20,7 @@ import {
   type WaState,
 } from './providers.ts';
 import { WhatsAppPairing } from './WhatsAppPairing.tsx';
+import { InstagramConnect } from './InstagramConnect.tsx';
 
 const MARK: Record<ProvTone | 'cfg', string> = {
   live: 'bg-agent',
@@ -35,6 +36,9 @@ export function ProviderCard({
   wa,
   onWaLogout,
   waLoggingOut,
+  ig = null,
+  onIgLogout,
+  igLoggingOut,
   onSave,
   saving,
 }: {
@@ -43,6 +47,9 @@ export function ProviderCard({
   wa: WaState;
   onWaLogout?: (() => void) | undefined;
   waLoggingOut?: boolean | undefined;
+  ig?: IgStatus | null | undefined;
+  onIgLogout?: (() => void) | undefined;
+  igLoggingOut?: boolean | undefined;
   onSave: (d: IntegrationDraft, enable: boolean) => void;
   saving: boolean;
 }) {
@@ -81,7 +88,7 @@ export function ProviderCard({
     driver !== baseline.driver ||
     secretRef !== baseline.secretRef ||
     JSON.stringify(config) !== JSON.stringify(baseline.config);
-  const st = providerStatus(kind.key, rows, wa);
+  const st = providerStatus(kind.key, rows, wa, ig);
   const liveDetail = current
     ? [
         current.driver,
@@ -190,6 +197,21 @@ export function ProviderCard({
           ) : (
             <p className="rounded-md border border-dashed px-3 py-2 text-xs text-muted-foreground">
               ative pra gerar o QR — o número pareia por aqui mesmo
+            </p>
+          ))}
+
+        {kind.key === 'instagram' &&
+          driver === 'sidecar' &&
+          (current?.driver === 'sidecar' && current.enabled ? (
+            <InstagramConnect
+              ig={ig}
+              resetSignal={pairReset}
+              onLogout={() => onIgLogout?.()}
+              loggingOut={!!igLoggingOut}
+            />
+          ) : (
+            <p className="rounded-md border border-dashed px-3 py-2 text-xs text-muted-foreground">
+              ative pra entrar na conta — o login acontece por aqui mesmo
             </p>
           ))}
 

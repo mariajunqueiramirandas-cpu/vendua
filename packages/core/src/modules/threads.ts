@@ -8,8 +8,16 @@ import { DEFAULT_GUARDRAILS, getSettingTx, type Guardrails } from './integration
 // Unified inbox: one thread per (lead, channel); owns persistence + the
 // draft→approve→dispatch lifecycle — provider sends live in agent/channels.
 
-export const CHANNELS = ['email', 'whatsapp', 'manual'] as const;
+export const CHANNELS = ['email', 'whatsapp', 'instagram', 'manual'] as const;
 export type Channel = (typeof CHANNELS)[number];
+
+/** Channels that dispatch through a provider ('manual' is a staff note), in
+ *  auto-pick preference order. */
+export const SEND_CHANNELS = ['whatsapp', 'instagram', 'email'] as const;
+export type SendChannel = (typeof SEND_CHANNELS)[number];
+export function isSendChannel(v: unknown): v is SendChannel {
+  return typeof v === 'string' && (SEND_CHANNELS as readonly string[]).includes(v);
+}
 
 export function channel(v: unknown): Channel {
   if (typeof v !== 'string' || !(CHANNELS as readonly string[]).includes(v)) {
@@ -227,6 +235,20 @@ export async function ensureThread(
   return rows[0]!;
 }
 
+// '@Handle', 'handle' or an instagram.com URL → 'handle'; null when it isn't one
+export function instagramHandle(raw: string | null | undefined): string | null {
+  if (!raw) return null;
+  const h = raw
+    .trim()
+    .toLowerCase()
+    .replace(/^(https?:\/\/)?(www\.|m\.)?(instagram\.com\/)?@?/, '')
+    .replace(/[/?#].*$/, '');
+  return /^[a-z0-9._]{1,30}$/.test(h) ? h : null;
+}
+
+// SQL twin of instagramHandle over leads.instagram — keep the two in step
+export const IG_HANDLE_SQL = `lower(regexp_replace(regexp_replace(trim(instagram), '^(https?://)?(www\\.|m\\.)?(instagram\\.com/)?@?', '', 'i'), '[/?#].*$', ''))`;
+
 export interface InboundResult {
   leadId: string;
   threadId: string;
@@ -288,10 +310,37 @@ export async function addInboundMessage(
       }
     }
 
-    // Lead match: email on `email`, digits on phone/whatsapp for whatsapp.
+    // Lead match: email on `email`, the sender's thread then handle on instagram,
+    // digits on phone/whatsapp for whatsapp.
     let leadId: string | null = null;
     const from = str(input.from, 'from', 300).trim();
-    if (input.channel === 'email') {
+    const igHandle = input.channel === 'instagram' ? instagramHandle(from) : null;
+    if (input.channel === 'instagram') {
+      // externalThreadId is the sender's account id — stable across handle renames
+      if (input.externalThreadId) {
+        const rows = await tx`
+          select t.lead_id as id from lead_threads t join leads l on l.id = t.lead_id
+          where t.channel = 'instagram' and t.external_id = ${input.externalThreadId}
+            and l.archived_at is null
+          order by t.created_at desc limit 1
+        `;
+        leadId = rows[0]?.id ?? null;
+      }
+      if (!leadId && igHandle) {
+        const rows = await tx`
+          select id from leads where archived_at is null
+            and ${tx.unsafe(IG_HANDLE_SQL)} = ${igHandle}
+          order by created_at desc limit 1
+        `;
+        leadId = rows[0]?.id ?? null;
+      }
+      if (leadId && igHandle) {
+        await tx`
+          update leads set instagram = ${`@${igHandle}`}
+          where id = ${leadId} and (instagram is null or trim(instagram) = '')
+        `;
+      }
+    } else if (input.channel === 'email') {
       const rows = await tx`
         select id from leads where archived_at is null
           and lower(trim(email)) = lower(${from}) order by created_at desc limit 1
@@ -342,7 +391,9 @@ export async function addInboundMessage(
         discovered_via: input.channel,
       };
       if (input.channel === 'email') fields.email = from;
-      else {
+      else if (input.channel === 'instagram') {
+        if (igHandle) fields.instagram = `@${igHandle}`;
+      } else {
         // An inbound whatsapp number is self-evidencing.
         fields.whatsapp = from;
         fields.whatsapp_verified = true;

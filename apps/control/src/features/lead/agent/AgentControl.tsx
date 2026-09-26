@@ -38,7 +38,7 @@ const MODE_NOTE: Record<string, string> = {
   auto: 'o agente conversa sozinho, dentro das guardrails',
 };
 
-type ActChannel = 'auto' | 'whatsapp' | 'email';
+type ActChannel = 'auto' | 'whatsapp' | 'instagram' | 'email';
 
 /** Per-thread agent on/off, optimistic on the lead's thread list. */
 export function ThreadAgentSwitch({
@@ -240,6 +240,7 @@ export function AgentControl({
             >
               <option value="auto">canal: auto</option>
               <option value="whatsapp">canal: whatsapp</option>
+              <option value="instagram">canal: instagram</option>
               <option value="email">canal: email</option>
             </Select>
             <Button

@@ -29,6 +29,7 @@ export const qk = {
   meetingsStatus: () => ['meetings-status'] as const,
   integrations: () => ['integrations'] as const,
   waQr: () => ['integrations', 'wa'] as const,
+  igStatus: () => ['integrations', 'ig'] as const,
   settings: () => ['settings'] as const,
   wakeups: (params?: Record<string, string>) => ['wakeups', params ?? {}] as const,
   agentConfig: () => ['agent-config'] as const,

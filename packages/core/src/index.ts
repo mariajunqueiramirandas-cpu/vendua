@@ -5,6 +5,7 @@ import { join } from 'node:path';
 import { ingestInbound } from './agent/inbound.ts';
 import { startAgentWorker } from './agent/runner.ts';
 import { ensureSocket, onHistoryMessage, onInboundMessage } from './agent/channels/whatsapp.ts';
+import { startInstagramReconcile } from './agent/channels/instagram.ts';
 import { getIntegration } from './modules/integrations.ts';
 import { setBookingSecret } from './modules/meetings.ts';
 
@@ -63,6 +64,8 @@ onHistoryMessage(async (m) => {
 void getIntegration(sql, 'whatsapp')
   .then((i) => ensureSocket(sql, i))
   .catch((e) => log.child({ mod: 'whatsapp' }).error({ err: e }, 'socket start failed'));
+// Instagram's live session sits in the ig-sidecar; this re-pushes the stored one after a sidecar restart.
+startInstagramReconcile(sql);
 
 log.info({ port }, 'listening');
 // idleTimeout must clear the SSE heartbeat (20s): Bun's default 10s kills a
