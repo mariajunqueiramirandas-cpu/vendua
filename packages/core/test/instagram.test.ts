@@ -31,7 +31,7 @@ describe('instagramHandle', () => {
   test('normalizes handles and profile URLs', () => {
     expect(instagramHandle('@Doceria.Aurora')).toBe('doceria.aurora');
     expect(instagramHandle('https://www.instagram.com/brasa_burger/')).toBe('brasa_burger');
-    expect(instagramHandle('instagram.com/forn?igsh=abc')).toBe('forn');
+    expect(instagramHandle('instagram.com/queropudim?igsh=abc')).toBe('queropudim');
     expect(instagramHandle(' plain ')).toBe('plain');
   });
   test('rejects non-handles', () => {

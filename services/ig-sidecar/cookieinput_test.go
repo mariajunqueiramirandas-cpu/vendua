@@ -46,7 +46,7 @@ func TestNormalizeUsername(t *testing.T) {
 	ok := map[string]string{
 		"@Doceria.Aurora":                         "doceria.aurora",
 		"https://www.instagram.com/brasa_burger/": "brasa_burger",
-		"instagram.com/forn?igsh=1":               "forn",
+		"instagram.com/queropudim?igsh=1":         "queropudim",
 		" plain ":                                 "plain",
 	}
 	for in, want := range ok {

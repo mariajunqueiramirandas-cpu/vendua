@@ -230,6 +230,9 @@ const TENANTS: SeedTenant[] = [
   },
 ];
 
+// demo storefronts removed from the repo; drop their tenants from already-seeded DBs (FKs cascade)
+await sql`delete from tenants where slug in ('brasa', 'forn')`;
+
 for (const t of TENANTS) {
   await sql.begin(async (tx) => {
     const tenant = (
