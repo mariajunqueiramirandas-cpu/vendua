@@ -1,4 +1,7 @@
 // dev tenants — idempotent wipe+recreate of catalog/settings (orders/carts preserved); quero-pudim :5174
+import { existsSync } from 'node:fs';
+import { join } from 'node:path';
+import { readTemplatesDir } from '@vendua/templates/node';
 import { createSql } from './db.ts';
 import { log } from './log.ts';
 
@@ -6,6 +9,7 @@ const slog = log.child({ mod: 'seed' });
 
 const url = process.env.MIGRATION_DATABASE_URL ?? 'postgres://vendua:vendua@localhost:5433/vendua';
 const sql = createSql(url);
+const REPO = join(import.meta.dir, '../../../..');
 
 interface SeedZone {
   name: string;
@@ -45,6 +49,9 @@ interface SeedTenant {
   slug: string;
   name: string;
   hosts: string[];
+  /** repo storefront whose templates/ seed the store's composition (v1 in Core) */
+  storefront?: string;
+  ring?: 'canary' | 'early' | 'stable';
   settings: {
     tagline?: string;
     description?: string;
@@ -72,6 +79,8 @@ const TENANTS: SeedTenant[] = [
     slug: 'quero-pudim',
     name: 'Quero Pudim Gourmet',
     hosts: ['quero-pudim.localhost', 'localhost:5174', '127.0.0.1:5174'],
+    storefront: 'storefronts/quero-pudim',
+    ring: 'stable',
     settings: {
       tagline: 'Pudins sem furinhos e sacolés cremosos',
       description:
@@ -230,6 +239,33 @@ const TENANTS: SeedTenant[] = [
   },
 ];
 
+// Every in-repo storefront has a dev tenant, so fleet operations (template
+// migrations by ring, trains) run over all of them. The golden example and the
+// scaffold baseline are Venduá-owned canaries.
+const quero = TENANTS[0]!;
+TENANTS.push(
+  {
+    ...quero,
+    slug: 'example-quero-pudim',
+    name: 'Quero Pudim (exemplo)',
+    hosts: ['example-quero-pudim.localhost', 'localhost:5176', '127.0.0.1:5176'],
+    storefront: 'storefronts/_examples/quero-pudim',
+    ring: 'canary',
+  },
+  {
+    ...quero,
+    slug: 'loja-modelo',
+    name: 'Loja Modelo',
+    hosts: ['loja-modelo.localhost', 'localhost:5175', '127.0.0.1:5175'],
+    storefront: 'storefronts/_template',
+    ring: 'canary',
+    settings: (({ promo: _promo, ...rest }) => ({
+      ...rest,
+      tagline: 'A base de todo vendua scaffold',
+    }))(quero.settings),
+  },
+);
+
 // demo storefronts removed from the repo; drop their tenants from already-seeded DBs (FKs cascade)
 await sql`delete from tenants where slug in ('brasa', 'forn')`;
 
@@ -313,6 +349,22 @@ for (const t of TENANTS) {
           }
         }
       }
+    }
+    await tx`select set_config('vendua.tenant_id', ${tid}, true)`;
+    await tx`
+      insert into storefront_ops (tenant_id, ring) values (${tid}, ${t.ring ?? 'stable'})
+      on conflict (tenant_id) do update set ring = excluded.ring
+    `;
+    // composition: repo templates become v1 — never over an existing history
+    const dir = t.storefront ? join(REPO, t.storefront, 'templates') : null;
+    if (dir && existsSync(dir)) {
+      const have = await tx`select 1 from storefront_templates where tenant_id = ${tid} limit 1`;
+      if (!have[0])
+        for (const [page, template] of Object.entries(readTemplatesDir(dir)))
+          await tx`
+            insert into storefront_templates (tenant_id, page, version, template, source)
+            values (${tid}, ${page}, 1, ${tx.json(template as never)}, 'seed')
+          `;
     }
     return tid;
   });

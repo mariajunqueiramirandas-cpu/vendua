@@ -172,7 +172,7 @@ export function vendua(opts: VenduaPluginOptions): Plugin {
       try {
         slug = (
           JSON.parse(readFileSync(join(root, 'package.json'), 'utf8')) as { name: string }
-        ).name.replace(/^@vendua\/storefront-/, '');
+        ).name.replace(/^@vendua\/(storefront-)?/, '');
       } catch {
         /* keep 'unknown' */
       }

@@ -1,4 +1,4 @@
-/* recipe-notebook surface; brand tokens arrive via vendua.config → --v-* vars */
+/* Quero Pudim — "caderno de receitas" surface; brand tokens arrive via vendua.config → --v-* vars. */
 
 :root {
   --cream: #fcfbf8;
@@ -380,7 +380,11 @@ button {
   margin-inline: auto;
   max-width: 28rem;
 }
-.floating-sacola a {
+.floating-sacola a,
+.floating-sacola button {
+  width: 100%;
+  font-family: inherit;
+  cursor: pointer;
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -399,9 +403,11 @@ button {
     box-shadow 0.15s,
     background-color 0.15s;
 }
+.floating-sacola button:hover,
 .floating-sacola a:hover {
   background: var(--brand-700);
 }
+.floating-sacola button:active,
 .floating-sacola a:active {
   transform: translate(3px, 3px);
   box-shadow: none;
@@ -974,7 +980,7 @@ textarea.input {
   color: var(--danger);
 }
 
-/* kernel stepper's data-vendua hooks are unstyleable — layout only, no visual overrides */
+/* Kernel stepper hooks are unstyleable per contract — layout only */
 .stepper-slot {
   display: inline-flex;
 }
@@ -1566,7 +1572,6 @@ textarea.input {
   outline-offset: 2px;
 }
 
-/* product images (forward-compat imageUrl) */
 .card-img {
   width: 100%;
   height: 100%;
@@ -1963,4 +1968,105 @@ textarea.input {
   font-style: italic;
   font-size: 0.875rem;
   color: var(--zinc-600);
+}
+
+/* store:qr-menu — the printable A4 sheet (Kernel surfaces hide themselves in print) */
+@media print {
+  @page {
+    size: A4 portrait;
+    margin: 8mm;
+  }
+  html,
+  body {
+    background: #fff !important;
+  }
+  .qr-controls,
+  .site-header,
+  .site-footer {
+    display: none !important;
+  }
+  .qr-sheet {
+    box-shadow: none !important;
+    border-radius: 0 !important;
+    height: 268mm;
+  }
+}
+
+/* ── Kernel UI in the brand's hand (17 — styling API): tokens do most of the
+   work; the rest is documented --v-* hooks and [data-part] targets only. ── */
+:root {
+  --v-btn-radius: 8px;
+  --v-card-radius: 12px;
+  --v-page-max: 1152px;
+  --v-announcement-bg: var(--caramel-700);
+  --v-announcement-fg: var(--cream);
+}
+
+.skip-link {
+  position: absolute;
+  left: 16px;
+  top: -48px;
+  z-index: 100;
+  padding: 8px 16px;
+  background: var(--zinc-950);
+  color: var(--cream);
+  border-radius: 2px;
+}
+.skip-link:focus {
+  top: 8px;
+}
+
+[data-section='sdk:purchase-panel'] [data-part='media'] {
+  background: var(--caramel-50);
+}
+[data-section='sdk:purchase-panel'] [data-part='name'] {
+  font-weight: 400;
+  font-size: clamp(2rem, 5vw, 3rem);
+  letter-spacing: -0.01em;
+}
+[data-section='sdk:purchase-panel'] [data-part='price'] {
+  color: var(--caramel-800);
+  font-weight: 500;
+}
+[data-section='sdk:purchase-panel'] [data-part='back'] {
+  font-size: 0.875rem;
+}
+
+.pd-perks {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 20px;
+  margin: 0;
+}
+.pd-perks span {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+.pd-perks svg {
+  color: var(--caramel-700);
+}
+
+/* narrow phones: the brand truncates and the status badge steps aside (the
+   paused overlay and closed notice still carry the state) */
+.site-header-inner > * {
+  min-width: 0;
+}
+.brand-lockup {
+  min-width: 0;
+}
+.brand-name,
+.brand-tag {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+@media (max-width: 399px) {
+  .header-status {
+    display: none;
+  }
+}
+.brand-link {
+  max-width: 100%;
 }

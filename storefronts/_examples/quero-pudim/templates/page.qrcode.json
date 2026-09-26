@@ -1,0 +1,18 @@
+{
+  "version": 1,
+  "page": "page:qrcode",
+  "sections": [
+    {
+      "id": "qr",
+      "type": "store:qr-menu",
+      "settings": {
+        "title": "Cardápio & Pedidos Online",
+        "subtitle": "Aponte a câmera do celular para conferir nossos doces e fazer seu pedido",
+        "featuredLabel": "Destaque do cardápio",
+        "hint": "ou acesse digitando em seu navegador",
+        "slogan": "Feito à mão em Saquarema",
+        "fileName": "qrcode-quero-pudim"
+      }
+    }
+  ]
+}

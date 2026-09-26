@@ -74,6 +74,8 @@
         "@axe-core/playwright": "4.13.0",
         "@playwright/test": "1.63.0",
         "@vendua/kernel": "workspace:*",
+        "@vendua/templates": "workspace:*",
+        "@vendua/ui-defaults": "workspace:*",
         "postgres": "3.4.7",
       },
       "devDependencies": {

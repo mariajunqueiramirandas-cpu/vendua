@@ -3,6 +3,7 @@ import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { proxyStats, startPreview } from './preview.ts';
 import { seedQaTenants } from './qa-seed.ts';
+import { readTemplatesDir } from '@vendua/templates/node';
 
 const PKG_DIR = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 
@@ -35,7 +36,14 @@ export async function runE2E(storefrontDir: string): Promise<number> {
   }
 
   console.log(`[e2e] seeding QA tenants (qa-open/qa-paused/qa-closed/qa-edge) …`);
-  await seedQaTenants({ databaseUrl, previewPort: port });
+  let templates: Record<string, unknown>;
+  try {
+    templates = readTemplatesDir(join(dir, 'templates'));
+  } catch (err) {
+    console.error(`[e2e] ${(err as Error).message}`);
+    return 2;
+  }
+  await seedQaTenants({ databaseUrl, previewPort: port, templates });
 
   const server = await startPreview({ distDir, port, coreOrigin });
   console.log(`[e2e] preview :${port} → core ${coreOrigin} (Host forwarded untouched)`);

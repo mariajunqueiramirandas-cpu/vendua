@@ -1076,4 +1076,13 @@
     font-size: 0.9375rem;
     color: var(--v-color-muted, #6e6a64);
   }
+
+  /* printed pages (menus, receipts) never carry live surfaces */
+  @media print {
+    .v-banner-stack,
+    .v-blocking-overlay,
+    .v-consent {
+      display: none !important;
+    }
+  }
 }

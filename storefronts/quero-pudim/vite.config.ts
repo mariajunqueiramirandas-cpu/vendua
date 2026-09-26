@@ -1,9 +1,11 @@
 import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
+import { vendua } from '@vendua/kernel/vite';
+import config from './vendua.config.ts';
 
 // port is tenant-significant (localhost:5174 maps to this store); proxy must not rewrite Host
 export default defineConfig({
-  plugins: [react()],
+  plugins: [react(), vendua({ config })],
   publicDir: 'assets',
   server: {
     port: 5174,

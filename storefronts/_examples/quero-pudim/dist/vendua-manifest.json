@@ -1,0 +1,136 @@
+{
+  "manifestVersion": 1,
+  "storefront": "example-quero-pudim",
+  "contract": 2,
+  "kernel": "1.0.0",
+  "coreApi": {
+    "storefront": 1,
+    "checkout": 1
+  },
+  "builtAt": "2026-09-26T22:15:32.237Z",
+  "templates": {
+    "source": "repo",
+    "pages": ["catalog", "home", "layout", "page:qrcode", "product"],
+    "hash": "5c7b36a9f3b4a99a"
+  },
+  "tokens": {
+    "source": "repo",
+    "hash": "199d9c82556e8e12"
+  },
+  "sections": {
+    "sdk:page-content": {},
+    "sdk:header": {
+      "areas": {
+        "actions": {
+          "accepts": ["badge", "info"],
+          "max": 2
+        }
+      }
+    },
+    "sdk:footer": {
+      "areas": {
+        "extra": {
+          "accepts": ["info", "social-proof", "promo"],
+          "max": 3
+        }
+      }
+    },
+    "sdk:announcement-bar": {},
+    "sdk:header-cart": {},
+    "sdk:purchase-panel": {
+      "areas": {
+        "media": {
+          "accepts": ["media", "badge"],
+          "max": 3
+        },
+        "after-price": {
+          "accepts": ["purchase-extras", "badge", "promo", "info"],
+          "max": 4
+        },
+        "after-cta": {
+          "accepts": ["purchase-extras", "info", "social-proof"],
+          "max": 4
+        }
+      }
+    },
+    "sdk:catalog-grid": {
+      "areas": {
+        "before-grid": {
+          "accepts": ["promo", "info"],
+          "max": 2
+        }
+      }
+    },
+    "sdk:product-list": {},
+    "sdk:store-status": {},
+    "sdk:rich-text": {},
+    "sdk:stock-counter": {
+      "category": "purchase-extras"
+    },
+    "sdk:notify-me": {
+      "category": "purchase-extras"
+    },
+    "sdk:promo-badge": {
+      "category": "badge"
+    },
+    "store:catalog-browser": {
+      "areas": {
+        "before-grid": {
+          "accepts": ["promo", "info"],
+          "max": 2
+        }
+      }
+    },
+    "store:closing": {},
+    "store:footer": {
+      "areas": {
+        "extra": {
+          "accepts": ["info", "social-proof", "promo"],
+          "max": 2
+        }
+      }
+    },
+    "store:header": {
+      "areas": {
+        "actions": {
+          "accepts": ["badge", "info"],
+          "max": 1
+        }
+      }
+    },
+    "store:hero": {
+      "areas": {
+        "after": {
+          "accepts": ["promo", "badge", "info"],
+          "max": 2
+        }
+      }
+    },
+    "store:product-figure": {
+      "category": "media"
+    },
+    "store:product-perks": {
+      "category": "info"
+    },
+    "store:qr-menu": {},
+    "store:showcase": {
+      "areas": {
+        "before-grid": {
+          "accepts": ["promo", "info"],
+          "max": 1
+        }
+      }
+    },
+    "store:steps": {},
+    "store:story": {
+      "areas": {
+        "aside": {
+          "accepts": ["social-proof", "badge", "info"],
+          "max": 2
+        }
+      }
+    },
+    "store:values": {}
+  },
+  "overrides": ["system.Notice"]
+}
