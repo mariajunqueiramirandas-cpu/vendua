@@ -1,7 +1,14 @@
 import { describe, expect, test, beforeEach, afterEach } from 'bun:test';
-import { executeTool, bookDigest, toolsFor, type ToolContext } from '../src/agent/tools.ts';
+import {
+  executeTool,
+  bookDigest,
+  registeredToolNames,
+  toolsFor,
+  type ToolContext,
+  type ToolGate,
+} from '../src/agent/tools.ts';
 import { buildSystemPrompt } from '../src/agent/prompts.ts';
-import { DEFAULT_PITCH } from '../src/modules/integrations.ts';
+import { DEFAULT_PITCH, type Pitch } from '../src/modules/integrations.ts';
 import { MonidBudget } from '../src/agent/channels/monid.ts';
 
 // book/plan never touch sql; monid tools hit fetch — stub it per test.
@@ -164,12 +171,44 @@ describe('monid enrichment tools', () => {
   });
 });
 
-describe('unconfigured tools — hidden, refused, and named in the prompt', () => {
-  const off = new Map([
-    ['serp', 'MONID_API_KEY não configurada'],
-    ['maps_lookup', 'MONID_API_KEY não configurada'],
-    ['instagram_profile', 'MONID_API_KEY não configurada'],
-  ]);
+describe('unconfigured tools — hidden, refused, never named', () => {
+  const MONID = ['maps_lookup', 'instagram_profile', 'serp'];
+  const DISC = ['web_search', 'read_pages'];
+  const off = new Map(MONID.map((n) => [n, 'MONID_API_KEY não configurada']));
+  const all = registeredToolNames();
+  const mentioned = (text: string) => all.filter((n) => new RegExp(`\\b${n}\\b`).test(text));
+  const KINDS = ['triage', 'reply', 'outreach', 'discovery', 'strategist'] as const;
+  const disabled = (...names: string[]) => new Map(names.map((n) => [n, 'x']));
+  const GATES: Record<string, ToolGate> = {
+    full: { disabled: new Map(), channels: ['whatsapp', 'instagram', 'email'] },
+    noMonid: { disabled: disabled(...MONID), channels: ['whatsapp'] },
+    noDiscovery: { disabled: disabled(...DISC), channels: ['email'] },
+    noResearch: { disabled: disabled(...MONID, ...DISC), channels: ['instagram'] },
+    noChannels: { disabled: disabled('send_message'), channels: [] },
+    noMemory: { disabled: disabled('remember', 'set_fact'), channels: ['whatsapp'] },
+  };
+
+  // The per-turn lead gate — install is fine, this lead can't be reached right now.
+  // The static prompt never sees these (a harness note announces them), so only defs are checked.
+  const TURN_GATES: Record<string, ToolGate> = {
+    leadBlocked: {
+      disabled: disabled('send_message'),
+      channels: [],
+      draftChannels: ['manual'],
+    },
+    nothing: {
+      disabled: disabled(
+        ...MONID,
+        ...DISC,
+        'send_message',
+        'draft_message',
+        'remember',
+        'set_fact',
+      ),
+      channels: [],
+      draftChannels: [],
+    },
+  };
 
   test('toolsFor drops disabled tools', () => {
     const names = toolsFor('discovery', { disabled: off, channels: ['whatsapp'] }).map(
@@ -192,67 +231,84 @@ describe('unconfigured tools — hidden, refused, and named in the prompt', () =
     expect(fetched).toBe(false);
   });
 
-  test('the prompt drops their arsenal lines and says they do not exist', () => {
-    const p = buildSystemPrompt(
-      'discovery',
-      DEFAULT_PITCH,
-      '',
-      { facts: [] },
-      {
-        disabledTools: [...off.keys()],
-      },
-    );
-    expect(p).not.toContain('- maps_lookup(query, city)');
-    expect(p).not.toContain('- serp(query)');
+  // The invariant: nothing the model reads names a tool it wasn't offered.
+  test.each([...Object.keys(GATES), ...Object.keys(TURN_GATES)])(
+    '%s: prompt + tool defs name only offered tools',
+    (g) => {
+      const install = g in GATES;
+      const gate = (GATES[g] ?? TURN_GATES[g])!;
+      for (const kind of KINDS) {
+        const defs = toolsFor(kind, gate);
+        const offered = new Set(defs.map((d) => d.name));
+        for (const goal of install ? (['meeting', 'negotiation'] as const) : []) {
+          for (const bookingUrl of [null, 'https://cal.example/x']) {
+            for (const offer of ['', 'R$ 49/mês'] as string[]) {
+              const p = buildSystemPrompt(
+                kind,
+                { ...DEFAULT_PITCH, offer } as Pitch,
+                '',
+                { facts: [] },
+                {
+                  goal,
+                  bookingUrl,
+                  tools: offered,
+                  channels: gate.channels,
+                },
+              );
+              expect({ kind, goal, extra: mentioned(p).filter((n) => !offered.has(n)) }).toEqual({
+                kind,
+                goal,
+                extra: [],
+              });
+            }
+          }
+        }
+        for (const d of defs) {
+          const extra = mentioned(d.description + JSON.stringify(d.parameters)).filter(
+            (n) => !offered.has(n),
+          );
+          expect({ kind, tool: d.name, extra }).toEqual({ kind, tool: d.name, extra: [] });
+        }
+      }
+    },
+  );
+
+  test('discovery loses the arsenal lines of tools it lacks', () => {
+    const tools = new Set(toolsFor('discovery', GATES.noMonid!).map((t) => t.name));
+    const p = buildSystemPrompt('discovery', DEFAULT_PITCH, '', { facts: [] }, { tools });
+    expect(p).not.toContain('- maps_lookup(');
+    expect(p).not.toContain('- serp(');
     expect(p).toContain('- web_search(query, purpose)');
-    expect(p).toContain(
-      'FERRAMENTAS DESATIVADAS nesta instalação: serp, maps_lookup, instagram_profile',
-    );
-    const full = buildSystemPrompt('discovery', DEFAULT_PITCH, '', { facts: [] });
-    expect(full).not.toContain('FERRAMENTAS DESATIVADAS');
   });
 
-  test('no research at all → lead kinds are told to ask instead', () => {
-    const p = buildSystemPrompt(
-      'reply',
-      DEFAULT_PITCH,
-      '',
-      { facts: [] },
-      {
-        disabledTools: ['web_search', 'read_pages', 'serp'],
-      },
-    );
-    expect(p).toContain('pergunte à pessoa o que falta');
+  test('no research at all → lead kinds ask instead of searching', () => {
+    const tools = new Set(toolsFor('reply', GATES.noResearch!).map((t) => t.name));
+    const p = buildSystemPrompt('reply', DEFAULT_PITCH, '', { facts: [] }, { tools });
+    expect(p).toContain('Sem pesquisa externa nesta instalação');
   });
 
-  test('channel args list only connected channels; none connected → manual drafts only', () => {
-    const def = (kind: string, name: string, channels: ('whatsapp' | 'email')[]) =>
-      toolsFor(kind, { disabled: new Map(), channels }).find((t) => t.name === name)!;
+  test('channel args list only live channels; none → manual drafts only', () => {
+    const def = (kind: string, name: string, gate: ToolGate) =>
+      toolsFor(kind, gate).find((t) => t.name === name)!;
     const chan = (d: { parameters: Record<string, unknown> }) =>
       (d.parameters as { properties: { channel: { enum: string[] } } }).properties.channel.enum;
-    expect(chan(def('reply', 'send_message', ['whatsapp']))).toEqual(['whatsapp']);
-    expect(chan(def('reply', 'draft_message', ['whatsapp']))).toEqual(['whatsapp', 'manual']);
-    const draft = def('triage', 'draft_message', []);
-    expect(chan(draft)).toEqual(['manual']);
-    expect((draft.parameters as { required: string[] }).required).toContain('channel');
-    const unsub = def('reply', 'unsubscribe', []);
-    expect((unsub.parameters as { properties: object }).properties).not.toHaveProperty('reply');
+    const wa: ToolGate = { disabled: new Map(), channels: ['whatsapp'] };
+    expect(chan(def('reply', 'send_message', wa))).toEqual(['whatsapp']);
+    expect(chan(def('reply', 'draft_message', wa))).toEqual(['whatsapp', 'manual']);
+    for (const gate of [GATES.noChannels!, TURN_GATES.leadBlocked!]) {
+      const draft = def('triage', 'draft_message', gate);
+      expect(chan(draft)).toEqual(['manual']);
+      expect((draft.parameters as { required: string[] }).required).toContain('channel');
+      const unsub = def('reply', 'unsubscribe', gate);
+      expect((unsub.parameters as { properties: object }).properties).not.toHaveProperty('reply');
+    }
     // the registry itself is untouched
     expect(chan(toolsFor('reply').find((t) => t.name === 'send_message')!)).toContain('email');
   });
 
-  test('no channel connected → the prompt says nothing goes out', () => {
-    const p = buildSystemPrompt(
-      'reply',
-      DEFAULT_PITCH,
-      '',
-      { facts: [] },
-      {
-        disabledTools: ['send_message'],
-        channels: [],
-      },
-    );
-    expect(p).toContain('CONTATO DESATIVADO');
+  test('the prompt states which channels are live', () => {
+    const none = buildSystemPrompt('reply', DEFAULT_PITCH, '', { facts: [] }, { channels: [] });
+    expect(none).toContain('nenhum canal de envio (whatsapp/instagram/email) está conectado');
     const partial = buildSystemPrompt(
       'outreach',
       DEFAULT_PITCH,
@@ -262,16 +318,9 @@ describe('unconfigured tools — hidden, refused, and named in the prompt', () =
         channels: ['whatsapp'],
       },
     );
-    expect(partial).toContain('instagram, email está(ão) desligado(s)');
-    const all = buildSystemPrompt(
-      'outreach',
-      DEFAULT_PITCH,
-      '',
-      { facts: [] },
-      {
-        channels: ['whatsapp', 'instagram', 'email'],
-      },
-    );
-    expect(all).not.toContain('desligado');
+    expect(partial).toContain('Desligado(s) nesta instalação: instagram, email');
+    expect(partial).not.toContain('Instagram: DM frio');
+    const full = buildSystemPrompt('outreach', DEFAULT_PITCH, '', { facts: [] });
+    expect(full).not.toContain('Desligado');
   });
 });

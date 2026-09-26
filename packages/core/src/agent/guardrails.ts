@@ -1,6 +1,11 @@
 import type { Sql } from '../platform/db.ts';
 import { DEFAULT_GUARDRAILS, getIntegrationTx, type Guardrails } from '../modules/integrations.ts';
-import { instagramHandle, SEND_CHANNELS, type Channel } from '../modules/threads.ts';
+import {
+  instagramHandle,
+  SEND_CHANNELS,
+  type Channel,
+  type SendChannel,
+} from '../modules/threads.ts';
 import { waStatus } from './channels/whatsapp.ts';
 import { igState } from './channels/instagram.ts';
 import { agentSettingTx, draftDecision } from './policy.ts';
@@ -176,10 +181,12 @@ export async function agentPausedForChannelTx(
   tx: Sql,
   leadId: string,
   channel: Channel,
+  opts: { lock?: boolean } = { lock: true },
 ): Promise<boolean> {
+  const lock = tx.unsafe(opts.lock ? 'for update' : '');
   const lead = (
     await tx<{ agent_paused_at: string | null }[]>`
-      select agent_paused_at from leads where id = ${leadId} for update
+      select agent_paused_at from leads where id = ${leadId} ${lock}
     `
   )[0];
   if (lead?.agent_paused_at) return true;
@@ -187,10 +194,64 @@ export async function agentPausedForChannelTx(
     await tx<{ agent_enabled: boolean }[]>`
       select agent_enabled from lead_threads
       where lead_id = ${leadId} and channel = ${channel}
-      for update
+      ${lock}
     `
   )[0];
   return !!dest && !dest.agent_enabled;
+}
+
+/** Channels a send / a draft to this lead would land on right now — the same checks
+ *  send_message and draft_message run at execution (reachability, pause, verdict),
+ *  read-only, so the per-turn tool gate never offers a call that can only block. */
+export async function sendableNowTx(
+  tx: Sql,
+  g: Guardrails,
+  leadId: string,
+  opts: {
+    /** send channels connected in the install */
+    channels: readonly SendChannel[];
+    draftOnly: boolean;
+    override: SendChannel | null;
+  },
+): Promise<{ send: SendChannel[]; draft: Channel[]; why: string | null }> {
+  const avail = await channelAvailabilityTx(tx, leadId);
+  const misses: string[] = [];
+  const open: Channel[] = [];
+  // staff's forced channel trumps every pick — nothing else can be used; channels the
+  // install lacks aren't candidates at all (the prompt already says they're off)
+  const candidates: Channel[] = opts.override
+    ? [opts.override]
+    : [...SEND_CHANNELS.filter((c) => opts.channels.includes(c)), 'manual'];
+  for (const c of candidates) {
+    if (c !== 'manual' && !opts.channels.includes(c)) {
+      misses.push(`${c}: integration off`);
+      continue;
+    }
+    if (!avail[c].ok) {
+      misses.push(`${c}: ${avail[c].reason ?? 'unavailable'}`);
+      continue;
+    }
+    if (await agentPausedForChannelTx(tx, leadId, c, { lock: false })) {
+      misses.push(`${c}: thread paused for agent`);
+      continue;
+    }
+    open.push(c);
+  }
+  const send: SendChannel[] = [];
+  let verdictWhy: string | null = null;
+  for (const c of open) {
+    if (c === 'manual') continue;
+    const v = opts.draftOnly
+      ? { ok: true, reason: undefined }
+      : await checkSendAllowedTx(tx, g, leadId, c);
+    if (v.ok) send.push(c);
+    else verdictWhy ??= v.reason ?? 'guardrail';
+  }
+  return {
+    send,
+    draft: open,
+    why: send.length ? null : (verdictWhy ?? (misses.join('; ') || 'no reachable channel')),
+  };
 }
 
 export interface SendVerdict {
