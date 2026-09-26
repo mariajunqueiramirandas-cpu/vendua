@@ -26,8 +26,8 @@ describe('mapFiles', () => {
   });
 
   test('a storefront file only rebuilds its own slug', () => {
-    const r = mapFiles(['storefronts/brasa/routes/index.tsx']);
-    expect(r.packages).toEqual(['storefronts/brasa']);
+    const r = mapFiles(['storefronts/acme/routes/index.tsx']);
+    expect(r.packages).toEqual(['storefronts/acme']);
     expect(r.allStorefronts).toBe(false);
   });
 
@@ -68,10 +68,10 @@ describe('check-storefront-paths', () => {
   test('in-scope files pass', () => {
     const r = run([
       '--slug',
-      'brasa',
+      'acme',
       '--files',
-      'storefronts/brasa/a.ts',
-      'storefronts/brasa/sub/b.ts',
+      'storefronts/acme/a.ts',
+      'storefronts/acme/sub/b.ts',
     ]);
     expect(r.status).toBe(0);
   });
@@ -79,17 +79,17 @@ describe('check-storefront-paths', () => {
   test('out-of-scope file fails and names it', () => {
     const r = run([
       '--slug',
-      'brasa',
+      'acme',
       '--files',
-      'storefronts/brasa/a.ts',
+      'storefronts/acme/a.ts',
       'packages/core/src/app.ts',
     ]);
     expect(r.status).toBe(1);
     expect(r.stderr).toContain('packages/core/src/app.ts');
   });
 
-  test('prefix confusion fails: storefronts/brasa-x is not storefronts/brasa/', () => {
-    const r = run(['--slug', 'brasa', '--files', 'storefronts/brasa-x/a.ts']);
+  test('prefix confusion fails: storefronts/acme-x is not storefronts/acme/', () => {
+    const r = run(['--slug', 'acme', '--files', 'storefronts/acme-x/a.ts']);
     expect(r.status).toBe(1);
   });
 
@@ -117,7 +117,7 @@ describe('check-storefront-paths', () => {
   });
 
   test('unlabelled mixed diff (storefront + platform) fails — the label hole', () => {
-    const r = run(['--files', 'storefronts/brasa/routes/i.tsx', 'packages/core/src/app.ts']);
+    const r = run(['--files', 'storefronts/acme/routes/i.tsx', 'packages/core/src/app.ts']);
     expect(r.status).toBe(1);
     expect(r.stderr).toContain('platform');
   });
@@ -132,7 +132,7 @@ describe('check-storefront-paths', () => {
       '--slug',
       'platform',
       '--files',
-      'storefronts/brasa/routes/i.tsx',
+      'storefronts/acme/routes/i.tsx',
       'packages/kernel/src/api.ts',
     ]);
     expect(r.status).toBe(0);

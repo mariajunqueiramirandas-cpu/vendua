@@ -153,7 +153,7 @@ touch platform code.
 Goal: the SDK a storefront is written against is finished, and every kind of
 change in [09](architecture/09-migrations-and-fleet-trains.md#change-classes--process-map)
 has been shipped to the in-repo storefronts (`_template`, `_examples/*`,
-`quero-pudim`, `forn`, `brasa`) without hand edits. **No customer is onboarded
+`quero-pudim`) without hand edits. **No customer is onboarded
 before this exit.** Items that used to sit in Phases 3, 5 and 6 moved here
 because they are what "updatable" means; the ones that need real merchants
 (early ring, volunteer discounts) stay where they were.
@@ -240,7 +240,7 @@ because they are what "updatable" means; the ones that need real merchants
 - [ ] Template editing API in Core (staff first; the merchant editor lands with
       the Phase 3 admin).
 - [ ] Freeze Contract v2 and port every in-repo storefront (`_template`,
-      `_examples/*`, `quero-pudim`, `forn`, `brasa`) from `routes/` to
+      `_examples/*`, `quero-pudim`) from `routes/` to
       `sections/` + templates, moving their copy into settings.
 - [ ] Proof: ship a new SDK block in a Kernel minor and place it on every
       in-repo storefront's product page with a template migration — zero

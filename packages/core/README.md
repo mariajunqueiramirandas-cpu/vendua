@@ -24,7 +24,7 @@ envelope per `05-system-surfaces.md`).
 ```sh
 bun run db:up      # postgres:16 in docker, port 5433
 bun run migrate    # schema (also runs automatically on `bun run dev`)
-bun run seed       # dev tenants: quero-pudim, brasa, forn
+bun run seed       # dev tenants: quero-pudim
 bun run dev        # http://localhost:8787
 bun run test       # unit tests (no DB needed)
 bun run check      # tsc
