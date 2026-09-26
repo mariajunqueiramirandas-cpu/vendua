@@ -86,6 +86,8 @@
       "version": "0.0.0",
       "dependencies": {
         "@openrouter/sdk": "1.3.2",
+        "@vendua/loader": "workspace:*",
+        "@vendua/templates": "workspace:*",
         "baileys": "7.0.0-rc14",
         "hono": "4.10.7",
         "pino": "9.14.0",
@@ -109,6 +111,22 @@
       "peerDependencies": {
         "react": "^18.3.1 || ^19.0.0",
         "react-dom": "^18.3.1 || ^19.0.0",
+      },
+    },
+    "packages/loader": {
+      "name": "@vendua/loader",
+      "version": "1.0.0",
+      "devDependencies": {
+        "@types/bun": "1.4.2",
+        "typescript": "6.0.3",
+      },
+    },
+    "packages/templates": {
+      "name": "@vendua/templates",
+      "version": "1.0.0",
+      "devDependencies": {
+        "@types/bun": "1.4.2",
+        "typescript": "6.0.3",
       },
     },
     "site": {
@@ -639,11 +657,15 @@
 
     "@vendua/kernel": ["@vendua/kernel@workspace:packages/kernel"],
 
+    "@vendua/loader": ["@vendua/loader@workspace:packages/loader"],
+
     "@vendua/site": ["@vendua/site@workspace:site"],
 
     "@vendua/storefront-quero-pudim": ["@vendua/storefront-quero-pudim@workspace:storefronts/quero-pudim"],
 
     "@vendua/storefront-template": ["@vendua/storefront-template@workspace:storefronts/_template"],
+
+    "@vendua/templates": ["@vendua/templates@workspace:packages/templates"],
 
     "@vitejs/plugin-react": ["@vitejs/plugin-react@4.3.4", "", { "dependencies": { "@babel/core": "^7.26.0", "@babel/plugin-transform-react-jsx-self": "^7.25.9", "@babel/plugin-transform-react-jsx-source": "^7.25.9", "@types/babel__core": "^7.20.5", "react-refresh": "^0.14.2" }, "peerDependencies": { "vite": "^4.2.0 || ^5.0.0 || ^6.0.0" } }, "sha512-SCCPBJtYLdE8PX/7ZQAs1QAZ8Jqwih+0VBLum1EGqmCCQal+MIUqLCzj3ZUy8ufbC0cAM4LRlSTm7IQJwWT4ug=="],
 

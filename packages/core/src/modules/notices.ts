@@ -90,6 +90,22 @@ export function composeNotices(
     });
   }
 
+  // high_demand (Phase 1b): a kind no Kernel knows specially — it reaches every
+  // storefront, rebuilt or not, through the generic system.Notice path
+  if (settings?.demand_level === 'high' && derived.status !== 'paused') {
+    const prep = settings.prep_time_minutes;
+    notices.push({
+      id: `${tenantSlug}:high_demand`,
+      kind: 'high_demand',
+      severity: 'warning',
+      title: 'Muitos pedidos agora',
+      body: `O preparo está levando mais que os ~${prep} min de sempre. Seu pedido entra na fila normalmente.`,
+      dismissible: true,
+      priority: 40,
+      payload: { prepTimeMinutes: prep },
+    });
+  }
+
   if (settings?.promo) {
     notices.push({
       id: `${tenantSlug}:promo`,

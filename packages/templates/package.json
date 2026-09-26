@@ -1,0 +1,17 @@
+{
+  "name": "@vendua/templates",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "check": "tsc --noEmit -p tsconfig.json",
+    "test": "bun test test/"
+  },
+  "devDependencies": {
+    "@types/bun": "1.4.2",
+    "typescript": "6.0.3"
+  }
+}

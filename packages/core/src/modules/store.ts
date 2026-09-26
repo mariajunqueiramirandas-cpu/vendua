@@ -29,6 +29,8 @@ export interface StoreSettingsRow {
   delivery_enabled: boolean;
   promo: { title: string; body?: string } | null;
   currency: string;
+  /** 'high' emits the high_demand notice (migration 0049). */
+  demand_level?: 'normal' | 'high';
   vocabulary: {
     itemSingular?: string;
     itemPlural?: string;
