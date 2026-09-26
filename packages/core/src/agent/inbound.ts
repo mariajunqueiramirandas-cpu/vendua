@@ -174,8 +174,10 @@ export async function ingestInbound(
       });
     }
     emitControlEvent('run.update', runId);
-    // kick the queue now rather than waiting for the poll tick
-    void drain(sql).catch((e) => agentLog.error({ err: e }, 'drain failed'));
+    // run it from this process now — the scheduler's notification may land on another worker
+    void drain(sql, 20, { orphans: false }).catch((e) =>
+      agentLog.error({ err: e }, 'drain failed'),
+    );
   }
   return res;
 }

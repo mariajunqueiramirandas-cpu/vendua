@@ -1175,7 +1175,7 @@ export async function patchMeeting(
   return { status: res.status, body: res.body, replayed: res.replayed };
 }
 
-// reminder sweep — called from the agent worker tick
+// reminders — the scheduler wakes at the next due reminder (ADR 0017)
 
 const REMINDER_24H_MS = 24 * 3600_000;
 const REMINDER_1H_MS = 3600_000;
@@ -1191,14 +1191,38 @@ function reminderBody(kind: '24h' | '1h', meeting: MeetingRow, cfg: MeetingConfi
     : `Oi! Nossa call começa daqui a ~1h (${when}).${room}`;
 }
 
-/** send due reminders; skipped (marker stays null → retried next tick) when the guardrail says no/draft or no channel is reachable */
+/** Earliest reminder still to come (24h / 1h before a scheduled call). */
+export async function nextReminderAtTx(tx: Sql): Promise<Date | null> {
+  const [row] = await tx<{ at: Date | null }[]>`
+    select min(t) as at from (
+      select starts_at - interval '24 hours' as t from meetings
+      where status = 'scheduled' and lead_id is not null
+        and reminder_24h_at is null and reminder_1h_at is null
+      union all
+      select starts_at - interval '1 hour' from meetings
+      where status = 'scheduled' and lead_id is not null and reminder_1h_at is null
+    ) x
+    where t > now()
+  `;
+  return row?.at ? new Date(row.at) : null;
+}
+
+/** reminders + the effects/calendar heal, in one call */
 export async function sweepMeetingReminders(sql: Sql): Promise<number> {
+  const { sent } = await sendMeetingReminders(sql);
+  await syncMeetingEffects(sql);
+  return sent;
+}
+
+/** send due reminders; skipped (marker stays null, `blocked` = retry later) when the guardrail says no/draft or no channel is reachable */
+export async function sendMeetingReminders(sql: Sql): Promise<{ sent: number; blocked: boolean }> {
   const { composeMessageTx } = await import('./threads.ts');
   const { resolveChannelTx, checkSendAllowedTx } = await import('../agent/guardrails.ts');
   const { DEFAULT_GUARDRAILS, getSettingTx } = await import('./integrations.ts');
   const { dispatchMessage } = await import('../agent/send.ts');
 
   let sent = 0;
+  let blocked = false;
   const due = await controlTx(
     sql,
     (tx) => tx<MeetingRow[]>`
@@ -1224,12 +1248,12 @@ export async function sweepMeetingReminders(sql: Sql): Promise<number> {
       const kind: '1h' | '24h' = want1 ? '1h' : '24h';
       const cfg = await meetingConfigTx(tx);
       const pick = await resolveChannelTx(tx, cur.lead_id, {});
-      if (!pick.ok || pick.channel === 'manual') return null;
+      if (!pick.ok || pick.channel === 'manual') return 'blocked' as const;
       const stored = await getSettingTx<Record<string, unknown>>(tx, 'guardrails', {});
       const g = { ...DEFAULT_GUARDRAILS, ...stored } as Guardrails;
       const verdict = await checkSendAllowedTx(tx, g, cur.lead_id, pick.channel);
-      // draft-required or hard block → leave the marker unset for the next tick
-      if (!verdict.ok || verdict.forceDraft) return null;
+      // draft-required or hard block → leave the marker unset for a retry
+      if (!verdict.ok || verdict.forceDraft) return 'blocked' as const;
       const composed = await composeMessageTx(tx, {
         leadId: cur.lead_id,
         channel: pick.channel,
@@ -1247,12 +1271,14 @@ export async function sweepMeetingReminders(sql: Sql): Promise<number> {
       }
       return { messageId: composed.body.message.id, kind, claimed24 };
     });
-    if (!claim) continue;
+    if (claim === 'blocked') blocked = true;
+    if (!claim || claim === 'blocked') continue;
     const dispatch = await dispatchMessage(sql, claim.messageId);
     if (dispatch.ok) {
       sent++;
     } else {
-      // dispatch failed → release claimed markers so a later tick retries; the failed row stays as the record
+      // dispatch failed → release claimed markers so a retry picks it up; the failed row stays as the record
+      blocked = true;
       await controlTx(sql, async (tx) => {
         if (claim.kind === '1h' && claim.claimed24) {
           await tx`update meetings set reminder_1h_at = null, reminder_24h_at = null, updated_at = now() where id = ${m.id}`;
@@ -1265,6 +1291,13 @@ export async function sweepMeetingReminders(sql: Sql): Promise<number> {
       mlog.warn({ meetingId: m.id, reason: dispatch.reason }, 'meeting reminder dispatch failed');
     }
   }
+  return { sent, blocked };
+}
+
+/** Heal bookings whose post-commit effects never ran and calendar events that drifted —
+ *  recovery work, run by the scheduler's reconcile pass. */
+export async function syncMeetingEffects(sql: Sql): Promise<number> {
+  let healed = 0;
   // heal bookings whose post-commit effects never ran; scoped to artifacts a configured provider should have produced
   const wantGcal = gcal.gcalConfigured();
   const wantDaily = rooms.dailyConfigured();
@@ -1281,6 +1314,7 @@ export async function sweepMeetingReminders(sql: Sql): Promise<number> {
         limit 20
       `,
     );
+    healed += pending.length;
     for (const p of pending) {
       await ensureMeetingEffects(sql, p.id).catch((err) =>
         mlog.warn({ meetingId: p.id, err }, 'meeting effects heal failed'),
@@ -1326,6 +1360,7 @@ export async function sweepMeetingReminders(sql: Sql): Promise<number> {
     );
     for (const s of stale) {
       if (!(await gcal.deleteEvent(s.gcal_event_id))) continue;
+      healed++;
       await controlTx(
         sql,
         async (tx) =>
@@ -1333,7 +1368,7 @@ export async function sweepMeetingReminders(sql: Sql): Promise<number> {
       );
     }
   }
-  return sent;
+  return healed;
 }
 
 export async function meetingsStatus(sql: Sql) {

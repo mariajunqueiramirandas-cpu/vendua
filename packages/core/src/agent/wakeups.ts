@@ -296,11 +296,50 @@ export async function cancelWakeup(sql: Sql, id: string, idemKey: string) {
   return res;
 }
 
-/** materialize due wakeups — FOR UPDATE SKIP LOCKED, capfin only tried (busy lead stays pending), insertRun applies the cost cap */
+const WAKEUP_BATCH = 20;
+
+/** Earliest pending wakeup still in the future — the agenda's next due time. Due-but-parked
+ *  rows (paused lead, preset off, cost cap) are left out: the change that frees them notifies. */
+export async function nextWakeupAtTx(tx: Sql): Promise<Date | null> {
+  const [row] = await tx<{ at: Date | null }[]>`
+    select min(at) as at from agent_wakeups where status = 'pending' and at > now()
+  `;
+  return row?.at ? new Date(row.at) : null;
+}
+
+/** materialize due wakeups — FOR UPDATE SKIP LOCKED, capfin only tried (busy lead stays pending), insertRun applies the cost cap.
+ *  Batches until the due set is exhausted; rows already looked at this call are skipped so a busy lead can't pin the loop. */
 export async function sweepWakeups(sql: Sql): Promise<number> {
+  return (await fireDueWakeups(sql)).queued;
+}
+
+/** sweepWakeups with the scheduler's retry signal: `contended` = a due row was skipped
+ *  because its lead was busy, so the agenda should look again shortly. */
+export async function fireDueWakeups(sql: Sql): Promise<{ queued: number; contended: boolean }> {
+  const out = { queuedIds: [] as string[], capFlagged: false, contended: false };
+  const seen: string[] = [];
+  try {
+    for (let batch = 0; batch < 50; batch++) {
+      const selected = await sweepWakeupsBatch(sql, seen, out);
+      if (selected < WAKEUP_BATCH) break;
+    }
+  } finally {
+    // earlier batches committed — their runs are real even if a later one threw
+    for (const id of out.queuedIds) emitControlEvent('run.update', id);
+    if (out.capFlagged) emitControlEvent('lead.change');
+  }
+  return { queued: out.queuedIds.length, contended: out.contended };
+}
+
+async function sweepWakeupsBatch(
+  sql: Sql,
+  seen: string[],
+  out: { queuedIds: string[]; capFlagged: boolean; contended: boolean },
+): Promise<number> {
+  // collected per batch and merged only after commit — a rolled-back batch queued nothing
   const queuedIds: string[] = [];
   let capFlagged = false;
-  await controlTx(sql, async (tx) => {
+  const selected = await controlTx(sql, async (tx) => {
     const dead = await tx<{ lead_id: string }[]>`
       update agent_wakeups w set status = 'canceled', updated_at = now(),
         cancel_reason = case when l.unsubscribed_at is not null then 'descadastrado' else 'arquivado' end
@@ -330,15 +369,20 @@ export async function sweepWakeups(sql: Sql): Promise<number> {
         and (${capCents} <= 0 or
           coalesce((select sum(x.cost_cents) from agent_runs x
                     where x.lead_id = w.lead_id), 0) < ${capCents})
+        and not (w.id = any(${seen}::uuid[]))
       order by w.at
-      limit 20
+      limit ${WAKEUP_BATCH}
       for update of w skip locked
     `;
     for (const w of due) {
+      seen.push(w.id);
       const capFree = await tx<{ got: boolean }[]>`
         select pg_try_advisory_xact_lock(hashtext(${'capfin:' + w.lead_id})) as got
       `;
-      if (!capFree[0]!.got) continue;
+      if (!capFree[0]!.got) {
+        out.contended = true;
+        continue;
+      }
       // lead-asked and staff dates are promises — the preset/job switches never stall them
       const promised = w.requested || w.created_by === 'staff';
       if (!promised && autoOff) continue;
@@ -368,8 +412,9 @@ export async function sweepWakeups(sql: Sql): Promise<number> {
       }
       // insertRun refusing (cost cap) leaves the wakeup pending — a raised cap resumes it
     }
+    return due.length;
   });
-  for (const id of queuedIds) emitControlEvent('run.update', id);
-  if (capFlagged) emitControlEvent('lead.change');
-  return queuedIds.length;
+  out.queuedIds.push(...queuedIds);
+  if (capFlagged) out.capFlagged = true;
+  return selected;
 }
