@@ -56,6 +56,7 @@ Then per topic as needed:
 | DesignSpec → agent → deploy        | [14-agent-pipeline](architecture/14-agent-pipeline.md)                           |
 | Event taxonomy, funnels            | [15-analytics](architecture/15-analytics.md)                                     |
 | SLOs, incidents, kill switch       | [16-operations-and-incidents](architecture/16-operations-and-incidents.md)       |
+| Templates, sections, blocks        | [17-page-composition](architecture/17-page-composition.md)                       |
 
 ## ADRs
 
@@ -76,6 +77,11 @@ Significant decisions are recorded as ADRs in [`adr/`](adr/). Current index:
 | [0011](adr/0011-ring-based-fleet-releases.md)         | Ring-based fleet releases with artifact promotion         |
 | [0012](adr/0012-agent-agnostic-pipeline.md)           | Agent-agnostic generation pipeline, CI as judge           |
 | [0013](adr/0013-modular-monolith-core.md)             | Core is a modular monolith on Postgres                    |
+| [0014](adr/0014-crm-agent-v2.md)                      | CRM agent v2 (tools, policy, wakeups, memory)             |
+| [0015](adr/0015-one-agent-config.md)                  | One agent, several jobs                                   |
+| [0016](adr/0016-agent-dispatch-and-scheduler.md)      | One dispatcher, one agenda, one scheduler                 |
+| [0017](adr/0017-due-time-scheduler.md)                | Scheduler sleeps until due, wakes on change               |
+| [0018](adr/0018-page-composition.md)                  | Pages are composed from SDK and store sections            |
 
 ## Conventions
 

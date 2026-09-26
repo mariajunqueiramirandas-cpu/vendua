@@ -72,18 +72,21 @@ loader is the escape hatch when even the Kernel is too old.
 Ordered by "how much storefront involvement is required". Every feature is
 implemented at the **highest rung that can express it**.
 
-| #   | Mechanism                                                    | Reaches stale storefronts         | Needs rebuild         | Needs code change           |
-| --- | ------------------------------------------------------------ | --------------------------------- | --------------------- | --------------------------- |
-| 1   | Backend-only change (rules, hours, pricing, promos)          | Immediately                       | No                    | No                          |
-| 2   | Server-driven system surface (new `kind`, new checkout step) | Immediately, via generic renderer | No                    | No                          |
-| 3   | Loader (`v.js`) overlay — emergencies only                   | Immediately, always               | No                    | No                          |
-| 4   | New Kernel default component / new slot                      | After fleet rebuild               | Yes (automated train) | No                          |
-| 5   | Additive hook/prop extension                                 | After rebuild, opt-in             | Yes                   | Optional                    |
-| 6   | Contract major + codemod                                     | After codemod + train             | Yes                   | Automated; failures → agent |
-| 7   | New brand surface / redesign                                 | That storefront only              | Yes                   | Agent or human              |
+| #   | Mechanism                                                    | Reaches stale storefronts         | Needs rebuild         | Needs code change                                  |
+| --- | ------------------------------------------------------------ | --------------------------------- | --------------------- | -------------------------------------------------- |
+| 1   | Backend-only change (rules, hours, pricing, promos)          | Immediately                       | No                    | No                                                 |
+| 2   | Server-driven system surface (new `kind`, new checkout step) | Immediately, via generic renderer | No                    | No                                                 |
+| 3   | Loader (`v.js`) overlay — emergencies only                   | Immediately, always               | No                    | No                                                 |
+| 4   | New Kernel default component / new slot                      | After fleet rebuild               | Yes (automated train) | No                                                 |
+| 4b  | New SDK section/block/Kernel page + template migration       | After fleet rebuild + migration   | Yes (automated train) | No — placed by data ([17](17-page-composition.md)) |
+| 5   | Additive hook/prop extension                                 | After rebuild, opt-in             | Yes                   | Optional                                           |
+| 6   | Contract major + codemod                                     | After codemod + train             | Yes                   | Automated; failures → agent                        |
+| 7   | New brand surface / redesign                                 | That storefront only              | Yes                   | Agent or human                                     |
 
 Rungs 1–3 cover "the fleet must have it now". Rung 4 covers "the fleet should
-have it, properly styled". Rungs 6–7 are the only ones that may consume agent
+have it, properly styled". Rung 4b (proposed, [ADR 0018](../adr/0018-page-composition.md))
+extends rung 4 to brand pages: a new feature is placed on every store's pages
+by a template migration, so it never needs rung 5 or 7. Rungs 6–7 are the only ones that may consume agent
 time, and rung 6 is designed to keep that tail small (target <15% of stores per
 major, majors at most once a year).
 

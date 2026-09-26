@@ -6,6 +6,11 @@
 The extension system is how a storefront makes _platform-owned_ surfaces look
 like _its own_ design — without ever owning their behavior.
 
+> Under the proposed Contract v2 ([17](17-page-composition.md#styling-api)),
+> overrides become the last resort. SDK sections and blocks are styled through
+> tokens, variants and documented parts instead, because an overridden component
+> stops receiving Kernel improvements.
+
 ## The slot model
 
 A **slot** is a named, typed extension point with a Kernel default

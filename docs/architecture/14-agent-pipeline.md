@@ -55,6 +55,11 @@ valid spec — the generation agent's job is satisfying it. Separating them mean
 the intake agent (conversational, fuzzy) can ship on a different cadence and
 model than the generation agent (code-precise).
 
+> Under the proposed Contract v2 ([17](17-page-composition.md#generation-under-v2)),
+> generation produces `store:*` sections, page templates, content and tokens
+> instead of whole pages. Post-launch agent work is limited to bespoke redesigns
+> and codemod failure tails.
+
 ## Scaffold-first generation — the anti-hallucination rule
 
 Agents never start from a blank repo. `vendua scaffold` produces a storefront

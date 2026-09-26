@@ -7,6 +7,11 @@
 > (superseded — kept as provenance). Changes to this file are Contract events
 > per ADR 0008: anything not marked additive needs a major.
 
+> **Contract v2 proposed:** [ADR 0018](../adr/0018-page-composition.md) /
+> [17](17-page-composition.md) replace free `routes/` pages with page templates
+> composed from SDK and store sections. It lands before the first customer. Until
+> then this v1 text is normative.
+
 **This is the normative contract between Venduá and every storefront.** It is
 what makes arbitrary design freedom operable at fleet scale. The Contract bounds
 every axis _except_ visual design — framework, file layout, dependency policy,

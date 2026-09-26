@@ -54,6 +54,19 @@ rebuilds. See [architecture/05-system-surfaces](architecture/05-system-surfaces.
 **System routes** — Reserved routes under `/(vendua)/*` (checkout, order
 tracking, legal, auth) that the Kernel renders inside every storefront.
 
+**Page template** — Per-store data listing a page's sections, their settings and
+blocks, stored in Core and delivered with the store state (Contract v2,
+[architecture/17](architecture/17-page-composition.md)).
+
+**Section** — A unit of a page template. `sdk:*` sections are Kernel-owned;
+`store:*` sections are the store's bespoke presentation code under `sections/`.
+
+**Block / area** — A block is a small component placed inside a section's named
+area. Areas accept block _categories_, so new SDK blocks fit existing sections.
+
+**Template migration** — A deterministic, reversible transform over page
+templates that places a new feature across the fleet, applied by ring.
+
 **Design tokens** — Per-storefront values (colors, fonts, radius, spacing,
 motion) declared in `vendua.config.ts` and emitted as CSS variables (`--v-*`).
 Kernel defaults consume them so un-overridden surfaces still look on-brand.

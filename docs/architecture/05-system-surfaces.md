@@ -10,6 +10,10 @@ server-driven: the Core decides _that_ a surface appears and what it says; the
 Kernel decides _where_ it mounts and _how it looks by default_; the storefront
 may restyle it via slots.
 
+Placing _features_ (not just notices) on brand pages is covered by page
+composition ([17](17-page-composition.md), ADR 0018). System surfaces stay the
+mechanism for Core-decided, no-rebuild messaging.
+
 **Scope discipline — read this first.** Server-driven UI applies **only** to
 system surfaces: notices, blocking states, checkout structure, order timeline,
 consent, legal, emergency overlays. Brand pages are never SDUI — they are real
