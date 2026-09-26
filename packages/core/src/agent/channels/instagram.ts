@@ -1,4 +1,11 @@
-import { createHmac, timingSafeEqual } from 'node:crypto';
+import {
+  createCipheriv,
+  createDecipheriv,
+  createHash,
+  createHmac,
+  randomBytes,
+  timingSafeEqual,
+} from 'node:crypto';
 import type { Sql } from '../../platform/db.ts';
 import { HttpError } from '../../platform/http.ts';
 import { controlTx } from '../../modules/control.ts';
@@ -167,8 +174,59 @@ function validSession(v: unknown): IgSession | null {
   return JSON.stringify(out).length <= MAX_SESSION_BYTES ? out : null;
 }
 
+// The stored cookies (and the device's private key) are a reusable Instagram login —
+// sealed with AES-256-GCM under a key derived from the sidecar secret, which lives in
+// env, never in the DB. A rotated secret just reads as "no session" (log in again).
+interface Sealed {
+  v: 1;
+  iv: string;
+  tag: string;
+  ct: string;
+}
+function sealKey(secret: string): Buffer {
+  return createHash('sha256').update(`vendua.ig-auth-state:${secret}`).digest();
+}
+export function seal(secret: string, value: unknown): Sealed {
+  const iv = randomBytes(12);
+  const c = createCipheriv('aes-256-gcm', sealKey(secret), iv);
+  const ct = Buffer.concat([c.update(JSON.stringify(value), 'utf8'), c.final()]);
+  return {
+    v: 1,
+    iv: iv.toString('base64'),
+    tag: c.getAuthTag().toString('base64'),
+    ct: ct.toString('base64'),
+  };
+}
+export function unseal(secret: string, raw: unknown): unknown {
+  const s = raw as Partial<Sealed> | null;
+  if (
+    !s ||
+    s.v !== 1 ||
+    typeof s.iv !== 'string' ||
+    typeof s.tag !== 'string' ||
+    typeof s.ct !== 'string'
+  ) {
+    return null;
+  }
+  try {
+    const d = createDecipheriv('aes-256-gcm', sealKey(secret), Buffer.from(s.iv, 'base64'));
+    d.setAuthTag(Buffer.from(s.tag, 'base64'));
+    const pt = Buffer.concat([d.update(Buffer.from(s.ct, 'base64')), d.final()]);
+    return JSON.parse(pt.toString('utf8'));
+  } catch {
+    return null;
+  }
+}
+
+function requireSecret(integration: IntegrationRow | null): string {
+  const secret = sidecarSecret(integration);
+  if (!secret) throw new HttpError(503, 'IG_NO_SECRET', 'IG_SIDECAR_SECRET ausente');
+  return secret;
+}
+
 async function loadAuth(
   sql: Sql,
+  secret: string,
 ): Promise<{ session: IgSession | null; device: Record<string, unknown> | null }> {
   const rows = await controlTx(
     sql,
@@ -176,19 +234,23 @@ async function loadAuth(
       select session, device from ig_auth_state where account_id = ${ACCOUNT}`,
   );
   const r = rows[0];
+  const device = unseal(secret, r?.device);
   return {
-    session: validSession(r?.session),
-    device: (r?.device as Record<string, unknown> | null) ?? null,
+    session: validSession(unseal(secret, r?.session)),
+    device:
+      device && typeof device === 'object' && !Array.isArray(device)
+        ? (device as Record<string, unknown>)
+        : null,
   };
 }
 
 // a completed login — rotations go through applyIgEvent and never move connected_at
-async function saveSession(sql: Sql, session: IgSession) {
+async function saveSession(sql: Sql, session: IgSession, secret: string) {
   await controlTx(
     sql,
     (tx) => tx`
       insert into ig_auth_state (account_id, session, device, connected_at, updated_at)
-      values (${ACCOUNT}, ${tx.json(session as never)}, ${session.device ? tx.json(session.device as never) : null}, now(), now())
+      values (${ACCOUNT}, ${tx.json(seal(secret, session) as never)}, ${session.device ? tx.json(seal(secret, session.device) as never) : null}, now(), now())
       on conflict (account_id) do update set
         session = excluded.session,
         device = coalesce(excluded.device, ig_auth_state.device),
@@ -254,7 +316,7 @@ async function reconcileOnce(sql: Sql, integration: IntegrationRow | null): Prom
     let st = await call<IgStatus>(integration, 'GET', '/v1/status');
     // 'off' with no login in progress = the sidecar lost its memory; 'error' waits for staff
     if (st.state === 'off' && !st.login) {
-      const { session } = await loadAuth(sql);
+      const { session } = await loadAuth(sql, requireSecret(integration));
       if (session) {
         st = await call<IgStatus>(integration, 'PUT', '/v1/session', {
           session,
@@ -302,7 +364,7 @@ async function afterLoginStep(
     const session = validSession(step.session);
     if (!session)
       throw new HttpError(502, 'IG_BAD_SESSION', 'ig-sidecar devolveu uma sessão inválida');
-    await saveSession(sql, session);
+    await saveSession(sql, session, requireSecret(integration));
     igLog.info({ username: step.account?.username }, 'instagram account connected');
   }
   // refresh the cached status so the CRM sees the live login/connection at once
@@ -312,7 +374,7 @@ async function afterLoginStep(
 
 export async function igLoginStart(sql: Sql): Promise<IgStep> {
   const i = await requireSidecar(sql);
-  const { device } = await loadAuth(sql);
+  const { device } = await loadAuth(sql, requireSecret(i));
   try {
     const step = await call<IgStep>(i, 'POST', '/v1/login/start', { device });
     return await afterLoginStep(sql, i, step);
@@ -335,7 +397,7 @@ export async function igLoginSubmit(sql: Sql, input: Record<string, string>): Pr
 
 export async function igLoginCookies(sql: Sql, cookies: string): Promise<IgStep> {
   const i = await requireSidecar(sql);
-  const { device } = await loadAuth(sql);
+  const { device } = await loadAuth(sql, requireSecret(i));
   try {
     const step = await call<IgStep & { session?: unknown }>(i, 'POST', '/v1/login/cookies', {
       cookies,
@@ -509,12 +571,16 @@ export function parseIgEvent(raw: unknown): IgEvent {
   throw bad('type');
 }
 
-/** Applies a verified event; messages are handed back for the inbound pipeline. */
 // Instagram killed these sessions for good; challenge/checkpoint ones can
 // revive once staff clear the check in the app, so they're kept
 const DEAD_SESSION = new Set(['logged_out', 'unauthorized']);
 
-export async function applyIgEvent(sql: Sql, evt: IgEvent): Promise<IgInbound | null> {
+/** Applies a verified event (signed with `secret`); messages are handed back for the inbound pipeline. */
+export async function applyIgEvent(
+  sql: Sql,
+  evt: IgEvent,
+  secret: string,
+): Promise<IgInbound | null> {
   if (evt.type === 'state') {
     if (evt.status.state === 'error' && DEAD_SESSION.has(evt.status.error?.code ?? '')) {
       await clearSession(sql);
@@ -527,7 +593,7 @@ export async function applyIgEvent(sql: Sql, evt: IgEvent): Promise<IgInbound | 
     await controlTx(
       sql,
       (tx) => tx`
-        update ig_auth_state set session = ${tx.json(evt.session as never)}, updated_at = now()
+        update ig_auth_state set session = ${tx.json(seal(secret, evt.session) as never)}, updated_at = now()
         where account_id = ${ACCOUNT} and session is not null`,
     );
     return null;

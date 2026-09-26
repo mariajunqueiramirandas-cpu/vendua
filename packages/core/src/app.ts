@@ -2121,7 +2121,10 @@ export function createApp({ sql, sessionSecret, controlSecret, autoDrain }: AppD
   app.post('/control/v1/ig/events', async (c) => {
     const ig = await import('./agent/channels/instagram.ts');
     const integration = await getIntegration(sql, 'instagram');
-    const secret = integration?.driver === 'sidecar' ? ig.igSecretFor(integration) : null;
+    // getIntegration only returns the enabled row — spelled out so a disabled driver
+    // visibly drops even correctly signed events
+    const secret =
+      integration?.enabled && integration.driver === 'sidecar' ? ig.igSecretFor(integration) : null;
     const raw = await boundedText(c);
     if (
       !secret ||
@@ -2140,7 +2143,7 @@ export function createApp({ sql, sessionSecret, controlSecret, autoDrain }: AppD
       throw new HttpError(429, 'RATE_LIMITED', 'event rate exceeded — retry in a minute');
     }
     const evt = ig.parseIgEvent(parseJsonObject(raw));
-    const msg = await ig.applyIgEvent(sql, evt);
+    const msg = await ig.applyIgEvent(sql, evt, secret);
     if (!msg) return c.json({ ok: true });
     const res = await ingestInbound(sql, {
       channel: 'instagram',

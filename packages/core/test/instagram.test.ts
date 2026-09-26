@@ -10,7 +10,13 @@ import {
   instagramColdCapTx,
   resolveChannelTx,
 } from '../src/agent/guardrails.ts';
-import { igEventSignatureOk, igStatus, parseIgEvent } from '../src/agent/channels/instagram.ts';
+import {
+  igEventSignatureOk,
+  igStatus,
+  parseIgEvent,
+  seal,
+  unseal,
+} from '../src/agent/channels/instagram.ts';
 import { approveMessage, composeMessageTx, instagramHandle } from '../src/modules/threads.ts';
 import {
   DEFAULT_GUARDRAILS,
@@ -56,6 +62,24 @@ describe('sidecar event signature', () => {
     );
     expect(igEventSignatureOk('secret', undefined, vector, '{}', 1700000000)).toBe(false);
     expect(igEventSignatureOk('secret', '1700000000', 'zz', '{}', 1700000000)).toBe(false);
+  });
+});
+
+describe('stored credential sealing', () => {
+  const session = { cookies: { sessionid: 'S', csrftoken: 'C', ds_user_id: '1' } };
+  test('round-trips and never stores the cookie values in the clear', () => {
+    const sealed = seal('k1', session);
+    expect(JSON.stringify(sealed)).not.toContain('sessionid');
+    expect(unseal('k1', sealed)).toEqual(session);
+  });
+  test('wrong key, tampering or a plaintext row read as nothing', () => {
+    const sealed = seal('k1', session);
+    expect(unseal('k2', sealed)).toBeNull();
+    const ct = Buffer.from(sealed.ct, 'base64');
+    ct[0] = ct[0]! ^ 1;
+    expect(unseal('k1', { ...sealed, ct: ct.toString('base64') })).toBeNull();
+    expect(unseal('k1', session)).toBeNull();
+    expect(unseal('k1', null)).toBeNull();
   });
 });
 
@@ -473,6 +497,21 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('instagram channel (db)', () => 
     expect(lead.instagram).toBe(`@ig${nonce}g`);
 
     expect((await post({ type: 'message', message: { id: 'x' } })).status).toBe(422);
+
+    // a rotated session lands sealed — only an existing (live) credential is refreshed
+    await sql`
+      insert into ig_auth_state (account_id, session)
+      values ('default', ${sql.json(seal(SECRET, { cookies: { sessionid: 'old', csrftoken: 'c', ds_user_id: '1' } }) as never)})
+      on conflict (account_id) do update set session = excluded.session`;
+    const rotated = { cookies: { sessionid: 'rotated-sid', csrftoken: 'c2', ds_user_id: '1' } };
+    expect((await post({ type: 'session', session: rotated })).status).toBe(200);
+    const stored = (
+      await sql<
+        { session: unknown }[]
+      >`select session from ig_auth_state where account_id = 'default'`
+    )[0]!.session;
+    expect(JSON.stringify(stored)).not.toContain('rotated-sid');
+    expect(unseal(SECRET, stored)).toMatchObject(rotated);
 
     // a dead session is wiped so a sidecar restart doesn't re-push it
     await sql`
