@@ -4,7 +4,13 @@ import { createSql, migrate } from './platform/db.ts';
 import { join } from 'node:path';
 import { ingestInbound } from './agent/inbound.ts';
 import { startScheduler, stopScheduler } from './agent/scheduler.ts';
-import { ensureSocket, onHistoryMessage, onInboundMessage } from './agent/channels/whatsapp.ts';
+import {
+  ensureSocket,
+  onHistoryMessage,
+  onInboundMessage,
+  onLidMapping,
+} from './agent/channels/whatsapp.ts';
+import { adoptLidMappings } from './modules/threads.ts';
 import { startInstagramReconcile } from './agent/channels/instagram.ts';
 import { getIntegration } from './modules/integrations.ts';
 import { setBookingSecret } from './modules/meetings.ts';
@@ -61,6 +67,13 @@ onHistoryMessage(async (m) => {
     providerMessageId: m.providerId,
     historical: true,
   });
+});
+// LID↔PN pairs learned by the socket move LID-keyed leads onto the real number.
+onLidMapping(async (pairs) => {
+  const ids = await adoptLidMappings(sql, pairs);
+  if (ids.length) {
+    log.child({ mod: 'whatsapp' }).info({ count: ids.length }, 'lid leads re-keyed to phone');
+  }
 });
 void getIntegration(sql, 'whatsapp')
   .then((i) => ensureSocket(sql, i))

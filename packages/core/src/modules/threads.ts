@@ -889,3 +889,48 @@ export async function markMessageFailed(tx: Sql, messageId: string, reason: stri
     where id = ${messageId}
   `;
 }
+
+/** Re-keys leads still addressed by a whatsapp LID onto the real phone jid once
+ *  the LID↔PN pair is known. Skips a pair when another lead already owns that
+ *  number — merging duplicates is staff's call. Returns the re-keyed lead ids. */
+export async function adoptLidMappings(
+  sql: Sql,
+  pairs: readonly { lid: string; pn: string }[],
+): Promise<string[]> {
+  const byLid = new Map<string, { lidDigits: string; pnJid: string; pnDigits: string }>();
+  for (const { lid, pn } of pairs) {
+    const lidDigits = lid.split('@')[0]?.split(':')[0]?.replace(/\D/g, '') ?? '';
+    const pnDigits = pn.split('@')[0]?.split(':')[0]?.replace(/\D/g, '') ?? '';
+    if (lidDigits.length < 6 || pnDigits.length < 10 || pnDigits.length > 15) continue;
+    if (!lid.endsWith('@lid') || !pn.endsWith('@s.whatsapp.net')) continue;
+    byLid.set(lidDigits, { lidDigits, pnJid: `${pnDigits}@s.whatsapp.net`, pnDigits });
+  }
+  if (byLid.size === 0) return [];
+  const list = [...byLid.values()];
+  const rows = await controlTx(
+    sql,
+    (tx) => tx<{ id: string }[]>`
+      with m as (
+        select * from unnest(
+          ${list.map((p) => p.lidDigits)}::text[],
+          ${list.map((p) => p.pnJid)}::text[],
+          ${list.map((p) => p.pnDigits)}::text[]
+        ) as m(lid_digits, pn_jid, pn_digits)
+      )
+      update leads l set whatsapp = m.pn_jid, whatsapp_verified = true
+      from m
+      where l.archived_at is null
+        and regexp_replace(coalesce(l.whatsapp, ''), '\\D', '', 'g') = m.lid_digits
+        and not exists (
+          select 1 from leads o where o.id <> l.id and o.archived_at is null and (
+            regexp_replace(coalesce(o.whatsapp, ''), '\\D', '', 'g') = m.pn_digits
+            or regexp_replace(coalesce(o.phone, ''), '\\D', '', 'g') = m.pn_digits
+          )
+        )
+      returning l.id
+    `,
+  );
+  const ids = rows.map((r) => r.id);
+  if (ids.length) emitControlEvent('lead.change');
+  return ids;
+}

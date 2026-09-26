@@ -2,12 +2,12 @@ import { afterEach, describe, expect, test } from 'bun:test';
 import { join } from 'node:path';
 import postgres from 'postgres';
 import { ingestInbound } from '../src/agent/inbound.ts';
-import { whatsappRegistered } from '../src/agent/channels/whatsapp.ts';
+import { lidPnPair, resolveDmJid, whatsappRegistered } from '../src/agent/channels/whatsapp.ts';
 import { dispatchMessage } from '../src/agent/send.ts';
 import { claimRun, enqueueRun } from '../src/agent/runner.ts';
 import { setNextActionTx, sweepWakeups } from '../src/agent/wakeups.ts';
 import { sweepOrphanInbox } from '../src/agent/dispatch.ts';
-import { composeMessageTx } from '../src/modules/threads.ts';
+import { adoptLidMappings, composeMessageTx } from '../src/modules/threads.ts';
 import {
   DEFAULT_GUARDRAILS,
   phoneIsIgnored,
@@ -53,6 +53,43 @@ describe('guardrails — ignoredPhones', () => {
     expect(phoneIsIgnored([], '5511999990000')).toBe(false);
     // the alias leg matches too (LID ↔ PN pairs)
     expect(phoneIsIgnored(list, 'not-a-number', '5511999990000')).toBe(true);
+  });
+});
+
+describe('whatsapp LID → phone resolution', () => {
+  const none = async () => null;
+
+  test('lidPnPair orders the pair and strips device suffixes', () => {
+    expect(lidPnPair('5511999990000:3@s.whatsapp.net', '123456789012345:3@lid')).toEqual({
+      lid: '123456789012345@lid',
+      pn: '5511999990000@s.whatsapp.net',
+    });
+    expect(lidPnPair('1@lid', '2@lid')).toBeNull();
+    expect(lidPnPair('1@g.us', '5511999990000@s.whatsapp.net')).toBeNull();
+  });
+
+  test('remoteJidAlt wins without a lookup', async () => {
+    const dm = await resolveDmJid('123456789012345@lid', '5511999990000@s.whatsapp.net', () => {
+      throw new Error('lookup must not run');
+    });
+    expect(dm).toEqual({ jid: '5511999990000@s.whatsapp.net', alias: '123456789012345@lid' });
+  });
+
+  test('a LID-only DM resolves through the lookup to the real number', async () => {
+    const dm = await resolveDmJid('123456789012345@lid', undefined, async (lid) =>
+      lid === '123456789012345@lid' ? '5511999990000:0@s.whatsapp.net' : null,
+    );
+    expect(dm).toEqual({ jid: '5511999990000@s.whatsapp.net', alias: '123456789012345@lid' });
+  });
+
+  test('an unresolvable LID stays the jid; groups and PN DMs pass through', async () => {
+    expect(await resolveDmJid('123456789012345@lid', undefined, none)).toEqual({
+      jid: '123456789012345@lid',
+    });
+    expect(await resolveDmJid('1203630@g.us', undefined, none)).toBeNull();
+    expect(await resolveDmJid('5511999990000@s.whatsapp.net', undefined, none)).toEqual({
+      jid: '5511999990000@s.whatsapp.net',
+    });
   });
 });
 
@@ -516,6 +553,53 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('whatsapp history + ignore list 
     const out = await dispatchMessage(sql, composed.body.message.id);
     expect(out.ok).toBe(false);
     expect(out.reason).toBe('número ignorado');
+  });
+
+  test('adoptLidMappings re-keys a LID lead onto the phone jid, never onto a taken number', async () => {
+    await migrate(sql, MIGRATIONS);
+    const rnd = () => crypto.randomUUID().replace(/\D/g, '').padEnd(12, '7').slice(0, 12);
+    const lid = `9${rnd()}00`;
+    const pn = `55119${rnd().slice(0, 8)}`;
+    const first = await ingestInbound(sql, {
+      channel: 'whatsapp',
+      from: `${lid}@lid`,
+      body: 'oi, vim pelo lid',
+      providerMessageId: `lid-rekey-1-${pmRun}`,
+      historical: true,
+    });
+    if ('ignored' in first) throw new Error('unexpected ignore');
+    const ids = await adoptLidMappings(sql, [
+      { lid: `${lid}:2@lid`, pn: `${pn}:2@s.whatsapp.net` },
+    ]);
+    expect(ids).toEqual([first.leadId]);
+    const [row] = await sql<{ whatsapp: string }[]>`
+      select whatsapp from leads where id = ${first.leadId}
+    `;
+    expect(row!.whatsapp).toBe(`${pn}@s.whatsapp.net`);
+    // later PN-addressed messages converge on the same lead
+    const again = await ingestInbound(sql, {
+      channel: 'whatsapp',
+      from: `${pn}@s.whatsapp.net`,
+      body: 'agora pelo número',
+      providerMessageId: `lid-rekey-2-${pmRun}`,
+      historical: true,
+    });
+    if ('ignored' in again) throw new Error('unexpected ignore');
+    expect(again.leadId).toBe(first.leadId);
+
+    // a second LID lead whose number is already owned stays put
+    const lid2 = `8${rnd()}00`;
+    const dup = await ingestInbound(sql, {
+      channel: 'whatsapp',
+      from: `${lid2}@lid`,
+      body: 'outro lid',
+      providerMessageId: `lid-rekey-3-${pmRun}`,
+      historical: true,
+    });
+    if ('ignored' in dup) throw new Error('unexpected ignore');
+    expect(
+      await adoptLidMappings(sql, [{ lid: `${lid2}@lid`, pn: `${pn}@s.whatsapp.net` }]),
+    ).toEqual([]);
   });
 
   test('whatsappRegistered degrades to null with no live socket', async () => {
