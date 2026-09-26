@@ -26,6 +26,7 @@ import {
 } from '@/components/ui/overlay.tsx';
 import { CONFIG, HUBS, SHORTCUTS, type Hub } from './nav.ts';
 import { CommandPalette } from './CommandPalette.tsx';
+import { Onboarding } from './Onboarding.tsx';
 import { ShellContext, type ShellApi } from './shell-context.ts';
 
 // Chrome/Android only — on iOS the install button never renders.
@@ -133,6 +134,7 @@ export function AppShell({ onLogout, children }: { onLogout: () => void; childre
         <TabBar badges={badges} />
       </div>
       <CommandPalette open={paletteOpen} onOpenChange={setPaletteOpen} />
+      <Onboarding />
       <Dialog open={helpOpen} onOpenChange={setHelpOpen} title="Atalhos de teclado">
         <dl className="grid grid-cols-[auto_1fr] items-center gap-x-4 gap-y-2.5 text-sm">
           {SHORTCUTS.map(([k, d]) => (

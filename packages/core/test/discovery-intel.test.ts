@@ -324,22 +324,61 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('discovery intelligence (db)', (
     );
   });
 
-  test('C2: sweepStrategist fires once per week', async () => {
-    // age out leftover strategist rows so suite re-runs stay idempotent (any row counts as "fired this week")
-    await sql`
-      update agent_runs set created_at = now() - interval '8 days'
-      where kind = 'strategist'
+  // the enabled llm row as it stood, restored after — `updatedAt` null = no model configured
+  const withLlm = async (updatedAt: string | null, fn: () => Promise<void>) => {
+    const prior = await sql<{ id: string; enabled: boolean; updated_at: Date }[]>`
+      select id, enabled, updated_at from control_integrations where kind = 'llm'
     `;
-    const first = await sweepStrategist(sql);
-    expect(first).toBe(true);
-    const second = await sweepStrategist(sql);
-    expect(second).toBe(false);
+    await sql`update control_integrations set enabled = false where kind = 'llm'`;
+    if (updatedAt) {
+      await sql`
+        insert into control_integrations (kind, driver, enabled, updated_at)
+        values ('llm', 'mock', true, now() - ${updatedAt}::interval)
+        on conflict (kind, driver) do update set enabled = true, updated_at = excluded.updated_at
+      `;
+    }
+    try {
+      await fn();
+    } finally {
+      await sql`delete from control_integrations where kind = 'llm'
+        and id <> all(${prior.map((p) => p.id)}::uuid[])`;
+      for (const p of prior) {
+        await sql`update control_integrations set enabled = ${p.enabled}, updated_at = ${p.updated_at}
+          where id = ${p.id}`;
+      }
+    }
+  };
+  // age out leftover strategist rows so suite re-runs stay idempotent (any row counts as "fired this week")
+  const ageStrategist = () => sql`
+    update agent_runs set created_at = now() - interval '8 days'
+    where kind = 'strategist'
+  `;
+
+  test('C2: sweepStrategist fires once per week', async () => {
+    await ageStrategist();
+    await withLlm('30 days', async () => {
+      const first = await sweepStrategist(sql);
+      expect(first).toBe(true);
+      const second = await sweepStrategist(sql);
+      expect(second).toBe(false);
+    });
     const queued = await sql<{ kind: string; source: string }[]>`
       select kind, source from agent_runs where kind = 'strategist' and status = 'queued'
     `;
     expect(queued.length).toBe(1);
     expect(queued[0]!.source).toBe('weekly');
     await sql`update agent_runs set status = 'canceled' where kind = 'strategist' and status = 'queued'`;
+  });
+
+  test('C2: no weekly review without a model, nor for a slot before it was set up', async () => {
+    await ageStrategist();
+    // fresh install: nothing configured → no run on the mock fallback
+    await withLlm(null, async () => expect(await sweepStrategist(sql)).toBe(false));
+    // configured just now — this week's slot already passed, the first review is the next one
+    await withLlm('1 second', async () => expect(await sweepStrategist(sql)).toBe(false));
+    const queued =
+      await sql`select 1 from agent_runs where kind = 'strategist' and status = 'queued'`;
+    expect(queued.length).toBe(0);
   });
 
   test('C2: propose_brief writes a disabled strategist draft and dedupes', async () => {
