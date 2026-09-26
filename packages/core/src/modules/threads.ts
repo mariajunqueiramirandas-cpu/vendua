@@ -8,8 +8,19 @@ import { DEFAULT_GUARDRAILS, getSettingTx, type Guardrails } from './integration
 // Unified inbox: one thread per (lead, channel); owns persistence + the
 // draft→approve→dispatch lifecycle — provider sends live in agent/channels.
 
-export const CHANNELS = ['email', 'whatsapp', 'manual'] as const;
+export const CHANNELS = ['email', 'whatsapp', 'instagram', 'manual'] as const;
 export type Channel = (typeof CHANNELS)[number];
+
+/** Channels that dispatch through a provider ('manual' is a staff note), in
+ *  auto-pick preference order. */
+export const SEND_CHANNELS = ['whatsapp', 'instagram', 'email'] as const;
+export type SendChannel = (typeof SEND_CHANNELS)[number];
+export function isSendChannel(v: unknown): v is SendChannel {
+  return typeof v === 'string' && (SEND_CHANNELS as readonly string[]).includes(v);
+}
+
+/** Instagram's DM length ceiling — the sidecar enforces it too. */
+export const IG_MAX_CHARS = 1000;
 
 export function channel(v: unknown): Channel {
   if (typeof v !== 'string' || !(CHANNELS as readonly string[]).includes(v)) {
@@ -227,6 +238,20 @@ export async function ensureThread(
   return rows[0]!;
 }
 
+// '@Handle', 'handle' or an instagram.com URL → 'handle'; null when it isn't one
+export function instagramHandle(raw: string | null | undefined): string | null {
+  if (!raw) return null;
+  const h = raw
+    .trim()
+    .toLowerCase()
+    .replace(/^(https?:\/\/)?(www\.|m\.)?(instagram\.com\/)?@?/, '')
+    .replace(/[/?#].*$/, '');
+  return /^[a-z0-9._]{1,30}$/.test(h) ? h : null;
+}
+
+// SQL twin of instagramHandle over leads.instagram — keep the two in step
+export const IG_HANDLE_SQL = `lower(regexp_replace(regexp_replace(trim(instagram), '^(https?://)?(www\\.|m\\.)?(instagram\\.com/)?@?', '', 'i'), '[/?#].*$', ''))`;
+
 export interface InboundResult {
   leadId: string;
   threadId: string;
@@ -288,10 +313,43 @@ export async function addInboundMessage(
       }
     }
 
-    // Lead match: email on `email`, digits on phone/whatsapp for whatsapp.
+    // Lead match: email on `email`, the sender's thread then handle on instagram,
+    // digits on phone/whatsapp for whatsapp.
     let leadId: string | null = null;
     const from = str(input.from, 'from', 300).trim();
-    if (input.channel === 'email') {
+    const igHandle = input.channel === 'instagram' ? instagramHandle(from) : null;
+    if (input.channel === 'instagram') {
+      let byAccount = false;
+      // externalThreadId is the sender's account id — stable across handle renames
+      if (input.externalThreadId) {
+        const rows = await tx`
+          select t.lead_id as id from lead_threads t join leads l on l.id = t.lead_id
+          where t.channel = 'instagram' and t.external_id = ${input.externalThreadId}
+            and l.archived_at is null
+          order by t.created_at desc limit 1
+        `;
+        leadId = rows[0]?.id ?? null;
+        byAccount = leadId !== null;
+      }
+      if (!leadId && igHandle) {
+        const rows = await tx`
+          select id from leads where archived_at is null
+            and ${tx.unsafe(IG_HANDLE_SQL)} = ${igHandle}
+          order by created_at desc limit 1
+        `;
+        leadId = rows[0]?.id ?? null;
+      }
+      if (leadId && igHandle) {
+        // an account-id match proves the handle is this sender's current one (a rename
+        // frees the old handle for someone else); a handle match only fills a blank
+        await tx`
+          update leads set instagram = ${`@${igHandle}`}
+          where id = ${leadId}
+            and (instagram is null or trim(instagram) = ''
+              or (${byAccount} and ${tx.unsafe(IG_HANDLE_SQL)} is distinct from ${igHandle}))
+        `;
+      }
+    } else if (input.channel === 'email') {
       const rows = await tx`
         select id from leads where archived_at is null
           and lower(trim(email)) = lower(${from}) order by created_at desc limit 1
@@ -342,7 +400,9 @@ export async function addInboundMessage(
         discovered_via: input.channel,
       };
       if (input.channel === 'email') fields.email = from;
-      else {
+      else if (input.channel === 'instagram') {
+        if (igHandle) fields.instagram = `@${igHandle}`;
+      } else {
         // An inbound whatsapp number is self-evidencing.
         fields.whatsapp = from;
         fields.whatsapp_verified = true;
@@ -469,6 +529,15 @@ export async function composeMessageTx(
   body: { thread: ReturnType<typeof threadJson>; message: ReturnType<typeof messageJson> };
 }> {
   const body = str(input.body, 'body', 8000).trim();
+  // checked at compose so an over-long DM stays editable instead of failing at dispatch
+  if (input.channel === 'instagram' && [...body].length > IG_MAX_CHARS) {
+    throw new HttpError(
+      422,
+      'IG_TOO_LONG',
+      `o instagram aceita até ${IG_MAX_CHARS} caracteres por DM (esta tem ${[...body].length})`,
+      { field: 'body' },
+    );
+  }
   const exists = await tx`select 1 from leads where id = ${input.leadId}`;
   if (!exists[0]) throw new HttpError(404, 'LEAD_NOT_FOUND', 'lead not found');
   const thread = await ensureThread(tx, input.leadId, input.channel, {
@@ -649,6 +718,31 @@ export async function approveMessage(
             },
           };
         }
+      }
+    }
+    // an approved agent draft that opens an instagram conversation spends the same
+    // account-wide cold-DM budget as an autonomous send — refused, it stays a draft
+    const igDraft = (
+      await tx<{ lead_id: string }[]>`
+        select t.lead_id from lead_messages m
+        join lead_threads t on t.id = m.thread_id
+        where m.id = ${messageId} and m.status = 'draft' and m.author = 'agent'
+          and t.channel = 'instagram'
+      `
+    )[0];
+    if (igDraft) {
+      const { instagramColdCapTx } = await import('../agent/guardrails.ts');
+      const refused = await instagramColdCapTx(
+        tx,
+        { ...DEFAULT_GUARDRAILS, ...g },
+        igDraft.lead_id,
+      );
+      if (refused) {
+        throw new HttpError(
+          409,
+          'IG_COLD_CAP',
+          'teto diário de DMs frias no instagram atingido — aprove de novo amanhã ou suba o limite',
+        );
       }
     }
     const rows = await tx<MessageRow[]>`

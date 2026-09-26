@@ -13,7 +13,7 @@ import { Button } from '@/components/ui/button.tsx';
 import { meetingsKey, useLeadMeetings, useLeadThreads } from './queries.ts';
 import { Hint, Row, Section } from './Section.tsx';
 
-export const CHANNELS = ['whatsapp', 'email', 'manual'] as const;
+export const CHANNELS = ['whatsapp', 'instagram', 'email', 'manual'] as const;
 
 export function useNewThread(leadId: string) {
   const client = useQueryClient();

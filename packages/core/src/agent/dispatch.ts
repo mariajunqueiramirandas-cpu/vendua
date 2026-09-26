@@ -2,6 +2,7 @@ import type { Sql } from '../platform/db.ts';
 import { controlTx } from '../modules/control.ts';
 import { emitControlEvent } from '../modules/control-events.ts';
 import { DEFAULT_GUARDRAILS, getSettingTx, type Guardrails } from '../modules/integrations.ts';
+import { isSendChannel, SEND_CHANNELS } from '../modules/threads.ts';
 import { log } from '../platform/log.ts';
 import { channelAvailabilityTx, sendWindowOpenAtTx } from './guardrails.ts';
 import { enqueueInboxTx, type InboxKind, type InboxPayload } from './inbox.ts';
@@ -92,8 +93,7 @@ export async function smartStartTx(
   // A pinned run (an inbound reply stays on its thread's channel) only counts its pin.
   const ch = await channelAvailabilityTx(tx, req.leadId);
   const pin = req.params?.channel;
-  const deliverable =
-    pin === 'whatsapp' || pin === 'email' ? ch[pin].ok : ch.whatsapp.ok || ch.email.ok;
+  const deliverable = isSendChannel(pin) ? ch[pin].ok : SEND_CHANNELS.some((c) => ch[c].ok);
   if (!deliverable) return at;
   const g: Guardrails = {
     ...DEFAULT_GUARDRAILS,
@@ -322,8 +322,7 @@ async function serveOrphanTx(
   if (!spawn) return null;
   const params = spawn.payload.params ?? {};
   // The spawned run inherits the latest notBefore of the items it would drain.
-  const runChannel =
-    params.channel === 'whatsapp' || params.channel === 'email' ? (params.channel as string) : '';
+  const runChannel = isSendChannel(params.channel) ? params.channel : '';
   const runDraftOnly = params.draftOnly === true;
   let notBefore = 0;
   for (const i of items) {

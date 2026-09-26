@@ -117,7 +117,7 @@ export interface ThreadItem {
   leadName: string;
   businessName: string | null;
   leadState: string;
-  channel: 'email' | 'whatsapp' | 'manual';
+  channel: 'email' | 'whatsapp' | 'instagram' | 'manual';
   subject: string | null;
   agentEnabled: boolean;
   lastMessageAt: string | null;
@@ -290,8 +290,29 @@ export interface SegmentStat {
   costCents: number;
   cplCents: number | null;
 }
+export interface IgAccount {
+  username: string;
+  name?: string;
+  igid?: string;
+  fbid?: string;
+}
+/** one screen of the instagram login wizard; 'wait' = approve elsewhere, then submit {} */
+export interface IgStep {
+  type: 'input' | 'wait' | 'complete';
+  stepId: string;
+  instructions: string;
+  fields?: { id: string; name: string; type: string; options?: string[] }[];
+  account?: IgAccount;
+}
+export interface IgStatus {
+  state: 'off' | 'connecting' | 'open' | 'error';
+  error?: { code: string; message: string } | null;
+  account?: IgAccount | null;
+  /** a login the sidecar still holds open — the card resumes it */
+  login?: IgStep | null;
+}
 export interface ChannelHealth {
-  channel: 'whatsapp' | 'email';
+  channel: 'whatsapp' | 'instagram' | 'email';
   sent: number;
   failed: number;
   blocked: number;
@@ -489,6 +510,17 @@ const apiBase = {
   waPairCode: (phone: string) =>
     req<{ code: string }>('/wa/pair-code', { method: 'POST', body: JSON.stringify({ phone }) }),
   waLogout: () => req<{ ok: true }>('/wa/logout', { method: 'POST' }),
+  igStatus: () => req<IgStatus>('/ig/status'),
+  igLoginStart: () => req<{ step: IgStep }>('/ig/login/start', { method: 'POST' }),
+  igLoginSubmit: (input: Record<string, string>) =>
+    req<{ step: IgStep }>('/ig/login/submit', { method: 'POST', body: JSON.stringify({ input }) }),
+  igLoginCookies: (cookies: string) =>
+    req<{ step: IgStep }>('/ig/login/cookies', {
+      method: 'POST',
+      body: JSON.stringify({ cookies }),
+    }),
+  igLoginCancel: () => req<{ ok: true }>('/ig/login/cancel', { method: 'POST' }),
+  igLogout: () => req<{ ok: true }>('/ig/logout', { method: 'POST' }),
   testIntegration: (kind: string) =>
     req<{ ok: boolean; detail: string }>(`/integrations/${kind}/test`, { method: 'POST' }),
 
@@ -585,7 +617,7 @@ export interface AgentRequest {
   leadIds?: string[];
   threadId?: string;
   focus?: string;
-  channel?: 'auto' | 'whatsapp' | 'email';
+  channel?: 'auto' | 'whatsapp' | 'instagram' | 'email';
   draftOnly?: boolean;
   goal?: 'negotiation' | 'meeting';
   params?: Record<string, unknown>;

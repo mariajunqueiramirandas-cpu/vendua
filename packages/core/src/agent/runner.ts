@@ -56,6 +56,7 @@ import {
 import { pageKey } from './channels/discovery.ts';
 import { dispatchMessage } from './send.ts';
 import { channelAvailabilityTx, whatsappReadyTx } from './guardrails.ts';
+import { isSendChannel, SEND_CHANNELS } from '../modules/threads.ts';
 import { bookingLinkForRunner } from '../modules/meetings.ts';
 import { emitControlEvent } from '../modules/control-events.ts';
 
@@ -697,12 +698,12 @@ export async function contextFor(
         }
         // Reachable-channel truth — never compose on a channel the lead can't be reached on.
         const avail = await controlTx(sql, (tx) => channelAvailabilityTx(tx, run.lead_id!));
-        const chanLine = (['whatsapp', 'email'] as const)
-          .map((ch) => `${ch} ${avail[ch].ok ? 'ok' : `indisponível (${avail[ch].reason})`}`)
-          .join(' · ');
+        const chanLine = SEND_CHANNELS.map(
+          (ch) => `${ch} ${avail[ch].ok ? 'ok' : `indisponível (${avail[ch].reason})`}`,
+        ).join(' · ');
         parts.push(`CANAIS: ${chanLine}`);
         const want = run.params.channel;
-        if (want === 'whatsapp' || want === 'email') {
+        if (isSendChannel(want)) {
           parts.push(`CANAL FORÇADO: ${want}`);
         }
         if (run.params.draftOnly === true) {
@@ -1453,10 +1454,7 @@ async function drainInbox(att: Attempt): Promise<number> {
   // unreviewed or strands a reply as an unapproved draft.
   const runDraftOnly = (att.run.params as { draftOnly?: unknown } | null)?.draftOnly === true;
   // Channel-pinned mail defers to a run pinned the same way; a thread-bound run speaks its thread's channel.
-  const runChannel =
-    att.run.params?.channel === 'whatsapp' || att.run.params?.channel === 'email'
-      ? att.run.params.channel
-      : '';
+  const runChannel = isSendChannel(att.run.params?.channel) ? att.run.params.channel : '';
   // A thread pin is a channel pin: both sides derive effective channel from their thread;
   // an unbound unpinned run can't take thread-bound mail (the derived channels would mismatch).
   const runThread = att.run.thread_id ?? '';
@@ -1729,10 +1727,7 @@ async function buildAttemptContext(att: Attempt): Promise<void> {
       const t = Math.floor(Number(run.params.target));
       return Number.isFinite(t) && t > 0 ? Math.min(1000, t) : DISCOVERY_LEAD_CAP;
     })(),
-    channelOverride:
-      run.params.channel === 'whatsapp' || run.params.channel === 'email'
-        ? run.params.channel
-        : null,
+    channelOverride: isSendChannel(run.params.channel) ? run.params.channel : null,
     pageCache: replay.pageCache,
     book: new Map(),
     plan: null,

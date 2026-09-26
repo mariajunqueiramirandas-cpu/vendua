@@ -35,6 +35,8 @@ export async function ingestInbound(
     subject?: string;
     body: string;
     providerMessageId?: string | null;
+    /** provider-side conversation key (instagram: the sender's account id) */
+    externalThreadId?: string;
     /** 'out' = own sent copy — context, never answered */
     direction?: 'in' | 'out';
     /** provider timestamp for history import */
@@ -57,6 +59,7 @@ export async function ingestInbound(
     ...(input.subject ? { subject: input.subject } : {}),
     body: input.body,
     ...(input.providerMessageId ? { providerMessageId: input.providerMessageId } : {}),
+    ...(input.externalThreadId ? { externalThreadId: input.externalThreadId } : {}),
     ...(input.direction ? { direction: input.direction } : {}),
     ...(input.sentAt ? { sentAt: input.sentAt } : {}),
     ...(input.historical ? { historical: input.historical } : {}),

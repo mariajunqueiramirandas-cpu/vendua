@@ -29,10 +29,12 @@ import { recordBlockedSendTx } from '../modules/channel-health.ts';
 import {
   agentPausedForChannelTx,
   checkSendAllowedTx,
+  instagramReadyTx,
   resolveChannelTx,
   whatsappReadyTx,
   type SendVerdict,
 } from './guardrails.ts';
+import { instagramHandle } from '../modules/threads.ts';
 import { dispatchMessage } from './send.ts';
 import { whatsappRegistered } from './channels/whatsapp.ts';
 import { leadBoundArg, toolAvailable } from './tool-meta.ts';
@@ -59,7 +61,7 @@ export interface ToolContext {
   /** hard per-run ceiling on created leads — enforced in code so the prompt can't talk past it. */
   leadCap: number;
   /** staff channel override (params.channel) — trumps the model's pick on send/draft. */
-  channelOverride: 'email' | 'whatsapp' | null;
+  channelOverride: import('../modules/threads.ts').SendChannel | null;
   /** run-scoped working memory — the `book` prospect ledger + `plan` campaign plan. */
   book: Map<string, BookEntry>;
   plan: string | null;
@@ -299,12 +301,12 @@ const REGISTRY: { def: AgentTool }[] = [
     def: {
       name: 'draft_message',
       description:
-        'Draft an outbound message for human approval — always allowed, never sends. Omit channel to auto-pick the reachable one (last inbound channel, else whatsapp > email); if you pass a dead channel you get {blocked, reason, use} — retry on `use`.',
+        'Draft an outbound message for human approval — always allowed, never sends. Omit channel to auto-pick the reachable one (last inbound channel, else whatsapp > instagram > email); if you pass a dead channel you get {blocked, reason, use} — retry on `use`. Instagram DMs max 1000 chars.',
       parameters: {
         type: 'object',
         properties: {
           leadId: leadIdArg,
-          channel: { type: 'string', enum: ['email', 'whatsapp', 'manual'] },
+          channel: { type: 'string', enum: ['email', 'whatsapp', 'instagram', 'manual'] },
           body: { type: 'string' },
           subject: { type: 'string' },
         },
@@ -316,12 +318,12 @@ const REGISTRY: { def: AgentTool }[] = [
     def: {
       name: 'send_message',
       description:
-        'Send an outbound message now. Guardrails decide whether it queues (auto mode) or falls back to draft. Omit channel to auto-pick the reachable one; a dead channel returns {blocked, reason, use} — retry on `use`.',
+        "Send an outbound message now. Guardrails decide whether it queues (auto mode) or falls back to draft. Omit channel to auto-pick the reachable one; a dead channel returns {blocked, reason, use} — retry on `use`. Instagram DMs max 1000 chars; a cold instagram DM lands in the lead's message requests, so open with who you are.",
       parameters: {
         type: 'object',
         properties: {
           leadId: leadIdArg,
-          channel: { type: 'string', enum: ['email', 'whatsapp'] },
+          channel: { type: 'string', enum: ['email', 'whatsapp', 'instagram'] },
           body: { type: 'string' },
           subject: { type: 'string' },
         },
@@ -762,14 +764,22 @@ export async function executeTool(
         let autoOn = false;
         let minScore: number = DEFAULT_GUARDRAILS.discoveryContactMinScore;
         let waDriverOn = false;
-        /** autocontact gate: verified whatsapp (never a guessed phone), live wa driver, fitScore ≥ min. */
-        const gateFires = (score: number | null, wa: string) =>
-          ctx.runKind === 'discovery' &&
-          autoOn &&
-          waDriverOn &&
-          score !== null &&
-          score >= minScore &&
-          Boolean(wa);
+        let igDriverOn = false;
+        /** autocontact gate: fitScore ≥ min, then verified whatsapp (never a guessed
+         *  phone) on a live wa driver, else an instagram handle on a live sidecar
+         *  (cold DMs on). Returns the channel to pin, or null. */
+        const gateFires = (
+          score: number | null,
+          wa: string,
+          ig: unknown,
+        ): 'whatsapp' | 'instagram' | null => {
+          if (ctx.runKind !== 'discovery' || !autoOn || score === null || score < minScore) {
+            return null;
+          }
+          if (waDriverOn && wa) return 'whatsapp';
+          if (igDriverOn && typeof ig === 'string' && instagramHandle(ig)) return 'instagram';
+          return null;
+        };
         /** first-contact suppresses on live runs AND any outbound row — a
          *  'failed' send may still have reached the wire; 'rejected' is a veto. */
         const outreachActive = async (leadId: string) => {
@@ -793,7 +803,11 @@ export async function executeTool(
             )[0],
           );
         };
-        const queueOutreach = async (leadId: string, score: number | null) => {
+        const queueOutreach = async (
+          leadId: string,
+          score: number | null,
+          chan: 'whatsapp' | 'instagram',
+        ) => {
           if (await outreachActive(leadId)) return null;
           if (!(await automationAllowedTx(tx, 'outreach')).ok) return null;
           const { requestAgentTx } = await import('./dispatch.ts');
@@ -804,7 +818,7 @@ export async function executeTool(
             leadId,
             text: 'lead descoberto — primeiro contato',
             params: {
-              channel: 'whatsapp',
+              channel: chan,
               focus: `primeiro contato — lead descoberto (fitScore ${String(score)}). O dossiê de pesquisa está na timeline do lead.`,
             },
             dedupe: true,
@@ -828,6 +842,9 @@ export async function executeTool(
           minScore =
             guardrails.discoveryContactMinScore ?? DEFAULT_GUARDRAILS.discoveryContactMinScore;
           waDriverOn = await whatsappReadyTx(tx);
+          igDriverOn =
+            (guardrails.instagramColdDmsPerDay ?? DEFAULT_GUARDRAILS.instagramColdDmsPerDay) > 0 &&
+            (await instagramReadyTx(tx));
           // dedupe before the cap check so a repeat can't burn cap — name/business hits only merge when city matches too.
           const digits = (v: unknown) =>
             typeof v === 'string' && v.replace(/\D/g, '').length >= 8 ? v.replace(/\D/g, '') : null;
@@ -928,16 +945,21 @@ export async function executeTool(
               (dup.whatsapp_verified === true || set.whatsapp_verified === true
                 ? String(dup.whatsapp ?? '').trim()
                 : '') || (whatsappDerived ? '' : String(set.whatsapp ?? '').trim());
+            const dupChan = gateFires(dupScore, dupWa, set.instagram ?? dup.instagram);
             const dupContact =
-              gateFires(dupScore, dupWa) &&
+              dupChan &&
               dup.state === 'lead' &&
               dup.agent_mode !== 'off' &&
-              !(await outreachActive(dup.id as string));
+              !(await outreachActive(dup.id as string))
+                ? dupChan
+                : null;
             // agent_mode promotes only after the run is admitted — a cap refusal must not commit 'auto' with no outreach.
             if (merged.length) {
               await tx`update leads set ${tx(set)}, updated_at = now() where id = ${dup.id as string}`;
             }
-            const contactRun = dupContact ? await queueOutreach(dup.id as string, dupScore) : null;
+            const contactRun = dupContact
+              ? await queueOutreach(dup.id as string, dupScore, dupContact)
+              : null;
             if (contactRun && dup.agent_mode !== 'auto') {
               await tx`update leads set agent_mode = 'auto', updated_at = now() where id = ${dup.id as string}`;
               merged.push('agent_mode');
@@ -973,12 +995,14 @@ export async function executeTool(
             );
           }
         }
-        // score gate → first contact without a human: verified whatsapp + live
-        // driver → autonomy + queued outreach; messaging guardrails still apply.
+        // score gate → first contact without a human: verified whatsapp (else an
+        // instagram handle) + live driver → autonomy + queued outreach; messaging
+        // guardrails (incl. the instagram cold-DM cap) still apply.
         const newScore = typeof input.fit_score === 'number' ? input.fit_score : null;
         const autoContact = gateFires(
           newScore,
           whatsappDerived ? '' : String(input.whatsapp ?? '').trim(),
+          input.instagram,
         );
         const created = await insertLeadTx(tx, input);
         await writeFindings(created.body.lead.id as string);
@@ -989,7 +1013,7 @@ export async function executeTool(
         }
         if (autoContact) {
           // agent_mode follows the admitted run — a cap refusal must not leave 'auto' with no outreach.
-          const contactRun = await queueOutreach(created.body.lead.id, newScore);
+          const contactRun = await queueOutreach(created.body.lead.id, newScore, autoContact);
           if (contactRun) {
             await tx`update leads set agent_mode = 'auto', updated_at = now()
               where id = ${created.body.lead.id as string}`;

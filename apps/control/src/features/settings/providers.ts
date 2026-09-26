@@ -1,4 +1,4 @@
-import type { Integration } from '@/lib/api.ts';
+import type { IgStatus, Integration } from '@/lib/api.ts';
 
 export type Driver = {
   d: string;
@@ -112,6 +112,21 @@ export const KINDS: Kind[] = [
     ],
   },
   {
+    key: 'instagram',
+    label: 'instagram',
+    sub: 'DMs da conta da Venduá',
+    drivers: [
+      {
+        d: 'sidecar',
+        label: 'sidecar',
+        hint: 'conta de verdade pelo ig-sidecar — entra com usuário e senha (ou cookies do navegador)',
+        secret: true,
+        secretName: 'IG_SIDECAR_SECRET',
+      },
+      { d: 'log', label: 'log', hint: 'só imprime no console — nada sai de verdade' },
+    ],
+  },
+  {
     key: 'discovery',
     label: 'descoberta',
     sub: 'busca e extração de novos leads',
@@ -155,9 +170,18 @@ export function providerStatus(
   kindKey: string,
   rows: Integration[],
   wa: WaState,
+  ig: IgStatus | null = null,
 ): { tone: ProvTone; text: string } {
   const cur = rows.find((r) => r.enabled);
   if (!cur) return { tone: 'off', text: rows.length ? 'desativado' : 'não configurado' };
+  if (kindKey === 'instagram' && cur.driver === 'sidecar') {
+    if (cur.secretName && !cur.secretPresent) return { tone: 'warn', text: 'falta chave' };
+    if (ig?.state === 'open') return { tone: 'live', text: 'conectado' };
+    if (ig?.state === 'connecting') return { tone: 'warn', text: 'conectando…' };
+    if (ig?.error?.code === 'sidecar_unreachable') return { tone: 'warn', text: 'sidecar offline' };
+    if (ig?.state === 'error') return { tone: 'warn', text: 'reconectar conta' };
+    return { tone: 'warn', text: 'entrar na conta' };
+  }
   if (kindKey === 'whatsapp' && cur.driver === 'baileys') {
     if (wa.status === 'open') return { tone: 'live', text: 'conectado' };
     if (wa.status === 'qr') return { tone: 'warn', text: 'escanear QR' };

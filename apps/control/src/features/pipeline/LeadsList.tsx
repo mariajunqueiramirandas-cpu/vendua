@@ -20,6 +20,7 @@ type Page = { leads: LeadListItem[]; nextCursor: string | null };
 const CHANNELS = [
   ['auto', 'auto'],
   ['whatsapp', 'whatsapp'],
+  ['instagram', 'instagram'],
   ['email', 'email'],
 ] as const;
 
@@ -127,7 +128,7 @@ export function LeadsList({
   const leads = useMemo(() => query.data?.pages.flatMap((pg) => pg.leads) ?? [], [query.data]);
   const [sel, setSel] = useState<Set<string>>(new Set());
   const [goal, setGoal] = useState<'negotiation' | 'meeting'>('negotiation');
-  const [channel, setChannel] = useState<'auto' | 'whatsapp' | 'email'>('auto');
+  const [channel, setChannel] = useState<'auto' | 'whatsapp' | 'instagram' | 'email'>('auto');
   const [dispatchMsg, setDispatchMsg] = useState('');
   // Bumped on filter change — invalidates in-flight dispatch results.
   const filterGen = useRef(0);

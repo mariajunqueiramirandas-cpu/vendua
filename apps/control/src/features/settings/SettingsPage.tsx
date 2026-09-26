@@ -13,7 +13,14 @@ import { OverviewArea } from './OverviewArea.tsx';
 import { KINDS, WA_IDLE, type ProvTone } from './providers.ts';
 import { AREAS, computeReadiness, STUDIO, type AreaKey } from './readiness.ts';
 import { ReportsArea } from './ReportsArea.tsx';
-import { obj, useMeetingsStatus, useSaveSetting, useSettingsMap, useWaQr } from './queries.ts';
+import {
+  obj,
+  useIgStatus,
+  useMeetingsStatus,
+  useSaveSetting,
+  useSettingsMap,
+  useWaQr,
+} from './queries.ts';
 
 const MARK: Record<ProvTone, string> = {
   live: 'text-agent-foreground bg-agent',
@@ -33,6 +40,7 @@ export default function SettingsPage() {
   const integQ = useIntegrations();
   const settingsQ = useSettingsMap();
   const waQ = useWaQr();
+  const igQ = useIgStatus();
   const mQ = useMeetingsStatus();
   const saveSetting = useSaveSetting();
 
@@ -73,6 +81,7 @@ export default function SettingsPage() {
     settings,
     setErr: settingsQ.isError,
     wa,
+    ig: igQ.data ?? null,
     mStatus,
   });
   const marks: Partial<Record<AreaKey, ProvTone>> = {};
@@ -164,6 +173,7 @@ export default function SettingsPage() {
               integrations={integrations}
               loading={integQ.isPending}
               wa={wa}
+              ig={igQ.data ?? null}
               provLive={r.provLive}
             />
           </div>

@@ -69,6 +69,26 @@ jobs:
           bun-version: '1.4.2'
       - run: bun tools/check-storefront-paths.mjs
 
+  # services/ig-sidecar is Go — the Bun jobs never see it
+  ig-sidecar:
+    runs-on: ubuntu-latest
+    if: >-
+      github.event_name == 'push' ||
+      !contains(fromJSON('["labeled","unlabeled"]'), github.event.action)
+    defaults:
+      run:
+        working-directory: services/ig-sidecar
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: services/ig-sidecar/go.mod
+          cache-dependency-path: services/ig-sidecar/go.sum
+      - name: gofmt
+        run: test -z "$(gofmt -l .)" || (gofmt -l . && exit 1)
+      - run: go vet ./...
+      - run: go test -race ./...
+
   # validates the merge ref (PR) / pushed commit (main) — the code that lands
   check:
     runs-on: ubuntu-latest

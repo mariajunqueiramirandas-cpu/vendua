@@ -5,6 +5,7 @@ import { join } from 'node:path';
 import { ingestInbound } from './agent/inbound.ts';
 import { startScheduler, stopScheduler } from './agent/scheduler.ts';
 import { ensureSocket, onHistoryMessage, onInboundMessage } from './agent/channels/whatsapp.ts';
+import { startInstagramReconcile } from './agent/channels/instagram.ts';
 import { getIntegration } from './modules/integrations.ts';
 import { setBookingSecret } from './modules/meetings.ts';
 
@@ -64,6 +65,8 @@ onHistoryMessage(async (m) => {
 void getIntegration(sql, 'whatsapp')
   .then((i) => ensureSocket(sql, i))
   .catch((e) => log.child({ mod: 'whatsapp' }).error({ err: e }, 'socket start failed'));
+// Instagram's live session sits in the ig-sidecar; this re-pushes the stored one after a sidecar restart.
+startInstagramReconcile(sql);
 
 // Deploys send SIGTERM: stop claiming, let the run in hand finish (bounded), then exit —
 // a run cut off anyway is recovered by its lease on the next boot.

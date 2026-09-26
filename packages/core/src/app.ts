@@ -75,6 +75,7 @@ import {
   setThreadAgent,
   threadsForLead,
   ensureThread,
+  isSendChannel,
   type Channel,
 } from './modules/threads.ts';
 import {
@@ -256,6 +257,10 @@ async function testIntegration(
       if (st === 'open') return { ok: true, detail: 'socket pareado' };
       if (st === 'qr') return { ok: true, detail: 'aguardando escanear o QR' };
       return { ok: false, detail: `socket ${st}` };
+    }
+    if (kind === 'instagram') {
+      const { testInstagram } = await import('./agent/channels/instagram.ts');
+      return await timed(testInstagram(integration), 'ig-sidecar');
     }
     if (kind === 'discovery') {
       if (integration.driver === 'mock') {
@@ -1166,6 +1171,11 @@ export function createApp({ sql, sessionSecret, controlSecret, autoDrain }: AppD
       requireIdemKey(c),
     );
     if (res.replayed) c.header('x-idempotent-replay', 'true');
+    if (kind === 'instagram') {
+      // a disable/switch stops the sidecar session now; an enable pushes the stored one
+      const { reconcileInstagram } = await import('./agent/channels/instagram.ts');
+      void getIntegration(sql, 'instagram').then((i) => reconcileInstagram(sql, i));
+    }
     if (kind === 'whatsapp') {
       // A disable/switch must close the old Baileys session now, not lazily.
       const { ensureSocket } = await import('./agent/channels/whatsapp.ts');
@@ -1552,10 +1562,7 @@ export function createApp({ sql, sessionSecret, controlSecret, autoDrain }: AppD
       await releaseInboxTx(tx, id, true);
       // Tombstone the forRunId items that asked for this run or they'd respawn it — scoped to what
       // the run could serve (draftOnly + effective channel + thread), so merely-associated mail survives.
-      const runChan =
-        rows[0].params?.channel === 'whatsapp' || rows[0].params?.channel === 'email'
-          ? rows[0].params.channel
-          : '';
+      const runChan = isSendChannel(rows[0].params?.channel) ? rows[0].params.channel : '';
       const runThread = rows[0].thread_id ?? '';
       const effChan =
         runChan ||
@@ -1618,10 +1625,9 @@ export function createApp({ sql, sessionSecret, controlSecret, autoDrain }: AppD
       throw new HttpError(422, 'BAD_REQUEST', 'strategist requests take no leads');
     }
     if (body.focus != null) str(body.focus, 'focus', 2000);
-    const wantChannel =
-      body.channel === 'whatsapp' || body.channel === 'email' ? body.channel : null;
+    const wantChannel = isSendChannel(body.channel) ? body.channel : null;
     if (body.channel != null && body.channel !== 'auto' && !wantChannel) {
-      throw new HttpError(422, 'BAD_REQUEST', 'channel must be auto|whatsapp|email');
+      throw new HttpError(422, 'BAD_REQUEST', 'channel must be auto|whatsapp|instagram|email');
     }
     if (body.draftOnly != null && typeof body.draftOnly !== 'boolean') {
       throw new HttpError(422, 'BAD_REQUEST', 'draftOnly must be a boolean');
@@ -2033,6 +2039,122 @@ export function createApp({ sql, sessionSecret, controlSecret, autoDrain }: AppD
     if (res.replayed) c.header('x-idempotent-replay', 'true');
     if (!res.replayed) emitControlEvent('channel.health', 'whatsapp');
     return c.json(res.body, res.status as 200);
+  });
+
+  // Instagram login wizard — the sidecar runs Instagram's steps; Core relays them and
+  // stores the resulting credential. Claimed so a retried submit replays instead of
+  // re-sending a one-time code; only responses are stored, never the password.
+  app.get('/control/v1/ig/status', async (c) => {
+    controlGate(c);
+    const { igStatus } = await import('./agent/channels/instagram.ts');
+    return c.json(igStatus());
+  });
+
+  const igClaim = (c: Context, work: () => Promise<unknown>) =>
+    claimControl(sql, requireIdemKey(c), async () => ({ status: 200, body: await work() })).then(
+      (res) => {
+        if (res.replayed) c.header('x-idempotent-replay', 'true');
+        else emitControlEvent('channel.health', 'instagram');
+        return c.json(res.body as never, res.status as 200);
+      },
+    );
+
+  app.post('/control/v1/ig/login/start', async (c) => {
+    controlGate(c);
+    const { igLoginStart } = await import('./agent/channels/instagram.ts');
+    return igClaim(c, async () => ({ step: await igLoginStart(sql) }));
+  });
+
+  app.post('/control/v1/ig/login/submit', async (c) => {
+    controlGate(c);
+    const body = await bodyJson(c);
+    const raw = body.input ?? {};
+    if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) {
+      throw new HttpError(422, 'BAD_REQUEST', 'input must be an object', { field: 'input' });
+    }
+    const entries = Object.entries(raw as Record<string, unknown>);
+    if (entries.length > 10) {
+      throw new HttpError(422, 'BAD_REQUEST', 'input has too many fields', { field: 'input' });
+    }
+    const input: Record<string, string> = {};
+    for (const [k, v] of entries) {
+      if (k.length > 60 || typeof v !== 'string' || v.length > 500) {
+        throw new HttpError(422, 'BAD_REQUEST', 'input values must be strings ≤500 chars', {
+          field: 'input',
+        });
+      }
+      input[k] = v;
+    }
+    const { igLoginSubmit } = await import('./agent/channels/instagram.ts');
+    return igClaim(c, async () => ({ step: await igLoginSubmit(sql, input) }));
+  });
+
+  app.post('/control/v1/ig/login/cookies', async (c) => {
+    controlGate(c);
+    const body = await bodyJson(c);
+    const cookies = str(body.cookies, 'cookies', 64_000);
+    const { igLoginCookies } = await import('./agent/channels/instagram.ts');
+    return igClaim(c, async () => ({ step: await igLoginCookies(sql, cookies) }));
+  });
+
+  app.post('/control/v1/ig/login/cancel', async (c) => {
+    controlGate(c);
+    const { igLoginCancel } = await import('./agent/channels/instagram.ts');
+    return igClaim(c, async () => {
+      await igLoginCancel(sql);
+      return { ok: true };
+    });
+  });
+
+  app.post('/control/v1/ig/logout', async (c) => {
+    controlGate(c);
+    const { igLogout } = await import('./agent/channels/instagram.ts');
+    return igClaim(c, async () => {
+      await igLogout(sql);
+      return { ok: true };
+    });
+  });
+
+  // Sidecar → Core events (inbound DMs, connection state, rotated cookies), HMAC-signed
+  // with the sidecar secret; a uniform 404 for anything unsigned hides the route.
+  let igEventBucket = { count: 0, resetAt: 0 };
+  app.post('/control/v1/ig/events', async (c) => {
+    const ig = await import('./agent/channels/instagram.ts');
+    const integration = await getIntegration(sql, 'instagram');
+    // getIntegration only returns the enabled row — spelled out so a disabled driver
+    // visibly drops even correctly signed events
+    const secret =
+      integration?.enabled && integration.driver === 'sidecar' ? ig.igSecretFor(integration) : null;
+    const raw = await boundedText(c);
+    if (
+      !secret ||
+      !ig.igEventSignatureOk(
+        secret,
+        c.req.header('x-ig-timestamp'),
+        c.req.header('x-ig-signature'),
+        raw,
+      )
+    ) {
+      throw new HttpError(404, 'NOT_FOUND', 'not found');
+    }
+    const nowMs = Date.now();
+    if (igEventBucket.resetAt <= nowMs) igEventBucket = { count: 0, resetAt: nowMs + 60_000 };
+    if (++igEventBucket.count > 600) {
+      throw new HttpError(429, 'RATE_LIMITED', 'event rate exceeded — retry in a minute');
+    }
+    const evt = ig.parseIgEvent(parseJsonObject(raw));
+    const msg = await ig.applyIgEvent(sql, evt, secret);
+    if (!msg) return c.json({ ok: true });
+    const res = await ingestInbound(sql, {
+      channel: 'instagram',
+      from: msg.username ? `@${msg.username}` : `ig:${msg.fromFbid}`,
+      ...(msg.name ? { fromName: msg.name } : {}),
+      body: msg.text,
+      providerMessageId: msg.id,
+      externalThreadId: msg.fromFbid,
+      ...(msg.sentAt ? { sentAt: msg.sentAt } : {}),
+    });
+    return c.json(res, 'ignored' in res ? 200 : 201);
   });
 
   // Shared webhook secret gates inbound posts — channels can't carry the staff cookie.

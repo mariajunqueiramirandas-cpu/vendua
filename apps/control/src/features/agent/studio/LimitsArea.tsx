@@ -62,6 +62,7 @@ function Guardrails({
     followupCadenceDays: num(value.followupCadenceDays, 2),
     staleDraftDays: num(value.staleDraftDays, 7),
     briefAutoPauseRuns: num(value.briefAutoPauseRuns, 5),
+    instagramColdDmsPerDay: num(value.instagramColdDmsPerDay, 15),
     ignoredPhones: Array.isArray(value.ignoredPhones) ? (value.ignoredPhones as string[]) : [],
   };
   const { edit, setEdit, dirty, reset } = useDraft(cur);
@@ -80,7 +81,8 @@ function Guardrails({
       | 'firstContactDelayMin'
       | 'followupCadenceDays'
       | 'staleDraftDays'
-      | 'briefAutoPauseRuns',
+      | 'briefAutoPauseRuns'
+      | 'instagramColdDmsPerDay',
     min: number,
     max: number,
     floor: number,
@@ -186,6 +188,13 @@ function Guardrails({
           hint="runs seguidas do mesmo brief sem lead novo pausam ele sozinho; 0 = nunca pausa"
         >
           {numIn('briefAutoPauseRuns', 0, 100, 0)}
+        </Field>
+        <Field
+          label="DMs frias no instagram / dia"
+          htmlFor="gr-instagramColdDmsPerDay"
+          hint="teto da conta inteira pra conversas que o agente abre com quem nunca escreveu (24h corridas) — rascunho do agente aprovado também conta; respostas e follow-ups não; 0 = sem DM fria"
+        >
+          {numIn('instagramColdDmsPerDay', 0, 200, 0)}
         </Field>
         <Field
           label="números ignorados (equipe / founders)"

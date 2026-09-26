@@ -8,7 +8,7 @@ import { JOB_KINDS } from '../agent/tool-meta.ts';
 // modular provider config: `secret_ref` is the NAME of the env var holding the
 // credential — secret values never enter the DB
 
-export const INTEGRATION_KINDS = ['llm', 'email', 'whatsapp', 'discovery'] as const;
+export const INTEGRATION_KINDS = ['llm', 'email', 'whatsapp', 'instagram', 'discovery'] as const;
 export type IntegrationKind = (typeof INTEGRATION_KINDS)[number];
 
 // driver names per kind — the API and the driver registry agree here
@@ -16,6 +16,7 @@ export const DRIVERS: Record<IntegrationKind, readonly string[]> = {
   llm: ['gemini', 'openrouter', 'anthropic', 'openai', 'mock'],
   email: ['resend', 'log'],
   whatsapp: ['baileys', 'log'],
+  instagram: ['sidecar', 'log'],
   discovery: ['tinyfish', 'mock'],
 };
 
@@ -28,11 +29,12 @@ export const DEFAULT_SECRET: Record<string, string> = {
   openai: 'OPENAI_API_KEY',
   resend: 'RESEND_API_KEY',
   tinyfish: 'TINYFISH_API_KEY',
+  sidecar: 'IG_SIDECAR_SECRET',
 };
 
 // drivers that read `(env[ref]) ?? env[DEFAULT]` — a configured-but-missing
 // ref still authenticates via the default; LLM drivers are strict
-const SECRET_FALLBACK: ReadonlySet<string> = new Set(['resend', 'tinyfish']);
+const SECRET_FALLBACK: ReadonlySet<string> = new Set(['resend', 'tinyfish', 'sidecar']);
 
 export interface IntegrationRow {
   id: string;
@@ -173,7 +175,7 @@ export async function upsertIntegration(
     return { status: 200, body: { integration: integrationJson(rows[0]!) } };
   });
   // a driver/enable flip changes what the channel's health cards and live socket do
-  if (!res.replayed && (kind === 'whatsapp' || kind === 'email')) {
+  if (!res.replayed && (kind === 'whatsapp' || kind === 'email' || kind === 'instagram')) {
     emitControlEvent('channel.health', kind);
   }
   return res;
@@ -201,6 +203,9 @@ export const DEFAULT_GUARDRAILS = {
   staleDraftDays: 7,
   /** a brief whose last N runs produced zero leads auto-pauses; 0 = never */
   briefAutoPauseRuns: 5,
+  /** account-wide cap on agent cold DMs (instagram threads the lead never wrote
+   *  in) per rolling 24h — new accounts get restricted above a few dozen */
+  instagramColdDmsPerDay: 15,
   /** staff/founder numbers the agent never touches — compared on digits */
   ignoredPhones: [] as string[],
   /** per-lead agent spend ceiling (USD): ≥ cap refuses new runs and flags the
@@ -227,6 +232,7 @@ export type Guardrails = {
   followupCadenceDays: number;
   staleDraftDays: number;
   briefAutoPauseRuns: number;
+  instagramColdDmsPerDay: number;
   ignoredPhones: string[];
   leadLifetimeCostCapUsd: number;
 };
@@ -346,6 +352,7 @@ export function validateSetting(key: string, value: unknown): void {
     intField('followupCadenceDays', 0, 90);
     intField('staleDraftDays', 0, 90);
     intField('briefAutoPauseRuns', 0, 100);
+    intField('instagramColdDmsPerDay', 0, 200);
     const numField = (k: keyof Guardrails, min: number, max: number) => {
       if (v[k] === undefined) return;
       const n = v[k];

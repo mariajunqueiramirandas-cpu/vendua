@@ -1,4 +1,4 @@
-import type { Integration, MeetingStatus } from '@/lib/api.ts';
+import type { IgStatus, Integration, MeetingStatus } from '@/lib/api.ts';
 import { KINDS, providerStatus, WA_IDLE, type ProvTone, type WaState } from './providers.ts';
 import { num, obj, str, type SettingsMap } from './queries.ts';
 
@@ -45,6 +45,7 @@ export function computeReadiness({
   settings,
   setErr,
   wa,
+  ig,
   mStatus,
 }: {
   integrations: Integration[];
@@ -52,6 +53,7 @@ export function computeReadiness({
   settings: SettingsMap;
   setErr: boolean;
   wa: WaState;
+  ig: IgStatus | null;
   mStatus: MeetingStatus | 'err' | null;
 }): Readiness {
   const provTones = KINDS.map(
@@ -60,6 +62,7 @@ export function computeReadiness({
         k.key,
         integrations.filter((i) => i.kind === k.key),
         k.key === 'whatsapp' ? wa : WA_IDLE,
+        ig,
       ).tone,
   );
   const provLive = provTones.filter((t) => t === 'live').length;
@@ -75,7 +78,7 @@ export function computeReadiness({
         p: k.key,
       };
     const rows = integrations.filter((i) => i.kind === k.key);
-    const st = providerStatus(k.key, rows, k.key === 'whatsapp' ? wa : WA_IDLE);
+    const st = providerStatus(k.key, rows, k.key === 'whatsapp' ? wa : WA_IDLE, ig);
     const cur = rows.find((r) => r.enabled);
     return {
       key: k.key,

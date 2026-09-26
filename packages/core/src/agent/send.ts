@@ -8,10 +8,16 @@ import {
   type Guardrails,
   type IntegrationRow,
 } from '../modules/integrations.ts';
-import { markMessageFailed, markMessageSent, type Channel } from '../modules/threads.ts';
+import {
+  instagramHandle,
+  markMessageFailed,
+  markMessageSent,
+  type Channel,
+} from '../modules/threads.ts';
 import { emitControlEvent } from '../modules/control-events.ts';
 import { sendEmail } from './channels/email.ts';
 import { sendWhatsApp } from './channels/whatsapp.ts';
+import { sendInstagram } from './channels/instagram.ts';
 import { applyDeliveryEventTx } from './channels/email-inbound.ts';
 
 /**
@@ -73,13 +79,14 @@ export async function dispatchMessage(
           email: string | null;
           whatsapp: string | null;
           phone: string | null;
+          instagram: string | null;
           unsubscribed_at: string | null;
           archived_at: string | null;
           agent_paused_at: string | null;
           email_bounced_at: string | null;
         }[]
       >`
-        select id, email, whatsapp, phone, unsubscribed_at, archived_at, agent_paused_at, email_bounced_at from leads where id = ${thread.lead_id}
+        select id, email, whatsapp, phone, instagram, unsubscribed_at, archived_at, agent_paused_at, email_bounced_at from leads where id = ${thread.lead_id}
       `
     )[0]!;
 
@@ -144,6 +151,15 @@ export async function dispatchMessage(
         return { fail: 'número ignorado' };
       }
       integration = await getIntegrationTx(tx, 'whatsapp');
+    } else if (thread.channel === 'instagram') {
+      // the account id from an inbound/earlier send wins — handles get renamed
+      if (!thread.external_id && !instagramHandle(lead.instagram)) {
+        await markMessageFailed(tx, messageId, 'lead has no instagram');
+        wroteTid = msg.thread_id;
+        return { fail: 'lead has no instagram' };
+      }
+      to = lead.instagram;
+      integration = await getIntegrationTx(tx, 'instagram');
     }
     if (thread.channel !== 'manual' && !integration) {
       const reason = `no enabled ${thread.channel} integration`;
@@ -180,6 +196,7 @@ export async function dispatchMessage(
         subject: msg.subject ?? thread.subject ?? 'Venduá',
         body: msg.body,
         integration,
+        igFbid: thread.channel === 'instagram' ? thread.external_id : null,
         leadId: thread.lead_id,
         author: msg.author,
       },
@@ -193,6 +210,7 @@ export async function dispatchMessage(
   const { send } = job;
 
   let providerMessageId: string | null = null;
+  let igFbid: string | null = null;
   let sendError: string | null = null;
   try {
     if (send.channel === 'email') {
@@ -203,6 +221,14 @@ export async function dispatchMessage(
       });
     } else if (send.channel === 'whatsapp') {
       providerMessageId = await sendWhatsApp(sql, send.integration!, send.to!, send.body);
+    } else if (send.channel === 'instagram') {
+      const r = await sendInstagram(
+        send.integration!,
+        { fbid: send.igFbid, handle: send.to },
+        send.body,
+      );
+      providerMessageId = r.messageId;
+      igFbid = r.fbid;
     }
   } catch (e) {
     sendError = e instanceof Error ? e.message : 'send failed';
@@ -224,6 +250,12 @@ export async function dispatchMessage(
       await tx`select pg_advisory_xact_lock(hashtext(${`pev:${send.channel}:${providerMessageId}`}))`;
     }
     await markMessageSent(tx, messageId, pmid);
+    // pin the resolved account id so the lead's reply lands on this thread
+    if (igFbid && /^\d+$/.test(igFbid)) {
+      await tx`
+        update lead_threads set external_id = coalesce(external_id, ${igFbid})
+        where id = ${send.threadId}`;
+    }
     // cadence: an agent send with no answer books a follow-up on the lead's agenda unless
     // something is already there (the agent's own date or a promise wins); skipped when a
     // real inbound post-dates 'sending' — 'historical' imports and NULL received_at

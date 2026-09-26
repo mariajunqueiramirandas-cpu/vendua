@@ -153,7 +153,7 @@ export function useSetTaskDone(leadId: string) {
 export function useOpenChannel(leadId: string) {
   const client = useQueryClient();
   return useMutation({
-    mutationFn: async (channel: 'whatsapp' | 'email' | 'manual') => {
+    mutationFn: async (channel: 'whatsapp' | 'instagram' | 'email' | 'manual') => {
       const threads = (
         client.getQueryData<{ threads: { id: string; channel: string }[] }>(
           qk.leadThreads(leadId),
