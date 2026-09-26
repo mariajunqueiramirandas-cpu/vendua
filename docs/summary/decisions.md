@@ -1,6 +1,7 @@
 # Decisions — all ADRs in brief
 
-Status of all: **Proposed** (2026-09-11). Full text in [`../adr/`](../adr/).
+0001–0013: **Proposed** (2026-09-11); 0014–0017: **Accepted** (2026-09-25/26,
+CRM agent). Full text in [`../adr/`](../adr/).
 
 | #    | Decision                                             | Why                                                                                                                                          | Main cost                                                                                   |
 | ---- | ---------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------- |
@@ -17,6 +18,10 @@ Status of all: **Proposed** (2026-09-11). Full text in [`../adr/`](../adr/).
 | 0011 | Ring-based fleet trains                              | Rollout is a first-class, gated, reversible operation; blast radius bounded by ring size                                                     | ~5000 CI-min per train at N=1000; ~3-day soak to stable                                     |
 | 0012 | Agent-agnostic pipeline; CI is the judge             | No vendor lock-in; scaffold-first makes hallucination visible as a diff                                                                      | Agent variance; pipeline only works once Contract + conformance are good (Phase 6)          |
 | 0013 | Core is a modular monolith on Postgres               | One deploy/transaction boundary is the right simplicity; outbox + interfaces keep the services option open                                   | Boundary-erosion discipline; one bad Core deploy stalls all writes                          |
+| 0014 | CRM agent v2 (tools, policy, wakeups, memory)        | Agent was reliable but not autonomous; behaviour spread over prompts/runner/tools, ~8 permission flags, flat memory                          | Playbook overrides + `agent_autonomy` later superseded by 0015                              |
+| 0015 | One agent, several jobs                              | ~50 overlapping playbook knobs; jobs stay in code, staff set one `agent` setting (preset + job switches)                                     | Less per-kind tuning; prompt changes are code changes                                       |
+| 0016 | One dispatcher, one agenda                           | 12 paths started runs via `params` markers; `requestAgentTx` + `source` provenance make it one path                                          | Every new trigger must name a `source` and go through the dispatcher                        |
+| 0017 | Scheduler sleeps until due, wakes on change          | 15-s tick did constant idle work and hid missed transitions                                                                                  | Every future-work source needs a due time and a `pg_notify` trigger                         |
 
 ## Rejected alternatives worth remembering
 

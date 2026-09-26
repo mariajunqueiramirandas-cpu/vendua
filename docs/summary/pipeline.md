@@ -49,4 +49,6 @@ See [`../roadmap.md`](../roadmap.md) — rewritten fleet-first (2026-09-18):
 phases follow the fleet lifecycle (produce → sell → deploy → operate →
 migrate → generate → scale), Control Plane lands in Phase 4 (before the first
 real tenant), and growth is gated by fleet stages (1 / 5 / 25 / 100 / 1000
-stores), not just phase exits.
+stores), not just phase exits. As of 2026-09-26 Phases 0–1 are done and
+2–8 are open; the sales-side agent engine (ADRs 0014–0017) runs ahead of
+the plan and is the machinery Phase 6 reuses.
