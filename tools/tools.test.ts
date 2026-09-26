@@ -59,6 +59,32 @@ describe('mapFiles', () => {
     // a file directly under apps/ is not a workspace
     expect(mapFiles(['apps/README.md']).packages).toEqual([]);
   });
+
+  test('CRM/site/docs-only diffs skip core tests and conformance', () => {
+    const r = mapFiles(['apps/control/src/App.tsx', 'site/src/app.css', 'docs/roadmap.md']);
+    expect(r.coreTests).toBe(false);
+    expect(r.conformance).toBe(false);
+  });
+
+  test('core change runs both; kernel/template change runs conformance only', () => {
+    const core = mapFiles(['packages/core/src/index.ts']);
+    expect([core.coreTests, core.conformance]).toEqual([true, true]);
+    for (const f of ['packages/kernel/src/a.ts', 'storefronts/_template/routes/index.tsx']) {
+      const r = mapFiles([f]);
+      expect([r.coreTests, r.conformance]).toEqual([false, true]);
+    }
+  });
+
+  test('a single storefront change skips conformance', () => {
+    expect(mapFiles(['storefronts/acme/routes/index.tsx']).conformance).toBe(false);
+  });
+
+  test('workflow or root dependency changes run everything', () => {
+    for (const f of ['.github/workflows/ci.yml', 'bun.lock']) {
+      const r = mapFiles([f]);
+      expect([r.coreTests, r.conformance]).toEqual([true, true]);
+    }
+  });
 });
 
 describe('check-storefront-paths', () => {
