@@ -138,6 +138,9 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('dispatch + scheduler (db)', () 
       expect(wait).toBeGreaterThan(60 * 60_000 - 5_000);
       expect(wait).toBeLessThanOrEqual(2 * 60 * 60_000);
       expect(await start('staff')).toBeNull();
+      // pinned to an undeliverable channel (no whatsapp here) — nothing to wait for
+      expect(await start('inbound', { channel: 'whatsapp' })).toBeNull();
+      expect(await start('inbound', { channel: 'email' })).not.toBeNull();
       expect(await start('followup', { draftOnly: true })).toBeNull();
       // copilot drafts everything — nothing to wait for
       await setSetting('agent', { level: 'copilot' });

@@ -88,9 +88,13 @@ export async function smartStartTx(
   )[0];
   if (!lead || lead.agent_mode === 'draft') return at;
   if (level === 'supervised' && lead.prior_out === 0) return at;
-  // no deliverable channel → the run can only draft or escalate; nothing to wait for
+  // no deliverable channel → the run can only draft or escalate; nothing to wait for.
+  // A pinned run (an inbound reply stays on its thread's channel) only counts its pin.
   const ch = await channelAvailabilityTx(tx, req.leadId);
-  if (!ch.whatsapp.ok && !ch.email.ok) return at;
+  const pin = req.params?.channel;
+  const deliverable =
+    pin === 'whatsapp' || pin === 'email' ? ch[pin].ok : ch.whatsapp.ok || ch.email.ok;
+  if (!deliverable) return at;
   const g: Guardrails = {
     ...DEFAULT_GUARDRAILS,
     ...(await getSettingTx<Partial<Guardrails>>(tx, 'guardrails', {})),
