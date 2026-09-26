@@ -32,6 +32,7 @@ export const qk = {
   settings: () => ['settings'] as const,
   wakeups: (params?: Record<string, string>) => ['wakeups', params ?? {}] as const,
   agentConfig: () => ['agent-config'] as const,
+  routines: () => ['routines'] as const,
   memory: (params?: Record<string, string>) => ['memory', params ?? {}] as const,
   duplicates: () => ['duplicates'] as const,
   snapshots: () => ['snapshots'] as const,

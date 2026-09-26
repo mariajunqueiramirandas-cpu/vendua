@@ -12,7 +12,8 @@ import {
   type RunRow,
 } from '../src/agent/runner.ts';
 import { mockProvider, setTestProvider } from '../src/agent/llm.ts';
-import { enqueueInboxTx, sweepOrphanInbox } from '../src/agent/inbox.ts';
+import { enqueueInboxTx } from '../src/agent/inbox.ts';
+import { sweepOrphanInbox } from '../src/agent/dispatch.ts';
 import { ingestInbound } from '../src/agent/inbound.ts';
 import { cancelWakeup } from '../src/agent/wakeups.ts';
 import { executeTool, assertRunClaimTx, type ToolContext } from '../src/agent/tools.ts';
@@ -1371,7 +1372,13 @@ dbDescribe('worker robustness (db)', () => {
     // one active run per lead — pending work lives in the inbox; the opt-out
     // drops it so the next drain never sees it
     await controlTx(sql, (tx) =>
-      enqueueInboxTx(tx, leadId, 'inbound', { text: 'mensagem pendente' }),
+      enqueueInboxTx(
+        tx,
+        leadId,
+        'inbound',
+        { text: 'mensagem pendente' },
+        { source: 'inbound', promised: false },
+      ),
     );
     const ctx = mkCtx(replyRun, claimed!.claim_token, leadId);
     await executeTool(ctx, 'u1', 'unsubscribe', { leadId, reason: 'pediu para sair' });
@@ -1396,10 +1403,16 @@ dbDescribe('worker robustness (db)', () => {
     // Mail with no live run: the sweep inside drain materializes the run
     // (kind from payload.requestedKind) and that very run drains the item.
     await controlTx(sql, (tx) =>
-      enqueueInboxTx(tx, leadId, 'staff', {
-        text: 'a equipe pediu um contato',
-        requestedKind: 'outreach',
-      }),
+      enqueueInboxTx(
+        tx,
+        leadId,
+        'staff',
+        {
+          text: 'a equipe pediu um contato',
+          requestedKind: 'outreach',
+        },
+        { source: 'staff', promised: false },
+      ),
     );
     // full drain: the sweep inserts the run, then the claim loop runs it —
     // drain(sql, 0) would sweep but never claim
@@ -2518,11 +2531,17 @@ dbDescribe('worker robustness (db)', () => {
       const running = runOnce(sql);
       await new Promise((r) => setTimeout(r, 150));
       await controlTx(sql, (tx) =>
-        enqueueInboxTx(tx, leadId, 'inbound', {
-          text: 'sim, quero',
-          threadId: thread!.id,
-          requestedKind: 'reply',
-        }),
+        enqueueInboxTx(
+          tx,
+          leadId,
+          'inbound',
+          {
+            text: 'sim, quero',
+            threadId: thread!.id,
+            requestedKind: 'reply',
+          },
+          { source: 'inbound', promised: false },
+        ),
       );
       expect(await running).toBe(true);
       const r = await getRun(runId);
@@ -2554,10 +2573,10 @@ dbDescribe('worker robustness (db)', () => {
     const leadId = lead.body.lead.id;
     await sql`delete from agent_runs where status = 'queued'`;
     const runId = (await enqueueRun(sql, {
+      source: 'first_contact',
       kind: 'outreach',
       leadId,
       params: {
-        auto: 'first-contact',
         script: [
           { toolCalls: [{ name: 'unsubscribe', args: { leadId, reason: 'pediu para sair' } }] },
           { text: 'fim' },
@@ -2567,10 +2586,16 @@ dbDescribe('worker robustness (db)', () => {
     // the outreach toolset has no unsubscribe — draining must widen
     // toolKinds or the opt-out bounces off the dispatch gate
     await controlTx(sql, (tx) =>
-      enqueueInboxTx(tx, leadId, 'inbound', {
-        text: 'para de me mandar mensagem',
-        requestedKind: 'reply',
-      }),
+      enqueueInboxTx(
+        tx,
+        leadId,
+        'inbound',
+        {
+          text: 'para de me mandar mensagem',
+          requestedKind: 'reply',
+        },
+        { source: 'inbound', promised: false },
+      ),
     );
     expect(await runOnce(sql)).toBe(true);
     const r = await getRun(runId);
@@ -2624,24 +2649,36 @@ dbDescribe('worker robustness (db)', () => {
       // batch 2 lands inside turn 1's delay and drains at the next boundary
       // — the byte-identical replies are mail answers, not a loop
       await controlTx(sql, (tx) =>
-        enqueueInboxTx(tx, leadId, 'inbound', {
-          text: 'oi',
-          threadId: thread!.id,
-          messageId: crypto.randomUUID(),
-          requestedKind: 'reply',
-          params: { origin: 'inbound', channel: 'whatsapp' },
-        }),
+        enqueueInboxTx(
+          tx,
+          leadId,
+          'inbound',
+          {
+            text: 'oi',
+            threadId: thread!.id,
+            messageId: crypto.randomUUID(),
+            requestedKind: 'reply',
+            params: { channel: 'whatsapp' },
+          },
+          { source: 'inbound', promised: false },
+        ),
       );
       const running = runOnce(sql);
       await new Promise((r) => setTimeout(r, 200));
       await controlTx(sql, (tx) =>
-        enqueueInboxTx(tx, leadId, 'inbound', {
-          text: 'e aí?',
-          threadId: thread!.id,
-          messageId: crypto.randomUUID(),
-          requestedKind: 'reply',
-          params: { origin: 'inbound', channel: 'whatsapp' },
-        }),
+        enqueueInboxTx(
+          tx,
+          leadId,
+          'inbound',
+          {
+            text: 'e aí?',
+            threadId: thread!.id,
+            messageId: crypto.randomUUID(),
+            requestedKind: 'reply',
+            params: { channel: 'whatsapp' },
+          },
+          { source: 'inbound', promised: false },
+        ),
       );
       expect(await running).toBe(true);
       const r = await getRun(runId);
@@ -2711,35 +2748,53 @@ dbDescribe('worker robustness (db)', () => {
         },
       }))!;
       await controlTx(sql, (tx) =>
-        enqueueInboxTx(tx, leadId, 'inbound', {
-          text: 'oi',
-          threadId: thread!.id,
-          messageId: crypto.randomUUID(),
-          requestedKind: 'reply',
-          params: { origin: 'inbound', channel: 'whatsapp' },
-        }),
+        enqueueInboxTx(
+          tx,
+          leadId,
+          'inbound',
+          {
+            text: 'oi',
+            threadId: thread!.id,
+            messageId: crypto.randomUUID(),
+            requestedKind: 'reply',
+            params: { channel: 'whatsapp' },
+          },
+          { source: 'inbound', promised: false },
+        ),
       );
       const running = runOnce(sql);
       await new Promise((r) => setTimeout(r, 200));
       await controlTx(sql, (tx) =>
-        enqueueInboxTx(tx, leadId, 'inbound', {
-          text: 'voltou',
-          threadId: thread!.id,
-          messageId: crypto.randomUUID(),
-          requestedKind: 'reply',
-          params: { origin: 'inbound', channel: 'whatsapp' },
-        }),
+        enqueueInboxTx(
+          tx,
+          leadId,
+          'inbound',
+          {
+            text: 'voltou',
+            threadId: thread!.id,
+            messageId: crypto.randomUUID(),
+            requestedKind: 'reply',
+            params: { channel: 'whatsapp' },
+          },
+          { source: 'inbound', promised: false },
+        ),
       );
       // second drop lands inside the turn-3 send's delayMs window
       await new Promise((r) => setTimeout(r, 1800));
       await controlTx(sql, (tx) =>
-        enqueueInboxTx(tx, leadId, 'inbound', {
-          text: 'de novo',
-          threadId: thread!.id,
-          messageId: crypto.randomUUID(),
-          requestedKind: 'reply',
-          params: { origin: 'inbound', channel: 'whatsapp' },
-        }),
+        enqueueInboxTx(
+          tx,
+          leadId,
+          'inbound',
+          {
+            text: 'de novo',
+            threadId: thread!.id,
+            messageId: crypto.randomUUID(),
+            requestedKind: 'reply',
+            params: { channel: 'whatsapp' },
+          },
+          { source: 'inbound', promised: false },
+        ),
       );
       expect(await running).toBe(true);
       const r = await getRun(runId);
@@ -2799,13 +2854,19 @@ dbDescribe('worker robustness (db)', () => {
       const running = runOnce(sql);
       await new Promise((r) => setTimeout(r, 200));
       await controlTx(sql, (tx) =>
-        enqueueInboxTx(tx, leadId, 'inbound', {
-          text: 'oi, tô aqui',
-          threadId: thread!.id,
-          messageId: crypto.randomUUID(),
-          requestedKind: 'reply',
-          params: { origin: 'inbound' },
-        }),
+        enqueueInboxTx(
+          tx,
+          leadId,
+          'inbound',
+          {
+            text: 'oi, tô aqui',
+            threadId: thread!.id,
+            messageId: crypto.randomUUID(),
+            requestedKind: 'reply',
+            params: {},
+          },
+          { source: 'inbound', promised: false },
+        ),
       );
       expect(await running).toBe(true);
       const r = await getRun(runId);
@@ -2854,11 +2915,11 @@ dbDescribe('worker robustness (db)', () => {
       // Queued while supervised — but nothing was stamped, so the send
       // verdict at execution time is the only policy that counts.
       const runId = (await enqueueRun(sql, {
+        source: 'first_contact',
         kind: 'outreach',
         leadId,
         threadId: thread!.id,
         params: {
-          auto: 'first-contact',
           script: [
             { toolCalls: [{ name: 'send_message', args: { leadId, body: 'oi, bem-vindo' } }] },
             { text: 'fim' },
@@ -2889,11 +2950,11 @@ dbDescribe('worker robustness (db)', () => {
       `;
       await sql`delete from agent_runs where status = 'queued'`;
       (await enqueueRun(sql, {
+        source: 'first_contact',
         kind: 'outreach',
         leadId: lead2Id,
         threadId: thread2!.id,
         params: {
-          auto: 'first-contact',
           script: [
             { toolCalls: [{ name: 'send_message', args: { leadId: lead2Id, body: 'oi' } }] },
             { text: 'fim' },
@@ -2924,11 +2985,11 @@ dbDescribe('worker robustness (db)', () => {
       `;
       await sql`delete from agent_runs where status = 'queued'`;
       (await enqueueRun(sql, {
+        source: 'first_contact',
         kind: 'outreach',
         leadId: lead3Id,
         threadId: thread3!.id,
         params: {
-          auto: 'first-contact',
           script: [
             { toolCalls: [{ name: 'send_message', args: { leadId: lead3Id, body: 'oi' } }] },
             { text: 'fim' },
@@ -2954,11 +3015,11 @@ dbDescribe('worker robustness (db)', () => {
       `;
       await sql`delete from agent_runs where status = 'queued'`;
       (await enqueueRun(sql, {
+        source: 'first_contact',
         kind: 'outreach',
         leadId: lead4Id,
         threadId: thread4!.id,
         params: {
-          auto: 'first-contact',
           script: [
             { toolCalls: [{ name: 'send_message', args: { leadId: lead4Id, body: 'oi' } }] },
             { text: 'fim' },
@@ -3023,13 +3084,19 @@ dbDescribe('worker robustness (db)', () => {
       const running = runOnce(sql);
       await new Promise((r) => setTimeout(r, 200));
       await controlTx(sql, (tx) =>
-        enqueueInboxTx(tx, leadId, 'inbound', {
-          text: 'oi, tô aqui',
-          threadId: thread!.id,
-          messageId: crypto.randomUUID(),
-          requestedKind: 'reply',
-          params: { origin: 'inbound' },
-        }),
+        enqueueInboxTx(
+          tx,
+          leadId,
+          'inbound',
+          {
+            text: 'oi, tô aqui',
+            threadId: thread!.id,
+            messageId: crypto.randomUUID(),
+            requestedKind: 'reply',
+            params: {},
+          },
+          { source: 'inbound', promised: false },
+        ),
       );
       expect(await running).toBe(true);
       const r = await getRun(runId);
@@ -3080,11 +3147,17 @@ dbDescribe('worker robustness (db)', () => {
         fixtureLeadIds.push(lead.body.lead.id);
         // automation mail for the switched-off reply job — parked, never served
         await controlTx(sql, (tx) =>
-          enqueueInboxTx(tx, lead.body.lead.id, 'inbound', {
-            text: 'responde esse',
-            requestedKind: 'reply',
-            params: { origin: 'inbound' },
-          }),
+          enqueueInboxTx(
+            tx,
+            lead.body.lead.id,
+            'inbound',
+            {
+              text: 'responde esse',
+              requestedKind: 'reply',
+              params: {},
+            },
+            { source: 'inbound', promised: false },
+          ),
         );
         await controlTx(
           sql,
@@ -3095,10 +3168,16 @@ dbDescribe('worker robustness (db)', () => {
       const servable = await controlTx(sql, (tx) => insertLeadTx(tx, { name: 'Servable' }));
       fixtureLeadIds.push(servable.body.lead.id);
       await controlTx(sql, (tx) =>
-        enqueueInboxTx(tx, servable.body.lead.id, 'staff', {
-          text: 'qualifica esse',
-          requestedKind: 'triage',
-        }),
+        enqueueInboxTx(
+          tx,
+          servable.body.lead.id,
+          'staff',
+          {
+            text: 'qualifica esse',
+            requestedKind: 'triage',
+          },
+          { source: 'staff', promised: false },
+        ),
       );
       await controlTx(
         sql,
@@ -3145,17 +3224,23 @@ dbDescribe('worker robustness (db)', () => {
     // draining into the outreach run would let the reaction send unreviewed
     // — it waits for its own draftOnly run
     await controlTx(sql, (tx) =>
-      enqueueInboxTx(tx, leadId, 'staff', {
-        text: 'rascunho sugerido pela equipe',
-        requestedKind: 'reply',
-        params: {
-          draftOnly: true,
-          script: [
-            { toolCalls: [{ name: 'send_message', args: { leadId, body: 'oi, rascunho' } }] },
-            { text: 'ok' },
-          ],
+      enqueueInboxTx(
+        tx,
+        leadId,
+        'staff',
+        {
+          text: 'rascunho sugerido pela equipe',
+          requestedKind: 'reply',
+          params: {
+            draftOnly: true,
+            script: [
+              { toolCalls: [{ name: 'send_message', args: { leadId, body: 'oi, rascunho' } }] },
+              { text: 'ok' },
+            ],
+          },
         },
-      }),
+        { source: 'staff', promised: false },
+      ),
     );
     await drain(sql);
     // Parked phase: item unconsumed, the outreach run untouched.
@@ -3201,19 +3286,26 @@ dbDescribe('worker robustness (db)', () => {
     // into the whatsapp run would reply on whatsapp; it waits for a run
     // pinned to its channel + thread
     const waRun = (await enqueueRun(sql, {
+      source: 'inbound',
       kind: 'reply',
       leadId,
       threadId: waThread!.id,
       runAt: new Date(Date.now() + 3600e3),
-      params: { origin: 'inbound', channel: 'whatsapp' },
+      params: { channel: 'whatsapp' },
     }))!;
     await controlTx(sql, (tx) =>
-      enqueueInboxTx(tx, leadId, 'inbound', {
-        text: 'mensagem do lead [email]: ainda tem?',
-        threadId: emThread!.id,
-        requestedKind: 'reply',
-        params: { origin: 'inbound', channel: 'email' },
-      }),
+      enqueueInboxTx(
+        tx,
+        leadId,
+        'inbound',
+        {
+          text: 'mensagem do lead [email]: ainda tem?',
+          threadId: emThread!.id,
+          requestedKind: 'reply',
+          params: { channel: 'email' },
+        },
+        { source: 'inbound', promised: false },
+      ),
     );
     await drain(sql);
     expect(
@@ -3253,12 +3345,12 @@ dbDescribe('worker robustness (db)', () => {
     // channel-only check would drain it and answer on whatsapp; it waits
     // for its own thread's run
     (await enqueueRun(sql, {
+      source: 'inbound',
       kind: 'reply',
       leadId,
       threadId: waThread!.id,
       runAt: new Date(Date.now()),
       params: {
-        origin: 'inbound',
         channel: 'whatsapp',
         script: [{ text: 'pensando', delayMs: 1500 }, { text: 'fim' }],
       },
@@ -3266,12 +3358,18 @@ dbDescribe('worker robustness (db)', () => {
     const running = runOnce(sql);
     await new Promise((r) => setTimeout(r, 150));
     await controlTx(sql, (tx) =>
-      enqueueInboxTx(tx, leadId, 'staff', {
-        text: 'responde no email',
-        threadId: emThread!.id,
-        requestedKind: 'reply',
-        params: { origin: 'staff' },
-      }),
+      enqueueInboxTx(
+        tx,
+        leadId,
+        'staff',
+        {
+          text: 'responde no email',
+          threadId: emThread!.id,
+          requestedKind: 'reply',
+          params: {},
+        },
+        { source: 'staff', promised: false },
+      ),
     );
     await running;
     expect(
@@ -3313,12 +3411,18 @@ dbDescribe('worker robustness (db)', () => {
     const running = runOnce(sql);
     await new Promise((r) => setTimeout(r, 150));
     await controlTx(sql, (tx) =>
-      enqueueInboxTx(tx, leadId, 'staff', {
-        text: 'responde no email',
-        threadId: emThread!.id,
-        requestedKind: 'reply',
-        params: { origin: 'staff' },
-      }),
+      enqueueInboxTx(
+        tx,
+        leadId,
+        'staff',
+        {
+          text: 'responde no email',
+          threadId: emThread!.id,
+          requestedKind: 'reply',
+          params: {},
+        },
+        { source: 'staff', promised: false },
+      ),
     );
     await running;
     expect(
@@ -3348,11 +3452,11 @@ dbDescribe('worker robustness (db)', () => {
     // must not count the dead artifact or the run closes with nothing to
     // approve
     const runId = (await enqueueRun(sql, {
+      source: 'first_contact',
       kind: 'outreach',
       leadId,
       runAt: new Date(Date.now()),
       params: {
-        auto: 'first-contact',
         script: [
           { toolCalls: [{ name: 'draft_message', args: { leadId, body: 'oi, primeira' } }] },
           { text: 'aqui é a venduá de novo', delayMs: 4000 },
@@ -3416,11 +3520,17 @@ dbDescribe('worker robustness (db)', () => {
     const running = runOnce(sql);
     await new Promise((r) => setTimeout(r, 150));
     await controlTx(sql, (tx) =>
-      enqueueInboxTx(tx, leadId, 'inbound', {
-        text: 'sim, quero',
-        requestedKind: 'reply',
-        params: { origin: 'inbound' },
-      }),
+      enqueueInboxTx(
+        tx,
+        leadId,
+        'inbound',
+        {
+          text: 'sim, quero',
+          requestedKind: 'reply',
+          params: {},
+        },
+        { source: 'inbound', promised: false },
+      ),
     );
     await running;
     expect(
@@ -3456,18 +3566,30 @@ dbDescribe('worker robustness (db)', () => {
     `;
     try {
       await controlTx(sql, (tx) =>
-        enqueueInboxTx(tx, leadId, 'event', {
-          text: 'resposta pendente',
-          requestedKind: 'reply',
-          params: { auto: 'cadence' },
-        }),
+        enqueueInboxTx(
+          tx,
+          leadId,
+          'event',
+          {
+            text: 'resposta pendente',
+            requestedKind: 'reply',
+            params: {},
+          },
+          { source: 'followup', promised: false },
+        ),
       );
       await controlTx(sql, (tx) =>
-        enqueueInboxTx(tx, leadId, 'staff', {
-          text: 'a equipe pediu um contato',
-          requestedKind: 'outreach',
-          params: { script: [{ text: 'ok' }] },
-        }),
+        enqueueInboxTx(
+          tx,
+          leadId,
+          'staff',
+          {
+            text: 'a equipe pediu um contato',
+            requestedKind: 'outreach',
+            params: { script: [{ text: 'ok' }] },
+          },
+          { source: 'staff', promised: false },
+        ),
       );
       await drain(sql);
       const runs = await sql<{ id: string; kind: string }[]>`
@@ -3506,19 +3628,31 @@ dbDescribe('worker robustness (db)', () => {
       // predicate must run before the limit, not after
       for (let i = 0; i < 10; i++) {
         await controlTx(sql, (tx) =>
-          enqueueInboxTx(tx, leadId, 'event', {
-            text: `resposta ${i}`,
-            requestedKind: 'reply',
-            params: { auto: 'cadence' },
-          }),
+          enqueueInboxTx(
+            tx,
+            leadId,
+            'event',
+            {
+              text: `resposta ${i}`,
+              requestedKind: 'reply',
+              params: {},
+            },
+            { source: 'followup', promised: false },
+          ),
         );
       }
       await controlTx(sql, (tx) =>
-        enqueueInboxTx(tx, leadId, 'staff', {
-          text: 'a equipe pediu um contato',
-          requestedKind: 'outreach',
-          params: { script: [{ text: 'ok' }] },
-        }),
+        enqueueInboxTx(
+          tx,
+          leadId,
+          'staff',
+          {
+            text: 'a equipe pediu um contato',
+            requestedKind: 'outreach',
+            params: { script: [{ text: 'ok' }] },
+          },
+          { source: 'staff', promised: false },
+        ),
       );
       await drain(sql);
       const runs = await sql<{ id: string }[]>`select id from agent_runs where lead_id = ${leadId}`;
@@ -3552,19 +3686,31 @@ dbDescribe('worker robustness (db)', () => {
       // the spawned run must not wait out a gated item's future notBefore
       // for mail it will never drain
       await controlTx(sql, (tx) =>
-        enqueueInboxTx(tx, leadId, 'event', {
-          text: 'resposta adiada',
-          requestedKind: 'reply',
-          params: { auto: 'cadence' },
-          notBefore: deadline,
-        }),
+        enqueueInboxTx(
+          tx,
+          leadId,
+          'event',
+          {
+            text: 'resposta adiada',
+            requestedKind: 'reply',
+            params: {},
+            notBefore: deadline,
+          },
+          { source: 'followup', promised: false },
+        ),
       );
       await controlTx(sql, (tx) =>
-        enqueueInboxTx(tx, leadId, 'staff', {
-          text: 'a equipe pediu um contato',
-          requestedKind: 'outreach',
-          params: { script: [{ text: 'ok' }] },
-        }),
+        enqueueInboxTx(
+          tx,
+          leadId,
+          'staff',
+          {
+            text: 'a equipe pediu um contato',
+            requestedKind: 'outreach',
+            params: { script: [{ text: 'ok' }] },
+          },
+          { source: 'staff', promised: false },
+        ),
       );
       await drain(sql);
       const [run] = await sql<{ run_at: Date | null }[]>`
@@ -3595,12 +3741,18 @@ dbDescribe('worker robustness (db)', () => {
     // the inbound quiet period stamped at enqueue must ride into run_at —
     // a deferred reply can't skip the configured delay
     await controlTx(sql, (tx) =>
-      enqueueInboxTx(tx, leadId, 'inbound', {
-        text: 'mensagem do lead [email]',
-        requestedKind: 'reply',
-        params: { origin: 'inbound', channel: 'email' },
-        notBefore: deadline,
-      }),
+      enqueueInboxTx(
+        tx,
+        leadId,
+        'inbound',
+        {
+          text: 'mensagem do lead [email]',
+          requestedKind: 'reply',
+          params: { channel: 'email' },
+          notBefore: deadline,
+        },
+        { source: 'inbound', promised: false },
+      ),
     );
     await drain(sql);
     const [run] = await sql<{ run_at: Date; status: string }[]>`
@@ -3621,11 +3773,11 @@ dbDescribe('worker robustness (db)', () => {
     `;
     await sql`delete from agent_runs where status = 'queued'`;
     const runId = (await enqueueRun(sql, {
+      source: 'inbound',
       kind: 'reply',
       leadId,
       threadId: thread!.id,
       params: {
-        origin: 'inbound',
         channel: 'whatsapp',
         script: [{ text: 'a', delayMs: 1500 }, { text: 'b' }],
       },
@@ -3643,14 +3795,20 @@ dbDescribe('worker robustness (db)', () => {
       select id from lead_messages where thread_id = ${thread!.id} and body = 'sim, quero'
     `;
     await controlTx(sql, (tx) =>
-      enqueueInboxTx(tx, leadId, 'inbound', {
-        text: 'sim, quero',
-        threadId: thread!.id,
-        messageId: deferredMsg!.id,
-        requestedKind: 'reply',
-        params: { origin: 'inbound', channel: 'whatsapp' },
-        notBefore: new Date(Date.now() + 3600e3).toISOString(),
-      }),
+      enqueueInboxTx(
+        tx,
+        leadId,
+        'inbound',
+        {
+          text: 'sim, quero',
+          threadId: thread!.id,
+          messageId: deferredMsg!.id,
+          requestedKind: 'reply',
+          params: { channel: 'whatsapp' },
+          notBefore: new Date(Date.now() + 3600e3).toISOString(),
+        },
+        { source: 'inbound', promised: false },
+      ),
     );
     await running;
     expect(
@@ -3686,10 +3844,11 @@ dbDescribe('worker robustness (db)', () => {
     // fired wakeup = queued run + undrained inbox item — the cancel must
     // reach both
     const runId = (await enqueueRun(sql, {
+      source: 'followup',
       kind: 'outreach',
       leadId,
       runAt: new Date(Date.now() + 3600e3),
-      params: { auto: 'wakeup', wakeupId: 'w1', focus: 'retorno marcado' },
+      params: { wakeupId: 'w1', focus: 'retorno marcado' },
     }))!;
     const [w] = await sql<{ id: string }[]>`
       insert into agent_wakeups (lead_id, kind, at, focus, status, created_by, fired_run_id, fired_at)
@@ -3698,25 +3857,31 @@ dbDescribe('worker robustness (db)', () => {
     `;
     await sql`update agent_runs set params = params || ${sql.json({ wakeupId: w!.id } as never)} where id = ${runId}`;
     await controlTx(sql, (tx) =>
-      enqueueInboxTx(tx, leadId, 'wakeup', {
-        text: 'agendado por você: retorno marcado',
-        requestedKind: 'outreach',
-        params: { auto: 'wakeup', wakeupId: w!.id },
-      }),
+      enqueueInboxTx(
+        tx,
+        leadId,
+        'wakeup',
+        {
+          text: 'agendado por você: retorno marcado',
+          requestedKind: 'outreach',
+          params: { wakeupId: w!.id },
+        },
+        { source: 'followup', promised: false },
+      ),
     );
     // an earlier attempt already consumed mail — this wakeup's tombstones,
     // but other lead mail must release back to the sweep
     const [otherItem] = await sql<{ id: string }[]>`
       insert into agent_inbox (lead_id, kind, payload, consumed_by_run, consumed_at)
       values (${leadId}, 'inbound',
-        ${sql.json({ text: 'oi', requestedKind: 'reply', params: { origin: 'inbound', channel: 'whatsapp' } } as never)},
+        ${sql.json({ text: 'oi', requestedKind: 'reply', params: { channel: 'whatsapp' } } as never)},
         ${runId}, now())
       returning id
     `;
     await sql`
       insert into agent_inbox (lead_id, kind, payload, consumed_by_run, consumed_at)
       values (${leadId}, 'wakeup',
-        ${sql.json({ text: 'retorno', requestedKind: 'outreach', params: { auto: 'wakeup', wakeupId: w!.id } } as never)},
+        ${sql.json({ text: 'retorno', requestedKind: 'outreach', params: { wakeupId: w!.id } } as never)},
         ${runId}, now())
     `;
     const res = await cancelWakeup(sql, w!.id, `cancel-fired-${crypto.randomUUID()}`);
@@ -3753,10 +3918,10 @@ dbDescribe('worker robustness (db)', () => {
     const leadId = lead.body.lead.id;
     await sql`delete from agent_runs where status = 'queued'`;
     const runId = (await enqueueRun(sql, {
+      source: 'first_contact',
       kind: 'outreach',
       leadId,
       params: {
-        auto: 'first-contact',
         script: [
           { toolCalls: [{ name: 'unsubscribe', args: { leadId, reason: 'pediu para sair' } }] },
           { text: 'fim' },
@@ -3769,7 +3934,7 @@ dbDescribe('worker robustness (db)', () => {
     const [item] = await sql<{ id: string }[]>`
       insert into agent_inbox (lead_id, kind, payload, consumed_by_run, consumed_at)
       values (${leadId}, 'inbound',
-        ${sql.json({ text: 'para de me mandar mensagem', requestedKind: 'reply', params: { origin: 'inbound' } } as never)},
+        ${sql.json({ text: 'para de me mandar mensagem', requestedKind: 'reply', params: {} } as never)},
         ${runId}, now())
       returning id
     `;
@@ -3824,11 +3989,11 @@ dbDescribe('worker robustness (db)', () => {
       on conflict (key) do update set value = excluded.value
     `;
     const runId = (await enqueueRun(sql, {
+      source: 'first_contact',
       kind: 'outreach',
       leadId,
       threadId: thread!.id,
       params: {
-        auto: 'first-contact',
         channel: 'whatsapp',
         script: [
           { toolCalls: [{ name: 'unsubscribe', args: { leadId, reason: 'teste' } }] },
@@ -3839,12 +4004,18 @@ dbDescribe('worker robustness (db)', () => {
     // the reply job is off — the inbound item parks instead of handing this
     // run the switched-off kind's toolset mid-flight.
     await controlTx(sql, (tx) =>
-      enqueueInboxTx(tx, leadId, 'inbound', {
-        text: 'para de me mandar mensagem',
-        threadId: thread!.id,
-        requestedKind: 'reply',
-        params: { origin: 'inbound', channel: 'whatsapp' },
-      }),
+      enqueueInboxTx(
+        tx,
+        leadId,
+        'inbound',
+        {
+          text: 'para de me mandar mensagem',
+          threadId: thread!.id,
+          requestedKind: 'reply',
+          params: { channel: 'whatsapp' },
+        },
+        { source: 'inbound', promised: false },
+      ),
     );
     expect(await runOnce(sql)).toBe(true);
     const [l] = await sql<{ unsubscribed_at: string | null }[]>`
@@ -3873,24 +4044,37 @@ dbDescribe('worker robustness (db)', () => {
     // agent_enabled or an unbound run serves mail the pause was meant to hide
     await sql`update lead_threads set agent_enabled = false where id = ${thread!.id}`;
     await enqueueRun(sql, {
+      source: 'first_contact',
       kind: 'outreach',
       leadId,
-      params: { auto: 'first-contact', script: [{ text: 'fim' }] },
+      params: { script: [{ text: 'fim' }] },
     });
     await controlTx(sql, (tx) =>
-      enqueueInboxTx(tx, leadId, 'inbound', {
-        text: 'oi',
-        threadId: thread!.id,
-        requestedKind: 'reply',
-        params: { origin: 'inbound' },
-      }),
+      enqueueInboxTx(
+        tx,
+        leadId,
+        'inbound',
+        {
+          text: 'oi',
+          threadId: thread!.id,
+          requestedKind: 'reply',
+          params: {},
+        },
+        { source: 'inbound', promised: false },
+      ),
     );
     await controlTx(sql, (tx) =>
-      enqueueInboxTx(tx, leadId, 'staff', {
-        text: 'prioridade: reengajar',
-        requestedKind: 'outreach',
-        params: {},
-      }),
+      enqueueInboxTx(
+        tx,
+        leadId,
+        'staff',
+        {
+          text: 'prioridade: reengajar',
+          requestedKind: 'outreach',
+          params: {},
+        },
+        { source: 'staff', promised: false },
+      ),
     );
     expect(await runOnce(sql)).toBe(true);
     // The paused thread's item waits for the sweep; the unbound staff
@@ -3922,31 +4106,41 @@ dbDescribe('worker robustness (db)', () => {
       await enqueueRun(sql, {
         kind: 'outreach',
         leadId,
-        params: { origin: 'staff', script: [{ text: 'fim' }] },
+        params: { script: [{ text: 'fim' }] },
       });
       await controlTx(sql, (tx) =>
-        enqueueInboxTx(tx, leadId, 'event', {
-          text: 'a cadência disparou',
-          requestedKind: 'outreach',
-          params: { auto: 'first-contact' },
-        }),
+        enqueueInboxTx(
+          tx,
+          leadId,
+          'event',
+          {
+            text: 'a cadência disparou',
+            requestedKind: 'outreach',
+            params: {},
+          },
+          { source: 'first_contact', promised: false },
+        ),
       );
       await controlTx(sql, (tx) =>
-        enqueueInboxTx(tx, leadId, 'staff', {
-          text: 'prioridade: reengajar',
-          requestedKind: 'outreach',
-          params: {},
-        }),
+        enqueueInboxTx(
+          tx,
+          leadId,
+          'staff',
+          {
+            text: 'prioridade: reengajar',
+            requestedKind: 'outreach',
+            params: {},
+          },
+          { source: 'staff', promised: false },
+        ),
       );
       expect(await runOnce(sql)).toBe(true);
-      const items = await sql<
-        { consumed_at: Date | null; payload: { params?: { auto?: string } } }[]
-      >`
-        select consumed_at, payload from agent_inbox where lead_id = ${leadId}
+      const items = await sql<{ consumed_at: Date | null; source: string }[]>`
+        select consumed_at, source from agent_inbox where lead_id = ${leadId}
       `;
       expect(items).toHaveLength(2);
       for (const i of items) {
-        if (i.payload.params?.auto) expect(i.consumed_at).toBeNull();
+        if (i.source !== 'staff') expect(i.consumed_at).toBeNull();
         else expect(i.consumed_at).not.toBeNull();
       }
     } finally {
@@ -3970,19 +4164,31 @@ dbDescribe('worker robustness (db)', () => {
       // the staff request the sweep CAN serve.
       const tomorrow = new Date(Date.now() + 86_400_000).toISOString();
       await controlTx(sql, (tx) =>
-        enqueueInboxTx(tx, leadId, 'event', {
-          text: 'a cadência disparou',
-          requestedKind: 'outreach',
-          params: { auto: 'first-contact' },
-          notBefore: tomorrow,
-        }),
+        enqueueInboxTx(
+          tx,
+          leadId,
+          'event',
+          {
+            text: 'a cadência disparou',
+            requestedKind: 'outreach',
+            params: {},
+            notBefore: tomorrow,
+          },
+          { source: 'first_contact', promised: false },
+        ),
       );
       await controlTx(sql, (tx) =>
-        enqueueInboxTx(tx, leadId, 'staff', {
-          text: 'reengaja já',
-          requestedKind: 'outreach',
-          params: {},
-        }),
+        enqueueInboxTx(
+          tx,
+          leadId,
+          'staff',
+          {
+            text: 'reengaja já',
+            requestedKind: 'outreach',
+            params: {},
+          },
+          { source: 'staff', promised: false },
+        ),
       );
       await sweepOrphanInbox(sql);
       const [run] = await sql<{ run_at: Date | null }[]>`
@@ -4010,11 +4216,17 @@ dbDescribe('worker robustness (db)', () => {
     await sql`delete from agent_runs where status = 'queued'`;
     await sql`update leads set agent_paused_at = now(), unsubscribed_at = now() where id = ${leadId}`;
     await controlTx(sql, (tx) =>
-      enqueueInboxTx(tx, leadId, 'inbound', {
-        text: 'oi',
-        requestedKind: 'reply',
-        params: { origin: 'inbound' },
-      }),
+      enqueueInboxTx(
+        tx,
+        leadId,
+        'inbound',
+        {
+          text: 'oi',
+          requestedKind: 'reply',
+          params: {},
+        },
+        { source: 'inbound', promised: false },
+      ),
     );
     await sweepOrphanInbox(sql);
     // Paused alone would park — but terminal is terminal: the mail drops
@@ -4043,15 +4255,27 @@ dbDescribe('worker robustness (db)', () => {
     // Older pending mail on a paused lead must not occupy the sweep's
     // bounded window — it parks forever and would starve anyone younger.
     await controlTx(sql, (tx) =>
-      enqueueInboxTx(tx, pausedId, 'staff', { text: 'antigo', requestedKind: 'reply' }),
+      enqueueInboxTx(
+        tx,
+        pausedId,
+        'staff',
+        { text: 'antigo', requestedKind: 'reply' },
+        { source: 'staff', promised: false },
+      ),
     );
     await sql`update leads set agent_paused_at = now() where id = ${pausedId}`;
     await controlTx(sql, (tx) =>
-      enqueueInboxTx(tx, freshId, 'staff', {
-        text: 'novo',
-        requestedKind: 'reply',
-        params: { script: [{ text: 'ok' }] },
-      }),
+      enqueueInboxTx(
+        tx,
+        freshId,
+        'staff',
+        {
+          text: 'novo',
+          requestedKind: 'reply',
+          params: { script: [{ text: 'ok' }] },
+        },
+        { source: 'staff', promised: false },
+      ),
     );
     await drain(sql);
     const [run] = await sql<{ id: string }[]>`
@@ -4085,7 +4309,9 @@ dbDescribe('worker robustness (db)', () => {
         insert into agent_runs (kind, lead_id, status, cost_cents, finished_at)
         values ('reply', ${leadId}, 'done', 1, now())
       `;
-      expect(await controlTx(sql, (tx) => insertRun(tx, { kind: 'reply', leadId }))).toBe(runId);
+      expect(
+        await controlTx(sql, (tx) => insertRun(tx, { source: 'staff', kind: 'reply', leadId })),
+      ).toBe(runId);
     } finally {
       await sql`delete from control_settings where key = 'guardrails'`;
     }
@@ -4100,8 +4326,8 @@ dbDescribe('worker robustness (db)', () => {
     `;
     await sql`delete from agent_runs where status = 'queued'`;
     const runId = (await enqueueRun(sql, { kind: 'outreach', leadId }))!;
-    await sql`update agent_runs set run_at = now(),
-      params = ${sql.json({ auto: 'first-contact', script: [{ text: 'oi' }] } as never)}
+    await sql`update agent_runs set run_at = now(), source = 'first_contact',
+      params = ${sql.json({ script: [{ text: 'oi' }] } as never)}
       where id = ${runId}`;
     // a re-imported context message stamped after the claim (or a provider
     // clock ahead) — historical=true means it never asked for a reply
@@ -4122,8 +4348,8 @@ dbDescribe('worker robustness (db)', () => {
     `;
     await sql`delete from agent_runs where status = 'queued'`;
     const runId = (await enqueueRun(sql, { kind: 'outreach', leadId }))!;
-    await sql`update agent_runs set run_at = now(),
-      params = ${sql.json({ auto: 'first-contact', script: [{ text: 'oi' }] } as never)}
+    await sql`update agent_runs set run_at = now(), source = 'first_contact',
+      params = ${sql.json({ script: [{ text: 'oi' }] } as never)}
       where id = ${runId}`;
     // received_at NULL marks a row no server ingested — without the
     // real-ingest discriminator a provider clock ahead would cancel
@@ -4145,13 +4371,19 @@ dbDescribe('worker robustness (db)', () => {
     `;
     await sql`delete from agent_runs where status = 'queued'`;
     const runId = (await enqueueRun(sql, { kind: 'outreach', leadId }))!;
-    await sql`update agent_runs set run_at = now(),
-      params = ${sql.json({ auto: 'first-contact', script: [{ text: 'oi', delayMs: 1500 }, { text: 'outra' }] } as never)}
+    await sql`update agent_runs set run_at = now(), source = 'first_contact',
+      params = ${sql.json({ script: [{ text: 'oi', delayMs: 1500 }, { text: 'outra' }] } as never)}
       where id = ${runId}`;
     const running = runOnce(sql);
     await new Promise((r) => setTimeout(r, 150));
     await controlTx(sql, (tx) =>
-      enqueueInboxTx(tx, leadId, 'staff', { text: 'a equipe pediu atenção' }),
+      enqueueInboxTx(
+        tx,
+        leadId,
+        'staff',
+        { text: 'a equipe pediu atenção' },
+        { source: 'staff', promised: false },
+      ),
     );
     expect(await running).toBe(true);
     const r = await getRun(runId);
@@ -4186,8 +4418,8 @@ dbDescribe('worker robustness (db)', () => {
     `;
     await sql`delete from agent_runs where status = 'queued'`;
     const runId = (await enqueueRun(sql, { kind: 'outreach', leadId }))!;
-    await sql`update agent_runs set run_at = now(),
-      params = ${sql.json({ auto: 'first-contact' } as never)}
+    await sql`update agent_runs set run_at = now(), source = 'first_contact',
+      params = ${sql.json({} as never)}
       where id = ${runId}`;
     const claimed = await claimRun(sql);
     expect(claimed?.id).toBe(runId);
@@ -4232,8 +4464,8 @@ dbDescribe('worker robustness (db)', () => {
     `;
     await sql`delete from agent_runs where status = 'queued'`;
     const runId = (await enqueueRun(sql, { kind: 'outreach', leadId }))!;
-    await sql`update agent_runs set run_at = now(),
-      params = ${sql.json({ auto: 'first-contact' } as never)}
+    await sql`update agent_runs set run_at = now(), source = 'first_contact',
+      params = ${sql.json({} as never)}
       where id = ${runId}`;
     const claimed = await claimRun(sql);
     expect(claimed?.id).toBe(runId);
@@ -4244,11 +4476,17 @@ dbDescribe('worker robustness (db)', () => {
       values (${thread!.id}, 'in', 'lead', 'oi, quero', 'received') returning id
     `;
     const itemId = await controlTx(sql, (tx) =>
-      enqueueInboxTx(tx, leadId, 'inbound', {
-        text: 'oi, quero',
-        requestedKind: 'reply',
-        messageId: msg!.id,
-      }),
+      enqueueInboxTx(
+        tx,
+        leadId,
+        'inbound',
+        {
+          text: 'oi, quero',
+          requestedKind: 'reply',
+          messageId: msg!.id,
+        },
+        { source: 'inbound', promised: false },
+      ),
     );
     await sql`
       update agent_inbox set consumed_by_run = ${runId}, consumed_at = now() where id = ${itemId}
@@ -4390,7 +4628,13 @@ dbDescribe('worker robustness (db)', () => {
           if (!rows.length) return;
           clearInterval(deliver);
           await controlTx(sql, (tx) =>
-            enqueueInboxTx(tx, leadId, 'inbound', { text: 'e o frete?', requestedKind: 'reply' }),
+            enqueueInboxTx(
+              tx,
+              leadId,
+              'inbound',
+              { text: 'e o frete?', requestedKind: 'reply' },
+              { source: 'inbound', promised: false },
+            ),
           );
         });
       }, 5);
@@ -4448,11 +4692,17 @@ dbDescribe('worker robustness (db)', () => {
       params: { channel: 'whatsapp', script: [{ text: 'ok' }] },
     }))!;
     await controlTx(sql, (tx) =>
-      enqueueInboxTx(tx, leadId, 'staff', {
-        text: 'responde por email',
-        requestedKind: 'reply',
-        params: { channel: 'email', script: [{ text: 'ok' }] },
-      }),
+      enqueueInboxTx(
+        tx,
+        leadId,
+        'staff',
+        {
+          text: 'responde por email',
+          requestedKind: 'reply',
+          params: { channel: 'email', script: [{ text: 'ok' }] },
+        },
+        { source: 'staff', promised: false },
+      ),
     );
     expect(await runOnce(sql)).toBe(true);
     expect((await getRun(runId)).status).toBe('done');
@@ -4482,7 +4732,13 @@ dbDescribe('worker robustness (db)', () => {
     const leadId = lead.body.lead.id;
     await sql`delete from agent_runs where status = 'queued'`;
     const itemId = await controlTx(sql, (tx) =>
-      enqueueInboxTx(tx, leadId, 'inbound', { text: 'oi', requestedKind: 'reply' }),
+      enqueueInboxTx(
+        tx,
+        leadId,
+        'inbound',
+        { text: 'oi', requestedKind: 'reply' },
+        { source: 'inbound', promised: false },
+      ),
     );
     const stale = new Date(Date.now() - 11 * 60_000);
     const mail = () =>
@@ -4544,18 +4800,36 @@ dbDescribe('worker robustness (db)', () => {
       returning id
     `;
     const itemId = await controlTx(sql, (tx) =>
-      enqueueInboxTx(tx, leadId, 'inbound', {
-        text: 'oi',
-        requestedKind: 'reply',
-        messageId: inMsg!.id,
-        params: { origin: 'inbound', channel: 'whatsapp' },
-      }),
+      enqueueInboxTx(
+        tx,
+        leadId,
+        'inbound',
+        {
+          text: 'oi',
+          requestedKind: 'reply',
+          messageId: inMsg!.id,
+          params: { channel: 'whatsapp' },
+        },
+        { source: 'inbound', promised: false },
+      ),
     );
     const nudgeId = await controlTx(sql, (tx) =>
-      enqueueInboxTx(tx, leadId, 'staff', { text: 'a equipe pediu atenção' }),
+      enqueueInboxTx(
+        tx,
+        leadId,
+        'staff',
+        { text: 'a equipe pediu atenção' },
+        { source: 'staff', promised: false },
+      ),
     );
     const retryId = await controlTx(sql, (tx) =>
-      enqueueInboxTx(tx, leadId, 'inbound', { text: 'e ai', requestedKind: 'reply' }),
+      enqueueInboxTx(
+        tx,
+        leadId,
+        'inbound',
+        { text: 'e ai', requestedKind: 'reply' },
+        { source: 'inbound', promised: false },
+      ),
     );
     // answeredBy suppresses release only while the answer is live/landed:
     // a landed 'sent' keeps its mail consumed, a 'failed' answer re-serves;
@@ -4575,7 +4849,13 @@ dbDescribe('worker robustness (db)', () => {
       values (${thread!.id}, 'out', 'agent', 'oi, posso ajudar?', 'failed', ${run!.id}, now()) returning id
     `;
     const attemptedId = await controlTx(sql, (tx) =>
-      enqueueInboxTx(tx, leadId, 'inbound', { text: 'oi de novo', requestedKind: 'reply' }),
+      enqueueInboxTx(
+        tx,
+        leadId,
+        'inbound',
+        { text: 'oi de novo', requestedKind: 'reply' },
+        { source: 'inbound', promised: false },
+      ),
     );
     await sql`update agent_inbox set consumed_by_run = ${run!.id}, consumed_at = now(),
       payload = payload || jsonb_build_object('answeredBy', ${sentOut!.id}::text)

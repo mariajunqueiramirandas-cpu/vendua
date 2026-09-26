@@ -193,8 +193,8 @@ export const DEFAULT_GUARDRAILS = {
   /** staff-created lead's outreach run is scheduled N min after create;
    *  0 = fire at once but draft-only */
   firstContactDelayMin: 0,
-  /** after an agent send, wait ≤N days for a reply before sweepOutreach picks
-   *  the lead up; stamped only when next_action_at is NULL; 0 = off */
+  /** after an agent send with no reply, book a follow-up N days out on the lead's
+   *  agenda unless something is already there; 0 = off */
   followupCadenceDays: 2,
   /** approving a draft older than N days supersedes it and recomposes against
    *  current state; 0 = approve always sends */
@@ -533,7 +533,7 @@ export function validateSetting(key: string, value: unknown): void {
     }
     const v = value as Record<string, unknown>;
     for (const f of Object.keys(v)) {
-      if (!['level', 'jobs', 'instructions', 'weeklyDiscoveryUsd'].includes(f))
+      if (!['level', 'jobs', 'instructions', 'weeklyDiscoveryUsd', 'schedule'].includes(f))
         throw bad(f, 'is not an agent field');
     }
     if (!['off', 'copilot', 'supervised', 'autopilot'].includes(v.level as string)) {
@@ -561,6 +561,19 @@ export function validateSetting(key: string, value: unknown): void {
       (typeof usd !== 'number' || !Number.isFinite(usd) || usd < 0 || usd > 50)
     ) {
       throw bad('weeklyDiscoveryUsd', 'must be a number in [0, 50]');
+    }
+    if (v.schedule !== undefined) {
+      if (!v.schedule || typeof v.schedule !== 'object' || Array.isArray(v.schedule)) {
+        throw bad('schedule', 'must be an object');
+      }
+      const bounds: Record<string, number> = { discoveryHour: 23, weeklyDay: 6, weeklyHour: 23 };
+      for (const [k, x] of Object.entries(v.schedule as Record<string, unknown>)) {
+        const max = bounds[k];
+        if (max === undefined) throw bad(`schedule.${k}`, 'is not a schedule field');
+        if (typeof x !== 'number' || !Number.isInteger(x) || x < 0 || x > max) {
+          throw bad(`schedule.${k}`, `must be an integer in [0, ${max}]`);
+        }
+      }
     }
     return;
   }

@@ -254,3 +254,26 @@ export async function checkSendAllowedTx(
     return { ok: true, forceDraft: false };
   }
 }
+
+/** Earliest instant ≥ `at` outside quiet hours, in the workspace timezone — the dispatcher
+ *  starts send-bound runs there instead of letting them wake up just to be blocked. */
+export async function sendWindowOpenAtTx(tx: Sql, g: Guardrails, at: Date): Promise<Date> {
+  const row = (
+    await tx<{ open: Date }[]>`
+      with p as (
+        select (${at}::timestamptz at time zone ${g.timezone}) as lt,
+               ${g.quietStart}::time as qs, ${g.quietEnd}::time as qe
+      )
+      select case
+        when qs = qe then ${at}::timestamptz
+        when (qs < qe and lt::time >= qs and lt::time < qe)
+          or (qs > qe and (lt::time >= qs or lt::time < qe))
+        then (case when lt::time < qe then date_trunc('day', lt) + qe
+                   else date_trunc('day', lt) + interval '1 day' + qe end) at time zone ${g.timezone}
+        else ${at}::timestamptz
+      end as open
+      from p
+    `
+  )[0]!;
+  return new Date(row.open);
+}

@@ -51,7 +51,7 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('agent memory v2 (db)', () => {
       (r) => r.body.lead.id,
     );
   const mkRun = () =>
-    controlTx(sql, (tx) => insertRun(tx, { kind: 'discovery' })).then((id) => {
+    controlTx(sql, (tx) => insertRun(tx, { source: 'staff', kind: 'discovery' })).then((id) => {
       if (!id) throw new Error('insertRun refused');
       return id;
     });

@@ -16,7 +16,7 @@ const SECTIONS = [
   { key: 'agente', label: 'agente', sub: 'autonomia, voz e instruções' },
   { key: 'limites', label: 'limites', sub: 'o que o código impõe' },
   { key: 'memoria', label: 'memória', sub: 'o que ele lembra' },
-  { key: 'agenda', label: 'agenda', sub: 'retornos marcados' },
+  { key: 'agenda', label: 'agenda', sub: 'rotinas e retornos marcados' },
 ] as const;
 type SectionKey = (typeof SECTIONS)[number]['key'];
 // pre-ADR-0015 links (?s=autonomia|voz|playbooks|regras) land on their new home

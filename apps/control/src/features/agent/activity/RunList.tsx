@@ -92,7 +92,7 @@ export function RunList({
       className: 'w-24',
       cell: (r) => (
         <span className="flex flex-col leading-tight">
-          <RunKind kind={r.kind} className="text-foreground" />
+          <RunKind kind={r.kind} source={r.source} className="text-foreground" />
           <span className="font-mono text-[10px] text-muted-foreground">{shortId(r.id)}</span>
         </span>
       ),
@@ -168,7 +168,7 @@ export function RunList({
         mobileRow={(r) => (
           <div className="flex min-w-0 flex-col gap-1">
             <div className="flex items-baseline gap-2">
-              <RunKind kind={r.kind} className="font-medium text-foreground" />
+              <RunKind kind={r.kind} source={r.source} className="font-medium text-foreground" />
               <span className="min-w-0 flex-1 truncate text-sm font-medium">
                 {r.lead_name ?? '—'}
               </span>

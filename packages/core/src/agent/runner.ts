@@ -20,8 +20,6 @@ import {
   memoryForRunTx,
 } from '../modules/agent-memory.ts';
 import { segmentStats, type AgentGoal } from '../modules/leads.ts';
-import { sweepPipelineSnapshots } from '../modules/forecast.ts';
-import { sweepDigest } from '../modules/digest.ts';
 import {
   estimateModelCostUsd,
   providerFor,
@@ -41,7 +39,10 @@ import {
   parkPolicyTx,
 } from './policy.ts';
 import { pendingWakeupsTx, sweepWakeups } from './wakeups.ts';
-import { enqueueInboxTx, renderInboxItems, sweepOrphanInbox, type InboxItem } from './inbox.ts';
+import { enqueueInboxTx, renderInboxItems, type InboxItem } from './inbox.ts';
+import { requestAgentTx, sweepOrphanInbox } from './dispatch.ts';
+import { anchorTx } from './schedule-anchors.ts';
+import { provenance, SOURCE_PRIORITY, type TriggerSource } from './sources.ts';
 import { executeTool, toolsFor, bookDigest, type BookEntry, type ToolContext } from './tools.ts';
 import { MonidBudget } from './channels/monid.ts';
 import {
@@ -55,7 +56,7 @@ import {
 import { pageKey } from './channels/discovery.ts';
 import { dispatchMessage } from './send.ts';
 import { channelAvailabilityTx, whatsappReadyTx } from './guardrails.ts';
-import { bookingLinkForRunner, sweepMeetingReminders } from '../modules/meetings.ts';
+import { bookingLinkForRunner } from '../modules/meetings.ts';
 import { emitControlEvent } from '../modules/control-events.ts';
 
 const agentLog = log.child({ mod: 'agent' });
@@ -129,7 +130,19 @@ export async function leadUnderCostCapTx(tx: Sql, leadId: string): Promise<CapVe
   return 'flagged';
 }
 
+type ActiveRow = {
+  id: string;
+  status: string;
+  kind: string;
+  thread_id: string | null;
+  params: Record<string, unknown>;
+  run_at: Date | null;
+  source: TriggerSource;
+  promised: boolean;
+};
+
 // Transaction-local insert (postgres.js tx handles have no .begin()); null = cost-cap refusal.
+// Producers go through dispatch.ts (requestAgentTx), which files the inbox mail first.
 export async function insertRun(
   tx: Sql,
   input: {
@@ -139,25 +152,24 @@ export async function insertRun(
     params?: Record<string, unknown>;
     /** earliest start; null = claimable immediately */
     runAt?: Date | null;
+    /** why the run exists (ADR 0016) — only dispatch.ts produces it outside tests */
+    source: TriggerSource;
+    promised?: boolean;
   },
-  /** out-box: flagged = fresh cap flag (emit lead.change post-commit); retired = adopt-canceled ids (emit run.update each). */
-  cap?: { flagged?: boolean; retired?: string[] },
+  /** out-box: flagged = fresh cap flag (emit lead.change post-commit); refused = the cost cap
+   *  said no; retired = adopt-canceled ids (emit run.update each). */
+  cap?: { flagged?: boolean; refused?: boolean; retired?: string[] },
 ): Promise<string | null> {
   // Adopt an already-active row as the mail's owner — or retire it when it can't serve: policy-parked,
   // or scheduled (its run_at never slides earlier). A retire re-anchors the row's intent as an 'event'
   // item unless pending mail already covers it, then releases its consumed mail.
   const callerAt = input.runAt ?? new Date();
-  const adopt = async (a: {
-    id: string;
-    status: string;
-    kind: string;
-    thread_id: string | null;
-    params: Record<string, unknown>;
-    run_at: Date | null;
-  }): Promise<string | null> => {
+  const prov = provenance(input.source, input.promised);
+  const priority = SOURCE_PRIORITY[prov.source];
+  const adopt = async (a: ActiveRow): Promise<string | null> => {
     if (a.status !== 'queued') return a.id;
     const p = a.params ?? {};
-    const parkedByPolicy = parked(await parkPolicyTx(tx), a.kind, p);
+    const parkedByPolicy = parked(await parkPolicyTx(tx), a.kind, a);
     const scheduled = a.run_at !== null && a.run_at.getTime() > callerAt.getTime();
     if (parkedByPolicy || scheduled) {
       // Status-conditional: a claim in flight owns arriving mail just the same.
@@ -172,7 +184,7 @@ export async function insertRun(
       if (!retired.length) return a.id;
       if (cap) (cap.retired ??= []).push(a.id);
       // A pending item stands in only if it carries the same intent whole (kind, thread, equal
-      // params, and for a scheduled row a notBefore reaching its deadline).
+      // params, same provenance, and for a scheduled row a notBefore reaching its deadline).
       const covered = (
         await tx<{ ok: boolean }[]>`
           select exists (
@@ -181,6 +193,7 @@ export async function insertRun(
               and i.payload->>'requestedKind' = ${a.kind}
               and coalesce(i.payload->>'threadId', '') = ${a.thread_id ?? ''}
               and coalesce(i.payload->'params', '{}'::jsonb) = ${tx.json(p as never)}::jsonb
+              and i.source = ${a.source} and i.promised = ${a.promised}
               and (not ${scheduled}
                    or coalesce(nullif(i.payload->>'notBefore', '')::timestamptz,
                         '-infinity'::timestamptz)
@@ -189,38 +202,37 @@ export async function insertRun(
         `
       )[0]!.ok;
       if (!covered) {
-        await enqueueInboxTx(tx, input.leadId!, 'event', {
-          text: `uma '${a.kind}' estava marcada${typeof p['focus'] === 'string' ? ` — ${p['focus']}` : ''}`,
-          requestedKind: a.kind as JobKind,
-          threadId: a.thread_id,
-          params: p,
-          ...(scheduled ? { notBefore: a.run_at!.toISOString() } : {}),
-        });
+        await enqueueInboxTx(
+          tx,
+          input.leadId!,
+          'event',
+          {
+            text: `uma '${a.kind}' estava marcada${typeof p['focus'] === 'string' ? ` — ${p['focus']}` : ''}`,
+            requestedKind: a.kind as JobKind,
+            threadId: a.thread_id,
+            params: p,
+            ...(scheduled ? { notBefore: a.run_at!.toISOString() } : {}),
+          },
+          { source: a.source, promised: a.promised },
+        );
       }
       await releaseInboxTx(tx, a.id, true);
       return null;
     }
-    // Runnable + no schedule conflict: keep the row, pull its start to the earlier intent.
+    // Runnable + no schedule conflict: keep the row, pull its start and priority to the
+    // more urgent intent (a promise adopted into a follow-up must not wait behind briefs).
     await tx`
       update agent_runs
-      set run_at = least(coalesce(run_at, now()), ${callerAt})
+      set run_at = least(coalesce(run_at, now()), ${callerAt}),
+          priority = least(priority, ${priority})
       where id = ${a.id} and status = 'queued'
     `;
     return a.id;
   };
   if (input.leadId) {
     // An already-active run owns the mail regardless of the cap — delivery into it costs nothing.
-    const active = await tx<
-      {
-        id: string;
-        status: string;
-        kind: string;
-        thread_id: string | null;
-        params: Record<string, unknown>;
-        run_at: Date | null;
-      }[]
-    >`
-      select id, status, kind, thread_id, params, run_at from agent_runs
+    const active = await tx<ActiveRow[]>`
+      select id, status, kind, thread_id, params, run_at, source, promised from agent_runs
       where lead_id = ${input.leadId} and status in ('queued', 'running')
       order by created_at limit 1
     `;
@@ -230,31 +242,26 @@ export async function insertRun(
     }
     const verdict = await leadUnderCostCapTx(tx, input.leadId);
     if (verdict !== 'under') {
-      if (cap) cap.flagged = verdict === 'flagged';
+      if (cap) {
+        cap.flagged = verdict === 'flagged';
+        cap.refused = true;
+      }
       return null;
     }
   }
   // One active run per lead (agent_runs_one_active_per_lead); on conflict the existing row owns the mail's delivery.
   const row = (
     await tx<{ id: string }[]>`
-      insert into agent_runs (kind, lead_id, thread_id, params, run_at)
-      values (${input.kind}, ${input.leadId ?? null}, ${input.threadId ?? null}, ${tx.json((input.params ?? {}) as never)}, ${input.runAt ?? null})
+      insert into agent_runs (kind, lead_id, thread_id, params, run_at, source, promised, priority)
+      values (${input.kind}, ${input.leadId ?? null}, ${input.threadId ?? null}, ${tx.json((input.params ?? {}) as never)}, ${input.runAt ?? null},
+              ${prov.source}, ${prov.promised}, ${priority})
       on conflict (lead_id) where status in ('queued', 'running') do nothing
       returning id
     `
   )[0];
   if (row) return row.id;
-  const existing = await tx<
-    {
-      id: string;
-      status: string;
-      kind: string;
-      thread_id: string | null;
-      params: Record<string, unknown>;
-      run_at: Date | null;
-    }[]
-  >`
-    select id, status, kind, thread_id, params, run_at from agent_runs
+  const existing = await tx<ActiveRow[]>`
+    select id, status, kind, thread_id, params, run_at, source, promised from agent_runs
     where lead_id = ${input.leadId ?? null} and status in ('queued', 'running')
     order by created_at limit 1
   `;
@@ -262,6 +269,7 @@ export async function insertRun(
   return existing[0] ? await adopt(existing[0]) : null;
 }
 
+/** A bare run with no inbox mail — tests and tooling; producers use dispatch.ts. */
 export async function enqueueRun(
   sql: Sql,
   input: {
@@ -270,12 +278,14 @@ export async function enqueueRun(
     threadId?: string | null;
     runAt?: Date | null;
     params?: Record<string, unknown>;
+    source?: TriggerSource;
+    promised?: boolean;
   },
 ): Promise<string | null> {
   const { id, capFlagged, retired } = await controlTx(sql, async (tx) => {
     const cap: { flagged?: boolean; retired?: string[] } = {};
     return {
-      id: await insertRun(tx, input, cap),
+      id: await insertRun(tx, { ...input, source: input.source ?? 'staff' }, cap),
       capFlagged: cap.flagged === true,
       retired: cap.retired ?? [],
     };
@@ -345,8 +355,8 @@ export async function claimRun(sql: Sql): Promise<RunRow | null> {
     const ignoredDigits = ignoredPhones.map(phoneDigits).filter((d) => d.length >= 6);
     // Over-cap leads excluded in the scan itself so parked capped runs can't starve the 8-attempt loop.
     const capCents = capCentsOf(g);
-    // Preset 'off' / a job switched off parks only automation-queued rows (auto marker / inbound origin);
-    // staff runs and promises stay eligible.
+    // Preset 'off' / a job switched off parks only automated rows; staff asks and promises stay
+    // eligible. Claim order is priority (source) first — a customer waiting beats a brief.
     const { offJobs, autoOff } = await parkPolicyTx(tx);
     const rejected: string[] = [];
     for (let attempt = 0; attempt < 8; attempt++) {
@@ -385,9 +395,9 @@ export async function claimRun(sql: Sql): Promise<RunRow | null> {
               and x.status = 'running'
           ))
           and not ((${autoOff} or r.kind = any(${offJobs}::text[]))
-                   and (r.params ? 'auto' or r.params->>'origin' = 'inbound'))
+                   and r.source <> 'staff' and not r.promised)
           and not (r.id = any(${rejected}::uuid[]))
-        order by r.created_at
+        order by r.priority, r.created_at
         limit 1
         for update skip locked
       `;
@@ -1486,12 +1496,11 @@ async function drainInbox(att: Attempt): Promise<number> {
     // Same gate as the spawn: automation-marked mail parks under preset 'off' or its job off.
     const { autoOff, offJobs } = await parkPolicyTx(tx);
     return tx<InboxItem[]>`
-      select id, kind, payload, created_at from agent_inbox
+      select id, kind, payload, created_at, source, promised from agent_inbox
       where ${scope}
         and (payload->>'threadId' is null or not (payload->>'threadId' = any(${dead})))
         and not ((${autoOff} or coalesce(payload->>'requestedKind', '') = any(${offJobs}::text[]))
-                 and (coalesce(payload->'params', '{}'::jsonb) ? 'auto'
-                      or coalesce(payload->'params'->>'origin', '') = 'inbound'))
+                 and source <> 'staff' and not promised)
       order by created_at limit 10
     `;
   });
@@ -2218,7 +2227,27 @@ export async function runOnce(sql: Sql): Promise<boolean> {
 // Drain the queue; reclaims runs whose worker died (requeued past the lease, not failed).
 const RUN_LEASE_MIN = 10;
 
-export async function drain(sql: Sql, limit = 20): Promise<number> {
+// Every drain — the scheduler's tick, an HTTP kick, an inbound kick — registers here so a
+// shutdown can wait for all of them, not just the scheduler's own.
+const drainsInFlight = new Set<Promise<number>>();
+
+export function drain(sql: Sql, limit = 20): Promise<number> {
+  if (claimsStopped) return Promise.resolve(0);
+  const p = drainOnce(sql, limit);
+  drainsInFlight.add(p);
+  void p.then(
+    () => drainsInFlight.delete(p),
+    () => drainsInFlight.delete(p),
+  );
+  return p;
+}
+
+/** resolves when every drain running right now has settled */
+export function drainsSettled(): Promise<unknown> {
+  return Promise.allSettled([...drainsInFlight]);
+}
+
+async function drainOnce(sql: Sql, limit: number): Promise<number> {
   // Requeue behind exponential backoff (2^attempts min); exhausting max_attempts lands 'failed'.
   const capFlaggedIds: string[] = [];
   // A normal failed run's [humano] task needs the same lead.change refresh a fresh flag earns.
@@ -2395,47 +2424,25 @@ export async function drain(sql: Sql, limit = 20): Promise<number> {
   // Orphaned mail: the sweep creates the fallback run each payload describes.
   await sweepOrphanInbox(sql).catch((e) => agentLog.error({ err: e }, 'inbox sweep failed'));
   let ran = 0;
-  while (ran < limit && (await runOnce(sql))) ran++;
+  while (ran < limit && !claimsStopped && (await runOnce(sql))) ran++;
   return ran;
 }
 
-let workerTimer: ReturnType<typeof setInterval> | null = null;
-let draining = false;
-
-// In-process worker: durable Postgres queue + periodic sweeps.
-export function startAgentWorker(sql: Sql, intervalMs = 15_000) {
-  if (workerTimer) return;
-  // Over-cap leads without a settings write park queued work until flagged;
-  // keeping the pass in the tick chain retries a failure next interval.
-  void flagCappedLeads(sql).catch((e) => agentLog.error({ err: e }, 'boot cap flag failed'));
-  workerTimer = setInterval(() => {
-    if (draining) return;
-    draining = true;
-    void drain(sql)
-      .then(() =>
-        flagCappedLeads(sql).catch((e) => agentLog.error({ err: e }, 'cap flag sweep failed')),
-      )
-      .then(() => sweepOutreach(sql))
-      .then(() => sweepWakeups(sql))
-      .then(() => sweepBriefs(sql))
-      .then(() => sweepStrategist(sql))
-      .then(() => sweepPipelineSnapshots(sql))
-      .then(() => sweepMeetingReminders(sql))
-      .then(() => sweepDigest(sql))
-      .catch((e) => agentLog.error({ err: e }, 'worker failed'))
-      .finally(() => {
-        draining = false;
-      });
-  }, intervalMs);
-  workerTimer.unref?.();
+// Set by the scheduler on shutdown: finish the run in hand, claim nothing new, start no drain.
+let claimsStopped = false;
+export function stopClaims(stop = true) {
+  claimsStopped = stop;
 }
 
-// Each enabled brief past its 23h cadence gets a discovery run (not-exists prevents
-// double-fire); new leads tag 'descoberto'.
+// Each enabled brief runs once a day from agent.schedule.discoveryHour (workspace time);
+// a brief that hasn't run since the latest anchor is due, a new one runs right away
+// (not-exists prevents double-fire); new leads tag 'descoberto'.
 export async function sweepBriefs(sql: Sql): Promise<number> {
   const queuedIds: string[] = [];
   const pausedIds: string[] = [];
   const fired = await controlTx(sql, async (tx) => {
+    const { schedule } = await agentSettingTx(tx);
+    const { last: anchor } = await anchorTx(tx, { hour: schedule.discoveryHour });
     const due = await tx<
       {
         id: string;
@@ -2450,7 +2457,7 @@ export async function sweepBriefs(sql: Sql): Promise<number> {
     >`
       select id, name, query, segment, city, target, rearmed_at, created_by from discovery_briefs
       where enabled
-        and (last_run_at is null or last_run_at < now() - interval '23 hours')
+        and (last_run_at is null or last_run_at < ${anchor})
         and not exists (
           select 1 from agent_runs r
           where r.kind = 'discovery' and r.status in ('queued', 'running')
@@ -2523,11 +2530,10 @@ export async function sweepBriefs(sql: Sql): Promise<number> {
           continue;
         }
       }
-      const runId = await insertRun(tx, {
+      const { runId } = await requestAgentTx(tx, {
         kind: 'discovery',
+        source: 'brief',
         params: {
-          // automation marker — a queued brief run parks when discovery is switched off
-          auto: 'brief',
           query: b.query,
           ...(b.segment ? { segment: b.segment } : {}),
           ...(b.city ? { city: b.city } : {}),
@@ -2548,8 +2554,8 @@ export async function sweepBriefs(sql: Sql): Promise<number> {
   return fired;
 }
 
-// Weekly strategist cadence, stamped by created_at; the advisory lock substitutes for a
-// missing anchor row so two workers can't double-fire.
+// Weekly review at agent.schedule weekday/hour (workspace time): due once per anchor, stamped
+// by created_at; the advisory lock serializes workers so two can't double-fire.
 export async function sweepStrategist(sql: Sql): Promise<boolean> {
   let queuedId: string | null = null;
   const fired = await controlTx(sql, async (tx) => {
@@ -2558,123 +2564,21 @@ export async function sweepStrategist(sql: Sql): Promise<boolean> {
     `;
     if (!locked[0]?.ok) return false;
     if (!(await automationAllowedTx(tx, 'strategist')).ok) return false;
+    const { schedule } = await agentSettingTx(tx);
+    const { last: anchor } = await anchorTx(tx, {
+      hour: schedule.weeklyHour,
+      weekday: schedule.weeklyDay,
+    });
     // only board-scoped runs fill the cadence slot
     const recent = await tx`
       select 1 from agent_runs
-      where kind = 'strategist' and lead_id is null
-        and created_at > now() - interval '7 days'
+      where kind = 'strategist' and lead_id is null and created_at >= ${anchor}
       limit 1
     `;
     if (recent.length) return false;
-    queuedId = await insertRun(tx, { kind: 'strategist', params: { auto: 'weekly' } });
+    queuedId = (await requestAgentTx(tx, { kind: 'strategist', source: 'weekly' })).runId;
     return true;
   });
   if (queuedId) emitControlEvent('run.update', queuedId);
-  return fired;
-}
-
-/** Periodic sweep: leads due for a follow-up get an outreach run. */
-export async function sweepOutreach(sql: Sql): Promise<number> {
-  const queuedIds: string[] = [];
-  const capFlagged: string[] = [];
-  const fired = await controlTx(sql, async (tx) => {
-    // Preset 'off' / outreach job off parks only the automation's own nudges — promised work still fires.
-    const pp = await parkPolicyTx(tx);
-    const autoOff = pp.autoOff || pp.offJobs.includes('outreach');
-    const g = await getSettingTx<Partial<Guardrails>>(tx, 'guardrails', {});
-    const capCents = capCentsOf(g);
-    // skip locked: concurrent sweeps take disjoint lead sets; the cap predicate keeps
-    // over-cap leads out of the 20-row window so they can't starve eligible leads.
-    const due = await tx<{ id: string; next_action_source: string }[]>`
-      select l.id, l.next_action_source from leads l
-      where l.next_action_at is not null and l.next_action_at <= now()
-        and l.archived_at is null and l.unsubscribed_at is null
-        and l.agent_mode != 'off'
-        and (l.next_action_source in ('staff', 'requested', 'agent') or ${!autoOff})
-        and (${capCents} <= 0 or
-          coalesce((select sum(x.cost_cents) from agent_runs x
-                    where x.lead_id = l.id), 0) < ${capCents})
-      limit 20
-      for update skip locked
-    `;
-    for (const { id, next_action_source } of due) {
-      // for-update already holds this lead's row lock — a blocking capfin would invert
-      // against ingestInbound (see capLockTx), so try the advisory and skip when busy.
-      const capFree = await tx<{ got: boolean }[]>`
-        select pg_try_advisory_xact_lock(hashtext(${'capfin:' + id})) as got
-      `;
-      if (!capFree[0]!.got) continue;
-      // 'cadence'/'auto' sources are automation nudges a fresh inbound cancels;
-      // 'staff'/'requested' AND legacy 'agent' (the unrecoverably mixed 0025 backfill)
-      // materialize UNMARKED — promises a reply can't cancel. insertRun applies the cost
-      // cap; a capped lead keeps its due action.
-      // The agent's own due wakeup folds into this run (read BEFORE insertRun); under
-      // preset 'off' / outreach off it stays pending for sweepWakeups' own gate.
-      const fold = autoOff
-        ? undefined
-        : (
-            await tx<{ id: string; focus: string }[]>`
-                select id, focus from agent_wakeups
-                where lead_id = ${id} and status = 'pending' and at <= now()
-                  and created_by = 'agent' and not requested
-                for update skip locked
-              `
-          )[0];
-      const promised =
-        next_action_source === 'staff' ||
-        next_action_source === 'requested' ||
-        next_action_source === 'agent';
-      // Parked (preset 'off' / outreach off), a queued auto outreach can never claim — retire it so the promise
-      // mints an unmarked row; dead-attempt mail releases too.
-      if (promised && autoOff) {
-        const retired = await tx<{ id: string }[]>`
-          update agent_runs
-          set status = 'canceled', error = 'promised work takes over', finished_at = now()
-          where lead_id = ${id} and kind = 'outreach' and status = 'queued'
-            and params->>'auto' is not null
-            and params->>'auto' not in ('regenerate', 'agent')
-          returning id
-        `;
-        for (const r of retired) await releaseInboxTx(tx, r.id, true);
-        queuedIds.push(...retired.map((r) => r.id));
-      }
-      const params: Record<string, unknown> = {
-        ...(promised ? {} : { auto: next_action_source }),
-        ...(fold ? { focus: `agendado por você: ${fold.focus}`, wakeupId: fold.id } : {}),
-      };
-      const cap: { flagged?: boolean; retired?: string[] } = {};
-      const runId = await insertRun(
-        tx,
-        {
-          kind: 'outreach',
-          leadId: id,
-          params,
-        },
-        cap,
-      );
-      if (cap.flagged) capFlagged.push(id);
-      // retired rows need the same run.update refresh
-      if (cap.retired) queuedIds.push(...cap.retired);
-      if (runId) {
-        queuedIds.push(runId);
-        // the item carries the cadence intent into an already-active run — audit trail either way
-        await enqueueInboxTx(tx, id, 'event', {
-          text: `a cadência disparou${fold ? ` — ${params.focus}` : ''}`,
-          requestedKind: 'outreach',
-          params,
-        });
-        await tx`update leads set next_action_at = null, next_action_source = null where id = ${id}`;
-        if (fold) {
-          await tx`
-            update agent_wakeups set status = 'fired', fired_run_id = ${runId}, fired_at = now(), updated_at = now()
-            where id = ${fold.id}
-          `;
-        }
-      }
-    }
-    return queuedIds.length;
-  });
-  for (const id of queuedIds) emitControlEvent('run.update', id);
-  if (capFlagged.length) emitControlEvent('lead.change');
   return fired;
 }

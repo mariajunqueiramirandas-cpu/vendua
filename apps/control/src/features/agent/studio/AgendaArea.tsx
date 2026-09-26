@@ -13,6 +13,7 @@ import { Badge } from '@/components/ui/badge.tsx';
 import { Card } from '@/components/ui/card.tsx';
 import { Segmented } from '@/components/ui/controls.tsx';
 import { AreaIntro, EndpointState } from './bits.tsx';
+import { RoutinesPanel } from './RoutinesPanel.tsx';
 
 const FILTERS = [
   { key: 'pending', label: 'pendentes', empty: 'nada agendado' },
@@ -68,8 +69,8 @@ export function AgendaArea({ active }: { active: boolean }) {
   );
   const origin = (w: Wakeup) => (
     <span className="inline-flex items-center gap-1.5">
-      {w.createdBy === 'staff' ? 'equipe' : 'agente'}
-      {w.requested && <Badge variant="agent">pedido</Badge>}
+      {w.createdBy === 'staff' ? 'equipe' : w.requested ? 'lead' : 'agente'}
+      {(w.requested || w.createdBy === 'staff') && <Badge variant="agent">promessa</Badge>}
     </span>
   );
   const action = (w: Wakeup) =>
@@ -123,66 +124,70 @@ export function AgendaArea({ active }: { active: boolean }) {
   const rows = q.data ?? [];
 
   return (
-    <>
-      <AreaIntro
-        aside={
-          <Segmented
-            size="sm"
-            value={status}
-            onChange={setStatus}
-            options={FILTERS.map((f) => [f.key, f.label] as const)}
+    <div className="flex flex-col gap-3">
+      <RoutinesPanel active={active} />
+      <div>
+        <AreaIntro
+          aside={
+            <Segmented
+              size="sm"
+              value={status}
+              onChange={setStatus}
+              options={FILTERS.map((f) => [f.key, f.label] as const)}
+            />
+          }
+        >
+          tudo que o agente vai fazer depois — follow-ups dele, retornos que o lead pediu e datas da
+          equipe; cancelar aqui desmarca
+        </AreaIntro>
+        {q.error ? (
+          <EndpointState
+            title="agenda do agente"
+            error={q.error}
+            missing="GET /agent/wakeups ainda não chegou neste servidor — os retornos que o agente marca com a tool `schedule` vão aparecer aqui, com cancelamento."
+            onRetry={() => void q.refetch()}
           />
-        }
-      >
-        retornos que o agente marcou — cancelar aqui desmarca o run
-      </AreaIntro>
-      {q.error ? (
-        <EndpointState
-          title="agenda do agente"
-          error={q.error}
-          missing="GET /agent/wakeups ainda não chegou neste servidor — os retornos que o agente marca com a tool `schedule` vão aparecer aqui, com cancelamento."
-          onRetry={() => void q.refetch()}
-        />
-      ) : (
-        <Card className="overflow-hidden">
-          <DataList
-            rows={rows}
-            rowKey={(w) => w.id}
-            loading={q.isPending}
-            columns={columns}
-            empty={
-              <EmptyState
-                icon={CalendarClock}
-                title={empty}
-                hint="o agente marca retornos sozinho com a tool `schedule`"
-              />
-            }
-            mobileRow={(w) => (
-              <div className="flex flex-col gap-1">
-                <div className="flex items-center gap-2">
-                  {due(w)}
-                  <span className="min-w-0 truncate">{lead(w)}</span>
-                  <Badge className="ml-auto">{RUN_KIND_LABEL[w.kind] ?? w.kind}</Badge>
+        ) : (
+          <Card className="overflow-hidden">
+            <DataList
+              rows={rows}
+              rowKey={(w) => w.id}
+              loading={q.isPending}
+              columns={columns}
+              empty={
+                <EmptyState
+                  icon={CalendarClock}
+                  title={empty}
+                  hint="follow-ups, retornos pedidos e datas marcadas no lead aparecem aqui"
+                />
+              }
+              mobileRow={(w) => (
+                <div className="flex flex-col gap-1">
+                  <div className="flex items-center gap-2">
+                    {due(w)}
+                    <span className="min-w-0 truncate">{lead(w)}</span>
+                    <Badge className="ml-auto">{RUN_KIND_LABEL[w.kind] ?? w.kind}</Badge>
+                  </div>
+                  <p className="line-clamp-2 text-sm text-muted-foreground">{w.focus}</p>
+                  {w.status === 'canceled' && w.cancelReason && (
+                    <p className="text-xs text-muted-foreground">motivo: {w.cancelReason}</p>
+                  )}
+                  <div className="flex items-center gap-2 text-xs text-muted-foreground">
+                    <span className="tnum">{fmtDateTime(w.at)}</span>·{origin(w)}
+                    <span className="ml-auto">{action(w)}</span>
+                  </div>
                 </div>
-                <p className="line-clamp-2 text-sm text-muted-foreground">{w.focus}</p>
-                {w.status === 'canceled' && w.cancelReason && (
-                  <p className="text-xs text-muted-foreground">motivo: {w.cancelReason}</p>
-                )}
-                <div className="flex items-center gap-2 text-xs text-muted-foreground">
-                  <span className="tnum">{fmtDateTime(w.at)}</span>·{origin(w)}
-                  <span className="ml-auto">{action(w)}</span>
-                </div>
-              </div>
+              )}
+            />
+            {rows.length === PAGE && (
+              <p className="border-t px-3 py-2 text-xs text-muted-foreground">
+                mostrando os {PAGE} primeiros — a lista corta aqui; cancele pelo painel do lead pros
+                que ficaram de fora
+              </p>
             )}
-          />
-          {rows.length === PAGE && (
-            <p className="border-t px-3 py-2 text-xs text-muted-foreground">
-              mostrando os {PAGE} primeiros — a lista corta aqui; cancele pelo painel do lead pros
-              que ficaram de fora
-            </p>
-          )}
-        </Card>
-      )}
-    </>
+          </Card>
+        )}
+      </div>
+    </div>
   );
 }
