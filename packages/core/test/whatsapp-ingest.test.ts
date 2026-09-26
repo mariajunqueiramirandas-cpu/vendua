@@ -568,6 +568,10 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('whatsapp history + ignore list 
       historical: true,
     });
     if ('ignored' in first) throw new Error('unexpected ignore');
+    const [lidRow] = await sql<{ whatsapp: string }[]>`
+      select whatsapp from leads where id = ${first.leadId}
+    `;
+    expect(lidRow!.whatsapp).toBe(`${lid}@lid`);
     const ids = await adoptLidMappings(sql, [
       { lid: `${lid}:2@lid`, pn: `${pn}:2@s.whatsapp.net` },
     ]);
@@ -575,7 +579,7 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('whatsapp history + ignore list 
     const [row] = await sql<{ whatsapp: string }[]>`
       select whatsapp from leads where id = ${first.leadId}
     `;
-    expect(row!.whatsapp).toBe(`${pn}@s.whatsapp.net`);
+    expect(row!.whatsapp).toBe(`+${pn}`);
     // later PN-addressed messages converge on the same lead
     const again = await ingestInbound(sql, {
       channel: 'whatsapp',
@@ -600,6 +604,23 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('whatsapp history + ignore list 
     expect(
       await adoptLidMappings(sql, [{ lid: `${lid2}@lid`, pn: `${pn}@s.whatsapp.net` }]),
     ).toEqual([]);
+  });
+
+  test('a phone-jid inbound stores the lead number as +E.164, not the jid', async () => {
+    await migrate(sql, MIGRATIONS);
+    const pn = `55119${crypto.randomUUID().replace(/\D/g, '').slice(0, 8)}`;
+    const res = await ingestInbound(sql, {
+      channel: 'whatsapp',
+      from: `${pn}@s.whatsapp.net`,
+      body: 'oi',
+      providerMessageId: `pn-store-1-${pmRun}`,
+      historical: true,
+    });
+    if ('ignored' in res) throw new Error('unexpected ignore');
+    const [row] = await sql<{ whatsapp: string; name: string }[]>`
+      select whatsapp, name from leads where id = ${res.leadId}
+    `;
+    expect(row).toEqual({ whatsapp: `+${pn}`, name: `+${pn}` });
   });
 
   test('whatsappRegistered degrades to null with no live socket', async () => {

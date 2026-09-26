@@ -374,12 +374,14 @@ export async function addInboundMessage(
       // a different stored value keeps provenance — unless it IS the message's own alias
       // (provider proved both), then canonicalize to `from` so later messages converge.
       if (leadId && input.channel === 'whatsapp') {
+        const stored = whatsappNumber(from);
         const hasAlt = altDigits.length >= 6;
         await tx`
           update leads set
             whatsapp = case
-              when whatsapp is null or whatsapp = '' then ${from}
-              when ${hasAlt} and regexp_replace(whatsapp, '\\D', '', 'g') = ${altDigits} then ${from}
+              when whatsapp is null or whatsapp = '' then ${stored}
+              when ${hasAlt} and regexp_replace(whatsapp, '\\D', '', 'g') = ${altDigits} then ${stored}
+              when whatsapp like '%@s.whatsapp.net' and regexp_replace(whatsapp, '\\D', '', 'g') = ${digits} then ${stored}
               else whatsapp
             end,
             whatsapp_verified = whatsapp_verified
@@ -393,7 +395,8 @@ export async function addInboundMessage(
 
     let leadCreated = false;
     if (!leadId) {
-      const name = str(input.fromName ?? from, 'name', 200) || from;
+      const fallbackName = input.channel === 'whatsapp' ? whatsappNumber(from) : from;
+      const name = str(input.fromName ?? fallbackName, 'name', 200) || fallbackName;
       const fields: Record<string, unknown> = {
         name,
         source: `inbound:${input.channel}`,
@@ -404,7 +407,7 @@ export async function addInboundMessage(
         if (igHandle) fields.instagram = `@${igHandle}`;
       } else {
         // An inbound whatsapp number is self-evidencing.
-        fields.whatsapp = from;
+        fields.whatsapp = input.channel === 'whatsapp' ? whatsappNumber(from) : from;
         fields.whatsapp_verified = true;
       }
       const lead = (
@@ -890,20 +893,28 @@ export async function markMessageFailed(tx: Sql, messageId: string, reason: stri
   `;
 }
 
-/** Re-keys leads still addressed by a whatsapp LID onto the real phone jid once
+/** whatsapp jid → the lead's stored number: '5511…@s.whatsapp.net' → '+5511…'.
+ *  LIDs carry no phone number and stay as-is until a mapping re-keys them. */
+export function whatsappNumber(jid: string): string {
+  if (!jid.endsWith('@s.whatsapp.net')) return jid;
+  const digits = jid.split('@')[0]!.split(':')[0]!.replace(/\D/g, '');
+  return digits ? `+${digits}` : jid;
+}
+
+/** Re-keys leads still addressed by a whatsapp LID onto the real phone number once
  *  the LID↔PN pair is known. Skips a pair when another lead already owns that
  *  number — merging duplicates is staff's call. Returns the re-keyed lead ids. */
 export async function adoptLidMappings(
   sql: Sql,
   pairs: readonly { lid: string; pn: string }[],
 ): Promise<string[]> {
-  const byLid = new Map<string, { lidDigits: string; pnJid: string; pnDigits: string }>();
+  const byLid = new Map<string, { lidDigits: string; pnNumber: string; pnDigits: string }>();
   for (const { lid, pn } of pairs) {
     const lidDigits = lid.split('@')[0]?.split(':')[0]?.replace(/\D/g, '') ?? '';
     const pnDigits = pn.split('@')[0]?.split(':')[0]?.replace(/\D/g, '') ?? '';
     if (lidDigits.length < 6 || pnDigits.length < 10 || pnDigits.length > 15) continue;
     if (!lid.endsWith('@lid') || !pn.endsWith('@s.whatsapp.net')) continue;
-    byLid.set(lidDigits, { lidDigits, pnJid: `${pnDigits}@s.whatsapp.net`, pnDigits });
+    byLid.set(lidDigits, { lidDigits, pnNumber: `+${pnDigits}`, pnDigits });
   }
   if (byLid.size === 0) return [];
   const list = [...byLid.values()];
@@ -913,11 +924,11 @@ export async function adoptLidMappings(
       with m as (
         select * from unnest(
           ${list.map((p) => p.lidDigits)}::text[],
-          ${list.map((p) => p.pnJid)}::text[],
+          ${list.map((p) => p.pnNumber)}::text[],
           ${list.map((p) => p.pnDigits)}::text[]
-        ) as m(lid_digits, pn_jid, pn_digits)
+        ) as m(lid_digits, pn_number, pn_digits)
       )
-      update leads l set whatsapp = m.pn_jid, whatsapp_verified = true
+      update leads l set whatsapp = m.pn_number, whatsapp_verified = true
       from m
       where l.archived_at is null
         and regexp_replace(coalesce(l.whatsapp, ''), '\\D', '', 'g') = m.lid_digits
