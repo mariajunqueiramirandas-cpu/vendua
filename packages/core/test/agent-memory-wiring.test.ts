@@ -211,6 +211,29 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('agent memory v2 wiring (db)', (
     expect(text).toContain('team_size: 4 people (confiança 0.5)');
   });
 
+  test('contextFor stamps ORIGEM from who spoke first — unsent drafts do not count', async () => {
+    await setup();
+    const cold = await mkLead('origem-cold');
+    const warm = await mkLead('origem-warm');
+    const [ct] = await sql<{ id: string }[]>`
+      insert into lead_threads (lead_id, channel) values (${cold}, 'whatsapp') returning id`;
+    const [wt] = await sql<{ id: string }[]>`
+      insert into lead_threads (lead_id, channel) values (${warm}, 'whatsapp') returning id`;
+    // no conversation yet → cold approach
+    expect((await contextFor(sql, await mkRun('outreach', cold))).text).toContain(
+      'ORIGEM: outbound',
+    );
+    await sql`insert into lead_messages (thread_id, direction, author, body, status, created_at)
+      values (${ct!.id}, 'out', 'agent', 'oi', 'sent', now() - interval '2 hours'),
+             (${ct!.id}, 'in', 'lead', 'quem é?', 'received', now() - interval '1 hour')`;
+    expect((await contextFor(sql, await mkRun('reply', cold))).text).toContain('ORIGEM: outbound');
+    // a rejected draft predating the lead's first message was never seen by them
+    await sql`insert into lead_messages (thread_id, direction, author, body, status, created_at)
+      values (${wt!.id}, 'out', 'agent', 'rascunho', 'rejected', now() - interval '2 hours'),
+             (${wt!.id}, 'in', 'lead', 'vocês fazem loja?', 'received', now() - interval '1 hour')`;
+    expect((await contextFor(sql, await mkRun('reply', warm))).text).toContain('ORIGEM: inbound');
+  });
+
   test('memoryForPrompt feeds segment learnings from the bound lead', async () => {
     await setup();
     const segment = nm('docerias');
