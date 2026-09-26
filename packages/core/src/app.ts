@@ -708,6 +708,19 @@ export function createApp({ sql, sessionSecret, controlSecret, autoDrain }: AppD
       }
     }
   };
+  // The CRM is an installed PWA: one sign-in per device. 400 days is Chrome's cap, and
+  // /session re-issues it on every app open, so only logout or a secret rotation ends it.
+  const setControlCookie = (c: Context) =>
+    setCookie(c, CONTROL_COOKIE, controlToken, {
+      httpOnly: true,
+      sameSite: 'Lax',
+      // TLS directly, or via trusted X-Forwarded-Proto.
+      secure:
+        c.req.url.startsWith('https://') ||
+        (trustProxy && c.req.header('x-forwarded-proto') === 'https'),
+      maxAge: 60 * 60 * 24 * 400,
+      path: '/control',
+    });
   const requireIdemKey = (c: Context) => {
     const key = c.req.header('idempotency-key');
     if (!key) {
@@ -758,16 +771,7 @@ export function createApp({ sql, sessionSecret, controlSecret, autoDrain }: AppD
     }
     const body = (await bodyJson(c).catch(() => ({}))) as { key?: unknown };
     if (body.key !== staffSecret) throw new HttpError(404, 'NOT_FOUND', 'not found');
-    setCookie(c, CONTROL_COOKIE, controlToken, {
-      httpOnly: true,
-      sameSite: 'Lax',
-      // TLS directly, or via trusted X-Forwarded-Proto.
-      secure:
-        c.req.url.startsWith('https://') ||
-        (trustProxy && c.req.header('x-forwarded-proto') === 'https'),
-      maxAge: 60 * 60 * 12,
-      path: '/control',
-    });
+    setControlCookie(c);
     return c.json({ ok: true });
   });
 
@@ -778,6 +782,7 @@ export function createApp({ sql, sessionSecret, controlSecret, autoDrain }: AppD
 
   app.get('/control/v1/session', (c) => {
     controlGate(c);
+    if (getCookie(c, CONTROL_COOKIE) === controlToken) setControlCookie(c);
     return c.json({ ok: true });
   });
 

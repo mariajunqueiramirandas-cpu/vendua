@@ -36,8 +36,11 @@ export default function Login({ onLogin }: { onLogin: () => void }) {
         <p className="mt-1 text-[13px] text-muted-foreground">
           Use a chave de acesso da equipe para abrir o console.
         </p>
+        {/* password managers (iOS Keychain, Google) only offer to save a key paired with a username */}
+        <input type="text" name="username" autoComplete="username" value="equipe" readOnly hidden />
         <Input
           type="password"
+          name="password"
           placeholder="chave de acesso"
           aria-label="chave de acesso"
           value={key}
