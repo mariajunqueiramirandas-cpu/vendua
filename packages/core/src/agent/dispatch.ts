@@ -3,7 +3,7 @@ import { controlTx } from '../modules/control.ts';
 import { emitControlEvent } from '../modules/control-events.ts';
 import { DEFAULT_GUARDRAILS, getSettingTx, type Guardrails } from '../modules/integrations.ts';
 import { log } from '../platform/log.ts';
-import { sendWindowOpenAtTx } from './guardrails.ts';
+import { channelAvailabilityTx, sendWindowOpenAtTx } from './guardrails.ts';
 import { enqueueInboxTx, type InboxKind, type InboxPayload } from './inbox.ts';
 import { agentSettingTx, parked, parkPolicyTx } from './policy.ts';
 import { capLockTx, insertRun } from './runner.ts';
@@ -65,7 +65,8 @@ const INBOX_KIND: Record<TriggerSource, InboxKind> = {
 const SEND_BOUND: readonly TriggerSource[] = ['inbound', 'callback', 'followup', 'first_contact'];
 
 /** When a send-bound run should start: never inside quiet hours when it would send live.
- *  Drafting work (copilot, draft-mode leads, supervised first contact) runs right away. */
+ *  Drafting work (copilot, draft-mode leads, supervised first contact, no deliverable
+ *  channel) runs right away. */
 export async function smartStartTx(
   tx: Sql,
   req: Pick<AgentRequest, 'kind' | 'leadId' | 'params' | 'at'>,
@@ -87,6 +88,9 @@ export async function smartStartTx(
   )[0];
   if (!lead || lead.agent_mode === 'draft') return at;
   if (level === 'supervised' && lead.prior_out === 0) return at;
+  // no deliverable channel → the run can only draft or escalate; nothing to wait for
+  const ch = await channelAvailabilityTx(tx, req.leadId);
+  if (!ch.whatsapp.ok && !ch.email.ok) return at;
   const g: Guardrails = {
     ...DEFAULT_GUARDRAILS,
     ...(await getSettingTx<Partial<Guardrails>>(tx, 'guardrails', {})),

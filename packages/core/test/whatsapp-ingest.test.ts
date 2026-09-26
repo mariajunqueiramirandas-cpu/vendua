@@ -445,17 +445,25 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('whatsapp history + ignore list 
     }
     // more ignored-lead runs than the claim loop's 8-attempt budget — they
     // must be filtered in the scan, not rejected one at a time
+    const parked: string[] = [];
     for (let i = 0; i < 10; i++) {
       const lead = await controlTx(sql, (tx) =>
         insertLeadTx(tx, { name: `Parked ${i}`, whatsapp: '5511999776600' }),
       );
-      await enqueueRun(sql, { kind: 'outreach', leadId: lead.body.lead.id })!;
+      parked.push((await enqueueRun(sql, { kind: 'outreach', leadId: lead.body.lead.id }))!);
     }
     const valid = await controlTx(sql, (tx) =>
       insertLeadTx(tx, { name: 'Valid', whatsapp: '5511900001111' }),
     );
     const runId = (await enqueueRun(sql, { kind: 'outreach', leadId: valid.body.lead.id }))!;
-    const claimed = await claimRun(sql);
+    // a background drain kicked by an earlier test can spawn a higher-priority stray
+    // (claim order is priority first) — finish strays, but an ignored run must never claim
+    let claimed = await claimRun(sql);
+    for (let i = 0; i < 10 && claimed && claimed.id !== runId; i++) {
+      expect(parked).not.toContain(claimed.id);
+      await sql`update agent_runs set status = 'done', finished_at = now() where id = ${claimed.id}`;
+      claimed = await claimRun(sql);
+    }
     expect(claimed?.id).toBe(runId);
   });
 

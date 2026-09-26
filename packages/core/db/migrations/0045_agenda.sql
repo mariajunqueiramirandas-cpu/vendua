@@ -2,6 +2,16 @@
 -- a mirror of the earliest pending one. Existing dates become agenda entries.
 -- legacy 'agent' was the ambiguous 0025 marker — kept as a promise (requested)
 
+-- The agent's own plan allows one pending entry per lead (agent_wakeups_one_pending_agent).
+-- A lead with both an agent wakeup and a cadence/auto date keeps ONE touch at the earlier
+-- of the two — the run re-plans from there — instead of the date silently losing the insert.
+update agent_wakeups w set at = least(w.at, l.next_action_at), updated_at = now()
+from leads l
+where w.lead_id = l.id and w.status = 'pending' and w.created_by = 'agent' and not w.requested
+  and l.next_action_at is not null
+  and l.archived_at is null and l.unsubscribed_at is null
+  and coalesce(l.next_action_source, 'staff') not in ('staff', 'requested', 'agent');
+
 insert into agent_wakeups (lead_id, kind, at, focus, requested, created_by)
 select l.id, 'outreach', l.next_action_at,
   case coalesce(l.next_action_source, 'staff')
@@ -20,7 +30,14 @@ where l.next_action_at is not null
     select 1 from agent_wakeups w
     where w.lead_id = l.id and w.status = 'pending' and w.at = l.next_action_at
   )
-on conflict do nothing;
+  -- reconciled above: the agent's plan already carries this touch
+  and not (
+    coalesce(l.next_action_source, 'staff') not in ('staff', 'requested', 'agent')
+    and exists (
+      select 1 from agent_wakeups w
+      where w.lead_id = l.id and w.status = 'pending' and w.created_by = 'agent' and not w.requested
+    )
+  );
 
 update leads l set (next_action_at, next_action_source) = (
   select w.at,

@@ -5,7 +5,14 @@ import { sweepPipelineSnapshots } from '../modules/forecast.ts';
 import { sweepMeetingReminders } from '../modules/meetings.ts';
 import { log } from '../platform/log.ts';
 import { agentSettingTx } from './policy.ts';
-import { drain, flagCappedLeads, stopClaims, sweepBriefs, sweepStrategist } from './runner.ts';
+import {
+  drain,
+  drainsSettled,
+  flagCappedLeads,
+  stopClaims,
+  sweepBriefs,
+  sweepStrategist,
+} from './runner.ts';
 import { anchorTx } from './schedule-anchors.ts';
 import { sweepWakeups } from './wakeups.ts';
 
@@ -198,8 +205,8 @@ export async function stopScheduler(graceMs = 25_000): Promise<void> {
   if (workTimer) clearInterval(workTimer);
   if (jobTimer) clearInterval(jobTimer);
   workTimer = jobTimer = null;
-  const inFlight = [working, jobbing].filter(Boolean) as Promise<unknown>[];
-  if (!inFlight.length) return;
+  // the scheduler's own passes plus every drain kicked from HTTP or an inbound message
+  const inFlight = [working, jobbing, drainsSettled()].filter(Boolean) as Promise<unknown>[];
   await Promise.race([
     Promise.allSettled(inFlight),
     new Promise((r) => setTimeout(r, graceMs).unref?.()),

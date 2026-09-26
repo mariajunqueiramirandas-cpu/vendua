@@ -100,6 +100,11 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('dispatch + scheduler (db)', () 
     await migrate(sql, MIGRATIONS);
     const priorAgent = await getSetting('agent');
     const priorGr = await getSetting('guardrails');
+    const priorLog = (
+      await sql<{ enabled: boolean }[]>`
+        select enabled from control_integrations where kind = 'email' and driver = 'log'
+      `
+    )[0];
     try {
       const tz = 'America/Sao_Paulo';
       const h = await localHour(tz);
@@ -111,7 +116,17 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('dispatch + scheduler (db)', () 
         quietEnd: pad(h + 2),
       });
       await setSetting('agent', { level: 'autopilot' });
-      const leadId = await mkLead();
+      // a deliverable channel — without one the run can only draft, so nothing waits
+      await sql`insert into control_integrations (kind, driver, enabled)
+                values ('email', 'log', true)
+                on conflict (kind, driver) do update set enabled = true`;
+      const leadId = await mkLead({ email: `smart-${nonce}@example.com` });
+      const noChannel = await mkLead();
+      expect(
+        await controlTx(sql, (tx) =>
+          smartStartTx(tx, { kind: 'reply', leadId: noChannel }, provenance('inbound')),
+        ),
+      ).toBeNull();
       const start = (source: 'inbound' | 'staff' | 'followup', params = {}) =>
         controlTx(sql, (tx) =>
           smartStartTx(tx, { kind: 'reply', leadId, params }, provenance(source)),
@@ -137,6 +152,10 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('dispatch + scheduler (db)', () 
     } finally {
       await restore('agent', priorAgent);
       await restore('guardrails', priorGr);
+      if (priorLog)
+        await sql`update control_integrations set enabled = ${priorLog.enabled}
+                  where kind = 'email' and driver = 'log'`;
+      else await sql`delete from control_integrations where kind = 'email' and driver = 'log'`;
     }
   });
 

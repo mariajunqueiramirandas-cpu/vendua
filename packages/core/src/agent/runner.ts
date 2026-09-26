@@ -2227,7 +2227,27 @@ export async function runOnce(sql: Sql): Promise<boolean> {
 // Drain the queue; reclaims runs whose worker died (requeued past the lease, not failed).
 const RUN_LEASE_MIN = 10;
 
-export async function drain(sql: Sql, limit = 20): Promise<number> {
+// Every drain — the scheduler's tick, an HTTP kick, an inbound kick — registers here so a
+// shutdown can wait for all of them, not just the scheduler's own.
+const drainsInFlight = new Set<Promise<number>>();
+
+export function drain(sql: Sql, limit = 20): Promise<number> {
+  if (claimsStopped) return Promise.resolve(0);
+  const p = drainOnce(sql, limit);
+  drainsInFlight.add(p);
+  void p.then(
+    () => drainsInFlight.delete(p),
+    () => drainsInFlight.delete(p),
+  );
+  return p;
+}
+
+/** resolves when every drain running right now has settled */
+export function drainsSettled(): Promise<unknown> {
+  return Promise.allSettled([...drainsInFlight]);
+}
+
+async function drainOnce(sql: Sql, limit: number): Promise<number> {
   // Requeue behind exponential backoff (2^attempts min); exhausting max_attempts lands 'failed'.
   const capFlaggedIds: string[] = [];
   // A normal failed run's [humano] task needs the same lead.change refresh a fresh flag earns.
@@ -2408,7 +2428,7 @@ export async function drain(sql: Sql, limit = 20): Promise<number> {
   return ran;
 }
 
-// Set by the scheduler on shutdown: finish the run in hand, claim nothing new.
+// Set by the scheduler on shutdown: finish the run in hand, claim nothing new, start no drain.
 let claimsStopped = false;
 export function stopClaims(stop = true) {
   claimsStopped = stop;
