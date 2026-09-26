@@ -15,6 +15,8 @@ export function buildSystemPrompt(
     autoContact?: { enabled: boolean; minScore: number };
     /** tools this kind would normally get but whose provider isn't configured */
     disabledTools?: string[];
+    /** send channels connected in this install — omitted = don't mention */
+    channels?: readonly string[];
   } = {},
 ): string {
   const base = [
@@ -103,19 +105,36 @@ Cada proposta leva name (curto — 'docerias fortaleza'), query (a busca como um
 Nada convincente? Saia sem propor — uma rodada zerada vale mais que um quadro cheio de rascunho fraco. Aprendizado durável sobre o que converte (segmento que respondeu, ângulo que falhou) → remember.`,
   };
   const off = opts.disabledTools ?? [];
-  if (!off.length) return `${base.join('\n')}\n\n${perKind[kind]}`;
+  const notes: string[] = [];
   // The playbooks name every research tool — drop the arsenal lines and say loudly the rest doesn't apply.
   const body = perKind[kind]
     .split('\n')
     .filter((l) => !off.some((t) => l.startsWith(`- ${t}(`)))
     .join('\n');
-  // serp shares monid's key with maps_lookup/instagram_profile — all three go together.
-  const noResearch = ['web_search', 'read_pages', 'serp'].every((t) => off.includes(t));
-  return `${base.join('\n')}\n\n${body}\n\nFERRAMENTAS DESATIVADAS nesta instalação: ${off.join(', ')}. Não estão configuradas e NÃO existem nesta run — qualquer menção a elas acima não vale, não tente chamá-las nem planeje com elas. Trabalhe só com as ferramentas que você recebeu${
-    noResearch
-      ? kind === 'discovery'
-        ? '; sem busca nem leitura de páginas não há como achar prospect novo — registre no remember e encerre a run sem inventar leads'
-        : '; sem pesquisa externa: use o que está no LEAD/DOSSIÊ e, na conversa, pergunte à pessoa o que falta'
-      : ''
-  }.`;
+  if (off.length) {
+    // serp shares monid's key with maps_lookup/instagram_profile — all three go together.
+    const noResearch = ['web_search', 'read_pages', 'serp'].every((t) => off.includes(t));
+    notes.push(
+      `FERRAMENTAS DESATIVADAS nesta instalação: ${off.join(', ')}. Não estão configuradas e NÃO existem nesta run — qualquer menção a elas acima não vale, não tente chamá-las nem planeje com elas. Trabalhe só com as ferramentas que você recebeu${
+        noResearch
+          ? kind === 'discovery'
+            ? '; sem busca nem leitura de páginas não há como achar prospect novo — registre no remember e encerre a run sem inventar leads'
+            : '; sem pesquisa externa: use o que está no LEAD/DOSSIÊ e, na conversa, pergunte à pessoa o que falta'
+          : ''
+      }.`,
+    );
+  }
+  const leadKind = kind === 'triage' || kind === 'reply' || kind === 'outreach';
+  const ch = opts.channels;
+  if (leadKind && ch && !ch.length) {
+    notes.push(
+      `CONTATO DESATIVADO: nenhum canal de envio (whatsapp/instagram/email) está conectado nesta instalação — nada sai daqui, e isso vale acima de qualquer instrução anterior. send_message não existe; a mensagem (primeiro contato ou resposta) vira draft_message com channel 'manual' — a equipe envia à mão — e a run termina nesse rascunho, não em envio. unsubscribe só registra a saída, sem despedida.`,
+    );
+  } else if (leadKind && ch && ch.length < 3) {
+    const down = (['whatsapp', 'instagram', 'email'] as const).filter((c) => !ch.includes(c));
+    notes.push(
+      `Canais conectados nesta instalação: ${ch.join(', ')}. ${down.join(', ')} está(ão) desligado(s) — não redija, não ofereça e não prometa contato por eles.`,
+    );
+  }
+  return [`${base.join('\n')}\n\n${body}`, ...notes].join('\n\n');
 }

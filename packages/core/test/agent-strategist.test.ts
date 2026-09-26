@@ -172,7 +172,9 @@ describe('unconfigured tools — hidden, refused, and named in the prompt', () =
   ]);
 
   test('toolsFor drops disabled tools', () => {
-    const names = toolsFor('discovery', off).map((t) => t.name);
+    const names = toolsFor('discovery', { disabled: off, channels: ['whatsapp'] }).map(
+      (t) => t.name,
+    );
     expect(names).not.toContain('serp');
     expect(names).not.toContain('maps_lookup');
     expect(names).toContain('web_search');
@@ -221,5 +223,55 @@ describe('unconfigured tools — hidden, refused, and named in the prompt', () =
       },
     );
     expect(p).toContain('pergunte à pessoa o que falta');
+  });
+
+  test('channel args list only connected channels; none connected → manual drafts only', () => {
+    const def = (kind: string, name: string, channels: ('whatsapp' | 'email')[]) =>
+      toolsFor(kind, { disabled: new Map(), channels }).find((t) => t.name === name)!;
+    const chan = (d: { parameters: Record<string, unknown> }) =>
+      (d.parameters as { properties: { channel: { enum: string[] } } }).properties.channel.enum;
+    expect(chan(def('reply', 'send_message', ['whatsapp']))).toEqual(['whatsapp']);
+    expect(chan(def('reply', 'draft_message', ['whatsapp']))).toEqual(['whatsapp', 'manual']);
+    const draft = def('triage', 'draft_message', []);
+    expect(chan(draft)).toEqual(['manual']);
+    expect((draft.parameters as { required: string[] }).required).toContain('channel');
+    const unsub = def('reply', 'unsubscribe', []);
+    expect((unsub.parameters as { properties: object }).properties).not.toHaveProperty('reply');
+    // the registry itself is untouched
+    expect(chan(toolsFor('reply').find((t) => t.name === 'send_message')!)).toContain('email');
+  });
+
+  test('no channel connected → the prompt says nothing goes out', () => {
+    const p = buildSystemPrompt(
+      'reply',
+      DEFAULT_PITCH,
+      '',
+      { facts: [] },
+      {
+        disabledTools: ['send_message'],
+        channels: [],
+      },
+    );
+    expect(p).toContain('CONTATO DESATIVADO');
+    const partial = buildSystemPrompt(
+      'outreach',
+      DEFAULT_PITCH,
+      '',
+      { facts: [] },
+      {
+        channels: ['whatsapp'],
+      },
+    );
+    expect(partial).toContain('instagram, email está(ão) desligado(s)');
+    const all = buildSystemPrompt(
+      'outreach',
+      DEFAULT_PITCH,
+      '',
+      { facts: [] },
+      {
+        channels: ['whatsapp', 'instagram', 'email'],
+      },
+    );
+    expect(all).not.toContain('desligado');
   });
 });

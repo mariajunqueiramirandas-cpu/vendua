@@ -12,10 +12,11 @@ import {
   updateLead,
 } from '../modules/leads.ts';
 import { addActivity, createTask } from '../modules/activities.ts';
-import { composeMessageTx, channel } from '../modules/threads.ts';
+import { composeMessageTx, channel, SEND_CHANNELS, type SendChannel } from '../modules/threads.ts';
 import {
   DEFAULT_GUARDRAILS,
   getSetting,
+  getIntegrationTx,
   getSettingTx,
   type Guardrails,
 } from '../modules/integrations.ts';
@@ -536,10 +537,55 @@ const REGISTRY: { def: AgentTool }[] = [
   },
 ];
 
-export function toolsFor(kind: string, disabled?: ReadonlyMap<string, string>): AgentTool[] {
-  return REGISTRY.filter((t) => toolAvailable(kind, t.def.name) && !disabled?.has(t.def.name)).map(
-    (t) => t.def,
-  );
+/** What this install can actually run — computed once per attempt. */
+export interface ToolGate {
+  /** tool → why it can't work here; never offered, refused if called anyway */
+  disabled: Map<string, string>;
+  /** send channels whose integration is enabled and connected */
+  channels: SendChannel[];
+}
+
+export function toolsFor(kind: string, gate?: ToolGate): AgentTool[] {
+  return REGISTRY.filter(
+    (t) => toolAvailable(kind, t.def.name) && !gate?.disabled.has(t.def.name),
+  ).map((t) => (gate ? gatedDef(t.def, gate.channels) : t.def));
+}
+
+export function registeredToolNames(): string[] {
+  return REGISTRY.map((t) => t.def.name);
+}
+
+// Channel args only list what can carry a message — the model never picks a dead integration.
+function gatedDef(def: AgentTool, channels: SendChannel[]): AgentTool {
+  const params = def.parameters as {
+    properties: Record<string, unknown>;
+    required?: string[];
+  };
+  if (def.name === 'send_message' || def.name === 'draft_message') {
+    const draft = def.name === 'draft_message';
+    const properties = {
+      ...params.properties,
+      channel: { type: 'string', enum: draft ? [...channels, 'manual'] : channels },
+    };
+    if (draft && !channels.length) {
+      return {
+        ...def,
+        description: `${def.description} No send channel is connected in this install — pass channel 'manual' (staff sends it by hand).`,
+        parameters: { ...params, properties, required: [...(params.required ?? []), 'channel'] },
+      };
+    }
+    return { ...def, parameters: { ...params, properties } };
+  }
+  if (def.name === 'unsubscribe' && !channels.length) {
+    const { reply: _reply, ...properties } = params.properties;
+    return {
+      ...def,
+      description:
+        'The sender asked to stop receiving messages / be removed — opts the lead out (unsubscribed_at). No send channel is connected, so no farewell can go out; never send anything after calling this.',
+      parameters: { ...params, properties },
+    };
+  }
+  return def;
 }
 
 const MONID_TOOLS = ['maps_lookup', 'instagram_profile', 'serp'] as const;
@@ -548,22 +594,37 @@ const DISCOVERY_TOOLS = ['web_search', 'read_pages'] as const;
 /** Tools that would only error (or return canned data) because their provider isn't
  *  configured — the model must not be offered them. `simulated` = mock LLM, where
  *  discovery's mock pages are the intended fixture. */
-export async function disabledTools(
-  sql: Sql,
-  opts: { simulated: boolean },
-): Promise<Map<string, string>> {
-  const out = new Map<string, string>();
+export async function toolGate(sql: Sql, opts: { simulated: boolean }): Promise<ToolGate> {
+  const disabled = new Map<string, string>();
   if (!process.env.MONID_API_KEY) {
-    for (const n of MONID_TOOLS) out.set(n, 'MONID_API_KEY não configurada');
+    for (const n of MONID_TOOLS) disabled.set(n, 'MONID_API_KEY não configurada');
   }
   const { discoveryUnavailable } = await import('./channels/discovery.ts');
   const why = await discoveryUnavailable(sql, opts.simulated);
-  if (why) for (const n of DISCOVERY_TOOLS) out.set(n, why);
-  return out;
-}
-
-export function registeredToolNames(): string[] {
-  return REGISTRY.map((t) => t.def.name);
+  if (why) for (const n of DISCOVERY_TOOLS) disabled.set(n, why);
+  const { channels, memory } = await controlTx(sql, async (tx) => {
+    const [wa, ig, em, memory] = await Promise.all([
+      whatsappReadyTx(tx),
+      instagramReadyTx(tx),
+      getIntegrationTx(tx, 'email'),
+      hasMemoryTablesTx(tx),
+    ]);
+    // resend without its key throws at dispatch — same check sendEmail makes
+    const emailReady =
+      !!em &&
+      (em.driver !== 'resend' ||
+        !!((em.secret_ref && process.env[em.secret_ref]) ?? process.env.RESEND_API_KEY));
+    const ready: Record<SendChannel, boolean> = { whatsapp: wa, instagram: ig, email: emailReady };
+    return { channels: SEND_CHANNELS.filter((c) => ready[c]), memory };
+  });
+  if (!channels.length) {
+    disabled.set('send_message', 'nenhum canal de envio (whatsapp/instagram/email) conectado');
+  }
+  if (!memory) {
+    for (const n of ['remember', 'set_fact'])
+      disabled.set(n, 'tabelas de memória não migradas (0035)');
+  }
+  return { disabled, channels };
 }
 
 /** Side-effect fence on the live claim — runs FIRST inside the mutation's claim

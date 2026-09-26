@@ -47,8 +47,9 @@ import {
   executeTool,
   toolsFor,
   bookDigest,
-  disabledTools,
+  toolGate,
   type BookEntry,
+  type ToolGate,
   type ToolContext,
 } from './tools.ts';
 import { MonidBudget } from './channels/monid.ts';
@@ -1323,8 +1324,8 @@ interface Attempt {
   tools: AgentTool[];
   /** Job kinds this attempt may serve — drainInbox adds a drained item's requestedKind. */
   toolKinds: Set<string>;
-  /** unconfigured tools (name → why) — hidden from every kind this attempt serves */
-  disabledTools: Map<string, string>;
+  /** what this install can run — unconfigured tools hidden from every kind this attempt serves */
+  gate: ToolGate;
   /** kernel-loop state — res is the current chat() result */
   i: number;
   res: LlmResult;
@@ -1568,7 +1569,7 @@ async function drainInbox(att: Attempt): Promise<number> {
 function widenAttemptTools(att: Attempt): void {
   const seen = new Set(att.tools.map((t) => t.name));
   for (const k of att.toolKinds) {
-    for (const t of toolsFor(k, att.disabledTools)) {
+    for (const t of toolsFor(k, att.gate)) {
       if (!seen.has(t.name)) {
         seen.add(t.name);
         att.tools.push(t);
@@ -1647,7 +1648,7 @@ async function openAttempt(sql: Sql, run: RunRow): Promise<Attempt> {
     system: '',
     tools: [],
     toolKinds: new Set([run.kind]),
-    disabledTools: new Map(),
+    gate: { disabled: new Map(), channels: [] },
     i: 0,
     res: undefined as never,
     nudged: false,
@@ -1724,7 +1725,7 @@ async function buildAttemptContext(att: Attempt): Promise<void> {
   // The prompt only promises autocontact under the same conditions create_lead's gate checks.
   const waDriverOn = run.kind === 'discovery' && (await whatsappReadyTx(sql));
   // A mock LLM runs against discovery's mock pages; a real one only gets tools that can work.
-  att.disabledTools = await disabledTools(sql, {
+  att.gate = await toolGate(sql, {
     simulated: !integration || integration.driver === 'mock',
   });
   const offered = new Set(toolsFor(run.kind).map((t) => t.name));
@@ -1735,9 +1736,10 @@ async function buildAttemptContext(att: Attempt): Promise<void> {
       enabled: (g.discoveryAutoContact ?? DEFAULT_GUARDRAILS.discoveryAutoContact) && waDriverOn,
       minScore: g.discoveryContactMinScore ?? DEFAULT_GUARDRAILS.discoveryContactMinScore,
     },
-    disabledTools: [...att.disabledTools.keys()].filter((n) => offered.has(n)),
+    disabledTools: [...att.gate.disabled.keys()].filter((n) => offered.has(n)),
+    channels: att.gate.channels,
   });
-  att.tools = toolsFor(run.kind, att.disabledTools);
+  att.tools = toolsFor(run.kind, att.gate);
   // Kinds from stamped mail must be visible to the model, not just permitted in dispatch.
   widenAttemptTools(att);
   const replay = (att.replay = replayJournal(att.priorSteps, !att.claimsChecked));
@@ -1765,7 +1767,7 @@ async function buildAttemptContext(att: Attempt): Promise<void> {
     // staff assist runs may only compose — send_message degrades to a draft
     draftOnly: run.params.draftOnly === true,
     toolKinds: att.toolKinds,
-    disabledTools: att.disabledTools,
+    disabledTools: att.gate.disabled,
   };
   att.ctx = ctx;
   // Clone book entries on the way in — in-place mutation would rewrite the earlier
@@ -1847,7 +1849,7 @@ async function finishGate(att: Attempt): Promise<'end' | 'again'> {
             )}${readUrls.size ? `; leituras ${[...readUrls].slice(0, 8).join(', ')}` : ''}.`
         : '';
     // Per-prospect untried moves from the ledger.
-    const off = att.disabledTools;
+    const off = att.gate.disabled;
     const LADDER = ['maps', 'ig', 'hub', 'serp', 'dir'].filter(
       (m) => !(m === 'maps' && off.has('maps_lookup')) && !(m === 'serp' && off.has('serp')),
     );
@@ -2027,7 +2029,7 @@ async function dispatchParallel(att: Attempt): Promise<void> {
           .map((q) => `"${q}"`)
           .join(', ') || 'nenhuma'
       }; leituras ${[...urls].slice(0, 8).join(', ') || 'nenhuma'}.\nPassos restantes: ~${Math.max(0, att.limit - att.i)}. Qual o próximo melhor movimento — novo ângulo de busca, ${
-        att.disabledTools.has('maps_lookup')
+        att.gate.disabled.has('maps_lookup')
           ? 'read_pages num @ ou site que sobrou'
           : 'maps_lookup, instagram_profile num @ que sobrou'
       }, ou fechar um prospect como dead? Responda e siga.`;
