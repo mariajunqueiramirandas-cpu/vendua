@@ -2,7 +2,7 @@ import { describe, expect, test } from 'bun:test';
 import { join } from 'node:path';
 import postgres from 'postgres';
 import { insertRun, sweepBriefs, sweepStrategist } from '../src/agent/runner.ts';
-import { executeTool, toolsFor, type ToolContext } from '../src/agent/tools.ts';
+import { toolGate, executeTool, toolsFor, type ToolContext } from '../src/agent/tools.ts';
 import { buildSystemPrompt } from '../src/agent/prompts.ts';
 import { DEFAULT_GUARDRAILS, DEFAULT_PITCH, validateSetting } from '../src/modules/integrations.ts';
 import { controlTx } from '../src/modules/control.ts';
@@ -57,6 +57,76 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('discovery intelligence (db)', (
   const uniq = Date.now().toString(36);
   // phones/whatsapps dedupe — keep them unique across suite re-runs
   const wa = `wa.me/55${String(Date.now()).slice(-9)}`;
+
+  test('toolGate — unconfigured providers are reported, mock LLM keeps mock discovery', async () => {
+    // first DB touch in this file on a fresh CI database — migrate before anything
+    await migrate(sql, join(import.meta.dir, '../db/migrations'));
+    const monid = process.env.MONID_API_KEY;
+    delete process.env.MONID_API_KEY;
+    const ref = `VENDUA_TEST_TF_${uniq}`;
+    const emRef = `VENDUA_TEST_RESEND_${uniq}`;
+    // other files leave integration rows behind — snapshot the ones this test touches
+    const prior = await sql<
+      { kind: string; driver: string; enabled: boolean; secret_ref: string | null }[]
+    >`
+      select kind, driver, enabled, secret_ref from control_integrations
+      where kind = 'discovery' or (kind = 'email' and driver = 'resend')
+    `;
+    const upsert = (kind: string, driver: string, secretRef: string) => sql`
+      insert into control_integrations (kind, driver, enabled, secret_ref)
+      values (${kind}, ${driver}, true, ${secretRef})
+      on conflict (kind, driver) do update
+        set enabled = true, secret_ref = excluded.secret_ref, updated_at = now()
+    `;
+    try {
+      await sql`update control_integrations set enabled = false where kind = 'discovery'`;
+      const real = await toolGate(sql, { simulated: false });
+      for (const n of ['instagram_profile', 'maps_lookup', 'read_pages', 'serp', 'web_search'])
+        expect(real.disabled.has(n)).toBe(true);
+      // memory tables are migrated in the test db
+      expect(real.disabled.has('remember')).toBe(false);
+      const sim = await toolGate(sql, { simulated: true });
+      expect(sim.disabled.has('web_search')).toBe(false);
+      expect(sim.disabled.has('serp')).toBe(true);
+
+      await upsert('discovery', 'tinyfish', ref);
+      expect((await toolGate(sql, { simulated: true })).disabled.get('web_search')).toContain(ref);
+      process.env[ref] = 'k';
+      process.env.MONID_API_KEY = 'k';
+      const research = await toolGate(sql, { simulated: false });
+      for (const n of ['instagram_profile', 'maps_lookup', 'read_pages', 'serp', 'web_search'])
+        expect(research.disabled.has(n)).toBe(false);
+
+      // the newest enabled email row is THE provider: a resend without its key can't send
+      await upsert('email', 'resend', emRef);
+      const noKey = await toolGate(sql, { simulated: false });
+      expect(noKey.channels).not.toContain('email');
+      process.env[emRef] = 'k';
+      const withKey = await toolGate(sql, { simulated: false });
+      expect(withKey.channels).toContain('email');
+      expect(withKey.disabled.has('send_message')).toBe(false);
+    } finally {
+      // rows this test created go; rows that were there get their state back
+      for (const [kind, driver] of [
+        ['discovery', 'tinyfish'],
+        ['email', 'resend'],
+      ] as const) {
+        if (!prior.some((r) => r.kind === kind && r.driver === driver)) {
+          await sql`delete from control_integrations where kind = ${kind} and driver = ${driver}`;
+        }
+      }
+      for (const r of prior) {
+        await sql`
+          update control_integrations set enabled = ${r.enabled}, secret_ref = ${r.secret_ref}
+          where kind = ${r.kind} and driver = ${r.driver}
+        `;
+      }
+      delete process.env[ref];
+      delete process.env[emRef];
+      if (monid === undefined) delete process.env.MONID_API_KEY;
+      else process.env.MONID_API_KEY = monid;
+    }
+  });
 
   const mkCtx = (runKind: ToolContext['runKind']): ToolContext => ({
     sql,

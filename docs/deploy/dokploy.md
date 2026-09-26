@@ -25,7 +25,7 @@ Copy `.env.example` into the service's environment and fill it in:
 | `VENDUA_PROXY_HOPS`                        | XFF trusted suffix length — `1` for the Traefik→nginx chain     |
 | `RESEND_API_KEY`                           | email driver — sending + fetching received bodies               |
 | `RESEND_WEBHOOK_SECRET`                    | svix signing secret of the inbound webhook (see below)          |
-| `MONID_API_KEY`                            | monid.ai gateway for the agent's paid enrichment tools          |
+| `MONID_API_KEY`                            | monid.ai enrichment tools (unset → hidden from the agent)       |
 | `GOOGLE_CALENDAR_SERVICE_ACCOUNT_JSON_B64` | service-account key, base64'd — meeting → gcal sync (optional)  |
 | `GOOGLE_CALENDAR_ID`                       | target calendar id for the gcal sync                            |
 | `DAILY_API_KEY`                            | daily.co per-meeting video rooms (unset → static roomUrl)       |

@@ -12,10 +12,17 @@ import {
   updateLead,
 } from '../modules/leads.ts';
 import { addActivity, createTask } from '../modules/activities.ts';
-import { composeMessageTx, channel } from '../modules/threads.ts';
+import {
+  composeMessageTx,
+  channel,
+  SEND_CHANNELS,
+  type Channel,
+  type SendChannel,
+} from '../modules/threads.ts';
 import {
   DEFAULT_GUARDRAILS,
   getSetting,
+  getIntegrationTx,
   getSettingTx,
   type Guardrails,
 } from '../modules/integrations.ts';
@@ -38,6 +45,7 @@ import { instagramHandle } from '../modules/threads.ts';
 import { dispatchMessage } from './send.ts';
 import { whatsappRegistered } from './channels/whatsapp.ts';
 import { leadBoundArg, toolAvailable } from './tool-meta.ts';
+import { ladderTags } from './prompts.ts';
 import { parseWakeupAt, scheduleWakeupTx } from './wakeups.ts';
 import { automationAllowedTx, discoveryBudgetTx } from './policy.ts';
 import { RETIRED_BY_INBOUND, type TriggerSource } from './sources.ts';
@@ -77,6 +85,8 @@ export interface ToolContext {
   draftOnly: boolean;
   /** job kinds this run may call as — drained mail adds its requestedKind; the dispatcher gate reads this. */
   toolKinds?: ReadonlySet<string>;
+  /** tools whose provider isn't configured (name → why) — never offered, refused if called anyway. */
+  disabledTools?: ReadonlyMap<string, string>;
 }
 
 /** One prospect in the agent's ledger — what it found and which moves it already spent. */
@@ -534,12 +544,147 @@ const REGISTRY: { def: AgentTool }[] = [
   },
 ];
 
-export function toolsFor(kind: string): AgentTool[] {
-  return REGISTRY.filter((t) => toolAvailable(kind, t.def.name)).map((t) => t.def);
+/** What this install can actually run — computed once per attempt. */
+export interface ToolGate {
+  /** tool → why it can't work here; never offered, refused if called anyway */
+  disabled: Map<string, string>;
+  /** send channels whose integration is enabled and connected */
+  channels: SendChannel[];
+  /** channels a draft may target (default: channels + 'manual') — the per-turn lead gate narrows it */
+  draftChannels?: Channel[];
+}
+
+export function toolsFor(kind: string, gate?: ToolGate): AgentTool[] {
+  const defs = REGISTRY.filter(
+    (t) => toolAvailable(kind, t.def.name) && !gate?.disabled.has(t.def.name),
+  ).map((t) => t.def);
+  if (!gate) return defs;
+  const offered = new Set(defs.map((d) => d.name));
+  return defs.map((d) =>
+    gatedDef(d, gate.channels, gate.draftChannels ?? [...gate.channels, 'manual'], (n) =>
+      offered.has(n),
+    ),
+  );
 }
 
 export function registeredToolNames(): string[] {
   return REGISTRY.map((t) => t.def.name);
+}
+
+// A gated def never points at a tool the run lacks, and its channel args only list
+// what can carry a message.
+function gatedDef(
+  def: AgentTool,
+  channels: SendChannel[],
+  draftChannels: Channel[],
+  has: (tool: string) => boolean,
+): AgentTool {
+  const params = def.parameters as {
+    properties: Record<string, unknown>;
+    required?: string[];
+  };
+  const cut = (text: string) => ({ ...def, description: def.description.replace(text, '') });
+  switch (def.name) {
+    case 'send_message':
+    case 'draft_message': {
+      const draft = def.name === 'draft_message';
+      const properties = {
+        ...params.properties,
+        channel: { type: 'string', enum: draft ? draftChannels : channels },
+      };
+      const live = (draft ? draftChannels : channels).filter((c) => c !== 'manual');
+      const description = def.description.replace(
+        'else whatsapp > instagram > email',
+        `else ${live.join(' > ')}`,
+      );
+      if (draft && !live.length) {
+        return {
+          ...def,
+          description:
+            "Draft an outbound message for human approval — never sends. No send channel can reach this lead right now, so pass channel 'manual': staff sends it by hand.",
+          parameters: { ...params, properties, required: [...(params.required ?? []), 'channel'] },
+        };
+      }
+      return { ...def, description, parameters: { ...params, properties } };
+    }
+    case 'unsubscribe': {
+      if (channels.length) return def;
+      const { reply: _reply, ...properties } = params.properties;
+      return {
+        ...def,
+        description:
+          'The sender asked to stop receiving messages / be removed — opts the lead out (unsubscribed_at). No send channel is connected, so no farewell can go out; never send anything after calling this.',
+        parameters: { ...params, properties },
+      };
+    }
+    case 'remember':
+      return has('set_fact')
+        ? def
+        : cut(' For a structured fact about THIS lead, prefer `set_fact`.');
+    case 'book': {
+      const tags = ladderTags(has)
+        .map((t) => `'${t}'`)
+        .join(',');
+      return {
+        ...def,
+        description: def.description.replace(
+          "(tried: 'maps','ig','hub','serp','dir')",
+          `(tried: ${tags || 'free-form'})`,
+        ),
+      };
+    }
+    case 'instagram_profile':
+      return has('read_pages')
+        ? def
+        : cut(' The fix for profiles that render as shells in read_pages.');
+    case 'serp':
+      return has('read_pages')
+        ? def
+        : cut(
+            '; the result that names the prospect (even a directory — cylex, apontador, guia local) is worth a read_pages',
+          );
+    default:
+      return def;
+  }
+}
+
+const MONID_TOOLS = ['maps_lookup', 'instagram_profile', 'serp'] as const;
+const DISCOVERY_TOOLS = ['web_search', 'read_pages'] as const;
+
+/** Tools that would only error (or return canned data) because their provider isn't
+ *  configured — the model must not be offered them. `simulated` = mock LLM, where
+ *  discovery's mock pages are the intended fixture. */
+export async function toolGate(sql: Sql, opts: { simulated: boolean }): Promise<ToolGate> {
+  const disabled = new Map<string, string>();
+  if (!process.env.MONID_API_KEY) {
+    for (const n of MONID_TOOLS) disabled.set(n, 'MONID_API_KEY não configurada');
+  }
+  const { discoveryUnavailable } = await import('./channels/discovery.ts');
+  const why = await discoveryUnavailable(sql, opts.simulated);
+  if (why) for (const n of DISCOVERY_TOOLS) disabled.set(n, why);
+  const { channels, memory } = await controlTx(sql, async (tx) => {
+    const [wa, ig, em, memory] = await Promise.all([
+      whatsappReadyTx(tx),
+      instagramReadyTx(tx),
+      getIntegrationTx(tx, 'email'),
+      hasMemoryTablesTx(tx),
+    ]);
+    // resend without its key throws at dispatch — same check sendEmail makes
+    const emailReady =
+      !!em &&
+      (em.driver !== 'resend' ||
+        !!((em.secret_ref && process.env[em.secret_ref]) ?? process.env.RESEND_API_KEY));
+    const ready: Record<SendChannel, boolean> = { whatsapp: wa, instagram: ig, email: emailReady };
+    return { channels: SEND_CHANNELS.filter((c) => ready[c]), memory };
+  });
+  if (!channels.length) {
+    disabled.set('send_message', 'nenhum canal de envio (whatsapp/instagram/email) conectado');
+  }
+  if (!memory) {
+    for (const n of ['remember', 'set_fact'])
+      disabled.set(n, 'tabelas de memória não migradas (0035)');
+  }
+  return { disabled, channels };
 }
 
 /** Side-effect fence on the live claim — runs FIRST inside the mutation's claim
@@ -604,6 +749,11 @@ export async function executeTool(
   if (!allowed || !REGISTRY.some((t) => t.def.name === name)) {
     return { error: `tool ${name} not available for ${ctx.runKind} runs` };
   }
+  // hints in results name only tools this run can actually call
+  const offered = (n: string) =>
+    !ctx.disabledTools?.has(n) && [...kinds].some((k) => toolAvailable(k, n));
+  const off = ctx.disabledTools?.get(name);
+  if (off) return { error: `TOOL_DISABLED — ${name} está desativada (${off}); não chame de novo` };
 
   // lead-bound runs may only mutate their own lead — reads stay unscoped (triage inspects other leads for dupes).
   const boundArg = leadBoundArg(name);
@@ -719,8 +869,16 @@ export async function executeTool(
         const channels = ['phone', 'whatsapp', 'email', 'instagram', 'website'];
         if (!channels.some((f) => typeof payload[f] === 'string' && String(payload[f]).trim())) {
           return {
-            error:
-              'NO_CHANNEL — o lead precisa de ≥1 canal de contato (phone/whatsapp/email/instagram/website). Pesquise mais o prospect (read_pages, web_search "nome cidade") ou desista dele.',
+            error: `NO_CHANNEL — o lead precisa de ≥1 canal de contato (phone/whatsapp/email/instagram/website). ${(() => {
+              const moves = [
+                offered('read_pages') && 'read_pages',
+                offered('web_search') && 'web_search "nome cidade"',
+                offered('serp') && 'serp "nome cidade"',
+              ].filter(Boolean);
+              return moves.length
+                ? `Pesquise mais o prospect (${moves.join(', ')}) ou desista dele.`
+                : 'Sem canal, desista dele.';
+            })()}`,
           };
         }
         if (payload.discoveredVia === undefined)
@@ -2031,7 +2189,7 @@ export async function executeTool(
       const { contactsFromText, contactFromUrl, isProfileHubUrl, isBrMobilePhone } =
         await import('./channels/discovery.ts');
       const apiKey = process.env.MONID_API_KEY;
-      if (!apiKey) return { error: 'MONID_API_KEY não configurada — use web_search/read_pages' };
+      if (!apiKey) return { error: 'MONID_API_KEY não configurada' };
       const budget = () => ({ spentUsd: ctx.monid?.spent ?? 0, capUsd: ctx.monid?.cap() ?? 0 });
       // contact values that hadn't been banked yet — counts progress
       const freshContacts = (vals: (string | null | undefined)[]): number => {
@@ -2143,11 +2301,13 @@ export async function executeTool(
             return false;
           }
         })();
-        if (extIsHub)
-          next.push(
-            `externalUrl é hub — read_pages("${externalUrl}") entrega os links reais (wa.me mora lá)`,
-          );
-        else if (externalUrl) next.push(`externalUrl="${externalUrl}" — read_pages vale`);
+        if (offered('read_pages')) {
+          if (extIsHub)
+            next.push(
+              `externalUrl é hub — read_pages("${externalUrl}") entrega os links reais (wa.me mora lá)`,
+            );
+          else if (externalUrl) next.push(`externalUrl="${externalUrl}" — read_pages vale`);
+        }
         if (contacts.phoneHints.length && !contacts.phones.length)
           next.push(
             `phoneHints ${contacts.phoneHints.join(', ')} sem DDD — serp "${handle} ${contacts.phoneHints[0]}" ou "<nome> <cidade>" telefone resolve`,
@@ -2197,9 +2357,11 @@ export async function executeTool(
           ]),
         ),
         ...budget(),
-        next: [
-          'o resultado que citar o nome do prospect (mesmo diretório/guia) → read_pages — é onde telefone mora',
-        ],
+        next: offered('read_pages')
+          ? [
+              'o resultado que citar o nome do prospect (mesmo diretório/guia) → read_pages — é onde telefone mora',
+            ]
+          : [],
       };
     }
     default:

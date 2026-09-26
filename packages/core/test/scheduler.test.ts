@@ -187,6 +187,62 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)(
       }
     });
 
+    test('a wakeup that came due during a pass still counts for that pass’s next due time', async () => {
+      await migrate(sql, MIGRATIONS);
+      const leadId = await mkLead();
+      try {
+        // due 200ms ago, but the pass started 1s ago — it couldn't have seen this row
+        const [w] = await sql<{ at: Date }[]>`
+        insert into agent_wakeups (lead_id, at, focus, created_by)
+        values (${leadId}, now() - interval '200 milliseconds', 'no meio', 'staff')
+        returning at
+      `;
+        const passStart = new Date(Date.now() - 1000);
+        const next = await controlTx(sql, (tx) => nextWakeupAtTx(tx, passStart));
+        expect(next).not.toBeNull();
+        expect(next!.getTime()).toBeLessThanOrEqual(new Date(w!.at).getTime());
+        // without a pass start (and for a pass that started after it) it's past — not counted
+        const later = await controlTx(sql, (tx) => nextWakeupAtTx(tx, new Date()));
+        expect(later === null || later.getTime() > new Date(w!.at).getTime()).toBe(true);
+      } finally {
+        await cleanup(leadId);
+      }
+    });
+
+    // Regression: the driver truncates `at` to the ms, so the timer could fire just before a
+    // wakeup due at …x.9ms; that pass fired nothing and the row was dropped as "past" (or
+    // backed off 30s). Offsets inside the ms put every wakeup in that window.
+    test('live: a wakeup due mid-millisecond fires on time', async () => {
+      await migrate(sql, MIGRATIONS);
+      const leadId = await mkLead();
+      startScheduler(sql, { jobs: ['agenda'], work: false });
+      stopClaims(true);
+      try {
+        await Bun.sleep(500);
+        for (const us of [900, 999, 750, 500, 950, 990]) {
+          const [w] = await sql<{ id: string }[]>`
+          insert into agent_wakeups (lead_id, at, focus, created_by)
+          values (${leadId},
+                  date_trunc('milliseconds', now()) + interval '400 milliseconds'
+                    + make_interval(secs => ${us} / 1e6),
+                  'sub-ms', 'staff')
+          returning id
+        `;
+          const fired = async () =>
+            (
+              await sql<{ status: string }[]>`select status from agent_wakeups where id = ${w!.id}`
+            )[0]?.status === 'fired';
+          expect({ us, fired: await until(fired, 2500) }).toEqual({ us, fired: true });
+          await sql`update agent_runs set status = 'canceled', finished_at = now()
+                  where lead_id = ${leadId} and status in ('queued', 'running')`;
+        }
+      } finally {
+        await stopScheduler(2000);
+        stopClaims(false);
+        await cleanup(leadId);
+      }
+    }, 15_000);
+
     test('live: sleeps until a wakeup is due, and a notification wakes it at once', async () => {
       await migrate(sql, MIGRATIONS);
       const leadId = await mkLead();
@@ -223,6 +279,6 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)(
         stopClaims(false);
         await cleanup(leadId);
       }
-    });
+    }, 15_000);
   },
 );

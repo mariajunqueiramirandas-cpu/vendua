@@ -1624,22 +1624,27 @@ dbDescribe('worker robustness (db)', () => {
 
   test('a blocked send is not a reusable result — its retry re-executes', async () => {
     await migrate(sql, MIGRATIONS);
-    const lead = await controlTx(sql, (tx) => insertLeadTx(tx, { name: 'Blocked Lead' }));
+    // whatsapp-only lead: send_message is offered, but the model asks for email anyway
+    const lead = await controlTx(sql, (tx) =>
+      insertLeadTx(tx, { name: 'Blocked Lead', whatsapp: `55119${String(Date.now()).slice(-8)}` }),
+    );
     const leadId = lead.body.lead.id;
     await sql`delete from agent_runs where status = 'queued'`;
     const runId = (await enqueueRun(sql, { kind: 'reply', leadId })!)!;
     await sql`update agent_runs set
       params = ${sql.json({
         script: [
-          // the send blocks (this lead has no channel); a write lands after it
+          // the send blocks (this lead has no email); a write lands after it
           {
             toolCalls: [
-              { name: 'send_message', args: { leadId, body: 'olá' } },
+              { name: 'send_message', args: { leadId, body: 'olá', channel: 'email' } },
               { name: 'update_lead', args: { id: leadId, city: 'Recife' } },
             ],
           },
           // an identical send next turn must execute, not return REPEAT
-          { toolCalls: [{ name: 'send_message', args: { leadId, body: 'olá' } }] },
+          {
+            toolCalls: [{ name: 'send_message', args: { leadId, body: 'olá', channel: 'email' } }],
+          },
           { toolCalls: [{ name: 'request_human', args: { leadId, reason: 'travou' } }] },
           { text: 'fim' },
         ],
@@ -1652,7 +1657,7 @@ dbDescribe('worker robustness (db)', () => {
       out?: { error?: string; blocked?: boolean };
     }[];
     expect(sends).toHaveLength(2);
-    // still blocked (no channel ever appeared) — but it RAN, not REPEAT
+    // still blocked (no email ever appeared) — but it RAN, not REPEAT
     expect(sends[1]!.out?.error ?? '').not.toMatch(/^REPEAT/);
     expect(sends[1]!.out?.blocked).toBe(true);
   });
@@ -1744,6 +1749,12 @@ dbDescribe('worker robustness (db)', () => {
         select value from control_settings where key = 'guardrails'
       `
     )[0];
+    // a configured resend whose API fails at dispatch — the send is offered, then fails on the wire
+    const priorKey = process.env.RESEND_API_KEY;
+    const realFetch = globalThis.fetch;
+    process.env.RESEND_API_KEY = 'test-key';
+    globalThis.fetch = (async () =>
+      new Response('upstream down', { status: 500 })) as unknown as typeof fetch;
     try {
       await sql`
         insert into control_settings (key, value)
@@ -1791,6 +1802,9 @@ dbDescribe('worker robustness (db)', () => {
       expect(rows[0]!.status).toBe('failed');
       expect(rows[0]!.dispatch_attempted_at).not.toBeNull();
     } finally {
+      globalThis.fetch = realFetch;
+      if (priorKey === undefined) delete process.env.RESEND_API_KEY;
+      else process.env.RESEND_API_KEY = priorKey;
       if (prior) {
         await sql`
           update control_integrations

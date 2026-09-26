@@ -29,7 +29,7 @@ import {
   type LlmResult,
   type ToolCall,
 } from './llm.ts';
-import { buildSystemPrompt } from './prompts.ts';
+import { buildSystemPrompt, ladderTags } from './prompts.ts';
 import { JOBS, type JobDef } from './jobs.ts';
 import {
   agentSettingTx,
@@ -43,7 +43,15 @@ import { enqueueInboxTx, renderInboxItems, type InboxItem } from './inbox.ts';
 import { requestAgentTx, sweepOrphanInbox } from './dispatch.ts';
 import { anchorTx } from './schedule-anchors.ts';
 import { provenance, SOURCE_PRIORITY, type TriggerSource } from './sources.ts';
-import { executeTool, toolsFor, bookDigest, type BookEntry, type ToolContext } from './tools.ts';
+import {
+  executeTool,
+  toolsFor,
+  bookDigest,
+  toolGate,
+  type BookEntry,
+  type ToolGate,
+  type ToolContext,
+} from './tools.ts';
 import { MonidBudget } from './channels/monid.ts';
 import {
   ACTION_TOOLS,
@@ -51,11 +59,12 @@ import {
   NON_IDEMPOTENT,
   JOB_KINDS,
   READ_TOOLS,
+  toolAvailable,
   type JobKind,
 } from './tool-meta.ts';
 import { pageKey } from './channels/discovery.ts';
 import { dispatchMessage } from './send.ts';
-import { channelAvailabilityTx, whatsappReadyTx } from './guardrails.ts';
+import { channelAvailabilityTx, sendableNowTx, whatsappReadyTx } from './guardrails.ts';
 import { isSendChannel, SEND_CHANNELS } from '../modules/threads.ts';
 import { bookingLinkForRunner } from '../modules/meetings.ts';
 import { emitControlEvent } from '../modules/control-events.ts';
@@ -640,6 +649,8 @@ async function finishRun(
 export async function contextFor(
   sql: Sql,
   run: RunRow,
+  /** the run's offered toolset — context lines only name tools it can call */
+  has: (tool: string) => boolean = () => true,
 ): Promise<{ text: string; goal: AgentGoal; bookingUrl: string | null }> {
   const parts: string[] = [];
   let goal: AgentGoal = 'negotiation';
@@ -693,7 +704,7 @@ export async function contextFor(
         );
         if (facts.length) {
           parts.push(
-            `FATOS (memória estruturada do lead — set_fact atualiza):\n${facts
+            `FATOS (memória estruturada do lead${has('set_fact') ? ' — set_fact atualiza' : ''}):\n${facts
               .map(
                 (f) =>
                   `- ${f.key}: ${f.value}${f.confidence < 1 ? ` (confiança ${f.confidence})` : ''}`,
@@ -740,7 +751,7 @@ export async function contextFor(
         }
         if (run.params.draftOnly === true) {
           parts.push(
-            'MODO ASSISTÊNCIA: staff pediu uma sugestão — send_message compõe rascunho, nada sai sem aprovação da equipe.',
+            `MODO ASSISTÊNCIA: staff pediu uma sugestão — ${has('send_message') ? 'send_message compõe' : 'draft_message compõe o'} rascunho, nada sai sem aprovação da equipe.`,
           );
         }
       }
@@ -776,7 +787,7 @@ export async function contextFor(
   if (run.lead_id && run.kind !== 'discovery') {
     const wakeups = await controlTx(sql, (tx) => pendingWakeupsTx(tx, run.lead_id!));
     parts.push(
-      `AGENDA (seus retornos agendados — use schedule para remarcar):\n${
+      `AGENDA (seus retornos agendados${has('schedule') ? ' — use schedule para remarcar' : ''}):\n${
         wakeups.length
           ? wakeups
               .map((w) => `- ${w.at}: ${w.focus}${w.requested ? ' (pedido pelo lead)' : ''}`)
@@ -1167,7 +1178,12 @@ export function replayJournal(prior: unknown[], claimsUnverified = false): Journ
       });
       continue;
     }
-    if (s.type === 'nudge' || s.type === 'reflection' || s.type === 'inbox') {
+    if (
+      s.type === 'nudge' ||
+      s.type === 'reflection' ||
+      s.type === 'inbox' ||
+      s.type === 'contact'
+    ) {
       flush();
       replay.messages.push({ role: 'user', content: s.content ?? '' });
       continue;
@@ -1336,6 +1352,12 @@ interface Attempt {
   tools: AgentTool[];
   /** Job kinds this attempt may serve — drainInbox adds a drained item's requestedKind. */
   toolKinds: Set<string>;
+  /** what this install can run — unconfigured tools hidden from every kind this attempt serves */
+  gate: ToolGate;
+  /** gate + this turn's lead reachability (send/draft) — what att.tools is built from */
+  liveGate: ToolGate;
+  /** last contact state announced to the model; unset = open (what the prompt assumes) */
+  contactState?: string;
   /** kernel-loop state — res is the current chat() result */
   i: number;
   res: LlmResult;
@@ -1575,17 +1597,89 @@ async function drainInbox(att: Attempt): Promise<number> {
   return items.length;
 }
 
+const attHas = (att: Attempt, name: string): boolean => att.tools.some((t) => t.name === name);
+
 // The offered toolset follows toolKinds — deduped by tool name.
 function widenAttemptTools(att: Attempt): void {
-  const seen = new Set(att.tools.map((t) => t.name));
+  const seen = new Set<string>();
+  att.tools = [];
   for (const k of att.toolKinds) {
-    for (const t of toolsFor(k)) {
+    for (const t of toolsFor(k, att.liveGate)) {
       if (!seen.has(t.name)) {
         seen.add(t.name);
         att.tools.push(t);
       }
     }
   }
+}
+
+const LEAD_CONTACT_TOOLS = ['send_message', 'draft_message', 'unsubscribe'];
+
+// Per-turn lead gate: send/draft are offered only while they can land on this lead
+// right now — research can add a channel mid-run, a pause or guardrail can close one.
+async function refreshLeadGate(att: Attempt): Promise<void> {
+  const { sql, leadId } = att.ctx;
+  const wants = (n: string) =>
+    !att.gate.disabled.has(n) && [...att.toolKinds].some((k) => toolAvailable(k, n));
+  if (!leadId || !LEAD_CONTACT_TOOLS.some(wants)) return;
+  const g = {
+    ...DEFAULT_GUARDRAILS,
+    ...(await getSetting<Partial<Guardrails>>(sql, 'guardrails', {})),
+  };
+  const reach = await controlTx(sql, (tx) =>
+    sendableNowTx(tx, g, leadId, {
+      channels: att.gate.channels,
+      draftOnly: att.ctx.draftOnly,
+      override: att.ctx.channelOverride,
+    }),
+  );
+  const disabled = new Map(att.gate.disabled);
+  const why = reach.why ?? 'sem canal alcançável';
+  if (!reach.send.length) disabled.set('send_message', `envio bloqueado agora (${why})`);
+  if (!reach.draft.length) disabled.set('draft_message', `rascunho bloqueado agora (${why})`);
+  att.liveGate = { disabled, channels: reach.send, draftChannels: reach.draft };
+  att.ctx.disabledTools = disabled;
+  widenAttemptTools(att);
+  // The prompt assumed contact works — say so when it doesn't, and again when it reopens.
+  const sendBlocked = wants('send_message') && !reach.send.length;
+  const draftBlocked = wants('draft_message') && !reach.draft.length;
+  // only the hand-sent channel is left — skipped when the install has no channel at all
+  // (the prompt's CANAIS block already says so)
+  const manualOnly =
+    wants('draft_message') &&
+    att.gate.channels.length > 0 &&
+    reach.draft.length > 0 &&
+    reach.draft.every((c) => c === 'manual');
+  const mode = draftBlocked ? 'blocked' : sendBlocked ? 'nosend' : manualOnly ? 'manual' : 'open';
+  const state = mode === 'open' ? 'open' : `${mode}:${why}`;
+  if (state === (att.contactState ?? 'open')) return;
+  att.contactState = state;
+  const has = (n: string) => attHas(att, n);
+  const next = [
+    has('update_lead') && 'update_lead nextActionAt',
+    has('schedule') && 'schedule',
+    has('request_human') ? 'request_human' : has('create_task') && 'create_task pra equipe',
+  ].filter(Boolean);
+  const nextStep = next.length ? `; registre o próximo passo (${next.join(', ')})` : '';
+  const manual = "channel 'manual' — a equipe envia à mão";
+  const note =
+    mode === 'blocked'
+      ? `CONTATO BLOQUEADO agora (${why}): nenhuma mensagem sai nem vira rascunho nesta run. Não insista${nextStep}.`
+      : mode === 'nosend'
+        ? `ENVIO BLOQUEADO agora (${why}): nenhuma mensagem sai nesta run — ${
+            manualOnly
+              ? `rascunho só com ${manual}`
+              : 'só rascunho, nos canais que a ferramenta lista'
+          }. Não insista${nextStep}.`
+        : mode === 'manual'
+          ? `Nenhum canal alcança este lead agora (${why}): o rascunho vai com ${manual}.`
+          : `CONTATO LIBERADO: ${
+              has('send_message')
+                ? `envio por ${reach.send.join(', ')}`
+                : `rascunho em ${reach.draft.filter((c) => c !== 'manual').join(', ')}`
+            } — siga o plano.`;
+  att.steps.push({ type: 'contact', content: note, contactState: state });
+  att.messages.push({ role: 'user', content: note });
 }
 
 // Attempt setup — journal resume + cost accounting + lease heartbeat.
@@ -1658,6 +1752,8 @@ async function openAttempt(sql: Sql, run: RunRow): Promise<Attempt> {
     system: '',
     tools: [],
     toolKinds: new Set([run.kind]),
+    gate: { disabled: new Map(), channels: [] },
+    liveGate: { disabled: new Map(), channels: [] },
     i: 0,
     res: undefined as never,
     nudged: false,
@@ -1728,7 +1824,19 @@ async function buildAttemptContext(att: Attempt): Promise<void> {
   att.provider = providerFor(integration, run.params);
   const pitch = await getPitch(sql);
   const { instructions } = await controlTx(sql, (tx) => agentSettingTx(tx));
-  const { text: context, goal, bookingUrl } = await contextFor(sql, run);
+  // A mock LLM runs against discovery's mock pages; a real one only gets tools that can work.
+  att.gate = await toolGate(sql, {
+    simulated: !integration || integration.driver === 'mock',
+  });
+  att.liveGate = att.gate;
+  // a resumed attempt already told the model the contact state — don't repeat it
+  for (const e of att.priorSteps) {
+    const cs = (e as { contactState?: unknown } | null)?.contactState;
+    if (typeof cs === 'string') att.contactState = cs;
+  }
+  att.tools = toolsFor(run.kind, att.gate);
+  const offered = new Set(att.tools.map((t) => t.name));
+  const { text: context, goal, bookingUrl } = await contextFor(sql, run, (n) => offered.has(n));
   const memory = { facts: await memoryForPrompt(sql, run) };
   const g = await getSetting<Partial<Guardrails>>(sql, 'guardrails', {});
   // The prompt only promises autocontact under the same conditions create_lead's gate checks.
@@ -1740,10 +1848,21 @@ async function buildAttemptContext(att: Attempt): Promise<void> {
       enabled: (g.discoveryAutoContact ?? DEFAULT_GUARDRAILS.discoveryAutoContact) && waDriverOn,
       minScore: g.discoveryContactMinScore ?? DEFAULT_GUARDRAILS.discoveryContactMinScore,
     },
+    tools: offered,
+    channels: att.gate.channels,
   });
-  att.tools = toolsFor(run.kind);
   // Kinds from stamped mail must be visible to the model, not just permitted in dispatch.
   widenAttemptTools(att);
+  // Discovery with nothing to search or read can only burn tokens — fail it up front, with why.
+  if (
+    run.kind === 'discovery' &&
+    !['web_search', 'read_pages', 'serp', 'maps_lookup', 'instagram_profile'].some((n) =>
+      attHas(att, n),
+    )
+  ) {
+    const why = [...new Set(att.gate.disabled.values())].join('; ');
+    throw new Error(`discovery sem ferramenta de pesquisa configurada (${why})`);
+  }
   const replay = (att.replay = replayJournal(att.priorSteps, !att.claimsChecked));
   const ctx: ToolContext = {
     sql,
@@ -1769,6 +1888,7 @@ async function buildAttemptContext(att: Attempt): Promise<void> {
     // staff assist runs may only compose — send_message degrades to a draft
     draftOnly: run.params.draftOnly === true,
     toolKinds: att.toolKinds,
+    disabledTools: att.gate.disabled,
   };
   att.ctx = ctx;
   // Clone book entries on the way in — in-place mutation would rewrite the earlier
@@ -1794,6 +1914,7 @@ async function buildAttemptContext(att: Attempt): Promise<void> {
 
 // One chat() turn: usage folds into the ledger and the turn journals verbatim.
 async function modelTurn(att: Attempt): Promise<void> {
+  await refreshLeadGate(att);
   const res = (att.res = await att.provider.chat({
     system: att.system,
     messages: att.messages,
@@ -1850,7 +1971,9 @@ async function finishGate(att: Attempt): Promise<'end' | 'again'> {
             )}${readUrls.size ? `; leituras ${[...readUrls].slice(0, 8).join(', ')}` : ''}.`
         : '';
     // Per-prospect untried moves from the ledger.
-    const LADDER = ['maps', 'ig', 'hub', 'serp', 'dir'];
+    const has = (n: string) => attHas(att, n);
+    const LADDER = ladderTags(has);
+    const search = has('serp') ? 'serp' : has('web_search') ? 'web_search' : null;
     const untried = (leadName: string): string => {
       const e = att.ctx.book.get(leadName.toLowerCase());
       if (!e) return '';
@@ -1859,14 +1982,22 @@ async function finishGate(att: Attempt): Promise<'end' | 'again'> {
     };
     const nudge =
       !created.length && !merged
-        ? `Nenhum lead entrou no CRM ainda — descoberta só conta quando o lead é criado.${tried} Siga por um sabor NÃO tentado — outra variação de segmento/modelo de negócio/cidade — ou read_pages no prospect fraco (o diretório que citar o nome é onde telefone mora).`
+        ? `Nenhum lead entrou no CRM ainda — descoberta só conta quando o lead é criado.${tried} Siga por um sabor NÃO tentado — outra variação de segmento/modelo de negócio/cidade${has('read_pages') ? ' — ou read_pages no prospect fraco (o diretório que citar o nome é onde telefone mora)' : ''}.`
         : missingWa.length
           ? `${missingWa.length} lead(s) sem whatsapp: ${missingWa
               .map((l) => `${String(l.name ?? '?')}${untried(String(l.name ?? ''))}`)
               .slice(0, 6)
-              .join(
-                ', ',
-              )}.${tried} Uma rodada por nome antes de encerrar: serp "<nome> <cidade>" telefone/whatsapp (ângulo novo, não repita as buscas listadas); e no resultado que citar o nome — mesmo diretório/guia local — read_pages vale (é onde telefone e endereço moram).`
+              .join(', ')}.${tried} Uma rodada por nome antes de encerrar: ${
+              [
+                search &&
+                  `${search} "<nome> <cidade>" telefone/whatsapp (ângulo novo, não repita as buscas listadas)`,
+                has('read_pages') &&
+                  'no resultado que citar o nome — mesmo diretório/guia local — read_pages vale (é onde telefone e endereço moram)',
+              ]
+                .filter(Boolean)
+                .join('; e ') ||
+              'sem ferramenta de busca nesta run — marque no book como dead os que não têm whatsapp'
+            }.`
           : null;
     if (nudge) {
       att.nudged = true;
@@ -1898,7 +2029,21 @@ async function finishGate(att: Attempt): Promise<'end' | 'again'> {
     if (att.job.requiresAction) att.nudged = true;
     else att.actionNudged = true;
     att.limit = att.i + 5;
-    const nudge = `Ação pendente — a run ainda não teve efeito visível (send_message/draft, request_human, set_state, unsubscribe, update_lead, create_task). Pesquisar e sair sem agir deixa o lead falando sozinho — aja agora; se um guardrail ou canal morto trava a ação, request_human é a saída.`;
+    const acts = [
+      'send_message',
+      'draft_message',
+      'request_human',
+      'set_state',
+      'unsubscribe',
+      'update_lead',
+      'create_task',
+    ].filter((n) => attHas(att, n));
+    const way = attHas(att, 'request_human')
+      ? 'request_human'
+      : attHas(att, 'create_task')
+        ? 'create_task pra equipe'
+        : null;
+    const nudge = `Ação pendente — a run ainda não teve efeito visível (${acts.join(', ')}). Pesquisar e sair sem agir deixa o lead falando sozinho — aja agora${way ? `; se um guardrail ou canal morto trava a ação, ${way} é a saída` : ''}.`;
     messages.push({ role: 'assistant', content: res.text ?? 'ok' });
     messages.push({ role: 'user', content: nudge });
     steps.push({ type: 'nudge', content: nudge });
@@ -2026,7 +2171,16 @@ async function dispatchParallel(att: Attempt): Promise<void> {
           .slice(0, 8)
           .map((q) => `"${q}"`)
           .join(', ') || 'nenhuma'
-      }; leituras ${[...urls].slice(0, 8).join(', ') || 'nenhuma'}.\nPassos restantes: ~${Math.max(0, att.limit - att.i)}. Qual o próximo melhor movimento — novo ângulo de busca, maps_lookup, instagram_profile num @ que sobrou, ou fechar um prospect como dead? Responda e siga.`;
+      }; leituras ${[...urls].slice(0, 8).join(', ') || 'nenhuma'}.\nPassos restantes: ~${Math.max(0, att.limit - att.i)}. Qual o próximo melhor movimento — ${[
+        'novo ângulo de busca',
+        attHas(att, 'maps_lookup') && 'maps_lookup',
+        attHas(att, 'instagram_profile')
+          ? 'instagram_profile num @ que sobrou'
+          : attHas(att, 'read_pages') && 'read_pages num @ ou site que sobrou',
+        'ou fechar um prospect como dead',
+      ]
+        .filter(Boolean)
+        .join(', ')}? Responda e siga.`;
       steps.push({ type: 'reflection', content: reflection });
       messages.push({ role: 'user', content: reflection });
     }
