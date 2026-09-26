@@ -199,7 +199,7 @@ export interface Kpi {
 export function KpiStrip({ items, className }: { items: Kpi[]; className?: string | undefined }) {
   return (
     <div className={cn('no-scrollbar -mx-3 flex overflow-x-auto px-3 md:mx-0 md:px-0', className)}>
-      <div className="flex min-w-full divide-x rounded-lg border bg-card shadow-card">
+      <div className="flex min-w-full shrink-0 divide-x rounded-lg border bg-card shadow-card">
         {items.map((k) => {
           const body = (
             <>
