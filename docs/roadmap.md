@@ -8,8 +8,9 @@
 | ----------------------------- | ------- | -------------------------------------------------------------------------------------------------------------------------- |
 | 0 — Foundations               | ✅ Done | Monorepo, Core skeleton, Kernel, 3 spike storefronts, Contract v1 drafted                                                  |
 | 1 — Storefront factory        | ✅ Done | Contract frozen, conformance, CLI, fleet isolation, Founder CRM — which has since grown well past its v0 scope (see below) |
+| 1b — Kernel v1 + updatability | ⬜ Next | **Current priority.** Complete SDK surface + proven update path, before any customer                                       |
 | 2 — Commerce completeness     | ⬜ Open | Order lifecycle, catalog depth, growth surfaces — all unchecked                                                            |
-| 3 — Payments + merchant admin | ⬜ Open | The "buy a plan → provisioned store" self-serve path lives here; top product priority                                      |
+| 3 — Payments + merchant admin | ⬜ Open | The "buy a plan → provisioned store" self-serve path; starts once 1b's exit is met                                         |
 | 4 — First tenant operated     | ⬜ Open | Edge, Control Plane v0, provisioner — the other half of the 1-hour signup→store promise                                    |
 | 5–8 — Fleet loop → scale      | ⬜ Open | Blocked on 2–4 having a fleet to operate                                                                                   |
 
@@ -47,10 +48,14 @@ the same `agent_runs` machinery the Phase-6 generation pipeline will reuse:
 - **Backlog** — [`agent-improvements.md`](agent-improvements.md) is the
   maintained list; every numbered item has shipped, two follow-ups remain.
 
-The product bet in the Phase 3/4 gap: the sales agent above is the
-acquisition engine, and "ad → paid plan → agent-built store live in ~1 hour"
-is the pipeline those two phases must close — intake exists, money and
-provisioning do not.
+**Priority call (2026-09-26): no customers before the Kernel is complete and
+updatable.** Every store launched on an incomplete Kernel is a store that later
+needs hand migration; the whole model depends on the first tenant already
+sitting on a Kernel that can be changed under it without touching its code.
+So [Phase 1b](#phase-1b--kernel-v1-complete-updatable-by-construction) comes
+before the "ad → paid plan → agent-built store live in ~1 hour" path
+(Phases 3/4) — the sales agent keeps building pipeline meanwhile, but nobody
+is onboarded until 1b's exit is met.
 
 **Organizing principle: the fleet is the product.** This roadmap is not "build
 the platform, then learn to operate 1000 stores". Every phase must leave the
@@ -75,13 +80,13 @@ migrate → generate → scale**. Two consequences versus a naive build order:
 Phases build capability; these stages gate _growth_. Do not grow past a stage
 until its row is true.
 
-| Stage        | N     | Must be true before growing past it                                                                           |
-| ------------ | ----- | ------------------------------------------------------------------------------------------------------------- |
-| First store  | 1     | Real paid order taken; provision/promote/rollback ran through the Control Plane — zero manual steps           |
-| Pilot cohort | ~5    | Conformance + changed-path CI green on every storefront PR; probes live on all hostnames; `_examples/` seeded |
-| Early fleet  | ~25   | One boring train shipped; one codemod rehearsal done; runbook covers the top 5 incidents                      |
-| Growth       | ~100  | Agent pipeline is the default intake; Core HA + LKG proven by a real failover drill; train cost measured      |
-| Fleet        | ~1000 | `fleet-*` shard rehearsed; Kernel publishing path proven; train economics budgeted                            |
+| Stage        | N     | Must be true before growing past it                                                                                                                                                                                                   |
+| ------------ | ----- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| First store  | 1     | Phase 1b exit met (Kernel v1 complete; a Kernel minor and a Contract-major rehearsal reached every in-repo storefront untouched); real paid order taken; provision/promote/rollback ran through the Control Plane — zero manual steps |
+| Pilot cohort | ~5    | Conformance + changed-path CI green on every storefront PR; probes live on all hostnames; `_examples/` seeded                                                                                                                         |
+| Early fleet  | ~25   | One boring train shipped; one codemod rehearsal done; runbook covers the top 5 incidents                                                                                                                                              |
+| Growth       | ~100  | Agent pipeline is the default intake; Core HA + LKG proven by a real failover drill; train cost measured                                                                                                                              |
+| Fleet        | ~1000 | `fleet-*` shard rehearsed; Kernel publishing path proven; train economics budgeted                                                                                                                                                    |
 
 ## Phase 0 — Fleet-shaped foundations (weeks 0–4) ✅
 
@@ -135,6 +140,78 @@ Goal: storefronts are _produced_, not hand-built — and the repo enforces it.
 Exit: `vendua scaffold && vendua build && vendua qa` is green on a fresh
 storefront without any custom code — and a storefront PR physically cannot
 touch platform code.
+
+## Phase 1b — Kernel v1 complete, updatable by construction
+
+Goal: the SDK a storefront is written against is finished, and every kind of
+change in [09](architecture/09-migrations-and-fleet-trains.md#change-classes--process-map)
+has been shipped to the in-repo storefronts (`_template`, `_examples/*`,
+`quero-pudim`, `forn`, `brasa`) without hand edits. **No customer is onboarded
+before this exit.** Items that used to sit in Phases 3, 5 and 6 moved here
+because they are what "updatable" means; the ones that need real merchants
+(early ring, volunteer discounts) stay where they were.
+
+### 1b-i — The SDK surface ([02](architecture/02-kernel.md), [04](architecture/04-extensions-and-overrides.md))
+
+- [ ] Default implementation for **every** registered slot. Today only the
+      notice slots render; `checkout.*`, `cart.*`, `order.*`, `catalog.*`,
+      `store.HoursTable` and `system.ConsentBanner` / `ErrorFallback` /
+      `NotFound` / `EmergencyOverlay` exist only as keys in `SLOT_KEYS`.
+      Token-driven, in `@layer vendua`, split out as `@vendua/ui-defaults`.
+- [ ] Every slot renders a storefront override inside an error boundary with
+      the default as fallback, plus a conformance fixture with canonical props.
+      Unskip `[S05]` with a fixture storefront whose override throws.
+- [ ] Missing primitives: `ProductLink`, `CheckoutButton`, `NotifyMeButton`,
+      `Img` — each stamps its `data-vendua` hook and ARIA semantics.
+- [ ] Missing hooks: `useDeliveryQuote`, `useCustomer`, `useAnalytics`; typed
+      error codes map to default surfaces when the storefront doesn't handle
+      them.
+- [ ] Analytics beacon: primitives and surfaces emit the standard taxonomy
+      ([15](architecture/15-analytics.md)); custom events go through an
+      allow-listed `track()`.
+- [ ] Token contrast check at build (WCAG AA on default surfaces blocks
+      release).
+- [ ] `vendua check` lint rules: `no-deep-kernel-imports`, `override-purity`,
+      `require-primitives`, `no-v-namespace` (alongside the existing
+      direct-fetch and slot-key checks).
+- [ ] Kernel API review and freeze for v1.0: every export is intended, the
+      `exports` map hides the rest, and each storefront in the repo builds on
+      the frozen surface with no casts.
+
+### 1b-ii — Updatability ([09](architecture/09-migrations-and-fleet-trains.md), [11](architecture/11-backward-compatibility.md))
+
+- [ ] Kernel gets real semver (it is `0.0.0` today); the build writes an
+      artifact manifest with Kernel version × Contract major × Core API majors,
+      and CI checks it against a compat matrix.
+- [ ] Staleness CI job: a reference storefront built on the oldest supported
+      Kernel line re-runs the S-series on every Core and Kernel merge
+      ([11](architecture/11-backward-compatibility.md#the-staleness-guarantee--tested-not-asserted)).
+      _(was Phase 5)_
+- [ ] `v.js` moves out of `packages/core/src/loader.ts` into `@vendua/loader`,
+      built and versioned separately; per-tenant maintenance switch drilled on
+      a Venduá-owned store. _(was Phase 5)_
+- [ ] Server-driven notices end to end: Core emits `store_paused`, an
+      unmodified storefront renders it; then ship one new notice kind and
+      verify it reaches a storefront that was never rebuilt. _(was Phases 3
+      and 5)_
+- [ ] Train dry-run: a Kernel minor (e.g. a new slot default) rebuilds every
+      in-repo storefront in one affected-graph run, conformance green on all,
+      zero storefront diffs. Promotion by ring waits for the Control Plane
+      (Phase 4); the build + judge half is proven here.
+- [ ] `@vendua/codemods` + `vendua codemod run <id> --dry`, then a **Contract
+      major rehearsal** (a slot rename with alias window) over every in-repo
+      storefront: codemod, typecheck, conformance, failure-tail measured.
+      _(was Phase 6)_
+- [ ] Design updates through tokens: changing a storefront's tokens restyles
+      every Kernel default and every `var(--v-*)` in its own CSS on the next
+      build, with no component edits — asserted by a conformance visual
+      check.
+
+Exit: every slot, primitive and hook in the v1 spec exists with a default and a
+fixture; a Kernel minor and a Contract-major rehearsal both reached every
+in-repo storefront with zero hand edits; the stale reference storefront is green
+in CI; `v.js` renders the kill switch on a broken build. **Gate for the first
+customer.**
 
 ## Phase 2 — Commerce completeness (weeks 8–12)
 
@@ -196,8 +273,8 @@ without touching a repo.
       state machine ([13](architecture/13-payments.md)).
 - [ ] Merchant admin MVP: catalog CRUD (incl. Phase-2 fields), hours,
       zones/fees, orders, MP connect.
-- [ ] **Self-serve signup + subscription billing** — the top-priority
-      product path: a visitor goes from plan selection on the site to a paid
+- [ ] **Self-serve signup + subscription billing** — the core product path
+      once 1b is done: a visitor goes from plan selection on the site to a paid
       Venduá subscription and a provisioned store with zero staff
       involvement. Pre-auth signup surface in Core, a plan catalog
       (`tenants.plan` already exists), and Venduá-side recurring billing —
@@ -205,9 +282,8 @@ without touching a repo.
       merchant's own MP account; this is the merchant paying Venduá).
       Paid signup hands off to the provisioner (Phase 4); the invite path
       stays for sales-assisted deals.
-- [ ] Server-driven notices end-to-end: emit `store_paused` from Core, watch
-      an _unmodified_ storefront render it
-      ([05](architecture/05-system-surfaces.md)).
+- Server-driven notices end to end moved to
+  [Phase 1b](#1b-ii--updatability-09-11).
 
 Exit: a merchant edits catalog/hours and receives paid PIX orders without
 engineer involvement.
@@ -247,12 +323,11 @@ proven while N is small enough to fix cheaply.
 - [ ] Ship a real Kernel minor through canary → early → stable with gates
       ([09](architecture/09-migrations-and-fleet-trains.md),
       [11](architecture/11-backward-compatibility.md)).
-- [ ] Compat matrix + `kernel_skew` alerts + the permanent stale-storefront CI
-      job ([11](architecture/11-backward-compatibility.md#the-staleness-guarantee--tested-not-asserted)).
-- [ ] `v.js` loader live on all storefronts; per-tenant kill switch drilled
-      once ([16](architecture/16-operations-and-incidents.md#the-kill-switch)).
-- [ ] Deliberately ship one server-driven feature (e.g. "delivery estimate"
-      notice) and verify it reaches a storefront that was never rebuilt.
+- [ ] `kernel_skew` alerts in the Control Plane on top of the compat matrix
+      and stale-storefront CI job built in Phase 1b.
+- [ ] Kill switch drilled on a real merchant's store
+      ([16](architecture/16-operations-and-incidents.md#the-kill-switch)) —
+      the loader itself and its first drill land in Phase 1b.
 
 Exit: a fleet train is _boring_; a rollback drill takes minutes; stale-store
 CI has caught — or demonstrably would catch — a real break. **Stage gates:
@@ -271,8 +346,9 @@ interface is the only interface.
 - [ ] Failure-bundle format + agent queue in the Control Plane.
 - [ ] Track the metrics: iterations-to-green, agent-minutes per storefront,
       post-launch defect rate.
-- [ ] First Contract major **rehearsal** on a staging cohort — the codemod
-      machinery must be proven before it's needed for real
+- [ ] Re-run the Contract-major rehearsal (first done in Phase 1b on the
+      in-repo storefronts) on a staging cohort of agent-generated stores —
+      their failure tail is the number that matters
       ([09](architecture/09-migrations-and-fleet-trains.md#contract-majors)).
 
 Exit: a new storefront goes from DesignSpec to live `*.vendua.com.br` site with
