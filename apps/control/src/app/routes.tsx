@@ -1,12 +1,17 @@
-import { lazy as reactLazy, Suspense, type ComponentType, type ReactNode } from 'react';
+import { lazy as reactLazy, Suspense, useEffect, type ComponentType, type ReactNode } from 'react';
 import { Navigate, Route, Routes, useLocation, useParams } from 'react-router-dom';
 import { LoadingRows } from '@/components/common.tsx';
+import { Page, type PageTab } from '@/components/Page.tsx';
+import { AGENT_TABS } from '@/features/agent/tabs.ts';
+import { PIPELINE_TABS } from '@/features/pipeline/tabs.ts';
 
 // Route chunks are content-hashed and a deploy replaces them — a tab opened before
 // the deploy would 404 on its next lazy import. Reload once to pick up the new build;
 // the sessionStorage flag stops a genuinely broken chunk from looping.
 const RELOAD_KEY = 'vendua-control-chunk-reload';
+const loaders: (() => Promise<unknown>)[] = [];
 function lazy<T extends ComponentType>(load: () => Promise<{ default: T }>) {
+  loaders.push(load);
   return reactLazy(() =>
     load().then(
       (m) => {
@@ -64,11 +69,48 @@ function Legacy({
   return <Navigate to={`${path}${s ? `?${s}` : ''}`} replace />;
 }
 
+/** Header of the page being loaded, so only its content area shows a skeleton. */
+function chrome(path: string): { title: string; tabs?: PageTab[]; back?: string } {
+  if (path.startsWith('/pipeline/relatorios')) return { title: 'Pipeline', tabs: PIPELINE_TABS };
+  if (path.startsWith('/pipeline/')) return { title: 'Lead', back: '/pipeline' };
+  if (path.startsWith('/pipeline')) return { title: 'Pipeline', tabs: PIPELINE_TABS };
+  if (path.startsWith('/inbox/')) return { title: 'conversa', back: '/inbox' };
+  if (path.startsWith('/inbox')) return { title: 'Inbox' };
+  if (path.startsWith('/agenda')) return { title: 'Agenda' };
+  if (path.startsWith('/agente')) return { title: 'Agente', tabs: AGENT_TABS };
+  if (path.startsWith('/config')) return { title: 'Config' };
+  return { title: 'Hoje' };
+}
+
+function RouteFallback() {
+  const { pathname } = useLocation();
+  return (
+    <Page {...chrome(pathname)}>
+      <LoadingRows />
+    </Page>
+  );
+}
+
+// Fetch the other hubs' chunks once the first screen is up, so switching hubs
+// renders immediately instead of falling back to a skeleton.
+function usePreloadRoutes() {
+  useEffect(() => {
+    const run = () => loaders.forEach((l) => void l().catch(() => undefined));
+    if ('requestIdleCallback' in window) {
+      const id = window.requestIdleCallback(run, { timeout: 3000 });
+      return () => window.cancelIdleCallback(id);
+    }
+    const t = setTimeout(run, 1500);
+    return () => clearTimeout(t);
+  }, []);
+}
+
 const Lazy = ({ children }: { children: ReactNode }) => (
-  <Suspense fallback={<LoadingRows className="p-4" />}>{children}</Suspense>
+  <Suspense fallback={<RouteFallback />}>{children}</Suspense>
 );
 
 export function AppRoutes() {
+  usePreloadRoutes();
   return (
     <Lazy>
       <Routes>
