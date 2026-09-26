@@ -39,7 +39,7 @@ Generate secrets with `openssl rand -hex 32`.
 In Dokploy, assign a domain to each web service (port 80):
 
 - `site` → marketing domain (e.g. `vendua.example.com`)
-- `quero-pudim`, `brasa`, `forn` → each storefront's public domain
+- `quero-pudim` → the storefront's public domain
 - `core` → **internal only**; no domain. Storefront nginx proxies
   `/storefront/v1`, `/checkout/v1`, and `/v1` to it.
 - `crm` → the staff CRM domain (e.g. `crm.example.com`) — proxies only
@@ -49,7 +49,7 @@ In Dokploy, assign a domain to each web service (port 80):
   Traefik→nginx→core chain) collapses every staff IP into one bucket.
 
 Then set `SEED_DOMAINS` to match, e.g.
-`quero-pudim:pudim.example.com,brasa:grill.example.com` — tenant routing is
+`quero-pudim:pudim.example.com` — tenant routing is
 Host-header based, so each storefront's public domain must exist in the
 `domains` table. Seed runs on boot when `SEED_DEMO=1`; to add a domain later:
 
@@ -103,14 +103,14 @@ Boot order is handled by healthchecks: `db` healthy → `core` migrates
 
 ## Services
 
-| Service                          | Image                                                      | Exposed port   |
-| -------------------------------- | ---------------------------------------------------------- | -------------- |
-| `db`                             | postgres:16-alpine                                         | internal only  |
-| `core`                           | `packages/core/Dockerfile` (Bun)                           | 8787, internal |
-| `quero-pudim` / `brasa` / `forn` | `storefronts/Dockerfile` `target: storefront` (vite→nginx) | 80             |
-| `crm`                            | `nginx:1.28-alpine` + `apps/control/nginx.conf`            | 80             |
-| `site`                           | `storefronts/Dockerfile` `target: site` (SvelteKit→nginx)  | 80             |
-| `ig-sidecar`                     | `services/ig-sidecar/Dockerfile` (Go)                      | 8790, internal |
+| Service       | Image                                                      | Exposed port   |
+| ------------- | ---------------------------------------------------------- | -------------- |
+| `db`          | postgres:16-alpine                                         | internal only  |
+| `core`        | `packages/core/Dockerfile` (Bun)                           | 8787, internal |
+| `quero-pudim` | `storefronts/Dockerfile` `target: storefront` (vite→nginx) | 80             |
+| `crm`         | `nginx:1.28-alpine` + `apps/control/nginx.conf`            | 80             |
+| `site`        | `storefronts/Dockerfile` `target: site` (SvelteKit→nginx)  | 80             |
+| `ig-sidecar`  | `services/ig-sidecar/Dockerfile` (Go)                      | 8790, internal |
 
 All web services share the Dockerfile's `build` stage, so a deploy runs one
 `bun install` + one vite pass total (compose/bake dedupe the shared stage).

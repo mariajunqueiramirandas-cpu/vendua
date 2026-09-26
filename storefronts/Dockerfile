@@ -12,8 +12,6 @@ COPY apps/control/package.json apps/control/package.json
 COPY site/package.json site/package.json
 # New storefronts go here — one COPY per workspace package.json.
 COPY storefronts/quero-pudim/package.json storefronts/quero-pudim/package.json
-COPY storefronts/brasa/package.json storefronts/brasa/package.json
-COPY storefronts/forn/package.json storefronts/forn/package.json
 COPY storefronts/_examples/quero-pudim/package.json storefronts/_examples/quero-pudim/package.json
 COPY storefronts/_template/package.json storefronts/_template/package.json
 RUN --mount=type=cache,id=vendua-bun,target=/root/.bun/install/cache \

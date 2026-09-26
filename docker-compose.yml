@@ -96,36 +96,6 @@ services:
       driver: json-file
       options: { max-size: '10m', max-file: '3' }
 
-  brasa:
-    build:
-      context: .
-      dockerfile: storefronts/Dockerfile
-      target: storefront
-      args:
-        STOREFRONT: brasa
-    depends_on:
-      core:
-        condition: service_healthy
-    restart: unless-stopped
-    logging:
-      driver: json-file
-      options: { max-size: '10m', max-file: '3' }
-
-  forn:
-    build:
-      context: .
-      dockerfile: storefronts/Dockerfile
-      target: storefront
-      args:
-        STOREFRONT: forn
-    depends_on:
-      core:
-        condition: service_healthy
-    restart: unless-stopped
-    logging:
-      driver: json-file
-      options: { max-size: '10m', max-file: '3' }
-
   # Instagram DM transport (services/ig-sidecar, Go + mautrix-meta, AGPL-3.0). Internal
   # only: Core pushes the stored session in and it posts signed events back. Without
   # IG_SIDECAR_SECRET it idles and refuses every call.
