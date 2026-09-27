@@ -3,7 +3,12 @@ import { HttpError, str } from '../platform/http.ts';
 import { claimControl, controlTx, type ClaimResult } from './control.ts';
 import { emitControlEvent } from './control-events.ts';
 import { leadJson, type LeadRow } from './leads.ts';
-import { DEFAULT_GUARDRAILS, getSettingTx, type Guardrails } from './integrations.ts';
+import {
+  DEFAULT_GUARDRAILS,
+  getSettingTx,
+  newLeadModesOf,
+  type Guardrails,
+} from './integrations.ts';
 
 // Unified inbox: one thread per (lead, channel); owns persistence + the
 // draft→approve→dispatch lifecycle — provider sends live in agent/channels.
@@ -401,6 +406,8 @@ export async function addInboundMessage(
         name,
         source: `inbound:${input.channel}`,
         discovered_via: input.channel,
+        // they wrote first — the workspace decides whether the agent answers live or drafts
+        agent_mode: newLeadModesOf(await getSettingTx<unknown>(tx, 'agent', null)).inbound,
       };
       if (input.channel === 'email') fields.email = from;
       else if (input.channel === 'instagram') {

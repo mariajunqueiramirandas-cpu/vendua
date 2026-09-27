@@ -82,7 +82,11 @@ describe('agent v2 — pure', () => {
       instructions: DEFAULT_INSTRUCTIONS,
       weeklyDiscoveryUsd: 0,
       schedule: { discoveryHour: 9, weeklyDay: 1, weeklyHour: 8 },
+      newLeadMode: { inbound: 'auto', discovery: 'auto' },
     });
+    expect(
+      normalizeAgent({ newLeadMode: { inbound: 'draft', discovery: 'yolo' } }).newLeadMode,
+    ).toEqual({ inbound: 'draft', discovery: 'auto' });
     expect(
       normalizeAgent({ schedule: { discoveryHour: 25, weeklyDay: 3, weeklyHour: 1.5 } }).schedule,
     ).toEqual({ discoveryHour: 9, weeklyDay: 3, weeklyHour: 8 });

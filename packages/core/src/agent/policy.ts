@@ -3,6 +3,8 @@ import {
   DEFAULT_GUARDRAILS,
   DEFAULT_AGENT_RULES,
   capCentsOf,
+  newLeadModesOf,
+  type NewLeadModes,
   getSettingTx,
   phoneIsIgnored,
   type Guardrails,
@@ -46,6 +48,8 @@ export interface AgentSetting {
   /** strategist may enable its own discovery briefs while trailing-7d discovery spend stays under this; 0 = never */
   weeklyDiscoveryUsd: number;
   schedule: AgentSchedule;
+  /** the agent mode leads start in when no one on staff chose one */
+  newLeadMode: NewLeadModes;
 }
 
 // Normalizes a stored row: bad/missing fields fall back to defaults so a hand-edited row can't poison policy.
@@ -72,6 +76,7 @@ export function normalizeAgent(v: unknown): AgentSetting {
         ? o.instructions.slice(0, AGENT_INSTRUCTIONS_MAX)
         : DEFAULT_INSTRUCTIONS,
     weeklyDiscoveryUsd: Number.isFinite(usd) ? Math.min(50, Math.max(0, usd)) : 0,
+    newLeadMode: newLeadModesOf(o),
     schedule: {
       discoveryHour: int(sc.discoveryHour, 23, DEFAULT_SCHEDULE.discoveryHour),
       weeklyDay: int(sc.weeklyDay, 6, DEFAULT_SCHEDULE.weeklyDay),
@@ -178,8 +183,8 @@ export async function explainAutonomyTx(
         l.whatsapp, l.phone, l.email, l.email_bounced_at,
         coalesce((select sum(r.cost_cents) from agent_runs r where r.lead_id = l.id), 0)::int as spent,
         (select count(*) from lead_messages m join lead_threads t on t.id = m.thread_id
-          where t.lead_id = l.id and m.direction = 'out'
-            and m.status in ('queued', 'sending', 'sent', 'delivered'))::int as prior_out,
+          where t.lead_id = l.id
+            and (m.direction = 'in' or m.status in ('queued', 'sending', 'sent', 'delivered')))::int as prior_out,
         (select count(*) from lead_threads t
           where t.lead_id = l.id and t.channel = 'whatsapp' and t.external_id is not null)::int as wa_thread
       from leads l where l.id = ${leadId}
@@ -231,7 +236,8 @@ export async function explainAutonomyTx(
     const msg: Record<string, string> = {
       workspace_copilot: 'modo copiloto — toda mensagem vira rascunho para aprovação',
       lead_mode_draft: 'lead em modo rascunho — mensagens aguardam aprovação',
-      first_contact_draft: 'primeiro contato passa pela fila de aprovação',
+      first_contact_draft:
+        'primeira abordagem (a gente fala primeiro) passa pela fila de aprovação',
     };
     if (d.code) reasons.push({ code: d.code, message: msg[d.code] ?? d.code });
     else

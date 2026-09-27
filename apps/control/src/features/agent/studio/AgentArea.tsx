@@ -35,8 +35,9 @@ export const LEVELS: {
     key: 'supervised',
     label: 'supervisionado',
     tag: 'o padrão',
-    sends: 'respostas e follow-ups saem direto; primeiro contato espera aprovação',
-    queue: 'só o primeiro contato para na fila',
+    sends:
+      'respostas e follow-ups saem direto; abordagem fria (a gente fala primeiro) espera aprovação',
+    queue: 'só a abordagem fria para na fila',
   },
   {
     key: 'autopilot',
@@ -309,6 +310,41 @@ function AgentForm({
               )}
             </div>
           )}
+          <div className="mt-3 grid gap-3 border-t pt-3 md:grid-cols-2">
+            {(
+              [
+                [
+                  'inbound',
+                  'leads que chegam sozinhos',
+                  'escreveram pro whatsapp, instagram ou e-mail',
+                ],
+                [
+                  'discovery',
+                  'leads achados pela descoberta',
+                  'criados pelo agente nos briefs de busca',
+                ],
+              ] as const
+            ).map(([k, label, hint]) => (
+              <Field key={k} label={`${label} começam em`} htmlFor={`agent-new-${k}`} hint={hint}>
+                <Select
+                  id={`agent-new-${k}`}
+                  value={a.newLeadMode[k]}
+                  onChange={(e) =>
+                    setA({
+                      newLeadMode: { ...a.newLeadMode, [k]: e.target.value as 'draft' | 'auto' },
+                    })
+                  }
+                >
+                  <option value="auto">automático (segue a autonomia)</option>
+                  <option value="draft">rascunho (tudo espera aprovação)</option>
+                </Select>
+              </Field>
+            ))}
+            <p className="text-xs text-muted-foreground md:col-span-2">
+              vale para leads novos; os que já existem mantêm o modo do card, que você troca no
+              próprio lead
+            </p>
+          </div>
         </Panel>
 
         <Panel title="voz">

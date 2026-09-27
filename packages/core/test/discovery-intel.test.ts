@@ -10,6 +10,15 @@ import { insertLeadTx, leadInsert, leadPatch } from '../src/modules/leads.ts';
 import { migrate } from '../src/platform/db.ts';
 
 describe('discovery intelligence — pure', () => {
+  test('agent.newLeadMode validates origin and mode', () => {
+    const ok = (m: unknown) => () =>
+      validateSetting('agent', { level: 'supervised', newLeadMode: m });
+    expect(ok({ inbound: 'draft', discovery: 'auto' })).not.toThrow();
+    expect(ok({ inbound: 'off' })).toThrow();
+    expect(ok({ staff: 'auto' })).toThrow();
+    expect(ok('auto')).toThrow();
+  });
+
   test('guardrails: briefAutoPauseRuns defaults on, validates range', () => {
     expect(DEFAULT_GUARDRAILS.briefAutoPauseRuns).toBe(5);
     expect(() => validateSetting('guardrails', { briefAutoPauseRuns: 0 })).not.toThrow();
@@ -425,6 +434,36 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('discovery intelligence (db)', (
       reason: 'r',
     })) as { error?: string };
     expect(denied.error).toContain('not available');
+  });
+
+  test('create_lead starts the lead in the workspace mode for discovered leads', async () => {
+    const c = mkCtx('discovery');
+    const modes: string[] = [];
+    try {
+      for (const mode of ['draft', 'auto'] as const) {
+        await sql`insert into control_settings (key, value)
+          values ('agent', ${sql.json({ level: 'supervised', newLeadMode: { discovery: mode } } as never)})
+          on conflict (key) do update set value = excluded.value`;
+        // low fit: autocontact stays out of it, so the mode is the setting's alone
+        const out = (await executeTool(c, `nm-${mode}`, 'create_lead', {
+          name: `Modo ${mode} ${uniq}`,
+          email: `modo-${mode}-${uniq}@example.com`,
+          findings: 'doceria de bairro, vende por encomenda',
+          fitScore: 3,
+          fitReason: 'porte pequeno',
+        })) as { lead: { id: string } };
+        modes.push(
+          (
+            await sql<
+              { agent_mode: string }[]
+            >`select agent_mode from leads where id = ${out.lead.id}`
+          )[0]!.agent_mode,
+        );
+      }
+    } finally {
+      await sql`delete from control_settings where key = 'agent'`;
+    }
+    expect(modes).toEqual(['draft', 'auto']);
   });
 
   test('C3: create_lead persists intent_score + merges fill gaps only', async () => {

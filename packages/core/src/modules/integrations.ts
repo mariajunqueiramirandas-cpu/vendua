@@ -279,6 +279,30 @@ export const DEFAULT_AGENT_RULES = [
 
 export type Pitch = typeof DEFAULT_PITCH;
 
+/** The agent mode a lead starts in when nobody on staff picked one. 'auto' follows the
+ *  workspace autonomy level; 'draft' holds every message on that lead for approval. */
+export type LeadStartMode = 'draft' | 'auto';
+export interface NewLeadModes {
+  /** a lead minted by an inbound message (they wrote to us first) */
+  inbound: LeadStartMode;
+  /** a lead the agent created (discovery) */
+  discovery: LeadStartMode;
+}
+export const DEFAULT_NEW_LEAD_MODES: NewLeadModes = { inbound: 'auto', discovery: 'auto' };
+
+/** `agent.newLeadMode` with defaults — lives here, not in policy.ts, so the inbound path can read it. */
+export function newLeadModesOf(agentSetting: unknown): NewLeadModes {
+  const raw = (agentSetting as { newLeadMode?: unknown } | null)?.newLeadMode;
+  const o =
+    raw && typeof raw === 'object' && !Array.isArray(raw) ? (raw as Record<string, unknown>) : {};
+  const pick = (v: unknown, d: LeadStartMode): LeadStartMode =>
+    v === 'draft' || v === 'auto' ? v : d;
+  return {
+    inbound: pick(o.inbound, DEFAULT_NEW_LEAD_MODES.inbound),
+    discovery: pick(o.discovery, DEFAULT_NEW_LEAD_MODES.discovery),
+  };
+}
+
 // shared bound — validateSetting, the `remember` tool and the discovery debrief all truncate to this
 export const AGENT_MEMORY_MAX_FACTS = 100;
 
@@ -547,7 +571,16 @@ export function validateSetting(key: string, value: unknown): void {
     }
     const v = value as Record<string, unknown>;
     for (const f of Object.keys(v)) {
-      if (!['level', 'jobs', 'instructions', 'weeklyDiscoveryUsd', 'schedule'].includes(f))
+      if (
+        ![
+          'level',
+          'jobs',
+          'instructions',
+          'weeklyDiscoveryUsd',
+          'schedule',
+          'newLeadMode',
+        ].includes(f)
+      )
         throw bad(f, 'is not an agent field');
     }
     if (!['off', 'copilot', 'supervised', 'autopilot'].includes(v.level as string)) {
@@ -568,6 +601,16 @@ export function validateSetting(key: string, value: unknown): void {
       (typeof v.instructions !== 'string' || v.instructions.length > 8000)
     ) {
       throw bad('instructions', 'must be a string (≤8000 chars)');
+    }
+    if (v.newLeadMode !== undefined) {
+      const m = v.newLeadMode;
+      if (!m || typeof m !== 'object' || Array.isArray(m))
+        throw bad('newLeadMode', 'must be an object');
+      for (const [k, x] of Object.entries(m as Record<string, unknown>)) {
+        if (k !== 'inbound' && k !== 'discovery')
+          throw bad(`newLeadMode.${k}`, 'is not a lead origin');
+        if (x !== 'draft' && x !== 'auto') throw bad(`newLeadMode.${k}`, 'must be draft | auto');
+      }
     }
     const usd = v.weeklyDiscoveryUsd;
     if (
