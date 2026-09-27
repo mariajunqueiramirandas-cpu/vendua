@@ -258,22 +258,23 @@ export function phoneIsIgnored(
 
 export const DEFAULT_PITCH = {
   product:
-    'Venduá — plataforma que cria uma loja online própria para pequenos negócios de comida (docerias, marmitas, pizzarias) em poucos dias, com catálogo, pedidos e checkout integrados.',
-  audience: 'donos de pequenos negócios de alimentação no Brasil',
-  tone: 'direto, caloroso, português brasileiro, mensagens curtas estilo WhatsApp',
+    'Venduá: plataforma que coloca no ar, em poucos dias, a loja online própria de um pequeno negócio de comida, com catálogo, pedidos e pagamento integrados.',
+  audience:
+    'donos de pequenos negócios de comida no Brasil (docerias, confeitarias, marmitas, pizzarias, padarias, lanchonetes) que hoje vendem por WhatsApp, Instagram ou marketplace',
+  tone: 'direto e caloroso, como um bom vendedor brasileiro no WhatsApp: mensagens curtas, português falado, zero formalidade de e-mail',
   offerRange:
-    'pode oferecer teste gratuito e desconto de lançamento; nunca prometa preço final nem isenção — escale para humano quando pedirem desconto além do lançamento',
+    'nenhuma condição especial pré-aprovada: desconto, teste grátis, prazo ou exceção são decisão da equipe, então escale para humano',
   /** the only commercial claims the agent may state verbatim; empty = nothing may be quoted */
   offer: '',
-  goal: 'descobrir interesse e marcar uma conversa curta ou pedido de demonstração',
+  goal: 'entender o negócio da pessoa e levar a um próximo passo real: uma conversa curta com a equipe',
 } as const;
 
 /** default `agent.instructions` (policy.ts) — the standing rules every run carries */
 export const DEFAULT_AGENT_RULES = [
-  'nunca invente funcionalidades, prazos ou preços',
+  'nunca invente funcionalidades, prazos, preços ou resultados',
   'nunca pressione quem disse não ou pediu para parar',
-  'uma mensagem por vez; sem listas longas ou jargão',
-  'não se identifique como IA a menos que perguntem — e se perguntarem, seja honesto',
+  'uma mensagem curta por vez, com no máximo uma pergunta; sem listas nem jargão',
+  'não se identifique como IA a menos que perguntem; se perguntarem, seja honesto',
 ] as const;
 
 export type Pitch = typeof DEFAULT_PITCH;

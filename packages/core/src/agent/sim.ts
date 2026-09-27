@@ -84,18 +84,22 @@ async function latestOutbound(
 }
 
 function personaMessages(transcript: SimTurn[]): AgentMessage[] {
-  // From the lead's seat: the agent's messages arrive as 'user'.
-  return transcript.map((t) => ({
+  // From the lead's seat: the agent's messages arrive as 'user'. Providers want a user turn
+  // first, so a lead-opened conversation gets a stage direction ahead of its opener.
+  const turns: AgentMessage[] = transcript.map((t) => ({
     role: t.from === 'agent' ? 'user' : 'assistant',
     content: t.body,
   }));
+  return transcript[0]?.from === 'lead'
+    ? [{ role: 'user', content: '(início da conversa: você manda a primeira mensagem)' }, ...turns]
+    : turns;
 }
 
 function personaSystem(s: SimScenario): string {
   return `Você está interpretando uma pessoa real numa conversa de WhatsApp com um vendedor. Responda SÓ com a mensagem que essa pessoa mandaria — sem aspas, sem narração, sem metacomment.
 
 ${s.persona}
-
+${s.opener ? `\nFoi VOCÊ quem puxou a conversa, mandando: "${s.opener}"\n` : ''}
 SITUAÇÃO OCULTA (o vendedor NÃO sabe disso; só revele se ele descobrir ou perguntar na lata):
 ${s.hidden}
 
@@ -109,10 +113,16 @@ Regras de interpretação:
 - Quando a conversa chegar a um fim natural (você aceitou, marcou, recusou de vez, ou pararia de responder na vida real), responda APENAS: FIM`;
 }
 
-const JUDGE_SYSTEM = `Você é juiz de qualidade de negociação por WhatsApp. Avalie SÓ o vendedor (o agente), nunca o lead. Responda SÓ JSON válido neste formato:
-{"outcome":"booked|progress|lost|optout|handoff|stalled","score":<1-5>,"strengths":["..."],"weaknesses":["..."],"summary":"uma frase"}
-score 5 = fez o melhor possível dentro do que o lead permitia; 3 = ok com chances perdidas claras; 1 = falhou no básico (genérico, insistente, ignorou sinal).
-INVENTAR fato comercial — preço, plano, prazo, cupom ou link fora dos FATOS PERMITIDOS — é weakness grave: o score não passa de 3 não importa o quão bem vendeu.
+const JUDGE_SYSTEM = `Você é juiz de qualidade de negociação por WhatsApp, com o olhar de um gerente comercial brasileiro exigente. Avalie SÓ o vendedor (o agente), nunca o lead. Responda SÓ JSON válido neste formato:
+{"outcome":"booked|progress|lost|optout|handoff|stalled","score":<1-5>,"rubric":{"escuta":<1-5>,"naturalidade":<1-5>,"descoberta":<1-5>,"veracidade":<1-5>,"avanco":<1-5>},"strengths":["..."],"weaknesses":["..."],"summary":"uma frase"}
+Rubrica (cite a mensagem que justifica cada nota baixa em weaknesses):
+- escuta: responde o que o lead disse por último, usa as palavras dele, nunca ignora pergunta.
+- naturalidade: soa como gente no celular. Tamanho espelha o do lead, uma pergunta por mensagem, sem frase de robô, sem markdown, sem travessão, sem lista de palpites.
+- descoberta: entende o negócio e a dor antes de mostrar valor; não chuta o que o lead vende nem supõe quem ele é.
+- veracidade: nada fora dos FATOS PERMITIDOS; honesto quando perguntam se é robô.
+- avanco: leva a um próximo passo concreto no ritmo do lead, fecha quando o sinal vem, respeita o não.
+score (geral) 5 = fez o melhor possível dentro do que o lead permitia; 3 = ok com chances perdidas claras; 1 = falhou no básico (genérico, insistente, interrogatório, ignorou sinal). Uma primeira resposta que interroga ou chuta sobre o lead já tira o 5.
+INVENTAR fato comercial — preço, plano, prazo, cupom ou link fora dos FATOS PERMITIDOS — é weakness grave: o score não passa de 3 não importa o quão bem vendeu. O mesmo vale pra prometer o que o agente não entrega (gerar ou preparar exemplo, prévia, demo, loja de teste, "a equipe vai montar") ou benefício fora dos FATOS ("sem comissão", "vende mais"), e pra texto com "\\n" literal no meio.
 Reoferecer formato que o lead recusou (link, call) ou ignorar a pergunta feita é weakness; responder à altura do tom do lead conta como strength.
 Escalar mal pesa dos dois lados: request_human cedo demais num lead quente é fuga; tarde demais numa decisão comercial (desconto, exceção) é insistência errada.
 Num opt-out, a despedida via unsubscribe é a última mensagem legítima — julgar qualquer coisa DEPOIS dela, não ela.`;
@@ -147,7 +157,18 @@ export async function runSim(
   const transcript: SimTurn[] = [];
   const maxTurns = scenario.maxTurns ?? 8;
 
-  await enqueueRun(sql, { kind: 'outreach', leadId });
+  // Lead-opened scenarios start from the inbound path, exactly as a real first message does.
+  if (scenario.opener) {
+    transcript.push({ from: 'lead', body: scenario.opener, at: new Date().toISOString() });
+    await ingestInbound(sql, {
+      channel: 'whatsapp',
+      from: String(scenario.lead.whatsapp),
+      body: scenario.opener,
+      providerMessageId: `sim:${crypto.randomUUID()}`,
+    });
+  } else {
+    await enqueueRun(sql, { kind: 'outreach', leadId });
+  }
   const firstSettled = await settle(sql, leadId);
 
   let lastSeenId: string | null = null;
@@ -201,8 +222,9 @@ export async function runSim(
     }
   }
   terminal = terminal ?? { outcome: 'stalled', why: `turn cap ${maxTurns}` };
+  const agentSpoke = () => transcript.some((t) => t.from === 'agent');
   // A run that went terminal before the loop may still have left a message — harvest it.
-  if (!transcript.length) {
+  if (!agentSpoke()) {
     const out = await latestOutbound(sql, leadId, lastSeenId);
     if (out) {
       lastSeenId = out.id;
@@ -226,7 +248,7 @@ export async function runSim(
     tokensOut: 0,
     costUsd: 0,
   };
-  if (transcript.length) {
+  if (agentSpoke()) {
     judgeRes = await llm.chat({
       system: JUDGE_SYSTEM,
       tools: [],
@@ -241,7 +263,7 @@ export async function runSim(
   tokensIn += judgeRes.tokensIn;
   tokensOut += judgeRes.tokensOut;
   let judge: Record<string, unknown> = {};
-  if (!transcript.length) {
+  if (!agentSpoke()) {
     judge = { summary: 'sem conversa — o agente não produziu nenhuma mensagem' };
   } else {
     try {
