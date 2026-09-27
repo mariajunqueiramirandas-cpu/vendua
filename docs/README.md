@@ -65,27 +65,28 @@ Then per topic as needed:
 
 Significant decisions are recorded as ADRs in [`adr/`](adr/). Current index:
 
-| #                                                      | Decision                                                  |
-| ------------------------------------------------------ | --------------------------------------------------------- |
-| [0001](adr/0001-monorepo-for-storefronts.md)           | One monorepo for all storefronts                          |
-| [0002](adr/0002-single-storefront-framework-react.md)  | React as the single storefront framework                  |
-| [0003](adr/0003-storefronts-as-artifacts.md)           | Storefronts are deployable artifacts, not services        |
-| [0004](adr/0004-kernel-owned-checkout.md)              | Checkout and system surfaces are Kernel-owned             |
-| [0005](adr/0005-server-driven-system-surfaces.md)      | System surfaces are server-driven                         |
-| [0006](adr/0006-runtime-loader.md)                     | A tiny runtime loader (`v.js`) as the last-resort channel |
-| [0007](adr/0007-headless-primitives.md)                | Headless primitives are the commerce API                  |
-| [0008](adr/0008-contract-versioning.md)                | Three-axis versioning; majors require codemods            |
-| [0009](adr/0009-mercado-pago-marketplace.md)           | Mercado Pago Marketplace + OAuth + application fee        |
-| [0010](adr/0010-automated-domains-tls.md)              | Automated domains and TLS                                 |
-| [0011](adr/0011-ring-based-fleet-releases.md)          | Ring-based fleet releases with artifact promotion         |
-| [0012](adr/0012-agent-agnostic-pipeline.md)            | Agent-agnostic generation pipeline, CI as judge           |
-| [0013](adr/0013-modular-monolith-core.md)              | Core is a modular monolith on Postgres                    |
-| [0014](adr/0014-crm-agent-v2.md)                       | CRM agent v2 (tools, policy, wakeups, memory)             |
-| [0015](adr/0015-one-agent-config.md)                   | One agent, several jobs                                   |
-| [0016](adr/0016-agent-dispatch-and-scheduler.md)       | One dispatcher, one agenda, one scheduler                 |
-| [0017](adr/0017-due-time-scheduler.md)                 | Scheduler sleeps until due, wakes on change               |
-| [0018](adr/0018-page-composition.md)                   | Pages are composed from SDK and store sections            |
-| [0019](adr/0019-customer-identity-without-accounts.md) | Customer identity without accounts (phone + order number) |
+| #                                                      | Decision                                                    |
+| ------------------------------------------------------ | ----------------------------------------------------------- |
+| [0001](adr/0001-monorepo-for-storefronts.md)           | One monorepo for all storefronts                            |
+| [0002](adr/0002-single-storefront-framework-react.md)  | React as the single storefront framework                    |
+| [0003](adr/0003-storefronts-as-artifacts.md)           | Storefronts are deployable artifacts, not services          |
+| [0004](adr/0004-kernel-owned-checkout.md)              | Checkout and system surfaces are Kernel-owned               |
+| [0005](adr/0005-server-driven-system-surfaces.md)      | System surfaces are server-driven                           |
+| [0006](adr/0006-runtime-loader.md)                     | A tiny runtime loader (`v.js`) as the last-resort channel   |
+| [0007](adr/0007-headless-primitives.md)                | Headless primitives are the commerce API                    |
+| [0008](adr/0008-contract-versioning.md)                | Three-axis versioning; majors require codemods              |
+| [0009](adr/0009-mercado-pago-marketplace.md)           | Mercado Pago Marketplace + OAuth + application fee          |
+| [0010](adr/0010-automated-domains-tls.md)              | Automated domains and TLS                                   |
+| [0011](adr/0011-ring-based-fleet-releases.md)          | Ring-based fleet releases with artifact promotion           |
+| [0012](adr/0012-agent-agnostic-pipeline.md)            | Agent-agnostic generation pipeline, CI as judge             |
+| [0013](adr/0013-modular-monolith-core.md)              | Core is a modular monolith on Postgres                      |
+| [0014](adr/0014-crm-agent-v2.md)                       | CRM agent v2 (tools, policy, wakeups, memory)               |
+| [0015](adr/0015-one-agent-config.md)                   | One agent, several jobs                                     |
+| [0016](adr/0016-agent-dispatch-and-scheduler.md)       | One dispatcher, one agenda, one scheduler                   |
+| [0017](adr/0017-due-time-scheduler.md)                 | Scheduler sleeps until due, wakes on change                 |
+| [0018](adr/0018-page-composition.md)                   | Pages are composed from SDK and store sections              |
+| [0019](adr/0019-customer-identity-without-accounts.md) | Customer identity without accounts (phone + order number)   |
+| [0020](adr/0020-merchant-identity.md)                  | Merchant identity: phone OTP, tenant-scoped sessions, roles |
 
 ## Conventions
 

@@ -45,6 +45,7 @@ export default function Scheduled() {
     setMonth(isoDate(d).slice(0, 7));
   };
   const monthName = first.toLocaleDateString('pt-BR', { month: 'long', year: 'numeric' });
+  const monthLabel = monthName.charAt(0).toUpperCase() + monthName.slice(1);
   const list = byDay.get(day) ?? [];
   return (
     <PageBody>
@@ -55,7 +56,7 @@ export default function Scheduled() {
             <IconButton label="mês anterior" onClick={() => shift(-1)}>
               <CaretLeft />
             </IconButton>
-            <p className="t-title-2 capitalize">{monthName}</p>
+            <p className="t-title-2">{monthLabel}</p>
             <IconButton label="próximo mês" onClick={() => shift(1)}>
               <CaretRight />
             </IconButton>

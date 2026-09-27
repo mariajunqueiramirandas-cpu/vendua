@@ -1,6 +1,7 @@
 import { Table } from '@phosphor-icons/react';
 import { useId, useMemo, useState, type ReactNode } from 'react';
 import { cn } from './cn.ts';
+import { NoPhoto } from './illustrations.tsx';
 
 // Chart family (§7): single-series marks in one forest hue (--chart), the current
 // period in --chart-now. Every chart carries a one-sentence text summary for
@@ -299,9 +300,9 @@ export function Heatmap({
             </div>
           ))}
           <div className="flex gap-[2px] pl-9">
-            {shown.map((h) => (
-              <span key={h} className="t-caption flex-1 text-center text-muted">
-                {h % 3 === 0 ? `${h}h` : ''}
+            {shown.map((h, i) => (
+              <span key={h} className="t-caption flex-1 whitespace-nowrap text-center text-muted">
+                {h % 3 === 0 && i < shown.length - 1 ? `${h}h` : ''}
               </span>
             ))}
           </div>
@@ -388,7 +389,9 @@ export function RankBars({
               <span className="size-11 shrink-0 overflow-hidden rounded-sm bg-sunken">
                 {r.image ? (
                   <img src={r.image} alt="" className="size-full object-cover" loading="lazy" />
-                ) : null}
+                ) : (
+                  <NoPhoto />
+                )}
               </span>
             ) : null}
             <div className="min-w-0 flex-1">

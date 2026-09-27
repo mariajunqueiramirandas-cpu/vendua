@@ -27,6 +27,13 @@ export function phone(p: string | null | undefined): string {
   return p;
 }
 
+/** What gets stored: digits with the country code, so wa.me links work. */
+export function waDigits(v: string): string | null {
+  const d = v.replace(/\D/g, '');
+  if (!d) return null;
+  return d.length === 10 || d.length === 11 ? `55${d}` : d;
+}
+
 export function whatsappLink(p: string, text?: string) {
   const d = p.replace(/\D/g, '');
   const full = d.length <= 11 ? `55${d}` : d;

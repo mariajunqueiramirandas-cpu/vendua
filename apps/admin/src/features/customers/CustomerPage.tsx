@@ -3,7 +3,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { api } from '../../lib/api.ts';
-import { dateShort, money, phone, whatsappLink } from '../../lib/format.ts';
+import { dateShort, money, phone, plural, whatsappLink } from '../../lib/format.ts';
 import { qk } from '../../lib/query.ts';
 import { useCan, useSession } from '../../lib/session.ts';
 import { Button } from '../../ui/Button.tsx';
@@ -206,7 +206,9 @@ function ForgetSheet({
     onSuccess: (r) => {
       void qc.invalidateQueries({ queryKey: ['customers'] });
       void qc.invalidateQueries({ queryKey: ['orders'] });
-      toast(`Dados apagados. ${r.anonymized} pedidos ficaram sem nome e telefone.`);
+      toast(
+        `Dados apagados. ${plural(r.anonymized, 'pedido ficou', 'pedidos ficaram')} sem nome e telefone.`,
+      );
       nav('/clientes');
     },
     onError: (e) => toast.error(messageOf(e)),

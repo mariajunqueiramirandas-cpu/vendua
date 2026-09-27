@@ -60,7 +60,7 @@
   --shadow-e1: 0 1px 2px rgb(18 60 50 / 0.06), 0 4px 16px rgb(18 60 50 / 0.05);
   --shadow-e2: 0 2px 4px rgb(18 60 50 / 0.08), 0 12px 32px rgb(18 60 50 / 0.1);
   --shadow-e3: 0 8px 16px rgb(18 60 50 / 0.1), 0 24px 64px rgb(18 60 50 / 0.16);
-  --highlight: none;
+  --highlight: 0 0 #0000;
 
   /* the store's own accent — set at runtime from its tokens (hero glow, avatar ring) */
   --store-accent: #d9f875;
@@ -332,21 +332,28 @@
   }
 }
 
-.depth-1 {
-  box-shadow: var(--shadow-e1), var(--highlight);
+/* composed like Tailwind's shadow-*, so ring-* on the same element still shows */
+@utility depth-1 {
+  --tw-shadow: var(--shadow-e1), var(--highlight);
+  box-shadow:
+    var(--tw-inset-shadow, 0 0 #0000), var(--tw-inset-ring-shadow, 0 0 #0000),
+    var(--tw-ring-offset-shadow, 0 0 #0000), var(--tw-ring-shadow, 0 0 #0000), var(--tw-shadow);
 }
-.depth-2 {
-  box-shadow: var(--shadow-e2), var(--highlight);
+@utility depth-2 {
+  --tw-shadow: var(--shadow-e2), var(--highlight);
+  box-shadow:
+    var(--tw-inset-shadow, 0 0 #0000), var(--tw-inset-ring-shadow, 0 0 #0000),
+    var(--tw-ring-offset-shadow, 0 0 #0000), var(--tw-ring-shadow, 0 0 #0000), var(--tw-shadow);
 }
-.depth-3 {
-  box-shadow: var(--shadow-e3), var(--highlight);
+@utility depth-3 {
+  --tw-shadow: var(--shadow-e3), var(--highlight);
+  box-shadow:
+    var(--tw-inset-shadow, 0 0 #0000), var(--tw-inset-ring-shadow, 0 0 #0000),
+    var(--tw-ring-offset-shadow, 0 0 #0000), var(--tw-ring-shadow, 0 0 #0000), var(--tw-shadow);
 }
 
 .pb-safe {
   padding-bottom: env(safe-area-inset-bottom);
-}
-.pt-safe {
-  padding-top: env(safe-area-inset-top);
 }
 
 /* ── motion (§5) ───────────────────────────────────────────────────────── */

@@ -31,14 +31,14 @@ export function Section({
       className={cn('scroll-mt-24', className)}
       aria-labelledby={id ? `${id}-t` : undefined}
     >
-      <div className="mb-3 flex items-end justify-between gap-3 px-1">
-        <div className="min-w-0">
-          <h2 id={id ? `${id}-t` : undefined} className="t-title-2">
+      <div className="mb-3 px-1">
+        <div className="flex items-center justify-between gap-3">
+          <h2 id={id ? `${id}-t` : undefined} className="t-title-2 min-w-0">
             {title}
           </h2>
-          {hint ? <p className="t-body mt-0.5 text-muted">{hint}</p> : null}
+          {action ? <div className="shrink-0">{action}</div> : null}
         </div>
-        {action}
+        {hint ? <p className="t-body mt-0.5 text-muted">{hint}</p> : null}
       </div>
       {children}
     </section>

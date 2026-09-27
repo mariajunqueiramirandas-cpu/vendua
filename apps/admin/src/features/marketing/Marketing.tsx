@@ -30,7 +30,7 @@ import {
   Toggle,
   useSaveState,
 } from '../../ui/fields.tsx';
-import { ArtTicket } from '../../ui/illustrations.tsx';
+import { ArtTicket, NoPhoto } from '../../ui/illustrations.tsx';
 import { PageBody, PageHeader } from '../../ui/Page.tsx';
 import { Sheet } from '../../ui/Sheet.tsx';
 import { toast } from '../../ui/Toast.tsx';
@@ -144,7 +144,9 @@ function Share() {
                         className="size-full object-cover"
                         loading="lazy"
                       />
-                    ) : null}
+                    ) : (
+                      <NoPhoto />
+                    )}
                   </span>
                   <span className="block p-2">
                     <span className="t-caption block truncate font-semibold">{p.name}</span>
@@ -525,7 +527,9 @@ function Waitlist({ data }: { data: M }) {
                   <span className="size-12 shrink-0 overflow-hidden rounded-sm bg-sunken">
                     {w.imageUrl ? (
                       <img src={w.imageUrl} alt="" className="size-full object-cover" />
-                    ) : null}
+                    ) : (
+                      <NoPhoto />
+                    )}
                   </span>
                   <div className="min-w-0 flex-1">
                     <p className="truncate font-semibold">{w.name}</p>

@@ -157,14 +157,14 @@ export function Shell({ children }: { children: ReactNode }) {
           </ul>
         </nav>
         <div className="space-y-2 border-t border-line p-3 lg:p-4">
-          <StatusPill block className="md:px-2 lg:px-4" />
+          <StatusPill block rail />
           <UserMenu />
         </div>
       </aside>
 
       <div className="min-w-0 flex-1">
         {/* phone top: status pill always visible (§3.2) + search */}
-        <header className="pt-safe sticky top-0 z-30 flex items-center gap-2 bg-bg/95 px-4 pb-2 pt-3 backdrop-blur-sm md:hidden">
+        <header className="sticky top-0 z-30 flex items-center gap-2 bg-bg/95 px-4 pb-2 pt-[calc(env(safe-area-inset-top)+0.75rem)] backdrop-blur-sm md:hidden">
           <StoreAvatar size={40} />
           <StatusPill className="min-w-0" />
           <div className="flex-1" />

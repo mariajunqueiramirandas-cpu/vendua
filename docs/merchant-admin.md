@@ -171,86 +171,88 @@ serves the built app at `/admin/` like the CRM; afterwards it moves to
 Each milestone ends with a usability session and a screenshot review against
 the design bar. It is not done until both pass.
 
+**Status (2026-09-27):** the whole admin is built. `/admin/v1` (Core migration
+0052, [ADR 0020](adr/0020-merchant-identity.md)) and `apps/admin` cover every area
+below, and the screenshot, overflow, axe and bundle-budget gates run in CI. A box is
+ticked when the software is done. What is still open is the part only people can
+do: sign-offs, commissioned art, usability sessions and the pilot exits. Phase 3
+work (Mercado Pago, billing) and Phase 4 work (provisioning) is left open.
+
 ### A0 — Foundations and the design system
 
-- [ ] Sign off [`merchant-admin-design.md`](merchant-admin-design.md) (tokens,
-      type, motion, signature moments) with the pilot merchants' feedback.
-- [ ] Commission the illustration set and the two sounds; mockups for
-      Início, Pedidos, Cardápio and Aparência at 375/820/1440 in Creme and
-      Noite, following the spec, signed off.
-- [ ] `apps/admin` scaffold: shell (bottom nav on phones, sidebar on desktop),
-      routing, query client, theme, PWA manifest, the component library and a
-      living `/_ui` reference.
-- [ ] Merchant identity ADR + `merchant_users`, phone-OTP login, tenant-scoped
-      sessions, roles; `/admin/v1` skeleton with the audit log.
-- [ ] CI: typecheck, build, screenshot + overflow, axe, Lighthouse budget.
-
-Exit: a merchant logs in on their phone and lands on a designed, empty Início.
-The design system is the reference every later screen is built from.
+- [ ] Sign off [`merchant-admin-design.md`](merchant-admin-design.md) with the
+      pilot merchants' feedback. _Implemented as specified in
+      `apps/admin/src/ui/theme.css`; no sign-off yet._
+- [ ] Commission the illustration set and the two sounds; signed-off mockups.
+      _Placeholder line illustrations (`ui/illustrations.tsx`) and a
+      synthesized WebAudio chime (`lib/sound.ts`) stand in._
+- [x] `apps/admin` scaffold: shell (bottom nav on phones, rail on tablets,
+      sidebar on desktop), routing, query client, Creme/Noite themes, PWA
+      manifest + service worker, the component library and a living `/_ui`.
+- [x] Merchant identity ADR + `merchant_users`, phone-OTP login, tenant-scoped
+      sessions, roles; `/admin/v1` with the audit log.
+- [x] CI (`admin-gate`): typecheck, build with bundle budgets, screenshots at
+      375/820/1440 in both themes with overflow, console and axe checks.
+      _Lighthouse is not wired; the bundle budget stands in for it._
 
 ### A1 — Run the day
 
-- [ ] Pedidos: live board, new-order alert with push, accept/prepare/dispatch/
-      deliver, cancel, kitchen ticket print, WhatsApp the customer, history.
-- [ ] Loja: open/pause with message, hours, holidays, delivery zones on a map,
-      fees, minimum order, store profile.
-- [ ] Início v1: status, waiting orders, today's sales, setup checklist.
-
-Exit: the Quero Pudim owner runs a full day of real orders from the admin on
-their phone with no staff help.
+- [x] Pedidos: live board (SSE), new-order chime + web push with one-tap
+      accept, accept with prep time/prepare/dispatch/deliver, cancel with
+      reason, kitchen ticket print, WhatsApp the customer, history, encomendas.
+- [x] Loja: open/pause (timed, with message), hours, holidays and special
+      days, delivery zones on a map, fees, minimum order, store profile.
+- [x] Início v1: status, what needs you, today's sales vs last week, setup
+      checklist, live activity.
+- [ ] Exit: a real day of Quero Pudim orders run from the phone.
 
 ### A2 — The menu
 
-- [ ] Cardápio: products, categories, modifiers, kits, availability,
-      stock, preorder rules, bulk edit.
-- [ ] Media uploads with crop and resizing; drag-to-reorder galleries.
-
-Exit: a merchant builds a 30-item menu with photos from scratch on a phone in
-under 30 minutes (timed in a usability session).
+- [x] Cardápio: products, categories, modifiers, kits, availability
+      ("esgotado hoje" ends at midnight), stock, preorder rules, bulk edit,
+      paste-a-list import.
+- [x] Media uploads with crop, aspect guide and "clarear"; gallery reorder.
+      _Resizing and WebP encoding run client-side; Core stores ≤2 MB images
+      in Postgres (`media_objects`). Object storage comes with the Edge._
+- [ ] Exit: the timed 30-item usability session.
 
 ### A3 — Money
 
 Lands with Phase 3's Mercado Pago work.
 
-- [ ] Pagamentos: MP connect and token health, Pix, methods, per-order payment
-      status, refunds, fee statement.
-- [ ] Admin notices for `expiring` / `disconnected` / `restricted`
-      ([13](architecture/13-payments.md)).
-
-Exit: [Phase 3's exit](roadmap.md#phase-3--payments--self-serve-signup-weeks-1216).
-A merchant edits their catalog and hours and receives paid PIX orders with no
-engineer involved, entirely through the admin.
+- [x] Pagamentos: Pix key + QR, methods on/off (checkout honours them —
+      Kernel 1.4), per-order payment status ("recebi"), refunds via the order,
+      30-day split by method.
+- [ ] Mercado Pago connect, token health, fee statement and the
+      `expiring` / `disconnected` / `restricted` notices
+      ([13](architecture/13-payments.md)). _Shown as "em breve"._
 
 ### A4 — Grow
 
-- [ ] Clientes: list, profile, history, loyalty, LGPD export and delete.
-- [ ] Marketing: coupons, loyalty setup, waitlist, share links, announcement.
-- [ ] Relatórios: rollups + sales, products, peak hours, funnel, zones, repeat
-      rate, CSV.
-
-Exit: a merchant creates a coupon, shares it and sees its redemptions and
-revenue in Relatórios the same day.
+- [x] Clientes: list, profile, history, loyalty, LGPD export and delete.
+- [x] Marketing: coupons, loyalty setup, waitlist, share links and cards, QR,
+      announcement.
+- [x] Relatórios: sales, products, peak hours, funnel, zones, payments,
+      coupons, repeat rate, CSV. _Computed at query time; rollups when a
+      store's volume needs them._
 
 ### A5 — Appearance
 
-- [ ] Page editor with live preview: reorder, settings and copy, images,
-      migration-placed toggles (removals recorded as tombstones), tokens
-      with the inline AA check, history and restore, publish status.
-
-Exit: a merchant changes their home page and colors and sees it live, with
-no staff and no agent. Post-launch agent-minutes stay at ~0
-([metrics](roadmap.md#metrics-that-gate-growth)).
+- [x] Page editor with live preview of the real storefront (Kernel 1.4
+      preview channel): tap to select, reorder, settings and copy, images,
+      toggles with tombstones, tokens with the inline AA check, history and
+      restore, publish status.
+- [ ] Exit: a merchant does it with no staff (usability session).
 
 ### A6 — Team, account and plan
 
-- [ ] Equipe: invites, roles, activity log.
-- [ ] Conta e plano: plan and invoices (Phase 3 billing), store address,
-      notification preferences; Ajuda with "falar com a Venduá".
-- [ ] Onboarding: a first-run flow that takes a freshly provisioned store
-      (Phase 4) to "ready to sell" (profile, hours, zones, MP, first products).
-
-Exit: a self-serve signup reaches its first paid order through the admin with
-zero staff involvement. This is the admin's half of the First-store gate.
+- [x] Equipe: invites, roles, activity log.
+- [x] Conta: store address, plan, devices, notification and theme
+      preferences; Ajuda with "falar com a Venduá" (reaches staff).
+- [ ] Invoices and billing (Phase 3).
+- [x] Onboarding: `/bem-vindo` takes a store to "ready to sell" (profile,
+      hours, delivery, Pix, first products) with a live preview.
+      _Provisioning a fresh store is Phase 4._
 
 ## Done means
 

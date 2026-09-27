@@ -18,6 +18,7 @@ import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { api, type Home as HomeData } from '../../lib/api.ts';
 import { ago, clock, greeting, money, moneyShort, num, plural } from '../../lib/format.ts';
+import { NoPhoto } from '../../ui/illustrations.tsx';
 import { qk } from '../../lib/query.ts';
 import { useSession } from '../../lib/session.ts';
 import { ButtonLink } from '../../ui/Button.tsx';
@@ -240,7 +241,7 @@ function Hero({ data }: { data: HomeData }) {
             {data.best[0] ? `Campeão: ${data.best[0].name} (${data.best[0].qty}). ` : ''}
             {data.busiest ? `Hora mais movimentada: ${data.busiest.hour}h. ` : ''}
             {t.lastWeekOrders
-              ? `Na mesma ${new Date().toLocaleDateString('pt-BR', { weekday: 'long' })} passada: ${t.lastWeekOrders} pedidos.`
+              ? `Na mesma ${new Date().toLocaleDateString('pt-BR', { weekday: 'long' })} passada: ${plural(t.lastWeekOrders, 'pedido', 'pedidos')}.`
               : ''}
           </p>
         </div>
@@ -459,13 +460,15 @@ function Best({ data }: { data: HomeData }) {
           <div className="relative aspect-[4/3] bg-sunken">
             {b.imageUrl ? (
               <img src={b.imageUrl} alt="" className="size-full object-cover" loading="lazy" />
-            ) : null}
+            ) : (
+              <NoPhoto />
+            )}
             <span className="tnum absolute left-2 top-2 grid size-7 place-items-center rounded-full bg-surface text-sm font-bold depth-1">
               {i + 1}
             </span>
           </div>
           <div className="p-3">
-            <p className="t-body truncate font-semibold">{b.name}</p>
+            <p className="t-body line-clamp-2 font-semibold leading-snug">{b.name}</p>
             <p className="t-caption text-muted">{plural(b.qty, 'vendido', 'vendidos')}</p>
           </div>
         </Card>

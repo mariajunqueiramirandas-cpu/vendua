@@ -384,7 +384,7 @@ export function Segmented<T extends string>({
               on ? 'bg-surface text-ink depth-1' : 'text-muted hover:text-ink',
             )}
           >
-            <span className="truncate">{o.label}</span>
+            <span className="line-clamp-2 text-center leading-tight">{o.label}</span>
             {o.count !== undefined ? (
               <span
                 className={cn(

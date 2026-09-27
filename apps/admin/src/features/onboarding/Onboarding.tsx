@@ -4,7 +4,7 @@ import QRCode from 'qrcode';
 import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import { Link } from 'react-router-dom';
 import { api, type StoreView } from '../../lib/api.ts';
-import { hhmm, money, WEEKDAYS } from '../../lib/format.ts';
+import { hhmm, money, phone, waDigits, WEEKDAYS } from '../../lib/format.ts';
 import { qk } from '../../lib/query.ts';
 import { can, useSession } from '../../lib/session.ts';
 import { Button } from '../../ui/Button.tsx';
@@ -13,6 +13,7 @@ import { Confetti } from '../../ui/Celebration.tsx';
 import { cn } from '../../ui/cn.ts';
 import { Loading, messageOf } from '../../ui/feedback.tsx';
 import { Chips, CommitInput, Field, MoneyField, TextInput, Toggle } from '../../ui/fields.tsx';
+import { NoPhoto } from '../../ui/illustrations.tsx';
 import { PhotoField } from '../../ui/PhotoField.tsx';
 import { fromWeek, TimeRangeField, toWeek, type WeekModel } from '../../ui/TimeRangeField.tsx';
 import { toast } from '../../ui/Toast.tsx';
@@ -89,6 +90,7 @@ function Flow({
         <p className="font-display text-lg font-semibold">venduá</p>
         <div
           className="flex flex-1 justify-center gap-1.5"
+          role="img"
           aria-label={`${steps.filter((x) => x.done).length} de ${steps.length} passos`}
         >
           {steps.map((x) => (
@@ -144,11 +146,9 @@ function Flow({
                     type="tel"
                     inputMode="tel"
                     maxLength={20}
-                    value={s.profile.whatsapp ?? ''}
+                    value={phone(s.profile.whatsapp)}
                     placeholder="(22) 99999-0000"
-                    onCommit={(v) =>
-                      void save({ profile: { whatsapp: v.replace(/\D/g, '') || null } })
-                    }
+                    onCommit={(v) => void save({ profile: { whatsapp: waDigits(v) } })}
                   />
                 </Field>
                 <Field label="Uma frase sobre a loja" optional htmlFor="ob-tag">
@@ -389,7 +389,7 @@ function MiniStore({
           <p
             className={cn(
               'mt-2 inline-flex items-center gap-1.5 rounded-full px-2 py-0.5 text-[11px] font-semibold',
-              hours.length ? 'bg-[#e8f5dd] text-[#2f4a00]' : 'bg-black/5 text-black/50',
+              hours.length ? 'bg-[#e8f5dd] text-[#2f4a00]' : 'bg-black/5 text-black/65',
             )}
           >
             <span
@@ -399,7 +399,7 @@ function MiniStore({
               ? `Hoje: ${hours.map((h) => `${hhmm(h.open)}–${hhmm(h.close)}`).join(', ')}`
               : `${WEEKDAYS[today]}: fechado`}
           </p>
-          <p className="mt-1 text-[11px] text-black/50">
+          <p className="mt-1 text-[11px] text-black/65">
             {[s.operations.pickupEnabled && 'retirada', s.operations.deliveryEnabled && 'entrega']
               .filter(Boolean)
               .join(' · ')}
@@ -415,7 +415,9 @@ function MiniStore({
                     <div className="aspect-[4/3] bg-[#efe9d8]">
                       {p.imageUrl ? (
                         <img src={p.imageUrl} alt="" className="size-full object-cover" />
-                      ) : null}
+                      ) : (
+                        <NoPhoto className="text-[#123c32]" />
+                      )}
                     </div>
                     <div className="p-1.5">
                       <p className="truncate text-[11px] font-semibold">{p.name}</p>

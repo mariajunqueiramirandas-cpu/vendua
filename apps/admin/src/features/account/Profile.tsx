@@ -12,7 +12,15 @@ import { readTheme, setTheme, type ThemePref } from '../../lib/theme.ts';
 import { Button } from '../../ui/Button.tsx';
 import { Card, Section } from '../../ui/Card.tsx';
 import { messageOf } from '../../ui/feedback.tsx';
-import { Chips, CommitInput, Field, SaveMark, Toggle, useSaveState } from '../../ui/fields.tsx';
+import {
+  Chips,
+  CommitInput,
+  Segmented,
+  Field,
+  SaveMark,
+  Toggle,
+  useSaveState,
+} from '../../ui/fields.tsx';
 import { PageBody, PageHeader } from '../../ui/Page.tsx';
 import { toast } from '../../ui/Toast.tsx';
 
@@ -165,7 +173,7 @@ export default function Profile() {
         </Section>
         <Section title="Aparência do painel">
           <Card className="p-5">
-            <Chips
+            <Segmented
               label="tema"
               value={theme}
               onChange={(t) => {
@@ -238,5 +246,7 @@ function deviceName(ua: string) {
   if (/Android/.test(ua)) return /Mobile/.test(ua) ? 'Celular Android' : 'Tablet Android';
   if (/Mac OS/.test(ua)) return 'Mac';
   if (/Windows/.test(ua)) return 'Computador Windows';
+  if (/CrOS/.test(ua)) return 'Chromebook';
+  if (/Linux/.test(ua)) return 'Computador Linux';
   return 'Navegador';
 }

@@ -133,8 +133,9 @@ export function OrderCard({
         className={cn(
           'rounded-lg bg-surface p-4 depth-1 transition-[transform,box-shadow] duration-(--duration-smooth) ease-(--ease-soft)',
           dx !== 0 && 'transition-none',
-          selected && 'ring-2 ring-primary',
-          late && 'ring-2 ring-warning',
+          // inset: the article clips to its radius for the swipe reveal
+          selected && 'ring-2 ring-inset ring-primary',
+          late && 'ring-2 ring-inset ring-warning',
         )}
       >
         <button
@@ -172,7 +173,11 @@ export function OrderCard({
                   {t}
                 </li>
               ))}
-              {items.length > 4 ? <li className="text-muted">+ {items.length - 4} itens</li> : null}
+              {items.length > 4 ? (
+                <li className="text-muted">
+                  + {items.length - 4} {items.length === 5 ? 'item' : 'itens'}
+                </li>
+              ) : null}
             </ul>
           ) : null}
           <div className="t-body mt-3 flex flex-wrap items-center gap-x-3 gap-y-1 text-muted">

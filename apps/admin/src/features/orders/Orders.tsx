@@ -186,13 +186,14 @@ export default function Orders() {
 
   return (
     <div className="mx-auto w-full max-w-[1600px] px-4 pb-32 pt-4 md:px-8 md:pb-10 md:pt-8">
-      <header className="mb-4 flex flex-wrap items-center gap-3 md:mb-6">
+      <header className="mb-4 flex items-center gap-2 md:mb-6 md:gap-3">
         <h1 className="t-title-1 flex-1">Pedidos</h1>
         <Link
           to="/pedidos/agendados"
+          aria-label="Encomendas"
           className="t-label inline-flex min-h-11 items-center gap-2 rounded-md px-3 ring-1 ring-line hover:bg-hover"
         >
-          <CalendarBlank className="size-5" /> Encomendas
+          <CalendarBlank className="size-5" /> <span className="hidden sm:inline">Encomendas</span>
           {data?.scheduledUpcoming ? (
             <span className="tnum rounded-full bg-info-soft px-2 text-info">
               {data.scheduledUpcoming}
@@ -201,9 +202,11 @@ export default function Orders() {
         </Link>
         <Link
           to="/pedidos/historico"
+          aria-label="Histórico"
           className="t-label inline-flex min-h-11 items-center gap-2 rounded-md px-3 ring-1 ring-line hover:bg-hover"
         >
-          <ClockCounterClockwise className="size-5" /> Histórico
+          <ClockCounterClockwise className="size-5" />{' '}
+          <span className="hidden sm:inline">Histórico</span>
         </Link>
       </header>
 

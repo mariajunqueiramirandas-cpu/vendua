@@ -14,7 +14,7 @@ import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { lazy, Suspense, useEffect, useState } from 'react';
 import { api, type SpecialDay, type StoreView, type Zone } from '../../lib/api.ts';
 import { useAutosave } from '../../lib/autosave.ts';
-import { dateShort, hhmm, isoDate, money, phone } from '../../lib/format.ts';
+import { dateShort, hhmm, isoDate, money, phone, waDigits } from '../../lib/format.ts';
 import { qk } from '../../lib/query.ts';
 import { Button, IconButton } from '../../ui/Button.tsx';
 import { Card, Section } from '../../ui/Card.tsx';
@@ -678,7 +678,7 @@ function Profile({
   return (
     <Section id="perfil" title="Perfil" hint="Como a loja se apresenta.">
       <Card className="space-y-5 p-5">
-        <div className="flex items-start gap-4">
+        <div className="flex flex-col gap-4 sm:flex-row sm:items-start">
           <div className="w-28 shrink-0">
             <PhotoField
               label="logo da loja"
@@ -729,8 +729,8 @@ function Profile({
               value={waDraft}
               onChange={(e) => setWaDraft(e.target.value)}
               onBlur={() => {
-                const d = waDraft.replace(/\D/g, '');
-                if (d !== (p.whatsapp ?? '')) patch({ profile: { whatsapp: d || null } });
+                const d = waDigits(waDraft);
+                if (d !== (p.whatsapp ?? null)) patch({ profile: { whatsapp: d } });
               }}
             />
           </Field>

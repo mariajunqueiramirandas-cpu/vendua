@@ -43,7 +43,8 @@ export function ProductTile({
       <div
         className={cn(
           'relative aspect-[4/3] bg-sunken',
-          a === 'sold_out' && 'grayscale',
+          // the photo goes monochrome; the stamp keeps its red
+          a === 'sold_out' && '[&>img]:grayscale',
           a === 'hidden' && '[&>img]:opacity-50',
         )}
         style={p.dominant ? { background: p.dominant } : undefined}

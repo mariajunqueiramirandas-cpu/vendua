@@ -89,7 +89,11 @@ export default function Customers() {
                 <span className="min-w-0 flex-1">
                   <span className="block truncate font-semibold">{c.name}</span>
                   <span className="t-caption block truncate text-muted">
-                    {phone(c.phone)} · último {ago(c.lastAt)}
+                    {phone(c.phone)}
+                    <span className="max-sm:hidden"> · último pedido {ago(c.lastAt)}</span>
+                  </span>
+                  <span className="t-caption block truncate text-muted sm:hidden">
+                    último pedido {ago(c.lastAt)}
                   </span>
                 </span>
                 <span className="shrink-0 text-right">

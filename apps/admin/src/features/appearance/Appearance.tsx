@@ -332,7 +332,7 @@ function Editor({ data }: { data: AppearanceData }) {
 
   return (
     <div className="mx-auto w-full max-w-[1600px] px-4 pb-40 pt-4 md:px-8 md:pb-10 md:pt-8">
-      <header className="mb-4 flex flex-wrap items-center gap-3">
+      <header className="mb-4 flex items-start gap-2 md:items-center md:gap-3">
         <div className="min-w-0 flex-1">
           <h1 className="t-title-1">Aparência</h1>
           <p className="t-body text-muted">
@@ -359,30 +359,33 @@ function Editor({ data }: { data: AppearanceData }) {
         <Button
           variant={colorsPanel ? 'primary' : 'secondary'}
           icon={<Palette />}
+          aria-label="cores"
           onClick={() => {
             // desktop: beside the preview, so the change is visible as it's picked
             if (window.matchMedia('(min-width: 1200px)').matches) setColorsPanel((v) => !v);
             else setSheet('colors');
           }}
         >
-          cores
+          <span className="max-sm:sr-only">cores</span>
         </Button>
         <Button
           variant="ghost"
           icon={<ClockCounterClockwise />}
+          aria-label="versões"
           onClick={() => setSheet('history')}
         >
-          versões
+          <span className="max-sm:sr-only">versões</span>
         </Button>
-        <Button
-          className="hidden md:inline-flex"
-          icon={<RocketLaunch />}
-          disabled={!dirty || !tokensOk}
-          loading={publish.isPending}
-          onClick={() => publish.mutate()}
-        >
-          publicar
-        </Button>
+        <span className="hidden md:contents">
+          <Button
+            icon={<RocketLaunch />}
+            disabled={!dirty || !tokensOk}
+            loading={publish.isPending}
+            onClick={() => publish.mutate()}
+          >
+            publicar
+          </Button>
+        </span>
       </header>
 
       <Hint id="appearance-tap" className="mb-4">
@@ -398,7 +401,7 @@ function Editor({ data }: { data: AppearanceData }) {
             setPage(p);
             setSelected(null);
           }}
-          className="min-w-0 flex-1 md:max-w-xl"
+          className="min-w-0 basis-full md:max-w-xl md:basis-auto md:flex-1"
           options={PAGES.map((p) => ({
             value: p.id,
             label: dirtyPage(p.id) ? `${p.label} •` : p.label,
@@ -669,19 +672,19 @@ function DevicePreview({
       <div
         className={cn(
           'relative w-full overflow-hidden bg-[#0c1410] depth-3',
-          device === 'phone' ? 'max-w-[400px] rounded-[44px] p-3' : 'rounded-xl p-2',
+          device === 'phone' ? 'max-w-[400px] rounded-[44px] px-3 pb-3 pt-10' : 'rounded-xl p-2',
         )}
       >
         {device === 'phone' ? (
           <div
             aria-hidden
-            className="absolute left-1/2 top-4 z-10 h-5 w-24 -translate-x-1/2 rounded-full bg-[#0c1410]"
+            className="absolute left-1/2 top-4 z-10 h-1.5 w-16 -translate-x-1/2 rounded-full bg-white/20"
           />
         ) : null}
         <div
           className={cn(
             'relative overflow-hidden bg-surface',
-            device === 'phone' ? 'aspect-[9/19] rounded-[34px]' : 'aspect-[16/10] rounded-lg',
+            device === 'phone' ? 'aspect-[9/19] rounded-[28px]' : 'aspect-[16/10] rounded-lg',
           )}
         >
           {!loaded && !late ? <div className="skeleton absolute inset-0" /> : null}

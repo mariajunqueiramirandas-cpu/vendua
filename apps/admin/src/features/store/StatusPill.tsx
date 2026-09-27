@@ -37,7 +37,16 @@ export function useStoreQuery() {
 }
 
 /** The live state, always present (§3.2). Tapping opens the status sheet. */
-export function StatusPill({ className, block }: { className?: string; block?: boolean }) {
+export function StatusPill({
+  className,
+  block,
+  rail,
+}: {
+  className?: string;
+  block?: boolean;
+  /** the tablet rail is ~88px: dot over a two-line label */
+  rail?: boolean;
+}) {
   const { data } = useStoreQuery();
   const [open, setOpen] = useState(false);
   const [seen, setSeen] = useState(false);
@@ -59,6 +68,8 @@ export function StatusPill({ className, block }: { className?: string; block?: b
           w.tone === 'paused' && 'bg-warning-soft ring-warning/40 text-warning',
           w.tone === 'closed' && 'bg-sunken ring-line-strong text-muted',
           block && 'w-full justify-center',
+          rail &&
+            'max-lg:flex-col max-lg:gap-1 max-lg:rounded-lg max-lg:px-1 max-lg:py-2 max-lg:text-xs',
           className,
         )}
       >
@@ -73,7 +84,11 @@ export function StatusPill({ className, block }: { className?: string; block?: b
             )}
           />
         </span>
-        <span className="truncate">{w.label}</span>
+        <span
+          className={cn(rail ? 'max-lg:line-clamp-2 max-lg:text-center lg:truncate' : 'truncate')}
+        >
+          {w.label}
+        </span>
       </button>
       {open || seen ? (
         <Suspense fallback={null}>

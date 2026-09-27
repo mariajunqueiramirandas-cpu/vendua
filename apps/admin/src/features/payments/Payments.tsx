@@ -132,9 +132,11 @@ function Awaiting({ data }: { data: PaymentsData }) {
               <span className="block truncate font-semibold">
                 #{o.number} · {o.name}
               </span>
-              <span className="t-caption text-muted">{ago(o.placedAt)}</span>
+              <span className="t-caption text-muted">
+                <span className="tnum font-semibold text-ink">{money(o.totalCents)}</span> ·{' '}
+                {ago(o.placedAt)}
+              </span>
             </Link>
-            <span className="tnum font-semibold">{money(o.totalCents)}</span>
             <Button
               size="sm"
               variant="secondary"

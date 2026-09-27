@@ -189,3 +189,12 @@ export const ArtSparkle = (p: P) => (
     <path d="M122 76c2 9 6 13 15 15-9 2-13 6-15 15-2-9-6-13-15-15 9-2 13-6 15-15zM38 78c1.5 6 4 8.5 10 10-6 1.5-8.5 4-10 10-1.5-6-4-8.5-10-10 6-1.5 8.5-4 10-10z" />
   </Art>
 );
+
+/** What a product shows before it has a photo. */
+export function NoPhoto({ className }: { className?: string }) {
+  return (
+    <span className={`grid size-full place-items-center ${className ?? 'text-ink'}`}>
+      <ArtPudim className="h-3/5 w-auto opacity-40" />
+    </span>
+  );
+}

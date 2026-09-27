@@ -2,7 +2,7 @@ import { DownloadSimple, Info } from '@phosphor-icons/react';
 import { useQuery } from '@tanstack/react-query';
 import { useState } from 'react';
 import { api, type Kpis, type Reports as R } from '../../lib/api.ts';
-import { dateShort, isoDate, money, moneyCompact, num } from '../../lib/format.ts';
+import { dateShort, isoDate, money, moneyCompact, num, plural } from '../../lib/format.ts';
 import { qk } from '../../lib/query.ts';
 import { Card, Section } from '../../ui/Card.tsx';
 import { ColumnChart, Funnel, Heatmap, RankBars } from '../../ui/charts.tsx';
@@ -163,7 +163,7 @@ export default function Reports() {
                   key: z.name,
                   label: z.name,
                   value: z.revenueCents,
-                  detail: `${z.orders} pedidos · ${money(z.feesCents)} em taxas`,
+                  detail: `${plural(z.orders, 'pedido', 'pedidos')} · ${money(z.feesCents)} em taxas`,
                 }))}
               />
             </Card>
@@ -180,7 +180,7 @@ export default function Reports() {
                   key: p.method,
                   label: METHOD[p.method] ?? p.method,
                   value: p.revenueCents,
-                  detail: `${p.orders} pedidos`,
+                  detail: plural(p.orders, 'pedido', 'pedidos'),
                 }))}
               />
             </Card>
@@ -195,7 +195,7 @@ export default function Reports() {
                   >
                     <span className="font-display font-semibold tracking-wide">{c.code}</span>
                     <span className="t-body tnum text-right text-muted">
-                      {c.orders} pedidos · {money(c.revenueCents)} vendidos ·{' '}
+                      {plural(c.orders, 'pedido', 'pedidos')} · {money(c.revenueCents)} vendidos ·{' '}
                       {money(c.discountCents)} de desconto
                     </span>
                   </div>
