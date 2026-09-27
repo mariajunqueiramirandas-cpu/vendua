@@ -1,7 +1,12 @@
 import type { Sql } from '../platform/db.ts';
 import { controlTx } from '../modules/control.ts';
 import { emitControlEvent } from '../modules/control-events.ts';
-import { getGuardrails, phoneIsIgnored } from '../modules/integrations.ts';
+import {
+  getGuardrails,
+  getSetting,
+  phoneIsIgnored,
+  whatsappHistoryOf,
+} from '../modules/integrations.ts';
 import { addInboundMessage, type Channel, type InboundResult } from '../modules/threads.ts';
 import { capLockTx, drain, releaseInboxTx } from './runner.ts';
 import { requestAgentTx } from './dispatch.ts';
@@ -9,6 +14,7 @@ import { automationAllowedTx } from './policy.ts';
 import { retireWakeupsOnInboundTx } from './wakeups.ts';
 import { RETIRED_BY_INBOUND } from './sources.ts';
 import { log } from '../platform/log.ts';
+import { staffWhatsappsTx } from '../modules/staff.ts';
 
 const agentLog = log.child({ mod: 'agent' });
 
@@ -48,8 +54,22 @@ export async function ingestInbound(
   const { ignoredPhones, inboundReplyDelayMin } = await getGuardrails(sql);
   // Staff/founder numbers drop before a lead is ever minted — the agent
   // must never see them as leads, in either direction.
-  if (phoneIsIgnored(ignoredPhones, input.from, input.fromAlias)) {
+  const staffPhones = await controlTx(sql, staffWhatsappsTx);
+  if (phoneIsIgnored([...ignoredPhones, ...staffPhones], input.from, input.fromAlias)) {
     return { ignored: `número ignorado: ${input.from}` };
+  }
+  // whatsapp_history scopes the pairing-time import; live messages are never filtered here
+  const history =
+    input.historical && input.channel === 'whatsapp'
+      ? whatsappHistoryOf(await getSetting<unknown>(sql, 'whatsapp_history', null))
+      : null;
+  if (history?.mode === 'off') return { ignored: 'histórico do whatsapp desligado' };
+  if (
+    history?.maxAgeDays &&
+    input.sentAt &&
+    input.sentAt.getTime() < Date.now() - history.maxAgeDays * 86_400_000
+  ) {
+    return { ignored: `histórico com mais de ${history.maxAgeDays} dias` };
   }
   const res = await addInboundMessage(sql, {
     channel: input.channel,
@@ -63,7 +83,14 @@ export async function ingestInbound(
     ...(input.direction ? { direction: input.direction } : {}),
     ...(input.sentAt ? { sentAt: input.sentAt } : {}),
     ...(input.historical ? { historical: input.historical } : {}),
+    ...(history
+      ? {
+          createLead: history.mode === 'leads',
+          ...(history.leadMode !== 'inbound' ? { newLeadAgentMode: history.leadMode } : {}),
+        }
+      : {}),
   });
+  if (!res) return { ignored: 'histórico de contato sem lead' };
 
   // Provider retry of an already-recorded message: no side effects again.
   if (res.alreadySeen) return res;

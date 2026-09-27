@@ -144,6 +144,44 @@ copy.
 
 `cpl` column on the Descoberta segment table.
 
+### 16. Conversation quality overhaul — shipped
+
+Real-lead tests showed the agent interrogating a bare "Ola" ("O que vocês vendem
+por aí? (doces, marmitas, pizza...)"), offering demos and example catalogs no one
+delivers, inventing benefits ("sem comissão") and sending a literal `\n\n`.
+
+- **Prompt layout** (`agent/prompts.ts`): identity → product → _O que existe de
+  verdade_ (the only offerable next steps: BOOKING_URL, OFERTA, handoff) → staff
+  rules → writing rules → negotiation → goal → per-kind playbook → channels →
+  pre-send check. Examples teach by contrast (Bom/Ruim with why); a lone quoted
+  line gets copied verbatim by small models.
+- **Style check** (`agent/style.ts`): `send_message`/`draft_message` bounce the
+  first robotic body of a run (em dash, markdown, bullets, guess lists, 3+
+  questions, template placeholders, demo/example offers, stock bot phrases)
+  back to the model with the issues; the second attempt goes out as written.
+  Escaped `\n` in bodies becomes a real line break.
+- **Context** (`agent/context-render.ts`): `AGORA` (local weekday/time), a
+  trimmed lead card, a `NOME` warning when the name is still the phone, and
+  `CONVERSA` as a dated transcript (who said it, what never reached the lead);
+  runs without a thread see the lead's recent messages across channels.
+- **WhatsApp**: áudio/imagem/vídeo/documento arrive tagged instead of dropped;
+  Baileys marks the lead's pending messages read and shows "digitando…" right
+  before each send.
+- **Context budgets** (`CTX` in `runner.ts`): lead runs read the lead's whole
+  history across channels (≤400 messages, 60k chars; overflow keeps the opening +
+  the recent tail with a cut marker), up to 30 notes (3k chars each, 20k total),
+  200 facts, open team tasks and stage history.
+- **Caching**: the Anthropic driver caches the system prompt and the run's growing
+  conversation (`max_tokens` 16k, cache-aware cost); OpenRouter caches the system
+  prompt for `anthropic/*` models. The system prompt holds nothing volatile (time
+  lives in the context message), so the prefix stays byte-stable.
+- **Defaults**: the stock pitch no longer pre-authorizes trials/demos. Installs
+  with a stored `pitch`/`agent.instructions` keep their own text.
+- **Sim**: lead-opened scenarios (`opener`) incl. `inbound-oi`,
+  `brownie-quer-ver`, `inbound-cliente-final`, `robo-e-preco`; the judge scores
+  a rubric (escuta, naturalidade, descoberta, veracidade, avanço) and caps
+  promised-but-nonexistent deliverables like fabricated prices.
+
 ## Still open
 
 - **Negotiation reflection** — see item 3: a checklist-aware finish step for

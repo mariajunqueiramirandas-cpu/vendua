@@ -36,6 +36,11 @@ export interface LlmProvider {
 // cost estimation — providers that don't report USD get tokens × per-1M list prices so cost caps still fire
 const MODEL_USD_PER_1M: Record<string, { in: number; out: number }> = {
   'gemini-3.5-flash-lite': { in: 0.1, out: 0.4 },
+  'claude-fable-5-1': { in: 10.0, out: 50.0 },
+  'claude-opus-5-5': { in: 4.0, out: 20.0 },
+  'claude-opus-5': { in: 5.0, out: 25.0 },
+  'claude-sonnet-5': { in: 2.0, out: 10.0 },
+  'claude-haiku-4-5': { in: 1.0, out: 5.0 },
   'claude-sonnet-4-5': { in: 3.0, out: 15.0 },
   'gpt-4o-mini': { in: 0.15, out: 0.6 },
 };
@@ -53,6 +58,22 @@ export function estimateModelCostUsd(
   const rate =
     MODEL_USD_PER_1M[model] ?? (model.endsWith(':free') ? { in: 0, out: 0 } : FALLBACK_USD_PER_1M);
   return (tokensIn * rate.in + tokensOut * rate.out) / 1_000_000;
+}
+
+// Anthropic bills cache reads at 0.1× and cache writes at 1.25× the input rate — estimating
+// cached tokens at full price would trip the per-lead cost cap early.
+export function anthropicCostUsd(
+  model: string,
+  u: { input: number; cacheRead: number; cacheWrite: number; output: number },
+): number {
+  const rate = MODEL_USD_PER_1M[model] ?? FALLBACK_USD_PER_1M;
+  return (
+    (u.input * rate.in +
+      u.cacheRead * rate.in * 0.1 +
+      u.cacheWrite * rate.in * 1.25 +
+      u.output * rate.out) /
+    1_000_000
+  );
 }
 
 // rate limiting — module-level slot chain spaces calls to RPM; retries honor Retry-After
@@ -149,7 +170,16 @@ function openrouterProvider(
   return {
     name: `openrouter:${model}`,
     async chat({ system, messages, tools }) {
-      const orMessages: unknown[] = [{ role: 'system', content: system }];
+      // anthropic models behind openrouter cache only at explicit breakpoints; the others
+      // cache a stable prefix on their own
+      const orMessages: unknown[] = [
+        model.startsWith('anthropic/')
+          ? {
+              role: 'system',
+              content: [{ type: 'text', text: system, cache_control: { type: 'ephemeral' } }],
+            }
+          : { role: 'system', content: system },
+      ];
       for (const m of messages) {
         if (m.role === 'tool') {
           orMessages.push({ role: 'tool', toolCallId: m.toolCallId, content: m.content });
@@ -392,10 +422,13 @@ function anthropicProvider(config: Record<string, unknown>, secretRef: string | 
               'x-api-key': apiKey,
               'anthropic-version': '2023-06-01',
             },
+            // the system prompt is stable per install/kind — its own breakpoint; the
+            // top-level one caches the run's growing conversation turn to turn
             body: JSON.stringify({
               model,
-              max_tokens: 2048,
-              system,
+              max_tokens: 16_000,
+              cache_control: { type: 'ephemeral' },
+              system: [{ type: 'text', text: system, cache_control: { type: 'ephemeral' } }],
               messages: amMessages,
               tools: tools.map((t) => ({
                 name: t.name,
@@ -409,7 +442,12 @@ function anthropicProvider(config: Record<string, unknown>, secretRef: string | 
         );
         return (await res.json()) as {
           content?: { type: string; text?: string; id?: string; name?: string; input?: unknown }[];
-          usage?: { input_tokens?: number; output_tokens?: number };
+          usage?: {
+            input_tokens?: number;
+            output_tokens?: number;
+            cache_read_input_tokens?: number;
+            cache_creation_input_tokens?: number;
+          };
         };
       });
       const text = (data.content ?? [])
@@ -423,12 +461,18 @@ function anthropicProvider(config: Record<string, unknown>, secretRef: string | 
           name: b.name!,
           args: (b.input ?? {}) as Record<string, unknown>,
         }));
+      const u = {
+        input: data.usage?.input_tokens ?? 0,
+        cacheRead: data.usage?.cache_read_input_tokens ?? 0,
+        cacheWrite: data.usage?.cache_creation_input_tokens ?? 0,
+        output: data.usage?.output_tokens ?? 0,
+      };
       return {
         text: text || null,
         toolCalls,
-        tokensIn: data.usage?.input_tokens ?? 0,
-        tokensOut: data.usage?.output_tokens ?? 0,
-        costUsd: null,
+        tokensIn: u.input + u.cacheRead + u.cacheWrite,
+        tokensOut: u.output,
+        costUsd: anthropicCostUsd(model, u),
       };
     },
   };

@@ -9,8 +9,18 @@ const waLog = log.child({ mod: 'whatsapp' });
 // baileys v7 in-process; auth state persists in wa_auth_state (survives
 // restarts/redeploys with no filesystem). 'log' is the zero-credential dev driver.
 
+interface WaKey {
+  remoteJid: string;
+  id: string;
+  fromMe: false;
+}
+
 interface BaileysSocket {
   sendMessage(jid: string, content: { text: string }): Promise<{ key?: { id?: string } }>;
+  /** blue ticks on the lead's phone for these inbound keys */
+  readMessages?(keys: WaKey[]): Promise<unknown>;
+  /** 'composing' shows "digitando…" in the lead's chat until the message lands */
+  sendPresenceUpdate?(type: 'composing' | 'paused' | 'available', jid?: string): Promise<unknown>;
   /** free server-side existence probe — the autocontact gate verifies numbers through it */
   onWhatsApp(jid: string): Promise<{ jid: string; exists: boolean }[] | undefined>;
   end(err?: Error): void;
@@ -20,6 +30,8 @@ interface BaileysSocket {
   logout(): Promise<unknown>;
   /** The account once `open` — id/phoneNumber are jids ('5511…:dev@s.whatsapp.net'). */
   user?: { id?: string; phoneNumber?: string; name?: string } | undefined;
+  /** persisted LID↔PN store (wa_auth_state 'lid-mapping') baileys fills from every stanza/sync */
+  signalRepository?: { lidMapping?: { getPNForLID(lid: string): Promise<string | null> } };
   ev: {
     on(
       event: 'connection.update',
@@ -32,6 +44,7 @@ interface BaileysSocket {
       }) => void,
     ): void;
     on(event: 'creds.update', cb: () => void): void;
+    on(event: 'lid-mapping.update', cb: (m: { lid?: string; pn?: string }) => void): void;
     on(
       event: 'messages.upsert',
       cb: (m: {
@@ -52,7 +65,14 @@ interface BaileysSocket {
       event: 'messaging-history.set',
       cb: (m: {
         chats?: unknown[];
-        contacts?: { id?: string; name?: string; notify?: string; verifiedName?: string }[];
+        contacts?: {
+          id?: string;
+          lid?: string;
+          phoneNumber?: string;
+          name?: string;
+          notify?: string;
+          verifiedName?: string;
+        }[];
         messages?: {
           key?: {
             remoteJid?: string;
@@ -198,9 +218,32 @@ export function onHistoryMessage(fn: HistoryHandler) {
   historyHandlers.push(fn);
 }
 
+export interface LidMapping {
+  lid: string;
+  pn: string;
+}
+type LidMappingHandler = (pairs: LidMapping[]) => Promise<void>;
+const lidMappingHandlers: LidMappingHandler[] = [];
+/** LID↔PN pairs as the socket learns them (history sync, lid-mapping.update) — lets
+ *  persistence re-key leads first seen under a LID onto the real number */
+export function onLidMapping(fn: LidMappingHandler) {
+  lidMappingHandlers.push(fn);
+}
+async function emitLidMappings(pairs: LidMapping[]) {
+  if (pairs.length === 0) return;
+  for (const fn of lidMappingHandlers) {
+    try {
+      await fn(pairs);
+    } catch (e) {
+      waLog.warn({ err: e, count: pairs.length }, 'lid mapping handler failed');
+    }
+  }
+}
+
 // one drain queue for every socket's history chunks — serializing keeps
 // concurrent drains on the same unknown contact from minting duplicate leads
 let historyTail: Promise<void> = Promise.resolve();
+let liveTail: Promise<void> = Promise.resolve();
 
 // DB-backed auth state — creds/signal keys round-trip through BufferJSON so Buffers survive jsonb
 function dbAuthState(
@@ -427,21 +470,35 @@ async function startSocket(sql: Sql, integration: IntegrationRow): Promise<Baile
     // 'append' is real inbound too — stanzas delivered while offline/syncing;
     // providerMessageId dedupes retries downstream
     if (type !== 'notify' && type !== 'append') return;
-    for (const m of messages) {
-      const key = m.key;
-      // DMs only — group/broadcast JIDs would mint a lead per participant;
-      // LID-addressed DMs carry the phone-number jid in remoteJidAlt
-      const dm = key ? dmJid(key.remoteJid, key.remoteJidAlt) : null;
-      if (!key || key.fromMe || !dm) continue;
-      // no provider id = nothing to dedupe a retry on
-      if (!key.id) continue;
-      const text = extractText(baileys.normalizeMessageContent(m.message) ?? m.message);
-      if (!text) continue;
-      waLog.info({ from: maskPhone(dm.jid), type }, 'inbound message');
-      for (const fn of handlers) {
-        void fn(dm.jid, text, key.id, m.pushName, dm.alias);
-      }
-    }
+    const lookup = lidLookup(sock);
+    // serialized so one sender's burst keeps its order across the async LID lookup
+    liveTail = liveTail
+      .then(async () => {
+        for (const m of messages) {
+          const key = m.key;
+          if (!key || key.fromMe || !key.id) continue;
+          const text = extractText(baileys.normalizeMessageContent(m.message) ?? m.message);
+          if (!text) continue;
+          // DMs only — group/broadcast JIDs would mint a lead per participant
+          const dm = await resolveDmJid(key.remoteJid, key.remoteJidAlt, lookup);
+          if (!dm) continue;
+          waLog.info(
+            { from: maskPhone(dm.jid), lid: dm.jid.endsWith('@lid'), type },
+            'inbound message',
+          );
+          if (key.remoteJid)
+            rememberUnread(dm, { remoteJid: key.remoteJid, id: key.id, fromMe: false });
+          for (const fn of handlers) {
+            void fn(dm.jid, text, key.id, m.pushName, dm.alias);
+          }
+        }
+      })
+      .catch((e) => waLog.error({ err: e }, 'inbound processing failed'));
+  });
+  sock.ev.on('lid-mapping.update', ({ lid, pn }) => {
+    if (socket !== sock || !lid || !pn) return;
+    const pair = lidPnPair(lid, pn);
+    if (pair) void emitLidMappings([pair]);
   });
   sock.ev.on(
     'messaging-history.set',
@@ -454,14 +511,24 @@ async function startSocket(sql: Sql, integration: IntegrationRow): Promise<Baile
         const n = c.name ?? c.notify ?? c.verifiedName;
         if (c.id && n) names.set(c.id, n);
       }
-      // LID↔PN pairs from the sync itself — alias when the stanza lacks remoteJidAlt
-      const lidPn = new Map<string, string>();
-      for (const m of lidPnMappings ?? []) {
-        if (m.lid && m.pn) {
-          lidPn.set(m.lid, m.pn);
-          lidPn.set(m.pn, m.lid);
-        }
+      // LID↔PN pairs from the sync itself (+ contacts carrying both forms) — resolve
+      // LID-only stanzas before falling back to the persisted store
+      const pairs = new Map<string, LidMapping>();
+      const addPair = (a?: string, b?: string) => {
+        const pair = a && b ? lidPnPair(a, b) : null;
+        if (pair) pairs.set(pair.lid, pair);
+      };
+      for (const m of lidPnMappings ?? []) addPair(m.lid, m.pn);
+      for (const c of contacts ?? []) {
+        addPair(c.lid, c.phoneNumber);
+        addPair(c.id, c.phoneNumber);
+        addPair(c.id, c.lid);
+        const n = c.name ?? c.notify ?? c.verifiedName;
+        for (const j of [c.lid, c.phoneNumber]) if (j && n && !names.has(j)) names.set(j, n);
       }
+      const chunkPn = new Map([...pairs.values()].map((p) => [p.lid, p.pn]));
+      const storeLookup = lidLookup(sock);
+      const lookup = async (lid: string) => chunkPn.get(lid) ?? storeLookup(lid);
       // identity comes off the live socket — history can arrive before 'open' populates waMe
       const ownDigits = readIdentity(sock).phone;
       waLog.info(
@@ -472,20 +539,21 @@ async function startSocket(sql: Sql, integration: IntegrationRow): Promise<Baile
       // needing no creds; teardown can lose it, not corrupt it
       historyTail = historyTail
         .then(async () => {
+          // re-key LID leads first so this chunk's messages match them by number
+          await emitLidMappings([...pairs.values()]);
           for (const m of messages ?? []) {
             try {
               const key = m.key;
-              const dm = key ? dmJid(key.remoteJid, key.remoteJidAlt) : null;
+              const dm = key ? await resolveDmJid(key.remoteJid, key.remoteJidAlt, lookup) : null;
               if (!key?.id || !dm) continue;
               // self-chat = the account's own number — never a lead
               if (ownDigits && dm.jid.replace(/\D/g, '') === ownDigits) continue;
               const text = extractText(baileys.normalizeMessageContent(m.message) ?? m.message);
               if (!text) continue;
               // pushName on a fromMe stanza is OUR account name — use the contact map instead
-              const pushName = key.fromMe
-                ? names.get(key.remoteJid ?? '')
-                : (m.pushName ?? names.get(key.remoteJid ?? ''));
-              const altJid = dm.alias ?? lidPn.get(dm.jid);
+              const contactName = names.get(key.remoteJid ?? '') ?? names.get(dm.jid);
+              const pushName = key.fromMe ? contactName : (m.pushName ?? contactName);
+              const altJid = dm.alias;
               const sentAt = messageTs(m.messageTimestamp);
               const entry: HistoryMessage = {
                 jid: dm.jid,
@@ -524,6 +592,51 @@ function messageTs(ts: number | string | { toNumber(): number } | undefined): Da
   return new Date(n > 1e12 ? n : n * 1000);
 }
 
+// jid user part without the device suffix — '5511…:12@s.whatsapp.net' → '5511…@s.whatsapp.net'
+function userJid(j: string): string {
+  const at = j.indexOf('@');
+  if (at < 0) return j;
+  return `${j.slice(0, at).split(':')[0]}${j.slice(at)}`;
+}
+
+/** order-insensitive LID↔PN pair at user level; null unless exactly one of each */
+export function lidPnPair(a: string, b: string): LidMapping | null {
+  const x = userJid(a);
+  const y = userJid(b);
+  if (x.endsWith('@lid') && y.endsWith('@s.whatsapp.net')) return { lid: x, pn: y };
+  if (y.endsWith('@lid') && x.endsWith('@s.whatsapp.net')) return { lid: y, pn: x };
+  return null;
+}
+
+// persisted store lookup — null on miss or failure (never blocks ingest)
+function lidLookup(sock: BaileysSocket): (lid: string) => Promise<string | null> {
+  return async (lid) => {
+    const store = sock.signalRepository?.lidMapping;
+    if (!store) return null;
+    try {
+      return await store.getPNForLID(lid);
+    } catch (e) {
+      waLog.warn({ err: e }, 'lid→pn lookup failed');
+      return null;
+    }
+  };
+}
+
+/** DM jid pair with LIDs upgraded to the real number: remoteJidAlt first, then
+ *  `lookup` (sync mappings / baileys' persisted LID store). An unresolvable LID
+ *  stays the jid — it still identifies the chat and re-keys once a mapping lands. */
+export async function resolveDmJid(
+  remoteJid: string | undefined,
+  remoteJidAlt: string | undefined,
+  lookup: (lid: string) => Promise<string | null | undefined>,
+): Promise<{ jid: string; alias?: string } | null> {
+  const dm = dmJid(remoteJid && userJid(remoteJid), remoteJidAlt && userJid(remoteJidAlt));
+  if (!dm || !dm.jid.endsWith('@lid')) return dm;
+  const pn = await lookup(dm.jid);
+  const pair = pn ? lidPnPair(dm.jid, pn) : null;
+  return pair ? { jid: pair.pn, alias: pair.lid } : dm;
+}
+
 // DM jid pair — jid prefers the PN form (@s.whatsapp.net, what lead
 // digit-matching wants), alias is the LID↔PN complement; group/broadcast reject
 function dmJid(remoteJid?: string, remoteJidAlt?: string): { jid: string; alias?: string } | null {
@@ -554,13 +667,26 @@ function readIdentity(sock: BaileysSocket): {
   return { phone: digits || null, name: u?.name ?? null };
 }
 
-function extractText(message: unknown): string | null {
+// Media the agent can't read still reaches it as a tagged line — a dropped áudio leaves the
+// lead talking to nobody; the tag lets the reply say so. Stickers/reactions need no answer.
+export function extractText(message: unknown): string | null {
   if (!message || typeof message !== 'object') return null;
   const m = message as Record<string, unknown>;
   const conv = m.conversation;
   if (typeof conv === 'string') return conv;
   const ext = m.extendedTextMessage as { text?: string } | undefined;
   if (ext?.text) return ext.text;
+  const media = (k: string) =>
+    m[k] && typeof m[k] === 'object' ? (m[k] as { caption?: string; fileName?: string }) : null;
+  const tagged = (tag: string, caption?: string) =>
+    caption?.trim() ? `[${tag}] ${caption.trim()}` : `[${tag}]`;
+  if (media('audioMessage')) return '[áudio]';
+  const img = media('imageMessage');
+  if (img) return tagged('imagem', img.caption);
+  const vid = media('videoMessage');
+  if (vid) return tagged('vídeo', vid.caption);
+  const doc = media('documentMessage');
+  if (doc) return tagged(doc.fileName ? `documento: ${doc.fileName}` : 'documento', doc.caption);
   return null;
 }
 
@@ -745,6 +871,33 @@ async function logoutOnce(sql: Sql, accountId: string): Promise<void> {
   waLog.info({ accountId }, 'logged out — auth state wiped');
 }
 
+// Inbound keys not yet marked read, by phone digits (and LID alias) — flushed as read receipts
+// right before our next message to that chat, the way a person reads and then answers.
+// In-memory: a restart just means those few messages keep grey ticks.
+const unread = new Map<string, WaKey[]>();
+const UNREAD_PER_CHAT = 20;
+
+function rememberUnread(dm: { jid: string; alias?: string }, k: WaKey): void {
+  for (const j of [dm.jid, dm.alias]) {
+    const d = j?.replace(/@.*$/, '').replace(/\D/g, '');
+    if (!d) continue;
+    const list = unread.get(d) ?? [];
+    if (!list.some((x) => x.id === k.id)) list.push(k);
+    unread.set(d, list.slice(-UNREAD_PER_CHAT));
+  }
+}
+
+function takeUnread(jid: string): WaKey[] {
+  const d = jid.replace(/@.*$/, '').replace(/\D/g, '');
+  const keys = unread.get(d) ?? [];
+  // the same keys may sit under the alias too — drop every entry that holds them
+  for (const [k, v] of unread) if (v.some((x) => keys.some((y) => y.id === x.id))) unread.delete(k);
+  return keys;
+}
+
+// "digitando…" long enough to register, short enough not to stall the dispatch
+const typingMs = (text: string) => Math.min(2_000, 400 + text.length * 15);
+
 export async function sendWhatsApp(
   sql: Sql,
   integration: IntegrationRow,
@@ -760,7 +913,18 @@ export async function sendWhatsApp(
     const sock = await ensureSocket(sql, integration);
     if (!sock) throw new Error('baileys socket not started');
     const jid = to.includes('@') ? to : `${to.replace(/\D/g, '')}@s.whatsapp.net`;
+    // receipts and presence are cosmetic — never let them fail the send
+    const keys = takeUnread(jid);
+    if (keys.length && sock.readMessages) {
+      await sock.readMessages(keys).catch((e) => waLog.warn({ err: e }, 'read receipt failed'));
+    }
+    if (sock.sendPresenceUpdate) {
+      await sock.sendPresenceUpdate('composing', jid).catch(() => undefined);
+      await new Promise((r) => setTimeout(r, typingMs(text)));
+    }
     const res = await sock.sendMessage(jid, { text });
+    if (sock.sendPresenceUpdate)
+      await sock.sendPresenceUpdate('paused', jid).catch(() => undefined);
     waLog.info({ to: maskPhone(jid), id: res?.key?.id ?? null }, 'message sent');
     return res?.key?.id ?? null;
   }

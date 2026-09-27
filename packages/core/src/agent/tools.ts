@@ -24,6 +24,7 @@ import {
   getSetting,
   getIntegrationTx,
   getSettingTx,
+  newLeadModesOf,
   type Guardrails,
 } from '../modules/integrations.ts';
 import {
@@ -44,11 +45,13 @@ import {
 import { instagramHandle } from '../modules/threads.ts';
 import { dispatchMessage } from './send.ts';
 import { whatsappRegistered } from './channels/whatsapp.ts';
+import { notifyStaff } from '../modules/staff.ts';
 import { leadBoundArg, toolAvailable } from './tool-meta.ts';
 import { ladderTags } from './prompts.ts';
 import { parseWakeupAt, scheduleWakeupTx } from './wakeups.ts';
 import { automationAllowedTx, discoveryBudgetTx } from './policy.ts';
 import { RETIRED_BY_INBOUND, type TriggerSource } from './sources.ts';
+import { messageStyleIssues, normalizeMessageBody } from './style.ts';
 
 /** central tool registry — every tool validates args and executes against modules; the model never touches SQL. */
 
@@ -87,6 +90,8 @@ export interface ToolContext {
   toolKinds?: ReadonlySet<string>;
   /** tools whose provider isn't configured (name → why) — never offered, refused if called anyway. */
   disabledTools?: ReadonlyMap<string, string>;
+  /** the run already had one message bounced by the style check — the next goes as written */
+  styleBounced?: boolean;
 }
 
 /** One prospect in the agent's ledger — what it found and which moves it already spent. */
@@ -209,6 +214,10 @@ const REGISTRY: { def: AgentTool }[] = [
         type: 'object',
         properties: {
           id: leadIdArg,
+          name: {
+            type: 'string',
+            description: "the person's real name once the conversation shows it",
+          },
           ...LEAD_FIELDS,
           archived: {
             type: 'boolean',
@@ -317,8 +326,15 @@ const REGISTRY: { def: AgentTool }[] = [
         properties: {
           leadId: leadIdArg,
           channel: { type: 'string', enum: ['email', 'whatsapp', 'instagram', 'manual'] },
-          body: { type: 'string' },
-          subject: { type: 'string' },
+          body: {
+            type: 'string',
+            description:
+              'the message exactly as the lead will read it: plain text, sized like a real chat message (1-3 short lines on whatsapp/instagram), at most one question, no markdown, bullets or em dashes',
+          },
+          subject: {
+            type: 'string',
+            description: 'email only: short and plain, the way a person titles an email',
+          },
         },
         required: ['leadId', 'body'],
       },
@@ -334,8 +350,15 @@ const REGISTRY: { def: AgentTool }[] = [
         properties: {
           leadId: leadIdArg,
           channel: { type: 'string', enum: ['email', 'whatsapp', 'instagram'] },
-          body: { type: 'string' },
-          subject: { type: 'string' },
+          body: {
+            type: 'string',
+            description:
+              'the message exactly as the lead will read it: plain text, sized like a real chat message (1-3 short lines on whatsapp/instagram), at most one question, no markdown, bullets or em dashes',
+          },
+          subject: {
+            type: 'string',
+            description: 'email only: short and plain, the way a person titles an email',
+          },
         },
         required: ['leadId', 'body'],
       },
@@ -382,10 +405,18 @@ const REGISTRY: { def: AgentTool }[] = [
   {
     def: {
       name: 'request_human',
-      description: 'Pause the agent on this thread and hand the lead to staff (creates a task).',
+      description:
+        'Pause the agent on this thread and hand the lead to staff (creates a task). A human takes over mid-conversation, so reason is the handoff they read first.',
       parameters: {
         type: 'object',
-        properties: { leadId: leadIdArg, reason: { type: 'string' } },
+        properties: {
+          leadId: leadIdArg,
+          reason: {
+            type: 'string',
+            description:
+              'the handoff: what the lead wants, what you already said or tried, what the human must decide',
+          },
+        },
         required: ['leadId', 'reason'],
       },
     },
@@ -400,7 +431,10 @@ const REGISTRY: { def: AgentTool }[] = [
         properties: {
           leadId: leadIdArg,
           reason: { type: 'string' },
-          reply: { type: 'string' },
+          reply: {
+            type: 'string',
+            description: "one short line in the lead's own register, no pitch, no question",
+          },
         },
         required: ['leadId'],
       },
@@ -762,6 +796,31 @@ export async function executeTool(
     if (target !== ctx.leadId) {
       return {
         error: `LEAD_MISMATCH — this run is bound to lead ${ctx.leadId}; pass that leadId`,
+      };
+    }
+  }
+
+  if ((name === 'send_message' || name === 'draft_message') && typeof args.body === 'string') {
+    args = { ...args, body: normalizeMessageBody(args.body) };
+  }
+  if (name === 'unsubscribe' && typeof args.reply === 'string') {
+    args = { ...args, reply: normalizeMessageBody(args.reply) };
+  }
+  if (
+    (name === 'send_message' || name === 'draft_message') &&
+    !ctx.styleBounced &&
+    typeof args.body === 'string'
+  ) {
+    const issues = messageStyleIssues(
+      args.body,
+      typeof args.channel === 'string' ? args.channel : ctx.channelOverride,
+    );
+    if (issues.length) {
+      ctx.styleBounced = true;
+      return {
+        error:
+          'ESTILO — a mensagem não saiu: soa como robô. Reescreva como uma pessoa digitaria no celular e chame de novo.',
+        issues,
       };
     }
   }
@@ -1162,7 +1221,13 @@ export async function executeTool(
           whatsappDerived ? '' : String(input.whatsapp ?? '').trim(),
           input.instagram,
         );
-        const created = await insertLeadTx(tx, input);
+        // an agent-found lead starts where the workspace says; autocontact below may still promote it
+        const created = await insertLeadTx(tx, {
+          ...input,
+          agent_mode:
+            input.agent_mode ??
+            newLeadModesOf(await getSettingTx<unknown>(tx, 'agent', null)).discovery,
+        });
         await writeFindings(created.body.lead.id as string);
         if (whatsappDerived) {
           (created.body as Record<string, unknown>).whatsappUnverified = true;
@@ -1659,9 +1724,9 @@ export async function executeTool(
       const reason = String(args.reason).slice(0, 500);
       // the whole handoff commits under ONE claim — sub-claims could half-commit
       // on crash and a retry would duplicate the task/note.
-      await claimControl(sql, key, async (tx) => {
+      const res = await claimControl(sql, key, async (tx) => {
         await assertRunClaimTx(tx, ctx);
-        const exists = await tx`select 1 from leads where id = ${leadId}`;
+        const exists = await tx<{ name: string }[]>`select name from leads where id = ${leadId}`;
         if (!exists[0]) throw new HttpError(404, 'LEAD_NOT_FOUND', 'lead not found');
         if (ctx.threadId) {
           const rows = await tx`
@@ -1684,8 +1749,15 @@ export async function executeTool(
           insert into lead_activities (lead_id, kind, body, created_by)
           values (${leadId}, 'system', ${`Handoff para humano — ${reason}`}, 'agent')
         `;
-        return { status: 200, body: { handedOff: true } };
+        return { status: 200, body: { handedOff: true, leadName: exists[0].name } };
       });
+      if (!res.replayed) {
+        void notifyStaff(sql, 'handoff', {
+          subject: `Venduá — ${res.body.leadName} precisa de você`,
+          body: `O agente pausou e passou a conversa para a equipe.\n\nMotivo: ${reason}`,
+          idemKey: `handoff:${key}`,
+        });
+      }
       return { handedOff: true };
     }
     case 'unsubscribe': {

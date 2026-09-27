@@ -175,7 +175,45 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('agent evals — golden runs (db
     expect(last.messages.some((m) => m.role === 'tool' && m.name === 'send_message')).toBe(true);
   });
 
-  test('supervised forces the first outbound into the approvals queue', async () => {
+  test('supervised: a cold first contact waits for approval', async () => {
+    await migrate(sql, MIGRATIONS);
+    await cancelQueued();
+    await seedChannel();
+    await seedGuardrails();
+    await pinAutonomy('supervised');
+    const leadId = await seedLead(PHONE());
+    const p = scriptedProvider([
+      { toolCalls: [{ name: 'send_message', args: { leadId, body: 'Primeira mensagem.' } }] },
+      { text: 'drafted.' },
+    ]);
+    setTestProvider(p);
+    try {
+      await enqueueRun(sql, { kind: 'outreach', leadId });
+      const deadline = Date.now() + 15_000;
+      for (;;) {
+        await drain(sql);
+        const [r] = await sql<{ status: string }[]>`
+          select status from agent_runs where lead_id = ${leadId} order by created_at desc limit 1`;
+        if (r && ['done', 'failed', 'canceled'].includes(r.status)) {
+          expect(r.status).toBe('done');
+          break;
+        }
+        if (Date.now() > deadline) throw new Error('run never reached a terminal status');
+        await new Promise((res) => setTimeout(res, 40));
+      }
+    } finally {
+      setTestProvider(null);
+      await cancelQueued();
+    }
+    const msgs = await outbound(leadId);
+    expect(msgs).toHaveLength(1);
+    // landed for review, not on the wire — and the run still counts as acted
+    expect(msgs[0]!.status).toBe('draft');
+    const lead = (await sql<{ state: string }[]>`select state from leads where id = ${leadId}`)[0]!;
+    expect(lead.state).toBe('lead');
+  });
+
+  test('supervised: a lead who wrote first gets a live answer', async () => {
     await migrate(sql, MIGRATIONS);
     await cancelQueued();
     await seedChannel();
@@ -184,17 +222,30 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('agent evals — golden runs (db
     const wa = PHONE();
     const leadId = await seedLead(wa);
     const p = scriptedProvider([
-      { toolCalls: [{ name: 'send_message', args: { leadId, body: 'Primeira mensagem.' } }] },
-      { text: 'drafted.' },
+      { toolCalls: [{ name: 'send_message', args: { leadId, body: 'Oi! Aqui é da Venduá.' } }] },
+      { text: 'respondido.' },
     ]);
     const { run } = await runInbound(p, wa, `eval:${crypto.randomUUID()}`);
     expect(run.status).toBe('done');
-    const msgs = await outbound(leadId);
-    expect(msgs).toHaveLength(1);
-    // landed for review, not on the wire — and the run still counts as acted
-    expect(msgs[0]!.status).toBe('draft');
-    const lead = (await sql<{ state: string }[]>`select state from leads where id = ${leadId}`)[0]!;
-    expect(lead.state).toBe('lead');
+    expect((await outbound(leadId)).map((m) => m.status)).toEqual(['sent']);
+  });
+
+  test('a new number starts in the mode the workspace picked for inbound leads', async () => {
+    await migrate(sql, MIGRATIONS);
+    await cancelQueued();
+    await seedChannel();
+    await seedGuardrails();
+    const modeOf = async (wa: string) =>
+      (await sql<{ agent_mode: string }[]>`select agent_mode from leads where whatsapp = ${wa}`)[0]
+        ?.agent_mode;
+    for (const mode of ['draft', 'auto'] as const) {
+      await sql`insert into control_settings (key, value)
+        values ('agent', ${sql.json({ level: 'supervised', newLeadMode: { inbound: mode } } as never)})
+        on conflict (key) do update set value = excluded.value`;
+      const wa = PHONE();
+      await runInbound(scriptedProvider([{ text: 'ok' }]), wa, `eval:${crypto.randomUUID()}`);
+      expect(await modeOf(wa)).toBe(mode);
+    }
   });
 
   test('unsubscribe intent suppresses the lead; later runs are refused', async () => {
@@ -284,7 +335,7 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('agent evals — golden runs (db
     const leadId = await seedLead(wa);
     const p = scriptedProvider([
       { text: 'Hmm, deixa eu olhar o contexto.' },
-      { toolCalls: [{ name: 'send_message', args: { leadId, body: 'Achei — aqui está.' } }] },
+      { toolCalls: [{ name: 'send_message', args: { leadId, body: 'Achei, aqui está.' } }] },
       { text: 'feito.' },
     ]);
     const { run } = await runInbound(p, wa, `eval:${crypto.randomUUID()}`);
@@ -298,6 +349,58 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('agent evals — golden runs (db
     expect(lastMsg.role === 'user' ? lastMsg.content : '').toContain('Ação pendente');
     const msgs = await outbound(leadId);
     expect(msgs[0]!.status).toBe('sent');
+  });
+
+  test('style check bounces a robotic reply once — the rewrite is what reaches the lead', async () => {
+    await migrate(sql, MIGRATIONS);
+    await cancelQueued();
+    await seedChannel();
+    await seedGuardrails();
+    await pinAutonomy('autopilot');
+    const wa = PHONE();
+    const leadId = await seedLead(wa, { name: wa });
+    const robotic = 'Olá! Tudo bem? O que vocês vendem por aí? (doces, marmitas, pizza...)';
+    const human = 'Oi, tudo bem? Aqui é da Venduá. Me conta, como posso te ajudar?';
+    const p = scriptedProvider([
+      { toolCalls: [{ name: 'send_message', args: { leadId, body: robotic } }] },
+      { toolCalls: [{ name: 'send_message', args: { leadId, body: human } }] },
+      { text: 'respondido.' },
+    ]);
+    const { run } = await runInbound(p, wa, `eval:${crypto.randomUUID()}`);
+    expect(run.status).toBe('done');
+    const msgs = await outbound(leadId);
+    expect(msgs.map((m) => [m.status, m.body])).toEqual([['sent', human]]);
+    const bounced = (run.steps as { name?: string; out?: { error?: string; issues?: string[] } }[])
+      .filter((s) => s.name === 'send_message' && s.out?.error)
+      .map((s) => s.out!);
+    expect(bounced).toHaveLength(1);
+    expect(bounced[0]!.error).toContain('ESTILO');
+    expect(bounced[0]!.issues!.join(' ')).toContain('palpites');
+    // the model saw a dated transcript and the unnamed-contact warning, not raw rows
+    const context = p.requests[0]!.messages[0]!;
+    const text = context.role === 'user' ? context.content : '';
+    expect(text).toMatch(/^AGORA: /);
+    expect(text).toContain('] LEAD: oi — quero saber do plano');
+    expect(text).toContain('NOME: o cadastro ainda não tem o nome');
+    expect(text).not.toContain('"agent_plan"');
+  });
+
+  test('style check steers but never strands — a second flawed body goes out as written', async () => {
+    await migrate(sql, MIGRATIONS);
+    await cancelQueued();
+    await seedChannel();
+    await seedGuardrails();
+    await pinAutonomy('autopilot');
+    const wa = PHONE();
+    const leadId = await seedLead(wa);
+    const p = scriptedProvider([
+      { toolCalls: [{ name: 'send_message', args: { leadId, body: 'Oi — tudo certo?' } }] },
+      { toolCalls: [{ name: 'send_message', args: { leadId, body: 'Oi — tudo certo por aí?' } }] },
+      { text: 'feito.' },
+    ]);
+    const { run } = await runInbound(p, wa, `eval:${crypto.randomUUID()}`);
+    expect(run.status).toBe('done');
+    expect((await outbound(leadId)).map((m) => m.body)).toEqual(['Oi — tudo certo por aí?']);
   });
 
   test('cost cap refuses the next run once a lead crosses its lifetime spend', async () => {

@@ -292,14 +292,15 @@ export async function checkSendAllowedTx(
     if (channel === 'email' && lead.email_bounced_at)
       return { ok: false, forceDraft: false, reason: 'email bounced' };
 
-    // first contact is always human-approved; the draft decision runs
-    // before the send-only gates so quiet hours/cap only bind live sends
+    // a cold first contact (we'd speak first) is human-approved under supervised; a lead
+    // who wrote to us isn't cold. The draft decision runs before the send-only gates so
+    // quiet hours/cap only bind live sends.
     const priorOut = (
       await tx<{ n: number }[]>`
         select count(*)::int as n from lead_messages m
         join lead_threads t on t.id = m.thread_id
-        where t.lead_id = ${leadId} and m.direction = 'out'
-          and m.status in ('queued', 'sending', 'sent', 'delivered')
+        where t.lead_id = ${leadId}
+          and (m.direction = 'in' or m.status in ('queued', 'sending', 'sent', 'delivered'))
       `
     )[0]!.n;
     const { level } = await agentSettingTx(tx);

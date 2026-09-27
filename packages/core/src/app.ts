@@ -31,6 +31,8 @@ import {
 import { TenantResolver, type Tenant } from './platform/tenancy.ts';
 import { getCatalog, getProduct, getProductById } from './modules/catalog.ts';
 import { deriveStatus, type StoreSettingsRow } from './modules/store.ts';
+import { notifyStaff } from './modules/staff.ts';
+import { normalizeStaff } from './modules/staff-config.ts';
 import { composeNotices, type SurfacesEnvelope } from './modules/notices.ts';
 import { addItem, assertCartOpen, loadCartView, matchZone } from './modules/cart.ts';
 import { validateCheckout, validateCheckoutShape } from './modules/checkout.ts';
@@ -725,6 +727,19 @@ export function createApp({ sql, sessionSecret, controlSecret, autoDrain }: AppD
       }
     }
   };
+  // The CRM is an installed PWA: one sign-in per device. 400 days is Chrome's cap, and
+  // /session re-issues it on every app open, so only logout or a secret rotation ends it.
+  const setControlCookie = (c: Context) =>
+    setCookie(c, CONTROL_COOKIE, controlToken, {
+      httpOnly: true,
+      sameSite: 'Lax',
+      // TLS directly, or via trusted X-Forwarded-Proto.
+      secure:
+        c.req.url.startsWith('https://') ||
+        (trustProxy && c.req.header('x-forwarded-proto') === 'https'),
+      maxAge: 60 * 60 * 24 * 400,
+      path: '/control',
+    });
   const requireIdemKey = (c: Context) => {
     const key = c.req.header('idempotency-key');
     if (!key) {
@@ -775,16 +790,7 @@ export function createApp({ sql, sessionSecret, controlSecret, autoDrain }: AppD
     }
     const body = (await bodyJson(c).catch(() => ({}))) as { key?: unknown };
     if (body.key !== staffSecret) throw new HttpError(404, 'NOT_FOUND', 'not found');
-    setCookie(c, CONTROL_COOKIE, controlToken, {
-      httpOnly: true,
-      sameSite: 'Lax',
-      // TLS directly, or via trusted X-Forwarded-Proto.
-      secure:
-        c.req.url.startsWith('https://') ||
-        (trustProxy && c.req.header('x-forwarded-proto') === 'https'),
-      maxAge: 60 * 60 * 12,
-      path: '/control',
-    });
+    setControlCookie(c);
     return c.json({ ok: true });
   });
 
@@ -795,6 +801,7 @@ export function createApp({ sql, sessionSecret, controlSecret, autoDrain }: AppD
 
   app.get('/control/v1/session', (c) => {
     controlGate(c);
+    if (getCookie(c, CONTROL_COOKIE) === controlToken) setControlCookie(c);
     return c.json({ ok: true });
   });
 
@@ -1233,10 +1240,24 @@ export function createApp({ sql, sessionSecret, controlSecret, autoDrain }: AppD
     const body = await bodyJson(c);
     const key = str(c.req.param('key'), 'key', 80);
     validateSetting(key, body.value);
-    const res = await putSetting(sql, key, body.value, requireIdemKey(c));
+    const value = key === 'staff' ? normalizeStaff(body.value) : body.value;
+    const res = await putSetting(sql, key, value, requireIdemKey(c));
     if (res.replayed) c.header('x-idempotent-replay', 'true');
     // A lowered cap strands over-cap leads (queued runs park silently) — flag them now; deduped.
     if (key === 'guardrails' && !res.replayed) await flagCappedLeads(sql);
+    return c.json(res.body);
+  });
+
+  app.post('/control/v1/staff/test', async (c) => {
+    controlGate(c);
+    const res = await claimControl(sql, requireIdemKey(c), async () => {
+      const deliveries = await notifyStaff(sql, null, {
+        subject: 'Venduá — teste de notificação',
+        body: 'Tudo certo: é por aqui que a equipe fica sabendo de handoffs e calls marcadas.',
+      });
+      return { status: 200, body: { deliveries } };
+    });
+    if (res.replayed) c.header('x-idempotent-replay', 'true');
     return c.json(res.body);
   });
 

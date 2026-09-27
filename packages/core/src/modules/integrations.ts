@@ -4,6 +4,7 @@ import { claimControl, controlTx, type ClaimResult } from './control.ts';
 import { emitControlEvent } from './control-events.ts';
 import { LEAD_STATES, type LeadState } from './leads.ts';
 import { JOB_KINDS } from '../agent/tool-meta.ts';
+import { normalizeStaff } from './staff-config.ts';
 
 // modular provider config: `secret_ref` is the NAME of the env var holding the
 // credential — secret values never enter the DB
@@ -257,25 +258,93 @@ export function phoneIsIgnored(
 
 export const DEFAULT_PITCH = {
   product:
-    'Venduá — plataforma que cria uma loja online própria para pequenos negócios de comida (docerias, marmitas, pizzarias) em poucos dias, com catálogo, pedidos e checkout integrados.',
-  audience: 'donos de pequenos negócios de alimentação no Brasil',
-  tone: 'direto, caloroso, português brasileiro, mensagens curtas estilo WhatsApp',
+    'Venduá: plataforma que coloca no ar, em poucos dias, a loja online própria de um pequeno negócio de comida, com catálogo, pedidos e pagamento integrados.',
+  audience:
+    'donos de pequenos negócios de comida no Brasil (docerias, confeitarias, marmitas, pizzarias, padarias, lanchonetes) que hoje vendem por WhatsApp, Instagram ou marketplace',
+  tone: 'direto e caloroso, como um bom vendedor brasileiro no WhatsApp: mensagens curtas, português falado, zero formalidade de e-mail',
   offerRange:
-    'pode oferecer teste gratuito e desconto de lançamento; nunca prometa preço final nem isenção — escale para humano quando pedirem desconto além do lançamento',
+    'nenhuma condição especial pré-aprovada: desconto, teste grátis, prazo ou exceção são decisão da equipe, então escale para humano',
   /** the only commercial claims the agent may state verbatim; empty = nothing may be quoted */
   offer: '',
-  goal: 'descobrir interesse e marcar uma conversa curta ou pedido de demonstração',
+  goal: 'entender o negócio da pessoa e levar a um próximo passo real: uma conversa curta com a equipe',
 } as const;
 
 /** default `agent.instructions` (policy.ts) — the standing rules every run carries */
 export const DEFAULT_AGENT_RULES = [
-  'nunca invente funcionalidades, prazos ou preços',
+  'nunca invente funcionalidades, prazos, preços ou resultados',
   'nunca pressione quem disse não ou pediu para parar',
-  'uma mensagem por vez; sem listas longas ou jargão',
-  'não se identifique como IA a menos que perguntem — e se perguntarem, seja honesto',
+  'uma mensagem curta por vez, com no máximo uma pergunta; sem listas nem jargão',
+  'não se identifique como IA a menos que perguntem; se perguntarem, seja honesto',
 ] as const;
 
 export type Pitch = typeof DEFAULT_PITCH;
+
+/** The agent mode a lead starts in when nobody on staff picked one. 'auto' follows the
+ *  workspace autonomy level; 'draft' holds every message on that lead for approval. */
+export type LeadStartMode = 'draft' | 'auto';
+export interface NewLeadModes {
+  /** a lead minted by an inbound message (they wrote to us first) */
+  inbound: LeadStartMode;
+  /** a lead the agent created (discovery) */
+  discovery: LeadStartMode;
+}
+export const DEFAULT_NEW_LEAD_MODES: NewLeadModes = { inbound: 'auto', discovery: 'auto' };
+
+/** `agent.newLeadMode` with defaults — lives here, not in policy.ts, so the inbound path can read it. */
+export function newLeadModesOf(agentSetting: unknown): NewLeadModes {
+  const raw = (agentSetting as { newLeadMode?: unknown } | null)?.newLeadMode;
+  const o =
+    raw && typeof raw === 'object' && !Array.isArray(raw) ? (raw as Record<string, unknown>) : {};
+  const pick = (v: unknown, d: LeadStartMode): LeadStartMode =>
+    v === 'draft' || v === 'auto' ? v : d;
+  return {
+    inbound: pick(o.inbound, DEFAULT_NEW_LEAD_MODES.inbound),
+    discovery: pick(o.discovery, DEFAULT_NEW_LEAD_MODES.discovery),
+  };
+}
+
+/** What the pairing-time WhatsApp history sync may do. Defaults keep the original
+ *  behavior: every DM chat in the phone becomes a lead. */
+export interface WhatsappHistory {
+  /** 'leads' = unknown contacts become leads; 'existing' = only attach to leads we
+   *  already have; 'off' = drop the history entirely */
+  mode: 'leads' | 'existing' | 'off';
+  /** skip messages older than N days; 0 = no limit */
+  maxAgeDays: number;
+  /** agent mode for a lead minted from history — 'inbound' follows agent.newLeadMode.inbound.
+   *  Old chats are often friends/clients, so 'off' keeps the agent away until staff opts in. */
+  leadMode: 'inbound' | 'draft' | 'off';
+}
+export const DEFAULT_WHATSAPP_HISTORY: WhatsappHistory = {
+  mode: 'leads',
+  maxAgeDays: 0,
+  leadMode: 'inbound',
+};
+const WA_HISTORY_MODES = ['leads', 'existing', 'off'] as const;
+const WA_HISTORY_LEAD_MODES = ['inbound', 'draft', 'off'] as const;
+export const WA_HISTORY_MAX_AGE_DAYS = 3650;
+
+/** `whatsapp_history` with defaults — bad fields fall back instead of breaking ingest. */
+export function whatsappHistoryOf(stored: unknown): WhatsappHistory {
+  const o =
+    stored && typeof stored === 'object' && !Array.isArray(stored)
+      ? (stored as Record<string, unknown>)
+      : {};
+  const d = DEFAULT_WHATSAPP_HISTORY;
+  const age = o.maxAgeDays;
+  return {
+    mode: (WA_HISTORY_MODES as readonly unknown[]).includes(o.mode)
+      ? (o.mode as WhatsappHistory['mode'])
+      : d.mode,
+    maxAgeDays:
+      typeof age === 'number' && Number.isInteger(age) && age >= 0 && age <= WA_HISTORY_MAX_AGE_DAYS
+        ? age
+        : d.maxAgeDays,
+    leadMode: (WA_HISTORY_LEAD_MODES as readonly unknown[]).includes(o.leadMode)
+      ? (o.leadMode as WhatsappHistory['leadMode'])
+      : d.leadMode,
+  };
+}
 
 // shared bound — validateSetting, the `remember` tool and the discovery debrief all truncate to this
 export const AGENT_MEMORY_MAX_FACTS = 100;
@@ -503,7 +572,42 @@ export function validateSetting(key: string, value: unknown): void {
     return;
   }
 
-  // 'digest' daily staff email; `to` is the only staff-address field
+  if (key === 'staff') {
+    normalizeStaff(value);
+    return;
+  }
+
+  if (key === 'whatsapp_history') {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) {
+      throw bad('*', 'must be an object');
+    }
+    const v = value as Record<string, unknown>;
+    for (const f of Object.keys(v)) {
+      if (!['mode', 'maxAgeDays', 'leadMode'].includes(f)) throw bad(f, 'is not a history field');
+    }
+    if (v.mode !== undefined && !(WA_HISTORY_MODES as readonly unknown[]).includes(v.mode)) {
+      throw bad('mode', `must be ${WA_HISTORY_MODES.join(' | ')}`);
+    }
+    if (
+      v.leadMode !== undefined &&
+      !(WA_HISTORY_LEAD_MODES as readonly unknown[]).includes(v.leadMode)
+    ) {
+      throw bad('leadMode', `must be ${WA_HISTORY_LEAD_MODES.join(' | ')}`);
+    }
+    const age = v.maxAgeDays;
+    if (
+      age !== undefined &&
+      (typeof age !== 'number' ||
+        !Number.isInteger(age) ||
+        age < 0 ||
+        age > WA_HISTORY_MAX_AGE_DAYS)
+    ) {
+      throw bad('maxAgeDays', `must be an integer in [0, ${WA_HISTORY_MAX_AGE_DAYS}]`);
+    }
+    return;
+  }
+
+  // 'digest' daily staff email
   if (key === 'digest') {
     if (!value || typeof value !== 'object' || Array.isArray(value)) {
       throw bad('*', 'must be an object');
@@ -540,7 +644,16 @@ export function validateSetting(key: string, value: unknown): void {
     }
     const v = value as Record<string, unknown>;
     for (const f of Object.keys(v)) {
-      if (!['level', 'jobs', 'instructions', 'weeklyDiscoveryUsd', 'schedule'].includes(f))
+      if (
+        ![
+          'level',
+          'jobs',
+          'instructions',
+          'weeklyDiscoveryUsd',
+          'schedule',
+          'newLeadMode',
+        ].includes(f)
+      )
         throw bad(f, 'is not an agent field');
     }
     if (!['off', 'copilot', 'supervised', 'autopilot'].includes(v.level as string)) {
@@ -561,6 +674,16 @@ export function validateSetting(key: string, value: unknown): void {
       (typeof v.instructions !== 'string' || v.instructions.length > 8000)
     ) {
       throw bad('instructions', 'must be a string (≤8000 chars)');
+    }
+    if (v.newLeadMode !== undefined) {
+      const m = v.newLeadMode;
+      if (!m || typeof m !== 'object' || Array.isArray(m))
+        throw bad('newLeadMode', 'must be an object');
+      for (const [k, x] of Object.entries(m as Record<string, unknown>)) {
+        if (k !== 'inbound' && k !== 'discovery')
+          throw bad(`newLeadMode.${k}`, 'is not a lead origin');
+        if (x !== 'draft' && x !== 'auto') throw bad(`newLeadMode.${k}`, 'must be draft | auto');
+      }
     }
     const usd = v.weeklyDiscoveryUsd;
     if (

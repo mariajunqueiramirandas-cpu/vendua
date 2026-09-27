@@ -521,6 +521,16 @@ const apiBase = {
     }),
   igLoginCancel: () => req<{ ok: true }>('/ig/login/cancel', { method: 'POST' }),
   igLogout: () => req<{ ok: true }>('/ig/logout', { method: 'POST' }),
+  testStaff: () =>
+    req<{
+      deliveries: {
+        name: string;
+        channel: 'email' | 'whatsapp';
+        to: string;
+        ok: boolean;
+        error?: string;
+      }[];
+    }>('/staff/test', { method: 'POST' }),
   testIntegration: (kind: string) =>
     req<{ ok: boolean; detail: string }>(`/integrations/${kind}/test`, { method: 'POST' }),
 
@@ -664,6 +674,8 @@ export interface AgentConfig {
   /** strategist self-approves proposed briefs while trailing-7d discovery spend stays under this. 0 = never. */
   weeklyDiscoveryUsd: number;
   schedule: AgentSchedule;
+  /** mode a lead starts in when staff didn't pick one: 'auto' follows the level, 'draft' holds every message */
+  newLeadMode: { inbound: 'draft' | 'auto'; discovery: 'draft' | 'auto' };
 }
 
 export type MemoryScope = 'workspace' | 'segment' | 'debrief';

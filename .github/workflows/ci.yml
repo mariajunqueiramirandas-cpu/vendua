@@ -115,18 +115,6 @@ jobs:
               (cd "$dir" && bun run check)
             fi
           done
-      # boot compose Postgres so TEST_DATABASE_URL tests actually run instead of skipping
-      - name: Postgres for core tests
-        run: |
-          docker compose -f packages/core/docker-compose.yml up -d postgres
-          for i in $(seq 1 30); do
-            docker compose -f packages/core/docker-compose.yml exec -T postgres pg_isready -h localhost -p 5432 -U vendua && break
-            sleep 1
-          done
-          # a broken container must fail here, not as an indirect test-step error
-          docker compose -f packages/core/docker-compose.yml exec -T postgres pg_isready -h localhost -p 5432 -U vendua
-      - name: Core tests
-        run: cd packages/core && TEST_DATABASE_URL=postgres://vendua:vendua@localhost:5433/vendua bun test
       - name: Isolation tools tests
         run: bun test tools/
       - name: Builds
@@ -156,9 +144,10 @@ jobs:
               if [ -f "$dir/vendua.config.ts" ]; then bunx vendua-conformance manifest "$dir"; fi
             fi
           done
-      - name: Unit tests (conformance + any workspace with a test script)
+      - name: Unit tests (conformance + any workspace with a test script but core)
         run: |
           for dir in packages/* tools; do
+            [ "$dir" = packages/core ] && continue # core-tests job
             [ -d "$dir" ] || continue
             [ -f "$dir/package.json" ] || continue
             if jq -e '.scripts.test' "$dir/package.json" > /dev/null 2>&1; then
@@ -166,6 +155,48 @@ jobs:
               (cd "$dir" && bun test)
             fi
           done
+
+  # Postgres-backed core tests, split from `check` so the two run in parallel
+  core-tests:
+    runs-on: ubuntu-latest
+    if: >-
+      github.event_name == 'push' ||
+      !contains(fromJSON('["labeled","unlabeled"]'), github.event.action)
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # Scope diffs origin/<base>...HEAD
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: '1.4.2'
+      # PR / autofix-retrigger runs skip this job when the diff can't affect it (tools/affected.mjs); main pushes run it all
+      - name: Scope
+        id: scope
+        run: |
+          base="${{ github.base_ref || github.event.inputs.base_ref }}"
+          if [ -z "$base" ]; then
+            echo "run=true" >> "$GITHUB_OUTPUT"
+          else
+            affected="$(bun tools/affected.mjs --base "origin/$base")" # a failed diff fails the step, never a silent skip
+            echo "run=$(echo "$affected" | jq -r '.coreTests')" >> "$GITHUB_OUTPUT"
+          fi
+          cat "$GITHUB_OUTPUT"
+      - if: steps.scope.outputs.run == 'true'
+        run: bun install --frozen-lockfile
+      # boot compose Postgres so TEST_DATABASE_URL tests actually run instead of skipping
+      - name: Postgres for core tests
+        if: steps.scope.outputs.run == 'true'
+        run: |
+          docker compose -f packages/core/docker-compose.yml up -d postgres
+          for i in $(seq 1 30); do
+            docker compose -f packages/core/docker-compose.yml exec -T postgres pg_isready -h localhost -p 5432 -U vendua && break
+            sleep 1
+          done
+          # a broken container must fail here, not as an indirect test-step error
+          docker compose -f packages/core/docker-compose.yml exec -T postgres pg_isready -h localhost -p 5432 -U vendua
+      - name: Core tests
+        if: steps.scope.outputs.run == 'true'
+        run: cd packages/core && TEST_DATABASE_URL=postgres://vendua:vendua@localhost:5433/vendua bun test
 
   # exit criterion: scaffold a fresh storefront, boot Postgres + Core, run the conformance e2e through the preview proxy
   conformance:
@@ -175,11 +206,31 @@ jobs:
       !contains(fromJSON('["labeled","unlabeled"]'), github.event.action)
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # Scope diffs origin/<base>...HEAD
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version: '1.4.2'
-      - run: bun install --frozen-lockfile
+      # PR / autofix-retrigger runs skip this job when the diff can't affect it (tools/affected.mjs); main pushes run it all
+      - name: Scope
+        id: scope
+        run: |
+          base="${{ github.base_ref || github.event.inputs.base_ref }}"
+          if [ -z "$base" ]; then
+            echo "run=true" >> "$GITHUB_OUTPUT"
+          else
+            affected="$(bun tools/affected.mjs --base "origin/$base")" # a failed diff fails the step, never a silent skip
+            echo "run=$(echo "$affected" | jq -r '.conformance')" >> "$GITHUB_OUTPUT"
+          fi
+          cat "$GITHUB_OUTPUT"
+      - if: steps.scope.outputs.run == 'true'
+        run: bun install --frozen-lockfile
+      # download Chromium while Postgres + Core boot; awaited before qa
+      - name: Playwright browser (background)
+        if: steps.scope.outputs.run == 'true'
+        run: (bunx playwright install --with-deps chromium > /tmp/pw.log 2>&1; echo $? > /tmp/pw.exit) &
       - name: Postgres + migrate
+        if: steps.scope.outputs.run == 'true'
         run: |
           docker compose -f packages/core/docker-compose.yml up -d postgres
           # check TCP not the unix socket — the image's init server also answers pg_isready there
@@ -189,6 +240,7 @@ jobs:
           done
           (cd packages/core && bun run migrate)
       - name: Core API
+        if: steps.scope.outputs.run == 'true'
         run: |
           (cd packages/core && SESSION_SECRET=ci-secret bun run dev > /tmp/core.log 2>&1 &)
           for i in $(seq 1 30); do
@@ -196,8 +248,13 @@ jobs:
             sleep 1
           done
       - name: Playwright browser
-        run: bunx playwright install --with-deps chromium
+        if: steps.scope.outputs.run == 'true'
+        run: |
+          for i in $(seq 1 300); do [ -f /tmp/pw.exit ] && break; sleep 1; done
+          cat /tmp/pw.log
+          [ "$(cat /tmp/pw.exit 2>/dev/null)" = 0 ]
       - name: Scaffold + check + qa (exit criterion)
+        if: steps.scope.outputs.run == 'true'
         run: |
           bunx vendua scaffold ci-smoke
           bun install
@@ -213,11 +270,27 @@ jobs:
       !contains(fromJSON('["labeled","unlabeled"]'), github.event.action)
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # Scope diffs origin/<base>...HEAD
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version: '1.4.2'
-      - run: bun install --frozen-lockfile
+      # same scoping as conformance: PRs that can't affect Core/Kernel/storefronts skip it
+      - name: Scope
+        id: scope
+        run: |
+          base="${{ github.base_ref || github.event.inputs.base_ref }}"
+          if [ -z "$base" ]; then
+            echo "run=true" >> "$GITHUB_OUTPUT"
+          else
+            affected="$(bun tools/affected.mjs --base "origin/$base")"
+            echo "run=$(echo "$affected" | jq -r '.conformance')" >> "$GITHUB_OUTPUT"
+          fi
+          cat "$GITHUB_OUTPUT"
+      - if: steps.scope.outputs.run == 'true'
+        run: bun install --frozen-lockfile
       - name: Postgres + migrate
+        if: steps.scope.outputs.run == 'true'
         run: |
           docker compose -f packages/core/docker-compose.yml up -d postgres
           for i in $(seq 1 30); do
@@ -226,6 +299,7 @@ jobs:
           done
           (cd packages/core && bun run migrate)
       - name: Core API
+        if: steps.scope.outputs.run == 'true'
         run: |
           (cd packages/core && SESSION_SECRET=ci-secret bun run dev > /tmp/core.log 2>&1 &)
           for i in $(seq 1 30); do
@@ -233,8 +307,10 @@ jobs:
             sleep 1
           done
       - name: Playwright browser
+        if: steps.scope.outputs.run == 'true'
         run: bunx playwright install --with-deps chromium
       - name: S-series on the Kernel 1.0.0 artifact
+        if: steps.scope.outputs.run == 'true'
         run: bunx vendua-conformance e2e packages/conformance/stale/kernel-1.0.0 --prebuilt --grep '\[(S0|K16)'
 
   # fleet operations over every in-repo storefront: a train pulling design data
@@ -249,11 +325,27 @@ jobs:
       CONTROL_SECRET: ci-control
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # Scope diffs origin/<base>...HEAD
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version: '1.4.2'
-      - run: bun install --frozen-lockfile
+      # same scoping as conformance: PRs that can't affect Core/Kernel/storefronts skip it
+      - name: Scope
+        id: scope
+        run: |
+          base="${{ github.base_ref || github.event.inputs.base_ref }}"
+          if [ -z "$base" ]; then
+            echo "run=true" >> "$GITHUB_OUTPUT"
+          else
+            affected="$(bun tools/affected.mjs --base "origin/$base")"
+            echo "run=$(echo "$affected" | jq -r '.conformance')" >> "$GITHUB_OUTPUT"
+          fi
+          cat "$GITHUB_OUTPUT"
+      - if: steps.scope.outputs.run == 'true'
+        run: bun install --frozen-lockfile
       - name: Postgres + migrate + seed
+        if: steps.scope.outputs.run == 'true'
         run: |
           docker compose -f packages/core/docker-compose.yml up -d postgres
           for i in $(seq 1 30); do
@@ -262,6 +354,7 @@ jobs:
           done
           (cd packages/core && bun run migrate && bun run seed)
       - name: Core API
+        if: steps.scope.outputs.run == 'true'
         run: |
           (cd packages/core && SESSION_SECRET=ci-secret CONTROL_SECRET=ci-control bun run dev > /tmp/core.log 2>&1 &)
           for i in $(seq 1 30); do
@@ -269,11 +362,14 @@ jobs:
             sleep 1
           done
       - name: Train (build + check + compat + record, pulling from Core)
+        if: steps.scope.outputs.run == 'true'
         run: bunx vendua train --core --record
       - name: Template migrations — dry run over the fleet
+        if: steps.scope.outputs.run == 'true'
         run: |
           for id in $(bunx vendua templates list | cut -d' ' -f1); do
             bunx vendua templates migrate "$id"
           done
       - name: Codemod rehearsal
+        if: steps.scope.outputs.run == 'true'
         run: bunx vendua codemod rehearse c3-rehearsal

@@ -11,9 +11,22 @@ import { queryClient } from './lib/query.ts';
 // PWA install: prod-only registration — in dev a cache would fight vite HMR.
 if (import.meta.env.PROD && 'serviceWorker' in navigator) {
   window.addEventListener('load', () => {
-    navigator.serviceWorker.register('/control/sw.js').catch(() => undefined);
+    navigator.serviceWorker
+      .register('/control/sw.js')
+      .then((reg) => {
+        // an installed PWA resumes from the background instead of reloading, so the
+        // browser's own update check rarely fires — look for a new deploy on each return
+        document.addEventListener('visibilitychange', () => {
+          if (document.visibilityState === 'visible') void reg.update().catch(() => undefined);
+        });
+      })
+      .catch(() => undefined);
   });
 }
+
+// ask the browser not to evict the app shell cache under storage pressure; granted
+// silently for installed PWAs, a no-op elsewhere
+void navigator.storage?.persist?.().catch(() => undefined);
 
 // --vvh/--vvo: iOS Safari's software keyboard doesn't shrink the layout
 // viewport, so the phone shell (h-vv) pins to these vars instead of 100dvh.

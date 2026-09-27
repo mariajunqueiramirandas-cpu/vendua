@@ -1,9 +1,10 @@
 #!/usr/bin/env bun
 // Maps a git diff to the workspaces it affects (affected graph from
 // docs/architecture/06-monorepo.md). Prints
-// `{"packages": [<workspace dirs>], "allStorefronts": <bool>}` — `packages` lists
-// directories consumers `cd` into; `allStorefronts: true` expands to every
-// `storefronts/*/` and `storefronts/_examples/*/` dir.
+// `{"packages": [<workspace dirs>], "allStorefronts": <bool>, "coreTests": <bool>, "conformance": <bool>}`
+// — `packages` lists directories consumers `cd` into; `allStorefronts: true` expands
+// to every `storefronts/*/` and `storefronts/_examples/*/` dir; `coreTests` /
+// `conformance` gate the CI jobs of the same name.
 //   bun tools/affected.mjs [--base <ref>]     (default base: origin/main)
 // Consumed by the `check` job's Builds step in .github/workflows/ci.yml.
 
@@ -18,10 +19,23 @@ const SHARED_PACKAGES = new Set([
   'codemods',
 ]);
 const SHARED_ROOT_FILES = new Set(['package.json', 'bun.lock', 'tsconfig.base.json']);
+// the conformance e2e scaffolds from _template and runs against Core + Kernel
+const CONFORMANCE_INPUTS = new Set([
+  'packages/core',
+  'packages/kernel',
+  'packages/cli',
+  'packages/conformance',
+  'packages/ui-defaults',
+  'packages/templates',
+  'packages/loader',
+  'storefronts/_template',
+]);
 
 export function mapFiles(files) {
   const packages = new Set();
   let allStorefronts = false;
+  let ciChanged = false;
+  let rootChanged = false;
   for (const f of files) {
     const parts = f.split('/');
     const [top, second, third] = parts;
@@ -46,10 +60,19 @@ export function mapFiles(files) {
       packages.add('site');
     } else if (SHARED_ROOT_FILES.has(f)) {
       allStorefronts = true;
+      rootChanged = true;
+    } else if (top === '.github' && second === 'workflows') {
+      ciChanged = true;
     }
     // docs/, tools/, .github/, other root files → no workspace affected
   }
-  return { packages: [...packages].sort(), allStorefronts };
+  const touches = (dir) => packages.has(dir);
+  return {
+    packages: [...packages].sort(),
+    allStorefronts,
+    coreTests: ciChanged || rootChanged || touches('packages/core'),
+    conformance: ciChanged || allStorefronts || [...CONFORMANCE_INPUTS].some(touches),
+  };
 }
 
 if (import.meta.main) {
