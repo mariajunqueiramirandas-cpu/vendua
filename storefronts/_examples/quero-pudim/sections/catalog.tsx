@@ -55,7 +55,10 @@ function Card({
 }) {
   const soldOut = product.status === 'sold_out';
   const stock = product.stockQuantity;
-  const low = !soldOut && typeof stock === 'number' && stock > 0 && stock <= s.lowStockThreshold;
+  // Core's lowStock (the merchant's threshold) wins; the section setting covers older Cores
+  const low =
+    !soldOut &&
+    (product.lowStock ?? (typeof stock === 'number' && stock > 0 && stock <= s.lowStockThreshold));
   const [imgFailed, setImgFailed] = useState(false);
   return (
     <li
@@ -86,6 +89,9 @@ function Card({
               )}
               {soldOut ? <span className="soldout-flag">{s.soldOutLabel}</span> : null}
               {low ? <span className="soldout-flag soldout-flag--low">Restam {stock}</span> : null}
+              {!soldOut && product.requiresPreorder ? (
+                <span className="soldout-flag soldout-flag--low">Encomenda</span>
+              ) : null}
             </div>
           </div>
           <p className="card-cat">{category}</p>

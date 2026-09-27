@@ -204,6 +204,7 @@ export function useCart(): {
 }
 
 const TERMINAL_ORDER = new Set(['delivered', 'cancelled', 'refunded']);
+const FIRST_WAIT_DELAY_MS = 1500;
 
 /** Kernel 1.2: live by default — a Kernel-owned long poll (no storefront polling,
  *  no EventSource). Pauses while the tab is hidden, stops at a terminal state,
@@ -223,6 +224,7 @@ export function useOrder(
   const q = useQuery(`order:${id}`, () => api.order(id));
   const [fresh, setFresh] = useState<Order>();
   const [live, setLive] = useState(false);
+  const armed = useRef(false);
   const want = opts.live !== false;
   // whichever read is newer wins: the live wait's answer or a refetch
   const own = fresh?.id === id ? fresh : undefined;
@@ -232,6 +234,7 @@ export function useOrder(
 
   useEffect(() => {
     setFresh(undefined);
+    armed.current = false;
   }, [id]);
 
   useEffect(() => {
@@ -275,7 +278,15 @@ export function useOrder(
         }
       }
     };
-    void loop(version);
+    // the first wait opens after the page settles: load stays quick and tools that
+    // wait for network idle (crawlers, screenshots, conformance) aren't held forever
+    const start = armed.current
+      ? Promise.resolve()
+      : new Promise<void>((r) => setTimeout(r, FIRST_WAIT_DELAY_MS));
+    armed.current = true;
+    void start.then(() => {
+      if (!stopped) void loop(version);
+    });
     return () => {
       stopped = true;
       ctl.abort();

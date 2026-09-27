@@ -178,6 +178,11 @@ export function CouponField({
               : (COUPON_REASON[coupon.reason] ?? 'Este cupom não vale agora.')}
           </p>
         ) : null}
+        {error ? (
+          <p className="v-field-error" id="v-coupon-error" role="alert">
+            {error}
+          </p>
+        ) : null}
         <button
           type="button"
           className="v-link-btn"
@@ -243,9 +248,9 @@ export function SchedulePicker({
   leadDays,
   error,
 }: SlotProps['checkout.SchedulePicker']) {
-  const shown = dates.slice(0, 21);
+  const shown = dates.slice(0, 14);
   return (
-    <fieldset className="v-fieldset" data-vendua="schedule" data-part="root">
+    <fieldset className="v-fieldset v-schedule" data-vendua="schedule" data-part="root">
       <legend className="v-legend">
         {required ? 'Data da encomenda' : 'Agendar pedido (opcional)'}
       </legend>

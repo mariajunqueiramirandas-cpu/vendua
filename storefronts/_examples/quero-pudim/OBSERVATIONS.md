@@ -182,3 +182,32 @@ What moved and what it cost:
   `page:order` template/area is the natural additive fix.
 - The build's WCAG gate caught `accent #B06010` on `onAccent` at 4.48:1 — now
   `#AC5E10` (4.65:1).
+
+## Phase 2 — commerce completeness (2026-09-27, Kernel 1.2)
+
+Every FEATURE-GAP above now has a platform answer; this golden runs on it with
+no storefront-side workaround (no widening casts, no sessionStorage snapshots, no
+wa.me stand-ins):
+
+| Gap (above)              | Platform answer                                                                                            |
+| ------------------------ | ---------------------------------------------------------------------------------------------------------- |
+| Combos / kits            | `kind: 'combo'` products with slots (min/max/qty-per-item); `catalog.ComboPicker`; kit-festa seeded as one |
+| Stock + low stock        | `stockQuantity`/`lowStock` (Core's threshold); checkout draws stock, cancel returns it                     |
+| Preorder / encomendas    | `requiresPreorder` + lead days; Core's bookable calendar; Pix-only enforced at checkout                    |
+| `imageUrl` / gallery     | `product_media`; `imageUrl` + `gallery[]`; `catalog.Gallery`                                               |
+| Waitlist                 | `POST /storefront/v1/waitlist`; restock wakes it (outbox); "N pessoas esperando"                           |
+| Order items              | `items[]` on the order; `order.Items`                                                                      |
+| Orders-by-phone          | `useOrders(phone)` — trusted device, or phone + an order number; summaries only                            |
+| Pix on the store profile | `store.pix` + per-order copia e cola with the amount; QR rendered by the Kernel                            |
+| Coupons                  | `POST /checkout/v1/coupons/validate`, `cart.coupon`, `totals.discountCents`                                |
+| Order notes              | `notes` on checkout → order                                                                                |
+| CEP + distance pricing   | `GET /storefront/v1/cep/:cep`; radius zones priced per km; device location in checkout                     |
+| Structured address       | street/number/complement/reference/cep on checkout → `delivery.addressParts`                               |
+| Loyalty card             | stamp card; delivered orders stamp it and mint a personal reward coupon                                    |
+| `?cart=` share links     | `mutations.share()` → `?cart=CODE`; the provider imports it; "pedir de novo" reuses the path               |
+| Realtime order updates   | `useOrder` live by default — a Kernel-owned long poll woken by `pg_notify`                                 |
+
+Store-side changes were two lines of the catalog card (Core's `lowStock` wins over
+the section's threshold; an "Encomenda" flag) and a comment. Everything else —
+kit picker, coupon field, encomenda date, Pix, live status — reached the store
+through Kernel pages and SDK sections.

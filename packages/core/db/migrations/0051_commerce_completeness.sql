@@ -88,6 +88,8 @@ create table if not exists combo_slot_items (
 alter table cart_items
   add column if not exists combo_selections jsonb not null default '[]',
   add column if not exists combo_snapshot jsonb not null default '[]';
+-- lines added in one tx (import, reorder) keep their order — now() is per-transaction
+alter table cart_items alter column created_at set default clock_timestamp();
 -- same product + modifiers but a different kit composition is a different line
 alter table cart_items drop constraint if exists cart_items_cart_id_product_id_modifier_ids_key;
 create unique index if not exists cart_items_line_unique

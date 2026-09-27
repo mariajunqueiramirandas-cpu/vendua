@@ -19,6 +19,20 @@ Modules under `src/modules/`: `store` (hours → open/closed/paused derivation),
 `orders` (state machine + events + outbox), `notices` (`composeNotices` → SDUI
 envelope per `05-system-surfaces.md`).
 
+## Commerce (roadmap Phase 2, migration 0051)
+
+| Surface          | Endpoints                                                                                                                                                                                                                                       |
+| ---------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `/storefront/v1` | `GET /cep/:cep` (address + zone) · `POST /waitlist`; products carry `imageUrl`/`gallery`, stock/`lowStock`, `kind: 'combo'` + `comboSlots`, encomenda fields; `/store` carries `pix`/`loyalty`                                                  |
+| `/checkout/v1`   | `POST /coupons/validate` · `POST/DELETE /cart/coupon` · `POST /cart/import` · `POST /cart/share` · `POST /cart/reorder` · `POST /customer/session` · `GET /customer/orders` · `GET /customer/loyalty` · `GET /orders/:id?since&wait` (live)     |
+| `/control/v1`    | `…/storefronts/:slug/commerce/` — `PATCH products/:p` (stock, status, encomenda) · `PUT products/:p/media` · `PUT products/:p/combo` · coupons · `PATCH settings` (pix, loyalty, location, preorder) · zones · orders + `transition` · waitlist |
+
+Modules: `place-order` (the one place an order is born — fee, coupon, stock and
+schedule recomputed under locks), `coupons`, `combos`, `stock`, `preorder`,
+`customer` (tokens, orders-by-phone, loyalty — ADR 0019), `cart-share`, `geo`
+(bairro + radius zones, ViaCEP with an LRU), `pix` (BR Code), `order-live`
+(LISTEN `vendua_order` → long-poll wake-ups).
+
 ## Dev loop
 
 ```sh
@@ -41,8 +55,9 @@ curl -H 'Host: quero-pudim.localhost' localhost:8787/storefront/v1/surfaces
 
 ## Notes / skeleton limits
 
-- Checkout is a **stub**: orders are created `placed` with
-  `payment.provider = 'sandbox'`. MP OAuth/PIX/webhooks land in Phase 2.
+- Checkout doesn't capture payment: orders are created `placed` with
+  `payment.provider = 'sandbox'` (Pix orders carry a copia e cola for the exact
+  amount). MP OAuth/PIX capture/webhooks land in Phase 3.
 - Admin APIs (`/admin/v1`), payments, notifications, identity, analytics are
   Phase 2+; only the tables needed for Phase 0 exist.
 - Order transitions exist (`modules/orders.ts`) but no admin surface consumes

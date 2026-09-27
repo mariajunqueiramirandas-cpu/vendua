@@ -10,6 +10,7 @@ import {
   uuidParam,
   verifySessionToken,
 } from '../platform/http.ts';
+import { log } from '../platform/log.ts';
 import type { Tenant } from '../platform/tenancy.ts';
 import { assertCartOpen, loadCartView, loadZoneRows } from './cart.ts';
 import {
@@ -51,6 +52,8 @@ import type { StoreSettingsRow } from './store.ts';
 
 type TenantApp = Hono<{ Variables: { tenant: Tenant } }>;
 
+const commerceLog = log.child({ mod: 'commerce' });
+
 interface Deps {
   app: TenantApp;
   storefront: TenantApp;
@@ -86,7 +89,8 @@ export function mountCommerce(d: Deps) {
     let found;
     try {
       found = await d.cepLookup(cep);
-    } catch {
+    } catch (err) {
+      commerceLog.warn({ err, cep }, 'cep lookup failed');
       throw new HttpError(503, 'CEP_UNAVAILABLE', 'cep lookup is unavailable — type the address');
     }
     if (!found) throw new HttpError(404, 'CEP_NOT_FOUND', 'unknown cep');

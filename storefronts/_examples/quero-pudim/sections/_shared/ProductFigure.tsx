@@ -1,4 +1,4 @@
-/** Fallback illustration for photoless products; figureVariant comes from Core via a widening type (OBSERVATIONS.md). */
+/** Fallback illustration for photoless products (no `imageUrl` in Core); `figureVariant` picks the art. */
 
 export type FigureVariant = 'default' | 'alt';
 

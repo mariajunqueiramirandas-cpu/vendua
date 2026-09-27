@@ -168,6 +168,10 @@ describe('live order (Kernel-owned long poll)', () => {
       );
     });
     m = await mount({ path: `/pedido/${ORDER_ID}` });
+    // the first wait opens after the page settles (network-idle friendly)
+    await flush(4);
+    expect(waits).toBe(0);
+    await act(async () => new Promise((r) => setTimeout(r, 1700)));
     await flush(10);
     expect($('[data-vendua="order-status"]')?.getAttribute('data-state')).toBe('confirmed');
     expect(c.calls.some((x) => x.path.endsWith('?since=1&wait=25'))).toBe(true);
