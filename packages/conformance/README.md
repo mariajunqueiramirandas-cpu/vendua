@@ -3,10 +3,24 @@
 Contract conformance checks for storefronts — `docs/architecture/10-qa-pipeline.md` C/S/Q/K IDs, modeled on `site/tests/site.spec.ts`.
 
 ```sh
-vendua-conformance static <storefrontDir>   # K01–K04 (no browser)
-vendua-conformance k05 <slug> [baseRef]     # git diff ⊆ storefronts/<slug>/**
-vendua-conformance e2e <storefrontDir>      # build + preview + Playwright C/S/Q
+vendua-conformance static <storefrontDir>    # K01–K04, K06–K15 (no browser)
+vendua-conformance k05 <slug> [baseRef]      # git diff ⊆ storefronts/<slug>/**
+vendua-conformance e2e <storefrontDir> [--prebuilt] [--grep <re>]
+                                             # build + preview + Playwright C/S/Q/K16
+vendua-conformance manifest <storefrontDir>  # K16 on dist/vendua-manifest.json
+bun src/drill-maintenance.ts <dir> <tenant> [report.md]   # kill-switch drill
 ```
+
+- `fixtures/override-crash/` — the S05 fixture storefront (every override throws,
+  one under a deprecated slot alias; one section throws; one template names an
+  unshipped SDK type). `e2e` builds it and serves it on `VENDUA_PREVIEW_PORT − 10`
+  from its own snapshot.
+- `stale/kernel-1.0.0/` — the stale reference artifact (see its README); CI runs
+  `e2e … --prebuilt --grep '\[(S0|K16)'` against it on every merge.
+
+Sessions without a system resolver for `*.localhost` (some containers) need
+`/etc/hosts` entries for `qa-{open,paused,closed,edge}.localhost`; a preinstalled
+Chromium of another build is used with `CHROMIUM=/path/to/chromium`.
 
 Every command prints one line per check ID and exits non-zero on any failure.
 
@@ -43,22 +57,15 @@ Every command prints one line per check ID and exits non-zero on any failure.
 - `screenshots/` — home/catalog/state pages at 390 and 1440 px
 - `traces/` — Playwright traces, retained only on failure
 
-## Honest gaps (skipped with reason, not faked)
+## Remaining approximations
 
-- **S05** — needs a fixture storefront whose slot override throws at render;
-  none exists under `storefronts/` and this package may not create one.
-- **S07** — the Phase-0 kernel mounts no `(vendua)/*` system route group.
-- **C04/C05/C06** — checkout steps are driven through documented conventions
-  (name/phone inputs, `Continuar` buttons, delivery/payment radios). A
-  storefront that deviates fails the check honestly rather than passing a
-  weaker one.
 - **S01** — the harness has no edge-injected state; "blocking notice on first
   paint" is asserted as "overlay renders shortly after load".
-- `data-vendua="product-link"` is driven from markup when present; where the
-  hook is absent the suite falls back to slug-matching anchors so downstream
-  C-checks still exercise the flow while C01 reports the missing hook.
+- **C04/C05/C06** — checkout steps are driven through documented conventions
+  (name/phone inputs, `Continuar` buttons, delivery/payment radios); the Kernel
+  checkout page follows them.
 
-## Observed platform behavior (surfaced, not fixed)
+## Observed platform behavior (history)
 
 - The preview server prints a per-path request/status table after each run.
   On `storefronts/quero-pudim` it shows a self-sustaining delivery-sync loop:
@@ -70,4 +77,6 @@ Every command prints one line per check ID and exits non-zero on any failure.
   mid-test page churn). Root cause sits in `packages/kernel`
   (evict-on-invalidate) × `storefronts/quero-pudim/routes/checkout.tsx`
   (`items.length` effect dep) — both outside this package's ownership, so the
-  failures are reported as signal, not patched over.
+  failures are reported as signal, not patched over. Resolved: the Kernel's
+  `invalidateQuery` now seeds instead of evicting, and in Contract 2 checkout is
+  a Kernel page that syncs delivery once per step.

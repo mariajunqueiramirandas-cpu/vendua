@@ -715,11 +715,12 @@ test('[S09] a notice kind newer than this build (high_demand) renders through th
     await sql`update store_settings set demand_level = 'high' where tenant_id = ${tid}`;
     const errs = trackPageErrors(page);
     await page.goto(base(CLOSED));
-    const n = page.locator('[data-vendua="banner-stack"] [data-kind="high_demand"]');
-    await expect(n, 'high_demand notice missing from the banner stack').toBeVisible({
-      timeout: 15_000,
-    });
-    expect(await n.innerText()).toMatch(/muitos pedidos/i);
+    // through system.Notice — the Kernel default or the store's own override of it
+    const stack = page.locator('[data-vendua="banner-stack"]');
+    await expect(stack, 'high_demand notice missing from the banner stack').toContainText(
+      /muitos pedidos/i,
+      { timeout: 15_000 },
+    );
     expect(errs).toHaveLength(0);
   } finally {
     await sql`update store_settings set demand_level = 'normal' where tenant_id = ${tid}`;

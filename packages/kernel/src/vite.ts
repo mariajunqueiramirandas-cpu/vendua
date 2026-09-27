@@ -77,9 +77,7 @@ function getJson(origin: string, path: string, host: string): Promise<unknown> {
 
 /** Static read of `defineSection/defineBlock({ type, category, areas })` — the
  *  manifest needs area specs without executing store code (lint keeps them literal). */
-export function extractSchemas(
-  src: string,
-): Record<
+export function extractSchemas(src: string): Record<
   string,
   {
     areas?: Record<string, { accepts: string[]; max?: number }>;

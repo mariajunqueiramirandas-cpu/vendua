@@ -1,6 +1,6 @@
 # 10 — QA Pipeline
 
-> Status: Proposed · Last reviewed: 2026-09-11
+> Status: Implemented (`packages/conformance`) · Last reviewed: 2026-09-27
 
 Two suites with different jobs:
 
@@ -20,7 +20,12 @@ that shape generalizes directly into Conformance.
   fixtures: catalog with variants/modifiers/sold-out items, delivery zones,
   hours that produce open/closed/paused states, a sandbox payment connection.
 - `vendua qa` builds the artifact and runs Playwright against the preview
-  server serving _that artifact_ — we test what we ship.
+  server serving _that artifact_ — we test what we ship. The S05 fixture
+  storefront (`packages/conformance/fixtures/override-crash`: every override
+  throws) is built and served beside it.
+- `vendua-conformance e2e <dir> --prebuilt --grep '\[(S0|K16)'` runs the
+  S-series against a committed artifact — the stale reference
+  (`packages/conformance/stale/kernel-1.0.0`) in CI on every merge.
 - Every run produces a QA report artifact: `report.json`, screenshots per
   viewport, Playwright traces on failure. The report id goes into the release
   manifest (`qaRef`).
@@ -44,30 +49,33 @@ referenced by ID in failure bundles and codemod reports.
 
 ### System states (S-series)
 
-| ID  | Requirement                                                                                                                   |
-| --- | ----------------------------------------------------------------------------------------------------------------------------- |
-| S01 | `paused` fixture → blocking notice on first paint (from injected state), primitives disabled, checkout rejects `STORE_PAUSED` |
-| S02 | `closed` fixture → `StoreClosedNotice` shows next opening; browsing still works                                               |
-| S03 | Unknown `kind` fixture → generic `system.Notice` renders, no crash                                                            |
-| S04 | Unknown `severity`/action `type` fixtures → degrade per spec, never crash                                                     |
-| S05 | Override crash fixture → error boundary renders Kernel default, failure reported                                              |
-| S06 | `v.js` present, health ping responds, blocking overlay renders with Kernel JS disabled                                        |
-| S07 | `(vendua)/*` system routes all resolve and render Kernel defaults                                                             |
+| ID  | Requirement                                                                                                                        |
+| --- | ---------------------------------------------------------------------------------------------------------------------------------- |
+| S01 | `paused` fixture → blocking notice on first paint (from injected state), primitives disabled, checkout rejects `STORE_PAUSED`      |
+| S02 | `closed` fixture → `StoreClosedNotice` shows next opening; browsing still works                                                    |
+| S03 | Unknown `kind` fixture → generic `system.Notice` renders, no crash                                                                 |
+| S04 | Unknown `severity`/action `type` fixtures → degrade per spec, never crash                                                          |
+| S05 | Override crash fixture → error boundary renders Kernel default, failure reported                                                   |
+| S06 | `v.js` present, health ping responds, blocking overlay renders with Kernel JS disabled                                             |
+| S07 | `(vendua)/*` system routes all resolve and render Kernel defaults                                                                  |
+| S08 | Kill switch: `loader_state = maintenance` renders the `v.js` overlay over a live Kernel **and** with the storefront bundle aborted |
+| S09 | A notice kind newer than the build (`high_demand`) renders through the generic path — no rebuild                                   |
 
 ### Quality gates (Q-series)
 
-| ID  | Requirement                                                                  |
-| --- | ---------------------------------------------------------------------------- |
-| Q01 | No layout overflow at 320, 360, 390, 768, 1280, 1440 px                      |
-| Q02 | axe audit: zero serious+ violations on home, product, cart, checkout         |
-| Q03 | `prefers-reduced-motion`: animations off, content complete                   |
-| Q04 | No-JS: home/menu content legible; system surfaces show static fallback       |
-| Q05 | Byte budgets per [03](03-storefront-contract.md#budgets)                     |
-| Q06 | Internal links resolve; no dead routes; 404 renders `system.NotFound`        |
-| Q07 | Contrast AA on token pairs used by default surfaces                          |
-| Q08 | Hostile-CSS fixture (aggressive global reset) does not break Kernel defaults |
-| Q09 | Focus order + visible focus on interactive elements; skip link works         |
-| Q10 | Zoom 200% CSS: no loss of function                                           |
+| ID  | Requirement                                                                                                               |
+| --- | ------------------------------------------------------------------------------------------------------------------------- |
+| Q01 | No layout overflow at 320, 360, 390, 768, 1280, 1440 px                                                                   |
+| Q02 | axe audit: zero serious+ violations on home, product, cart, checkout                                                      |
+| Q03 | `prefers-reduced-motion`: animations off, content complete                                                                |
+| Q04 | No-JS: home/menu content legible; system surfaces show static fallback                                                    |
+| Q05 | Byte budgets per [03](03-storefront-contract.md#budgets)                                                                  |
+| Q06 | Internal links resolve; no dead routes; 404 renders `system.NotFound`                                                     |
+| Q07 | Contrast AA on token pairs used by default surfaces                                                                       |
+| Q08 | Hostile-CSS fixture (aggressive global reset) does not break Kernel defaults                                              |
+| Q09 | Focus order + visible focus on interactive elements; skip link works                                                      |
+| Q10 | Zoom 200% CSS: no loss of function                                                                                        |
+| Q11 | Token restyle: flipping every `--v-color-*` restyles every Kernel default and ≥ 90% of the store's own `var(--v-*)` rules |
 
 ### Contract checks (K-series — lint/type, run pre-browser)
 
@@ -79,6 +87,16 @@ referenced by ID in failure bundles and codemod reports.
 | K04 | All commerce triggers reachable via primitives — no literal API-endpoint calls, no page routes under reserved API prefixes (`/v1`, `/storefront`, `/checkout/v1`, `/control`) |
 | K05 | PR touches only `storefronts/<slug>/**`                                                                                                                                       |
 | K06 | `vite.config.ts` proxy: object-form entries only, keys ⊆ reserved API prefixes, `changeOrigin` absent/false — Host must reach Core untouched                                  |
+| K07 | `no-deep-kernel-imports`: only `@vendua/kernel`, `/config`, `/styles.css`, `/vite`                                                                                            |
+| K08 | `override-purity`: overrides (and what they import) use no mutation hooks, commerce primitives or `fetch`                                                                     |
+| K09 | `require-primitives`: no direct cart mutations, `useCheckout`, or hand-built product URLs in store code                                                                       |
+| K10 | `no-v-namespace`: store CSS never targets `.v-*` / `[data-vendua]`; documented `[data-part]` and `--v-<component>-*` hooks are allowed                                        |
+| K11 | Composition (Contract 2): literal section schemas with `store:` types, templates reference known types, blocks sit in areas that accept their category, no `routes/`          |
+| K12 | Content as data: no JSX copy longer than 4 words in `sections/` — it belongs in settings                                                                                      |
+| K13 | Tokens complete, CSS-safe, WCAG AA on every default-surface pair (the build refuses the same)                                                                                 |
+| K14 | Override budget: ≤ 5 slot overrides (each freezes UI against Kernel improvements); the count is reported                                                                      |
+| K15 | Every override renders its slot's canonical fixture without throwing                                                                                                          |
+| K16 | `dist/vendua-manifest.json` is a valid compat-matrix row (Kernel × Contract × Core API)                                                                                       |
 
 ## Generation QA
 

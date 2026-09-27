@@ -1,11 +1,19 @@
 # 17 — Page Composition: Templates, Sections and Blocks
 
-> Status: Proposed · Last reviewed: 2026-09-26
+> Status: Implemented — Contract v2, Kernel 1.x · Last reviewed: 2026-09-27
 > Decisions: [ADR 0018](../adr/0018-page-composition.md)
 
 How a storefront page is put together so that new platform features reach it
-without anyone editing the store's code. This is the design for **Contract v2**.
-[03](03-storefront-contract.md) still describes the frozen v1 until v2 lands.
+without anyone editing the store's code. This is **Contract v2**, frozen in [03](03-storefront-contract.md).
+
+**Where it lives:** the template model, validation and migration DSL in
+`@vendua/templates` (shared by Core, Kernel and CLI); the renderer, `defineSection`,
+`<BlockArea>`, SDK sections/blocks and Kernel pages in `@vendua/kernel`
+(`src/composition`, `src/sdk`, `src/pages`); slot defaults and all default CSS in
+`@vendua/ui-defaults`; templates, tokens, migrations and their history in Core
+(`storefront_templates`, `storefront_tokens`, `template_migration_runs`). Fleet
+commands: `vendua templates migrate|rollback`, `vendua train`. Evidence of the
+first real runs: [fleet-runs](../fleet-runs/README.md).
 
 ## The model in one picture
 
@@ -49,7 +57,8 @@ type BlockInstance = {
 
 - Stored in Core per tenant, with a version history (`storefront_templates`,
   RLS-scoped like every table).
-- Delivered in the store state (`__VENDUA_STATE__` and `/storefront/v1/state`),
+- Delivered in the store state (`__VENDUA_STATE__` and
+  `/storefront/v1/state?templates=1` — `v.js`'s poll omits them to stay small),
   so first paint already has the composition.
 - The artifact bundles the template snapshot it was built with. If Core is
   unreachable, the store renders that last-known-good composition.
@@ -85,7 +94,8 @@ Rules for `store:*` sections:
 - A section MAY declare areas. It SHOULD declare at least one area wherever an
   SDK block could reasonably sit, and the scaffold's sections show the pattern.
 
-`sdk:*` sections are Kernel code in `@vendua/ui-defaults`. They follow the same
+`sdk:*` sections are Kernel code (`@vendua/kernel/src/sdk`; their styles in
+`@vendua/ui-defaults`). They follow the same
 schema format. Each one ships with canonical fixtures for conformance.
 
 ## Blocks and areas
@@ -157,7 +167,11 @@ export default defineTemplateMigration({
 - **Reversible.** Every application writes a new template version. Rollback
   restores the previous version.
 - **Merchants can opt out.** A merchant can remove or move what a migration
-  added. A migration never re-adds something a merchant removed.
+  added. A migration never re-adds something a merchant removed (edits record
+  removed types as tombstones on the template).
+- **Placement by category, from the build's manifest.** A migration finds "the
+  first area on this page that accepts `info`" through the section catalog the
+  store's last recorded build published (areas in declaration order).
 
 ## Compatibility
 

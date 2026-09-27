@@ -159,3 +159,26 @@ add for the real version.
   mapped to copy (`OUT_OF_ZONE` → "fora da área", `ORDER_MIN_NOT_MET` →
   min order via `details.minOrderCents`), `cart.totals.belowMinOrder`/
   `minOrderCents`/`deliveryFeeCents` driving the checkout summary.
+
+## Contract 2 port (2026-09-27, ADR 0018)
+
+What moved and what it cost:
+
+- `routes/` → `sections/` (header, footer, hero, values, showcase, story, steps,
+  closing, catalog browser, QR menu) + blocks (product figure in the purchase
+  panel's `media` area, product perks in `after-price`). Every string of copy now
+  lives in `templates/*.json` settings; `{city}` placeholders read the store
+  profile.
+- The product page is the SDK purchase panel (`editorial` variant) styled through
+  documented parts — the brand keeps its figure, perks and type, and gets every
+  Kernel improvement to the buy flow (it received `sdk:delivery-eta` by template
+  migration without an edit).
+- Cart, checkout, order status and "meus pedidos" are Kernel pages now; the old
+  URLs redirect (`/cart` → `/sacola`, `/meus-pedidos` → `/pedidos`).
+- `_lib/profile.ts` (localStorage profile) and `_lib/orders.ts` are gone — the
+  Kernel's `useCustomer` (opt-in) and order history replace them.
+- **Lost for now:** the bespoke checkout layout and the "enviar pedido no
+  WhatsApp" link on the order page. Kernel pages have no extension area yet; a
+  `page:order` template/area is the natural additive fix.
+- The build's WCAG gate caught `accent #B06010` on `onAccent` at 4.48:1 — now
+  `#AC5E10` (4.65:1).

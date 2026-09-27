@@ -1,6 +1,6 @@
 # 09 — Migrations and Fleet Trains
 
-> Status: Proposed · Last reviewed: 2026-09-11
+> Status: Build + judge half implemented (`vendua train`, `vendua codemod`, `vendua templates`); promotion by ring waits for the Control Plane · Last reviewed: 2026-09-27
 > Decisions: [ADR 0008](../adr/0008-contract-versioning.md), [ADR 0011](../adr/0011-ring-based-fleet-releases.md)
 
 How change reaches the fleet. Two mechanisms cover everything: **fleet trains**
@@ -69,6 +69,19 @@ Rules (normative):
   implementation); Core keeps serving both payload shapes for N−1.
 - Result bands: ~90% rewritten and green automatically; ~10% need an agent
   (dynamic imports, prop spreading the codemod can't prove); <1% need a human.
+
+## Tooling (today)
+
+- `vendua train [--core] [--record] [--pending]` — steps 1 + the judge of a train:
+  rebuild every in-repo storefront in one run, `vendua check` each artifact,
+  validate its manifest against the compat matrix, assert zero storefront diffs,
+  file manifests with Core. `--pending` rebuilds the stores Core queued (token
+  edits). CI's `fleet` job runs it on every merge.
+- `vendua codemod run <id> [--dry]` / `vendua codemod rehearse <id>` — the
+  rehearsal copies each store, applies, typechecks, checks and reports the tail
+  (first run: [c3-rehearsal](../fleet-runs/c3-rehearsal.md), 0/3).
+- `vendua templates migrate <id> [--apply] [--ring r]` / `rollback` — template
+  migrations by ring with per-store dry-run reports.
 
 ## Kernel version skew
 

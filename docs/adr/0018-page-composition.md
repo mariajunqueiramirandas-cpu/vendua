@@ -1,6 +1,6 @@
 # ADR 0018: Pages are composed from SDK and store sections
 
-- Status: Proposed
+- Status: Accepted (implemented 2026-09-27 — Kernel 1.0, Contract v2)
 - Date: 2026-09-26
 - Amends: [ADR 0005](0005-server-driven-system-surfaces.md) (brand pages are
   no longer wholly outside data-driven composition)
