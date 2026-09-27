@@ -183,7 +183,11 @@ export async function upsertIntegration(
 }
 
 export const DEFAULT_GUARDRAILS = {
+  /** agent sends to one lead in 24h *without an answer*: a lead reply resets the
+   *  count, so an active negotiation is never capped; 0 = no cap */
   maxOutboundPerLeadPerDay: 3,
+  /** false = no quiet window at all (quietStart/quietEnd kept for when it's back on) */
+  quietHoursEnabled: true,
   quietStart: '21:00',
   quietEnd: '08:00',
   timezone: 'America/Sao_Paulo',
@@ -207,7 +211,8 @@ export const DEFAULT_GUARDRAILS = {
   /** account-wide cap on agent cold DMs (instagram threads the lead never wrote
    *  in) per rolling 24h — new accounts get restricted above a few dozen */
   instagramColdDmsPerDay: 15,
-  /** staff/founder numbers the agent never touches — compared on digits */
+  /** retired: team numbers now come from the `staff` setting (blockedPhonesTx);
+   *  entries still stored here keep being honored */
   ignoredPhones: [] as string[],
   /** per-lead agent spend ceiling (USD): ≥ cap refuses new runs and flags the
    *  card; 0 = uncapped */
@@ -223,6 +228,7 @@ export function capCentsOf(g: Partial<Guardrails>): number {
 
 export type Guardrails = {
   maxOutboundPerLeadPerDay: number;
+  quietHoursEnabled: boolean;
   quietStart: string;
   quietEnd: string;
   timezone: string;
@@ -414,7 +420,7 @@ export function validateSetting(key: string, value: unknown): void {
         throw bad(k, `must be an integer in [${min}, ${max}]`);
       }
     };
-    intField('maxOutboundPerLeadPerDay', 1, 100);
+    intField('maxOutboundPerLeadPerDay', 0, 100);
     intField('discoveryContactMinScore', 1, 10);
     intField('inboundReplyDelayMin', 0, 1440);
     intField('firstContactDelayMin', 0, 10080);
@@ -447,6 +453,9 @@ export function validateSetting(key: string, value: unknown): void {
       } catch {
         throw bad('timezone', `unknown IANA timezone '${tz}'`);
       }
+    }
+    if (v.quietHoursEnabled !== undefined && typeof v.quietHoursEnabled !== 'boolean') {
+      throw bad('quietHoursEnabled', 'must be a boolean');
     }
     if (v.discoveryAutoContact !== undefined && typeof v.discoveryAutoContact !== 'boolean') {
       throw bad('discoveryAutoContact', 'must be a boolean');

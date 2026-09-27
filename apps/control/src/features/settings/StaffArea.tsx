@@ -124,7 +124,7 @@ export function StaffArea({
     <section className="max-w-4xl">
       <SectionHead
         title="equipe"
-        sub="quem fica sabendo quando o agente precisa de alguém — por email e/ou whatsapp"
+        sub="quem fica sabendo quando o agente precisa de alguém — por email e/ou whatsapp. esses números nunca viram lead e o agente nunca manda mensagem pra eles"
       />
       <datalist id="staff-emails">
         {cur.members

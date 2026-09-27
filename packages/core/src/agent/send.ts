@@ -15,6 +15,7 @@ import {
   type Channel,
 } from '../modules/threads.ts';
 import { emitControlEvent } from '../modules/control-events.ts';
+import { blockedPhonesTx } from '../modules/staff.ts';
 import { sendEmail } from './channels/email.ts';
 import { sendWhatsApp } from './channels/whatsapp.ts';
 import { sendInstagram } from './channels/instagram.ts';
@@ -142,10 +143,9 @@ export async function dispatchMessage(
         wroteTid = msg.thread_id;
         return { fail: 'lead has no whatsapp' };
       }
-      // staff/founder numbers never get agent traffic — the net for leads
-      // created before the ignore list
-      const g = await getSettingTx<Partial<Guardrails>>(tx, 'guardrails', {});
-      if (phoneIsIgnored(g.ignoredPhones ?? [], to, lead.whatsapp, lead.phone)) {
+      // team numbers never get agent traffic — the net for leads created before
+      // the number joined the team
+      if (phoneIsIgnored(await blockedPhonesTx(tx), to, lead.whatsapp, lead.phone)) {
         await markMessageFailed(tx, messageId, 'número ignorado');
         wroteTid = msg.thread_id;
         return { fail: 'número ignorado' };

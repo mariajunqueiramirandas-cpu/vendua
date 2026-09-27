@@ -76,6 +76,7 @@ import { channelAvailabilityTx, sendableNowTx, whatsappReadyTx } from './guardra
 import { isSendChannel, SEND_CHANNELS } from '../modules/threads.ts';
 import { bookingLinkForRunner } from '../modules/meetings.ts';
 import { emitControlEvent } from '../modules/control-events.ts';
+import { blockedPhonesTx } from '../modules/staff.ts';
 
 const agentLog = log.child({ mod: 'agent' });
 
@@ -376,9 +377,9 @@ export function takeClaimContention(): boolean {
 export async function claimRun(sql: Sql): Promise<RunRow | null> {
   const capFlagged: string[] = [];
   const run = await controlTx(sql, async (tx) => {
-    // Staff/founder numbers never run (covers leads predating the list).
+    // Team numbers never run (covers leads created before the number joined the team).
     const g = await getSettingTx<Partial<Guardrails>>(tx, 'guardrails', {});
-    const ignoredPhones = g.ignoredPhones ?? [];
+    const ignoredPhones = await blockedPhonesTx(tx);
     const ignoredDigits = ignoredPhones.map(phoneDigits).filter((d) => d.length >= 6);
     // Over-cap leads excluded in the scan itself so parked capped runs can't starve the 8-attempt loop.
     const capCents = capCentsOf(g);

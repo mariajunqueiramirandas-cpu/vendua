@@ -2,7 +2,8 @@ import type { ReactNode } from 'react';
 import { Panel } from '@/components/ui/card.tsx';
 import { Switch } from '@/components/ui/controls.tsx';
 import { Field, Input } from '@/components/ui/input.tsx';
-import { AreaIntro, FieldError, ListEditor, RawJson, SaveBar, useDraft } from './bits.tsx';
+import { cn } from '@/lib/cn.ts';
+import { AreaIntro, FieldError, RawJson, SaveBar, useDraft } from './bits.tsx';
 import { num, obj, str, tzValid, type SettingsMap, type SettingWrite } from './settings.ts';
 
 type Save = (key: string, v: SettingWrite) => Promise<boolean>;
@@ -52,6 +53,7 @@ function Guardrails({
 }) {
   const cur = {
     maxOutboundPerLeadPerDay: num(value.maxOutboundPerLeadPerDay, 3),
+    quietHoursEnabled: value.quietHoursEnabled !== false,
     quietStart: str(value.quietStart, '21:00'),
     quietEnd: str(value.quietEnd, '08:00'),
     timezone: str(value.timezone, 'America/Sao_Paulo'),
@@ -63,16 +65,11 @@ function Guardrails({
     staleDraftDays: num(value.staleDraftDays, 7),
     briefAutoPauseRuns: num(value.briefAutoPauseRuns, 5),
     instagramColdDmsPerDay: num(value.instagramColdDmsPerDay, 15),
-    ignoredPhones: Array.isArray(value.ignoredPhones) ? (value.ignoredPhones as string[]) : [],
   };
   const { edit, setEdit, dirty, reset } = useDraft(cur);
   const quietWrap = edit.quietStart > edit.quietEnd;
   const tzOk = tzValid(edit.timezone);
-  const phonesBad = edit.ignoredPhones.some((p) => {
-    const d = p.replace(/\D/g, '');
-    return d.length < 6 || d.length > 15;
-  });
-  const invalid = !tzOk || phonesBad;
+  const invalid = !tzOk;
   const numIn = (
     k:
       | 'maxOutboundPerLeadPerDay'
@@ -102,16 +99,33 @@ function Guardrails({
   return (
     <Panel title="limites">
       <div className="grid gap-x-4 gap-y-3 lg:grid-cols-2">
-        <Field label="msgs/dia por lead" htmlFor="gr-maxOutboundPerLeadPerDay">
-          {numIn('maxOutboundPerLeadPerDay', 1, 100, 1)}
+        <Field
+          label="msgs sem resposta por lead"
+          htmlFor="gr-maxOutboundPerLeadPerDay"
+          hint="quantas mensagens seguidas o agente manda (em 24h) sem o lead responder — quando o lead responde, zera; conversa ativa nunca trava; 0 = sem limite"
+        >
+          {numIn('maxOutboundPerLeadPerDay', 0, 100, 0)}
         </Field>
         <Field
           label={
-            <>horário de silêncio {quietWrap && <em className="not-italic">(vira o dia)</em>}</>
+            <>
+              horário de silêncio{' '}
+              {edit.quietHoursEnabled && quietWrap && <em className="not-italic">(vira o dia)</em>}
+            </>
           }
-          hint="o agente não envia nada dentro dessa janela"
+          hint={
+            edit.quietHoursEnabled
+              ? 'o agente não envia nada dentro dessa janela'
+              : 'desligado — o agente envia a qualquer hora'
+          }
         >
-          <div className="flex items-center gap-2">
+          <Toggle
+            checked={edit.quietHoursEnabled}
+            onChange={(v) => setEdit({ ...edit, quietHoursEnabled: v })}
+          >
+            {edit.quietHoursEnabled ? 'ligado' : 'desligado'}
+          </Toggle>
+          <div className={cn('flex items-center gap-2', !edit.quietHoursEnabled && 'hidden')}>
             <Input
               type="time"
               aria-label="início do silêncio"
@@ -195,20 +209,6 @@ function Guardrails({
           hint="teto da conta inteira pra conversas que o agente abre com quem nunca escreveu (24h corridas) — rascunho do agente aprovado também conta; respostas e follow-ups não; 0 = sem DM fria"
         >
           {numIn('instagramColdDmsPerDay', 0, 200, 0)}
-        </Field>
-        <Field
-          label="números ignorados (equipe / founders)"
-          hint="mensagem desses números não vira lead e nada sai para eles — whatsapp ou phone do lead"
-          className="lg:col-span-2"
-        >
-          <ListEditor
-            items={edit.ignoredPhones}
-            placeholder="+55 11 99999-0000"
-            max={100}
-            maxLen={40}
-            onChange={(ignoredPhones) => setEdit({ ...edit, ignoredPhones })}
-          />
-          {phonesBad && <FieldError>cada número precisa ter de 6 a 15 dígitos</FieldError>}
         </Field>
       </div>
       <SaveBar

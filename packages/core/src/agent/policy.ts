@@ -12,6 +12,7 @@ import {
 import type { JobKind } from './tool-meta.ts';
 import { channelAvailabilityTx } from './guardrails.ts';
 import { isAutomated, type Provenance } from './sources.ts';
+import { blockedPhonesTx } from '../modules/staff.ts';
 
 // The one agent setting (`agent`): autonomy preset × automatic jobs × staff instructions,
 // consulted by claimRun / checkSendAllowedTx / every enqueue gate.
@@ -205,8 +206,11 @@ export async function explainAutonomyTx(
     blockers.push({ code: 'lead_mode_off', message: 'agente desligado neste lead' });
   if (lead.agent_paused_at)
     blockers.push({ code: 'paused', message: 'agente pausado — aguardando um humano' });
-  if (phoneIsIgnored(g.ignoredPhones, lead.whatsapp, lead.phone))
-    blockers.push({ code: 'ignored_phone', message: 'número na lista de ignorados' });
+  if (phoneIsIgnored(await blockedPhonesTx(tx), lead.whatsapp, lead.phone))
+    blockers.push({
+      code: 'ignored_phone',
+      message: 'número da equipe — o agente não fala com ele',
+    });
   const capCents = capCentsOf(g);
   if (capCents > 0 && lead.spent >= capCents)
     blockers.push({
@@ -245,7 +249,7 @@ export async function explainAutonomyTx(
         code: level === 'autopilot' ? 'autopilot' : 'supervised',
         message:
           level === 'autopilot'
-            ? 'piloto automático — envia dentro dos limites (horário, teto diário)'
+            ? 'piloto automático — envia dentro dos limites (horário, msgs sem resposta)'
             : 'supervisionado — follow-ups e respostas saem sem aprovação',
       });
   }

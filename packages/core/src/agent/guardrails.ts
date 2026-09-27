@@ -312,32 +312,42 @@ export async function checkSendAllowedTx(
     if (d.forceDraft) return { ok: true, forceDraft: true };
 
     // quiet hours in configured tz; overnight window wraps past midnight
-    const hh = (
-      await tx<{ h: number; m: number }[]>`
+    if (g.quietHoursEnabled !== false) {
+      const hh = (
+        await tx<{ h: number; m: number }[]>`
         select extract(hour from now() at time zone ${g.timezone})::int as h,
                extract(minute from now() at time zone ${g.timezone})::int as m
       `
-    )[0]!;
-    const cur = hh.h * 60 + hh.m;
-    const [qsH, qsM] = g.quietStart.split(':').map(Number);
-    const [qeH, qeM] = g.quietEnd.split(':').map(Number);
-    const start = (qsH ?? 21) * 60 + (qsM ?? 0);
-    const end = (qeH ?? 8) * 60 + (qeM ?? 0);
-    const quiet = start <= end ? cur >= start && cur < end : cur >= start || cur < end;
-    if (quiet) return { ok: false, forceDraft: false, reason: 'quiet hours' };
+      )[0]!;
+      const cur = hh.h * 60 + hh.m;
+      const [qsH, qsM] = g.quietStart.split(':').map(Number);
+      const [qeH, qeM] = g.quietEnd.split(':').map(Number);
+      const start = (qsH ?? 21) * 60 + (qsM ?? 0);
+      const end = (qeH ?? 8) * 60 + (qeM ?? 0);
+      const quiet = start <= end ? cur >= start && cur < end : cur >= start || cur < end;
+      if (quiet) return { ok: false, forceDraft: false, reason: 'quiet hours' };
+    }
 
-    // daily outbound cap per lead (agent-authored only)
-    const sentToday = (
-      await tx<{ n: number }[]>`
-        select count(*)::int as n from lead_messages m
-        join lead_threads t on t.id = m.thread_id
-        where t.lead_id = ${leadId} and m.direction = 'out' and m.author = 'agent'
-          and m.status in ('queued', 'sending', 'sent', 'delivered')
-          and m.created_at > now() - interval '1 day'
-      `
-    )[0]!.n;
-    if (sentToday >= g.maxOutboundPerLeadPerDay) {
-      return { ok: false, forceDraft: false, reason: 'daily cap reached' };
+    // unanswered-send cap per lead (agent-authored, rolling 24h): only sends after the
+    // lead's last message count, so a live back-and-forth is never throttled
+    if (g.maxOutboundPerLeadPerDay > 0) {
+      const unanswered = (
+        await tx<{ n: number }[]>`
+          select count(*)::int as n from lead_messages m
+          join lead_threads t on t.id = m.thread_id
+          where t.lead_id = ${leadId} and m.direction = 'out' and m.author = 'agent'
+            and m.status in ('queued', 'sending', 'sent', 'delivered')
+            and m.created_at > now() - interval '1 day'
+            and m.created_at > coalesce((
+              select max(i.created_at) from lead_messages i
+              join lead_threads it on it.id = i.thread_id
+              where it.lead_id = ${leadId} and i.direction = 'in'
+            ), '-infinity')
+        `
+      )[0]!.n;
+      if (unanswered >= g.maxOutboundPerLeadPerDay) {
+        return { ok: false, forceDraft: false, reason: 'unanswered cap reached' };
+      }
     }
 
     if (channel === 'instagram') {
@@ -398,6 +408,7 @@ export async function instagramColdCapTx(
 /** Earliest instant ≥ `at` outside quiet hours, in the workspace timezone — the dispatcher
  *  starts send-bound runs there instead of letting them wake up just to be blocked. */
 export async function sendWindowOpenAtTx(tx: Sql, g: Guardrails, at: Date): Promise<Date> {
+  if (g.quietHoursEnabled === false) return at;
   const row = (
     await tx<{ open: Date }[]>`
       with p as (

@@ -23,7 +23,7 @@ const LEVEL_NOTE: Record<AutonomyLevel, string> = {
   off: 'o agente só age quando alguém dispara um run',
   copilot: 'roda sozinho, mas toda mensagem vira rascunho',
   supervised: 'primeiro contato passa por aprovação; follow-ups e respostas saem',
-  autopilot: 'envia sem aprovação — horário, teto diário e demais limites valem',
+  autopilot: 'envia sem aprovação — horário de silêncio e demais limites valem',
 };
 const SEND_LABEL = {
   auto: 'envia sem aprovação',

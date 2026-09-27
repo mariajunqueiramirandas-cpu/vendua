@@ -173,10 +173,11 @@ export function computeReadiness({
         {
           key: 'regras',
           label: 'limites',
-          state: `silêncio ${str(g.quietStart, '21:00')}–${str(g.quietEnd, '08:00')} · ${str(
-            g.timezone,
-            'America/Sao_Paulo',
-          )}`,
+          state: `${
+            g.quietHoursEnabled === false
+              ? 'sem horário de silêncio'
+              : `silêncio ${str(g.quietStart, '21:00')}–${str(g.quietEnd, '08:00')}`
+          } · ${str(g.timezone, 'America/Sao_Paulo')}`,
           tone: 'live',
           route: `${STUDIO}?s=limites`,
         },

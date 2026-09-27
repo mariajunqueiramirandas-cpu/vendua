@@ -3,7 +3,12 @@ import { log } from '../platform/log.ts';
 import { sendEmail } from '../agent/channels/email.ts';
 import { sendWhatsApp } from '../agent/channels/whatsapp.ts';
 import { controlTx } from './control.ts';
-import { getIntegrationTx, getSettingTx, type IntegrationRow } from './integrations.ts';
+import {
+  getIntegrationTx,
+  getSettingTx,
+  type Guardrails,
+  type IntegrationRow,
+} from './integrations.ts';
 import { DEFAULT_STAFF, type StaffConfig, type StaffEvent } from './staff-config.ts';
 
 const staffLog = log.child({ mod: 'staff-notify' });
@@ -33,6 +38,14 @@ export async function staffConfigTx(tx: Sql): Promise<StaffConfig> {
 
 export async function staffWhatsappsTx(tx: Sql): Promise<string[]> {
   return (await staffConfigTx(tx)).members.map((m) => m.whatsapp).filter(Boolean);
+}
+
+/** Numbers the agent never treats as leads: the team's whatsapps, plus the retired
+ *  `guardrails.ignoredPhones` list (no UI anymore; still honored so old rows keep working). */
+export async function blockedPhonesTx(tx: Sql): Promise<string[]> {
+  const g = await getSettingTx<Partial<Guardrails>>(tx, 'guardrails', {});
+  const legacy = Array.isArray(g.ignoredPhones) ? g.ignoredPhones : [];
+  return [...legacy, ...(await staffWhatsappsTx(tx))];
 }
 
 /** Fans a notice out to every staff email + whatsapp through the active providers.
