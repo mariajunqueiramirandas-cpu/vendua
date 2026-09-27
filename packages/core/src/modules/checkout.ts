@@ -1,34 +1,74 @@
-import type { Sql } from '../platform/db.ts';
 import { HttpError } from '../platform/http.ts';
-import { matchZone, validateItemModifiers, type CartView } from './cart.ts';
+import { validateLine, type CartView } from './cart.ts';
 import type { ProductDetail } from './catalog.ts';
+import { normalizeCep, resolveZone, validCoords, type Coords, type ZoneLike } from './geo.ts';
 import type { DerivedStatus, StoreSettingsRow } from './store.ts';
 
 export interface CheckoutInput {
   customer: { name: string; phone: string };
-  delivery: { mode: 'pickup' | 'delivery'; neighborhood?: string; address?: string };
+  delivery: {
+    mode: 'pickup' | 'delivery';
+    neighborhood?: string;
+    /** freeform line — still accepted; structured fields below win when present */
+    address?: string;
+    street?: string;
+    number?: string;
+    complement?: string;
+    reference?: string;
+    cep?: string;
+    lat?: number;
+    lng?: number;
+  };
   payment: { method: 'pix' | 'card_on_delivery' | 'cash' };
+  /** "Alguma observação?" */
+  notes?: string;
+  /** encomenda date, YYYY-MM-DD in the store's timezone */
+  scheduledFor?: string;
 }
 
-export interface ZoneRowLike {
-  id: string;
-  name: string;
-  neighborhoods: string[];
-  fee_cents: number;
-  min_order_cents: number;
-  eta_min_minutes: number;
-  eta_max_minutes: number;
+export type ZoneRowLike = ZoneLike;
+
+export interface AddressParts {
+  street: string | null;
+  number: string | null;
+  complement: string | null;
+  neighborhood: string | null;
+  reference: string | null;
+  cep: string | null;
+}
+
+/** One display line for couriers and receipts, from the structured parts. */
+export function composeAddress(d: CheckoutInput['delivery']): string | null {
+  const street = d.street?.trim();
+  if (street) {
+    const head = [street, d.number?.trim()].filter(Boolean).join(', ');
+    return [head, d.complement?.trim()].filter(Boolean).join(' — ');
+  }
+  return d.address?.trim() || null;
+}
+
+export function addressParts(d: CheckoutInput['delivery']): AddressParts {
+  const t = (s: string | undefined) => s?.trim() || null;
+  return {
+    street: t(d.street),
+    number: t(d.number),
+    complement: t(d.complement),
+    neighborhood: t(d.neighborhood),
+    reference: t(d.reference),
+    cep: d.cep ? normalizeCep(d.cep) : null,
+  };
 }
 
 /** pure validation; throws the typed error a client sees */
-export function validateCheckout(
+export function validateCheckout<Z extends ZoneLike>(
   status: DerivedStatus,
   settings: StoreSettingsRow | null,
   cart: CartView,
   input: CheckoutInput,
-  zones: ZoneRowLike[],
+  zones: Z[],
   products?: Map<string, ProductDetail | null>,
-): { zone: ZoneRowLike | null } {
+  store: Coords | null = null,
+): { zone: Z | null; distanceKm: number | null; feeCents: number } {
   if (status.status === 'paused') {
     throw new HttpError(423, 'STORE_PAUSED', 'store is paused', {
       ...(status.resumesAt ? { resumesAt: status.resumesAt } : {}),
@@ -43,8 +83,11 @@ export function validateCheckout(
   for (const item of cart.items) {
     const product = products?.get(item.productId);
     if (product) {
-      const invalid = validateItemModifiers(product, item.modifierIds);
-      if (invalid) throw invalid;
+      const invalid = validateLine(product, item.modifierIds, item.comboSelections ?? []);
+      if (invalid) {
+        invalid.details = { ...invalid.details, productId: item.productId };
+        throw invalid;
+      }
       continue;
     }
     if (item.productStatus !== 'active') {
@@ -69,15 +112,22 @@ export function validateCheckout(
     if (!(settings?.delivery_enabled ?? true)) {
       throw new HttpError(422, 'DELIVERY_UNAVAILABLE', 'delivery is not available');
     }
-    const zone = matchZone(zones, input.delivery.neighborhood);
-    if (!zone) throw new HttpError(422, 'OUT_OF_ZONE', 'address is outside the delivery area');
-    const minOrder = Math.max(settings?.min_order_cents ?? 0, zone.min_order_cents);
+    const match = resolveZone(
+      zones,
+      {
+        neighborhood: input.delivery.neighborhood,
+        coords: validCoords(input.delivery.lat, input.delivery.lng),
+      },
+      store,
+    );
+    if (!match) throw new HttpError(422, 'OUT_OF_ZONE', 'address is outside the delivery area');
+    const minOrder = Math.max(settings?.min_order_cents ?? 0, match.zone.min_order_cents);
     if (cart.totals.subtotalCents < minOrder) {
       throw new HttpError(422, 'ORDER_MIN_NOT_MET', `minimum order is ${minOrder} cents`, {
         minOrderCents: minOrder,
       });
     }
-    return { zone };
+    return { zone: match.zone, distanceKm: match.distanceKm, feeCents: match.feeCents };
   }
   const minOrder = settings?.min_order_cents ?? 0;
   if (cart.totals.subtotalCents < minOrder) {
@@ -85,12 +135,17 @@ export function validateCheckout(
       minOrderCents: minOrder,
     });
   }
-  return { zone: null };
+  return { zone: null, distanceKm: null, feeCents: 0 };
 }
 
 /** public checkout input must not be unbounded */
 function bounded(v: unknown, max: number): v is string {
   return typeof v === 'string' && v.length <= max;
+}
+
+function optional(v: unknown, max: number, field: string, code = 'INVALID_DELIVERY') {
+  if (v !== undefined && v !== null && !bounded(v, max))
+    throw new HttpError(422, code, `${field} is too long`, { field });
 }
 
 export function validateCheckoutShape(input: unknown): asserts input is CheckoutInput {
@@ -113,12 +168,27 @@ export function validateCheckoutShape(input: unknown): asserts input is Checkout
     });
   }
   if (i.delivery.mode === 'delivery') {
-    if (i.delivery.neighborhood !== undefined && !bounded(i.delivery.neighborhood, 200)) {
-      throw new HttpError(422, 'INVALID_DELIVERY', 'delivery.neighborhood is too long', {
-        field: 'delivery.neighborhood',
+    const d = i.delivery;
+    optional(d.neighborhood, 200, 'delivery.neighborhood');
+    optional(d.address, 500, 'delivery.address');
+    optional(d.street, 120, 'delivery.street');
+    optional(d.number, 10, 'delivery.number');
+    optional(d.complement, 80, 'delivery.complement');
+    optional(d.reference, 120, 'delivery.reference');
+    if (d.cep !== undefined && d.cep !== null && (!bounded(d.cep, 12) || !normalizeCep(d.cep)))
+      throw new HttpError(422, 'INVALID_DELIVERY', 'delivery.cep must have 8 digits', {
+        field: 'delivery.cep',
       });
-    }
-    if (!bounded(i.delivery.address, 500) || i.delivery.address.trim().length === 0) {
+    if ((d.lat !== undefined || d.lng !== undefined) && !validCoords(d.lat, d.lng))
+      throw new HttpError(422, 'INVALID_DELIVERY', 'delivery.lat/lng must be coordinates', {
+        field: 'delivery.lat',
+      });
+    const structured = typeof d.street === 'string' && d.street.trim().length > 0;
+    if (structured && !(typeof d.number === 'string' && d.number.trim().length > 0))
+      throw new HttpError(422, 'INVALID_DELIVERY', 'delivery.number is required', {
+        field: 'delivery.number',
+      });
+    if (!structured && !(typeof d.address === 'string' && d.address.trim().length > 0)) {
       throw new HttpError(422, 'INVALID_DELIVERY', 'delivery.address is required for delivery', {
         field: 'delivery.address',
       });
@@ -134,4 +204,13 @@ export function validateCheckoutShape(input: unknown): asserts input is Checkout
       },
     );
   }
+  optional(i.notes, 500, 'notes', 'INVALID_NOTES');
+  if (
+    i.scheduledFor !== undefined &&
+    i.scheduledFor !== null &&
+    !(typeof i.scheduledFor === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(i.scheduledFor))
+  )
+    throw new HttpError(422, 'INVALID_SCHEDULE', 'scheduledFor must be YYYY-MM-DD', {
+      field: 'scheduledFor',
+    });
 }

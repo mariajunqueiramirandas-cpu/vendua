@@ -67,6 +67,12 @@ function cart(subtotalCents: number): CartView {
         productStatus: 'active',
         modifierIds: [],
         modifiers: [],
+        combo: [],
+        comboSelections: [],
+        imageUrl: null,
+        stockQuantity: null,
+        requiresPreorder: false,
+        preorderLeadDays: 0,
         lineTotalCents: subtotalCents,
       },
     ],
@@ -78,8 +84,13 @@ function cart(subtotalCents: number): CartView {
       minOrderCents: 1000,
       remainingMinOrderCents: Math.max(0, 1000 - subtotalCents),
       belowMinOrder: subtotalCents < 1000,
+      discountCents: 0,
+      freeDeliveryThresholdCents: null,
+      freeDeliveryRemainingCents: null,
     },
     delivery: null,
+    coupon: null,
+    schedule: { required: false, leadDays: 0, dates: [], paymentMethods: ['pix'] },
   };
 }
 

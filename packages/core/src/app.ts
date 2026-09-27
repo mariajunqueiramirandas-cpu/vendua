@@ -34,9 +34,24 @@ import { deriveStatus, type StoreSettingsRow } from './modules/store.ts';
 import { notifyStaff } from './modules/staff.ts';
 import { normalizeStaff } from './modules/staff-config.ts';
 import { composeNotices, type SurfacesEnvelope } from './modules/notices.ts';
-import { addItem, assertCartOpen, loadCartView, matchZone } from './modules/cart.ts';
-import { validateCheckout, validateCheckoutShape } from './modules/checkout.ts';
-import { loadOrderView } from './modules/orders.ts';
+import {
+  addItem,
+  assertCartOpen,
+  assertLineQty,
+  loadCartView,
+  loadZoneRows,
+  storeCoords,
+} from './modules/cart.ts';
+import { validateCheckoutShape } from './modules/checkout.ts';
+import { loadOrderView, orderVersion, TERMINAL_STATES } from './modules/orders.ts';
+import { placeOrderTx } from './modules/place-order.ts';
+import { parseSelections } from './modules/combos.ts';
+import { mintCustomerToken, normalizePhone, parseLoyalty } from './modules/customer.ts';
+import { normalizeCep, resolveZone, validCoords, viaCep, type CepLookup } from './modules/geo.ts';
+import { OrderHub } from './modules/order-live.ts';
+import { pixPayload, type PixKeyType } from './modules/pix.ts';
+import { bookableDates } from './modules/preorder.ts';
+import { mountCommerce } from './modules/commerce-routes.ts';
 import {
   agentGoal,
   deleteLead,
@@ -148,6 +163,8 @@ export interface AppDeps {
   controlSecret?: string | undefined;
   /** tests pass false — a background drain mid-assertion races expectations */
   autoDrain?: boolean | undefined;
+  /** CEP → address; tests inject a stub (default: ViaCEP) */
+  cepLookup?: CepLookup | undefined;
 }
 
 async function loadSettings(
@@ -162,23 +179,23 @@ async function loadSettings(
   return rows[0] ?? null;
 }
 
-async function loadZones(tx: Sql, tenantId: string, opts: { forUpdate?: boolean } = {}) {
-  const lock = opts.forUpdate ? tx`for update` : tx``;
-  return tx<
-    {
-      id: string;
-      name: string;
-      neighborhoods: string[];
-      fee_cents: number;
-      min_order_cents: number;
-      eta_min_minutes: number;
-      eta_max_minutes: number;
-      active: boolean;
-    }[]
-  >`
-    select id, name, neighborhoods, fee_cents, min_order_cents, eta_min_minutes, eta_max_minutes
-    from delivery_zones where tenant_id = ${tenantId} and active order by name ${lock}
-  `;
+const loadZones = loadZoneRows;
+
+/** The store's Pix for the storefront page — key, beneficiary and an amount-less copia e cola. */
+function pixProfile(settings: StoreSettingsRow | null) {
+  if (!settings?.pix_key || !settings.pix_key_type) return null;
+  const profile = {
+    key: settings.pix_key,
+    keyType: settings.pix_key_type as PixKeyType,
+    beneficiary: settings.pix_beneficiary ?? '',
+    city: settings.pix_city ?? settings.city ?? '',
+  };
+  return {
+    key: profile.key,
+    keyType: profile.keyType,
+    beneficiary: profile.beneficiary,
+    copyPaste: pixPayload(profile),
+  };
 }
 
 function currentStatus(settings: StoreSettingsRow | null) {
@@ -284,7 +301,8 @@ async function testIntegration(
   }
 }
 
-export function createApp({ sql, sessionSecret, controlSecret, autoDrain }: AppDeps) {
+export function createApp({ sql, sessionSecret, controlSecret, autoDrain, cepLookup }: AppDeps) {
+  const orderHub = new OrderHub(sql);
   const kickDrain =
     autoDrain === false
       ? () => {}
@@ -315,7 +333,7 @@ export function createApp({ sql, sessionSecret, controlSecret, autoDrain }: AppD
           (trustProxy ? c.req.header('x-forwarded-host') : undefined) ?? c.req.header('host') ?? '';
         return originHost === reqHost ? o : null;
       },
-      allowHeaders: ['Content-Type', 'Authorization', 'Idempotency-Key'],
+      allowHeaders: ['Content-Type', 'Authorization', 'Idempotency-Key', 'X-Vendua-Customer'],
       credentials: true,
     }),
   );
@@ -354,6 +372,21 @@ export function createApp({ sql, sessionSecret, controlSecret, autoDrain }: AppD
       deliveryEnabled: settings?.delivery_enabled ?? true,
       currency: settings?.currency ?? 'BRL',
       vocabulary: settings?.vocabulary ?? {},
+      pix: pixProfile(settings),
+      loyalty: (() => {
+        const l = parseLoyalty(settings?.loyalty);
+        return l
+          ? {
+              stampsRequired: l.stampsRequired,
+              minOrderCents: l.minOrderCents,
+              rewardLabel: l.reward.label,
+            }
+          : null;
+      })(),
+      preorder: {
+        paymentMethods: settings?.preorder_payment_methods ?? ['pix'],
+        maxDays: settings?.preorder_max_days ?? 30,
+      },
     });
   });
 
@@ -365,11 +398,20 @@ export function createApp({ sql, sessionSecret, controlSecret, autoDrain }: AppD
 
   storefront.get('/products/:slug', async (c) => {
     const tenant = c.get('tenant');
-    const product = await withTenant(sql, tenant.id, (tx) =>
-      getProduct(tx, tenant.id, str(c.req.param('slug'), 'slug', 200)),
-    );
+    const { product, settings } = await withTenant(sql, tenant.id, async (tx) => ({
+      product: await getProduct(tx, tenant.id, str(c.req.param('slug'), 'slug', 200)),
+      settings: await loadSettings(tx, tenant.id),
+    }));
     if (!product) throw new HttpError(404, 'PRODUCT_NOT_FOUND', 'product not found');
-    return c.json({ product });
+    const earliest = product.requiresPreorder
+      ? (bookableDates(
+          settings?.hours ?? { timezone: 'America/Sao_Paulo', windows: [] },
+          product.preorderLeadDays,
+          settings?.preorder_max_days ?? 30,
+          new Date(),
+        )[0] ?? null)
+      : null;
+    return c.json({ product: { ...product, preorderEarliestDate: earliest } });
   });
 
   storefront.get('/surfaces', async (c) => {
@@ -405,6 +447,10 @@ export function createApp({ sql, sessionSecret, controlSecret, autoDrain }: AppD
         minOrderCents: z.min_order_cents,
         etaMin: z.eta_min_minutes,
         etaMax: z.eta_max_minutes,
+        kind: z.kind,
+        maxDistanceKm: z.max_distance_km == null ? null : Number(z.max_distance_km),
+        feePerKmCents: z.fee_per_km_cents,
+        freeDeliveryOverCents: z.free_delivery_over_cents,
       })),
     });
   });
@@ -505,11 +551,12 @@ export function createApp({ sql, sessionSecret, controlSecret, autoDrain }: AppD
       const modifierIds = Array.isArray(body.modifierIds)
         ? body.modifierIds.map((m) => str(m, 'modifierId', 64))
         : [];
+      const comboSelections = parseSelections(body.comboSelections);
       const cart = await addItem(
         tx,
         tenant.id,
         cartId,
-        { productId, qty, modifierIds },
+        { productId, qty, modifierIds, comboSelections },
         getProductById,
       );
       return { status: 200, body: { cart } };
@@ -530,6 +577,7 @@ export function createApp({ sql, sessionSecret, controlSecret, autoDrain }: AppD
       if (qty === 0) {
         await tx`delete from cart_items where tenant_id = ${tenant.id} and cart_id = ${cartId} and id = ${itemId}`;
       } else {
+        await assertLineQty(tx, tenant.id, cartId, itemId, qty);
         await tx`update cart_items set qty = ${qty} where tenant_id = ${tenant.id} and cart_id = ${cartId} and id = ${itemId}`;
       }
       await tx`update carts set updated_at = now() where id = ${cartId}`;
@@ -554,18 +602,34 @@ export function createApp({ sql, sessionSecret, controlSecret, autoDrain }: AppD
     return idempotency(sql, async (c, tx) => {
       const cartId = await sessionCartId(c, sessionSecret);
       const body = await bodyJson(c);
-      const { mode, neighborhood, address } = body;
+      const { mode } = body;
       if (mode !== 'pickup' && mode !== 'delivery') {
         throw new HttpError(422, 'INVALID_DELIVERY', 'mode must be pickup or delivery');
       }
-      const nb =
-        neighborhood === undefined || neighborhood === null
-          ? null
-          : str(neighborhood, 'neighborhood', 200);
-      const addr = address === undefined || address === null ? null : str(address, 'address', 500);
+      const opt = (k: string, max: number) =>
+        body[k] === undefined || body[k] === null ? null : str(body[k], k, max);
+      const cepRaw = opt('cep', 12);
+      const cep = cepRaw ? normalizeCep(cepRaw) : null;
+      if (cepRaw && !cep) throw new HttpError(422, 'INVALID_DELIVERY', 'cep must have 8 digits');
+      const hasCoords = body.lat !== undefined && body.lat !== null;
+      const coords = hasCoords ? validCoords(body.lat, body.lng) : null;
+      if (hasCoords && !coords)
+        throw new HttpError(422, 'INVALID_DELIVERY', 'lat/lng must be coordinates');
+      const delivery = {
+        mode,
+        neighborhood: opt('neighborhood', 200),
+        address: opt('address', 500),
+        street: opt('street', 120),
+        number: opt('number', 10),
+        complement: opt('complement', 80),
+        reference: opt('reference', 120),
+        cep,
+        lat: coords?.lat ?? null,
+        lng: coords?.lng ?? null,
+      };
       await assertCartOpen(tx, tenant.id, cartId);
       await tx`
-        update carts set delivery = ${tx.json({ mode, neighborhood: nb, address: addr })}, updated_at = now()
+        update carts set delivery = ${tx.json(delivery)}, updated_at = now()
         where tenant_id = ${tenant.id} and id = ${cartId}
       `;
       const cart = await loadCartView(tx, tenant.id, cartId);
@@ -576,25 +640,33 @@ export function createApp({ sql, sessionSecret, controlSecret, autoDrain }: AppD
   checkout.post('/quote', async (c) => {
     const tenant = c.get('tenant');
     return idempotency(sql, async (c, tx) => {
-      const { neighborhood } = await bodyJson(c);
-      const zones = await loadZones(tx, tenant.id);
-      const zone = matchZone(
-        zones,
-        neighborhood === undefined || neighborhood === null
+      const body = await bodyJson(c);
+      const neighborhood =
+        body.neighborhood === undefined || body.neighborhood === null
           ? ''
-          : str(neighborhood, 'neighborhood', 200),
-      );
-      if (!zone) {
+          : str(body.neighborhood, 'neighborhood', 200);
+      const hasCoords = body.lat !== undefined && body.lat !== null;
+      const coords = hasCoords ? validCoords(body.lat, body.lng) : null;
+      if (hasCoords && !coords)
+        throw new HttpError(422, 'INVALID_DELIVERY', 'lat/lng must be coordinates');
+      const zones = await loadZones(tx, tenant.id);
+      const settings = await loadSettings(tx, tenant.id);
+      const match = resolveZone(zones, { neighborhood, coords }, storeCoords(settings));
+      if (!match) {
         return { status: 200, body: { eligible: false, reason: 'OUT_OF_ZONE' } };
       }
       return {
         status: 200,
         body: {
           eligible: true,
-          zoneId: zone.id,
-          feeCents: zone.fee_cents,
-          etaMin: zone.eta_min_minutes,
-          etaMax: zone.eta_max_minutes,
+          zoneId: match.zone.id,
+          zoneName: match.zone.name,
+          feeCents: match.feeCents,
+          etaMin: match.zone.eta_min_minutes,
+          etaMax: match.zone.eta_max_minutes,
+          distanceKm: match.distanceKm,
+          minOrderCents: Math.max(settings?.min_order_cents ?? 0, match.zone.min_order_cents),
+          freeDeliveryOverCents: match.zone.free_delivery_over_cents,
         },
       };
     })(c);
@@ -606,96 +678,57 @@ export function createApp({ sql, sessionSecret, controlSecret, autoDrain }: AppD
       const cartId = await sessionCartId(c, sessionSecret);
       const body = await bodyJson(c);
       validateCheckoutShape(body);
-      const order = await (async () => {
-        // Lock the cart row first — concurrent checkouts would both see 'open' and mint duplicates.
-        await tx`select id from carts where tenant_id = ${tenant.id} and id = ${cartId} for update`;
-        const cart = await loadCartView(tx, tenant.id, cartId);
-        // A completed cart must not mint a second order.
-        if (cart.status !== 'open') {
-          throw new HttpError(409, 'CART_NOT_OPEN', 'cart already checked out', {
-            cartStatus: cart.status,
-          });
-        }
-        // Advisory lock before reading eligibility — choke point vs concurrent settings/zone/product writes.
-        await tx`select pg_advisory_xact_lock(hashtext(${tenant.id}))`;
-        const settings = await loadSettings(tx, tenant.id, { forUpdate: true });
-        const zones = await loadZones(tx, tenant.id, { forUpdate: true });
-        // Re-validate modifier ids against current defs — a retired modifier can't slip through underpriced.
-        const products = new Map<string, Awaited<ReturnType<typeof getProductById>>>();
-        for (const item of cart.items) {
-          products.set(
-            item.productId,
-            await getProductById(tx, tenant.id, item.productId, { forUpdate: true }),
-          );
-        }
-        const { zone } = validateCheckout(
-          currentStatus(settings),
-          settings,
-          cart,
-          body,
-          zones,
-          products,
-        );
-        const delivery = {
-          mode: body.delivery.mode,
-          neighborhood: body.delivery.neighborhood ?? null,
-          address: body.delivery.address ?? null,
-          feeCents: zone?.fee_cents ?? 0,
-          etaMin: zone?.eta_min_minutes ?? null,
-          etaMax: zone?.eta_max_minutes ?? null,
-        };
-        const deliveryFee = body.delivery.mode === 'delivery' ? (zone?.fee_cents ?? 0) : 0;
-        // Numbering relies on the advisory lock above — else two checkouts read the same max.
-        const number = (
-          await tx<
-            { n: number }[]
-          >`select coalesce(max(number), 0) + 1 as n from orders where tenant_id = ${tenant.id}`
-        )[0]!.n;
-        const orderId = crypto.randomUUID();
-        const payment = {
-          // 'sandbox' = the contract's dev provider name (pay-on-delivery stand-in).
-          provider: 'sandbox',
-          method: body.payment.method,
-          status: 'pending',
-          instructions:
-            body.payment.method === 'pix'
-              ? 'Pagamento PIX combinado na entrega/retirada (sandbox de Phase 0).'
-              : 'Pagamento na entrega ou retirada (sandbox de Phase 0).',
-        };
-        await tx`
-          insert into orders (id, tenant_id, cart_id, number, customer, delivery, payment, state, subtotal_cents, delivery_fee_cents, total_cents)
-          values (${orderId}, ${tenant.id}, ${cartId}, ${number}, ${tx.json(body.customer)}, ${tx.json(delivery)}, ${tx.json(payment)},
-                  'placed', ${cart.totals.subtotalCents}, ${deliveryFee}, ${cart.totals.subtotalCents + deliveryFee})
-        `;
-        await tx`
-          insert into order_events (tenant_id, order_id, from_state, to_state, actor, meta)
-          values (${tenant.id}, ${orderId}, null, 'placed', 'customer', ${tx.json({ via: 'checkout-sandbox' })})
-        `;
-        await tx`
-          insert into outbox (tenant_id, topic, payload)
-          values (${tenant.id}, 'order.placed', ${tx.json({ orderId, number })})
-        `;
-        await tx`update carts set status = 'completed', updated_at = now() where id = ${cartId}`;
-        // authoritative funnel event (15-analytics) — the cart id is the session scope
-        await tx`
-          insert into analytics_events (tenant_id, name, at, session_id, props)
-          values (${tenant.id}, 'order_placed', now(), ${cartId},
-            ${tx.json({ order_id: orderId, value: cart.totals.subtotalCents + deliveryFee, method: body.payment.method })})
-        `;
-        return orderId;
-      })();
+      const order = await placeOrderTx(tx, tenant.id, cartId, body);
       const view = await loadOrderView(tx, tenant.id, order, cartId);
-      return { status: 201, body: { order: view } };
+      // the device that just placed an order for this phone may read the phone's history
+      const customer = mintCustomerToken(
+        sessionSecret,
+        tenant.id,
+        normalizePhone(body.customer.phone),
+      );
+      return {
+        status: 201,
+        body: {
+          order: view,
+          customerToken: customer.token,
+          customerTokenExpiresAt: customer.expiresAt,
+        },
+      };
     })(c);
   });
 
+  // `?since=<version>&wait=<s>` holds the request (≤25s) until the order moves past
+  // `since` — the Kernel's live useOrder; without `wait` it's a plain read
   checkout.get('/orders/:id', async (c) => {
     const tenant = c.get('tenant');
     const cartId = await sessionCartId(c, sessionSecret);
-    const order = await withTenant(sql, tenant.id, (tx) =>
-      loadOrderView(tx, tenant.id, uuidParam(c, 'id'), cartId),
-    );
-    return c.json({ order });
+    const orderId = uuidParam(c, 'id');
+    const read = () =>
+      withTenant(sql, tenant.id, (tx) => loadOrderView(tx, tenant.id, orderId, cartId));
+    const waitRaw = c.req.query('wait');
+    const sinceRaw = c.req.query('since');
+    if (waitRaw === undefined || sinceRaw === undefined) return c.json({ order: await read() });
+    const waitS = Number(waitRaw);
+    const since = Number(sinceRaw);
+    if (
+      !Number.isInteger(waitS) ||
+      waitS < 1 ||
+      waitS > 25 ||
+      !Number.isInteger(since) ||
+      since < 0
+    )
+      throw new HttpError(400, 'BAD_REQUEST', 'wait must be 1–25 and since a version');
+    let order = await read();
+    const deadline = Date.now() + waitS * 1000;
+    while (order.version <= since && !TERMINAL_STATES.has(order.state) && Date.now() < deadline) {
+      // 5s slices: a NOTIFY landing between the read and the subscribe costs ≤5s, not the whole wait
+      await orderHub.wait(orderId, Math.min(5000, deadline - Date.now()), c.req.raw.signal);
+      if (c.req.raw.signal.aborted) break;
+      const v = await withTenant(sql, tenant.id, (tx) => orderVersion(tx, tenant.id, orderId));
+      if (v > since) order = await read();
+    }
+    c.header('cache-control', 'no-store');
+    return c.json({ order, changed: order.version > since });
   });
 
   // /control/v1: staff-gated internal surface — X-Vendua-Control key or
@@ -2391,6 +2424,20 @@ export function createApp({ sql, sessionSecret, controlSecret, autoDrain }: AppD
     '.txt': 'text/plain; charset=utf-8',
   };
   // before the SPA catch-all below, or its GET /control/* shadows the staff API
+  mountCommerce({
+    app,
+    storefront,
+    checkout,
+    sql,
+    sessionSecret,
+    controlGate,
+    requireIdemKey,
+    idempotency,
+    trustProxy,
+    cepLookup: cepLookup ?? viaCep,
+    orderHub,
+  });
+
   mountStorefrontPlatform({
     app,
     storefront,
