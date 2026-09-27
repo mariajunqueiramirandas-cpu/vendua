@@ -176,6 +176,9 @@ export default function SettingsPage() {
               wa={wa}
               ig={igQ.data ?? null}
               provLive={r.provLive}
+              history={obj(settings.whatsapp_history)}
+              onSaveHistory={save('whatsapp_history')}
+              savingHistory={savingKey === 'whatsapp_history'}
             />
           </div>
           <div hidden={area !== 'agenda'}>
