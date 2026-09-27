@@ -166,6 +166,25 @@ export const deliveryEta = defineBlock({
   },
 });
 
+/** Kernel 1.2 — the store's Pix key, copia e cola and QR (Core's BR Code). */
+export const pixInfo = defineBlock({
+  type: 'sdk:pix-info',
+  category: 'info',
+  settings: {
+    title: text({ max: 60, default: 'Pague com Pix' }),
+    showQr: boolean({ default: true }),
+  },
+});
+
+/** Kernel 1.2 — "junte N selos, ganhe X": the store's stamp card, when it runs one. */
+export const loyaltyTeaser = defineBlock({
+  type: 'sdk:loyalty-teaser',
+  category: 'promo',
+  settings: {
+    text: text({ max: 120, default: '' }),
+  },
+});
+
 export const SDK_SCHEMAS: readonly (SectionSchema | BlockSchema)[] = [
   pageContent,
   header,
@@ -181,6 +200,8 @@ export const SDK_SCHEMAS: readonly (SectionSchema | BlockSchema)[] = [
   notifyMe,
   promoBadge,
   deliveryEta,
+  pixInfo,
+  loyaltyTeaser,
 ];
 
 /** The shape the artifact manifest publishes (template migrations target areas by category). */

@@ -30,4 +30,6 @@ export const SDK_COMPONENTS: RegisteredComponent[] = [
   sdk(schemas.notifyMe, B.NotifyMe),
   sdk(schemas.promoBadge, B.PromoBadge),
   sdk(schemas.deliveryEta, B.DeliveryEta),
+  sdk(schemas.pixInfo, B.PixInfo),
+  sdk(schemas.loyaltyTeaser, B.LoyaltyTeaser),
 ];

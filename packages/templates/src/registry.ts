@@ -28,7 +28,30 @@ const deliveryEtaOnProduct = defineTemplateMigration({
   },
 });
 
-export const TEMPLATE_MIGRATIONS: readonly TemplateMigration[] = [deliveryEtaOnProduct];
+/** Kernel 1.2's `sdk:loyalty-teaser` on every product page, in the first area that
+ *  accepts `promo` blocks. It renders nothing until the store runs a stamp card, so
+ *  placing it everywhere is safe — turning the program on is then pure data. */
+const loyaltyTeaserOnProduct = defineTemplateMigration({
+  id: '2026-09-loyalty-teaser-on-product',
+  description:
+    'place sdk:loyalty-teaser (Kernel 1.2) in the first product-page area accepting promo blocks',
+  requiresKernel: '>=1.2.0',
+  pages: ['product'],
+  up(t, ctx) {
+    if (t.has('sdk:loyalty-teaser')) return;
+    const hit = findArea(t, 'promo', ctx.sections);
+    if (!hit)
+      throw new MigrationConflict(
+        'no area on the product page accepts promo blocks (or it is full)',
+      );
+    t.addBlock(hit.section, hit.area, { type: 'sdk:loyalty-teaser' });
+  },
+});
+
+export const TEMPLATE_MIGRATIONS: readonly TemplateMigration[] = [
+  deliveryEtaOnProduct,
+  loyaltyTeaserOnProduct,
+];
 
 export function findMigration(id: string): TemplateMigration | undefined {
   return TEMPLATE_MIGRATIONS.find((m) => m.id === id);

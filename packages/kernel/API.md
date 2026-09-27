@@ -19,7 +19,7 @@ retypes (those need a Contract major, a codemod and an alias window).
 | `KERNEL_PATHS`     | Same paths by name                                                                             |
 | `SurfaceRegion`    | Inline notices targeted at a region name                                                       |
 | `ErrorBoundary`    | Fallback-on-throw wrapper for storefront code                                                  |
-| `SLOT_KEYS`        | The slot registry (22 slots, each with a default in `@vendua/ui-defaults`)                     |
+| `SLOT_KEYS`        | The slot registry (31 slots, each with a default in `@vendua/ui-defaults`)                     |
 | `SLOT_ALIASES`     | Deprecated slot keys → their replacement and the codemod that rewrites them                    |
 
 ```tsx
@@ -54,22 +54,37 @@ The `virtual:vendua/storefront` module is typed by the Kernel entry itself.
 `useCustomer` (guest profile remembered on opt-in; OTP accounts land behind the same
 hook), `useAnalytics` (`track('custom.<name>')`, consent-gated), `useConsent`,
 `useErrorSurface` (route a caught error to the default notice), `usePageContext`
-(page id + route params for sections/blocks).
+(page id + route params for sections/blocks), and since Kernel 1.2 `useOrders`,
+`useLoyalty`, `useCep`, `useWaitlist`.
 
 Hooks never compute prices or eligibility; every read exposes `refetch`.
 
+**Kernel 1.2 (commerce completeness, roadmap Phase 2)** — all additive:
+
+| Hook / change                | What it does                                                                                                                                                                                                        |
+| ---------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `useOrder(id, { live? })`    | Live by default: a Kernel-owned long poll (`GET /orders/:id?since&wait`) that pauses while the tab is hidden, stops at a terminal state and backs off on errors. Returns `live`. `{ live: false }` = the plain read |
+| `useOrders(phone?)`          | "Sem senha, sem cadastro": the phone's orders across devices (summaries, no address). `needsVerification` + `verify(orderNumber)`; the device that checked out with the phone is already trusted                    |
+| `useLoyalty(phone?)`         | The stamp card (`stamps`, `stampsRequired`, minted `rewards` coupon codes) for a verified phone                                                                                                                     |
+| `useCep()`                   | `lookup(cep)` → street/bairro/cidade + the delivery-zone answer, via Core                                                                                                                                           |
+| `useWaitlist(productId)`     | Join a sold-out product's restock waitlist; answers how many wait                                                                                                                                                   |
+| `useCart().mutations`        | `add(…, comboSelections?)`, structured `setDelivery` (street/number/cep/lat/lng…), `applyCoupon`, `removeCoupon`, `importItems`, `share` (a `?cart=CODE` link), `reorder(orderId)`                                  |
+| `useDeliveryQuote().quote`   | Also takes `{ lat, lng }` (distance-priced zones)                                                                                                                                                                   |
+| `useCheckout().submit`       | `CheckoutInput` gains `notes`, `scheduledFor` and structured address fields                                                                                                                                         |
+| `?cart=CODE` / `?cupom=CODE` | Handled by `VenduaProvider`: the shared sacola is imported / the coupon applied, the param stripped                                                                                                                 |
+
 ## Primitives
 
-| Primitive          | Stamps                          | Behaviour owned by the Kernel                              |
-| ------------------ | ------------------------------- | ---------------------------------------------------------- |
-| `ProductLink`      | `data-vendua="product-link"`    | route resolution (`paths.product`), prefetch               |
-| `AddToCart`        | `data-vendua="add-to-cart"`     | disabled on paused/sold-out, mutation, `add_to_cart` event |
-| `QuantityStepper`  | `data-vendua="qty-stepper"`     | min/max, mutation                                          |
-| `CartTrigger`      | `data-vendua="cart-trigger"`    | badge count, opens `/sacola`, `cart_open` event            |
-| `CheckoutButton`   | `data-vendua="checkout-button"` | starts the session, disabled states, `checkout_start`      |
-| `StoreStatusBadge` | `data-vendua="store-status"`    | live open/closed/paused                                    |
-| `NotifyMeButton`   | `data-vendua="notify-me"`       | "avise-me" subscription, `notify_me` event                 |
-| `Img`              | —                               | CDN srcset (`images.cdn`), lazy/priority, blur-up          |
+| Primitive          | Stamps                          | Behaviour owned by the Kernel                                                       |
+| ------------------ | ------------------------------- | ----------------------------------------------------------------------------------- |
+| `ProductLink`      | `data-vendua="product-link"`    | route resolution (`paths.product`), prefetch                                        |
+| `AddToCart`        | `data-vendua="add-to-cart"`     | disabled on paused/sold-out, mutation, `add_to_cart` event; `comboSelections` (1.2) |
+| `QuantityStepper`  | `data-vendua="qty-stepper"`     | min/max, mutation                                                                   |
+| `CartTrigger`      | `data-vendua="cart-trigger"`    | badge count, opens `/sacola`, `cart_open` event                                     |
+| `CheckoutButton`   | `data-vendua="checkout-button"` | starts the session, disabled states, `checkout_start`                               |
+| `StoreStatusBadge` | `data-vendua="store-status"`    | live open/closed/paused                                                             |
+| `NotifyMeButton`   | `data-vendua="notify-me"`       | "avise-me" subscription, `notify_me` event                                          |
+| `Img`              | —                               | CDN srcset (`images.cdn`), lazy/priority, blur-up                                   |
 
 Every primitive accepts `asChild`. A primitive with no `onError` hands typed errors to
 the default error surface.
@@ -103,6 +118,21 @@ may only use `store:` types.
 | `sdk:notify-me`        | block   | category `purchase-extras`; title, successText                 | —                                                                                                                              |
 | `sdk:promo-badge`      | block   | category `badge`; text, tone                                   | —                                                                                                                              |
 | `sdk:delivery-eta`     | block   | category `info`; showFee, showPickup — **Kernel 1.1**          | —                                                                                                                              |
+| `sdk:pix-info`         | block   | category `info`; title, showQr — **Kernel 1.2**                | —                                                                                                                              |
+| `sdk:loyalty-teaser`   | block   | category `promo`; text — **Kernel 1.2**                        | —                                                                                                                              |
+
+Kernel 1.2 also teaches existing SDK pieces: `sdk:purchase-panel` renders the product
+gallery (`catalog.Gallery`), the kit picker (`catalog.ComboPicker`) for `kind: 'combo'`
+products, a "sob encomenda" note and caps quantity at tracked stock; `sdk:notify-me`
+joins the restock waitlist and shows how many wait.
+
+### Slots added in Kernel 1.2
+
+`catalog.ComboPicker`, `catalog.Gallery`, `checkout.CouponField`, `checkout.SchedulePicker`,
+`checkout.Notes`, `checkout.PixPayment`, `order.Items`, `customer.LoyaltyCard`,
+`customer.PhoneVerify` — each with a default and a fixture in `@vendua/ui-defaults`.
+`checkout.AddressForm` gains optional `onCep`/`cepStatus`, `onLocate`/`locateStatus` and
+`zoneHint`; `CustomerDraft` gains optional `cep` and `reference`.
 
 ## Styling API (Contract surface)
 
@@ -127,7 +157,10 @@ the last resort — each one is counted in the artifact manifest.
 
 `ApiError`, `ERROR_CODES` (the exhaustive set storefronts may switch on),
 `formatCents`, and the Core DTO types (`StoreProfile`, `CatalogProduct`, `Cart`,
-`Order`, `Notice`, `StateEnvelope`, …). Slot prop types: `SlotProps`, `CheckoutStep`,
+`Order`, `Notice`, `StateEnvelope`, …). Kernel 1.2 types: `ComboSlot`, `ComboSelection`,
+`CartCoupon`, `CartSchedule`, `CouponCheck`, `DeliveryAddress`, `CepResult`, `ImportLine`,
+`ImportReport`, `OrderItem`, `OrderSummary`, `LoyaltyCard`, `PixInfo`; every new DTO field
+is optional so a Kernel 1.2 storefront still runs against an older Core. Slot prop types: `SlotProps`, `CheckoutStep`,
 `CustomerDraft`, `DeliveryOption`, `PaymentMethod`, `ModifierGroup`.
 
 ## Build (`@vendua/kernel/vite`)

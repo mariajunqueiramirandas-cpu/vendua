@@ -1088,6 +1088,194 @@
   }
 
   /* printed pages (menus, receipts) never carry live surfaces */
+  /* ── Kernel 1.2: kits, gallery, coupons, encomendas, Pix, loyalty ─────────── */
+  .v-combo {
+    display: grid;
+    gap: 16px;
+  }
+  .v-combo-list {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    display: grid;
+    gap: 8px;
+  }
+  .v-combo-item {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 8px 12px;
+    border-radius: var(--v-radius-md, 8px);
+    border: 1px solid color-mix(in srgb, var(--v-color-text, #1c1b1a) 12%, transparent);
+    min-width: 0;
+  }
+  .v-combo-item[data-selected] {
+    border-color: var(--v-color-accent, #3f5e4e);
+  }
+  .v-combo-item[data-status='sold_out'] {
+    opacity: 0.55;
+  }
+  .v-combo-name {
+    min-width: 0;
+    overflow-wrap: anywhere;
+  }
+  .v-combo-count {
+    float: right;
+    font-weight: 600;
+  }
+  .v-gallery {
+    display: grid;
+    gap: 8px;
+  }
+  .v-gallery > img {
+    width: 100%;
+    aspect-ratio: var(--v-purchase-panel-media-ratio);
+    object-fit: cover;
+    border-radius: var(--v-card-radius);
+  }
+  .v-gallery-thumbs {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    display: flex;
+    gap: 8px;
+    overflow-x: auto;
+  }
+  .v-gallery-thumbs button {
+    padding: 0;
+    border: 2px solid transparent;
+    border-radius: var(--v-radius-sm, 4px);
+    background: none;
+    cursor: pointer;
+  }
+  .v-gallery-thumbs button[aria-current] {
+    border-color: var(--v-color-accent, #3f5e4e);
+  }
+  .v-gallery-thumbs img {
+    display: block;
+    width: 56px;
+    height: 56px;
+    object-fit: cover;
+    border-radius: var(--v-radius-sm, 4px);
+  }
+  .v-coupon {
+    display: grid;
+    gap: 6px;
+    margin-block: 12px;
+  }
+  .v-coupon-code {
+    font-family: var(--v-font-mono, ui-monospace, monospace);
+    letter-spacing: 0.04em;
+  }
+  .v-dates {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+  .v-date {
+    flex: 0 0 auto;
+  }
+  .v-textarea {
+    resize: vertical;
+    min-height: 72px;
+    font: inherit;
+  }
+  .v-counter {
+    text-align: end;
+    font-size: 0.75rem;
+  }
+  .v-progress {
+    display: grid;
+    gap: 6px;
+    margin-top: 12px;
+  }
+  .v-progress progress {
+    width: 100%;
+    height: 6px;
+    accent-color: var(--v-color-accent, #3f5e4e);
+  }
+  .v-locate {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 12px;
+  }
+  .v-pix {
+    display: grid;
+    gap: 10px;
+    justify-items: start;
+    margin-bottom: 16px;
+  }
+  .v-qr {
+    width: min(220px, 60vw);
+    height: auto;
+    border-radius: var(--v-radius-sm, 4px);
+  }
+  .v-pix-code {
+    width: 100%;
+    font-family: var(--v-font-mono, ui-monospace, monospace);
+    font-size: 0.75rem;
+    overflow-wrap: anywhere;
+    resize: none;
+  }
+  .v-pix-info {
+    display: grid;
+    gap: 6px;
+  }
+  .v-pix-info .v-qr {
+    width: min(160px, 50vw);
+  }
+  .v-pix-info code {
+    overflow-wrap: anywhere;
+  }
+  .v-order-items {
+    margin-top: 16px;
+  }
+  .v-order-row {
+    display: flex;
+    justify-content: space-between;
+    gap: 12px;
+    flex-wrap: wrap;
+    padding: 16px;
+    border-radius: var(--v-radius-md, 8px);
+    border: 1px dashed color-mix(in srgb, var(--v-color-text, #1c1b1a) 16%, transparent);
+  }
+  .v-loyalty {
+    margin-bottom: 16px;
+  }
+  .v-stamps {
+    list-style: none;
+    margin: 12px 0;
+    padding: 0;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+  .v-stamps li {
+    width: 28px;
+    height: 28px;
+    border-radius: 50%;
+    border: 2px dashed color-mix(in srgb, var(--v-color-text, #1c1b1a) 30%, transparent);
+  }
+  .v-stamps li[data-filled] {
+    border-style: solid;
+    border-color: var(--v-color-accent, #3f5e4e);
+    background: var(--v-color-accent, #3f5e4e);
+  }
+  .v-rewards {
+    margin: 0;
+    padding-inline-start: 18px;
+    display: grid;
+    gap: 4px;
+  }
+  .v-verify {
+    display: grid;
+    gap: 10px;
+    margin-top: 16px;
+  }
+
   @media print {
     .v-banner-stack,
     .v-blocking-overlay,

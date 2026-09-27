@@ -31,6 +31,16 @@ export const SLOT_KEYS = [
   'store.HoursTable',
   'catalog.ProductCard',
   'catalog.ModifierPicker',
+  // Kernel 1.2 — commerce completeness (roadmap Phase 2)
+  'catalog.ComboPicker',
+  'catalog.Gallery',
+  'checkout.CouponField',
+  'checkout.SchedulePicker',
+  'checkout.Notes',
+  'checkout.PixPayment',
+  'order.Items',
+  'customer.LoyaltyCard',
+  'customer.PhoneVerify',
 ] as const;
 export type SlotKey = (typeof SLOT_KEYS)[number];
 

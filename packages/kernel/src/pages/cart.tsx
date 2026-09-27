@@ -2,10 +2,10 @@ import { useState } from 'react';
 import { useCart, useStore } from '../hooks.ts';
 import { CheckoutButton, useNavigateTo } from '../primitives.tsx';
 import { Slot } from '../slot.tsx';
-import { showError } from '../errors.ts';
+import { errorCode, errorCopy, showError, showInfo } from '../errors.ts';
 import { useKernel } from '../provider.tsx';
 import { resolvePaths } from '../config.ts';
-import type { CartItem } from '../api.ts';
+import type { Cart, CartItem } from '../api.ts';
 
 // /sacola — Kernel page (17 — Kernel pages), rendered inside the store's layout.
 // Totals are Core's; the page only wires slots to the cart mutations.
@@ -39,6 +39,69 @@ function Line({ item, currency }: { item: CartItem; currency: string }) {
   );
 }
 
+/** "Mandar sacola": a Core share code as a link — native share sheet, else clipboard. */
+function ShareCart() {
+  const { mutations } = useCart();
+  const [pending, setPending] = useState(false);
+  const share = async () => {
+    setPending(true);
+    try {
+      const { url } = await mutations.share();
+      const nav = globalThis.navigator as Navigator | undefined;
+      if (nav?.share) {
+        await nav.share({ title: 'Minha sacola', url }).catch(() => {});
+      } else {
+        await nav?.clipboard?.writeText(url);
+        showInfo('share', 'Link da sacola copiado', 'Abra em outro aparelho ou mande para alguém.');
+      }
+    } catch (err) {
+      showError(err);
+    } finally {
+      setPending(false);
+    }
+  };
+  return (
+    <button
+      type="button"
+      className="v-link-btn"
+      data-vendua="share-cart"
+      disabled={pending}
+      onClick={() => void share()}
+    >
+      {pending ? 'Gerando link…' : 'Mandar sacola por link'}
+    </button>
+  );
+}
+
+function Coupon({ cart, currency }: { cart: Cart; currency: string }) {
+  const { mutations } = useCart();
+  const [pending, setPending] = useState(false);
+  const [error, setError] = useState<string>();
+  const run = async (fn: () => Promise<unknown>) => {
+    setPending(true);
+    setError(undefined);
+    try {
+      await fn();
+    } catch (err) {
+      setError(errorCopy(errorCode(err)).title);
+    } finally {
+      setPending(false);
+    }
+  };
+  return (
+    <Slot
+      name="checkout.CouponField"
+      coupon={cart.coupon ?? null}
+      discountCents={cart.totals.discountCents ?? 0}
+      currency={currency}
+      pending={pending}
+      {...(error ? { error } : {})}
+      onApply={(code) => void run(() => mutations.applyCoupon(code))}
+      onRemove={() => void run(() => mutations.removeCoupon())}
+    />
+  );
+}
+
 export function CartPage() {
   const { cart, loading } = useCart();
   const { store } = useStore();
@@ -64,7 +127,13 @@ export function CartPage() {
           lines={cart.items.map((i) => (
             <Line key={i.id} item={i} currency={currency} />
           ))}
-          summary={<Slot name="checkout.Summary" cart={cart} currency={currency} />}
+          summary={
+            <>
+              <Slot name="checkout.Summary" cart={cart} currency={currency} />
+              <Coupon cart={cart} currency={currency} />
+              <ShareCart />
+            </>
+          }
           checkout={
             <CheckoutButton asChild>
               <button type="button" className="v-btn v-btn-accent v-btn-block">

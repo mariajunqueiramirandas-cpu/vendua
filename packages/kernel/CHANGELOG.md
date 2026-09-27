@@ -3,6 +3,26 @@
 Semver, per docs/architecture/11-backward-compatibility.md: minors and patches
 never need a storefront edit; a major only ships with a Contract major.
 
+## 1.2.0
+
+Commerce completeness (roadmap Phase 2) — additive; no storefront edit needed.
+
+- Hooks: `useOrders(phone?)` (cross-device history, verified by an order number),
+  `useLoyalty`, `useCep`, `useWaitlist`. `useOrder` is live by default (a Kernel-owned
+  long poll woken by Core's `pg_notify`; pauses on hidden tabs); `{ live: false }` opts out.
+- Cart mutations: kit `comboSelections`, structured delivery address + coordinates,
+  `applyCoupon`/`removeCoupon`, `importItems`, `share` (`?cart=CODE`), `reorder`.
+  `VenduaProvider` handles `?cart=` and `?cupom=` links.
+- Kernel pages: checkout gains CEP autofill, "usar minha localização" (distance-priced
+  zones), reference point, notes, coupon field, encomenda date picker with Pix-only
+  enforcement, free-delivery progress; `/pedido/:id` shows items, notes, the Pix copia e
+  cola + QR and "pedir de novo"; `/pedidos` merges this device's orders with the phone's
+  and shows the loyalty card; `/sacola` gets the coupon field and "mandar sacola por link".
+- SDK: `sdk:pix-info`, `sdk:loyalty-teaser` (placed on existing stores by the template
+  migration `2026-09-loyalty-teaser-on-product`); purchase panel gallery, kit picker,
+  stock-capped quantity, encomenda note; waitlist count on `sdk:notify-me`.
+- 9 new slots (see API.md); new Core error codes in `ERROR_CODES`.
+
 ## 1.1.1
 
 - Build plugin: the manifest's section catalog carries each section's area

@@ -1,6 +1,8 @@
 import { useState } from 'react';
 import type { SlotProps } from '@vendua/kernel';
-import { dateTime, money, ORDER_STATE_LABEL, PAYMENT_LABEL } from './format.ts';
+import { dateTime, dayLabel, money, ORDER_STATE_LABEL, PAYMENT_LABEL, time } from './format.ts';
+
+const TERMINAL = new Set(['delivered', 'cancelled', 'refunded']);
 
 // cart.*, order.*, store.*, catalog.* defaults.
 
@@ -131,6 +133,16 @@ export function CartLineItem({
               .join(', ')}
           </p>
         ) : null}
+        {item.combo?.length ? (
+          <p className="v-muted v-line-mods" data-part="combo">
+            {item.combo.map((c) => `${c.qty}× ${c.name}`).join(', ')}
+          </p>
+        ) : null}
+        {item.requiresPreorder ? (
+          <p className="v-badge" data-part="preorder">
+            Encomenda
+          </p>
+        ) : null}
         {unavailable ? (
           <p className="v-alert" role="status">
             Indisponível agora — remova para continuar.
@@ -191,7 +203,18 @@ export function OrderStatusPage({ order, currency, timeline }: SlotProps['order.
         <h1 className="v-page-title" data-part="state">
           {ORDER_STATE_LABEL[order.state] ?? order.state}
         </h1>
-        {d.etaMin != null && d.etaMax != null && d.mode === 'delivery' ? (
+        {order.scheduledFor ? (
+          <p className="v-muted" data-part="scheduled">
+            Encomenda para {dayLabel(order.scheduledFor)}
+          </p>
+        ) : d.promisedTo && !TERMINAL.has(order.state) ? (
+          <p className="v-muted" data-part="promise">
+            {d.mode === 'delivery' ? 'Chega' : 'Pronto para retirar'}{' '}
+            {d.promisedFrom && d.promisedFrom !== d.promisedTo
+              ? `entre ${time(d.promisedFrom)} e ${time(d.promisedTo)}`
+              : `por volta de ${time(d.promisedTo)}`}
+          </p>
+        ) : d.etaMin != null && d.etaMax != null && d.mode === 'delivery' ? (
           <p className="v-muted">
             Entrega em {d.etaMin}–{d.etaMax} min
           </p>
@@ -202,7 +225,13 @@ export function OrderStatusPage({ order, currency, timeline }: SlotProps['order.
         <dl className="v-order-facts" data-part="facts">
           <div>
             <dt>{d.mode === 'delivery' ? 'Entrega' : 'Retirada'}</dt>
-            <dd>{d.mode === 'delivery' ? (d.neighborhood ?? 'Endereço informado') : 'Na loja'}</dd>
+            <dd>
+              {d.mode === 'delivery'
+                ? [typeof d.address === 'string' ? d.address : null, d.neighborhood]
+                    .filter(Boolean)
+                    .join(' — ') || 'Endereço informado'
+                : 'Na loja'}
+            </dd>
           </div>
           <div>
             <dt>Pagamento</dt>

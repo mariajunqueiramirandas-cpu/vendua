@@ -19,6 +19,17 @@ import {
   ProductCard,
 } from './commerce.tsx';
 import {
+  ComboPicker,
+  CouponField,
+  Gallery,
+  LoyaltyCard,
+  Notes,
+  OrderItems,
+  PhoneVerify,
+  PixPayment,
+  SchedulePicker,
+} from './growth.tsx';
+import {
   ConsentBanner,
   EmergencyOverlay,
   ErrorFallback,
@@ -58,9 +69,28 @@ export const SLOT_DEFAULTS: SlotDefaults = {
   'store.HoursTable': HoursTable,
   'catalog.ProductCard': ProductCard,
   'catalog.ModifierPicker': ModifierPicker,
+  'catalog.ComboPicker': ComboPicker,
+  'catalog.Gallery': Gallery,
+  'checkout.CouponField': CouponField,
+  'checkout.SchedulePicker': SchedulePicker,
+  'checkout.Notes': Notes,
+  'checkout.PixPayment': PixPayment,
+  'order.Items': OrderItems,
+  'customer.LoyaltyCard': LoyaltyCard,
+  'customer.PhoneVerify': PhoneVerify,
 };
 
 export { noticeSeverity, noticeLinks, NoticeCard } from './system.tsx';
 export { QtyControl } from './commerce.tsx';
-export { money, dateTime, time, ORDER_STATE_LABEL, PAYMENT_LABEL } from './format.ts';
+export {
+  money,
+  dateTime,
+  time,
+  dayLabel,
+  ORDER_STATE_LABEL,
+  PAYMENT_LABEL,
+  COUPON_REASON,
+} from './format.ts';
+export { PixQr } from './growth.tsx';
+export { qrMatrix, qrSvgPath } from './qr.ts';
 export { SLOT_FIXTURES } from './fixtures.tsx';

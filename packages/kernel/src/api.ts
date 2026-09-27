@@ -38,6 +38,20 @@ export interface StoreProfile {
   currency: string;
   /** Per-tenant copy deck — e.g. { itemSingular: 'doce', bag: 'sacola' }. */
   vocabulary: Record<string, string>;
+  /** Kernel 1.2 — the store's Pix: key + an amount-less copia e cola (null = none). */
+  pix?: PixInfo | null;
+  /** Kernel 1.2 — the stamp card, when the store runs one. */
+  loyalty?: { stampsRequired: number; minOrderCents: number; rewardLabel: string } | null;
+  /** Kernel 1.2 — encomenda rules. */
+  preorder?: { paymentMethods: string[]; maxDays: number };
+}
+
+export interface PixInfo {
+  key: string;
+  keyType: 'cpf' | 'cnpj' | 'email' | 'phone' | 'random';
+  beneficiary: string;
+  /** BR Code "copia e cola" — render as a QR or a copy button */
+  copyPaste: string;
 }
 
 export interface CatalogProduct {
@@ -53,6 +67,37 @@ export interface CatalogProduct {
   /** Additive Core fields (03 — semantics pinned in v1): absent until Core serves them. */
   imageUrl?: string | null;
   stockQuantity?: number | null;
+  /** Kernel 1.2 fields (Core Phase 2). */
+  kind?: 'simple' | 'combo';
+  lowStockThreshold?: number | null;
+  /** Core's call: tracked stock at/below the threshold */
+  lowStock?: boolean;
+  requiresPreorder?: boolean;
+  preorderLeadDays?: number;
+}
+
+export interface ComboSlot {
+  id: string;
+  name: string;
+  minSelect: number;
+  maxSelect: number;
+  /** how many of the same item the slot takes */
+  qtyPerItem: number;
+  items: {
+    productId: string;
+    slug: string;
+    name: string;
+    priceDeltaCents: number;
+    status: string;
+    stockQuantity: number | null;
+    imageUrl: string | null;
+  }[];
+}
+
+export interface ComboSelection {
+  slotId: string;
+  productId: string;
+  qty: number;
 }
 
 export interface CatalogCategory {
@@ -72,6 +117,13 @@ export interface ProductDetail extends CatalogProduct {
     maxSelect: number;
     modifiers: { id: string; name: string; priceDeltaCents: number; status: string }[];
   }[];
+  /** Kernel 1.2 */
+  gallery?: { url: string; alt: string | null; width: number | null; height: number | null }[];
+  comboSlots?: ComboSlot[];
+  /** people waiting on a restock (sold-out products) */
+  waitlistCount?: number;
+  /** first bookable date for an encomenda (YYYY-MM-DD), Core-computed */
+  preorderEarliestDate?: string | null;
 }
 
 export type NoticeSeverity = 'info' | 'warning' | 'blocking';
@@ -122,6 +174,21 @@ export interface CartItem {
   productStatus: string;
   modifiers: { id: string; name: string; priceDeltaCents: number; status: string }[];
   lineTotalCents: number;
+  /** Kernel 1.2 */
+  combo?: {
+    slotId: string;
+    slotName: string;
+    productId: string;
+    name: string;
+    qty: number;
+    priceDeltaCents: number;
+    status: string;
+  }[];
+  comboSelections?: ComboSelection[];
+  imageUrl?: string | null;
+  stockQuantity?: number | null;
+  requiresPreorder?: boolean;
+  preorderLeadDays?: number;
 }
 
 export interface CartTotals {
@@ -134,6 +201,42 @@ export interface CartTotals {
    *  subtract money themselves. 0 once the minimum is met. */
   remainingMinOrderCents: number;
   belowMinOrder: boolean;
+  /** Kernel 1.2 — coupon discount (Core-computed); total already has it off */
+  discountCents?: number;
+  freeDeliveryThresholdCents?: number | null;
+  /** cents short of free delivery; 0 once reached */
+  freeDeliveryRemainingCents?: number | null;
+}
+
+export interface CartCoupon {
+  code: string;
+  label: string;
+  kind: 'percent' | 'fixed' | 'free_delivery';
+  /** false = kept on the cart but not discounting now; `reason` is an error code */
+  applies: boolean;
+  reason?: string;
+  details?: Record<string, unknown>;
+}
+
+export interface CartSchedule {
+  /** a line is an encomenda — checkout needs `scheduledFor` */
+  required: boolean;
+  leadDays: number;
+  /** bookable YYYY-MM-DD dates, earliest first */
+  dates: string[];
+  paymentMethods: string[];
+}
+
+export interface DeliveryAddress {
+  neighborhood?: string;
+  address?: string;
+  street?: string;
+  number?: string;
+  complement?: string;
+  reference?: string;
+  cep?: string;
+  lat?: number;
+  lng?: number;
 }
 
 export interface Cart {
@@ -141,13 +244,30 @@ export interface Cart {
   status: 'open' | 'completed' | 'abandoned';
   items: CartItem[];
   totals: CartTotals;
-  delivery: { mode: 'pickup' | 'delivery'; neighborhood?: string; zoneId?: string | null } | null;
+  delivery:
+    | ({
+        mode: 'pickup' | 'delivery';
+        neighborhood?: string;
+        zoneId?: string | null;
+        zoneName?: string | null;
+        distanceKm?: number | null;
+        etaMin?: number | null;
+        etaMax?: number | null;
+      } & Omit<DeliveryAddress, 'neighborhood'>)
+    | null;
+  /** Kernel 1.2 */
+  coupon?: CartCoupon | null;
+  schedule?: CartSchedule;
 }
 
 export interface CheckoutInput {
   customer: { name: string; phone: string };
-  delivery: { mode: 'pickup' | 'delivery'; neighborhood?: string; address?: string };
+  delivery: { mode: 'pickup' | 'delivery' } & DeliveryAddress;
   payment: { method: 'pix' | 'card_on_delivery' | 'cash' };
+  /** Kernel 1.2 — "Alguma observação?" (≤500) */
+  notes?: string;
+  /** Kernel 1.2 — encomenda date, YYYY-MM-DD */
+  scheduledFor?: string;
 }
 
 export interface DeliveryZone {
@@ -158,6 +278,10 @@ export interface DeliveryZone {
   minOrderCents: number;
   etaMin: number;
   etaMax: number;
+  kind?: 'neighborhood' | 'radius';
+  maxDistanceKm?: number | null;
+  feePerKmCents?: number;
+  freeDeliveryOverCents?: number | null;
 }
 
 export interface QuoteResult {
@@ -167,6 +291,66 @@ export interface QuoteResult {
   feeCents?: number;
   etaMin?: number;
   etaMax?: number;
+  zoneName?: string;
+  distanceKm?: number | null;
+  minOrderCents?: number;
+  freeDeliveryOverCents?: number | null;
+}
+
+export interface CepResult {
+  address: {
+    cep: string;
+    street: string | null;
+    neighborhood: string | null;
+    city: string | null;
+    state: string | null;
+  };
+  zone: QuoteResult;
+}
+
+export interface CouponCheck {
+  valid: boolean;
+  code: string;
+  label?: string;
+  kind?: CartCoupon['kind'];
+  discountCents?: number;
+  reason?: string;
+  details?: Record<string, unknown>;
+}
+
+export interface ImportReport {
+  added: number;
+  skipped: { productId: string | null; slug: string | null; code: string; message: string }[];
+}
+
+export interface ImportLine {
+  productId?: string;
+  slug?: string;
+  qty: number;
+  modifierIds?: string[];
+  comboSelections?: ComboSelection[];
+}
+
+/** A phone's order, as `useOrders` sees it — no address, no other PII. */
+export interface OrderSummary {
+  id: string;
+  number: number;
+  state: string;
+  placedAt: string;
+  scheduledFor: string | null;
+  mode: 'pickup' | 'delivery';
+  totalCents: number;
+  items: { name: string; qty: number }[];
+}
+
+export interface LoyaltyCard {
+  enabled: boolean;
+  stampsRequired: number;
+  stamps: number;
+  minOrderCents: number;
+  rewardLabel: string;
+  /** personal coupon codes ready to use */
+  rewards: { code: string; label: string; expiresAt: string | null }[];
 }
 
 export interface Order {
@@ -181,13 +365,54 @@ export interface Order {
     address: unknown;
     feeCents: number;
     neighborhood: string | null;
+    /** Kernel 1.2 */
+    addressParts?: {
+      street: string | null;
+      number: string | null;
+      complement: string | null;
+      neighborhood: string | null;
+      reference: string | null;
+      cep: string | null;
+    };
+    zoneName?: string | null;
+    distanceKm?: number | null;
+    /** when Core promised it (null for scheduled orders) */
+    promisedFrom?: string | null;
+    promisedTo?: string | null;
   };
-  payment: { method: string; status: string; provider: string; instructions: string | null };
+  payment: {
+    method: string;
+    status: string;
+    provider: string;
+    instructions: string | null;
+    /** Kernel 1.2 — copia e cola with this order's amount */
+    pix?: (Omit<PixInfo, 'keyType'> & { keyType?: string }) | null;
+  };
   subtotalCents: number;
   deliveryFeeCents: number;
   totalCents: number;
   placedAt: string;
   timeline: { at: string; from: string | null; to: string; actor: string; meta: unknown }[];
+  /** Kernel 1.2 */
+  items?: OrderItem[];
+  notes?: string | null;
+  scheduledFor?: string | null;
+  discountCents?: number;
+  coupon?: { code: string } | null;
+  updatedAt?: string;
+  /** bumps on every state change — the live wait's cursor */
+  version?: number;
+}
+
+export interface OrderItem {
+  productId: string | null;
+  slug: string;
+  name: string;
+  qty: number;
+  unitPriceCents: number;
+  modifiers: { name: string; priceDeltaCents: number }[];
+  combo: { slotName: string; name: string; qty: number }[];
+  lineTotalCents: number;
 }
 
 const SESSION_KEY = 'vendua.session';
@@ -216,6 +441,44 @@ function storeOrderToken(orderId: string, t: string) {
   } catch {
     /* private mode — order tracking lives in memory only */
   }
+}
+
+const CUSTOMER_TOKENS_KEY = 'vendua.customerTokens';
+
+// customer tokens (phone → token) outlive the tab: "meus pedidos" on this device
+// keeps working across visits without asking the order number again
+interface CustomerTokens {
+  last?: string;
+  byPhone: Record<string, { token: string; expiresAt: string }>;
+}
+
+function readCustomerTokens(): CustomerTokens {
+  try {
+    const raw = JSON.parse(
+      globalThis.localStorage?.getItem(CUSTOMER_TOKENS_KEY) ?? 'null',
+    ) as CustomerTokens | null;
+    if (!raw || typeof raw.byPhone !== 'object') return { byPhone: {} };
+    const now = Date.now();
+    for (const [phone, t] of Object.entries(raw.byPhone))
+      if (!t?.token || Date.parse(t.expiresAt) < now) delete raw.byPhone[phone];
+    return raw;
+  } catch {
+    return { byPhone: {} };
+  }
+}
+
+function writeCustomerTokens(t: CustomerTokens) {
+  try {
+    globalThis.localStorage?.setItem(CUSTOMER_TOKENS_KEY, JSON.stringify(t));
+  } catch {
+    /* private mode — verification lasts for this page */
+  }
+}
+
+/** National digits — the shape Core keys phones by. */
+export function phoneKey(phone: string): string {
+  const d = phone.replace(/\D/g, '');
+  return d.length >= 12 && d.startsWith('55') ? d.slice(2) : d;
 }
 
 function readStoredToken(): string | null {
@@ -272,6 +535,28 @@ export function createApi(baseUrl = '') {
   // Serial delivery writes — a slower earlier write must not overwrite the newer cart.
   let deliveryQueue: Promise<unknown> = Promise.resolve();
   const auth = () => (token ? { authorization: `Bearer ${token}` } : {});
+  let customerTokens: CustomerTokens = readCustomerTokens();
+  const rememberCustomer = (phone: string, t: { token: string; expiresAt: string }) => {
+    const key = phoneKey(phone);
+    customerTokens = {
+      last: key,
+      byPhone: { ...customerTokens.byPhone, [key]: t },
+    };
+    writeCustomerTokens(customerTokens);
+  };
+  const customerHeader = (phone?: string): Record<string, string> => {
+    const key = phone ? phoneKey(phone) : customerTokens.last;
+    const t = key ? customerTokens.byPhone[key] : undefined;
+    return t ? { 'x-vendua-customer': t.token } : {};
+  };
+  const cartPost = async <T>(path: string, body?: unknown, method = 'POST'): Promise<T> => {
+    await ensureSessionNow();
+    return apiFetch<T>(co(path), {
+      method,
+      headers: { ...auth(), ...customerHeader(), 'idempotency-key': idemKey() },
+      ...(body !== undefined ? { body: JSON.stringify(body) } : {}),
+    });
+  };
 
   // Closure-scoped so a destructured `checkout` behaves identically to `api.checkout()`.
   const cartGet = () => apiFetch<{ cart: Cart }>(co('/cart'), { headers: auth() });
@@ -337,22 +622,100 @@ export function createApi(baseUrl = '') {
       const ids = new Set<string>([...orderTokenMem.keys(), ...Object.keys(readOrderTokens())]);
       return [...ids].reverse();
     },
-    quote: (neighborhood: string) =>
+    /** a bairro name, or Kernel 1.2: `{ lat, lng }` from the device / `{ neighborhood }` */
+    quote: (where: string | { neighborhood?: string; lat?: number; lng?: number }) =>
       apiFetch<QuoteResult>(co('/quote'), {
         method: 'POST',
         headers: { 'idempotency-key': idemKey() },
-        body: JSON.stringify({ neighborhood }),
+        body: JSON.stringify(typeof where === 'string' ? { neighborhood: where } : where),
       }),
+    /** Kernel 1.2 — address + zone for a CEP (Core calls the CEP service) */
+    cep: (cep: string) =>
+      apiFetch<CepResult>(sf(`/cep/${encodeURIComponent(cep.replace(/\D/g, '').slice(0, 8))}`)),
+    /** Kernel 1.2 — restock waitlist; answers how many are waiting */
+    waitlist: (productId: string, phone: string) =>
+      apiFetch<{ subscribed: true; waiting: number }>(sf('/waitlist'), {
+        method: 'POST',
+        headers: { 'idempotency-key': idemKey() },
+        body: JSON.stringify({ productId, phone }),
+      }),
+    validateCoupon: (code: string) =>
+      apiFetch<CouponCheck>(co('/coupons/validate'), {
+        method: 'POST',
+        headers: { ...auth(), ...customerHeader(), 'idempotency-key': idemKey() },
+        body: JSON.stringify({ code }),
+      }),
+    applyCoupon: (code: string) =>
+      cartPost<{ cart: Cart }>('/cart/coupon', { code }).then((r) => r.cart),
+    removeCoupon: () =>
+      cartPost<{ cart: Cart }>('/cart/coupon', undefined, 'DELETE').then((r) => r.cart),
+    importCart: (items: ImportLine[]) =>
+      cartPost<{ cart: Cart; report: ImportReport }>('/cart/import', { items }),
+    importShare: (shareCode: string) =>
+      cartPost<{ cart: Cart; report: ImportReport }>('/cart/import', { shareCode }),
+    shareCart: () => cartPost<{ code: string; expiresAt: string }>('/cart/share'),
+    reorder: (orderId: string) =>
+      cartPost<{ cart: Cart; report: ImportReport }>('/cart/reorder', {
+        orderId,
+        ...((orderTokenMem.get(orderId) ?? readOrderTokens()[orderId])
+          ? { orderToken: orderTokenMem.get(orderId) ?? readOrderTokens()[orderId] }
+          : {}),
+      }),
+    /** phones this device can read history for (verified or checked out here) */
+    customerPhones: (): string[] => {
+      customerTokens = readCustomerTokens();
+      const phones = Object.keys(customerTokens.byPhone);
+      const last = customerTokens.last;
+      return last && phones.includes(last) ? [last, ...phones.filter((p) => p !== last)] : phones;
+    },
+    verifyCustomer: async (phone: string, orderNumber: number) => {
+      const r = await apiFetch<{ customerToken: string; expiresAt: string; phone: string }>(
+        co('/customer/session'),
+        {
+          method: 'POST',
+          headers: { 'idempotency-key': idemKey() },
+          body: JSON.stringify({ phone, orderNumber }),
+        },
+      );
+      rememberCustomer(r.phone, { token: r.customerToken, expiresAt: r.expiresAt });
+      return r.phone;
+    },
+    forgetCustomer: (phone?: string) => {
+      const next = { ...customerTokens.byPhone };
+      if (phone) delete next[phoneKey(phone)];
+      customerTokens = phone ? { byPhone: next } : { byPhone: {} };
+      writeCustomerTokens(customerTokens);
+    },
+    customerOrders: (phone?: string) =>
+      apiFetch<{ phone: string; orders: OrderSummary[] }>(
+        co(`/customer/orders${phone ? `?phone=${phoneKey(phone)}` : ''}`),
+        { headers: customerHeader(phone) },
+      ),
+    loyalty: (phone?: string) =>
+      apiFetch<{ phone: string; loyalty: LoyaltyCard }>(
+        co(`/customer/loyalty${phone ? `?phone=${phoneKey(phone)}` : ''}`),
+        { headers: customerHeader(phone) },
+      ),
 
     clearSession: clearSessionNow,
     ensureSession: ensureSessionNow,
     cart: cartGet,
-    async addItem(productId: string, qty = 1, modifierIds: string[] = []): Promise<Cart> {
+    async addItem(
+      productId: string,
+      qty = 1,
+      modifierIds: string[] = [],
+      comboSelections?: ComboSelection[],
+    ): Promise<Cart> {
       await ensureSessionNow();
       const res = await apiFetch<{ cart: Cart }>(co('/cart/items'), {
         method: 'POST',
         headers: { ...auth(), 'idempotency-key': idemKey() },
-        body: JSON.stringify({ productId, qty, modifierIds }),
+        body: JSON.stringify({
+          productId,
+          qty,
+          modifierIds,
+          ...(comboSelections?.length ? { comboSelections } : {}),
+        }),
       });
       return res.cart;
     },
@@ -367,7 +730,7 @@ export function createApi(baseUrl = '') {
         method: 'DELETE',
         headers: { ...auth(), 'idempotency-key': idemKey() },
       }).then((r) => r.cart),
-    setDelivery: (delivery: { mode: 'pickup' | 'delivery'; neighborhood?: string }) => {
+    setDelivery: (delivery: { mode: 'pickup' | 'delivery' } & DeliveryAddress) => {
       // Bind the token at call time — a queued write must target the cart it was
       // issued for, not a session rotated by a completed checkout.
       const bound = token;
@@ -384,11 +747,21 @@ export function createApi(baseUrl = '') {
       return p;
     },
     async checkout(input: CheckoutInput): Promise<Order> {
-      const r = await apiFetch<{ order: Order }>(co('/checkout'), {
+      const r = await apiFetch<{
+        order: Order;
+        customerToken?: string;
+        customerTokenExpiresAt?: string;
+      }>(co('/checkout'), {
         method: 'POST',
         headers: { ...auth(), 'idempotency-key': idemKey() },
         body: JSON.stringify(input),
       });
+      // this device placed an order for the phone — it may read the phone's history
+      if (r.customerToken && r.customerTokenExpiresAt)
+        rememberCustomer(input.customer.phone, {
+          token: r.customerToken,
+          expiresAt: r.customerTokenExpiresAt,
+        });
       // The order's token is its tracking credential — keep it before rotation swaps `token`.
       if (token) {
         orderTokenMem.set(r.order.id, token);
@@ -408,6 +781,17 @@ export function createApi(baseUrl = '') {
       return apiFetch<{ order: Order }>(co(`/orders/${id}`), {
         headers: bearer ? { authorization: `Bearer ${bearer}` } : {},
       }).then((r) => r.order);
+    },
+    /** Kernel 1.2 — long poll: resolves when the order moves past `since` or after `waitS` */
+    orderWait: (id: string, since: number, waitS = 25, signal?: AbortSignal) => {
+      const bearer = orderTokenMem.get(id) ?? readOrderTokens()[id] ?? token;
+      return apiFetch<{ order: Order; changed: boolean }>(
+        co(`/orders/${id}?since=${since}&wait=${waitS}`),
+        {
+          headers: bearer ? { authorization: `Bearer ${bearer}` } : {},
+          ...(signal ? { signal } : {}),
+        },
+      );
     },
   };
 }
@@ -453,6 +837,36 @@ export const ERROR_CODES = [
   'INVALID_TOKENS',
   'INVALID_MANIFEST',
   'MIGRATION_NOT_FOUND',
+  // commerce completeness (Phase 2 — Kernel 1.2)
+  'OUT_OF_STOCK',
+  'INVALID_COMBO',
+  'COMBO_SLOT_COUNT',
+  'COMBO_ITEM_LIMIT',
+  'COMBO_ITEM_SOLD_OUT',
+  'SCHEDULE_REQUIRED',
+  'INVALID_SCHEDULE',
+  'PAYMENT_NOT_ALLOWED',
+  'INVALID_NOTES',
+  'INVALID_COUPON',
+  'COUPON_NOT_FOUND',
+  'COUPON_EXPIRED',
+  'COUPON_NOT_STARTED',
+  'COUPON_EXHAUSTED',
+  'COUPON_MIN_SUBTOTAL',
+  'COUPON_NOT_YOURS',
+  'COUPON_ALREADY_USED',
+  'COUPON_FIRST_ORDER_ONLY',
+  'COUPON_EXISTS',
+  'INVALID_IMPORT',
+  'SHARE_NOT_FOUND',
+  'CUSTOMER_REQUIRED',
+  'CUSTOMER_MISMATCH',
+  'CUSTOMER_NOT_VERIFIED',
+  'INVALID_CEP',
+  'CEP_NOT_FOUND',
+  'CEP_UNAVAILABLE',
+  'INVALID_PIX',
+  'ZONE_NOT_FOUND',
   // control-plane (staff) API codes — leads module
   'INVALID_STATE',
   'INVALID_LEAD',

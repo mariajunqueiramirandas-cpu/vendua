@@ -1,6 +1,7 @@
 import { useState } from 'react';
-import { useDeliveryZones, useProduct, useStore } from '../hooks.ts';
-import { money } from '@vendua/ui-defaults';
+import { useDeliveryZones, useProduct, useStore, useWaitlist } from '../hooks.ts';
+import { money, PixQr } from '@vendua/ui-defaults';
+import { errorCopy } from '../errors.ts';
 import { NotifyMeButton } from '../primitives.tsx';
 import { usePageContext } from '../composition/runtime.tsx';
 import type { BlockProps } from '../composition/registry.ts';
@@ -34,20 +35,73 @@ export function StockCounter({ settings }: BlockProps<typeof S.stockCounter>) {
   );
 }
 
-/** Shows only when there's something to wait for: a sold-out product or a paused store. */
+/** Shows only when there's something to wait for: a sold-out product or a paused store.
+ *  Kernel 1.2: a sold-out product joins Core's restock waitlist and shows who else waits. */
 export function NotifyMe({ settings }: BlockProps<typeof S.notifyMe>) {
   const product = usePageProduct();
   const { status } = useStore();
   const [phone, setPhone] = useState('');
   const [done, setDone] = useState(false);
+  const waitlist = useWaitlist(product?.status === 'sold_out' ? product.id : undefined);
   const subject = product?.status === 'sold_out' ? 'product' : status === 'paused' ? 'store' : null;
   if (!subject) return null;
-  if (done)
+  if (done || waitlist.joined)
     return (
       <p className="v-note" role="status" data-part="done">
         {settings.successText}
+        {waitlist.waiting && waitlist.waiting > 1
+          ? ` Você e mais ${waitlist.waiting - 1} ${waitlist.waiting === 2 ? 'pessoa esperam' : 'pessoas esperam'}.`
+          : ''}
       </p>
     );
+  if (subject === 'product' && product) {
+    const others = product.waitlistCount ?? 0;
+    return (
+      <form
+        className="v-notify"
+        data-part="root"
+        onSubmit={(e) => {
+          e.preventDefault();
+          if (phone.replace(/\D/g, '').length >= 10) void waitlist.join(phone).catch(() => {});
+        }}
+      >
+        <label className="v-label" htmlFor="v-notify-phone">
+          {settings.title}
+        </label>
+        {others > 0 ? (
+          <p className="v-muted" data-part="waiting">
+            {others} {others === 1 ? 'pessoa já espera' : 'pessoas já esperam'} a volta.
+          </p>
+        ) : null}
+        <div className="v-notify-row">
+          <input
+            id="v-notify-phone"
+            type="tel"
+            inputMode="tel"
+            autoComplete="tel"
+            className="v-input"
+            placeholder="Seu WhatsApp"
+            maxLength={20}
+            value={phone}
+            onChange={(e) => setPhone(e.target.value)}
+          />
+          <button
+            type="submit"
+            className="v-btn v-btn-accent"
+            data-vendua="notify-me"
+            disabled={waitlist.pending || phone.replace(/\D/g, '').length < 10}
+          >
+            Avise-me
+          </button>
+        </div>
+        {waitlist.error ? (
+          <p className="v-field-error" role="alert">
+            {errorCopy(waitlist.error.code).title}
+          </p>
+        ) : null}
+      </form>
+    );
+  }
   return (
     <div className="v-notify" data-part="root">
       <label className="v-label" htmlFor="v-notify-phone">
@@ -110,6 +164,62 @@ export function DeliveryEta({ settings }: BlockProps<typeof S.deliveryEta>) {
   return (
     <p className="v-info v-eta" data-part="root">
       {parts.join(' · ')}
+    </p>
+  );
+}
+
+/** Kernel 1.2 — renders nothing until the store configures a Pix key. */
+export function PixInfo({ settings }: BlockProps<typeof S.pixInfo>) {
+  const { store } = useStore();
+  const [copied, setCopied] = useState(false);
+  const pix = store?.pix;
+  if (!pix) return null;
+  const copy = async () => {
+    try {
+      await navigator.clipboard.writeText(pix.key);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2500);
+    } catch {
+      /* clipboard blocked — the key stays visible */
+    }
+  };
+  return (
+    <div className="v-info v-pix-info" data-part="root">
+      <p className="v-panel-title">{settings.title}</p>
+      {settings.showQr ? (
+        <PixQr payload={pix.copyPaste} label={`QR code Pix de ${pix.beneficiary}`} />
+      ) : null}
+      <p>
+        <span className="v-muted">Chave ({KEY_LABEL[pix.keyType] ?? pix.keyType}):</span>{' '}
+        <code data-part="key">{pix.key}</code>{' '}
+        <button type="button" className="v-link-btn" onClick={copy}>
+          {copied ? 'Copiada!' : 'Copiar'}
+        </button>
+      </p>
+      <p className="v-muted" data-part="beneficiary">
+        {pix.beneficiary}
+      </p>
+    </div>
+  );
+}
+
+const KEY_LABEL: Record<string, string> = {
+  cpf: 'CPF',
+  cnpj: 'CNPJ',
+  email: 'e-mail',
+  phone: 'celular',
+  random: 'aleatória',
+};
+
+/** Kernel 1.2 — the stamp card pitch; nothing when the store runs no program. */
+export function LoyaltyTeaser({ settings }: BlockProps<typeof S.loyaltyTeaser>) {
+  const { store } = useStore();
+  const l = store?.loyalty;
+  if (!l) return null;
+  return (
+    <p className="v-badge v-loyalty-teaser" data-part="root" data-tone="accent">
+      {settings.text ||
+        `Cartão fidelidade: a cada ${l.stampsRequired} pedidos, ${l.rewardLabel.toLowerCase()}.`}
     </p>
   );
 }

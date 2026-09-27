@@ -1,10 +1,15 @@
 import type { ReactNode } from 'react';
 import type {
   Cart,
+  CartCoupon,
   CartItem,
+  ComboSelection,
+  ComboSlot,
+  LoyaltyCard,
   Notice,
   NoticeAction,
   Order,
+  OrderItem,
   ProductDetail,
   StoreProfile,
   CatalogProduct,
@@ -28,6 +33,9 @@ export interface CustomerDraft {
   neighborhood: string;
   complement: string;
   remember: boolean;
+  /** Kernel 1.2 */
+  cep?: string;
+  reference?: string;
 }
 
 export interface DeliveryOption {
@@ -78,6 +86,14 @@ export interface SlotProps {
     /** 'customer' = name/phone; 'address' = delivery address */
     part: 'customer' | 'address';
     neighborhoods: string[];
+    /** Kernel 1.2 — CEP autofill (Core lookup); absent = no CEP field */
+    onCep?: (cep: string) => void;
+    cepStatus?: 'idle' | 'pending' | 'found' | 'not_found' | 'unavailable';
+    /** Kernel 1.2 — "usar minha localização" (device geolocation → distance pricing) */
+    onLocate?: () => void;
+    locateStatus?: 'idle' | 'pending' | 'located' | 'denied' | 'out_of_zone';
+    /** what Core answered for the address: zone + fee, when known */
+    zoneHint?: string;
   };
   'checkout.DeliveryOptions': {
     options: DeliveryOption[];
@@ -117,6 +133,65 @@ export interface SlotProps {
     href: string;
     /** the Kernel's ProductLink wrapper — renders the anchor with its hooks */
     link: (children: ReactNode) => ReactNode;
+  };
+  'catalog.ComboPicker': {
+    slots: ComboSlot[];
+    value: ComboSelection[];
+    onChange: (next: ComboSelection[]) => void;
+    currency: string;
+    /** slotId → message */
+    errors: Record<string, string>;
+  };
+  'catalog.Gallery': {
+    images: { url: string; alt: string | null }[];
+    productName: string;
+    figureVariant: CatalogProduct['figureVariant'];
+  };
+  'checkout.CouponField': {
+    coupon: CartCoupon | null;
+    discountCents: number;
+    currency: string;
+    pending: boolean;
+    error?: string;
+    onApply: (code: string) => void;
+    onRemove: () => void;
+  };
+  'checkout.SchedulePicker': {
+    /** YYYY-MM-DD, Core's bookable dates */
+    dates: string[];
+    value: string | undefined;
+    onChange: (date: string) => void;
+    required: boolean;
+    leadDays: number;
+    timezone?: string;
+    error?: string;
+  };
+  'checkout.Notes': { value: string; onChange: (v: string) => void; max: number };
+  'checkout.PixPayment': {
+    /** copia e cola; render as QR + copy button */
+    copyPaste: string;
+    beneficiary: string;
+    keyLabel?: string;
+    amountCents?: number;
+    currency: string;
+  };
+  'order.Items': {
+    items: OrderItem[];
+    currency: string;
+    notes?: string | null;
+    scheduledFor?: string | null;
+    discountCents?: number;
+    couponCode?: string | null;
+    /** "pedir de novo" — present when the Kernel can replay the order */
+    onReorder?: () => void;
+    reorderPending?: boolean;
+  };
+  'customer.LoyaltyCard': { card: LoyaltyCard; currency: string };
+  'customer.PhoneVerify': {
+    phone: string;
+    pending: boolean;
+    error?: string;
+    onSubmit: (phone: string, orderNumber: number) => void;
   };
   'catalog.ModifierPicker': {
     groups: ModifierGroup[];
