@@ -420,6 +420,13 @@ for (const t of TENANTS) {
         latitude = ${s.location?.latitude ?? null}, longitude = ${s.location?.longitude ?? null}
       where tenant_id = ${tid}
     `;
+    // demo owner for the merchant admin — sign in at /admin/ with (22) 99999-0000
+    // (dev codes print in the log, or come back in the response with VENDUA_ADMIN_DEV_OTP=1)
+    await tx`
+      insert into merchant_users (tenant_id, name, phone, role)
+      values (${tid}, 'Maria', '22999990000', 'owner')
+      on conflict (tenant_id, phone) do nothing
+    `;
     for (const c of t.coupons ?? []) {
       await tx`
         insert into coupons (tenant_id, code, kind, value, label, min_subtotal_cents, first_order_only, per_phone_limit)

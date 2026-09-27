@@ -12,6 +12,16 @@ export interface StoreHours {
   windows: WeeklyWindow[];
 }
 
+/** A dated exception to the weekly hours: a holiday (closed) or different hours that day. */
+export interface SpecialDay {
+  /** local date "YYYY-MM-DD" in the store's timezone */
+  date: string;
+  closed: boolean;
+  open?: string;
+  close?: string;
+  label?: string;
+}
+
 /** Stamp card: every qualifying order that reaches `delivered` earns a stamp. */
 export interface LoyaltyProgram {
   stampsRequired: number;
@@ -51,6 +61,14 @@ export interface StoreSettingsRow {
   pix_city?: string | null;
   latitude?: number | null;
   longitude?: number | null;
+  // merchant admin (migration 0052)
+  logo_url?: string | null;
+  pause_message?: string | null;
+  closed_message?: string | null;
+  special_days?: SpecialDay[];
+  accept_target_minutes?: number;
+  email?: string | null;
+  payment_methods?: string[];
   vocabulary: {
     itemSingular?: string;
     itemPlural?: string;
@@ -74,9 +92,15 @@ function hhmmToMinutes(t: string): number {
 }
 
 /** Wall-clock {day, minutes, seconds} of `instant` in `tz`, via Intl (no manual TZ math). */
-function localParts(instant: Date, tz: string): { day: number; minutes: number; seconds: number } {
+function localParts(
+  instant: Date,
+  tz: string,
+): { day: number; minutes: number; seconds: number; date: string } {
   const parts = new Intl.DateTimeFormat('en-US', {
     timeZone: tz,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
     weekday: 'short',
     hour: '2-digit',
     minute: '2-digit',
@@ -98,28 +122,35 @@ function localParts(instant: Date, tz: string): { day: number; minutes: number; 
     day,
     minutes: Number(get('hour')) * 60 + Number(get('minute')),
     seconds: Number(get('second')),
+    date: `${get('year')}-${get('month')}-${get('day')}`,
   };
 }
 
-function withinWindow(dayMinutes: number, w: WeeklyWindow, day: number): boolean {
+/** The windows that apply on a local date: a special day replaces the weekly ones. */
+function windowsOn(hours: StoreHours, day: number, date: string, special: SpecialDay[]) {
+  const s = special.find((d) => d.date === date);
+  if (!s) return hours.windows;
+  if (s.closed || !s.open || !s.close) return [];
+  return [{ days: [day], open: s.open, close: s.close }];
+}
+
+/** Today's share of a window; an overnight window's after-midnight part belongs to yesterday. */
+function openPart(dayMinutes: number, w: WeeklyWindow, day: number): boolean {
+  if (!w.days.includes(day)) return false;
   const open = hhmmToMinutes(w.open);
   const close = hhmmToMinutes(w.close);
-  if (close > open) return w.days.includes(day) && dayMinutes >= open && dayMinutes < close;
-  // overnight window: close lands day+1, so early-morning counts as the previous day's window
-  const inOpenPart = w.days.includes(day) && dayMinutes >= open;
-  const prevDay = (day + 6) % 7;
-  const inClosePart = w.days.includes(prevDay) && dayMinutes < close;
-  return inOpenPart || inClosePart;
+  return close > open ? dayMinutes >= open && dayMinutes < close : dayMinutes >= open;
 }
 
 // next opening instant — wall-clock open converted back to an instant; one pass absorbs tz drift
-function nextOpen(hours: StoreHours, now: Date): Date | undefined {
+function nextOpen(hours: StoreHours, now: Date, special: SpecialDay[] = []): Date | undefined {
   const tz = hours.timezone;
   let best: { t: number; openMin: number } | undefined;
-  for (let d = 0; d <= 8; d++) {
+  // 15 days: a two-week holiday still finds the reopening
+  for (let d = 0; d <= 15; d++) {
     const probe = new Date(now.getTime() + d * 86_400_000);
-    const { day, minutes, seconds } = localParts(probe, tz);
-    for (const w of hours.windows) {
+    const { day, minutes, seconds, date } = localParts(probe, tz);
+    for (const w of windowsOn(hours, day, date, special)) {
       if (!w.days.includes(day)) continue;
       const openMin = hhmmToMinutes(w.open);
       // candidate = probe + (open − tod) − local seconds/millis — lands on the wall-clock minute
@@ -128,7 +159,7 @@ function nextOpen(hours: StoreHours, now: Date): Date | undefined {
       if (t <= now.getTime()) continue;
       if (!best || t < best.t) best = { t, openMin };
     }
-    if (best && d === 0) break; // a same-day open is the earliest possible
+    if (best) break; // the first day with an opening is the earliest
   }
   if (!best) return undefined;
   // Correct once for any offset change between now and the candidate.
@@ -142,18 +173,29 @@ export function deriveStatus(
   override: 'paused' | 'closed' | null,
   resumesAt: string | null,
   now: Date,
+  specialDays: SpecialDay[] = [],
 ): DerivedStatus {
-  if (override === 'paused') {
+  // a timed pause ends by itself; the admin sweep clears the row later
+  const expired = resumesAt !== null && new Date(resumesAt).getTime() <= now.getTime();
+  if (override === 'paused' && !expired) {
     return resumesAt ? { status: 'paused', resumesAt } : { status: 'paused' };
   }
-  if (override === 'closed') {
+  if (override === 'closed' && !expired) {
     // manual close persists until cleared — only a configured resumes_at is honest
     return resumesAt ? { status: 'closed', resumesAt } : { status: 'closed' };
   }
   const tz = hours.timezone || 'America/Sao_Paulo';
-  const { day, minutes } = localParts(now, tz);
-  const open = hours.windows.some((w) => withinWindow(minutes, w, day));
+  const { day, minutes, date } = localParts(now, tz);
+  const today = windowsOn(hours, day, date, specialDays);
+  // yesterday's overnight window still spills into a special day
+  const yesterday = localParts(new Date(now.getTime() - 86_400_000), tz);
+  const prev = windowsOn(hours, yesterday.day, yesterday.date, specialDays).filter(
+    (w) => hhmmToMinutes(w.close) <= hhmmToMinutes(w.open),
+  );
+  const open =
+    today.some((w) => openPart(minutes, w, day)) ||
+    prev.some((w) => w.days.includes(yesterday.day) && minutes < hhmmToMinutes(w.close));
   if (open) return { status: 'open' };
-  const next = nextOpen(hours, now);
+  const next = nextOpen({ ...hours, timezone: tz }, now, specialDays);
   return next ? { status: 'closed', resumesAt: next.toISOString() } : { status: 'closed' };
 }

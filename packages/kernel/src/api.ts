@@ -44,6 +44,10 @@ export interface StoreProfile {
   loyalty?: { stampsRequired: number; minOrderCents: number; rewardLabel: string } | null;
   /** Kernel 1.2 — encomenda rules. */
   preorder?: { paymentMethods: string[]; maxDays: number };
+  /** Kernel 1.4 — methods the store accepts at checkout (the merchant admin toggles them). */
+  paymentMethods?: string[];
+  /** Kernel 1.4 — the store's uploaded logo, when it has one. */
+  logoUrl?: string | null;
 }
 
 export interface PixInfo {
@@ -908,6 +912,8 @@ export const ERROR_CODES = [
   'SCHEDULE_REQUIRED',
   'INVALID_SCHEDULE',
   'PAYMENT_NOT_ALLOWED',
+  // Kernel 1.4 — the store turned this method off in its admin
+  'PAYMENT_METHOD_UNAVAILABLE',
   'INVALID_NOTES',
   'INVALID_COUPON',
   'COUPON_NOT_FOUND',

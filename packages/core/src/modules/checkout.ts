@@ -78,6 +78,13 @@ export function validateCheckout<Z extends ZoneLike>(
   if (input.delivery.mode === 'pickup' && !(settings?.pickup_enabled ?? true)) {
     throw new HttpError(422, 'PICKUP_UNAVAILABLE', 'pickup is not available');
   }
+  // the merchant turns methods off in the admin; absent setting = all three (pre-0052 rows)
+  const methods = settings?.payment_methods;
+  if (methods && !methods.includes(input.payment.method)) {
+    throw new HttpError(422, 'PAYMENT_METHOD_UNAVAILABLE', 'this payment method is not accepted', {
+      field: 'payment.method',
+    });
+  }
   if (cart.items.length === 0) throw new HttpError(422, 'EMPTY_CART', 'cart is empty');
   // re-validate against the current product — a dropped modifier id must never quietly reprice the order
   for (const item of cart.items) {

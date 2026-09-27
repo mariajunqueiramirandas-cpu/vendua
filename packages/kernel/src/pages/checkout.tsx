@@ -123,10 +123,12 @@ export function CheckoutPage() {
   const schedule = cart?.schedule;
   const encomenda = schedule?.required === true;
   const allowed = encomenda ? schedule!.paymentMethods.join(',') : '';
-  const methods = useMemo(
-    () => (allowed ? METHODS.filter((m) => allowed.split(',').includes(m.id)) : METHODS),
-    [allowed],
-  );
+  // the store's own list (Kernel 1.4); absent on an older Core = all three
+  const accepted = store?.paymentMethods?.join(',') ?? '';
+  const methods = useMemo(() => {
+    const byStore = accepted ? METHODS.filter((m) => accepted.split(',').includes(m.id)) : METHODS;
+    return allowed ? byStore.filter((m) => allowed.split(',').includes(m.id)) : byStore;
+  }, [allowed, accepted]);
   // an encomenda narrows payment (Pix-only in the reference) — keep the choice valid
   useEffect(() => {
     if (methods.length && !methods.some((m) => m.id === pay)) setPay(methods[0]!.id);

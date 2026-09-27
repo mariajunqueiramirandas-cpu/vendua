@@ -1,0 +1,160 @@
+import { HttpError, bodyJson } from '../platform/http.ts';
+import {
+  assertPage,
+  currentTemplatesTx,
+  currentTokensTx,
+  latestBuildTx,
+  rollbackTemplateTx,
+  saveTemplateTx,
+  saveTokensTx,
+  templateHistoryTx,
+} from '../modules/storefront-platform.ts';
+import { audit } from './audit.ts';
+import { int, type AdminDeps } from './context.ts';
+import { handlers } from './handlers.ts';
+import { emitAdminTx } from './live.ts';
+import { storeUrl } from './routes.ts';
+
+const TEMPLATE_BODY_MAX = 160 * 1024;
+
+const PAGE_LABEL: Record<string, string> = {
+  layout: 'topo e rodapé',
+  home: 'página inicial',
+  catalog: 'cardápio',
+  product: 'página do produto',
+};
+
+// Aparência: the same versioned template/token writes staff use, with source
+// 'merchant'. Page edits are live on the next storefront poll; token edits
+// queue a rebuild, which is what "publicando…" → "no ar" reports.
+
+export function mountAppearance(d: AdminDeps) {
+  const { admin } = d;
+  const { read, write } = handlers(d);
+
+  admin.get(
+    '/appearance',
+    read('manager', async (tx, t) => {
+      const rows = await tx<
+        { page: string; version: number; template: unknown; source: string; created_at: string }[]
+      >`
+        select distinct on (page) page, version, template, source, created_at from storefront_templates
+        where tenant_id = ${t.id} order by page, version desc
+      `;
+      const tokens = await currentTokensTx(tx, t.id);
+      const pending = await tx<{ id: number; created_at: string }[]>`
+        select id, created_at from outbox
+        where tenant_id = ${t.id} and topic = 'storefront.rebuild_requested' and published_at is null
+        order by id desc limit 5
+      `;
+      const build = await latestBuildTx(tx, t.id);
+      return {
+        url: storeUrl(t.slug, d.storeDomain),
+        pages: rows.map((r) => ({
+          page: r.page,
+          label: PAGE_LABEL[r.page] ?? r.page.replace(/^page:/, 'página '),
+          version: r.version,
+          template: r.template,
+          source: r.source,
+          updatedAt: r.created_at,
+        })),
+        tokens,
+        publish: {
+          // tokens compile into the build; pages are data and go live on their own
+          state: pending.length ? 'publishing' : 'live',
+          since: pending.at(-1)?.created_at ?? null,
+          lastBuildAt: build?.recordedAt ?? null,
+        },
+        sections: build?.sections ?? {},
+      };
+    }),
+  );
+
+  admin.get(
+    '/appearance/pages/:page/history',
+    read('manager', async (tx, t, _m, c) => {
+      const page = assertPage(c.req.param('page') ?? '');
+      const history = await templateHistoryTx(tx, t.id, page);
+      return {
+        history: history.map((h) => ({
+          version: h.version,
+          source: h.source,
+          at: h.created_at,
+          // who: merchant/staff/migration → the words the merchant sees
+          by: h.source.startsWith('merchant')
+            ? 'você'
+            : h.source.startsWith('migration')
+              ? 'atualização automática'
+              : h.source.startsWith('rollback')
+                ? 'restauração'
+                : 'equipe Venduá',
+        })),
+      };
+    }),
+  );
+
+  admin.put(
+    '/appearance/pages/:page',
+    write('manager', async (tx, t, m, c) => {
+      const page = assertPage(c.req.param('page') ?? '');
+      const body = await bodyJson(c, TEMPLATE_BODY_MAX);
+      const expectVersion =
+        body.expectVersion === undefined
+          ? undefined
+          : int(body.expectVersion, 'expectVersion', 0, 1_000_000);
+      const saved = await saveTemplateTx(tx, t.id, page, body.template, `merchant:${m.userId}`, {
+        trackRemovals: true,
+        ...(expectVersion !== undefined ? { expectVersion } : {}),
+      });
+      await audit(tx, t.id, m, {
+        action: 'appearance.page',
+        entity: 'page',
+        entityId: page,
+        summary: `publicou a ${PAGE_LABEL[page] ?? page} (versão ${saved.version})`,
+      });
+      await emitAdminTx(tx, t.id, 'appearance');
+      return { status: 200, body: saved };
+    }),
+  );
+
+  admin.post(
+    '/appearance/pages/:page/restore',
+    write('manager', async (tx, t, m, c) => {
+      const page = assertPage(c.req.param('page') ?? '');
+      const body = await bodyJson(c);
+      const to = int(body.toVersion, 'toVersion', 1, 1_000_000);
+      const saved = await rollbackTemplateTx(tx, t.id, page, to);
+      await audit(tx, t.id, m, {
+        action: 'appearance.restore',
+        entity: 'page',
+        entityId: page,
+        summary: `restaurou a ${PAGE_LABEL[page] ?? page} para a versão ${to}`,
+      });
+      await emitAdminTx(tx, t.id, 'appearance');
+      return { status: 200, body: saved };
+    }),
+  );
+
+  admin.put(
+    '/appearance/tokens',
+    write('manager', async (tx, t, m, c) => {
+      const body = await bodyJson(c);
+      if (body.tokens === undefined) throw new HttpError(422, 'BAD_REQUEST', 'tokens are required');
+      const saved = await saveTokensTx(tx, t.id, body.tokens, `merchant:${m.userId}`);
+      await audit(tx, t.id, m, {
+        action: 'appearance.tokens',
+        entity: 'tokens',
+        summary: `mudou as cores e fontes da loja (versão ${saved.version})`,
+        after: saved.tokens,
+      });
+      await emitAdminTx(tx, t.id, 'appearance');
+      return { status: 200, body: saved };
+    }),
+  );
+
+  // pages the store has no row for yet read from the kernel defaults client-side
+  admin.get(
+    '/appearance/templates',
+    read('manager', async (tx, t) => ({ templates: await currentTemplatesTx(tx, t.id) })),
+  );
+}

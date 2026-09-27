@@ -9,6 +9,7 @@ import {
 } from '@vendua/templates';
 import { ErrorBoundary } from '../error-boundary.tsx';
 import { useKernel, useQuery } from '../provider.tsx';
+import { usePreviewTemplates } from '../preview.ts';
 import { reportFailure } from '../telemetry.ts';
 import { DEFAULT_TEMPLATES } from '../sdk/defaults.ts';
 import { buildRegistry, type RegisteredComponent } from './registry.ts';
@@ -77,13 +78,16 @@ function reportOnce(kind: 'section_unknown' | 'block_unknown', target: string, m
 export function useTemplateSet(): TemplateSet {
   const { api, storefront } = useKernel();
   const q = useQuery('state:templates', () => api.state(true));
+  const drafts = usePreviewTemplates();
   return useMemo(
     () => ({
       ...DEFAULT_TEMPLATES,
       ...storefront.snapshot.templates,
       ...(q.data?.templates ?? {}),
+      // the admin editor's unpublished edits, only inside its preview frame
+      ...(drafts ?? {}),
     }),
-    [storefront, q.data],
+    [storefront, q.data, drafts],
   );
 }
 
