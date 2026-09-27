@@ -58,4 +58,34 @@ describe('slot defaults', () => {
     expect(html).toContain('href="/x"');
     expect(html).not.toContain('Boom');
   });
+
+  test('hours fold runs of equal days and name the rest', () => {
+    const C = SLOT_DEFAULTS['store.HoursTable'];
+    const html = renderToStaticMarkup(<C {...SLOT_FIXTURES['store.HoursTable']} />);
+    expect(html).toContain('Seg – Sex');
+    expect(html).toContain('09:00–18:00');
+    expect(html).toContain('Sáb – Dom');
+    expect(html.match(/<tr/g)?.length).toBe(2);
+    const every = renderToStaticMarkup(
+      <C
+        status="open"
+        hours={{
+          timezone: 'America/Sao_Paulo',
+          windows: [{ days: [0, 1, 2, 3, 4, 5, 6], open: '10:00', close: '20:00' }],
+        }}
+      />,
+    );
+    expect(every).toContain('Todos os dias');
+    expect(every).toContain('data-today="true"');
+  });
+
+  test('product cards flag low stock and encomendas, not plain items', () => {
+    const C = SLOT_DEFAULTS['catalog.ProductCard'];
+    const fx = SLOT_FIXTURES['catalog.ProductCard'];
+    const card = (extra: object) =>
+      renderToStaticMarkup(<C {...fx} product={{ ...fx.product, ...extra }} />);
+    expect(card({})).not.toContain('data-part="badge"');
+    expect(card({ lowStock: true, stockQuantity: 2 })).toContain('Últimas 2');
+    expect(card({ requiresPreorder: true })).toContain('Encomenda');
+  });
 });

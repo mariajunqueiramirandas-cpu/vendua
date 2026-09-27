@@ -116,7 +116,7 @@ export function OrderPage() {
               reorderPending={pending === order.id}
             />
           ) : null}
-          <p style={{ marginTop: 24 }}>
+          <p className="v-section-cta">
             <KLink href={KERNEL_PATHS.orders} className="v-btn v-btn-ghost">
               Meus pedidos
             </KLink>
@@ -245,7 +245,7 @@ export function OrderHistoryPage() {
           onSubmit={(p, n) => void verify(p, n)}
         />
       ) : (
-        <p className="v-muted" style={{ marginTop: 16 }}>
+        <p className="v-muted v-forget">
           <button type="button" className="v-link-btn" onClick={phone.forget}>
             Esquecer meu WhatsApp neste aparelho
           </button>

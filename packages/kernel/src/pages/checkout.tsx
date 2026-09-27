@@ -438,7 +438,7 @@ export function CheckoutPage() {
                 ) : null}
               </>
             ) : null}
-            <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', marginTop: 8 }}>
+            <div className="v-form-actions" data-part="actions">
               {step !== 'dados' ? (
                 <button
                   type="button"

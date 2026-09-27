@@ -415,6 +415,24 @@ export function SuccessPage({ order, currency }: SlotProps['checkout.SuccessPage
       data-part="root"
       role="status"
     >
+      <svg
+        className="v-success-icon"
+        data-part="icon"
+        viewBox="0 0 24 24"
+        width="40"
+        height="40"
+        aria-hidden="true"
+      >
+        <circle cx="12" cy="12" r="11" fill="currentColor" />
+        <path
+          d="m7 12.5 3.2 3.2L17 9"
+          fill="none"
+          stroke="var(--v-color-surface, #fff)"
+          strokeWidth="2.2"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+        />
+      </svg>
       <h1 className="v-page-title" data-part="title">
         Pedido #{order.number} recebido!
       </h1>
@@ -434,12 +452,37 @@ export function SuccessPage({ order, currency }: SlotProps['checkout.SuccessPage
 export function EmptyCart({ onBrowse }: SlotProps['checkout.EmptyCart']) {
   return (
     <div className="v-panel v-empty" data-vendua="empty-cart" data-part="root">
+      <BagIcon />
       <p className="v-panel-title" data-part="title">
         Sua sacola está vazia.
+      </p>
+      <p className="v-muted" data-part="body">
+        Escolha algo no cardápio — a sacola fica guardada neste aparelho.
       </p>
       <button type="button" className="v-btn v-btn-accent" data-part="browse" onClick={onBrowse}>
         Ver cardápio
       </button>
     </div>
+  );
+}
+
+function BagIcon() {
+  return (
+    <svg
+      className="v-empty-icon"
+      data-part="icon"
+      viewBox="0 0 48 48"
+      width="56"
+      height="56"
+      aria-hidden="true"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    >
+      <path d="M10 16h28l-2.2 22.4A4 4 0 0 1 31.8 42H16.2a4 4 0 0 1-4-3.6z" />
+      <path d="M18 20v-6a6 6 0 0 1 12 0v6" />
+    </svg>
   );
 }
