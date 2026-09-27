@@ -13,6 +13,7 @@ import { OverviewArea } from './OverviewArea.tsx';
 import { KINDS, WA_IDLE, type ProvTone } from './providers.ts';
 import { AREAS, computeReadiness, STUDIO, type AreaKey } from './readiness.ts';
 import { ReportsArea } from './ReportsArea.tsx';
+import { StaffArea } from './StaffArea.tsx';
 import {
   obj,
   useIgStatus,
@@ -183,6 +184,13 @@ export default function SettingsPage() {
               status={mStatus === 'err' ? null : mStatus}
               onSave={save('meeting')}
               saving={savingKey === 'meeting'}
+            />
+          </div>
+          <div hidden={area !== 'equipe'}>
+            <StaffArea
+              value={obj(settings.staff)}
+              onSave={save('staff')}
+              saving={savingKey === 'staff'}
             />
           </div>
           <div hidden={area !== 'relatorios'}>

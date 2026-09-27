@@ -6,6 +6,7 @@ export const AREAS = [
   { key: 'visao', label: 'visão geral' },
   { key: 'conexoes', label: 'conexões' },
   { key: 'agenda', label: 'agenda' },
+  { key: 'equipe', label: 'equipe' },
   { key: 'relatorios', label: 'relatórios' },
 ] as const;
 export type AreaKey = (typeof AREAS)[number]['key'];
@@ -133,6 +134,8 @@ export function computeReadiness({
   const pitch = obj(settings.pitch);
   const digest = obj(settings.digest);
   const autonomy = obj(settings.agent);
+  const staff = obj(settings.staff);
+  const staffCount = Array.isArray(staff.members) ? staff.members.length : 0;
   // 'off' parks the agent; 'copilot' silently backs up the draft queue — both worth flagging
   const autoLevel = str(autonomy.level, 'supervised');
   const routine: Check[] = setErr
@@ -142,6 +145,7 @@ export function computeReadiness({
           { key: 'voz', label: 'voz do agente', route: STUDIO },
           { key: 'regras', label: 'limites', route: `${STUDIO}?s=limites` },
           { key: 'resumo', label: 'resumo diário', to: 'relatorios' },
+          { key: 'equipe', label: 'avisos da equipe', to: 'equipe' },
         ] as const
       ).map((c): Check => ({ ...c, state: 'falha ao ler', tone: 'warn' }))
     : [
@@ -182,6 +186,15 @@ export function computeReadiness({
           state: digest.enabled === true ? `todo dia às ${num(digest.hour, 8)}h` : 'desligado',
           tone: digest.enabled === true ? 'live' : 'off',
           to: 'relatorios',
+        },
+        {
+          key: 'equipe',
+          label: 'avisos da equipe',
+          state: staffCount
+            ? `${staffCount} ${staffCount === 1 ? 'pessoa' : 'pessoas'}`
+            : 'ninguém cadastrado — handoffs passam em silêncio',
+          tone: staffCount ? 'live' : 'warn',
+          to: 'equipe',
         },
       ];
 

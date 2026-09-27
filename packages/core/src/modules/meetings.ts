@@ -10,6 +10,7 @@ import { getSettingTx, type Guardrails } from './integrations.ts';
 import type { LeadRow } from './leads.ts';
 import * as gcal from './gcal.ts';
 import * as rooms from './rooms.ts';
+import { notifyStaff } from './staff.ts';
 
 const mlog = log.child({ mod: 'meetings' });
 
@@ -570,6 +571,13 @@ export async function bookMeeting(sql: Sql, input: BookInput): Promise<BookResul
   if (txResult.created) {
     emitControlEvent('meeting.change', txResult.meeting.id);
     emitControlEvent('lead.change', txResult.lead.id);
+    if (bookInput.source !== 'staff') {
+      void notifyStaff(sql, 'meeting', {
+        subject: `Venduá — call marcada com ${txResult.lead.name}`,
+        body: `${txResult.lead.name} marcou uma call para ${fmtWhen(txResult.meeting.starts_at, txResult.cfg.tz)}.`,
+        idemKey: `meeting:${txResult.meeting.id}`,
+      });
+    }
   }
   // run effects for replays too — a crash post-commit leaves them unfinished; each step fills what's missing
   await meetingEffects(sql, txResult.meeting, txResult.cfg, txResult.lead, bookInput.bookerContact);

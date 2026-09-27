@@ -521,6 +521,16 @@ const apiBase = {
     }),
   igLoginCancel: () => req<{ ok: true }>('/ig/login/cancel', { method: 'POST' }),
   igLogout: () => req<{ ok: true }>('/ig/logout', { method: 'POST' }),
+  testStaff: () =>
+    req<{
+      deliveries: {
+        name: string;
+        channel: 'email' | 'whatsapp';
+        to: string;
+        ok: boolean;
+        error?: string;
+      }[];
+    }>('/staff/test', { method: 'POST' }),
   testIntegration: (kind: string) =>
     req<{ ok: boolean; detail: string }>(`/integrations/${kind}/test`, { method: 'POST' }),
 

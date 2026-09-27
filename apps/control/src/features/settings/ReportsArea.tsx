@@ -182,6 +182,7 @@ function DigestForm({
               inputMode="email"
               autoComplete="email"
               placeholder="voce@empresa.com"
+              list="staff-emails"
               value={edit.to}
               maxLength={320}
               aria-invalid={invalid}

@@ -4,6 +4,7 @@ import { claimControl, controlTx, type ClaimResult } from './control.ts';
 import { emitControlEvent } from './control-events.ts';
 import { LEAD_STATES, type LeadState } from './leads.ts';
 import { JOB_KINDS } from '../agent/tool-meta.ts';
+import { normalizeStaff } from './staff-config.ts';
 
 // modular provider config: `secret_ref` is the NAME of the env var holding the
 // credential — secret values never enter the DB
@@ -504,7 +505,12 @@ export function validateSetting(key: string, value: unknown): void {
     return;
   }
 
-  // 'digest' daily staff email; `to` is the only staff-address field
+  if (key === 'staff') {
+    normalizeStaff(value);
+    return;
+  }
+
+  // 'digest' daily staff email
   if (key === 'digest') {
     if (!value || typeof value !== 'object' || Array.isArray(value)) {
       throw bad('*', 'must be an object');

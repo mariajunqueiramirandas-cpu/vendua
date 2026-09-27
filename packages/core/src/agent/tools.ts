@@ -44,6 +44,7 @@ import {
 import { instagramHandle } from '../modules/threads.ts';
 import { dispatchMessage } from './send.ts';
 import { whatsappRegistered } from './channels/whatsapp.ts';
+import { notifyStaff } from '../modules/staff.ts';
 import { leadBoundArg, toolAvailable } from './tool-meta.ts';
 import { ladderTags } from './prompts.ts';
 import { parseWakeupAt, scheduleWakeupTx } from './wakeups.ts';
@@ -1716,9 +1717,9 @@ export async function executeTool(
       const reason = String(args.reason).slice(0, 500);
       // the whole handoff commits under ONE claim — sub-claims could half-commit
       // on crash and a retry would duplicate the task/note.
-      await claimControl(sql, key, async (tx) => {
+      const res = await claimControl(sql, key, async (tx) => {
         await assertRunClaimTx(tx, ctx);
-        const exists = await tx`select 1 from leads where id = ${leadId}`;
+        const exists = await tx<{ name: string }[]>`select name from leads where id = ${leadId}`;
         if (!exists[0]) throw new HttpError(404, 'LEAD_NOT_FOUND', 'lead not found');
         if (ctx.threadId) {
           const rows = await tx`
@@ -1741,8 +1742,15 @@ export async function executeTool(
           insert into lead_activities (lead_id, kind, body, created_by)
           values (${leadId}, 'system', ${`Handoff para humano — ${reason}`}, 'agent')
         `;
-        return { status: 200, body: { handedOff: true } };
+        return { status: 200, body: { handedOff: true, leadName: exists[0].name } };
       });
+      if (!res.replayed) {
+        void notifyStaff(sql, 'handoff', {
+          subject: `Venduá — ${res.body.leadName} precisa de você`,
+          body: `O agente pausou e passou a conversa para a equipe.\n\nMotivo: ${reason}`,
+          idemKey: `handoff:${key}`,
+        });
+      }
       return { handedOff: true };
     }
     case 'unsubscribe': {
