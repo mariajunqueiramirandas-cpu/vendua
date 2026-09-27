@@ -261,6 +261,72 @@ export function mountStorefrontPlatform(d: Deps) {
     return reply(c, res);
   });
 
+  // Token edits (and future design data) queue rebuilds on the outbox; the
+  // train consumes them (`vendua train --pending`) until the Control Plane does.
+  app.get('/control/v1/storefronts/rebuild-requests', async (c) => {
+    controlGate(c);
+    const tenants = await sql<{ id: string; slug: string }[]>`
+      select id, slug from tenants where status = 'active' order by slug
+    `;
+    const requests: { tenant: string; id: number; reason: unknown; requestedAt: string }[] = [];
+    for (const t of tenants) {
+      const rows = await withTenant(
+        sql,
+        t.id,
+        (tx) =>
+          tx<{ id: number; payload: unknown; created_at: string }[]>`
+          select id, payload, created_at from outbox
+          where tenant_id = ${t.id} and topic = 'storefront.rebuild_requested' and published_at is null
+          order by id limit 100
+        `,
+      );
+      for (const r of rows)
+        requests.push({
+          tenant: t.slug,
+          id: Number(r.id),
+          reason: r.payload,
+          requestedAt: r.created_at,
+        });
+    }
+    return c.json({ requests });
+  });
+
+  app.post('/control/v1/storefronts/rebuild-requests/ack', async (c) => {
+    controlGate(c);
+    const body = await bodyJson(c);
+    const items = body.requests;
+    if (
+      !Array.isArray(items) ||
+      items.length > 500 ||
+      items.some(
+        (x) =>
+          typeof x !== 'object' ||
+          x === null ||
+          typeof (x as { tenant?: unknown }).tenant !== 'string' ||
+          !Number.isInteger((x as { id?: unknown }).id),
+      )
+    )
+      throw new HttpError(400, 'BAD_REQUEST', 'requests must be [{ tenant, id }] (≤ 500)');
+    const res = await claimControl(sql, requireIdemKey(c), async () => {
+      let acked = 0;
+      for (const { tenant, id } of items as { tenant: string; id: number }[]) {
+        const t = await tenantBySlug(tenant);
+        const done = await withTenant(
+          sql,
+          t.id,
+          (tx) => tx`
+          update outbox set published_at = now()
+          where tenant_id = ${t.id} and id = ${id} and topic = 'storefront.rebuild_requested' and published_at is null
+          returning id
+        `,
+        );
+        acked += done.length;
+      }
+      return { status: 200, body: { acked } };
+    });
+    return reply(c, res);
+  });
+
   app.get('/control/v1/template-migrations', (c) => {
     controlGate(c);
     return c.json({

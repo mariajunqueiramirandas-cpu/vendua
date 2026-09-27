@@ -1075,6 +1075,108 @@ test('[Q10] zoom 200% CSS: no loss of function', async ({ page, request }) => {
     await expect(add, 'add-to-cart not interactable at 200% zoom').toBeEnabled();
 });
 
+test('[Q11] token restyle: every Kernel default and every var(--v-*) rule follows the tokens', async ({
+  page,
+}) => {
+  // a token edit only changes the --v-* values the provider emits; flip them all
+  // and every colour that is token-driven must move — no component edits involved
+  const FLIP: Record<string, string> = {
+    '--v-color-bg': 'rgb(250, 240, 230)',
+    '--v-color-surface': 'rgb(240, 250, 245)',
+    '--v-color-text': 'rgb(10, 20, 90)',
+    '--v-color-muted': 'rgb(60, 70, 120)',
+    '--v-color-accent': 'rgb(120, 10, 60)',
+    '--v-color-on-accent': 'rgb(255, 250, 200)',
+    '--v-color-danger': 'rgb(140, 20, 10)',
+    '--v-color-success': 'rgb(10, 110, 60)',
+  };
+  const bad: string[] = [];
+  let kernelPairs = 0;
+  let storePairs = 0;
+  let storeChanged = 0;
+  for (const path of ['/', '/sacola']) {
+    await page.goto(`${O}${path}`);
+    await page.waitForLoadState('networkidle').catch(() => {});
+    await page.waitForTimeout(500);
+    const r = await page.evaluate((flip) => {
+      const PROPS: [string, string][] = [
+        ['color', 'color'],
+        ['background-color', 'background-color'],
+        ['background', 'background-color'],
+        ['border-color', 'border-top-color'],
+        ['border', 'border-top-color'],
+        ['border-left', 'border-left-color'],
+        ['border-bottom', 'border-bottom-color'],
+        ['outline', 'outline-color'],
+      ];
+      const pairs: { sel: string; prop: string; el: Element; kernel: boolean }[] = [];
+      const walk = (rules: CSSRuleList) => {
+        for (const rule of Array.from(rules)) {
+          if ('cssRules' in rule && (rule as CSSGroupingRule).cssRules)
+            walk((rule as CSSGroupingRule).cssRules);
+          if (!(rule instanceof CSSStyleRule)) continue;
+          for (const [decl, computed] of PROPS) {
+            if (!rule.style.getPropertyValue(decl).includes('var(--v-color-')) continue;
+            let els: Element[] = [];
+            try {
+              els = Array.from(document.querySelectorAll(rule.selectorText));
+            } catch {
+              continue;
+            }
+            for (const el of els.filter((e) => e.getClientRects().length > 0).slice(0, 3))
+              pairs.push({
+                sel: rule.selectorText,
+                prop: computed,
+                el,
+                kernel: /\.v-|\[data-vendua/.test(rule.selectorText),
+              });
+          }
+        }
+      };
+      for (const sheet of Array.from(document.styleSheets)) {
+        try {
+          walk(sheet.cssRules);
+        } catch {
+          /* cross-origin sheet (web fonts) */
+        }
+      }
+      const read = () => pairs.map((p) => getComputedStyle(p.el).getPropertyValue(p.prop));
+      const before = read();
+      const root = document.documentElement.style;
+      const saved = Object.keys(flip).map((k) => [k, root.getPropertyValue(k)] as const);
+      for (const [k, v] of Object.entries(flip)) root.setProperty(k, v);
+      const after = read();
+      for (const [k, v] of saved) root.setProperty(k, v);
+      return pairs.map((p, i) => ({
+        sel: p.sel,
+        prop: p.prop,
+        kernel: p.kernel,
+        changed: before[i] !== after[i],
+        before: before[i],
+      }));
+    }, FLIP);
+    for (const x of r) {
+      if (x.kernel) {
+        kernelPairs++;
+        if (!x.changed) bad.push(`${path}: Kernel default '${x.sel}' ${x.prop} stayed ${x.before}`);
+      } else {
+        storePairs++;
+        if (x.changed) storeChanged++;
+      }
+    }
+  }
+  const coverage = `${kernelPairs} Kernel default pairs, ${storeChanged}/${storePairs} store var(--v-*) pairs restyled`;
+  test.info().annotations.push({ type: 'coverage', description: coverage });
+  console.log(`[Q11] ${coverage}`);
+  expect(kernelPairs, 'no Kernel default surfaces found to check').toBeGreaterThan(5);
+  expect(bad, bad.slice(0, 10).join('\n')).toHaveLength(0);
+  if (storePairs > 0)
+    expect(
+      storeChanged / storePairs,
+      `only ${storeChanged}/${storePairs} store var(--v-*) rules restyled (others overridden by hard-coded colours)`,
+    ).toBeGreaterThanOrEqual(0.9);
+});
+
 test('[artifacts] screenshots at 390/1440 for the QA report', async ({ page }) => {
   mkdirSync(SHOTS, { recursive: true });
   const shots: [QaHost, string][] = [

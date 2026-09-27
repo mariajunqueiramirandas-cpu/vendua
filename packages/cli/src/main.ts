@@ -18,10 +18,11 @@ Usage:
   vendua qa [slug]         build + vendua-conformance e2e (when installed)
 
 Fleet (every in-repo storefront unless slugs are given):
-  vendua train [slug…] [--core] [--record] [--report f]
+  vendua train [slug…] [--core] [--record] [--pending] [--report f]
                            rebuild on the current Kernel, check each artifact,
                            validate manifests vs the compat matrix, assert zero
-                           storefront diffs; --record files manifests with Core
+                           storefront diffs; --record files manifests with Core;
+                           --pending rebuilds only stores Core queued (token edits)
   vendua codemod list
   vendua codemod run <id> [slug…] [--dry]
                            apply (or preview) a Contract codemod

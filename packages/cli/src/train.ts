@@ -2,10 +2,10 @@ import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { checkCompat, type ArtifactManifest } from '@vendua/templates';
 import { control, coreOrigin } from './core.ts';
-import { select } from './fleet.ts';
+import { select, type FleetStore } from './fleet.ts';
 import { die } from './paths.ts';
 
-// `vendua train [slug…] [--core] [--record] [--report <file>]` — the build + judge
+// `vendua train [slug…] [--core] [--record] [--pending] [--report <file>]` — the build + judge
 // half of a fleet train (09 — fleet trains): rebuild every in-repo storefront on
 // the current Kernel in one run, conformance-check each artifact, validate its
 // manifest against the compat matrix, and prove the train touched zero
@@ -46,18 +46,41 @@ export async function cmdTrain(args: string[], root: string): Promise<never> {
   const ri = args.indexOf('--report');
   const reportFile = ri >= 0 ? args[ri + 1] : undefined;
   const slugs = args.filter((a, i) => !a.startsWith('--') && args[i - 1] !== '--report');
-  let stores;
+  // --pending: rebuild exactly the stores whose design data changed in Core
+  // (token edits queue storefront.rebuild_requested), then acknowledge them
+  const pending = args.includes('--pending');
+  let queue: { tenant: string; id: number }[] = [];
+  let stores: FleetStore[];
   try {
     stores = select(root, slugs);
+    if (pending) {
+      queue = (
+        await control<{ requests: { tenant: string; id: number }[] }>(
+          'GET',
+          '/control/v1/storefronts/rebuild-requests',
+        )
+      ).requests;
+      const wanted = new Set(queue.map((q) => q.tenant));
+      stores = stores.filter((s) => wanted.has(s.tenant));
+      if (stores.length === 0) {
+        console.log(
+          `[train] no pending rebuild requests${queue.length ? ` for in-repo storefronts (${[...wanted].join(', ')})` : ''}`,
+        );
+        process.exit(0);
+      }
+      queue = queue.filter((q) => stores!.some((s) => s.tenant === q.tenant));
+    }
   } catch (e) {
     die((e as Error).message);
   }
+  const fromCore = withCore || pending;
+  const doRecord = record || pending;
 
   const before = (await exec(['git', 'status', '--porcelain', '--', 'storefronts'], root)).output;
   const rows: Row[] = [];
   for (const s of stores) {
     console.log(`[train] ${s.rel} …`);
-    const env: Record<string, string> = withCore
+    const env: Record<string, string> = fromCore
       ? { VENDUA_CORE_ORIGIN: coreOrigin() }
       : { VENDUA_CORE_ORIGIN: '' };
     const build = await exec(['bun', 'run', 'build'], s.dir, env);
@@ -86,6 +109,11 @@ export async function cmdTrain(args: string[], root: string): Promise<never> {
       row.contract = manifest.contract;
       row.source = `templates:${manifest.templates.source} tokens:${manifest.tokens.source}`;
       const problems = checkCompat(manifest);
+      // a queued rebuild exists to pick up Core's data — a repo-only build must not ack it
+      if (fromCore && manifest.templates.source !== 'core' && manifest.tokens.source !== 'core')
+        problems.push(
+          'built from repo data although Core was requested (tenant host / origin wrong?)',
+        );
       row.compat = problems.length ? `fail: ${problems.join('; ')}` : 'pass';
     } else row.compat = 'fail: no manifest (built without vendua())';
     const bin = join(root, 'node_modules', '.bin', 'vendua-conformance');
@@ -94,7 +122,7 @@ export async function cmdTrain(args: string[], root: string): Promise<never> {
       const fails = ck.output.split('\n').filter((l) => l.startsWith('FAIL'));
       row.check = ck.code === 0 ? 'pass' : `fail: ${fails.join(' | ')}`;
     }
-    if (record && manifest && row.compat === 'pass') {
+    if (doRecord && manifest && row.compat === 'pass') {
       try {
         await control(
           'POST',
@@ -121,10 +149,20 @@ export async function cmdTrain(args: string[], root: string): Promise<never> {
       !r.recorded.startsWith('fail'),
   );
 
+  if (pending && green && !touched && queue.length) {
+    await control(
+      'POST',
+      '/control/v1/storefronts/rebuild-requests/ack',
+      { requests: queue },
+      `ack:${queue.map((q) => q.id).join(',')}`,
+    );
+    console.log(`[train] acknowledged ${queue.length} rebuild request(s)`);
+  }
+
   const md = [
     `# Train dry-run — Kernel ${kernels.join(', ')}`,
     '',
-    `${rows.length} storefronts rebuilt in one run${withCore ? ' (templates/tokens pulled from Core)' : ''}.`,
+    `${rows.length} storefronts rebuilt in one run${fromCore ? ' (templates/tokens pulled from Core)' : ''}${pending ? ', driven by pending rebuild requests' : ''}.`,
     '',
     '| Storefront | Tenant | Kernel | Contract | Snapshot | Build | Compat | vendua check | Recorded |',
     '| --- | --- | --- | --- | --- | --- | --- | --- | --- |',

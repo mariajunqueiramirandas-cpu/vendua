@@ -193,6 +193,27 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('storefront platform (db)', () =
     );
     expect(outbox).toHaveLength(1);
 
+    // the train consumes the queue: list → rebuild → ack
+    type Req = { tenant: string; id: number; reason: { reason: string } };
+    const pending = (await (
+      await ctl('GET', '/control/v1/storefronts/rebuild-requests')
+    ).json()) as {
+      requests: Req[];
+    };
+    const mine = pending.requests.filter((r) => r.tenant === slug);
+    expect(mine.map((r) => r.reason.reason)).toEqual(['tokens']);
+    const ack = await ctl(
+      'POST',
+      '/control/v1/storefronts/rebuild-requests/ack',
+      { requests: mine },
+      'ack-1',
+    );
+    expect(await ack.json()).toEqual({ acked: 1 });
+    const after = (await (await ctl('GET', '/control/v1/storefronts/rebuild-requests')).json()) as {
+      requests: Req[];
+    };
+    expect(after.requests.filter((r) => r.tenant === slug)).toEqual([]);
+
     const design = (await (await pub('GET', '/storefront/v1/design')).json()) as {
       tokens: { color: { accent: string } };
     };
