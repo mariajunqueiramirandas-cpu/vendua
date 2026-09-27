@@ -27,7 +27,14 @@ export interface ArtifactManifest {
   builtAt: string;
   templates: { source: 'core' | 'repo'; pages: string[]; hash: string };
   tokens: { source: 'core' | 'repo'; hash: string };
-  sections: Record<string, { areas?: Record<string, { accepts: string[]; max?: number }> }>;
+  sections: Record<
+    string,
+    {
+      areas?: Record<string, { accepts: string[]; max?: number }>;
+      order?: string[];
+      category?: string;
+    }
+  >;
   overrides: string[];
 }
 

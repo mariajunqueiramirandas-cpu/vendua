@@ -156,6 +156,16 @@ export const promoBadge = defineBlock({
   },
 });
 
+/** Kernel 1.1 — delivery/pickup times from Core (zones + prep time), never computed here. */
+export const deliveryEta = defineBlock({
+  type: 'sdk:delivery-eta',
+  category: 'info',
+  settings: {
+    showFee: boolean({ default: true }),
+    showPickup: boolean({ default: true }),
+  },
+});
+
 export const SDK_SCHEMAS: readonly (SectionSchema | BlockSchema)[] = [
   pageContent,
   header,
@@ -170,18 +180,25 @@ export const SDK_SCHEMAS: readonly (SectionSchema | BlockSchema)[] = [
   stockCounter,
   notifyMe,
   promoBadge,
+  deliveryEta,
 ];
 
 /** The shape the artifact manifest publishes (template migrations target areas by category). */
-export function catalogOf(
-  schemas: readonly (SectionSchema | BlockSchema)[],
-): Record<
+export function catalogOf(schemas: readonly (SectionSchema | BlockSchema)[]): Record<
   string,
-  { areas?: Record<string, { accepts: string[]; max?: number }>; category?: string }
+  {
+    areas?: Record<string, { accepts: string[]; max?: number }>;
+    order?: string[];
+    category?: string;
+  }
 > {
   const out: Record<
     string,
-    { areas?: Record<string, { accepts: string[]; max?: number }>; category?: string }
+    {
+      areas?: Record<string, { accepts: string[]; max?: number }>;
+      order?: string[];
+      category?: string;
+    }
   > = {};
   for (const s of schemas) {
     if (s.kind === 'block') out[s.type] = { category: s.category };
@@ -194,6 +211,7 @@ export function catalogOf(
                 { accepts: [...a.accepts], ...(a.max !== undefined ? { max: a.max } : {}) },
               ]),
             ),
+            order: Object.keys(s.areas),
           }
         : {};
   }

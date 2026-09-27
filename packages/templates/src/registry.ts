@@ -1,8 +1,34 @@
-import type { TemplateMigration } from './migrations.ts';
+import {
+  defineTemplateMigration,
+  findArea,
+  MigrationConflict,
+  type TemplateMigration,
+} from './migrations.ts';
 
 // Every fleet template migration, oldest first. Core runs them (dry-run, then by
 // ring); ids are permanent — Core records applications by id.
-export const TEMPLATE_MIGRATIONS: readonly TemplateMigration[] = [];
+
+/** Kernel 1.1's `sdk:delivery-eta` on every product page, in the first area of the
+ *  page that accepts `info` blocks — whichever section (SDK or the store's own)
+ *  owns it, per the store's recorded build manifest. */
+const deliveryEtaOnProduct = defineTemplateMigration({
+  id: '2026-09-delivery-eta-on-product',
+  description:
+    'place sdk:delivery-eta (Kernel 1.1) in the first product-page area accepting info blocks',
+  requiresKernel: '>=1.1.0',
+  pages: ['product'],
+  up(t, ctx) {
+    if (t.has('sdk:delivery-eta')) return;
+    const hit = findArea(t, 'info', ctx.sections);
+    if (!hit)
+      throw new MigrationConflict(
+        'no area on the product page accepts info blocks (or it is full)',
+      );
+    t.addBlock(hit.section, hit.area, { type: 'sdk:delivery-eta' });
+  },
+});
+
+export const TEMPLATE_MIGRATIONS: readonly TemplateMigration[] = [deliveryEtaOnProduct];
 
 export function findMigration(id: string): TemplateMigration | undefined {
   return TEMPLATE_MIGRATIONS.find((m) => m.id === id);

@@ -16,7 +16,10 @@ describe('extractSchemas', () => {
       });
       export const other = defineBlock({ type: 'store:seal', category: 'badge', settings: {} });`;
     expect(extractSchemas(src)).toEqual({
-      'store:story': { areas: { aside: { accepts: ['social-proof', 'badge'], max: 2 } } },
+      'store:story': {
+        areas: { aside: { accepts: ['social-proof', 'badge'], max: 2 } },
+        order: ['aside'],
+      },
       'store:seal': { category: 'badge' },
     });
   });
@@ -80,7 +83,15 @@ describe('vendua() plugin', () => {
       coreApi: { storefront: 1, checkout: 1 },
       templates: { source: 'repo', pages: ['home'] },
     });
-    expect(manifest.sections['store:story']).toEqual({ areas: { aside: { accepts: ['badge'] } } });
+    expect(manifest.sections['store:story']).toEqual({
+      areas: { aside: { accepts: ['badge'] } },
+      order: ['aside'],
+    });
+    expect(manifest.sections['sdk:purchase-panel'].order).toEqual([
+      'media',
+      'after-price',
+      'after-cta',
+    ]);
     expect(manifest.sections['sdk:purchase-panel'].areas['after-price'].accepts).toContain(
       'purchase-extras',
     );

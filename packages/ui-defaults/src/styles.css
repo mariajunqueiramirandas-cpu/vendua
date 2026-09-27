@@ -1071,6 +1071,16 @@
     flex: 1 1 180px;
     width: auto;
   }
+  .v-eta::before {
+    content: '';
+    display: inline-block;
+    width: 8px;
+    height: 8px;
+    margin-right: 8px;
+    border-radius: 50%;
+    background: var(--v-color-success, #3d7a4f);
+    vertical-align: 1px;
+  }
   .v-info {
     margin: 0;
     font-size: 0.9375rem;

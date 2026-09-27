@@ -112,7 +112,11 @@ export class TemplateEditor {
  *  manifest so migrations can target areas by category without running store code. */
 export type SectionCatalog = Record<
   string,
-  { areas?: Record<string, { accepts: readonly string[]; max?: number }> }
+  {
+    areas?: Record<string, { accepts: readonly string[]; max?: number }>;
+    /** declaration order of `areas` — object key order doesn't survive jsonb */
+    order?: readonly string[];
+  }
 >;
 
 export interface MigrationContext {
@@ -185,8 +189,11 @@ export function findArea(
 ): { section: SectionInstance; area: string } | null {
   for (const s of t.sections) {
     if (s.disabled) continue;
-    const areas = sections?.[s.type]?.areas ?? {};
-    for (const [area, spec] of Object.entries(areas)) {
+    const entry = sections?.[s.type];
+    const areas = entry?.areas ?? {};
+    for (const area of entry?.order ?? Object.keys(areas)) {
+      const spec = areas[area];
+      if (!spec) continue;
       if (!spec.accepts.includes(category)) continue;
       const count = s.blocks?.[area]?.length ?? 0;
       if (spec.max !== undefined && count >= spec.max) continue;

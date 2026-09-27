@@ -1,5 +1,6 @@
 import { useState } from 'react';
-import { useProduct, useStore } from '../hooks.ts';
+import { useDeliveryZones, useProduct, useStore } from '../hooks.ts';
+import { money } from '@vendua/ui-defaults';
 import { NotifyMeButton } from '../primitives.tsx';
 import { usePageContext } from '../composition/runtime.tsx';
 import type { BlockProps } from '../composition/registry.ts';
@@ -86,5 +87,29 @@ export function PromoBadge({ settings }: BlockProps<typeof S.promoBadge>) {
     <span className="v-badge" data-part="root" data-tone={settings.tone}>
       {settings.text}
     </span>
+  );
+}
+
+/** Kernel 1.1: "Entrega em 30–80 min · a partir de R$ 5,00 · Retirada em ~40 min" — Core's zones and prep time. */
+export function DeliveryEta({ settings }: BlockProps<typeof S.deliveryEta>) {
+  const { store } = useStore();
+  const { zones } = useDeliveryZones();
+  if (!store) return null;
+  const parts: string[] = [];
+  if (store.deliveryEnabled && zones.length > 0) {
+    const min = Math.min(...zones.map((z) => z.etaMin));
+    const max = Math.max(...zones.map((z) => z.etaMax));
+    const fee = Math.min(...zones.map((z) => z.feeCents));
+    parts.push(`Entrega em ${min}–${max} min`);
+    if (settings.showFee)
+      parts.push(fee > 0 ? `a partir de ${money(fee, store.currency)}` : 'entrega grátis');
+  }
+  if (settings.showPickup && store.pickupEnabled)
+    parts.push(`Retirada em ~${store.prepTimeMinutes} min`);
+  if (parts.length === 0) return null;
+  return (
+    <p className="v-info v-eta" data-part="root">
+      {parts.join(' · ')}
+    </p>
   );
 }

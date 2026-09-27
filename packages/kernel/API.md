@@ -85,7 +85,7 @@ a section's area. Types: `SectionProps`, `BlockProps`, `SectionSchema`, `BlockSc
 Store modules live in `sections/*.tsx`, export `schema` + a default component, and
 may only use `store:` types.
 
-### SDK sections and blocks (Kernel 1.0)
+### SDK sections and blocks (Kernel 1.0; additions marked)
 
 | Type                   | Kind    | Variants / settings                                            | Areas (accepts)                                                                                                                |
 | ---------------------- | ------- | -------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------ |
@@ -102,6 +102,7 @@ may only use `store:` types.
 | `sdk:stock-counter`    | block   | category `purchase-extras`; threshold, showWhenPlenty          | —                                                                                                                              |
 | `sdk:notify-me`        | block   | category `purchase-extras`; title, successText                 | —                                                                                                                              |
 | `sdk:promo-badge`      | block   | category `badge`; text, tone                                   | —                                                                                                                              |
+| `sdk:delivery-eta`     | block   | category `info`; showFee, showPickup — **Kernel 1.1**          | —                                                                                                                              |
 
 ## Styling API (Contract surface)
 

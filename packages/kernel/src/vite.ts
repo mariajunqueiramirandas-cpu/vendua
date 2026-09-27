@@ -81,11 +81,19 @@ export function extractSchemas(
   src: string,
 ): Record<
   string,
-  { areas?: Record<string, { accepts: string[]; max?: number }>; category?: string }
+  {
+    areas?: Record<string, { accepts: string[]; max?: number }>;
+    order?: string[];
+    category?: string;
+  }
 > {
   const out: Record<
     string,
-    { areas?: Record<string, { accepts: string[]; max?: number }>; category?: string }
+    {
+      areas?: Record<string, { accepts: string[]; max?: number }>;
+      order?: string[];
+      category?: string;
+    }
   > = {};
   const balanced = (text: string, from: number, open: string, close: string): string | null => {
     let depth = 0;
@@ -115,7 +123,8 @@ export function extractSchemas(
         areas = undefined;
       }
     }
-    out[type] = areas ? { areas } : {};
+    // declaration order travels as an array — manifests round-trip through jsonb
+    out[type] = areas ? { areas, order: Object.keys(areas) } : {};
   }
   return out;
 }

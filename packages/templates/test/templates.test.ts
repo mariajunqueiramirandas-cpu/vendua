@@ -221,3 +221,27 @@ describe('tokens', () => {
     expect(inj.ok).toBe(false);
   });
 });
+
+describe('findArea ordering', () => {
+  test('follows the declared area order, not object key order (jsonb reorders keys)', () => {
+    const m = defineTemplateMigration({
+      id: '2026-10-order',
+      description: 'x',
+      pages: ['product'],
+      up(t, ctx) {
+        const hit = findArea(t, 'info', ctx.sections);
+        if (hit) t.addBlock(hit.section, hit.area, { type: 'sdk:x' });
+      },
+    });
+    // shorter key first, the way Postgres hands jsonb back
+    const sections = {
+      'sdk:purchase-panel': {
+        areas: { 'after-cta': { accepts: ['info'] }, 'after-price': { accepts: ['info'] } },
+        order: ['after-price', 'after-cta'],
+      },
+    };
+    const r = runMigration(m, product, { sections });
+    if (r.status !== 'applied') throw new Error(r.status);
+    expect(Object.keys(r.template.sections[0]!.blocks ?? {})).toEqual(['after-price']);
+  });
+});
