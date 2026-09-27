@@ -42,8 +42,9 @@ In Dokploy, assign a domain to each web service (port 80):
 - `quero-pudim` → the storefront's public domain
 - `core` → **internal only**; no domain. Storefront nginx proxies
   `/storefront/v1`, `/checkout/v1`, and `/v1` to it.
-- `crm` → the staff CRM domain (e.g. `crm.example.com`) — proxies only
-  `/control` to `core`. Log in with `CONTROL_SECRET`. Don't put the domain
+- `crm` → the staff CRM domain (e.g. `crm.example.com`) — proxies
+  `/control`, `/agendar` and `/book/v1` to `core`. Log in with
+  `CONTROL_SECRET`. Don't put the domain
   directly on `core`: that removes one trusted proxy hop and the login
   rate limiter's client-IP math (`VENDUA_PROXY_HOPS=1` assumes the
   Traefik→nginx→core chain) collapses every staff IP into one bucket.
@@ -108,7 +109,7 @@ Boot order is handled by healthchecks: `db` healthy → `core` migrates
 | `db`          | postgres:16-alpine                                         | internal only  |
 | `core`        | `packages/core/Dockerfile` (Bun)                           | 8787, internal |
 | `quero-pudim` | `storefronts/Dockerfile` `target: storefront` (vite→nginx) | 80             |
-| `crm`         | `nginx:1.28-alpine` + `apps/control/nginx.conf`            | 80             |
+| `crm`         | `apps/control/Dockerfile` (nginx + conf baked in)           | 80             |
 | `site`        | `storefronts/Dockerfile` `target: site` (SvelteKit→nginx)  | 80             |
 | `ig-sidecar`  | `services/ig-sidecar/Dockerfile` (Go)                      | 8790, internal |
 

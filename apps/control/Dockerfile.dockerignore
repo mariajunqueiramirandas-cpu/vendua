@@ -1,0 +1,3 @@
+# Build context for apps/control/Dockerfile — only nginx.conf is COPYed.
+**
+!nginx.conf
