@@ -950,6 +950,16 @@
   .v-form-actions .v-btn-accent {
     flex: 1 1 220px;
   }
+  @media (max-width: 479px) {
+    .v-form-actions {
+      flex-direction: column-reverse;
+    }
+    .v-form-actions .v-btn,
+    .v-form-actions .v-btn-accent {
+      flex: none;
+      width: 100%;
+    }
+  }
   @media (min-width: 720px) {
     .v-form-actions .v-btn-accent {
       flex: 0 1 auto;
@@ -1026,6 +1036,7 @@
   }
   .v-success {
     margin-bottom: 24px;
+    text-align: center;
     border-color: color-mix(in srgb, var(--v-color-success, #3d7a4f) 50%, transparent);
     background: color-mix(
       in srgb,
@@ -1035,7 +1046,7 @@
   }
   .v-success-icon {
     display: block;
-    margin-bottom: 12px;
+    margin: 0 auto 12px;
     color: var(--v-color-success, #3d7a4f);
     animation: v-pop 420ms var(--v-motion-easing, ease) both;
   }
@@ -1118,7 +1129,7 @@
     font-weight: 600;
     white-space: nowrap;
   }
-  .v-cart-aside .v-btn {
+  .v-cart-aside > .v-btn {
     margin-top: 8px;
   }
 
@@ -1200,6 +1211,11 @@
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
+  }
+  @media (max-width: 479px) {
+    .v-order-progress span {
+      display: none;
+    }
   }
   .v-order-facts {
     margin: 0;
@@ -1489,16 +1505,20 @@
     flex: none;
     margin-right: -2px;
   }
+  /* trimmed to cap height and padded back to 24px: the digit sits on the optical
+     centre instead of riding high under the font's ascender */
   .v-cart-count {
-    display: inline-grid;
-    place-items: center;
+    box-sizing: border-box;
+    display: inline-block;
     min-width: 24px;
-    height: 24px;
-    padding: 0 7px;
+    padding: calc((24px - 1cap) / 2) 7px;
     border-radius: 999px;
     background: var(--v-color-accent, #3f5e4e);
     color: var(--v-color-on-accent, #fff);
     font-size: 0.8rem;
+    line-height: 1;
+    text-align: center;
+    text-box: trim-both cap alphabetic;
     font-variant-numeric: tabular-nums;
     animation: v-bump 360ms var(--v-motion-easing, ease);
   }
@@ -1550,6 +1570,7 @@
     background: var(--v-color-surface, #fff);
     font-size: 0.875rem;
     font-weight: 600;
+    line-height: 1.2;
     text-decoration: none;
   }
   .v-footer-contacts a:hover {
@@ -1847,8 +1868,15 @@
     min-width: 0;
     overflow-wrap: anywhere;
   }
+  .v-combo .v-legend {
+    display: flex;
+    align-items: baseline;
+    gap: 6px;
+    width: 100%;
+  }
   .v-combo-count {
-    float: right;
+    margin-left: auto;
+    padding-left: 8px;
     font-weight: 600;
   }
   .v-gallery {
