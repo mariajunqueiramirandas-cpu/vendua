@@ -1,0 +1,9 @@
+{
+  "version": 1,
+  "page": "home",
+  "sections": [
+    { "id": "boom", "type": "store:boom" },
+    { "id": "future", "type": "sdk:not-shipped-yet" },
+    { "id": "catalog", "type": "sdk:catalog-grid", "settings": { "title": "Cardápio do fixture" } }
+  ]
+}

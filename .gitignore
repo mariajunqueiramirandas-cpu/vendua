@@ -9,6 +9,12 @@ artifacts/
 !.env.example
 storefronts/*/qa-report/
 storefronts/*/dist/
+storefronts/_examples/*/dist/
+storefronts/_examples/*/qa-report/
+storefronts/.rehearsal-*/
+packages/conformance/fixtures/*/dist/
+packages/conformance/stale/*/qa-report/
+packages/conformance/fixtures/*/qa-report/
 packages/conformance/test/.tmp/
 apps/control/dist/
 .claude/worktrees/

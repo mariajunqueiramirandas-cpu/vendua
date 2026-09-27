@@ -1,9 +1,8 @@
-import { defineStorefront } from '@vendua/kernel';
+import { defineStorefront } from '@vendua/kernel/config';
 
 // the always-green baseline every `vendua scaffold` copies — deliberately neutral tokens, not a brand
 export default defineStorefront({
-  contract: 1,
-  ring: 'stable',
+  contract: 2,
   tokens: {
     color: {
       bg: '#F7F6F4',
@@ -24,5 +23,6 @@ export default defineStorefront({
     space: { scale: ['4px', '8px', '12px', '16px', '24px', '32px', '48px'] },
     motion: { duration: '180ms', easing: 'cubic-bezier(0.2, 0.8, 0.2, 1)' },
   },
+  paths: { catalog: '/cardapio' },
   budgets: 'default',
 });

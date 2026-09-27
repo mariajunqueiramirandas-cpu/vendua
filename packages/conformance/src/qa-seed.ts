@@ -132,6 +132,8 @@ export interface QaSeedOptions {
   databaseUrl?: string;
   /** seeded for this port AND the bare hostname so the Host resolver matches either */
   previewPort?: number;
+  /** the storefront-under-test's repo templates — qa tenants must compose ITS sections */
+  templates?: Record<string, unknown>;
 }
 
 export async function seedQaTenants(opts: QaSeedOptions = {}): Promise<void> {
@@ -186,6 +188,22 @@ export async function seedQaTenants(opts: QaSeedOptions = {}): Promise<void> {
         await tx`delete from domains where tenant_id = ${tid}`;
         await tx`delete from delivery_zones where tenant_id = ${tid}`;
         await tx`delete from categories where tenant_id = ${tid}`;
+        // storefront platform state: composition, ring/kill switch, builds, demand
+        for (const table of [
+          'storefront_templates',
+          'storefront_tokens',
+          'storefront_ops',
+          'storefront_builds',
+          'template_migration_runs',
+          'notify_requests',
+          'analytics_events',
+        ])
+          await tx`delete from ${tx(table)} where tenant_id = ${tid}`;
+        for (const [page, template] of Object.entries(opts.templates ?? {}))
+          await tx`
+            insert into storefront_templates (tenant_id, page, version, template, source)
+            values (${tid}, ${page}, 1, ${tx.json(template as never)}, 'seed')
+          `;
 
         for (const host of hosts) {
           await tx`insert into domains (host, tenant_id) values (${host}, ${tid})`;
@@ -207,7 +225,8 @@ export async function seedQaTenants(opts: QaSeedOptions = {}): Promise<void> {
             min_order_cents = excluded.min_order_cents, pickup_enabled = excluded.pickup_enabled,
             delivery_enabled = excluded.delivery_enabled, promo = excluded.promo,
             currency = excluded.currency, vocabulary = excluded.vocabulary,
-            status_override = excluded.status_override, resumes_at = excluded.resumes_at
+            status_override = excluded.status_override, resumes_at = excluded.resumes_at,
+            demand_level = 'normal'
         `;
 
         for (const z of ZONES) {

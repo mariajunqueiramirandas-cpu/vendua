@@ -1,0 +1,125 @@
+{
+  "version": 1,
+  "page": "home",
+  "sections": [
+    {
+      "id": "hero",
+      "type": "store:hero",
+      "settings": {
+        "eyebrow": "Feito à mão em {city}",
+        "title": "Seu dia merece",
+        "titleEmphasis": "um doce de verdade.",
+        "text": "Pudim lisinho, sem furinho, calda dourada no ponto. Sacolé bem cremoso para o calor — feito à mão, para saborear sem pressa.",
+        "ctaLabel": "Escolher meu doce",
+        "ctaHref": "/catalog",
+        "secondaryLabel": "Nossa história",
+        "secondaryHref": "/#nossa-historia",
+        "image": "/images/hero-pudim-real.webp",
+        "imageAlt": "Confeiteira da Quero Pudim segurando um pudim embalado com a etiqueta da marca",
+        "figTitle": "Receita de família",
+        "figSub": "Cada um feito à mão, um por um."
+      }
+    },
+    {
+      "id": "values",
+      "type": "store:values",
+      "settings": {
+        "items": [
+          {
+            "icon": "heart",
+            "title": "Feito à mão, de verdade",
+            "description": "Receita de família, sem atalho e sem pó."
+          },
+          {
+            "icon": "snowflake",
+            "title": "Cremoso de verdade",
+            "description": "Pudim lisinho e sacolé que derrete na boca."
+          },
+          {
+            "icon": "truck",
+            "title": "Pertinho de você",
+            "description": "Retire em Saquarema ou receba em casa."
+          }
+        ]
+      }
+    },
+    {
+      "id": "featured",
+      "type": "store:showcase",
+      "settings": {
+        "eyebrow": "Ficha do dia",
+        "title": "Direto da nossa cozinha",
+        "lede": "Pudins e sacolés escolhidos a dedo para hoje.",
+        "limit": 4,
+        "numbered": true,
+        "ctaLabel": "Ver todos os doces",
+        "ctaHref": "/catalog"
+      }
+    },
+    {
+      "id": "kits",
+      "type": "store:showcase",
+      "settings": {
+        "eyebrow": "Kits e promoções especiais",
+        "title": "Combos e kits personalizáveis",
+        "lede": "Monte o kit com os sabores que você mais gosta — para a festa, o presente ou a sobremesa da semana.",
+        "category": "kits",
+        "limit": 4,
+        "numbered": false,
+        "cardCaption": "Monte o seu",
+        "cardCta": "Montar"
+      }
+    },
+    {
+      "id": "story",
+      "type": "store:story",
+      "settings": {
+        "anchor": "nossa-historia",
+        "eyebrow": "Da nossa cozinha para você",
+        "title": "O segredo é fazer",
+        "titleEmphasis": "sem pressa.",
+        "text": "Todo pudim sai da nossa cozinha em Saquarema, um por um, com receita de família e ingredientes escolhidos a dedo. Sem furinho, com calda dourada e aquele sabor de casa que a gente faz questão de manter.",
+        "image": "/images/confeiteira.jpg",
+        "imageAlt": "Retrato da confeiteira da Quero Pudim sorrindo com um pudim da marca nas mãos"
+      }
+    },
+    {
+      "id": "steps",
+      "type": "store:steps",
+      "settings": {
+        "eyebrow": "Como pedir",
+        "title": "Do pedido ao primeiro gole",
+        "lede": "Simples assim, em três passos.",
+        "steps": [
+          {
+            "icon": "utensils",
+            "title": "Escolha seus doces",
+            "description": "Monte a sacola com pudins e sacolés."
+          },
+          {
+            "icon": "shield",
+            "title": "Confirme o pedido",
+            "description": "Escolha entrega ou retirada na loja."
+          },
+          {
+            "icon": "snowflake",
+            "title": "Receba geladinho",
+            "description": "A gente embala com cuidado e leva até você."
+          }
+        ],
+        "footnote": "Entrega e retirada em {city}."
+      }
+    },
+    {
+      "id": "closing",
+      "type": "store:closing",
+      "settings": {
+        "eyebrow": "Feito à mão em Saquarema",
+        "title": "Bateu a vontade?",
+        "text": "O cardápio completo está logo ali.",
+        "ctaLabel": "Escolher meus doces",
+        "ctaHref": "/catalog"
+      }
+    }
+  ]
+}

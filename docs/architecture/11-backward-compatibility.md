@@ -1,6 +1,6 @@
 # 11 — Backward Compatibility
 
-> Status: Proposed · Last reviewed: 2026-09-11
+> Status: Implemented for Contract 2 / Kernel 1.x · Last reviewed: 2026-09-27
 > Decision: [ADR 0008](../adr/0008-contract-versioning.md)
 
 At any moment the fleet is a matrix of Core API versions × Kernel versions ×
@@ -25,7 +25,10 @@ at fleet scale.
 
 ## Compat matrix
 
-The Control Plane holds the authoritative matrix:
+Until the Control Plane exists the matrix is code: `COMPAT_MATRIX` in
+`@vendua/templates` (`contract 2 × kernel >=1.0.0 <2.0.0 × storefront/checkout API v1`).
+Every build writes `dist/vendua-manifest.json`; CI checks it (K16) and the train
+records it in Core. The eventual Control Plane holds the authoritative matrix:
 
 ```
 contract_major | kernel range   | core api majors
@@ -86,3 +89,7 @@ the oldest supported Kernel line + Contract major, never updated. On every Core
 and Kernel merge it re-runs the S-series conformance tests against it. If
 "store built 14 months ago" breaks, the merge that broke it reverts. This test
 _is_ the backward-compatibility strategy; everything else is bookkeeping.
+
+Implemented: `packages/conformance/stale/kernel-1.0.0` (`_template` as built on
+Kernel 1.0.0) and CI's `stale-reference` job, which runs the S-series + K16
+against it through the preview proxy on every merge.

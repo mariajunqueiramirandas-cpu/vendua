@@ -1,18 +1,18 @@
 # Roadmap
 
-> Status: In progress · Last reviewed: 2026-09-26
+> Status: In progress · Last reviewed: 2026-09-27
 
 ## Where we are
 
-| Phase                         | State   | Notes                                                                                                                      |
-| ----------------------------- | ------- | -------------------------------------------------------------------------------------------------------------------------- |
-| 0 — Foundations               | ✅ Done | Monorepo, Core skeleton, Kernel, 3 spike storefronts, Contract v1 drafted                                                  |
-| 1 — Storefront factory        | ✅ Done | Contract frozen, conformance, CLI, fleet isolation, Founder CRM — which has since grown well past its v0 scope (see below) |
-| 1b — Kernel v1 + updatability | ⬜ Next | **Current priority.** Complete SDK, page composition (Contract v2), proven update path — before any customer               |
-| 2 — Commerce completeness     | ⬜ Open | Order lifecycle, catalog depth, growth surfaces — all unchecked                                                            |
-| 3 — Payments + merchant admin | ⬜ Open | The "buy a plan → provisioned store" self-serve path; starts once 1b's exit is met                                         |
-| 4 — First tenant operated     | ⬜ Open | Edge, Control Plane v0, provisioner — the other half of the 1-hour signup→store promise                                    |
-| 5–8 — Fleet loop → scale      | ⬜ Open | Blocked on 2–4 having a fleet to operate                                                                                   |
+| Phase                         | State   | Notes                                                                                                                                                                            |
+| ----------------------------- | ------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 0 — Foundations               | ✅ Done | Monorepo, Core skeleton, Kernel, 3 spike storefronts, Contract v1 drafted                                                                                                        |
+| 1 — Storefront factory        | ✅ Done | Contract frozen, conformance, CLI, fleet isolation, Founder CRM — which has since grown well past its v0 scope (see below)                                                       |
+| 1b — Kernel v1 + updatability | ✅ Done | Kernel 1.1.1 on Contract 2; every in-repo storefront received a Kernel minor, a template migration and a Contract-major rehearsal untouched ([fleet runs](fleet-runs/README.md)) |
+| 2 — Commerce completeness     | ⬜ Open | Order lifecycle, catalog depth, growth surfaces — all unchecked                                                                                                                  |
+| 3 — Payments + merchant admin | ⬜ Next | The "buy a plan → provisioned store" self-serve path; 1b's exit is met, so this is unblocked                                                                                     |
+| 4 — First tenant operated     | ⬜ Open | Edge, Control Plane v0, provisioner — the other half of the 1-hour signup→store promise                                                                                          |
+| 5–8 — Fleet loop → scale      | ⬜ Open | Blocked on 2–4 having a fleet to operate                                                                                                                                         |
 
 **Ahead of the roadmap:** the Founder CRM (`apps/control`) grew into the agent
 ops surface, and the sales-side agent engine shipped on `packages/core` —
@@ -52,10 +52,12 @@ the same `agent_runs` machinery the Phase-6 generation pipeline will reuse:
 updatable.** Every store launched on an incomplete Kernel is a store that later
 needs hand migration; the whole model depends on the first tenant already
 sitting on a Kernel that can be changed under it without touching its code.
-So [Phase 1b](#phase-1b--kernel-v1-complete-updatable-by-construction) comes
+So [Phase 1b](#phase-1b--kernel-v1-complete-updatable-by-construction-) came
 before the "ad → paid plan → agent-built store live in ~1 hour" path
-(Phases 3/4) — the sales agent keeps building pipeline meanwhile, but nobody
-is onboarded until 1b's exit is met.
+(Phases 3/4). **1b's exit was met on 2026-09-27** — the self-serve path
+(Phase 3, with Phase 4's Control Plane) is next; the remaining gates for the
+first store are a real paid order and provision/promote/rollback through the
+Control Plane.
 
 **After a store is created, agent coding is kept to a minimum**
 ([ADR 0018](adr/0018-page-composition.md)). Pages are templates composed of
@@ -148,7 +150,7 @@ Exit: `vendua scaffold && vendua build && vendua qa` is green on a fresh
 storefront without any custom code — and a storefront PR physically cannot
 touch platform code.
 
-## Phase 1b — Kernel v1 complete, updatable by construction
+## Phase 1b — Kernel v1 complete, updatable by construction ✅
 
 Goal: the SDK a storefront is written against is finished, and every kind of
 change in [09](architecture/09-migrations-and-fleet-trains.md#change-classes--process-map)
@@ -158,100 +160,114 @@ before this exit.** Items that used to sit in Phases 3, 5 and 6 moved here
 because they are what "updatable" means; the ones that need real merchants
 (early ring, volunteer discounts) stay where they were.
 
+Evidence for every item below is in [`fleet-runs/`](fleet-runs/README.md)
+(reports of the real runs) and in the conformance IDs of
+[10](architecture/10-qa-pipeline.md).
+
 ### 1b-i — The SDK surface ([02](architecture/02-kernel.md), [04](architecture/04-extensions-and-overrides.md))
 
-- [ ] Default implementation for **every** registered slot. Today only the
-      notice slots render; `checkout.*`, `cart.*`, `order.*`, `catalog.*`,
-      `store.HoursTable` and `system.ConsentBanner` / `ErrorFallback` /
-      `NotFound` / `EmergencyOverlay` exist only as keys in `SLOT_KEYS`.
-      Token-driven, in `@layer vendua`, split out as `@vendua/ui-defaults`.
-- [ ] Every slot renders a storefront override inside an error boundary with
-      the default as fallback, plus a conformance fixture with canonical props.
-      Unskip `[S05]` with a fixture storefront whose override throws.
-- [ ] Missing primitives: `ProductLink`, `CheckoutButton`, `NotifyMeButton`,
-      `Img` — each stamps its `data-vendua` hook and ARIA semantics.
-- [ ] Missing hooks: `useDeliveryQuote`, `useCustomer`, `useAnalytics`; typed
-      error codes map to default surfaces when the storefront doesn't handle
-      them.
-- [ ] Analytics beacon: primitives and surfaces emit the standard taxonomy
-      ([15](architecture/15-analytics.md)); custom events go through an
-      allow-listed `track()`.
-- [ ] Token contrast check at build (WCAG AA on default surfaces blocks
-      release).
-- [ ] `vendua check` lint rules: `no-deep-kernel-imports`, `override-purity`,
-      `require-primitives`, `no-v-namespace` (alongside the existing
-      direct-fetch and slot-key checks).
-- [ ] Kernel API review and freeze for v1.0: every export is intended, the
-      `exports` map hides the rest, and each storefront in the repo builds on
-      the frozen surface with no casts.
+- [x] Default implementation for **every** registered slot — all 22, in
+      `@vendua/ui-defaults`, token-driven, in `@layer vendua`. Each renders its
+      canonical fixture in a unit test.
+- [x] Every slot renders a storefront override inside an error boundary with
+      the default as fallback, the failure reported (`slot_error`); every slot
+      has a canonical fixture (`SLOT_FIXTURES`), and K15 renders each store
+      override with it. `[S05]` runs against a fixture storefront whose
+      overrides and one section throw.
+- [x] Missing primitives: `ProductLink`, `CheckoutButton`, `NotifyMeButton`
+      (with Core's `POST /checkout/v1/notify-me`), `Img`.
+- [x] Missing hooks: `useDeliveryQuote`, `useCustomer` (guest profile on
+      opt-in; OTP accounts later behind the same hook), `useAnalytics`; typed
+      error codes a store doesn't handle map to default surfaces.
+- [x] Analytics beacon: primitives and surfaces emit the standard taxonomy
+      into `POST /storefront/v1/events` (batched, lossy, idempotent by batch
+      id); Core writes `order_placed` itself; `custom.*` only through
+      `track()` and only with analytics consent (`system.ConsentBanner`).
+- [x] Token contrast check at build: `vendua()` refuses tokens that fail WCAG
+      AA on default surfaces (K13 statically, Q07 in the browser). It caught
+      quero-pudim's accent (4.48:1), now `#AC5E10`.
+- [x] `vendua check` lint rules: `no-deep-kernel-imports` (K07),
+      `override-purity` (K08), `require-primitives` (K09), `no-v-namespace`
+      (K10), plus composition (K11), content-as-data (K12), override budget
+      (K14) — each with a failing fixture test.
+- [x] Kernel API review and freeze for v1.0: [`API.md`](../packages/kernel/API.md)
+      lists every export, `test/api-surface.test.ts` fails on any unlisted
+      one, the `exports` map hides the rest (`useKernel` and the raw API
+      client are no longer public), and every in-repo storefront typechecks
+      on it with no casts.
 
 ### 1b-ii — Updatability ([09](architecture/09-migrations-and-fleet-trains.md), [11](architecture/11-backward-compatibility.md))
 
-- [ ] Kernel gets real semver (it is `0.0.0` today); the build writes an
-      artifact manifest with Kernel version × Contract major × Core API majors,
-      and CI checks it against a compat matrix.
-- [ ] Staleness CI job: a reference storefront built on the oldest supported
-      Kernel line re-runs the S-series on every Core and Kernel merge
-      ([11](architecture/11-backward-compatibility.md#the-staleness-guarantee--tested-not-asserted)).
-      _(was Phase 5)_
-- [ ] `v.js` moves out of `packages/core/src/loader.ts` into `@vendua/loader`,
-      built and versioned separately; per-tenant maintenance switch drilled on
-      a Venduá-owned store. _(was Phase 5)_
-- [ ] Server-driven notices end to end: Core emits `store_paused`, an
-      unmodified storefront renders it; then ship one new notice kind and
-      verify it reaches a storefront that was never rebuilt. _(was Phases 3
-      and 5)_
-- [ ] Train dry-run: a Kernel minor (e.g. a new slot default) rebuilds every
-      in-repo storefront in one affected-graph run, conformance green on all,
-      zero storefront diffs. Promotion by ring waits for the Control Plane
-      (Phase 4); the build + judge half is proven here.
-- [ ] `@vendua/codemods` + `vendua codemod run <id> --dry`, then a **Contract
-      major rehearsal** (a slot rename with alias window) over every in-repo
-      storefront: codemod, typecheck, conformance, failure-tail measured.
-      _(was Phase 6)_
-- [ ] Design updates through tokens: changing a storefront's tokens restyles
-      every Kernel default and every `var(--v-*)` in its own CSS on the next
-      build, with no component edits — asserted by a conformance visual
-      check. Tokens move into Core as store data; an edit triggers the
-      rebuild.
+- [x] Kernel has real semver (1.0.0 → 1.1.0 → 1.1.1, `CHANGELOG.md`); each
+      build writes `dist/vendua-manifest.json` (Kernel × Contract × Core API
+      majors, template/token source + hash, section catalog, overrides), and
+      CI checks every artifact against `COMPAT_MATRIX` (K16).
+- [x] Staleness CI job: `packages/conformance/stale/kernel-1.0.0` is
+      `_template` as built on Kernel 1.0.0, never rebuilt; the
+      `stale-reference` job re-runs the S-series + K16 against it on every
+      merge.
+- [x] `v.js` lives in `@vendua/loader` (own version, 1.0.0); the per-tenant
+      maintenance switch (`vendua ops <tenant> --maintenance`) renders over a
+      live Kernel and on a broken build — drilled on `loja-modelo`
+      ([10](fleet-runs/10-maintenance-drill.md)) and asserted by `[S08]`.
+- [x] Server-driven notices end to end: `store_paused` renders on an
+      unmodified storefront (`[S01]`); the new kind `high_demand` reaches the
+      Kernel 1.0.0 artifact that was never rebuilt (`[S09]`).
+- [x] Train dry-run: `vendua train` rebuilt every in-repo storefront on
+      Kernel 1.1 in one run — conformance green, manifests valid and recorded,
+      zero storefront diffs ([02](fleet-runs/02-train-kernel-1.1.md),
+      [06](fleet-runs/06-train-kernel-1.1.1.md)). Promotion by ring waits for
+      the Control Plane (Phase 4).
+- [x] `@vendua/codemods` + `vendua codemod run <id> --dry`; the Contract-major
+      rehearsal `c3-rehearsal` (slot rename `system.StorePausedNotice` →
+      `system.PauseNotice` inside the alias window, `ring` out of the config)
+      ran over every in-repo storefront: codemod, typecheck, `vendua check` —
+      failure tail 0/3 ([report](fleet-runs/c3-rehearsal.md)) — then applied.
+- [x] Design updates through tokens: tokens are store data in Core
+      (`storefront_tokens`, AA-validated, versioned); an edit queues a rebuild
+      that `vendua train --pending` consumes; `[Q11]` asserts every Kernel
+      default and the store's own `var(--v-*)` rules follow the tokens.
+      Drill: [09](fleet-runs/09-token-edit-rebuild.md).
 
 ### 1b-iii — Page composition, Contract v2 ([17](architecture/17-page-composition.md), [ADR 0018](adr/0018-page-composition.md))
 
-- [ ] Page templates in Core: `storefront_templates` (RLS, version history),
-      delivered in the store state, with the build-time snapshot bundled in
-      the artifact as last-known-good.
-- [ ] Kernel composition runtime: template renderer, `defineSection`,
-      `<BlockArea>` with category acceptance, an error boundary per section
-      and block, and unknown types rendering nothing (reported).
-- [ ] SDK sections v1, each with variants, documented parts and fixtures:
+- [x] Page templates in Core: `storefront_templates` (RLS, append-only
+      version history), delivered in `/storefront/v1/state?templates=1`; the
+      build bundles the snapshot as last-known-good.
+- [x] Kernel composition runtime: template renderer, `defineSection` /
+      `defineBlock`, `<BlockArea>` with category acceptance, an error boundary
+      per section and block, unknown types rendering nothing (reported).
+- [x] SDK sections v1, each with variants, documented parts and fixtures:
       purchase panel, catalog grid, product list, store status + hours,
-      header cart, announcement bar. Initial blocks: stock counter,
-      notify-me, promo badge.
-- [ ] Content as data: section settings schemas; conformance flags hard-coded
-      copy in `store:*` sections.
-- [ ] Kernel pages under `/(vendua)/*` render inside the store's `layout`
-      template (order history first).
-- [ ] Styling API: `data-part` + `--v-<component>-*` hooks documented and
-      exempted from `no-v-namespace`; generation QA reports the override
-      count per store.
-- [ ] Template migrations: format, per-store dry-run report, apply by ring,
-      rollback to the previous template version, never re-adding what a
-      merchant removed.
-- [ ] Template editing API in Core (staff first; the merchant editor lands with
-      the Phase 3 admin).
-- [ ] Freeze Contract v2 and port every in-repo storefront (`_template`,
-      `_examples/*`, `quero-pudim`) from `routes/` to
-      `sections/` + templates, moving their copy into settings.
-- [ ] Proof: ship a new SDK block in a Kernel minor and place it on every
-      in-repo storefront's product page with a template migration — zero
-      store edits.
+      header cart, announcement bar (plus header, footer, rich text). Blocks:
+      stock counter, notify-me, promo badge.
+- [x] Content as data: section settings schemas (validated, unknowns
+      ignored); K12 flags hard-coded copy in `store:*` sections.
+- [x] Kernel pages under `/(vendua)/*` render inside the store's `layout`
+      template: cart, checkout, order status and order history (`[S07]`).
+- [x] Styling API: `data-part` + `--v-<component>-*` hooks documented in
+      `API.md` and allowed by `no-v-namespace`; the manifest reports the
+      override count per store and K14 flags stores above 5.
+- [x] Template migrations: `defineTemplateMigration`, per-store dry-run
+      report, apply by ring, rollback to the previous version, merchant
+      removals never re-added (`vendua templates migrate|rollback`).
+- [x] Template editing API in Core (staff): read, history, versioned write
+      with optimistic concurrency and removal tombstones, rollback.
+- [x] Contract v2 frozen ([03](architecture/03-storefront-contract.md)) and
+      every in-repo storefront ported from `routes/` to `sections/` +
+      templates, copy moved into settings.
+- [x] Proof: Kernel 1.1 shipped `sdk:delivery-eta`; the template migration
+      `2026-09-delivery-eta-on-product` placed it on every in-repo
+      storefront's product page by ring — zero store edits. The canary review
+      caught a wrong placement, which was rolled back and fixed in 1.1.1
+      ([01–08](fleet-runs/README.md)).
 
 Exit: every slot, primitive and hook in the v1 spec exists with a default and a
 fixture; every in-repo storefront runs on Contract v2 (templates + sections);
 a new SDK block reached all of them through a template migration, and a Kernel
 minor and a Contract-major rehearsal both reached them, with zero hand edits; the stale reference storefront is green
 in CI; `v.js` renders the kill switch on a broken build. **Gate for the first
-customer.**
+customer — met 2026-09-27.**
 
 ## Phase 2 — Commerce completeness (weeks 8–12)
 

@@ -2,6 +2,8 @@ import { cpSync, existsSync, readFileSync, renameSync, rmSync, writeFileSync } f
 import { join } from 'node:path';
 import { randomBytes } from 'node:crypto';
 import postgres from 'postgres';
+import { readTemplatesDir } from '@vendua/templates/node';
+import type { TemplateSet } from '@vendua/templates';
 import { die, isStorefrontDir, nextPort } from './paths.ts';
 
 /** `vendua scaffold <slug>` — the DB registration runs BEFORE any file is
@@ -74,7 +76,14 @@ export async function cmdScaffold(slug: string | undefined, root: string): Promi
   if (!isStorefrontDir(template)) die('storefronts/_template is missing or broken');
 
   const port = nextPort(root);
-  await registerTenant(slug, port);
+  // the template's composition becomes the new store's v1 in Core (a bad file fails before any write)
+  let templates: TemplateSet;
+  try {
+    templates = readTemplatesDir(join(template, 'templates'));
+  } catch (e) {
+    die((e as Error).message);
+  }
+  await registerTenant(slug, port, templates);
 
   // Build in a temp sibling and rename — a failed scaffold must leave no
   // storefronts/<slug> behind or the existsSync guard blocks the retry.
@@ -87,8 +96,12 @@ export async function cmdScaffold(slug: string | undefined, root: string): Promi
     });
 
     const pkgPath = join(tmp, 'package.json');
-    const pkg = JSON.parse(readFileSync(pkgPath, 'utf8')) as { name: string };
+    const pkg = JSON.parse(readFileSync(pkgPath, 'utf8')) as {
+      name: string;
+      vendua?: { tenant?: string };
+    };
     pkg.name = `@vendua/storefront-${slug}`;
+    pkg.vendua = { ...pkg.vendua, tenant: slug };
     writeFileSync(pkgPath, `${JSON.stringify(pkg, null, 2)}\n`);
 
     const vitePath = join(tmp, 'vite.config.ts');
@@ -113,7 +126,7 @@ export async function cmdScaffold(slug: string | undefined, root: string): Promi
 
 /** Idempotent dev-tenant registration — mirrors the row shapes in
  *  platform/seed.ts; on conflict leaves existing rows alone. */
-async function registerTenant(slug: string, port: number): Promise<void> {
+async function registerTenant(slug: string, port: number, templates: TemplateSet): Promise<void> {
   const url = process.env.DATABASE_URL ?? DEFAULT_DB_URL;
   let sql: postgres.Sql;
   try {
@@ -173,6 +186,18 @@ async function registerTenant(slug: string, port: number): Promise<void> {
           values (${tid}, 'Entrega', ${tx.json(['Centro'])}, 500, 0, 30, 50)
         `;
       }
+
+      await tx`
+        insert into storefront_ops (tenant_id, ring) values (${tid}, 'stable')
+        on conflict (tenant_id) do nothing
+      `;
+      const have = await tx`select 1 from storefront_templates where tenant_id = ${tid} limit 1`;
+      if (!have[0])
+        for (const [page, t] of Object.entries(templates))
+          await tx`
+            insert into storefront_templates (tenant_id, page, version, template, source)
+            values (${tid}, ${page}, 1, ${tx.json(t as never)}, 'seed')
+          `;
 
       const cats = await tx`select 1 from categories where tenant_id = ${tid} limit 1`;
       if (cats.length === 0) {

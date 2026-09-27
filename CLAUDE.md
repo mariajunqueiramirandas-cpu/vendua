@@ -1,8 +1,11 @@
 # Venduá — notes for Claude
 
 Monorepo (bun workspaces): `packages/core` (Hono + Postgres API), `packages/kernel`
-(storefront runtime), `apps/control` (staff CRM console, React), `storefronts/*`, `site/`.
-`docs/README.md` has the architecture.
+(storefront runtime, 1.x = Contract 2 — public surface in `packages/kernel/API.md`),
+`packages/ui-defaults` (slot defaults + all default CSS), `packages/templates` (template
+model, migrations, tokens, compat matrix), `packages/loader` (`v.js`), `packages/codemods`,
+`packages/conformance`, `packages/cli`, `apps/control` (staff CRM console, React),
+`storefronts/*`, `site/`. `docs/README.md` has the architecture.
 
 ## Invariants (bugs if broken)
 
@@ -13,6 +16,11 @@ Monorepo (bun workspaces): `packages/core` (Hono + Postgres API), `packages/kern
   `platform/http.ts`; checkout creates at most one order per cart.
 - Storefronts talk to Core only through the kernel api client (never raw `fetch`).
 - Inputs are bounded (length/size caps) and bad ids return stable 4xx, never a 500.
+- Storefront pages are templates (Core data) + sections; store code never calls cart
+  mutations or builds product URLs by hand, and store CSS never targets `.v-*` /
+  `[data-vendua]` — `vendua check` (K01–K15) enforces it.
+- Kernel changes are additive within a Contract major; a new export needs `API.md` +
+  `test/api-surface.test.ts`, a version bump and a `CHANGELOG.md` line.
 - Agent work is requested only through `requestAgentTx` (`agent/dispatch.ts`) with a `source`;
   nothing else inserts runs. Future touches on a lead are `agent_wakeups` rows (ADR 0016).
 
@@ -24,6 +32,12 @@ Monorepo (bun workspaces): `packages/core` (Hono + Postgres API), `packages/kern
 - Typecheck per workspace: `bun run check`. Core tests: `cd packages/core && bun test`
   (`TEST_DATABASE_URL` is exported by the session hook).
 - Comments are sparse — only non-obvious _why_.
+- Kernel tests run in happy-dom (`packages/kernel/bunfig.toml` preloads it).
+- Conformance e2e in a container: add `/etc/hosts` lines for `qa-*.localhost` (no
+  system resolver for `*.localhost`) and pass `CHROMIUM=/opt/pw-browsers/chromium`.
+- Fleet commands (need Core + `CONTROL_SECRET`): `bunx vendua train [--core --record]`,
+  `bunx vendua templates migrate <id> [--apply --ring r]`, `bunx vendua codemod rehearse <id>`,
+  `bunx vendua ops <tenant>`. Evidence of real runs goes in `docs/fleet-runs/`.
 
 ## Running locally (cloud sessions)
 
@@ -42,8 +56,8 @@ CHROMIUM=/opt/pw-browsers/chromium bun scripts/shots.ts /pipeline /inbox   # 375
 
 - Core rate-limits `/control/v1/login` to 10/min per IP — `scripts/shots.ts` reuses one saved
   cookie (`/tmp/vendua-control-auth.json`); don't script UI logins in loops.
-- Don't `pkill -f <pattern>` where the pattern also appears in your own command line — it
-  kills the shell running it.
+- Don't `pkill -f <pattern>` (or `pgrep -f` + kill) where the pattern also appears in your
+  own command line — it kills the shell running it. Save `$!` to a pidfile when starting Core.
 - Docker + Compose are installed but the daemon isn't running: start it on demand with
   `(nohup dockerd > /tmp/dockerd.log 2>&1 &)`. It can pull from Docker Hub, so the real
   Dokploy images can be checked with `docker compose build core` (it builds the CRM inside) — images are large, so

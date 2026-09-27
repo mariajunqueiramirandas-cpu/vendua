@@ -8,4 +8,6 @@ Curated golden storefronts — the canonical read set for humans and agents
   with modifier groups, 3-step checkout, order confirmation + my-orders,
   sold-out states, and its `OBSERVATIONS.md` documents where the contract
   had to grow. Snapshot of `storefronts/quero-pudim` — the live tenant keeps
-  its own copy; this one tracks contract evolution.
+  its own copy; this one tracks contract evolution (it builds for its own
+  canary tenant, `example-quero-pudim`, :5176). Contract 2 port: 12 store
+  sections/blocks around the SDK purchase panel and Kernel pages.

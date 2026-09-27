@@ -1,6 +1,6 @@
 # 02 — The Kernel
 
-> Status: Proposed · Last reviewed: 2026-09-11
+> Status: Implemented — Kernel 1.x (public surface: `packages/kernel/API.md`) · Last reviewed: 2026-09-27
 > Decisions: [ADR 0004](../adr/0004-kernel-owned-checkout.md), [ADR 0007](../adr/0007-headless-primitives.md)
 
 The Kernel is the shared frontend runtime every storefront builds on. It is the
@@ -13,11 +13,12 @@ caches, renders and delegates.
 | Package               | Contents                                                                                                                                         |
 | --------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------ |
 | `@vendua/kernel`      | `VenduaProvider`, API client, query/cache layer, hooks, primitives, `<SystemSurfaces />`, overrides registry, analytics beacon, error boundaries |
-| `@vendua/ui-defaults` | Token-driven default implementations of every system surface and slot                                                                            |
+| `@vendua/ui-defaults` | Token-driven default implementations of every slot + canonical fixtures, and all default CSS (`@layer vendua`, documented parts)                 |
 | `@vendua/cli`         | `scaffold`, `dev`, `check`, `build`, `qa`, `preview` — the only supported build path                                                             |
 | `@vendua/conformance` | The shared Playwright suite + lint rules + type tests                                                                                            |
 | `@vendua/codemods`    | Contract migration transforms                                                                                                                    |
 | `@vendua/loader`      | Source of `v.js`, built and versioned separately from the Kernel                                                                                 |
+| `@vendua/templates`   | Page-template model, validation, migration DSL + registry, tokens/WCAG, semver + compat matrix — framework-free, shared with Core and the CLI    |
 
 Packages are private workspace dependencies — storefronts live in the same
 monorepo, nothing is published to a registry. Kernel internals are hidden behind
@@ -51,7 +52,7 @@ Mutation hooks hit `/checkout/v1` and return typed errors.
 | `useStore()`                      | store profile, hours, status (`open/closed/paused`, `resumesAt`) |
 | `useCatalog()` / `useProduct(id)` | catalog tree / single product incl. variants & modifiers         |
 | `useCart()`                       | server cart: items, totals, session state                        |
-| `useCartMutations()`              | `add`, `updateQty`, `remove`, `applyCoupon`, `clear`             |
+| `useCart().mutations`             | `add`, `updateQty`, `remove`, `setDelivery` (coupons: Phase 2)   |
 | `useDeliveryQuote()`              | zone check, fee, ETA for an address                              |
 | `useCheckout()`                   | checkout session state machine + `submit()`                      |
 | `useOrder(id)`                    | order status + timeline (poll/stream)                            |

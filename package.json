@@ -7,6 +7,7 @@
   "workspaces": [
     "site",
     "packages/*",
+    "packages/conformance/fixtures/*",
     "storefronts/*",
     "storefronts/_examples/*",
     "apps/*"

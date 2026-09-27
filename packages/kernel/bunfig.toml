@@ -1,0 +1,3 @@
+[test]
+# react-dom decides canUseDOM at import time — the DOM must exist before any test imports it
+preload = ["./test/setup.ts"]

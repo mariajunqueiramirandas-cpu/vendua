@@ -1,0 +1,25 @@
+{
+  "version": 1,
+  "page": "catalog",
+  "sections": [
+    {
+      "id": "catalog",
+      "type": "store:catalog-browser",
+      "settings": {
+        "eyebrow": "Escolha o seu favorito",
+        "title": "Nosso cardápio",
+        "lede": "Para um mimo só seu ou para dividir à mesa.",
+        "searchLabel": "Buscar no cardápio",
+        "searchPlaceholder": "Qual sabor você procura?",
+        "allLabel": "Todos os doces",
+        "itemSingular": "doce",
+        "itemPlural": "doces",
+        "emptyTitle": "Novos doces vêm por aí",
+        "emptyText": "Estamos preparando o cardápio. Volte daqui a pouco para escolher o seu favorito.",
+        "noMatchTitle": "Esse sabor ainda não apareceu",
+        "resetLabel": "Ver todos os doces",
+        "bagLabel": "Ver sacola"
+      }
+    }
+  ]
+}

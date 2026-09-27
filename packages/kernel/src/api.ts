@@ -1,3 +1,5 @@
+import type { TemplateSet } from '@vendua/templates';
+
 // The only supported path from a storefront to Core (no fetch/axios in storefront
 // code). Mutations send a fresh Idempotency-Key; the session token rides as Bearer.
 
@@ -48,6 +50,9 @@ export interface CatalogProduct {
   /** Decorative figure slot — storefronts map variants to artwork. */
   figureVariant: 'default' | 'alt';
   tags: string[];
+  /** Additive Core fields (03 — semantics pinned in v1): absent until Core serves them. */
+  imageUrl?: string | null;
+  stockQuantity?: number | null;
 }
 
 export interface CatalogCategory {
@@ -95,6 +100,15 @@ export interface SurfacesEnvelope {
   version: 1;
   store: { status: 'open' | 'closed' | 'paused'; resumesAt?: string };
   notices: Notice[];
+}
+
+/** `/storefront/v1/state` — the loader's snapshot; `templates` when asked for. */
+export interface StateEnvelope {
+  version: 1;
+  store: { status: 'open' | 'closed' | 'paused'; resumesAt?: string };
+  notices: Notice[];
+  loader: { state: 'normal' | 'maintenance'; title?: string; message?: string; href?: string };
+  templates?: TemplateSet;
 }
 
 export interface CartItem {
@@ -310,6 +324,19 @@ export function createApi(baseUrl = '') {
         sf(`/surfaces${zoneMatched === undefined ? '' : `?zoneMatched=${zoneMatched}`}`),
       ),
     zones: () => apiFetch<{ zones: DeliveryZone[] }>(sf('/zones')),
+    state: (templates = false) =>
+      apiFetch<StateEnvelope>(sf(`/state${templates ? '?templates=1' : ''}`)),
+    notifyMe: (body: { subject: 'store' | 'product'; productId?: string; phone: string }) =>
+      apiFetch<{ subscribed: true }>(co('/notify-me'), {
+        method: 'POST',
+        headers: { 'idempotency-key': idemKey() },
+        body: JSON.stringify(body),
+      }),
+    /** order ids this browser placed (their tracking tokens are kept) — newest first */
+    orderIds: (): string[] => {
+      const ids = new Set<string>([...orderTokenMem.keys(), ...Object.keys(readOrderTokens())]);
+      return [...ids].reverse();
+    },
     quote: (neighborhood: string) =>
       apiFetch<QuoteResult>(co('/quote'), {
         method: 'POST',
@@ -416,6 +443,16 @@ export const ERROR_CODES = [
   'IDEMPOTENCY_KEY_REQUIRED',
   'IDEMPOTENCY_IN_PROGRESS',
   'RATE_LIMITED',
+  'NETWORK_ERROR',
+  // storefront platform (Phase 1b)
+  'INVALID_NOTIFY',
+  'INVALID_PAGE',
+  'INVALID_TEMPLATE',
+  'TEMPLATE_NOT_FOUND',
+  'TEMPLATE_VERSION_CONFLICT',
+  'INVALID_TOKENS',
+  'INVALID_MANIFEST',
+  'MIGRATION_NOT_FOUND',
   // control-plane (staff) API codes — leads module
   'INVALID_STATE',
   'INVALID_LEAD',

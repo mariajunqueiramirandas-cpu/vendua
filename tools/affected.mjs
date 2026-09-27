@@ -10,7 +10,14 @@
 
 import { execFileSync } from 'node:child_process';
 
-const SHARED_PACKAGES = new Set(['kernel', 'cli', 'conformance', 'ui-defaults']);
+const SHARED_PACKAGES = new Set([
+  'kernel',
+  'cli',
+  'conformance',
+  'ui-defaults',
+  'templates',
+  'codemods',
+]);
 const SHARED_ROOT_FILES = new Set(['package.json', 'bun.lock', 'tsconfig.base.json']);
 // the conformance e2e scaffolds from _template and runs against Core + Kernel
 const CONFORMANCE_INPUTS = new Set([
@@ -19,6 +26,8 @@ const CONFORMANCE_INPUTS = new Set([
   'packages/cli',
   'packages/conformance',
   'packages/ui-defaults',
+  'packages/templates',
+  'packages/loader',
   'storefronts/_template',
 ]);
 

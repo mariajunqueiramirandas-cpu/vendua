@@ -1,6 +1,6 @@
 # 04 — Extensions and Overrides
 
-> Status: Proposed · Last reviewed: 2026-09-11
+> Status: Implemented — Kernel 1.x (typed props: `SlotProps` in `@vendua/kernel`) · Last reviewed: 2026-09-27
 > Decisions: [ADR 0004](../adr/0004-kernel-owned-checkout.md), [ADR 0008](../adr/0008-contract-versioning.md)
 
 The extension system is how a storefront makes _platform-owned_ surfaces look
@@ -49,30 +49,30 @@ The initial registry. Each entry: props summary + what the default does.
 Additions are additive (new slots appear with defaults — old stores unaffected).
 Renames require a Contract major + codemod + alias window.
 
-| Slot                       | Props (sketch)                        | Default behavior                                                                                       |
-| -------------------------- | ------------------------------------- | ------------------------------------------------------------------------------------------------------ |
-| `system.Notice`            | `notice: Notice; onDismiss; onAction` | Generic notice card (info/warning/blocking) — **the guaranteed fallback for every future notice kind** |
-| `system.StorePausedNotice` | `notice; resumesAt; onNotifyMe`       | Blocking banner + countdown + notify-me                                                                |
-| `system.StoreClosedNotice` | `notice; opensAt`                     | Non-blocking closed banner with next-opening time                                                      |
-| `system.ConsentBanner`     | `purposes[]; onAccept; onReject`      | LGPD consent bar, token-styled                                                                         |
-| `system.ErrorFallback`     | `error; retry`                        | Generic recoverable error panel                                                                        |
-| `system.NotFound`          | `path`                                | 404 page within the storefront shell                                                                   |
-| `system.EmergencyOverlay`  | `notice`                              | Loader-rendered last-resort overlay (see `v.js`)                                                       |
-| `system.PromoNotice`       | `notice; onDismiss`                   | Promo notice (kinds `promo`/`promo_notice`) — falls back to `system.Notice`                            |
-| `checkout.Layout`          | `steps; current; children`            | Step shell (address → delivery → payment → review)                                                     |
-| `checkout.Summary`         | `cart; deliveryFee; total`            | Order summary block                                                                                    |
-| `checkout.AddressForm`     | `value; onChange; errors`             | Address form (validation stays in Kernel)                                                              |
-| `checkout.DeliveryOptions` | `options[]; selected; onSelect`       | Delivery/pickup picker                                                                                 |
-| `checkout.PaymentMethods`  | `methods[]; selected; onSelect`       | PIX/card method picker (Bricks mount inside)                                                           |
-| `checkout.SuccessPage`     | `order`                               | Order confirmation page                                                                                |
-| `checkout.EmptyCart`       | `onBrowse`                            | Empty-cart state                                                                                       |
-| `cart.Drawer`              | `cart; onClose; onCheckout`           | Cart drawer shell                                                                                      |
-| `cart.LineItem`            | `item; onQty; onRemove`               | Cart line layout                                                                                       |
-| `order.StatusPage`         | `order; timeline`                     | Order tracking page shell                                                                              |
-| `order.Timeline`           | `events[]`                            | Timeline component                                                                                     |
-| `store.HoursTable`         | `hours`                               | Opening-hours display                                                                                  |
-| `catalog.ProductCard`      | `product; onOpen`                     | Default product card for listing regions                                                               |
-| `catalog.ModifierPicker`   | `groups; value; onChange; errors`     | Variant/modifier selection UI                                                                          |
+| Slot                       | Props (sketch)                           | Default behavior                                                                                                                            |
+| -------------------------- | ---------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------- |
+| `system.Notice`            | `notice: Notice; onDismiss; onAction`    | Generic notice card (info/warning/blocking) — **the guaranteed fallback for every future notice kind**                                      |
+| `system.PauseNotice`       | `notice; resumesAt; actions; onNotifyMe` | Blocking banner + countdown + notify-me (Contract 2 name; `system.StorePausedNotice` is its alias until Contract 3, codemod `c3-rehearsal`) |
+| `system.StoreClosedNotice` | `notice; opensAt`                        | Non-blocking closed banner with next-opening time                                                                                           |
+| `system.ConsentBanner`     | `purposes[]; onAccept; onReject`         | LGPD consent bar, token-styled                                                                                                              |
+| `system.ErrorFallback`     | `error; retry`                           | Generic recoverable error panel                                                                                                             |
+| `system.NotFound`          | `path`                                   | 404 page within the storefront shell                                                                                                        |
+| `system.EmergencyOverlay`  | `notice`                                 | Loader-rendered last-resort overlay (see `v.js`)                                                                                            |
+| `system.PromoNotice`       | `notice; onDismiss`                      | Promo notice (kinds `promo`/`promo_notice`) — falls back to `system.Notice`                                                                 |
+| `checkout.Layout`          | `steps; current; children`               | Step shell (address → delivery → payment → review)                                                                                          |
+| `checkout.Summary`         | `cart; deliveryFee; total`               | Order summary block                                                                                                                         |
+| `checkout.AddressForm`     | `value; onChange; errors`                | Address form (validation stays in Kernel)                                                                                                   |
+| `checkout.DeliveryOptions` | `options[]; selected; onSelect`          | Delivery/pickup picker                                                                                                                      |
+| `checkout.PaymentMethods`  | `methods[]; selected; onSelect`          | PIX/card method picker (Bricks mount inside)                                                                                                |
+| `checkout.SuccessPage`     | `order`                                  | Order confirmation page                                                                                                                     |
+| `checkout.EmptyCart`       | `onBrowse`                               | Empty-cart state                                                                                                                            |
+| `cart.Drawer`              | `cart; onClose; onCheckout`              | Cart drawer shell                                                                                                                           |
+| `cart.LineItem`            | `item; onQty; onRemove`                  | Cart line layout                                                                                                                            |
+| `order.StatusPage`         | `order; timeline`                        | Order tracking page shell                                                                                                                   |
+| `order.Timeline`           | `events[]`                               | Timeline component                                                                                                                          |
+| `store.HoursTable`         | `hours`                                  | Opening-hours display                                                                                                                       |
+| `catalog.ProductCard`      | `product; onOpen`                        | Default product card for listing regions                                                                                                    |
+| `catalog.ModifierPicker`   | `groups; value; onChange; errors`        | Variant/modifier selection UI                                                                                                               |
 
 Registry maintenance rules:
 
@@ -122,7 +122,7 @@ Two levels of token adoption by storefronts:
 - Aliased slots keep working for exactly one major; the codemod deletes the
   alias usage.
 
-## Lint rules (enforced by `vendua check`)
+## Lint rules (enforced by `vendua check` — IDs in [10](10-qa-pipeline.md))
 
 - `vendua/no-direct-fetch` — no `fetch`/axios/Core imports outside `@vendua/*`.
 - `vendua/no-deep-kernel-imports`.

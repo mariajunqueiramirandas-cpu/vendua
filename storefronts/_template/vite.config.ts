@@ -1,9 +1,11 @@
 import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
+import { vendua } from '@vendua/kernel/vite';
+import config from './vendua.config.ts';
 
 // port is tenant-significant; object-form proxies keep Host intact — bare '/checkout' would swallow the SPA route
 export default defineConfig({
-  plugins: [react()],
+  plugins: [react(), vendua({ config })],
   publicDir: 'assets',
   server: {
     port: 5175,

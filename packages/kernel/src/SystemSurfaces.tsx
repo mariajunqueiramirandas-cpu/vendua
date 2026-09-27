@@ -1,111 +1,102 @@
-import { Suspense, lazy, useEffect, useMemo, useState, type ReactNode } from 'react';
-import { ErrorBoundary } from './error-boundary.tsx';
+import { useEffect, useRef, useState, type ReactNode } from 'react';
+import { noticeSeverity } from '@vendua/ui-defaults';
 import { useKernel, useQuery } from './provider.tsx';
+import { Slot } from './slot.tsx';
+import { dismissError, useTransientNotices } from './errors.ts';
+import { useConsent } from './hooks.ts';
+import { emit } from './telemetry.ts';
 import type { Notice, NoticeAction, SurfacesEnvelope } from './api.ts';
-import type { SlotKey } from './config.ts';
+import type { ConsentPurpose } from './config.ts';
 
-// server-driven surfaces at fixed mount points (05-system-surfaces.md);
-// unknown kinds/severities/action types degrade per the forward-compat rules,
-// overrides render inside an error boundary with the generic notice as fallback
+// Server-driven surfaces at fixed mount points (05-system-surfaces.md): banner
+// stack, blocking overlay, consent; the emergency mount belongs to v.js. Unknown
+// kinds/severities/actions degrade per the forward-compat rules; every notice
+// renders through its slot (override → error boundary → Kernel default).
 
-const SEVERITIES = new Set(['info', 'warning', 'blocking']);
+const shown = new Set<string>();
 
-function severityOf(n: Notice): 'info' | 'warning' | 'blocking' {
-  if (n.kind === 'emergency') return 'blocking';
-  const s = String(n.severity);
-  return SEVERITIES.has(s) ? (s as 'info' | 'warning' | 'blocking') : 'info';
-}
-
-function actionToLink(a: NoticeAction): { label: string; href: string } | null {
-  // forward-compat: unknown action types render as a link if they carry href
-  if (a.type === 'link' && typeof a.href === 'string') return { label: a.label, href: a.href };
-  if (typeof (a as Record<string, unknown>).href === 'string') {
-    return { label: a.label, href: (a as Record<string, unknown>).href as string };
+function NoticeSlot({ notice, onDismiss }: { notice: Notice; onDismiss?: () => void }) {
+  useEffect(() => {
+    if (shown.has(notice.id)) return;
+    shown.add(notice.id);
+    emit('notice_shown', { kind: notice.kind, severity: noticeSeverity(notice) });
+  }, [notice]);
+  const onAction = (a: NoticeAction) =>
+    emit('notice_action', { kind: notice.kind, severity: noticeSeverity(notice), action: a.type });
+  const dismiss = onDismiss ? { onDismiss } : {};
+  const resumesAt =
+    typeof notice.payload?.resumesAt === 'string' ? notice.payload.resumesAt : undefined;
+  switch (notice.kind) {
+    case 'store_paused':
+      return (
+        <Slot
+          name="system.PauseNotice"
+          notice={notice}
+          actions={notice.actions ?? []}
+          {...(resumesAt ? { resumesAt } : {})}
+          {...dismiss}
+        />
+      );
+    case 'store_closed':
+      return (
+        <Slot
+          name="system.StoreClosedNotice"
+          notice={notice}
+          {...(resumesAt ? { opensAt: resumesAt } : {})}
+          {...dismiss}
+        />
+      );
+    case 'promo':
+    case 'promo_notice':
+      return <Slot name="system.PromoNotice" notice={notice} {...dismiss} />;
+    case 'emergency':
+      return <Slot name="system.EmergencyOverlay" notice={notice} />;
+    default:
+      return <Slot name="system.Notice" notice={notice} onAction={onAction} {...dismiss} />;
   }
-  return null;
-}
-
-export function GenericNotice({
-  notice,
-  onDismiss,
-}: {
-  notice: Notice;
-  onDismiss?: (() => void) | undefined;
-}) {
-  const severity = severityOf(notice);
-  const links = (notice.actions ?? [])
-    .map(actionToLink)
-    .filter((x): x is NonNullable<typeof x> => x != null);
-  return (
-    <div
-      className={`v-notice v-notice-${severity}`}
-      data-vendua="notice"
-      data-kind={notice.kind}
-      data-severity={severity}
-      role={severity === 'blocking' ? 'alertdialog' : 'status'}
-      aria-modal={severity === 'blocking' || undefined}
-    >
-      <strong className="v-notice-title">{notice.title}</strong>
-      {notice.body ? <p className="v-notice-body">{notice.body}</p> : null}
-      {links.length > 0 ? (
-        <p className="v-notice-actions">
-          {links.map((l, i) => (
-            <a key={i} className="v-notice-action" href={l.href}>
-              {l.label}
-            </a>
-          ))}
-        </p>
-      ) : null}
-      {notice.dismissible && onDismiss ? (
-        <button
-          type="button"
-          className="v-notice-dismiss"
-          aria-label="dispensar"
-          onClick={onDismiss}
-        >
-          ×
-        </button>
-      ) : null}
-    </div>
-  );
-}
-
-// props every `system.*` notice override receives
-export interface NoticeOverrideProps {
-  notice: Notice;
-  onDismiss?: () => void;
-}
-
-// override → error boundary → generic fallback
-function SlotNotice({ notice, onDismiss }: { notice: Notice; onDismiss?: () => void }) {
-  const { config } = useKernel();
-  const slotForKind = `system.${notice.kind
-    .split('_')
-    .map((p) => p[0]?.toUpperCase() + p.slice(1))
-    .join('')}Notice` as SlotKey;
-  const overrideFactory = config.overrides?.[slotForKind] ?? config.overrides?.['system.Notice'];
-
-  const Override = useMemo(
-    () => (overrideFactory ? lazy(overrideFactory) : null),
-    [overrideFactory],
-  );
-
-  if (!Override) return <GenericNotice notice={notice} onDismiss={onDismiss} />;
-  return (
-    <ErrorBoundary
-      fallback={<GenericNotice notice={notice} {...(onDismiss ? { onDismiss } : {})} />}
-    >
-      <Suspense fallback={<GenericNotice notice={notice} />}>
-        <Override {...({ notice, onDismiss } as Record<string, unknown>)} />
-      </Suspense>
-    </ErrorBoundary>
-  );
 }
 
 function NoticeView({ notice }: { notice: Notice }) {
   const [dismissed, setDismissed] = useState(false);
   if (dismissed) return null;
-  return <SlotNotice notice={notice} onDismiss={() => setDismissed(true)} />;
+  return <NoticeSlot notice={notice} onDismiss={() => setDismissed(true)} />;
+}
+
+const PURPOSE_LABEL: Record<ConsentPurpose, string> = {
+  analytics: 'Métricas de uso',
+  marketing: 'Ofertas personalizadas',
+};
+
+/** Mount point 3 — only when the store asks for non-essential purposes. */
+function ConsentMount() {
+  const { config } = useKernel();
+  const { consent, decide } = useConsent();
+  const purposes = config.consent?.purposes ?? [];
+  if (purposes.length === 0 || consent) return null;
+  return (
+    <Slot
+      name="system.ConsentBanner"
+      purposes={purposes.map((id) => ({ id, label: PURPOSE_LABEL[id] }))}
+      onAccept={(ids) => decide(ids)}
+      onReject={() => decide([])}
+    />
+  );
+}
+
+/** Blocking notices take focus so keyboard/screen-reader users land on them. */
+function BlockingOverlay({ notices }: { notices: Notice[] }) {
+  const ref = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    ref.current?.querySelector<HTMLElement>('[role="alertdialog"]')?.setAttribute('tabindex', '-1');
+    ref.current?.querySelector<HTMLElement>('[role="alertdialog"]')?.focus({ preventScroll: true });
+  }, [notices.length]);
+  return (
+    <div className="v-blocking-overlay" data-vendua="blocking-overlay" ref={ref}>
+      {notices.map((n) => (
+        <NoticeSlot key={n.id} notice={n} />
+      ))}
+    </div>
+  );
 }
 
 export function SystemSurfaces({ zoneMatched }: { zoneMatched?: boolean } = {}) {
@@ -116,10 +107,10 @@ export function SystemSurfaces({ zoneMatched }: { zoneMatched?: boolean } = {}) 
   // key carries zoneMatched so a cached envelope can't render for a new result
   const key = `surfaces:${zoneMatched === undefined ? 'any' : zoneMatched}`;
   const q = useQuery(key, () => api.surfaces(zoneMatched));
-  // Injected state is only a valid first paint for the unscoped query.
   const envelope = q.data ?? (zoneMatched === undefined ? injected : undefined);
+  const transient = useTransientNotices();
 
-  // schedule one re-render at the nearest future startsAt/endsAt boundary
+  // re-render at the nearest future startsAt/endsAt boundary
   const [, setTick] = useState(0);
   useEffect(() => {
     if (!envelope) return;
@@ -133,46 +124,43 @@ export function SystemSurfaces({ zoneMatched }: { zoneMatched?: boolean } = {}) 
       }
     }
     if (nearest === Infinity) return;
-    const id = setTimeout(() => setTick((t) => t + 1), nearest - now + 50);
+    const id = setTimeout(() => setTick((t) => t + 1), Math.min(nearest - now + 50, 2 ** 31 - 1));
     return () => clearTimeout(id);
   }, [envelope]);
 
-  if (!envelope) return null;
   const now = Date.now();
-  const visible = envelope.notices.filter(
+  const visible = (envelope?.notices ?? []).filter(
     (n) =>
       (!n.startsAt || Date.parse(n.startsAt) <= now) && (!n.endsAt || Date.parse(n.endsAt) > now),
   );
-  const blocking = visible.filter((n) => severityOf(n) === 'blocking');
-  const banners = visible.filter((n) => severityOf(n) !== 'blocking');
+  const blocking = visible.filter((n) => noticeSeverity(n) === 'blocking');
+  const banners = visible.filter((n) => noticeSeverity(n) !== 'blocking');
 
   return (
     <>
       {/* mount point 1 */}
-      <div className="v-banner-stack" data-vendua="banner-stack">
+      <div className="v-banner-stack" data-vendua="banner-stack" aria-live="polite">
         {banners.map((n) => (
           <NoticeView key={n.id} notice={n} />
         ))}
+        {transient.map((n) => (
+          <NoticeSlot key={n.id} notice={n} onDismiss={() => dismissError(n.id)} />
+        ))}
       </div>
       {/* mount point 2 */}
-      {blocking.length > 0 ? (
-        <div className="v-blocking-overlay" data-vendua="blocking-overlay">
-          {blocking.map((n) => (
-            <SlotNotice key={n.id} notice={n} />
-          ))}
-        </div>
-      ) : null}
-      {/* mount points 3 (consent) and 4 (emergency/loader-owned) are Phase 1+ */}
+      {blocking.length > 0 ? <BlockingOverlay notices={blocking} /> : null}
+      {/* mount point 3 — mount point 4 (emergency) is v.js's */}
+      <ConsentMount />
     </>
   );
 }
 
-// inline surface region (05: SurfaceRegion)
+/** Inline surface region a brand section may place (05 — SurfaceRegion). */
 export function SurfaceRegion({ name }: { name: string }): ReactNode {
   const { api } = useKernel();
-  const q = useQuery(`surfaces:region:${name}`, () => api.surfaces());
+  const q = useQuery('surfaces:any', () => api.surfaces());
   const notices = (q.data?.notices ?? []).filter(
-    (n) => severityOf(n) !== 'blocking' && (n.payload?.region === name || n.kind === name),
+    (n) => noticeSeverity(n) !== 'blocking' && (n.payload?.region === name || n.kind === name),
   );
   if (notices.length === 0) return null;
   return (

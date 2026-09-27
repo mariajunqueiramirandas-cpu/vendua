@@ -10,6 +10,8 @@
     "check": "tsc --noEmit -p tsconfig.json"
   },
   "dependencies": {
+    "@vendua/codemods": "workspace:*",
+    "@vendua/templates": "workspace:*",
     "postgres": "3.4.7"
   },
   "devDependencies": {

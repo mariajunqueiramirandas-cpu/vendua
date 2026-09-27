@@ -9,6 +9,9 @@ import {
 } from 'react';
 import { createApi, type VenduaApi } from './api.ts';
 import type { StorefrontConfig, StorefrontTokens } from './config.ts';
+import { setStatusRefresher } from './errors.ts';
+import { beacon } from './telemetry.ts';
+import type { StorefrontBundle } from './composition/registry.ts';
 
 // tenant context, api client, token emission — mounted once per storefront root
 // (03-storefront-contract.md#required-mounts); Phase 0 uses a minimal in-flight
@@ -17,6 +20,10 @@ import type { StorefrontConfig, StorefrontTokens } from './config.ts';
 interface KernelCtx {
   api: VenduaApi;
   config: StorefrontConfig;
+  /** tokens actually in force: Core's (pulled at build) over the config's */
+  tokens: StorefrontTokens;
+  /** sections + template snapshot the build bundled (virtual:vendua/storefront) */
+  storefront: StorefrontBundle;
   /** bumps refetch hooks subscribed to a key */
   invalidate: (key: string) => void;
   subscribe: (key: string, fn: () => void) => () => void;
@@ -59,15 +66,20 @@ function tokensToVars(tokens: StorefrontTokens): Record<string, string> {
   return vars;
 }
 
+const EMPTY_BUNDLE: StorefrontBundle = { sections: {}, snapshot: { templates: {}, tokens: null } };
+
 export function VenduaProvider({
   config,
+  storefront = EMPTY_BUNDLE,
   baseUrl = '',
   children,
 }: {
   config: StorefrontConfig;
+  storefront?: StorefrontBundle;
   baseUrl?: string;
   children: ReactNode;
 }) {
+  const tokens = storefront.snapshot.tokens ?? config.tokens;
   const apiRef = useRef<{ api: VenduaApi; baseUrl: string }>();
   if (!apiRef.current || apiRef.current.baseUrl !== baseUrl) {
     // baseUrl change: the old client's cache/session belong to the previous
@@ -82,6 +94,8 @@ export function VenduaProvider({
     () => ({
       api,
       config,
+      tokens,
+      storefront,
       invalidate(key) {
         listeners.current.get(key)?.forEach((fn) => fn());
       },
@@ -92,22 +106,32 @@ export function VenduaProvider({
         return () => set!.delete(fn);
       },
     }),
-    [config, api],
+    [config, api, tokens, storefront],
   );
+
+  // analytics beacon + "server truth changed" refetch for unhandled STORE_* errors
+  useEffect(() => {
+    beacon.configure(baseUrl);
+    setStatusRefresher(() => {
+      for (const key of ['store', 'surfaces:any', 'surfaces:true', 'surfaces:false'])
+        invalidateQuery(key);
+    });
+    return () => setStatusRefresher(null);
+  }, [baseUrl]);
 
   // Emit design tokens as --v-* vars on :root (02-kernel.md#design-tokens).
   useEffect(() => {
     const root = document.documentElement;
-    const vars = tokensToVars(config.tokens);
+    const vars = tokensToVars(tokens);
     for (const [k, v] of Object.entries(vars)) root.style.setProperty(k, v);
     return () => {
       for (const k of Object.keys(vars)) root.style.removeProperty(k);
     };
-  }, [config]);
+  }, [tokens]);
 
   // font-display: swap — contract default; brand fonts must never block first paint
   useEffect(() => {
-    const srcs = config.tokens.font.srcs;
+    const srcs = tokens.font.srcs;
     if (!srcs?.length) return;
     const style = document.createElement('style');
     style.dataset.vendua = 'fonts';
@@ -125,7 +149,7 @@ export function VenduaProvider({
     return () => {
       style.remove();
     };
-  }, [config]);
+  }, [tokens]);
 
   // track this provider's cache + notifier while mounted so invalidateQuery
   // reaches live providers only
@@ -141,7 +165,9 @@ export function VenduaProvider({
   // without the handoff a blocking notice renders twice
   useEffect(() => {
     (globalThis as Record<string, unknown>).__VENDUA_KERNEL_MOUNTED__ = true;
-    document.getElementById('vendua-loader-overlay')?.remove();
+    // the maintenance kill switch outranks a healthy Kernel — only notice overlays yield
+    const overlay = document.getElementById('vendua-loader-overlay');
+    if (overlay?.dataset.mode !== 'maintenance') overlay?.remove();
   }, []);
 
   return <Ctx.Provider value={ctx}>{children}</Ctx.Provider>;
@@ -251,6 +277,24 @@ const liveProviders = new Set<{
   cache: Map<string, CacheEntry>;
   invalidate: (key: string) => void;
 }>();
+
+/** Warm a query without subscribing (ProductLink hover/focus) — no-op when cached or in flight. */
+export function prefetchQuery<T>(api: VenduaApi, key: string, fetcher: () => Promise<T>) {
+  const cache = cacheFor(api);
+  const e = cache.get(key);
+  if (e?.resolved || e?.inflight) return;
+  const runToken = Symbol(key);
+  const entry: CacheEntry = { runToken };
+  entry.inflight = fetcher()
+    .then((data) => {
+      if (cache.get(key)?.runToken === runToken) cache.set(key, { resolved: true, data });
+    })
+    .catch((error: ApiErrorShape) => {
+      // same shape as useQuery: a subscriber riding this flight sees the error + can refetch
+      if (cache.get(key)?.runToken === runToken) cache.set(key, { resolved: true, error });
+    });
+  cache.set(key, entry);
+}
 
 export function invalidateQuery(key: string, data?: unknown) {
   // evict + notify so mounted hooks refetch; seed when the mutation already

@@ -1,8 +1,7 @@
 import { X } from 'lucide-react';
 import type { Notice, NoticeAction } from '@vendua/kernel';
 
-// system.Notice override — blocking notices still render inside the Kernel's overlay;
-// the Kernel falls back to this for every notice kind, so it must handle all of them.
+/** system.Notice override — Kernel falls back to it per notice kind, so this must handle every kind gracefully. */
 
 function actionHref(a: NoticeAction): { label: string; href: string } | null {
   if (a.type === 'link' && typeof a.href === 'string') return { label: a.label, href: a.href };

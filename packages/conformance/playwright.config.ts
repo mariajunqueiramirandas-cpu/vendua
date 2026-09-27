@@ -18,6 +18,8 @@ export default defineConfig({
     screenshot: 'only-on-failure',
     launchOptions: {
       args: ['--host-resolver-rules=MAP *.localhost 127.0.0.1'],
+      // sessions with a preinstalled Chromium of another build (CHROMIUM=/opt/pw-browsers/chromium)
+      ...(process.env.CHROMIUM ? { executablePath: process.env.CHROMIUM } : {}),
     },
   },
 });

@@ -296,17 +296,17 @@ export async function sessionCartId(c: Context, secret: string): Promise<string>
 
 const MAX_BODY_BYTES = 32 * 1024;
 
-export async function boundedText(c: Context): Promise<string> {
+export async function boundedText(c: Context, max = MAX_BODY_BYTES): Promise<string> {
   // cap raw bytes before parsing attacker-controlled bodies; Content-Length is a free pre-filter
   // (absent/lying headers still hit the post-read check)
   const declared = Number(c.req.header('content-length'));
-  if (Number.isFinite(declared) && declared > MAX_BODY_BYTES) {
-    throw new HttpError(413, 'PAYLOAD_TOO_LARGE', `body exceeds ${MAX_BODY_BYTES} bytes`);
+  if (Number.isFinite(declared) && declared > max) {
+    throw new HttpError(413, 'PAYLOAD_TOO_LARGE', `body exceeds ${max} bytes`);
   }
   const raw = await c.req.text();
   // byte length, not string.length — multibyte input would slip the cap
-  if (new TextEncoder().encode(raw).byteLength > MAX_BODY_BYTES) {
-    throw new HttpError(413, 'PAYLOAD_TOO_LARGE', `body exceeds ${MAX_BODY_BYTES} bytes`);
+  if (new TextEncoder().encode(raw).byteLength > max) {
+    throw new HttpError(413, 'PAYLOAD_TOO_LARGE', `body exceeds ${max} bytes`);
   }
   return raw;
 }
@@ -324,8 +324,8 @@ export function parseJsonObject(raw: string): Record<string, unknown> {
   return body as Record<string, unknown>;
 }
 
-export async function bodyJson(c: Context): Promise<Record<string, unknown>> {
-  return parseJsonObject(await boundedText(c));
+export async function bodyJson(c: Context, max?: number): Promise<Record<string, unknown>> {
+  return parseJsonObject(await boundedText(c, max));
 }
 
 export const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;

@@ -53,16 +53,18 @@ workspace deps, internals hidden behind `exports`.
 A storefront = React app fragment at `storefronts/<slug>/`, compiled by
 `@vendua/cli` to a static artifact. No server code, no framework choice.
 
-- **Required**: `vendua.config.ts` (`defineStorefront`: `contract`, `ring`,
-  `tokens`, `overrides`, `routes`, `budgets`), `routes/index.tsx`, mounts
-  (`VenduaProvider` + `SystemSurfaces` + `/(vendua)/*` system routes + `v.js`
-  script tag).
+- **Required (Contract v2)**: `vendua.config.ts` (`defineStorefront`:
+  `contract: 2`, `tokens`, optional `overrides`/`paths`/`redirects`/`consent`,
+  `budgets`), `sections/` (store sections) + `templates/` (initial composition),
+  mounts (`VenduaProvider` + `SystemSurfaces` + `StorefrontRoutes` with the
+  `/(vendua)/*` Kernel pages + `v.js` script tag), the `vendua()` Vite plugin.
 - **Rules**: React only; commerce via primitives; no fetch/Core calls; no
   business rules; allow-listed deps only; no deep Kernel imports; no parallel
   cart/checkout UI; Kernel session utils for storage; no CSS targeting
   `v-*`/`[data-vendua]`.
-- **Free to control**: routes, layout, typography, motion (GSAP/Framer),
-  3D/WebGL, imagery, visual layer of every primitive/slot.
+- **Free to control**: its own sections' markup, layout, typography, motion
+  (GSAP/Framer), 3D/WebGL, imagery; the visual layer of every primitive, SDK
+  section (tokens, variants, parts) and slot. Copy and page order are data.
 - **Budgets** (enforced in conformance): initial JS ≤250 KB gzip (cap 400),
   total `/` transfer ≤1.5 MB (cap 2.5).
 - **Versioning**: `contract: N` integer; majors ≤1/year, always with codemod +

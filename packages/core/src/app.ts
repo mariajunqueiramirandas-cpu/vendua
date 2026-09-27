@@ -133,7 +133,9 @@ import * as rooms from './modules/rooms.ts';
 import { capLockTx, drain, flagCappedLeads, releaseInboxTx } from './agent/runner.ts';
 import { ingestInbound } from './agent/inbound.ts';
 import { ingestResendEvent, svixHeaders, svixVerified } from './agent/channels/email-inbound.ts';
-import { LOADER_JS } from './loader.ts';
+import { LOADER_JS } from '@vendua/loader';
+import { currentTemplatesTx, opsTx } from './modules/storefront-platform.ts';
+import { mountStorefrontPlatform } from './modules/storefront-routes.ts';
 import { log } from './platform/log.ts';
 
 const agentLog = log.child({ mod: 'agent' });
@@ -407,18 +409,27 @@ export function createApp({ sql, sessionSecret, controlSecret, autoDrain }: AppD
     });
   });
 
-  // Loader-facing cached snapshot per 05-system-surfaces.
+  // Loader-facing snapshot per 05-system-surfaces; `?templates=1` (the Kernel's
+  // read) adds the page composition so v.js's 30s poll stays small.
   storefront.get('/state', async (c) => {
     const tenant = c.get('tenant');
-    const settings = await withTenant(sql, tenant.id, (tx) => loadSettings(tx, tenant.id));
+    const withTemplates = c.req.query('templates') === '1';
+    const { settings, ops, templates } = await withTenant(sql, tenant.id, async (tx) => ({
+      settings: await loadSettings(tx, tenant.id),
+      ops: await opsTx(tx, tenant.id),
+      templates: withTemplates ? await currentTemplatesTx(tx, tenant.id) : undefined,
+    }));
     const status = currentStatus(settings);
     const notices = composeNotices(tenant.slug, settings, status);
     return c.json({
+      version: 1,
       store: {
         status: status.status,
         ...(status.resumesAt ? { resumesAt: status.resumesAt } : {}),
       },
       notices: notices.filter((n) => n.severity === 'blocking' || n.kind === 'emergency'),
+      loader: ops.loader,
+      ...(templates ? { templates } : {}),
     });
   });
 
@@ -665,6 +676,12 @@ export function createApp({ sql, sessionSecret, controlSecret, autoDrain }: AppD
           values (${tenant.id}, 'order.placed', ${tx.json({ orderId, number })})
         `;
         await tx`update carts set status = 'completed', updated_at = now() where id = ${cartId}`;
+        // authoritative funnel event (15-analytics) — the cart id is the session scope
+        await tx`
+          insert into analytics_events (tenant_id, name, at, session_id, props)
+          values (${tenant.id}, 'order_placed', now(), ${cartId},
+            ${tx.json({ order_id: orderId, value: cart.totals.subtotalCents + deliveryFee, method: body.payment.method })})
+        `;
         return orderId;
       })();
       const view = await loadOrderView(tx, tenant.id, order, cartId);
@@ -2373,6 +2390,18 @@ export function createApp({ sql, sessionSecret, controlSecret, autoDrain }: AppD
     '.map': 'application/json',
     '.txt': 'text/plain; charset=utf-8',
   };
+  // before the SPA catch-all below, or its GET /control/* shadows the staff API
+  mountStorefrontPlatform({
+    app,
+    storefront,
+    checkout,
+    sql,
+    controlGate,
+    requireIdemKey,
+    idempotency,
+    trustProxy,
+  });
+
   app.get('/control', (c) => c.redirect('/control/'));
   app.get('/control/*', async (c) => {
     const path = new URL(c.req.url).pathname;
