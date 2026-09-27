@@ -303,6 +303,49 @@ export function newLeadModesOf(agentSetting: unknown): NewLeadModes {
   };
 }
 
+/** What the pairing-time WhatsApp history sync may do. Defaults keep the original
+ *  behavior: every DM chat in the phone becomes a lead. */
+export interface WhatsappHistory {
+  /** 'leads' = unknown contacts become leads; 'existing' = only attach to leads we
+   *  already have; 'off' = drop the history entirely */
+  mode: 'leads' | 'existing' | 'off';
+  /** skip messages older than N days; 0 = no limit */
+  maxAgeDays: number;
+  /** agent mode for a lead minted from history — 'inbound' follows agent.newLeadMode.inbound.
+   *  Old chats are often friends/clients, so 'off' keeps the agent away until staff opts in. */
+  leadMode: 'inbound' | 'draft' | 'off';
+}
+export const DEFAULT_WHATSAPP_HISTORY: WhatsappHistory = {
+  mode: 'leads',
+  maxAgeDays: 0,
+  leadMode: 'inbound',
+};
+const WA_HISTORY_MODES = ['leads', 'existing', 'off'] as const;
+const WA_HISTORY_LEAD_MODES = ['inbound', 'draft', 'off'] as const;
+export const WA_HISTORY_MAX_AGE_DAYS = 3650;
+
+/** `whatsapp_history` with defaults — bad fields fall back instead of breaking ingest. */
+export function whatsappHistoryOf(stored: unknown): WhatsappHistory {
+  const o =
+    stored && typeof stored === 'object' && !Array.isArray(stored)
+      ? (stored as Record<string, unknown>)
+      : {};
+  const d = DEFAULT_WHATSAPP_HISTORY;
+  const age = o.maxAgeDays;
+  return {
+    mode: (WA_HISTORY_MODES as readonly unknown[]).includes(o.mode)
+      ? (o.mode as WhatsappHistory['mode'])
+      : d.mode,
+    maxAgeDays:
+      typeof age === 'number' && Number.isInteger(age) && age >= 0 && age <= WA_HISTORY_MAX_AGE_DAYS
+        ? age
+        : d.maxAgeDays,
+    leadMode: (WA_HISTORY_LEAD_MODES as readonly unknown[]).includes(o.leadMode)
+      ? (o.leadMode as WhatsappHistory['leadMode'])
+      : d.leadMode,
+  };
+}
+
 // shared bound — validateSetting, the `remember` tool and the discovery debrief all truncate to this
 export const AGENT_MEMORY_MAX_FACTS = 100;
 
@@ -531,6 +574,36 @@ export function validateSetting(key: string, value: unknown): void {
 
   if (key === 'staff') {
     normalizeStaff(value);
+    return;
+  }
+
+  if (key === 'whatsapp_history') {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) {
+      throw bad('*', 'must be an object');
+    }
+    const v = value as Record<string, unknown>;
+    for (const f of Object.keys(v)) {
+      if (!['mode', 'maxAgeDays', 'leadMode'].includes(f)) throw bad(f, 'is not a history field');
+    }
+    if (v.mode !== undefined && !(WA_HISTORY_MODES as readonly unknown[]).includes(v.mode)) {
+      throw bad('mode', `must be ${WA_HISTORY_MODES.join(' | ')}`);
+    }
+    if (
+      v.leadMode !== undefined &&
+      !(WA_HISTORY_LEAD_MODES as readonly unknown[]).includes(v.leadMode)
+    ) {
+      throw bad('leadMode', `must be ${WA_HISTORY_LEAD_MODES.join(' | ')}`);
+    }
+    const age = v.maxAgeDays;
+    if (
+      age !== undefined &&
+      (typeof age !== 'number' ||
+        !Number.isInteger(age) ||
+        age < 0 ||
+        age > WA_HISTORY_MAX_AGE_DAYS)
+    ) {
+      throw bad('maxAgeDays', `must be an integer in [0, ${WA_HISTORY_MAX_AGE_DAYS}]`);
+    }
     return;
   }
 

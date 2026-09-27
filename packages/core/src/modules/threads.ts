@@ -293,8 +293,12 @@ export async function addInboundMessage(
     /** history import: context-only record — no activity row, no
      *  cadence-floor clear, and ingestInbound never queues a reply. */
     historical?: boolean;
+    /** false = attach to an existing lead only; an unknown sender returns null */
+    createLead?: boolean;
+    /** agent mode for a lead minted here — defaults to agent.newLeadMode.inbound */
+    newLeadAgentMode?: 'off' | 'draft' | 'auto';
   },
-): Promise<InboundResult> {
+): Promise<InboundResult | null> {
   const body = str(input.body, 'body', 8000).trim();
   if (!body) throw new HttpError(422, 'BAD_REQUEST', 'body is required');
   const direction = input.direction ?? 'in';
@@ -399,6 +403,7 @@ export async function addInboundMessage(
     }
 
     let leadCreated = false;
+    if (!leadId && input.createLead === false) return null;
     if (!leadId) {
       const fallbackName = input.channel === 'whatsapp' ? whatsappNumber(from) : from;
       const name = str(input.fromName ?? fallbackName, 'name', 200) || fallbackName;
@@ -407,7 +412,9 @@ export async function addInboundMessage(
         source: `inbound:${input.channel}`,
         discovered_via: input.channel,
         // they wrote first — the workspace decides whether the agent answers live or drafts
-        agent_mode: newLeadModesOf(await getSettingTx<unknown>(tx, 'agent', null)).inbound,
+        agent_mode:
+          input.newLeadAgentMode ??
+          newLeadModesOf(await getSettingTx<unknown>(tx, 'agent', null)).inbound,
       };
       if (input.channel === 'email') fields.email = from;
       else if (input.channel === 'instagram') {
@@ -469,7 +476,7 @@ export async function addInboundMessage(
 
     return { leadId, threadId: thread.id, messageId: message.id, leadCreated, alreadySeen: false };
   });
-  if (!result.alreadySeen) {
+  if (result && !result.alreadySeen) {
     emitControlEvent('thread.message', result.threadId);
     emitControlEvent('lead.change', result.leadId);
   }

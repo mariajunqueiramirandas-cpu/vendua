@@ -4,6 +4,7 @@ import { SectionHead } from './bits.tsx';
 import { KINDS, WA_IDLE, type WaState } from './providers.ts';
 import { ProviderCard } from './ProviderCard.tsx';
 import { useIgLogout, useSaveIntegration, useWaLogout } from './queries.ts';
+import { WhatsAppHistory } from './WhatsAppHistory.tsx';
 
 export function ConnectionsArea({
   integrations,
@@ -11,12 +12,18 @@ export function ConnectionsArea({
   wa,
   ig,
   provLive,
+  history,
+  onSaveHistory,
+  savingHistory,
 }: {
   integrations: Integration[];
   loading: boolean;
   wa: WaState;
   ig: IgStatus | null;
   provLive: number;
+  history: Record<string, unknown>;
+  onSaveHistory: (v: Record<string, unknown>) => void;
+  savingHistory: boolean;
 }) {
   const save = useSaveIntegration();
   const logout = useWaLogout();
@@ -46,6 +53,9 @@ export function ConnectionsArea({
                 />
               </div>
             ))}
+      </div>
+      <div className="mt-3">
+        <WhatsAppHistory value={history} onSave={onSaveHistory} saving={savingHistory} />
       </div>
     </section>
   );

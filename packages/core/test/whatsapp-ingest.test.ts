@@ -10,8 +10,10 @@ import { sweepOrphanInbox } from '../src/agent/dispatch.ts';
 import { adoptLidMappings, composeMessageTx } from '../src/modules/threads.ts';
 import {
   DEFAULT_GUARDRAILS,
+  DEFAULT_WHATSAPP_HISTORY,
   phoneIsIgnored,
   validateSetting,
+  whatsappHistoryOf,
 } from '../src/modules/integrations.ts';
 import { controlTx } from '../src/modules/control.ts';
 import { subscribeControlEvents, type ControlEvent } from '../src/modules/control-events.ts';
@@ -53,6 +55,38 @@ describe('guardrails — ignoredPhones', () => {
     expect(phoneIsIgnored([], '5511999990000')).toBe(false);
     // the alias leg matches too (LID ↔ PN pairs)
     expect(phoneIsIgnored(list, 'not-a-number', '5511999990000')).toBe(true);
+  });
+});
+
+describe('settings — whatsapp_history', () => {
+  test('defaults keep the original import-everything behavior', () => {
+    expect(whatsappHistoryOf(null)).toEqual(DEFAULT_WHATSAPP_HISTORY);
+    expect(DEFAULT_WHATSAPP_HISTORY).toEqual({ mode: 'leads', maxAgeDays: 0, leadMode: 'inbound' });
+  });
+
+  test('bad stored fields fall back field by field', () => {
+    expect(whatsappHistoryOf({ mode: 'nope', maxAgeDays: -3, leadMode: 'off' })).toEqual({
+      mode: 'leads',
+      maxAgeDays: 0,
+      leadMode: 'off',
+    });
+    expect(whatsappHistoryOf({ mode: 'existing', maxAgeDays: 30 })).toMatchObject({
+      mode: 'existing',
+      maxAgeDays: 30,
+    });
+  });
+
+  test('validateSetting guards every field', () => {
+    expect(() =>
+      validateSetting('whatsapp_history', { mode: 'off', maxAgeDays: 90, leadMode: 'draft' }),
+    ).not.toThrow();
+    expect(() => validateSetting('whatsapp_history', {})).not.toThrow();
+    expect(() => validateSetting('whatsapp_history', [])).toThrow();
+    expect(() => validateSetting('whatsapp_history', { mode: 'all' })).toThrow();
+    expect(() => validateSetting('whatsapp_history', { leadMode: 'auto' })).toThrow();
+    expect(() => validateSetting('whatsapp_history', { maxAgeDays: 1.5 })).toThrow();
+    expect(() => validateSetting('whatsapp_history', { maxAgeDays: 99999 })).toThrow();
+    expect(() => validateSetting('whatsapp_history', { extra: 1 })).toThrow();
   });
 });
 
@@ -104,9 +138,125 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('whatsapp history + ignore list 
       on conflict (key) do update set value = excluded.value
     `;
 
+  const setHistory = (v: Record<string, unknown>) =>
+    sql`
+      insert into control_settings (key, value) values ('whatsapp_history', ${sql.json(v as never)})
+      on conflict (key) do update set value = excluded.value
+    `;
+  const freshJid = () =>
+    `55119${crypto.randomUUID().replace(/\D/g, '').slice(0, 8)}@s.whatsapp.net`;
+  const leadsFor = (jid: string) => sql<{ agent_mode: string }[]>`
+    select agent_mode from leads
+    where regexp_replace(coalesce(whatsapp,''),'\\D','','g') = ${jid.replace(/\D/g, '')}
+  `;
+
   afterEach(async () => {
-    await sql`delete from control_settings where key = 'guardrails'`;
+    await sql`delete from control_settings where key in ('guardrails', 'whatsapp_history')`;
     await sql`update agent_runs set status = 'canceled' where status = 'queued'`;
+  });
+
+  test("whatsapp_history 'off' drops the import; live messages still land", async () => {
+    await migrate(sql, MIGRATIONS);
+    await setHistory({ mode: 'off' });
+    const jid = freshJid();
+    const hist = await ingestInbound(sql, {
+      channel: 'whatsapp',
+      from: jid,
+      body: 'conversa antiga',
+      providerMessageId: `wh-off-1-${pmRun}`,
+      historical: true,
+    });
+    expect(hist).toEqual({ ignored: 'histórico do whatsapp desligado' });
+    expect(await leadsFor(jid)).toHaveLength(0);
+    const live = await ingestInbound(sql, {
+      channel: 'whatsapp',
+      from: jid,
+      body: 'oi, agora ao vivo',
+      providerMessageId: `wh-off-2-${pmRun}`,
+    });
+    expect('ignored' in live).toBe(false);
+  });
+
+  test("whatsapp_history 'existing' attaches to known leads only", async () => {
+    await migrate(sql, MIGRATIONS);
+    await setHistory({ mode: 'existing' });
+    const unknown = freshJid();
+    const res = await ingestInbound(sql, {
+      channel: 'whatsapp',
+      from: unknown,
+      body: 'contato desconhecido',
+      providerMessageId: `wh-ex-1-${pmRun}`,
+      historical: true,
+    });
+    expect(res).toEqual({ ignored: 'histórico de contato sem lead' });
+    expect(await leadsFor(unknown)).toHaveLength(0);
+
+    const known = freshJid();
+    const live = await ingestInbound(sql, {
+      channel: 'whatsapp',
+      from: known,
+      body: 'oi',
+      providerMessageId: `wh-ex-2-${pmRun}`,
+    });
+    if ('ignored' in live) throw new Error('unexpected ignore');
+    const hist = await ingestInbound(sql, {
+      channel: 'whatsapp',
+      from: known,
+      body: 'mensagem da semana passada',
+      providerMessageId: `wh-ex-3-${pmRun}`,
+      historical: true,
+    });
+    if ('ignored' in hist) throw new Error('known lead should take history');
+    expect(hist.leadId).toBe(live.leadId);
+    expect(hist.leadCreated).toBe(false);
+  });
+
+  test('whatsapp_history maxAgeDays skips old messages, keeps recent ones', async () => {
+    await migrate(sql, MIGRATIONS);
+    await setHistory({ maxAgeDays: 30 });
+    const jid = freshJid();
+    const old = await ingestInbound(sql, {
+      channel: 'whatsapp',
+      from: jid,
+      body: 'de dois meses atrás',
+      providerMessageId: `wh-age-1-${pmRun}`,
+      historical: true,
+      sentAt: new Date(Date.now() - 60 * 86_400_000),
+    });
+    expect(old).toEqual({ ignored: 'histórico com mais de 30 dias' });
+    expect(await leadsFor(jid)).toHaveLength(0);
+    const recent = await ingestInbound(sql, {
+      channel: 'whatsapp',
+      from: jid,
+      body: 'de ontem',
+      providerMessageId: `wh-age-2-${pmRun}`,
+      historical: true,
+      sentAt: new Date(Date.now() - 86_400_000),
+    });
+    expect('ignored' in recent).toBe(false);
+  });
+
+  test('whatsapp_history leadMode sets the agent mode of history-minted leads', async () => {
+    await migrate(sql, MIGRATIONS);
+    await setHistory({ leadMode: 'off' });
+    const jid = freshJid();
+    await ingestInbound(sql, {
+      channel: 'whatsapp',
+      from: jid,
+      body: 'amigo antigo',
+      providerMessageId: `wh-lm-1-${pmRun}`,
+      historical: true,
+    });
+    expect((await leadsFor(jid))[0]?.agent_mode).toBe('off');
+    // a live message minting a lead still follows agent.newLeadMode
+    const live = freshJid();
+    await ingestInbound(sql, {
+      channel: 'whatsapp',
+      from: live,
+      body: 'oi',
+      providerMessageId: `wh-lm-2-${pmRun}`,
+    });
+    expect((await leadsFor(live))[0]?.agent_mode).not.toBe('off');
   });
 
   test('history ingest records the message but queues no reply run', async () => {

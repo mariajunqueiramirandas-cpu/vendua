@@ -1,7 +1,12 @@
 import type { Sql } from '../platform/db.ts';
 import { controlTx } from '../modules/control.ts';
 import { emitControlEvent } from '../modules/control-events.ts';
-import { getGuardrails, phoneIsIgnored } from '../modules/integrations.ts';
+import {
+  getGuardrails,
+  getSetting,
+  phoneIsIgnored,
+  whatsappHistoryOf,
+} from '../modules/integrations.ts';
 import { addInboundMessage, type Channel, type InboundResult } from '../modules/threads.ts';
 import { capLockTx, drain, releaseInboxTx } from './runner.ts';
 import { requestAgentTx } from './dispatch.ts';
@@ -53,6 +58,19 @@ export async function ingestInbound(
   if (phoneIsIgnored([...ignoredPhones, ...staffPhones], input.from, input.fromAlias)) {
     return { ignored: `número ignorado: ${input.from}` };
   }
+  // whatsapp_history scopes the pairing-time import; live messages are never filtered here
+  const history =
+    input.historical && input.channel === 'whatsapp'
+      ? whatsappHistoryOf(await getSetting<unknown>(sql, 'whatsapp_history', null))
+      : null;
+  if (history?.mode === 'off') return { ignored: 'histórico do whatsapp desligado' };
+  if (
+    history?.maxAgeDays &&
+    input.sentAt &&
+    input.sentAt.getTime() < Date.now() - history.maxAgeDays * 86_400_000
+  ) {
+    return { ignored: `histórico com mais de ${history.maxAgeDays} dias` };
+  }
   const res = await addInboundMessage(sql, {
     channel: input.channel,
     from: input.from,
@@ -65,7 +83,14 @@ export async function ingestInbound(
     ...(input.direction ? { direction: input.direction } : {}),
     ...(input.sentAt ? { sentAt: input.sentAt } : {}),
     ...(input.historical ? { historical: input.historical } : {}),
+    ...(history
+      ? {
+          createLead: history.mode === 'leads',
+          ...(history.leadMode !== 'inbound' ? { newLeadAgentMode: history.leadMode } : {}),
+        }
+      : {}),
   });
+  if (!res) return { ignored: 'histórico de contato sem lead' };
 
   // Provider retry of an already-recorded message: no side effects again.
   if (res.alreadySeen) return res;
