@@ -299,13 +299,14 @@ function DayRow({
       <span className="w-9 shrink-0 pt-1.5 text-xs font-medium text-muted-foreground pointer-coarse:pt-2.5">
         {label}
       </span>
-      <div className="flex min-w-0 flex-1 flex-wrap items-center gap-1.5">
+      <div className="flex min-w-0 flex-1 flex-col gap-1.5">
         {wins.map((w, i) => {
           const bad = !w[0] || !w[1] || w[0] >= w[1];
           return (
-            <span
+            // grid + min-w-0 inputs: native time pickers (Android) are wider than a phone column
+            <div
               key={i}
-              className="inline-flex items-center gap-1 rounded-md border bg-muted/40 py-0.5 pr-0.5 pl-1 aria-invalid:border-destructive"
+              className="grid max-w-72 grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)_auto] items-center gap-1 rounded-md border bg-muted/40 py-0.5 pr-0.5 pl-1 aria-invalid:border-destructive"
               aria-invalid={bad}
             >
               <input
@@ -313,7 +314,7 @@ function DayRow({
                 aria-label={`${label} abre`}
                 value={w[0]}
                 onChange={(e) => set(i, [e.target.value, w[1]])}
-                className="h-7 bg-transparent px-1 text-base tnum outline-none md:text-xs pointer-coarse:h-9"
+                className="h-7 w-full min-w-0 bg-transparent px-1 text-base tnum outline-none md:text-xs pointer-coarse:h-9"
               />
               <span className="text-muted-foreground">–</span>
               <input
@@ -321,7 +322,7 @@ function DayRow({
                 aria-label={`${label} fecha`}
                 value={w[1]}
                 onChange={(e) => set(i, [w[0], e.target.value])}
-                className="h-7 bg-transparent px-1 text-base tnum outline-none md:text-xs pointer-coarse:h-9"
+                className="h-7 w-full min-w-0 bg-transparent px-1 text-base tnum outline-none md:text-xs pointer-coarse:h-9"
               />
               <Button
                 size="icon-sm"
@@ -332,14 +333,19 @@ function DayRow({
               >
                 <X />
               </Button>
-            </span>
+            </div>
           );
         })}
-        {wins.length === 0 && <span className="text-xs text-muted-foreground">fechado</span>}
+        {wins.length === 0 && (
+          <span className="pt-1.5 text-xs text-muted-foreground pointer-coarse:pt-2.5">
+            fechado
+          </span>
+        )}
       </div>
       <Button
         size="icon-sm"
         variant="outline"
+        className="shrink-0"
         title={full ? 'máx 6 janelas/dia' : 'adicionar janela'}
         aria-label="adicionar janela"
         disabled={full}

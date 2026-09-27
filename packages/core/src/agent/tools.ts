@@ -1406,7 +1406,7 @@ export async function executeTool(
     case 'send_message': {
       const leadId = String(args.leadId);
       const chanArg = args.channel ? channel(args.channel) : null;
-      // claimed — retries replay; the advisory lock serializes concurrent sends so the daily cap sees the winner's row.
+      // claimed — retries replay; the advisory lock serializes concurrent sends so the unanswered cap sees the winner's row.
       type SendBody =
         | { blocked: true; reason: string | undefined; use?: string | null }
         | {

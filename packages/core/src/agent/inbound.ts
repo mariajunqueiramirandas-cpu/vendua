@@ -14,7 +14,7 @@ import { automationAllowedTx } from './policy.ts';
 import { retireWakeupsOnInboundTx } from './wakeups.ts';
 import { RETIRED_BY_INBOUND } from './sources.ts';
 import { log } from '../platform/log.ts';
-import { staffWhatsappsTx } from '../modules/staff.ts';
+import { blockedPhonesTx } from '../modules/staff.ts';
 
 const agentLog = log.child({ mod: 'agent' });
 
@@ -51,11 +51,11 @@ export async function ingestInbound(
     historical?: boolean;
   },
 ): Promise<IngestResult> {
-  const { ignoredPhones, inboundReplyDelayMin } = await getGuardrails(sql);
-  // Staff/founder numbers drop before a lead is ever minted — the agent
+  const { inboundReplyDelayMin } = await getGuardrails(sql);
+  // Team numbers drop before a lead is ever minted — the agent
   // must never see them as leads, in either direction.
-  const staffPhones = await controlTx(sql, staffWhatsappsTx);
-  if (phoneIsIgnored([...ignoredPhones, ...staffPhones], input.from, input.fromAlias)) {
+  const blocked = await controlTx(sql, blockedPhonesTx);
+  if (phoneIsIgnored(blocked, input.from, input.fromAlias)) {
     return { ignored: `número ignorado: ${input.from}` };
   }
   // whatsapp_history scopes the pairing-time import; live messages are never filtered here
