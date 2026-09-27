@@ -109,7 +109,7 @@ Boot order is handled by healthchecks: `db` healthy → `core` migrates
 | `db`          | postgres:16-alpine                                         | internal only  |
 | `core`        | `packages/core/Dockerfile` (Bun)                           | 8787, internal |
 | `quero-pudim` | `storefronts/Dockerfile` `target: storefront` (vite→nginx) | 80             |
-| `crm`         | `apps/control/Dockerfile` (nginx + conf baked in)           | 80             |
+| `crm`         | `apps/control/Dockerfile` (nginx + conf baked in)          | 80             |
 | `site`        | `storefronts/Dockerfile` `target: site` (SvelteKit→nginx)  | 80             |
 | `ig-sidecar`  | `services/ig-sidecar/Dockerfile` (Go)                      | 8790, internal |
 
