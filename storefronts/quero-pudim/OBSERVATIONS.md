@@ -205,7 +205,7 @@ wa.me stand-ins):
 | Structured address       | street/number/complement/reference/cep on checkout → `delivery.addressParts`                               |
 | Loyalty card             | stamp card; delivered orders stamp it and mint a personal reward coupon                                    |
 | `?cart=` share links     | `mutations.share()` → `?cart=CODE`; the provider imports it; "pedir de novo" reuses the path               |
-| Realtime order updates   | `useOrder` live by default — a Kernel-owned long poll woken by `pg_notify`                                 |
+| Realtime order updates   | `useOrder` live by default — Kernel-owned SSE (long-poll fallback) woken by `pg_notify`                    |
 
 This live copy needs no edit: the Kernel pages and SDK sections carry every flow;
 the golden shows the two optional catalog-card tweaks.

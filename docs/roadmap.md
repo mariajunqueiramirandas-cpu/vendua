@@ -329,9 +329,10 @@ How each landed (Core migration `0051_commerce_completeness.sql`, Kernel 1.2):
   `delivery.addressParts`; orders keyed by a normalized `customer_phone`.
   Orders-by-phone uses customer tokens ([ADR 0019](adr/0019-customer-identity-without-accounts.md)):
   the checkout device is trusted, any other device proves the phone with an order
-  number, and only summaries are exposed. Realtime is a Kernel-owned long poll
-  (`GET /orders/:id?since&wait`) woken by `pg_notify` on commit — no polling cost
-  while idle, works across replicas, no EventSource.
+  number, and only summaries are exposed. Realtime is Kernel-owned SSE (`GET /orders/:id/events`;
+  the long poll `GET /orders/:id?since&wait` is the fallback) woken by `pg_notify` on commit — no polling cost
+  while idle, works across replicas; the Kernel reads the stream over a
+  header-authed fetch because EventSource can't send the session token.
 - **2b** — `product_media` (`imageUrl`, `gallery[]`); tracked stock with a
   Core-computed `lowStock`, drawn at checkout under row locks (kits draw their
   picks), returned on cancel, and a restock wakes the waitlist; combos as
@@ -494,7 +495,7 @@ Two landed during Phase-0 review; the rest landed in Phase 2.
 | Order notes                          | ✅ Landed — `notes` on checkout → order               |
 | Structured address                   | ✅ Landed — `delivery.addressParts`                   |
 | Orders-by-phone                      | ✅ Landed — `useOrders(phone)` (ADR 0019)             |
-| Realtime order updates               | ✅ Landed — live `useOrder` (long poll + NOTIFY)      |
+| Realtime order updates               | ✅ Landed — live `useOrder` (SSE + NOTIFY)            |
 | `imageUrl` / gallery                 | ✅ Landed — `product_media`, `catalog.Gallery`        |
 | Stock quantity + low-stock           | ✅ Landed — drawn at checkout, returned on cancel     |
 | Combos / kits                        | ✅ Landed — `kind: 'combo'`, `catalog.ComboPicker`    |

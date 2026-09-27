@@ -206,9 +206,11 @@ export function useCart(): {
 const TERMINAL_ORDER = new Set(['delivered', 'cancelled', 'refunded']);
 const FIRST_WAIT_DELAY_MS = 1500;
 
-/** Kernel 1.2: live by default — a Kernel-owned long poll (no storefront polling,
- *  no EventSource). Pauses while the tab is hidden, stops at a terminal state,
- *  backs off on errors. `{ live: false }` restores the plain read. */
+/** Live by default (Kernel 1.2; SSE since 1.3): a Kernel-owned stream of the
+ *  order — no storefront polling. It opens once the page settles, drops while
+ *  the tab is hidden, reconnects with backoff, stops at a terminal state, and
+ *  falls back to Core's long poll when no event stream gets through (an old
+ *  Core, a buffering proxy). `{ live: false }` restores the plain read. */
 export function useOrder(
   id: string,
   opts: { live?: boolean } = {},
@@ -217,35 +219,53 @@ export function useOrder(
   loading: boolean;
   error: QueryError | undefined;
   refetch: () => void;
-  /** a live wait is open right now */
+  /** a live connection is open right now */
   live: boolean;
+  /** Kernel 1.3 — which transport carries it */
+  transport: 'stream' | 'poll' | null;
 } {
   const { api } = useKernel();
   const q = useQuery(`order:${id}`, () => api.order(id));
   const [fresh, setFresh] = useState<Order>();
   const [live, setLive] = useState(false);
+  const [transport, setTransport] = useState<'stream' | 'poll' | null>(null);
   const armed = useRef(false);
   const want = opts.live !== false;
-  // whichever read is newer wins: the live wait's answer or a refetch
+  // whichever read is newer wins: the live answer or a refetch
   const own = fresh?.id === id ? fresh : undefined;
   const current = own && (own.version ?? 0) >= (q.data?.version ?? 0) ? own : (q.data ?? own);
-  const version = current?.version;
-  const state = current?.state;
+  const versionRef = useRef<number | undefined>(undefined);
+  const seen = current?.version;
+  if (seen !== undefined && seen > (versionRef.current ?? 0)) versionRef.current = seen;
+  // Core without Kernel-1.2 orders (no version) keeps the plain read
+  const ready = current?.version !== undefined;
+  const terminal = current?.state ? TERMINAL_ORDER.has(current.state) : false;
 
   useEffect(() => {
     setFresh(undefined);
     armed.current = false;
+    versionRef.current = undefined;
   }, [id]);
 
   useEffect(() => {
-    // Core without Kernel-1.2 orders (no version) keeps the plain read
-    if (!want || version === undefined || !state || TERMINAL_ORDER.has(state)) return;
-    const ctl = new AbortController();
+    if (!want || !ready || terminal) return;
+    const master = new AbortController();
     let stopped = false;
     let failures = 0;
+    let mode: 'stream' | 'poll' = 'stream';
     const doc = globalThis.document;
     const visible = () => !doc || doc.visibilityState !== 'hidden';
-    const loop = async (since: number) => {
+    const sleep = (ms: number) =>
+      new Promise<void>((r) => {
+        const t = setTimeout(r, ms);
+        master.signal.addEventListener('abort', () => (clearTimeout(t), r()), { once: true });
+      });
+    const accept = (o: Order) => {
+      if ((o.version ?? 0) <= (versionRef.current ?? 0)) return;
+      versionRef.current = o.version;
+      setFresh(o);
+    };
+    const loop = async () => {
       while (!stopped) {
         if (!visible()) {
           setLive(false);
@@ -257,42 +277,61 @@ export function useOrder(
               }
             };
             doc?.addEventListener('visibilitychange', on);
-            ctl.signal.addEventListener('abort', on, { once: true });
+            master.signal.addEventListener('abort', on, { once: true });
           });
           continue;
         }
+        // one connection per iteration; hiding the tab closes it
+        const round = new AbortController();
+        const kill = () => round.abort();
+        master.signal.addEventListener('abort', kill, { once: true });
+        const onHide = () => {
+          if (!visible()) kill();
+        };
+        doc?.addEventListener('visibilitychange', onHide);
         setLive(true);
+        setTransport(mode);
         try {
-          const r = await api.orderWait(id, since, 25, ctl.signal);
-          failures = 0;
-          if (r.changed && r.order.version !== undefined) {
-            setFresh(r.order);
-            // the effect re-arms on the new version (or stops at a terminal state)
-            return;
+          if (mode === 'stream') {
+            await api.orderStream(id, versionRef.current ?? 0, accept, round.signal);
+            failures = 0;
+            // Core closed it (lifetime or terminal) — a beat before reconnecting
+            await sleep(1000);
+          } else {
+            const r = await api.orderWait(id, versionRef.current ?? 0, 25, round.signal);
+            failures = 0;
+            if (r.changed) accept(r.order);
           }
-        } catch {
+        } catch (err) {
           if (stopped) return;
+          if (round.signal.aborted) continue; // hidden tab, not a failure
+          if (mode === 'stream' && err instanceof ApiError && err.code === 'STREAM_UNAVAILABLE') {
+            mode = 'poll';
+            continue;
+          }
           failures++;
           setLive(false);
-          await new Promise((r) => setTimeout(r, Math.min(30_000, 1000 * 2 ** failures)));
+          await sleep(Math.min(30_000, 1000 * 2 ** failures));
+        } finally {
+          master.signal.removeEventListener('abort', kill);
+          doc?.removeEventListener('visibilitychange', onHide);
         }
       }
     };
-    // the first wait opens after the page settles: load stays quick and tools that
-    // wait for network idle (crawlers, screenshots, conformance) aren't held forever
-    const start = armed.current
-      ? Promise.resolve()
-      : new Promise<void>((r) => setTimeout(r, FIRST_WAIT_DELAY_MS));
+    // the first connection opens after the page settles: load stays quick and tools
+    // that wait for network idle (crawlers, screenshots, conformance) aren't held forever
+    const start = armed.current ? Promise.resolve() : sleep(FIRST_WAIT_DELAY_MS);
     armed.current = true;
     void start.then(() => {
-      if (!stopped) void loop(version);
+      if (!stopped) void loop();
     });
     return () => {
       stopped = true;
-      ctl.abort();
+      master.abort();
       setLive(false);
+      setTransport(null);
     };
-  }, [api, id, want, version, state]);
+  }, [api, id, want, ready, terminal]);
 
   return {
     order: current,
@@ -300,6 +339,7 @@ export function useOrder(
     error: current ? undefined : q.error,
     refetch: q.refetch,
     live,
+    transport,
   };
 }
 

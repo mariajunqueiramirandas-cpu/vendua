@@ -782,6 +782,66 @@ export function createApi(baseUrl = '') {
         headers: bearer ? { authorization: `Bearer ${bearer}` } : {},
       }).then((r) => r.order);
     },
+    /** Kernel 1.3 — SSE over fetch (the session token rides as Bearer, which
+     *  EventSource can't send). Calls `onOrder` per `order` event; resolves when
+     *  Core closes the stream (terminal state or lifetime), throws
+     *  STREAM_UNAVAILABLE when there's no event stream to read. */
+    orderStream: async (
+      id: string,
+      since: number,
+      onOrder: (order: Order) => void,
+      signal?: AbortSignal,
+    ): Promise<void> => {
+      const bearer = orderTokenMem.get(id) ?? readOrderTokens()[id] ?? token;
+      let res: Response;
+      try {
+        res = await fetch(co(`/orders/${id}/events`), {
+          headers: {
+            accept: 'text/event-stream',
+            ...(bearer ? { authorization: `Bearer ${bearer}` } : {}),
+            ...(since > 0 ? { 'last-event-id': String(since) } : {}),
+          },
+          ...(signal ? { signal } : {}),
+        });
+      } catch (err) {
+        if (signal?.aborted) throw err;
+        throw new ApiError(0, 'NETWORK_ERROR', 'could not reach the store backend');
+      }
+      const type = res.headers.get('content-type') ?? '';
+      if (!res.ok || !res.body || !type.includes('text/event-stream')) {
+        const body = (await res.json().catch(() => ({}))) as ApiErrorBody;
+        // a Core without the route answers the generic NOT_FOUND — same as "no stream here"
+        const code = body?.error?.code;
+        throw new ApiError(
+          res.status,
+          res.ok || !code || code === 'NOT_FOUND' ? 'STREAM_UNAVAILABLE' : code,
+          body?.error?.message ?? 'no event stream',
+        );
+      }
+      const reader = res.body.getReader();
+      const dec = new TextDecoder();
+      let buf = '';
+      for (;;) {
+        const { value, done } = await reader.read();
+        if (done) return;
+        buf += dec.decode(value, { stream: true }).replace(/\r\n?/g, '\n');
+        for (let i = buf.indexOf('\n\n'); i >= 0; i = buf.indexOf('\n\n')) {
+          const frame = buf.slice(0, i);
+          buf = buf.slice(i + 2);
+          let event = 'message';
+          const data: string[] = [];
+          for (const line of frame.split('\n')) {
+            if (!line || line.startsWith(':')) continue;
+            const at = line.indexOf(':');
+            const field = at < 0 ? line : line.slice(0, at);
+            const v = at < 0 ? '' : line.slice(at + 1).replace(/^ /, '');
+            if (field === 'event') event = v;
+            else if (field === 'data') data.push(v);
+          }
+          if (event === 'order' && data.length) onOrder(JSON.parse(data.join('\n')) as Order);
+        }
+      }
+    },
     /** Kernel 1.2 — long poll: resolves when the order moves past `since` or after `waitS` */
     orderWait: (id: string, since: number, waitS = 25, signal?: AbortSignal) => {
       const bearer = orderTokenMem.get(id) ?? readOrderTokens()[id] ?? token;
@@ -828,6 +888,8 @@ export const ERROR_CODES = [
   'IDEMPOTENCY_IN_PROGRESS',
   'RATE_LIMITED',
   'NETWORK_ERROR',
+  // Kernel-side: Core (or a proxy) served no event stream — live orders fall back to the long poll
+  'STREAM_UNAVAILABLE',
   // storefront platform (Phase 1b)
   'INVALID_NOTIFY',
   'INVALID_PAGE',

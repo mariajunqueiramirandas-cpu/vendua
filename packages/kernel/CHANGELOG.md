@@ -3,6 +3,18 @@
 Semver, per docs/architecture/11-backward-compatibility.md: minors and patches
 never need a storefront edit; a major only ships with a Contract major.
 
+## 1.3.0
+
+- Live orders over **SSE**: `useOrder` reads Core's `GET /checkout/v1/orders/:id/events`
+  through a header-authed `fetch` (EventSource can't send the session token). One
+  stream carries every change; it drops while the tab is hidden, reconnects with
+  backoff and `Last-Event-ID`, and falls back to the 1.2 long poll when no event
+  stream gets through (an older Core, a buffering proxy). `useOrder` also returns
+  `transport: 'stream' | 'poll' | null`.
+- `checkout.SchedulePicker`'s default is a month **calendar** (`Calendar` from
+  `@vendua/ui-defaults`): only Core's bookable days select, bounded month
+  navigation, roving-tabindex keyboard grid (arrows, Home/End, PageUp/PageDown).
+
 ## 1.2.0
 
 Commerce completeness (roadmap Phase 2) — additive; no storefront edit needed.

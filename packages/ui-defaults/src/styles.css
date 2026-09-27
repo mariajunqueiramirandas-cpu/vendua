@@ -1172,15 +1172,81 @@
     width: 100%;
     min-width: 0;
   }
-  .v-dates {
-    display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
-    gap: 8px;
+  .v-calendar {
+    width: 100%;
+    max-width: 360px;
+    margin-block: 8px 12px;
   }
-  .v-dates .v-option.v-date {
-    padding: 8px 10px;
-    column-gap: 8px;
-    font-size: 0.875rem;
+  .v-calendar-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    margin-bottom: 8px;
+  }
+  .v-calendar-month {
+    margin: 0;
+    font-weight: 600;
+  }
+  .v-calendar-nav {
+    width: 40px;
+    height: 40px;
+    border-radius: 50%;
+    border: 1px solid color-mix(in srgb, var(--v-color-text, #1c1b1a) 16%, transparent);
+    background: var(--v-color-surface, #fff);
+    color: inherit;
+    font-size: 1.25rem;
+    cursor: pointer;
+  }
+  .v-calendar-nav:disabled {
+    opacity: 0.35;
+    cursor: default;
+  }
+  .v-calendar-grid {
+    width: 100%;
+    border-collapse: collapse;
+    table-layout: fixed;
+  }
+  .v-calendar-grid th {
+    padding-bottom: 6px;
+    font-size: 0.75rem;
+    font-weight: 500;
+    color: var(--v-color-muted, #6e6a64);
+    text-transform: uppercase;
+  }
+  .v-calendar-grid td {
+    padding: 2px;
+    text-align: center;
+  }
+  .v-calendar-day {
+    width: 100%;
+    max-width: 44px;
+    aspect-ratio: 1;
+    border-radius: 50%;
+    border: 1px solid transparent;
+    background: color-mix(in srgb, var(--v-color-accent, #3f5e4e) 10%, transparent);
+    color: var(--v-color-text, #1c1b1a);
+    font: inherit;
+    font-variant-numeric: tabular-nums;
+    cursor: pointer;
+  }
+  .v-calendar-day[aria-disabled='true'] {
+    background: none;
+    color: var(--v-color-muted, #6e6a64);
+    opacity: 0.45;
+    cursor: default;
+  }
+  .v-calendar-day[data-today] {
+    border-color: color-mix(in srgb, var(--v-color-text, #1c1b1a) 30%, transparent);
+  }
+  .v-calendar-day[data-selected] {
+    background: var(--v-color-accent, #3f5e4e);
+    color: var(--v-color-on-accent, #fff);
+    font-weight: 600;
+  }
+  .v-calendar-day:focus-visible {
+    outline: var(--v-focus);
+    outline-offset: 2px;
   }
   .v-textarea {
     resize: vertical;

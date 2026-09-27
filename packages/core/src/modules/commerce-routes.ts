@@ -1,4 +1,5 @@
 import type { Context, Hono } from 'hono';
+import { streamSSE } from 'hono/streaming';
 import { withTenant, type Sql } from '../platform/db.ts';
 import {
   HttpError,
@@ -44,7 +45,14 @@ import {
 } from './customer.ts';
 import { normalizeCep, resolveZone, type CepLookup } from './geo.ts';
 import type { OrderHub } from './order-live.ts';
-import { ORDER_STATES, loadOrderView, transitionOrder, type OrderState } from './orders.ts';
+import {
+  ORDER_STATES,
+  TERMINAL_STATES,
+  loadOrderView,
+  transitionOrder,
+  type OrderState,
+  type OrderView,
+} from './orders.ts';
 import { normalizePixKey, type PixKeyType } from './pix.ts';
 import { setStock } from './stock.ts';
 import { subscribeNotifyTx } from './storefront-platform.ts';
@@ -72,6 +80,10 @@ interface Deps {
 }
 
 const CUSTOMER_HEADER = 'x-vendua-customer';
+// proxy idle timeouts sit at 30–60s; 20s keeps the stream warm
+const STREAM_HEARTBEAT_MS = 20_000;
+const STREAM_RECHECK_MS = 15_000;
+const STREAM_MAX_MS = 10 * 60_000;
 
 /** Phase 2 commerce surfaces (roadmap 2a–2c): public reads, checkout mutations, staff admin. */
 export function mountCommerce(d: Deps) {
@@ -283,6 +295,71 @@ export function mountCommerce(d: Deps) {
       return { status: 200, body: { cart: await loadCartView(tx, tenant.id, cartId), report } };
     }),
   );
+
+  // ── live order: SSE ────────────────────────────────────────────────────────
+
+  // One `order` event per new version (id = version): the current order on
+  // connect, then each change as pg_notify lands. Closes at a terminal state or
+  // after STREAM_MAX_MS (the Kernel reconnects). A 15s re-read covers a NOTIFY
+  // lost while LISTEN reconnects; `Last-Event-ID` skips a version already seen.
+  checkout.get('/orders/:id/events', async (c) => {
+    const tenant = c.get('tenant');
+    const cartId = await sessionCartId(c, sessionSecret);
+    const orderId = uuidParam(c, 'id');
+    const read = () =>
+      withTenant(sql, tenant.id, (tx) => loadOrderView(tx, tenant.id, orderId, cartId));
+    // 404 before the stream opens — a stream is only for an order this session owns
+    const first = await read();
+    const lastId = Number(c.req.header('last-event-id'));
+    const res = streamSSE(c, async (stream) => {
+      let sent = Number.isInteger(lastId) && lastId > 0 ? lastId : 0;
+      let finish!: () => void;
+      let closed = false;
+      const done = new Promise<void>((resolve) => {
+        finish = () => {
+          if (closed) return;
+          closed = true;
+          resolve();
+        };
+      });
+      stream.onAbort(finish);
+      const push = async (o: OrderView) => {
+        if (o.version > sent) {
+          sent = o.version;
+          await stream.writeSSE({ event: 'order', id: String(o.version), data: JSON.stringify(o) });
+        }
+        if (TERMINAL_STATES.has(o.state)) finish();
+      };
+      // serialized: two wake-ups never race a stale read past a fresh one
+      let chain = Promise.resolve();
+      const refresh = () => {
+        chain = chain.then(async () => {
+          if (closed) return;
+          try {
+            await push(await read());
+          } catch (err) {
+            commerceLog.warn({ err, orderId }, 'order stream read failed');
+            finish();
+          }
+        });
+      };
+      const unsubscribe = await d.orderHub.subscribe(orderId, refresh);
+      const beat = setInterval(() => void stream.write(':ka\n\n'), STREAM_HEARTBEAT_MS);
+      const recheck = setInterval(refresh, STREAM_RECHECK_MS);
+      const lifetime = setTimeout(finish, STREAM_MAX_MS);
+      // re-read after subscribing: a change between `first` and now isn't lost
+      await push(first);
+      refresh();
+      await done;
+      unsubscribe();
+      clearInterval(beat);
+      clearInterval(recheck);
+      clearTimeout(lifetime);
+    });
+    c.header('cache-control', 'no-cache, no-transform');
+    c.header('x-accel-buffering', 'no');
+    return c.newResponse(res.body);
+  });
 
   // ── customer (sem senha, sem cadastro) ─────────────────────────────────────
 

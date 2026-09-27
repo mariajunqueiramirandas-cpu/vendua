@@ -2,6 +2,7 @@ import { useMemo, useState } from 'react';
 import type { SlotProps } from '@vendua/kernel';
 import { COUPON_REASON, dayLabel, money } from './format.ts';
 import { qrMatrix, qrSvgPath } from './qr.ts';
+import { Calendar } from './calendar.tsx';
 
 // Kernel 1.2 slot defaults — kits, gallery, coupons, encomendas, notes, Pix,
 // order items, loyalty card, phone verification. Presentational only.
@@ -248,7 +249,6 @@ export function SchedulePicker({
   leadDays,
   error,
 }: SlotProps['checkout.SchedulePicker']) {
-  const shown = dates.slice(0, 14);
   return (
     <fieldset className="v-fieldset v-schedule" data-vendua="schedule" data-part="root">
       <legend className="v-legend">
@@ -259,26 +259,21 @@ export function SchedulePicker({
           Encomendas pedem {leadDays} {leadDays === 1 ? 'dia' : 'dias'} de antecedência.
         </p>
       ) : null}
-      {shown.length === 0 ? (
+      {dates.length === 0 ? (
         <p className="v-alert" role="status">
           Sem datas disponíveis agora.
         </p>
       ) : (
-        <div className="v-dates" role="radiogroup" aria-label="Datas disponíveis">
-          {shown.map((d) => (
-            <label key={d} className="v-option v-date" data-selected={d === value || undefined}>
-              <input
-                type="radio"
-                name="scheduled-for"
-                value={d}
-                checked={d === value}
-                onChange={() => onChange(d)}
-              />
-              <span className="v-option-label">{dayLabel(d)}</span>
-            </label>
-          ))}
-        </div>
+        <Calendar
+          available={dates}
+          value={value}
+          onChange={onChange}
+          label={required ? 'Data da encomenda' : 'Data do pedido'}
+        />
       )}
+      <p className="v-note" data-part="selected" role="status" aria-live="polite">
+        {value ? `Encomenda para ${dayLabel(value)}` : 'Escolha um dia disponível no calendário.'}
+      </p>
       {error ? (
         <p className="v-field-error" role="alert">
           {error}

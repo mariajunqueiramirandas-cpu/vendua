@@ -440,6 +440,50 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('commerce completeness (db)', ()
     expect(idle.body.changed).toBe(false);
   });
 
+  test('SSE: the stream sends the current order, then each new version as it commits', async () => {
+    const ctl2 = new AbortController();
+    const res = await app.request(`http://${host}/checkout/v1/orders/${orderId}/events`, {
+      headers: { host, authorization: `Bearer ${orderToken}` },
+      signal: ctl2.signal,
+    });
+    expect(res.status).toBe(200);
+    expect(res.headers.get('content-type')).toContain('text/event-stream');
+    const reader = res.body!.getReader();
+    const dec = new TextDecoder();
+    let buf = '';
+    const nextOrder = async () => {
+      for (;;) {
+        const i = buf.indexOf('\n\n');
+        if (i >= 0) {
+          const frame = buf.slice(0, i);
+          buf = buf.slice(i + 2);
+          const data = frame.split('\n').find((l) => l.startsWith('data:'));
+          if (frame.includes('event: order') && data) return JSON.parse(data.slice(5));
+          continue;
+        }
+        const { value, done } = await reader.read();
+        if (done) return null;
+        buf += dec.decode(value, { stream: true });
+      }
+    };
+    const first = await nextOrder();
+    expect(first).toMatchObject({ id: orderId, state: 'confirmed', version: 2 });
+    const t = Date.now();
+    await ctl('POST', `/orders/${orderId}/transition`, { to: 'preparing' });
+    const second = await nextOrder();
+    expect(second).toMatchObject({ state: 'preparing', version: 3 });
+    expect(Date.now() - t).toBeLessThan(3000);
+    ctl2.abort();
+    await reader.cancel().catch(() => {});
+
+    // another session's token can't open this order's stream
+    const other = await session();
+    const denied = await app.request(`http://${host}/checkout/v1/orders/${orderId}/events`, {
+      headers: { host, ...other },
+    });
+    expect(denied.status).toBe(404);
+  });
+
   test('customer: orders by phone need a token for that phone; verification by order number', async () => {
     const h = { 'x-vendua-customer': customerToken };
     expect((await call('GET', '/checkout/v1/customer/orders')).status).toBe(401);

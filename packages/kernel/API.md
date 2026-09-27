@@ -55,23 +55,24 @@ The `virtual:vendua/storefront` module is typed by the Kernel entry itself.
 hook), `useAnalytics` (`track('custom.<name>')`, consent-gated), `useConsent`,
 `useErrorSurface` (route a caught error to the default notice), `usePageContext`
 (page id + route params for sections/blocks), and since Kernel 1.2 `useOrders`,
-`useLoyalty`, `useCep`, `useWaitlist`.
+`useLoyalty`, `useCep`, `useWaitlist`. `@vendua/ui-defaults` also exports `Calendar`
+(the month grid behind `checkout.SchedulePicker`) for store sections that need one.
 
 Hooks never compute prices or eligibility; every read exposes `refetch`.
 
 **Kernel 1.2 (commerce completeness, roadmap Phase 2)** — all additive:
 
-| Hook / change                | What it does                                                                                                                                                                                                        |
-| ---------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `useOrder(id, { live? })`    | Live by default: a Kernel-owned long poll (`GET /orders/:id?since&wait`) that pauses while the tab is hidden, stops at a terminal state and backs off on errors. Returns `live`. `{ live: false }` = the plain read |
-| `useOrders(phone?)`          | "Sem senha, sem cadastro": the phone's orders across devices (summaries, no address). `needsVerification` + `verify(orderNumber)`; the device that checked out with the phone is already trusted                    |
-| `useLoyalty(phone?)`         | The stamp card (`stamps`, `stampsRequired`, minted `rewards` coupon codes) for a verified phone                                                                                                                     |
-| `useCep()`                   | `lookup(cep)` → street/bairro/cidade + the delivery-zone answer, via Core                                                                                                                                           |
-| `useWaitlist(productId)`     | Join a sold-out product's restock waitlist; answers how many wait                                                                                                                                                   |
-| `useCart().mutations`        | `add(…, comboSelections?)`, structured `setDelivery` (street/number/cep/lat/lng…), `applyCoupon`, `removeCoupon`, `importItems`, `share` (a `?cart=CODE` link), `reorder(orderId)`                                  |
-| `useDeliveryQuote().quote`   | Also takes `{ lat, lng }` (distance-priced zones)                                                                                                                                                                   |
-| `useCheckout().submit`       | `CheckoutInput` gains `notes`, `scheduledFor` and structured address fields                                                                                                                                         |
-| `?cart=CODE` / `?cupom=CODE` | Handled by `VenduaProvider`: the shared sacola is imported / the coupon applied, the param stripped                                                                                                                 |
+| Hook / change                | What it does                                                                                                                                                                                                                                                                                                                 |
+| ---------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `useOrder(id, { live? })`    | Live by default: a Kernel-owned **SSE** stream (1.3; `GET /orders/:id/events` over a header-authed fetch), with the long poll (`GET /orders/:id?since&wait`) as fallback. Pauses while the tab is hidden, stops at a terminal state, backs off on errors. Returns `live` and `transport`. `{ live: false }` = the plain read |
+| `useOrders(phone?)`          | "Sem senha, sem cadastro": the phone's orders across devices (summaries, no address). `needsVerification` + `verify(orderNumber)`; the device that checked out with the phone is already trusted                                                                                                                             |
+| `useLoyalty(phone?)`         | The stamp card (`stamps`, `stampsRequired`, minted `rewards` coupon codes) for a verified phone                                                                                                                                                                                                                              |
+| `useCep()`                   | `lookup(cep)` → street/bairro/cidade + the delivery-zone answer, via Core                                                                                                                                                                                                                                                    |
+| `useWaitlist(productId)`     | Join a sold-out product's restock waitlist; answers how many wait                                                                                                                                                                                                                                                            |
+| `useCart().mutations`        | `add(…, comboSelections?)`, structured `setDelivery` (street/number/cep/lat/lng…), `applyCoupon`, `removeCoupon`, `importItems`, `share` (a `?cart=CODE` link), `reorder(orderId)`                                                                                                                                           |
+| `useDeliveryQuote().quote`   | Also takes `{ lat, lng }` (distance-priced zones)                                                                                                                                                                                                                                                                            |
+| `useCheckout().submit`       | `CheckoutInput` gains `notes`, `scheduledFor` and structured address fields                                                                                                                                                                                                                                                  |
+| `?cart=CODE` / `?cupom=CODE` | Handled by `VenduaProvider`: the shared sacola is imported / the coupon applied, the param stripped                                                                                                                                                                                                                          |
 
 ## Primitives
 

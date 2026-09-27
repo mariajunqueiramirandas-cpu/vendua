@@ -153,8 +153,59 @@ describe('kits (combo products)', () => {
   });
 });
 
-describe('live order (Kernel-owned long poll)', () => {
-  test('the order page waits on Core and re-renders on the next version', async () => {
+describe('live order (Kernel-owned SSE, long-poll fallback)', () => {
+  test("SSE: the order page streams Core's events and re-renders on each new version", async () => {
+    const enc = new TextEncoder();
+    let streams = 0;
+    let push: (frame: string) => void = () => {};
+    const c = core((url, init) => {
+      if (url.pathname === `/checkout/v1/orders/${ORDER_ID}/events`) {
+        streams++;
+        const body = new ReadableStream<Uint8Array>({
+          start(ctrl) {
+            push = (f) => ctrl.enqueue(enc.encode(f));
+            // current order (already seen → ignored), a heartbeat, then a change
+            push(`event: order\nid: 1\ndata: ${JSON.stringify(order(1, 'placed'))}\n\n`);
+            push(':ka\n\n');
+            init?.signal?.addEventListener('abort', () =>
+              ctrl.error(new DOMException('x', 'AbortError')),
+            );
+          },
+        });
+        return new Response(body, {
+          status: 200,
+          headers: { 'content-type': 'text/event-stream' },
+        });
+      }
+      if (url.pathname === `/checkout/v1/orders/${ORDER_ID}`)
+        return json(200, { order: order(1, 'placed') });
+      return null;
+    });
+    m = await mount({ path: `/pedido/${ORDER_ID}` });
+    await flush(4);
+    expect(streams).toBe(0);
+    await act(async () => new Promise((r) => setTimeout(r, 1700)));
+    await flush(6);
+    expect(streams).toBe(1);
+    const call = c.calls.find((x) => x.path.endsWith('/events'));
+    expect(call).toBeDefined();
+    await act(async () =>
+      push(`event: order\nid: 2\ndata: ${JSON.stringify(order(2, 'confirmed'))}\n\n`),
+    );
+    await flush(6);
+    expect($('[data-vendua="order-status"]')?.getAttribute('data-state')).toBe('confirmed');
+    // a frame split across chunks still parses
+    const frame = `event: order\nid: 3\ndata: ${JSON.stringify(order(3, 'preparing'))}\n\n`;
+    await act(async () => push(frame.slice(0, 40)));
+    await act(async () => push(frame.slice(40)));
+    await flush(6);
+    expect($('[data-vendua="order-status"]')?.getAttribute('data-state')).toBe('preparing');
+    // one stream carried every update — no reconnect per version, no long poll
+    expect(streams).toBe(1);
+    expect(c.calls.some((x) => x.path.includes('wait='))).toBe(false);
+  });
+
+  test('fallback: a Core without the stream route gets the long poll', async () => {
     let waits = 0;
     const c = core((url, init) => {
       if (url.pathname !== `/checkout/v1/orders/${ORDER_ID}`) return null;

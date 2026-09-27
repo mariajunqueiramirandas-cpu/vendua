@@ -21,17 +21,17 @@ envelope per `05-system-surfaces.md`).
 
 ## Commerce (roadmap Phase 2, migration 0051)
 
-| Surface          | Endpoints                                                                                                                                                                                                                                       |
-| ---------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `/storefront/v1` | `GET /cep/:cep` (address + zone) · `POST /waitlist`; products carry `imageUrl`/`gallery`, stock/`lowStock`, `kind: 'combo'` + `comboSlots`, encomenda fields; `/store` carries `pix`/`loyalty`                                                  |
-| `/checkout/v1`   | `POST /coupons/validate` · `POST/DELETE /cart/coupon` · `POST /cart/import` · `POST /cart/share` · `POST /cart/reorder` · `POST /customer/session` · `GET /customer/orders` · `GET /customer/loyalty` · `GET /orders/:id?since&wait` (live)     |
-| `/control/v1`    | `…/storefronts/:slug/commerce/` — `PATCH products/:p` (stock, status, encomenda) · `PUT products/:p/media` · `PUT products/:p/combo` · coupons · `PATCH settings` (pix, loyalty, location, preorder) · zones · orders + `transition` · waitlist |
+| Surface          | Endpoints                                                                                                                                                                                                                                                                                  |
+| ---------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `/storefront/v1` | `GET /cep/:cep` (address + zone) · `POST /waitlist`; products carry `imageUrl`/`gallery`, stock/`lowStock`, `kind: 'combo'` + `comboSlots`, encomenda fields; `/store` carries `pix`/`loyalty`                                                                                             |
+| `/checkout/v1`   | `POST /coupons/validate` · `POST/DELETE /cart/coupon` · `POST /cart/import` · `POST /cart/share` · `POST /cart/reorder` · `POST /customer/session` · `GET /customer/orders` · `GET /customer/loyalty` · `GET /orders/:id/events` (SSE) · `GET /orders/:id?since&wait` (long-poll fallback) |
+| `/control/v1`    | `…/storefronts/:slug/commerce/` — `PATCH products/:p` (stock, status, encomenda) · `PUT products/:p/media` · `PUT products/:p/combo` · coupons · `PATCH settings` (pix, loyalty, location, preorder) · zones · orders + `transition` · waitlist                                            |
 
 Modules: `place-order` (the one place an order is born — fee, coupon, stock and
 schedule recomputed under locks), `coupons`, `combos`, `stock`, `preorder`,
 `customer` (tokens, orders-by-phone, loyalty — ADR 0019), `cart-share`, `geo`
 (bairro + radius zones, ViaCEP with an LRU), `pix` (BR Code), `order-live`
-(LISTEN `vendua_order` → long-poll wake-ups).
+(LISTEN `vendua_order` → SSE pushes and long-poll wake-ups).
 
 ## Dev loop
 

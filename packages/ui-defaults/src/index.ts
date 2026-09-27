@@ -92,5 +92,6 @@ export {
   COUPON_REASON,
 } from './format.ts';
 export { PixQr } from './growth.tsx';
+export { Calendar, type CalendarProps } from './calendar.tsx';
 export { qrMatrix, qrSvgPath } from './qr.ts';
 export { SLOT_FIXTURES } from './fixtures.tsx';
