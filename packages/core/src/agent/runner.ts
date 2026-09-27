@@ -34,8 +34,8 @@ import { buildSystemPrompt, ladderTags } from './prompts.ts';
 import {
   leadCard,
   nameIsContact,
+  fitTranscript,
   nowLine,
-  renderTranscript,
   type TranscriptMessage,
 } from './context-render.ts';
 import { JOBS, type JobDef } from './jobs.ts';
@@ -654,6 +654,27 @@ async function finishRun(
   return { matched: out.updated.length > 0, deadAction: out.deadAction };
 }
 
+// Context budgets, sized for a frontier model: a whole negotiation fits, and caching makes
+// the stable prefix cheap. Characters, not tokens (pt-BR ≈ 3.5-4 chars/token).
+const CTX = {
+  messages: 400,
+  transcriptChars: 60_000,
+  notes: 30,
+  noteChars: 3_000,
+  dossierChars: 20_000,
+  facts: 200,
+};
+
+function withinBudget(items: string[], budget: number): string[] {
+  const out: string[] = [];
+  for (const it of items) {
+    if (budget - it.length - 1 < 0 && out.length) break;
+    out.push(it);
+    budget -= it.length + 1;
+  }
+  return out;
+}
+
 export async function contextFor(
   sql: Sql,
   run: RunRow,
@@ -716,7 +737,7 @@ export async function contextFor(
         // Durable key/value lead facts (memory v2); pre-0035 schemas have no table — omit, don't fail.
         const facts = await controlTx(sql, async (tx) =>
           (await hasMemoryTablesTx(tx))
-            ? leadFactsTx(tx, run.lead_id!, { limit: 50, order: 'recent' })
+            ? leadFactsTx(tx, run.lead_id!, { limit: CTX.facts, order: 'recent' })
             : [],
         );
         if (facts.length) {
@@ -734,14 +755,53 @@ export async function contextFor(
           (tx) => tx<{ kind: string; body: string | null }[]>`
             select kind, body from lead_activities
             where lead_id = ${run.lead_id!} and kind = 'note'
-            order by at desc limit 6
+            order by at desc limit ${CTX.notes}
           `,
         );
         if (dossier.length) {
+          const notes = withinBudget(
+            dossier.map((a) => `- ${(a.body ?? '').slice(0, CTX.noteChars)}`),
+            CTX.dossierChars,
+          );
+          parts.push(`DOSSIÊ (notas e pesquisa, mais recente primeiro):\n${notes.join('\n')}`);
+        }
+        // What the team already has in motion and how the lead moved — so a reply never
+        // contradicts an open task or re-pitches a lead the team already advanced.
+        const [tasks, moves] = await controlTx(
+          sql,
+          async (tx) =>
+            [
+              await tx<{ title: string; due_at: string | null; created_by: string }[]>`
+            select title, due_at, created_by from lead_tasks
+            where lead_id = ${run.lead_id!} and done_at is null
+            order by coalesce(due_at, created_at) limit 20
+          `,
+              await tx<
+                { from_state: string | null; to_state: string; actor: string; at: string }[]
+              >`
+            select from_state, to_state, actor, at from lead_state_history
+            where lead_id = ${run.lead_id!} order by at desc limit 10
+          `,
+            ] as const,
+        );
+        if (tasks.length) {
           parts.push(
-            `DOSSIÊ (notes + research, newest first):\n${dossier
-              .map((a) => `- ${(a.body ?? '').slice(0, 800)}`)
+            `TAREFAS ABERTAS DA EQUIPE:\n${tasks
+              .map(
+                (t) =>
+                  `- ${t.title}${t.due_at ? ` (até ${new Date(t.due_at).toISOString().slice(0, 10)})` : ''}${t.created_by === 'agent' ? ' [criada por você]' : ''}`,
+              )
               .join('\n')}`,
+          );
+        }
+        if (moves.length) {
+          parts.push(
+            `HISTÓRICO DE ESTÁGIO (mais recente primeiro): ${moves
+              .map(
+                (m) =>
+                  `${new Date(m.at).toISOString().slice(0, 10)} ${m.from_state ?? '∅'}→${m.to_state} (${m.actor})`,
+              )
+              .join('; ')}`,
           );
         }
         if (goal === 'meeting') {
@@ -774,35 +834,46 @@ export async function contextFor(
       }
     }
   }
-  // The conversation: the run's own thread, or — for a lead run woken without one (a
-  // wakeup, a staff ask) — the lead's recent messages across channels, so a follow-up
-  // never repeats itself. Items inside their quiet period stay out — else the model reads
-  // them off the thread and replies before notBefore.
-  if (run.thread_id || (run.lead_id && leadKind)) {
+  // The conversation. Lead runs read the lead's whole history across channels (a lead
+  // who moved from Instagram to WhatsApp is one negotiation), fitted to a large budget;
+  // other runs read their thread. Items inside their quiet period stay out — else the
+  // model reads them off the thread and replies before notBefore.
+  const leadWide = !!run.lead_id && leadKind;
+  if (run.thread_id || leadWide) {
     const rows = await controlTx(
       sql,
-      (tx) => tx<(TranscriptMessage & { subject: string | null })[]>`
+      (tx) => tx<(TranscriptMessage & { subject: string | null; thread_id: string })[]>`
         select * from (
-          select m.direction, m.body, m.status, m.author, m.created_at, t.channel, t.subject
+          select m.direction, m.body, m.status, m.author, m.created_at, t.channel, t.subject,
+                 t.id::text as thread_id
           from lead_messages m join lead_threads t on t.id = m.thread_id
-          where ${run.thread_id ? tx`t.id = ${run.thread_id}` : tx`t.lead_id = ${run.lead_id}`}
+          where ${leadWide ? tx`t.lead_id = ${run.lead_id}` : tx`t.id = ${run.thread_id}`}
             and m.id::text not in (
               select i.payload->>'messageId' from agent_inbox i
               where i.consumed_at is null and i.payload->>'messageId' is not null
                 and (i.payload->>'notBefore')::timestamptz > now()
             )
-          order by m.created_at desc, m.id desc limit 12
+          order by m.created_at desc, m.id desc limit ${CTX.messages}
         ) r order by created_at, direction
       `,
     );
     const channels = [...new Set(rows.map((r) => r.channel).filter(Boolean))];
-    const subject = rows.find((r) => r.subject)?.subject;
-    const head = run.thread_id
-      ? `CONVERSA (${channels[0] ?? 'thread'}${subject ? ` · assunto: ${subject}` : ''} · mais antiga → mais recente)`
-      : 'CONVERSA (todas as conversas do lead · mais antiga → mais recente)';
+    const own = run.thread_id ? rows.find((r) => r.thread_id === run.thread_id) : undefined;
+    const where = own
+      ? `esta run responde no ${own.channel}${own.subject ? ` · assunto: ${own.subject}` : ''}`
+      : channels.length === 1
+        ? channels[0]!
+        : null;
     if (run.thread_id || rows.length) {
       parts.push(
-        `${head}:\n${renderTranscript(rows, tz, { tagChannel: !run.thread_id && channels.length > 1 })}`,
+        `CONVERSA (${where ? `${where} · ` : ''}mais antiga → mais recente):\n${fitTranscript(
+          rows,
+          tz,
+          {
+            budget: CTX.transcriptChars,
+            tagChannel: channels.length > 1,
+          },
+        )}`,
       );
     }
   }
@@ -2068,7 +2139,7 @@ async function finishGate(att: Attempt): Promise<'end' | 'again'> {
       : attHas(att, 'create_task')
         ? 'create_task pra equipe'
         : null;
-    const nudge = `Ação pendente — a run ainda não teve efeito visível (${acts.join(', ')}). Pesquisar e sair sem agir deixa o lead falando sozinho — aja agora${way ? `; se um guardrail ou canal morto trava a ação, ${way} é a saída` : ''}.`;
+    const nudge = `Ação pendente: a run ainda não fez nada que a pessoa ou a equipe veja (${acts.join(', ')}). Se ela está esperando resposta, responda agora, no padrão de sempre: curto, humano, só com o que é verdade${way ? `. Se um guardrail ou canal morto trava a resposta, ${way} é a saída` : ''}.`;
     messages.push({ role: 'assistant', content: res.text ?? 'ok' });
     messages.push({ role: 'user', content: nudge });
     steps.push({ type: 'nudge', content: nudge });

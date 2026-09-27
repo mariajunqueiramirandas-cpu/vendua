@@ -167,6 +167,14 @@ delivers, inventing benefits ("sem comissão") and sending a literal `\n\n`.
 - **WhatsApp**: áudio/imagem/vídeo/documento arrive tagged instead of dropped;
   Baileys marks the lead's pending messages read and shows "digitando…" right
   before each send.
+- **Context budgets** (`CTX` in `runner.ts`): lead runs read the lead's whole
+  history across channels (≤400 messages, 60k chars; overflow keeps the opening +
+  the recent tail with a cut marker), up to 30 notes (3k chars each, 20k total),
+  200 facts, open team tasks and stage history.
+- **Caching**: the Anthropic driver caches the system prompt and the run's growing
+  conversation (`max_tokens` 16k, cache-aware cost); OpenRouter caches the system
+  prompt for `anthropic/*` models. The system prompt holds nothing volatile (time
+  lives in the context message), so the prefix stays byte-stable.
 - **Defaults**: the stock pitch no longer pre-authorizes trials/demos. Installs
   with a stored `pitch`/`agent.instructions` keep their own text.
 - **Sim**: lead-opened scenarios (`opener`) incl. `inbound-oi`,

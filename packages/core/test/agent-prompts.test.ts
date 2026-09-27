@@ -1,9 +1,16 @@
 import { describe, expect, test } from 'bun:test';
 import { buildSystemPrompt } from '../src/agent/prompts.ts';
 import { messageStyleIssues, normalizeMessageBody } from '../src/agent/style.ts';
-import { leadCard, nameIsContact, nowLine, renderTranscript } from '../src/agent/context-render.ts';
+import {
+  fitTranscript,
+  leadCard,
+  nameIsContact,
+  nowLine,
+  renderTranscript,
+} from '../src/agent/context-render.ts';
 import { extractText } from '../src/agent/channels/whatsapp.ts';
 import { DEFAULT_PITCH } from '../src/modules/integrations.ts';
+import { anthropicCostUsd } from '../src/agent/llm.ts';
 
 const reply = (extra: Parameters<typeof buildSystemPrompt>[4] = {}) =>
   buildSystemPrompt('reply', DEFAULT_PITCH, '', { facts: [] }, extra);
@@ -181,5 +188,51 @@ describe('whatsapp inbound text', () => {
       '[documento: menu.pdf]',
     );
     expect(extractText({ stickerMessage: {} })).toBeNull();
+  });
+});
+
+describe('context budgets', () => {
+  const msg = (i: number, body = `mensagem ${i}`) => ({
+    direction: (i % 2 ? 'in' : 'out') as 'in' | 'out',
+    body,
+    status: 'sent',
+    author: i % 2 ? 'lead' : 'agent',
+    created_at: new Date(Date.UTC(2026, 8, 1, 12, i)).toISOString(),
+  });
+
+  test('a normal negotiation fits whole', () => {
+    const msgs = Array.from({ length: 80 }, (_, i) => msg(i));
+    const out = fitTranscript(msgs, 'UTC', { budget: 60_000 });
+    expect(out.split('\n')).toHaveLength(80);
+    expect(out).not.toContain('fora do contexto');
+  });
+
+  test('an oversized one keeps the opening and the recent tail, never half a message', () => {
+    const msgs = Array.from({ length: 300 }, (_, i) =>
+      msg(i, i === 299 ? 'última\ncom duas linhas' : `m${i} ${'x'.repeat(200)}`),
+    );
+    const out = fitTranscript(msgs, 'UTC', { budget: 10_000, head: 3 });
+    expect(out.length).toBeLessThanOrEqual(10_000 + 200);
+    expect(out).toContain('m0 ');
+    expect(out).toContain('m2 ');
+    expect(out).toMatch(/\[… \d+ mensagens do meio fora do contexto/);
+    expect(out.endsWith('última\ncom duas linhas')).toBe(true);
+  });
+
+  test('anthropic cost prices cache reads at a tenth', () => {
+    const full = anthropicCostUsd('claude-opus-5', {
+      input: 100_000,
+      cacheRead: 0,
+      cacheWrite: 0,
+      output: 0,
+    });
+    const cached = anthropicCostUsd('claude-opus-5', {
+      input: 0,
+      cacheRead: 100_000,
+      cacheWrite: 0,
+      output: 0,
+    });
+    expect(full).toBeCloseTo(0.5, 6);
+    expect(cached).toBeCloseTo(0.05, 6);
   });
 });

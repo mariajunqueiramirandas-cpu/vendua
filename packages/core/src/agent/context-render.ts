@@ -88,20 +88,60 @@ export function renderTranscript(
   tz: string,
   opts: { tagChannel?: boolean } = {},
 ): string {
-  if (!msgs.length) return '(nenhuma mensagem ainda)';
-  return msgs
-    .map((m) => {
-      const who =
-        m.direction === 'in'
-          ? 'LEAD'
-          : m.author === 'staff'
-            ? 'VENDUÁ (equipe)'
-            : m.author === 'system'
-              ? 'SISTEMA'
-              : 'VENDUÁ (agente)';
-      const notes = [opts.tagChannel && m.channel, STATUS_NOTE[m.status]].filter(Boolean);
-      const body = (m.body ?? '').trim() || '(vazio)';
-      return `[${stamp(m.created_at, tz)}] ${who}${notes.length ? ` (${notes.join(', ')})` : ''}: ${body}`;
-    })
-    .join('\n');
+  return msgs.length ? transcriptEntries(msgs, tz, opts).join('\n') : '(nenhuma mensagem ainda)';
+}
+
+// one entry per message — a body may span several lines, so budgeting works on entries
+function transcriptEntries(
+  msgs: readonly TranscriptMessage[],
+  tz: string,
+  opts: { tagChannel?: boolean },
+): string[] {
+  return msgs.map((m) => {
+    const who =
+      m.direction === 'in'
+        ? 'LEAD'
+        : m.author === 'staff'
+          ? 'VENDUÁ (equipe)'
+          : m.author === 'system'
+            ? 'SISTEMA'
+            : 'VENDUÁ (agente)';
+    const notes = [opts.tagChannel && m.channel, STATUS_NOTE[m.status]].filter(Boolean);
+    const body = (m.body ?? '').trim() || '(vazio)';
+    return `[${stamp(m.created_at, tz)}] ${who}${notes.length ? ` (${notes.join(', ')})` : ''}: ${body}`;
+  });
+}
+
+/** Fits a conversation into a character budget: the opening (how it started, who reached
+ *  out) plus as much of the recent tail as fits, with a marker where the middle was cut.
+ *  A frontier model reads 60k characters of transcript easily; the cut only bites on
+ *  months-long threads, and PLANO/FATOS/DOSSIÊ carry what the middle established. */
+export function fitTranscript(
+  msgs: readonly TranscriptMessage[],
+  tz: string,
+  opts: { budget: number; head?: number; tagChannel?: boolean },
+): string {
+  if (!msgs.length) return renderTranscript(msgs, tz, opts);
+  const lines = transcriptEntries(msgs, tz, opts);
+  const total = lines.reduce((n, l) => n + l.length + 1, 0);
+  if (total <= opts.budget) return lines.join('\n');
+  const head = lines.slice(0, Math.min(opts.head ?? 4, lines.length));
+  let room = opts.budget - head.reduce((n, l) => n + l.length + 1, 0);
+  const tail: string[] = [];
+  for (let i = lines.length - 1; i >= head.length; i--) {
+    const l = lines[i]!;
+    if (room - l.length - 1 < 0 && tail.length) break;
+    tail.unshift(l);
+    room -= l.length + 1;
+  }
+  const cut = lines.length - head.length - tail.length;
+  return [
+    ...head,
+    ...(cut > 0
+      ? [
+          `[… ${cut} mensagens do meio fora do contexto; o que elas estabeleceram está em PLANO, FATOS e DOSSIÊ …]`,
+        ]
+      : []),
+    ...tail,
+  ].join('\n');
 }
