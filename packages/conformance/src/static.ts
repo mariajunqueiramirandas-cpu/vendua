@@ -1,7 +1,11 @@
 import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
 import { basename, join, resolve } from 'node:path';
-import { SLOT_KEYS } from '@vendua/kernel/config';
+import { SLOT_ALIASES, SLOT_KEYS } from '@vendua/kernel/config';
+import { COMPAT_MATRIX } from '@vendua/templates';
+import { runLint } from './lint.ts';
 import type { CheckResult } from './report.ts';
+
+export const SUPPORTED_CONTRACTS = [...new Set(COMPAT_MATRIX.map((r) => r.contract))];
 
 const SRC_EXT = new Set(['.ts', '.tsx', '.js', '.jsx', '.mts', '.cts']);
 const SKIP_DIRS = new Set(['node_modules', 'dist', 'qa-report', '.git', '.vite']);
@@ -25,10 +29,11 @@ const DEVDEP_ALLOW = new Set(['typescript', 'vite', '@vitejs/plugin-react']);
 const DEVDEP_ALLOW_PREFIX = ['@types/'];
 
 // kernel subpaths a storefront may import — deeper is a contract violation
-const KERNEL_IMPORT_ALLOW = new Set([
+export const KERNEL_IMPORT_ALLOW = new Set([
   '@vendua/kernel',
   '@vendua/kernel/config',
   '@vendua/kernel/styles.css',
+  '@vendua/kernel/vite',
 ]);
 
 const RESERVED_ROUTE_PREFIXES = ['v1', 'storefront', 'checkout/v1', 'control'];
@@ -36,7 +41,7 @@ const RESERVED_ROUTE_PREFIXES = ['v1', 'storefront', 'checkout/v1', 'control'];
 // only versioned API prefixes — a bare '/storefront' or '/checkout' key would swallow same-named page routes
 const PROXY_KEY_ALLOW = new Set(['/storefront/v1', '/checkout/v1', '/v1', '/control']);
 
-function sourceFiles(dir: string): string[] {
+export function sourceFiles(dir: string): string[] {
   const out: string[] = [];
   const walk = (d: string) => {
     for (const name of readdirSync(d)) {
@@ -56,7 +61,7 @@ function sourceFiles(dir: string): string[] {
   return out;
 }
 
-async function run(
+export async function run(
   cmd: string[],
   cwd: string,
   timeoutMs = 180_000,
@@ -122,21 +127,41 @@ async function k01(dir: string): Promise<CheckResult> {
     contract: number | null;
     keys: string[];
   };
-  if (parsed.contract !== 1)
-    return fail(id, title, `contract major must be 1; got ${JSON.stringify(parsed.contract)}`);
-  const bad = parsed.keys.filter((k) => !(SLOT_KEYS as readonly string[]).includes(k));
+  if (parsed.contract === null || !SUPPORTED_CONTRACTS.includes(parsed.contract))
+    return fail(
+      id,
+      title,
+      `contract major ${JSON.stringify(parsed.contract)} is not supported (compat matrix: ${SUPPORTED_CONTRACTS.join(', ')})`,
+    );
+  const aliases = SLOT_ALIASES as Record<string, { to: string; codemod: string }>;
+  const bad = parsed.keys.filter(
+    (k) => !(SLOT_KEYS as readonly string[]).includes(k) && !(k in aliases),
+  );
   if (bad.length)
     return fail(
       id,
       title,
       `override keys not in SLOT_KEYS (contract v${parsed.contract}): ${bad.join(', ')}`,
     );
-  return pass(id, title, `contract=1, overrides=[${parsed.keys.join(', ') || 'none'}] all valid`);
+  const deprecated = parsed.keys.filter((k) => k in aliases);
+  if (deprecated.length)
+    return pass(
+      id,
+      title,
+      `deprecated slot keys (still aliased this major): ${deprecated
+        .map((k) => `${k} → ${aliases[k]!.to} (vendua codemod run ${aliases[k]!.codemod})`)
+        .join('; ')}`,
+    );
+  return pass(
+    id,
+    title,
+    `contract=${parsed.contract}, overrides=[${parsed.keys.join(', ') || 'none'}] all valid`,
+  );
 }
 
 function k02(dir: string): CheckResult {
   const id = 'K02';
-  const title = 'required mounts: VenduaProvider + SystemSurfaces + v.js tag';
+  const title = 'required mounts: VenduaProvider + SystemSurfaces + StorefrontRoutes + v.js tag';
   const indexPath = join(dir, 'index.html');
   if (!existsSync(indexPath)) return fail(id, title, 'index.html missing');
   const html = readFileSync(indexPath, 'utf8');
@@ -194,6 +219,18 @@ function k02(dir: string): CheckResult {
         problems.push('no router mount inside <VenduaProvider> — the app shell is required');
       else if (!(surf < router && router < provClose))
         problems.push('<SystemSurfaces /> must mount before the router inside the provider');
+      else {
+        // Contract 2: the (vendua) system route group + template pages
+        const routes = /<StorefrontRoutes[\s/>]/.exec(src)?.index;
+        if (routes === undefined)
+          problems.push('no <StorefrontRoutes /> — the system route group must be mounted');
+        else if (!(router < routes && routes < provClose))
+          problems.push('<StorefrontRoutes /> must render inside the router');
+        if (!/virtual:vendua\/storefront/.test(src))
+          problems.push(
+            "entry does not pass the build's bundle (import from 'virtual:vendua/storefront')",
+          );
+      }
     }
   }
   if (problems.length) return fail(id, title, problems.join('\n'));
@@ -202,7 +239,7 @@ function k02(dir: string): CheckResult {
 
 function k03(dir: string): CheckResult {
   const id = 'K03';
-  const title = 'no direct fetch/axios/XHR; no deep kernel imports; deps ⊆ allow-list';
+  const title = 'no-direct-fetch: no fetch/axios/XHR in storefront code; deps ⊆ allow-list';
   const problems: string[] = [];
 
   for (const file of sourceFiles(dir)) {
@@ -217,16 +254,6 @@ function k03(dir: string): CheckResult {
       if (/\baxios\b/.test(line)) problems.push(`${loc}: axios — use @vendua/kernel api`);
       if (/\bXMLHttpRequest\b/.test(line))
         problems.push(`${loc}: XMLHttpRequest — use @vendua/kernel api`);
-      for (const imp of line.matchAll(/from\s+['"](@vendua\/kernel[^'"]*)['"]/g)) {
-        if (!KERNEL_IMPORT_ALLOW.has(imp[1]!))
-          problems.push(
-            `${loc}: deep import ${imp[1]} — allowed: ${[...KERNEL_IMPORT_ALLOW].join(', ')}`,
-          );
-      }
-      for (const imp of line.matchAll(/import\s*\(\s*['"](@vendua\/kernel[^'"]*)['"]/g)) {
-        if (!KERNEL_IMPORT_ALLOW.has(imp[1]!))
-          problems.push(`${loc}: deep dynamic import ${imp[1]}`);
-      }
     });
   }
 
@@ -361,5 +388,6 @@ export async function runStatic(storefrontDir: string): Promise<CheckResult[]> {
   results.push(k03(dir));
   results.push(k04(dir));
   results.push(await k06(dir));
+  results.push(...(await runLint(dir)));
   return results;
 }
