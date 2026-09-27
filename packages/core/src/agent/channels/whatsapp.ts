@@ -9,8 +9,18 @@ const waLog = log.child({ mod: 'whatsapp' });
 // baileys v7 in-process; auth state persists in wa_auth_state (survives
 // restarts/redeploys with no filesystem). 'log' is the zero-credential dev driver.
 
+interface WaKey {
+  remoteJid: string;
+  id: string;
+  fromMe: false;
+}
+
 interface BaileysSocket {
   sendMessage(jid: string, content: { text: string }): Promise<{ key?: { id?: string } }>;
+  /** blue ticks on the lead's phone for these inbound keys */
+  readMessages?(keys: WaKey[]): Promise<unknown>;
+  /** 'composing' shows "digitando…" in the lead's chat until the message lands */
+  sendPresenceUpdate?(type: 'composing' | 'paused' | 'available', jid?: string): Promise<unknown>;
   /** free server-side existence probe — the autocontact gate verifies numbers through it */
   onWhatsApp(jid: string): Promise<{ jid: string; exists: boolean }[] | undefined>;
   end(err?: Error): void;
@@ -438,6 +448,8 @@ async function startSocket(sql: Sql, integration: IntegrationRow): Promise<Baile
       const text = extractText(baileys.normalizeMessageContent(m.message) ?? m.message);
       if (!text) continue;
       waLog.info({ from: maskPhone(dm.jid), type }, 'inbound message');
+      if (key.remoteJid)
+        rememberUnread(dm, { remoteJid: key.remoteJid, id: key.id, fromMe: false });
       for (const fn of handlers) {
         void fn(dm.jid, text, key.id, m.pushName, dm.alias);
       }
@@ -554,13 +566,26 @@ function readIdentity(sock: BaileysSocket): {
   return { phone: digits || null, name: u?.name ?? null };
 }
 
-function extractText(message: unknown): string | null {
+// Media the agent can't read still reaches it as a tagged line — a dropped áudio leaves the
+// lead talking to nobody; the tag lets the reply say so. Stickers/reactions need no answer.
+export function extractText(message: unknown): string | null {
   if (!message || typeof message !== 'object') return null;
   const m = message as Record<string, unknown>;
   const conv = m.conversation;
   if (typeof conv === 'string') return conv;
   const ext = m.extendedTextMessage as { text?: string } | undefined;
   if (ext?.text) return ext.text;
+  const media = (k: string) =>
+    m[k] && typeof m[k] === 'object' ? (m[k] as { caption?: string; fileName?: string }) : null;
+  const tagged = (tag: string, caption?: string) =>
+    caption?.trim() ? `[${tag}] ${caption.trim()}` : `[${tag}]`;
+  if (media('audioMessage')) return '[áudio]';
+  const img = media('imageMessage');
+  if (img) return tagged('imagem', img.caption);
+  const vid = media('videoMessage');
+  if (vid) return tagged('vídeo', vid.caption);
+  const doc = media('documentMessage');
+  if (doc) return tagged(doc.fileName ? `documento: ${doc.fileName}` : 'documento', doc.caption);
   return null;
 }
 
@@ -745,6 +770,33 @@ async function logoutOnce(sql: Sql, accountId: string): Promise<void> {
   waLog.info({ accountId }, 'logged out — auth state wiped');
 }
 
+// Inbound keys not yet marked read, by phone digits (and LID alias) — flushed as read receipts
+// right before our next message to that chat, the way a person reads and then answers.
+// In-memory: a restart just means those few messages keep grey ticks.
+const unread = new Map<string, WaKey[]>();
+const UNREAD_PER_CHAT = 20;
+
+function rememberUnread(dm: { jid: string; alias?: string }, k: WaKey): void {
+  for (const j of [dm.jid, dm.alias]) {
+    const d = j?.replace(/@.*$/, '').replace(/\D/g, '');
+    if (!d) continue;
+    const list = unread.get(d) ?? [];
+    if (!list.some((x) => x.id === k.id)) list.push(k);
+    unread.set(d, list.slice(-UNREAD_PER_CHAT));
+  }
+}
+
+function takeUnread(jid: string): WaKey[] {
+  const d = jid.replace(/@.*$/, '').replace(/\D/g, '');
+  const keys = unread.get(d) ?? [];
+  // the same keys may sit under the alias too — drop every entry that holds them
+  for (const [k, v] of unread) if (v.some((x) => keys.some((y) => y.id === x.id))) unread.delete(k);
+  return keys;
+}
+
+// "digitando…" long enough to register, short enough not to stall the dispatch
+const typingMs = (text: string) => Math.min(2_000, 400 + text.length * 15);
+
 export async function sendWhatsApp(
   sql: Sql,
   integration: IntegrationRow,
@@ -760,7 +812,18 @@ export async function sendWhatsApp(
     const sock = await ensureSocket(sql, integration);
     if (!sock) throw new Error('baileys socket not started');
     const jid = to.includes('@') ? to : `${to.replace(/\D/g, '')}@s.whatsapp.net`;
+    // receipts and presence are cosmetic — never let them fail the send
+    const keys = takeUnread(jid);
+    if (keys.length && sock.readMessages) {
+      await sock.readMessages(keys).catch((e) => waLog.warn({ err: e }, 'read receipt failed'));
+    }
+    if (sock.sendPresenceUpdate) {
+      await sock.sendPresenceUpdate('composing', jid).catch(() => undefined);
+      await new Promise((r) => setTimeout(r, typingMs(text)));
+    }
     const res = await sock.sendMessage(jid, { text });
+    if (sock.sendPresenceUpdate)
+      await sock.sendPresenceUpdate('paused', jid).catch(() => undefined);
     waLog.info({ to: maskPhone(jid), id: res?.key?.id ?? null }, 'message sent');
     return res?.key?.id ?? null;
   }

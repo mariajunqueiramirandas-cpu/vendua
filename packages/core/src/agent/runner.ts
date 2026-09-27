@@ -31,6 +31,13 @@ import {
   type ToolCall,
 } from './llm.ts';
 import { buildSystemPrompt, ladderTags } from './prompts.ts';
+import {
+  leadCard,
+  nameIsContact,
+  nowLine,
+  renderTranscript,
+  type TranscriptMessage,
+} from './context-render.ts';
 import { JOBS, type JobDef } from './jobs.ts';
 import {
   agentSettingTx,
@@ -653,7 +660,11 @@ export async function contextFor(
   /** the run's offered toolset — context lines only name tools it can call */
   has: (tool: string) => boolean = () => true,
 ): Promise<{ text: string; goal: AgentGoal; bookingUrl: string | null }> {
-  const parts: string[] = [];
+  const tz =
+    (await getSetting<Partial<Guardrails>>(sql, 'guardrails', {})).timezone ??
+    DEFAULT_GUARDRAILS.timezone;
+  const parts: string[] = [nowLine(new Date(), tz)];
+  const leadKind = run.kind === 'triage' || run.kind === 'reply' || run.kind === 'outreach';
   let goal: AgentGoal = 'negotiation';
   let bookingUrl: string | null = null;
   if (run.lead_id) {
@@ -665,13 +676,18 @@ export async function contextFor(
         >`select row_to_json(l) as j from leads l where l.id = ${run.lead_id}`,
     );
     if (rows[0]) {
-      parts.push(`LEAD: ${JSON.stringify(rows[0].j)}`);
+      parts.push(`LEAD: ${JSON.stringify(leadCard(rows[0].j))}`);
+      if (leadKind && nameIsContact(rows[0].j.name)) {
+        parts.push(
+          'NOME: o cadastro ainda não tem o nome da pessoa (o campo é só o contato). Não a chame pelo número; se o nome vier na conversa, update_lead name.',
+        );
+      }
       goal = rows[0].j.agent_goal === 'meeting' ? 'meeting' : 'negotiation';
       // params.goal overrides the lead's standing goal for a one-off run.
       if (run.params.goal === 'meeting' || run.params.goal === 'negotiation') {
         goal = run.params.goal;
       }
-      if (run.kind === 'triage' || run.kind === 'reply' || run.kind === 'outreach') {
+      if (leadKind) {
         parts.push(`GOAL: ${goal}`);
         // Who spoke first decides whether "what do you sell?" is allowed: fine when the
         // lead came to us, amateur on a cold approach. Only what reached the wire counts —
@@ -758,29 +774,37 @@ export async function contextFor(
       }
     }
   }
-  if (run.thread_id) {
-    // Items inside their quiet period stay out of context — else the model reads them off the thread and replies before notBefore.
+  // The conversation: the run's own thread, or — for a lead run woken without one (a
+  // wakeup, a staff ask) — the lead's recent messages across channels, so a follow-up
+  // never repeats itself. Items inside their quiet period stay out — else the model reads
+  // them off the thread and replies before notBefore.
+  if (run.thread_id || (run.lead_id && leadKind)) {
     const rows = await controlTx(
       sql,
-      (tx) => tx`
-        select jsonb_build_object(
-          'thread', row_to_json(t),
-          'messages', (
-            select coalesce(jsonb_agg(m order by m.created_at), '[]'::jsonb)
-            from (select direction, body, status, author, created_at
-                  from lead_messages where thread_id = ${run.thread_id}
-                    and id::text not in (
-                      select i.payload->>'messageId' from agent_inbox i
-                      where i.consumed_at is null and i.payload->>'messageId' is not null
-                        and (i.payload->>'notBefore')::timestamptz > now()
-                    )
-                  order by created_at desc limit 12) m
-          )
-        ) as j
-        from lead_threads t where t.id = ${run.thread_id}
+      (tx) => tx<(TranscriptMessage & { subject: string | null })[]>`
+        select * from (
+          select m.direction, m.body, m.status, m.author, m.created_at, t.channel, t.subject
+          from lead_messages m join lead_threads t on t.id = m.thread_id
+          where ${run.thread_id ? tx`t.id = ${run.thread_id}` : tx`t.lead_id = ${run.lead_id}`}
+            and m.id::text not in (
+              select i.payload->>'messageId' from agent_inbox i
+              where i.consumed_at is null and i.payload->>'messageId' is not null
+                and (i.payload->>'notBefore')::timestamptz > now()
+            )
+          order by m.created_at desc, m.id desc limit 12
+        ) r order by created_at, direction
       `,
     );
-    if (rows[0]) parts.push(`THREAD: ${JSON.stringify(rows[0].j)}`);
+    const channels = [...new Set(rows.map((r) => r.channel).filter(Boolean))];
+    const subject = rows.find((r) => r.subject)?.subject;
+    const head = run.thread_id
+      ? `CONVERSA (${channels[0] ?? 'thread'}${subject ? ` · assunto: ${subject}` : ''} · mais antiga → mais recente)`
+      : 'CONVERSA (todas as conversas do lead · mais antiga → mais recente)';
+    if (run.thread_id || rows.length) {
+      parts.push(
+        `${head}:\n${renderTranscript(rows, tz, { tagChannel: !run.thread_id && channels.length > 1 })}`,
+      );
+    }
   }
   if (run.kind === 'outreach' && run.params.focus) {
     parts.push(`FOCUS: ${String(run.params.focus)}`);

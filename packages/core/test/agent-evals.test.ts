@@ -284,7 +284,7 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('agent evals — golden runs (db
     const leadId = await seedLead(wa);
     const p = scriptedProvider([
       { text: 'Hmm, deixa eu olhar o contexto.' },
-      { toolCalls: [{ name: 'send_message', args: { leadId, body: 'Achei — aqui está.' } }] },
+      { toolCalls: [{ name: 'send_message', args: { leadId, body: 'Achei, aqui está.' } }] },
       { text: 'feito.' },
     ]);
     const { run } = await runInbound(p, wa, `eval:${crypto.randomUUID()}`);
@@ -298,6 +298,58 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('agent evals — golden runs (db
     expect(lastMsg.role === 'user' ? lastMsg.content : '').toContain('Ação pendente');
     const msgs = await outbound(leadId);
     expect(msgs[0]!.status).toBe('sent');
+  });
+
+  test('style check bounces a robotic reply once — the rewrite is what reaches the lead', async () => {
+    await migrate(sql, MIGRATIONS);
+    await cancelQueued();
+    await seedChannel();
+    await seedGuardrails();
+    await pinAutonomy('autopilot');
+    const wa = PHONE();
+    const leadId = await seedLead(wa, { name: wa });
+    const robotic = 'Olá! Tudo bem? O que vocês vendem por aí? (doces, marmitas, pizza...)';
+    const human = 'Oi, tudo bem? Aqui é da Venduá. Me conta, como posso te ajudar?';
+    const p = scriptedProvider([
+      { toolCalls: [{ name: 'send_message', args: { leadId, body: robotic } }] },
+      { toolCalls: [{ name: 'send_message', args: { leadId, body: human } }] },
+      { text: 'respondido.' },
+    ]);
+    const { run } = await runInbound(p, wa, `eval:${crypto.randomUUID()}`);
+    expect(run.status).toBe('done');
+    const msgs = await outbound(leadId);
+    expect(msgs.map((m) => [m.status, m.body])).toEqual([['sent', human]]);
+    const bounced = (run.steps as { name?: string; out?: { error?: string; issues?: string[] } }[])
+      .filter((s) => s.name === 'send_message' && s.out?.error)
+      .map((s) => s.out!);
+    expect(bounced).toHaveLength(1);
+    expect(bounced[0]!.error).toContain('ESTILO');
+    expect(bounced[0]!.issues!.join(' ')).toContain('palpites');
+    // the model saw a dated transcript and the unnamed-contact warning, not raw rows
+    const context = p.requests[0]!.messages[0]!;
+    const text = context.role === 'user' ? context.content : '';
+    expect(text).toMatch(/^AGORA: /);
+    expect(text).toContain('] LEAD: oi — quero saber do plano');
+    expect(text).toContain('NOME: o cadastro ainda não tem o nome');
+    expect(text).not.toContain('"agent_plan"');
+  });
+
+  test('style check steers but never strands — a second flawed body goes out as written', async () => {
+    await migrate(sql, MIGRATIONS);
+    await cancelQueued();
+    await seedChannel();
+    await seedGuardrails();
+    await pinAutonomy('autopilot');
+    const wa = PHONE();
+    const leadId = await seedLead(wa);
+    const p = scriptedProvider([
+      { toolCalls: [{ name: 'send_message', args: { leadId, body: 'Oi — tudo certo?' } }] },
+      { toolCalls: [{ name: 'send_message', args: { leadId, body: 'Oi — tudo certo por aí?' } }] },
+      { text: 'feito.' },
+    ]);
+    const { run } = await runInbound(p, wa, `eval:${crypto.randomUUID()}`);
+    expect(run.status).toBe('done');
+    expect((await outbound(leadId)).map((m) => m.body)).toEqual(['Oi — tudo certo por aí?']);
   });
 
   test('cost cap refuses the next run once a lead crosses its lifetime spend', async () => {

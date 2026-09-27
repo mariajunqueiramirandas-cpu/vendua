@@ -3833,7 +3833,7 @@ dbDescribe('worker robustness (db)', () => {
     // read the quiet-period mail straight off the thread.
     const [runRow] = await sql<RunRow[]>`select * from agent_runs where id = ${runId}`;
     const { text } = await contextFor(sql, runRow!);
-    expect(text).toContain('"body":"oi"');
+    expect(text).toContain('] LEAD: oi');
     expect(text).not.toContain('sim, quero');
     // Past the deadline it drains normally — the sweep's spawned run takes it.
     await sql`
