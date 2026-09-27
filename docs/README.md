@@ -37,6 +37,7 @@ If you are new, read in this order:
 6. [`roadmap.md`](roadmap.md) — build order and exit criteria.
 7. [`merchant-admin.md`](merchant-admin.md) — the store-owner product (current
    focus): design bar, scope and milestones.
+   Its design spec is [`merchant-admin-design.md`](merchant-admin-design.md).
 
 Then per topic as needed:
 

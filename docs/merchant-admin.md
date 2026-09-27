@@ -35,6 +35,12 @@ and billing area (A6).
 
 ## The design bar: way more beautiful than the CRM
 
+The full, normative spec (UX laws with tap budgets, color and type tokens,
+motion, sound, signature moments, components, screens, voice, accessibility,
+performance and the definition of done) is
+[`merchant-admin-design.md`](merchant-admin-design.md). This section is the
+summary.
+
 The CRM (`apps/control`) is a good staff console and deliberately a dense one:
 text-sm, h-8 controls, neutral chrome, no display type, no hero, "Linear/Attio
 class". That is right for a founder triaging 40 leads on a laptop. It is wrong
@@ -167,9 +173,11 @@ the design bar. It is not done until both pass.
 
 ### A0 — Foundations and the design system
 
-- [ ] Brand and visual direction for the admin: type pairing, palette, motion,
-      illustration style; mockups for Início, Pedidos, Cardápio and Aparência
-      at 375/820/1440 in both themes, signed off.
+- [ ] Sign off [`merchant-admin-design.md`](merchant-admin-design.md) (tokens,
+      type, motion, signature moments) with the pilot merchants' feedback.
+- [ ] Commission the illustration set and the two sounds; mockups for
+      Início, Pedidos, Cardápio and Aparência at 375/820/1440 in Creme and
+      Noite, following the spec, signed off.
 - [ ] `apps/admin` scaffold: shell (bottom nav on phones, sidebar on desktop),
       routing, query client, theme, PWA manifest, the component library and a
       living `/_ui` reference.
