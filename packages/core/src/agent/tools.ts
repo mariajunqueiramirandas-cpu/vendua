@@ -24,6 +24,7 @@ import {
   getSetting,
   getIntegrationTx,
   getSettingTx,
+  newLeadModesOf,
   type Guardrails,
 } from '../modules/integrations.ts';
 import {
@@ -1220,7 +1221,13 @@ export async function executeTool(
           whatsappDerived ? '' : String(input.whatsapp ?? '').trim(),
           input.instagram,
         );
-        const created = await insertLeadTx(tx, input);
+        // an agent-found lead starts where the workspace says; autocontact below may still promote it
+        const created = await insertLeadTx(tx, {
+          ...input,
+          agent_mode:
+            input.agent_mode ??
+            newLeadModesOf(await getSettingTx<unknown>(tx, 'agent', null)).discovery,
+        });
         await writeFindings(created.body.lead.id as string);
         if (whatsappDerived) {
           (created.body as Record<string, unknown>).whatsappUnverified = true;

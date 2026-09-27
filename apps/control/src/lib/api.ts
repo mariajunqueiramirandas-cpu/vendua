@@ -674,6 +674,8 @@ export interface AgentConfig {
   /** strategist self-approves proposed briefs while trailing-7d discovery spend stays under this. 0 = never. */
   weeklyDiscoveryUsd: number;
   schedule: AgentSchedule;
+  /** mode a lead starts in when staff didn't pick one: 'auto' follows the level, 'draft' holds every message */
+  newLeadMode: { inbound: 'draft' | 'auto'; discovery: 'draft' | 'auto' };
 }
 
 export type MemoryScope = 'workspace' | 'segment' | 'debrief';
