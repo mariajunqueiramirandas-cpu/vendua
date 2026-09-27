@@ -3,6 +3,35 @@
 Semver, per docs/architecture/11-backward-compatibility.md: minors and patches
 never need a storefront edit; a major only ships with a Contract major.
 
+## 1.3.1
+
+Default UI refresh — visual and behavioural polish in the SDK sections and
+`@vendua/ui-defaults`; no API change, no storefront edit.
+
+- Header: one row on phones (nav becomes a scrollable strip), translucent sticky bar,
+  current-page nav link (`aria-current`), bag glyph and a count that bumps on change.
+- Catalog: search matches category names too, shows a result count, clears with × or
+  Esc and spans every category; sold-out items sort last; category titles carry counts;
+  tabs scroll in one row on phones; skeleton cards while loading.
+- Product cards: monogram placeholder, hover lift, "Encomenda" / "Últimas N" badges.
+  Product page: sticky buy bar on phones, sticky media on desktop, pill qty stepper,
+  radio/checkbox indicators on modifiers. "Você também pode gostar" never lists the
+  product being viewed.
+- `store.HoursTable` folds days with the same hours ("Todos os dias", "Seg – Sex")
+  and marks today in the store's timezone.
+- Cart lines get a thumbnail and cap qty at stock; the cart page's summary no longer
+  repeats the lines. Checkout steps are a segmented track; the order page shows a
+  progress track and a dotted timeline. Buttons show a spinner while `aria-busy`.
+- Typography: one scale (12 · 14 · 15 · 16 · 18 · 20 + fluid display sizes) applied by
+  role, weights 400 text / 500 UI / 600 emphasis, tightened display tracking, balanced
+  headings and orphan-free paragraphs, tabular lining numerals for money; monograms and
+  count badges trimmed to cap height so they sit on the optical centre. Order history
+  rows read title / meta / total + status instead of one mixed line.
+- `checkout.PixPayment` is phone-first: amount up top, a full-width copy button, the code
+  on one line, three steps for the bank app, and the QR as the "another device" path
+  (QR leads from 720px). The success card stops repeating the Pix how-to and "recebido".
+- Animations respect `prefers-reduced-motion`.
+
 ## 1.3.0
 
 - Live orders over **SSE**: `useOrder` reads Core's `GET /checkout/v1/orders/:id/events`

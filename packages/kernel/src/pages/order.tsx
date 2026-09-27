@@ -116,7 +116,7 @@ export function OrderPage() {
               reorderPending={pending === order.id}
             />
           ) : null}
-          <p style={{ marginTop: 24 }}>
+          <p className="v-section-cta">
             <KLink href={KERNEL_PATHS.orders} className="v-btn v-btn-ghost">
               Meus pedidos
             </KLink>
@@ -191,21 +191,23 @@ export function OrderHistoryPage() {
           {rows.map((o) => {
             const head = (
               <>
-                <span>
-                  <strong>Pedido #{o.number}</strong>{' '}
-                  <span className="v-muted">
-                    {new Date(o.placedAt).toLocaleDateString('pt-BR')}
+                <span className="v-order-row-main">
+                  <strong className="v-order-row-title">Pedido #{o.number}</strong>
+                  <span className="v-muted v-order-row-meta">
+                    {new Date(o.placedAt).toLocaleDateString('pt-BR', {
+                      day: '2-digit',
+                      month: 'short',
+                    })}
+                    {o.items.length
+                      ? ` · ${o.items.map((i) => `${i.qty}× ${i.name}`).join(', ')}`
+                      : ''}
                   </span>
-                  {o.items.length ? (
-                    <span className="v-muted v-line-mods">
-                      {' '}
-                      · {o.items.map((i) => `${i.qty}× ${i.name}`).join(', ')}
-                    </span>
-                  ) : null}
                 </span>
-                <span>
-                  {ORDER_STATE_LABEL[o.state] ?? o.state} ·{' '}
-                  <span className="v-num">{money(o.totalCents, currency)}</span>
+                <span className="v-order-row-side">
+                  <span className="v-num v-order-row-total">{money(o.totalCents, currency)}</span>
+                  <span className="v-order-row-state" data-state={o.state}>
+                    {ORDER_STATE_LABEL[o.state] ?? o.state}
+                  </span>
                 </span>
               </>
             );
@@ -245,7 +247,7 @@ export function OrderHistoryPage() {
           onSubmit={(p, n) => void verify(p, n)}
         />
       ) : (
-        <p className="v-muted" style={{ marginTop: 16 }}>
+        <p className="v-muted v-forget">
           <button type="button" className="v-link-btn" onClick={phone.forget}>
             Esquecer meu WhatsApp neste aparelho
           </button>

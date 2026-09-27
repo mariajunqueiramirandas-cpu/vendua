@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState, type ReactNode } from 'react';
-import { Outlet } from 'react-router-dom';
+import { Outlet, useLocation } from 'react-router-dom';
 import { dayLabel, money } from '@vendua/ui-defaults';
 import { useCart, useCatalog, useProduct, useStore } from '../hooks.ts';
 import {
@@ -77,6 +77,7 @@ export function Header({ settings }: SectionProps<typeof S.header>) {
   const { cart } = useCart();
   const count = cart?.status === 'open' ? cart.totals.itemCount : 0;
   const name = settings.brand || store?.name || 'Loja';
+  const { pathname } = useLocation();
   return (
     <header className="v-header" data-part="root">
       <a href="#main" className="v-sr" data-part="skip">
@@ -90,7 +91,15 @@ export function Header({ settings }: SectionProps<typeof S.header>) {
         {settings.links?.length ? (
           <nav className="v-nav" aria-label="Navegação principal" data-part="nav">
             {settings.links.map((l, i) => (
-              <KLink key={i} href={l.href}>
+              <KLink
+                key={i}
+                href={l.href}
+                aria-current={
+                  l.href !== '/' && (pathname === l.href || pathname.startsWith(`${l.href}/`))
+                    ? 'page'
+                    : undefined
+                }
+              >
                 {l.label}
               </KLink>
             ))}
@@ -101,7 +110,11 @@ export function Header({ settings }: SectionProps<typeof S.header>) {
           {settings.showStatus ? <StoreStatusBadge /> : null}
           <CartTrigger asChild>
             <button type="button" className="v-cart-pill" data-part="cart">
-              {settings.cartLabel} <span className="v-cart-count">{count}</span>
+              <BagGlyph />
+              <span className="v-cart-label">{settings.cartLabel}</span>{' '}
+              <span key={count} className="v-cart-count" data-empty={count === 0 || undefined}>
+                {count}
+              </span>
             </button>
           </CartTrigger>
         </div>
@@ -118,7 +131,7 @@ export function Footer({ settings }: SectionProps<typeof S.footer>) {
     <footer className="v-footer" data-part="root">
       <div className="v-footer-inner">
         <div data-part="about">
-          <p style={{ fontWeight: 600 }}>{store?.name ?? ''}</p>
+          <p className="v-footer-name">{store?.name ?? ''}</p>
           {settings.note ? <p className="v-muted">{settings.note}</p> : null}
           {store?.address ? (
             <p className="v-muted">
@@ -133,7 +146,6 @@ export function Footer({ settings }: SectionProps<typeof S.footer>) {
                   WhatsApp
                 </a>
               ) : null}
-              {wa && ig ? ' · ' : null}
               {ig ? (
                 <a
                   href={`https://www.instagram.com/${ig}/`}
@@ -188,18 +200,17 @@ export function HeaderCart({ settings }: SectionProps<typeof S.headerCart>) {
   const { cart } = useCart();
   const count = cart?.status === 'open' ? cart.totals.itemCount : 0;
   return (
-    <div
-      className="v-section"
-      data-part="root"
-      style={{ paddingBlock: 8, display: 'flex', justifyContent: 'flex-end' }}
-    >
+    <div className="v-section v-header-cart" data-part="root">
       <CartTrigger asChild>
         <button
           type="button"
           className={settings.variant === 'pill' ? 'v-cart-pill' : 'v-link-btn'}
           data-part="trigger"
         >
-          {settings.label} <span className="v-cart-count">{count}</span>
+          {settings.label}{' '}
+          <span key={count} className="v-cart-count" data-empty={count === 0 || undefined}>
+            {count}
+          </span>
         </button>
       </CartTrigger>
     </div>
@@ -313,7 +324,7 @@ export function PurchasePanel({ settings }: SectionProps<typeof S.purchasePanel>
             />
           ) : (
             <span className="v-card-initial" aria-hidden="true" data-figure={product.figureVariant}>
-              {product.name.slice(0, 1).toUpperCase()}
+              <span>{product.name.slice(0, 1).toUpperCase()}</span>
             </span>
           )}
         </div>
@@ -418,9 +429,17 @@ export function PurchasePanel({ settings }: SectionProps<typeof S.purchasePanel>
                   disabled={missing.length > 0 || comboMissing.length > 0 || status === 'paused'}
                   data-part="add"
                 >
-                  {slots.length
-                    ? settings.addLabel
-                    : `${settings.addLabel} · ${money(product.basePriceCents * qty, currency)}`}
+                  {slots.length ? (
+                    settings.addLabel
+                  ) : (
+                    <>
+                      <span>{settings.addLabel}</span>
+                      <span className="v-pp-add-price v-num">
+                        <span className="v-pp-add-sep">· </span>
+                        {money(product.basePriceCents * qty, currency)}
+                      </span>
+                    </>
+                  )}
                 </button>
               </AddToCart>
             </div>
@@ -513,17 +532,27 @@ export function CatalogGrid({ settings }: SectionProps<typeof S.catalogGrid>) {
   const currency = store?.currency ?? 'BRL';
   const visible = categories.filter((c) => c.products.some((p) => p.status !== 'archived'));
   const q = normalize(query.trim());
+  // a search spans every category; sold-out items sink to the end of theirs
   const filtered = visible
-    .filter((c) => active === 'all' || c.id === active)
-    .map((c) => ({
-      ...c,
-      products: c.products.filter(
-        (p) =>
-          p.status !== 'archived' &&
-          (!q || normalize(p.name).includes(q) || normalize(p.description ?? '').includes(q)),
-      ),
-    }))
+    .filter((c) => q || active === 'all' || c.id === active)
+    .map((c) => {
+      const catHit = q && normalize(c.name).includes(q);
+      return {
+        ...c,
+        products: c.products
+          .filter(
+            (p) =>
+              p.status !== 'archived' &&
+              (!q ||
+                catHit ||
+                normalize(p.name).includes(q) ||
+                normalize(p.description ?? '').includes(q)),
+          )
+          .sort((a, b) => Number(a.status !== 'active') - Number(b.status !== 'active')),
+      };
+    })
     .filter((c) => c.products.length > 0);
+  const hits = filtered.reduce((n, c) => n + c.products.length, 0);
 
   return (
     <section className="v-section" data-part="root" id="cardapio">
@@ -544,17 +573,46 @@ export function CatalogGrid({ settings }: SectionProps<typeof S.catalogGrid>) {
           <label className="v-label" htmlFor="v-catalog-search">
             {settings.searchLabel}
           </label>
-          <input
-            id="v-catalog-search"
-            type="search"
-            className="v-input"
-            value={query}
-            maxLength={80}
-            onChange={(e) => setQuery(e.target.value)}
-          />
+          <div className="v-search-field">
+            <svg viewBox="0 0 20 20" width="18" height="18" aria-hidden="true" data-part="icon">
+              <circle cx="8.5" cy="8.5" r="5.5" fill="none" stroke="currentColor" strokeWidth="2" />
+              <path d="m13 13 4 4" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+            </svg>
+            <input
+              id="v-catalog-search"
+              type="search"
+              className="v-input"
+              value={query}
+              maxLength={80}
+              placeholder="Nome, sabor, categoria…"
+              autoComplete="off"
+              aria-describedby={q ? 'v-catalog-hits' : undefined}
+              onChange={(e) => setQuery(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Escape') setQuery('');
+              }}
+            />
+            {query ? (
+              <button
+                type="button"
+                className="v-search-clear"
+                aria-label="Limpar busca"
+                onClick={() => setQuery('')}
+              >
+                ×
+              </button>
+            ) : null}
+          </div>
+          {q ? (
+            <p id="v-catalog-hits" className="v-muted v-search-hits" role="status">
+              {hits === 0
+                ? 'Nenhum resultado'
+                : `${hits} ${hits === 1 ? 'resultado' : 'resultados'}`}
+            </p>
+          ) : null}
         </form>
       ) : null}
-      {settings.showCategoryTabs && visible.length > 1 ? (
+      {settings.showCategoryTabs && visible.length > 1 && !q ? (
         <nav className="v-tabs" aria-label="Categorias" data-part="tabs">
           <button
             type="button"
@@ -580,7 +638,7 @@ export function CatalogGrid({ settings }: SectionProps<typeof S.catalogGrid>) {
       {loading && categories.length === 0 ? (
         <div className="v-grid" aria-busy="true" aria-label="Carregando cardápio">
           {Array.from({ length: 4 }, (_, i) => (
-            <div key={i} className="v-card-media" />
+            <SkeletonCard key={i} />
           ))}
         </div>
       ) : error && categories.length === 0 ? (
@@ -591,13 +649,24 @@ export function CatalogGrid({ settings }: SectionProps<typeof S.catalogGrid>) {
         />
       ) : filtered.length === 0 ? (
         <p className="v-muted" data-part="empty">
-          {q ? `Nada encontrado para “${query.trim()}”.` : settings.emptyText}
+          {q ? (
+            <>
+              Nada encontrado para “{query.trim()}”.{' '}
+              <button type="button" className="v-link-btn" onClick={() => setQuery('')}>
+                Ver tudo
+              </button>
+            </>
+          ) : (
+            settings.emptyText
+          )}
         </p>
       ) : (
         filtered.map((c) => (
           <div key={c.id} data-part="category">
             {filtered.length > 1 || active === 'all' ? (
-              <h3 className="v-cat-title">{c.name}</h3>
+              <h3 className="v-cat-title">
+                {c.name} <span className="v-cat-count v-num">{c.products.length}</span>
+              </h3>
             ) : null}
             <ProductGrid products={c.products} variant={settings.variant} currency={currency} />
           </div>
@@ -610,10 +679,14 @@ export function CatalogGrid({ settings }: SectionProps<typeof S.catalogGrid>) {
 export function ProductList({ settings }: SectionProps<typeof S.productList>) {
   const { categories, loading } = useCatalog();
   const { store } = useStore();
+  const { params } = usePageContext();
   const pool = settings.category
     ? (categories.find((c) => c.slug === settings.category)?.products ?? [])
     : categories.flatMap((c) => c.products);
-  const products = pool.filter((p) => p.status === 'active').slice(0, settings.limit);
+  // on a product page, "you may also like" never suggests the product itself
+  const products = pool
+    .filter((p) => p.status === 'active' && p.slug !== params.slug)
+    .slice(0, settings.limit);
   if (!loading && products.length === 0) return null;
   return (
     <section className="v-section" data-part="root">
@@ -621,7 +694,7 @@ export function ProductList({ settings }: SectionProps<typeof S.productList>) {
       {loading && products.length === 0 ? (
         <div className="v-grid" aria-busy="true" aria-label="Carregando produtos">
           {Array.from({ length: settings.limit }, (_, i) => (
-            <div key={i} className="v-card-media" />
+            <SkeletonCard key={i} />
           ))}
         </div>
       ) : (
@@ -632,7 +705,7 @@ export function ProductList({ settings }: SectionProps<typeof S.productList>) {
         />
       )}
       {settings.ctaLabel && settings.ctaHref ? (
-        <p style={{ marginTop: 24 }}>
+        <p className="v-section-cta">
           <KLink href={settings.ctaHref} className="v-btn v-btn-ghost" data-part="cta">
             {settings.ctaLabel}
           </KLink>
@@ -648,14 +721,12 @@ export function StoreStatus({ settings }: SectionProps<typeof S.storeStatus>) {
   return (
     <section className="v-section" data-part="root" data-variant={settings.variant}>
       <div className={settings.variant === 'card' ? 'v-panel v-status-card' : 'v-status-card'}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
-          <h2 className="v-section-title" style={{ margin: 0 }}>
-            {settings.title}
-          </h2>
+        <div className="v-status-head">
+          <h2 className="v-section-title">{settings.title}</h2>
           <StoreStatusBadge />
         </div>
         {settings.showAddress && store.address ? (
-          <p className="v-muted" data-part="address" style={{ margin: 0 }}>
+          <p className="v-muted" data-part="address">
             {store.address}
             {store.city ? `, ${store.city}` : ''}
           </p>
@@ -683,5 +754,35 @@ export function RichText({ settings }: SectionProps<typeof S.richTextSection>) {
         <p key={i}>{p}</p>
       ))}
     </section>
+  );
+}
+
+function SkeletonCard() {
+  return (
+    <div className="v-skeleton-card" aria-hidden="true">
+      <div className="v-card-media v-skeleton" />
+      <div className="v-skeleton v-skeleton-line" />
+      <div className="v-skeleton v-skeleton-line" data-short="" />
+    </div>
+  );
+}
+
+function BagGlyph() {
+  return (
+    <svg
+      className="v-cart-glyph"
+      viewBox="0 0 24 24"
+      width="18"
+      height="18"
+      aria-hidden="true"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    >
+      <path d="M5 8h14l-1.2 11.2a2 2 0 0 1-2 1.8H8.2a2 2 0 0 1-2-1.8z" />
+      <path d="M9 10V7a3 3 0 0 1 6 0v3" />
+    </svg>
   );
 }

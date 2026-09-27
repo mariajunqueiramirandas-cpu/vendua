@@ -115,7 +115,7 @@ export function Gallery({
   if (!cur)
     return (
       <span className="v-card-initial" aria-hidden="true" data-figure={figureVariant}>
-        {name.slice(0, 1).toUpperCase()}
+        <span>{name.slice(0, 1).toUpperCase()}</span>
       </span>
     );
   return (
@@ -330,6 +330,8 @@ export function PixQr({ payload, label }: { payload: string; label: string }) {
   );
 }
 
+/** On a phone the buyer can't scan their own screen, so copy comes first and the QR
+ *  is the "another device" fallback; from 720px the QR leads (scan with the phone). */
 export function PixPayment({
   copyPaste,
   beneficiary,
@@ -344,7 +346,7 @@ export function PixPayment({
       setCopied(true);
       setTimeout(() => setCopied(false), 2500);
     } catch {
-      /* clipboard blocked — the text stays selectable */
+      /* clipboard blocked — the code stays selectable in the field */
     }
   };
   return (
@@ -352,30 +354,67 @@ export function PixPayment({
       className="v-panel v-pix"
       data-vendua="pix"
       data-part="root"
-      aria-label="Pagar com Pix"
+      aria-labelledby="v-pix-title"
     >
-      <h2 className="v-panel-title">
-        Pix{amountCents ? <span className="v-num"> · {money(amountCents, currency)}</span> : null}
-      </h2>
-      <PixQr payload={copyPaste} label="QR code Pix" />
-      <p className="v-muted" data-part="beneficiary">
-        Para {beneficiary}
-        {keyLabel ? ` · ${keyLabel}` : ''}
-      </p>
-      <label className="v-label" htmlFor="v-pix-code">
-        Pix copia e cola
-      </label>
-      <textarea
-        id="v-pix-code"
-        className="v-input v-pix-code"
-        readOnly
-        rows={3}
-        value={copyPaste}
-        onFocus={(e) => e.currentTarget.select()}
-      />
-      <button type="button" className="v-btn v-btn-accent" data-part="copy" onClick={copy}>
-        {copied ? 'Copiado!' : 'Copiar código Pix'}
-      </button>
+      <header className="v-pix-head" data-part="head">
+        <h2 className="v-eyebrow" id="v-pix-title">
+          Pague com Pix
+        </h2>
+        {amountCents ? (
+          <p className="v-pix-amount v-num" data-part="amount">
+            {money(amountCents, currency)}
+          </p>
+        ) : null}
+        <p className="v-muted v-pix-to" data-part="beneficiary">
+          Para <strong>{beneficiary}</strong>
+          {keyLabel ? ` · chave ${keyLabel}` : ''}
+        </p>
+      </header>
+      <div className="v-pix-copy" data-part="copy-block">
+        <button
+          type="button"
+          className="v-btn v-btn-accent v-btn-block"
+          data-part="copy"
+          data-copied={copied || undefined}
+          onClick={() => void copy()}
+        >
+          {copied ? 'Código copiado' : 'Copiar código Pix'}
+        </button>
+        <span className="v-sr" role="status">
+          {copied ? 'Código Pix copiado' : ''}
+        </span>
+        <label className="v-label" htmlFor="v-pix-code">
+          Pix copia e cola
+        </label>
+        <input
+          id="v-pix-code"
+          className="v-input v-pix-code"
+          readOnly
+          value={copyPaste}
+          onFocus={(e) => e.currentTarget.select()}
+        />
+        <ol className="v-pix-steps" data-part="steps">
+          <li>
+            <span>Copie o código</span>
+          </li>
+          <li>
+            <span>
+              No app do banco, abra <strong>Pix copia e cola</strong>
+            </span>
+          </li>
+          <li>
+            <span>Cole, confira o valor e confirme</span>
+          </li>
+        </ol>
+      </div>
+      <div className="v-pix-qr" data-part="qr">
+        <p className="v-pix-or">
+          <span>ou pague de outro aparelho</span>
+        </p>
+        <div className="v-pix-qr-tile">
+          <PixQr payload={copyPaste} label="QR code Pix" />
+        </div>
+      </div>
     </section>
   );
 }

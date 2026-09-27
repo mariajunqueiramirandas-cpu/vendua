@@ -118,6 +118,13 @@ export function CartLineItem({
       data-part="root"
       data-unavailable={unavailable || undefined}
     >
+      <span className="v-line-thumb" data-part="thumb" aria-hidden="true">
+        {item.imageUrl ? (
+          <img src={item.imageUrl} alt="" loading="lazy" decoding="async" />
+        ) : (
+          <span>{item.name.slice(0, 1).toUpperCase()}</span>
+        )}
+      </span>
       <div className="v-line-main">
         <p className="v-line-name" data-part="name">
           {item.name}
@@ -151,6 +158,7 @@ export function CartLineItem({
         <div className="v-line-actions" data-part="actions">
           <QtyControl
             qty={item.qty}
+            max={Math.max(item.qty, Math.min(99, item.stockQuantity ?? 99))}
             pending={pending}
             onChange={onQty}
             label={`quantidade de ${item.name}`}
@@ -178,7 +186,13 @@ export function OrderTimeline({ events }: SlotProps['order.Timeline']) {
   return (
     <ol className="v-timeline" data-vendua="order-timeline" data-part="root">
       {events.map((e, i) => (
-        <li key={`${e.at}-${i}`} className="v-timeline-item" data-part="event" data-state={e.to}>
+        <li
+          key={`${e.at}-${i}`}
+          className="v-timeline-item"
+          data-part="event"
+          data-state={e.to}
+          data-current={i === events.length - 1 || undefined}
+        >
           <span className="v-timeline-label">{ORDER_STATE_LABEL[e.to] ?? e.to}</span>
           <time className="v-muted" dateTime={e.at}>
             {dateTime(e.at)}
@@ -220,6 +234,7 @@ export function OrderStatusPage({ order, currency, timeline }: SlotProps['order.
           </p>
         ) : null}
       </header>
+      <OrderProgress state={order.state} mode={d.mode} />
       <div className="v-order-grid">
         <div data-part="timeline">{timeline}</div>
         <dl className="v-order-facts" data-part="facts">
@@ -247,23 +262,94 @@ export function OrderStatusPage({ order, currency, timeline }: SlotProps['order.
   );
 }
 
-const DAY = ['Domingo', 'Segunda', 'Terça', 'Quarta', 'Quinta', 'Sexta', 'Sábado'];
+/** The happy path as a glanceable track; cancelled/refunded orders skip it. */
+function OrderProgress({ state, mode }: { state: string; mode: string }) {
+  const path =
+    mode === 'delivery'
+      ? ['placed', 'confirmed', 'preparing', 'out_for_delivery', 'delivered']
+      : ['placed', 'confirmed', 'preparing', 'ready', 'delivered'];
+  const at = path.indexOf(state === 'ready' && mode === 'delivery' ? 'preparing' : state);
+  if (at < 0) return null;
+  const short: Record<string, string> = {
+    placed: 'Recebido',
+    confirmed: 'Confirmado',
+    preparing: 'Preparo',
+    ready: 'Pronto',
+    out_for_delivery: 'A caminho',
+    delivered: mode === 'delivery' ? 'Entregue' : 'Retirado',
+  };
+  return (
+    <ol className="v-order-progress" data-part="progress" aria-hidden="true">
+      {path.map((s, i) => (
+        <li key={s} data-state={i < at ? 'done' : i === at ? 'current' : 'todo'}>
+          <span>{short[s]}</span>
+        </li>
+      ))}
+    </ol>
+  );
+}
 
+const DAY = ['Domingo', 'Segunda', 'Terça', 'Quarta', 'Quinta', 'Sexta', 'Sábado'];
+const DAY_SHORT = ['Dom', 'Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb'];
+// Monday first — how a Brazilian storefront reads its week
+const WEEK = [1, 2, 3, 4, 5, 6, 0];
+
+function todayIn(timeZone: string | undefined): number {
+  try {
+    const wd = new Intl.DateTimeFormat('en-US', {
+      weekday: 'short',
+      ...(timeZone ? { timeZone } : {}),
+    }).format(new Date());
+    return ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'].indexOf(wd);
+  } catch {
+    return new Date().getDay();
+  }
+}
+
+/** Consecutive days with the same windows fold into one row ("Seg – Sex"). */
 export function HoursTable({ hours }: SlotProps['store.HoursTable']) {
-  const rows = DAY.map((label, day) => ({
-    label,
-    windows: hours.windows.filter((w) => w.days.includes(day)).map((w) => `${w.open}–${w.close}`),
-  }));
+  const today = todayIn(hours.timezone);
+  const text = (day: number) =>
+    hours.windows
+      .filter((w) => w.days.includes(day))
+      .map((w) => `${w.open}–${w.close}`)
+      .join(', ') || 'Fechado';
+  const rows: { days: number[]; text: string }[] = [];
+  for (const day of WEEK) {
+    const t = text(day);
+    const last = rows[rows.length - 1];
+    if (last && last.text === t) last.days.push(day);
+    else rows.push({ days: [day], text: t });
+  }
+  const label = (days: number[]) =>
+    days.length === 7
+      ? 'Todos os dias'
+      : days.length === 1
+        ? DAY[days[0]!]
+        : `${DAY_SHORT[days[0]!]} – ${DAY_SHORT[days[days.length - 1]!]}`;
   return (
     <table className="v-hours" data-vendua="hours-table" data-part="root">
       <caption className="v-sr">Horário de funcionamento</caption>
       <tbody>
-        {rows.map((r) => (
-          <tr key={r.label} data-part="row">
-            <th scope="row">{r.label}</th>
-            <td className="v-num">{r.windows.length ? r.windows.join(', ') : 'Fechado'}</td>
-          </tr>
-        ))}
+        {rows.map((r) => {
+          const isToday = r.days.includes(today);
+          return (
+            <tr
+              key={r.days.join()}
+              data-part="row"
+              data-today={isToday || undefined}
+              data-closed={r.text === 'Fechado' || undefined}
+            >
+              <th scope="row">
+                {label(r.days)}
+                {isToday && r.days.length < 7 ? (
+                  <span className="v-hours-today"> · hoje</span>
+                ) : null}
+              </th>
+              <td className="v-num">{r.text}</td>
+            </tr>
+          );
+        })}
       </tbody>
     </table>
   );
@@ -272,11 +358,24 @@ export function HoursTable({ hours }: SlotProps['store.HoursTable']) {
 export function ProductCard({ product, currency, link }: SlotProps['catalog.ProductCard']) {
   const soldOut = product.status !== 'active';
   const [imgFailed, setImgFailed] = useState(false);
+  const left = product.stockQuantity;
+  const badge = soldOut
+    ? null
+    : product.requiresPreorder
+      ? { tone: 'surface', text: 'Encomenda' }
+      : product.lowStock && typeof left === 'number' && left > 0
+        ? { tone: 'danger', text: left === 1 ? 'Última unidade' : `Últimas ${left}` }
+        : null;
   return (
     <article className="v-card" data-part="root" data-status={product.status}>
       {link(
         <>
           <div className="v-card-media" data-part="media" aria-hidden="true">
+            {badge ? (
+              <span className="v-card-badge" data-part="badge" data-tone={badge.tone}>
+                {badge.text}
+              </span>
+            ) : null}
             {product.imageUrl && !imgFailed ? (
               <img
                 src={product.imageUrl}
@@ -287,7 +386,7 @@ export function ProductCard({ product, currency, link }: SlotProps['catalog.Prod
               />
             ) : (
               <span className="v-card-initial" data-figure={product.figureVariant}>
-                {product.name.slice(0, 1).toUpperCase()}
+                <span>{product.name.slice(0, 1).toUpperCase()}</span>
               </span>
             )}
           </div>
@@ -303,7 +402,12 @@ export function ProductCard({ product, currency, link }: SlotProps['catalog.Prod
             {soldOut ? (
               <span className="v-flag">Esgotado</span>
             ) : (
-              money(product.basePriceCents, currency)
+              <>
+                <span>{money(product.basePriceCents, currency)}</span>
+                <span className="v-card-go" aria-hidden="true">
+                  +
+                </span>
+              </>
             )}
           </p>
         </>,
