@@ -3,6 +3,7 @@ import { anyFailed, printChecks } from './report.ts';
 import { runStatic } from './static.ts';
 import { runK05 } from './k05.ts';
 import { runE2E } from './e2e.ts';
+import { runManifest } from './manifest.ts';
 
 const [, , cmd, ...args] = process.argv;
 
@@ -11,7 +12,8 @@ function usage(): never {
     'usage:\n' +
       '  vendua-conformance static <storefrontDir>\n' +
       '  vendua-conformance k05 <slug> [baseRef]\n' +
-      '  vendua-conformance e2e <storefrontDir>',
+      '  vendua-conformance e2e <storefrontDir> [--prebuilt] [--grep <re>]\n' +
+      '  vendua-conformance manifest <storefrontDir>   (K16 on dist/vendua-manifest.json)',
   );
   process.exit(2);
 }
@@ -34,7 +36,20 @@ switch (cmd) {
   case 'e2e': {
     const dir = args[0];
     if (!dir) usage();
-    process.exit(await runE2E(dir));
+    const gi = args.indexOf('--grep');
+    process.exit(
+      await runE2E(dir, {
+        prebuilt: args.includes('--prebuilt'),
+        ...(gi >= 0 && args[gi + 1] ? { grep: args[gi + 1] } : {}),
+      }),
+    );
+  }
+  case 'manifest': {
+    const dir = args[0];
+    if (!dir) usage();
+    const results = runManifest(dir);
+    printChecks(results);
+    process.exit(anyFailed(results) ? 1 : 0);
   }
   default:
     usage();

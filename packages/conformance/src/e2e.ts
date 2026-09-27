@@ -7,7 +7,14 @@ import { readTemplatesDir } from '@vendua/templates/node';
 
 const PKG_DIR = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 
-export async function runE2E(storefrontDir: string): Promise<number> {
+export interface E2EOptions {
+  /** `dir` already holds a built artifact (dist/ + templates/) — e.g. the stale reference; don't build */
+  prebuilt?: boolean;
+  /** Playwright --grep: run a subset (the stale job runs the S-series) */
+  grep?: string;
+}
+
+export async function runE2E(storefrontDir: string, opts: E2EOptions = {}): Promise<number> {
   const dir = resolve(storefrontDir);
   const port = Number(process.env.VENDUA_PREVIEW_PORT ?? 5199);
   const coreOrigin = process.env.VENDUA_CORE_ORIGIN ?? 'http://localhost:8787';
@@ -18,16 +25,20 @@ export async function runE2E(storefrontDir: string): Promise<number> {
     return 2;
   }
 
-  console.log(`[e2e] building ${dir} …`);
-  const build = Bun.spawn(['bun', 'run', 'build'], {
-    cwd: dir,
-    stdout: 'inherit',
-    stderr: 'inherit',
-    env: { ...process.env },
-  });
-  if ((await build.exited) !== 0) {
-    console.error('[e2e] storefront build failed');
-    return 2;
+  if (opts.prebuilt) {
+    console.log(`[e2e] prebuilt artifact ${dir} — not rebuilding`);
+  } else {
+    console.log(`[e2e] building ${dir} …`);
+    const build = Bun.spawn(['bun', 'run', 'build'], {
+      cwd: dir,
+      stdout: 'inherit',
+      stderr: 'inherit',
+      env: { ...process.env },
+    });
+    if ((await build.exited) !== 0) {
+      console.error('[e2e] storefront build failed');
+      return 2;
+    }
   }
   const distDir = join(dir, 'dist');
   if (!existsSync(join(distDir, 'index.html'))) {
@@ -80,7 +91,9 @@ export async function runE2E(storefrontDir: string): Promise<number> {
     }
 
     const reportDir = join(dir, 'qa-report');
-    const proc = Bun.spawn(['bunx', 'playwright', 'test', '--config', 'playwright.config.ts'], {
+    const argv = ['bunx', 'playwright', 'test', '--config', 'playwright.config.ts'];
+    if (opts.grep) argv.push('--grep', opts.grep);
+    const proc = Bun.spawn(argv, {
       cwd: PKG_DIR,
       stdout: 'inherit',
       stderr: 'inherit',

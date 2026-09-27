@@ -1,0 +1,117 @@
+{
+  "manifestVersion": 1,
+  "storefront": "template",
+  "contract": 2,
+  "kernel": "1.0.0",
+  "coreApi": {
+    "storefront": 1,
+    "checkout": 1
+  },
+  "builtAt": "2026-09-27T02:12:07.808Z",
+  "templates": {
+    "source": "repo",
+    "pages": [
+      "catalog",
+      "home",
+      "layout",
+      "product"
+    ],
+    "hash": "8575e2a0a27a9d50"
+  },
+  "tokens": {
+    "source": "repo",
+    "hash": "bbd698a3c36e84f6"
+  },
+  "sections": {
+    "sdk:page-content": {},
+    "sdk:header": {
+      "areas": {
+        "actions": {
+          "accepts": [
+            "badge",
+            "info"
+          ],
+          "max": 2
+        }
+      }
+    },
+    "sdk:footer": {
+      "areas": {
+        "extra": {
+          "accepts": [
+            "info",
+            "social-proof",
+            "promo"
+          ],
+          "max": 3
+        }
+      }
+    },
+    "sdk:announcement-bar": {},
+    "sdk:header-cart": {},
+    "sdk:purchase-panel": {
+      "areas": {
+        "media": {
+          "accepts": [
+            "media",
+            "badge"
+          ],
+          "max": 3
+        },
+        "after-price": {
+          "accepts": [
+            "purchase-extras",
+            "badge",
+            "promo",
+            "info"
+          ],
+          "max": 4
+        },
+        "after-cta": {
+          "accepts": [
+            "purchase-extras",
+            "info",
+            "social-proof"
+          ],
+          "max": 4
+        }
+      }
+    },
+    "sdk:catalog-grid": {
+      "areas": {
+        "before-grid": {
+          "accepts": [
+            "promo",
+            "info"
+          ],
+          "max": 2
+        }
+      }
+    },
+    "sdk:product-list": {},
+    "sdk:store-status": {},
+    "sdk:rich-text": {},
+    "sdk:stock-counter": {
+      "category": "purchase-extras"
+    },
+    "sdk:notify-me": {
+      "category": "purchase-extras"
+    },
+    "sdk:promo-badge": {
+      "category": "badge"
+    },
+    "store:intro": {
+      "areas": {
+        "aside": {
+          "accepts": [
+            "promo",
+            "badge",
+            "info"
+          ],
+          "max": 2
+        }
+      }
+    }
+  },
+  "overrides": []
+}
