@@ -408,6 +408,9 @@ export function PaymentMethods({
 }
 
 export function SuccessPage({ order, currency }: SlotProps['checkout.SuccessPage']) {
+  // the Pix card right below carries the how-to; here only what's left to do
+  const pixDue =
+    order.payment.method === 'pix' && order.payment.status === 'pending' && !!order.payment.pix;
   return (
     <section
       className="v-panel v-success"
@@ -437,10 +440,20 @@ export function SuccessPage({ order, currency }: SlotProps['checkout.SuccessPage
         Pedido #{order.number} recebido!
       </h1>
       <p className="v-muted" data-part="body">
-        {ORDER_STATE_LABEL[order.state] ?? order.state} · {money(order.totalCents, currency)} ·{' '}
-        {PAYMENT_LABEL[order.payment.method] ?? order.payment.method}
+        {/* the title already says "recebido" — the state only earns a mention once it moves on */}
+        {[
+          order.state === 'placed' ? null : (ORDER_STATE_LABEL[order.state] ?? order.state),
+          money(order.totalCents, currency),
+          PAYMENT_LABEL[order.payment.method] ?? order.payment.method,
+        ]
+          .filter(Boolean)
+          .join(' · ')}
       </p>
-      {order.payment.instructions ? (
+      {pixDue ? (
+        <p className="v-success-next" data-part="next">
+          Falta só o Pix — assim que o pagamento cair, o pedido vai para a loja.
+        </p>
+      ) : order.payment.instructions ? (
         <p className="v-note" data-part="instructions">
           {order.payment.instructions}
         </p>

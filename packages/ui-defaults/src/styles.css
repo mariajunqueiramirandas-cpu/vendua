@@ -1108,6 +1108,12 @@
       var(--v-color-surface, #fff)
     );
   }
+  .v-success-next {
+    margin: 12px auto 0;
+    max-width: 30em;
+    font-weight: 500;
+    text-wrap: balance;
+  }
   .v-success-icon {
     display: block;
     margin: 0 auto 12px;
@@ -2183,23 +2189,171 @@
     gap: 8px;
     margin-bottom: 12px;
   }
+  /* Pix payment — phone: amount, copy, steps, then QR as the other-device path.
+     ≥720px: QR tile left, the rest right. */
   .v-pix {
     display: grid;
-    gap: 10px;
-    justify-items: start;
+    gap: 20px;
     margin-bottom: 16px;
+  }
+  .v-pix-head {
+    display: grid;
+    gap: 2px;
+  }
+  .v-pix-head .v-eyebrow {
+    margin: 0;
+  }
+  .v-pix-amount {
+    margin: 0;
+    font-family: var(--v-font-display, var(--v-font-body, serif));
+    font-size: clamp(2rem, 1.6rem + 1.6vw, 2.5rem);
+    font-weight: 600;
+    line-height: 1.1;
+    letter-spacing: -0.02em;
+  }
+  .v-pix-to {
+    margin: 4px 0 0;
+    font-size: 0.875rem;
+  }
+  .v-pix-to strong {
+    font-weight: 500;
+    color: var(--v-color-text, #1c1b1a);
+  }
+  .v-pix-copy {
+    display: grid;
+    gap: 8px;
+  }
+  .v-pix-copy [data-part='copy'] {
+    min-height: 52px;
+    font-size: 1rem;
+  }
+  .v-pix-copy [data-copied] {
+    background: var(--v-color-success, #3d7a4f);
+  }
+  .v-pix-copy [data-copied]::before {
+    content: '';
+    width: 0.55em;
+    height: 1em;
+    margin-top: -0.2em;
+    border: solid currentColor;
+    border-width: 0 2px 2px 0;
+    transform: rotate(45deg);
+  }
+  .v-pix-copy .v-label {
+    margin-top: 8px;
+  }
+  .v-pix-code {
+    font-family: var(--v-font-mono, ui-monospace, monospace);
+    font-size: 16px; /* iOS zooms inputs under 16px */
+    text-overflow: ellipsis;
+    background: color-mix(in srgb, var(--v-color-text, #1c1b1a) 3%, var(--v-color-surface, #fff));
+  }
+  .v-pix-steps {
+    margin: 8px 0 0;
+    padding: 0;
+    list-style: none;
+    counter-reset: v-pix;
+    display: grid;
+    gap: 8px;
+    font-size: 0.875rem;
+    line-height: 1.4;
+    color: var(--v-color-muted, #6e6a64);
+  }
+  .v-pix-steps li {
+    display: flex;
+    align-items: baseline;
+    gap: 10px;
+    counter-increment: v-pix;
+  }
+  .v-pix-steps li::before {
+    content: counter(v-pix);
+    flex: none;
+    display: inline-grid;
+    place-items: center;
+    width: 20px;
+    height: 20px;
+    border-radius: 50%;
+    font-size: 0.75rem;
+    font-weight: 600;
+    font-variant-numeric: tabular-nums;
+    color: var(--v-color-accent, #3f5e4e);
+    background: color-mix(in srgb, var(--v-color-accent, #3f5e4e) 12%, transparent);
+    transform: translateY(-1px);
+  }
+  .v-pix-steps strong {
+    font-weight: 500;
+    color: var(--v-color-text, #1c1b1a);
+  }
+  .v-pix-qr {
+    display: grid;
+    justify-items: center;
+    gap: 16px;
+  }
+  .v-pix-or {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    width: 100%;
+    margin: 0;
+    font-size: 0.75rem;
+    font-weight: 600;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--v-color-muted, #6e6a64);
+  }
+  .v-pix-or::before,
+  .v-pix-or::after {
+    content: '';
+    flex: 1;
+    height: 1px;
+    background: color-mix(in srgb, var(--v-color-text, #1c1b1a) 12%, transparent);
+  }
+  /* scanners want dark-on-white with a quiet zone, whatever the store's palette */
+  .v-pix-qr-tile {
+    padding: 12px;
+    border-radius: var(--v-radius-md, 8px);
+    background: #fff;
+    border: 1px solid color-mix(in srgb, var(--v-color-text, #1c1b1a) 10%, transparent);
+    line-height: 0;
+  }
+  .v-pix-qr-tile .v-qr {
+    width: 176px;
+    height: 176px;
+    border-radius: 0;
+  }
+  @media (min-width: 720px) {
+    .v-pix {
+      grid-template-columns: auto minmax(0, 1fr);
+      grid-template-areas: 'qr head' 'qr copy';
+      align-items: start;
+      gap: 12px 32px;
+    }
+    .v-pix-head {
+      grid-area: head;
+    }
+    .v-pix-copy {
+      grid-area: copy;
+    }
+    .v-pix-qr {
+      grid-area: qr;
+    }
+    .v-pix-or {
+      display: none;
+    }
+    .v-pix-qr-tile .v-qr {
+      width: 200px;
+      height: 200px;
+    }
+    .v-pix-copy [data-part='copy'] {
+      justify-self: start;
+      width: auto;
+      min-width: 240px;
+    }
   }
   .v-qr {
     width: min(220px, 60vw);
     height: auto;
     border-radius: var(--v-radius-sm, 4px);
-  }
-  .v-pix-code {
-    width: 100%;
-    font-family: var(--v-font-mono, ui-monospace, monospace);
-    font-size: 0.75rem;
-    overflow-wrap: anywhere;
-    resize: none;
   }
   .v-pix-info {
     display: grid;

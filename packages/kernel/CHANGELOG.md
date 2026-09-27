@@ -27,6 +27,9 @@ Default UI refresh — visual and behavioural polish in the SDK sections and
   headings and orphan-free paragraphs, tabular lining numerals for money; monograms and
   count badges trimmed to cap height so they sit on the optical centre. Order history
   rows read title / meta / total + status instead of one mixed line.
+- `checkout.PixPayment` is phone-first: amount up top, a full-width copy button, the code
+  on one line, three steps for the bank app, and the QR as the "another device" path
+  (QR leads from 720px). The success card stops repeating the Pix how-to and "recebido".
 - Animations respect `prefers-reduced-motion`.
 
 ## 1.3.0
