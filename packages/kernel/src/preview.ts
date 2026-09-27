@@ -1,11 +1,18 @@
 import { useSyncExternalStore } from 'react';
-import { validateTemplate, type PageId, type TemplateSet } from '@vendua/templates';
+import {
+  validateTemplate,
+  validateTokens,
+  type PageId,
+  type StorefrontTokens,
+  type TemplateSet,
+} from '@vendua/templates';
 
 // Editor preview (Kernel 1.4): the merchant admin frames the real storefront with
 // `?vendua-preview=1` and posts draft templates, so edits show before "publicar".
 // Only a framed page opted in by the query listens; drafts never leave this tab.
-// Messages: parent → { type: 'vendua:preview', templates?, selected? };
-//           frame  → { type: 'vendua:preview-ready' } | { type: 'vendua:preview-select', id }.
+// Messages: parent → { type: 'vendua:preview', templates?, tokens?, selected? };
+//           frame  → { type: 'vendua:preview-ready', tokens, paths } | { type: 'vendua:preview-select', id }.
+// `tokens` in ready are the ones in force, so the editor starts from the real look.
 
 const active =
   typeof window !== 'undefined' &&
@@ -13,6 +20,9 @@ const active =
   new URLSearchParams(window.location.search).has('vendua-preview');
 
 let drafts: TemplateSet | null = null;
+let draftTokens: StorefrontTokens | null = null;
+let current: StorefrontTokens | null = null;
+let paths: Record<string, string> | null = null;
 const listeners = new Set<() => void>();
 let started = false;
 
@@ -26,7 +36,12 @@ function start() {
   const style = document.createElement('style');
   document.head.appendChild(style);
   window.addEventListener('message', (e) => {
-    const d = e.data as { type?: unknown; templates?: unknown; selected?: unknown } | null;
+    const d = e.data as {
+      type?: unknown;
+      templates?: unknown;
+      tokens?: unknown;
+      selected?: unknown;
+    } | null;
     if (!d || d.type !== 'vendua:preview' || e.source !== window.parent) return;
     if (d.templates && typeof d.templates === 'object') {
       const next: TemplateSet = {};
@@ -35,6 +50,12 @@ function start() {
         if (v.ok) next[page as PageId] = v.template;
       }
       drafts = next;
+      for (const l of listeners) l();
+    }
+    if (d.tokens !== undefined) {
+      // same gate as Core: an unreadable palette never renders, even as a draft
+      const v = d.tokens === null ? null : validateTokens(d.tokens);
+      draftTokens = v && v.ok ? v.tokens : null;
       for (const l of listeners) l();
     }
     if (typeof d.selected === 'string' || d.selected === null) {
@@ -63,7 +84,19 @@ function start() {
     },
     true,
   );
-  window.parent.postMessage({ type: 'vendua:preview-ready' }, '*');
+  announce();
+}
+
+function announce() {
+  window.parent.postMessage({ type: 'vendua:preview-ready', tokens: current, paths }, '*');
+}
+
+/** The provider reports the tokens in force and the store's routes; the editor starts from them. */
+export function reportPreview(t: StorefrontTokens, p: Record<string, string>) {
+  current = t;
+  paths = p;
+  // effects run child-first, so the frame may have announced itself before this
+  if (started) announce();
 }
 
 const subscribe = (fn: () => void) => {
@@ -77,6 +110,15 @@ export function usePreviewTemplates(): TemplateSet | null {
   return useSyncExternalStore(
     subscribe,
     () => drafts,
+    () => null,
+  );
+}
+
+/** Draft tokens from the editor while previewing; null otherwise. */
+export function usePreviewTokens(): StorefrontTokens | null {
+  return useSyncExternalStore(
+    subscribe,
+    () => draftTokens,
     () => null,
   );
 }

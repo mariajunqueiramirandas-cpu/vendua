@@ -14,6 +14,7 @@ COPY packages/loader/package.json packages/loader/package.json
 COPY packages/templates/package.json packages/templates/package.json
 COPY packages/ui-defaults/package.json packages/ui-defaults/package.json
 COPY apps/control/package.json apps/control/package.json
+COPY apps/admin/package.json apps/admin/package.json
 COPY site/package.json site/package.json
 # New storefronts go here — one COPY per workspace package.json.
 COPY storefronts/quero-pudim/package.json storefronts/quero-pudim/package.json

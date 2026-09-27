@@ -143,8 +143,10 @@ export function mountAdmin(o: MountAdminOpts) {
     const { stores, settings } = await withTenant(sql, tenant.id, async (tx) => ({
       stores: await membershipsFor(sql, m.phone),
       settings: (
-        await tx<{ logo_url: string | null; prefs: Record<string, unknown> }[]>`
-          select s.logo_url, u.prefs from merchant_users u
+        await tx<
+          { logo_url: string | null; prefs: Record<string, unknown>; email: string | null }[]
+        >`
+          select s.logo_url, u.prefs, u.email from merchant_users u
             left join store_settings s on s.tenant_id = u.tenant_id
           where u.id = ${m.userId}
         `
@@ -167,6 +169,8 @@ export function mountAdmin(o: MountAdminOpts) {
       },
       stores: stores.map(publicStore),
       push: { publicKey: vapidPublicKey() },
+      // "falar com a Venduá" (Ajuda); unset = the page offers the in-app message only
+      support: { whatsapp: process.env.VENDUA_SUPPORT_WHATSAPP?.replace(/\D/g, '') || null },
     });
   });
 

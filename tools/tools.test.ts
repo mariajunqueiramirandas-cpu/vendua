@@ -62,6 +62,15 @@ describe('mapFiles', () => {
     expect(mapFiles(['apps/README.md']).packages).toEqual([]);
   });
 
+  test('the admin gate runs for the admin, Core, the Kernel and CI changes only', () => {
+    expect(mapFiles(['apps/admin/src/main.tsx']).adminGate).toBe(true);
+    expect(mapFiles(['packages/core/src/app.ts']).adminGate).toBe(true);
+    expect(mapFiles(['packages/kernel/src/api.ts']).adminGate).toBe(true);
+    expect(mapFiles(['.github/workflows/ci.yml']).adminGate).toBe(true);
+    expect(mapFiles(['apps/control/src/App.tsx', 'docs/roadmap.md']).adminGate).toBe(false);
+    expect(mapFiles(['storefronts/acme/routes/index.tsx']).adminGate).toBe(false);
+  });
+
   test('CRM/site/docs-only diffs skip core tests and conformance', () => {
     const r = mapFiles(['apps/control/src/App.tsx', 'site/src/app.css', 'docs/roadmap.md']);
     expect(r.coreTests).toBe(false);

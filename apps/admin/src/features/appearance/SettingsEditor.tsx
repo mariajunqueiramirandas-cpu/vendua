@@ -1,0 +1,184 @@
+import { Plus, Trash } from '@phosphor-icons/react';
+import { Button, IconButton } from '../../ui/Button.tsx';
+import { Chips, Field, TextArea, TextInput, Toggle, Stepper } from '../../ui/fields.tsx';
+import { PhotoField } from '../../ui/PhotoField.tsx';
+import { optionName, type FieldSpec } from './fields.ts';
+
+type Values = Record<string, unknown>;
+
+/** Every change lands in the preview as it's typed; "publicar" makes it real. */
+export function SettingsEditor({
+  fields,
+  value,
+  onChange,
+  idPrefix,
+  origin,
+}: {
+  fields: FieldSpec[];
+  value: Values;
+  onChange: (v: Values) => void;
+  idPrefix: string;
+  /** the store's own address: its relative images ("/images/…") live there */
+  origin: string;
+}) {
+  const show = (u: string) =>
+    u.startsWith('/') && !u.startsWith('/v1/media/') && !u.startsWith('//') ? origin + u : u;
+  const set = (k: string, v: unknown) => {
+    const next = { ...value };
+    if (v === '' || v === undefined) delete next[k];
+    else next[k] = v;
+    onChange(next);
+  };
+  const shown = fields.filter((f) => f.kind !== 'skip');
+  if (!shown.length)
+    return (
+      <p className="t-body text-muted">
+        Esta parte não tem textos para editar. Dá para mover ou esconder.
+      </p>
+    );
+  return (
+    <div className="space-y-5">
+      {shown.map((f) => {
+        const id = `${idPrefix}-${f.key}`;
+        const v = value[f.key];
+        switch (f.kind) {
+          case 'text':
+            return (
+              <Field key={f.key} label={f.label} htmlFor={id}>
+                {f.long ? (
+                  <TextArea
+                    id={id}
+                    maxLength={f.max}
+                    value={(v as string) ?? ''}
+                    onChange={(e) => set(f.key, e.target.value)}
+                    className="min-h-24"
+                  />
+                ) : (
+                  <TextInput
+                    id={id}
+                    maxLength={f.max}
+                    value={(v as string) ?? ''}
+                    onChange={(e) => set(f.key, e.target.value)}
+                  />
+                )}
+              </Field>
+            );
+          case 'url':
+            return (
+              <Field
+                key={f.key}
+                label={f.label}
+                htmlFor={id}
+                helper="Uma página da loja (ex.: /catalog) ou um link completo."
+              >
+                <TextInput
+                  id={id}
+                  maxLength={300}
+                  inputMode="url"
+                  value={(v as string) ?? ''}
+                  onChange={(e) => set(f.key, e.target.value)}
+                />
+              </Field>
+            );
+          case 'number':
+            return (
+              <Field key={f.key} label={f.label}>
+                <Stepper
+                  label={f.label}
+                  value={typeof v === 'number' ? v : (f.def ?? f.min)}
+                  min={f.min}
+                  max={f.max}
+                  onChange={(n) => set(f.key, n)}
+                />
+              </Field>
+            );
+          case 'boolean':
+            return (
+              <Toggle
+                key={f.key}
+                checked={typeof v === 'boolean' ? v : (f.def ?? false)}
+                onChange={(b) => set(f.key, b)}
+                label={f.label}
+              />
+            );
+          case 'select':
+            return (
+              <Field key={f.key} label={f.label}>
+                <Chips
+                  label={f.label}
+                  value={(v as string) ?? f.def ?? f.options[0] ?? ''}
+                  onChange={(o) => set(f.key, o)}
+                  options={f.options.map((o) => ({ value: o, label: optionName(o) }))}
+                />
+              </Field>
+            );
+          case 'image':
+            return (
+              <Field key={f.key} label={f.label}>
+                <PhotoField
+                  label={f.label}
+                  max={1}
+                  photos={typeof v === 'string' && v ? [{ url: show(v) }] : []}
+                  onChange={(p) =>
+                    set(f.key, p[0]?.url === show(String(v ?? '')) ? v : (p[0]?.url ?? ''))
+                  }
+                />
+              </Field>
+            );
+          case 'list': {
+            const items = Array.isArray(v) ? (v as Values[]) : [];
+            return (
+              <Field key={f.key} label={f.label}>
+                <div className="space-y-3">
+                  {items.map((it, i) => (
+                    <div key={i} className="rounded-md bg-sunken p-3">
+                      <div className="mb-2 flex items-center justify-between">
+                        <span className="t-caption font-semibold text-muted">{i + 1}º item</span>
+                        <IconButton
+                          label="tirar item"
+                          size="sm"
+                          onClick={() =>
+                            set(
+                              f.key,
+                              items.filter((_, k) => k !== i),
+                            )
+                          }
+                        >
+                          <Trash />
+                        </IconButton>
+                      </div>
+                      <SettingsEditor
+                        origin={origin}
+                        fields={f.of}
+                        value={it}
+                        idPrefix={`${id}-${i}`}
+                        onChange={(nv) =>
+                          set(
+                            f.key,
+                            items.map((x, k) => (k === i ? nv : x)),
+                          )
+                        }
+                      />
+                    </div>
+                  ))}
+                  {items.length < f.max ? (
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      icon={<Plus />}
+                      onClick={() => set(f.key, [...items, { ...(items.at(-1) ?? {}) }])}
+                    >
+                      mais um item
+                    </Button>
+                  ) : null}
+                </div>
+              </Field>
+            );
+          }
+          default:
+            return null;
+        }
+      })}
+    </div>
+  );
+}

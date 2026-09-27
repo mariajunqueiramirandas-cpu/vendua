@@ -1,0 +1,564 @@
+@import 'tailwindcss';
+
+/*
+ * Venduá merchant admin — design tokens (docs/merchant-admin-design.md §4, appendix).
+ * "Paper and light": warm cream surfaces, forest as the brand's voice, lime only
+ * where something is alive or new. Two themes, Creme (default) and Noite, chosen on
+ * <html data-theme>. Everything below reads these variables; no screen hard-codes a colour.
+ */
+
+@custom-variant noite (&:where([data-theme='noite'], [data-theme='noite'] *));
+
+:root {
+  --bg: #f7f4ea;
+  --surface: #fffdf8;
+  --surface-sunken: #efe9d8;
+  --surface-raised: #fffdf8;
+  --ink: #123c32;
+  --ink-muted: #4f6a5e;
+  --ink-faint: #6b8177; /* non-text only */
+  --line: rgb(18 60 50 / 0.12);
+  --line-strong: rgb(18 60 50 / 0.2);
+  --primary: #123c32;
+  --on-primary: #fffdf8;
+  --primary-hover: #0d2f27;
+  --spark: #d9f875;
+  --on-spark: #123c32;
+  --spark-soft: #f0fcc9;
+  --success: #1f7a4d;
+  --success-soft: #ddf3e6;
+  --warning: #9a5200;
+  --warning-soft: #fff0d6;
+  --danger: #b3261e;
+  --danger-soft: #fbe4e1;
+  --info: #2456b0;
+  --info-soft: #e3eeff;
+  --hover: rgb(18 60 50 / 0.05);
+  --press: rgb(18 60 50 / 0.09);
+  --glass: rgb(247 244 234 / 0.92);
+
+  /* order states: fill + ink, every pair AA+ (spec §4.2) */
+  --st-novo: #f0fcc9;
+  --st-novo-ink: #2f4a00;
+  --st-aceito: #e3eeff;
+  --st-aceito-ink: #1b4a8c;
+  --st-preparando: #fff0d6;
+  --st-preparando-ink: #7a4300;
+  --st-pronto: #eee8ff;
+  --st-pronto-ink: #4b2e91;
+  --st-entregue: #ddf3e6;
+  --st-entregue-ink: #0f4a33;
+  --st-cancelado: #eeede8;
+  --st-cancelado-ink: #5b5f5c;
+
+  /* charts: one forest hue, light → dark (sequential), validated on --surface */
+  --chart: #2d7a60;
+  --chart-soft: rgb(45 122 96 / 0.12);
+  --chart-now: #123c32;
+  --chart-grid: rgb(18 60 50 / 0.1);
+
+  --shadow-e1: 0 1px 2px rgb(18 60 50 / 0.06), 0 4px 16px rgb(18 60 50 / 0.05);
+  --shadow-e2: 0 2px 4px rgb(18 60 50 / 0.08), 0 12px 32px rgb(18 60 50 / 0.1);
+  --shadow-e3: 0 8px 16px rgb(18 60 50 / 0.1), 0 24px 64px rgb(18 60 50 / 0.16);
+  --highlight: none;
+
+  /* the store's own accent — set at runtime from its tokens (hero glow, avatar ring) */
+  --store-accent: #d9f875;
+
+  color-scheme: light;
+}
+
+:root[data-theme='noite'] {
+  --bg: #0a100d;
+  --surface: #131d18;
+  --surface-sunken: #0c1410;
+  --surface-raised: #1a2620;
+  --ink: #f7f4ea;
+  --ink-muted: #9dafa4;
+  --ink-faint: #7f9388;
+  --line: rgb(247 244 234 / 0.1);
+  --line-strong: rgb(247 244 234 / 0.18);
+  --primary: #d9f875;
+  --on-primary: #0a100d;
+  --primary-hover: #e6fb9b;
+  --spark: #d9f875;
+  --on-spark: #0a100d;
+  --spark-soft: rgb(217 248 117 / 0.14);
+  --success: #6fd39c;
+  --success-soft: rgb(111 211 156 / 0.14);
+  --warning: #f2b45a;
+  --warning-soft: rgb(242 180 90 / 0.14);
+  --danger: #ff8a7f;
+  --danger-soft: rgb(255 138 127 / 0.14);
+  --info: #8eb4ff;
+  --info-soft: rgb(142 180 255 / 0.14);
+  --hover: rgb(247 244 234 / 0.05);
+  --press: rgb(247 244 234 / 0.09);
+  --glass: rgb(10 16 13 / 0.9);
+
+  --st-novo: #26330d;
+  --st-novo-ink: #d9f875;
+  --st-aceito: #172743;
+  --st-aceito-ink: #a9c6ff;
+  --st-preparando: #3a2a10;
+  --st-preparando-ink: #f5c67f;
+  --st-pronto: #28203f;
+  --st-pronto-ink: #cbbcff;
+  --st-entregue: #12301f;
+  --st-entregue-ink: #8fe0b2;
+  --st-cancelado: #1f2522;
+  --st-cancelado-ink: #b5bab6;
+
+  --chart: #8fcfb0;
+  --chart-soft: rgb(143 207 176 / 0.14);
+  --chart-now: #d9f875;
+  --chart-grid: rgb(247 244 234 / 0.08);
+
+  /* depth in Noite is lighter surfaces + a 1px top highlight, not shadows */
+  --shadow-e1: 0 0 0 1px rgb(247 244 234 / 0.04);
+  --shadow-e2: 0 0 0 1px rgb(247 244 234 / 0.06), 0 12px 32px rgb(0 0 0 / 0.35);
+  --shadow-e3: 0 0 0 1px rgb(247 244 234 / 0.06), 0 24px 64px rgb(0 0 0 / 0.5);
+  --highlight: inset 0 1px 0 rgb(255 255 255 / 0.06);
+
+  color-scheme: dark;
+}
+
+@theme inline {
+  --color-bg: var(--bg);
+  --color-surface: var(--surface);
+  --color-sunken: var(--surface-sunken);
+  --color-raised: var(--surface-raised);
+  --color-ink: var(--ink);
+  --color-muted: var(--ink-muted);
+  --color-faint: var(--ink-faint);
+  --color-line: var(--line);
+  --color-line-strong: var(--line-strong);
+  --color-primary: var(--primary);
+  --color-on-primary: var(--on-primary);
+  --color-primary-hover: var(--primary-hover);
+  --color-spark: var(--spark);
+  --color-on-spark: var(--on-spark);
+  --color-spark-soft: var(--spark-soft);
+  --color-success: var(--success);
+  --color-success-soft: var(--success-soft);
+  --color-warning: var(--warning);
+  --color-warning-soft: var(--warning-soft);
+  --color-danger: var(--danger);
+  --color-danger-soft: var(--danger-soft);
+  --color-info: var(--info);
+  --color-info-soft: var(--info-soft);
+  --color-hover: var(--hover);
+  --color-press: var(--press);
+
+  --font-display: 'Space Grotesk Variable', system-ui, sans-serif;
+  --font-moment: 'Instrument Serif', Georgia, serif;
+  --font-sans: 'Figtree Variable', system-ui, sans-serif;
+
+  --radius-sm: 10px;
+  --radius-md: 16px;
+  --radius-lg: 24px;
+  --radius-xl: 32px;
+
+  --shadow-e1: var(--shadow-e1);
+  --shadow-e2: var(--shadow-e2);
+  --shadow-e3: var(--shadow-e3);
+
+  --ease-soft: cubic-bezier(0.2, 0.8, 0.2, 1);
+  --duration-instant: 100ms;
+  --duration-quick: 180ms;
+  --duration-smooth: 280ms;
+
+  --breakpoint-md: 768px;
+  --breakpoint-lg: 1200px;
+}
+
+/* ── type scale (§4.3) ─────────────────────────────────────────────────── */
+@utility t-hero {
+  font-family: var(--font-display);
+  font-size: 3.5rem;
+  line-height: 3.75rem;
+  font-weight: 600;
+  letter-spacing: -0.03em;
+}
+@utility t-display {
+  font-family: var(--font-display);
+  font-size: 2.5rem;
+  line-height: 2.75rem;
+  font-weight: 600;
+  letter-spacing: -0.025em;
+}
+@utility t-title-1 {
+  font-family: var(--font-display);
+  font-size: 1.75rem;
+  line-height: 2.125rem;
+  font-weight: 600;
+  letter-spacing: -0.02em;
+}
+@utility t-title-2 {
+  font-family: var(--font-display);
+  font-size: 1.375rem;
+  line-height: 1.75rem;
+  font-weight: 600;
+  letter-spacing: -0.015em;
+}
+@utility t-moment {
+  font-family: var(--font-moment);
+  font-style: italic;
+  font-size: 2rem;
+  line-height: 2.25rem;
+  font-weight: 400;
+}
+@utility t-body-lg {
+  font-size: 1.0625rem;
+  line-height: 1.625rem;
+  font-weight: 450;
+}
+@utility t-body {
+  font-size: 0.9375rem;
+  line-height: 1.375rem;
+  font-weight: 450;
+}
+@utility t-label {
+  font-size: 0.875rem;
+  line-height: 1.25rem;
+  font-weight: 600;
+}
+@utility t-caption {
+  font-size: 0.8125rem;
+  line-height: 1.125rem;
+  font-weight: 500;
+}
+@utility tnum {
+  font-variant-numeric: tabular-nums;
+}
+
+@layer base {
+  html {
+    -webkit-text-size-adjust: 100%;
+    -webkit-tap-highlight-color: transparent;
+  }
+  body {
+    background: var(--bg);
+    color: var(--ink);
+    font-family: var(--font-sans);
+    font-size: 1.0625rem;
+    line-height: 1.625rem;
+    font-weight: 450;
+    font-optical-sizing: auto;
+    text-rendering: optimizeLegibility;
+    -webkit-font-smoothing: antialiased;
+    overscroll-behavior-y: none;
+  }
+  @media (min-width: 1200px) {
+    body {
+      font-size: 0.9375rem;
+      line-height: 1.375rem;
+    }
+  }
+  /* paper grain (§4.4): Creme only, off under reduced transparency */
+  :root:not([data-theme='noite']) body::before {
+    content: '';
+    position: fixed;
+    inset: 0;
+    pointer-events: none;
+    z-index: 0;
+    opacity: 0.035;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.85' numOctaves='3' stitchTiles='stitch'/%3E%3CfeColorMatrix values='0 0 0 0 .07 0 0 0 0 .24 0 0 0 0 .2 0 0 0 1 0'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+  }
+  @media (prefers-reduced-transparency: reduce) {
+    body::before {
+      display: none;
+    }
+  }
+  #root {
+    position: relative;
+    z-index: 1;
+  }
+  h1,
+  h2,
+  h3 {
+    text-wrap: balance;
+  }
+  p {
+    text-wrap: pretty;
+  }
+  button,
+  [role='button'],
+  a {
+    touch-action: manipulation;
+  }
+  /* focus: 2px lime ring + 2px forest offset ring, visible in both themes (§7) */
+  :focus-visible {
+    outline: 2px solid var(--spark);
+    outline-offset: 2px;
+    box-shadow: 0 0 0 4px var(--primary);
+    border-radius: 6px;
+  }
+  :root[data-theme='noite'] :focus-visible {
+    box-shadow: 0 0 0 4px var(--bg);
+  }
+  ::selection {
+    background: var(--spark);
+    color: var(--on-spark);
+  }
+  input,
+  textarea,
+  select {
+    font: inherit;
+    color: inherit;
+  }
+  input::placeholder,
+  textarea::placeholder {
+    color: var(--ink-faint);
+    opacity: 1;
+  }
+}
+
+/* glass: only the bottom bar and sheet headers (§4.4), solid fallback */
+.glass {
+  background: var(--surface);
+}
+@supports (backdrop-filter: blur(20px)) {
+  .glass {
+    background: var(--glass);
+    backdrop-filter: blur(20px) saturate(1.4);
+    -webkit-backdrop-filter: blur(20px) saturate(1.4);
+  }
+}
+@media (prefers-reduced-transparency: reduce) {
+  .glass {
+    background: var(--surface);
+    backdrop-filter: none;
+  }
+}
+
+.depth-1 {
+  box-shadow: var(--shadow-e1), var(--highlight);
+}
+.depth-2 {
+  box-shadow: var(--shadow-e2), var(--highlight);
+}
+.depth-3 {
+  box-shadow: var(--shadow-e3), var(--highlight);
+}
+
+.pb-safe {
+  padding-bottom: env(safe-area-inset-bottom);
+}
+.pt-safe {
+  padding-top: env(safe-area-inset-top);
+}
+
+/* ── motion (§5) ───────────────────────────────────────────────────────── */
+@keyframes drop-in {
+  0% {
+    transform: translateY(-28px) scale(0.98);
+    opacity: 0;
+    box-shadow: var(--shadow-e2);
+  }
+  60% {
+    transform: translateY(3px) scale(1);
+    opacity: 1;
+  }
+  100% {
+    transform: translateY(0);
+    box-shadow: var(--shadow-e1);
+  }
+}
+@keyframes spark-edge {
+  from {
+    box-shadow:
+      0 0 0 2px var(--spark),
+      var(--shadow-e2);
+  }
+  to {
+    box-shadow:
+      0 0 0 0 transparent,
+      var(--shadow-e1);
+  }
+}
+@keyframes fade-up {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+@keyframes float-up {
+  0% {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  20% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 0;
+    transform: translateY(-28px);
+  }
+}
+@keyframes breathe {
+  0%,
+  100% {
+    opacity: 0.1;
+    transform: scale(1);
+  }
+  50% {
+    opacity: 0.16;
+    transform: scale(1.06);
+  }
+}
+@keyframes pop {
+  0% {
+    transform: scale(1);
+  }
+  40% {
+    transform: scale(1.35);
+  }
+  100% {
+    transform: scale(1);
+  }
+}
+@keyframes pulse-dot {
+  0%,
+  100% {
+    transform: scale(1);
+    opacity: 1;
+  }
+  50% {
+    transform: scale(1.6);
+    opacity: 0.4;
+  }
+}
+@keyframes ring {
+  0%,
+  100% {
+    transform: rotate(0);
+  }
+  15% {
+    transform: rotate(14deg);
+  }
+  30% {
+    transform: rotate(-12deg);
+  }
+  45% {
+    transform: rotate(8deg);
+  }
+  60% {
+    transform: rotate(-4deg);
+  }
+}
+@keyframes shimmer {
+  from {
+    background-position: -200% 0;
+  }
+  to {
+    background-position: 200% 0;
+  }
+}
+@keyframes sheet-up {
+  from {
+    transform: translateY(100%);
+  }
+  to {
+    transform: none;
+  }
+}
+@keyframes panel-in {
+  from {
+    transform: translateX(24px);
+    opacity: 0;
+  }
+  to {
+    transform: none;
+    opacity: 1;
+  }
+}
+@keyframes confetti {
+  0% {
+    transform: translate3d(0, 0, 0) rotate(0);
+    opacity: 1;
+  }
+  100% {
+    transform: translate3d(var(--dx), var(--dy), 0) rotate(var(--rot));
+    opacity: 0;
+  }
+}
+
+.animate-drop-in {
+  animation:
+    drop-in 520ms var(--ease-soft) both,
+    spark-edge 3s ease-out 520ms both;
+}
+.animate-fade-up {
+  animation: fade-up var(--duration-smooth) var(--ease-soft) both;
+}
+.animate-float-up {
+  animation: float-up 1600ms var(--ease-soft) both;
+}
+.animate-breathe {
+  animation: breathe 4s ease-in-out infinite;
+}
+.animate-pop {
+  animation: pop 360ms var(--ease-soft);
+}
+.animate-pulse-dot {
+  animation: pulse-dot 1.8s ease-in-out infinite;
+}
+.animate-ring {
+  animation: ring 1.2s ease-in-out infinite;
+  transform-origin: 50% 10%;
+}
+.animate-panel-in {
+  animation: panel-in var(--duration-smooth) var(--ease-soft) both;
+}
+.skeleton {
+  background: linear-gradient(
+    90deg,
+    var(--surface-sunken) 25%,
+    color-mix(in oklab, var(--surface-sunken), var(--surface) 55%) 50%,
+    var(--surface-sunken) 75%
+  );
+  background-size: 200% 100%;
+  animation: shimmer 1.6s linear infinite;
+}
+
+/* reduced motion: transforms become a short fade, nothing loops (§5.1) */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 120ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 120ms !important;
+    scroll-behavior: auto !important;
+  }
+  .animate-drop-in,
+  .animate-fade-up,
+  .animate-panel-in {
+    animation: fade-up 120ms linear both !important;
+  }
+  .animate-breathe,
+  .animate-pulse-dot,
+  .animate-ring,
+  .skeleton {
+    animation: none !important;
+  }
+}
+
+@media (forced-colors: active) {
+  .depth-1,
+  .depth-2,
+  .depth-3 {
+    border: 1px solid CanvasText;
+  }
+}
+
+/* view transitions: crossfade route changes where supported */
+::view-transition-old(root),
+::view-transition-new(root) {
+  animation-duration: 180ms;
+}

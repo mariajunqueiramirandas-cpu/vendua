@@ -1,0 +1,27 @@
+{
+  "name": "Minha loja · Venduá",
+  "short_name": "Minha loja",
+  "description": "Pedidos, cardápio, horários e vendas da sua loja.",
+  "lang": "pt-BR",
+  "start_url": "/admin/",
+  "scope": "/admin/",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#f7f4ea",
+  "theme_color": "#123c32",
+  "icons": [
+    { "src": "/admin/icons/icon.svg", "sizes": "any", "type": "image/svg+xml" },
+    { "src": "/admin/icons/icon-192.png", "sizes": "192x192", "type": "image/png" },
+    { "src": "/admin/icons/icon-512.png", "sizes": "512x512", "type": "image/png" },
+    {
+      "src": "/admin/icons/maskable-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "maskable"
+    }
+  ],
+  "shortcuts": [
+    { "name": "Pedidos", "url": "/admin/pedidos" },
+    { "name": "Cardápio", "url": "/admin/cardapio" }
+  ]
+}

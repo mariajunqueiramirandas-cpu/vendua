@@ -48,8 +48,17 @@ export function mountAppearance(d: AdminDeps) {
         order by id desc limit 5
       `;
       const build = await latestBuildTx(tx, t.id);
+      const hosts = (
+        await tx<{ host: string }[]>`select host from domains where tenant_id = ${t.id}`
+      ).map((r) => r.host);
+      // the frame shows the real storefront: its public address in prod, the dev server locally
+      const dev =
+        process.env.NODE_ENV !== 'production'
+          ? hosts.find((h) => /^localhost:\d+$/.test(h))
+          : undefined;
       return {
         url: storeUrl(t.slug, d.storeDomain),
+        previewUrl: dev ? `http://${dev}` : storeUrl(t.slug, d.storeDomain),
         pages: rows.map((r) => ({
           page: r.page,
           label: PAGE_LABEL[r.page] ?? r.page.replace(/^page:/, 'página '),

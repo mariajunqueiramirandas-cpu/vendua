@@ -1,3 +1,4 @@
+import { reportPreview, usePreviewTokens } from './preview.ts';
 import {
   createContext,
   useContext,
@@ -8,7 +9,12 @@ import {
   type ReactNode,
 } from 'react';
 import { createApi, type VenduaApi } from './api.ts';
-import { KERNEL_PATHS, type StorefrontConfig, type StorefrontTokens } from './config.ts';
+import {
+  KERNEL_PATHS,
+  resolvePaths,
+  type StorefrontConfig,
+  type StorefrontTokens,
+} from './config.ts';
 import { setStatusRefresher, showError, showInfo } from './errors.ts';
 import { beacon } from './telemetry.ts';
 import type { StorefrontBundle } from './composition/registry.ts';
@@ -171,14 +177,18 @@ export function VenduaProvider({
   }, [api]);
 
   // Emit design tokens as --v-* vars on :root (02-kernel.md#design-tokens).
+  // Inside the admin's editor frame, its draft colours win (Kernel 1.4 preview).
+  const draftTokens = usePreviewTokens();
+  const shown = draftTokens ?? tokens;
+  useEffect(() => reportPreview(tokens, resolvePaths(config)), [tokens, config]);
   useEffect(() => {
     const root = document.documentElement;
-    const vars = tokensToVars(tokens);
+    const vars = tokensToVars(shown);
     for (const [k, v] of Object.entries(vars)) root.style.setProperty(k, v);
     return () => {
       for (const k of Object.keys(vars)) root.style.removeProperty(k);
     };
-  }, [tokens]);
+  }, [shown]);
 
   // font-display: swap — contract default; brand fonts must never block first paint
   useEffect(() => {
