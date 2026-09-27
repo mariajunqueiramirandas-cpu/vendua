@@ -5,9 +5,14 @@ WORKDIR /app
 # every workspace package.json required — --frozen-lockfile resolves the full workspace graph
 COPY package.json bun.lock tsconfig.base.json ./
 COPY packages/cli/package.json packages/cli/package.json
+COPY packages/codemods/package.json packages/codemods/package.json
 COPY packages/conformance/package.json packages/conformance/package.json
+COPY packages/conformance/fixtures/override-crash/package.json packages/conformance/fixtures/override-crash/package.json
 COPY packages/core/package.json packages/core/package.json
 COPY packages/kernel/package.json packages/kernel/package.json
+COPY packages/loader/package.json packages/loader/package.json
+COPY packages/templates/package.json packages/templates/package.json
+COPY packages/ui-defaults/package.json packages/ui-defaults/package.json
 COPY apps/control/package.json apps/control/package.json
 COPY site/package.json site/package.json
 # New storefronts go here — one COPY per workspace package.json.
@@ -18,6 +23,8 @@ RUN --mount=type=cache,id=vendua-bun,target=/root/.bun/install/cache \
     bun install --frozen-lockfile
 
 COPY packages/kernel packages/kernel
+COPY packages/ui-defaults packages/ui-defaults
+COPY packages/templates packages/templates
 COPY site site
 COPY storefronts storefronts
 RUN bun --filter @vendua/site build && bun --filter './storefronts/*' build

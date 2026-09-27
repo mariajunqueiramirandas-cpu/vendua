@@ -152,6 +152,8 @@ jobs:
             if jq -e '.scripts.build' "$dir/package.json" > /dev/null 2>&1; then
               echo "build $dir"
               (cd "$dir" && bun run build)
+              # storefront artifacts must be a valid compat-matrix row (K16)
+              if [ -f "$dir/vendua.config.ts" ]; then bunx vendua-conformance manifest "$dir"; fi
             fi
           done
       - name: Unit tests (conformance + any workspace with a test script)
@@ -195,8 +197,83 @@ jobs:
           done
       - name: Playwright browser
         run: bunx playwright install --with-deps chromium
-      - name: Scaffold + qa (exit criterion)
+      - name: Scaffold + check + qa (exit criterion)
         run: |
           bunx vendua scaffold ci-smoke
           bun install
+          bunx vendua check ci-smoke
           bunx vendua qa ci-smoke
+
+  # the staleness guarantee (11): a storefront built on the oldest supported Kernel
+  # line, never rebuilt, keeps passing the S-series against Core main
+  stale-reference:
+    runs-on: ubuntu-latest
+    if: >-
+      github.event_name == 'push' ||
+      !contains(fromJSON('["labeled","unlabeled"]'), github.event.action)
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: '1.4.2'
+      - run: bun install --frozen-lockfile
+      - name: Postgres + migrate
+        run: |
+          docker compose -f packages/core/docker-compose.yml up -d postgres
+          for i in $(seq 1 30); do
+            docker compose -f packages/core/docker-compose.yml exec -T postgres pg_isready -h localhost -p 5432 -U vendua && break
+            sleep 1
+          done
+          (cd packages/core && bun run migrate)
+      - name: Core API
+        run: |
+          (cd packages/core && SESSION_SECRET=ci-secret bun run dev > /tmp/core.log 2>&1 &)
+          for i in $(seq 1 30); do
+            curl -sf http://localhost:8787/healthz && break
+            sleep 1
+          done
+      - name: Playwright browser
+        run: bunx playwright install --with-deps chromium
+      - name: S-series on the Kernel 1.0.0 artifact
+        run: bunx vendua-conformance e2e packages/conformance/stale/kernel-1.0.0 --prebuilt --grep '\[(S0|K16)'
+
+  # fleet operations over every in-repo storefront: a train pulling design data
+  # from Core (zero storefront diffs), a template-migration dry run, and the
+  # Contract-major codemod rehearsal (failure tail measured)
+  fleet:
+    runs-on: ubuntu-latest
+    if: >-
+      github.event_name == 'push' ||
+      !contains(fromJSON('["labeled","unlabeled"]'), github.event.action)
+    env:
+      CONTROL_SECRET: ci-control
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: '1.4.2'
+      - run: bun install --frozen-lockfile
+      - name: Postgres + migrate + seed
+        run: |
+          docker compose -f packages/core/docker-compose.yml up -d postgres
+          for i in $(seq 1 30); do
+            docker compose -f packages/core/docker-compose.yml exec -T postgres pg_isready -h localhost -p 5432 -U vendua && break
+            sleep 1
+          done
+          (cd packages/core && bun run migrate && bun run seed)
+      - name: Core API
+        run: |
+          (cd packages/core && SESSION_SECRET=ci-secret CONTROL_SECRET=ci-control bun run dev > /tmp/core.log 2>&1 &)
+          for i in $(seq 1 30); do
+            curl -sf http://localhost:8787/healthz && break
+            sleep 1
+          done
+      - name: Train (build + check + compat + record, pulling from Core)
+        run: bunx vendua train --core --record
+      - name: Template migrations — dry run over the fleet
+        run: |
+          for id in $(bunx vendua templates list | cut -d' ' -f1); do
+            bunx vendua templates migrate "$id"
+          done
+      - name: Codemod rehearsal
+        run: bunx vendua codemod rehearse c3-rehearsal

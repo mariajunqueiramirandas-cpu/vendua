@@ -7,9 +7,14 @@ WORKDIR /app
 # All workspace manifests must be present or --frozen-lockfile fails.
 COPY package.json bun.lock tsconfig.base.json ./
 COPY packages/cli/package.json packages/cli/package.json
+COPY packages/codemods/package.json packages/codemods/package.json
 COPY packages/conformance/package.json packages/conformance/package.json
+COPY packages/conformance/fixtures/override-crash/package.json packages/conformance/fixtures/override-crash/package.json
 COPY packages/core/package.json packages/core/package.json
 COPY packages/kernel/package.json packages/kernel/package.json
+COPY packages/loader/package.json packages/loader/package.json
+COPY packages/templates/package.json packages/templates/package.json
+COPY packages/ui-defaults/package.json packages/ui-defaults/package.json
 COPY apps/control/package.json apps/control/package.json
 COPY site/package.json site/package.json
 # New workspaces go here.
@@ -23,6 +28,9 @@ RUN --mount=type=cache,id=vendua-bun,target=/root/.bun/install/cache \
 COPY apps/control apps/control
 RUN cd apps/control && bun run build
 
+# Core runs @vendua/templates (template model, migrations) and serves @vendua/loader (v.js)
+COPY packages/templates packages/templates
+COPY packages/loader packages/loader
 COPY packages/core packages/core
 
 ENV NODE_ENV=production
