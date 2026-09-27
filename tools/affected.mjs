@@ -9,7 +9,14 @@
 
 import { execFileSync } from 'node:child_process';
 
-const SHARED_PACKAGES = new Set(['kernel', 'cli', 'conformance', 'ui-defaults']);
+const SHARED_PACKAGES = new Set([
+  'kernel',
+  'cli',
+  'conformance',
+  'ui-defaults',
+  'templates',
+  'codemods',
+]);
 const SHARED_ROOT_FILES = new Set(['package.json', 'bun.lock', 'tsconfig.base.json']);
 
 export function mapFiles(files) {

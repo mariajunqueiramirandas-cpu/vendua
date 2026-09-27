@@ -9,6 +9,8 @@ describe('mapFiles', () => {
       'packages/kernel/src/api.ts',
       'packages/core/src/app.ts' /* core is NOT shared */,
       'packages/cli/src/bin.ts',
+      'packages/templates/src/model.ts',
+      'packages/ui-defaults/src/styles.css',
       'bun.lock',
     ]) {
       const r = mapFiles([f]);
