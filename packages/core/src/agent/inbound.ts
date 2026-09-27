@@ -9,6 +9,7 @@ import { automationAllowedTx } from './policy.ts';
 import { retireWakeupsOnInboundTx } from './wakeups.ts';
 import { RETIRED_BY_INBOUND } from './sources.ts';
 import { log } from '../platform/log.ts';
+import { staffWhatsappsTx } from '../modules/staff.ts';
 
 const agentLog = log.child({ mod: 'agent' });
 
@@ -48,7 +49,8 @@ export async function ingestInbound(
   const { ignoredPhones, inboundReplyDelayMin } = await getGuardrails(sql);
   // Staff/founder numbers drop before a lead is ever minted — the agent
   // must never see them as leads, in either direction.
-  if (phoneIsIgnored(ignoredPhones, input.from, input.fromAlias)) {
+  const staffPhones = await controlTx(sql, staffWhatsappsTx);
+  if (phoneIsIgnored([...ignoredPhones, ...staffPhones], input.from, input.fromAlias)) {
     return { ignored: `número ignorado: ${input.from}` };
   }
   const res = await addInboundMessage(sql, {
