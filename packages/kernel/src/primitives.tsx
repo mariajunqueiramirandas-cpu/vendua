@@ -414,7 +414,7 @@ export function Img({
       {...(srcSet ? { srcSet, sizes: sizes ?? `(max-width: ${width}px) 100vw, ${width}px` } : {})}
       loading={priority ? 'eager' : 'lazy'}
       decoding="async"
-      {...(priority ? { fetchPriority: 'high' as const } : {})}
+      {...(priority ? { fetchpriority: 'high' } : {})}
       className={['v-img', className].filter(Boolean).join(' ')}
       data-loaded={loaded}
       style={{ aspectRatio: `${width} / ${height}`, ...style }}

@@ -65,7 +65,12 @@ export default function Hero({ settings: s }: SectionProps<typeof schema>) {
           <figure className="hero-fig rise-in rise-in-3">
             <div className="print-frame">
               <div className="card-frame" style={{ aspectRatio: '4/3' }}>
-                <img src={s.image} alt={s.imageAlt} fetchPriority="high" decoding="async" />
+                <img
+                  src={s.image}
+                  alt={s.imageAlt}
+                  {...{ fetchpriority: 'high' }}
+                  decoding="async"
+                />
               </div>
             </div>
             {s.figTitle || s.figSub ? (

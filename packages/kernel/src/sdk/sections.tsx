@@ -285,7 +285,12 @@ export function PurchasePanel({ settings }: SectionProps<typeof S.purchasePanel>
           <BlockArea name="media" only={['media']} className="v-pp-media-custom" />
           <BlockArea name="media" only={['badge']} className="v-pp-media-badges" />
           {customMedia ? null : product.imageUrl ? (
-            <img src={product.imageUrl} alt={product.name} fetchPriority="high" decoding="async" />
+            <img
+              src={product.imageUrl}
+              alt={product.name}
+              {...{ fetchpriority: 'high' }}
+              decoding="async"
+            />
           ) : (
             <span className="v-card-initial" aria-hidden="true" data-figure={product.figureVariant}>
               {product.name.slice(0, 1).toUpperCase()}

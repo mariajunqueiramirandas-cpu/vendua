@@ -15,7 +15,12 @@ export default function ProductFigureBlock(_: BlockProps<typeof schema>) {
   if (!product) return null;
   if (product.imageUrl)
     return (
-      <img src={product.imageUrl} alt={product.name} className="pd-img" fetchPriority="high" />
+      <img
+        src={product.imageUrl}
+        alt={product.name}
+        className="pd-img"
+        {...{ fetchpriority: 'high' }}
+      />
     );
   return (
     <div className="pd-figure">
