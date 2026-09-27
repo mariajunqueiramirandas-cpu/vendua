@@ -27,6 +27,34 @@ const COPY: Record<string, { title: string; body?: string }> = {
   PRODUCT_NOT_FOUND: { title: 'Produto indisponível' },
   NETWORK_ERROR: { title: 'Sem conexão com a loja', body: 'Confira sua internet e tente de novo.' },
   RATE_LIMITED: { title: 'Muitas tentativas seguidas', body: 'Espere alguns segundos.' },
+  // Kernel 1.2
+  OUT_OF_STOCK: { title: 'Não temos tudo isso em estoque', body: 'Diminua a quantidade.' },
+  COMBO_SLOT_COUNT: {
+    title: 'Complete a montagem do kit',
+    body: 'Confira quantos itens cada parte pede.',
+  },
+  COMBO_ITEM_LIMIT: { title: 'Repetiu demais um item do kit' },
+  COMBO_ITEM_SOLD_OUT: { title: 'Um item do kit esgotou', body: 'Troque por outro sabor.' },
+  INVALID_COMBO: { title: 'Esse kit mudou', body: 'Monte de novo.' },
+  SCHEDULE_REQUIRED: { title: 'Escolha a data da encomenda' },
+  INVALID_SCHEDULE: { title: 'Essa data não está disponível', body: 'Escolha outra data.' },
+  PAYMENT_NOT_ALLOWED: { title: 'Encomendas aceitam outra forma de pagamento' },
+  COUPON_NOT_FOUND: { title: 'Cupom não encontrado' },
+  INVALID_COUPON: { title: 'Cupom inválido' },
+  COUPON_EXPIRED: { title: 'Esse cupom expirou' },
+  COUPON_NOT_STARTED: { title: 'Esse cupom ainda não começou' },
+  COUPON_EXHAUSTED: { title: 'Esse cupom esgotou' },
+  COUPON_MIN_SUBTOTAL: { title: 'Falta pouco para usar o cupom', body: 'Adicione mais itens.' },
+  COUPON_NOT_YOURS: { title: 'Esse cupom é de outro cliente' },
+  COUPON_ALREADY_USED: { title: 'Você já usou esse cupom' },
+  COUPON_FIRST_ORDER_ONLY: { title: 'Cupom válido só no primeiro pedido' },
+  SHARE_NOT_FOUND: { title: 'Esse link de sacola expirou' },
+  CUSTOMER_NOT_VERIFIED: {
+    title: 'Não achamos esse pedido',
+    body: 'Confira o número do pedido e o WhatsApp usado nele.',
+  },
+  CEP_NOT_FOUND: { title: 'CEP não encontrado', body: 'Preencha o endereço à mão.' },
+  CEP_UNAVAILABLE: { title: 'Busca de CEP indisponível', body: 'Preencha o endereço à mão.' },
 };
 const FALLBACK = { title: 'Não foi possível concluir', body: 'Tente novamente em instantes.' };
 
@@ -71,6 +99,25 @@ export function showError(err: unknown) {
   notify();
   setTimeout(() => dismissError(id), 8000);
   if (STATUS_CODES.has(code)) onStatusChange?.();
+}
+
+/** An informational toast on the same transient stack (e.g. "sacola recuperada"). */
+export function showInfo(id: string, title: string, body?: string) {
+  const key = `info:${id}`;
+  transient = [
+    ...transient.filter((n) => n.id !== key),
+    {
+      id: key,
+      kind: 'info',
+      severity: 'info',
+      title,
+      ...(body ? { body } : {}),
+      dismissible: true,
+      priority: 80,
+    },
+  ].slice(-3);
+  notify();
+  setTimeout(() => dismissError(key), 8000);
 }
 
 export function dismissError(id: string) {

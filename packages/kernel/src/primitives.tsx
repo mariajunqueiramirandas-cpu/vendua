@@ -14,7 +14,7 @@ import { useKernel, prefetchQuery } from './provider.tsx';
 import { productHref, KERNEL_PATHS } from './config.ts';
 import { showError } from './errors.ts';
 import { emit } from './telemetry.ts';
-import type { CatalogProduct } from './api.ts';
+import type { CatalogProduct, ComboSelection } from './api.ts';
 
 /** Headless primitives (02-kernel.md): Kernel owns behavior, the storefront owns visuals via asChild — each stamps its data-vendua hook + ARIA regardless of the delegated child. */
 
@@ -113,6 +113,8 @@ export interface AddToCartProps {
   product: Pick<CatalogProduct, 'id' | 'status'> & Partial<Pick<CatalogProduct, 'basePriceCents'>>;
   qty?: number;
   modifierIds?: string[];
+  /** Kernel 1.2 — kit picks for a `kind: 'combo'` product */
+  comboSelections?: ComboSelection[];
   asChild?: boolean;
   children?: ReactNode;
   onAdded?: () => void;
@@ -124,6 +126,7 @@ export function AddToCart({
   product,
   qty = 1,
   modifierIds = [],
+  comboSelections,
   asChild,
   children,
   onAdded,
@@ -139,7 +142,7 @@ export function AddToCart({
     if (disabled) return;
     setPending(true);
     try {
-      await mutations.add(product.id, qty, modifierIds);
+      await mutations.add(product.id, qty, modifierIds, comboSelections);
       emit('add_to_cart', {
         product_id: product.id,
         qty,

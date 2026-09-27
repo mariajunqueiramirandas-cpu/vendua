@@ -4,15 +4,15 @@
 
 ## Where we are
 
-| Phase                         | State   | Notes                                                                                                                                                                            |
-| ----------------------------- | ------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| 0 — Foundations               | ✅ Done | Monorepo, Core skeleton, Kernel, 3 spike storefronts, Contract v1 drafted                                                                                                        |
-| 1 — Storefront factory        | ✅ Done | Contract frozen, conformance, CLI, fleet isolation, Founder CRM — which has since grown well past its v0 scope (see below)                                                       |
-| 1b — Kernel v1 + updatability | ✅ Done | Kernel 1.1.1 on Contract 2; every in-repo storefront received a Kernel minor, a template migration and a Contract-major rehearsal untouched ([fleet runs](fleet-runs/README.md)) |
-| 2 — Commerce completeness     | ⬜ Open | Order lifecycle, catalog depth, growth surfaces — all unchecked                                                                                                                  |
-| 3 — Payments + merchant admin | ⬜ Next | The "buy a plan → provisioned store" self-serve path; 1b's exit is met, so this is unblocked                                                                                     |
-| 4 — First tenant operated     | ⬜ Open | Edge, Control Plane v0, provisioner — the other half of the 1-hour signup→store promise                                                                                          |
-| 5–8 — Fleet loop → scale      | ⬜ Open | Blocked on 2–4 having a fleet to operate                                                                                                                                         |
+| Phase                         | State   | Notes                                                                                                                                                                                       |
+| ----------------------------- | ------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 0 — Foundations               | ✅ Done | Monorepo, Core skeleton, Kernel, 3 spike storefronts, Contract v1 drafted                                                                                                                   |
+| 1 — Storefront factory        | ✅ Done | Contract frozen, conformance, CLI, fleet isolation, Founder CRM — which has since grown well past its v0 scope (see below)                                                                  |
+| 1b — Kernel v1 + updatability | ✅ Done | Kernel 1.1.1 on Contract 2; every in-repo storefront received a Kernel minor, a template migration and a Contract-major rehearsal untouched ([fleet runs](fleet-runs/README.md))            |
+| 2 — Commerce completeness     | ✅ Done | Order lifecycle, catalog depth, growth surfaces — Core migration 0051 + Kernel 1.2; the Quero Pudim golden runs with zero workarounds ([below](#phase-2--commerce-completeness-weeks-812-)) |
+| 3 — Payments + merchant admin | ⬜ Next | The "buy a plan → provisioned store" self-serve path; 1b's exit is met, so this is unblocked                                                                                                |
+| 4 — First tenant operated     | ⬜ Open | Edge, Control Plane v0, provisioner — the other half of the 1-hour signup→store promise                                                                                                     |
+| 5–8 — Fleet loop → scale      | ⬜ Open | Blocked on 2–4 having a fleet to operate                                                                                                                                                    |
 
 **Ahead of the roadmap:** the Founder CRM (`apps/control`) grew into the agent
 ops surface, and the sales-side agent engine shipped on `packages/core` —
@@ -269,7 +269,7 @@ minor and a Contract-major rehearsal both reached them, with zero hand edits; th
 in CI; `v.js` renders the kill switch on a broken build. **Gate for the first
 customer — met 2026-09-27.**
 
-## Phase 2 — Commerce completeness (weeks 8–12)
+## Phase 2 — Commerce completeness (weeks 8–12) ✅
 
 Goal: Core expresses everything a real merchant storefront needs — the
 Quero Pudim reference must run on the platform with **zero storefront-side
@@ -278,47 +278,79 @@ workarounds**. Each gap below lands as schema + API + Kernel support; the
 
 ### 2a — Order lifecycle (the post-checkout truth)
 
-- [ ] `items[]` (name, qty, unitPriceCents, modifiers) on `GET /orders/:id` —
+- [x] `items[]` (name, qty, unitPriceCents, modifiers) on `GET /orders/:id` —
       today storefronts snapshot `cart.items` into sessionStorage to render
       the order page.
-- [ ] `notes` on `CheckoutInput` → `OrderView` ("Alguma observação?").
-- [ ] Structured address fields (street/number/complement/bairro/cep) instead
+- [x] `notes` on `CheckoutInput` → `OrderView` ("Alguma observação?").
+- [x] Structured address fields (street/number/complement/bairro/cep) instead
       of one freeform string.
-- [ ] Orders-by-phone (`GET /customer/orders?phone=`) + Kernel `useOrders(phone)`
+- [x] Orders-by-phone (`GET /customer/orders?phone=`) + Kernel `useOrders(phone)`
       — "sem senha, sem cadastro" order history across devices.
-- [ ] Realtime order updates — Kernel-owned `useOrder(id)` polling/SSE wrapper
+- [x] Realtime order updates — Kernel-owned `useOrder(id)` polling/SSE wrapper
       (storefronts can't open EventSource per the contract).
 
 ### 2b — Catalog depth
 
-- [ ] `imageUrl`/`gallery[]` on products (media table) — ports render
+- [x] `imageUrl`/`gallery[]` on products (media table) — ports render
       `figureVariant` SVG fallbacks today.
-- [ ] `stockQuantity` + `lowStockThreshold` on products ("Restam N", qty cap).
-- [ ] Combos entity: `slots[] { name, minSelect, maxSelect, qtyPerItem }` +
+- [x] `stockQuantity` + `lowStockThreshold` on products ("Restam N", qty cap).
+- [x] Combos entity: `slots[] { name, minSelect, maxSelect, qtyPerItem }` +
       `items[]` per slot + checkout validation — kills the seeded "Kits as
       modifier-groups" hack.
-- [ ] Preorder/encomendas: `requiresPreorder`, `preorderLeadDays`,
+- [x] Preorder/encomendas: `requiresPreorder`, `preorderLeadDays`,
       `scheduledFor` on `CheckoutInput` + payment-method constraints
       (encomendas are Pix-only in the reference).
 
 ### 2c — Growth surfaces
 
-- [ ] Coupons: `POST /checkout/v1/coupons/validate` + `discountCents` on cart
+- [x] Coupons: `POST /checkout/v1/coupons/validate` + `discountCents` on cart
       totals.
-- [ ] Waitlist: `POST /storefront/v1/waitlist` (productId, phone) — replaces
+- [x] Waitlist: `POST /storefront/v1/waitlist` (productId, phone) — replaces
       the wa.me deep-link workaround.
-- [ ] Loyalty card: `GET /customer/loyalty?phone=` (points/stamps).
-- [ ] Cross-device cart recovery: `POST /cart` accepting items, or Kernel
+- [x] Loyalty card: `GET /customer/loyalty?phone=` (points/stamps).
+- [x] Cross-device cart recovery: `POST /cart` accepting items, or Kernel
       `importCart(items)` — the `?cart=` share-link flow.
-- [ ] CEP lookup / address autocomplete + distance-based zone pricing
+- [x] CEP lookup / address autocomplete + distance-based zone pricing
       (replaces bairro-name matching).
-- [ ] Pix fields on the store profile (`pixKey`, `pixBeneficiary`, QR payload)
+- [x] Pix fields on the store profile (`pixKey`, `pixBeneficiary`, QR payload)
       — surfaced on the store page, not only post-checkout instructions.
       Payment capture itself stays in Phase 4.
 
 Exit: `_examples/quero-pudim` compiles with every `(p as { … })` defensive
 cast and sessionStorage workaround deleted; conformance can assert the real
-flows.
+flows. **Met 2026-09-27** — no casts, snapshots or wa.me stand-ins remain in the
+golden; `packages/core/test/commerce.test.ts` drives every item above over HTTP
+against Postgres, and the Kernel's `test/commerce.test.tsx` covers the storefront
+side (kit picker, live order, `?cart=` links, cross-device history).
+
+How each landed (Core migration `0051_commerce_completeness.sql`, Kernel 1.2):
+
+- **2a** — `order_items` frozen at checkout; `notes`, `scheduled_for`, structured
+  `delivery.addressParts`; orders keyed by a normalized `customer_phone`.
+  Orders-by-phone uses customer tokens ([ADR 0019](adr/0019-customer-identity-without-accounts.md)):
+  the checkout device is trusted, any other device proves the phone with an order
+  number, and only summaries are exposed. Realtime is Kernel-owned SSE (`GET /orders/:id/events`;
+  the long poll `GET /orders/:id?since&wait` is the fallback) woken by `pg_notify` on commit — no polling cost
+  while idle, works across replicas; the Kernel reads the stream over a
+  header-authed fetch because EventSource can't send the session token.
+- **2b** — `product_media` (`imageUrl`, `gallery[]`); tracked stock with a
+  Core-computed `lowStock`, drawn at checkout under row locks (kits draw their
+  picks), returned on cancel, and a restock wakes the waitlist; combos as
+  `kind: 'combo'` products with slots, validated at add and at checkout (the
+  seeded kit-festa is one now); encomendas with Core's bookable calendar and
+  payment-method limits.
+- **2c** — coupons (percent / fixed / free delivery; windows, caps, per-phone,
+  first order, personal) re-evaluated on every cart read and at checkout with the
+  phone; the waitlist route; a stamp card that mints a personal reward coupon when
+  an order is delivered; share codes, `importCart` and "pedir de novo" through one
+  add path that reports what it skipped; CEP lookup, radius zones priced per km,
+  device location, free-delivery thresholds; Pix copia e cola (BR Code) on the
+  store and per order with the exact amount, rendered as a QR by the Kernel.
+- Beyond the list: the staff commerce API (`/control/v1/storefronts/:slug/commerce`
+  — stock, media, kits, coupons, zones, Pix, loyalty, orders, waitlist) so
+  everything is operable before the merchant admin; the template migration
+  `2026-09-loyalty-teaser-on-product`; and a guard test that keeps Core's
+  storefront error codes in the Kernel's `ERROR_CODES`.
 
 ## Phase 3 — Payments + merchant admin (weeks 12–16)
 
@@ -453,27 +485,27 @@ evidence-backed.
 Every feature the Quero Pudim reference ships that the platform couldn't
 express during the port (source:
 [`storefronts/quero-pudim/OBSERVATIONS.md`](../storefronts/quero-pudim/OBSERVATIONS.md)).
-Two landed during Phase-0 review; the rest are scheduled.
+Two landed during Phase-0 review; the rest landed in Phase 2.
 
 | Gap                                  | Status                                                |
 | ------------------------------------ | ----------------------------------------------------- |
 | Delivery zones readable pre-checkout | ✅ Landed — `GET /storefront/v1/zones`                |
 | Order view / polling                 | ✅ Landed — `useOrder(id)` + session-bound order auth |
-| Order items on the order view        | Phase 2a                                              |
-| Order notes                          | Phase 2a                                              |
-| Structured address                   | Phase 2a                                              |
-| Orders-by-phone                      | Phase 2a                                              |
-| Realtime order updates               | Phase 2a                                              |
-| `imageUrl` / gallery                 | Phase 2b                                              |
-| Stock quantity + low-stock           | Phase 2b                                              |
-| Combos / kits                        | Phase 2b                                              |
-| Preorder / encomendas                | Phase 2b                                              |
-| Coupons                              | Phase 2c                                              |
-| Waitlist                             | Phase 2c                                              |
-| Loyalty card                         | Phase 2c                                              |
-| `?cart=` share links                 | Phase 2c                                              |
-| CEP lookup + distance pricing        | Phase 2c                                              |
-| Pix key on store profile             | Phase 2c (fields) + Phase 3 (capture)                 |
+| Order items on the order view        | ✅ Landed — `order.items[]`, `order.Items` slot       |
+| Order notes                          | ✅ Landed — `notes` on checkout → order               |
+| Structured address                   | ✅ Landed — `delivery.addressParts`                   |
+| Orders-by-phone                      | ✅ Landed — `useOrders(phone)` (ADR 0019)             |
+| Realtime order updates               | ✅ Landed — live `useOrder` (SSE + NOTIFY)            |
+| `imageUrl` / gallery                 | ✅ Landed — `product_media`, `catalog.Gallery`        |
+| Stock quantity + low-stock           | ✅ Landed — drawn at checkout, returned on cancel     |
+| Combos / kits                        | ✅ Landed — `kind: 'combo'`, `catalog.ComboPicker`    |
+| Preorder / encomendas                | ✅ Landed — Core calendar, Pix-only enforced          |
+| Coupons                              | ✅ Landed — validate/apply, `discountCents`           |
+| Waitlist                             | ✅ Landed — `POST /storefront/v1/waitlist`            |
+| Loyalty card                         | ✅ Landed — stamps + personal reward coupons          |
+| `?cart=` share links                 | ✅ Landed — share codes + `importCart`                |
+| CEP lookup + distance pricing        | ✅ Landed — CEP route, radius zones per km            |
+| Pix key on store profile             | ✅ Fields + copia e cola landed; capture is Phase 3   |
 
 ## Metrics that gate growth
 

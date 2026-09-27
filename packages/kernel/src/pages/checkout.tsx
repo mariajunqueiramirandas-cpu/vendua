@@ -1,5 +1,13 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { useCart, useCheckout, useCustomer, useDeliveryZones, useStore } from '../hooks.ts';
+import {
+  useCart,
+  useCep,
+  useCheckout,
+  useCustomer,
+  useDeliveryQuote,
+  useDeliveryZones,
+  useStore,
+} from '../hooks.ts';
 import { useNavigateTo } from '../primitives.tsx';
 import { Slot } from '../slot.tsx';
 import { errorCopy, errorCode } from '../errors.ts';
@@ -27,7 +35,20 @@ const METHODS: PaymentMethod[] = [
   { id: 'cash', label: 'Dinheiro' },
 ];
 
-function validate(step: StepId, d: CustomerDraft, mode: 'pickup' | 'delivery') {
+const NOTES_MAX = 500;
+const COUPON_CODES = new Set([
+  'COUPON_NOT_FOUND',
+  'INVALID_COUPON',
+  'COUPON_EXPIRED',
+  'COUPON_NOT_STARTED',
+  'COUPON_EXHAUSTED',
+  'COUPON_MIN_SUBTOTAL',
+  'COUPON_NOT_YOURS',
+  'COUPON_ALREADY_USED',
+  'COUPON_FIRST_ORDER_ONLY',
+]);
+
+function validate(step: StepId, d: CustomerDraft, mode: 'pickup' | 'delivery', located = false) {
   const e: Partial<Record<keyof CustomerDraft, string>> = {};
   if (step === 'dados') {
     if (d.name.trim().length < 2) e.name = 'Informe seu nome.';
@@ -35,7 +56,8 @@ function validate(step: StepId, d: CustomerDraft, mode: 'pickup' | 'delivery') {
     if (digits.length < 10 || digits.length > 13) e.phone = 'Informe um WhatsApp com DDD.';
   }
   if (step === 'entrega' && mode === 'delivery') {
-    if (!d.neighborhood.trim()) e.neighborhood = 'Informe o bairro.';
+    // a device location resolves the zone by distance — the bairro is then optional
+    if (!d.neighborhood.trim() && !located) e.neighborhood = 'Informe o bairro.';
     if (!d.street.trim()) e.street = 'Informe a rua.';
     if (!d.number.trim()) e.number = 'Informe o número.';
   }
@@ -46,6 +68,8 @@ export function CheckoutPage() {
   const { cart, loading, mutations } = useCart();
   const { store } = useStore();
   const { zones } = useDeliveryZones();
+  const cepLookup = useCep();
+  const quote = useDeliveryQuote();
   const { submit, pending, error, reset } = useCheckout();
   const { customer, remember, forget } = useCustomer();
   const { config } = useKernel();
@@ -62,8 +86,20 @@ export function CheckoutPage() {
     number: customer?.address.number ?? '',
     neighborhood: customer?.address.neighborhood ?? '',
     complement: customer?.address.complement ?? '',
+    cep: customer?.address.cep ?? '',
+    reference: '',
     remember: true,
   }));
+  const [coords, setCoords] = useState<{ lat: number; lng: number } | null>(null);
+  const [locateStatus, setLocateStatus] = useState<
+    'idle' | 'pending' | 'located' | 'denied' | 'out_of_zone'
+  >('idle');
+  const [zoneHint, setZoneHint] = useState<string | undefined>();
+  const [notes, setNotes] = useState('');
+  const [scheduledFor, setScheduledFor] = useState<string | undefined>();
+  const [scheduleError, setScheduleError] = useState<string | undefined>();
+  const [couponPending, setCouponPending] = useState(false);
+  const [couponError, setCouponError] = useState<string | undefined>();
   const deliveryOk = store?.deliveryEnabled !== false;
   const pickupOk = store?.pickupEnabled !== false;
   const [mode, setMode] = useState<'pickup' | 'delivery'>(deliveryOk ? 'delivery' : 'pickup');
@@ -80,6 +116,21 @@ export function CheckoutPage() {
   }, [step]);
 
   const neighborhoods = useMemo(() => zones.flatMap((z) => z.neighborhoods), [zones]);
+  const canLocate =
+    typeof navigator !== 'undefined' &&
+    'geolocation' in navigator &&
+    zones.some((z) => z.kind === 'radius');
+  const schedule = cart?.schedule;
+  const encomenda = schedule?.required === true;
+  const allowed = encomenda ? schedule!.paymentMethods.join(',') : '';
+  const methods = useMemo(
+    () => (allowed ? METHODS.filter((m) => allowed.split(',').includes(m.id)) : METHODS),
+    [allowed],
+  );
+  // an encomenda narrows payment (Pix-only in the reference) — keep the choice valid
+  useEffect(() => {
+    if (methods.length && !methods.some((m) => m.id === pay)) setPay(methods[0]!.id);
+  }, [methods, pay]);
   const minFee = zones.length ? Math.min(...zones.map((z) => z.feeCents)) : null;
   const options: DeliveryOption[] = [
     {
@@ -119,8 +170,95 @@ export function CheckoutPage() {
     });
   };
 
+  const onCep = async (cep: string) => {
+    const r = await cepLookup.lookup(cep);
+    if (!r) return;
+    const a = r.address;
+    setDraft((d) => ({
+      ...d,
+      street: d.street.trim() ? d.street : (a.street ?? ''),
+      neighborhood: d.neighborhood.trim() ? d.neighborhood : (a.neighborhood ?? ''),
+    }));
+    setZoneHint(
+      r.zone.eligible
+        ? `Entrega para ${a.neighborhood ?? 'esse CEP'}: ${
+            (r.zone.feeCents ?? 0) > 0 ? money(r.zone.feeCents!, currency) : 'grátis'
+          }${r.zone.etaMin != null ? ` · ${r.zone.etaMin}–${r.zone.etaMax} min` : ''}`
+        : `${a.neighborhood ?? 'Esse CEP'} fica fora da área de entrega${pickupOk ? ' — retirada continua disponível' : ''}.`,
+    );
+  };
+
+  const onLocate = () => {
+    setLocateStatus('pending');
+    navigator.geolocation.getCurrentPosition(
+      async (pos) => {
+        const c = {
+          lat: Math.round(pos.coords.latitude * 1e5) / 1e5,
+          lng: Math.round(pos.coords.longitude * 1e5) / 1e5,
+        };
+        try {
+          const r = await quote.quote(c);
+          if (!r.eligible) {
+            setCoords(null);
+            setLocateStatus('out_of_zone');
+            return;
+          }
+          setCoords(c);
+          setLocateStatus('located');
+          setZoneHint(
+            `Entrega ${r.distanceKm != null ? `a ${r.distanceKm.toLocaleString('pt-BR')} km` : ''}: ${
+              (r.feeCents ?? 0) > 0 ? money(r.feeCents!, currency) : 'grátis'
+            }`,
+          );
+        } catch {
+          setLocateStatus('idle');
+        }
+      },
+      () => setLocateStatus('denied'),
+      { enableHighAccuracy: false, timeout: 10_000, maximumAge: 300_000 },
+    );
+  };
+
+  const deliveryPayload = () =>
+    mode === 'pickup'
+      ? { mode }
+      : {
+          mode,
+          ...(draft.neighborhood.trim() ? { neighborhood: draft.neighborhood.trim() } : {}),
+          street: draft.street.trim(),
+          number: draft.number.trim(),
+          ...(draft.complement.trim() ? { complement: draft.complement.trim() } : {}),
+          ...(draft.reference?.trim() ? { reference: draft.reference.trim() } : {}),
+          ...(draft.cep && draft.cep.replace(/\D/g, '').length === 8
+            ? { cep: draft.cep.replace(/\D/g, '') }
+            : {}),
+          ...(coords ? { lat: coords.lat, lng: coords.lng } : {}),
+        };
+
+  const applyCoupon = async (code: string) => {
+    setCouponPending(true);
+    setCouponError(undefined);
+    try {
+      await mutations.applyCoupon(code);
+    } catch (err) {
+      setCouponError(errorCopy(errorCode(err)).title);
+    } finally {
+      setCouponPending(false);
+    }
+  };
+  const removeCoupon = async () => {
+    setCouponPending(true);
+    try {
+      await mutations.removeCoupon();
+    } catch (err) {
+      setCouponError(errorCopy(errorCode(err)).title);
+    } finally {
+      setCouponPending(false);
+    }
+  };
+
   const advance = async () => {
-    const e = validate(step, draft, mode);
+    const e = validate(step, draft, mode, coords !== null);
     setErrors(e);
     if (Object.keys(e).length) return;
     if (step === 'entrega') {
@@ -129,9 +267,7 @@ export function CheckoutPage() {
       setSyncing(true);
       setDeliveryIssue(null);
       try {
-        await mutations.setDelivery(
-          mode === 'pickup' ? { mode } : { mode, neighborhood: draft.neighborhood.trim() },
-        );
+        await mutations.setDelivery(deliveryPayload());
       } catch (err) {
         setDeliveryIssue(errorCopy(errorCode(err)).title);
       } finally {
@@ -144,17 +280,20 @@ export function CheckoutPage() {
 
   const place = async () => {
     if (submitting.current || pending) return;
+    if (encomenda && !scheduledFor) {
+      setScheduleError('Escolha a data da encomenda.');
+      return;
+    }
     submitting.current = true;
     reset();
+    setScheduleError(undefined);
     try {
-      const address = [draft.street.trim(), draft.number.trim(), draft.complement.trim()]
-        .filter(Boolean)
-        .join(', ');
       const order = await submit({
         customer: { name: draft.name.trim(), phone: draft.phone.replace(/\D/g, '') },
-        delivery:
-          mode === 'pickup' ? { mode } : { mode, neighborhood: draft.neighborhood.trim(), address },
+        delivery: deliveryPayload(),
         payment: { method: pay },
+        ...(notes.trim() ? { notes: notes.trim().slice(0, NOTES_MAX) } : {}),
+        ...(scheduledFor ? { scheduledFor } : {}),
       });
       if (draft.remember)
         remember({
@@ -165,12 +304,17 @@ export function CheckoutPage() {
             number: draft.number,
             neighborhood: draft.neighborhood,
             complement: draft.complement,
+            ...(draft.cep ? { cep: draft.cep } : {}),
           },
         });
       else forget();
       go(`${paths.order.replace(':id', order.id)}?novo=1`);
-    } catch {
-      /* useCheckout().error carries the typed failure */
+    } catch (err) {
+      // useCheckout().error carries the typed failure; route the fixable ones to their field
+      const code = errorCode(err);
+      if (code === 'SCHEDULE_REQUIRED' || code === 'INVALID_SCHEDULE')
+        setScheduleError(errorCopy(code).title);
+      if (COUPON_CODES.has(code)) setCouponError(errorCopy(code).title);
     } finally {
       submitting.current = false;
     }
@@ -219,18 +363,63 @@ export function CheckoutPage() {
                     onChange={patch}
                     errors={errors}
                     neighborhoods={neighborhoods}
+                    onCep={(cep) => void onCep(cep)}
+                    cepStatus={
+                      cepLookup.pending
+                        ? 'pending'
+                        : cepLookup.error?.code === 'CEP_NOT_FOUND'
+                          ? 'not_found'
+                          : cepLookup.error
+                            ? 'unavailable'
+                            : cepLookup.result
+                              ? 'found'
+                              : 'idle'
+                    }
+                    {...(canLocate ? { onLocate, locateStatus } : {})}
+                    {...(zoneHint ? { zoneHint } : {})}
                   />
                 ) : null}
               </>
             ) : null}
             {step === 'pagamento' ? (
               <>
+                {schedule && (encomenda || scheduledFor) ? (
+                  <Slot
+                    name="checkout.SchedulePicker"
+                    dates={schedule.dates}
+                    value={scheduledFor}
+                    onChange={(d) => {
+                      setScheduledFor(d);
+                      setScheduleError(undefined);
+                    }}
+                    required={encomenda}
+                    leadDays={schedule.leadDays}
+                    {...(store?.hours.timezone ? { timezone: store.hours.timezone } : {})}
+                    {...(scheduleError ? { error: scheduleError } : {})}
+                  />
+                ) : null}
                 <Slot
                   name="checkout.PaymentMethods"
-                  methods={METHODS}
+                  methods={methods}
                   selected={pay}
                   onSelect={setPay}
                 />
+                {encomenda && methods.length < METHODS.length ? (
+                  <p className="v-muted" data-part="payment-note">
+                    Encomendas aceitam: {methods.map((m) => m.label).join(', ')}.
+                  </p>
+                ) : null}
+                <Slot
+                  name="checkout.CouponField"
+                  coupon={cart.coupon ?? null}
+                  discountCents={cart.totals.discountCents ?? 0}
+                  currency={currency}
+                  pending={couponPending}
+                  {...(couponError ? { error: couponError } : {})}
+                  onApply={(code) => void applyCoupon(code)}
+                  onRemove={() => void removeCoupon()}
+                />
+                <Slot name="checkout.Notes" value={notes} onChange={setNotes} max={NOTES_MAX} />
                 {deliveryIssue ? (
                   <p className="v-alert" role="alert" data-part="delivery-issue">
                     {deliveryIssue}

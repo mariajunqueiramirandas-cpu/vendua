@@ -47,13 +47,17 @@ const FROZEN_V1 = [
   'useCustomer',
   'useDeliveryQuote',
   'useDeliveryZones',
+  'useCep',
   'useErrorSurface',
+  'useLoyalty',
   'useNotices',
   'useOrder',
   'useOrderHistory',
+  'useOrders',
   'usePageContext',
   'useProduct',
   'useStore',
+  'useWaitlist',
 ];
 
 describe('public surface', () => {

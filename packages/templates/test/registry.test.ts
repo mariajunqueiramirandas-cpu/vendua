@@ -38,3 +38,31 @@ describe('2026-09-delivery-eta-on-product', () => {
     });
   });
 });
+
+describe('2026-09-loyalty-teaser-on-product', () => {
+  const lt = findMigration('2026-09-loyalty-teaser-on-product')!;
+  for (const store of [
+    'storefronts/_template',
+    'storefronts/quero-pudim',
+    'storefronts/_examples/quero-pudim',
+  ]) {
+    test(`lands in a promo-accepting area on ${store}, idempotently`, () => {
+      const product = readTemplatesDir(join(REPO, store, 'templates')).product!;
+      const r = runMigration(lt, product, { kernelVersion: '1.2.0', sections });
+      expect(r.status).toBe('applied');
+      if (r.status !== 'applied') return;
+      const placed = r.template.sections.flatMap((s) =>
+        Object.values(s.blocks ?? {}).flatMap((bs) => bs.map((b) => b.type)),
+      );
+      expect(placed).toContain('sdk:loyalty-teaser');
+      expect(runMigration(lt, r.template, { kernelVersion: '1.2.0', sections }).status).toBe(
+        'skipped',
+      );
+    });
+  }
+
+  test('Kernel 1.1 stores are skipped', () => {
+    const product = readTemplatesDir(join(REPO, 'storefronts/_template/templates')).product!;
+    expect(runMigration(lt, product, { kernelVersion: '1.1.1', sections }).status).toBe('skipped');
+  });
+});

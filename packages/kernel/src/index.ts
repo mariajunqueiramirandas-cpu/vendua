@@ -44,6 +44,10 @@ export {
   useCustomer,
   useAnalytics,
   useConsent,
+  useOrders,
+  useLoyalty,
+  useCep,
+  useWaitlist,
 } from './hooks.ts';
 export type { CartMutations, CustomerProfile, QueryError } from './hooks.ts';
 export { useErrorSurface } from './errors.ts';
@@ -131,4 +135,18 @@ export type {
   ErrorCode,
   Order,
   QuoteResult,
+  // Kernel 1.2
+  CartCoupon,
+  CartSchedule,
+  CepResult,
+  ComboSelection,
+  ComboSlot,
+  CouponCheck,
+  DeliveryAddress,
+  ImportLine,
+  ImportReport,
+  LoyaltyCard,
+  OrderItem,
+  OrderSummary,
+  PixInfo,
 } from './api.ts';

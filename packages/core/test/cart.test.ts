@@ -49,6 +49,16 @@ const product: ProductDetail = {
   status: 'active',
   figureVariant: 'default',
   tags: [],
+  kind: 'simple',
+  imageUrl: null,
+  stockQuantity: null,
+  lowStockThreshold: null,
+  lowStock: false,
+  requiresPreorder: false,
+  preorderLeadDays: 0,
+  gallery: [],
+  comboSlots: [],
+  waitlistCount: 0,
   modifierGroups: [
     {
       id: 'g1',

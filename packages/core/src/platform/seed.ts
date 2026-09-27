@@ -18,6 +18,17 @@ interface SeedZone {
   minOrderCents?: number;
   etaMin: number;
   etaMax: number;
+  /** radius zone: serves addresses within this distance of the store */
+  maxDistanceKm?: number;
+  feePerKmCents?: number;
+  freeDeliveryOverCents?: number;
+}
+interface SeedComboSlot {
+  name: string;
+  min: number;
+  max: number;
+  qtyPerItem?: number;
+  items: { slug: string; deltaCents?: number }[];
 }
 interface SeedModifier {
   name: string;
@@ -38,6 +49,12 @@ interface SeedProduct {
   status?: 'active' | 'sold_out';
   figure?: 'default' | 'alt';
   groups?: SeedGroup[];
+  stock?: number;
+  lowStockThreshold?: number;
+  /** encomenda: lead days before the scheduled date */
+  preorderDays?: number;
+  /** kit: the customer picks items per slot (roadmap 2b combos) */
+  combo?: SeedComboSlot[];
 }
 interface SeedCategory {
   slug: string;
@@ -67,8 +84,30 @@ interface SeedTenant {
     promo?: { title: string; body?: string };
     currency?: string;
     vocabulary?: Record<string, string>;
+    pix?: {
+      key: string;
+      keyType: 'email' | 'phone' | 'cpf' | 'cnpj' | 'random';
+      beneficiary: string;
+      city: string;
+    };
+    loyalty?: {
+      stampsRequired: number;
+      minOrderCents: number;
+      reward: { kind: 'percent' | 'fixed' | 'free_delivery'; value: number; label: string };
+      rewardValidDays: number;
+    };
+    location?: { latitude: number; longitude: number };
   };
   zones: SeedZone[];
+  coupons?: {
+    code: string;
+    kind: 'percent' | 'fixed' | 'free_delivery';
+    value?: number;
+    label?: string;
+    minSubtotalCents?: number;
+    firstOrderOnly?: boolean;
+    perPhoneLimit?: number;
+  }[];
   categories: SeedCategory[];
 }
 
@@ -99,7 +138,36 @@ const TENANTS: SeedTenant[] = [
         bag: 'sacola',
         cta: 'Escolher meu doce',
       },
+      pix: {
+        key: 'pedidos@queropudim.com.br',
+        keyType: 'email',
+        beneficiary: 'Quero Pudim Gourmet',
+        city: 'Saquarema',
+      },
+      loyalty: {
+        stampsRequired: 8,
+        minOrderCents: 2500,
+        reward: { kind: 'fixed', value: 1890, label: '1 pudim tradicional grátis' },
+        rewardValidDays: 60,
+      },
+      location: { latitude: -22.9292, longitude: -42.4906 },
     },
+    coupons: [
+      {
+        code: 'BEMVINDO',
+        kind: 'percent',
+        value: 10,
+        label: '10% no primeiro pedido',
+        firstOrderOnly: true,
+      },
+      {
+        code: 'FRETEGRATIS',
+        kind: 'free_delivery',
+        label: 'Entrega grátis acima de R$ 80',
+        minSubtotalCents: 8000,
+        perPhoneLimit: 3,
+      },
+    ],
     zones: [
       {
         name: 'Centro',
@@ -107,6 +175,7 @@ const TENANTS: SeedTenant[] = [
         feeCents: 500,
         etaMin: 30,
         etaMax: 50,
+        freeDeliveryOverCents: 12000,
       },
       { name: 'Itaúna', neighborhoods: ['Itaúna'], feeCents: 700, etaMin: 40, etaMax: 60 },
       {
@@ -116,6 +185,17 @@ const TENANTS: SeedTenant[] = [
         minOrderCents: 2000,
         etaMin: 50,
         etaMax: 80,
+      },
+      // everything else nearby: priced by distance from the kitchen
+      {
+        name: 'Até 12 km',
+        neighborhoods: [],
+        feeCents: 400,
+        feePerKmCents: 90,
+        maxDistanceKm: 12,
+        minOrderCents: 3000,
+        etaMin: 45,
+        etaMax: 90,
       },
     ],
     categories: [
@@ -128,6 +208,8 @@ const TENANTS: SeedTenant[] = [
             slug: 'pudim-tradicional',
             name: 'Pudim tradicional',
             priceCents: 1890,
+            stock: 14,
+            lowStockThreshold: 4,
             description: 'O clássico: lisinho, sem furinho, calda dourada de caramelo.',
             groups: [
               {
@@ -181,6 +263,8 @@ const TENANTS: SeedTenant[] = [
             slug: 'sacole-coco',
             name: 'Sacolé de coco',
             priceCents: 700,
+            stock: 3,
+            lowStockThreshold: 5,
             figure: 'alt',
             description: 'Cremoso de verdade — leite de coco fresco.',
           },
@@ -210,21 +294,42 @@ const TENANTS: SeedTenant[] = [
             name: 'Kit festa',
             priceCents: 5990,
             figure: 'alt',
-            description: '12 doces à sua escolha — para a festa, o presente ou a semana.',
-            groups: [
+            description:
+              '4 pudins e 2 sacolés à sua escolha — para a festa, o presente ou a semana.',
+            combo: [
               {
-                name: 'Sabores dos pudins',
-                required: true,
-                min: 2,
+                name: 'Pudins',
+                min: 4,
                 max: 4,
-                modifiers: [
-                  { name: 'Tradicional' },
-                  { name: 'Coco' },
-                  { name: 'Doce de leite' },
-                  { name: 'Maracujá' },
+                qtyPerItem: 2,
+                items: [
+                  { slug: 'pudim-tradicional' },
+                  { slug: 'pudim-coco' },
+                  { slug: 'pudim-doce-de-leite', deltaCents: 200 },
+                  { slug: 'pudim-maracuja' },
+                ],
+              },
+              {
+                name: 'Sacolés',
+                min: 2,
+                max: 2,
+                qtyPerItem: 2,
+                items: [
+                  { slug: 'sacole-coco' },
+                  { slug: 'sacole-morango' },
+                  { slug: 'sacole-chocolate' },
                 ],
               },
             ],
+          },
+          {
+            slug: 'pudim-gigante',
+            name: 'Pudim gigante (encomenda)',
+            priceCents: 12900,
+            figure: 'default',
+            description:
+              '2 kg, serve 20 pessoas. Feito sob encomenda — peça com 2 dias de antecedência.',
+            preorderDays: 2,
           },
           {
             slug: 'kit-semana',
@@ -307,12 +412,33 @@ for (const t of TENANTS) {
         delivery_enabled = excluded.delivery_enabled, promo = excluded.promo,
         currency = excluded.currency, vocabulary = excluded.vocabulary
     `;
+    await tx`
+      update store_settings set
+        pix_key = ${s.pix?.key ?? null}, pix_key_type = ${s.pix?.keyType ?? null},
+        pix_beneficiary = ${s.pix?.beneficiary ?? null}, pix_city = ${s.pix?.city ?? null},
+        loyalty = ${s.loyalty ? tx.json(s.loyalty) : null},
+        latitude = ${s.location?.latitude ?? null}, longitude = ${s.location?.longitude ?? null}
+      where tenant_id = ${tid}
+    `;
+    for (const c of t.coupons ?? []) {
+      await tx`
+        insert into coupons (tenant_id, code, kind, value, label, min_subtotal_cents, first_order_only, per_phone_limit)
+        values (${tid}, ${c.code}, ${c.kind}, ${c.value ?? 0}, ${c.label ?? null}, ${c.minSubtotalCents ?? 0},
+                ${c.firstOrderOnly ?? false}, ${c.perPhoneLimit ?? null})
+        on conflict (tenant_id, code) do update set kind = excluded.kind, value = excluded.value,
+          label = excluded.label, min_subtotal_cents = excluded.min_subtotal_cents,
+          first_order_only = excluded.first_order_only, per_phone_limit = excluded.per_phone_limit, active = true
+      `;
+    }
 
     await tx`delete from delivery_zones where tenant_id = ${tid}`;
     for (const z of t.zones) {
       await tx`
-        insert into delivery_zones (tenant_id, name, neighborhoods, fee_cents, min_order_cents, eta_min_minutes, eta_max_minutes)
-        values (${tid}, ${z.name}, ${tx.json(z.neighborhoods)}, ${z.feeCents}, ${z.minOrderCents ?? 0}, ${z.etaMin}, ${z.etaMax})
+        insert into delivery_zones (tenant_id, name, kind, neighborhoods, fee_cents, min_order_cents, eta_min_minutes,
+                                    eta_max_minutes, max_distance_km, fee_per_km_cents, free_delivery_over_cents)
+        values (${tid}, ${z.name}, ${z.maxDistanceKm ? 'radius' : 'neighborhood'}, ${tx.json(z.neighborhoods)}, ${z.feeCents},
+                ${z.minOrderCents ?? 0}, ${z.etaMin}, ${z.etaMax}, ${z.maxDistanceKm ?? null}, ${z.feePerKmCents ?? 0},
+                ${z.freeDeliveryOverCents ?? null})
       `;
     }
 
@@ -328,8 +454,11 @@ for (const t of TENANTS) {
       for (const p of cat.products) {
         const pid = (
           await tx<{ id: string }[]>`
-            insert into products (tenant_id, category_id, slug, name, description, base_price_cents, status, figure_variant)
-            values (${tid}, ${catId}, ${p.slug}, ${p.name}, ${p.description ?? null}, ${p.priceCents}, ${p.status ?? 'active'}, ${p.figure ?? 'default'})
+            insert into products (tenant_id, category_id, slug, name, description, base_price_cents, status, figure_variant,
+                                  stock_quantity, low_stock_threshold, requires_preorder, preorder_lead_days, kind)
+            values (${tid}, ${catId}, ${p.slug}, ${p.name}, ${p.description ?? null}, ${p.priceCents}, ${p.status ?? 'active'},
+                    ${p.figure ?? 'default'}, ${p.stock ?? null}, ${p.lowStockThreshold ?? null},
+                    ${p.preorderDays !== undefined}, ${p.preorderDays ?? 0}, ${p.combo ? 'combo' : 'simple'})
             returning id
           `
         )[0]!.id;
@@ -347,6 +476,30 @@ for (const t of TENANTS) {
               values (${tid}, ${gid}, ${m.name}, ${m.deltaCents ?? 0}, ${mi})
             `;
           }
+        }
+      }
+    }
+    // kits last: their slots point at products created above
+    for (const p of t.categories.flatMap((c) => c.products).filter((p) => p.combo)) {
+      const kitId = (
+        await tx<
+          { id: string }[]
+        >`select id from products where tenant_id = ${tid} and slug = ${p.slug}`
+      )[0]!.id;
+      for (const [si, slot] of p.combo!.entries()) {
+        const slotId = (
+          await tx<{ id: string }[]>`
+            insert into combo_slots (tenant_id, product_id, name, min_select, max_select, qty_per_item, sort)
+            values (${tid}, ${kitId}, ${slot.name}, ${slot.min}, ${slot.max}, ${slot.qtyPerItem ?? 1}, ${si})
+            returning id
+          `
+        )[0]!.id;
+        for (const [ii, item] of slot.items.entries()) {
+          await tx`
+            insert into combo_slot_items (tenant_id, slot_id, product_id, price_delta_cents, sort)
+            select ${tid}, ${slotId}, id, ${item.deltaCents ?? 0}, ${ii} from products
+            where tenant_id = ${tid} and slug = ${item.slug}
+          `;
         }
       }
     }
@@ -371,98 +524,32 @@ for (const t of TENANTS) {
   slog.info({ slug: t.slug }, 'seeded tenant');
 }
 
-// CRM demo leads — wiped+recreated each seed (source='seed'); runs as table owner so no RLS GUC needed
+// CRM: no demo pipeline — one real customer record for the store this repo ships.
+// Re-seeds replace it (source='seed'); leads you create by hand are never touched.
 {
   await sql`delete from leads where source = 'seed'`;
-  const SEED_LEADS = [
-    {
-      name: 'Dona Mirtes',
-      business: 'Doces da Mirtes',
-      phone: '+5585988120001',
-      email: 'mirtes@doces.com',
-      city: 'Fortaleza',
-      segment: 'doceria',
-      state: 'contacted',
-      agentMode: 'draft',
-      tags: ['quente', 'indicacao'],
-      deal: 490000,
-      activity: 'Indicada pela Lia — vende brigadeiros por encomenda no IG, ~40 pedidos/semana.',
-    },
-    {
-      name: 'Atelier do Brigadeiro',
-      business: 'Atelier do Brigadeiro',
-      phone: '+5585988120002',
-      city: 'Fortaleza',
-      segment: 'doceria',
-      state: 'lead',
-      agentMode: 'draft',
-      discoveredVia: 'agente',
-      tags: ['descoberto'],
-      activity: 'Descoberto pelo agente via busca — IG ativo com 12k seguidores, sem loja online.',
-    },
-    {
-      name: 'Seu Norberto',
-      business: 'Marmitas do Norberto',
-      phone: '+5585988120003',
-      city: 'Caucaia',
-      segment: 'marmitaria',
-      state: 'invited',
-      agentMode: 'auto',
-      tags: ['almoço-corporativo'],
-      deal: 890000,
-      activity: 'Negociando plano anual — pediu proposta por escrito.',
-    },
-    {
-      name: 'Café Serra Azul',
-      business: 'Café Serra Azul',
-      phone: '+5585988120004',
-      city: 'Guaramiranga',
-      segment: 'cafeteria',
-      state: 'live',
-      agentMode: 'off',
-      tags: ['cliente'],
-      deal: 590000,
-      activity: 'Fechou! Loja no ar desde semana passada.',
-    },
-    {
-      name: 'Padaria Trigo Real',
-      business: 'Padaria Trigo Real',
-      phone: '+5585988120005',
-      city: 'Fortaleza',
-      segment: 'padaria',
-      state: 'contacted',
-      agentMode: 'draft',
-      lostReason: 'fechou contrato com concorrente',
-      tags: ['perdido'],
-      activity: 'Perdido — assinou com concorrente na sexta. Revisitar em 6 meses.',
-    },
-  ] as const;
-  for (const l of SEED_LEADS) {
-    const lead = (
-      await sql<{ id: string }[]>`
-        insert into leads (name, business_name, phone, email, city, segment, state, agent_mode,
-          tags, deal_value_cents, discovered_via, lost_reason, source)
-        values (${l.name}, ${l.business}, ${l.phone}, ${'email' in l ? l.email : null}, ${l.city},
-          ${l.segment}, ${l.state}, ${l.agentMode}, ${l.tags as unknown as never[]},
-          ${'deal' in l ? l.deal : null}, ${'discoveredVia' in l ? l.discoveredVia : null},
-          ${'lostReason' in l ? l.lostReason : null}, 'seed')
-        returning id
-      `
-    )[0]!;
+  const lead = (
+    await sql<{ id: string }[]>`
+      insert into leads (name, business_name, phone, whatsapp, instagram, city, segment, state,
+        agent_mode, tags, source)
+      values ('Quero Pudim Gourmet', 'Quero Pudim Gourmet', '+5522999999999', '+5522999999999',
+        '@queropudim_gourmet', 'Saquarema', 'doceria', 'live', 'off',
+        ${['cliente'] as unknown as never[]}, 'seed')
+      returning id
+    `
+  )[0]!;
+  await sql`
+    insert into lead_activities (lead_id, kind, body, created_by)
+    values (${lead.id}, 'note', 'Cliente: loja no ar em storefronts/quero-pudim (tenant quero-pudim).', 'staff')
+  `;
+  // one history row per stage — everReached counts to_state rows
+  for (const s of ['lead', 'contacted', 'invited', 'live'] as const) {
     await sql`
-      insert into lead_activities (lead_id, kind, body, created_by)
-      values (${lead.id}, 'note', ${l.activity}, 'staff')
+      insert into lead_state_history (lead_id, from_state, to_state, actor, value_cents)
+      values (${lead.id}, null, ${s}, 'staff', null)
     `;
-    // one history row per stage the lead passed through — everReached counts to_state rows
-    const stages = ['lead', 'contacted', 'invited', 'live'] as const;
-    for (const s of stages.slice(0, stages.indexOf(l.state) + 1)) {
-      await sql`
-        insert into lead_state_history (lead_id, from_state, to_state, actor, value_cents)
-        values (${lead.id}, null, ${s}, 'staff', ${'deal' in l ? l.deal : null})
-      `;
-    }
   }
-  slog.info({ count: 5 }, 'seeded CRM leads');
+  slog.info('seeded CRM customer: Quero Pudim Gourmet');
 }
 
 await sql.end();

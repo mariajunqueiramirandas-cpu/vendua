@@ -8,8 +8,8 @@ import {
   type ReactNode,
 } from 'react';
 import { createApi, type VenduaApi } from './api.ts';
-import type { StorefrontConfig, StorefrontTokens } from './config.ts';
-import { setStatusRefresher } from './errors.ts';
+import { KERNEL_PATHS, type StorefrontConfig, type StorefrontTokens } from './config.ts';
+import { setStatusRefresher, showError, showInfo } from './errors.ts';
 import { beacon } from './telemetry.ts';
 import type { StorefrontBundle } from './composition/registry.ts';
 
@@ -118,6 +118,57 @@ export function VenduaProvider({
     });
     return () => setStatusRefresher(null);
   }, [baseUrl]);
+
+  // Kernel 1.2 links: `?cart=CODE` restores a shared sacola, `?cupom=CODE` applies a
+  // coupon — both land on /sacola with the params stripped (the URL stays shareable once)
+  useEffect(() => {
+    const loc = globalThis.location;
+    if (!loc) return;
+    const params = new URLSearchParams(loc.search);
+    const share = params.get('cart');
+    const coupon = params.get('cupom');
+    if (!share && !coupon) return;
+    params.delete('cart');
+    params.delete('cupom');
+    const rest = params.toString();
+    globalThis.history?.replaceState(
+      null,
+      '',
+      `${loc.pathname}${rest ? `?${rest}` : ''}${loc.hash}`,
+    );
+    void (async () => {
+      try {
+        if (share && /^[A-Za-z0-9]{6,16}$/.test(share)) {
+          const { cart, report } = await api.importShare(share);
+          invalidateQuery('cart', cart);
+          showInfo(
+            'cart-import',
+            report.skipped.length ? 'Sacola recuperada em parte' : 'Sacola recuperada',
+            report.skipped.length
+              ? `${report.skipped.length} item(ns) não estão disponíveis agora.`
+              : undefined,
+          );
+        }
+        if (coupon && /^[A-Za-z0-9_-]{3,32}$/.test(coupon)) {
+          const cart = await api.applyCoupon(coupon);
+          invalidateQuery('cart', cart);
+          showInfo(
+            'coupon',
+            `Cupom ${cart.coupon?.code ?? coupon.toUpperCase()} na sacola`,
+            cart.coupon?.label,
+          );
+        }
+      } catch (err) {
+        showError(err);
+        return;
+      }
+      if (share) {
+        globalThis.history?.pushState(null, '', KERNEL_PATHS.cart);
+        globalThis.dispatchEvent?.(new PopStateEvent('popstate'));
+      }
+    })();
+    // once per client
+  }, [api]);
 
   // Emit design tokens as --v-* vars on :root (02-kernel.md#design-tokens).
   useEffect(() => {

@@ -12,6 +12,16 @@ export interface StoreHours {
   windows: WeeklyWindow[];
 }
 
+/** Stamp card: every qualifying order that reaches `delivered` earns a stamp. */
+export interface LoyaltyProgram {
+  stampsRequired: number;
+  /** subtotal an order needs to earn a stamp */
+  minOrderCents: number;
+  reward: { kind: 'percent' | 'fixed' | 'free_delivery'; value: number; label: string };
+  /** days the minted reward coupon stays valid */
+  rewardValidDays: number;
+}
+
 export interface StoreSettingsRow {
   tenant_id: string;
   tagline: string | null;
@@ -31,6 +41,16 @@ export interface StoreSettingsRow {
   currency: string;
   /** 'high' emits the high_demand notice (migration 0049). */
   demand_level?: 'normal' | 'high';
+  // Phase 2 (migration 0051) — optional so pre-0051 fixtures still type
+  preorder_payment_methods?: string[];
+  preorder_max_days?: number;
+  loyalty?: LoyaltyProgram | null;
+  pix_key?: string | null;
+  pix_key_type?: 'cpf' | 'cnpj' | 'email' | 'phone' | 'random' | null;
+  pix_beneficiary?: string | null;
+  pix_city?: string | null;
+  latitude?: number | null;
+  longitude?: number | null;
   vocabulary: {
     itemSingular?: string;
     itemPlural?: string;

@@ -3,10 +3,17 @@ import { useKernel, useQuery, invalidateQuery } from './provider.tsx';
 import type {
   Cart,
   CatalogCategory,
+  CepResult,
   CheckoutInput,
+  ComboSelection,
+  DeliveryAddress,
   DeliveryZone,
+  ImportLine,
+  ImportReport,
+  LoyaltyCard,
   Notice,
   Order,
+  OrderSummary,
   ProductDetail,
   QuoteResult,
   StoreProfile,
@@ -114,10 +121,25 @@ export function useDeliveryZones(): {
 }
 
 export interface CartMutations {
-  add: (productId: string, qty?: number, modifierIds?: string[]) => Promise<Cart>;
+  add: (
+    productId: string,
+    qty?: number,
+    modifierIds?: string[],
+    /** Kernel 1.2 — kit picks for a `kind: 'combo'` product */
+    comboSelections?: ComboSelection[],
+  ) => Promise<Cart>;
   updateQty: (itemId: string, qty: number) => Promise<Cart>;
   remove: (itemId: string) => Promise<Cart>;
-  setDelivery: (d: { mode: 'pickup' | 'delivery'; neighborhood?: string }) => Promise<Cart>;
+  setDelivery: (d: { mode: 'pickup' | 'delivery' } & DeliveryAddress) => Promise<Cart>;
+  /** Kernel 1.2 — Core validates and prices; a coupon short of its minimum stays on, not applying */
+  applyCoupon: (code: string) => Promise<Cart>;
+  removeCoupon: () => Promise<Cart>;
+  /** Kernel 1.2 — merge lines into this cart; `report.skipped` says what couldn't be added */
+  importItems: (items: ImportLine[]) => Promise<{ cart: Cart; report: ImportReport }>;
+  /** Kernel 1.2 — a `?cart=CODE` link anyone can open to get this sacola */
+  share: () => Promise<{ code: string; url: string; expiresAt: string }>;
+  /** Kernel 1.2 — "pedir de novo": a past order's lines back in the sacola */
+  reorder: (orderId: string) => Promise<{ cart: Cart; report: ImportReport }>;
 }
 
 export function useCart(): {
@@ -146,11 +168,28 @@ export function useCart(): {
 
   const mutations = useMemo<CartMutations>(
     () => ({
-      add: (productId, qty = 1, modifierIds = []) =>
-        api.addItem(productId, qty, modifierIds).then(bump),
+      add: (productId, qty = 1, modifierIds = [], comboSelections) =>
+        api.addItem(productId, qty, modifierIds, comboSelections).then(bump),
       updateQty: (itemId, qty) => api.updateItem(itemId, qty).then(bump),
       remove: (itemId) => api.removeItem(itemId).then(bump),
       setDelivery: (d) => api.setDelivery(d).then(bump),
+      applyCoupon: (code) => api.applyCoupon(code).then(bump),
+      removeCoupon: () => api.removeCoupon().then(bump),
+      importItems: (items) =>
+        api.importCart(items).then((r) => {
+          bump(r.cart);
+          return r;
+        }),
+      share: async () => {
+        const r = await api.shareCart();
+        const origin = globalThis.location?.origin ?? '';
+        return { ...r, url: `${origin}/?cart=${encodeURIComponent(r.code)}` };
+      },
+      reorder: (orderId) =>
+        api.reorder(orderId).then((r) => {
+          bump(r.cart);
+          return r;
+        }),
     }),
     [api, bump],
   );
@@ -164,15 +203,144 @@ export function useCart(): {
   };
 }
 
-export function useOrder(id: string): {
+const TERMINAL_ORDER = new Set(['delivered', 'cancelled', 'refunded']);
+const FIRST_WAIT_DELAY_MS = 1500;
+
+/** Live by default (Kernel 1.2; SSE since 1.3): a Kernel-owned stream of the
+ *  order — no storefront polling. It opens once the page settles, drops while
+ *  the tab is hidden, reconnects with backoff, stops at a terminal state, and
+ *  falls back to Core's long poll when no event stream gets through (an old
+ *  Core, a buffering proxy). `{ live: false }` restores the plain read. */
+export function useOrder(
+  id: string,
+  opts: { live?: boolean } = {},
+): {
   order: Order | undefined;
   loading: boolean;
   error: QueryError | undefined;
   refetch: () => void;
+  /** a live connection is open right now */
+  live: boolean;
+  /** Kernel 1.3 — which transport carries it */
+  transport: 'stream' | 'poll' | null;
 } {
   const { api } = useKernel();
   const q = useQuery(`order:${id}`, () => api.order(id));
-  return { order: q.data, loading: q.loading, error: q.error, refetch: q.refetch };
+  const [fresh, setFresh] = useState<Order>();
+  const [live, setLive] = useState(false);
+  const [transport, setTransport] = useState<'stream' | 'poll' | null>(null);
+  const armed = useRef(false);
+  const want = opts.live !== false;
+  // whichever read is newer wins: the live answer or a refetch
+  const own = fresh?.id === id ? fresh : undefined;
+  const current = own && (own.version ?? 0) >= (q.data?.version ?? 0) ? own : (q.data ?? own);
+  const versionRef = useRef<number | undefined>(undefined);
+  const seen = current?.version;
+  if (seen !== undefined && seen > (versionRef.current ?? 0)) versionRef.current = seen;
+  // Core without Kernel-1.2 orders (no version) keeps the plain read
+  const ready = current?.version !== undefined;
+  const terminal = current?.state ? TERMINAL_ORDER.has(current.state) : false;
+
+  useEffect(() => {
+    setFresh(undefined);
+    armed.current = false;
+    versionRef.current = undefined;
+  }, [id]);
+
+  useEffect(() => {
+    if (!want || !ready || terminal) return;
+    const master = new AbortController();
+    let stopped = false;
+    let failures = 0;
+    let mode: 'stream' | 'poll' = 'stream';
+    const doc = globalThis.document;
+    const visible = () => !doc || doc.visibilityState !== 'hidden';
+    const sleep = (ms: number) =>
+      new Promise<void>((r) => {
+        const t = setTimeout(r, ms);
+        master.signal.addEventListener('abort', () => (clearTimeout(t), r()), { once: true });
+      });
+    const accept = (o: Order) => {
+      if ((o.version ?? 0) <= (versionRef.current ?? 0)) return;
+      versionRef.current = o.version;
+      setFresh(o);
+    };
+    const loop = async () => {
+      while (!stopped) {
+        if (!visible()) {
+          setLive(false);
+          await new Promise<void>((r) => {
+            const on = () => {
+              if (visible() || stopped) {
+                doc?.removeEventListener('visibilitychange', on);
+                r();
+              }
+            };
+            doc?.addEventListener('visibilitychange', on);
+            master.signal.addEventListener('abort', on, { once: true });
+          });
+          continue;
+        }
+        // one connection per iteration; hiding the tab closes it
+        const round = new AbortController();
+        const kill = () => round.abort();
+        master.signal.addEventListener('abort', kill, { once: true });
+        const onHide = () => {
+          if (!visible()) kill();
+        };
+        doc?.addEventListener('visibilitychange', onHide);
+        setLive(true);
+        setTransport(mode);
+        try {
+          if (mode === 'stream') {
+            await api.orderStream(id, versionRef.current ?? 0, accept, round.signal);
+            failures = 0;
+            // Core closed it (lifetime or terminal) — a beat before reconnecting
+            await sleep(1000);
+          } else {
+            const r = await api.orderWait(id, versionRef.current ?? 0, 25, round.signal);
+            failures = 0;
+            if (r.changed) accept(r.order);
+          }
+        } catch (err) {
+          if (stopped) return;
+          if (round.signal.aborted) continue; // hidden tab, not a failure
+          if (mode === 'stream' && err instanceof ApiError && err.code === 'STREAM_UNAVAILABLE') {
+            mode = 'poll';
+            continue;
+          }
+          failures++;
+          setLive(false);
+          await sleep(Math.min(30_000, 1000 * 2 ** failures));
+        } finally {
+          master.signal.removeEventListener('abort', kill);
+          doc?.removeEventListener('visibilitychange', onHide);
+        }
+      }
+    };
+    // the first connection opens after the page settles: load stays quick and tools
+    // that wait for network idle (crawlers, screenshots, conformance) aren't held forever
+    const start = armed.current ? Promise.resolve() : sleep(FIRST_WAIT_DELAY_MS);
+    armed.current = true;
+    void start.then(() => {
+      if (!stopped) void loop();
+    });
+    return () => {
+      stopped = true;
+      master.abort();
+      setLive(false);
+      setTransport(null);
+    };
+  }, [api, id, want, ready, terminal]);
+
+  return {
+    order: current,
+    loading: q.loading && !current,
+    error: current ? undefined : q.error,
+    refetch: q.refetch,
+    live,
+    transport,
+  };
 }
 
 export function useCheckout(): {
@@ -217,7 +385,10 @@ export function useCheckout(): {
 
 /** Zone check for a neighborhood — fee, ETA and eligibility are Core's answer. */
 export function useDeliveryQuote(): {
-  quote: (neighborhood: string) => Promise<QuoteResult>;
+  /** a bairro, or Kernel 1.2 `{ lat, lng }` (e.g. from the device's location) */
+  quote: (
+    where: string | { neighborhood?: string; lat?: number; lng?: number },
+  ) => Promise<QuoteResult>;
   result: QuoteResult | undefined;
   pending: boolean;
   error: QueryError | undefined;
@@ -228,12 +399,12 @@ export function useDeliveryQuote(): {
   const [error, setError] = useState<QueryError>();
   const seq = useRef(0);
   const quote = useCallback(
-    async (neighborhood: string) => {
+    async (where: string | { neighborhood?: string; lat?: number; lng?: number }) => {
       const n = ++seq.current;
       setPending(true);
       setError(undefined);
       try {
-        const r = await api.quote(neighborhood.trim().slice(0, 80));
+        const r = await api.quote(typeof where === 'string' ? where.trim().slice(0, 80) : where);
         if (n === seq.current) setResult(r);
         return r;
       } catch (err) {
@@ -255,7 +426,14 @@ export function useDeliveryQuote(): {
 export interface CustomerProfile {
   name: string;
   phone: string;
-  address: { street: string; number: string; neighborhood: string; complement: string };
+  address: {
+    street: string;
+    number: string;
+    neighborhood: string;
+    complement: string;
+    /** Kernel 1.2 */
+    cep?: string;
+  };
 }
 
 const CUSTOMER_KEY = 'vendua.customer';
@@ -300,6 +478,7 @@ export function useCustomer(): {
         number: p.address.number.slice(0, 10),
         neighborhood: p.address.neighborhood.slice(0, 80),
         complement: p.address.complement.slice(0, 80),
+        ...(p.address.cep ? { cep: p.address.cep.replace(/\D/g, '').slice(0, 8) } : {}),
       },
     };
     customerMem = clean;
@@ -350,4 +529,156 @@ export function useOrderHistory(): {
     return settled.flatMap((r) => (r.status === 'fulfilled' ? [r.value] : []));
   });
   return { orders: q.data ?? [], loading: q.loading, refetch: q.refetch };
+}
+
+function toQueryError(err: unknown, fallback: string): QueryError {
+  return err instanceof ApiError
+    ? { status: err.status, code: err.code, message: err.message, details: err.details }
+    : { code: 'INTERNAL', message: fallback };
+}
+
+/** Kernel 1.2 — "sem senha, sem cadastro": a phone's orders across devices. The
+ *  device that checked out with the phone is trusted already; any other proves it
+ *  with one order number (`verify`). Summaries only — no addresses. */
+export function useOrders(phone?: string): {
+  orders: OrderSummary[];
+  /** the phone the list belongs to (normalized), once known */
+  phone: string | undefined;
+  /** no proof for this phone on this device yet — call verify(orderNumber) */
+  needsVerification: boolean;
+  verify: (orderNumber: number, phoneOverride?: string) => Promise<void>;
+  forget: () => void;
+  loading: boolean;
+  error: QueryError | undefined;
+  refetch: () => void;
+} {
+  const { api } = useKernel();
+  const [, bumpTick] = useState(0);
+  const known = api.customerPhones();
+  const target = phone ?? known[0];
+  const key = `customer-orders:${target ?? ''}`;
+  const q = useQuery(key, () =>
+    target && known.some((p) => target.replace(/\D/g, '').endsWith(p))
+      ? api.customerOrders(target)
+      : Promise.resolve(null),
+  );
+  const needsVerification =
+    !q.loading && (q.data === null || q.error?.code === 'CUSTOMER_REQUIRED');
+  const verify = useCallback(
+    async (orderNumber: number, phoneOverride?: string) => {
+      const p = phoneOverride ?? phone;
+      if (!p) throw new ApiError(422, 'INVALID_CUSTOMER', 'phone is required');
+      const verified = await api.verifyCustomer(p, orderNumber);
+      invalidateQuery(`customer-orders:${phoneOverride ?? phone ?? ''}`);
+      invalidateQuery(`customer-orders:${verified}`);
+      invalidateQuery(`loyalty:${verified}`);
+      bumpTick((t) => t + 1);
+    },
+    [api, phone],
+  );
+  const forget = useCallback(() => {
+    api.forgetCustomer(target);
+    invalidateQuery(key);
+    bumpTick((t) => t + 1);
+  }, [api, key, target]);
+  return {
+    orders: q.data?.orders ?? [],
+    phone: q.data?.phone ?? target,
+    needsVerification,
+    verify,
+    forget,
+    loading: q.loading,
+    error: q.error?.code === 'CUSTOMER_REQUIRED' ? undefined : q.error,
+    refetch: q.refetch,
+  };
+}
+
+/** Kernel 1.2 — the stamp card for a verified phone (see useOrders for verification). */
+export function useLoyalty(phone?: string): {
+  card: LoyaltyCard | null;
+  needsVerification: boolean;
+  loading: boolean;
+  refetch: () => void;
+} {
+  const { api } = useKernel();
+  const target = phone ?? api.customerPhones()[0];
+  const q = useQuery(`loyalty:${target ?? ''}`, () =>
+    target ? api.loyalty(target).catch(() => null) : Promise.resolve(null),
+  );
+  return {
+    card: q.data?.loyalty ?? null,
+    needsVerification: !q.loading && !q.data,
+    loading: q.loading,
+    refetch: q.refetch,
+  };
+}
+
+/** Kernel 1.2 — CEP → street/bairro/cidade and the delivery zone, via Core. */
+export function useCep(): {
+  lookup: (cep: string) => Promise<CepResult | null>;
+  result: CepResult | undefined;
+  pending: boolean;
+  error: QueryError | undefined;
+} {
+  const { api } = useKernel();
+  const [result, setResult] = useState<CepResult>();
+  const [pending, setPending] = useState(false);
+  const [error, setError] = useState<QueryError>();
+  const seq = useRef(0);
+  const lookup = useCallback(
+    async (cep: string) => {
+      const digits = cep.replace(/\D/g, '');
+      if (digits.length !== 8) return null;
+      const n = ++seq.current;
+      setPending(true);
+      setError(undefined);
+      try {
+        const r = await api.cep(digits);
+        if (n === seq.current) setResult(r);
+        return r;
+      } catch (err) {
+        if (n === seq.current) setError(toQueryError(err, 'cep lookup failed'));
+        return null;
+      } finally {
+        if (n === seq.current) setPending(false);
+      }
+    },
+    [api],
+  );
+  return { lookup, result, pending, error };
+}
+
+/** Kernel 1.2 — join a sold-out product's restock waitlist. */
+export function useWaitlist(productId: string | undefined): {
+  join: (phone: string) => Promise<number>;
+  /** how many wait, after joining */
+  waiting: number | undefined;
+  joined: boolean;
+  pending: boolean;
+  error: QueryError | undefined;
+} {
+  const { api } = useKernel();
+  const [waiting, setWaiting] = useState<number>();
+  const [pending, setPending] = useState(false);
+  const [error, setError] = useState<QueryError>();
+  const join = useCallback(
+    async (phone: string) => {
+      if (!productId) throw new ApiError(422, 'INVALID_NOTIFY', 'no product');
+      setPending(true);
+      setError(undefined);
+      try {
+        const r = await api.waitlist(productId, phone);
+        setWaiting(r.waiting);
+        emit('notify_me', { subject: 'product', product_id: productId });
+        return r.waiting;
+      } catch (err) {
+        setError(toQueryError(err, 'waitlist failed'));
+        throw err;
+      } finally {
+        setPending(false);
+      }
+    },
+    [api, productId],
+  );
+  return { join, waiting, joined: waiting !== undefined, pending, error };
 }

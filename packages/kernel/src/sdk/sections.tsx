@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import { Outlet } from 'react-router-dom';
-import { money } from '@vendua/ui-defaults';
+import { dayLabel, money } from '@vendua/ui-defaults';
 import { useCart, useCatalog, useProduct, useStore } from '../hooks.ts';
 import {
   AddToCart,
@@ -14,7 +14,8 @@ import type { SectionProps } from '../composition/registry.ts';
 import { Slot } from '../slot.tsx';
 import { useKernel } from '../provider.tsx';
 import { productHref, resolvePaths } from '../config.ts';
-import type { CatalogProduct } from '../api.ts';
+import type { CatalogProduct, ComboSelection } from '../api.ts';
+import { errorCopy } from '../errors.ts';
 import * as S from './schemas.ts';
 
 // SDK sections (17): Kernel-owned behaviour + markup, styled by tokens,
@@ -213,6 +214,7 @@ export function PurchasePanel({ settings }: SectionProps<typeof S.purchasePanel>
   const { config } = useKernel();
   const go = useNavigateTo();
   const [selected, setSelected] = useState<Record<string, string[]>>({});
+  const [combo, setCombo] = useState<ComboSelection[]>([]);
   const [qty, setQty] = useState(1);
   const [cartError, setCartError] = useState<string | null>(null);
   const [added, setAdded] = useState(false);
@@ -230,6 +232,16 @@ export function PurchasePanel({ settings }: SectionProps<typeof S.purchasePanel>
   );
   const errors = Object.fromEntries(
     missing.map((g) => [g.id, cartError ? 'Escolha uma opção' : '']).filter(([, v]) => v),
+  );
+  const slots = useMemo(() => product?.comboSlots ?? [], [product]);
+  const comboMissing = slots
+    .map((sl) => ({
+      slot: sl,
+      left: sl.minSelect - combo.filter((c) => c.slotId === sl.id).reduce((n, c) => n + c.qty, 0),
+    }))
+    .filter((m) => m.left > 0);
+  const comboErrors = Object.fromEntries(
+    comboMissing.map((m) => [m.slot.id, cartError ? `Faltam ${m.left}` : '']).filter(([, v]) => v),
   );
 
   if (!slug) return null;
@@ -273,6 +285,7 @@ export function PurchasePanel({ settings }: SectionProps<typeof S.purchasePanel>
 
   const soldOut = product.status !== 'active';
   const Title = settings.product ? 'h2' : 'h1';
+  const maxQty = Math.max(1, Math.min(99, product.stockQuantity ?? 99));
   return (
     <section className="v-section" data-part="root">
       {!settings.product ? (
@@ -284,7 +297,14 @@ export function PurchasePanel({ settings }: SectionProps<typeof S.purchasePanel>
         <div className="v-pp-media" data-part="media">
           <BlockArea name="media" only={['media']} className="v-pp-media-custom" />
           <BlockArea name="media" only={['badge']} className="v-pp-media-badges" />
-          {customMedia ? null : product.imageUrl ? (
+          {customMedia ? null : (product.gallery?.length ?? 0) > 1 ? (
+            <Slot
+              name="catalog.Gallery"
+              images={product.gallery!.map((g) => ({ url: g.url, alt: g.alt }))}
+              productName={product.name}
+              figureVariant={product.figureVariant}
+            />
+          ) : product.imageUrl ? (
             <img
               src={product.imageUrl}
               alt={product.name}
@@ -302,8 +322,19 @@ export function PurchasePanel({ settings }: SectionProps<typeof S.purchasePanel>
             {product.name}
           </Title>
           <p className="v-pp-price v-num" data-part="price">
+            {slots.some((sl) => sl.items.some((i) => i.priceDeltaCents > 0)) ? 'a partir de ' : ''}
             {money(product.basePriceCents, currency)}
           </p>
+          {product.requiresPreorder ? (
+            <p className="v-note" data-part="preorder" role="note">
+              Sob encomenda
+              {product.preorderEarliestDate
+                ? ` · a partir de ${dayLabel(product.preorderEarliestDate)}`
+                : product.preorderLeadDays
+                  ? ` · ${product.preorderLeadDays} ${product.preorderLeadDays === 1 ? 'dia' : 'dias'} de antecedência`
+                  : ''}
+            </p>
+          ) : null}
           <BlockArea name="after-price" className="v-pp-area" />
           {settings.showDescription && product.description ? (
             <p className="v-pp-desc" data-part="description">
@@ -320,6 +351,19 @@ export function PurchasePanel({ settings }: SectionProps<typeof S.purchasePanel>
               onChange={(gid, ids) => {
                 setCartError(null);
                 setSelected((prev) => ({ ...prev, [gid]: ids }));
+              }}
+            />
+          ) : null}
+          {slots.length > 0 ? (
+            <Slot
+              name="catalog.ComboPicker"
+              slots={slots}
+              value={combo}
+              currency={currency}
+              errors={comboErrors}
+              onChange={(next) => {
+                setCartError(null);
+                setCombo(next);
               }}
             />
           ) : null}
@@ -342,8 +386,8 @@ export function PurchasePanel({ settings }: SectionProps<typeof S.purchasePanel>
                 <button
                   type="button"
                   aria-label="Aumentar quantidade"
-                  disabled={qty >= 99}
-                  onClick={() => setQty((q) => Math.min(99, q + 1))}
+                  disabled={qty >= maxQty}
+                  onClick={() => setQty((q) => Math.min(maxQty, q + 1))}
                 >
                   +
                 </button>
@@ -352,6 +396,7 @@ export function PurchasePanel({ settings }: SectionProps<typeof S.purchasePanel>
                 product={product}
                 qty={qty}
                 modifierIds={Object.values(selected).flat()}
+                {...(slots.length ? { comboSelections: combo } : {})}
                 asChild
                 onAdded={() => {
                   setAdded(true);
@@ -361,24 +406,33 @@ export function PurchasePanel({ settings }: SectionProps<typeof S.purchasePanel>
                   setCartError(
                     err.code === 'MODIFIER_REQUIRED'
                       ? 'Escolha as opções obrigatórias antes de adicionar.'
-                      : `Não foi possível adicionar (${err.message}).`,
+                      : err.code in COPY_CODES
+                        ? errorCopy(err.code).title
+                        : `Não foi possível adicionar (${err.message}).`,
                   )
                 }
               >
                 <button
                   type="button"
                   className="v-btn v-btn-accent"
-                  disabled={missing.length > 0 || status === 'paused'}
+                  disabled={missing.length > 0 || comboMissing.length > 0 || status === 'paused'}
                   data-part="add"
                 >
-                  {settings.addLabel} · {money(product.basePriceCents * qty, currency)}
+                  {slots.length
+                    ? settings.addLabel
+                    : `${settings.addLabel} · ${money(product.basePriceCents * qty, currency)}`}
                 </button>
               </AddToCart>
             </div>
           )}
-          {missing.length > 0 && !soldOut ? (
+          {(missing.length > 0 || comboMissing.length > 0) && !soldOut ? (
             <p className="v-muted" role="note" data-part="missing">
-              Falta escolher: {missing.map((g) => g.name).join(', ')}.
+              Falta escolher:{' '}
+              {[
+                ...missing.map((g) => g.name),
+                ...comboMissing.map((m) => `${m.left} em ${m.slot.name}`),
+              ].join(', ')}
+              .
             </p>
           ) : null}
           {added && settings.afterAdd === 'stay' ? (
@@ -397,6 +451,17 @@ export function PurchasePanel({ settings }: SectionProps<typeof S.purchasePanel>
     </section>
   );
 }
+
+// codes whose Kernel copy reads well inline under the add button
+const COPY_CODES: Record<string, true> = {
+  OUT_OF_STOCK: true,
+  COMBO_SLOT_COUNT: true,
+  COMBO_ITEM_LIMIT: true,
+  COMBO_ITEM_SOLD_OUT: true,
+  INVALID_COMBO: true,
+  SOLD_OUT: true,
+  MODIFIER_SOLD_OUT: true,
+};
 
 const normalize = (s: string) => s.normalize('NFD').replace(/[̀-ͯ]/g, '').toLocaleLowerCase('pt-BR');
 

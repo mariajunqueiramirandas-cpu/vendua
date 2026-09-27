@@ -37,3 +37,25 @@ export const PAYMENT_LABEL: Record<string, string> = {
   card_on_delivery: 'Cartão na entrega',
   cash: 'Dinheiro',
 };
+
+/** "sáb., 26 set." for a store-local YYYY-MM-DD (no timezone shift). */
+export function dayLabel(date: string): string {
+  const [y, m, d] = date.split('-').map(Number);
+  return new Intl.DateTimeFormat('pt-BR', {
+    timeZone: 'UTC',
+    weekday: 'short',
+    day: '2-digit',
+    month: 'short',
+  }).format(new Date(Date.UTC(y ?? 1970, (m ?? 1) - 1, d ?? 1, 12)));
+}
+
+export const COUPON_REASON: Record<string, string> = {
+  COUPON_NOT_FOUND: 'Cupom não encontrado.',
+  COUPON_EXPIRED: 'Este cupom expirou.',
+  COUPON_NOT_STARTED: 'Este cupom ainda não começou.',
+  COUPON_EXHAUSTED: 'Este cupom esgotou.',
+  COUPON_MIN_SUBTOTAL: 'Adicione mais itens para usar este cupom.',
+  COUPON_NOT_YOURS: 'Este cupom é de outro cliente.',
+  COUPON_ALREADY_USED: 'Você já usou este cupom.',
+  COUPON_FIRST_ORDER_ONLY: 'Cupom válido só no primeiro pedido.',
+};

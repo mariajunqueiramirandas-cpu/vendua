@@ -50,6 +50,12 @@ export function CheckoutSummary({ cart, currency }: SlotProps['checkout.Summary'
           <li key={i.id} className="v-summary-line">
             <span>
               {i.qty}× {i.name}
+              {i.combo?.length ? (
+                <span className="v-muted v-line-mods">
+                  {' '}
+                  — {i.combo.map((c) => `${c.qty}× ${c.name}`).join(', ')}
+                </span>
+              ) : null}
             </span>
             <span className="v-num">{money(i.lineTotalCents, currency)}</span>
           </li>
@@ -70,6 +76,14 @@ export function CheckoutSummary({ cart, currency }: SlotProps['checkout.Summary'
             </dd>
           </div>
         ) : null}
+        {t.discountCents ? (
+          <div data-part="discount">
+            <dt>Desconto{cart.coupon ? ` · ${cart.coupon.code}` : ''}</dt>
+            <dd className="v-num" data-vendua="discount">
+              −{money(t.discountCents, currency)}
+            </dd>
+          </div>
+        ) : null}
         <div className="v-summary-total">
           <dt>Total</dt>
           <dd className="v-num" data-vendua="total">
@@ -77,6 +91,26 @@ export function CheckoutSummary({ cart, currency }: SlotProps['checkout.Summary'
           </dd>
         </div>
       </dl>
+      {cart.delivery?.mode === 'delivery' &&
+      t.freeDeliveryRemainingCents != null &&
+      t.freeDeliveryThresholdCents != null ? (
+        t.freeDeliveryRemainingCents > 0 ? (
+          <div className="v-progress" data-part="free-delivery" role="status">
+            <p>
+              Faltam {money(t.freeDeliveryRemainingCents, currency)} para{' '}
+              <strong>entrega grátis</strong>.
+            </p>
+            <progress
+              max={t.freeDeliveryThresholdCents}
+              value={t.freeDeliveryThresholdCents - t.freeDeliveryRemainingCents}
+            />
+          </div>
+        ) : (
+          <p className="v-note" data-part="free-delivery" role="status">
+            Você ganhou entrega grátis!
+          </p>
+        )
+      ) : null}
       {t.belowMinOrder ? (
         <p className="v-alert" role="status" data-part="min-order">
           Faltam {money(t.remainingMinOrderCents, currency)} para o pedido mínimo de{' '}
@@ -119,6 +153,11 @@ export function AddressForm({
   errors,
   part,
   neighborhoods,
+  onCep,
+  cepStatus,
+  onLocate,
+  locateStatus,
+  zoneHint,
 }: SlotProps['checkout.AddressForm']) {
   const err = (k: keyof typeof errors) => errors[k];
   const aria = (k: keyof typeof errors) =>
@@ -168,6 +207,62 @@ export function AddressForm({
   return (
     <fieldset className="v-fieldset" data-part="root">
       <legend className="v-legend">Endereço de entrega</legend>
+      {onLocate ? (
+        <div className="v-locate" data-part="locate">
+          <button
+            type="button"
+            className="v-btn v-btn-ghost"
+            onClick={onLocate}
+            disabled={locateStatus === 'pending'}
+          >
+            {locateStatus === 'pending' ? 'Localizando…' : 'Usar minha localização'}
+          </button>
+          {locateStatus === 'denied' ? (
+            <span className="v-muted" role="status">
+              Sem acesso à localização — preencha o endereço.
+            </span>
+          ) : locateStatus === 'out_of_zone' ? (
+            <span className="v-muted" role="status">
+              Sua localização fica fora da área de entrega.
+            </span>
+          ) : locateStatus === 'located' ? (
+            <span className="v-muted" role="status">
+              Localização usada para calcular a entrega.
+            </span>
+          ) : null}
+        </div>
+      ) : null}
+      {onCep ? (
+        <Field id="checkout-cep" label="CEP" error={err('cep')}>
+          <input
+            id="checkout-cep"
+            name="cep"
+            className="v-input v-input-short"
+            inputMode="numeric"
+            autoComplete="postal-code"
+            maxLength={9}
+            placeholder="00000-000"
+            value={value.cep ?? ''}
+            onChange={(e) => {
+              const digits = e.target.value.replace(/\D/g, '').slice(0, 8);
+              onChange({
+                cep: digits.length > 5 ? `${digits.slice(0, 5)}-${digits.slice(5)}` : digits,
+              });
+              if (digits.length === 8) onCep(digits);
+            }}
+            aria-describedby="checkout-cep-status"
+          />
+          <span id="checkout-cep-status" className="v-muted" role="status">
+            {cepStatus === 'pending'
+              ? 'Buscando endereço…'
+              : cepStatus === 'not_found'
+                ? 'CEP não encontrado — preencha à mão.'
+                : cepStatus === 'unavailable'
+                  ? 'Busca de CEP indisponível — preencha à mão.'
+                  : ''}
+          </span>
+        </Field>
+      ) : null}
       <Field id="checkout-neighborhood" label="Bairro" error={err('neighborhood')}>
         <input
           id="checkout-neighborhood"
@@ -222,6 +317,27 @@ export function AddressForm({
           onChange={(e) => onChange({ complement: e.target.value })}
         />
       </Field>
+      {value.reference !== undefined ? (
+        <Field
+          id="checkout-reference"
+          label="Ponto de referência (opcional)"
+          error={err('reference')}
+        >
+          <input
+            id="checkout-reference"
+            name="reference"
+            className="v-input"
+            maxLength={120}
+            value={value.reference}
+            onChange={(e) => onChange({ reference: e.target.value })}
+          />
+        </Field>
+      ) : null}
+      {zoneHint ? (
+        <p className="v-note" data-part="zone" role="status">
+          {zoneHint}
+        </p>
+      ) : null}
     </fieldset>
   );
 }
