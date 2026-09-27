@@ -22,9 +22,12 @@ vendua/
     codemods/           # @vendua/codemods
     loader/             # v.js source
     control-plane/      # fleet state, reconciler, fleet ops API
-    admin/              # merchant admin app — own app, shares only the
-                        # API client (not a Kernel consumer)
     edge/               # host→tenant resolution, artifact serving, injection
+  apps/
+    control/            # staff CRM + agent ops console
+    admin/              # merchant admin app — own app and design system,
+                        # shares only the API client (not a Kernel consumer);
+                        # see ../merchant-admin.md
   storefronts/
     _template/          # `vendua scaffold` source — always green
     _examples/          # curated golden storefronts — the only sibling

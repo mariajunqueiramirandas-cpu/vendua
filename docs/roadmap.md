@@ -4,15 +4,16 @@
 
 ## Where we are
 
-| Phase                         | State   | Notes                                                                                                                                                                                       |
-| ----------------------------- | ------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| 0 — Foundations               | ✅ Done | Monorepo, Core skeleton, Kernel, 3 spike storefronts, Contract v1 drafted                                                                                                                   |
-| 1 — Storefront factory        | ✅ Done | Contract frozen, conformance, CLI, fleet isolation, Founder CRM — which has since grown well past its v0 scope (see below)                                                                  |
-| 1b — Kernel v1 + updatability | ✅ Done | Kernel 1.1.1 on Contract 2; every in-repo storefront received a Kernel minor, a template migration and a Contract-major rehearsal untouched ([fleet runs](fleet-runs/README.md))            |
-| 2 — Commerce completeness     | ✅ Done | Order lifecycle, catalog depth, growth surfaces — Core migration 0051 + Kernel 1.2; the Quero Pudim golden runs with zero workarounds ([below](#phase-2--commerce-completeness-weeks-812-)) |
-| 3 — Payments + merchant admin | ⬜ Next | The "buy a plan → provisioned store" self-serve path; 1b's exit is met, so this is unblocked                                                                                                |
-| 4 — First tenant operated     | ⬜ Open | Edge, Control Plane v0, provisioner — the other half of the 1-hour signup→store promise                                                                                                     |
-| 5–8 — Fleet loop → scale      | ⬜ Open | Blocked on 2–4 having a fleet to operate                                                                                                                                                    |
+| Phase                         | State    | Notes                                                                                                                                                                                       |
+| ----------------------------- | -------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 0 — Foundations               | ✅ Done  | Monorepo, Core skeleton, Kernel, 3 spike storefronts, Contract v1 drafted                                                                                                                   |
+| 1 — Storefront factory        | ✅ Done  | Contract frozen, conformance, CLI, fleet isolation, Founder CRM — which has since grown well past its v0 scope (see below)                                                                  |
+| 1b — Kernel v1 + updatability | ✅ Done  | Kernel 1.1.1 on Contract 2; every in-repo storefront received a Kernel minor, a template migration and a Contract-major rehearsal untouched ([fleet runs](fleet-runs/README.md))            |
+| 2 — Commerce completeness     | ✅ Done  | Order lifecycle, catalog depth, growth surfaces — Core migration 0051 + Kernel 1.2; the Quero Pudim golden runs with zero workarounds ([below](#phase-2--commerce-completeness-weeks-812-)) |
+| A — Merchant admin            | 🟨 Focus | The complete store-owner product, held to a higher design bar than the CRM — its own track and plan in [`merchant-admin.md`](merchant-admin.md)                                             |
+| 3 — Payments + signup         | ⬜ Next  | Mercado Pago + the "buy a plan → provisioned store" self-serve path; runs alongside Track A (A3 and A6 are its admin screens)                                                               |
+| 4 — First tenant operated     | ⬜ Open  | Edge, Control Plane v0, provisioner — the other half of the 1-hour signup→store promise                                                                                                     |
+| 5–8 — Fleet loop → scale      | ⬜ Open  | Blocked on 2–4 having a fleet to operate                                                                                                                                                    |
 
 **Ahead of the roadmap:** the Founder CRM (`apps/control`) grew into the agent
 ops surface, and the sales-side agent engine shipped on `packages/core` —
@@ -56,8 +57,16 @@ So [Phase 1b](#phase-1b--kernel-v1-complete-updatable-by-construction-) came
 before the "ad → paid plan → agent-built store live in ~1 hour" path
 (Phases 3/4). **1b's exit was met on 2026-09-27** — the self-serve path
 (Phase 3, with Phase 4's Control Plane) is next; the remaining gates for the
-first store are a real paid order and provision/promote/rollback through the
-Control Plane.
+first store are a real paid order, a merchant running the store from the
+admin, and provision/promote/rollback through the Control Plane.
+
+**Priority call (2026-09-27): the merchant admin is its own track and the
+current focus** ([Track A](#track-a--merchant-admin-the-current-focus),
+plan in [`merchant-admin.md`](merchant-admin.md)). It is the product a store
+owner touches every day, so it ships complete — not as an MVP — and is held
+to a higher design bar than the CRM: consumer-grade, phone-first, the
+merchant's own brand, every state designed. Phase 3 keeps payments and
+self-serve signup; its merchant-facing screens are Track A milestones.
 
 **After a store is created, agent coding is kept to a minimum**
 ([ADR 0018](adr/0018-page-composition.md)). Pages are templates composed of
@@ -89,13 +98,13 @@ migrate → generate → scale**. Two consequences versus a naive build order:
 Phases build capability; these stages gate _growth_. Do not grow past a stage
 until its row is true.
 
-| Stage        | N     | Must be true before growing past it                                                                                                                                                                                                                                                            |
-| ------------ | ----- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| First store  | 1     | Phase 1b exit met (Kernel v1 complete; Contract v2 page composition live; a template migration, a Kernel minor and a Contract-major rehearsal reached every in-repo storefront untouched); real paid order taken; provision/promote/rollback ran through the Control Plane — zero manual steps |
-| Pilot cohort | ~5    | Conformance + changed-path CI green on every storefront PR; probes live on all hostnames; `_examples/` seeded                                                                                                                                                                                  |
-| Early fleet  | ~25   | One boring train shipped; one codemod rehearsal done; runbook covers the top 5 incidents                                                                                                                                                                                                       |
-| Growth       | ~100  | Agent pipeline is the default intake; Core HA + LKG proven by a real failover drill; train cost measured                                                                                                                                                                                       |
-| Fleet        | ~1000 | `fleet-*` shard rehearsed; Kernel publishing path proven; train economics budgeted                                                                                                                                                                                                             |
+| Stage        | N     | Must be true before growing past it                                                                                                                                                                                                                                                                                                                                                         |
+| ------------ | ----- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| First store  | 1     | Phase 1b exit met (Kernel v1 complete; Contract v2 page composition live; a template migration, a Kernel minor and a Contract-major rehearsal reached every in-repo storefront untouched); real paid order taken; the merchant runs the day (orders, menu, hours, payments) from the admin with no staff help; provision/promote/rollback ran through the Control Plane — zero manual steps |
+| Pilot cohort | ~5    | Conformance + changed-path CI green on every storefront PR; probes live on all hostnames; `_examples/` seeded                                                                                                                                                                                                                                                                               |
+| Early fleet  | ~25   | One boring train shipped; one codemod rehearsal done; runbook covers the top 5 incidents                                                                                                                                                                                                                                                                                                    |
+| Growth       | ~100  | Agent pipeline is the default intake; Core HA + LKG proven by a real failover drill; train cost measured                                                                                                                                                                                                                                                                                    |
+| Fleet        | ~1000 | `fleet-*` shard rehearsed; Kernel publishing path proven; train economics budgeted                                                                                                                                                                                                                                                                                                          |
 
 ## Phase 0 — Fleet-shaped foundations (weeks 0–4) ✅
 
@@ -352,16 +361,46 @@ How each landed (Core migration `0051_commerce_completeness.sql`, Kernel 1.2):
   `2026-09-loyalty-teaser-on-product`; and a guard test that keeps Core's
   storefront error codes in the Kernel's `ERROR_CODES`.
 
-## Phase 3 — Payments + merchant admin (weeks 12–16)
+## Track A — Merchant admin (the current focus)
 
-Goal: money moves through the platform and a merchant can run the store
-without touching a repo.
+Goal: a store owner runs their whole business from a phone, with no staff,
+in an app they'd show to another merchant. The full plan (design bar, the
+twelve areas, the platform work and exit criteria per milestone) lives in
+[`merchant-admin.md`](merchant-admin.md); this is the summary.
+
+- **Complete, not an MVP.** Every capability the staff commerce and template
+  APIs expose (orders, catalog, kits, stock, media, hours, zones, Pix,
+  coupons, loyalty, waitlist, the page editor, tokens) is reachable by the
+  merchant, plus customers, reports, team and account.
+- **Design bar above the CRM.** `apps/admin` has its own design system, not
+  `apps/control`'s dense staff chrome: phone first, calm spacing, expressive
+  type and motion, the store's own brand, photos first-class, every state
+  designed. Mockups are signed off before code; screenshots, axe and a
+  Lighthouse mobile budget gate CI; real merchants test each milestone.
+- **Platform work it owns:** merchant identity (phone OTP, roles, an ADR),
+  the `/admin/v1` API sharing Core's modules, audit log, signed media
+  uploads, web push, a live admin stream, reporting rollups.
+
+| Milestone           | Delivers                                                                                   | Exit                                                           |
+| ------------------- | ------------------------------------------------------------------------------------------ | -------------------------------------------------------------- |
+| A0 — Foundations    | Visual direction, design system, `apps/admin` shell, merchant login, `/admin/v1`, CI gates | a merchant logs in on a phone to a designed Início             |
+| A1 — Run the day    | Pedidos (live board + alerts), Loja (hours, pause, zones map), Início                      | Quero Pudim runs a real day of orders from the admin, no staff |
+| A2 — The menu       | Cardápio, photo uploads with crop, bulk edit                                               | a 30-item menu with photos built on a phone in under 30 min    |
+| A3 — Money          | Pagamentos: MP connect, refunds, fee statement (with Phase 3)                              | Phase 3's exit, entirely through the admin                     |
+| A4 — Grow           | Clientes, Marketing, Relatórios                                                            | coupon created, shared, and its revenue visible the same day   |
+| A5 — Appearance     | Page editor with live preview, tokens, history                                             | home page and colors changed live, no staff or agent           |
+| A6 — Team + account | Equipe, plan and invoices, onboarding flow                                                 | a self-serve signup reaches its first paid order via the admin |
+
+Exit: A1–A6 met. **Stage gate: First store** needs A1–A3; the rest lands
+before the Pilot cohort.
+
+## Phase 3 — Payments + self-serve signup (weeks 12–16)
+
+Goal: money moves through the platform: shoppers pay merchants, and merchants
+pay Venduá.
 
 - [ ] Mercado Pago OAuth + `application_fee` + PIX + webhook-driven order
       state machine ([13](architecture/13-payments.md)).
-- [ ] Merchant admin MVP: catalog CRUD (incl. Phase-2 fields), hours,
-      zones/fees, orders, MP connect, and the page editor (section order,
-      section settings/content, tokens, toggling what migrations placed).
 - [ ] **Self-serve signup + subscription billing** — the core product path
       once 1b is done: a visitor goes from plan selection on the site to a paid
       Venduá subscription and a provisioned store with zero staff
@@ -371,11 +410,14 @@ without touching a repo.
       merchant's own MP account; this is the merchant paying Venduá).
       Paid signup hands off to the provisioner (Phase 4); the invite path
       stays for sales-assisted deals.
+- The merchant admin moved to its own track,
+  [Track A](#track-a--merchant-admin-the-current-focus); MP connect, refunds
+  and billing screens are its A3 and A6.
 - Server-driven notices end to end moved to
   [Phase 1b](#1b-ii--updatability-09-11).
 
 Exit: a merchant edits catalog/hours and receives paid PIX orders without
-engineer involvement.
+engineer involvement (through the admin, milestone A3).
 
 ## Phase 4 — One tenant, operated for real (weeks 14–20, overlaps)
 

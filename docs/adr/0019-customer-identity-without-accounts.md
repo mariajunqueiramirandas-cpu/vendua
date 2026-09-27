@@ -39,7 +39,7 @@ another device's order goes through the same phone check.
   limited to what was bought and when; no address, name or payment detail is shown.
   This is strictly better than the reference, which exposed everything to a typed
   phone number.
-- Phone-OTP verification lands with the merchant admin (Phase 3). It becomes a
+- Phone-OTP verification lands with the merchant admin (Track A, milestone A0). It becomes a
   third minting path with the same token and the same `useOrders`/`useLoyalty`
   hooks, so storefronts change nothing.
 - Loyalty rewards are coupons bound to the phone. Redeeming one is checked against

@@ -35,6 +35,9 @@ If you are new, read in this order:
    how global features reach storefronts without code changes.
 5. [`architecture/01-core.md`](architecture/01-core.md) — the shared backend.
 6. [`roadmap.md`](roadmap.md) — build order and exit criteria.
+7. [`merchant-admin.md`](merchant-admin.md) — the store-owner product (current
+   focus): design bar, scope and milestones.
+   Its design spec is [`merchant-admin-design.md`](merchant-admin-design.md).
 
 Then per topic as needed:
 
