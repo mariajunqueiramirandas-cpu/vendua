@@ -122,7 +122,7 @@ export function CartLineItem({
         {item.imageUrl ? (
           <img src={item.imageUrl} alt="" loading="lazy" decoding="async" />
         ) : (
-          item.name.slice(0, 1).toUpperCase()
+          <span>{item.name.slice(0, 1).toUpperCase()}</span>
         )}
       </span>
       <div className="v-line-main">
@@ -386,7 +386,7 @@ export function ProductCard({ product, currency, link }: SlotProps['catalog.Prod
               />
             ) : (
               <span className="v-card-initial" data-figure={product.figureVariant}>
-                {product.name.slice(0, 1).toUpperCase()}
+                <span>{product.name.slice(0, 1).toUpperCase()}</span>
               </span>
             )}
           </div>

@@ -22,6 +22,11 @@ Default UI refresh — visual and behavioural polish in the SDK sections and
 - Cart lines get a thumbnail and cap qty at stock; the cart page's summary no longer
   repeats the lines. Checkout steps are a segmented track; the order page shows a
   progress track and a dotted timeline. Buttons show a spinner while `aria-busy`.
+- Typography: one scale (12 · 14 · 15 · 16 · 18 · 20 + fluid display sizes) applied by
+  role, weights 400 text / 500 UI / 600 emphasis, tightened display tracking, balanced
+  headings and orphan-free paragraphs, tabular lining numerals for money; monograms and
+  count badges trimmed to cap height so they sit on the optical centre. Order history
+  rows read title / meta / total + status instead of one mixed line.
 - Animations respect `prefers-reduced-motion`.
 
 ## 1.3.0

@@ -324,7 +324,7 @@ export function PurchasePanel({ settings }: SectionProps<typeof S.purchasePanel>
             />
           ) : (
             <span className="v-card-initial" aria-hidden="true" data-figure={product.figureVariant}>
-              {product.name.slice(0, 1).toUpperCase()}
+              <span>{product.name.slice(0, 1).toUpperCase()}</span>
             </span>
           )}
         </div>

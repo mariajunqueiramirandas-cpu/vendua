@@ -115,7 +115,7 @@ export function Gallery({
   if (!cur)
     return (
       <span className="v-card-initial" aria-hidden="true" data-figure={figureVariant}>
-        {name.slice(0, 1).toUpperCase()}
+        <span>{name.slice(0, 1).toUpperCase()}</span>
       </span>
     );
   return (
