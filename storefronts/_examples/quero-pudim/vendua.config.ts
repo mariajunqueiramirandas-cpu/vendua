@@ -5,6 +5,7 @@ import { defineStorefront } from '@vendua/kernel/config';
 // edit there triggers the rebuild).
 export default defineStorefront({
   contract: 2,
+  ring: 'stable',
   tokens: {
     color: {
       bg: '#FCFBF8',
@@ -28,6 +29,8 @@ export default defineStorefront({
   },
   overrides: {
     'system.Notice': () => import('./overrides/Notice.tsx'),
+    // the brand notice also takes the paused slot
+    'system.StorePausedNotice': () => import('./overrides/Notice.tsx'),
   },
   paths: { catalog: '/catalog' },
   // URLs printed on menus and shared before Contract 2

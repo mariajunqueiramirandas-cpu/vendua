@@ -5,6 +5,7 @@ import { defineStorefront } from '@vendua/kernel/config';
 // edit there triggers the rebuild).
 export default defineStorefront({
   contract: 2,
+  ring: 'stable',
   tokens: {
     color: {
       bg: '#FCFBF8',

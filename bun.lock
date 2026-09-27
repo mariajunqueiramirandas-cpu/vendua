@@ -57,8 +57,18 @@
         "vendua": "./src/main.ts",
       },
       "dependencies": {
+        "@vendua/codemods": "workspace:*",
+        "@vendua/templates": "workspace:*",
         "postgres": "3.4.7",
       },
+      "devDependencies": {
+        "@types/bun": "1.4.2",
+        "typescript": "6.0.3",
+      },
+    },
+    "packages/codemods": {
+      "name": "@vendua/codemods",
+      "version": "1.0.0",
       "devDependencies": {
         "@types/bun": "1.4.2",
         "typescript": "6.0.3",
@@ -700,6 +710,8 @@
     "@types/ws": ["@types/ws@8.18.1", "", { "dependencies": { "@types/node": "*" } }, "sha512-ThVF6DCVhA8kUGy+aazFQ4kXQ7E1Ty7A3ypFOe0IcJV8O/M511G99AW24irKrW56Wt44yG9+ij8FaqoBGkuBXg=="],
 
     "@vendua/cli": ["@vendua/cli@workspace:packages/cli"],
+
+    "@vendua/codemods": ["@vendua/codemods@workspace:packages/codemods"],
 
     "@vendua/conformance": ["@vendua/conformance@workspace:packages/conformance"],
 

@@ -3,6 +3,7 @@ import { defineStorefront } from '@vendua/kernel/config';
 // the always-green baseline every `vendua scaffold` copies — deliberately neutral tokens, not a brand
 export default defineStorefront({
   contract: 2,
+  ring: 'stable',
   tokens: {
     color: {
       bg: '#F7F6F4',
