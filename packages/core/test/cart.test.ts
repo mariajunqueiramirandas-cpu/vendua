@@ -56,6 +56,7 @@ const product: ProductDetail = {
   lowStock: false,
   requiresPreorder: false,
   preorderLeadDays: 0,
+  needsChoices: false,
   gallery: [],
   comboSlots: [],
   waitlistCount: 0,

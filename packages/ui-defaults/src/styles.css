@@ -158,10 +158,12 @@
     align-items: center;
     justify-content: center;
     gap: 8px;
-    min-height: 44px;
+    min-height: 48px;
     padding: var(--v-btn-padding);
     border-radius: var(--v-btn-radius);
     border: 1px solid transparent;
+    line-height: 1;
+    letter-spacing: 0.005em;
     font: inherit;
     font-weight: 600;
     text-decoration: none;
@@ -178,9 +180,11 @@
   .v-btn-accent {
     background: var(--v-color-accent, #3f5e4e);
     color: var(--v-color-on-accent, #fff);
+    border-color: rgb(0 0 0 / 0.12);
     box-shadow:
-      0 1px 2px rgb(0 0 0 / 0.12),
-      0 4px 12px -4px color-mix(in srgb, var(--v-color-accent, #3f5e4e) 60%, transparent);
+      inset 0 1px 0 rgb(255 255 255 / 0.2),
+      0 1px 2px rgb(0 0 0 / 0.16),
+      0 8px 16px -10px color-mix(in srgb, var(--v-color-accent, #3f5e4e) 75%, transparent);
   }
   .v-btn-accent:hover:not(:disabled) {
     filter: brightness(1.08);
@@ -239,19 +243,133 @@
     cursor: not-allowed;
   }
 
+  /* ── bag bar (sdk:bag-bar) — phones only ────────────────────────────────── */
+  .v-bag-bar {
+    display: none;
+  }
+  @media (max-width: 767px) {
+    .v-bag-bar {
+      position: fixed;
+      inset: auto 0 0 0;
+      z-index: 50;
+      display: block;
+      padding: 8px 12px max(12px, env(safe-area-inset-bottom));
+      pointer-events: none;
+      animation: v-bag-rise 260ms var(--v-motion-easing, ease) both;
+    }
+    .v-bag-bar-btn {
+      pointer-events: auto;
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      width: 100%;
+      min-height: 52px;
+      padding: 8px 18px 8px 10px;
+      border: 0;
+      border-radius: 16px;
+      background: var(--v-color-accent, #3f5e4e);
+      color: var(--v-color-on-accent, #fff);
+      font: inherit;
+      font-weight: 600;
+      cursor: pointer;
+      box-shadow: 0 12px 28px -10px color-mix(in srgb, var(--v-color-accent, #3f5e4e) 70%, #000);
+    }
+    .v-bag-bar-count {
+      display: grid;
+      place-items: center;
+      min-width: 34px;
+      height: 34px;
+      border-radius: 50%;
+      background: color-mix(in srgb, var(--v-color-on-accent, #fff) 22%, transparent);
+      font-variant-numeric: tabular-nums;
+      animation: v-bag-bump 320ms var(--v-motion-easing, ease);
+    }
+    .v-bag-bar-label {
+      flex: 1;
+      text-align: left;
+    }
+    body:has(.v-bag-bar) {
+      padding-bottom: 76px;
+    }
+  }
+  @keyframes v-bag-rise {
+    from {
+      transform: translateY(100%);
+      opacity: 0;
+    }
+  }
+  @keyframes v-bag-bump {
+    40% {
+      transform: scale(1.25);
+    }
+  }
+
   /* ── notices / surfaces ─────────────────────────────────────────────────── */
+  /* Banners sit in the page flow above the header (they push content, never cover
+     it); transient errors float in the toast region instead. */
   .v-banner-stack {
-    position: fixed;
-    inset: 0 0 auto 0;
-    z-index: 9990;
+    position: relative;
+    z-index: 30;
     display: flex;
     flex-direction: column;
     align-items: stretch;
-    pointer-events: none;
-    padding: 8px;
-    gap: 8px;
   }
-  .v-banner-stack > * {
+  .v-banner-stack > .v-notice {
+    max-width: none;
+    margin: 0;
+    padding: 9px 48px 9px 16px;
+    border: 0;
+    border-radius: 0;
+    box-shadow: none;
+    text-align: center;
+    line-height: 1.4;
+    background: color-mix(in srgb, var(--v-color-accent, #b06010) 12%, var(--v-color-bg, #fff));
+    border-bottom: 1px solid color-mix(in srgb, var(--v-color-accent, #b06010) 22%, transparent);
+  }
+  .v-banner-stack > .v-notice-info {
+    border-left: 0;
+    background: color-mix(in srgb, var(--v-color-success, #3d7a4f) 10%, var(--v-color-bg, #fff));
+    border-bottom-color: color-mix(in srgb, var(--v-color-success, #3d7a4f) 22%, transparent);
+  }
+  .v-banner-stack > .v-notice-warning {
+    border-left: 0;
+  }
+  .v-banner-stack > .v-notice :is(.v-notice-title, .v-notice-body, .v-notice-dismiss) {
+    color: var(--v-color-text, #1a1714);
+  }
+  .v-banner-stack > .v-notice :is(.v-notice-title, .v-notice-body) {
+    display: inline;
+    margin: 0;
+    font-size: 14px;
+  }
+  .v-banner-stack > .v-notice .v-notice-title::after {
+    content: ' — ';
+    font-weight: 400;
+  }
+  .v-banner-stack > .v-notice .v-notice-title:only-child::after {
+    content: none;
+  }
+  .v-banner-stack > .v-notice .v-notice-actions {
+    display: inline-flex;
+    margin: 0 0 0 10px;
+  }
+  .v-banner-stack > .v-notice .v-notice-dismiss {
+    top: 50%;
+    right: 6px;
+    transform: translateY(-50%);
+  }
+  .v-toast-region {
+    position: fixed;
+    inset: auto 0 max(16px, env(safe-area-inset-bottom)) 0;
+    z-index: 9990;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 8px;
+    padding: 0 12px;
+    pointer-events: none;
+  }
+  .v-toast-region > * {
     pointer-events: auto;
   }
   .v-notice {
@@ -530,7 +648,50 @@
     grid-template-columns: 1fr;
   }
   .v-card {
+    position: relative;
     height: 100%;
+  }
+  /* the Kernel wraps the glyph in its add-to-cart button, pinned to the price row */
+  .v-card > button[data-vendua='add-to-cart'] {
+    position: absolute;
+    right: 0;
+    bottom: 0;
+    display: grid;
+    place-items: center;
+    width: 44px;
+    height: 44px;
+    padding: 0;
+    border: 0;
+    background: none;
+    cursor: pointer;
+    -webkit-tap-highlight-color: transparent;
+  }
+  .v-card-quick {
+    display: grid;
+    place-items: center;
+    width: 32px;
+    height: 32px;
+    border-radius: 50%;
+    font-size: 1.25rem;
+    line-height: 1;
+    background: var(--v-color-accent, #3f5e4e);
+    color: var(--v-color-on-accent, #fff);
+    box-shadow: 0 4px 12px -4px color-mix(in srgb, var(--v-color-accent, #3f5e4e) 60%, transparent);
+    transition: transform var(--v-motion-duration, 180ms) var(--v-motion-easing, ease);
+  }
+  .v-card > button[data-vendua='add-to-cart']:hover .v-card-quick {
+    transform: scale(1.1);
+  }
+  .v-card > button[data-vendua='add-to-cart']:active .v-card-quick {
+    transform: scale(0.92);
+  }
+  .v-card > button[data-vendua='add-to-cart'][aria-busy='true'] .v-card-quick {
+    opacity: 0.55;
+  }
+  .v-card > button[data-vendua='add-to-cart']:focus-visible {
+    outline: var(--v-focus);
+    outline-offset: 2px;
+    border-radius: 50%;
   }
   .v-card a {
     display: flex;
@@ -2505,6 +2666,8 @@
     .v-page > .v-panel[aria-busy='true'],
     .v-section[aria-busy='true'] .v-pp-media,
     .v-cart-count,
+    .v-bag-bar,
+    .v-bag-bar-count,
     .v-success-icon,
     .v-order-progress li::before {
       animation: none;
@@ -2524,6 +2687,8 @@
 
   @media print {
     .v-banner-stack,
+    .v-toast-region,
+    .v-bag-bar,
     .v-blocking-overlay,
     .v-consent {
       display: none !important;

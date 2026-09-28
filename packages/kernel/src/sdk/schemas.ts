@@ -61,6 +61,14 @@ export const headerCart = defineSection({
   },
 });
 
+/** Kernel 1.5 — phones: a sticky "ver sacola" bar with the count and Core's subtotal. */
+export const bagBar = defineSection({
+  type: 'sdk:bag-bar',
+  settings: {
+    label: text({ max: 30, default: 'Ver sacola' }),
+  },
+});
+
 export const purchasePanel = defineSection({
   type: 'sdk:purchase-panel',
   settings: {
@@ -191,6 +199,7 @@ export const SDK_SCHEMAS: readonly (SectionSchema | BlockSchema)[] = [
   footer,
   announcementBar,
   headerCart,
+  bagBar,
   purchasePanel,
   catalogGrid,
   productList,

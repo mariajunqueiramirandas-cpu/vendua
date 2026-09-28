@@ -1,5 +1,6 @@
 import { defineBlock, usePageContext, useProduct, type BlockProps } from '@vendua/kernel';
 import { ProductFigure } from './_shared/ProductFigure.tsx';
+import { KIT_FLAVOR, flavorOf } from './_shared/flavor.ts';
 
 // The brand's illustrated figure for photoless products, placed in the SDK
 // purchase panel's `media` area — the panel stays Kernel-owned.
@@ -22,9 +23,15 @@ export default function ProductFigureBlock(_: BlockProps<typeof schema>) {
         {...{ fetchpriority: 'high' }}
       />
     );
+  const flavor = product.kind === 'combo' ? KIT_FLAVOR : flavorOf(product.name);
   return (
-    <div className="pd-figure">
-      <ProductFigure variant={product.figureVariant} title={product.name} />
+    <div className="pd-figure" style={{ background: flavor.tint }}>
+      <ProductFigure
+        variant={product.figureVariant}
+        kind={product.kind}
+        title={product.name}
+        flavor={flavor}
+      />
     </div>
   );
 }

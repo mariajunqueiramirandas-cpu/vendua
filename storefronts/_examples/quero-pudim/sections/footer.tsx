@@ -1,4 +1,4 @@
-import { ArrowUpRight, Instagram, MessageCircle, QrCode } from 'lucide-react';
+import { ArrowUpRight, Clock, Instagram, MapPin, MessageCircle, QrCode } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import {
   BlockArea,
@@ -51,39 +51,44 @@ export default function Footer({ settings }: SectionProps<typeof schema>) {
   const instagram = store?.instagram?.replace(/^@/, '');
   const whatsapp = store?.whatsapp?.replace(/\D/g, '');
   const hours = hoursSummary(store?.hours);
+  const address = [store?.address, store?.city].filter(Boolean).join(', ');
   return (
     <footer className="site-footer">
       <div className="container">
-        {settings.eyebrow ? <p className="eyebrow">{settings.eyebrow}</p> : null}
         <div className="footer-grid">
-          <div>
+          <div className="footer-brand">
             <img
               src={settings.logo}
               alt={store ? `${store.name} — ${store.tagline ?? ''}` : ''}
               className="brand-img footer-logo"
             />
-            {settings.blurb ? (
-              <p className="small muted" style={{ marginTop: 12, maxWidth: '20rem' }}>
-                {settings.blurb}
-              </p>
-            ) : null}
-            {store?.address ? (
-              <p className="small muted" style={{ marginTop: 16, fontSize: '0.75rem' }}>
-                {store.address}
-                {store.city ? `, ${store.city}` : ''}
-              </p>
-            ) : null}
-            {hours ? (
-              <p className="small muted tnum" style={{ marginTop: 4, fontSize: '0.75rem' }}>
-                {hours}
-              </p>
-            ) : null}
+            {settings.blurb ? <p className="footer-blurb">{settings.blurb}</p> : null}
+            <div className="footer-social">
+              {instagram ? (
+                <a
+                  href={`https://www.instagram.com/${instagram}/`}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  aria-label={`Instagram @${instagram}`}
+                >
+                  <Instagram size={18} aria-hidden="true" />
+                </a>
+              ) : null}
+              {whatsapp ? (
+                <a
+                  href={`https://wa.me/${whatsapp}`}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  aria-label="WhatsApp"
+                >
+                  <MessageCircle size={18} aria-hidden="true" />
+                </a>
+              ) : null}
+            </div>
             <BlockArea name="extra" />
           </div>
-          <nav className="footer-nav" aria-label="Contatos da loja">
-            <p className="eyebrow" style={{ fontSize: '0.875rem' }}>
-              {settings.contactsTitle}
-            </p>
+          <nav className="footer-col" aria-label="Links da loja">
+            <p className="footer-title">{settings.eyebrow || 'Explore'}</p>
             {(settings.links ?? []).map((l) => (
               <Link key={l.href} to={l.href}>
                 {l.label}
@@ -94,29 +99,42 @@ export default function Footer({ settings }: SectionProps<typeof schema>) {
                 <QrCode size={16} aria-hidden="true" /> {settings.qrLabel}
               </Link>
             ) : null}
+          </nav>
+          <div className="footer-col">
+            <p className="footer-title">{settings.contactsTitle}</p>
+            {address ? (
+              <p className="footer-line">
+                <MapPin size={16} aria-hidden="true" /> {address}
+              </p>
+            ) : null}
+            {hours ? (
+              <p className="footer-line tnum">
+                <Clock size={16} aria-hidden="true" /> {hours}
+              </p>
+            ) : null}
+            {whatsapp ? (
+              <a href={`https://wa.me/${whatsapp}`} target="_blank" rel="noopener noreferrer">
+                <MessageCircle size={16} aria-hidden="true" /> Falar no WhatsApp{' '}
+                <ArrowUpRight size={14} aria-hidden="true" />
+              </a>
+            ) : null}
             {instagram ? (
               <a
                 href={`https://www.instagram.com/${instagram}/`}
                 target="_blank"
                 rel="noopener noreferrer"
               >
-                <Instagram size={16} aria-hidden="true" /> Instagram @{instagram}{' '}
+                <Instagram size={16} aria-hidden="true" /> @{instagram}{' '}
                 <ArrowUpRight size={14} aria-hidden="true" />
               </a>
             ) : null}
-            {whatsapp ? (
-              <a href={`https://wa.me/${whatsapp}`} target="_blank" rel="noopener noreferrer">
-                <MessageCircle size={16} aria-hidden="true" /> WhatsApp{' '}
-                <ArrowUpRight size={14} aria-hidden="true" />
-              </a>
-            ) : null}
-          </nav>
+          </div>
         </div>
         <div className="footer-legal">
-          <p style={{ margin: 0 }}>
+          <p>
             © {new Date().getFullYear()} {store?.name ?? ''}
           </p>
-          {store?.tagline ? <p style={{ margin: 0 }}>{store.tagline}</p> : null}
+          {store?.tagline ? <p>{store.tagline}</p> : null}
         </div>
       </div>
     </footer>

@@ -1,5 +1,7 @@
+import { MessageCircle } from 'lucide-react';
 import { Link } from 'react-router-dom';
-import { defineSection, text, url, type SectionProps } from '@vendua/kernel';
+import { defineSection, text, url, useStore, type SectionProps } from '@vendua/kernel';
+import { Reveal } from './_shared/Reveal.tsx';
 
 export const schema = defineSection({
   type: 'store:closing',
@@ -9,28 +11,40 @@ export const schema = defineSection({
     text: text({ max: 200 }),
     ctaLabel: text({ max: 40 }),
     ctaHref: url(),
+    /** shown next to the store's WhatsApp link when the store has one */
+    whatsappLabel: text({ max: 40, default: 'Chamar no WhatsApp' }),
   },
 });
 
 export default function Closing({ settings: s }: SectionProps<typeof schema>) {
+  const { store } = useStore();
+  const whatsapp = store?.whatsapp?.replace(/\D/g, '');
   return (
-    <section className="ficha-rule closing">
-      <div className="container" style={{ paddingBlock: 64 }}>
-        {s.eyebrow ? <p className="eyebrow">{s.eyebrow}</p> : null}
-        <h2 className="display display-lg" style={{ marginTop: 16 }}>
-          {s.title}
-        </h2>
-        {s.text ? (
-          <p className="hero-sub" style={{ marginTop: 8 }}>
-            {s.text}
-          </p>
-        ) : null}
-        {s.ctaLabel && s.ctaHref ? (
-          <Link to={s.ctaHref} className="btn" style={{ marginTop: 32 }}>
-            {s.ctaLabel}
-          </Link>
-        ) : null}
-      </div>
+    <section className="container closing-wrap">
+      <Reveal className="closing">
+        <div className="closing-copy">
+          {s.eyebrow ? <p className="eyebrow">{s.eyebrow}</p> : null}
+          <h2 className="display display-lg">{s.title}</h2>
+          {s.text ? <p className="closing-text">{s.text}</p> : null}
+        </div>
+        <div className="closing-actions">
+          {s.ctaLabel && s.ctaHref ? (
+            <Link to={s.ctaHref} className="btn btn-lg btn-light">
+              {s.ctaLabel}
+            </Link>
+          ) : null}
+          {whatsapp ? (
+            <a
+              className="btn-ghost btn-lg btn-ghost--light"
+              href={`https://wa.me/${whatsapp}`}
+              target="_blank"
+              rel="noopener noreferrer"
+            >
+              <MessageCircle size={18} aria-hidden="true" /> {s.whatsappLabel}
+            </a>
+          ) : null}
+        </div>
+      </Reveal>
     </section>
   );
 }

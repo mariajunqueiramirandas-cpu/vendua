@@ -8,6 +8,9 @@ import {
   useStore,
   type SectionProps,
 } from '@vendua/kernel';
+import { ProductFigure } from './_shared/ProductFigure.tsx';
+import { StatusPill } from './_shared/StatusPill.tsx';
+import { flavorOf } from './_shared/flavor.ts';
 
 export const schema = defineSection({
   type: 'store:hero',
@@ -22,8 +25,11 @@ export const schema = defineSection({
     secondaryHref: url(),
     image: image(),
     imageAlt: text({ max: 160, default: '' }),
+    /** the round sticker on the photo */
     figTitle: text({ max: 60 }),
     figSub: text({ max: 80 }),
+    /** short promises under the buttons, separated by "|" */
+    proof: text({ max: 160 }),
   },
   areas: { after: { accepts: ['promo', 'badge', 'info'], max: 2 } },
 });
@@ -32,16 +38,23 @@ export default function Hero({ settings: s }: SectionProps<typeof schema>) {
   const { store } = useStore();
   // "{city}" in copy is filled from the store profile, so one template reads right anywhere
   const fill = (v: string | undefined) => v?.replaceAll('{city}', store?.city ?? '');
+  const proof = (s.proof ?? '')
+    .split('|')
+    .map((x) => x.trim())
+    .filter(Boolean);
   return (
-    <section className="container" style={{ paddingBlock: '40px 48px' }}>
-      {s.eyebrow ? <p className="eyebrow rise-in rise-in-1">{fill(s.eyebrow)}</p> : null}
-      <div className="hero-grid" style={{ marginTop: 16 }}>
-        <div>
+    <section className="hero">
+      <div className="container hero-grid">
+        <div className="hero-copy">
+          <p className="hero-pill rise-in rise-in-1">
+            <StatusPill />
+            {s.eyebrow ? <span>{fill(s.eyebrow)}</span> : null}
+          </p>
           <h1 className="display display-xl rise-in rise-in-2">
             {s.title}
             {s.titleEmphasis ? (
               <>
-                <br />
+                {' '}
                 <em>{s.titleEmphasis}</em>
               </>
             ) : null}
@@ -49,38 +62,44 @@ export default function Hero({ settings: s }: SectionProps<typeof schema>) {
           {s.text ? <p className="hero-sub rise-in rise-in-3">{fill(s.text)}</p> : null}
           <div className="hero-cta rise-in rise-in-4">
             {s.ctaLabel && s.ctaHref ? (
-              <Link to={s.ctaHref} className="btn">
+              <Link to={s.ctaHref} className="btn btn-lg">
                 {s.ctaLabel}
               </Link>
             ) : null}
             {s.secondaryLabel && s.secondaryHref ? (
-              <Link to={s.secondaryHref} className="btn-ghost">
+              <Link to={s.secondaryHref} className="btn-ghost btn-lg">
                 {s.secondaryLabel}
               </Link>
             ) : null}
           </div>
+          {proof.length > 0 ? (
+            <ul className="hero-proof rise-in rise-in-4">
+              {proof.map((p) => (
+                <li key={p}>{fill(p)}</li>
+              ))}
+            </ul>
+          ) : null}
           <BlockArea name="after" className="hero-after" />
         </div>
-        {s.image ? (
-          <figure className="hero-fig rise-in rise-in-3">
-            <div className="print-frame">
-              <div className="card-frame" style={{ aspectRatio: '4/3' }}>
-                <img
-                  src={s.image}
-                  alt={s.imageAlt}
-                  {...{ fetchpriority: 'high' }}
-                  decoding="async"
-                />
-              </div>
-            </div>
-            {s.figTitle || s.figSub ? (
-              <figcaption>
-                {s.figTitle ? <span className="fig-title">{s.figTitle}</span> : null}
-                {s.figSub ? <span className="fig-sub">{s.figSub}</span> : null}
-              </figcaption>
-            ) : null}
-          </figure>
-        ) : null}
+        <figure className="hero-visual rise-in rise-in-3">
+          <div className="hero-arch">
+            {s.image ? (
+              <img src={s.image} alt={s.imageAlt} {...{ fetchpriority: 'high' }} decoding="async" />
+            ) : (
+              <ProductFigure
+                title="Pudim artesanal"
+                flavor={flavorOf('tradicional')}
+                className="hero-art"
+              />
+            )}
+          </div>
+          {s.figTitle ? (
+            <figcaption className="hero-sticker">
+              <span className="hero-sticker-title">{s.figTitle}</span>
+              {s.figSub ? <span className="hero-sticker-sub">{s.figSub}</span> : null}
+            </figcaption>
+          ) : null}
+        </figure>
       </div>
     </section>
   );

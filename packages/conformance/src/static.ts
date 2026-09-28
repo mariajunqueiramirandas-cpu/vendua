@@ -24,7 +24,7 @@ const DEP_ALLOW = new Set([
   'framer-motion',
   'motion',
 ]);
-const DEP_ALLOW_PREFIX = ['@react-three/'];
+const DEP_ALLOW_PREFIX = ['@react-three/', '@fontsource-variable/'];
 const DEVDEP_ALLOW = new Set(['typescript', 'vite', '@vitejs/plugin-react']);
 const DEVDEP_ALLOW_PREFIX = ['@types/'];
 

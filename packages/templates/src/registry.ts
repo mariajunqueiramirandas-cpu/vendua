@@ -48,9 +48,23 @@ const loyaltyTeaserOnProduct = defineTemplateMigration({
   },
 });
 
+/** Kernel 1.5's phone bag bar, once, on the layout — it hides itself where the page
+ *  already is the bag, so placing it everywhere is safe. */
+const bagBarOnLayout = defineTemplateMigration({
+  id: '2026-09-bag-bar-on-layout',
+  description: 'append sdk:bag-bar (Kernel 1.5) to the layout',
+  requiresKernel: '>=1.5.0',
+  pages: ['layout'],
+  up(t) {
+    if (t.has('sdk:bag-bar') || t.wasRemoved('sdk:bag-bar')) return;
+    t.append({ type: 'sdk:bag-bar' });
+  },
+});
+
 export const TEMPLATE_MIGRATIONS: readonly TemplateMigration[] = [
   deliveryEtaOnProduct,
   loyaltyTeaserOnProduct,
+  bagBarOnLayout,
 ];
 
 export function findMigration(id: string): TemplateMigration | undefined {

@@ -103,24 +103,31 @@ may only use `store:` types.
 
 ### SDK sections and blocks (Kernel 1.0; additions marked)
 
-| Type                   | Kind    | Variants / settings                                            | Areas (accepts)                                                                                                                |
-| ---------------------- | ------- | -------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------ |
-| `sdk:page-content`     | section | layout marker — where pages render                             | —                                                                                                                              |
-| `sdk:header`           | section | brand, logo, links, showStatus, cartLabel                      | `actions` (badge, info)                                                                                                        |
-| `sdk:footer`           | section | note, showHours, showContacts, links                           | `extra` (info, social-proof, promo)                                                                                            |
-| `sdk:announcement-bar` | section | text, href, linkLabel, tone `accent\|surface`                  | —                                                                                                                              |
-| `sdk:header-cart`      | section | label, variant `pill\|text`                                    | —                                                                                                                              |
-| `sdk:purchase-panel`   | section | variant `split\|compact\|editorial`, product, labels, afterAdd | `media` (media, badge), `after-price` (purchase-extras, badge, promo, info), `after-cta` (purchase-extras, info, social-proof) |
-| `sdk:catalog-grid`     | section | variant `grid\|list`, search, category tabs, copy              | `before-grid` (promo, info)                                                                                                    |
-| `sdk:product-list`     | section | category, limit, variant, cta                                  | —                                                                                                                              |
-| `sdk:store-status`     | section | status + hours, variant `card\|inline`                         | —                                                                                                                              |
-| `sdk:rich-text`        | section | eyebrow, title, body (plain paragraphs)                        | —                                                                                                                              |
-| `sdk:stock-counter`    | block   | category `purchase-extras`; threshold, showWhenPlenty          | —                                                                                                                              |
-| `sdk:notify-me`        | block   | category `purchase-extras`; title, successText                 | —                                                                                                                              |
-| `sdk:promo-badge`      | block   | category `badge`; text, tone                                   | —                                                                                                                              |
-| `sdk:delivery-eta`     | block   | category `info`; showFee, showPickup — **Kernel 1.1**          | —                                                                                                                              |
-| `sdk:pix-info`         | block   | category `info`; title, showQr — **Kernel 1.2**                | —                                                                                                                              |
-| `sdk:loyalty-teaser`   | block   | category `promo`; text — **Kernel 1.2**                        | —                                                                                                                              |
+| Type                   | Kind    | Variants / settings                                                   | Areas (accepts)                                                                                                                |
+| ---------------------- | ------- | --------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------ |
+| `sdk:page-content`     | section | layout marker — where pages render                                    | —                                                                                                                              |
+| `sdk:header`           | section | brand, logo, links, showStatus, cartLabel                             | `actions` (badge, info)                                                                                                        |
+| `sdk:footer`           | section | note, showHours, showContacts, links                                  | `extra` (info, social-proof, promo)                                                                                            |
+| `sdk:announcement-bar` | section | text, href, linkLabel, tone `accent\|surface`                         | —                                                                                                                              |
+| `sdk:header-cart`      | section | label, variant `pill\|text`                                           | —                                                                                                                              |
+| `sdk:bag-bar`          | section | label — phones: sticky sacola bar (count + subtotal) — **Kernel 1.5** | —                                                                                                                              |
+| `sdk:purchase-panel`   | section | variant `split\|compact\|editorial`, product, labels, afterAdd        | `media` (media, badge), `after-price` (purchase-extras, badge, promo, info), `after-cta` (purchase-extras, info, social-proof) |
+| `sdk:catalog-grid`     | section | variant `grid\|list`, search, category tabs, copy                     | `before-grid` (promo, info)                                                                                                    |
+| `sdk:product-list`     | section | category, limit, variant, cta                                         | —                                                                                                                              |
+| `sdk:store-status`     | section | status + hours, variant `card\|inline`                                | —                                                                                                                              |
+| `sdk:rich-text`        | section | eyebrow, title, body (plain paragraphs)                               | —                                                                                                                              |
+| `sdk:stock-counter`    | block   | category `purchase-extras`; threshold, showWhenPlenty                 | —                                                                                                                              |
+| `sdk:notify-me`        | block   | category `purchase-extras`; title, successText                        | —                                                                                                                              |
+| `sdk:promo-badge`      | block   | category `badge`; text, tone                                          | —                                                                                                                              |
+| `sdk:delivery-eta`     | block   | category `info`; showFee, showPickup — **Kernel 1.1**                 | —                                                                                                                              |
+| `sdk:pix-info`         | block   | category `info`; title, showQr — **Kernel 1.2**                       | —                                                                                                                              |
+| `sdk:loyalty-teaser`   | block   | category `promo`; text — **Kernel 1.2**                               | —                                                                                                                              |
+
+Kernel 1.5: `catalog.ProductCard` receives an optional `quickAdd(children)` render prop — the
+Kernel's add-to-cart button, offered only for products that can be added as-is (active, not a
+combo, no modifier groups, not an encomenda); `CatalogProduct.needsChoices` says so. Banner
+notices render in the page flow above the header; transient errors and confirmations float in
+`[data-vendua="toast-region"]` inside the banner stack.
 
 Kernel 1.2 also teaches existing SDK pieces: `sdk:purchase-panel` renders the product
 gallery (`catalog.Gallery`), the kit picker (`catalog.ComboPicker`) for `kind: 'combo'`

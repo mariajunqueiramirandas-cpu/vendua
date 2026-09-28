@@ -1,5 +1,6 @@
 import { defineSection, list, select, text, useStore, type SectionProps } from '@vendua/kernel';
 import { ICON_NAMES, ICONS } from './_shared/icons.ts';
+import { Reveal } from './_shared/Reveal.tsx';
 import { twoDigits } from './_shared/format.ts';
 
 export const schema = defineSection({
@@ -23,31 +24,29 @@ export const schema = defineSection({
 export default function Steps({ settings: s }: SectionProps<typeof schema>) {
   const { store } = useStore();
   return (
-    <section className="container ficha-rule" style={{ paddingBlock: '32px 64px' }}>
-      <div className="section-head">
+    <section className="container steps-section">
+      <Reveal className="section-head section-head--center">
         {s.eyebrow ? <p className="eyebrow">{s.eyebrow}</p> : null}
         {s.title ? <h2 className="display display-lg">{s.title}</h2> : null}
         {s.lede ? <p className="lede">{s.lede}</p> : null}
-      </div>
-      <ol className="steps">
+      </Reveal>
+      <Reveal as="ol" className="steps">
         {(s.steps ?? []).map((step, i) => {
           const Icon = ICONS[step.icon];
           return (
             <li key={step.title}>
-              <div className="step-head">
-                <span className="ficha-num">{twoDigits(i + 1)}</span>
-                <Icon className="step-icon" aria-hidden="true" />
-              </div>
+              <span className="step-num">{twoDigits(i + 1)}</span>
+              <span className="step-badge">
+                <Icon size={24} strokeWidth={1.6} aria-hidden="true" />
+              </span>
               <h3>{step.title}</h3>
               <p>{step.description}</p>
             </li>
           );
         })}
-      </ol>
+      </Reveal>
       {s.footnote ? (
-        <p className="small muted" style={{ marginTop: 32 }}>
-          {s.footnote.replaceAll('{city}', store?.city ?? '')}
-        </p>
+        <p className="steps-note">{s.footnote.replaceAll('{city}', store?.city ?? '')}</p>
       ) : null}
     </section>
   );

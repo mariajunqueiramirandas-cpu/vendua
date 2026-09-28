@@ -200,6 +200,9 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('commerce completeness (db)', ()
     expect(pudim.imageUrl).toBe('https://cdn.x/p.webp');
     expect(pudim.stockQuantity).toBe(5);
     expect(pudim.lowStock).toBe(false);
+    // cards offer one-tap add only where nothing needs choosing (Kernel 1.5)
+    expect(pudim.needsChoices).toBe(false);
+    expect(all.find((p) => p.slug === 'kit').needsChoices).toBe(true);
     expect(all.find((p) => p.slug === 'maracuja').status).toBe('sold_out');
     const detail = await call('GET', '/storefront/v1/products/pudim');
     expect(detail.body.product.gallery).toHaveLength(2);

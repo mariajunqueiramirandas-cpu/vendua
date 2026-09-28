@@ -133,6 +133,9 @@ export interface SlotProps {
     href: string;
     /** the Kernel's ProductLink wrapper — renders the anchor with its hooks */
     link: (children: ReactNode) => ReactNode;
+    /** Kernel 1.5 — wraps children in the Kernel's add-to-cart button (qty 1). Absent when
+     *  the product can't be added from the grid (sold out, combo, options, encomenda). */
+    quickAdd?: (children: ReactNode) => ReactNode;
   };
   'catalog.ComboPicker': {
     slots: ComboSlot[];

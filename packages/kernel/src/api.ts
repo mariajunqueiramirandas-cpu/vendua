@@ -78,6 +78,8 @@ export interface CatalogProduct {
   lowStock?: boolean;
   requiresPreorder?: boolean;
   preorderLeadDays?: number;
+  /** Kernel 1.5 — a combo or a product with modifier groups: only the product page can add it */
+  needsChoices?: boolean;
 }
 
 export interface ComboSlot {

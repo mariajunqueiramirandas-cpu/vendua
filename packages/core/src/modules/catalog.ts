@@ -21,6 +21,8 @@ export interface ProductSummary {
   lowStock: boolean;
   requiresPreorder: boolean;
   preorderLeadDays: number;
+  /** a combo, or a product with modifier groups: the card must open the product page */
+  needsChoices: boolean;
 }
 
 export interface CategoryWithProducts {
@@ -86,6 +88,7 @@ interface ProductRow {
   low_stock_threshold: number | null;
   requires_preorder: boolean;
   preorder_lead_days: number;
+  needs_choices: boolean;
 }
 
 /** Live availability — stock 0 is sold out without anyone flipping a status. */
@@ -114,13 +117,15 @@ function toSummary(row: ProductRow): ProductSummary {
       stock <= row.low_stock_threshold,
     requiresPreorder: row.requires_preorder,
     preorderLeadDays: row.preorder_lead_days,
+    needsChoices: row.needs_choices,
   };
 }
 
 const productColumns = (tx: Sql) => tx`
   p.id, p.category_id, p.slug, p.name, p.description, p.base_price_cents, p.status, p.figure_variant,
   p.tags, p.kind, p.stock_quantity, p.low_stock_threshold, p.requires_preorder, p.preorder_lead_days,
-  (select m.url from product_media m where m.product_id = p.id order by m.sort, m.id limit 1) as image_url
+  (select m.url from product_media m where m.product_id = p.id order by m.sort, m.id limit 1) as image_url,
+  (p.kind = 'combo' or exists (select 1 from modifier_groups g where g.product_id = p.id)) as needs_choices
 `;
 
 export async function getCatalog(tx: Sql, tenantId: string): Promise<CategoryWithProducts[]> {
