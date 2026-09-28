@@ -28,7 +28,7 @@ export interface AdminDeps {
     sql: Sql,
     run: (c: Context, tx: Sql) => Promise<{ status: number; body: unknown }>,
   ) => (c: Context) => Promise<Response>;
-  /** public origin shown to merchants for their store ("seuendereco.vendua.com.br") */
+  /** fallback `<slug>.<storeDomain>` for storeOrigin — never build a store URL from it directly */
   storeDomain: string;
 }
 

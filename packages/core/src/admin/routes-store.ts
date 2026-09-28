@@ -23,7 +23,7 @@ import {
 import { handlers } from './handlers.ts';
 import { emitAdminTx } from './live.ts';
 import { nextLocalMidnight } from './routes-catalog.ts';
-import { storeUrl } from './routes.ts';
+import { storeOrigin } from '../platform/store-origin.ts';
 
 const METHODS = ['pix', 'card_on_delivery', 'cash'] as const;
 
@@ -92,10 +92,11 @@ export async function storeView(
   name: string,
   domain: string,
 ) {
+  const url = await storeOrigin(tx, { id: tenantId, slug }, domain);
   const s = await loadSettings(tx, tenantId);
   const st = statusOf(s);
   return {
-    url: storeUrl(slug, domain),
+    url,
     profile: {
       name,
       tagline: s.tagline,

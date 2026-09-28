@@ -188,11 +188,15 @@ export function ErrorFallback({ error, retry }: SlotProps['system.ErrorFallback'
 export function NotFound({ path, homeHref }: SlotProps['system.NotFound']) {
   return (
     <main id="main" className="v-page v-not-found" data-vendua-page="not-found" data-part="root">
+      <p className="v-eyebrow" data-part="eyebrow">
+        Erro 404
+      </p>
       <h1 className="v-page-title" data-part="title">
         Página não encontrada
       </h1>
       <p className="v-muted" data-part="body">
-        O endereço <code>{path}</code> não existe nesta loja.
+        O endereço <code className="v-not-found-path">{path}</code> não existe nesta loja. Pode ser
+        um link antigo ou um produto que saiu do cardápio.
       </p>
       <a className="v-btn v-btn-accent" href={homeHref} data-part="home">
         Voltar para o início

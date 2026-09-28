@@ -3,6 +3,11 @@
 Semver, per docs/architecture/11-backward-compatibility.md: minors and patches
 never need a storefront edit; a major only ships with a Contract major.
 
+## 1.4.1
+
+- The not-found route marks itself `noindex` while mounted, so typo URLs stay out of
+  search results (the SPA answers 200 for every path). No storefront edit.
+
 ## 1.4.0
 
 Merchant admin support — additive, no storefront edit.

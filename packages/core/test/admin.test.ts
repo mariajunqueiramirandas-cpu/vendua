@@ -512,6 +512,51 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('merchant admin (db)', () => {
     expect(share.body.products[0].url).toStartWith(`https://${slug}.vendua.test/produto/`);
   });
 
+  test('store links follow the domain the store is served on, never its slug', async () => {
+    // the store lives on a host unrelated to its slug (pudim.vendua.com.br for quero-pudim)
+    const real = `loja-${nonce}.vendua.test`;
+    await sql`insert into domains (host, tenant_id) values (${`zz-${nonce}.example`}, ${tenantId})`;
+    await sql`insert into domains (host, tenant_id, is_primary) values (${real}, ${tenantId}, true)`;
+    try {
+      const want = `https://${real}`;
+      expect((await owner('GET', '/session')).body.store.url).toBe(want);
+      expect((await owner('GET', '/store')).body.url).toBe(want);
+      expect((await owner('GET', '/appearance')).body.url).toBe(want);
+      expect((await owner('GET', '/account')).body.address).toBe(want);
+      const share = await owner('GET', '/share');
+      expect(share.body.products[0].url).toStartWith(`${want}/produto/`);
+      // a second primary for the same store is refused by the schema
+      const dup =
+        await sql`insert into domains (host, tenant_id, is_primary) values (${`x-${nonce}.vendua.test`}, ${tenantId}, true)`.then(
+          () => null,
+          (e: { code?: string }) => e.code,
+        );
+      expect(dup).toBe('23505');
+    } finally {
+      await sql`delete from domains where tenant_id = ${tenantId} and host <> ${host}`;
+    }
+  });
+
+  test('the slug subdomain fallback always resolves to its store', async () => {
+    const res = await app.request(`http://${slug}.vendua.test/storefront/v1/store`, {
+      headers: { host: `${slug}.vendua.test` },
+    });
+    expect(res.status).toBe(200);
+    const miss = await app.request(`http://nope-${nonce}.vendua.test/storefront/v1/store`, {
+      headers: { host: `nope-${nonce}.vendua.test` },
+    });
+    expect(miss.status).toBe(404);
+    // storefront nginx picks the bundle from this; unknown hosts get no store (template)
+    const bundle = (h: string) =>
+      app.request(`http://${h}/storefront/v1/_bundle`, { headers: { host: h } });
+    const hit = await bundle(`${slug}.vendua.test`);
+    expect(hit.status).toBe(204);
+    expect(hit.headers.get('x-vendua-store')).toBe(slug);
+    const none = await bundle(`nope-${nonce}.vendua.test`);
+    expect(none.status).toBe(204);
+    expect(none.headers.get('x-vendua-store')).toBeNull();
+  });
+
   test('Equipe: roles gate the API, the last owner stays, the log records it all', async () => {
     const add = await owner('POST', '/team', {
       name: 'Caio',

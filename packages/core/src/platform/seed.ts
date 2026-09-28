@@ -4,6 +4,7 @@ import { join } from 'node:path';
 import { readTemplatesDir } from '@vendua/templates/node';
 import { createSql } from './db.ts';
 import { log } from './log.ts';
+import { isPublicHost } from './store-origin.ts';
 
 const slog = log.child({ mod: 'seed' });
 
@@ -395,8 +396,10 @@ for (const t of TENANTS) {
       .map((e) => e.trim().split(':'))
       .filter(([slug]) => slug === t.slug)
       .flatMap(([, hosts]) => (hosts ?? '').split('|').filter(Boolean));
+    // the first public SEED_DOMAINS host is the address every admin link uses
+    const primary = extra.find(isPublicHost);
     for (const host of [...t.hosts, ...extra]) {
-      await tx`insert into domains (host, tenant_id) values (${host}, ${tid})`;
+      await tx`insert into domains (host, tenant_id, is_primary) values (${host}, ${tid}, ${host === primary})`;
     }
 
     const s = t.settings;

@@ -91,13 +91,14 @@ services:
       driver: json-file
       options: { max-size: '10m', max-file: '3' }
 
-  quero-pudim:
+  # Every store, one service: Core maps Host → store (domains rows, then <slug>.<VENDUA_STORE_DOMAIN>)
+  # and nginx serves that store's bundle, or the `_template` bundle for stores without one.
+  # Attach the wildcard domain here once; new stores and bundles need no compose or Dokploy change.
+  stores:
     build:
       context: .
       dockerfile: storefronts/Dockerfile
-      target: storefront
-      args:
-        STOREFRONT: quero-pudim
+      target: stores
     depends_on:
       core:
         condition: service_healthy

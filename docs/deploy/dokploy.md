@@ -43,7 +43,6 @@ Generate secrets with `openssl rand -hex 32`.
 In Dokploy, assign a domain to each web service (port 80):
 
 - `site` → marketing domain (e.g. `vendua.example.com`)
-- `quero-pudim` → the storefront's public domain
 - `core` → **internal only**; no domain. Storefront nginx proxies
   `/storefront/v1`, `/checkout/v1`, and `/v1` to it.
 - `crm` → the staff CRM domain (e.g. `crm.example.com`) — proxies
@@ -65,6 +64,22 @@ In Dokploy, assign a domain to each web service (port 80):
   the Origin check. Keep that label out of store slugs — the Phase 4
   provisioner must reserve it.
 
+- `stores` → the wildcard `*.vendua.com.br` — **the only storefront domain you
+  attach.** One container serves every store: for each host, nginx asks Core
+  which store it is (`/storefront/v1/_bundle`, cached 30s) and serves that
+  store's own bundle (`storefronts/<slug>/`, keyed by `package.json`
+  `vendua.tenant` or the folder name), or the `_template` bundle for stores
+  without one. `pudim.vendua.com.br` reaches quero-pudim's bundle through its
+  `domains` row; a new store works at `<slug>.vendua.com.br` with nothing
+  added. Give this router the **lowest priority** (Traefik label
+  `traefik.http.routers.<router>.priority=1`) so the exact hosts of `admin`,
+  `crm` and `site` still win. A domain outside the wildcard
+  (`pudim.com.br`) is one more domain on `stores` plus its `domains` row.
+
+Store links (share, QR, "ver loja") always use the store's **primary** domain
+row, then any public row, then `<slug>.<VENDUA_STORE_DOMAIN>` — never a URL
+guessed from the slug alone.
+
 Then set `SEED_DOMAINS` to match, e.g.
 `quero-pudim:pudim.example.com` — tenant routing is
 Host-header based, so each storefront's public domain must exist in the
@@ -73,6 +88,9 @@ Host-header based, so each storefront's public domain must exist in the
 ```sql
 insert into domains (host, tenant_id)
   select 'pudim.example.com', id from tenants where slug = 'quero-pudim';
+-- make it the address every admin link uses (one primary per store)
+update domains set is_primary = (host = 'pudim.example.com')
+  where tenant_id = (select id from tenants where slug = 'quero-pudim');
 ```
 
 (Exec into the `db` container or use Dokploy's database console.)
@@ -120,20 +138,20 @@ Boot order is handled by healthchecks: `db` healthy → `core` migrates
 
 ## Services
 
-| Service       | Image                                                      | Exposed port   |
-| ------------- | ---------------------------------------------------------- | -------------- |
-| `db`          | postgres:16-alpine                                         | internal only  |
-| `core`        | `packages/core/Dockerfile` (Bun)                           | 8787, internal |
-| `quero-pudim` | `storefronts/Dockerfile` `target: storefront` (vite→nginx) | 80             |
-| `crm`         | `apps/control/Dockerfile` (nginx + conf baked in)          | 80             |
-| `admin`       | `apps/admin/Dockerfile` (nginx + conf baked in)            | 80             |
-| `site`        | `storefronts/Dockerfile` `target: site` (SvelteKit→nginx)  | 80             |
-| `ig-sidecar`  | `services/ig-sidecar/Dockerfile` (Go)                      | 8790, internal |
+| Service      | Image                                                     | Exposed port   |
+| ------------ | --------------------------------------------------------- | -------------- |
+| `db`         | postgres:16-alpine                                        | internal only  |
+| `core`       | `packages/core/Dockerfile` (Bun)                          | 8787, internal |
+| `stores`     | `storefronts/Dockerfile` `target: stores` — every store   | 80             |
+| `crm`        | `apps/control/Dockerfile` (nginx + conf baked in)         | 80             |
+| `admin`      | `apps/admin/Dockerfile` (nginx + conf baked in)           | 80             |
+| `site`       | `storefronts/Dockerfile` `target: site` (SvelteKit→nginx) | 80             |
+| `ig-sidecar` | `services/ig-sidecar/Dockerfile` (Go)                     | 8790, internal |
 
 All web services share the Dockerfile's `build` stage, so a deploy runs one
 `bun install` + one vite pass total (compose/bake dedupe the shared stage).
 
-Adding a storefront later = one more service block using
-`storefronts/Dockerfile` with `target: storefront` + a `STOREFRONT` arg, one
-`COPY` line for its `package.json` in the Dockerfile's manifest block
-(`--frozen-lockfile` needs it on disk), plus its domain row.
+Adding a storefront with its own bundle = its folder under `storefronts/`
+and one `COPY` line for its `package.json` in the Dockerfile's manifest block
+(`--frozen-lockfile` needs it on disk); the next deploy puts it in the `stores`
+image. No compose service and no Dokploy domain.

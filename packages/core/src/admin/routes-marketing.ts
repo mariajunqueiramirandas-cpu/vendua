@@ -7,7 +7,7 @@ import { bool, int, isObj, oneOf, optInt, optText, text, type AdminDeps } from '
 import { handlers } from './handlers.ts';
 import { emitAdminTx } from './live.ts';
 import { loadSettings } from './routes-store.ts';
-import { storeUrl } from './routes.ts';
+import { storeOrigin } from '../platform/store-origin.ts';
 
 async function couponsView(tx: Sql, tenantId: string) {
   return tx`
@@ -233,7 +233,7 @@ export function mountMarketing(d: AdminDeps) {
   admin.get(
     '/share',
     read('attendant', async (tx, t) => {
-      const base = storeUrl(t.slug, d.storeDomain);
+      const base = await storeOrigin(tx, t, d.storeDomain);
       const recorded = (
         await tx<{ path: string | null }[]>`
           select manifest -> 'paths' ->> 'product' as path from storefront_builds
