@@ -5,6 +5,7 @@ import { StorefrontRoutes, SystemSurfaces, VenduaProvider } from '@vendua/kernel
 import storefront from 'virtual:vendua/storefront';
 import '@vendua/kernel/styles.css';
 import './styles/global.css';
+import './styles/qr.css';
 import config from './vendua.config.ts';
 
 const rootEl = document.getElementById('root');

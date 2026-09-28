@@ -3,7 +3,6 @@ import { useEffect, useState } from 'react';
 import { Link, NavLink, useLocation } from 'react-router-dom';
 import {
   CartTrigger,
-  StoreStatusBadge,
   boolean,
   defineSection,
   image,
@@ -14,6 +13,7 @@ import {
   useStore,
   type SectionProps,
 } from '@vendua/kernel';
+import { StatusPill } from './_shared/StatusPill.tsx';
 
 export const schema = defineSection({
   type: 'store:header',
@@ -32,8 +32,15 @@ export default function Header({ settings }: SectionProps<typeof schema>) {
   const { store } = useStore();
   const { cart } = useCart();
   const count = cart?.status === 'open' ? cart.totals.itemCount : 0;
+  const [scrolled, setScrolled] = useState(false);
+  useEffect(() => {
+    const on = () => setScrolled(window.scrollY > 8);
+    on();
+    window.addEventListener('scroll', on, { passive: true });
+    return () => window.removeEventListener('scroll', on);
+  }, []);
   return (
-    <header className="site-header">
+    <header className="site-header" data-scrolled={scrolled || undefined}>
       <a href="#main" className="skip-link">
         Pular para o conteúdo
       </a>
@@ -66,14 +73,16 @@ export default function Header({ settings }: SectionProps<typeof schema>) {
         <div className="header-actions">
           {settings.showStatus ? (
             <span className="header-status">
-              <StoreStatusBadge />
+              <StatusPill openLabel="Aberto" />
             </span>
           ) : null}
           <CartTrigger asChild>
             <button type="button" className="sacola-btn">
-              <ShoppingBag size={16} aria-hidden="true" />
+              <ShoppingBag size={18} aria-hidden="true" />
               <span className="sacola-word">{settings.cartLabel}</span>
-              <span className="sacola-count">{count}</span>
+              <span className="sacola-count" key={count} data-empty={count === 0 || undefined}>
+                {count}
+              </span>
             </button>
           </CartTrigger>
         </div>

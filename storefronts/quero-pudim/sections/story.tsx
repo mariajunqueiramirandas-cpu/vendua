@@ -1,5 +1,6 @@
 import { useEffect } from 'react';
 import { BlockArea, defineSection, image, text, type SectionProps } from '@vendua/kernel';
+import { Reveal } from './_shared/Reveal.tsx';
 
 export const schema = defineSection({
   type: 'store:story',
@@ -11,6 +12,10 @@ export const schema = defineSection({
     text: text({ max: 600 }),
     image: image(),
     imageAlt: text({ max: 160, default: '' }),
+    /** a second paragraph */
+    text2: text({ max: 600 }),
+    /** the handwritten line under the story */
+    signature: text({ max: 60 }),
   },
   areas: { aside: { accepts: ['social-proof', 'badge', 'info'], max: 2 } },
 });
@@ -24,37 +29,33 @@ export default function Story({ settings: s }: SectionProps<typeof schema>) {
   }, [s.anchor]);
 
   return (
-    <section id={s.anchor} className="ficha-rule" style={{ scrollMarginTop: 120 }}>
-      <div className="container" style={{ paddingBlock: 64 }}>
-        {s.eyebrow ? (
-          <p className="eyebrow" style={{ marginBottom: 24 }}>
-            {s.eyebrow}
-          </p>
-        ) : null}
-        <div className="hero-grid">
-          {s.image ? (
-            <figure className="hero-fig" style={{ order: 2 }}>
-              <div className="print-frame">
-                <div className="card-frame" style={{ aspectRatio: '4/3' }}>
-                  <img src={s.image} alt={s.imageAlt} loading="lazy" decoding="async" />
-                </div>
-              </div>
-            </figure>
-          ) : null}
-          <div style={{ order: 1 }}>
-            <h2 className="display display-lg">
-              {s.title}
-              {s.titleEmphasis ? (
-                <>
-                  <br />
-                  <em>{s.titleEmphasis}</em>
-                </>
-              ) : null}
-            </h2>
-            {s.text ? <p className="hero-sub">{s.text}</p> : null}
-            <BlockArea name="aside" />
+    <section id={s.anchor} className="story">
+      <div className="container story-grid">
+        <Reveal className="story-media">
+          <div className="story-frame">
+            {s.image ? (
+              <img src={s.image} alt={s.imageAlt} loading="lazy" decoding="async" />
+            ) : (
+              <span className="story-placeholder" aria-hidden="true" />
+            )}
           </div>
-        </div>
+        </Reveal>
+        <Reveal className="story-copy" delay={80}>
+          {s.eyebrow ? <p className="eyebrow">{s.eyebrow}</p> : null}
+          <h2 className="display display-lg">
+            {s.title}
+            {s.titleEmphasis ? (
+              <>
+                {' '}
+                <em>{s.titleEmphasis}</em>
+              </>
+            ) : null}
+          </h2>
+          {s.text ? <p className="story-text">{s.text}</p> : null}
+          {s.text2 ? <p className="story-text">{s.text2}</p> : null}
+          {s.signature ? <p className="story-sign">{s.signature}</p> : null}
+          <BlockArea name="aside" />
+        </Reveal>
       </div>
     </section>
   );

@@ -17,7 +17,8 @@
         "image": "/images/hero-pudim-real.webp",
         "imageAlt": "Confeiteira da Quero Pudim segurando um pudim embalado com a etiqueta da marca",
         "figTitle": "Receita de família",
-        "figSub": "Cada um feito à mão, um por um."
+        "figSub": "Cada um feito à mão, um por um.",
+        "proof": "Feito à mão|Sem furinho|Entrega e retirada em {city}"
       }
     },
     {
@@ -47,12 +48,12 @@
       "id": "featured",
       "type": "store:showcase",
       "settings": {
-        "eyebrow": "Ficha do dia",
+        "eyebrow": "Mais pedidos",
         "title": "Direto da nossa cozinha",
         "lede": "Pudins e sacolés escolhidos a dedo para hoje.",
         "limit": 4,
-        "numbered": true,
-        "ctaLabel": "Ver todos os doces",
+        "numbered": false,
+        "ctaLabel": "Ver o cardápio completo",
         "ctaHref": "/catalog"
       }
     },
@@ -64,10 +65,13 @@
         "title": "Combos e kits personalizáveis",
         "lede": "Monte o kit com os sabores que você mais gosta — para a festa, o presente ou a sobremesa da semana.",
         "category": "kits",
-        "limit": 4,
+        "limit": 2,
         "numbered": false,
         "cardCaption": "Monte o seu",
-        "cardCta": "Montar"
+        "cardCta": "Montar",
+        "feature": true,
+        "ctaLabel": "Ver todos os kits",
+        "ctaHref": "/catalog"
       }
     },
     {
@@ -80,7 +84,9 @@
         "titleEmphasis": "sem pressa.",
         "text": "Todo pudim sai da nossa cozinha em Saquarema, um por um, com receita de família e ingredientes escolhidos a dedo. Sem furinho, com calda dourada e aquele sabor de casa que a gente faz questão de manter.",
         "image": "/images/confeiteira.jpg",
-        "imageAlt": "Retrato da confeiteira da Quero Pudim sorrindo com um pudim da marca nas mãos"
+        "imageAlt": "Retrato da confeiteira da Quero Pudim sorrindo com um pudim da marca nas mãos",
+        "text2": "A gente começou pequeno, com a receita da família, e segue fazendo do mesmo jeito: pouca pressa, muito cuidado e o doce sempre geladinho.",
+        "signature": "Com carinho, Quero Pudim"
       }
     },
     {
@@ -108,6 +114,37 @@
           }
         ],
         "footnote": "Entrega e retirada em {city}."
+      }
+    },
+    {
+      "id": "faq",
+      "type": "store:faq",
+      "settings": {
+        "eyebrow": "Dúvidas",
+        "title": "Perguntas frequentes",
+        "lede": "O essencial para pedir sem dúvida.",
+        "items": [
+          {
+            "question": "Como faço um pedido?",
+            "answer": "Escolha seus doces, monte a sacola, informe se é entrega ou retirada e confirme. Depois você acompanha o pedido na página que aparece ao final."
+          },
+          {
+            "question": "Vocês entregam na minha região?",
+            "answer": "Entregamos em áreas de {city}. No checkout você informa o endereço ou o CEP e vê na hora se atendemos e qual é o valor da entrega."
+          },
+          {
+            "question": "Quais são as formas de pagamento?",
+            "answer": "As formas de pagamento aceitas aparecem no checkout, antes de você confirmar o pedido."
+          },
+          {
+            "question": "Posso encomendar para uma festa?",
+            "answer": "Pode! Kits e produtos sob encomenda podem ser agendados para a data que você precisar, direto no checkout."
+          },
+          {
+            "question": "Como devo guardar?",
+            "answer": "Mantenha refrigerado até a hora de servir."
+          }
+        ]
       }
     },
     {
