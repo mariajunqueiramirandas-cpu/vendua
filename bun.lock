@@ -167,7 +167,7 @@
     },
     "packages/kernel": {
       "name": "@vendua/kernel",
-      "version": "1.4.1",
+      "version": "1.5.0",
       "dependencies": {
         "@vendua/templates": "workspace:*",
         "@vendua/ui-defaults": "workspace:*",
