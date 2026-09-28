@@ -114,16 +114,17 @@ function useKeyboardInset() {
     const reveal = () => {
       const el = document.activeElement;
       if (el instanceof HTMLElement && el.matches('input, textarea, select'))
-        el.scrollIntoView({ block: 'center', behavior: 'smooth' });
+        el.scrollIntoView({ block: 'center' });
     };
-    const update = () => {
+    const update = (e?: Event) => {
       // pinch-zoom also shrinks the visual viewport; that is not a keyboard
       const covered =
         vv.scale > 1.01
           ? 0
           : Math.max(0, Math.round(window.innerHeight - vv.height - vv.offsetTop));
       root.style.setProperty('--kb', `${covered}px`);
-      if (covered > 0) reveal();
+      // scroll events fire continuously while reveal() scrolls: only a resize may trigger it
+      if (covered > 0 && e?.type === 'resize') reveal();
     };
     vv.addEventListener('resize', update);
     vv.addEventListener('scroll', update);
@@ -250,7 +251,7 @@ function Flow({
 
       <div
         className={cn(
-          'mx-auto grid max-w-6xl grid-cols-[minmax(0,1fr)] gap-10 px-4 pb-[calc(2rem+env(safe-area-inset-bottom)+var(--kb,0px))] pt-8 md:px-8',
+          'mx-auto grid max-w-6xl grid-cols-[minmax(0,1fr)] gap-10 px-4 pb-[calc(1rem+var(--kb,0px))] pt-8 md:px-8',
           step !== 'pronto' && 'lg:grid-cols-[minmax(0,1fr)_380px]',
         )}
       >
