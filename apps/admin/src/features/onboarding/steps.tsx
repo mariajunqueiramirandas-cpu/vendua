@@ -76,7 +76,7 @@ function Frame({
         {hint ? <p className="t-body-lg mt-2 text-muted">{hint}</p> : null}
       </div>
       {children}
-      <div className="flex flex-col-reverse gap-3 pt-2 sm:flex-row sm:items-center">
+      <div className="sticky bottom-[var(--kb,0px)] z-20 -mx-4 flex scroll-mb-24 flex-col-reverse gap-3 border-t border-line bg-bg/95 px-4 pb-[calc(0.75rem+env(safe-area-inset-bottom))] pt-3 backdrop-blur-sm sm:flex-row sm:items-center md:-mx-8 md:px-8 lg:mx-0 lg:border-0 lg:bg-transparent lg:px-0 lg:pb-0 lg:backdrop-blur-none">
         {back ? (
           <Button variant="ghost" size="lg" icon={<ArrowLeft />} onClick={back}>
             voltar
@@ -587,7 +587,7 @@ export function ProductsStep({
       toast(`${r.product.name} no cardápio. ${CHEERS[products.length % CHEERS.length]}`);
       setName('');
       setPrice(null);
-      nameRef.current?.focus();
+      nameRef.current?.focus({ preventScroll: true });
     },
     onError: (e) => toast.error(messageOf(e)),
   });
