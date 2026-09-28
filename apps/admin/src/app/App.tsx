@@ -5,6 +5,7 @@ import { ApiError } from '../lib/api.ts';
 import { qk } from '../lib/query.ts';
 import { SessionCtx, useSessionQuery } from '../lib/session.ts';
 import { applyTheme, type ThemePref } from '../lib/theme.ts';
+import { ErrorBoundary } from '../ui/ErrorBoundary.tsx';
 import { ErrorState, Loading } from '../ui/feedback.tsx';
 import { Shell } from './Shell.tsx';
 
@@ -79,44 +80,54 @@ export default function App() {
     );
   return (
     <SessionCtx.Provider value={q.data}>
-      <Routes>
-        <Route
-          path="/bem-vindo"
-          element={
-            <Suspense fallback={null}>
-              <Onboarding />
-            </Suspense>
-          }
-        />
-        <Route
-          path="*"
-          element={
-            <Shell>
-              <Routes>
-                <Route index element={<Home />} />
-                <Route path="pedidos" element={<Orders />} />
-                <Route path="pedidos/historico" element={<OrderHistory />} />
-                <Route path="pedidos/agendados" element={<Scheduled />} />
-                <Route path="pedidos/:id" element={<OrderPage />} />
-                <Route path="cardapio" element={<Menu />} />
-                <Route path="cardapio/produto/:id" element={<ProductPage />} />
-                <Route path="loja" element={<Store />} />
-                <Route path="pagamentos" element={<Payments />} />
-                <Route path="clientes" element={<Customers />} />
-                <Route path="clientes/:phone" element={<CustomerPage />} />
-                <Route path="marketing" element={<Marketing />} />
-                <Route path="aparencia" element={<Appearance />} />
-                <Route path="relatorios" element={<Reports />} />
-                <Route path="equipe" element={<Team />} />
-                <Route path="conta" element={<Account />} />
-                <Route path="perfil" element={<Profile />} />
-                <Route path="ajuda" element={<Help />} />
-                <Route path="*" element={<NotFound />} />
-              </Routes>
-            </Shell>
-          }
-        />
-      </Routes>
+      <ErrorBoundary>
+        <Routes>
+          <Route
+            path="/bem-vindo"
+            element={
+              <ErrorBoundary>
+                <Suspense
+                  fallback={
+                    <div className="mx-auto max-w-lg p-6" aria-busy>
+                      <Loading />
+                    </div>
+                  }
+                >
+                  <Onboarding />
+                </Suspense>
+              </ErrorBoundary>
+            }
+          />
+          <Route
+            path="*"
+            element={
+              <Shell>
+                <Routes>
+                  <Route index element={<Home />} />
+                  <Route path="pedidos" element={<Orders />} />
+                  <Route path="pedidos/historico" element={<OrderHistory />} />
+                  <Route path="pedidos/agendados" element={<Scheduled />} />
+                  <Route path="pedidos/:id" element={<OrderPage />} />
+                  <Route path="cardapio" element={<Menu />} />
+                  <Route path="cardapio/produto/:id" element={<ProductPage />} />
+                  <Route path="loja" element={<Store />} />
+                  <Route path="pagamentos" element={<Payments />} />
+                  <Route path="clientes" element={<Customers />} />
+                  <Route path="clientes/:phone" element={<CustomerPage />} />
+                  <Route path="marketing" element={<Marketing />} />
+                  <Route path="aparencia" element={<Appearance />} />
+                  <Route path="relatorios" element={<Reports />} />
+                  <Route path="equipe" element={<Team />} />
+                  <Route path="conta" element={<Account />} />
+                  <Route path="perfil" element={<Profile />} />
+                  <Route path="ajuda" element={<Help />} />
+                  <Route path="*" element={<NotFound />} />
+                </Routes>
+              </Shell>
+            }
+          />
+        </Routes>
+      </ErrorBoundary>
     </SessionCtx.Provider>
   );
 }
