@@ -117,7 +117,11 @@ function useKeyboardInset() {
         el.scrollIntoView({ block: 'center', behavior: 'smooth' });
     };
     const update = () => {
-      const covered = Math.max(0, Math.round(window.innerHeight - vv.height - vv.offsetTop));
+      // pinch-zoom also shrinks the visual viewport; that is not a keyboard
+      const covered =
+        vv.scale > 1.01
+          ? 0
+          : Math.max(0, Math.round(window.innerHeight - vv.height - vv.offsetTop));
       root.style.setProperty('--kb', `${covered}px`);
       if (covered > 0) reveal();
     };
@@ -246,7 +250,7 @@ function Flow({
 
       <div
         className={cn(
-          'mx-auto grid max-w-6xl grid-cols-[minmax(0,1fr)] gap-10 px-4 pb-[calc(6rem+var(--kb,0px))] pt-8 md:px-8',
+          'mx-auto grid max-w-6xl grid-cols-[minmax(0,1fr)] gap-10 px-4 pb-[calc(2rem+env(safe-area-inset-bottom)+var(--kb,0px))] pt-8 md:px-8',
           step !== 'pronto' && 'lg:grid-cols-[minmax(0,1fr)_380px]',
         )}
       >
@@ -259,7 +263,7 @@ function Flow({
 
           {step === 'oi' ? (
             <div className="animate-fade-up space-y-6">
-              <Mascote pose="boas-vindas" size={200} className="mx-auto w-48" />
+              <Mascote pose="boas-vindas" size={200} className="mx-auto hidden w-48 md:block" />
               <div>
                 <h1 className="t-title-1 md:text-[2rem]">Vamos abrir a sua loja online?</h1>
                 <p className="t-body-lg mt-2 text-muted">

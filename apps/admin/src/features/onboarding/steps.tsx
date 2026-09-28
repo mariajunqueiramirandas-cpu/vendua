@@ -66,7 +66,11 @@ function Frame({
       }}
     >
       <div>
-        <h2 ref={head} tabIndex={-1} className="t-title-1 outline-none md:text-[2rem]">
+        <h2
+          ref={head}
+          tabIndex={-1}
+          className="t-title-1 outline-none focus-visible:shadow-none md:text-[2rem]"
+        >
           {title}
         </h2>
         {hint ? <p className="t-body-lg mt-2 text-muted">{hint}</p> : null}
