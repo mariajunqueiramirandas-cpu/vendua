@@ -21,6 +21,7 @@ export const SDK_COMPONENTS: RegisteredComponent[] = [
   sdk(schemas.footer, S.Footer),
   sdk(schemas.announcementBar, S.AnnouncementBar),
   sdk(schemas.headerCart, S.HeaderCart),
+  sdk(schemas.bagBar, S.BagBar),
   sdk(schemas.purchasePanel, S.PurchasePanel),
   sdk(schemas.catalogGrid, S.CatalogGrid),
   sdk(schemas.productList, S.ProductList),

@@ -355,7 +355,12 @@ export function HoursTable({ hours }: SlotProps['store.HoursTable']) {
   );
 }
 
-export function ProductCard({ product, currency, link }: SlotProps['catalog.ProductCard']) {
+export function ProductCard({
+  product,
+  currency,
+  link,
+  quickAdd,
+}: SlotProps['catalog.ProductCard']) {
   const soldOut = product.status !== 'active';
   const [imgFailed, setImgFailed] = useState(false);
   const left = product.stockQuantity;
@@ -404,14 +409,23 @@ export function ProductCard({ product, currency, link }: SlotProps['catalog.Prod
             ) : (
               <>
                 <span>{money(product.basePriceCents, currency)}</span>
-                <span className="v-card-go" aria-hidden="true">
-                  +
-                </span>
+                {quickAdd ? null : (
+                  <span className="v-card-go" aria-hidden="true">
+                    +
+                  </span>
+                )}
               </>
             )}
           </p>
         </>,
       )}
+      {quickAdd
+        ? quickAdd(
+            <span className="v-card-quick" data-part="quick-add" aria-hidden="true">
+              +
+            </span>,
+          )
+        : null}
     </article>
   );
 }

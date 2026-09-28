@@ -143,9 +143,13 @@ export function SystemSurfaces({ zoneMatched }: { zoneMatched?: boolean } = {}) 
         {banners.map((n) => (
           <NoticeView key={n.id} notice={n} />
         ))}
-        {transient.map((n) => (
-          <NoticeSlot key={n.id} notice={n} onDismiss={() => dismissError(n.id)} />
-        ))}
+        {transient.length > 0 ? (
+          <div className="v-toast-region" data-vendua="toast-region">
+            {transient.map((n) => (
+              <NoticeSlot key={n.id} notice={n} onDismiss={() => dismissError(n.id)} />
+            ))}
+          </div>
+        ) : null}
       </div>
       {/* mount point 2 */}
       {blocking.length > 0 ? <BlockingOverlay notices={blocking} /> : null}

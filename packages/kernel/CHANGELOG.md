@@ -3,6 +3,18 @@
 Semver, per docs/architecture/11-backward-compatibility.md: minors and patches
 never need a storefront edit; a major only ships with a Contract major.
 
+## 1.5.0
+
+Storefront experience — additive; existing stores need no edit.
+
+- `sdk:bag-bar`: a sticky "ver sacola" bar on phones (count + Core's subtotal), hidden on the
+  product, sacola, checkout and order pages. Placed by the `2026-09-bag-bar-on-layout` template
+  migration.
+- Product cards get a one-tap add: `catalog.ProductCard` receives `quickAdd` for products that
+  need no choices (`CatalogProduct.needsChoices`, served by Core), with a "na sacola" toast.
+- Banner notices sit in the page flow above the header instead of floating over it; transient
+  errors and confirmations move to a bottom toast region (`data-vendua="toast-region"`).
+
 ## 1.4.1
 
 - The not-found route marks itself `noindex` while mounted, so typo URLs stay out of

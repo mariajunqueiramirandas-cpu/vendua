@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState, type ReactNode } from 'react';
-import { Outlet, useLocation } from 'react-router-dom';
+import { matchPath, Outlet, useLocation } from 'react-router-dom';
 import { dayLabel, money } from '@vendua/ui-defaults';
 import { useCart, useCatalog, useProduct, useStore } from '../hooks.ts';
 import {
@@ -15,7 +15,7 @@ import { Slot } from '../slot.tsx';
 import { useKernel } from '../provider.tsx';
 import { productHref, resolvePaths } from '../config.ts';
 import type { CatalogProduct, ComboSelection } from '../api.ts';
-import { errorCopy } from '../errors.ts';
+import { errorCopy, showInfo } from '../errors.ts';
 import * as S from './schemas.ts';
 
 // SDK sections (17): Kernel-owned behaviour + markup, styled by tokens,
@@ -210,6 +210,35 @@ export function HeaderCart({ settings }: SectionProps<typeof S.headerCart>) {
           {settings.label}{' '}
           <span key={count} className="v-cart-count" data-empty={count === 0 || undefined}>
             {count}
+          </span>
+        </button>
+      </CartTrigger>
+    </div>
+  );
+}
+
+export function BagBar({ settings }: SectionProps<typeof S.bagBar>) {
+  const { cart } = useCart();
+  const { store } = useStore();
+  const { config } = useKernel();
+  const { pathname } = useLocation();
+  const paths = resolvePaths(config);
+  // the product page has its own sticky buy bar; cart/checkout/order already are the bag
+  const quiet = [paths.product, paths.cart, paths.checkout, paths.order].some((p) =>
+    matchPath({ path: p, end: true }, pathname),
+  );
+  const count = cart?.status === 'open' ? cart.totals.itemCount : 0;
+  if (quiet || count === 0 || !cart) return null;
+  return (
+    <div className="v-bag-bar" data-vendua="bag-bar" data-part="root">
+      <CartTrigger asChild>
+        <button type="button" className="v-bag-bar-btn" data-part="trigger">
+          <span className="v-bag-bar-count" key={count}>
+            {count}
+          </span>
+          <span className="v-bag-bar-label">{settings.label}</span>
+          <span className="v-bag-bar-total v-num">
+            {money(cart.totals.subtotalCents, store?.currency ?? 'BRL')}
           </span>
         </button>
       </CartTrigger>
@@ -516,6 +545,24 @@ function ProductGrid({
                 </a>
               </ProductLink>
             )}
+            {...(p.status === 'active' &&
+            p.needsChoices === false &&
+            p.kind !== 'combo' &&
+            !p.requiresPreorder
+              ? {
+                  quickAdd: (children: ReactNode) => (
+                    <AddToCart
+                      product={p}
+                      asChild
+                      onAdded={() => showInfo(`added:${p.id}`, `${p.name} na sacola`)}
+                    >
+                      <button type="button" aria-label={`Adicionar ${p.name} à sacola`}>
+                        {children}
+                      </button>
+                    </AddToCart>
+                  ),
+                }
+              : {})}
           />
         </li>
       ))}
