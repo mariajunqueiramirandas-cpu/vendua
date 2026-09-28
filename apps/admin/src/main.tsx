@@ -24,8 +24,9 @@ persistCache(queryClient);
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
     <QueryClientProvider client={queryClient}>
-      {/* startTransition: the current screen stays up while the next one loads */}
-      <BrowserRouter basename="/admin" future={{ v7_startTransition: true }}>
+      {/* no startTransition: a screen whose chunk is slow (fresh deploy, cold cache) must show its
+          skeleton at once, not leave the old one frozen */}
+      <BrowserRouter basename="/admin">
         <App />
       </BrowserRouter>
     </QueryClientProvider>

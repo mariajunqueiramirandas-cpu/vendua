@@ -44,11 +44,23 @@ export function Skeleton({ className, delay = 150 }: { className?: string; delay
   );
 }
 
-export function Loading({ lines = 3, className }: { lines?: number; className?: string }) {
+export function Loading({
+  lines = 3,
+  className,
+  delay,
+}: {
+  lines?: number;
+  className?: string;
+  delay?: number;
+}) {
   return (
     <div className={cn('space-y-3', className)} role="status" aria-label="carregando">
       {Array.from({ length: lines }, (_, i) => (
-        <Skeleton key={i} className={cn('h-20', i === 0 && 'h-32')} />
+        <Skeleton
+          key={i}
+          {...(delay === undefined ? {} : { delay })}
+          className={cn('h-20', i === 0 && 'h-32')}
+        />
       ))}
     </div>
   );
