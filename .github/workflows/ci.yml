@@ -261,6 +261,80 @@ jobs:
           bunx vendua check ci-smoke
           bunx vendua qa ci-smoke
 
+  # merchant admin quality gate (docs/merchant-admin.md): every screen at 375/820/1440 in
+  # Creme and Noite against a seeded store — no horizontal overflow, no console errors,
+  # zero serious/critical axe violations. The bundle budget runs inside `bun run build`.
+  admin-gate:
+    runs-on: ubuntu-latest
+    if: >-
+      github.event_name == 'push' ||
+      !contains(fromJSON('["labeled","unlabeled"]'), github.event.action)
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # Scope diffs origin/<base>...HEAD
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: '1.4.2'
+      - name: Scope
+        id: scope
+        run: |
+          base="${{ github.base_ref || github.event.inputs.base_ref }}"
+          if [ -z "$base" ]; then
+            echo "run=true" >> "$GITHUB_OUTPUT"
+          else
+            affected="$(bun tools/affected.mjs --base "origin/$base")"
+            echo "run=$(echo "$affected" | jq -r '.adminGate')" >> "$GITHUB_OUTPUT"
+          fi
+          cat "$GITHUB_OUTPUT"
+      - if: steps.scope.outputs.run == 'true'
+        run: bun install --frozen-lockfile
+      - name: Playwright browser (background)
+        if: steps.scope.outputs.run == 'true'
+        run: (cd apps/admin && bunx playwright install --with-deps chromium > /tmp/pw.log 2>&1; echo $? > /tmp/pw.exit) &
+      - name: Build the admin
+        if: steps.scope.outputs.run == 'true'
+        run: cd apps/admin && bun run build
+      - name: Postgres + migrate + seed
+        if: steps.scope.outputs.run == 'true'
+        run: |
+          docker compose -f packages/core/docker-compose.yml up -d postgres
+          for i in $(seq 1 30); do
+            docker compose -f packages/core/docker-compose.yml exec -T postgres pg_isready -h localhost -p 5432 -U vendua && break
+            sleep 1
+          done
+          (cd packages/core && bun run migrate && bun run seed)
+      - name: Core API (serves apps/admin/dist at /admin/)
+        if: steps.scope.outputs.run == 'true'
+        run: |
+          (cd packages/core && SESSION_SECRET=ci-secret VENDUA_ADMIN_DEV_OTP=1 bun src/index.ts > /tmp/core.log 2>&1 &)
+          for i in $(seq 1 30); do
+            curl -sf http://localhost:8787/healthz && break
+            sleep 1
+          done
+      - name: Demo orders
+        if: steps.scope.outputs.run == 'true'
+        run: cd apps/admin && bun scripts/demo-orders.ts 40
+      - name: Playwright browser
+        if: steps.scope.outputs.run == 'true'
+        run: |
+          for i in $(seq 1 300); do [ -f /tmp/pw.exit ] && break; sleep 1; done
+          cat /tmp/pw.log
+          [ "$(cat /tmp/pw.exit 2>/dev/null)" = 0 ]
+      - name: Screenshots + overflow + axe
+        if: steps.scope.outputs.run == 'true'
+        run: cd apps/admin && BASE=http://localhost:8787/admin/ AXE=1 bun scripts/shots.ts
+      - name: Upload screenshots
+        if: always() && steps.scope.outputs.run == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: admin-screenshots
+          path: apps/admin/shots
+          retention-days: 7
+      - name: Core log on failure
+        if: failure() && steps.scope.outputs.run == 'true'
+        run: tail -200 /tmp/core.log
+
   # the staleness guarantee (11): a storefront built on the oldest supported Kernel
   # line, never rebuilt, keeps passing the S-series against Core main
   stale-reference:

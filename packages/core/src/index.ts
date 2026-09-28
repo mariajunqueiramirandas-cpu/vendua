@@ -1,4 +1,6 @@
 import { createApp } from './app.ts';
+import { AdminHub } from './admin/live.ts';
+import { startAdminSweeper, startPushNotifier } from './admin/workers.ts';
 import { log } from './platform/log.ts';
 import { createSql, migrate } from './platform/db.ts';
 import { join } from 'node:path';
@@ -36,7 +38,12 @@ if (applied.length) log.child({ mod: 'migrate' }).info({ applied }, 'migrations 
 await migrator.end();
 
 const sql = createSql(databaseUrl);
-const app = createApp({ sql, sessionSecret, controlSecret: process.env.CONTROL_SECRET });
+const adminHub = new AdminHub(sql);
+const app = createApp({ sql, sessionSecret, controlSecret: process.env.CONTROL_SECRET, adminHub });
+
+// merchant admin: new-order web push + the minute sweep ("esgotado hoje", timed pauses)
+void startPushNotifier(sql, adminHub);
+const stopAdminSweeper = startAdminSweeper(sql);
 
 // Booking links sign with the same staff key the app verifies — set before the worker starts.
 setBookingSecret(process.env.CONTROL_SECRET ?? sessionSecret);
@@ -89,6 +96,7 @@ for (const sig of ['SIGTERM', 'SIGINT'] as const) {
     if (shuttingDown) return;
     shuttingDown = true;
     log.info({ sig }, 'shutting down — draining the scheduler');
+    stopAdminSweeper();
     void stopScheduler()
       .then(() => sql.end({ timeout: 5 }))
       .finally(() => process.exit(0));

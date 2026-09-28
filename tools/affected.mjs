@@ -1,10 +1,11 @@
 #!/usr/bin/env bun
 // Maps a git diff to the workspaces it affects (affected graph from
 // docs/architecture/06-monorepo.md). Prints
-// `{"packages": [<workspace dirs>], "allStorefronts": <bool>, "coreTests": <bool>, "conformance": <bool>}`
+// `{"packages": [<workspace dirs>], "allStorefronts": <bool>, "coreTests": <bool>, "conformance": <bool>, "adminGate": <bool>}`
 // — `packages` lists directories consumers `cd` into; `allStorefronts: true` expands
 // to every `storefronts/*/` and `storefronts/_examples/*/` dir; `coreTests` /
-// `conformance` gate the CI jobs of the same name.
+// `conformance` gate the CI jobs of the same name; `adminGate` gates the merchant admin's
+// screenshot/axe job (it runs against Core + the Kernel's section catalog).
 //   bun tools/affected.mjs [--base <ref>]     (default base: origin/main)
 // Consumed by the `check` job's Builds step in .github/workflows/ci.yml.
 
@@ -20,6 +21,12 @@ const SHARED_PACKAGES = new Set([
 ]);
 const SHARED_ROOT_FILES = new Set(['package.json', 'bun.lock', 'tsconfig.base.json']);
 // the conformance e2e scaffolds from _template and runs against Core + Kernel
+const ADMIN_INPUTS = new Set([
+  'apps/admin',
+  'packages/core',
+  'packages/kernel',
+  'packages/templates',
+]);
 const CONFORMANCE_INPUTS = new Set([
   'packages/core',
   'packages/kernel',
@@ -72,6 +79,7 @@ export function mapFiles(files) {
     allStorefronts,
     coreTests: ciChanged || rootChanged || touches('packages/core'),
     conformance: ciChanged || allStorefronts || [...CONFORMANCE_INPUTS].some(touches),
+    adminGate: ciChanged || rootChanged || [...ADMIN_INPUTS].some(touches),
   };
 }
 

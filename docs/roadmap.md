@@ -4,16 +4,16 @@
 
 ## Where we are
 
-| Phase                         | State    | Notes                                                                                                                                                                                       |
-| ----------------------------- | -------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| 0 — Foundations               | ✅ Done  | Monorepo, Core skeleton, Kernel, 3 spike storefronts, Contract v1 drafted                                                                                                                   |
-| 1 — Storefront factory        | ✅ Done  | Contract frozen, conformance, CLI, fleet isolation, Founder CRM — which has since grown well past its v0 scope (see below)                                                                  |
-| 1b — Kernel v1 + updatability | ✅ Done  | Kernel 1.1.1 on Contract 2; every in-repo storefront received a Kernel minor, a template migration and a Contract-major rehearsal untouched ([fleet runs](fleet-runs/README.md))            |
-| 2 — Commerce completeness     | ✅ Done  | Order lifecycle, catalog depth, growth surfaces — Core migration 0051 + Kernel 1.2; the Quero Pudim golden runs with zero workarounds ([below](#phase-2--commerce-completeness-weeks-812-)) |
-| A — Merchant admin            | 🟨 Focus | The complete store-owner product, held to a higher design bar than the CRM — its own track and plan in [`merchant-admin.md`](merchant-admin.md)                                             |
-| 3 — Payments + signup         | ⬜ Next  | Mercado Pago + the "buy a plan → provisioned store" self-serve path; runs alongside Track A (A3 and A6 are its admin screens)                                                               |
-| 4 — First tenant operated     | ⬜ Open  | Edge, Control Plane v0, provisioner — the other half of the 1-hour signup→store promise                                                                                                     |
-| 5–8 — Fleet loop → scale      | ⬜ Open  | Blocked on 2–4 having a fleet to operate                                                                                                                                                    |
+| Phase                         | State    | Notes                                                                                                                                                                                                                                |
+| ----------------------------- | -------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| 0 — Foundations               | ✅ Done  | Monorepo, Core skeleton, Kernel, 3 spike storefronts, Contract v1 drafted                                                                                                                                                            |
+| 1 — Storefront factory        | ✅ Done  | Contract frozen, conformance, CLI, fleet isolation, Founder CRM — which has since grown well past its v0 scope (see below)                                                                                                           |
+| 1b — Kernel v1 + updatability | ✅ Done  | Kernel 1.1.1 on Contract 2; every in-repo storefront received a Kernel minor, a template migration and a Contract-major rehearsal untouched ([fleet runs](fleet-runs/README.md))                                                     |
+| 2 — Commerce completeness     | ✅ Done  | Order lifecycle, catalog depth, growth surfaces — Core migration 0051 + Kernel 1.2; the Quero Pudim golden runs with zero workarounds ([below](#phase-2--commerce-completeness-weeks-812-))                                          |
+| A — Merchant admin            | 🟨 Focus | Built end to end: `apps/admin` + `/admin/v1` (migration 0052, Kernel 1.4, [ADR 0020](adr/0020-merchant-identity.md)); pending sign-offs, usability sessions and the Phase 3 money screens — [`merchant-admin.md`](merchant-admin.md) |
+| 3 — Payments + signup         | ⬜ Next  | Mercado Pago + the "buy a plan → provisioned store" self-serve path; runs alongside Track A (A3 and A6 are its admin screens)                                                                                                        |
+| 4 — First tenant operated     | ⬜ Open  | Edge, Control Plane v0, provisioner — the other half of the 1-hour signup→store promise                                                                                                                                              |
+| 5–8 — Fleet loop → scale      | ⬜ Open  | Blocked on 2–4 having a fleet to operate                                                                                                                                                                                             |
 
 **Ahead of the roadmap:** the Founder CRM (`apps/control`) grew into the agent
 ops surface, and the sales-side agent engine shipped on `packages/core` —

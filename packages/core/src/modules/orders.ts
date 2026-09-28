@@ -1,3 +1,4 @@
+import { emitAdminTx } from '../admin/live.ts';
 import type { Sql } from '../platform/db.ts';
 import { HttpError } from '../platform/http.ts';
 import { mintLoyaltyRewards } from './customer.ts';
@@ -228,4 +229,5 @@ export async function transitionOrder(
   if (to === 'delivered') await mintLoyaltyRewards(tx, tenantId, order.customer_phone);
   // delivered on commit — live waiters (order-live.ts) wake then, never on a rolled-back change
   await tx`select pg_notify(${ORDER_CHANNEL}, ${orderId})`;
+  await emitAdminTx(tx, tenantId, 'order.changed', orderId);
 }

@@ -1,0 +1,749 @@
+// Typed client for /admin/v1 — cookie session, x-vendua-admin CSRF marker, and an
+// Idempotency-Key minted per call (a retried mutation reuses its own key).
+
+export class ApiError extends Error {
+  constructor(
+    public status: number,
+    public code: string,
+    message: string,
+    public details?: Record<string, unknown>,
+  ) {
+    super(message);
+  }
+  get field(): string | undefined {
+    return typeof this.details?.field === 'string' ? this.details.field : undefined;
+  }
+}
+
+type Init = RequestInit & { idem?: string; raw?: boolean };
+
+async function req<T>(path: string, init: Init = {}): Promise<T> {
+  const { idem, raw, ...rest } = init;
+  const mutating = rest.method && rest.method !== 'GET';
+  let res: Response;
+  try {
+    res = await fetch(`/admin/v1${path}`, {
+      credentials: 'same-origin',
+      ...rest,
+      headers: {
+        ...(raw ? {} : { 'content-type': 'application/json' }),
+        'x-vendua-admin': '1',
+        ...(mutating ? { 'idempotency-key': idem ?? crypto.randomUUID() } : {}),
+        ...rest.headers,
+      },
+    });
+  } catch {
+    throw new ApiError(0, 'NETWORK_ERROR', 'sem conexão');
+  }
+  if (!res.ok) {
+    const data = (await res.json().catch(() => ({}))) as {
+      error?: { code?: string; message?: string; details?: Record<string, unknown> };
+    };
+    const err = new ApiError(
+      res.status,
+      data.error?.code ?? 'ERROR',
+      data.error?.message ?? res.statusText,
+      data.error?.details,
+    );
+    if (res.status === 401) window.dispatchEvent(new CustomEvent('vendua:unauthenticated'));
+    throw err;
+  }
+  const ct = res.headers.get('content-type') ?? '';
+  return (ct.includes('json') ? res.json() : res.text()) as Promise<T>;
+}
+
+const get = <T>(p: string) => req<T>(p);
+const send = <T>(method: string, p: string, body?: unknown) =>
+  req<T>(p, { method, ...(body !== undefined ? { body: JSON.stringify(body) } : {}) });
+
+// ── types ───────────────────────────────────────────────────────────────────
+
+export type Role = 'owner' | 'manager' | 'attendant';
+export type OrderState =
+  | 'placed'
+  | 'confirmed'
+  | 'preparing'
+  | 'ready'
+  | 'out_for_delivery'
+  | 'delivered'
+  | 'cancelled'
+  | 'refunded';
+export type StoreStatus = 'open' | 'closed' | 'paused';
+export type PayMethod = 'pix' | 'card_on_delivery' | 'cash';
+
+export interface StoreRef {
+  id: string;
+  slug: string;
+  name: string;
+  role: Role;
+}
+
+export interface Session {
+  user: {
+    id: string;
+    name: string;
+    phone: string;
+    role: Role;
+    email: string | null;
+    prefs: {
+      sound?: boolean;
+      volume?: number;
+      push?: boolean;
+      theme?: string;
+      dismissedHints?: string[];
+    };
+  };
+  store: { id: string; slug: string; name: string; logoUrl: string | null; url: string };
+  stores: StoreRef[];
+  push: { publicKey: string | null };
+  support: { whatsapp: string | null };
+}
+
+export interface Order {
+  id: string;
+  number: number;
+  state: OrderState;
+  customer: { name: string; phone: string };
+  delivery: {
+    mode: 'pickup' | 'delivery';
+    neighborhood?: string | null;
+    address?: string | null;
+    addressParts?: Record<string, string | null>;
+    zoneName?: string | null;
+    distanceKm?: number | null;
+    feeCents?: number;
+    etaMin?: number | null;
+    etaMax?: number | null;
+    promisedFrom?: string | null;
+    promisedTo?: string | null;
+    lat?: number;
+    lng?: number;
+  };
+  payment: {
+    provider: string;
+    method: PayMethod;
+    status: string;
+    paidAt?: string | null;
+    confirmedBy?: string | null;
+  };
+  items: {
+    productId: string | null;
+    slug: string;
+    name: string;
+    qty: number;
+    unitPriceCents: number;
+    modifiers: { name: string; priceDeltaCents: number }[];
+    combo: { slotName: string; name: string; qty: number }[];
+    lineTotalCents: number;
+  }[];
+  notes: string | null;
+  scheduledFor: string | null;
+  subtotalCents: number;
+  deliveryFeeCents: number;
+  discountCents: number;
+  coupon: { code: string } | null;
+  totalCents: number;
+  placedAt: string;
+  updatedAt: string;
+  version: number;
+  timeline: {
+    at: string;
+    from: string | null;
+    to: OrderState;
+    actor: string;
+    meta: Record<string, unknown>;
+  }[];
+}
+
+export interface OrderRow {
+  id: string;
+  number: number;
+  state: OrderState;
+  name: string;
+  phone: string | null;
+  totalCents: number;
+  placedAt: string;
+  mode: 'pickup' | 'delivery';
+  neighborhood: string | null;
+  paymentMethod: PayMethod;
+  paymentStatus: string;
+  itemCount: number;
+  scheduledFor: string | null;
+}
+
+export interface Board {
+  orders: Order[];
+  scheduledUpcoming: number;
+  acceptTargetMinutes: number;
+  now: string;
+}
+
+export interface Product {
+  id: string;
+  categoryId: string;
+  slug: string;
+  name: string;
+  description: string | null;
+  priceCents: number;
+  status: 'active' | 'sold_out' | 'archived';
+  kind: 'simple' | 'combo';
+  stockQuantity: number | null;
+  lowStockThreshold: number | null;
+  requiresPreorder: boolean;
+  preorderLeadDays: number;
+  sort: number;
+  soldOutUntil: string | null;
+  tags: string[];
+  imageUrl: string | null;
+  dominant: string | null;
+  mediaCount: number;
+  groupCount: number;
+  waiting: number;
+}
+
+export interface OptionGroup {
+  id?: string;
+  name: string;
+  required?: boolean;
+  minSelect: number;
+  maxSelect: number;
+  options: { id?: string; name: string; priceDeltaCents: number; status: 'active' | 'sold_out' }[];
+}
+
+export interface KitSlot {
+  id?: string;
+  name: string;
+  minSelect: number;
+  maxSelect: number;
+  qtyPerItem: number;
+  items: { productId: string; name?: string; priceDeltaCents: number; imageUrl?: string | null }[];
+}
+
+export interface ProductDetail extends Product {
+  groups: OptionGroup[];
+  gallery: { url: string; alt: string | null; width: number | null; height: number | null }[];
+  comboSlots: KitSlot[];
+  sales30: { qty: number; revenueCents: number };
+}
+
+export interface Category {
+  id: string;
+  slug: string;
+  name: string;
+  sort: number;
+  products: Product[];
+}
+
+export interface Window_ {
+  days: number[];
+  open: string;
+  close: string;
+}
+export interface SpecialDay {
+  date: string;
+  closed: boolean;
+  open?: string;
+  close?: string;
+  label?: string;
+}
+export interface Zone {
+  id: string;
+  name: string;
+  kind: 'neighborhood' | 'radius';
+  neighborhoods: string[];
+  feeCents: number;
+  minOrderCents: number;
+  etaMin: number;
+  etaMax: number;
+  active: boolean;
+  maxDistanceKm: number | null;
+  feePerKmCents: number;
+  freeDeliveryOverCents: number | null;
+}
+
+export interface StoreView {
+  url: string;
+  profile: {
+    name: string;
+    tagline: string | null;
+    description: string | null;
+    whatsapp: string | null;
+    instagram: string | null;
+    email: string | null;
+    city: string | null;
+    address: string | null;
+    logoUrl: string | null;
+  };
+  status: {
+    status: StoreStatus;
+    resumesAt: string | null;
+    override: 'paused' | 'closed' | null;
+    pauseMessage: string | null;
+    closedMessage: string | null;
+  };
+  hours: { timezone: string; windows: Window_[] };
+  specialDays: SpecialDay[];
+  operations: {
+    prepTimeMinutes: number;
+    acceptTargetMinutes: number;
+    minOrderCents: number;
+    pickupEnabled: boolean;
+    deliveryEnabled: boolean;
+    demand: 'normal' | 'high';
+  };
+  location: { latitude: number; longitude: number } | null;
+  preorder: { paymentMethods: PayMethod[]; maxDays: number };
+  zones: Zone[];
+}
+
+export interface Home {
+  greetingName: string;
+  timezone: string;
+  status: { status: StoreStatus; resumesAt: string | null; override: string | null };
+  hours: { timezone: string; windows: Window_[] };
+  specialDays: SpecialDay[];
+  today: {
+    salesCents: number;
+    orders: number;
+    avgTicketCents: number;
+    lastWeekSalesCents: number;
+    lastWeekOrders: number;
+  };
+  spark: { date: string; salesCents: number }[];
+  waiting: { n: number; late: number; oldest: string | null };
+  inProgress: number;
+  attention: {
+    kind: string;
+    count: number;
+    title: string;
+    detail?: string;
+    href: string;
+    productId?: string;
+  }[];
+  checklist: { id: string; label: string; done: boolean; href: string }[];
+  totalOrders: number;
+  feed: {
+    at: string;
+    to: OrderState;
+    from: OrderState | null;
+    actor: string;
+    orderId: string;
+    number: number;
+    name: string;
+    totalCents: number;
+  }[];
+  live: { visitors: number; carts: number };
+  best: { productId: string | null; name: string; qty: number; imageUrl: string | null }[];
+  busiest: { hour: number; orders: number } | null;
+}
+
+export interface Customer {
+  phone: string;
+  name: string;
+  orders: number;
+  spentCents: number;
+  firstAt: string;
+  lastAt: string;
+}
+
+export interface CustomerDetail {
+  customer: Customer & { cancelled: number };
+  orders: OrderRow[];
+  favorites: { name: string; qty: number }[];
+  loyalty: {
+    enabled: boolean;
+    stampsRequired: number;
+    stamps: number;
+    rewardLabel: string;
+    rewards: { code: string; label: string; expiresAt: string | null }[];
+  };
+  lastAddress: { address: string | null; neighborhood: string | null } | null;
+}
+
+export interface Coupon {
+  id: string;
+  code: string;
+  kind: 'percent' | 'fixed' | 'free_delivery';
+  value: number;
+  label: string | null;
+  minSubtotalCents: number;
+  maxDiscountCents: number | null;
+  startsAt: string | null;
+  endsAt: string | null;
+  maxRedemptions: number | null;
+  perPhoneLimit: number | null;
+  firstOrderOnly: boolean;
+  active: boolean;
+  source: string;
+  createdAt: string;
+  redemptions: number;
+  revenueCents: number;
+  discountCents: number;
+}
+
+export interface LoyaltyProgram {
+  stampsRequired: number;
+  minOrderCents: number;
+  reward: { kind: 'percent' | 'fixed' | 'free_delivery'; value: number; label: string };
+  rewardValidDays: number;
+}
+
+export interface Marketing {
+  coupons: Coupon[];
+  loyalty: { program: LoyaltyProgram | null; issued: number; redeemed: number };
+  waitlist: {
+    productId: string;
+    name: string;
+    status: string;
+    stockQuantity: number | null;
+    imageUrl: string | null;
+    waiting: number;
+    contacts: { contact: string; since: string }[];
+  }[];
+  announcement: { title: string; body?: string } | null;
+}
+
+export interface Kpis {
+  revenueCents: number;
+  orders: number;
+  avgTicketCents: number;
+  customers: number;
+  newCustomers: number;
+  cancelled: number;
+  deliveryShare: number;
+}
+
+export interface Reports {
+  range: { from: string; to: string; days: number; prevFrom: string; prevTo: string };
+  current: Kpis;
+  previous: Kpis;
+  series: { date: string; revenueCents: number; orders: number }[];
+  hours: { dow: number; hour: number; orders: number }[];
+  products: {
+    key: string;
+    name: string;
+    qty: number;
+    revenueCents: number;
+    imageUrl: string | null;
+  }[];
+  funnel: {
+    visits: number;
+    productViews: number;
+    carts: number;
+    checkouts: number;
+    orders: number;
+  };
+  zones: { name: string; orders: number; revenueCents: number; feesCents: number }[];
+  payments: { method: PayMethod; orders: number; revenueCents: number }[];
+  coupons: { code: string; orders: number; discountCents: number; revenueCents: number }[];
+  repeat: { customers: number; returning: number };
+}
+
+export interface Member {
+  id: string;
+  name: string;
+  phone: string;
+  email: string | null;
+  role: Role;
+  status: 'active' | 'revoked';
+  createdAt: string;
+  lastSeenAt: string | null;
+}
+
+export interface ActivityEntry {
+  id: number;
+  actor: string;
+  action: string;
+  entity: string;
+  entityId: string | null;
+  summary: string;
+  at: string;
+}
+
+export interface Payments {
+  methods: PayMethod[];
+  pix: { key: string; keyType: string; beneficiary: string; city: string; sample: string } | null;
+  mercadoPago: { status: 'not_available' | 'connected' };
+  last30: { method: PayMethod; status: string; orders: number; cents: number }[];
+  awaitingPix: { id: string; number: number; name: string; totalCents: number; placedAt: string }[];
+}
+
+export interface TemplateSection {
+  id: string;
+  type: string;
+  settings?: Record<string, unknown>;
+  blocks?: Record<string, { id: string; type: string; settings?: Record<string, unknown> }[]>;
+  disabled?: boolean;
+}
+export interface PageTemplate {
+  version: 1;
+  page: string;
+  sections: TemplateSection[];
+  removed?: string[];
+}
+export interface StoreTokens {
+  color: Record<
+    'bg' | 'surface' | 'text' | 'muted' | 'accent' | 'onAccent' | 'danger' | 'success',
+    string
+  >;
+  font: { display: string; body: string; mono?: string; srcs?: unknown[] };
+  radius: { sm: string; md: string; lg: string };
+  space: { scale: number | string[] };
+  motion: { duration: string; easing: string };
+}
+export interface Appearance {
+  url: string;
+  previewUrl: string;
+  pages: {
+    page: string;
+    label: string;
+    version: number;
+    template: PageTemplate;
+    source: string;
+    updatedAt: string;
+  }[];
+  tokens: { version: number; tokens: StoreTokens } | null;
+  publish: { state: 'publishing' | 'live'; since: string | null; lastBuildAt: string | null };
+  sections: Record<string, unknown>;
+}
+
+export interface SearchResult {
+  orders: {
+    id: string;
+    number: number;
+    state: OrderState;
+    name: string;
+    totalCents: number;
+    placedAt: string;
+  }[];
+  products: {
+    id: string;
+    name: string;
+    status: string;
+    priceCents: number;
+    imageUrl: string | null;
+  }[];
+  customers: { phone: string; name: string; orders: number }[];
+}
+
+// ── endpoints ───────────────────────────────────────────────────────────────
+
+export const api = {
+  auth: {
+    start: (phone: string) =>
+      send<{ sent: boolean; devCode?: string; expiresAt: string }>('POST', '/auth/otp/start', {
+        phone,
+      }),
+    verify: (phone: string, code: string) =>
+      send<
+        | { signedIn: true; store: StoreRef }
+        | { signedIn: false; pickerToken: string; stores: StoreRef[] }
+      >('POST', '/auth/otp/verify', { phone, code }),
+    select: (pickerToken: string, storeId: string) =>
+      send<{ signedIn: true; store: StoreRef }>('POST', '/auth/select', { pickerToken, storeId }),
+    logout: () => send<{ ok: true }>('POST', '/auth/logout'),
+  },
+  session: () => get<Session>('/session'),
+  switchStore: (storeId: string) =>
+    send<{ signedIn: true }>('POST', '/session/switch', { storeId }),
+  updateMe: (patch: {
+    name?: string;
+    email?: string | null;
+    prefs?: Partial<Session['user']['prefs']>;
+  }) => send<{ user: unknown }>('PATCH', '/me', patch),
+  sessions: () =>
+    get<{
+      sessions: {
+        id: string;
+        device: string;
+        createdAt: string;
+        lastSeenAt: string;
+        current: boolean;
+      }[];
+    }>('/me/sessions'),
+  endSession: (id: string) => send<{ ok: true }>('DELETE', `/me/sessions/${id}`),
+  pushSubscribe: (sub: PushSubscriptionJSON) => send('POST', '/push/subscribe', sub),
+  pushUnsubscribe: (endpoint: string) => send('POST', '/push/unsubscribe', { endpoint }),
+
+  home: () => get<Home>('/home'),
+  search: (q: string) => get<SearchResult>(`/search?q=${encodeURIComponent(q)}`),
+
+  board: () => get<Board>('/orders/board'),
+  orders: (p: {
+    q?: string | undefined;
+    state?: string | undefined;
+    from?: string | undefined;
+    to?: string | undefined;
+    before?: string | undefined;
+  }) => {
+    const s = new URLSearchParams();
+    for (const [k, v] of Object.entries(p)) if (v) s.set(k, v);
+    return get<{ orders: OrderRow[]; next: string | null }>(`/orders?${s}`);
+  },
+  scheduled: (from: string, to: string) =>
+    get<{ orders: OrderRow[] }>(`/orders/scheduled?from=${from}&to=${to}`),
+  order: (id: string) =>
+    get<{
+      order: Order;
+      customer: { phone: string; orders: number; firstAt: string; spentCents: number } | null;
+    }>(`/orders/${id}`),
+  transition: (
+    id: string,
+    to: OrderState,
+    extra: { prepMinutes?: number; reason?: string } = {},
+    idem?: string,
+  ) =>
+    req<{ order: Order }>(`/orders/${id}/transition`, {
+      method: 'POST',
+      body: JSON.stringify({ to, ...extra }),
+      ...(idem ? { idem } : {}),
+    }),
+  markPaid: (id: string, status: 'paid' | 'pending') =>
+    send<{ order: Order }>('POST', `/orders/${id}/payment`, { status }),
+
+  catalog: () => get<{ categories: Category[] }>('/catalog'),
+  product: (id: string) => get<{ product: ProductDetail }>(`/products/${id}`),
+  createProduct: (p: {
+    name: string;
+    categoryId: string;
+    priceCents: number;
+    description?: string | null;
+  }) => send<{ product: ProductDetail }>('POST', '/products', p),
+  updateProduct: (id: string, patch: Record<string, unknown>) =>
+    send<{ product: ProductDetail; waitlistWoken: number }>('PATCH', `/products/${id}`, patch),
+  duplicateProduct: (id: string) =>
+    send<{ product: ProductDetail }>('POST', `/products/${id}/duplicate`),
+  setMedia: (
+    id: string,
+    media: { url: string; alt?: string | null; width?: number | null; height?: number | null }[],
+  ) => send<{ product: ProductDetail }>('PUT', `/products/${id}/media`, { media }),
+  setOptions: (id: string, groups: OptionGroup[]) =>
+    send<{ product: ProductDetail }>('PUT', `/products/${id}/options`, { groups }),
+  setKit: (id: string, slots: KitSlot[]) =>
+    send<{ product: ProductDetail }>('PUT', `/products/${id}/kit`, { slots }),
+  orderProducts: (categoryId: string, ids: string[]) =>
+    send('PUT', '/products/order', { categoryId, ids }),
+  bulk: (ids: string[], action: string, extra: Record<string, unknown> = {}) =>
+    send<{ updated: number }>('POST', '/products/bulk', { ids, action, ...extra }),
+  importPreview: (text: string) =>
+    send<{ items: { name: string; priceCents: number }[] }>('POST', '/products/import/preview', {
+      text,
+    }),
+  importProducts: (text: string, categoryId: string) =>
+    send<{ created: number }>('POST', '/products/import', { text, categoryId }),
+  createCategory: (name: string) => send<{ category: Category }>('POST', '/categories', { name }),
+  renameCategory: (id: string, name: string) => send('PATCH', `/categories/${id}`, { name }),
+  deleteCategory: (id: string) => send('DELETE', `/categories/${id}`),
+  orderCategories: (ids: string[]) => send('PUT', '/categories/order', { ids }),
+
+  uploadMedia: async (
+    blob: Blob,
+    meta: { width: number; height: number; dominant: string | null },
+  ) => {
+    const q = new URLSearchParams({ w: String(meta.width), h: String(meta.height) });
+    if (meta.dominant) q.set('dominant', meta.dominant);
+    return req<{ id: string; url: string; width: number; height: number; dominant: string | null }>(
+      `/media?${q}`,
+      { method: 'POST', body: blob, raw: true, headers: { 'content-type': blob.type } },
+    );
+  },
+
+  store: () => get<StoreView>('/store'),
+  updateStore: (patch: Record<string, unknown>) => send<StoreView>('PATCH', '/store', patch),
+  pause: (p: {
+    for: '15m' | '1h' | 'today' | 'indefinite' | 'minutes';
+    minutes?: number;
+    message?: string | null;
+  }) => send<StoreView>('POST', '/store/pause', p),
+  resume: () => send<StoreView>('POST', '/store/resume'),
+  createZone: (z: Partial<Zone>) => send<{ zones: Zone[] }>('POST', '/zones', z),
+  updateZone: (id: string, z: Partial<Zone>) => send<{ zones: Zone[] }>('PATCH', `/zones/${id}`, z),
+  deleteZone: (id: string) => send<{ zones: Zone[] }>('DELETE', `/zones/${id}`),
+
+  payments: () => get<Payments>('/payments'),
+  updatePayments: (p: { methods?: PayMethod[]; pix?: Record<string, unknown> | null }) =>
+    send<Payments>('PATCH', '/payments', p),
+
+  customers: (p: { q?: string; sort?: string; offset?: number }) => {
+    const s = new URLSearchParams();
+    if (p.q) s.set('q', p.q);
+    if (p.sort) s.set('sort', p.sort);
+    if (p.offset) s.set('offset', String(p.offset));
+    return get<{
+      customers: Customer[];
+      stats: { customers: number; repeat: number; newThisMonth: number };
+      next: number | null;
+    }>(`/customers?${s}`);
+  },
+  customer: (phone: string) => get<CustomerDetail>(`/customers/${phone}`),
+  exportCustomer: (phone: string) => get<unknown>(`/customers/${phone}/export`),
+  forgetCustomer: (phone: string, confirm: string) =>
+    send<{ anonymized: number }>('POST', `/customers/${phone}/forget`, { confirm }),
+
+  marketing: () => get<Marketing>('/marketing'),
+  createCoupon: (c: Record<string, unknown>) => send<{ coupons: Coupon[] }>('POST', '/coupons', c),
+  updateCoupon: (id: string, c: Record<string, unknown>) =>
+    send<{ coupons: Coupon[] }>('PATCH', `/coupons/${id}`, c),
+  setLoyalty: (program: LoyaltyProgram | null) =>
+    send<{ program: LoyaltyProgram | null }>('PUT', '/loyalty', { program }),
+  waitlistNotified: (productId: string) =>
+    send<{ notified: number }>('POST', `/waitlist/${productId}/notified`),
+  setAnnouncement: (a: { title: string; body?: string } | null) =>
+    send('PUT', '/announcement', { announcement: a }),
+  share: () =>
+    get<{
+      store: { name: string; url: string };
+      products: {
+        id: string;
+        slug: string;
+        name: string;
+        priceCents: number;
+        imageUrl: string | null;
+        url: string;
+      }[];
+    }>('/share'),
+
+  reports: (from: string, to: string) => get<Reports>(`/reports?from=${from}&to=${to}`),
+
+  team: () => get<{ members: Member[] }>('/team'),
+  addMember: (m: { name: string; phone: string; role: Role }) =>
+    send<{ members: Member[] }>('POST', '/team', m),
+  updateMember: (id: string, m: { role?: Role; name?: string }) =>
+    send<{ members: Member[] }>('PATCH', `/team/${id}`, m),
+  removeMember: (id: string) => send<{ members: Member[] }>('DELETE', `/team/${id}`),
+  activity: (before?: number) =>
+    get<{ entries: ActivityEntry[]; next: number | null }>(
+      `/activity${before ? `?before=${before}` : ''}`,
+    ),
+  account: () =>
+    get<{
+      plan: { id: string; since: string };
+      billing: { status: string };
+      address: string;
+      domains: string[];
+    }>('/account'),
+
+  appearance: () => get<Appearance>('/appearance'),
+  pageHistory: (page: string) =>
+    get<{ history: { version: number; source: string; at: string; by: string }[] }>(
+      `/appearance/pages/${encodeURIComponent(page)}/history`,
+    ),
+  savePage: (page: string, template: PageTemplate, expectVersion?: number) =>
+    send<{ version: number; template: PageTemplate }>(
+      'PUT',
+      `/appearance/pages/${encodeURIComponent(page)}`,
+      {
+        template,
+        ...(expectVersion !== undefined ? { expectVersion } : {}),
+      },
+    ),
+  restorePage: (page: string, toVersion: number) =>
+    send<{ version: number }>('POST', `/appearance/pages/${encodeURIComponent(page)}/restore`, {
+      toVersion,
+    }),
+  saveTokens: (tokens: StoreTokens) =>
+    send<{ version: number }>('PUT', '/appearance/tokens', { tokens }),
+
+  help: (message: string, topic?: string) =>
+    send<{ sent: true }>('POST', '/help', { message, topic }),
+};

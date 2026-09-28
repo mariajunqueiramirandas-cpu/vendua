@@ -1,3 +1,4 @@
+import { isPreview } from './preview.ts';
 import type { ConsentPurpose } from './config.ts';
 
 // Analytics beacon (15-analytics.md): batched, lossy by design, never blocks
@@ -150,6 +151,8 @@ export const beacon = new Beacon();
 
 /** Kernel-internal: taxonomy events from primitives and surfaces. */
 export function emit(name: PlatformEvent, props: Record<string, unknown> = {}) {
+  // an editor preview isn't a shopper — keep it out of the store's funnel
+  if (isPreview()) return;
   beacon.push(name, props);
 }
 

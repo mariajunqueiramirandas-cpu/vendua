@@ -1,3 +1,4 @@
+import { emitAdminTx } from '../admin/live.ts';
 import type { Sql } from '../platform/db.ts';
 import { HttpError } from '../platform/http.ts';
 import { loadCartView, loadZoneRows, storeCoords } from './cart.ts';
@@ -54,6 +55,7 @@ export async function placeOrderTx(
     settings?.status_override ?? null,
     settings?.resumes_at ?? null,
     now,
+    settings?.special_days ?? [],
   );
   const match = validateCheckout(
     status,
@@ -229,5 +231,7 @@ export async function placeOrderTx(
     values (${tenantId}, 'order_placed', now(), ${cartId},
       ${tx.json({ order_id: orderId, value: total, method: body.payment.method, ...(coupon ? { coupon: coupon.code } : {}) })})
   `;
+  // the merchant admin's live board rings on commit
+  await emitAdminTx(tx, tenantId, 'order.placed', orderId);
   return orderId;
 }

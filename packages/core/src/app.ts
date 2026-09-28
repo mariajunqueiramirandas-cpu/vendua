@@ -152,6 +152,10 @@ import { LOADER_JS } from '@vendua/loader';
 import { currentTemplatesTx, opsTx } from './modules/storefront-platform.ts';
 import { mountStorefrontPlatform } from './modules/storefront-routes.ts';
 import { log } from './platform/log.ts';
+import { validAdminPhone, whatsappOtpSender, type OtpSender } from './admin/auth.ts';
+import type { AdminApp } from './admin/context.ts';
+import { AdminHub } from './admin/live.ts';
+import { mountAdmin } from './admin/routes.ts';
 
 const agentLog = log.child({ mod: 'agent' });
 const waLog = log.child({ mod: 'whatsapp' });
@@ -165,6 +169,14 @@ export interface AppDeps {
   autoDrain?: boolean | undefined;
   /** CEP → address; tests inject a stub (default: ViaCEP) */
   cepLookup?: CepLookup | undefined;
+  /** merchant admin sign-in codes; tests capture them (default: WhatsApp) */
+  otpSender?: OtpSender | undefined;
+  /** shared with the push worker in index.ts; tests let the app make its own */
+  adminHub?: AdminHub | undefined;
+  /** stores live at `<slug>.<storeDomain>` */
+  storeDomain?: string | undefined;
+  /** the admin's own domain (VENDUA_ADMIN_HOST); set, no other host serves /admin */
+  adminHost?: string | undefined;
 }
 
 async function loadSettings(
@@ -204,6 +216,7 @@ function currentStatus(settings: StoreSettingsRow | null) {
     settings?.status_override ?? null,
     settings?.resumes_at ?? null,
     new Date(),
+    settings?.special_days ?? [],
   );
 }
 
@@ -301,7 +314,17 @@ async function testIntegration(
   }
 }
 
-export function createApp({ sql, sessionSecret, controlSecret, autoDrain, cepLookup }: AppDeps) {
+export function createApp({
+  sql,
+  sessionSecret,
+  controlSecret,
+  autoDrain,
+  cepLookup,
+  otpSender,
+  adminHub,
+  storeDomain,
+  adminHost,
+}: AppDeps) {
   const orderHub = new OrderHub(sql);
   const kickDrain =
     autoDrain === false
@@ -387,6 +410,8 @@ export function createApp({ sql, sessionSecret, controlSecret, autoDrain, cepLoo
         paymentMethods: settings?.preorder_payment_methods ?? ['pix'],
         maxDays: settings?.preorder_max_days ?? 30,
       },
+      paymentMethods: settings?.payment_methods ?? ['pix', 'card_on_delivery', 'cash'],
+      logoUrl: settings?.logo_url ?? null,
     });
   });
 
@@ -2407,6 +2432,7 @@ export function createApp({ sql, sessionSecret, controlSecret, autoDrain, cepLoo
 
   // Prod serves the built app; dev hits vite :5195 (proxies /control/v1 here).
   const CONTROL_DIST = join(import.meta.dir, '../../../apps/control/dist');
+  const ADMIN_DIST = join(import.meta.dir, '../../../apps/admin/dist');
   const SPA_MIME: Record<string, string> = {
     '.html': 'text/html; charset=utf-8',
     '.js': 'application/javascript; charset=utf-8',
@@ -2449,40 +2475,129 @@ export function createApp({ sql, sessionSecret, controlSecret, autoDrain, cepLoo
     trustProxy,
   });
 
-  app.get('/control', (c) => c.redirect('/control/'));
-  app.get('/control/*', async (c) => {
-    const path = new URL(c.req.url).pathname;
-    // Unmatched /control/v1/* GETs must not fall through to the SPA shell.
-    if (path.startsWith('/control/v1')) {
-      return c.json({ error: { code: 'NOT_FOUND', message: 'not found' } }, 404);
-    }
-    if (!existsSync(CONTROL_DIST)) {
-      return c.html(
-        '<!doctype html><title>venduá control</title><p style="font-family:monospace">control app not built — <code>cd apps/control && bun run dev</code> (vite :5195) or <code>bun run build</code> for prod.</p>',
-      );
-    }
-    const rel = normalize(path.slice('/control'.length)).replace(/^[/\\]+/, '');
-    let file = join(CONTROL_DIST, rel);
-    if (!file.startsWith(CONTROL_DIST)) {
-      throw new HttpError(404, 'NOT_FOUND', 'not found');
-    }
-    if (!rel || !existsSync(file) || statSync(file).isDirectory()) {
-      file = join(CONTROL_DIST, 'index.html');
-    }
-    const ext = extname(file);
-    c.header('content-type', SPA_MIME[ext] ?? 'application/octet-stream');
-    // Only assets/ is content-hashed by vite — root files (sw.js, manifest,
-    // icons) must revalidate or PWA updates never roll out.
-    c.header(
-      'cache-control',
-      ext === '.html'
-        ? 'no-store'
-        : rel.startsWith('assets/')
-          ? 'public, max-age=31536000, immutable'
-          : 'no-cache',
+  // Staff hand a store to its owner: the first merchant user (then Equipe in the admin takes over).
+  app.get('/control/v1/storefronts/:slug/merchant-users', async (c) => {
+    controlGate(c);
+    const t = await resolver.resolveBySlug(str(c.req.param('slug'), 'slug', 60));
+    if (!t) throw new HttpError(404, 'TENANT_NOT_FOUND', 'no such storefront');
+    const users = await withTenant(
+      sql,
+      t.id,
+      (tx) => tx`
+        select id, name, phone, role, status, last_seen_at as "lastSeenAt" from merchant_users
+        where tenant_id = ${t.id} order by created_at
+      `,
     );
-    return c.body(await Bun.file(file).arrayBuffer());
+    return c.json({ users });
   });
+  app.post('/control/v1/storefronts/:slug/merchant-users', async (c) => {
+    controlGate(c);
+    const t = await resolver.resolveBySlug(str(c.req.param('slug'), 'slug', 60));
+    if (!t) throw new HttpError(404, 'TENANT_NOT_FOUND', 'no such storefront');
+    const body = await bodyJson(c);
+    const name = str(body.name, 'name', 80).trim();
+    const phone = validAdminPhone(body.phone);
+    const role = body.role ?? 'owner';
+    if (name.length < 2 || !phone || !['owner', 'manager', 'attendant'].includes(role as string))
+      throw new HttpError(400, 'BAD_REQUEST', 'name, phone (DDD + number) and role are required');
+    const res = await claimControl(sql, requireIdemKey(c), async (tx) => {
+      await tx`select set_config('vendua.tenant_id', ${t.id}, true)`;
+      const row = (
+        await tx`
+          insert into merchant_users (tenant_id, name, phone, role) values (${t.id}, ${name}, ${phone}, ${role as string})
+          on conflict (tenant_id, phone) do update set name = excluded.name, role = excluded.role, status = 'active'
+          returning id, name, phone, role, status
+        `
+      )[0];
+      return { status: 201, body: { user: row } };
+    });
+    if (res.replayed) c.header('x-idempotent-replay', 'true');
+    return c.json(res.body as object, res.status as 201);
+  });
+
+  // Serves a built SPA under `prefix`; unmatched `<prefix>/v1/*` GETs 404 as JSON.
+  const serveSpa =
+    (prefix: '/control' | '/admin', dist: string, hint: string) => async (c: Context) => {
+      const path = new URL(c.req.url).pathname;
+      if (path.startsWith(`${prefix}/v1`)) {
+        return c.json({ error: { code: 'NOT_FOUND', message: 'not found' } }, 404);
+      }
+      if (!existsSync(dist)) {
+        return c.html(
+          `<!doctype html><title>venduá</title><p style="font-family:monospace">${hint}</p>`,
+        );
+      }
+      const rel = normalize(path.slice(prefix.length)).replace(/^[/\\]+/, '');
+      let file = join(dist, rel);
+      if (!file.startsWith(dist)) {
+        throw new HttpError(404, 'NOT_FOUND', 'not found');
+      }
+      if (!rel || !existsSync(file) || statSync(file).isDirectory()) {
+        file = join(dist, 'index.html');
+      }
+      const ext = extname(file);
+      c.header('content-type', SPA_MIME[ext] ?? 'application/octet-stream');
+      // Only assets/ is content-hashed by vite — root files (sw.js, manifest,
+      // icons) must revalidate or PWA updates never roll out.
+      c.header(
+        'cache-control',
+        ext === '.html'
+          ? 'no-store'
+          : rel.startsWith('assets/')
+            ? 'public, max-age=31536000, immutable'
+            : 'no-cache',
+      );
+      return c.body(await Bun.file(file).arrayBuffer());
+    };
+
+  app.get('/control', (c) => c.redirect('/control/'));
+  app.get(
+    '/control/*',
+    serveSpa(
+      '/control',
+      CONTROL_DIST,
+      'control app not built — <code>cd apps/control && bun run dev</code> (vite :5195) or <code>bun run build</code> for prod.',
+    ),
+  );
+
+  // Merchant admin (docs/merchant-admin.md): API at /admin/v1, the app at /admin/.
+  // With its own domain, store hosts stop serving it: a storefront's third-party scripts
+  // share the store's origin and could call /admin/v1 with the merchant's cookie.
+  const adminDomain = (adminHost ?? process.env.VENDUA_ADMIN_HOST)?.trim().toLowerCase();
+  if (adminDomain) {
+    const onAdminHost = async (c: Context, next: () => Promise<void>) => {
+      const host = (c.req.header('host') ?? new URL(c.req.url).host).toLowerCase();
+      if (host === adminDomain) return next();
+      const url = new URL(c.req.url);
+      if (c.req.method === 'GET' && !url.pathname.startsWith('/admin/v1'))
+        return c.redirect(`https://${adminDomain}${url.pathname}${url.search}`, 301);
+      return c.json({ error: { code: 'NOT_FOUND', message: 'not found' } }, 404);
+    };
+    app.use('/admin', onAdminHost);
+    app.use('/admin/*', onAdminHost);
+  }
+  const admin: AdminApp = new Hono();
+  mountAdmin({
+    app,
+    admin,
+    sql,
+    sessionSecret,
+    hub: adminHub ?? new AdminHub(sql),
+    trustProxy,
+    otpSender: otpSender ?? whatsappOtpSender(sql),
+    idempotency,
+    storeDomain: storeDomain ?? process.env.VENDUA_STORE_DOMAIN ?? 'vendua.com.br',
+  });
+  app.route('/admin/v1', admin);
+  app.get('/admin', (c) => c.redirect('/admin/'));
+  app.get(
+    '/admin/*',
+    serveSpa(
+      '/admin',
+      ADMIN_DIST,
+      'admin app not built — <code>cd apps/admin && bun run dev</code> (vite :5196) or <code>bun run build</code> for prod.',
+    ),
+  );
 
   app.route('/storefront/v1', storefront);
   app.route('/checkout/v1', checkout);

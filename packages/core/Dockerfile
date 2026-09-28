@@ -16,6 +16,7 @@ COPY packages/loader/package.json packages/loader/package.json
 COPY packages/templates/package.json packages/templates/package.json
 COPY packages/ui-defaults/package.json packages/ui-defaults/package.json
 COPY apps/control/package.json apps/control/package.json
+COPY apps/admin/package.json apps/admin/package.json
 COPY site/package.json site/package.json
 # New workspaces go here.
 COPY storefronts/quero-pudim/package.json storefronts/quero-pudim/package.json
@@ -24,13 +25,20 @@ COPY storefronts/_template/package.json storefronts/_template/package.json
 RUN --mount=type=cache,id=vendua-bun,target=/root/.bun/install/cache \
     bun install --frozen-lockfile
 
+# Core runs @vendua/templates (template model, migrations) and serves @vendua/loader (v.js);
+# the merchant admin reads the Kernel's section catalog (pure data) at build time.
+COPY packages/templates packages/templates
+COPY packages/loader packages/loader
+COPY packages/kernel packages/kernel
+
 # Control SPA — built in-image so Core can serve apps/control/dist at /control/.
 COPY apps/control apps/control
 RUN cd apps/control && bun run build
 
-# Core runs @vendua/templates (template model, migrations) and serves @vendua/loader (v.js)
-COPY packages/templates packages/templates
-COPY packages/loader packages/loader
+# Merchant admin SPA — Core serves apps/admin/dist at /admin/.
+COPY apps/admin apps/admin
+RUN cd apps/admin && bun run build
+
 COPY packages/core packages/core
 
 ENV NODE_ENV=production

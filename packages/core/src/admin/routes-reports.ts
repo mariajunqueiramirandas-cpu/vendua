@@ -1,0 +1,262 @@
+import type { Context } from 'hono';
+import { withTenant, type Sql } from '../platform/db.ts';
+import { HttpError } from '../platform/http.ts';
+import { DATE_RE, need, type AdminDeps } from './context.ts';
+import { handlers } from './handlers.ts';
+import { storeTz } from './routes-orders.ts';
+
+// Relatórios read orders directly over the (tenant_id, placed_at) index. At pilot
+// volume (hundreds of orders/month) a year-range query is milliseconds; the rollup
+// tables the plan mentions become worth it when a store crosses ~100k orders.
+
+const MAX_DAYS = 366;
+
+function range(c: Context) {
+  const from = c.req.query('from');
+  const to = c.req.query('to');
+  if (!from || !to || !DATE_RE.test(from) || !DATE_RE.test(to))
+    throw new HttpError(400, 'BAD_REQUEST', 'from and to are required (YYYY-MM-DD)');
+  const days = Math.round((Date.parse(to) - Date.parse(from)) / 86_400_000) + 1;
+  if (!(days >= 1 && days <= MAX_DAYS))
+    throw new HttpError(400, 'BAD_REQUEST', `the range must be 1–${MAX_DAYS} days`);
+  const prevTo = new Date(Date.parse(from) - 86_400_000).toISOString().slice(0, 10);
+  const prevFrom = new Date(Date.parse(from) - days * 86_400_000).toISOString().slice(0, 10);
+  return { from, to, days, prevFrom, prevTo };
+}
+
+const COUNTED = ['cancelled', 'refunded'];
+
+async function kpis(tx: Sql, tenantId: string, tz: string, from: string, to: string) {
+  return (
+    await tx<
+      {
+        revenueCents: number;
+        orders: number;
+        avgTicketCents: number;
+        customers: number;
+        newCustomers: number;
+        cancelled: number;
+        deliveryShare: number;
+      }[]
+    >`
+      with o as (
+        select * from orders
+        where tenant_id = ${tenantId}
+          and (placed_at at time zone ${tz})::date between ${from}::date and ${to}::date
+      ), ok as (select * from o where state <> all(${COUNTED}))
+      select
+        coalesce((select sum(total_cents) from ok), 0)::int as "revenueCents",
+        (select count(*) from ok)::int as orders,
+        coalesce((select round(avg(total_cents)) from ok), 0)::int as "avgTicketCents",
+        (select count(distinct customer_phone) from ok)::int as customers,
+        (select count(distinct customer_phone) from ok
+          where not exists (
+            select 1 from orders p where p.tenant_id = ${tenantId} and p.customer_phone = ok.customer_phone
+              and p.placed_at < (${from}::date::timestamp at time zone ${tz})
+          ))::int as "newCustomers",
+        (select count(*) from o where state = 'cancelled')::int as cancelled,
+        coalesce((select round(100.0 * count(*) filter (where delivery ->> 'mode' = 'delivery') / nullif(count(*), 0))
+                  from ok), 0)::int as "deliveryShare"
+    `
+  )[0]!;
+}
+
+export function mountReports(d: AdminDeps) {
+  const { admin, sql } = d;
+  const { read } = handlers(d);
+
+  admin.get(
+    '/reports',
+    read('manager', async (tx, t, _m, c) => {
+      const r = range(c);
+      const tz = await storeTz(tx, t.id);
+      const current = await kpis(tx, t.id, tz, r.from, r.to);
+      const previous = await kpis(tx, t.id, tz, r.prevFrom, r.prevTo);
+      const series = await tx`
+        select d::date::text as date,
+               coalesce(sum(o.total_cents) filter (where o.state <> all(${COUNTED})), 0)::int as "revenueCents",
+               count(o.id) filter (where o.state <> all(${COUNTED}))::int as orders
+        from generate_series(${r.from}::date, ${r.to}::date, interval '1 day') d
+        left join orders o on o.tenant_id = ${t.id} and (o.placed_at at time zone ${tz})::date = d::date
+        group by d order by d
+      `;
+      const hours = await tx`
+        select extract(dow from placed_at at time zone ${tz})::int as dow,
+               extract(hour from placed_at at time zone ${tz})::int as hour,
+               count(*)::int as orders
+        from orders
+        where tenant_id = ${t.id} and state <> all(${COUNTED})
+          and (placed_at at time zone ${tz})::date between ${r.from}::date and ${r.to}::date
+        group by 1, 2
+      `;
+      const products = await tx`
+        select coalesce(i.product_id::text, i.name) as key, (array_agg(i.name))[1] as name,
+               sum(i.qty)::int as qty, sum(i.line_total_cents)::int as "revenueCents",
+               (select url from product_media m where m.product_id = i.product_id order by sort limit 1) as "imageUrl"
+        from order_items i join orders o on o.id = i.order_id
+        where o.tenant_id = ${t.id} and o.state <> all(${COUNTED})
+          and (o.placed_at at time zone ${tz})::date between ${r.from}::date and ${r.to}::date
+        group by 1, i.product_id order by qty desc limit 10
+      `;
+      const funnel = (
+        await tx<
+          {
+            visits: number;
+            productViews: number;
+            carts: number;
+            checkouts: number;
+            orders: number;
+          }[]
+        >`
+          select
+            count(distinct session_id) filter (where name = 'page_view')::int as visits,
+            count(distinct session_id) filter (where name = 'product_view')::int as "productViews",
+            count(distinct session_id) filter (where name = 'add_to_cart')::int as carts,
+            count(distinct session_id) filter (where name = 'checkout_start')::int as checkouts,
+            count(distinct session_id) filter (where name = 'order_placed')::int as orders
+          from analytics_events
+          where tenant_id = ${t.id}
+            and (at at time zone ${tz})::date between ${r.from}::date and ${r.to}::date
+        `
+      )[0]!;
+      const zones = await tx`
+        select case when delivery ->> 'mode' = 'pickup' then 'Retirada'
+                    else coalesce(delivery ->> 'zoneName', delivery ->> 'neighborhood', 'Entrega') end as name,
+               count(*)::int as orders, sum(total_cents)::int as "revenueCents",
+               coalesce(sum(delivery_fee_cents), 0)::int as "feesCents"
+        from orders
+        where tenant_id = ${t.id} and state <> all(${COUNTED})
+          and (placed_at at time zone ${tz})::date between ${r.from}::date and ${r.to}::date
+        group by 1 order by orders desc limit 20
+      `;
+      const payments = await tx`
+        select payment ->> 'method' as method, count(*)::int as orders, sum(total_cents)::int as "revenueCents"
+        from orders
+        where tenant_id = ${t.id} and state <> all(${COUNTED})
+          and (placed_at at time zone ${tz})::date between ${r.from}::date and ${r.to}::date
+        group by 1 order by orders desc
+      `;
+      const coupons = await tx`
+        select o.coupon_code as code, count(*)::int as orders, sum(o.discount_cents)::int as "discountCents",
+               sum(o.total_cents)::int as "revenueCents"
+        from orders o
+        where o.tenant_id = ${t.id} and o.coupon_code is not null and o.state <> all(${COUNTED})
+          and (o.placed_at at time zone ${tz})::date between ${r.from}::date and ${r.to}::date
+        group by 1 order by orders desc limit 10
+      `;
+      const repeat = (
+        await tx<{ customers: number; returning: number }[]>`
+          select count(*)::int as customers, count(*) filter (where n >= 2)::int as returning from (
+            select customer_phone, count(*) as n from orders
+            where tenant_id = ${t.id} and customer_phone is not null and state <> all(${COUNTED})
+              and (placed_at at time zone ${tz})::date between ${r.from}::date and ${r.to}::date
+            group by customer_phone
+          ) x
+        `
+      )[0]!;
+      return {
+        range: r,
+        current,
+        previous,
+        series,
+        hours,
+        products,
+        funnel,
+        zones,
+        payments,
+        coupons,
+        repeat,
+      };
+    }),
+  );
+
+  // CSV of the orders in range — opens in Excel/Sheets (semicolons, BOM, comma decimals: pt-BR locale)
+  admin.get('/reports/orders.csv', async (c) => {
+    need(c, 'manager');
+    const t = c.get('tenant');
+    const r = range(c);
+    const rows = await withTenant(sql, t.id, async (tx) => {
+      const tz = await storeTz(tx, t.id);
+      return tx<
+        {
+          number: number;
+          placed: string;
+          state: string;
+          name: string;
+          phone: string | null;
+          mode: string;
+          zone: string | null;
+          method: string;
+          pstatus: string;
+          items: string;
+          subtotal: number;
+          fee: number;
+          discount: number;
+          total: number;
+          coupon: string | null;
+        }[]
+      >`
+        select o.number, to_char(o.placed_at at time zone ${tz}, 'YYYY-MM-DD HH24:MI') as placed, o.state,
+               o.customer ->> 'name' as name, o.customer_phone as phone, o.delivery ->> 'mode' as mode,
+               o.delivery ->> 'zoneName' as zone, o.payment ->> 'method' as method, o.payment ->> 'status' as pstatus,
+               coalesce((select string_agg(i.qty || 'x ' || i.name, ', ' order by i.sort) from order_items i where i.order_id = o.id), '') as items,
+               o.subtotal_cents as subtotal, o.delivery_fee_cents as fee, o.discount_cents as discount,
+               o.total_cents as total, o.coupon_code as coupon
+        from orders o
+        where o.tenant_id = ${t.id}
+          and (o.placed_at at time zone ${tz})::date between ${r.from}::date and ${r.to}::date
+        order by o.placed_at
+        limit 20000
+      `;
+    });
+    const money = (cents: number) => (cents / 100).toFixed(2).replace('.', ',');
+    const cell = (v: unknown) => {
+      const s = v === null || v === undefined ? '' : String(v);
+      // formula injection guard for spreadsheet apps
+      const safe = /^[=+\-@\t\r]/.test(s) ? `'${s}` : s;
+      return /[";\n]/.test(safe) ? `"${safe.replaceAll('"', '""')}"` : safe;
+    };
+    const head = [
+      'pedido',
+      'data',
+      'situação',
+      'cliente',
+      'telefone',
+      'modo',
+      'área',
+      'pagamento',
+      'status pagamento',
+      'itens',
+      'subtotal',
+      'entrega',
+      'desconto',
+      'total',
+      'cupom',
+    ];
+    const lines = rows.map((o) =>
+      [
+        o.number,
+        o.placed,
+        o.state,
+        o.name,
+        o.phone,
+        o.mode,
+        o.zone,
+        o.method,
+        o.pstatus,
+        o.items,
+        money(o.subtotal),
+        money(o.fee),
+        money(o.discount),
+        money(o.total),
+        o.coupon,
+      ]
+        .map(cell)
+        .join(';'),
+    );
+    c.header('content-type', 'text/csv; charset=utf-8');
+    c.header('content-disposition', `attachment; filename="pedidos-${r.from}-a-${r.to}.csv"`);
+    c.header('cache-control', 'no-store');
+    return c.body('﻿' + [head.join(';'), ...lines].join('\r\n'));
+  });
+}

@@ -36,6 +36,16 @@ services:
       VENDUA_TRUST_PROXY: '1'
       # Chain is client → Traefik → nginx → core; trust nginx's append (1 hop from the right).
       VENDUA_PROXY_HOPS: ${VENDUA_PROXY_HOPS:-1}
+      # Merchant admin: stores live at <slug>.<VENDUA_STORE_DOMAIN>.
+      VENDUA_STORE_DOMAIN: ${VENDUA_STORE_DOMAIN:-vendua.com.br}
+      # The admin's own domain (the `admin` service's); set, no other host serves /admin.
+      VENDUA_ADMIN_HOST: ${VENDUA_ADMIN_HOST:-}
+      # Web push for new orders (npx web-push generate-vapid-keys); unset = push off, sound still on.
+      VAPID_PUBLIC_KEY: ${VAPID_PUBLIC_KEY:-}
+      VAPID_PRIVATE_KEY: ${VAPID_PRIVATE_KEY:-}
+      VAPID_SUBJECT: ${VAPID_SUBJECT:-mailto:suporte@vendua.com.br}
+      # Ajuda's "chamar no WhatsApp" number (digits); unset = in-app message only.
+      VENDUA_SUPPORT_WHATSAPP: ${VENDUA_SUPPORT_WHATSAPP:-}
       # 1 = seed the three demo tenants + catalog on first boot; 0 = empty.
       SEED_DEMO: ${SEED_DEMO:-1}
       # slug:public-host[,slug:host2] — registers each storefront's real domain at seed time.
@@ -124,6 +134,18 @@ services:
   crm:
     build:
       context: ./apps/control
+    depends_on:
+      core:
+        condition: service_healthy
+    restart: unless-stopped
+    logging:
+      driver: json-file
+      options: { max-size: '10m', max-file: '3' }
+
+  # Merchant admin on its own domain — proxies /admin and /v1/media to core.
+  admin:
+    build:
+      context: ./apps/admin
     depends_on:
       core:
         condition: service_healthy

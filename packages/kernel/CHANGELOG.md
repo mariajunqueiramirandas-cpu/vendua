@@ -3,6 +3,17 @@
 Semver, per docs/architecture/11-backward-compatibility.md: minors and patches
 never need a storefront edit; a major only ships with a Contract major.
 
+## 1.4.0
+
+Merchant admin support — additive, no storefront edit.
+
+- Checkout offers only the payment methods the store accepts (`StoreProfile.paymentMethods`,
+  set from the merchant admin); Core answers `PAYMENT_METHOD_UNAVAILABLE` for any other.
+- `StoreProfile.logoUrl`: the logo the merchant uploaded.
+- Editor preview: a storefront framed by the admin with `?vendua-preview=1` renders the
+  editor's draft templates (postMessage), outlines the selected section and reports taps
+  on sections back to the editor. Preview sessions send no analytics.
+
 ## 1.3.1
 
 Default UI refresh — visual and behavioural polish in the SDK sections and

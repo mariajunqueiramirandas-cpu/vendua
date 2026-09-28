@@ -67,3 +67,35 @@ describe('deriveStatus', () => {
     expect(s.resumesAt).toBeUndefined();
   });
 });
+
+describe('deriveStatus — merchant admin additions', () => {
+  test('a timed pause ends by itself', () => {
+    const s = deriveStatus(
+      daily9to22,
+      'paused',
+      '2026-09-18T14:00:00Z',
+      at('2026-09-18T15:00:00Z'),
+    );
+    expect(s.status).toBe('open');
+  });
+
+  test('a closed special day overrides the weekly hours and reopens the next day', () => {
+    // 2026-09-18 is a Friday; 12:00 Sao_Paulo
+    const s = deriveStatus(daily9to22, null, null, at('2026-09-18T15:00:00Z'), [
+      { date: '2026-09-18', closed: true, label: 'Feriado' },
+    ]);
+    expect(s.status).toBe('closed');
+    // next day 09:00 Sao_Paulo = 12:00 UTC
+    expect(s.resumesAt).toBe('2026-09-19T12:00:00.000Z');
+  });
+
+  test('special hours replace the weekly window that day', () => {
+    const special = [{ date: '2026-09-18', closed: false, open: '14:00', close: '18:00' }];
+    expect(deriveStatus(daily9to22, null, null, at('2026-09-18T15:00:00Z'), special).status).toBe(
+      'closed',
+    );
+    expect(deriveStatus(daily9to22, null, null, at('2026-09-18T18:00:00Z'), special).status).toBe(
+      'open',
+    );
+  });
+});

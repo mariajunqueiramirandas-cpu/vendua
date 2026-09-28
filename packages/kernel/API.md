@@ -135,6 +135,16 @@ joins the restock waitlist and shows how many wait.
 `checkout.AddressForm` gains optional `onCep`/`cepStatus`, `onLocate`/`locateStatus` and
 `zoneHint`; `CustomerDraft` gains optional `cep` and `reference`.
 
+### Editor preview (Kernel 1.4)
+
+Not an export: a storefront loaded inside a frame with `?vendua-preview=1` listens for
+`{ type: 'vendua:preview', templates?, tokens?, selected? }` from its parent, renders those
+draft templates and tokens over the live ones (each validated like Core does), outlines
+`selected`'s section and posts `{ type: 'vendua:preview-select', id }` when a section is
+tapped. It announces itself with `{ type: 'vendua:preview-ready', tokens, paths }` (the tokens in
+force and the store's routes) and sends no analytics. The merchant admin's
+Aparência editor is the only caller.
+
 ## Styling API (Contract surface)
 
 Three layers, in order of preference (17 — styling API):

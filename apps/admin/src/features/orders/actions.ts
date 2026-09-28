@@ -1,0 +1,173 @@
+import { useMutation, useQueryClient } from '@tanstack/react-query';
+import { api, type Board, type Order, type OrderState } from '../../lib/api.ts';
+import { clock, money, phone, whatsappLink } from '../../lib/format.ts';
+import { haptic } from '../../lib/haptics.ts';
+import { markOrdersSeen } from '../../lib/live.ts';
+import { qk } from '../../lib/query.ts';
+import { messageOf } from '../../ui/feedback.tsx';
+import { toast } from '../../ui/Toast.tsx';
+
+const DONE_TOAST: Partial<Record<OrderState, (o: Order) => string>> = {
+  confirmed: (o) => `Pedido #${o.number} aceito`,
+  preparing: (o) => `#${o.number} em preparo`,
+  ready: (o) => `#${o.number} pronto`,
+  out_for_delivery: (o) => `#${o.number} saiu para entrega`,
+  delivered: (o) => `#${o.number} entregue ✓`,
+  cancelled: (o) => `Pedido #${o.number} cancelado`,
+  refunded: (o) => `#${o.number} marcado como estornado`,
+};
+
+/** Advance an order with an optimistic board update; offline it queues (same key on replay). */
+export function useTransition() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (v: {
+      order: Order;
+      to: OrderState;
+      prepMinutes?: number;
+      reason?: string;
+      idem: string;
+    }) =>
+      api.transition(
+        v.order.id,
+        v.to,
+        {
+          ...(v.prepMinutes ? { prepMinutes: v.prepMinutes } : {}),
+          ...(v.reason ? { reason: v.reason } : {}),
+        },
+        v.idem,
+      ),
+    onMutate: async (v) => {
+      haptic.commit();
+      markOrdersSeen();
+      await qc.cancelQueries({ queryKey: qk.board });
+      const prev = qc.getQueryData<Board>(qk.board);
+      if (prev)
+        qc.setQueryData<Board>(qk.board, {
+          ...prev,
+          orders: prev.orders.map((o) => (o.id === v.order.id ? { ...o, state: v.to } : o)),
+        });
+      return { prev };
+    },
+    onError: (e, _v, ctx) => {
+      if (ctx?.prev) qc.setQueryData(qk.board, ctx.prev);
+      haptic.error();
+      toast.error(messageOf(e));
+    },
+    onSuccess: ({ order }, v) => {
+      qc.setQueryData(qk.order(order.id), (old: { customer: unknown } | undefined) => ({
+        customer: old?.customer ?? null,
+        order,
+      }));
+      toast(DONE_TOAST[v.to]?.(order) ?? 'Pedido atualizado');
+    },
+    onSettled: () => {
+      void qc.invalidateQueries({ queryKey: qk.board });
+      void qc.invalidateQueries({ queryKey: qk.home });
+    },
+  });
+}
+
+export function useMarkPaid() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (v: { id: string; status: 'paid' | 'pending' }) => api.markPaid(v.id, v.status),
+    onSuccess: ({ order }, v) => {
+      qc.setQueryData(qk.order(order.id), (old: { customer: unknown } | undefined) => ({
+        customer: old?.customer ?? null,
+        order,
+      }));
+      void qc.invalidateQueries({ queryKey: ['orders'] });
+      void qc.invalidateQueries({ queryKey: qk.payments });
+      void qc.invalidateQueries({ queryKey: qk.home });
+      toast(v.status === 'paid' ? `#${order.number} marcado como pago` : 'Pagamento desmarcado', {
+        ...(v.status === 'paid'
+          ? {
+              undo: () =>
+                api
+                  .markPaid(v.id, 'pending')
+                  .then(() => qc.invalidateQueries({ queryKey: ['orders'] })),
+            }
+          : {}),
+      });
+    },
+    onError: (e) => toast.error(messageOf(e)),
+  });
+}
+
+export const CANCEL_REASONS = [
+  'Acabou um item do pedido',
+  'Loja fechando agora',
+  'Fora da área de entrega',
+  'Cliente pediu para cancelar',
+  'Não conseguimos falar com o cliente',
+];
+
+export const firstName = (n: string) => n.trim().split(/\s+/)[0] ?? n;
+
+/** The WhatsApp message that fits the order's moment. */
+export function whatsappFor(o: Order, storeName: string): string {
+  const hi = `Oi, ${firstName(o.customer.name)}! Aqui é da ${storeName}.`;
+  const promised = o.delivery.promisedTo ? clock(o.delivery.promisedTo) : null;
+  switch (o.state) {
+    case 'placed':
+      return `${hi} Recebemos seu pedido #${o.number}.`;
+    case 'confirmed':
+    case 'preparing':
+      return `${hi} Seu pedido #${o.number} já está sendo preparado${promised ? ` e fica pronto por volta das ${promised}` : ''}.`;
+    case 'ready':
+      return o.delivery.mode === 'pickup'
+        ? `${hi} Seu pedido #${o.number} está pronto para retirar. Te esperamos!`
+        : `${hi} Seu pedido #${o.number} está pronto e já vai sair.`;
+    case 'out_for_delivery':
+      return `${hi} Seu pedido #${o.number} saiu para entrega e chega logo.`;
+    case 'delivered':
+      return `${hi} Obrigado pelo pedido #${o.number}! Esperamos que tenha gostado.`;
+    default:
+      return `${hi} Sobre o pedido #${o.number}:`;
+  }
+}
+
+export function whatsappUrl(o: Order, storeName: string) {
+  return whatsappLink(o.customer.phone, whatsappFor(o, storeName));
+}
+
+const esc = (s: string) =>
+  s.replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]!);
+
+/** 80 mm kitchen ticket: big number, items, notes; the browser's print dialog. */
+export function printTicket(o: Order, storeName: string) {
+  const items = o.items
+    .map(
+      (i) =>
+        `<div class="it"><b>${i.qty}×</b> ${esc(i.name)}${
+          i.modifiers.length
+            ? `<div class="sub">${i.modifiers.map((m) => esc(m.name)).join(' · ')}</div>`
+            : ''
+        }${i.combo.length ? `<div class="sub">${i.combo.map((c) => `${c.qty}× ${esc(c.name)}`).join(' · ')}</div>` : ''}</div>`,
+    )
+    .join('');
+  const html = `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8"><title>Pedido #${o.number}</title>
+<style>@page{size:80mm auto;margin:4mm}body{font:14px/1.35 ui-monospace,Menlo,monospace;color:#000;width:72mm;margin:0}
+h1{font-size:34px;margin:0 0 4px}.m{font-size:13px}.it{padding:6px 0;border-bottom:1px dashed #000;font-size:16px}
+.sub{font-size:13px;padding-left:22px}.n{margin-top:8px;padding:6px;border:2px solid #000;font-size:15px;font-weight:bold}
+.t{margin-top:8px;font-size:16px;font-weight:bold;text-align:right}</style></head><body>
+<div class="m">${esc(storeName)}</div><h1>#${o.number}</h1>
+<div class="m">${esc(o.customer.name)} · ${esc(phone(o.customer.phone))}</div>
+<div class="m">${o.delivery.mode === 'delivery' ? `ENTREGA: ${esc(o.delivery.address ?? '')} ${esc(o.delivery.neighborhood ?? '')}` : 'RETIRADA'}</div>
+${o.scheduledFor ? `<div class="m">ENCOMENDA PARA ${esc(o.scheduledFor)}</div>` : ''}
+<div class="m">${new Date(o.placedAt).toLocaleString('pt-BR')}</div>
+<div style="margin-top:8px">${items}</div>
+${o.notes ? `<div class="n">OBS: ${esc(o.notes)}</div>` : ''}
+<div class="t">${esc(money(o.totalCents))} · ${o.payment.method === 'pix' ? 'Pix' : o.payment.method === 'cash' ? 'Dinheiro' : 'Cartão'}${
+    o.payment.status === 'paid' ? ' (pago)' : ''
+  }</div>
+<script>window.onload=()=>{window.print();setTimeout(()=>window.close(),300)}</script></body></html>`;
+  const w = window.open('', '_blank', 'width=420,height=640');
+  if (!w) {
+    toast.error('O navegador bloqueou a janela de impressão. Permita pop-ups para esta página.');
+    return;
+  }
+  w.document.write(html);
+  w.document.close();
+}

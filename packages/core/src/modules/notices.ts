@@ -55,9 +55,11 @@ export function composeNotices(
       kind: 'store_paused',
       severity: 'blocking',
       title: 'Estamos pausados no momento',
-      body: derived.resumesAt
-        ? `Voltamos a aceitar pedidos ${formatResume(derived.resumesAt, tz)}.`
-        : 'Voltamos a aceitar pedidos em breve.',
+      body:
+        settings?.pause_message ??
+        (derived.resumesAt
+          ? `Voltamos a aceitar pedidos ${formatResume(derived.resumesAt, tz)}.`
+          : 'Voltamos a aceitar pedidos em breve.'),
       dismissible: false,
       priority: 100,
       ...(derived.resumesAt ? { payload: { resumesAt: derived.resumesAt } } : {}),
@@ -68,9 +70,11 @@ export function composeNotices(
       kind: 'store_closed',
       severity: 'warning',
       title: 'Fechado agora',
-      body: derived.resumesAt
-        ? `Abrimos ${formatResume(derived.resumesAt, tz)}. Você já pode montar sua sacola.`
-        : 'Estamos fechados no momento.',
+      body:
+        settings?.closed_message ??
+        (derived.resumesAt
+          ? `Abrimos ${formatResume(derived.resumesAt, tz)}. Você já pode montar sua sacola.`
+          : 'Estamos fechados no momento.'),
       dismissible: true,
       priority: 50,
       // resumesAt in payload lets specialized slots restyle the countdown without parsing pt-BR copy
