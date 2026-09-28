@@ -1,4 +1,10 @@
-import { ArrowLeft, ArrowRight, Storefront, WhatsappLogo } from '@phosphor-icons/react';
+import {
+  ArrowLeft,
+  ArrowRight,
+  ClipboardText,
+  Storefront,
+  WhatsappLogo,
+} from '@phosphor-icons/react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { useEffect, useRef, useState } from 'react';
 import { api, ApiError, type StoreRef } from '../../lib/api.ts';
@@ -13,14 +19,41 @@ import { ArtStore } from '../../ui/illustrations.tsx';
 
 type Step =
   | { kind: 'phone' }
-  | { kind: 'code'; phone: string; devCode?: string }
+  | { kind: 'code'; phone: string; sentAt: number; devCode?: string }
   | { kind: 'pick'; token: string; stores: StoreRef[] };
+
+// The code arrives in WhatsApp, so the merchant leaves the app to read it, and the
+// phone may kill the app meanwhile (iOS does, often). The pending step is kept until
+// the code expires, so coming back lands on "Digite o código". Never the code itself.
+const PENDING = 'vendua-admin-signin';
+type Pending = { phone: string; sentAt: number; expiresAt: number };
+
+function loadPending(): Step {
+  try {
+    const p = JSON.parse(localStorage.getItem(PENDING) ?? 'null') as Pending | null;
+    if (p && typeof p.phone === 'string' && p.expiresAt > Date.now())
+      return { kind: 'code', phone: p.phone, sentAt: p.sentAt };
+  } catch {
+    /* private mode or a bad value: start over */
+  }
+  return { kind: 'phone' };
+}
+function savePending(p: Pending | null) {
+  try {
+    if (p) localStorage.setItem(PENDING, JSON.stringify(p));
+    else localStorage.removeItem(PENDING);
+  } catch {
+    /* private mode: the step lives in memory only */
+  }
+}
+const expiry = (iso: string) => Date.parse(iso) || Date.now() + 10 * 60_000;
 
 /** Sign in with the phone: a 6-digit code on WhatsApp, no password (ADR 0020). */
 export function Login() {
-  const [step, setStep] = useState<Step>({ kind: 'phone' });
+  const [step, setStep] = useState<Step>(loadPending);
   const qc = useQueryClient();
   const enter = () => {
+    savePending(null);
     void qc.invalidateQueries({ queryKey: qk.session });
     window.history.replaceState(null, '', '/admin/');
   };
@@ -55,16 +88,28 @@ export function Login() {
           </p>
           {step.kind === 'phone' ? (
             <PhoneStep
-              onSent={(phone, devCode) =>
-                setStep({ kind: 'code', phone, ...(devCode ? { devCode } : {}) })
-              }
+              onSent={(phone, expiresAt, devCode) => {
+                const sentAt = Date.now();
+                savePending({ phone, sentAt, expiresAt: expiry(expiresAt) });
+                setStep({ kind: 'code', phone, sentAt, ...(devCode ? { devCode } : {}) });
+              }}
             />
           ) : step.kind === 'code' ? (
             <CodeStep
               phone={step.phone}
+              sentAt={step.sentAt}
               devCode={step.devCode}
-              onBack={() => setStep({ kind: 'phone' })}
-              onPick={(token, stores) => setStep({ kind: 'pick', token, stores })}
+              onBack={() => {
+                savePending(null);
+                setStep({ kind: 'phone' });
+              }}
+              onResent={(expiresAt) =>
+                savePending({ phone: step.phone, sentAt: Date.now(), expiresAt: expiry(expiresAt) })
+              }
+              onPick={(token, stores) => {
+                savePending(null);
+                setStep({ kind: 'pick', token, stores });
+              }}
               onDone={enter}
             />
           ) : (
@@ -76,13 +121,17 @@ export function Login() {
   );
 }
 
-function PhoneStep({ onSent }: { onSent: (phone: string, devCode?: string) => void }) {
+function PhoneStep({
+  onSent,
+}: {
+  onSent: (phone: string, expiresAt: string, devCode?: string) => void;
+}) {
   const [shown, setShown] = useState('');
   const [digits, setDigits] = useState<string | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const start = useMutation({
     mutationFn: (p: string) => api.auth.start(p),
-    onSuccess: (r, p) => onSent(p, r.devCode),
+    onSuccess: (r, p) => onSent(p, r.expiresAt, r.devCode),
     onError: (e) => setErr(messageOf(e)),
   });
   return (
@@ -124,22 +173,32 @@ function PhoneStep({ onSent }: { onSent: (phone: string, devCode?: string) => vo
   );
 }
 
+const RESEND_AFTER = 30;
+
 function CodeStep({
   phone,
+  sentAt,
   devCode,
   onBack,
+  onResent,
   onPick,
   onDone,
 }: {
   phone: string;
+  sentAt: number;
   devCode?: string | undefined;
   onBack: () => void;
+  onResent: (expiresAt: string) => void;
   onPick: (token: string, stores: StoreRef[]) => void;
   onDone: () => void;
 }) {
   const [code, setCode] = useState('');
   const [err, setErr] = useState<string | null>(null);
-  const [wait, setWait] = useState(30);
+  // counted from the send, not from this screen: a reload mustn't restart the wait
+  const [wait, setWait] = useState(() =>
+    Math.max(0, RESEND_AFTER - Math.floor((Date.now() - sentAt) / 1000)),
+  );
+  const canPaste = typeof navigator !== 'undefined' && !!navigator.clipboard?.readText;
   const inputs = useRef<(HTMLInputElement | null)[]>([]);
   useEffect(() => {
     const t = setInterval(() => setWait((w) => Math.max(0, w - 1)), 1000);
@@ -156,7 +215,10 @@ function CodeStep({
   });
   const resend = useMutation({
     mutationFn: () => api.auth.start(phone),
-    onSuccess: () => setWait(30),
+    onSuccess: (r) => {
+      setWait(RESEND_AFTER);
+      onResent(r.expiresAt);
+    },
   });
   const setAt = (i: number, v: string) => {
     const d = v.replace(/\D/g, '');
@@ -217,6 +279,22 @@ function CodeStep({
           ))}
         </div>
       </fieldset>
+      {canPaste && code.length < 6 ? (
+        <Button
+          variant="secondary"
+          size="sm"
+          className="mt-3"
+          icon={<ClipboardText />}
+          onClick={async () => {
+            // WhatsApp's code message has a "copiar código" button
+            const d = (await navigator.clipboard.readText().catch(() => '')).replace(/\D/g, '');
+            if (d.length === 6) setAt(0, d);
+            else setErr('Não achamos um código de 6 números copiado. Digite o código.');
+          }}
+        >
+          colar código
+        </Button>
+      ) : null}
       {err ? (
         <p className="t-body mt-3 text-danger" role="alert">
           {err}
