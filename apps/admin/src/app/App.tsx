@@ -1,4 +1,4 @@
-import { lazy, Suspense, useEffect } from 'react';
+import { lazy, Suspense, useEffect, useRef } from 'react';
 import { Navigate, Route, Routes, useLocation } from 'react-router-dom';
 import { useQueryClient } from '@tanstack/react-query';
 import { ApiError } from '../lib/api.ts';
@@ -34,6 +34,8 @@ export default function App() {
   const q = useSessionQuery();
   const qc = useQueryClient();
   const loc = useLocation();
+  // once signed out, a background re-check keeps the sign-in on screen (its step lives there)
+  const signedOut = useRef(false);
   useEffect(() => {
     const on = () => void qc.invalidateQueries({ queryKey: qk.session });
     window.addEventListener('vendua:unauthenticated', on);
@@ -51,13 +53,15 @@ export default function App() {
         <UiReference />
       </Suspense>
     );
-  if (q.isPending)
+  const unauth =
+    (q.error instanceof ApiError && q.error.status === 401) || (q.isPending && signedOut.current);
+  signedOut.current = unauth || (signedOut.current && !q.data);
+  if (q.isPending && !unauth)
     return (
       <div className="mx-auto max-w-lg p-6" aria-busy>
         <Loading />
       </div>
     );
-  const unauth = q.error instanceof ApiError && q.error.status === 401;
   if (unauth || loc.pathname === '/entrar')
     return q.data && !unauth ? (
       <Navigate to="/" replace />

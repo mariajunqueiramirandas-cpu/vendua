@@ -18,6 +18,10 @@ export function useSessionQuery() {
     queryFn: api.session,
     staleTime: 5 * 60_000,
     retry: false,
+    // signed out there is nothing to refresh, and a refetch would reset the sign-in
+    // halfway (the merchant switched to WhatsApp for the code and came back)
+    refetchOnWindowFocus: (q) => q.state.data !== undefined,
+    refetchOnReconnect: (q) => q.state.data !== undefined,
   });
 }
 
