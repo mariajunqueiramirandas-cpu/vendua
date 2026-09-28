@@ -65,6 +65,19 @@ In Dokploy, assign a domain to each web service (port 80):
   the Origin check. Keep that label out of store slugs — the Phase 4
   provisioner must reserve it.
 
+- `stores` → the wildcard `*.vendua.com.br` (same value as
+  `VENDUA_STORE_DOMAIN`). Core routes `<slug>.vendua.com.br` to the tenant with
+  that slug, so every store opens there even without its own service or domain
+  row. Give this router the **lowest priority** (Traefik label
+  `traefik.http.routers.<router>.priority=1`): Traefik ranks rules by length, and
+  a `HostRegexp` rule would otherwise beat the exact `Host()` of `quero-pudim`,
+  `admin`, `crm` and `site`. The wildcard certificate comes from your DNS-01
+  resolver.
+
+Store links (share, QR, "ver loja") always use the store's **primary** domain
+row, then any public row, then `<slug>.<VENDUA_STORE_DOMAIN>` — never a URL
+guessed from the slug alone.
+
 Then set `SEED_DOMAINS` to match, e.g.
 `quero-pudim:pudim.example.com` — tenant routing is
 Host-header based, so each storefront's public domain must exist in the
@@ -73,6 +86,9 @@ Host-header based, so each storefront's public domain must exist in the
 ```sql
 insert into domains (host, tenant_id)
   select 'pudim.example.com', id from tenants where slug = 'quero-pudim';
+-- make it the address every admin link uses (one primary per store)
+update domains set is_primary = (host = 'pudim.example.com')
+  where tenant_id = (select id from tenants where slug = 'quero-pudim');
 ```
 
 (Exec into the `db` container or use Dokploy's database console.)
@@ -125,6 +141,7 @@ Boot order is handled by healthchecks: `db` healthy → `core` migrates
 | `db`          | postgres:16-alpine                                         | internal only  |
 | `core`        | `packages/core/Dockerfile` (Bun)                           | 8787, internal |
 | `quero-pudim` | `storefronts/Dockerfile` `target: storefront` (vite→nginx) | 80             |
+| `stores`      | same, `STOREFRONT=_template` — wildcard catch-all          | 80             |
 | `crm`         | `apps/control/Dockerfile` (nginx + conf baked in)          | 80             |
 | `admin`       | `apps/admin/Dockerfile` (nginx + conf baked in)            | 80             |
 | `site`        | `storefronts/Dockerfile` `target: site` (SvelteKit→nginx)  | 80             |

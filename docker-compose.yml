@@ -106,6 +106,25 @@ services:
       driver: json-file
       options: { max-size: '10m', max-file: '3' }
 
+  # Catch-all storefront for *.<VENDUA_STORE_DOMAIN>: the `_template` bundle renders
+  # whichever tenant Core resolves from Host (templates + sections live in Core), so a
+  # store with no bespoke bundle still opens at <slug>.<domain>. Stores with their own
+  # service keep their exact-host domain, which Traefik matches first.
+  stores:
+    build:
+      context: .
+      dockerfile: storefronts/Dockerfile
+      target: storefront
+      args:
+        STOREFRONT: _template
+    depends_on:
+      core:
+        condition: service_healthy
+    restart: unless-stopped
+    logging:
+      driver: json-file
+      options: { max-size: '10m', max-file: '3' }
+
   # Instagram DM transport (services/ig-sidecar, Go + mautrix-meta, AGPL-3.0). Internal
   # only: Core pushes the stored session in and it posts signed events back. Without
   # IG_SIDECAR_SECRET it idles and refuses every call.
