@@ -878,8 +878,9 @@ export async function leadStats(sql: Sql): Promise<LeadStats> {
     const tasks = (
       await tx<{ open: number; overdue: number }[]>`
         select count(*)::int as open,
-               count(*) filter (where due_at < now())::int as overdue
-        from lead_tasks where done_at is null
+               count(*) filter (where t.due_at < now())::int as overdue
+        from lead_tasks t join leads l on l.id = t.lead_id
+        where t.done_at is null and l.archived_at is null
       `
     )[0]!;
     const drafts = (
