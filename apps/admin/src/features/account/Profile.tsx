@@ -23,6 +23,8 @@ import {
 } from '../../ui/fields.tsx';
 import { PageBody, PageHeader } from '../../ui/Page.tsx';
 import { toast } from '../../ui/Toast.tsx';
+import { resetClient } from '../../lib/persist.ts';
+import { isIOS, standalone } from '../../lib/pwa.ts';
 
 export default function Profile() {
   const s = useSession();
@@ -162,7 +164,9 @@ export default function Profile() {
                   !s.push.publicKey
                     ? 'Os avisos ainda não estão ligados na Venduá. O som funciona com o painel aberto.'
                     : push === 'unsupported'
-                      ? 'Este navegador não recebe avisos. No iPhone, adicione o painel à tela de início.'
+                      ? isIOS() && !standalone()
+                        ? 'No iPhone, os avisos chegam pelo app: toque em Compartilhar › Adicionar à Tela de Início e abra por lá.'
+                        : 'Este navegador não recebe avisos.'
                       : push === 'denied'
                         ? 'Bloqueado neste navegador. Libere nas configurações do site.'
                         : 'Toca e vibra mesmo com o painel fechado. Dá para aceitar direto do aviso.'
@@ -228,7 +232,7 @@ export default function Profile() {
             icon={<SignOut />}
             onClick={async () => {
               await api.auth.logout();
-              qc.clear();
+              await resetClient(qc);
               window.location.assign('/admin/entrar');
             }}
           >

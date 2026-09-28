@@ -12,12 +12,13 @@ import {
   UsersThree,
 } from '@phosphor-icons/react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { api, type KitSlot, type OptionGroup, type ProductDetail } from '../../lib/api.ts';
 import { useAutosave } from '../../lib/autosave.ts';
 import { money, plural } from '../../lib/format.ts';
 import { qk } from '../../lib/query.ts';
+import { takeSharedPhoto } from '../../lib/share.ts';
 import { Button, IconButton } from '../../ui/Button.tsx';
 import { Card } from '../../ui/Card.tsx';
 import { cn } from '../../ui/cn.ts';
@@ -43,6 +44,10 @@ import { toast } from '../../ui/Toast.tsx';
 export default function ProductPage() {
   const { id = '' } = useParams();
   const [search] = useSearchParams();
+  const [sharedFile, setSharedFile] = useState<File | null>(null);
+  useEffect(() => {
+    if (search.get('foto') === 'compartilhada') void takeSharedPhoto().then(setSharedFile);
+  }, [search]);
   const { data, error, refetch } = useQuery({
     queryKey: qk.product(id),
     queryFn: () => api.product(id),
@@ -67,6 +72,7 @@ export default function ProductPage() {
       p={data.product}
       cats={cats.data?.categories ?? []}
       openPhoto={search.get('foto') === '1'}
+      sharedFile={sharedFile}
     />
   );
 }
@@ -75,6 +81,7 @@ function Editor({
   p,
   cats,
   openPhoto,
+  sharedFile,
 }: {
   p: ProductDetail;
   cats: {
@@ -83,6 +90,7 @@ function Editor({
     products: { id: string; name: string; imageUrl: string | null; kind: string }[];
   }[];
   openPhoto: boolean;
+  sharedFile: File | null;
 }) {
   const qc = useQueryClient();
   const nav = useNavigate();
@@ -159,6 +167,7 @@ function Editor({
             label="foto do produto"
             photos={p.gallery}
             autoOpen={openPhoto}
+            initialFile={sharedFile}
             onChange={(next) =>
               media.mutateAsync(
                 next.map((x) => ({

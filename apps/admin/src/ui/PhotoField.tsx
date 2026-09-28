@@ -29,6 +29,7 @@ export function PhotoField({
   max = 12,
   label,
   autoOpen,
+  initialFile,
   aspect = '4:3',
 }: {
   photos: Photo[];
@@ -36,10 +37,15 @@ export function PhotoField({
   max?: number;
   label: string;
   autoOpen?: boolean;
+  /** a photo that arrived another way (shared from the gallery): straight to the crop */
+  initialFile?: File | null;
   aspect?: AspectKey;
 }) {
   const input = useRef<HTMLInputElement>(null);
   const [file, setFile] = useState<File | null>(null);
+  useEffect(() => {
+    if (initialFile) setFile(initialFile);
+  }, [initialFile]);
   useEffect(() => {
     if (autoOpen && !photos.length) input.current?.click();
     // only on first mount: "criar e adicionar foto" lands here with the picker open

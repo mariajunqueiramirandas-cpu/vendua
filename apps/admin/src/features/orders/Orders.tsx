@@ -1,9 +1,16 @@
-import { CalendarBlank, ClockCounterClockwise, ShareNetwork, X } from '@phosphor-icons/react';
+import {
+  CalendarBlank,
+  ClockCounterClockwise,
+  ShareNetwork,
+  SunDim,
+  X,
+} from '@phosphor-icons/react';
 import { useQuery } from '@tanstack/react-query';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { api, type Order, type OrderState } from '../../lib/api.ts';
 import { markOrdersSeen } from '../../lib/live.ts';
+import { useWakeLock, wakeLockSupported } from '../../lib/wakeLock.ts';
 import { qk } from '../../lib/query.ts';
 import { useSession } from '../../lib/session.ts';
 import { Button, IconButton } from '../../ui/Button.tsx';
@@ -55,6 +62,7 @@ export default function Orders() {
   const nav = useNavigate();
   const now = useNow();
   const move = useTransition();
+  const awake = useWakeLock();
   const [lane, setLane] = useState<LaneId>('novos');
   const [selected, setSelected] = useState<string | null>(null);
   const [more, setMore] = useState<Order | null>(null);
@@ -188,6 +196,22 @@ export default function Orders() {
     <div className="mx-auto w-full max-w-[1600px] px-4 pb-32 pt-4 md:px-8 md:pb-10 md:pt-8">
       <header className="mb-4 flex items-center gap-2 md:mb-6 md:gap-3">
         <h1 className="t-title-1 flex-1">Pedidos</h1>
+        {wakeLockSupported() ? (
+          <button
+            type="button"
+            aria-pressed={awake.on}
+            onClick={awake.toggle}
+            title={awake.on ? 'A tela fica ligada nesta página' : 'Manter a tela ligada'}
+            className={cn(
+              't-label inline-flex min-h-11 items-center gap-2 rounded-md px-3 ring-1',
+              awake.on ? 'bg-spark-soft ring-spark' : 'ring-line hover:bg-hover',
+            )}
+          >
+            <SunDim weight={awake.held ? 'fill' : 'regular'} className="size-5" aria-hidden />
+            <span className="hidden sm:inline">Tela ligada</span>
+            <span className="sr-only sm:hidden">manter a tela ligada</span>
+          </button>
+        ) : null}
         <Link
           to="/pedidos/agendados"
           aria-label="Encomendas"

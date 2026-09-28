@@ -33,6 +33,7 @@ import { STATE_META } from '../../ui/StateChip.tsx';
 import { toast } from '../../ui/Toast.tsx';
 import { statusWords, useStoreQuery } from '../store/StatusPill.tsx';
 import { StatusSheet } from '../store/StatusSheet.tsx';
+import { DeviceCard } from './DeviceCard.tsx';
 
 export default function Home() {
   const s = useSession();
@@ -66,6 +67,7 @@ export default function Home() {
           <Section title="Precisa de você" className="order-1 lg:order-none">
             {data ? <Attention data={data} /> : <Skeleton className="h-40" />}
           </Section>
+          <DeviceCard className="order-2 lg:order-none" />
           {data && data.checklist.some((c) => !c.done) ? (
             <div className="order-2 lg:order-none">
               <Checklist items={data.checklist} />

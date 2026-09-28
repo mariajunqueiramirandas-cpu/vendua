@@ -2,6 +2,7 @@ import { useEffect, useSyncExternalStore } from 'react';
 import { queryClient, qk } from './query.ts';
 import { chimeNewOrder, chimePaid } from './sound.ts';
 import { haptic } from './haptics.ts';
+import { ordersSeen } from './pwa.ts';
 
 // One EventSource per signed-in tab (Core: GET /admin/v1/events). Each change
 // invalidates what shows it; a new order also rings: chime + double vibration +
@@ -63,6 +64,7 @@ function ring() {
 
 /** The board calls this when it's on screen — the merchant has seen them. */
 export function markOrdersSeen() {
+  ordersSeen();
   if (state.unseen.length) set({ unseen: [] });
 }
 
