@@ -211,7 +211,7 @@ export function Shell({ children }: { children: ReactNode }) {
             <Suspense
               fallback={
                 <div className="mx-auto max-w-[880px] p-4 md:p-8">
-                  <Loading />
+                  <Loading delay={0} />
                 </div>
               }
             >

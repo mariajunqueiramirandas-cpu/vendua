@@ -11,7 +11,7 @@ import { chimeNewOrder, setVolume } from '../../lib/sound.ts';
 import { readTheme, setTheme, type ThemePref } from '../../lib/theme.ts';
 import { Button } from '../../ui/Button.tsx';
 import { Card, Section } from '../../ui/Card.tsx';
-import { messageOf } from '../../ui/feedback.tsx';
+import { messageOf, Skeleton } from '../../ui/feedback.tsx';
 import {
   Chips,
   CommitInput,
@@ -209,6 +209,7 @@ export default function Profile() {
         </Section>
         <Section title="Aparelhos conectados">
           <Card className="divide-y divide-line">
+            {sessions.isPending ? <Skeleton className="h-16 rounded-none" delay={0} /> : null}
             {(sessions.data?.sessions ?? []).map((x) => (
               <div key={x.id} className="flex min-h-16 items-center gap-3 px-4 py-2">
                 <DeviceMobile className="size-6 shrink-0 text-muted" />

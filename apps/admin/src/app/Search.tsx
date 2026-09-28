@@ -7,7 +7,7 @@ import { ago, money, phone } from '../lib/format.ts';
 import { Sheet } from '../ui/Sheet.tsx';
 import { StateChip } from '../ui/StateChip.tsx';
 import { TextInput } from '../ui/fields.tsx';
-import { EmptyState } from '../ui/feedback.tsx';
+import { EmptyState, Loading } from '../ui/feedback.tsx';
 import { Mascote } from '../ui/Mascote.tsx';
 
 /** One field, three kinds of answer, grouped, as they type (§3.2). */
@@ -64,6 +64,8 @@ export function SearchSheet({
           title={`Nada encontrado para "${debounced}"`}
           body="Confira a grafia ou tente só uma parte do nome."
         />
+      ) : !data ? (
+        <Loading delay={0} />
       ) : (
         <div className="space-y-5">
           {data?.orders.length ? (
