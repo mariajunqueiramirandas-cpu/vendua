@@ -2,18 +2,18 @@
 
 Na cópia, Duá é neutro: sem artigo "o/a" (ex.: "Meu nome é Duá").
 
-Kit recebido em set/2026 (LEIA-ME original: 20 artes). Aqui estão as **16 poses já entregues**, em WebP
+Kit recebido em set/2026 (LEIA-ME original: 20 artes). Aqui estão as **20 poses já entregues**, em WebP
 com alfa, 640×640 (recortadas e centralizadas; os PNG originais 1254×1254 ficam com o design).
 
-Ainda faltam do kit: `avatar-ajuda`, `boas-vindas`, `horarios`, `loja`. Para adicionar: gerar o WebP no
+Todas as 20 artes do kit estão aqui. Para adicionar novas: gerar o WebP no
 mesmo formato, salvar aqui, e incluir o nome em `Pose` em `apps/admin/src/ui/Mascote.tsx`.
 
-| Arquivo                                                                            | Uso                                        |
-| ---------------------------------------------------------------------------------- | ------------------------------------------ |
-| `avatar-ola` / `avatar-pensando` / `avatar-feliz`                                  | Balão do assistente (64–96 px), login      |
-| `personalizar` `pagamento` `catalogo` `entrega` `publicar`                         | Passos do onboarding, finale               |
-| `sucesso` `erro` `carregando` `sem-resultados` `sem-pedidos` `offline` `seguranca` | Estados vazios/erro                        |
-| `carinho`                                                                          | Marca / acolhimento (ainda sem uso no app) |
+| Arquivo                                                                                    | Uso                                        |
+| ------------------------------------------------------------------------------------------ | ------------------------------------------ |
+| `avatar-ola` / `avatar-pensando` / `avatar-feliz` / `avatar-ajuda`                         | Balão do assistente (64–96 px), login      |
+| `boas-vindas` `horarios` `loja` `personalizar` `pagamento` `catalogo` `entrega` `publicar` | Passos do onboarding, finale               |
+| `sucesso` `erro` `carregando` `sem-resultados` `sem-pedidos` `offline` `seguranca`         | Estados vazios/erro                        |
+| `carinho`                                                                                  | Marca / acolhimento (ainda sem uso no app) |
 
 ## Regras (do kit)
 

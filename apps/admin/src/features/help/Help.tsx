@@ -92,7 +92,7 @@ export default function Help() {
       <PageHeader title="Ajuda" subtitle="A gente responde de gente para gente." />
       <div className="space-y-8">
         <Card className="flex flex-col items-center gap-4 p-6 text-center sm:flex-row sm:text-left">
-          <Mascote pose="avatar-ola" size={128} className="w-32 shrink-0" />
+          <Mascote pose="avatar-ajuda" size={128} className="w-32 shrink-0" />
           <div className="flex-1">
             <p className="t-title-2">Fale com a Venduá</p>
             <p className="t-body mt-1 text-muted">

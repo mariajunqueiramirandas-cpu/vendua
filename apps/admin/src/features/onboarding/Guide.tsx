@@ -8,11 +8,11 @@ const still = () =>
 
 const POSE: Record<string, Pose> = {
   oi: 'avatar-ola',
-  nome: 'avatar-pensando',
+  nome: 'loja',
   logo: 'personalizar',
   whatsapp: 'avatar-pensando',
   frase: 'personalizar',
-  horarios: 'carregando',
+  horarios: 'horarios',
   como: 'entrega',
   pix: 'pagamento',
   produtos: 'catalogo',

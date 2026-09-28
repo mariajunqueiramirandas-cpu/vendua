@@ -8,6 +8,7 @@ import { can, useSession } from '../../lib/session.ts';
 import { Button, ButtonLink } from '../../ui/Button.tsx';
 import { cn } from '../../ui/cn.ts';
 import { ErrorState, Loading, messageOf } from '../../ui/feedback.tsx';
+import { Mascote } from '../../ui/Mascote.tsx';
 import { toWeek } from '../../ui/TimeRangeField.tsx';
 import { toast } from '../../ui/Toast.tsx';
 import { Finale, type Pending } from './Finale.tsx';
@@ -226,6 +227,7 @@ function Flow({
 
           {step === 'oi' ? (
             <div className="animate-fade-up space-y-6">
+              <Mascote pose="boas-vindas" size={200} className="mx-auto w-48" />
               <div>
                 <h1 className="t-title-1 md:text-[2rem]">Vamos abrir a sua loja online?</h1>
                 <p className="t-body-lg mt-2 text-muted">
