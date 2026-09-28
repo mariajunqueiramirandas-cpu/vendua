@@ -173,7 +173,7 @@ export interface AppDeps {
   otpSender?: OtpSender | undefined;
   /** shared with the push worker in index.ts; tests let the app make its own */
   adminHub?: AdminHub | undefined;
-  /** stores live at `<slug>.<storeDomain>` */
+  /** fallback store address `<slug>.<storeDomain>` when a store has no public domains row */
   storeDomain?: string | undefined;
   /** the admin's own domain (VENDUA_ADMIN_HOST); set, no other host serves /admin */
   adminHost?: string | undefined;
@@ -333,7 +333,14 @@ export function createApp({
           void drain(sql, 20, { orphans: false }).catch((e) =>
             agentLog.error({ err: e }, 'drain failed'),
           );
-  const resolver = new TenantResolver(sql);
+  const publicStoreDomain = storeDomain ?? process.env.VENDUA_STORE_DOMAIN ?? 'vendua.com.br';
+  const adminDomain = (adminHost ?? process.env.VENDUA_ADMIN_HOST)?.trim().toLowerCase();
+  const resolver = new TenantResolver(
+    sql,
+    undefined,
+    publicStoreDomain,
+    adminDomain ? [adminDomain] : [],
+  );
   const app = new Hono<{ Variables: { tenant: Tenant } }>();
 
   app.onError((err, c) => errorJson(err, c));
@@ -2563,7 +2570,6 @@ export function createApp({
   // Merchant admin (docs/merchant-admin.md): API at /admin/v1, the app at /admin/.
   // With its own domain, store hosts stop serving it: a storefront's third-party scripts
   // share the store's origin and could call /admin/v1 with the merchant's cookie.
-  const adminDomain = (adminHost ?? process.env.VENDUA_ADMIN_HOST)?.trim().toLowerCase();
   if (adminDomain) {
     const onAdminHost = async (c: Context, next: () => Promise<void>) => {
       const host = (c.req.header('host') ?? new URL(c.req.url).host).toLowerCase();
@@ -2586,7 +2592,7 @@ export function createApp({
     trustProxy,
     otpSender: otpSender ?? whatsappOtpSender(sql),
     idempotency,
-    storeDomain: storeDomain ?? process.env.VENDUA_STORE_DOMAIN ?? 'vendua.com.br',
+    storeDomain: publicStoreDomain,
   });
   app.route('/admin/v1', admin);
   app.get('/admin', (c) => c.redirect('/admin/'));

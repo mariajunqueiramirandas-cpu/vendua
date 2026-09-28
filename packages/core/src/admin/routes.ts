@@ -44,6 +44,7 @@ import { mountReports } from './routes-reports.ts';
 import { mountStore } from './routes-store.ts';
 import { mountTeam } from './routes-team.ts';
 import { vapidPublicKey } from './webpush.ts';
+import { storeOrigin } from '../platform/store-origin.ts';
 
 const adminLog = log.child({ mod: 'admin' });
 
@@ -140,8 +141,9 @@ export function mountAdmin(o: MountAdminOpts) {
   admin.get('/session', async (c) => {
     const tenant = c.get('tenant');
     const m = c.get('merchant');
-    const { stores, settings } = await withTenant(sql, tenant.id, async (tx) => ({
+    const { stores, settings, url } = await withTenant(sql, tenant.id, async (tx) => ({
       stores: await membershipsFor(sql, m.phone),
+      url: await storeOrigin(tx, tenant, o.storeDomain),
       settings: (
         await tx<
           { logo_url: string | null; prefs: Record<string, unknown>; email: string | null }[]
@@ -165,7 +167,7 @@ export function mountAdmin(o: MountAdminOpts) {
         slug: tenant.slug,
         name: tenant.name,
         logoUrl: settings?.logo_url ?? null,
-        url: storeUrl(tenant.slug, o.storeDomain),
+        url,
       },
       stores: stores.map(publicStore),
       push: { publicKey: vapidPublicKey() },
@@ -453,10 +455,6 @@ export function mountAdmin(o: MountAdminOpts) {
 
 function publicStore(s: { tenant_id: string; slug: string; name: string; role: Role }) {
   return { id: s.tenant_id, slug: s.slug, name: s.name, role: s.role };
-}
-
-export function storeUrl(slug: string, domain: string) {
-  return `https://${slug}.${domain}`;
 }
 
 export function formatPhone(p: string) {

@@ -13,7 +13,7 @@ import { audit } from './audit.ts';
 import { int, type AdminDeps } from './context.ts';
 import { handlers } from './handlers.ts';
 import { emitAdminTx } from './live.ts';
-import { storeUrl } from './routes.ts';
+import { storeOrigin } from '../platform/store-origin.ts';
 
 const TEMPLATE_BODY_MAX = 160 * 1024;
 
@@ -56,9 +56,10 @@ export function mountAppearance(d: AdminDeps) {
         process.env.NODE_ENV !== 'production'
           ? hosts.find((h) => /^localhost:\d+$/.test(h))
           : undefined;
+      const url = await storeOrigin(tx, t, d.storeDomain);
       return {
-        url: storeUrl(t.slug, d.storeDomain),
-        previewUrl: dev ? `http://${dev}` : storeUrl(t.slug, d.storeDomain),
+        url,
+        previewUrl: dev ? `http://${dev}` : url,
         pages: rows.map((r) => ({
           page: r.page,
           label: PAGE_LABEL[r.page] ?? r.page.replace(/^page:/, 'página '),

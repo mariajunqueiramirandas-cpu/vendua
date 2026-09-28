@@ -5,7 +5,7 @@ import { validAdminPhone } from './auth.ts';
 import { ROLES, oneOf, text, type AdminDeps } from './context.ts';
 import { handlers } from './handlers.ts';
 import { emitAdminTx } from './live.ts';
-import { storeUrl } from './routes.ts';
+import { storeOrigin } from '../platform/store-origin.ts';
 
 const ROLE_LABEL = { owner: 'dono', manager: 'gerente', attendant: 'atendente' } as const;
 
@@ -167,7 +167,7 @@ export function mountTeam(d: AdminDeps) {
         plan: { id: tenant.plan, since: tenant.created_at },
         // billing lands with Phase 3 — no invoices exist yet, and the page says so
         billing: { status: 'not_available' as const },
-        address: storeUrl(t.slug, d.storeDomain),
+        address: await storeOrigin(tx, t, d.storeDomain),
         domains: domains
           .map((x) => x.host)
           .filter((h) => !h.endsWith('.localhost') && !h.startsWith('localhost')),
