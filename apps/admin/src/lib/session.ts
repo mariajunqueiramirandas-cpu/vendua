@@ -16,7 +16,10 @@ export function useSessionQuery() {
   return useQuery({
     queryKey: qk.session,
     queryFn: api.session,
-    staleTime: 5 * 60_000,
+    staleTime: 30_000,
+    // the restored copy (persist.ts) may outlive its cookie — a redeploy with fresh
+    // volumes — so every boot checks it against Core instead of trusting its age
+    refetchOnMount: 'always',
     retry: false,
     // signed out there is nothing to refresh, and a refetch would reset the sign-in
     // halfway (the merchant switched to WhatsApp for the code and came back)
