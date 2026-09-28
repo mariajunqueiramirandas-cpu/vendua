@@ -3,7 +3,7 @@ import { useEffect, useState, type ReactNode } from 'react';
 import { ApiError } from '../lib/api.ts';
 import { cn } from './cn.ts';
 import { Button } from './Button.tsx';
-import { ArtCloudOff } from './illustrations.tsx';
+import { Mascote } from './Mascote.tsx';
 
 /** Illustration + one sentence + one action — never a bare "Nenhum item" (§2.2.2). */
 export function EmptyState({
@@ -91,7 +91,7 @@ const FRIENDLY: Record<string, string> = {
 export function ErrorState({ error, retry }: { error: unknown; retry?: () => void }) {
   return (
     <EmptyState
-      art={<ArtCloudOff />}
+      art={<Mascote pose={error instanceof ApiError && error.status === 0 ? 'offline' : 'erro'} />}
       title="Não conseguimos carregar"
       body={messageOf(error)}
       action={

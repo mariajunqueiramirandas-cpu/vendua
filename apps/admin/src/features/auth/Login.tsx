@@ -15,7 +15,7 @@ import { Button } from '../../ui/Button.tsx';
 import { cn } from '../../ui/cn.ts';
 import { messageOf } from '../../ui/feedback.tsx';
 import { Field, PhoneInput } from '../../ui/fields.tsx';
-import { ArtStore } from '../../ui/illustrations.tsx';
+import { Mascote } from '../../ui/Mascote.tsx';
 
 type Step =
   | { kind: 'phone' }
@@ -67,8 +67,8 @@ export function Login() {
         <div className="relative flex h-full flex-col justify-between p-12">
           <p className="font-display text-2xl font-semibold tracking-tight">venduá</p>
           <div className="max-w-md">
-            <div className="mb-6 w-56 text-spark [&_svg]:w-full">
-              <ArtStore />
+            <div className="mb-6 w-56 rounded-xl bg-[#f7f4ea] p-4">
+              <Mascote pose="avatar-ola" size={224} />
             </div>
             <p className="t-moment text-[2.75rem] leading-[3rem]">A loja viva na palma da mão.</p>
             <p className="t-body-lg mt-4 opacity-80">

@@ -66,7 +66,9 @@ export default function Onboarding() {
   if (!can(session.user.role, 'manager'))
     return (
       <div className="mx-auto max-w-lg space-y-6 p-6 pt-12">
-        <Guide turn="sem-acesso">Montar a loja é com o dono ou um gerente. Peça a eles!</Guide>
+        <Guide turn="sem-acesso" pose="seguranca">
+          Montar a loja é com o dono ou um gerente. Peça a eles!
+        </Guide>
         <ButtonLink to="/" size="lg" block>
           Ir para o painel
         </ButtonLink>
@@ -218,7 +220,7 @@ function Flow({
         <div className="mx-auto w-full max-w-xl space-y-8 lg:mx-0">
           <Guide turn={step}>
             {praise ? <strong className="mr-1">{praise}</strong> : null}
-            {step === 'oi' ? `Oi, ${first}! Eu sou o Pudim. ` : null}
+            {step === 'oi' ? `Oi, ${first}! ` : null}
             {LINE[step]}
           </Guide>
 

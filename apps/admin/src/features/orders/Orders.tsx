@@ -17,7 +17,7 @@ import { Button, IconButton } from '../../ui/Button.tsx';
 import { cn } from '../../ui/cn.ts';
 import { EmptyState, ErrorState, Hint, Skeleton } from '../../ui/feedback.tsx';
 import { Segmented } from '../../ui/fields.tsx';
-import { ArtBell, ArtSparkle } from '../../ui/illustrations.tsx';
+import { Mascote } from '../../ui/Mascote.tsx';
 import { OrderCard } from '../../ui/OrderCard.tsx';
 import { Sheet } from '../../ui/Sheet.tsx';
 import { nextStep } from '../../ui/StateChip.tsx';
@@ -185,7 +185,7 @@ export default function Orders() {
   const empty = (id: LaneId) =>
     id === 'novos' ? (
       <EmptyState
-        art={<ArtBell />}
+        art={<Mascote pose="sem-pedidos" />}
         title="Nenhum pedido novo agora"
         body="Quando chegar, você ouve o sino e ele aparece aqui."
         action={
@@ -199,7 +199,7 @@ export default function Orders() {
         }
       />
     ) : id === 'concluidos' ? (
-      <EmptyState art={<ArtSparkle />} title="Nada concluído hoje ainda" />
+      <EmptyState art={<Mascote pose="sucesso" />} title="Nada concluído hoje ainda" />
     ) : (
       <p className="t-body px-2 py-8 text-center text-muted">Nada aqui agora.</p>
     );

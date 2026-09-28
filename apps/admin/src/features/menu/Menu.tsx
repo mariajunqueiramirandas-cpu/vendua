@@ -31,7 +31,7 @@ import {
   TextArea,
   TextInput,
 } from '../../ui/fields.tsx';
-import { ArtBox } from '../../ui/illustrations.tsx';
+import { Mascote } from '../../ui/Mascote.tsx';
 import { PageBody, PageHeader } from '../../ui/Page.tsx';
 import { availability, ProductTile } from '../../ui/ProductTile.tsx';
 import { Sheet } from '../../ui/Sheet.tsx';
@@ -235,7 +235,7 @@ export default function Menu() {
         <Loading />
       ) : !cats.length ? (
         <EmptyState
-          art={<ArtBox />}
+          art={<Mascote pose="catalogo" />}
           title="Seu cardápio está vazio"
           body="Comece criando uma categoria, como “Doces” ou “Lanches”. Se já tem o cardápio no WhatsApp, é só colar."
           action={

@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { cn } from './cn.ts';
 import { Button } from './Button.tsx';
-import { ArtBell } from './illustrations.tsx';
+import { Mascote } from './Mascote.tsx';
 
 // The first order, and the 10th/100th/1000th (§6.4): the only celebrations in the
 // admin, so they land. Restrained lime + cream burst, max 40 particles, 1.2 s.
@@ -106,7 +106,7 @@ export function Celebration({
       >
         <Confetti />
         <div className="mx-auto w-40 text-ink">
-          <ArtBell />
+          <Mascote pose="sucesso" />
         </div>
         <p className="t-moment mt-2">{text}</p>
         <p className="t-body mt-2 text-muted">
