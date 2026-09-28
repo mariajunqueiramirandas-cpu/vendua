@@ -4,6 +4,7 @@ import { contentHandle, PAGE_CONTENT, type PageId } from '@vendua/templates';
 import { useKernel } from './provider.tsx';
 import { KERNEL_PATHS, resolvePaths } from './config.ts';
 import { Slot } from './slot.tsx';
+import { ScrollManager } from './scroll.tsx';
 import { emit } from './telemetry.ts';
 import { useStore } from './hooks.ts';
 import {
@@ -101,6 +102,7 @@ export function StorefrontRoutes() {
   return (
     <RegistryProvider sdk={SDK_COMPONENTS}>
       <PageViews />
+      <ScrollManager />
       <Routes>
         {Object.entries(config.redirects ?? {}).map(([from, to]) => (
           <Route key={`r:${from}`} path={from} element={<Navigate to={to} replace />} />
