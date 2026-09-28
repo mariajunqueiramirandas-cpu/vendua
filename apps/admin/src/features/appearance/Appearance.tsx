@@ -757,6 +757,7 @@ function HistorySheet({
       title={`Versões: ${PAGES.find((p) => p.id === page)?.label}`}
       description="Voltar a uma versão publica ela de novo. A atual continua no histórico."
     >
+      {!data ? <Loading lines={3} className="pt-1" /> : null}
       <ol className="divide-y divide-line pt-1">
         {rows.map((h, i) => (
           <li key={h.version} className="flex min-h-16 items-center gap-3 py-2">
