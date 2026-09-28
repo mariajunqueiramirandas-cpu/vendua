@@ -1,4 +1,4 @@
-import { ShoppingBag } from 'lucide-react';
+import { Menu, ShoppingBag, X } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { Link, NavLink, useLocation } from 'react-router-dom';
 import {
@@ -33,6 +33,16 @@ export default function Header({ settings }: SectionProps<typeof schema>) {
   const { cart } = useCart();
   const count = cart?.status === 'open' ? cart.totals.itemCount : 0;
   const [scrolled, setScrolled] = useState(false);
+  const [menuOpen, setMenuOpen] = useState(false);
+  const { pathname } = useLocation();
+  // the phone menu closes on navigation and on Escape
+  useEffect(() => setMenuOpen(false), [pathname]);
+  useEffect(() => {
+    if (!menuOpen) return;
+    const onKey = (e: KeyboardEvent) => e.key === 'Escape' && setMenuOpen(false);
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [menuOpen]);
   useEffect(() => {
     const on = () => setScrolled(window.scrollY > 8);
     on();
@@ -53,7 +63,12 @@ export default function Header({ settings }: SectionProps<typeof schema>) {
           </span>
         </Link>
 
-        <nav className="site-nav" aria-label="Navegação principal">
+        <nav
+          className="site-nav"
+          id="site-nav"
+          aria-label="Navegação principal"
+          data-open={menuOpen || undefined}
+        >
           {(settings.links ?? []).map((l) =>
             settings.storyAnchor && l.href.endsWith(`#${settings.storyAnchor}`) ? (
               <AnchorLink
@@ -78,13 +93,23 @@ export default function Header({ settings }: SectionProps<typeof schema>) {
           ) : null}
           <CartTrigger asChild>
             <button type="button" className="sacola-btn">
-              <ShoppingBag size={18} aria-hidden="true" />
+              <ShoppingBag size={20} aria-hidden="true" />
               <span className="sacola-word">{settings.cartLabel}</span>
               <span className="sacola-count" key={count} data-empty={count === 0 || undefined}>
                 {count}
               </span>
             </button>
           </CartTrigger>
+          <button
+            type="button"
+            className="menu-btn"
+            aria-expanded={menuOpen}
+            aria-controls="site-nav"
+            aria-label={menuOpen ? 'Fechar menu' : 'Abrir menu'}
+            onClick={() => setMenuOpen((o) => !o)}
+          >
+            {menuOpen ? <X size={22} aria-hidden="true" /> : <Menu size={22} aria-hidden="true" />}
+          </button>
         </div>
       </div>
     </header>

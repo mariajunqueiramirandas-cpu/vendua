@@ -158,10 +158,12 @@
     align-items: center;
     justify-content: center;
     gap: 8px;
-    min-height: 44px;
+    min-height: 48px;
     padding: var(--v-btn-padding);
     border-radius: var(--v-btn-radius);
     border: 1px solid transparent;
+    line-height: 1;
+    letter-spacing: 0.005em;
     font: inherit;
     font-weight: 600;
     text-decoration: none;
@@ -178,9 +180,11 @@
   .v-btn-accent {
     background: var(--v-color-accent, #3f5e4e);
     color: var(--v-color-on-accent, #fff);
+    border-color: rgb(0 0 0 / 0.12);
     box-shadow:
-      0 1px 2px rgb(0 0 0 / 0.12),
-      0 4px 12px -4px color-mix(in srgb, var(--v-color-accent, #3f5e4e) 60%, transparent);
+      inset 0 1px 0 rgb(255 255 255 / 0.2),
+      0 1px 2px rgb(0 0 0 / 0.16),
+      0 8px 16px -10px color-mix(in srgb, var(--v-color-accent, #3f5e4e) 75%, transparent);
   }
   .v-btn-accent:hover:not(:disabled) {
     filter: brightness(1.08);
@@ -262,7 +266,7 @@
       min-height: 52px;
       padding: 8px 18px 8px 10px;
       border: 0;
-      border-radius: 999px;
+      border-radius: 16px;
       background: var(--v-color-accent, #3f5e4e);
       color: var(--v-color-on-accent, #fff);
       font: inherit;
@@ -305,7 +309,7 @@
      it); transient errors float in the toast region instead. */
   .v-banner-stack {
     position: relative;
-    z-index: 60;
+    z-index: 30;
     display: flex;
     flex-direction: column;
     align-items: stretch;
