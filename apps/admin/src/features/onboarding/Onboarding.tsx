@@ -7,7 +7,7 @@ import { qk } from '../../lib/query.ts';
 import { can, useSession } from '../../lib/session.ts';
 import { Button, ButtonLink } from '../../ui/Button.tsx';
 import { cn } from '../../ui/cn.ts';
-import { Loading, messageOf } from '../../ui/feedback.tsx';
+import { ErrorState, Loading, messageOf } from '../../ui/feedback.tsx';
 import { toWeek } from '../../ui/TimeRangeField.tsx';
 import { toast } from '../../ui/Toast.tsx';
 import { Finale, type Pending } from './Finale.tsx';
@@ -72,12 +72,24 @@ export default function Onboarding() {
         </ButtonLink>
       </div>
     );
-  if (!store.data || !cat.data)
+  if (!store.data || !cat.data) {
+    const error = store.error ?? cat.error;
     return (
       <div className="mx-auto max-w-lg p-6">
-        <Loading />
+        {error ? (
+          <ErrorState
+            error={error}
+            retry={() => {
+              void store.refetch();
+              void cat.refetch();
+            }}
+          />
+        ) : (
+          <Loading />
+        )}
       </div>
     );
+  }
   return (
     <Flow
       s={store.data}

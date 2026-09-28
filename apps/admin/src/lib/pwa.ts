@@ -83,8 +83,9 @@ export function startPwa() {
   window.addEventListener('vite:preloadError', (e) => {
     const k = 'vendua-admin-reloaded';
     try {
-      if (sessionStorage.getItem(k)) return;
-      sessionStorage.setItem(k, '1');
+      // a stamp, not a flag: one reload per minute stops a loop, but a later deploy still recovers
+      if (Date.now() - Number(sessionStorage.getItem(k) ?? 0) < 60_000) return;
+      sessionStorage.setItem(k, String(Date.now()));
     } catch {
       return;
     }
