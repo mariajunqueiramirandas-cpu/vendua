@@ -27,9 +27,21 @@ import { CancelSheet, OrderDetail } from './OrderDetail.tsx';
 
 type LaneId = 'novos' | 'preparo' | 'prontos' | 'concluidos';
 
-const LANES: { id: LaneId; label: string; states: OrderState[]; drop?: OrderState }[] = [
+const LANES: {
+  id: LaneId;
+  label: string;
+  short?: string;
+  states: OrderState[];
+  drop?: OrderState;
+}[] = [
   { id: 'novos', label: 'Novos', states: ['placed'] },
-  { id: 'preparo', label: 'Em preparo', states: ['confirmed', 'preparing'], drop: 'confirmed' },
+  {
+    id: 'preparo',
+    label: 'Em preparo',
+    short: 'Preparo',
+    states: ['confirmed', 'preparing'],
+    drop: 'confirmed',
+  },
   { id: 'prontos', label: 'Prontos', states: ['ready', 'out_for_delivery'], drop: 'ready' },
   {
     id: 'concluidos',
@@ -249,7 +261,19 @@ export default function Orders() {
               value={lane}
               onChange={setLane}
               className="sticky top-[72px] z-20 mb-4 md:top-2"
-              options={LANES.map((l) => ({ value: l.id, label: l.label, count: counts[l.id] }))}
+              options={LANES.map((l) => ({
+                value: l.id,
+                // phones: four lanes share 375px, so every label must fit one line
+                label: l.short ? (
+                  <>
+                    <span className="sm:hidden">{l.short}</span>
+                    <span className="max-sm:hidden">{l.label}</span>
+                  </>
+                ) : (
+                  l.label
+                ),
+                count: counts[l.id],
+              }))}
             />
             {isPending ? (
               <div className="space-y-3">
