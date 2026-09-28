@@ -175,6 +175,8 @@ export interface AppDeps {
   adminHub?: AdminHub | undefined;
   /** stores live at `<slug>.<storeDomain>` */
   storeDomain?: string | undefined;
+  /** the admin's own domain (VENDUA_ADMIN_HOST); set, no other host serves /admin */
+  adminHost?: string | undefined;
 }
 
 async function loadSettings(
@@ -321,6 +323,7 @@ export function createApp({
   otpSender,
   adminHub,
   storeDomain,
+  adminHost,
 }: AppDeps) {
   const orderHub = new OrderHub(sql);
   const kickDrain =
@@ -2558,6 +2561,21 @@ export function createApp({
   );
 
   // Merchant admin (docs/merchant-admin.md): API at /admin/v1, the app at /admin/.
+  // With its own domain, store hosts stop serving it: a storefront's third-party scripts
+  // share the store's origin and could call /admin/v1 with the merchant's cookie.
+  const adminDomain = (adminHost ?? process.env.VENDUA_ADMIN_HOST)?.trim().toLowerCase();
+  if (adminDomain) {
+    const onAdminHost = async (c: Context, next: () => Promise<void>) => {
+      const host = (c.req.header('host') ?? new URL(c.req.url).host).toLowerCase();
+      if (host === adminDomain) return next();
+      const url = new URL(c.req.url);
+      if (c.req.method === 'GET' && !url.pathname.startsWith('/admin/v1'))
+        return c.redirect(`https://${adminDomain}${url.pathname}${url.search}`, 301);
+      return c.json({ error: { code: 'NOT_FOUND', message: 'not found' } }, 404);
+    };
+    app.use('/admin', onAdminHost);
+    app.use('/admin/*', onAdminHost);
+  }
   const admin: AdminApp = new Hono();
   mountAdmin({
     app,

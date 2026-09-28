@@ -214,6 +214,29 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('merchant admin (db)', () => {
     expect(me.body.store.id).toBe(tenantId);
   });
 
+  test('own domain: only VENDUA_ADMIN_HOST serves /admin; store hosts redirect or 404', async () => {
+    const split = createApp({
+      sql: appSql,
+      sessionSecret: 's',
+      controlSecret: 'ctl',
+      autoDrain: false,
+      cepLookup: async () => null,
+      adminHost: 'Painel.Example.com',
+    });
+    const on = await split.request('http://painel.example.com/admin/v1/home');
+    expect(on.status).toBe(401);
+    const api = await split.request(`http://${host}/admin/v1/home`);
+    expect(api.status).toBe(404);
+    const page = await split.request(`http://${host}/admin/pedidos?x=1`);
+    expect(page.status).toBe(301);
+    expect(page.headers.get('location')).toBe('https://painel.example.com/admin/pedidos?x=1');
+    const post = await split.request(`http://${host}/admin/v1/auth/otp/start`, {
+      method: 'POST',
+      body: '{}',
+    });
+    expect(post.status).toBe(404);
+  });
+
   test('Loja: pause/resume reaches the storefront, hours validate, zones CRUD', async () => {
     const paused = await owner('POST', '/store/pause', { for: '1h', message: 'Voltamos já!' });
     expect(paused.status).toBe(200);

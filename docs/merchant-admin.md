@@ -162,9 +162,9 @@ they belong to this track:
 `apps/admin`, beside `apps/control` (the layout in
 [06](architecture/06-monorepo.md) is updated to match). It uses React + Vite +
 Tailwind v4, the stack the team already runs, with its own design system and
-its own typed client for `/admin/v1`. Until the Edge lands (Phase 4) Core
-serves the built app at `/admin/` like the CRM; afterwards it moves to
-`admin.vendua.com.br`. Copy is pt-BR.
+its own typed client for `/admin/v1`. Core serves the built app at `/admin/`,
+and it lives on its own domain (`VENDUA_ADMIN_HOST`, the `admin` proxy service in
+[deploy/dokploy.md](deploy/dokploy.md)), never on a store's domain. Copy is pt-BR.
 
 ## Milestones
 

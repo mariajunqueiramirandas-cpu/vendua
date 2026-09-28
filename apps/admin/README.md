@@ -1,6 +1,7 @@
 # apps/admin — the merchant admin
 
-The store owner's product: a phone-first PWA served at `/admin/`. It talks to
+The store owner's product: a phone-first PWA served at `/admin/` on its own domain
+(`VENDUA_ADMIN_HOST`; the `apps/admin/Dockerfile` proxy in production). It talks to
 Core's `/admin/v1` API. The plan is in [docs/merchant-admin.md](../../docs/merchant-admin.md),
 the design spec in [docs/merchant-admin-design.md](../../docs/merchant-admin-design.md),
 and identity in [ADR 0020](../../docs/adr/0020-merchant-identity.md). Copy is pt-BR.

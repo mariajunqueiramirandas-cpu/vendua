@@ -55,8 +55,11 @@ never enumerate another store's team.
   re-reads the person's role and status, so a role change applies on the next tap.
 
 **CSRF defense.** Mutations require the `x-vendua-admin: 1` header, and a
-same-host `Origin` when one is sent. A cross-site form can't set the header, and
-the cookie path keeps the session away from storefront and CRM routes.
+same-host `Origin` when one is sent. A cross-site form can't set the header. The
+header does not stop same-origin scripts, so the admin runs on its own domain
+(`VENDUA_ADMIN_HOST`), not on store domains, where a storefront's third-party scripts
+(pixels, chat widgets) run. With the variable set, Core refuses `/admin` on every
+other host.
 
 **Roles gate each handler.** Handlers declare the least role they need
 (`read('manager', …)`, `write('owner', …)`):

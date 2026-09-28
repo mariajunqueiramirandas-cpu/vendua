@@ -23,6 +23,10 @@ Copy `.env.example` into the service's environment and fill it in:
 | `SEED_DEMO`                                | `1` seeds the three demo tenants on boot; `0` = empty platform  |
 | `SEED_DOMAINS`                             | `slug:public-domain` per storefront — registers real domains    |
 | `VENDUA_PROXY_HOPS`                        | XFF trusted suffix length — `1` for the Traefik→nginx chain     |
+| `VENDUA_ADMIN_HOST`                        | the merchant admin's own domain, e.g. `painel.example.com`      |
+| `VENDUA_STORE_DOMAIN`                      | stores live at `<slug>.<domain>` — the admin's store links      |
+| `VAPID_PUBLIC_KEY` / `VAPID_PRIVATE_KEY`   | web push for new orders (`npx web-push generate-vapid-keys`)    |
+| `VENDUA_SUPPORT_WHATSAPP`                  | Ajuda's "chamar no WhatsApp" number (digits; optional)          |
 | `RESEND_API_KEY`                           | email driver — sending + fetching received bodies               |
 | `RESEND_WEBHOOK_SECRET`                    | svix signing secret of the inbound webhook (see below)          |
 | `MONID_API_KEY`                            | monid.ai enrichment tools (unset → hidden from the agent)       |
@@ -48,6 +52,14 @@ In Dokploy, assign a domain to each web service (port 80):
   directly on `core`: that removes one trusted proxy hop and the login
   rate limiter's client-IP math (`VENDUA_PROXY_HOPS=1` assumes the
   Traefik→nginx→core chain) collapses every staff IP into one bucket.
+- `admin` → the merchant admin's own domain (e.g. `painel.example.com`), the
+  same value as `VENDUA_ADMIN_HOST`. It proxies `/admin` (app, API, live
+  stream) and `/v1/media` to `core`, and `/` redirects to `/admin/`. Store
+  domains don't serve the admin: a storefront's third-party scripts share the
+  store's origin and could otherwise act with the merchant's cookie. With
+  `VENDUA_ADMIN_HOST` set, Core also refuses `/admin` on any other host and
+  sends old `/admin` bookmarks to the admin domain. One domain serves every
+  store; a person in several stores picks one after signing in.
 
 Then set `SEED_DOMAINS` to match, e.g.
 `quero-pudim:pudim.example.com` — tenant routing is
@@ -110,6 +122,7 @@ Boot order is handled by healthchecks: `db` healthy → `core` migrates
 | `core`        | `packages/core/Dockerfile` (Bun)                           | 8787, internal |
 | `quero-pudim` | `storefronts/Dockerfile` `target: storefront` (vite→nginx) | 80             |
 | `crm`         | `apps/control/Dockerfile` (nginx + conf baked in)          | 80             |
+| `admin`       | `apps/admin/Dockerfile` (nginx + conf baked in)            | 80             |
 | `site`        | `storefronts/Dockerfile` `target: site` (SvelteKit→nginx)  | 80             |
 | `ig-sidecar`  | `services/ig-sidecar/Dockerfile` (Go)                      | 8790, internal |
 
