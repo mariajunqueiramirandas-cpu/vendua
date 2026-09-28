@@ -13,7 +13,8 @@ import {
   validateSetting,
 } from '../src/modules/integrations.ts';
 import { controlTx } from '../src/modules/control.ts';
-import { insertLeadTx, leadStats, updateLead } from '../src/modules/leads.ts';
+import { createTask, listTasks } from '../src/modules/activities.ts';
+import { deleteLead, insertLeadTx, leadStats, updateLead } from '../src/modules/leads.ts';
 import { migrate } from '../src/platform/db.ts';
 
 const code = (fn: () => unknown) => {
@@ -156,5 +157,22 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('pipeline snapshots (db)', () =>
     const after = await leadStats(sql);
     expect(after.won30d.count).toBe(stats.won30d.count + 1);
     expect(after.won30d.valueCents).toBe(stats.won30d.valueCents);
+  });
+
+  test('task counts skip archived leads, matching the task list', async () => {
+    await migrate(sql, join(import.meta.dir, '../db/migrations'));
+    const created = await controlTx(sql, (tx) => insertLeadTx(tx, { name: 'Archived Tasks' }));
+    const id = created.body.lead.id;
+    const before = await leadStats(sql);
+    await createTask(sql, id, { title: 'follow up', dueAt: '2020-01-01T00:00:00Z' }, `t-${id}`);
+    const withTask = await leadStats(sql);
+    expect(withTask.openTasks).toBe(before.openTasks + 1);
+    expect(withTask.overdueTasks).toBe(before.overdueTasks + 1);
+
+    await deleteLead(sql, id, `archive-${id}`);
+    const after = await leadStats(sql);
+    expect(after.openTasks).toBe(before.openTasks);
+    expect(after.overdueTasks).toBe(before.overdueTasks);
+    expect(after.openTasks).toBe((await listTasks(sql, { done: false })).length);
   });
 });
