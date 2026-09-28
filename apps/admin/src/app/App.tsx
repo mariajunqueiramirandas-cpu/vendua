@@ -28,6 +28,7 @@ const Account = lazy(() => import('../features/account/Account.tsx'));
 const Profile = lazy(() => import('../features/account/Profile.tsx'));
 const Help = lazy(() => import('../features/help/Help.tsx'));
 const Onboarding = lazy(() => import('../features/onboarding/Onboarding.tsx'));
+const NotFound = lazy(() => import('../features/notfound/NotFound.tsx'));
 const UiReference = lazy(() => import('../features/dev/UiReference.tsx'));
 
 export default function App() {
@@ -110,7 +111,7 @@ export default function App() {
                 <Route path="conta" element={<Account />} />
                 <Route path="perfil" element={<Profile />} />
                 <Route path="ajuda" element={<Help />} />
-                <Route path="*" element={<Navigate to="/" replace />} />
+                <Route path="*" element={<NotFound />} />
               </Routes>
             </Shell>
           }

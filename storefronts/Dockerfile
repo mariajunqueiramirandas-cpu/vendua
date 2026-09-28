@@ -50,4 +50,5 @@ FROM nginx:1.28-alpine AS stores
 ENV NGINX_ENTRYPOINT_QUIET_LOGS=1
 COPY storefronts/nginx-stores.conf /etc/nginx/conf.d/default.conf
 COPY --from=build /app/stores /usr/share/nginx/stores
+COPY storefronts/errors /usr/share/nginx/_errors
 EXPOSE 80

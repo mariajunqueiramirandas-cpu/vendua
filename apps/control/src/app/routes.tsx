@@ -49,6 +49,7 @@ const PlansPage = lazy(() => import('@/features/agent/plans/PlansPage.tsx'));
 const DiscoveryPage = lazy(() => import('@/features/agent/discovery/DiscoveryPage.tsx'));
 const StudioPage = lazy(() => import('@/features/agent/studio/StudioPage.tsx'));
 const SettingsPage = lazy(() => import('@/features/settings/SettingsPage.tsx'));
+const NotFoundPage = lazy(() => import('@/features/notfound/NotFoundPage.tsx'));
 const UiPreview = lazy(() => import('@/features/dev/UiPreview.tsx'));
 
 /** Old (pre-redesign) URL → new URL, carrying the query string plus `extra` params. */
@@ -144,7 +145,7 @@ export function AppRoutes() {
           path="/agente/runs/:id"
           element={<Legacy to={(p) => `/agente/atividade/${p.id}`} />}
         />
-        <Route path="*" element={<Navigate to="/" replace />} />
+        <Route path="*" element={<NotFoundPage />} />
       </Routes>
     </Lazy>
   );

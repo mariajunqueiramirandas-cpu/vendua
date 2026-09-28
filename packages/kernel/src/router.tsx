@@ -75,6 +75,14 @@ function TemplatePage({ page }: { page: PageId }) {
 
 export function NotFoundPage() {
   const { pathname } = useLocation();
+  // the SPA answers 200 for every path; noindex keeps typo URLs out of search results
+  useEffect(() => {
+    const meta = document.createElement('meta');
+    meta.name = 'robots';
+    meta.content = 'noindex';
+    document.head.appendChild(meta);
+    return () => meta.remove();
+  }, []);
   return <Slot name="system.NotFound" path={pathname} homeHref="/" />;
 }
 

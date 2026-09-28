@@ -494,6 +494,18 @@
   .v-empty {
     padding-block: 40px;
   }
+  .v-not-found {
+    max-width: 34rem;
+    margin-inline: auto;
+    padding-block: clamp(48px, 12vh, 120px);
+  }
+  .v-not-found .v-muted {
+    max-width: 28rem;
+    margin-inline: auto;
+  }
+  .v-not-found-path {
+    overflow-wrap: anywhere;
+  }
   .v-empty-icon {
     display: block;
     margin: 0 auto 12px;

@@ -1,0 +1,181 @@
+<!doctype html>
+<html lang="pt-BR">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="robots" content="noindex" />
+    <meta name="theme-color" content="#f7f4ea" media="(prefers-color-scheme: light)" />
+    <meta name="theme-color" content="#0a100d" media="(prefers-color-scheme: dark)" />
+    <title>Loja não encontrada · Venduá</title>
+    <link
+      rel="icon"
+      href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 128 128'%3E%3Cpath d='M32 48 L61 88 L98 34' fill='none' stroke='%23123C32' stroke-width='17' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E"
+    />
+    <!-- served by the stores nginx for hosts Core knows no store for; self-contained on purpose -->
+    <style>
+      :root {
+        color-scheme: light dark;
+        --bg: #f7f4ea;
+        --surface: #efe9d8;
+        --text: #123c32;
+        --muted: #4f6a5e;
+        --line: color-mix(in srgb, #123c32 16%, transparent);
+        --accent: #d9f875;
+        --strong: #123c32;
+        --on-strong: #f7f4ea;
+      }
+      @media (prefers-color-scheme: dark) {
+        :root {
+          --bg: #0a100d;
+          --surface: #101915;
+          --text: #efe9d8;
+          --muted: #9dafa4;
+          --line: color-mix(in srgb, #efe9d8 14%, transparent);
+          --strong: #d9f875;
+          --on-strong: #0a100d;
+        }
+      }
+      * {
+        box-sizing: border-box;
+      }
+      body {
+        margin: 0;
+        min-height: 100dvh;
+        display: grid;
+        place-items: center;
+        padding: 32px 16px;
+        background: var(--bg);
+        color: var(--text);
+        font:
+          400 1rem/1.55 'Space Grotesk',
+          'Manrope',
+          system-ui,
+          -apple-system,
+          'Segoe UI',
+          sans-serif;
+      }
+      main {
+        width: 100%;
+        max-width: 30rem;
+        text-align: center;
+      }
+      .mark {
+        width: 56px;
+        height: 56px;
+        margin: 0 auto 28px;
+        display: grid;
+        place-items: center;
+        border-radius: 16px;
+        background: var(--accent);
+      }
+      .mark svg {
+        width: 34px;
+        height: 34px;
+      }
+      .eyebrow {
+        margin: 0 0 10px;
+        font:
+          500 0.75rem/1 ui-monospace,
+          'Cascadia Mono',
+          Consolas,
+          monospace;
+        letter-spacing: 0.14em;
+        text-transform: uppercase;
+        color: var(--muted);
+      }
+      h1 {
+        margin: 0 0 12px;
+        font-family: 'Instrument Serif', Georgia, serif;
+        font-weight: 400;
+        font-size: clamp(2rem, 1.5rem + 2.4vw, 2.75rem);
+        line-height: 1.08;
+        letter-spacing: -0.01em;
+      }
+      p {
+        margin: 0 auto;
+        color: var(--muted);
+        max-width: 26rem;
+      }
+      .host {
+        display: inline-block;
+        max-width: 100%;
+        overflow-wrap: anywhere;
+        padding: 1px 8px;
+        border-radius: 6px;
+        background: var(--surface);
+        border: 1px solid var(--line);
+        color: var(--text);
+        font:
+          0.9em ui-monospace,
+          'Cascadia Mono',
+          Consolas,
+          monospace;
+      }
+      .actions {
+        display: flex;
+        flex-wrap: wrap;
+        justify-content: center;
+        gap: 10px;
+        margin-top: 28px;
+      }
+      a.btn {
+        display: inline-flex;
+        align-items: center;
+        min-height: 44px;
+        padding: 0 18px;
+        border-radius: 999px;
+        font-weight: 600;
+        text-decoration: none;
+        border: 1px solid var(--line);
+        color: var(--text);
+      }
+      a.btn.primary {
+        background: var(--strong);
+        border-color: var(--strong);
+        color: var(--on-strong);
+      }
+      a.btn:focus-visible {
+        outline: 3px solid var(--accent);
+        outline-offset: 2px;
+      }
+      .hint {
+        margin-top: 36px;
+        padding-top: 20px;
+        border-top: 1px solid var(--line);
+        font-size: 0.875rem;
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <div class="mark" aria-hidden="true">
+        <svg viewBox="0 0 128 128">
+          <path
+            d="M32 48 L61 88 L98 34"
+            fill="none"
+            stroke="#123C32"
+            stroke-width="17"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+          />
+        </svg>
+      </div>
+      <p class="eyebrow">Erro 404 · loja não encontrada</p>
+      <h1>Essa loja não existe (ainda)</h1>
+      <p>
+        Não tem nenhuma loja da Venduá em <span class="host" id="host">este endereço</span>. Confira
+        se o link foi digitado certinho — ou peça o endereço de novo a quem te enviou.
+      </p>
+      <div class="actions">
+        <a class="btn primary" href="https://vendua.com.br">Conhecer a Venduá</a>
+        <a class="btn" href="https://vendua.com.br/contato/">Quero abrir minha loja</a>
+      </div>
+      <p class="hint">
+        É o dono desta loja e ela sumiu? Entre no seu painel ou fale com a gente — a gente resolve.
+      </p>
+    </main>
+    <script>
+      document.getElementById('host').textContent = location.hostname;
+    </script>
+  </body>
+</html>
