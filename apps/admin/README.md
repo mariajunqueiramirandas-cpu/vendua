@@ -17,7 +17,7 @@ cd apps/admin && bun run dev          # :5196/admin/, proxies /admin/v1 and /v1 
 cd storefronts/quero-pudim && bun run dev
 ```
 
-The seed's demo owner is Maria, phone `(22) 99999-0000`, at Quero Pudim.
+The seed makes Vinícius, phone `(22) 98179-5040`, the owner of Quero Pudim.
 `bun scripts/demo-orders.ts` places a few live orders.
 
 ## Gates (CI job `admin-gate`)

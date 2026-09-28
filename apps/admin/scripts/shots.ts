@@ -1,6 +1,6 @@
 // Screenshots + layout/a11y gate for the merchant admin (docs/merchant-admin.md — quality gates).
 //   bun scripts/shots.ts [route ...]      (defaults to every area)
-// Env: CHROMIUM, BASE (http://localhost:5196/admin/), PHONE (22999990000), STORE (quero-pudim),
+// Env: CHROMIUM, BASE (http://localhost:5196/admin/), PHONE (22981795040, the seed's owner), STORE (quero-pudim),
 //      OUT (./shots), THEMES (creme,noite), AXE=1 (fail on serious/critical axe violations)
 // Core must run with VENDUA_ADMIN_DEV_OTP=1 so the sign-in code comes back in the response.
 import AxeBuilder from '@axe-core/playwright';
@@ -8,7 +8,7 @@ import { chromium, type BrowserContext } from '@playwright/test';
 import { existsSync, mkdirSync } from 'node:fs';
 
 const BASE = process.env.BASE ?? 'http://localhost:5196/admin/';
-const PHONE = process.env.PHONE ?? '22999990000';
+const PHONE = process.env.PHONE ?? '22981795040';
 const STORE = process.env.STORE ?? 'quero-pudim';
 const OUT = process.env.OUT ?? 'shots';
 const THEMES = (process.env.THEMES ?? 'creme,noite').split(',') as ('creme' | 'noite')[];
