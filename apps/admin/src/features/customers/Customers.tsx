@@ -8,7 +8,7 @@ import { Button } from '../../ui/Button.tsx';
 import { Card } from '../../ui/Card.tsx';
 import { EmptyState, ErrorState, Loading } from '../../ui/feedback.tsx';
 import { Chips, TextInput } from '../../ui/fields.tsx';
-import { ArtPeople } from '../../ui/illustrations.tsx';
+import { Mascote } from '../../ui/Mascote.tsx';
 import { PageBody, PageHeader } from '../../ui/Page.tsx';
 
 type Sort = 'recent' | 'value' | 'orders';
@@ -119,7 +119,7 @@ export default function Customers() {
         </>
       ) : (
         <EmptyState
-          art={<ArtPeople />}
+          art={<Mascote pose="carinho" />}
           title={debounced ? `Ninguém com "${debounced}"` : 'Seus clientes aparecem aqui'}
           body={
             debounced

@@ -1,4 +1,6 @@
-# Venduá — mascote (tamanduá)
+# Venduá — mascote (tamanduá) — o nome é Duá
+
+Na cópia, Duá é neutro: sem artigo "o/a" (ex.: "Meu nome é Duá").
 
 Kit recebido em set/2026 (LEIA-ME original: 20 artes). Aqui estão as **16 poses já entregues**, em WebP
 com alfa, 640×640 (recortadas e centralizadas; os PNG originais 1254×1254 ficam com o design).

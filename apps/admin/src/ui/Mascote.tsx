@@ -1,6 +1,6 @@
 import { cn } from './cn.ts';
 
-// The Venduá anteater. Art lives in /brand/mascote (see brand/mascote/README.md); Vite
+// Duá, the Venduá anteater (neutral: no "o/a" in copy). Art lives in /brand/mascote (see brand/mascote/README.md); Vite
 // hashes each file and the service worker precaches them, so the states work offline.
 const files = import.meta.glob<string>('../../../../brand/mascote/*.webp', {
   eager: true,

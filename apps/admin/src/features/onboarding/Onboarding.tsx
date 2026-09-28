@@ -220,7 +220,7 @@ function Flow({
         <div className="mx-auto w-full max-w-xl space-y-8 lg:mx-0">
           <Guide turn={step}>
             {praise ? <strong className="mr-1">{praise}</strong> : null}
-            {step === 'oi' ? `Oi, ${first}! ` : null}
+            {step === 'oi' ? `Oi, ${first}! Meu nome é Duá. ` : null}
             {LINE[step]}
           </Guide>
 

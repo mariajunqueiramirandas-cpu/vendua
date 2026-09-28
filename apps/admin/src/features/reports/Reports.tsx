@@ -9,7 +9,7 @@ import { ColumnChart, Funnel, Heatmap, RankBars } from '../../ui/charts.tsx';
 import { cn } from '../../ui/cn.ts';
 import { EmptyState, ErrorState, Loading } from '../../ui/feedback.tsx';
 import { Chips, TextInput } from '../../ui/fields.tsx';
-import { ArtChart } from '../../ui/illustrations.tsx';
+import { Mascote } from '../../ui/Mascote.tsx';
 import { PageBody, PageHeader } from '../../ui/Page.tsx';
 
 type Period = 'hoje' | '7d' | '30d' | 'custom';
@@ -92,7 +92,7 @@ export default function Reports() {
         <Loading lines={4} />
       ) : data.current.orders === 0 && data.funnel.visits === 0 ? (
         <EmptyState
-          art={<ArtChart />}
+          art={<Mascote pose="sem-pedidos" />}
           title="Nada vendido nesse período"
           body="Escolha um período maior ou compartilhe a loja para começar a vender."
         />

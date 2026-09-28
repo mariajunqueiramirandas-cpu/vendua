@@ -8,7 +8,7 @@ import { Button } from '../../ui/Button.tsx';
 import { Card, Section } from '../../ui/Card.tsx';
 import { messageOf } from '../../ui/feedback.tsx';
 import { Chips, Field, TextArea } from '../../ui/fields.tsx';
-import { ArtChat } from '../../ui/illustrations.tsx';
+import { Mascote } from '../../ui/Mascote.tsx';
 import { PageBody, PageHeader } from '../../ui/Page.tsx';
 import { toast } from '../../ui/Toast.tsx';
 
@@ -92,9 +92,7 @@ export default function Help() {
       <PageHeader title="Ajuda" subtitle="A gente responde de gente para gente." />
       <div className="space-y-8">
         <Card className="flex flex-col items-center gap-4 p-6 text-center sm:flex-row sm:text-left">
-          <div className="w-32 shrink-0 text-ink">
-            <ArtChat />
-          </div>
+          <Mascote pose="avatar-ola" size={128} className="w-32 shrink-0" />
           <div className="flex-1">
             <p className="t-title-2">Fale com a Venduá</p>
             <p className="t-body mt-1 text-muted">

@@ -30,7 +30,8 @@ import {
   Toggle,
   useSaveState,
 } from '../../ui/fields.tsx';
-import { ArtTicket, NoPhoto } from '../../ui/illustrations.tsx';
+import { Mascote } from '../../ui/Mascote.tsx';
+import { NoPhoto } from '../../ui/illustrations.tsx';
 import { PageBody, PageHeader } from '../../ui/Page.tsx';
 import { Sheet } from '../../ui/Sheet.tsx';
 import { toast } from '../../ui/Toast.tsx';
@@ -252,7 +253,7 @@ function Coupons({ coupons }: { coupons: Coupon[] }) {
       ) : (
         <Card>
           <EmptyState
-            art={<ArtTicket />}
+            art={<Mascote pose="pagamento" />}
             title="Nenhum cupom ainda"
             body="Um cupom de primeira compra é um bom começo: “BEMVINDO” com 10% off."
             action={<Button onClick={() => setOpen(true)}>criar cupom</Button>}
