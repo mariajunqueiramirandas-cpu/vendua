@@ -37,6 +37,44 @@
   </head>
   <body>
     <div id="root"></div>
+    <script>
+      // nothing rendered after 10s (a stale service worker or cache pinned a broken version):
+      // drop them and load fresh, once a minute at most
+      setTimeout(function () {
+        var r = document.getElementById('root');
+        if (!r || r.childNodes.length) return;
+        try {
+          var k = 'vendua-admin-rescued';
+          if (Date.now() - Number(sessionStorage.getItem(k) || 0) < 60000) return;
+          sessionStorage.setItem(k, String(Date.now()));
+        } catch (e) {
+          return;
+        }
+        var done = function () {
+          location.reload();
+        };
+        Promise.all([
+          navigator.serviceWorker
+            ? navigator.serviceWorker.getRegistrations().then(function (rs) {
+                return Promise.all(
+                  rs.map(function (x) {
+                    return x.unregister();
+                  }),
+                );
+              })
+            : 0,
+          window.caches
+            ? caches.keys().then(function (ks) {
+                return Promise.all(
+                  ks.map(function (x) {
+                    return caches.delete(x);
+                  }),
+                );
+              })
+            : 0,
+        ]).then(done, done);
+      }, 10000);
+    </script>
     <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>

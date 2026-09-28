@@ -112,12 +112,15 @@ self.addEventListener('fetch', (e) => {
     return;
   }
   if (e.request.mode === 'navigate' && url.pathname.startsWith('/admin')) {
-    // the shell is part of the version: instant and offline, updated with the SW
+    // Network first: a cache-first shell pinned a broken version on the phone (a blank screen the
+    // page could never ask to update). The cached shell is the offline / slow-network fallback.
     e.respondWith(
-      caches
-        .open(SHELL)
-        .then((c) => c.match(INDEX))
-        .then((hit) => hit || fetch(e.request)),
+      Promise.race([fetch(e.request), new Promise((_, no) => setTimeout(no, 4000))]).catch(() =>
+        caches
+          .open(SHELL)
+          .then((c) => c.match(INDEX))
+          .then((hit) => hit || fetch(e.request)),
+      ),
     );
     return;
   }
