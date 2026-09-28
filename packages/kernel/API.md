@@ -58,7 +58,9 @@ hook), `useAnalytics` (`track('custom.<name>')`, consent-gated), `useConsent`,
 `useLoyalty`, `useCep`, `useWaitlist`. `@vendua/ui-defaults` also exports `Calendar`
 (the month grid behind `checkout.SchedulePicker`) for store sections that need one.
 
-Hooks never compute prices or eligibility; every read exposes `refetch`.
+Hooks never compute prices or eligibility; every read exposes `refetch`. Since 1.6 the
+reads behind `useCatalog`, `useProduct`, `useStore`, `useDeliveryZones` and `useNotices` also refresh by
+themselves when Core's live stream says they changed (no API change).
 
 **Kernel 1.2 (commerce completeness, roadmap Phase 2)** — all additive:
 

@@ -1,5 +1,5 @@
 // v.js — the last-resort loader. Dependency-free, renders in Shadow DOM so no
-// storefront CSS can break it. Exhaustive capabilities: poll /storefront/v1/state,
+// storefront CSS can break it. Exhaustive capabilities: poll /storefront/v1/state (+ its change stream),
 // render blocking/emergency notices while the Kernel is not mounted, render the
 // per-tenant maintenance kill switch ALWAYS (even over a healthy Kernel), expose
 // window.__VENDUA_LOADER__ for synthetic monitoring. Nothing else — resist growth.
@@ -70,6 +70,8 @@
 
     // once the Kernel mounts it owns surfaces — yield and strip any stale overlay
     if (window.__VENDUA_KERNEL_MOUNTED__) {
+      if (es) es.close(); // the Kernel's stream relays from here on
+      es = null;
       clear();
       return;
     }
@@ -87,8 +89,35 @@
   }
 
   tick();
-  setInterval(tick, 30000);
+  // The poll is the floor; the change stream (payload-free hints) makes it instant.
+  // Kernel mounted → it owns the connection and relays `vendua:change`, so tabs hold one stream.
+  setInterval(tick, 60000);
+  var es = null;
+  function stream() {
+    if (es || document.hidden || window.__VENDUA_KERNEL_MOUNTED__ || !window.EventSource) return;
+    es = new EventSource('/storefront/v1/events');
+    es.addEventListener('change', function (ev) {
+      try {
+        var t = JSON.parse(ev.data).topics || [];
+        if (t.indexOf('surfaces') >= 0 || t.indexOf('store') >= 0) tick();
+      } catch (e) {}
+    });
+    es.onerror = function () {
+      if (es && es.readyState === 2) es = null; // closed for good: the poll carries on
+    };
+  }
+  document.addEventListener('vendua:change', function (ev) {
+    var t = (ev.detail && ev.detail.topics) || [];
+    if (t.indexOf('surfaces') >= 0 || t.indexOf('store') >= 0) tick();
+  });
+  stream();
   document.addEventListener('visibilitychange', function () {
-    if (!document.hidden) tick();
+    if (document.hidden) {
+      if (es) es.close();
+      es = null;
+    } else {
+      tick();
+      stream();
+    }
   });
 })();

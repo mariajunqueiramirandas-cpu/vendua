@@ -155,6 +155,7 @@ import { log } from './platform/log.ts';
 import { validAdminPhone, whatsappOtpSender, type OtpSender } from './admin/auth.ts';
 import type { AdminApp } from './admin/context.ts';
 import { AdminHub } from './admin/live.ts';
+import { mountStorefrontEvents } from './modules/storefront-live.ts';
 import { mountAdmin } from './admin/routes.ts';
 
 const agentLog = log.child({ mod: 'agent' });
@@ -326,6 +327,7 @@ export function createApp({
   adminHost,
 }: AppDeps) {
   const orderHub = new OrderHub(sql);
+  const liveHub = adminHub ?? new AdminHub(sql);
   const kickDrain =
     autoDrain === false
       ? () => {}
@@ -496,6 +498,8 @@ export function createApp({
       })),
     });
   });
+
+  mountStorefrontEvents(storefront, liveHub);
 
   // Loader-facing snapshot per 05-system-surfaces; `?templates=1` (the Kernel's
   // read) adds the page composition so v.js's 30s poll stays small.
@@ -2598,7 +2602,7 @@ export function createApp({
     admin,
     sql,
     sessionSecret,
-    hub: adminHub ?? new AdminHub(sql),
+    hub: liveHub,
     trustProxy,
     otpSender: otpSender ?? whatsappOtpSender(sql),
     idempotency,

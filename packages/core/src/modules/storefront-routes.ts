@@ -1,3 +1,4 @@
+import { emitAdminTx } from '../admin/live.ts';
 import type { Context, Hono } from 'hono';
 import { TEMPLATE_MIGRATIONS } from '@vendua/templates';
 import { withTenant, type Sql } from '../platform/db.ts';
@@ -245,6 +246,7 @@ export function mountStorefrontPlatform(d: Deps) {
         select demand_level from store_settings where tenant_id = ${t.id}
       `
         )[0]?.demand_level ?? 'normal';
+      await emitAdminTx(tx, t.id, 'surfaces');
       return { status: 200, body: { ...ops, demand } };
     });
     return reply(c, res);
