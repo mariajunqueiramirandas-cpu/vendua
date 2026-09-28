@@ -11,8 +11,8 @@ export default defineStorefront({
       surface: '#FFFFFF',
       text: '#1A1714',
       muted: '#77705F',
-      // #B06010 read 4.48:1 against onAccent — just under AA; the build gate blocks that
-      accent: '#AC5E10',
+      // raspberry, matching the headline italics; 6.3:1 against onAccent
+      accent: '#A83248',
       onAccent: '#FCFBF8',
       danger: '#B3372F',
       success: '#3D7A4F',
