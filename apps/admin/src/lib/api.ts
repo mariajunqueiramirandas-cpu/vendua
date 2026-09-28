@@ -45,7 +45,9 @@ async function req<T>(path: string, init: Init = {}): Promise<T> {
       data.error?.message ?? res.statusText,
       data.error?.details,
     );
-    if (res.status === 401) window.dispatchEvent(new CustomEvent('vendua:unauthenticated'));
+    // not for /session itself: App re-checks the session on this event, so a 401 there would loop
+    if (res.status === 401 && path !== '/session')
+      window.dispatchEvent(new CustomEvent('vendua:unauthenticated'));
     throw err;
   }
   const ct = res.headers.get('content-type') ?? '';
