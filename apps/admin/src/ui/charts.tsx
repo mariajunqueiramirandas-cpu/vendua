@@ -27,9 +27,10 @@ export function Sparkline({
 }) {
   const w = 120;
   const h = 36;
+  const pad = 8;
   const max = Math.max(1, ...values);
   const pts = values.map((v, i) => [
-    values.length === 1 ? w : (i / (values.length - 1)) * (w - 6) + 3,
+    values.length === 1 ? w - pad : (i / (values.length - 1)) * (w - 2 * pad) + pad,
     h - 4 - (v / max) * (h - 10),
   ]);
   const d = pts.map((p, i) => `${i ? 'L' : 'M'}${p[0]!.toFixed(1)} ${p[1]!.toFixed(1)}`).join(' ');
@@ -37,11 +38,14 @@ export function Sparkline({
   return (
     <svg
       viewBox={`0 0 ${w} ${h}`}
-      className={cn('h-9 w-30', className)}
+      className={cn('h-9 w-full max-w-30 overflow-visible', className)}
       role="img"
       aria-label={label}
     >
-      <path d={`${d} L${last?.[0] ?? w} ${h} L3 ${h} Z`} fill="var(--chart-soft)" />
+      <path
+        d={`${d} L${last?.[0] ?? w} ${h} L${pts[0]?.[0] ?? pad} ${h} Z`}
+        fill="var(--chart-soft)"
+      />
       <path
         d={d}
         fill="none"

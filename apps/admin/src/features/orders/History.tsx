@@ -50,7 +50,7 @@ export default function History() {
           value={q}
           onChange={(e) => setQ(e.target.value)}
         />
-        <div className="-mx-4 overflow-x-auto px-4">
+        <div className="scroll-row -mx-4 px-4">
           <div className="flex w-max gap-4">
             <Chips
               label="período"

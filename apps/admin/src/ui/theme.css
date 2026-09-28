@@ -228,6 +228,17 @@
   line-height: 1.125rem;
   font-weight: 500;
 }
+/* Horizontal pill rows: no scrollbar, and block padding so rings/shadows aren't clipped
+   (overflow-x forces overflow-y to clip too). */
+@utility scroll-row {
+  overflow-x: auto;
+  scrollbar-width: none;
+  padding-block: 4px;
+  margin-block: -4px;
+  &::-webkit-scrollbar {
+    display: none;
+  }
+}
 @utility tnum {
   font-variant-numeric: tabular-nums;
 }

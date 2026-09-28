@@ -175,24 +175,31 @@ export default function Menu() {
             },
           ]}
         />
-        <div className="flex-1" />
-        <Button
-          variant={selecting ? 'primary' : 'ghost'}
-          icon={selecting ? <X /> : <Selection />}
-          onClick={() => {
-            setSelecting((v) => !v);
-            setPicked(new Set());
-          }}
-        >
-          {selecting ? 'cancelar seleção' : 'selecionar'}
-        </Button>
-        <Button variant="ghost" icon={<FolderSimplePlus />} onClick={() => setSheet('organize')}>
-          categorias
-        </Button>
+        <div className="flex w-full gap-2 sm:ml-auto sm:w-auto">
+          <Button
+            variant={selecting ? 'primary' : 'ghost'}
+            className="flex-1 sm:flex-none"
+            icon={selecting ? <X /> : <Selection />}
+            onClick={() => {
+              setSelecting((v) => !v);
+              setPicked(new Set());
+            }}
+          >
+            {selecting ? 'cancelar seleção' : 'selecionar'}
+          </Button>
+          <Button
+            variant="ghost"
+            className="flex-1 sm:flex-none"
+            icon={<FolderSimplePlus />}
+            onClick={() => setSheet('organize')}
+          >
+            categorias
+          </Button>
+        </div>
       </div>
 
       {cats.length > 1 ? (
-        <nav aria-label="categorias" className="-mx-4 mb-5 overflow-x-auto px-4 md:-mx-8 md:px-8">
+        <nav aria-label="categorias" className="scroll-row -mx-4 mb-5 px-4 md:-mx-8 md:px-8">
           <ul className="flex w-max gap-2">
             {cats.map((c) => (
               <li key={c.id}>

@@ -100,7 +100,7 @@ function StoreEditor({ s }: { s: StoreView }) {
         }
         actions={<StatusPill />}
       />
-      <nav aria-label="seções" className="-mx-4 mb-6 overflow-x-auto px-4 md:-mx-8 md:px-8">
+      <nav aria-label="seções" className="scroll-row -mx-4 mb-6 px-4 md:-mx-8 md:px-8">
         <ul className="flex w-max gap-2">
           {[
             ['horarios', 'Horários'],
