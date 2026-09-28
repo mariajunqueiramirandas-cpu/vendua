@@ -40,6 +40,15 @@
   --accent: var(--v-color-accent, var(--caramel-700));
   --on-accent: var(--v-color-on-accent, var(--cream));
   --header-h: 68px;
+
+  /* one button system: every button-like element reads these */
+  --btn-radius: 999px;
+  --btn-h: 48px;
+  --btn-h-lg: 56px;
+  --btn-pad: 26px;
+  --btn-shadow: 0 6px 16px -8px color-mix(in srgb, var(--accent) 80%, transparent);
+  --btn-outline: color-mix(in srgb, var(--accent) 40%, transparent);
+  --btn-tint: color-mix(in srgb, var(--accent) 8%, transparent);
 }
 
 * {
@@ -224,9 +233,9 @@ img {
   align-items: center;
   justify-content: center;
   gap: 8px;
-  min-height: 48px;
-  padding: 0 26px;
-  border-radius: 999px;
+  min-height: var(--btn-h);
+  padding: 0 var(--btn-pad);
+  border-radius: var(--btn-radius);
   font: inherit;
   font-size: 0.9375rem;
   font-weight: 600;
@@ -246,7 +255,7 @@ img {
   border: 0;
   background: var(--accent);
   color: var(--on-accent);
-  box-shadow: 0 6px 16px -8px color-mix(in srgb, var(--accent) 80%, transparent);
+  box-shadow: var(--btn-shadow);
 }
 .btn:hover {
   background: color-mix(in srgb, var(--accent) 88%, #000);
@@ -262,27 +271,28 @@ img {
   pointer-events: none;
 }
 .btn-ghost {
-  border: 1.5px solid color-mix(in srgb, var(--accent) 40%, transparent);
+  border: 1.5px solid var(--btn-outline);
   background: transparent;
   color: var(--accent);
 }
 .btn-ghost:hover {
   border-color: var(--accent);
-  background: color-mix(in srgb, var(--accent) 7%, transparent);
+  background: var(--btn-tint);
   transform: translateY(-1px);
 }
 .btn-ghost:active {
   transform: translateY(1px);
 }
 .btn-lg {
-  min-height: 54px;
-  padding-inline: 32px;
+  min-height: var(--btn-h-lg);
+  padding-inline: 34px;
   font-size: 1rem;
 }
 .btn-light {
   border-color: transparent;
   background: #fff;
-  color: var(--brand-800);
+  color: var(--accent);
+  box-shadow: 0 6px 16px -8px rgb(0 0 0 / 0.35);
 }
 .btn-light:hover {
   background: var(--cream-2);
@@ -440,8 +450,8 @@ img {
   width: 44px;
   height: 44px;
   padding: 0;
-  border: 1px solid color-mix(in srgb, var(--accent) 30%, transparent);
-  border-radius: 50%;
+  border: 1.5px solid var(--btn-outline);
+  border-radius: var(--btn-radius);
   background: #fff;
   color: var(--accent);
   -webkit-tap-highlight-color: transparent;
@@ -453,6 +463,7 @@ img {
 .sacola-btn:hover,
 .menu-btn:hover {
   border-color: var(--accent);
+  background: var(--btn-tint);
 }
 .sacola-btn:active,
 .menu-btn:active {
@@ -1024,13 +1035,14 @@ img {
   border-radius: 50%;
   background: var(--accent);
   color: var(--on-accent);
-  box-shadow: 0 8px 16px -8px rgb(126 63 13 / 0.8);
+  box-shadow: var(--btn-shadow);
   transition:
     transform 0.2s var(--ease),
     background-color 0.2s;
 }
 .pcard-add:hover {
-  transform: scale(1.08);
+  background: color-mix(in srgb, var(--accent) 88%, #000);
+  transform: scale(1.06);
 }
 .pcard-add:active {
   transform: scale(0.94);
@@ -1484,7 +1496,8 @@ img {
   color: var(--zinc-600);
 }
 .search-clear:hover {
-  background: var(--zinc-100);
+  background: var(--btn-tint);
+  color: var(--accent);
 }
 .catalog-body {
   padding-bottom: 96px;
@@ -1520,7 +1533,7 @@ img {
   min-height: 40px;
   padding: 0 18px;
   border: 1.5px solid var(--zinc-200);
-  border-radius: 999px;
+  border-radius: var(--btn-radius);
   background: #fff;
   color: var(--zinc-700);
   font-size: 0.9rem;
@@ -1531,12 +1544,13 @@ img {
     border-color 0.2s;
 }
 .cat-tab:hover {
-  border-color: var(--zinc-950);
+  border-color: var(--btn-outline);
+  background: var(--btn-tint);
 }
 .cat-tab[data-active] {
-  background: var(--zinc-950);
-  border-color: var(--zinc-950);
-  color: var(--cream);
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--on-accent);
 }
 .catalog-count {
   margin: 0;
@@ -1619,7 +1633,8 @@ img {
 /* ── Kernel UI in the brand's hand (17 — styling API): tokens do most of the
    work; the rest is documented --v-* hooks and [data-part] targets only. ── */
 :root {
-  --v-btn-radius: 999px;
+  --v-btn-radius: var(--btn-radius);
+  --v-btn-padding: 0 var(--btn-pad);
   --v-card-radius: 24px;
   --v-page-max: 1216px;
   --v-announcement-bg: var(--brand-700);
@@ -1698,7 +1713,8 @@ img {
   color: var(--zinc-500);
 }
 .qp-notice-dismiss:hover {
-  background: var(--zinc-100);
+  background: var(--btn-tint);
+  color: var(--accent);
 }
 
 @media (prefers-reduced-motion: reduce) {
