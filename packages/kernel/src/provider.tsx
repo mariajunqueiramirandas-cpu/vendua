@@ -125,6 +125,77 @@ export function VenduaProvider({
     return () => setStatusRefresher(null);
   }, [baseUrl]);
 
+  // Kernel 1.6 — live storefront: Core's payload-free `GET /storefront/v1/events` says which
+  // cached reads went stale (catalog, store, surfaces); they refetch in place, so open pages
+  // update without a flash of loading. Paused while the tab is hidden; a reconnect resyncs.
+  useEffect(() => {
+    if (typeof EventSource === 'undefined') return;
+    const cache = cacheFor(api);
+    const refresh = (topics: readonly string[]) => {
+      const match = (key: string) =>
+        topics.some((t) =>
+          t === 'catalog'
+            ? key === 'catalog' || key.startsWith('product:')
+            : t === 'store'
+              ? key === 'store' || key === 'zones'
+              : key.startsWith('surfaces:'),
+        );
+      for (const key of [...cache.keys()]) {
+        if (!match(key)) continue;
+        const subs = listeners.current.get(key);
+        // mounted readers revalidate in place; unmounted ones must not serve a stale entry later
+        if (subs?.size) subs.forEach((fn) => fn());
+        else cache.delete(key);
+      }
+      document.dispatchEvent(new CustomEvent('vendua:change', { detail: { topics } }));
+    };
+    let es: EventSource | null = null;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    let failures = 0;
+    let connected = false;
+    const close = () => {
+      clearTimeout(timer);
+      es?.close();
+      es = null;
+    };
+    const open = () => {
+      if (es || document.hidden) return;
+      const src = new EventSource(`${baseUrl}/storefront/v1/events`);
+      es = src;
+      src.addEventListener('hello', () => {
+        // anything sent while we weren't connected is lost — catch up on a reconnect
+        if (connected) refresh(['catalog', 'store', 'surfaces']);
+        connected = true;
+        failures = 0;
+      });
+      src.addEventListener('change', (ev) => {
+        try {
+          const { topics } = JSON.parse((ev as MessageEvent).data) as { topics: string[] };
+          refresh(topics);
+        } catch {
+          /* a malformed hint is dropped; the next read still tells the truth */
+        }
+      });
+      src.onerror = () => {
+        // the browser retries transient drops itself; a hard close (503 at capacity, a
+        // proxy without streaming) backs off up to a minute and quietly stays on plain reads
+        if (src.readyState !== EventSource.CLOSED) return;
+        close();
+        timer = setTimeout(open, Math.min(60_000, 2000 * 2 ** failures++));
+      };
+    };
+    const vis = () => {
+      if (document.hidden) close();
+      else open(); // `hello` resyncs
+    };
+    document.addEventListener('visibilitychange', vis);
+    open();
+    return () => {
+      document.removeEventListener('visibilitychange', vis);
+      close();
+    };
+  }, [api, baseUrl]);
+
   // Kernel 1.2 links: `?cart=CODE` restores a shared sacola, `?cupom=CODE` applies a
   // coupon — both land on /sacola with the params stripped (the URL stays shareable once)
   useEffect(() => {

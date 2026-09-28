@@ -8,7 +8,15 @@ import { log } from '../platform/log.ts';
 export const ADMIN_CHANNEL = 'vendua_admin';
 
 export type AdminTopic =
-  'order.placed' | 'order.changed' | 'catalog' | 'store' | 'marketing' | 'team' | 'appearance';
+  | 'order.placed'
+  | 'order.changed'
+  | 'catalog'
+  | 'store'
+  | 'marketing'
+  | 'team'
+  | 'appearance'
+  // loader/maintenance state — storefront-facing only
+  | 'surfaces';
 
 const liveLog = log.child({ mod: 'admin-live' });
 

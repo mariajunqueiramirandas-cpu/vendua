@@ -1,3 +1,4 @@
+import { emitAdminTx } from './live.ts';
 import type { Context } from 'hono';
 import type { Sql } from '../platform/db.ts';
 import { HttpError, bodyJson } from '../platform/http.ts';
@@ -204,6 +205,7 @@ export function mountCustomers(d: AdminDeps) {
         entityId: `…${phone.slice(-4)}`,
         summary: `apagou os dados de um cliente a pedido dele (${orders.length} pedidos anonimizados)`,
       });
+      await emitAdminTx(tx, t.id, 'order.changed');
       return { status: 200, body: { anonymized: orders.length } };
     }),
   );

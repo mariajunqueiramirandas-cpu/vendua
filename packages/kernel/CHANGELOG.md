@@ -3,6 +3,17 @@
 Semver, per docs/architecture/11-backward-compatibility.md: minors and patches
 never need a storefront edit; a major only ships with a Contract major.
 
+## 1.6.0
+
+Live storefront — additive; no storefront edit, no new export.
+
+- `VenduaProvider` holds one Core change stream (`GET /storefront/v1/events`, payload-free
+  `catalog` / `store` / `surfaces` hints). `useCatalog`, `useProduct`, `useStore`,
+  `useDeliveryZones` and `useNotices` revalidate in place when the merchant changes stock, prices,
+  hours, pause state or a banner, with no loading flash. Paused while the tab is hidden; a
+  reconnect resyncs; without a stream (proxy, capacity) reads behave exactly as before.
+- Relays `vendua:change` on `document` so `v.js` (which polls at 60 s) reacts instantly.
+
 ## 1.5.0
 
 Storefront experience — additive; existing stores need no edit.
