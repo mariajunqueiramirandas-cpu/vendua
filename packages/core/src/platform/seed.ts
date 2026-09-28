@@ -68,6 +68,8 @@ interface SeedTenant {
   hosts: string[];
   /** repo storefront whose templates/ seed the store's composition (v1 in Core) */
   storefront?: string;
+  /** the merchant admin owner — phone as national digits (DDD + number) */
+  owner?: { name: string; phone: string; email: string | null };
   ring?: 'canary' | 'early' | 'stable';
   settings: {
     tagline?: string;
@@ -119,6 +121,7 @@ const TENANTS: SeedTenant[] = [
     name: 'Quero Pudim Gourmet',
     hosts: ['quero-pudim.localhost', 'localhost:5174', '127.0.0.1:5174'],
     storefront: 'storefronts/quero-pudim',
+    owner: { name: 'Vinícius', phone: '22981795040', email: 'viunuvi@gmail.com' },
     ring: 'stable',
     settings: {
       tagline: 'Pudins sem furinhos e sacolés cremosos',
@@ -420,13 +423,17 @@ for (const t of TENANTS) {
         latitude = ${s.location?.latitude ?? null}, longitude = ${s.location?.longitude ?? null}
       where tenant_id = ${tid}
     `;
-    // demo owner for the merchant admin — sign in at /admin/ with (22) 99999-0000
-    // (dev codes print in the log, or come back in the response with VENDUA_ADMIN_DEV_OTP=1)
-    await tx`
-      insert into merchant_users (tenant_id, name, phone, role)
-      values (${tid}, 'Maria', '22999990000', 'owner')
-      on conflict (tenant_id, phone) do nothing
-    `;
+    // the store's owner in the merchant admin (dev codes print in the log, or come back
+    // in the response with VENDUA_ADMIN_DEV_OTP=1); the old placeholder owner is retired
+    if (t.owner) {
+      await tx`delete from merchant_users where tenant_id = ${tid} and phone = '22999990000'`;
+      await tx`
+        insert into merchant_users (tenant_id, name, phone, email, role)
+        values (${tid}, ${t.owner.name}, ${t.owner.phone}, ${t.owner.email}, 'owner')
+        on conflict (tenant_id, phone) do update
+          set name = excluded.name, email = excluded.email, role = 'owner', status = 'active'
+      `;
+    }
     for (const c of t.coupons ?? []) {
       await tx`
         insert into coupons (tenant_id, code, kind, value, label, min_subtotal_cents, first_order_only, per_phone_limit)

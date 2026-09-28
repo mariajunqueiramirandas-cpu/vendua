@@ -86,7 +86,7 @@ CHROMIUM=/opt/pw-browsers/chromium bun scripts/shots.ts /pipeline /inbox   # 375
   its own tx, and live updates are `emitAdminTx` → SSE.
 - To run it, start Core with `VENDUA_ADMIN_DEV_OTP=1` (the sign-in code comes back in
   the response), then `cd apps/admin && bun run dev` (:5196). Sign in as the seed owner,
-  phone 22999990000.
+  phone 22981795040.
 - Gates: `bun run build` (bundle budgets) and
   `CHROMIUM=/opt/pw-browsers/chromium AXE=1 bun scripts/shots.ts` (375/820/1440 ×
   Creme/Noite; overflow, console and axe).

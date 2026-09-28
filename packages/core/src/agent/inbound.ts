@@ -15,6 +15,7 @@ import { retireWakeupsOnInboundTx } from './wakeups.ts';
 import { RETIRED_BY_INBOUND } from './sources.ts';
 import { log } from '../platform/log.ts';
 import { blockedPhonesTx } from '../modules/staff.ts';
+import { isMerchantPhone } from '../admin/phones.ts';
 
 const agentLog = log.child({ mod: 'agent' });
 
@@ -57,6 +58,11 @@ export async function ingestInbound(
   const blocked = await controlTx(sql, blockedPhonesTx);
   if (phoneIsIgnored(blocked, input.from, input.fromAlias)) {
     return { ignored: `número ignorado: ${input.from}` };
+  }
+  // Store owners get their admin sign-in codes from this same number; a "valeu" back
+  // is not a sales lead, and the agent must not answer a customer as a prospect.
+  if (input.channel === 'whatsapp' && (await isMerchantPhone(sql, input.from, input.fromAlias))) {
+    return { ignored: `número de lojista: ${input.from}` };
   }
   // whatsapp_history scopes the pairing-time import; live messages are never filtered here
   const history =

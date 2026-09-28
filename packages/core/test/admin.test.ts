@@ -4,6 +4,7 @@ import postgres from 'postgres';
 import { createApp } from '../src/app.ts';
 import { parseMenuPaste, parseMoney } from '../src/admin/routes-catalog.ts';
 import { sweepAdmin } from '../src/admin/workers.ts';
+import { ingestInbound } from '../src/agent/inbound.ts';
 import { encryptPayload } from '../src/admin/webpush.ts';
 import { migrate } from '../src/platform/db.ts';
 
@@ -618,6 +619,19 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('merchant admin (db)', () => {
     expect((await owner('GET', '/customers/22988887777')).status).toBe(404);
     const o = await owner('GET', `/orders/${orderId}`);
     expect(o.body.order.customer.name).toBe('Cliente removido');
+  });
+
+  test('a store owner writing to the platform WhatsApp is not a lead', async () => {
+    const res = await ingestInbound(sql, {
+      channel: 'whatsapp',
+      from: `+55${ownerPhone}`,
+      body: 'valeu pelo código',
+      providerMessageId: `adm-${nonce}`,
+    });
+    expect('ignored' in res && res.ignored).toContain('lojista');
+    const leads =
+      await sql`select 1 from leads where whatsapp like ${`%${ownerPhone}`} or phone like ${`%${ownerPhone}`}`;
+    expect(leads.length).toBe(0);
   });
 
   test('staff create a store owner from the CRM', async () => {
