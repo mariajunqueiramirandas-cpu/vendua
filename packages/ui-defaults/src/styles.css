@@ -322,6 +322,7 @@
     border-radius: 0;
     box-shadow: none;
     text-align: center;
+    line-height: 1.4;
     background: color-mix(in srgb, var(--v-color-accent, #b06010) 12%, var(--v-color-bg, #fff));
     border-bottom: 1px solid color-mix(in srgb, var(--v-color-accent, #b06010) 22%, transparent);
   }
