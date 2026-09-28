@@ -60,6 +60,10 @@ In Dokploy, assign a domain to each web service (port 80):
   `VENDUA_ADMIN_HOST` set, Core also refuses `/admin` on any other host and
   sends old `/admin` bookmarks to the admin domain. One domain serves every
   store; a person in several stores picks one after signing in.
+  A subdomain of the store domain works (e.g. `painel.vendua.com.br` beside
+  `<slug>.vendua.com.br`): the cookie is host-only, and cross-origin calls fail
+  the Origin check. Keep that label out of store slugs — the Phase 4
+  provisioner must reserve it.
 
 Then set `SEED_DOMAINS` to match, e.g.
 `quero-pudim:pudim.example.com` — tenant routing is
