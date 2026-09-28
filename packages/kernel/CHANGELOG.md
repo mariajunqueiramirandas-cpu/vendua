@@ -3,6 +3,14 @@
 Semver, per docs/architecture/11-backward-compatibility.md: minors and patches
 never need a storefront edit; a major only ships with a Contract major.
 
+## 1.6.1
+
+Navigation scroll — patch; no storefront edit, no new export.
+
+- `StorefrontRoutes` now manages scroll: a new page opens at the top, a `#hash` link scrolls to its
+  element (waiting for async content), back/forward restores the previous position. Same-path
+  changes (`?query`, filters) leave the page where it is.
+
 ## 1.6.0
 
 Live storefront — additive; no storefront edit, no new export.

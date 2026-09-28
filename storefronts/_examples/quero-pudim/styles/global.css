@@ -40,6 +40,15 @@
   --accent: var(--v-color-accent, var(--caramel-700));
   --on-accent: var(--v-color-on-accent, var(--cream));
   --header-h: 68px;
+
+  /* one button system: every button-like element reads these */
+  --btn-radius: 999px;
+  --btn-h: 48px;
+  --btn-h-lg: 56px;
+  --btn-pad: 26px;
+  --btn-shadow: 0 6px 16px -8px color-mix(in srgb, var(--accent) 80%, transparent);
+  --btn-outline: color-mix(in srgb, var(--accent) 40%, transparent);
+  --btn-tint: color-mix(in srgb, var(--accent) 8%, transparent);
 }
 
 * {
@@ -83,12 +92,16 @@ p {
 img {
   max-width: 100%;
 }
-a {
-  color: inherit;
-}
-button {
-  font: inherit;
-  cursor: pointer;
+/* Same layer as the Kernel defaults so their .v-btn colour and weight win on specificity;
+   unlayered, these two resets flattened every Kernel link/button to inherited text. */
+@layer vendua {
+  a {
+    color: inherit;
+  }
+  button {
+    font: inherit;
+    cursor: pointer;
+  }
 }
 
 :where(a, button, input, textarea, select, summary):focus-visible {
@@ -220,9 +233,9 @@ button {
   align-items: center;
   justify-content: center;
   gap: 8px;
-  min-height: 48px;
-  padding: 0 24px;
-  border-radius: 14px;
+  min-height: var(--btn-h);
+  padding: 0 var(--btn-pad);
+  border-radius: var(--btn-radius);
   font: inherit;
   font-size: 0.9375rem;
   font-weight: 600;
@@ -239,13 +252,10 @@ button {
     color 0.15s;
 }
 .btn {
-  border: 1px solid rgb(0 0 0 / 0.12);
+  border: 0;
   background: var(--accent);
   color: var(--on-accent);
-  box-shadow:
-    inset 0 1px 0 rgb(255 255 255 / 0.2),
-    0 1px 2px rgb(58 30 12 / 0.2),
-    0 8px 16px -10px rgb(126 63 13 / 0.7);
+  box-shadow: var(--btn-shadow);
 }
 .btn:hover {
   background: color-mix(in srgb, var(--accent) 88%, #000);
@@ -253,7 +263,7 @@ button {
 }
 .btn:active {
   transform: translateY(1px);
-  box-shadow: inset 0 1px 2px rgb(0 0 0 / 0.25);
+  box-shadow: none;
 }
 .btn:disabled,
 .btn[aria-disabled='true'] {
@@ -261,27 +271,28 @@ button {
   pointer-events: none;
 }
 .btn-ghost {
-  border: 1px solid var(--zinc-300);
-  background: #fff;
-  color: var(--zinc-950);
-  box-shadow: 0 1px 2px rgb(58 30 12 / 0.06);
+  border: 1.5px solid var(--btn-outline);
+  background: transparent;
+  color: var(--accent);
 }
 .btn-ghost:hover {
-  border-color: var(--zinc-950);
+  border-color: var(--accent);
+  background: var(--btn-tint);
   transform: translateY(-1px);
 }
 .btn-ghost:active {
   transform: translateY(1px);
 }
 .btn-lg {
-  min-height: 54px;
-  padding-inline: 30px;
+  min-height: var(--btn-h-lg);
+  padding-inline: 34px;
   font-size: 1rem;
 }
 .btn-light {
   border-color: transparent;
   background: #fff;
-  color: var(--brand-800);
+  color: var(--accent);
+  box-shadow: 0 6px 16px -8px rgb(0 0 0 / 0.35);
 }
 .btn-light:hover {
   background: var(--cream-2);
@@ -439,10 +450,10 @@ button {
   width: 44px;
   height: 44px;
   padding: 0;
-  border: 1px solid var(--zinc-300);
-  border-radius: 14px;
+  border: 1.5px solid var(--btn-outline);
+  border-radius: var(--btn-radius);
   background: #fff;
-  color: var(--zinc-950);
+  color: var(--accent);
   -webkit-tap-highlight-color: transparent;
   transition:
     border-color 0.15s,
@@ -451,7 +462,8 @@ button {
 }
 .sacola-btn:hover,
 .menu-btn:hover {
-  border-color: var(--zinc-950);
+  border-color: var(--accent);
+  background: var(--btn-tint);
 }
 .sacola-btn:active,
 .menu-btn:active {
@@ -1023,13 +1035,14 @@ button {
   border-radius: 50%;
   background: var(--accent);
   color: var(--on-accent);
-  box-shadow: 0 8px 16px -8px rgb(126 63 13 / 0.8);
+  box-shadow: var(--btn-shadow);
   transition:
     transform 0.2s var(--ease),
     background-color 0.2s;
 }
 .pcard-add:hover {
-  transform: scale(1.08);
+  background: color-mix(in srgb, var(--accent) 88%, #000);
+  transform: scale(1.06);
 }
 .pcard-add:active {
   transform: scale(0.94);
@@ -1483,7 +1496,8 @@ button {
   color: var(--zinc-600);
 }
 .search-clear:hover {
-  background: var(--zinc-100);
+  background: var(--btn-tint);
+  color: var(--accent);
 }
 .catalog-body {
   padding-bottom: 96px;
@@ -1519,7 +1533,7 @@ button {
   min-height: 40px;
   padding: 0 18px;
   border: 1.5px solid var(--zinc-200);
-  border-radius: 999px;
+  border-radius: var(--btn-radius);
   background: #fff;
   color: var(--zinc-700);
   font-size: 0.9rem;
@@ -1530,12 +1544,13 @@ button {
     border-color 0.2s;
 }
 .cat-tab:hover {
-  border-color: var(--zinc-950);
+  border-color: var(--btn-outline);
+  background: var(--btn-tint);
 }
 .cat-tab[data-active] {
-  background: var(--zinc-950);
-  border-color: var(--zinc-950);
-  color: var(--cream);
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--on-accent);
 }
 .catalog-count {
   margin: 0;
@@ -1618,7 +1633,8 @@ button {
 /* ── Kernel UI in the brand's hand (17 — styling API): tokens do most of the
    work; the rest is documented --v-* hooks and [data-part] targets only. ── */
 :root {
-  --v-btn-radius: 14px;
+  --v-btn-radius: var(--btn-radius);
+  --v-btn-padding: 0 var(--btn-pad);
   --v-card-radius: 24px;
   --v-page-max: 1216px;
   --v-announcement-bg: var(--brand-700);
@@ -1697,7 +1713,8 @@ button {
   color: var(--zinc-500);
 }
 .qp-notice-dismiss:hover {
-  background: var(--zinc-100);
+  background: var(--btn-tint);
+  color: var(--accent);
 }
 
 @media (prefers-reduced-motion: reduce) {
