@@ -6,6 +6,7 @@ import { ROLE_LABEL, useSession } from '../lib/session.ts';
 import { Sheet } from '../ui/Sheet.tsx';
 import type { NAV } from './nav.ts';
 import { UserMenu } from './Shell.tsx';
+import { resetClient } from '../lib/persist.ts';
 
 export /** "Mais": large tiles with a live hint each (§3.1). */
 function MoreSheet({
@@ -83,7 +84,7 @@ export function SwitchStoreSheet({
               disabled={st.id === s.store.id}
               onClick={async () => {
                 await api.switchStore(st.id);
-                qc.clear();
+                await resetClient(qc);
                 window.location.assign('/admin/');
               }}
               className="flex min-h-16 w-full items-center gap-3 rounded-md px-4 text-left ring-1 ring-line hover:bg-hover disabled:bg-spark-soft disabled:ring-spark"

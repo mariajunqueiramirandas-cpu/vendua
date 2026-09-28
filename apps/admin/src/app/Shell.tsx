@@ -5,14 +5,17 @@ import { NavLink, useLocation, useNavigate } from 'react-router-dom';
 import { StatusPill } from '../features/store/StatusPill.tsx';
 import { api } from '../lib/api.ts';
 import { setAnnouncer, useLiveState, useLiveStream, setSoundOn } from '../lib/live.ts';
+import { applyUpdate, onUpdate, setBadge, updateReady } from '../lib/pwa.ts';
 import { qk } from '../lib/query.ts';
 import { can, ROLE_LABEL, useSession } from '../lib/session.ts';
 import { setVolume, unlockAudio } from '../lib/sound.ts';
 import { Boundary } from '../ui/Boundary.tsx';
 import { cn } from '../ui/cn.ts';
 import { Loading } from '../ui/feedback.tsx';
-import { Toaster } from '../ui/Toast.tsx';
+import { toast, Toaster } from '../ui/Toast.tsx';
 import { NAV } from './nav.ts';
+import { useScrollMemory, useTabNav } from './nativeFeel.ts';
+import { PullToRefresh } from './PullToRefresh.tsx';
 
 const SearchSheet = lazy(() => import('./Search.tsx').then((m) => ({ default: m.SearchSheet })));
 const MoreSheet = lazy(() => import('./ShellSheets.tsx').then((m) => ({ default: m.MoreSheet })));
@@ -29,6 +32,7 @@ function useSeen(open: boolean) {
   return seen;
 }
 import { StoreAvatar } from './StoreAvatar.tsx';
+import { resetClient } from '../lib/persist.ts';
 
 function usePlacedCount() {
   const { data } = useQuery({ queryKey: qk.board, queryFn: api.board, refetchInterval: 30_000 });
@@ -46,12 +50,15 @@ export function Shell({ children }: { children: ReactNode }) {
   const moreSeen = useSeen(moreOpen);
   const searchSeen = useSeen(searchOpen);
   const placed = usePlacedCount();
+  useEffect(() => setBadge(placed), [placed]);
   const live = useLiveState();
   const loc = useLocation();
   const nav = useNavigate();
   const liveRegion = useRef<HTMLDivElement>(null);
 
   useLiveStream(true);
+  useScrollMemory();
+  const tab = useTabNav();
   useEffect(() => {
     setSoundOn(session.user.prefs.sound !== false);
     setVolume(session.user.prefs.volume ?? 0.8);
@@ -79,14 +86,24 @@ export function Shell({ children }: { children: ReactNode }) {
     return () => window.removeEventListener('keydown', onKey);
   }, []);
   useEffect(() => {
-    // the service worker asks us to open a URL (a tapped notification)
-    const onMsg = (e: MessageEvent) => {
-      const d = e.data as { type?: string; url?: string };
-      if (d?.type === 'open' && d.url) nav(d.url.replace(/^\/admin/, '') || '/');
+    // a tapped notification, an app shortcut or a relaunch (lib/pwa.ts)
+    const onOpen = (e: Event) => {
+      const url = (e as CustomEvent<string>).detail;
+      nav(url.replace(/^\/admin/, '') || '/');
     };
-    navigator.serviceWorker?.addEventListener('message', onMsg);
-    return () => navigator.serviceWorker?.removeEventListener('message', onMsg);
+    window.addEventListener('vendua:open', onOpen);
+    return () => window.removeEventListener('vendua:open', onOpen);
   }, [nav]);
+  useEffect(() => {
+    const announce = () =>
+      toast('Tem uma versão nova do app.', {
+        tone: 'info',
+        ms: 24 * 60 * 60_000,
+        action: { label: 'atualizar', run: applyUpdate },
+      });
+    if (updateReady()) announce();
+    return onUpdate(announce);
+  }, []);
   useEffect(() => setMoreOpen(false), [loc.pathname]);
 
   const badge = (to: string) => (to === '/pedidos' && placed > 0 ? placed : 0);
@@ -101,7 +118,7 @@ export function Shell({ children }: { children: ReactNode }) {
       </a>
 
       {/* tablet rail + desktop sidebar */}
-      <aside className="sticky top-0 hidden h-dvh shrink-0 flex-col border-r border-line bg-bg md:flex md:w-[88px] lg:w-[264px]">
+      <aside className="vt-rail sticky top-0 hidden h-dvh shrink-0 flex-col border-r border-line bg-bg md:flex md:w-[88px] lg:w-[264px]">
         <div className="flex flex-col items-center gap-3 px-3 pb-2 pt-5 lg:items-stretch lg:px-4">
           <StoreSwitcher />
           <button
@@ -122,6 +139,7 @@ export function Shell({ children }: { children: ReactNode }) {
                 <NavLink
                   to={n.to}
                   end={n.to === '/'}
+                  onClick={tab(n.to)}
                   className={({ isActive }) =>
                     cn(
                       'group relative flex min-h-12 flex-col items-center justify-center gap-0.5 rounded-md px-2 py-1.5 transition-colors lg:flex-row lg:justify-start lg:gap-3 lg:px-3',
@@ -164,7 +182,7 @@ export function Shell({ children }: { children: ReactNode }) {
 
       <div className="min-w-0 flex-1">
         {/* phone top: status pill always visible (§3.2) + search */}
-        <header className="sticky top-0 z-30 flex items-center gap-2 bg-bg/95 px-4 pb-2 pt-[calc(env(safe-area-inset-top)+0.75rem)] backdrop-blur-sm md:hidden">
+        <header className="vt-top sticky top-0 z-30 flex items-center gap-2 bg-bg/95 px-4 pb-2 pt-[calc(env(safe-area-inset-top)+0.75rem)] backdrop-blur-sm md:hidden">
           <StoreAvatar size={40} />
           <StatusPill className="min-w-0" />
           <div className="flex-1" />
@@ -206,7 +224,7 @@ export function Shell({ children }: { children: ReactNode }) {
       {/* phone bottom bar: five items, always labelled (§3.1) */}
       <nav
         aria-label="principal"
-        className="glass pb-safe fixed inset-x-0 bottom-0 z-40 border-t border-line md:hidden"
+        className="vt-tabs chrome glass pb-safe fixed inset-x-0 bottom-0 z-40 border-t border-line md:hidden"
       >
         <ul className="mx-auto flex max-w-lg">
           {primary.map((n) => (
@@ -214,6 +232,7 @@ export function Shell({ children }: { children: ReactNode }) {
               <NavLink
                 to={n.to}
                 end={n.to === '/'}
+                onClick={tab(n.to)}
                 className={({ isActive }) =>
                   cn(
                     'relative flex h-[72px] flex-col items-center justify-center gap-1',
@@ -270,6 +289,7 @@ export function Shell({ children }: { children: ReactNode }) {
           <SearchSheet open={searchOpen} onOpenChange={setSearchOpen} />
         ) : null}
       </Suspense>
+      <PullToRefresh />
       <Toaster />
       <div ref={liveRegion} aria-live="assertive" className="sr-only" />
     </div>
@@ -348,7 +368,7 @@ export function UserMenu() {
         title="sair"
         onClick={async () => {
           await api.auth.logout().catch(() => undefined);
-          qc.clear();
+          await resetClient(qc);
           window.location.assign('/admin/entrar');
         }}
         className="grid size-11 shrink-0 place-items-center rounded-full text-muted hover:bg-hover hover:text-ink md:hidden lg:grid"

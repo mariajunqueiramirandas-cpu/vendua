@@ -356,6 +356,49 @@
   padding-bottom: env(safe-area-inset-bottom);
 }
 
+/* app chrome: a long press on a tab is not a text selection or a link preview */
+.chrome {
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-touch-callout: none;
+}
+
+/* ── screen changes (View Transitions, app/nativeFeel.ts) ─────────────────
+ * the page cross-fades with a small lift; the chrome around it stays put. */
+.vt-tabs {
+  view-transition-name: tabs;
+}
+.vt-top {
+  view-transition-name: top;
+}
+.vt-rail {
+  view-transition-name: rail;
+}
+::view-transition-old(root) {
+  animation: 120ms var(--ease-soft) both vt-out;
+}
+::view-transition-new(root) {
+  animation: 220ms var(--ease-soft) 40ms both vt-in;
+}
+@keyframes vt-out {
+  to {
+    opacity: 0;
+  }
+}
+@keyframes vt-in {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  ::view-transition-group(*),
+  ::view-transition-old(*),
+  ::view-transition-new(*) {
+    animation: none !important;
+  }
+}
+
 /* ── motion (§5) ───────────────────────────────────────────────────────── */
 @keyframes drop-in {
   0% {

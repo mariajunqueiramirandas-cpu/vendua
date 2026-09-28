@@ -8,29 +8,24 @@ import '@fontsource/instrument-serif/latin-400-italic.css';
 import './ui/theme.css';
 import App from './app/App.tsx';
 import { queryClient } from './lib/query.ts';
+import { persistCache, restoreCache } from './lib/persist.ts';
+import { startPwa } from './lib/pwa.ts';
 import { applyTheme } from './lib/theme.ts';
 
 applyTheme();
 
-// PWA: prod-only — in dev a cache would fight vite HMR
-if (import.meta.env.PROD && 'serviceWorker' in navigator) {
-  window.addEventListener('load', () => {
-    navigator.serviceWorker
-      .register('/admin/sw.js', { scope: '/admin/' })
-      .then((reg) => {
-        document.addEventListener('visibilitychange', () => {
-          if (document.visibilityState === 'visible') void reg.update().catch(() => undefined);
-        });
-      })
-      .catch(() => undefined);
-  });
-}
+// the service worker is prod-only: in dev a cache would fight vite HMR
+startPwa();
 void navigator.storage?.persist?.().catch(() => undefined);
+
+await restoreCache(queryClient);
+persistCache(queryClient);
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
     <QueryClientProvider client={queryClient}>
-      <BrowserRouter basename="/admin">
+      {/* startTransition: the current screen stays up while the next one loads */}
+      <BrowserRouter basename="/admin" future={{ v7_startTransition: true }}>
         <App />
       </BrowserRouter>
     </QueryClientProvider>

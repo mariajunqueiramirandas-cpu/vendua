@@ -13,7 +13,7 @@ import {
 } from '@phosphor-icons/react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { Link, useNavigate } from 'react-router-dom';
+import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { api, type Category, type Product } from '../../lib/api.ts';
 import { money } from '../../lib/format.ts';
 import { haptic } from '../../lib/haptics.ts';
@@ -68,6 +68,16 @@ export default function Menu() {
   const [sheet, setSheet] = useState<
     null | 'new' | 'category' | 'import' | 'organize' | 'bulk-price' | 'bulk-category'
   >(null);
+  // the "Novo produto" app shortcut and photos shared from the gallery land here
+  const [search, setSearch] = useSearchParams();
+  const shared = search.get('foto') === 'compartilhada';
+  const [fromShare, setFromShare] = useState(false);
+  useEffect(() => {
+    if (search.get('novo') !== '1' && !shared) return;
+    setFromShare(shared);
+    setSheet('new');
+    setSearch({}, { replace: true });
+  }, [search, shared, setSearch]);
   const [availFor, setAvailFor] = useState<Product | null>(null);
   const cats = data?.categories ?? [];
   useEffect(() => {
@@ -349,6 +359,7 @@ export default function Menu() {
         open={sheet === 'new'}
         onOpenChange={(v) => setSheet(v ? 'new' : null)}
         cats={cats}
+        sharedPhoto={fromShare}
         onNeedCategory={() => setSheet('category')}
       />
       <NewCategorySheet
@@ -659,11 +670,13 @@ function NewProductSheet({
   onOpenChange,
   cats,
   onNeedCategory,
+  sharedPhoto,
 }: {
   open: boolean;
   onOpenChange: (v: boolean) => void;
   cats: Category[];
   onNeedCategory: () => void;
+  sharedPhoto?: boolean;
 }) {
   const nav = useNavigate();
   const qc = useQueryClient();
@@ -685,8 +698,12 @@ function NewProductSheet({
     onSuccess: (r) => {
       void qc.invalidateQueries({ queryKey: qk.catalog });
       onOpenChange(false);
-      toast(`${r.product.name} criado. Agora é só pôr uma foto.`);
-      nav(`/cardapio/produto/${r.product.id}?foto=1`);
+      toast(
+        sharedPhoto
+          ? `${r.product.name} criado. Ajuste a foto que você mandou.`
+          : `${r.product.name} criado. Agora é só pôr uma foto.`,
+      );
+      nav(`/cardapio/produto/${r.product.id}?foto=${sharedPhoto ? 'compartilhada' : '1'}`);
     },
     onError: (e) => setErr(messageOf(e)),
   });
@@ -702,7 +719,11 @@ function NewProductSheet({
       open={open}
       onOpenChange={onOpenChange}
       title="Novo produto"
-      description="Só o básico agora. Foto, opções e estoque vêm no próximo passo."
+      description={
+        sharedPhoto
+          ? 'A foto chegou. Dê um nome e um preço; você ajusta a foto no próximo passo.'
+          : 'Só o básico agora. Foto, opções e estoque vêm no próximo passo.'
+      }
       footer={
         <Button
           size="lg"
@@ -714,7 +735,7 @@ function NewProductSheet({
             create.mutate();
           }}
         >
-          criar e adicionar foto
+          {sharedPhoto ? 'criar com esta foto' : 'criar e adicionar foto'}
         </Button>
       }
     >
@@ -810,11 +831,13 @@ function ImportSheet({
   onOpenChange,
   cats,
   onNeedCategory,
+  sharedPhoto,
 }: {
   open: boolean;
   onOpenChange: (v: boolean) => void;
   cats: Category[];
   onNeedCategory: () => void;
+  sharedPhoto?: boolean;
 }) {
   const qc = useQueryClient();
   const [text, setText] = useState('');

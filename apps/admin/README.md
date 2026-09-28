@@ -32,6 +32,40 @@ The seed makes Vinícius, phone `(22) 98179-5040`, the owner of Quero Pudim.
   and reuses `/tmp/vendua-admin-auth.json`. Set `BASE=http://localhost:8787/admin/`
   to check the production build that Core serves.
 
+## The installed app (PWA)
+
+The admin is meant to live on the merchant's home screen. What that takes, and where:
+
+- **Service worker** (`sw.js`, built into `dist/sw.js` by the `vendua-sw` plugin in
+  `vite.config.ts`). The build prepends `VERSION` (a hash of `dist/`) and `PRECACHE`
+  (the shell, every route chunk, the pt-BR fonts, icons), so every screen opens offline
+  and a deploy is one atomic version. A new version waits; the app shows "Tem uma versão
+  nova · atualizar" (`lib/pwa.ts`), and the old version keeps working meanwhile. Product
+  photos (`/v1/media`) are cached stale-while-revalidate; `/admin/v1` is never cached by
+  the worker.
+- **Last-known data** (`lib/persist.ts`): the query cache is saved to IndexedDB, so a cold
+  start (even offline) opens straight to the board. Sign-out and store switches go
+  through `resetClient()`, which wipes it; a 401 wipes it too.
+- **Manifest** (`public/manifest.webmanifest`): `id`, `launch_handler` (focus-existing;
+  the open window routes the launch URL), shortcuts with icons (Pedidos, Cardápio, Novo
+  produto → `/cardapio?novo=1`), store screenshots, a monochrome badge, and a
+  `share_target`: a photo shared from the gallery is parked by the worker and opens
+  "novo produto" with it (`lib/share.ts`).
+- **OS integration**: the app icon badge counts orders waiting (`setBadge`); order
+  notifications close when the board is seen; "Tela ligada" on Pedidos holds a screen
+  wake lock (`lib/wakeLock.ts`); Início offers install (Chromium prompt or iPhone steps)
+  and then push (`features/home/DeviceCard.tsx`).
+- **Native feel** (`app/nativeFeel.ts`, `app/PullToRefresh.tsx`, `ui/Sheet.tsx`): back
+  closes an open sheet instead of leaving the screen, back/forward restore scroll, a tap
+  on the current tab scrolls to the top, tab changes are view transitions (off under
+  reduced motion), and pulling down at the top refetches the screen.
+- **Install art** (`scripts/pwa-assets.ts`, committed to `public/`): the badge, shortcut
+  icons and the iOS splash screens (`scripts/splash-devices.ts`; the `<link>`s are
+  written at build). `--screenshots` recaptures the store screenshots from a running app.
+
+Test the worker against the production build (`BASE=http://localhost:8787/admin/`): in
+dev it isn't registered.
+
 ## Rules
 
 - **Tokens only.** Colours, radii, type and motion live in `src/ui/theme.css`
@@ -51,3 +85,5 @@ The seed makes Vinícius, phone `(22) 98179-5040`, the owner of Quero Pudim.
 - **Phones first.** Every screen works at 375px with thumb-reachable actions.
   Check 375 in the shots before anything else.
 - Keep the shell small: sheets and rarely used screens are `lazy()`.
+- **Sign-out and store switches** call `resetClient(qc)`, never `qc.clear()` alone: the
+  persisted cache must go with the session.

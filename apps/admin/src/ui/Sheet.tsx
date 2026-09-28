@@ -1,5 +1,5 @@
 import { X } from '@phosphor-icons/react';
-import { useEffect, useState, type ReactNode } from 'react';
+import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { Drawer } from 'vaul';
 import { cn } from './cn.ts';
 import { IconButton } from './Button.tsx';
@@ -14,6 +14,35 @@ function useDesktop() {
     return () => m.removeEventListener('change', on);
   }, []);
   return d;
+}
+
+/**
+ * The back button (Android, the browser, a swipe from the edge) closes the sheet
+ * instead of leaving the screen: an open sheet is one history entry.
+ */
+function useBackToClose(open: boolean, close: () => void) {
+  const closeRef = useRef(close);
+  closeRef.current = close;
+  useEffect(() => {
+    if (!open) return;
+    const id = Math.random().toString(36).slice(2);
+    let pushed = false;
+    // deferred: StrictMode's mount-unmount-mount must not leave entries behind
+    const t = setTimeout(() => {
+      history.pushState({ ...history.state, vSheet: id }, '');
+      pushed = true;
+    });
+    const onPop = () => {
+      if ((history.state as { vSheet?: string } | null)?.vSheet !== id) closeRef.current();
+    };
+    window.addEventListener('popstate', onPop);
+    return () => {
+      clearTimeout(t);
+      window.removeEventListener('popstate', onPop);
+      // closed from the UI: drop our entry (unless a navigation already moved past it)
+      if (pushed && (history.state as { vSheet?: string } | null)?.vSheet === id) history.back();
+    };
+  }, [open]);
 }
 
 /**
@@ -38,6 +67,7 @@ export function Sheet({
   wide?: boolean;
 }) {
   const desktop = useDesktop();
+  useBackToClose(open, () => onOpenChange(false));
   return (
     <Drawer.Root open={open} onOpenChange={onOpenChange} direction={desktop ? 'right' : 'bottom'}>
       <Drawer.Portal>

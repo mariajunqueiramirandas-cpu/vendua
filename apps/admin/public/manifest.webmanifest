@@ -1,27 +1,138 @@
 {
+  "id": "/admin/",
   "name": "Minha loja · Venduá",
   "short_name": "Minha loja",
-  "description": "Pedidos, cardápio, horários e vendas da sua loja.",
+  "description": "Pedidos ao vivo, cardápio, horários e vendas da sua loja, no celular.",
   "lang": "pt-BR",
+  "dir": "ltr",
   "start_url": "/admin/",
   "scope": "/admin/",
   "display": "standalone",
-  "orientation": "portrait",
+  "display_override": ["standalone", "minimal-ui"],
   "background_color": "#f7f4ea",
-  "theme_color": "#123c32",
+  "theme_color": "#f7f4ea",
+  "categories": ["business", "food", "productivity"],
+  "prefer_related_applications": false,
+  "launch_handler": {
+    "client_mode": ["focus-existing", "auto"]
+  },
+  "handle_links": "preferred",
+  "edge_side_panel": {
+    "preferred_width": 420
+  },
   "icons": [
-    { "src": "/admin/icons/icon.svg", "sizes": "any", "type": "image/svg+xml" },
-    { "src": "/admin/icons/icon-192.png", "sizes": "192x192", "type": "image/png" },
-    { "src": "/admin/icons/icon-512.png", "sizes": "512x512", "type": "image/png" },
+    {
+      "src": "/admin/icons/icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml"
+    },
+    {
+      "src": "/admin/icons/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png"
+    },
+    {
+      "src": "/admin/icons/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png"
+    },
     {
       "src": "/admin/icons/maskable-512.png",
       "sizes": "512x512",
       "type": "image/png",
       "purpose": "maskable"
+    },
+    {
+      "src": "/admin/icons/badge-96.png",
+      "sizes": "96x96",
+      "type": "image/png",
+      "purpose": "monochrome"
     }
   ],
   "shortcuts": [
-    { "name": "Pedidos", "url": "/admin/pedidos" },
-    { "name": "Cardápio", "url": "/admin/cardapio" }
+    {
+      "name": "Pedidos",
+      "short_name": "Pedidos",
+      "description": "O quadro de pedidos ao vivo",
+      "url": "/admin/pedidos",
+      "icons": [
+        {
+          "src": "/admin/icons/shortcut-orders.png",
+          "sizes": "96x96",
+          "type": "image/png"
+        }
+      ]
+    },
+    {
+      "name": "Cardápio",
+      "short_name": "Cardápio",
+      "description": "Produtos, preços e estoque",
+      "url": "/admin/cardapio",
+      "icons": [
+        {
+          "src": "/admin/icons/shortcut-menu.png",
+          "sizes": "96x96",
+          "type": "image/png"
+        }
+      ]
+    },
+    {
+      "name": "Novo produto",
+      "short_name": "Novo produto",
+      "description": "Cadastrar um produto agora",
+      "url": "/admin/cardapio?novo=1",
+      "icons": [
+        {
+          "src": "/admin/icons/shortcut-new.png",
+          "sizes": "96x96",
+          "type": "image/png"
+        }
+      ]
+    }
+  ],
+  "share_target": {
+    "action": "/admin/compartilhar",
+    "method": "POST",
+    "enctype": "multipart/form-data",
+    "params": {
+      "title": "title",
+      "text": "text",
+      "files": [
+        {
+          "name": "photos",
+          "accept": ["image/*", ".jpg", ".jpeg", ".png", ".webp", ".heic"]
+        }
+      ]
+    }
+  },
+  "screenshots": [
+    {
+      "src": "/admin/screenshots/inicio.jpg",
+      "sizes": "780x1688",
+      "type": "image/jpeg",
+      "form_factor": "narrow",
+      "label": "O dia da loja num olhar"
+    },
+    {
+      "src": "/admin/screenshots/pedidos.jpg",
+      "sizes": "780x1688",
+      "type": "image/jpeg",
+      "form_factor": "narrow",
+      "label": "Pedidos chegando ao vivo"
+    },
+    {
+      "src": "/admin/screenshots/cardapio.jpg",
+      "sizes": "780x1688",
+      "type": "image/jpeg",
+      "form_factor": "narrow",
+      "label": "O cardápio na palma da mão"
+    },
+    {
+      "src": "/admin/screenshots/painel.jpg",
+      "sizes": "1440x900",
+      "type": "image/jpeg",
+      "form_factor": "wide",
+      "label": "O quadro de pedidos no computador"
+    }
   ]
 }
