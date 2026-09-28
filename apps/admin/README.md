@@ -17,8 +17,11 @@ cd apps/admin && bun run dev          # :5196/admin/, proxies /admin/v1 and /v1 
 cd storefronts/quero-pudim && bun run dev
 ```
 
-The seed makes Vinícius, phone `(22) 98179-5040`, the owner of Quero Pudim.
-`bun scripts/demo-orders.ts` places a few live orders.
+The seed makes one store, Quero Pudim, deliberately blank (no hours, delivery, Pix or menu),
+with Vinícius, phone `(22) 98179-5040`, as its owner. A blank store opens Início straight into
+`/bem-vindo`, the step-by-step onboarding (`features/onboarding`: one question per screen, a
+guide, the store assembling beside it); re-seed to reset and run it again. `bun scripts/demo-orders.ts` needs a menu
+first (finish the onboarding), then places a few live orders.
 
 ## Gates (CI job `admin-gate`)
 

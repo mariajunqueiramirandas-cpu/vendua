@@ -38,7 +38,7 @@ schedule recomputed under locks), `coupons`, `combos`, `stock`, `preorder`,
 ```sh
 bun run db:up      # postgres:16 in docker, port 5433
 bun run migrate    # schema (also runs automatically on `bun run dev`)
-bun run seed       # dev tenants: quero-pudim
+bun run seed       # dev tenant: quero-pudim, blank (onboarding fills it)
 bun run dev        # http://localhost:8787
 bun run test       # unit tests (no DB needed)
 bun run check      # tsc
