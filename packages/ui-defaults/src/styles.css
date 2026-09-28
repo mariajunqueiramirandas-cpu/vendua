@@ -334,6 +334,9 @@
   .v-banner-stack > .v-notice-warning {
     border-left: 0;
   }
+  .v-banner-stack > .v-notice :is(.v-notice-title, .v-notice-body, .v-notice-dismiss) {
+    color: var(--v-color-text, #1a1714);
+  }
   .v-banner-stack > .v-notice :is(.v-notice-title, .v-notice-body) {
     display: inline;
     margin: 0;
