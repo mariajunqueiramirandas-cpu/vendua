@@ -42,6 +42,12 @@ check(
   latin.reduce((a, f) => a + statSync(join(dir, f)).size, 0),
   90 * 1024,
 );
+// the mascot art comes from /brand; if that folder is missing the glob is silently empty
+const mascot = files.filter((f) => f.endsWith('.webp')).length;
+if (mascot < 20) {
+  failed = true;
+  console.log(`✗ mascot images in the bundle: ${mascot} (expected 20, is /brand copied?)`);
+}
 if (failed) {
   console.error('bundle budget exceeded');
   process.exit(1);

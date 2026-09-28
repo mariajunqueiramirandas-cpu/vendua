@@ -36,6 +36,8 @@ COPY apps/control apps/control
 RUN cd apps/control && bun run build
 
 # Merchant admin SPA — Core serves apps/admin/dist at /admin/.
+# the mascot art the admin imports from /brand (an empty glob would ship broken images)
+COPY brand brand
 COPY apps/admin apps/admin
 RUN cd apps/admin && bun run build
 
