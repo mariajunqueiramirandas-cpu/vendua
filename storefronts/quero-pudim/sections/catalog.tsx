@@ -84,19 +84,9 @@ export default function CatalogBrowser({ settings: s }: SectionProps<typeof sche
     <>
       <section className="container catalog-head">
         {s.eyebrow ? <p className="eyebrow">{s.eyebrow}</p> : null}
-        <h1 className="display display-lg">
-          {s.title}
-        </h1>
-        {s.lede ? (
-          <p className="lede">
-            {s.lede}
-          </p>
-        ) : null}
-        <form
-          role="search"
-          className="search-wrap"
-          onSubmit={(e) => e.preventDefault()}
-        >
+        <h1 className="display display-lg">{s.title}</h1>
+        {s.lede ? <p className="lede">{s.lede}</p> : null}
+        <form role="search" className="search-wrap" onSubmit={(e) => e.preventDefault()}>
           <span className="search-icon">
             <Search size={16} aria-hidden="true" />
           </span>
@@ -208,7 +198,6 @@ export default function CatalogBrowser({ settings: s }: SectionProps<typeof sche
           )}
         </div>
       </section>
-
     </>
   );
 }

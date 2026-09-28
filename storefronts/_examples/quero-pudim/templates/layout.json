@@ -51,6 +51,10 @@
         "qrLabel": "Cardápio QR Code",
         "qrHref": "/qrcode"
       }
+    },
+    {
+      "id": "bag-bar",
+      "type": "sdk:bag-bar"
     }
   ]
 }

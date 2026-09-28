@@ -84,12 +84,7 @@ export default function Hero({ settings: s }: SectionProps<typeof schema>) {
         <figure className="hero-visual rise-in rise-in-3">
           <div className="hero-arch">
             {s.image ? (
-              <img
-                src={s.image}
-                alt={s.imageAlt}
-                {...{ fetchpriority: 'high' }}
-                decoding="async"
-              />
+              <img src={s.image} alt={s.imageAlt} {...{ fetchpriority: 'high' }} decoding="async" />
             ) : (
               <ProductFigure
                 title="Pudim artesanal"
