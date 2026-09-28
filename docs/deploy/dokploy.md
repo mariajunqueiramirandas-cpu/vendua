@@ -64,17 +64,20 @@ In Dokploy, assign a domain to each web service (port 80):
   the Origin check. Keep that label out of store slugs — the Phase 4
   provisioner must reserve it.
 
-- `stores` → the wildcard `*.vendua.com.br` — **the only storefront domain you
-  attach.** One container serves every store: for each host, nginx asks Core
-  which store it is (`/storefront/v1/_bundle`, cached 30s) and serves that
-  store's own bundle (`storefronts/<slug>/`, keyed by `package.json`
-  `vendua.tenant` or the folder name), or the `_template` bundle for stores
-  without one. `pudim.vendua.com.br` reaches quero-pudim's bundle through its
-  `domains` row; a new store works at `<slug>.vendua.com.br` with nothing
-  added. Give this router the **lowest priority** (Traefik label
-  `traefik.http.routers.<router>.priority=1`) so the exact hosts of `admin`,
-  `crm` and `site` still win. A domain outside the wildcard
-  (`pudim.com.br`) is one more domain on `stores` plus its `domains` row.
+- `stores` → **nothing in the Domains UI.** Dokploy's form rejects `*.vendua.com.br`,
+  so the wildcard route is Traefik labels on the service in `docker-compose.yml`
+  (`HostRegexp`, priority 1, on `dokploy-network`) — redeploy the compose and it's
+  live. One container serves every store: for each host, nginx asks Core which store
+  it is (`/storefront/v1/_bundle`, cached 30s) and serves that store's own bundle
+  (`storefronts/<slug>/`, keyed by `package.json` `vendua.tenant` or the folder name),
+  or the `_template` bundle for stores without one; unknown hosts get the "loja não
+  encontrada" 404. Exact hosts in the Domains UI (`admin`, `crm`, `site`) outrank the
+  wildcard. TLS: the router sets `tls=true` with no resolver, so Traefik needs the
+  wildcard certificate itself — either a DNS-01 resolver on Dokploy's Traefik for
+  `*.vendua.com.br` (then add `traefik.http.routers.vendua-stores.tls.certresolver=<name>`
+  and `tls.domains[0].main=vendua.com.br` / `tls.domains[0].sans=*.vendua.com.br`), or
+  Cloudflare proxying with SSL mode "Full". A domain outside the wildcard
+  (`pudim.com.br`) goes on `stores` in the Domains UI, plus its `domains` row.
 
 Store links (share, QR, "ver loja") always use the store's **primary** domain
 row, then any public row, then `<slug>.<VENDUA_STORE_DOMAIN>` — never a URL

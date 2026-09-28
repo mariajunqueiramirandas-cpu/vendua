@@ -102,6 +102,24 @@ services:
     depends_on:
       core:
         condition: service_healthy
+    # Dokploy's Domains form rejects wildcards, so the route lives here. Priority 1 = last:
+    # exact hosts set in the Domains UI (admin, crm, site) always win over the wildcard.
+    networks: [default, dokploy-network]
+    labels:
+      - traefik.enable=true
+      - traefik.docker.network=dokploy-network
+      - traefik.http.services.vendua-stores.loadbalancer.server.port=80
+      - traefik.http.routers.vendua-stores-http.rule=HostRegexp(`^[a-z0-9-]+\.vendua\.com\.br$$`)
+      - traefik.http.routers.vendua-stores-http.entrypoints=web
+      - traefik.http.routers.vendua-stores-http.priority=1
+      - traefik.http.routers.vendua-stores-http.middlewares=vendua-stores-https
+      - traefik.http.middlewares.vendua-stores-https.redirectscheme.scheme=https
+      - traefik.http.routers.vendua-stores.rule=HostRegexp(`^[a-z0-9-]+\.vendua\.com\.br$$`)
+      - traefik.http.routers.vendua-stores.entrypoints=websecure
+      - traefik.http.routers.vendua-stores.priority=1
+      - traefik.http.routers.vendua-stores.tls=true
+      - traefik.http.routers.vendua-stores.service=vendua-stores
+      - traefik.http.routers.vendua-stores-http.service=vendua-stores
     restart: unless-stopped
     logging:
       driver: json-file
@@ -164,6 +182,11 @@ services:
     logging:
       driver: json-file
       options: { max-size: '10m', max-file: '3' }
+
+networks:
+  # Dokploy's Traefik network — the `stores` wildcard route is reached through it
+  dokploy-network:
+    external: true
 
 volumes:
   pgdata:
