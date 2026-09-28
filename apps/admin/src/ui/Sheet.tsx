@@ -90,7 +90,7 @@ export function Sheet({
               aria-hidden
             />
           ) : null}
-          <div className="glass sticky top-0 z-10 flex items-start gap-3 rounded-t-lg px-5 pb-3 pt-4">
+          <div className="glass sticky top-0 z-10 flex items-start gap-3 rounded-t-lg px-5 pb-3 pt-4 [--glass:color-mix(in_srgb,var(--surface)_92%,transparent)]">
             <div className="min-w-0 flex-1">
               <Drawer.Title className="t-title-2">{title}</Drawer.Title>
               {description ? (
