@@ -546,6 +546,15 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('merchant admin (db)', () => {
       headers: { host: `nope-${nonce}.vendua.test` },
     });
     expect(miss.status).toBe(404);
+    // storefront nginx picks the bundle from this; unknown hosts get no store (template)
+    const bundle = (h: string) =>
+      app.request(`http://${h}/storefront/v1/_bundle`, { headers: { host: h } });
+    const hit = await bundle(`${slug}.vendua.test`);
+    expect(hit.status).toBe(204);
+    expect(hit.headers.get('x-vendua-store')).toBe(slug);
+    const none = await bundle(`nope-${nonce}.vendua.test`);
+    expect(none.status).toBe(204);
+    expect(none.headers.get('x-vendua-store')).toBeNull();
   });
 
   test('Equipe: roles gate the API, the last owner stays, the log records it all', async () => {

@@ -29,6 +29,7 @@ COPY packages/templates packages/templates
 COPY site site
 COPY storefronts storefronts
 RUN bun --filter @vendua/site build && bun --filter './storefronts/*' build
+RUN bun storefronts/place-bundles.ts storefronts /app/stores
 
 FROM nginx:1.28-alpine AS site
 ENV NGINX_ENTRYPOINT_QUIET_LOGS=1
@@ -42,4 +43,11 @@ ENV NGINX_ENTRYPOINT_QUIET_LOGS=1
 ARG STOREFRONT
 COPY storefronts/nginx.conf /etc/nginx/conf.d/default.conf
 COPY --from=build /app/storefronts/${STOREFRONT}/dist /usr/share/nginx/html
+EXPOSE 80
+
+# every store in one image: Core maps Host → slug, nginx serves that store's bundle or the template
+FROM nginx:1.28-alpine AS stores
+ENV NGINX_ENTRYPOINT_QUIET_LOGS=1
+COPY storefronts/nginx-stores.conf /etc/nginx/conf.d/default.conf
+COPY --from=build /app/stores /usr/share/nginx/stores
 EXPOSE 80

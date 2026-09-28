@@ -91,32 +91,14 @@ services:
       driver: json-file
       options: { max-size: '10m', max-file: '3' }
 
-  quero-pudim:
-    build:
-      context: .
-      dockerfile: storefronts/Dockerfile
-      target: storefront
-      args:
-        STOREFRONT: quero-pudim
-    depends_on:
-      core:
-        condition: service_healthy
-    restart: unless-stopped
-    logging:
-      driver: json-file
-      options: { max-size: '10m', max-file: '3' }
-
-  # Catch-all storefront for *.<VENDUA_STORE_DOMAIN>: the `_template` bundle renders
-  # whichever tenant Core resolves from Host (templates + sections live in Core), so a
-  # store with no bespoke bundle still opens at <slug>.<domain>. Stores with their own
-  # service keep their exact-host domain, which Traefik matches first.
+  # Every store, one service: Core maps Host → store (domains rows, then <slug>.<VENDUA_STORE_DOMAIN>)
+  # and nginx serves that store's bundle, or the `_template` bundle for stores without one.
+  # Attach the wildcard domain here once; new stores and bundles need no compose or Dokploy change.
   stores:
     build:
       context: .
       dockerfile: storefronts/Dockerfile
-      target: storefront
-      args:
-        STOREFRONT: _template
+      target: stores
     depends_on:
       core:
         condition: service_healthy

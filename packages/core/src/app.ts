@@ -377,6 +377,16 @@ export function createApp({
     return c.body(LOADER_JS);
   });
 
+  // storefront nginx (auth_request) asks which store a host is, to serve that store's bundle.
+  // Always 204 — an unknown host gets no header and nginx falls back to the template bundle.
+  app.get('/storefront/v1/_bundle', async (c) => {
+    const forwarded = trustProxy ? c.req.header('x-forwarded-host') : undefined;
+    const tenant = await resolver.resolve(forwarded ?? c.req.header('host') ?? '');
+    if (tenant) c.header('x-vendua-store', tenant.slug);
+    c.header('cache-control', 'no-store');
+    return c.body(null, 204);
+  });
+
   const storefront = new Hono<{ Variables: { tenant: Tenant } }>();
   storefront.use('*', tenantMiddleware(resolver, { trustForwardedHost: trustProxy }));
 
