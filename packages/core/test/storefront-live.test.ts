@@ -2,7 +2,47 @@ import { describe, expect, test } from 'bun:test';
 import { Hono } from 'hono';
 import type { AdminEvent, AdminHub } from '../src/admin/live.ts';
 import { mountStorefrontEvents, storefrontTopics } from '../src/modules/storefront-live.ts';
+import { PresenceTracker } from '../src/modules/presence.ts';
 import type { Tenant } from '../src/platform/tenancy.ts';
+
+function fakeSql() {
+  const sent: string[] = [];
+  let onNotify: (payload: string) => void = () => {};
+  const sql = Object.assign(
+    async (_s: TemplateStringsArray, _c: string, payload: string) => void sent.push(payload),
+    {
+      listen: async (_ch: string, fn: (p: string) => void) => void (onNotify = fn),
+    },
+  ) as never;
+  return { sql, sent, notify: (p: string) => onNotify(p) };
+}
+
+describe('PresenceTracker', () => {
+  test('counts local streams and sums other processes, expiring silent ones', async () => {
+    const f = fakeSql();
+    const p = new PresenceTracker(f.sql);
+    let moved = 0;
+    await p.subscribe('t1', () => moved++);
+    const a = await p.join('t1');
+    const b = await p.join('t1');
+    const other = await p.join('t2');
+    expect(p.viewers('t1')).toBe(2);
+    f.notify('t1|other-proc|3');
+    f.notify('t1|other-proc|nope');
+    expect(p.viewers('t1')).toBe(5);
+    a();
+    a(); // double close is a no-op
+    expect(p.viewers('t1')).toBe(4);
+    b();
+    other();
+    expect(p.viewers('t1')).toBe(3);
+    expect(p.viewers('t2')).toBe(0);
+    expect(moved).toBeGreaterThan(3);
+    await Bun.sleep(1100);
+    expect(f.sent.some((s) => s.startsWith(`t1|${p.procId}|`))).toBe(true);
+    p.stop();
+  });
+});
 
 describe('storefrontTopics', () => {
   test('maps admin changes to the storefront reads they stale', () => {
@@ -37,7 +77,8 @@ describe('GET /events', () => {
       c.set('tenant', { id: 't1' } as Tenant);
       await next();
     });
-    mountStorefrontEvents(app, hub);
+    const presence = new PresenceTracker(fakeSql().sql);
+    mountStorefrontEvents(app, hub, presence);
     const res = await app.request('/events');
     expect(res.headers.get('content-type')).toContain('text/event-stream');
     const reader = res.body!.getReader();

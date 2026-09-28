@@ -6,6 +6,7 @@ import { parseMenuPaste, parseMoney } from '../src/admin/routes-catalog.ts';
 import { sweepAdmin } from '../src/admin/workers.ts';
 import { ingestInbound } from '../src/agent/inbound.ts';
 import { encryptPayload } from '../src/admin/webpush.ts';
+import { activeCarts } from '../src/modules/presence.ts';
 import { migrate } from '../src/platform/db.ts';
 
 describe('admin parsing', () => {
@@ -121,8 +122,9 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('merchant admin (db)', () => {
       cookie = pick.cookie;
     }
     const value = /vendua_admin=([^;]+)/.exec(cookie ?? '')![1]!;
-    return (method: string, path: string, body?: unknown, h: Record<string, string> = {}) =>
+    const fn = (method: string, path: string, body?: unknown, h: Record<string, string> = {}) =>
       call(method, `/admin/v1${path}`, body, { cookie: `vendua_admin=${value}`, ...h });
+    return Object.assign(fn, { cookie: `vendua_admin=${value}` });
   };
 
   let owner: Awaited<ReturnType<typeof signIn>>;
@@ -677,6 +679,25 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('merchant admin (db)', () => {
     const leads =
       await sql`select 1 from leads where whatsapp like ${`%${ownerPhone}`} or phone like ${`%${ownerPhone}`}`;
     expect(leads.length).toBe(0);
+  });
+
+  test('presence: open storefront streams are viewers, only sacolas with items count', async () => {
+    const before = await activeCarts(sql, tenantId);
+    // an empty sacola must not count
+    await sql`insert into carts (tenant_id, session_hash) values (${tenantId}, ${'presence-empty-' + nonce})`;
+    const shop = await app.request(`http://${host}/storefront/v1/events`, { headers: { host } });
+    expect(shop.headers.get('content-type')).toContain('text/event-stream');
+    const feed = await app.request('http://core.localhost/admin/v1/events', {
+      headers: { host: 'core.localhost', cookie: owner.cookie },
+    });
+    const reader = feed.body!.getReader();
+    const dec = new TextDecoder();
+    let buf = '';
+    while (!buf.includes('event: presence')) buf += dec.decode((await reader.read()).value);
+    const data = buf.split('\n').find((l) => l.startsWith('data: {"viewers"'))!;
+    expect(JSON.parse(data.slice(6))).toEqual({ viewers: 1, carts: before });
+    await reader.cancel();
+    await shop.body!.cancel();
   });
 
   test('staff create a store owner from the CRM', async () => {

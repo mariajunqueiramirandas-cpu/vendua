@@ -1,6 +1,7 @@
 import type { Hono } from 'hono';
 import { streamSSE } from 'hono/streaming';
 import type { AdminEvent, AdminHub } from '../admin/live.ts';
+import type { PresenceTracker } from './presence.ts';
 import { HttpError } from '../platform/http.ts';
 import type { Tenant } from '../platform/tenancy.ts';
 
@@ -44,6 +45,7 @@ export function storefrontStreamCount() {
 export function mountStorefrontEvents(
   storefront: Hono<{ Variables: { tenant: Tenant } }>,
   hub: AdminHub,
+  presence: PresenceTracker,
 ) {
   storefront.get('/events', async (c) => {
     const tenant = c.get('tenant');
@@ -69,6 +71,7 @@ export function mountStorefrontEvents(
             .catch(() => finish());
         }, COALESCE_MS);
       });
+      const leave = await presence.join(tenant.id);
       await stream.writeSSE({ event: 'hello', data: '{}' });
       const beat = setInterval(
         () => void stream.write(':ka\n\n').catch(() => finish()),
@@ -79,6 +82,7 @@ export function mountStorefrontEvents(
         await done;
       } finally {
         open--;
+        leave();
         unsubscribe();
         clearInterval(beat);
         clearTimeout(lifetime);

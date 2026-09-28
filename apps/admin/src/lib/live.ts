@@ -26,11 +26,14 @@ interface LiveState {
   online: boolean;
   streaming: boolean;
   unseen: string[];
+  /** who's in the storefront right now — null until the stream says (or while it's down) */
+  presence: { viewers: number; carts: number } | null;
 }
 let state: LiveState = {
   online: typeof navigator === 'undefined' ? true : navigator.onLine,
   streaming: false,
   unseen: [],
+  presence: null,
 };
 const subs = new Set<() => void>();
 const set = (patch: Partial<LiveState>) => {
@@ -109,6 +112,14 @@ export function useLiveStream(enabled: boolean) {
       if (closed) return;
       es = new EventSource('/admin/v1/events');
       es.addEventListener('hello', () => set({ streaming: true }));
+      es.addEventListener('presence', (ev) => {
+        try {
+          const p = JSON.parse((ev as MessageEvent).data) as { viewers: number; carts: number };
+          if (Number.isFinite(p.viewers) && Number.isFinite(p.carts)) set({ presence: p });
+        } catch {
+          /* ignored: the next one replaces it */
+        }
+      });
       es.addEventListener('change', (ev) => {
         const e = JSON.parse((ev as MessageEvent).data) as { topic: Topic; id: string };
         if (e.id === 'resync') {
@@ -141,7 +152,7 @@ export function useLiveStream(enabled: boolean) {
         if (e.topic === 'order.placed' && e.id) void onPlaced(e.id);
       });
       es.onerror = () => {
-        set({ streaming: false });
+        set({ streaming: false, presence: null });
         // the browser retries by itself; a hard close (401, proxy) needs us to
         if (es?.readyState === EventSource.CLOSED) {
           es.close();
@@ -155,7 +166,7 @@ export function useLiveStream(enabled: boolean) {
       void queryClient.invalidateQueries();
       void queryClient.resumePausedMutations();
     };
-    const down = () => set({ online: false, streaming: false });
+    const down = () => set({ online: false, streaming: false, presence: null });
     window.addEventListener('online', up);
     window.addEventListener('offline', down);
     // a closed laptop lid or a backgrounded phone misses events: catch up on return

@@ -31,6 +31,7 @@ import { HeroCard, type DayPhase } from '../../ui/HeroCard.tsx';
 import { Odometer } from '../../ui/Odometer.tsx';
 import { STATE_META } from '../../ui/StateChip.tsx';
 import { toast } from '../../ui/Toast.tsx';
+import { useLiveState } from '../../lib/live.ts';
 import { statusWords, useStoreQuery } from '../store/StatusPill.tsx';
 import { StatusSheet } from '../store/StatusSheet.tsx';
 import { DeviceCard } from './DeviceCard.tsx';
@@ -60,6 +61,7 @@ export default function Home() {
         <div className="contents space-y-5 lg:block lg:space-y-6">
           {data ? <Hero data={data} /> : <Skeleton className="h-[340px] rounded-xl" delay={0} />}
           <Section title="Agora na loja" className="order-3 lg:order-none">
+            <Presence />
             {data ? <Feed data={data} /> : <Skeleton className="h-64" />}
           </Section>
         </div>
@@ -476,5 +478,29 @@ function Best({ data }: { data: HomeData }) {
         </Card>
       ))}
     </div>
+  );
+}
+
+// Live from the admin stream: open storefront tabs, and sacolas with items touched in the last 30 min.
+function Presence() {
+  const { presence } = useLiveState();
+  if (!presence) return null;
+  return (
+    <p
+      className="mb-3 flex flex-wrap items-center gap-x-5 gap-y-1 t-body text-muted"
+      aria-live="polite"
+      data-testid="presence"
+    >
+      <span className="inline-flex items-center gap-1.5">
+        <Eye size={16} weight="duotone" aria-hidden />
+        {presence.viewers === 0
+          ? 'Ninguém olhando agora'
+          : plural(presence.viewers, 'pessoa vendo a loja', 'pessoas vendo a loja')}
+      </span>
+      <span className="inline-flex items-center gap-1.5">
+        <ShoppingBag size={16} weight="duotone" aria-hidden />
+        {plural(presence.carts, 'sacola com itens', 'sacolas com itens')}
+      </span>
+    </p>
   );
 }

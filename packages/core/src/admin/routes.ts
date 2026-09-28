@@ -34,6 +34,7 @@ import {
   text,
 } from './context.ts';
 import { emitAdminTx, type AdminHub } from './live.ts';
+import { activeCarts, type PresenceTracker } from '../modules/presence.ts';
 import { mountAppearance } from './routes-appearance.ts';
 import { mountCatalog } from './routes-catalog.ts';
 import { mountCustomers } from './routes-customers.ts';
@@ -54,6 +55,7 @@ export interface MountAdminOpts {
   sql: Sql;
   sessionSecret: string;
   hub: AdminHub;
+  presence: PresenceTracker;
   trustProxy: boolean;
   otpSender: OtpSender;
   idempotency: AdminDeps['idempotency'];
@@ -62,11 +64,13 @@ export interface MountAdminOpts {
 
 const STREAM_HEARTBEAT_MS = 20_000;
 const STREAM_MAX_MS = 30 * 60_000;
+/** carts have no change signal — one cheap count per open admin stream */
+const PRESENCE_POLL_MS = 20_000;
 const MEDIA_MAX = 2 * 1024 * 1024;
 
 /** The merchant admin API (docs/merchant-admin.md). Mounted at /admin/v1. */
 export function mountAdmin(o: MountAdminOpts) {
-  const { admin, sql, sessionSecret, hub } = o;
+  const { admin, sql, sessionSecret, hub, presence } = o;
   const secure = (c: Context) =>
     c.req.url.startsWith('https://') ||
     (o.trustProxy && c.req.header('x-forwarded-proto') === 'https');
@@ -336,11 +340,38 @@ export function mountAdmin(o: MountAdminOpts) {
       const unsubscribe = await hub.subscribe(tenant.id, (e) => {
         void stream.writeSSE({ event: 'change', id: String(++seq), data: JSON.stringify(e) });
       });
+      // who's in the store: viewers move with streams, carts with the database — send on change
+      let lastPresence = '';
+      let sending = false;
+      const sendPresence = async () => {
+        if (sending) return;
+        sending = true;
+        try {
+          const p = {
+            viewers: presence.viewers(tenant.id),
+            carts: await activeCarts(sql, tenant.id),
+          };
+          const data = JSON.stringify(p);
+          if (data !== lastPresence) {
+            lastPresence = data;
+            await stream.writeSSE({ event: 'presence', data });
+          }
+        } catch {
+          /* the next tick tries again */
+        } finally {
+          sending = false;
+        }
+      };
+      const unwatch = await presence.subscribe(tenant.id, () => void sendPresence());
       await stream.writeSSE({ event: 'hello', data: JSON.stringify({ at: new Date() }) });
+      void sendPresence();
+      const carts = setInterval(() => void sendPresence(), PRESENCE_POLL_MS);
       const beat = setInterval(() => void stream.write(':ka\n\n'), STREAM_HEARTBEAT_MS);
       const lifetime = setTimeout(finish, STREAM_MAX_MS);
       await done;
       unsubscribe();
+      unwatch();
+      clearInterval(carts);
       clearInterval(beat);
       clearTimeout(lifetime);
     });
