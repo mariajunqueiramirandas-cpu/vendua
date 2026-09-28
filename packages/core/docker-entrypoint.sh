@@ -1,5 +1,5 @@
 #!/bin/sh
-# migrate (idempotent), optionally seed demo tenants, then serve
+# migrate (idempotent), optionally seed the blank dev store, then serve
 set -e
 
 bun run migrate

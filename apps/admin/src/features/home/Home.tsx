@@ -15,12 +15,12 @@ import {
 } from '@phosphor-icons/react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useEffect, useState } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, Navigate } from 'react-router-dom';
 import { api, type Home as HomeData } from '../../lib/api.ts';
 import { ago, clock, greeting, money, moneyShort, num, plural } from '../../lib/format.ts';
 import { NoPhoto } from '../../ui/illustrations.tsx';
 import { qk } from '../../lib/query.ts';
-import { useSession } from '../../lib/session.ts';
+import { can, useSession } from '../../lib/session.ts';
 import { ButtonLink } from '../../ui/Button.tsx';
 import { Card, Section } from '../../ui/Card.tsx';
 import { Celebration, markMilestone, unseenMilestone } from '../../ui/Celebration.tsx';
@@ -35,6 +35,7 @@ import { useLiveState } from '../../lib/live.ts';
 import { statusWords, useStoreQuery } from '../store/StatusPill.tsx';
 import { StatusSheet } from '../store/StatusSheet.tsx';
 import { DeviceCard } from './DeviceCard.tsx';
+import { hasLeft } from '../onboarding/progress.ts';
 
 export default function Home() {
   const s = useSession();
@@ -47,6 +48,17 @@ export default function Home() {
   useEffect(() => {
     if (data) setMilestone(unseenMilestone(s.store.id, data.totalOrders));
   }, [data, s.store.id]);
+
+  // a store nobody has touched yet opens the step-by-step, once (automated browsers skip it)
+  if (
+    data &&
+    !navigator.webdriver &&
+    can(s.user.role, 'manager') &&
+    data.totalOrders === 0 &&
+    data.checklist.every((c) => !c.done) &&
+    !hasLeft(s.store.id)
+  )
+    return <Navigate to="/bem-vindo" replace />;
 
   if (error && !data)
     return (

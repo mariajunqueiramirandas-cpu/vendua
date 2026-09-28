@@ -549,6 +549,34 @@
   }
 }
 
+@keyframes bob {
+  0%,
+  100% {
+    transform: translateY(0) rotate(-2deg);
+  }
+  50% {
+    transform: translateY(-5px) rotate(2deg);
+  }
+}
+@keyframes dot-bounce {
+  0%,
+  60%,
+  100% {
+    transform: translateY(0);
+    opacity: 0.4;
+  }
+  30% {
+    transform: translateY(-4px);
+    opacity: 1;
+  }
+}
+
+.animate-bob {
+  animation: bob 3.2s ease-in-out infinite;
+}
+.animate-dot {
+  animation: dot-bounce 1s ease-in-out infinite;
+}
 .animate-drop-in {
   animation:
     drop-in 520ms var(--ease-soft) both,
@@ -603,6 +631,8 @@
     animation: fade-up 120ms linear both !important;
   }
   .animate-breathe,
+  .animate-bob,
+  .animate-dot,
   .animate-pulse-dot,
   .animate-ring,
   .skeleton {

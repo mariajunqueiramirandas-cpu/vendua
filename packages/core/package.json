@@ -10,6 +10,7 @@
     "migrate": "bun src/platform/migrate-cli.ts",
     "sim": "bun src/agent/sim-cli.ts",
     "seed": "bun src/platform/seed.ts",
+    "seed:fixtures": "bun src/platform/seed-fixtures.ts",
     "check": "tsc --noEmit -p tsconfig.json",
     "test": "bun test"
   },

@@ -434,11 +434,17 @@ ratio. "Publicar" shows "publicando…" and then "no ar ✓" with the live URL.
 
 ### 6.8 The store builds itself (onboarding)
 
-After signup, onboarding is a single scroll where each step **visibly assembles
-their storefront** in a phone frame beside the questions (below the questions
-on phones): logo → colors appear, hours → the status appears, first products
-→ the grid fills. The last step is "sua loja está no ar", with the URL, a QR
-code and "compartilhar no WhatsApp".
+After signup, onboarding is a conversation: **one question per screen**, told
+by a friendly guide (a bobbing pudim in a speech bubble that praises each
+answer), with 56 px buttons, presets instead of blank fields (hours are "Segunda
+a sábado" plus one pair of times) and plain pt-BR. Each answer **visibly
+assembles their storefront** in a phone frame beside the questions (behind
+"Espiar minha loja" on phones): name → header, logo → avatar, hours → the
+status, first products → the grid. Everything saves on "Continuar", the step is
+remembered per store on the device, and "continuar depois" leaves without
+nagging. A store nobody has touched opens Início straight into it, once. The
+last step is "sua loja está no ar", with the URL, a QR code, "avisar no
+WhatsApp" and a list of what was left for later.
 
 ---
 
