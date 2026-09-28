@@ -7,7 +7,7 @@ import { Button } from '../../ui/Button.tsx';
 import { Card } from '../../ui/Card.tsx';
 import { EmptyState, ErrorState, Loading } from '../../ui/feedback.tsx';
 import { Chips, TextInput } from '../../ui/fields.tsx';
-import { ArtSearch } from '../../ui/illustrations.tsx';
+import { Mascote } from '../../ui/Mascote.tsx';
 import { PageBody, PageHeader } from '../../ui/Page.tsx';
 import { OrderRowView } from './OrderRowView.tsx';
 
@@ -105,7 +105,7 @@ export default function History() {
         </>
       ) : (
         <EmptyState
-          art={<ArtSearch />}
+          art={<Mascote pose="sem-resultados" />}
           title={debounced ? `Nenhum pedido com "${debounced}"` : 'Nenhum pedido nesse período'}
           body="Tente outro período ou tire os filtros."
         />

@@ -2,7 +2,7 @@ import { House, Question } from '@phosphor-icons/react';
 import { useLocation } from 'react-router-dom';
 import { ButtonLink } from '../../ui/Button.tsx';
 import { EmptyState } from '../../ui/feedback.tsx';
-import { ArtSearch } from '../../ui/illustrations.tsx';
+import { Mascote } from '../../ui/Mascote.tsx';
 import { PageBody } from '../../ui/Page.tsx';
 
 /** Unknown /admin path — says so and shows the way back, instead of silently landing on Início. */
@@ -11,7 +11,7 @@ export default function NotFound() {
   return (
     <PageBody>
       <EmptyState
-        art={<ArtSearch />}
+        art={<Mascote pose="sem-resultados" />}
         title="Essa página não existe"
         body={
           <>

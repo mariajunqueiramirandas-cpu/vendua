@@ -8,7 +8,7 @@ import { Sheet } from '../ui/Sheet.tsx';
 import { StateChip } from '../ui/StateChip.tsx';
 import { TextInput } from '../ui/fields.tsx';
 import { EmptyState } from '../ui/feedback.tsx';
-import { ArtSearch } from '../ui/illustrations.tsx';
+import { Mascote } from '../ui/Mascote.tsx';
 
 /** One field, three kinds of answer, grouped, as they type (§3.2). */
 export function SearchSheet({
@@ -60,7 +60,7 @@ export function SearchSheet({
         </p>
       ) : empty && !isFetching ? (
         <EmptyState
-          art={<ArtSearch />}
+          art={<Mascote pose="sem-resultados" />}
           title={`Nada encontrado para "${debounced}"`}
           body="Confira a grafia ou tente só uma parte do nome."
         />

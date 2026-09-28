@@ -8,7 +8,7 @@ import { IconButton } from '../../ui/Button.tsx';
 import { Card } from '../../ui/Card.tsx';
 import { cn } from '../../ui/cn.ts';
 import { EmptyState, ErrorState, Loading } from '../../ui/feedback.tsx';
-import { ArtCalendar } from '../../ui/illustrations.tsx';
+import { Mascote } from '../../ui/Mascote.tsx';
 import { PageBody, PageHeader } from '../../ui/Page.tsx';
 import { OrderRowView } from './OrderRowView.tsx';
 
@@ -123,7 +123,7 @@ export default function Scheduled() {
             </Card>
           ) : (
             <EmptyState
-              art={<ArtCalendar />}
+              art={<Mascote pose="carregando" />}
               title="Nenhuma encomenda nesse dia"
               body="Produtos marcados como encomenda aparecem aqui na data escolhida pelo cliente."
             />

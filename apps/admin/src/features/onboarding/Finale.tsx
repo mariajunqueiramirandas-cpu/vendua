@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { Button, ButtonLink } from '../../ui/Button.tsx';
 import { Confetti } from '../../ui/Celebration.tsx';
+import { Mascote } from '../../ui/Mascote.tsx';
 import { haptic } from '../../lib/haptics.ts';
 import { toast } from '../../ui/Toast.tsx';
 
@@ -35,6 +36,9 @@ export function Finale({ url, name, pending }: { url: string; name: string; pend
         </p>
         <div className="mt-6 flex flex-col gap-6 sm:flex-row sm:items-center">
           {qr ? <img src={qr} alt={`QR code para ${url}`} className="size-40 rounded-md" /> : null}
+          <div className="hidden w-40 shrink-0 rounded-xl bg-[#f7f4ea] p-2 md:block">
+            <Mascote pose="publicar" size={144} />
+          </div>
           <div className="min-w-0 flex-1 space-y-3">
             <p className="tnum break-all font-display text-xl font-semibold">
               {url.replace('https://', '')}

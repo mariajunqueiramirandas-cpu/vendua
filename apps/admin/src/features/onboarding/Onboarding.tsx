@@ -8,6 +8,7 @@ import { can, useSession } from '../../lib/session.ts';
 import { Button, ButtonLink } from '../../ui/Button.tsx';
 import { cn } from '../../ui/cn.ts';
 import { ErrorState, Loading, messageOf } from '../../ui/feedback.tsx';
+import { Mascote } from '../../ui/Mascote.tsx';
 import { toWeek } from '../../ui/TimeRangeField.tsx';
 import { toast } from '../../ui/Toast.tsx';
 import { Finale, type Pending } from './Finale.tsx';
@@ -66,7 +67,9 @@ export default function Onboarding() {
   if (!can(session.user.role, 'manager'))
     return (
       <div className="mx-auto max-w-lg space-y-6 p-6 pt-12">
-        <Guide turn="sem-acesso">Montar a loja é com o dono ou um gerente. Peça a eles!</Guide>
+        <Guide turn="sem-acesso" pose="seguranca">
+          Montar a loja é com o dono ou um gerente. Peça a eles!
+        </Guide>
         <ButtonLink to="/" size="lg" block>
           Ir para o painel
         </ButtonLink>
@@ -218,12 +221,13 @@ function Flow({
         <div className="mx-auto w-full max-w-xl space-y-8 lg:mx-0">
           <Guide turn={step}>
             {praise ? <strong className="mr-1">{praise}</strong> : null}
-            {step === 'oi' ? `Oi, ${first}! Eu sou o Pudim. ` : null}
+            {step === 'oi' ? `Oi, ${first}! Meu nome é Duá. ` : null}
             {LINE[step]}
           </Guide>
 
           {step === 'oi' ? (
             <div className="animate-fade-up space-y-6">
+              <Mascote pose="boas-vindas" size={200} className="mx-auto w-48" />
               <div>
                 <h1 className="t-title-1 md:text-[2rem]">Vamos abrir a sua loja online?</h1>
                 <p className="t-body-lg mt-2 text-muted">
