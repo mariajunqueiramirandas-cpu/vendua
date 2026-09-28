@@ -68,9 +68,18 @@ export default function App() {
     return q.data && !unauth ? (
       <Navigate to="/" replace />
     ) : (
-      <Suspense fallback={null}>
-        <Login />
-      </Suspense>
+      // a Login chunk that fails or crawls on mobile data must not leave a bare background
+      <ErrorBoundary>
+        <Suspense
+          fallback={
+            <div className="mx-auto max-w-lg p-6" aria-busy>
+              <Loading />
+            </div>
+          }
+        >
+          <Login />
+        </Suspense>
+      </ErrorBoundary>
     );
   if (q.error || !q.data)
     return (
