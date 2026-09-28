@@ -1,10 +1,11 @@
-import { describe, expect, test } from 'bun:test';
+import { beforeEach, describe, expect, test } from 'bun:test';
 import { join } from 'node:path';
 import postgres from 'postgres';
 import {
   claimRun,
   contextFor,
   drain,
+  drainsSettled,
   enqueueRun,
   insertRun,
   replayJournal,
@@ -511,6 +512,10 @@ const dbDescribe = describe.skipIf(!process.env.TEST_DATABASE_URL);
 dbDescribe('worker robustness (db)', () => {
   const sql = postgres(process.env.TEST_DATABASE_URL!);
   const MIGRATIONS = join(import.meta.dir, '../db/migrations');
+
+  // earlier files' fire-and-forget drains (HTTP / inbound kicks) share this process and
+  // DB — one still running can claim a run these tests make due and expect to claim
+  beforeEach(() => drainsSettled());
 
   const mkCtx = (
     runId: string,
