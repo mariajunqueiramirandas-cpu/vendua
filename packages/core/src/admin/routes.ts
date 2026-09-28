@@ -33,7 +33,7 @@ import {
   optText,
   text,
 } from './context.ts';
-import type { AdminHub } from './live.ts';
+import { emitAdminTx, type AdminHub } from './live.ts';
 import { mountAppearance } from './routes-appearance.ts';
 import { mountCatalog } from './routes-catalog.ts';
 import { mountCustomers } from './routes-customers.ts';
@@ -211,6 +211,7 @@ export function mountAdmin(o: MountAdminOpts) {
           returning id, name, email, prefs
         `
       )[0];
+      await emitAdminTx(tx, tenant.id, 'team');
       return { status: 200, body: { user: row } };
     })(c);
   });

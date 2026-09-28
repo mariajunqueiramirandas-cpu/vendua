@@ -12,6 +12,7 @@ import {
   type TemplateMigration,
   type TemplateSet,
 } from '@vendua/templates';
+import { emitAdminTx } from '../admin/live.ts';
 import { withTenant, type Sql } from '../platform/db.ts';
 import { HttpError } from '../platform/http.ts';
 
@@ -413,6 +414,7 @@ export async function subscribeNotifyTx(
     values (${tenantId}, ${subject}, ${productId}, 'whatsapp', ${contact})
     on conflict do nothing
   `;
+  await emitAdminTx(tx, tenantId, 'marketing');
   return { status: 201, body: { subscribed: true } };
 }
 

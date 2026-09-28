@@ -1,5 +1,6 @@
 import type { Context, Hono } from 'hono';
 import { streamSSE } from 'hono/streaming';
+import { emitAdminTx } from '../admin/live.ts';
 import { withTenant, type Sql } from '../platform/db.ts';
 import {
   HttpError,
@@ -493,6 +494,7 @@ export function mountCommerce(d: Deps) {
             preorder_lead_days = ${leadDays == null ? tx`preorder_lead_days` : leadDays}
           where tenant_id = ${t.id} and id = ${id}
         `;
+      await emitAdminTx(tx, t.id, 'catalog', id);
       return {
         status: 200,
         body: {
@@ -530,6 +532,7 @@ export function mountCommerce(d: Deps) {
           insert into product_media (tenant_id, product_id, url, alt, width, height, sort)
           values (${t.id}, ${id}, ${m.url}, ${m.alt}, ${m.width}, ${m.height}, ${sort})
         `;
+      await emitAdminTx(tx, t.id, 'catalog', id);
       return { status: 200, body: { product: await getProductByIdAny(tx, t.id, id) } };
     });
     return reply(c, res);
@@ -581,6 +584,7 @@ export function mountCommerce(d: Deps) {
         }
       }
       await tx`update products set kind = ${slots.length ? 'combo' : 'simple'} where tenant_id = ${t.id} and id = ${id}`;
+      await emitAdminTx(tx, t.id, 'catalog', id);
       return { status: 200, body: { product: await getProductByIdAny(tx, t.id, id) } };
     });
     return reply(c, res);
@@ -642,6 +646,7 @@ export function mountCommerce(d: Deps) {
             returning *
           `
         )[0];
+        await emitAdminTx(tx, t.id, 'marketing');
         return { status: 201, body: { coupon: row } };
       } catch (err) {
         if ((err as { code?: string }).code === '23505')
@@ -668,6 +673,7 @@ export function mountCommerce(d: Deps) {
         `
       )[0];
       if (!row) throw new HttpError(404, 'COUPON_NOT_FOUND', 'coupon not found');
+      await emitAdminTx(tx, t.id, 'marketing');
       return { status: 200, body: { coupon: row } };
     });
     return reply(c, res);
@@ -749,6 +755,7 @@ export function mountCommerce(d: Deps) {
           from store_settings where tenant_id = ${t.id}
         `
       )[0];
+      await emitAdminTx(tx, t.id, 'store');
       return { status: 200, body: { settings: s } };
     });
     return reply(c, res);
@@ -811,6 +818,7 @@ export function mountCommerce(d: Deps) {
           returning *
         `
       )[0];
+      await emitAdminTx(tx, t.id, 'store');
       return { status: 201, body: { zone: row } };
     });
     return reply(c, res);
@@ -836,6 +844,7 @@ export function mountCommerce(d: Deps) {
         `
       )[0];
       if (!row) throw new HttpError(404, 'ZONE_NOT_FOUND', 'zone not found');
+      await emitAdminTx(tx, t.id, 'store');
       return { status: 200, body: { zone: row } };
     });
     return reply(c, res);

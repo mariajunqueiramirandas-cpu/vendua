@@ -12,13 +12,13 @@ type Topic =
   'order.placed' | 'order.changed' | 'catalog' | 'store' | 'marketing' | 'team' | 'appearance';
 
 const TOPIC_KEYS: Record<Topic, readonly (readonly unknown[])[]> = {
-  'order.placed': [['orders'], qk.home],
-  'order.changed': [['orders'], qk.home, qk.payments, ['customers'], ['reports']],
-  catalog: [['catalog'], qk.home, qk.share],
-  store: [qk.store, qk.home, qk.payments],
-  marketing: [qk.marketing, qk.home],
+  'order.placed': [['orders'], qk.home, ['customers'], ['catalog'], qk.activity],
+  'order.changed': [['orders'], qk.home, qk.payments, ['customers'], ['reports'], qk.activity],
+  catalog: [['catalog'], qk.home, qk.share, qk.activity],
+  store: [qk.store, qk.home, qk.payments, qk.activity],
+  marketing: [qk.marketing, qk.home, qk.activity],
   team: [qk.team, qk.activity],
-  appearance: [qk.appearance],
+  appearance: [qk.appearance, qk.activity],
 };
 
 // ── connection + alert state (a tiny external store) ───────────────────────
