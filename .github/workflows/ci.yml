@@ -303,7 +303,7 @@ jobs:
             docker compose -f packages/core/docker-compose.yml exec -T postgres pg_isready -h localhost -p 5432 -U vendua && break
             sleep 1
           done
-          (cd packages/core && bun run migrate && bun run seed)
+          (cd packages/core && bun run migrate && bun run seed:fixtures)
       - name: Core API (serves apps/admin/dist at /admin/)
         if: steps.scope.outputs.run == 'true'
         run: |
@@ -426,7 +426,7 @@ jobs:
             docker compose -f packages/core/docker-compose.yml exec -T postgres pg_isready -h localhost -p 5432 -U vendua && break
             sleep 1
           done
-          (cd packages/core && bun run migrate && bun run seed)
+          (cd packages/core && bun run migrate && bun run seed:fixtures)
       - name: Core API
         if: steps.scope.outputs.run == 'true'
         run: |

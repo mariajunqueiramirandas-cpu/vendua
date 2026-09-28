@@ -400,12 +400,7 @@ export function HowStep({ s, draft, patch, save, next, back }: StepProps) {
       onSubmit={() =>
         void run(
           (async () => {
-            if (
-              !(await save({
-                operations: { pickupEnabled: draft.pickup, deliveryEnabled: draft.delivery },
-              }))
-            )
-              return;
+            // the zone first: if it fails, delivery stays off rather than on with nowhere to go
             if (needZone) {
               try {
                 await api.createZone({
@@ -419,6 +414,12 @@ export function HowStep({ s, draft, patch, save, next, back }: StepProps) {
                 return void toast.error(messageOf(e));
               }
             }
+            if (
+              !(await save({
+                operations: { pickupEnabled: draft.pickup, deliveryEnabled: draft.delivery },
+              }))
+            )
+              return;
             next(
               draft.delivery && draft.pickup
                 ? 'Retirada e entrega, que capricho!'

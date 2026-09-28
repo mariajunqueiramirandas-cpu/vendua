@@ -20,7 +20,9 @@ cd storefronts/quero-pudim && bun run dev
 The seed makes one store, Quero Pudim, deliberately blank (no hours, delivery, Pix or menu),
 with Vinícius, phone `(22) 98179-5040`, as its owner. A blank store opens Início straight into
 `/bem-vindo`, the step-by-step onboarding (`features/onboarding`: one question per screen, a
-guide, the store assembling beside it); re-seed to reset and run it again. `bun scripts/demo-orders.ts` needs a menu
+guide, the store assembling beside it); re-seed to reset and run it again (a device that already tapped "continuar depois"
+remembers it: open `/admin/bem-vindo` directly). CI and fleet runs need a menu and the canary
+tenants instead: `cd packages/core && bun run seed:fixtures`. `bun scripts/demo-orders.ts` needs a menu
 first (finish the onboarding), then places a few live orders.
 
 ## Gates (CI job `admin-gate`)

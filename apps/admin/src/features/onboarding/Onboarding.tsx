@@ -5,7 +5,7 @@ import { Link } from 'react-router-dom';
 import { api, type StoreView } from '../../lib/api.ts';
 import { qk } from '../../lib/query.ts';
 import { can, useSession } from '../../lib/session.ts';
-import { Button } from '../../ui/Button.tsx';
+import { Button, ButtonLink } from '../../ui/Button.tsx';
 import { cn } from '../../ui/cn.ts';
 import { Loading, messageOf } from '../../ui/feedback.tsx';
 import { toWeek } from '../../ui/TimeRangeField.tsx';
@@ -61,6 +61,17 @@ export default function Onboarding() {
   const store = useQuery({ queryKey: qk.store, queryFn: api.store });
   const cat = useQuery({ queryKey: qk.catalog, queryFn: api.catalog });
   const pay = useQuery({ queryKey: qk.payments, queryFn: api.payments });
+  const session = useSession();
+  // the store's settings are the manager's; an attendant would only hit "no permission" on every step
+  if (!can(session.user.role, 'manager'))
+    return (
+      <div className="mx-auto max-w-lg space-y-6 p-6 pt-12">
+        <Guide turn="sem-acesso">Montar a loja é com o dono ou um gerente. Peça a eles!</Guide>
+        <ButtonLink to="/" size="lg" block>
+          Ir para o painel
+        </ButtonLink>
+      </div>
+    );
   if (!store.data || !cat.data)
     return (
       <div className="mx-auto max-w-lg p-6">

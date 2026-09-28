@@ -251,7 +251,8 @@ Lands with Phase 3's Mercado Pago work.
       preferences; Ajuda with "falar com a Venduá" (reaches staff).
 - [ ] Invoices and billing (Phase 3).
 - [x] Onboarding: `/bem-vindo` takes a store to "ready to sell" (profile,
-      hours, delivery, Pix, first products) with a live preview.
+      hours, delivery, Pix, first products) as a one-question-per-screen
+      conversation with a live preview (§6.8).
       _Provisioning a fresh store is Phase 4._
 
 ## Done means

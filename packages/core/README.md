@@ -39,6 +39,7 @@ schedule recomputed under locks), `coupons`, `combos`, `stock`, `preorder`,
 bun run db:up      # postgres:16 in docker, port 5433
 bun run migrate    # schema (also runs automatically on `bun run dev`)
 bun run seed       # dev tenant: quero-pudim, blank (onboarding fills it)
+bun run seed:fixtures  # CI/fleet: menu, zones, Pix + the canary tenants (what `vendua train` needs)
 bun run dev        # http://localhost:8787
 bun run test       # unit tests (no DB needed)
 bun run check      # tsc
