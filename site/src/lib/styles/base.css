@@ -120,7 +120,8 @@ button {
 .t-lede {
   font-size: clamp(1.0625rem, 1rem + 0.35vw, 1.25rem);
   line-height: 1.55;
-  color: var(--ink-muted);
+  /* --ink-muted alone is ~4.9:1 on the dawn sky; half ink brings running text to ~7:1 (design spec §10) */
+  color: color-mix(in srgb, var(--ink) 50%, var(--ink-muted));
   max-width: 46ch;
 }
 .t-label {

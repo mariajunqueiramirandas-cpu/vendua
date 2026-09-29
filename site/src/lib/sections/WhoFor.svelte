@@ -41,7 +41,7 @@
 >
   <header class="head">
     <h2 id="para-quem-t" class="t-display">Feito pra quem faz.</h2>
-    <p class="t-lede">
+    <p class="t-lede lede">
       Bolo, marmita, hambúrguer, pão. Cada negócio vende de um jeito, e a sua loja acompanha o seu.
     </p>
   </header>
@@ -134,6 +134,15 @@
     max-width: 40rem;
   }
 
+  .head,
+  .tiles,
+  .made {
+    /* body copy at 7:1 on the card and the morning sky; plain --ink-muted sits near 5.8:1 */
+    --body: color-mix(in srgb, var(--ink) 50%, var(--ink-muted));
+  }
+  .lede {
+    color: var(--body);
+  }
   .tiles {
     list-style: none;
     margin: clamp(40px, 6vw, 72px) 0 0;
@@ -179,7 +188,7 @@
     padding-top: 4px;
   }
   .how {
-    color: var(--ink-muted);
+    color: var(--body);
     font-size: 1rem;
     line-height: 1.5;
   }
@@ -206,7 +215,7 @@
   .made p {
     font-size: clamp(1.0625rem, 1rem + 0.35vw, 1.25rem);
     line-height: 1.55;
-    color: var(--ink-muted);
+    color: var(--body);
   }
   .made strong {
     display: block;
@@ -216,11 +225,28 @@
     color: var(--ink);
   }
 
+  /* phones: the plate sits beside the name and the text gets the card's full width */
   @media (max-width: 479px) {
     .tile {
-      grid-template-columns: 96px 1fr;
+      grid-template-columns: 84px 1fr;
+      grid-template-rows: auto;
       column-gap: 14px;
-      padding: 16px;
+      row-gap: 8px;
+      padding: 14px 16px 18px;
+    }
+    .plate {
+      grid-row: auto;
+    }
+    .tile h3 {
+      align-self: center;
+      padding-top: 0;
+    }
+    .how,
+    .feature {
+      grid-column: 1 / -1;
+    }
+    .feature {
+      margin-top: 4px;
     }
     /* the drawing spills a little past its small plate so it still reads at thumbnail size */
     .plate svg {
@@ -247,11 +273,11 @@
     }
     .plate {
       grid-row: auto;
-      aspect-ratio: 4 / 3;
+      aspect-ratio: 2 / 1;
       margin-bottom: 8px;
     }
     .plate svg {
-      width: min(100%, 300px);
+      width: min(72%, 230px);
     }
     .tile h3,
     .how,
@@ -271,6 +297,12 @@
     .tiles {
       grid-template-columns: repeat(4, 1fr);
       align-items: start;
+    }
+    .plate {
+      aspect-ratio: 4 / 3;
+    }
+    .plate svg {
+      width: 100%;
     }
     .tile:nth-child(even) {
       margin-top: 40px;

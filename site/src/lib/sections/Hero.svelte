@@ -79,7 +79,7 @@
             key="inicio"
             eager
             sizes="(max-width: 640px) 50vw, 290px"
-            alt="O app da {store.name} aberto no celular: Bom dia, {store.owner}. Loja aberta e {store.salesToday} em vendas hoje."
+            alt="O app da {store.name} aberto no celular: Bom dia, {store.owner}. Loja aberta, {store.salesToday} em vendas e {store.ordersToday} pedidos hoje."
           />
         </Phone>
       </div>
@@ -105,7 +105,7 @@
   }
   @media (min-width: 1024px) {
     .grid {
-      grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+      grid-template-columns: minmax(0, 1.12fr) minmax(0, 0.88fr);
     }
   }
 
@@ -114,6 +114,7 @@
     display: grid;
     justify-items: start;
     min-width: 0;
+    container-type: inline-size;
   }
   .for {
     display: flex;
@@ -165,15 +166,22 @@
     stroke-width: 5;
     opacity: 0.75;
   }
+  /* "na palma da mão." never splits: the h1 shrinks to the column instead */
   @media (min-width: 560px) {
+    h1 {
+      font-size: min(clamp(2.75rem, 1.6rem + 4.6vw, 4.75rem), 12.4cqi);
+    }
     .l2 {
       display: block;
+      white-space: nowrap;
     }
   }
   .lede {
     margin-top: 22px;
     margin-bottom: 30px;
     max-width: 40ch;
+    /* body copy at 7:1 on the dawn sky; plain --ink-muted sits near 5.5:1 here */
+    color: color-mix(in srgb, var(--ink) 50%, var(--ink-muted));
   }
   .proofs {
     list-style: none;
