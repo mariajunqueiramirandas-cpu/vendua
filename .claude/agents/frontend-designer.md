@@ -26,7 +26,7 @@ screens or sections that do something similar:
   that store's directory. Run `bunx vendua check` for the store.
 - `packages/ui-defaults`: default slot components and all default CSS; changes reach every
   store, so keep them additive.
-- `site/`: SvelteKit teaser, see `site/README.md`; respect `prefers-reduced-motion`.
+- `site/`: SvelteKit marketing site, see `site/README.md` (only real admin screens and Duá); respect `prefers-reduced-motion`.
 
 Money is integer cents formatted for display only; never compute totals in the UI.
 

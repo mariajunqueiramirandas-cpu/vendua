@@ -158,9 +158,11 @@ on key moments); **lime is electricity**: it appears only where something is
 alive or new (a new order, today's live number, the open state, focus
 rings). Because lime is rare, it always means something.
 
-The admin extends the Venduá brand already on the site (`site/src/lib/styles.css`:
-cream, forest, sage, lime, night; Space Grotesk and Instrument Serif), so a
-merchant who bought on the site recognizes the product they're in.
+The admin's tokens (`apps/admin/src/ui/theme.css`: cream, forest, sage, lime,
+night; Space Grotesk and Instrument Serif) are the brand's source; the site
+copies them (`site/src/lib/styles/theme.css`, drift fails its build via
+`site/scripts/validate.ts`), so a merchant who found Venduá on the site
+recognizes the product they're in.
 
 ### 4.2 Color
 

@@ -137,8 +137,8 @@ Goal: storefronts are _produced_, not hand-built — and the repo enforces it.
       `vendua.config.ts`, required mounts, reserved system routes, primitives,
       budgets, dependency policy.
 - [x] `@vendua/conformance` v1: commerce flow, paused/closed states, viewports,
-      a11y baseline, byte budget — modeled on the teaser site's existing suite
-      (see `site/tests/site.spec.ts` and `site/VALIDACAO.md`).
+      a11y baseline, byte budget — modeled on the site's suite (see
+      `site/tests/site.spec.ts`, `site/scripts/validate.ts` and `site/scripts/postbuild.ts`).
 - [x] `@vendua/cli`: `scaffold`, `dev`, `check`, `build`, `qa`.
       `storefronts/_template` always green.
 - [x] **Fleet isolation machinery**: CODEOWNERS, changed-path CI check
