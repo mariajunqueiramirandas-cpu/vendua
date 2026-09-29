@@ -58,6 +58,12 @@
   .after i {
     background: #123c32;
   }
+  /* in Noite the pill itself is lime, so the live dot takes the pill's text colour */
+  @media (prefers-color-scheme: dark) {
+    .day i {
+      background: var(--on-primary);
+    }
+  }
   .note {
     font-size: 14px;
     color: var(--ink-muted);
