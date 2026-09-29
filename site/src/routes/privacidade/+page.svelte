@@ -142,7 +142,7 @@
   /* ── the dawn band: the header floats over it, like on the home page ── */
   .band {
     background: linear-gradient(180deg, var(--sky-0) 0%, var(--sky-1) 62%, var(--bg) 100%);
-    padding-top: 68px;
+    padding-top: calc(var(--header-h) + env(safe-area-inset-top, 0px));
   }
   .band-row {
     display: grid;

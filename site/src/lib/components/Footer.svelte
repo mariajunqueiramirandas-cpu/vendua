@@ -5,7 +5,7 @@
   // Sits on the night sky at the bottom of every page, so it always uses the "after" tone.
 </script>
 
-<footer class="foot">
+<footer class="foot" data-tone="after">
   <div class="wrap row">
     <a class="home" href="/" aria-label="Venduá, início"><Logo tone="after" size={20} /></a>
     <ul>

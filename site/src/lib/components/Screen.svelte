@@ -14,7 +14,7 @@
     kind.widths.map((w) => `${screenSrc(key, theme, w)} ${w}w`).join(', ');
   const fallbackSizes = $derived(
     SCREENS[key].kind === 'phone'
-      ? '(max-width: 560px) 70vw, 320px'
+      ? '(max-width: 560px) 70vw, 280px'
       : '(max-width: 900px) 92vw, 1100px',
   );
 </script>

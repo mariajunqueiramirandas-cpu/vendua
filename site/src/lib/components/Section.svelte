@@ -5,6 +5,7 @@
   // next so sections join without a seam); `tone="after"` is for dusk and night, where text stays light
   // in both themes. `hour` prints the small clock chip ("6h") that names the moment. `overlay` is for
   // the first section, which runs up under the sticky header: its content and chip start below it.
+  // data-tone (+ where the sunset band turns dark) lets the header's glass follow the sky under it.
   let {
     id,
     sky,
@@ -33,6 +34,8 @@
   class="section {tone} {cls}"
   class:overlay
   style="background: {sky}"
+  data-tone={tone}
+  data-dark-from={sky.includes('--sunset') ? 240 : undefined}
   aria-label={label}
   aria-labelledby={labelledby}
 >

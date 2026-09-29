@@ -51,14 +51,14 @@
   /* late-afternoon sky, the hour deliveries go out */
   .lost {
     background: linear-gradient(180deg, var(--sky-3) 0%, var(--sky-4) 100%);
-    padding-top: 68px;
+    padding-top: calc(var(--header-h) + env(safe-area-inset-top, 0px));
   }
   .row {
     display: grid;
     grid-template-columns: minmax(0, 1fr);
     align-items: center;
     gap: 24px;
-    min-height: calc(100svh - 68px - 100px);
+    min-height: calc(100svh - var(--header-h) - 100px);
     padding-block: 32px 64px;
   }
   .copy {
