@@ -12,6 +12,7 @@ import {
   adminGate,
   clearAdminCookie,
   createSession,
+  forgetGate,
   membershipsFor,
   pickerToken,
   readPickerToken,
@@ -255,6 +256,7 @@ export function mountAdmin(o: MountAdminOpts) {
         update merchant_sessions set revoked_at = now()
         where tenant_id = ${tenant.id} and user_id = ${m.userId} and id = ${id}
       `;
+      forgetGate();
       return { status: 200, body: { ok: true } };
     })(c);
   });

@@ -23,8 +23,17 @@ export async function withTenant<T>(
   fn: (tx: Sql) => Promise<T>,
 ): Promise<T> {
   return sql.begin(async (tx) => {
-    await tx`select set_config('vendua.tenant_id', ${tenantId}, true)`;
-    const out = await fn(tx as unknown as Sql);
+    // .execute() sends it now, without waiting: the connection is FIFO, so the handler's
+    // first query is already ordered behind it — one round trip saved per transaction
+    const set = tx`select set_config('vendua.tenant_id', ${tenantId}, true)`.execute();
+    let out: Awaited<T>;
+    try {
+      out = await fn(tx as unknown as Sql);
+    } catch (err) {
+      await set.catch(() => undefined);
+      throw err;
+    }
+    await set;
     return out as T extends readonly unknown[] ? never : Awaited<T>;
   }) as Promise<T>;
 }

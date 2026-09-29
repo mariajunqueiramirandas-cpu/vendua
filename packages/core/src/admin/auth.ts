@@ -205,6 +205,27 @@ function parseCookie(v: string | undefined) {
 }
 
 /** Resolves the cookie to (tenant, merchant) or 401. Also the CSRF line for mutations. */
+type GateRow = {
+  secret_hash: string;
+  expires_at: string;
+  last_seen_at: string;
+  user_id: string;
+  name: string;
+  phone: string;
+  role: Role;
+  slug: string;
+  tname: string;
+  tstatus: string;
+};
+
+// A valid session row, remembered for a few seconds: the gate otherwise costs a whole DB
+// transaction on every admin request. Keyed by the full cookie, so the secret is still
+// checked; a local revoke evicts, and another instance's revoke/role change lands within the TTL.
+const GATE_TTL_MS = 5_000;
+const GATE_MAX = 2_000;
+const gateCache = new Map<string, { row: GateRow; until: number }>();
+const gateKey = (tenantId: string, sessionId: string) => `${tenantId}.${sessionId}`;
+
 // per-session backstop against a runaway client (each write takes row locks, an audit row and an SSE event);
 // the UI debounces well below this, so real use never reaches it
 const allowMutation = windowCounter({ windowMs: 60_000, max: 240 });
@@ -235,42 +256,40 @@ export function adminGate(
         if (host !== reqHost) throw new HttpError(403, 'CSRF', 'cross-origin request');
       }
     }
-    const found = await withTenant(sql, parsed.tenantId, async (tx) => {
-      const rows = await tx<
-        {
-          secret_hash: string;
-          expires_at: string;
-          last_seen_at: string;
-          user_id: string;
-          name: string;
-          phone: string;
-          role: Role;
-          slug: string;
-          tname: string;
-          tstatus: string;
-        }[]
-      >`
-        select s.secret_hash, s.expires_at, s.last_seen_at, u.id as user_id, u.name, u.phone, u.role,
-               t.slug, t.name as tname, t.status as tstatus
-        from merchant_sessions s
-          join merchant_users u on u.id = s.user_id
-          join tenants t on t.id = s.tenant_id
-        where s.tenant_id = ${parsed.tenantId} and s.id = ${parsed.sessionId}
-          and s.revoked_at is null and s.expires_at > now() and u.status = 'active'
-      `;
-      const row = rows[0];
-      if (!row || !safeEq(row.secret_hash, sha256(parsed.secret))) return null;
-      // sliding expiry, written at most hourly
-      if (Date.now() - new Date(row.last_seen_at).getTime() > 3_600_000) {
-        await tx`
-          update merchant_sessions set last_seen_at = now(),
-            expires_at = now() + make_interval(days => ${SESSION_DAYS})
-          where id = ${parsed.sessionId}
+    const ck = gateKey(parsed.tenantId, parsed.sessionId);
+    const hit = gateCache.get(ck);
+    let found: GateRow | null = null;
+    if (hit && hit.until > Date.now()) {
+      if (safeEq(hit.row.secret_hash, sha256(parsed.secret))) found = hit.row;
+    } else {
+      found = await withTenant(sql, parsed.tenantId, async (tx) => {
+        const rows = await tx<GateRow[]>`
+          select s.secret_hash, s.expires_at, s.last_seen_at, u.id as user_id, u.name, u.phone, u.role,
+                 t.slug, t.name as tname, t.status as tstatus
+          from merchant_sessions s
+            join merchant_users u on u.id = s.user_id
+            join tenants t on t.id = s.tenant_id
+          where s.tenant_id = ${parsed.tenantId} and s.id = ${parsed.sessionId}
+            and s.revoked_at is null and s.expires_at > now() and u.status = 'active'
         `;
-        await tx`update merchant_users set last_seen_at = now() where id = ${row.user_id}`;
-      }
-      return row;
-    });
+        const row = rows[0];
+        if (!row || !safeEq(row.secret_hash, sha256(parsed.secret))) return null;
+        // sliding expiry, written at most hourly
+        if (Date.now() - new Date(row.last_seen_at).getTime() > 3_600_000) {
+          await tx`
+            update merchant_sessions set last_seen_at = now(),
+              expires_at = now() + make_interval(days => ${SESSION_DAYS})
+            where id = ${parsed.sessionId}
+          `;
+          await tx`update merchant_users set last_seen_at = now() where id = ${row.user_id}`;
+        }
+        return row;
+      });
+      if (found) {
+        if (gateCache.size >= GATE_MAX) gateCache.clear();
+        gateCache.set(ck, { row: found, until: Date.now() + GATE_TTL_MS });
+      } else gateCache.delete(ck);
+    }
     if (!found) throw new HttpError(401, 'UNAUTHENTICATED', 'session expired — sign in again');
     if (found.tstatus !== 'active') throw new HttpError(423, 'TENANT_SUSPENDED', 'store suspended');
     const merchant: Merchant = {
@@ -291,7 +310,13 @@ export function adminGate(
   };
 }
 
+/** Drop remembered sessions after a role/membership/session write, so it bites here at once. */
+export function forgetGate() {
+  gateCache.clear();
+}
+
 export async function revokeSession(sql: Sql, tenantId: string, sessionId: string) {
+  gateCache.delete(gateKey(tenantId, sessionId));
   await withTenant(
     sql,
     tenantId,

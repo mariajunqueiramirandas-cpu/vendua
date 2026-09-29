@@ -91,8 +91,28 @@ export default function Menu() {
   const setAvail = useMutation({
     mutationFn: (v: { p: Product; to: Avail; silent?: boolean }) =>
       api.updateProduct(v.p.id, { availability: v.to }),
+    // the tile flips on tap; the refetch below settles the details (e.g. "hoje" until midnight)
+    onMutate: async (v) => {
+      await qc.cancelQueries({ queryKey: qk.catalog });
+      const prev = qc.getQueryData<{ categories: Category[] }>(qk.catalog);
+      const status: Product['status'] =
+        v.to === 'available' ? 'active' : v.to === 'hidden' ? 'archived' : 'sold_out';
+      if (prev)
+        qc.setQueryData<{ categories: Category[] }>(qk.catalog, {
+          ...prev,
+          categories: prev.categories.map((c) => ({
+            ...c,
+            products: c.products.map((p) => (p.id === v.p.id ? { ...p, status } : p)),
+          })),
+        });
+      return { prev };
+    },
+    onError: (e, _v, ctx) => {
+      if (ctx?.prev) qc.setQueryData(qk.catalog, ctx.prev);
+      toast.error(messageOf(e));
+    },
+    onSettled: () => void qc.invalidateQueries({ queryKey: qk.catalog }),
     onSuccess: (r, v) => {
-      void qc.invalidateQueries({ queryKey: qk.catalog });
       if (v.silent) return;
       const prev = availability(v.p);
       toast(
@@ -107,7 +127,6 @@ export default function Menu() {
         },
       );
     },
-    onError: (e) => toast.error(messageOf(e)),
   });
   const bulk = useMutation({
     mutationFn: (v: { action: string; extra?: Record<string, unknown> }) =>
