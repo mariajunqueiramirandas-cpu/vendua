@@ -5,6 +5,7 @@ import {
   useId,
   useRef,
   useState,
+  type ComponentProps,
   type InputHTMLAttributes,
   type ReactNode,
   type TextareaHTMLAttributes,
@@ -539,6 +540,45 @@ export function Select({
 }
 
 /** A tiny autosave helper: run the save, show saving → salvo, fall back on error. */
+/** Optimistic stepper: taps update the number instantly and one PATCH goes out once they pause. */
+export function SavedStepper({
+  value,
+  onSave,
+  onDraft,
+  ...rest
+}: {
+  value: number;
+  onSave: (v: number) => Promise<unknown>;
+  onDraft?: (v: number) => void;
+} & Omit<ComponentProps<typeof Stepper>, 'value' | 'onChange'>) {
+  const [draft, setDraft] = useState<number | null>(null);
+  const timer = useRef<ReturnType<typeof setTimeout>>();
+  const pending = useRef<number | null>(null);
+  const save = useRef(onSave);
+  save.current = onSave;
+  const flush = () => {
+    clearTimeout(timer.current);
+    const v = pending.current;
+    if (v === null) return;
+    pending.current = null;
+    void save.current(v).finally(() => setDraft((d) => (d === v ? null : d)));
+  };
+  useEffect(() => flush, []);
+  return (
+    <Stepper
+      {...rest}
+      value={draft ?? value}
+      onChange={(v) => {
+        setDraft(v);
+        onDraft?.(v);
+        pending.current = v;
+        clearTimeout(timer.current);
+        timer.current = setTimeout(flush, 600);
+      }}
+    />
+  );
+}
+
 export function useSaveState() {
   const [state, setState] = useState<SaveState>('idle');
   const timer = useRef<ReturnType<typeof setTimeout>>();

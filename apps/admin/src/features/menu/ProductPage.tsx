@@ -12,7 +12,7 @@ import {
   UsersThree,
 } from '@phosphor-icons/react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { api, type KitSlot, type OptionGroup, type ProductDetail } from '../../lib/api.ts';
 import { useAutosave } from '../../lib/autosave.ts';
@@ -31,6 +31,7 @@ import {
   MoneyField,
   SaveMark,
   Select,
+  SavedStepper,
   Stepper,
   TextInput,
   Toggle,
@@ -73,42 +74,6 @@ export default function ProductPage() {
       cats={cats.data?.categories ?? []}
       openPhoto={search.get('foto') === '1'}
       sharedFile={sharedFile}
-    />
-  );
-}
-
-/** Optimistic stepper: taps update the number instantly and one PATCH goes out once they pause. */
-function SavedStepper({
-  value,
-  onSave,
-  ...rest
-}: { value: number; onSave: (v: number) => Promise<unknown> } & Omit<
-  React.ComponentProps<typeof Stepper>,
-  'value' | 'onChange'
->) {
-  const [draft, setDraft] = useState<number | null>(null);
-  const timer = useRef<ReturnType<typeof setTimeout>>();
-  const pending = useRef<number | null>(null);
-  const save = useRef(onSave);
-  save.current = onSave;
-  const flush = () => {
-    clearTimeout(timer.current);
-    const v = pending.current;
-    if (v === null) return;
-    pending.current = null;
-    void save.current(v).finally(() => setDraft((d) => (d === v ? null : d)));
-  };
-  useEffect(() => flush, []);
-  return (
-    <Stepper
-      {...rest}
-      value={draft ?? value}
-      onChange={(v) => {
-        setDraft(v);
-        pending.current = v;
-        clearTimeout(timer.current);
-        timer.current = setTimeout(flush, 600);
-      }}
     />
   );
 }
