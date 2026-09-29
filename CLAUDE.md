@@ -36,61 +36,43 @@ model, migrations, tokens, compat matrix), `packages/loader` (`v.js`), `packages
 - Kernel tests run in happy-dom (`packages/kernel/bunfig.toml` preloads it).
 - Conformance e2e in a container: add `/etc/hosts` lines for `qa-*.localhost` (no
   system resolver for `*.localhost`) and pass `CHROMIUM=/opt/pw-browsers/chromium`.
-- Fleet commands (need Core + `CONTROL_SECRET`): `bunx vendua train [--core --record]`,
-  `bunx vendua templates migrate <id> [--apply --ring r]`, `bunx vendua codemod rehearse <id>`,
-  `bunx vendua ops <tenant>`. Evidence of real runs goes in `docs/fleet-runs/`.
 
-## Running locally (cloud sessions)
+## Working here
 
-The SessionStart hook (`.claude/hooks/session-start.sh`) installs deps and starts a migrated,
-seeded Postgres 16 on :5433. Then:
-
-```sh
-# Core API on :8787 (the hook doesn't start it)
-cd packages/core && (CONTROL_SECRET=dev SESSION_SECRET=devsecret VENDUA_WEBHOOK_SECRET=devhook \
-  nohup bun src/index.ts > /tmp/core.log 2>&1 &)
-# CRM dev server on :5195 (proxies /control/v1 → :8787); login key: dev
-cd apps/control && (nohup bun run dev > /tmp/control.log 2>&1 &)
-bun scripts/dev-seed.ts            # 40 leads + threads/drafts/tasks (skips if already seeded)
-CHROMIUM=/opt/pw-browsers/chromium bun scripts/shots.ts /pipeline /inbox   # 375/820/1440 screenshots
-```
-
-- Core rate-limits `/control/v1/login` to 10/min per IP — `scripts/shots.ts` reuses one saved
-  cookie (`/tmp/vendua-control-auth.json`); don't script UI logins in loops.
+- Starting Core / the CRM / the admin, seeding, screenshots, fleet commands and Docker: the
+  `local-stack` skill (`.claude/skills/local-stack/SKILL.md`). `apps/control` and `apps/admin`
+  each have a `CLAUDE.md` with their UI rules; it loads when you work in that app.
 - Don't `pkill -f <pattern>` (or `pgrep -f` + kill) where the pattern also appears in your
-  own command line — it kills the shell running it. Save `$!` to a pidfile when starting Core.
-- Docker + Compose are installed but the daemon isn't running: start it on demand with
-  `(nohup dockerd > /tmp/dockerd.log 2>&1 &)`. It can pull from Docker Hub, so the real
-  Dokploy images can be checked with `docker compose build core` (it builds the CRM inside) — images are large, so
-  mind the session's disk allowance and `docker system prune` afterwards.
+  own command line — it kills the shell running it. Save `$!` to a pidfile instead.
+- Some files are huge: `packages/core/src/agent/runner.ts`, `agent/tools.ts` and `src/app.ts`
+  (~100 KB each), `test/agent-reclaim.test.ts` (~200 KB). Grep for the symbol and Read a
+  line range — never the whole file.
+- `.claude/settings.json` blocks reading `bun.lock` and build output (`dist/`, `qa-report/`)
+  and runs prettier on every file Claude writes.
 
-## apps/control (CRM)
+## Subagents
 
-`apps/control/README.md` holds the binding UI/data rules. Highlights:
+Subagents run on Sonnet 5.5 at low effort (`.claude/settings.json`); only their final report
+enters your context. Agents: `test-runner` and `invariant-reviewer` (this repo), `Explore`
+(read-only search), `Plan`, `general-purpose` (can edit). Check these triggers mid-task too,
+not only at the start:
 
-- Tailwind v4 tokens only (light + dark), shared components in `src/components/`,
-  one folder per area in `src/features/`, live style reference at `/#/_ui`.
-- TanStack Query keys come from `qk` in `src/lib/query.ts`; the cache stores the raw API
-  response (unwrap with `select`) because screens share keys; SSE invalidation lives in
-  `src/lib/live.ts`.
-- Every list gets a real phone layout (`DataList` `mobileRow`); check 375px for overflow.
-- Prod: Core's Docker image builds `apps/control` and serves `dist/` at `/control/`
-  (Dokploy compose; `crm` nginx proxies `/control` to core).
+- About to run a suite, a multi-workspace `bun run check`, e2e or read a long log → `test-runner`.
+- About to open a third file just to answer "where/how is X done" → `Explore`.
+- A change touches money, tenancy, idempotency, kernel exports or agent runs → after editing,
+  `invariant-reviewer` on the diff.
+- Stuck on a failure after two attempts → one agent to investigate it cold while you continue.
 
-## apps/admin (merchant admin)
+Splitting a task that spans areas (e.g. Core route + admin screen + kernel export):
 
-`apps/admin/README.md` holds the rules. Highlights:
+- Research in parallel — one agent per area, all in one message — then decide the design yourself.
+- Edits: do them yourself, or give parallel `general-purpose` agents disjoint file sets
+  (never two on one file); run the checks once all are back.
+- Don't split when each step needs the previous step's details, or the whole thing is a few edits.
 
-- Merchant identity is phone OTP over WhatsApp with per-tenant sessions and
-  owner/manager/attendant roles (ADR 0020). Every admin mutation writes `audit_log` in
-  its own tx, and live updates are `emitAdminTx` → SSE.
-- To run it, start Core with `VENDUA_ADMIN_DEV_OTP=1` (the sign-in code comes back in
-  the response), then `cd apps/admin && bun run dev` (:5196). Sign in as the seed owner,
-  phone 22981795040.
-- Gates: `bun run build` (bundle budgets) and
-  `CHROMIUM=/opt/pw-browsers/chromium AXE=1 bun scripts/shots.ts` (375/820/1440 ×
-  Creme/Noite; overflow, console and axe).
-- Style: `theme.css` tokens only, and `depth-*` for shadows (they compose with `ring-*`).
+A subagent sees none of the conversation. Its brief needs the goal, exact paths, the
+constraints that apply (quote the invariant) and the answer format ("under 200 words,
+file:line refs"). Don't redo its search; verify a surprising claim with one targeted Read.
 
 ## PRs
 
