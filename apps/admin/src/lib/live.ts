@@ -10,7 +10,14 @@ import type { Board, Order } from './api.ts';
 // a live-region announcement, repeating every 20 s until someone looks (§5.2, §6.3).
 
 type Topic =
-  'order.placed' | 'order.changed' | 'catalog' | 'store' | 'marketing' | 'team' | 'appearance';
+  | 'order.placed'
+  | 'order.changed'
+  | 'catalog'
+  | 'store'
+  | 'marketing'
+  | 'team'
+  | 'appearance'
+  | 'surfaces';
 
 const TOPIC_KEYS: Record<Topic, readonly (readonly unknown[])[]> = {
   'order.placed': [['orders'], qk.home, ['customers'], ['catalog'], qk.activity],
@@ -20,6 +27,8 @@ const TOPIC_KEYS: Record<Topic, readonly (readonly unknown[])[]> = {
   marketing: [qk.marketing, qk.home, qk.activity],
   team: [qk.team, qk.activity],
   appearance: [qk.appearance, qk.activity],
+  // storefront operations changed elsewhere (prep time, demand) show in Loja too
+  surfaces: [qk.store],
 };
 
 // ── connection + alert state (a tiny external store) ───────────────────────
@@ -41,6 +50,28 @@ const set = (patch: Partial<LiveState>) => {
   state = { ...state, ...patch };
   subs.forEach((s) => s());
 };
+/**
+ * How often a screen should poll: the stream pushes every change while it's up, so polling
+ * is only the fallback for when it's down (or a long safety net where missing one costs).
+ */
+export function usePollWhenOffline(ms: number, whileStreaming: number | false = false) {
+  const streaming = useSyncExternalStore(
+    (fn) => {
+      subs.add(fn);
+      return () => subs.delete(fn);
+    },
+    () => state.streaming,
+  );
+  return streaming ? whileStreaming : ms;
+}
+
+/** ms until an ISO instant (+2 s so the server's clock has passed it), capped for timers. */
+export function untilChange(iso: string | null | undefined): number | false {
+  if (!iso) return false;
+  const ms = Date.parse(iso) - Date.now() + 2000;
+  return Number.isFinite(ms) ? Math.min(Math.max(ms, 5000), 6 * 60 * 60_000) : false;
+}
+
 export function useLiveState(): LiveState {
   return useSyncExternalStore(
     (fn) => {

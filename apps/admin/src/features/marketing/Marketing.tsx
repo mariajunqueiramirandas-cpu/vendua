@@ -19,7 +19,7 @@ import { useSession } from '../../lib/session.ts';
 import { Button } from '../../ui/Button.tsx';
 import { Card, Section } from '../../ui/Card.tsx';
 import { cn } from '../../ui/cn.ts';
-import { EmptyState, ErrorState, messageOf } from '../../ui/feedback.tsx';
+import { EmptyState, ErrorState, messageOf, DuaNote } from '../../ui/feedback.tsx';
 import {
   Chips,
   Field,
@@ -589,12 +589,9 @@ function Waitlist({ data }: { data: M }) {
           })}
         </div>
       ) : (
-        <Card className="p-5">
-          <p className="t-body text-muted">
-            Ninguém esperando agora. Quando um produto esgota, a loja oferece “me avise quando
-            voltar”.
-          </p>
-        </Card>
+        <DuaNote pose="avatar-pensando" title="Ninguém esperando agora">
+          Quando um produto esgota, a loja oferece “me avise quando voltar”.
+        </DuaNote>
       )}
     </Section>
   );

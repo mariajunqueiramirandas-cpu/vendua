@@ -18,7 +18,7 @@ import { dateShort, hhmm, isoDate, money, phone, waDigits } from '../../lib/form
 import { qk, useMutation } from '../../lib/query.ts';
 import { Button, IconButton } from '../../ui/Button.tsx';
 import { Card, Section } from '../../ui/Card.tsx';
-import { ErrorState, messageOf } from '../../ui/feedback.tsx';
+import { ErrorState, messageOf, DuaNote } from '../../ui/feedback.tsx';
 import {
   Chips,
   CommitInput,
@@ -274,11 +274,9 @@ function SpecialDays({
           ))}
         </Card>
       ) : (
-        <Card className="p-5 text-muted">
-          <p className="t-body">
-            Nenhum dia especial marcado. Natal, Ano-Novo, uma folga: é só adicionar.
-          </p>
-        </Card>
+        <DuaNote pose="horarios" title="Nenhum dia especial marcado">
+          Natal, Ano-Novo, uma folga: é só adicionar.
+        </DuaNote>
       )}
       <Sheet
         open={open}

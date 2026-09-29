@@ -336,6 +336,8 @@ export interface StoreView {
   status: {
     status: StoreStatus;
     resumesAt: string | null;
+    /** when the status may flip by the clock (opens, closes, a pause ends) */
+    changesAt: string | null;
     override: 'paused' | 'closed' | null;
     pauseMessage: string | null;
     closedMessage: string | null;
@@ -358,7 +360,13 @@ export interface StoreView {
 export interface Home {
   greetingName: string;
   timezone: string;
-  status: { status: StoreStatus; resumesAt: string | null; override: string | null };
+  status: {
+    status: StoreStatus;
+    resumesAt: string | null;
+    /** when the status may flip by the clock (opens, closes, a pause ends) */
+    changesAt: string | null;
+    override: string | null;
+  };
   hours: { timezone: string; windows: Window_[] };
   specialDays: SpecialDay[];
   today: {

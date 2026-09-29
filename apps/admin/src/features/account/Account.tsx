@@ -10,6 +10,7 @@ import { ErrorState } from '../../ui/feedback.tsx';
 import { PageBody, PageHeader } from '../../ui/Page.tsx';
 import { SectionsSkeleton } from '../../ui/skeletons.tsx';
 import { toast } from '../../ui/Toast.tsx';
+import { Mascote } from '../../ui/Mascote.tsx';
 
 const PLAN: Record<string, string> = {
   spike: 'Piloto',
@@ -34,10 +35,15 @@ export default function Account() {
       ) : (
         <div className="space-y-8">
           <Section title="Seu plano">
-            <Card className="relative overflow-hidden p-5">
+            <Card className="relative overflow-hidden p-5 pr-28 sm:pr-32">
               <div
                 aria-hidden
                 className="absolute -right-12 -top-12 size-40 rounded-full bg-spark opacity-20 blur-2xl"
+              />
+              <Mascote
+                pose="loja"
+                size={96}
+                className="absolute bottom-2 right-3 size-24 max-sm:size-20"
               />
               <p className="t-caption text-muted">Plano atual</p>
               <p className="t-title-1 mt-1">{PLAN[data.plan.id] ?? data.plan.id}</p>

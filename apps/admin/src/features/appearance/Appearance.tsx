@@ -22,6 +22,8 @@ import {
   type TemplateSection,
 } from '../../lib/api.ts';
 import { when } from '../../lib/format.ts';
+import { usePollWhenOffline } from '../../lib/live.ts';
+import { Mascote } from '../../ui/Mascote.tsx';
 import { qk, useMutation } from '../../lib/query.ts';
 import { useSession } from '../../lib/session.ts';
 import { Button, IconButton } from '../../ui/Button.tsx';
@@ -95,10 +97,12 @@ const BASE_TOKENS: StoreTokens = {
 const same = (a: unknown, b: unknown) => JSON.stringify(a) === JSON.stringify(b);
 
 export default function Appearance() {
+  const poll = usePollWhenOffline(10_000);
   const { data, error, refetch } = useQuery({
     queryKey: qk.appearance,
     queryFn: api.appearance,
-    refetchInterval: (q) => (q.state.data?.publish.state === 'publishing' ? 10_000 : false),
+    // "no ar" is pushed when the build lands; polling only covers a stream that's down
+    refetchInterval: (q) => (q.state.data?.publish.state === 'publishing' ? poll : false),
   });
   if (error && !data)
     return (
@@ -333,6 +337,13 @@ function Editor({ data }: { data: AppearanceData }) {
   return (
     <div className="mx-auto w-full max-w-[1600px] px-4 pb-40 pt-4 md:px-8 md:pb-10 md:pt-8">
       <header className="mb-4 flex items-start gap-2 md:items-center md:gap-3">
+        {phase === 'live' ? (
+          <Mascote
+            pose="publicar"
+            size={72}
+            className="animate-pop size-16 shrink-0 md:size-[72px]"
+          />
+        ) : null}
         <div className="min-w-0 flex-1">
           <h1 className="t-title-1">Aparência</h1>
           <p className="t-body text-muted">

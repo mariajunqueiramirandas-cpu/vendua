@@ -266,9 +266,13 @@ function CodeStep({
       >
         <ArrowLeft className="size-5" /> trocar número
       </button>
-      <h1 className="t-title-1">Digite o código</h1>
+      <div className="flex items-center justify-between gap-3">
+        <h1 className="t-title-1">Digite o código</h1>
+        <Mascote pose="seguranca" size={72} className="size-16 shrink-0 sm:size-[72px]" />
+      </div>
       <p className="t-body-lg mt-2 text-muted">
-        Enviamos 6 números para o WhatsApp <strong className="text-ink">{fmtPhone(phone)}</strong>.
+        Enviamos 6 números para o WhatsApp{' '}
+        <strong className="whitespace-nowrap text-ink">{fmtPhone(phone)}</strong>.
       </p>
       {devCode ? (
         <p className="t-caption mt-3 rounded-sm bg-info-soft px-3 py-2 text-info">

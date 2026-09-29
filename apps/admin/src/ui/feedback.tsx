@@ -3,7 +3,8 @@ import { useEffect, useState, type CSSProperties, type ReactNode } from 'react';
 import { ApiError } from '../lib/api.ts';
 import { cn } from './cn.ts';
 import { Button } from './Button.tsx';
-import { Mascote } from './Mascote.tsx';
+import { Card } from './Card.tsx';
+import { Mascote, type Pose } from './Mascote.tsx';
 
 /** Illustration + one sentence + one action — never a bare "Nenhum item" (§2.2.2). */
 export function EmptyState({
@@ -25,6 +26,61 @@ export function EmptyState({
       <p className="t-title-2 max-w-sm">{title}</p>
       {body ? <p className="t-body mt-2 max-w-sm text-muted">{body}</p> : null}
       {action ? <div className="mt-5">{action}</div> : null}
+    </div>
+  );
+}
+
+/** Duá beside a short message: the calm states inside a screen (all done, nothing waiting). */
+export function DuaNote({
+  pose,
+  title,
+  children,
+  action,
+  className,
+}: {
+  pose: Pose;
+  title?: ReactNode;
+  children?: ReactNode;
+  action?: ReactNode;
+  className?: string;
+}) {
+  return (
+    <Card className={cn('flex items-center gap-4 p-4 pr-5', className)}>
+      <span className="dua-disc grid size-[76px] shrink-0 place-items-center">
+        <Mascote pose={pose} size={72} className="size-[72px]" />
+      </span>
+      <div className="min-w-0">
+        {title ? <p className="font-semibold">{title}</p> : null}
+        {children ? <div className="t-body text-muted">{children}</div> : null}
+        {action ? <div className="mt-3">{action}</div> : null}
+      </div>
+    </Card>
+  );
+}
+
+/** The app opening (the session check, the sign-in's code): Duá after a beat, so a fast
+ *  start never flashes it. */
+export function Splash({ text = 'Abrindo sua loja…' }: { text?: string }) {
+  const [show, setShow] = useState(false);
+  useEffect(() => {
+    const t = setTimeout(() => setShow(true), 300);
+    return () => clearTimeout(t);
+  }, []);
+  return (
+    <div
+      role="status"
+      aria-busy
+      className="grid min-h-dvh place-items-center px-6"
+      aria-label={text}
+    >
+      {show ? (
+        <div className="animate-fade-up flex flex-col items-center text-center">
+          <span className="dua-disc grid size-44 place-items-center">
+            <Mascote pose="carregando" size={160} className="w-40" />
+          </span>
+          <p className="t-body mt-3 text-muted">{text}</p>
+        </div>
+      ) : null}
     </div>
   );
 }

@@ -313,14 +313,16 @@ export function mountStorefrontPlatform(d: Deps) {
       let acked = 0;
       for (const { tenant, id } of items as { tenant: string; id: number }[]) {
         const t = await tenantBySlug(tenant);
-        const done = await withTenant(
-          sql,
-          t.id,
-          (tx) => tx`
+        const done = await withTenant(sql, t.id, (tx) =>
+          tx`
           update outbox set published_at = now()
           where tenant_id = ${t.id} and id = ${id} and topic = 'storefront.rebuild_requested' and published_at is null
           returning id
-        `,
+        `.then(async (rows) => {
+            // "publicando…" → "no ar" on the merchant's Aparência, pushed instead of polled
+            if (rows.length) await emitAdminTx(tx, t.id, 'appearance');
+            return rows;
+          }),
         );
         acked += done.length;
       }

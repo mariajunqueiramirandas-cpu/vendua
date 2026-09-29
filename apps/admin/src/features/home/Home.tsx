@@ -7,7 +7,6 @@ import {
   Package,
   Pause,
   Play,
-  Receipt,
   ShoppingBag,
   Timer,
   UsersThree,
@@ -26,13 +25,14 @@ import { Card, Section } from '../../ui/Card.tsx';
 import { Celebration, markMilestone, unseenMilestone } from '../../ui/Celebration.tsx';
 import { Sparkline } from '../../ui/charts.tsx';
 import { cn } from '../../ui/cn.ts';
-import { ErrorState, messageOf, Skeleton } from '../../ui/feedback.tsx';
+import { DuaNote, ErrorState, messageOf, Skeleton } from '../../ui/feedback.tsx';
 import { RowsSkeleton } from '../../ui/skeletons.tsx';
 import { HeroCard, type DayPhase } from '../../ui/HeroCard.tsx';
+import { Mascote, type Pose } from '../../ui/Mascote.tsx';
 import { Odometer } from '../../ui/Odometer.tsx';
 import { STATE_META } from '../../ui/StateChip.tsx';
 import { toast } from '../../ui/Toast.tsx';
-import { useLiveState } from '../../lib/live.ts';
+import { untilChange, useLiveState, usePollWhenOffline } from '../../lib/live.ts';
 import { statusWords, useStoreQuery } from '../store/StatusPill.tsx';
 import { StatusSheet } from '../store/StatusSheet.tsx';
 import { DeviceCard } from './DeviceCard.tsx';
@@ -41,10 +41,14 @@ import { usePreload } from '../../app/routes.ts';
 
 export default function Home() {
   const s = useSession();
+  const poll = usePollWhenOffline(60_000);
   const { data, error, refetch } = useQuery({
     queryKey: qk.home,
     queryFn: api.home,
-    refetchInterval: 60_000,
+    refetchInterval: (q) => {
+      const flip = untilChange(q.state.data?.status.changesAt);
+      return flip === false ? poll : poll === false ? flip : Math.min(flip, poll);
+    },
   });
   const [milestone, setMilestone] = useState<number | null>(null);
   useEffect(() => {
@@ -120,6 +124,13 @@ function phaseOf(d: HomeData): DayPhase {
   return 'dusk';
 }
 
+const HERO_POSE: Record<DayPhase, Pose> = {
+  dawn: 'avatar-ola',
+  open: 'avatar-feliz',
+  paused: 'avatar-pensando',
+  dusk: 'carinho',
+};
+
 function Hero({ data }: { data: HomeData }) {
   const store = useStoreQuery().data;
   const [sheet, setSheet] = useState(false);
@@ -161,6 +172,14 @@ function Hero({ data }: { data: HomeData }) {
         <p className="t-moment">
           {greeting(data.timezone)}, {data.greetingName}
         </p>
+        {/* Duá keeps the store company: waving before it opens, happy while it sells,
+            thinking through a pause, resting after close — on a cream disc over the dark dusk */}
+        <span
+          className="dua-disc -mr-1 -mt-1 grid size-[76px] shrink-0 place-items-center"
+          {...(light ? { 'data-dark': '' } : {})}
+        >
+          <Mascote pose={HERO_POSE[phase]} size={72} className="size-[72px]" />
+        </span>
       </div>
       <div className="mt-2 flex flex-wrap items-center gap-2">
         {w ? (
@@ -282,13 +301,9 @@ function Attention({ data }: { data: HomeData }) {
   const items = data.attention.slice(0, 3);
   if (!items.length)
     return (
-      <Card className="flex items-center gap-4 p-5">
-        <CheckCircle weight="duotone" className="size-10 shrink-0 text-success" />
-        <div>
-          <p className="font-semibold">Tudo em dia</p>
-          <p className="t-body text-muted">Nada esperando por você agora.</p>
-        </div>
-      </Card>
+      <DuaNote pose="avatar-feliz" title="Tudo em dia">
+        Nada esperando por você agora.
+      </DuaNote>
     );
   return (
     <Card as="section" className="divide-y divide-line overflow-hidden">
@@ -452,8 +467,10 @@ function Feed({ data }: { data: HomeData }) {
           })}
         </ol>
       ) : (
-        <div className="flex items-center gap-3 p-5 text-muted">
-          <Receipt weight="duotone" className="size-8" />
+        <div className="flex items-center gap-4 p-4 pr-5 text-muted">
+          <span className="dua-disc grid size-[76px] shrink-0 place-items-center">
+            <Mascote pose="sem-pedidos" size={72} className="size-[72px]" />
+          </span>
           <p className="t-body">Os pedidos das últimas 24 horas aparecem aqui, na hora.</p>
         </div>
       )}
@@ -464,14 +481,16 @@ function Feed({ data }: { data: HomeData }) {
 function Best({ data }: { data: HomeData }) {
   if (!data.best.length)
     return (
-      <Card className="p-5">
-        <p className="t-body text-muted">
-          Assim que sair o primeiro pedido do dia, os campeões aparecem aqui.
-        </p>
-        <ButtonLink to="/marketing#compartilhar" variant="secondary" className="mt-3">
-          compartilhar a loja
-        </ButtonLink>
-      </Card>
+      <DuaNote
+        pose="catalogo"
+        action={
+          <ButtonLink to="/marketing#compartilhar" variant="secondary">
+            compartilhar a loja
+          </ButtonLink>
+        }
+      >
+        Assim que sair o primeiro pedido do dia, os campeões aparecem aqui.
+      </DuaNote>
     );
   return (
     <div className="grid grid-cols-3 gap-3">

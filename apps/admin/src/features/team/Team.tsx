@@ -7,7 +7,7 @@ import { optimistic, qk, useMutation } from '../../lib/query.ts';
 import { ROLE_LABEL, useCan, useSession } from '../../lib/session.ts';
 import { Button } from '../../ui/Button.tsx';
 import { Card, Section } from '../../ui/Card.tsx';
-import { ErrorState, messageOf } from '../../ui/feedback.tsx';
+import { ErrorState, messageOf, DuaNote } from '../../ui/feedback.tsx';
 import { Chips, Field, PhoneInput, TextInput } from '../../ui/fields.tsx';
 import { HoldButton } from '../../ui/HoldButton.tsx';
 import { PageBody, PageHeader } from '../../ui/Page.tsx';
@@ -80,6 +80,12 @@ export default function Team() {
               ))}
             </Card>
           )}
+          {owner && data && data.members.filter((m) => m.status !== 'revoked').length === 1 ? (
+            <DuaNote pose="carinho" title="Tocando a loja sem ajuda?" className="mt-3">
+              Chame quem ajuda no balcão ou na cozinha. Cada pessoa entra com o próprio celular, e
+              você escolhe o que ela pode fazer.
+            </DuaNote>
+          ) : null}
           {owner ? (
             <Button
               variant="secondary"

@@ -9,7 +9,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { api, type Board, type Order, type OrderState } from '../../lib/api.ts';
-import { markOrdersSeen } from '../../lib/live.ts';
+import { markOrdersSeen, usePollWhenOffline } from '../../lib/live.ts';
 import { useWakeLock, wakeLockSupported } from '../../lib/wakeLock.ts';
 import { qk } from '../../lib/query.ts';
 import { useSession } from '../../lib/session.ts';
@@ -65,10 +65,11 @@ function useNow(ms = 15_000) {
 }
 
 export default function Orders() {
+  const poll = usePollWhenOffline(30_000, 5 * 60_000);
   const { data, error, refetch, isPending } = useQuery({
     queryKey: qk.board,
     queryFn: api.board,
-    refetchInterval: 30_000,
+    refetchInterval: poll,
   });
   const store = useStoreQuery().data;
   const s = useSession();

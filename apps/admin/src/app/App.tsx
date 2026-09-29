@@ -7,7 +7,7 @@ import { qk } from '../lib/query.ts';
 import { SessionCtx, useSessionQuery } from '../lib/session.ts';
 import { applyTheme, type ThemePref } from '../lib/theme.ts';
 import { ErrorBoundary } from '../ui/ErrorBoundary.tsx';
-import { ErrorState, Loading } from '../ui/feedback.tsx';
+import { ErrorState, Splash } from '../ui/feedback.tsx';
 import { chunks, screen } from './routes.ts';
 import { Shell } from './Shell.tsx';
 
@@ -70,25 +70,14 @@ export default function App() {
         <UiReference />
       </Suspense>
     );
-  if (q.isPending && !unauth)
-    return (
-      <div className="mx-auto max-w-lg p-6" aria-busy>
-        <Loading />
-      </div>
-    );
+  if (q.isPending && !unauth) return <Splash />;
   if (unauth || loc.pathname === '/entrar')
     return q.data && !unauth ? (
       <Navigate to="/" replace />
     ) : (
       // a Login chunk that fails or crawls on mobile data must not leave a bare background
       <ErrorBoundary>
-        <Suspense
-          fallback={
-            <div className="mx-auto max-w-lg p-6" aria-busy>
-              <Loading />
-            </div>
-          }
-        >
+        <Suspense fallback={<Splash text="Carregando…" />}>
           <Login />
         </Suspense>
       </ErrorBoundary>
@@ -109,13 +98,7 @@ export default function App() {
             path="/bem-vindo"
             element={
               <ErrorBoundary>
-                <Suspense
-                  fallback={
-                    <div className="mx-auto max-w-lg p-6" aria-busy>
-                      <Loading />
-                    </div>
-                  }
-                >
+                <Suspense fallback={<Splash text="Preparando seu passo a passo…" />}>
                   <Onboarding />
                 </Suspense>
               </ErrorBoundary>

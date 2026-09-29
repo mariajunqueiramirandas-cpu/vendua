@@ -17,6 +17,23 @@ describe('deriveStatus', () => {
     expect(s.resumesAt).toBeUndefined();
   });
 
+  test('open by its hours says when the window ends', () => {
+    // 12:00:30 Sao_Paulo → closes 22:00 Sao_Paulo = 01:00 UTC next day
+    const s = deriveStatus(daily9to22, null, null, at('2026-09-18T15:00:30Z'));
+    expect(s.closesAt).toBe('2026-09-19T01:00:00.000Z');
+    const burger: StoreHours = {
+      timezone: TZ,
+      windows: [{ days: [2, 3, 4, 5, 6, 0], open: '18:00', close: '02:00' }],
+    };
+    // Friday 20:00 → 02:00 Saturday; Saturday 00:30 (Friday's window spilling over) → 02:00
+    expect(deriveStatus(burger, null, null, at('2026-09-18T23:00:00Z')).closesAt).toBe(
+      '2026-09-19T05:00:00.000Z',
+    );
+    expect(deriveStatus(burger, null, null, at('2026-09-19T03:30:00Z')).closesAt).toBe(
+      '2026-09-19T05:00:00.000Z',
+    );
+  });
+
   test('closed outside a window, resumes at next open', () => {
     // 08:00 Sao_Paulo — before 09:00 open
     const s = deriveStatus(daily9to22, null, null, at('2026-09-18T11:00:00Z'));

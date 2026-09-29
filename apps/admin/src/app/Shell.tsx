@@ -4,7 +4,13 @@ import { Suspense, useEffect, useRef, useState, type ReactNode } from 'react';
 import { NavLink, useLocation, useNavigate } from 'react-router-dom';
 import { StatusPill } from '../features/store/StatusPill.tsx';
 import { api } from '../lib/api.ts';
-import { setAnnouncer, useLiveState, useLiveStream, setSoundOn } from '../lib/live.ts';
+import {
+  setAnnouncer,
+  useLiveState,
+  useLiveStream,
+  setSoundOn,
+  usePollWhenOffline,
+} from '../lib/live.ts';
 import { applyUpdate, onUpdate, setBadge, updateReady } from '../lib/pwa.ts';
 import { qk } from '../lib/query.ts';
 import { can, ROLE_LABEL, useSession } from '../lib/session.ts';
@@ -37,7 +43,9 @@ import { StoreAvatar } from './StoreAvatar.tsx';
 import { resetClient } from '../lib/persist.ts';
 
 function usePlacedCount() {
-  const { data } = useQuery({ queryKey: qk.board, queryFn: api.board, refetchInterval: 30_000 });
+  // orders are pushed over the stream; a slow safety net stays for the one screen that can't miss
+  const poll = usePollWhenOffline(30_000, 5 * 60_000);
+  const { data } = useQuery({ queryKey: qk.board, queryFn: api.board, refetchInterval: poll });
   return data?.orders.filter((o) => o.state === 'placed').length ?? 0;
 }
 
