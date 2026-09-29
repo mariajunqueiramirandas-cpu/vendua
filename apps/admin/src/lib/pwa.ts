@@ -72,19 +72,23 @@ export function applyUpdate() {
   waiting.postMessage({ type: 'SKIP_WAITING' });
 }
 
-/** Whether worker `w` precaches the hashed files this page was loaded with. */
-function sameBuild(w: ServiceWorker) {
+/**
+ * Ask worker `w` (sw.js `HAS`) whether it precaches the hashed files this page was loaded
+ * with, and whether it is the version the server serves now.
+ */
+function compare(w: ServiceWorker) {
   const urls = [
     ...document.querySelectorAll('script[src^="/admin/assets/"], link[href^="/admin/assets/"]'),
   ].map((el) => el.getAttribute('src') ?? el.getAttribute('href'));
-  return new Promise<boolean>((done) => {
-    if (!urls.length) return done(false);
+  const unknown = { page: false, current: true };
+  return new Promise<{ page: boolean; current: boolean }>((done) => {
+    if (!urls.length) return done(unknown);
     const ch = new MessageChannel();
     // a worker from before this check never answers: treat it as a new version
-    const t = setTimeout(() => done(false), 3000);
-    ch.port1.onmessage = (e) => {
+    const t = setTimeout(() => done(unknown), 10_000);
+    ch.port1.onmessage = (e: MessageEvent<{ page?: boolean; current?: boolean }>) => {
       clearTimeout(t);
-      done(e.data === true);
+      done({ page: e.data?.page === true, current: e.data?.current !== false });
     };
     w.postMessage({ type: 'HAS', urls }, [ch.port2]);
   });
@@ -144,12 +148,14 @@ export function startPwa() {
     const found = (w: ServiceWorker | null) => {
       // the first install has no update to announce
       if (!w || !sw.controller) return;
-      void sameBuild(w).then((same) => {
+      void compare(w).then(({ page, current }) => {
         if (w.state === 'redundant') return;
         // Pages load network-first, so a page opened after a deploy already runs the new
         // version while the worker still waits for the old one's windows to close: let it take
         // over quietly (no reload) instead of offering an "update" that changes nothing.
-        if (same) return w.postMessage({ type: 'SKIP_WAITING' });
+        if (page) return w.postMessage({ type: 'SKIP_WAITING' });
+        // a stale sw.js from a cache, not what the server serves: the next check replaces it
+        if (!current) return;
         waiting = w;
         updateSubs.forEach((f) => f());
       });

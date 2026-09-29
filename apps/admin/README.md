@@ -50,7 +50,9 @@ The admin is meant to live on the merchant's home screen. What that takes, and w
   (a deploy); the sign-in screen takes a new version by itself (nothing to lose there). Pages
   load network-first, so a page opened after the deploy already runs the new version: it asks
   the waiting worker (`HAS`) whether it precaches the page's own files and, if so, lets it take
-  over quietly instead of showing the banner. Product
+  over quietly instead of showing the banner. The worker also checks itself against the
+  `index.html` the server serves now: a stale `sw.js` from a CDN (Cloudflare kept one at the
+  edge; Core now sends `CDN-Cache-Control: no-store` for root files) is never announced. Product
   photos (`/v1/media`) are cached stale-while-revalidate; `/admin/v1` is never cached by
   the worker.
 - **Last-known data** (`lib/persist.ts`): the query cache is saved to IndexedDB, so a cold

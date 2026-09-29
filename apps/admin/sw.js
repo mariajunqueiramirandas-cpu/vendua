@@ -41,13 +41,26 @@ self.addEventListener('activate', (e) => {
 self.addEventListener('message', (e) => {
   const d = e.data || {};
   if (d.type === 'SKIP_WAITING') void self.skipWaiting();
-  // the page asks whether it already runs this version (its hashed files are all ours)
   if (d.type === 'HAS' && e.ports[0])
-    e.ports[0].postMessage(
-      Array.isArray(d.urls) && d.urls.length > 0 && d.urls.every((u) => PRECACHE.includes(u)),
-    );
+    e.waitUntil(has(d.urls).then((r) => e.ports[0].postMessage(r)));
   if (d.type === 'ORDERS_SEEN') e.waitUntil(clearOrderAlerts());
 });
+
+const ours = (urls) =>
+  Array.isArray(urls) && urls.length > 0 && urls.every((u) => PRECACHE.includes(u));
+
+// The page asks before announcing this worker: does it already run this version (its hashed
+// files are all ours), and is this version what the server serves now? A CDN can hand out a
+// stale sw.js hours after a deploy, which would read as a "new" version. index.html is
+// no-store, and a worker's own fetch skips every fetch handler.
+async function has(urls) {
+  const html = await fetch(INDEX, { cache: 'no-store' })
+    .then((r) => (r.ok ? r.text() : ''))
+    .catch(() => '');
+  const served = [...html.matchAll(/(?:src|href)="(\/admin\/assets\/[^"]+)"/g)].map((m) => m[1]);
+  // offline or an error page: unknown, so don't hold a real update back
+  return { page: ours(urls), current: served.length === 0 || ours(served) };
+}
 
 async function clearOrderAlerts() {
   const list = await self.registration.getNotifications();
