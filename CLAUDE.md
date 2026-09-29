@@ -52,10 +52,16 @@ model, migrations, tokens, compat matrix), `packages/loader` (`v.js`), `packages
 
 ## Subagents
 
-Subagents run on Sonnet 5.5 at low effort (`.claude/settings.json`); only their final report
-enters your context. Agents: `test-runner` and `invariant-reviewer` (this repo), `Explore`
-(read-only search), `Plan`, `general-purpose` (can edit). Check these triggers mid-task too,
-not only at the start:
+Subagents run on Sonnet 5.5 at low effort (set in each agent's frontmatter), except
+`frontend-designer`, which runs on Opus 5.5 at medium effort; only their final report
+enters your context. Agents: `test-runner`, `invariant-reviewer` and `frontend-designer`
+(this repo), `Explore` (read-only search), `Plan`, `general-purpose` (can edit). Check these
+triggers mid-task too, not only at the start:
+
+- Any task that needs UI / frontend design work (screens, components, layout, styling,
+  responsive behaviour, visual polish in `apps/*`, `packages/ui-defaults`, `site/`,
+  storefront sections) → `frontend-designer` (Opus 5.5), never Sonnet or another agent.
+  Only make trivial non-visual edits (a string, a prop rename) yourself.
 
 - About to run a suite, a multi-workspace `bun run check`, e2e or read a long log → `test-runner`.
 - About to open a third file just to answer "where/how is X done" → `Explore`.
