@@ -2,7 +2,7 @@ import type { Context, Hono } from 'hono';
 import { getCookie } from 'hono/cookie';
 import { streamSSE } from 'hono/streaming';
 import { withTenant, type Sql } from '../platform/db.ts';
-import { HttpError, UUID_RE, bodyJson } from '../platform/http.ts';
+import { HttpError, UUID_RE, bodyJson, clientIp, windowCounter } from '../platform/http.ts';
 import { log } from '../platform/log.ts';
 import type { Tenant } from '../platform/tenancy.ts';
 import { notifyStaff } from '../modules/staff.ts';
@@ -57,6 +57,8 @@ export interface MountAdminOpts {
   hub: AdminHub;
   presence: PresenceTracker;
   trustProxy: boolean;
+  /** trusted proxies beyond the client's own X-Forwarded-For entry (VENDUA_PROXY_HOPS) */
+  proxyHops: number;
   otpSender: OtpSender;
   idempotency: AdminDeps['idempotency'];
   storeDomain: string;
@@ -77,7 +79,7 @@ export function mountAdmin(o: MountAdminOpts) {
 
   // ── sign-in (pre-tenant) ─────────────────────────────────────────────────
   // one bucket per client IP for the whole auth surface — codes are the scarce thing
-  const authLimit = rateLimitByIp(20, o.trustProxy);
+  const authLimit = rateLimitByIp(20, { trustForwardedFor: o.trustProxy, proxyHops: o.proxyHops });
 
   admin.post('/auth/otp/start', authLimit, async (c) => {
     const body = await bodyJson(c);
@@ -551,19 +553,10 @@ function sniff(b: Uint8Array): string | null {
   return null;
 }
 
-function rateLimitByIp(max: number, trustProxy: boolean) {
-  const hits = new Map<string, { count: number; resetAt: number }>();
+function rateLimitByIp(max: number, flags: { trustForwardedFor: boolean; proxyHops: number }) {
+  const allow = windowCounter({ windowMs: 60_000, max });
   return async (c: Context, next: () => Promise<void>) => {
-    const xff = c.req
-      .header('x-forwarded-for')
-      ?.split(',')
-      .map((s) => s.trim());
-    const ip = trustProxy ? (xff?.at(-1) ?? 'unknown') : 'local';
-    const now = Date.now();
-    for (const [k, v] of hits) if (v.resetAt <= now) hits.delete(k);
-    const b = hits.get(ip);
-    if (!b || b.resetAt <= now) hits.set(ip, { count: 1, resetAt: now + 60_000 });
-    else if (++b.count > max)
+    if (!allow(clientIp(c, flags)))
       throw new HttpError(429, 'RATE_LIMITED', 'too many attempts — wait a minute');
     await next();
   };
