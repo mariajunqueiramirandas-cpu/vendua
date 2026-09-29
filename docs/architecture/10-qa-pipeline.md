@@ -10,8 +10,8 @@ Two suites with different jobs:
 - **Generation QA** — applied to agent-produced work. Answers "is this good?"
   Screenshots, visual triage, human approval where required.
 
-The teaser site's existing suite (`site/tests/site.spec.ts` + `site/VALIDACAO.md`
-style) is the prototype: viewports, axe, no-JS, byte budgets, link checks —
+The site's suite (`site/tests/site.spec.ts`, plus the build gates
+`site/scripts/validate.ts` and `site/scripts/postbuild.ts`) is the prototype: viewports, axe, no-JS, byte budgets, link checks —
 that shape generalizes directly into Conformance.
 
 ## Harness mechanics
@@ -32,7 +32,7 @@ that shape generalizes directly into Conformance.
 
 ## Conformance Suite v1 — normative criteria
 
-Format borrowed from this repo's `VALIDACAO.md`. IDs are stable; tests are
+Format borrowed from the former teaser site's `VALIDACAO.md`. IDs are stable; tests are
 referenced by ID in failure bundles and codemod reports.
 
 ### Commerce flow (C-series)

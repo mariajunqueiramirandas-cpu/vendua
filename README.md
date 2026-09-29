@@ -20,7 +20,7 @@ Contract v1 built from Phase 0 observations.
 
 ```
 vendua/
-  site/          # @vendua/site — the Venduá marketing/teaser site (SvelteKit).
+  site/          # @vendua/site — the Venduá marketing site (SvelteKit).
                  # Not a storefront; does not consume the Kernel.
   apps/          # apps/control — staff console: CRM board, agent ops (threads,
                  # plan board, discovery, digest settings)
@@ -47,7 +47,7 @@ bun run test:e2e   # Playwright suite (starts preview automatically)
 ```
 
 All root scripts delegate to `@vendua/site` via `bun --filter`; see
-[`site/README.md`](site/README.md) for the full site documentation (pt-BR).
+[`site/README.md`](site/README.md) for the full site documentation.
 
 ## Working on the platform
 

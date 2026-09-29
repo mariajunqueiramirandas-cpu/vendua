@@ -26,9 +26,21 @@ screens or sections that do something similar:
   that store's directory. Run `bunx vendua check` for the store.
 - `packages/ui-defaults`: default slot components and all default CSS; changes reach every
   store, so keep them additive.
-- `site/`: SvelteKit teaser, see `site/README.md`; respect `prefers-reduced-motion`.
+- `site/`: SvelteKit marketing site, see `site/README.md` (only real admin screens and Duá); respect `prefers-reduced-motion`.
 
 Money is integer cents formatted for display only; never compute totals in the UI.
+
+When you work in parallel with other agents:
+
+- Edit only the files your brief gives you. Put anything you need changed elsewhere in your
+  report instead.
+- Don't start or stop servers, and don't run a full build unless your brief says so.
+- A shot that fails on module requests is usually another agent's hot reload: rerun it.
+
+If you're asked to build something new (a screen, section or page) with no approved reference
+(a mockup or study the user signed off, the relevant design-spec section, and the real
+content), say so up front. Propose the direction in your report instead of guessing a
+finished design. Reviewing and polishing existing work needs no such reference.
 
 Verify what you built by looking at it, not only by type-checking:
 

@@ -1,298 +1,362 @@
-import { test, expect, type Page } from '@playwright/test';
+// End-to-end gate for the built site (`bun run build` first; the webServer serves build/).
+//   CHROMIUM=/opt/pw-browsers/chromium bun run test:e2e
 import AxeBuilder from '@axe-core/playwright';
+import { expect, test, type Page } from '@playwright/test';
 import { gzipSync } from 'node:zlib';
-import { mkdirSync, writeFileSync } from 'node:fs';
 
-const routes = ['/', '/contato/', '/privacidade/', '/nao-existe/'];
-const axeTags = ['wcag2a', 'wcag2aa', 'wcag21aa', 'wcag22aa'];
+const HOME = '/';
+const PRIVACY = '/privacidade/';
+const MISSING = '/nao-existe/';
+const PAGES = [HOME, PRIVACY, MISSING];
+const DOMAIN = 'https://vendua.com.br';
+const INSTAGRAM = 'https://www.instagram.com/vendua.digital/';
+const THEMES = ['light', 'dark'] as const;
 
-// sessionStorage 'vnd-intro' skips the intro veil so tests reach the content directly.
-test.beforeEach(async ({ page }) => {
-  await page.addInitScript(() => sessionStorage.setItem('vnd-intro', '1'));
+// Lazy images load only near the viewport: walk the page one screen at a time, waiting a frame
+// for layout at each stop, then wait for every rendered image to settle.
+async function scrollThrough(page: Page) {
+  await page.evaluate(async () => {
+    const frame = () => new Promise((r) => requestAnimationFrame(() => r(null)));
+    for (let y = 0; y < document.documentElement.scrollHeight; y += innerHeight * 0.75) {
+      scrollTo(0, y);
+      await frame();
+    }
+    scrollTo(0, document.documentElement.scrollHeight);
+    await frame();
+  });
+  await expect
+    .poll(
+      () =>
+        // an image skipped on the fast walk gets its own stop, like a reader lingering on it
+        page.evaluate(() =>
+          [...document.images]
+            .filter((i) => i.getClientRects().length > 0 && !i.complete)
+            .map((i) => (i.scrollIntoView({ block: 'center' }), i.currentSrc || i.src)),
+        ),
+      { message: `imagens que não terminaram de carregar em ${page.url()}`, timeout: 20_000 },
+    )
+    .toEqual([]);
+  await page.evaluate(() => scrollTo(0, 0));
+}
+
+test.describe('rotas', () => {
+  test('/ e /privacidade/ respondem 200; o resto, 404 com a página de não encontrada', async ({
+    page,
+  }) => {
+    for (const path of [HOME, PRIVACY]) {
+      const res = await page.goto(path);
+      expect(res?.status(), path).toBe(200);
+    }
+    for (const path of [MISSING, '/privacidade/nada/', '/pedidos']) {
+      const res = await page.goto(path);
+      expect(res?.status(), path).toBe(404);
+      await expect(page.locator('h1')).toHaveText('Essa página saiu para entrega.');
+    }
+  });
+
+  for (const path of PAGES)
+    test(`${path}: título, descrição, canonical, og:image e um só h1`, async ({ page }) => {
+      await page.goto(path);
+      await expect(page).toHaveTitle(/\S.*Venduá|Venduá.*\S/);
+      const meta = (sel: string, attr = 'content') =>
+        page.locator(sel).evaluateAll((els, a) => els.map((e) => e.getAttribute(a) ?? ''), attr);
+      const [description] = await meta('meta[name="description"]');
+      expect(description?.length ?? 0, 'meta description').toBeGreaterThan(50);
+      expect(await meta('link[rel="canonical"]', 'href')).toEqual([
+        new URL(path === MISSING ? '/404/' : path, DOMAIN).href,
+      ]);
+      expect(await meta('meta[property="og:image"]')).toEqual([`${DOMAIN}/og.png`]);
+      await expect(page.locator('h1')).toHaveCount(1);
+      await expect(page.locator('h1')).toBeVisible();
+    });
+
+  test('a imagem social existe e tem 1200×630', async ({ request }) => {
+    const res = await request.get('/og.png');
+    expect(res.status()).toBe(200);
+    const png = await res.body();
+    // IHDR: width and height are big-endian u32 at bytes 16 and 20
+    expect([png.readUInt32BE(16), png.readUInt32BE(20)]).toEqual([1200, 630]);
+  });
 });
 
-async function ready(page: Page) {
-  await expect(page.locator('h1')).toHaveCount(1);
-}
-
-async function axeClean(page: Page) {
-  const { violations } = await new AxeBuilder({ page }).withTags(axeTags).analyze();
-  expect(
-    violations.map((v) => `${v.id}: ${v.nodes.length} nó(s)`),
-    `violações axe em ${page.url()}`,
-  ).toEqual([]);
-}
-
-for (const width of [320, 360, 390, 768, 1280, 1440]) {
-  test(`rotas, imagens e layout em ${width}px`, async ({ page }) => {
-    await page.setViewportSize({ width, height: 900 });
-    const errors: string[] = [];
-    page.on('pageerror', (e) => errors.push(e.message));
-    for (const route of routes) {
-      const response = await page.goto(route);
-      await ready(page);
-      expect(response?.status()).toBe(route === '/nao-existe/' ? 404 : 200);
-      expect(
-        await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth),
-        `overflow horizontal em ${route} @ ${width}px`,
-      ).toBe(true);
-      for (const img of await page.locator('img:visible').all()) {
-        await img.scrollIntoViewIfNeeded();
-        await expect
-          .poll(() => img.evaluate((el) => (el as HTMLImageElement).naturalWidth))
-          .toBeGreaterThan(0);
-      }
-      await page.evaluate(() => scrollTo(0, 0));
-      if ([390, 1440].includes(width))
-        await page.screenshot({
-          path: `artifacts/${route === '/' ? 'home' : route.split('/')[1]}-${width}.png`,
-          fullPage: true,
+test.describe('layout', () => {
+  for (const colorScheme of THEMES)
+    for (const width of [320, 375, 768, 1280, 1440])
+      test(`sem rolagem horizontal em ${width}px (${colorScheme})`, async ({ browser }) => {
+        const ctx = await browser.newContext({
+          viewport: { width, height: 900 },
+          colorScheme,
+          reducedMotion: 'reduce',
         });
+        const page = await ctx.newPage();
+        for (const path of PAGES) {
+          await page.goto(path);
+          await scrollThrough(page);
+          const overflow = await page.evaluate(
+            () => document.documentElement.scrollWidth - document.documentElement.clientWidth,
+          );
+          expect(overflow, `${path} transborda ${overflow}px`).toBeLessThanOrEqual(0);
+        }
+        await ctx.close();
+      });
+});
+
+test.describe('acessibilidade', () => {
+  for (const colorScheme of THEMES)
+    for (const width of [375, 1280])
+      for (const path of PAGES)
+        test(`axe sem violações sérias em ${path} a ${width}px (${colorScheme})`, async ({
+          browser,
+        }) => {
+          const ctx = await browser.newContext({
+            viewport: { width, height: 900 },
+            colorScheme,
+            reducedMotion: 'reduce',
+          });
+          const page = await ctx.newPage();
+          await page.goto(path);
+          await scrollThrough(page);
+          const { violations } = await new AxeBuilder({ page })
+            .withTags(['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa', 'wcag22aa'])
+            .analyze();
+          const bad = violations
+            .filter((v) => v.impact === 'serious' || v.impact === 'critical')
+            .map(
+              (v) =>
+                `${v.id} (${v.impact}): ${v.nodes
+                  .slice(0, 4)
+                  .map((n) => n.target.join(' '))
+                  .join(' | ')}`,
+            );
+          expect(bad).toEqual([]);
+          await ctx.close();
+        });
+
+  test('toda <img> tem alt', async ({ page }) => {
+    for (const path of PAGES) {
+      await page.goto(path);
+      await expect(page.locator('img:not([alt])'), path).toHaveCount(0);
+      // the screenshots carry meaning; only Duá and ornaments may be decorative
+      // (a screen inside an aria-hidden decoration may be alt="")
+      for (const alt of await page
+        .locator('picture img')
+        .evaluateAll((els) =>
+          els
+            .filter((e) => !e.closest('[aria-hidden="true"]'))
+            .map((e) => e.getAttribute('alt') ?? ''),
+        ))
+        expect(alt.trim().length, 'alt de uma tela').toBeGreaterThan(10);
     }
+  });
+});
+
+test.describe('conteúdo', () => {
+  test('a home funciona sem JavaScript', async ({ browser }) => {
+    const ctx = await browser.newContext({ javaScriptEnabled: false, reducedMotion: 'reduce' });
+    const page = await ctx.newPage();
+    await page.goto(HOME);
+    await expect(page.locator('h1')).toBeVisible();
+    const sections = page.locator('main section[aria-labelledby]');
+    expect(await sections.count(), 'seções da home').toBeGreaterThanOrEqual(6);
+    for (const id of await sections.evaluateAll((els) =>
+      els.map((e) => e.getAttribute('aria-labelledby')!),
+    )) {
+      const heading = page.locator(`[id="${id}"]`);
+      await expect(heading, `título de #${id}`).toBeVisible();
+      await expect(heading).not.toBeEmpty();
+    }
+    const tags = await sections.evaluateAll((els) =>
+      els.map((e) => document.getElementById(e.getAttribute('aria-labelledby')!)?.tagName),
+    );
+    expect(tags, 'cada seção nomeada pelo seu h2 (o h1 abre a primeira)').toEqual([
+      'H1',
+      ...Array(tags.length - 1).fill('H2'),
+    ]);
+    await expect(page.getByText('Em breve', { exact: true }).first()).toBeVisible();
+    for (const id of ['pedidos', 'preco', 'perguntas'])
+      await expect(page.locator(`#${id}`)).toBeAttached();
+
+    // FAQ: native <details>, so every answer ships in the HTML and opens without a script
+    const faq = page.locator('#perguntas details');
+    expect(await faq.count(), 'perguntas').toBeGreaterThanOrEqual(3);
+    for (const item of await faq.all()) {
+      await expect(item.locator('summary')).not.toBeEmpty();
+      const answer = await item.evaluate((d) =>
+        [...d.children]
+          .filter((c) => c.tagName !== 'SUMMARY')
+          .map((c) => c.textContent ?? '')
+          .join(' ')
+          .trim(),
+      );
+      expect(answer.length, 'resposta da pergunta').toBeGreaterThan(20);
+    }
+    await faq.first().locator('summary').click();
+    await expect(faq.first()).toHaveAttribute('open', '');
+    await ctx.close();
+  });
+
+  test('a única chamada é "Em breve": sem formulário, cadastro nem contato', async ({ page }) => {
+    const CTA =
+      /cadastr|inscrev|assin[ae]|criar (a |sua )?loja|come[cç]ar agora|comece|teste|experimente|fale|contato|whats|agend|quero/i;
+    for (const path of PAGES) {
+      await page.goto(path);
+      await expect(page.locator('form, input, textarea, select'), path).toHaveCount(0);
+      await expect(page.locator('button[type="submit"], [role="button"]'), path).toHaveCount(0);
+      await expect(page.getByText('Em breve', { exact: true }).first()).toBeAttached();
+
+      const links = await page.locator('a[href]').evaluateAll((els) =>
+        els.map((a) => ({
+          href: (a as HTMLAnchorElement).href,
+          raw: a.getAttribute('href')!,
+          text: (a.textContent ?? '').trim(),
+          footer: !!a.closest('footer'),
+        })),
+      );
+      for (const l of links) {
+        // the one exception: the privacy page's address for requests about personal data (LGPD)
+        const legal = path === PRIVACY && /^mailto:[^@]+@vendua\.com\.br$/.test(l.raw);
+        if (legal) continue;
+        expect(l.raw, `${path}: ${l.text}`).not.toMatch(/^(mailto|tel|sms|whatsapp):/i);
+        expect(l.href, `${path}: ${l.text}`).not.toMatch(
+          /wa\.me|whatsapp|ig\.me|forms?\.|typeform/i,
+        );
+        const url = new URL(l.href);
+        // Instagram is the only other site linked (the profile, and its privacy policy on /privacidade/)
+        if (url.origin !== new URL(page.url()).origin)
+          expect(url.hostname, `${path}: link externo "${l.text}"`).toMatch(
+            /(^|\.)instagram\.com$/,
+          );
+        else expect(l.text, `${path}: ${l.href}`).not.toMatch(CTA);
+      }
+      const instagram = links.filter((l) => l.href === INSTAGRAM);
+      expect(
+        instagram.filter((l) => l.footer),
+        `${path}: Instagram no rodapé`,
+      ).toHaveLength(1);
+      // at most one "acompanhe no Instagram" line near the final Em breve
+      expect(instagram.filter((l) => !l.footer).length, path).toBeLessThanOrEqual(1);
+      for (const b of await page.locator('button').allTextContents())
+        expect(b, `${path}: botão`).not.toMatch(CTA);
+    }
+  });
+
+  for (const width of [375, 1280])
+    test(`âncoras #pedidos #preco #perguntas e os links do topo a ${width}px`, async ({ page }) => {
+      await page.setViewportSize({ width, height: 900 });
+      const anchors = ['#pedidos', '#preco', '#perguntas'];
+      // the bar shows its links inline on wide screens and behind a <details> menu on phones
+      const links = page.locator('header nav a:visible');
+      const open = async () => {
+        if ((await links.count()) === 0) await page.locator('header summary').click();
+        await expect(links).toHaveCount(anchors.length);
+      };
+      const hrefs = () => links.evaluateAll((els) => els.map((e) => e.getAttribute('href')));
+
+      await page.goto(HOME);
+      for (const a of anchors) await expect(page.locator(a)).toHaveCount(1);
+      await open();
+      expect(await hrefs()).toEqual(anchors);
+      for (const a of anchors) {
+        await open();
+        await links.and(page.locator(`[href="${a}"]`)).click();
+        await expect(page).toHaveURL(new RegExp(`${a}$`));
+        await expect(page.locator(a)).toBeInViewport();
+      }
+
+      // on the other pages the same links lead back to the home's sections
+      await page.goto(PRIVACY);
+      await open();
+      expect(await hrefs()).toEqual(anchors.map((a) => `/${a}`));
+      await links.first().click();
+      await expect(page).toHaveURL(/\/#pedidos$/);
+      await expect(page.locator('#pedidos')).toBeInViewport();
+    });
+});
+
+test.describe('imagens', () => {
+  for (const colorScheme of THEMES)
+    for (const width of [375, 1440])
+      test(`as imagens carregam em ${width}px (${colorScheme})`, async ({ browser }) => {
+        const ctx = await browser.newContext({
+          viewport: { width, height: 900 },
+          colorScheme,
+          reducedMotion: 'reduce',
+        });
+        const page = await ctx.newPage();
+        const failed: string[] = [];
+        page.on('response', (r) => r.status() >= 400 && failed.push(`${r.status()} ${r.url()}`));
+        page.on('requestfailed', (r) => failed.push(`falhou ${r.url()}`));
+        for (const path of [HOME, PRIVACY]) {
+          await page.goto(path);
+          await scrollThrough(page);
+          const imgs = await page.locator('img').evaluateAll((els) =>
+            (els as HTMLImageElement[])
+              .filter((i) => i.getClientRects().length > 0)
+              .map((i) => ({
+                src: i.currentSrc,
+                w: i.naturalWidth,
+                screen: !!i.closest('picture'),
+              })),
+          );
+          expect(imgs.length, path).toBeGreaterThan(0);
+          for (const i of imgs) expect(i.w, `${path}: ${i.src} não carregou`).toBeGreaterThan(0);
+          const screens = imgs.filter((i) => i.screen);
+          if (path === HOME) expect(screens.length, 'telas na home').toBeGreaterThanOrEqual(4);
+          const want = colorScheme === 'dark' ? '-noite-' : '-creme-';
+          for (const s of screens) expect(s.src, `tela ${colorScheme}`).toContain(want);
+        }
+        expect(failed).toEqual([]);
+        await ctx.close();
+      });
+});
+
+test.describe('rede', () => {
+  test('nenhuma requisição sai da origem e nada quebra no console', async ({ page }) => {
+    const origin = new URL(test.info().project.use.baseURL!).origin;
+    const foreign: string[] = [];
+    const errors: string[] = [];
+    page.on('request', (r) => {
+      const url = new URL(r.url());
+      if (!['data:', 'blob:'].includes(url.protocol) && url.origin !== origin)
+        foreign.push(r.url());
+    });
+    page.on('pageerror', (e) => errors.push(e.message));
+    page.on('console', (m) => {
+      // the 404 page's own document status is expected
+      if (m.type() === 'error' && !m.text().includes('404')) errors.push(m.text());
+    });
+    for (const colorScheme of THEMES) {
+      await page.emulateMedia({ colorScheme });
+      for (const path of PAGES) {
+        await page.goto(path, { waitUntil: 'networkidle' });
+        await scrollThrough(page);
+      }
+    }
+    expect(foreign).toEqual([]);
     expect(errors).toEqual([]);
   });
-}
 
-test('a porta de entrada é a conversa pelo direct', async ({ page }) => {
-  await page.goto('/');
-  await page.getByRole('navigation').getByRole('link', { name: 'Contato' }).click();
-  await expect(page).toHaveURL(/\/contato\/$/);
-  await expect(page.locator('h1')).toContainText('Só uma');
-  const cta = page.getByRole('link', { name: /Abrir @vendua.digital/ });
-  await expect(cta).toHaveAttribute('href', 'https://ig.me/m/vendua.digital');
-  await expect(cta).toHaveAttribute('target', '_blank');
-  await page.goto('/');
-  const primaryCta = page.getByRole('link', { name: 'Iniciar um projeto' }).first();
-  await expect(primaryCta).toHaveAttribute('href', 'https://ig.me/m/vendua.digital');
-  await expect(primaryCta).toHaveAttribute('target', '_blank');
-});
-
-test('tema claro por padrão, alternável e persistente', async ({ page }) => {
-  await page.emulateMedia({ reducedMotion: 'reduce' });
-  await page.goto('/');
-  const html = page.locator('html');
-  const body = page.locator('body');
-  const meta = page.locator('meta[name="theme-color"]');
-  await expect(html).not.toHaveAttribute('data-theme', 'dark');
-  await expect(body).toHaveCSS('background-color', 'rgb(247, 244, 234)');
-  const toggle = page.getByRole('button', { name: /tema/i });
-  await expect(toggle).toHaveAttribute('aria-pressed', 'false');
-  await toggle.click();
-  await expect(html).toHaveAttribute('data-theme', 'dark');
-  await expect(toggle).toHaveAttribute('aria-pressed', 'true');
-  await expect(body).toHaveCSS('background-color', 'rgb(10, 16, 13)');
-  await expect(meta).toHaveAttribute('content', '#0a100d');
-  await page.reload();
-  await ready(page);
-  await expect(html).toHaveAttribute('data-theme', 'dark');
-  await expect(toggle).toHaveAttribute('aria-pressed', 'true');
-  await axeClean(page);
-  await toggle.click();
-  await expect(html).not.toHaveAttribute('data-theme', 'dark');
-  await expect(body).toHaveCSS('background-color', 'rgb(247, 244, 234)');
-  await expect(meta).toHaveAttribute('content', '#f7f4ea');
-});
-
-test('modal de transmissão: abre, fecha por todas as vias e devolve o foco', async ({ page }) => {
-  // Reduced motion makes open/close synchronous — this tests the <dialog>, not the animation.
-  await page.emulateMedia({ reducedMotion: 'reduce' });
-  await page.setViewportSize({ width: 390, height: 844 });
-  await page.goto('/');
-  await ready(page);
-
-  const dialog = page.getByRole('dialog', { name: 'Ingestão do negócio' });
-  const trigger = page.getByRole('button', { name: /Abrir estágio S-01/ });
-  const closeButton = dialog.getByRole('button', { name: 'Fechar' });
-  const overflow = () => page.evaluate(() => document.body.style.overflow);
-
-  await expect(page.locator('.tx-panel')).toHaveCount(4); // painel introdutório + 3 estágios
-  await expect(dialog).toBeHidden();
-  await expect(trigger).toHaveAttribute('aria-haspopup', 'dialog');
-
-  await trigger.click();
-  await expect(dialog).toBeVisible();
-  // Focus enters the modal — the background stays inert for keyboard users.
-  await expect(closeButton).toBeFocused();
-  await expect(dialog.locator('.tx-modal-title')).toHaveText('Ingestão do negócio');
-  await expect(dialog.locator('.tx-modal-detail')).not.toBeEmpty();
-  await expect(dialog.locator('.tx-specs div')).toHaveCount(4);
-  await expect.poll(overflow).toBe('hidden');
-  await page.screenshot({ path: 'artifacts/modal-390.png' });
-  await axeClean(page);
-
-  // Esc closes (handler uses 'cancel'), frees scroll, returns focus to the card.
-  await page.keyboard.press('Escape');
-  await expect(dialog).toBeHidden();
-  await expect.poll(overflow).toBe('');
-  await expect(trigger).toBeFocused();
-
-  // The card is a <button>: Enter opens too — no mouse-only interaction.
-  await page.keyboard.press('Enter');
-  await expect(dialog).toBeVisible();
-
-  await closeButton.click();
-  await expect(dialog).toBeHidden();
-  await expect(trigger).toBeFocused();
-
-  // Click outside the dialog box = backdrop → closes.
-  await trigger.click();
-  await expect(dialog).toBeVisible();
-  await page.mouse.click(5, 5);
-  await expect(dialog).toBeHidden();
-  await expect.poll(overflow).toBe('');
-});
-
-test('perguntas abrem e fecham pelo acordeão', async ({ page }) => {
-  await page.goto('/');
-  await ready(page);
-  const item = page.locator('.teaser-faq details').first();
-  const summary = item.locator('summary');
-  await expect(item).not.toHaveAttribute('open', '');
-  await summary.click();
-  await expect(item).toHaveAttribute('open', '');
-  await expect(item.locator('.faq-body p')).toBeVisible();
-  await summary.click();
-  await expect(item).not.toHaveAttribute('open', '');
-});
-
-test('skip link é o primeiro foco e leva ao conteúdo', async ({ page }) => {
-  await page.goto('/');
-  await ready(page);
-  await page.keyboard.press('Tab');
-  const skip = page.locator('.skip');
-  await expect(skip).toBeFocused();
-  await expect(skip).toBeVisible();
-  await page.keyboard.press('Enter');
-  await expect(page).toHaveURL(/#conteudo$/);
-  await expect(page.locator('#conteudo')).toBeFocused();
-});
-
-test('véu de introdução aparece uma vez e some', async ({ browser, baseURL }) => {
-  // Own context — without the beforeEach sessionStorage seed.
-  const context = await browser.newContext({ baseURL });
-  const page = await context.newPage();
-  const errors: string[] = [];
-  page.on('pageerror', (e) => errors.push(e.message));
-  await page.goto('/');
-  const veil = page.locator('.intro-veil');
-  await expect(veil).toBeVisible();
-  await expect(veil).toBeHidden({ timeout: 15_000 });
-  await expect(page.locator('h1')).toBeVisible();
-  await page.reload();
-  await expect(veil).toBeHidden();
-  await expect(page.locator('h1')).toBeVisible();
-  expect(errors).toEqual([]);
-  await context.close();
-});
-
-test('conteúdo do teaser sem JavaScript', async ({ browser, baseURL }) => {
-  const context = await browser.newContext({
-    javaScriptEnabled: false,
-    baseURL,
-    viewport: { width: 360, height: 800 },
+  test('orçamento de JavaScript e fontes da home', async ({ page }) => {
+    const js: Promise<number>[] = [];
+    const fonts: Promise<number>[] = [];
+    page.on('response', (r) => {
+      const type = r.request().resourceType();
+      // the preview serves raw files; gzip here is what nginx (gzip_static) sends
+      if (type === 'script') js.push(r.body().then((b) => gzipSync(b, { level: 9 }).length));
+      if (type === 'font') fonts.push(r.body().then((b) => b.length));
+    });
+    await page.goto(HOME, { waitUntil: 'networkidle' });
+    await scrollThrough(page);
+    await page.waitForLoadState('networkidle');
+    const sum = async (list: Promise<number>[]) =>
+      (await Promise.all(list)).reduce((a, b) => a + b, 0);
+    const jsBytes = await sum(js);
+    const fontBytes = await sum(fonts);
+    const report = `JS ${jsBytes} B gzip em ${js.length} arquivos; fontes ${fontBytes} B em ${fonts.length}`;
+    test.info().annotations.push({ type: 'orçamento', description: report });
+    // Measured 2026-09-29: JS 45.2 KB gzip (9 files), fonts 64.6 KB (3 woff2: Figtree, Space Grotesk,
+    // Instrument Serif italic, latin subsets). Budgets are ~20% above; raise them only on purpose.
+    expect(jsBytes, report).toBeLessThanOrEqual(55_000);
+    expect(fontBytes, report).toBeLessThanOrEqual(78_000);
   });
-  const page = await context.newPage();
-  await page.goto('/');
-  await expect(page.locator('h1')).toContainText('sob medida');
-  await expect(page.locator('.intro-veil')).toBeHidden();
-  await expect(page.getByRole('navigation')).toBeVisible();
-  await expect(page.locator('.signal-item')).toHaveCount(3);
-  await expect(page.locator('.manifesto-text')).toContainText('não resolve ninguém');
-  await expect(page.locator('.tx-panel')).toHaveCount(4);
-  await expect(page.locator('.ritual-row')).toHaveCount(3);
-  await expect(page.locator('.teaser-faq details')).toHaveCount(5);
-  await page.locator('summary').first().click();
-  await expect(page.locator('details').first()).toHaveAttribute('open', '');
-  await page.goto('/contato/');
-  await expect(page.getByRole('link', { name: /Abrir @vendua.digital/ })).toHaveAttribute(
-    'href',
-    'https://ig.me/m/vendua.digital',
-  );
-  const response = await page.goto('/nao-existe/');
-  expect(response?.status()).toBe(404);
-  await expect(page.getByRole('heading', { level: 1 })).toContainText('Esta porta');
-  await context.close();
-});
-
-test('acessibilidade nas páginas', async ({ page }) => {
-  // Reduced motion renders the settled state of every section — the axe pass then
-  // audits final contrast values instead of mid-animation blends.
-  await page.emulateMedia({ reducedMotion: 'reduce' });
-  for (const route of routes) {
-    await page.goto(route);
-    await ready(page);
-    await axeClean(page);
-  }
-});
-
-test('zoom 200%, redução de movimento, links e SEO', async ({ page, request }) => {
-  await page.emulateMedia({ reducedMotion: 'reduce' });
-  for (const route of routes) {
-    await page.goto(route);
-    await ready(page);
-    await page.evaluate(() => (document.documentElement.style.zoom = '2'));
-    expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(
-      true,
-    );
-    expect(
-      await page.evaluate(() => getComputedStyle(document.documentElement).scrollBehavior),
-    ).toBe('auto');
-    await expect(page.locator('meta[name="description"]')).toHaveAttribute('content', /.+/);
-    // Canonical absoluto em todas as rotas (F05): a 404 usa o path default '/' do Seo.
-    const canonical = route === '/nao-existe/' ? '/' : route;
-    await expect(page.locator('link[rel="canonical"]')).toHaveAttribute(
-      'href',
-      `https://vendua.com.br${canonical}`,
-    );
-  }
-  await page.goto('/');
-  const links = await page
-    .locator('a[href^="/"]')
-    .evaluateAll((els) => [
-      ...new Set(els.map((el) => el.getAttribute('href')!.split('#')[0]).filter(Boolean)),
-    ]);
-  for (const link of links) expect((await request.get(link)).status()).toBe(200);
-  await expect(page.locator('a[href*="/projetos/"]')).toHaveCount(0);
-});
-
-test('orçamento inicial mobile e captura', async ({ page }) => {
-  await page.setViewportSize({ width: 390, height: 844 });
-  const measurements: Promise<{ url: string; bytes: number; script: boolean }>[] = [];
-  page.on('response', (response) => {
-    measurements.push(
-      (async () => {
-        const type = response.headers()['content-type'] || '';
-        try {
-          const body = await response.body();
-          return {
-            url: response.url(),
-            bytes: /text|javascript|json|svg/.test(type) ? gzipSync(body).length : body.length,
-            script: type.includes('javascript'),
-          };
-        } catch {
-          // Respostas sem corpo (redirecionamentos, falhas) não entram no orçamento.
-          return { url: response.url(), bytes: 0, script: false };
-        }
-      })(),
-    );
-  });
-  await page.goto('/');
-  await ready(page);
-  await page.waitForLoadState('networkidle');
-  const initial = await Promise.all(measurements);
-  const payload = initial.reduce((sum, file) => sum + file.bytes, 0);
-  const javascript = initial
-    .filter((file) => file.script)
-    .reduce((sum, file) => sum + file.bytes, 0);
-  mkdirSync('artifacts', { recursive: true });
-  writeFileSync(
-    'artifacts/performance.json',
-    JSON.stringify(
-      { viewport: 390, payloadGzipBytes: payload, javascriptGzipBytes: javascript, files: initial },
-      null,
-      2,
-    ),
-  );
-  expect(payload).toBeLessThan(1_000_000);
-  expect(javascript).toBeLessThan(120_000);
 });

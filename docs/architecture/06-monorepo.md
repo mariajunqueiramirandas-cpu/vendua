@@ -11,7 +11,7 @@ single highest-leverage structural decision in the fleet story: a codemod across
 
 ```
 vendua/
-  site/                 # @vendua/site — marketing/teaser site (SvelteKit).
+  site/                 # @vendua/site — marketing site (SvelteKit).
                         # Not a storefront; does not consume the Kernel.
   packages/
     core/               # backend modular monolith

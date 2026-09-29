@@ -1,0 +1,329 @@
+<script lang="ts">
+  import Dua from '$lib/components/Dua.svelte';
+  import Section from '$lib/components/Section.svelte';
+
+  type Kind = 'bolo' | 'marmita' | 'burger' | 'pao';
+
+  const kinds: { art: Kind; name: string; how: string; feature: string }[] = [
+    {
+      art: 'bolo',
+      name: 'Doces e bolos',
+      how: 'Encomenda com data marcada. O cliente escolhe o dia da festa e o pedido já entra no seu calendário.',
+      feature: 'encomendas',
+    },
+    {
+      art: 'marmita',
+      name: 'Marmitas',
+      how: 'O cardápio do dia muda com o horário. No almoço aparece o prato do dia, à noite entra a janta.',
+      feature: 'cardápio por horário',
+    },
+    {
+      art: 'burger',
+      name: 'Hambúrgueres',
+      how: 'Adicionais e combos do seu jeito. Bacon extra, sem cebola, com batata: o pedido chega montado.',
+      feature: 'adicionais e combos',
+    },
+    {
+      art: 'pao',
+      name: 'Pães e fornadas',
+      how: 'Acabou a fornada? O cliente entra na lista de espera e recebe o aviso quando o pão sai do forno.',
+      feature: 'lista de espera',
+    },
+  ];
+</script>
+
+<Section
+  id="para-quem"
+  hour="9h"
+  tone="day"
+  sky="linear-gradient(180deg, var(--sky-1), var(--sky-2))"
+  labelledby="para-quem-t"
+>
+  <header class="head">
+    <h2 id="para-quem-t" class="t-display">Feito pra quem faz.</h2>
+    <p class="t-lede lede">
+      Bolo, marmita, hambúrguer, pão. Cada negócio vende de um jeito, e a sua loja acompanha o seu.
+    </p>
+  </header>
+
+  <ul class="tiles" role="list">
+    {#each kinds as k, i (k.art)}
+      <li class="tile" style="--i: {i}">
+        <div class="plate">
+          {@render art(k.art)}
+        </div>
+        <h3 class="t-title-2">{k.name}</h3>
+        <p class="how">{k.how}</p>
+        <p class="feature t-caption">{k.feature}</p>
+      </li>
+    {/each}
+  </ul>
+
+  <div class="made">
+    <Dua pose="catalogo" size={200} class="dua" />
+    <p>
+      <strong>Nenhuma loja sai igual à outra.</strong>
+      Duá faz 8 perguntinhas, uma de cada vez, e a sua loja vai se montando ao lado: o seu nome, as suas
+      cores, o seu cardápio, do jeito que você vende.
+    </p>
+  </div>
+</Section>
+
+<!-- Inked in the admin's illustration style (apps/admin/src/ui/illustrations.tsx): currentColor
+     strokes so Noite recolours them, one lime accent per drawing. -->
+{#snippet art(kind: Kind)}
+  <svg
+    viewBox="0 0 160 120"
+    fill="none"
+    stroke="currentColor"
+    stroke-width="2.4"
+    stroke-linecap="round"
+    stroke-linejoin="round"
+    aria-hidden="true"
+  >
+    {#if kind === 'bolo'}
+      <path d="M28 96c16 6 88 6 104 0" />
+      <path d="M68 101l-3 11h30l-3-11" />
+      <path d="M44 57v35c14 6 58 6 72 0V57" />
+      <path
+        d="M44 56c0 4 1 9 4 9s4-5 7-5 3 11 7 11 4-8 7-8 4 5 8 5 3-6 7-6 4 9 8 9 3-7 6-7 4 4 7 4 3-6 6-6c3 0 5-2 5-6 0-7-72-7-72 0z"
+        fill="var(--spark)"
+      />
+      <path d="M48 80c14 4 50 4 64 0" stroke-width="2" stroke-dasharray="1 6" />
+      <circle cx="80" cy="44" r="5" />
+      <path d="M81 39c1-5 4-8 9-9" />
+      <path d="M124 38l5-5M128 48h7M32 38l-5-5M28 48h-6" stroke-width="2" />
+    {:else if kind === 'marmita'}
+      <path d="M64 34c-4-5 4-9 0-14M80 30c-4-5 4-9 0-14M96 34c-4-5 4-9 0-14" stroke-width="2" />
+      <path d="M40 58c1-9 9-13 16-11 4-6 14-6 18 1" />
+      <path d="M50 52l3-1M59 49h3M62 55l3-1" stroke-width="2" />
+      <path d="M86 58c2-7 10-10 16-8 5-4 14-2 18 8" />
+      <circle cx="96" cy="54" r="1.8" fill="currentColor" stroke="none" />
+      <circle cx="104" cy="52" r="1.8" fill="currentColor" stroke="none" />
+      <circle cx="110" cy="56" r="1.8" fill="currentColor" stroke="none" />
+      <path d="M68 57c3-10 15-14 23-10-2 9-13 13-23 10z" fill="var(--spark)" />
+      <path d="M72 55c6-2 11-4 16-7" stroke-width="2" />
+      <path d="M30 63c0-3 2-5 5-5h90c3 0 5 2 5 5" />
+      <path d="M34 64l7 34c1 4 3 6 7 6h64c4 0 6-2 7-6l7-34" />
+      <path d="M40 76c20 3 60 3 80 0" stroke-width="2" />
+    {:else if kind === 'burger'}
+      <path d="M40 64c0-20 18-32 40-32s40 12 40 32c0 3-2 4-5 4H45c-3 0-5-1-5-4z" />
+      <path d="M62 46l4-2M78 41l4 1M94 46l4 2M70 55l4-1M88 55l4 1" stroke-width="2" />
+      <path
+        d="M36 70h88c0 5-3 7-5 5-3 4-7 4-10 0-3 4-7 4-10 0-3 4-7 4-10 0-3 4-7 4-10 0-3 4-7 4-10 0-3 4-7 4-10 0-3 4-7 4-10 0-3 4-7 4-10 0-2 2-5 0-3-5z"
+        fill="var(--spark)"
+      />
+      <path d="M40 82c0-3 2-4 5-4h70c3 0 5 1 5 4v5c0 3-2 4-5 4H45c-3 0-5-1-5-4z" />
+      <path d="M54 85h4M68 84h4M86 85h4M100 84h4" stroke-width="2" />
+      <path d="M42 96h76c0 7-6 11-14 11H56c-8 0-14-4-14-11z" />
+    {:else}
+      <ellipse cx="80" cy="104" rx="50" ry="5" fill="var(--spark)" stroke="none" opacity=".7" />
+      <path d="M90 53l33-33c3-3 8-2 9 2 1 2 0 4-2 6l-30 30" />
+      <path d="M104 43l5 4M113 34l5 4M121 26l4 3" stroke-width="2" />
+      <path d="M32 88c0-22 22-36 50-36s48 14 48 34c0 10-10 14-22 14H52c-12 0-20-4-20-12z" />
+      <path d="M56 70c3 4 5 9 5 14M76 64c4 5 6 11 6 18M98 66c3 5 5 10 5 16" stroke-width="2" />
+      <path d="M44 42c-3-4 3-7 0-11M56 36c-3-4 3-7 0-11" stroke-width="2" />
+    {/if}
+  </svg>
+{/snippet}
+
+<style>
+  .head {
+    display: grid;
+    gap: 16px;
+    max-width: 40rem;
+  }
+
+  .head,
+  .tiles,
+  .made {
+    /* body copy at 7:1 on the card and the morning sky; plain --ink-muted sits near 5.8:1 */
+    --body: color-mix(in srgb, var(--ink) 50%, var(--ink-muted));
+  }
+  .lede {
+    color: var(--body);
+  }
+  .tiles {
+    list-style: none;
+    margin: clamp(40px, 6vw, 72px) 0 0;
+    padding: 0;
+    display: grid;
+    gap: 20px;
+  }
+
+  .tile {
+    display: grid;
+    grid-template-columns: 112px 1fr;
+    grid-template-rows: auto auto 1fr;
+    column-gap: 18px;
+    row-gap: 6px;
+    align-items: start;
+    padding: 18px 20px 20px 18px;
+    border-radius: var(--radius-lg);
+    background: var(--surface);
+    box-shadow: var(--shadow-e1), var(--highlight);
+  }
+
+  .plate {
+    grid-row: 1 / -1;
+    display: grid;
+    place-items: center;
+    aspect-ratio: 1;
+    /* a plate with a rim: the food is served, not boxed */
+    background: radial-gradient(
+      circle closest-side,
+      var(--surface-sunken) 0 78%,
+      var(--line-strong) calc(78% + 0.5px) calc(80% + 0.5px),
+      var(--surface-sunken) calc(80% + 1px) 99%,
+      transparent 100%
+    );
+    color: var(--ink);
+  }
+  .plate svg {
+    width: 100%;
+    height: auto;
+  }
+
+  .tile h3 {
+    padding-top: 4px;
+  }
+  .how {
+    color: var(--body);
+    font-size: 1rem;
+    line-height: 1.5;
+  }
+  .feature {
+    justify-self: start;
+    margin-top: 8px;
+    padding: 5px 10px;
+    border-radius: 999px;
+    box-shadow: inset 0 0 0 1px var(--line-strong);
+    color: var(--ink);
+  }
+
+  .made {
+    display: grid;
+    grid-template-columns: auto 1fr;
+    align-items: center;
+    gap: 8px 20px;
+    margin: clamp(48px, 7vw, 88px) auto 0;
+    max-width: 50rem;
+  }
+  .made :global(.dua) {
+    width: clamp(120px, 24vw, 208px);
+  }
+  .made p {
+    font-size: clamp(1.0625rem, 1rem + 0.35vw, 1.25rem);
+    line-height: 1.55;
+    color: var(--body);
+  }
+  .made strong {
+    display: block;
+    margin-bottom: 4px;
+    font: 600 1.375rem/1.3 var(--font-display);
+    letter-spacing: -0.015em;
+    color: var(--ink);
+  }
+
+  /* phones: the plate sits beside the name and the text gets the card's full width */
+  @media (max-width: 479px) {
+    .tile {
+      grid-template-columns: 84px 1fr;
+      grid-template-rows: auto;
+      column-gap: 14px;
+      row-gap: 8px;
+      padding: 14px 16px 18px;
+    }
+    .plate {
+      grid-row: auto;
+    }
+    .tile h3 {
+      align-self: center;
+      padding-top: 0;
+    }
+    .how,
+    .feature {
+      grid-column: 1 / -1;
+    }
+    .feature {
+      margin-top: 4px;
+    }
+    /* the drawing spills a little past its small plate so it still reads at thumbnail size */
+    .plate svg {
+      width: 132%;
+      max-width: none;
+      margin-inline: -16%;
+    }
+    .made {
+      grid-template-columns: 1fr;
+      justify-items: start;
+    }
+  }
+
+  @media (min-width: 720px) {
+    .tiles {
+      grid-template-columns: repeat(2, 1fr);
+      gap: 24px;
+    }
+    .tile {
+      grid-template-columns: 1fr;
+      grid-template-rows: none;
+      row-gap: 8px;
+      padding: 16px 16px 24px;
+    }
+    .plate {
+      grid-row: auto;
+      aspect-ratio: 2 / 1;
+      margin-bottom: 8px;
+    }
+    .plate svg {
+      width: min(72%, 230px);
+    }
+    .tile h3,
+    .how,
+    .feature {
+      margin-inline: 8px;
+    }
+    /* a little hand-placed, like cards pinned to the kitchen wall */
+    .tile:nth-child(odd) {
+      rotate: -0.8deg;
+    }
+    .tile:nth-child(even) {
+      rotate: 0.7deg;
+    }
+  }
+
+  @media (min-width: 1100px) {
+    .tiles {
+      grid-template-columns: repeat(4, 1fr);
+      align-items: start;
+    }
+    .plate {
+      aspect-ratio: 4 / 3;
+    }
+    .plate svg {
+      width: 100%;
+    }
+    .tile:nth-child(even) {
+      margin-top: 40px;
+    }
+  }
+
+  @media (prefers-reduced-motion: no-preference) {
+    @supports (animation-timeline: view()) {
+      .tile {
+        animation: rise linear both;
+        animation-timeline: view();
+        animation-range: entry 0% entry 70%;
+      }
+    }
+  }
+  @keyframes rise {
+    from {
+      translate: 0 calc(28px + var(--i) * 10px);
+    }
+    to {
+      translate: 0 0;
+    }
+  }
+</style>

@@ -1,71 +1,79 @@
-# Venduá
+# Venduá site
 
-Site teaser implementado com **Bun, Svelte 5 e SvelteKit**. A direção atual é misteriosa e exclusiva: o produto anterior (lojas personalizadas sob encomenda) saiu de cena e a página apresenta apenas sinais do que vem a seguir — vitrines que se constroem sozinhas. O acesso é por convite, com o direct do Instagram como única porta.
+The marketing site for vendua.com.br: SvelteKit 2 + Svelte 5, prerendered with adapter-static, copy
+in pt-BR. Sign-up isn't open yet.
 
-O hero e as três transmissões usam **shaders WebGL2 próprios** (utilitário `src/lib/gl.ts`, sem dependências): ruído deformado desenhando fitas lima no hero; nas transmissões, três visuais vivos — grade de células acendendo (a vitrine), linhas poligonais dobradas (a montagem) e fluxos de luz (a operação). Cada cartão é clicável e abre um modal (`<dialog>`) com a descrição críptica do sistema e uma tabela de especificações. Os canvases renderizam em resolução reduzida, pausam fora da viewport, recuperam contexto WebGL perdido, reagem ao ponteiro e viram um único quadro estático em `prefers-reduced-motion`. Sem WebGL ou sem JS, os quadros mostram o gradiente de fundo.
+The home page is **"um dia na loja"**: one day of a small shop in six moments, dawn to night, with
+the sky flowing continuously between sections — 6h hero (`#inicio`), 9h who it's for
+(`#para-quem`), 12h an order arrives (`#pedidos`), 15h the store and its price (`#sua-loja`,
+`#preco`), 18h the day's recap (`#seu-dia`), 21h how to start + FAQ (`#comecar`, `#perguntas`).
+Other pages: `/privacidade/` and the 404.
 
-A página inicial usa **GSAP ScrollTrigger** para entrada mascarada do hero, barra de progresso, manifesto fixado com revelação palavra a palavra, faixa horizontal de transmissões pinada no desktop (empilhada no mobile e em movimento reduzido) com saída por dissolução, revelações em lote, acordeão animado nas perguntas e cabeçalho fixo com blur sobre o hero.
+## Launch decisions the copy encodes
 
-Tipografia auto-hospedada via Fontsource: **Space Grotesk** variável (títulos em caixa alta, palavras vazadas em contorno) e **Instrument Serif** itálica (palavras de acento em lima). Apenas subconjuntos latinos são baixados pelo navegador (~44 KB).
+- The only call to action is `<Soon/>` ("Em breve"). No sign-up or contact CTA; Instagram only in
+  the footer (and at most one line near the closing "Em breve").
+- Price is never a number: the price block's total reads "em breve".
+- Every planned feature (`docs/merchant-admin.md` scope) is presented as available at launch.
+  Nothing beyond that list.
+- No custom software ("sob medida", software house, projects).
+- One store only: the fictional **Bolos da Nena** (owner Nena). Numbers quoted in copy come from
+  `src/lib/content.ts`, so they match the screenshots.
 
-## Executar
+## Visual rules
 
-```sh
-bun install --frozen-lockfile
-bun run dev
-```
+- The product appears only as real admin screens of Bolos da Nena (`<Screen key=…>`, registry in
+  `src/lib/screens.ts`) inside device frames drawn in CSS (`Phone`, `Tablet`). The only UI drawn in
+  code is system UI: lock screen and push notifications, with Core's real push text.
+- The only character is Duá (`static/dua/`, never mirrored or recolored), plus line drawings in the
+  admin's illustration style. No photos, people, AI images, stock, or fake testimonials/numbers.
+- Colors come from `src/lib/styles/theme.css`, copied from `apps/admin/src/ui/theme.css` (Creme,
+  and Noite under `prefers-color-scheme: dark`). The admin is the source: `scripts/validate.ts`
+  fails the build if a shared token drifts.
+- Banned words (platform jargon, "sob medida", "sem taxa", "grátis", real store names) are checked
+  on the rendered text of every page by `scripts/postbuild.ts`.
+- Works without JavaScript; motion is CSS-only and respects `prefers-reduced-motion`.
 
-Desenvolvimento em `http://127.0.0.1:5173`.
-
-```sh
-bun run check
-bun run build
-bun run preview
-```
-
-A prévia do build fica em `http://127.0.0.1:4173`, com resposta HTTP 404 para caminhos inexistentes. Bun 1.4.2 foi usado na implementação. As versões das dependências estão fixadas no manifesto e em `bun.lock`; TypeScript 6 é usado por compatibilidade com svelte-check.
-
-## Entrega
-
-- Home teaser: sinal de lançamento, três pistas numeradas, manifesto pinado, transmissões com as imagens geradas do kit, ritual de acesso em três passos e perguntas crípticas.
-- `/contato/`: página-porta sem formulário — um único link para o direct.
-- `/privacidade/`: descrição factual desta versão (sem coleta, sem cookies); política final pendente.
-- 404 com navegação de retorno, inclusive sem JavaScript.
-
-As páginas são pré-renderizadas em HTML via [adapter-static do SvelteKit](https://svelte.dev/docs/kit/adapter-static). Sem JavaScript, conteúdo, navegação e o caminho de acesso continuam disponíveis. Não há backend de contato, formulário, persistência, analytics ou transmissão automática.
-
-## Organização
-
-- `src/lib/content/site.ts`: configuração e conteúdo do teaser (sinais, manifesto, transmissões, ritual, perguntas).
-- `src/lib/components/`: header fixo, footer, encerramento, SEO e 404.
-- `src/routes/`: páginas públicas.
-- `src/lib/styles.css`: temas claro (padrão) e escuro via `data-theme` e tokens semânticos, seções e estados responsivos.
-- `static/assets/`: marca, cartão social e imagens geradas (`images/`).
-- `scripts/`: validação do conteúdo, pós-build e servidor de prévia local.
-- `tests/`: navegação, acessibilidade, ausência de JS, orçamento e links.
-- `artifacts/`: capturas do site produzidas durante os testes.
-
-## Verificar
+## Run
 
 ```sh
-bunx playwright install chromium
-bun run build
-bun run test:e2e
-bun run format:check
+bun run dev        # http://127.0.0.1:5173
+bun run check      # svelte-check
+bun run build      # validate.ts → vite build → postbuild.ts (404.html, sitemap, robots, copy rules)
+bun run preview    # serves build/ on http://127.0.0.1:4173, real 404s
+CHROMIUM=/opt/pw-browsers/chromium bun run test:e2e   # Playwright (tests/), starts preview itself
 ```
 
-Os testes iniciam a prévia automaticamente. Verificam 320, 360, 390, 768, 1280 e 1440 px, zoom CSS de 200%, movimento reduzido, funcionamento sem JS, links internos, destino do Instagram e auditoria axe — esta última executada com movimento reduzido para auditar o estado final, não quadros de animação. A auditoria automática não substitui testes com leitor de tela ou aparelhos físicos.
+`bun scripts/shots.ts [route …]` takes screenshots of the dev server (`WIDTHS`, `THEMES`,
+`SELECTOR`, `OUT`, `BASE`) and fails on horizontal overflow, console errors and failed requests.
 
-## Publicação
+## Regenerating images
 
-O diretório `build/` é a entrega estática. A hospedagem deve servir `rota/index.html` para cada rota e `404.html` com status 404 para caminhos desconhecidos. Não configurar fallback de SPA para `index.html`. `bun run preview` é apenas um servidor local de verificação.
+Images are committed; `scripts/assets.ts` rebuilds them (no argument = all three):
 
-Antes de publicar:
+- `bun scripts/assets.ts dua` — Duá poses from `brand/mascote/` → `static/dua/*.webp`.
+- `bun scripts/assets.ts screens` — real admin screens in Creme and Noite → `static/screens/`, and
+  `src/lib/screens.facts.json` (sales, orders, the day's recap) so the copy matches the screens.
+  Needs the local stack (the `local-stack` skill): Postgres on :5433, Core started with
+  `VENDUA_ADMIN_DEV_OTP=1`, the admin dev server on :5196. It rewrites the dev seed store into Bolos
+  da Nena — dev database only.
+- `bun scripts/assets.ts og` — the social card (`scripts/og.html`) → `static/og.png`; needs the
+  screens.
 
-1. Confirmar a identificação do responsável.
-2. Inventariar os dados da hospedagem e finalizar a política de privacidade em `/privacidade/`.
-3. `publicDomain` já está definido como `https://vendua.com.br` — canonical, Open Graph com URL absoluta, sitemap e robots para indexação são emitidos no build. Ao trocar de domínio, atualizar `src/lib/content/site.ts` e gerar novo build; sem domínio, robots bloqueia indexação e não são emitidas URLs fictícias.
-4. Configurar HTTPS e redirecionamento para a origem canônica na hospedagem escolhida.
-5. Conferir o perfil `@vendua.digital` com e sem login.
+## Structure
 
-O cartão social foi regenerado com a mensagem atual ("Software sob medida."). Não houve publicação ou envio de mensagens.
+- `src/routes/`: home, `/privacidade/`, 404.
+- `src/lib/sections/`: the six moments (`Hero`, `WhoFor`, `Orders`, `YourStore`, `YourDay`,
+  `Night`).
+- `src/lib/components/`: `Section`, device frames, `Screen`, `Notification`, `LockScreen`, `Dua`,
+  `Soon`, header, footer, SEO, 404.
+- `src/lib/content.ts`: site facts and the store's numbers; `src/lib/screens.ts`: screen registry.
+- `src/lib/styles/`: `theme.css` (tokens) and `base.css` (layout and type classes).
+- `static/`: `screens/`, `dua/`, `assets/brand/`, `og.png`.
+- `scripts/`: assets, validate, postbuild, preview server, shots.
+
+## Deploy
+
+`build/` is the deliverable. The `site` stage of `storefronts/Dockerfile` builds it and copies it
+into nginx with `nginx.conf`: each route is `route/index.html`, unknown paths get `404.html` with a
+real 404 status, and there is no SPA fallback.

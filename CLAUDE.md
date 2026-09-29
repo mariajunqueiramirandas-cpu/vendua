@@ -49,6 +49,13 @@ model, migrations, tokens, compat matrix), `packages/loader` (`v.js`), `packages
   line range — never the whole file.
 - `.claude/settings.json` blocks reading `bun.lock` and build output (`dist/`, `qa-report/`)
   and runs prettier on every file Claude writes.
+- `site/` is the marketing site: read `site/README.md` first. Its images are real admin
+  screens captured by `site/scripts/assets.ts`, never hand-drawn UI, and the build fails on
+  token drift from the admin or on banned copy.
+- `scripts/shots.ts` (admin and site) can report failed module requests while other edits are
+  hot-reloading: rerun before calling it a bug. Element shots include the sticky header.
+- Copy that states a price, a plan or a feature date needs the user's decision. Don't infer it
+  (e.g. "Total por mês" implies a monthly plan nobody decided on).
 
 ## Subagents
 
@@ -83,6 +90,32 @@ Splitting a task that spans areas (e.g. Core route + admin screen + kernel expor
 A subagent sees none of the conversation. Its brief needs the goal, exact paths, the
 constraints that apply (quote the invariant) and the answer format ("under 200 words,
 file:line refs"). Don't redo its search; verify a surprising claim with one targeted Read.
+
+Running agents (learned the hard way on the site rebuild):
+
+- Parallel by default: every agent whose brief doesn't depend on another's result goes out in
+  the same message, in the background. Serial subagents cost the same and only buy a clean
+  context; go one at a time only when the next brief needs the last result.
+- For a fan-out under ~10 agents, call Agent directly rather than the Workflow tool: a workflow
+  caps concurrent agents at CPUs − 2, which is 2 in a 4-CPU cloud container.
+- Design first, then delegate. Don't hand "build this screen/section from scratch" to an agent
+  unless it has an approved reference: a mockup or study the user signed off, the design-spec
+  section, the component API and the real content. Without one you get plausible, generic UI
+  and a second pass. Agents are strongest at reviewing and polishing existing work with fresh
+  eyes, so settle the design yourself (or with the user) and delegate the review.
+- One owner per file. The brief says "edit ONLY these files; report anything else", and shared
+  components get a single owner. Two agents on one file is a lost edit.
+- Context several agents share (decisions, voice, tokens, banned words) goes in one scratchpad
+  file, and each brief starts with "read <file> first" instead of pasting it.
+- Shared infrastructure belongs to the lead: start the one dev server before launching. Agents
+  never start or stop servers, and only one agent at a time runs `bun run build` or e2e.
+- Integrate as each agent lands. Look at the result yourself (UI: screenshots at 375 and 1280 in
+  both themes), run `bun run check`, and commit only that agent's files. Never commit files an
+  agent is still editing, even when the stop hook asks; say why instead.
+- A report is a set of claims. Before committing, check the API shapes, numbers and "check
+  passed" it relies on with one targeted command.
+- Background agents, workflows and dev servers die when the container restarts (it happens).
+  Push finished work promptly, and after a restart relaunch only what's left.
 
 ## PRs
 
