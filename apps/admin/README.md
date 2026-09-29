@@ -45,12 +45,20 @@ The admin is meant to live on the merchant's home screen. What that takes, and w
   `vite.config.ts`). The build prepends `VERSION` (a hash of `dist/`) and `PRECACHE`
   (the shell, every route chunk, the pt-BR fonts, icons), so every screen opens offline
   and a deploy is one atomic version. A new version waits; the app shows "Tem uma versão
-  nova · atualizar" (`lib/pwa.ts`), and the old version keeps working meanwhile. Product
+  nova · atualizar" (`lib/pwa.ts`), and the old version keeps working meanwhile. It looks
+  for one on return, hourly, and whenever the live stream comes back after Core went away
+  (a deploy); the sign-in screen takes a new version by itself (nothing to lose there). Product
   photos (`/v1/media`) are cached stale-while-revalidate; `/admin/v1` is never cached by
   the worker.
 - **Last-known data** (`lib/persist.ts`): the query cache is saved to IndexedDB, so a cold
   start (even offline) opens straight to the board. Sign-out and store switches go
-  through `resetClient()`, which wipes it; a 401 wipes it too.
+  through `resetClient()`, which wipes it; a 401 wipes it too, along with the in-memory
+  cache and any write queued offline.
+- **Signed out from under the app** (sair on another device, encerrar sessão, removed from
+  the team, a redeploy with a fresh database): the live stream re-checks the session on
+  every 20 s beat and sends `signedout`, and a stream Core refuses makes the app re-check
+  `/session`; either way the open app drops to sign-in without a refresh. A failed re-check
+  that isn't a 401 (Core mid-deploy, offline) keeps the app on its last session.
 - **Manifest** (`public/manifest.webmanifest`): `id`, `launch_handler` (focus-existing;
   the open window routes the launch URL), shortcuts with icons (Pedidos, Cardápio, Novo
   produto → `/cardapio?novo=1`), store screenshots, a monochrome badge, and a

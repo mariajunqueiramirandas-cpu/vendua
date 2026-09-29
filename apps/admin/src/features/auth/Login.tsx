@@ -9,6 +9,7 @@ import { useQueryClient } from '@tanstack/react-query';
 import { useEffect, useRef, useState } from 'react';
 import { api, ApiError, type StoreRef } from '../../lib/api.ts';
 import { phone as fmtPhone } from '../../lib/format.ts';
+import { applyUpdate, checkForUpdate, onUpdate, updateReady } from '../../lib/pwa.ts';
 import { qk, useMutation } from '../../lib/query.ts';
 import { ROLE_LABEL } from '../../lib/session.ts';
 import { Button } from '../../ui/Button.tsx';
@@ -52,6 +53,27 @@ const expiry = (iso: string) => Date.parse(iso) || Date.now() + 10 * 60_000;
 export function Login() {
   const [step, setStep] = useState<Step>(loadPending);
   const qc = useQueryClient();
+  // Signed out is the one moment a new version costs nothing: take it here, not with a banner.
+  // At once on arrival; later only while the merchant is away (reading the code in WhatsApp),
+  // since the code step survives a reload. Not while picking a store: that token lives in memory.
+  const picking = useRef(false);
+  picking.current = step.kind === 'pick';
+  useEffect(() => {
+    const take = () => {
+      if (updateReady() && !picking.current) applyUpdate();
+    };
+    take();
+    checkForUpdate();
+    const away = () => {
+      if (document.visibilityState === 'hidden') take();
+    };
+    const off = onUpdate(away);
+    document.addEventListener('visibilitychange', away);
+    return () => {
+      off();
+      document.removeEventListener('visibilitychange', away);
+    };
+  }, []);
   const enter = () => {
     savePending(null);
     void qc.invalidateQueries({ queryKey: qk.session });

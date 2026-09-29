@@ -5,6 +5,7 @@ import { createApp } from '../src/app.ts';
 import { parseMenuPaste, parseMoney } from '../src/admin/routes-catalog.ts';
 import { sweepAdmin } from '../src/admin/workers.ts';
 import { ingestInbound } from '../src/agent/inbound.ts';
+import { sessionAlive } from '../src/admin/auth.ts';
 import { encryptPayload } from '../src/admin/webpush.ts';
 import { activeCarts } from '../src/modules/presence.ts';
 import { migrate } from '../src/platform/db.ts';
@@ -698,6 +699,17 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('merchant admin (db)', () => {
     expect(JSON.parse(data.slice(6))).toEqual({ viewers: 1, carts: before });
     await reader.cancel();
     await shop.body!.cancel();
+  });
+
+  test('an open stream learns its session ended (signed out elsewhere)', async () => {
+    const other = await signIn(ownerPhone, tenantId);
+    const [tid, sid] = decodeURIComponent(other.cookie.split('=')[1]!).split('.');
+    expect(await sessionAlive(sql, tid!, sid!)).toBe(true);
+    expect((await other('POST', '/auth/logout')).status).toBe(200);
+    expect(await sessionAlive(sql, tid!, sid!)).toBe(false);
+    // the owner's own session is untouched
+    const [otid, osid] = decodeURIComponent(owner.cookie.split('=')[1]!).split('.');
+    expect(await sessionAlive(sql, otid!, osid!)).toBe(true);
   });
 
   test('staff create a store owner from the CRM', async () => {

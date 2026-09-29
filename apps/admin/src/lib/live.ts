@@ -2,7 +2,7 @@ import { useEffect, useSyncExternalStore } from 'react';
 import { queryClient, qk } from './query.ts';
 import { chimeNewOrder, chimePaid } from './sound.ts';
 import { haptic } from './haptics.ts';
-import { ordersSeen } from './pwa.ts';
+import { checkForUpdate, ordersSeen } from './pwa.ts';
 import type { Board, Order } from './api.ts';
 
 // One EventSource per signed-in tab (Core: GET /admin/v1/events). Each change
@@ -166,6 +166,7 @@ export function useLiveStream(enabled: boolean) {
     let closed = false;
     let retry: ReturnType<typeof setTimeout>;
     let hellos = 0;
+    let failures = 0;
     let lastSeen = Date.now();
     // armed by the first ping, so a Core without pings never trips it
     let pinged = false;
@@ -180,9 +181,22 @@ export function useLiveStream(enabled: boolean) {
       es = src;
       src.addEventListener('hello', () => {
         seen();
-        // events sent while we were away (a reconnect, Core's stream lifetime) are gone: catch up
-        if (hellos++ > 0) queueInvalidate('all');
+        failures = 0;
+        // events sent while we were away (a reconnect, Core's stream lifetime) are gone: catch
+        // up, and a Core that went away may have been a deploy: look for the new app version
+        if (hellos++ > 0) {
+          queueInvalidate('all');
+          checkForUpdate();
+        }
         set({ streaming: true });
+      });
+      // signed out elsewhere (sair on another device, encerrar sessão, removed from the team):
+      // straight to sign-in, no refresh needed
+      src.addEventListener('signedout', () => {
+        closed = true;
+        src.close();
+        set({ streaming: false, presence: null });
+        window.dispatchEvent(new CustomEvent('vendua:unauthenticated'));
       });
       src.addEventListener('ping', () => {
         seen();
@@ -214,8 +228,14 @@ export function useLiveStream(enabled: boolean) {
       src.onerror = () => {
         if (es !== src) return;
         set({ streaming: false, presence: null });
-        // the browser retries by itself; a hard close (401, proxy) needs us to
-        if (src.readyState === EventSource.CLOSED) retry = setTimeout(open, 5000);
+        // the browser retries by itself; a hard close (a 401, a proxy error mid-deploy) needs us to
+        if (src.readyState !== EventSource.CLOSED) return;
+        // Core refused the stream: maybe the session is gone (signed out, a redeploy with a fresh
+        // database). Re-checking the session drops to sign-in on a 401, without a refresh.
+        void queryClient.invalidateQueries({ queryKey: qk.session });
+        checkForUpdate();
+        // quick at first (a redeploy is back in seconds), then easing off to a minute
+        retry = setTimeout(open, Math.min(60_000, 2000 * 2 ** failures++));
       };
     };
     open();

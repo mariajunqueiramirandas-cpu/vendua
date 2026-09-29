@@ -17,6 +17,7 @@ import {
   pickerToken,
   readPickerToken,
   revokeSession,
+  sessionAlive,
   setAdminCookie,
   startOtp,
   validAdminPhone,
@@ -336,6 +337,7 @@ export function mountAdmin(o: MountAdminOpts) {
   // ── live stream: one per signed-in device ────────────────────────────────
   admin.get('/events', async (c) => {
     const tenant = c.get('tenant');
+    const merchant = c.get('merchant');
     const res = streamSSE(c, async (stream) => {
       let finish!: () => void;
       const done = new Promise<void>((r) => (finish = r));
@@ -370,11 +372,20 @@ export function mountAdmin(o: MountAdminOpts) {
       await stream.writeSSE({ event: 'hello', data: JSON.stringify({ at: new Date() }) });
       void sendPresence();
       const carts = setInterval(() => void sendPresence(), PRESENCE_POLL_MS);
-      // a named event, not a comment: the admin's watchdog sees it and reconnects a silent stream
-      const beat = setInterval(
-        () => void stream.writeSSE({ event: 'ping', data: '' }).catch(() => finish()),
-        STREAM_HEARTBEAT_MS,
-      );
+      // a named event, not a comment: the admin's watchdog sees it and reconnects a silent stream.
+      // Each beat also re-checks the session, so a device signed out elsewhere (sair, encerrar
+      // sessão, removed from the team, expired) stops getting events and drops to sign-in.
+      const beat = setInterval(async () => {
+        try {
+          if (!(await sessionAlive(sql, tenant.id, merchant.sessionId))) {
+            await stream.writeSSE({ event: 'signedout', data: '' });
+            return finish();
+          }
+        } catch {
+          /* the database blinked: keep the stream, the next beat asks again */
+        }
+        await stream.writeSSE({ event: 'ping', data: '' }).catch(() => finish());
+      }, STREAM_HEARTBEAT_MS);
       const lifetime = setTimeout(finish, STREAM_MAX_MS);
       await done;
       unsubscribe();

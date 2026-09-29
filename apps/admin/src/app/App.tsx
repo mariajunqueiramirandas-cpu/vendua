@@ -2,6 +2,7 @@ import { lazy, Suspense, useEffect, useRef } from 'react';
 import { Navigate, Route, Routes, useLocation } from 'react-router-dom';
 import { useQueryClient } from '@tanstack/react-query';
 import { ApiError } from '../lib/api.ts';
+import { clearPersisted } from '../lib/persist.ts';
 import { qk } from '../lib/query.ts';
 import { SessionCtx, useSessionQuery } from '../lib/session.ts';
 import { applyTheme, type ThemePref } from '../lib/theme.ts';
@@ -48,6 +49,19 @@ export default function App() {
     if (t) applyTheme(t);
   }, [q.data?.user.prefs.theme]);
 
+  const unauth =
+    (q.error instanceof ApiError && q.error.status === 401) || (q.isPending && signedOut.current);
+  signedOut.current = unauth || (signedOut.current && !q.data);
+  // Signed out from under us (expired, revoked, a redeploy with a fresh database): nothing of
+  // that session may leak into the next sign-in — not its screens' data, not a write queued
+  // offline, which would otherwise replay into whichever store signs in next.
+  useEffect(() => {
+    if (!unauth) return;
+    qc.getMutationCache().clear();
+    qc.removeQueries({ predicate: (x) => x.queryKey[0] !== qk.session[0] });
+    void clearPersisted();
+  }, [unauth, qc]);
+
   // the style reference renders without a session (CI screenshots it)
   if (loc.pathname === '/_ui')
     return (
@@ -55,9 +69,6 @@ export default function App() {
         <UiReference />
       </Suspense>
     );
-  const unauth =
-    (q.error instanceof ApiError && q.error.status === 401) || (q.isPending && signedOut.current);
-  signedOut.current = unauth || (signedOut.current && !q.data);
   if (q.isPending && !unauth)
     return (
       <div className="mx-auto max-w-lg p-6" aria-busy>
@@ -81,7 +92,9 @@ export default function App() {
         </Suspense>
       </ErrorBoundary>
     );
-  if (q.error || !q.data)
+  // a failed re-check (Core mid-deploy, a 502, offline) keeps the app on its last session;
+  // only a 401 signs out, and the error screen is for a first load with nothing to show
+  if (!q.data)
     return (
       <div className="mx-auto max-w-lg p-6">
         <ErrorState error={q.error} retry={() => void q.refetch()} />

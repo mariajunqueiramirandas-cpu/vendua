@@ -310,6 +310,20 @@ export function adminGate(
   };
 }
 
+/** Is this session still good (not revoked, expired or its member removed)? For long-lived streams. */
+export async function sessionAlive(sql: Sql, tenantId: string, sessionId: string) {
+  const rows = await withTenant(
+    sql,
+    tenantId,
+    (tx) => tx`
+      select 1 from merchant_sessions s join merchant_users u on u.id = s.user_id
+      where s.tenant_id = ${tenantId} and s.id = ${sessionId}
+        and s.revoked_at is null and s.expires_at > now() and u.status = 'active'
+    `,
+  );
+  return rows.length > 0;
+}
+
 /** Drop remembered sessions after a role/membership/session write, so it bites here at once. */
 export function forgetGate() {
   gateCache.clear();

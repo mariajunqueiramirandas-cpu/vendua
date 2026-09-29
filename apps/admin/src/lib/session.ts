@@ -1,6 +1,6 @@
 import { useQuery } from '@tanstack/react-query';
 import { createContext, useContext } from 'react';
-import { api, type Role, type Session } from './api.ts';
+import { api, ApiError, type Role, type Session } from './api.ts';
 import { qk } from './query.ts';
 
 const RANK: Record<Role, number> = { attendant: 1, manager: 2, owner: 3 };
@@ -20,7 +20,8 @@ export function useSessionQuery() {
     // the restored copy (persist.ts) may outlive its cookie — a redeploy with fresh
     // volumes — so every boot checks it against Core instead of trusting its age
     refetchOnMount: 'always',
-    retry: false,
+    // a 401 answers at once (sign-in); a blip (network, 5xx mid-deploy) gets a second try
+    retry: (n, e) => n < 2 && !(e instanceof ApiError && e.status >= 400 && e.status < 500),
     // signed out there is nothing to refresh, and a refetch would reset the sign-in
     // halfway (the merchant switched to WhatsApp for the code and came back)
     refetchOnWindowFocus: (q) => q.state.data !== undefined,
