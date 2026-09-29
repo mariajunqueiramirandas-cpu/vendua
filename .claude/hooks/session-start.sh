@@ -19,7 +19,11 @@ if [ "$(bun --version 2>/dev/null || true)" != "$BUN_VERSION" ]; then
   [ -n "${CLAUDE_ENV_FILE:-}" ] && echo "export PATH=\"$NPM_BIN:\$PATH\"" >> "$CLAUDE_ENV_FILE"
 fi
 
-bun install
+# stdout of this hook lands in Claude's context; keep the install log out of it
+if ! bun install > /tmp/vendua-bun-install.log 2>&1; then
+  tail -n 30 /tmp/vendua-bun-install.log >&2
+  exit 1
+fi
 
 PG_BIN=/usr/lib/postgresql/16/bin
 PG_DIR=/var/tmp/vendua-pg
