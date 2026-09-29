@@ -2562,14 +2562,14 @@ export function createApp({
       c.header('content-type', SPA_MIME[ext] ?? 'application/octet-stream');
       // Only assets/ is content-hashed by vite — root files (sw.js, manifest,
       // icons) must revalidate or PWA updates never roll out.
+      const hashed = rel.startsWith('assets/');
       c.header(
         'cache-control',
-        ext === '.html'
-          ? 'no-store'
-          : rel.startsWith('assets/')
-            ? 'public, max-age=31536000, immutable'
-            : 'no-cache',
+        ext === '.html' ? 'no-store' : hashed ? 'public, max-age=31536000, immutable' : 'no-cache',
       );
+      // Cloudflare keeps "no-cache" files at the edge and can hand out a stale copy while it
+      // revalidates: an old sw.js reads as a new version to the app. Keep them off the CDN.
+      if (!hashed) c.header('cdn-cache-control', 'no-store');
       return c.body(await Bun.file(file).arrayBuffer());
     };
 
