@@ -25,6 +25,7 @@ import {
   Field,
   MoneyField,
   SaveMark,
+  SavedStepper,
   Stepper,
   TextArea,
   TextInput,
@@ -168,7 +169,7 @@ function StoreEditor({ s }: { s: StoreView }) {
           </Section>
         </div>
         <div className="space-y-8">
-          <Delivery s={s} patch={patch} />
+          <Delivery s={s} patch={patch} run={run} />
           <Profile s={s} patch={patch} run={run} />
         </div>
       </div>
@@ -323,7 +324,15 @@ function SpecialDays({
   );
 }
 
-function Delivery({ s, patch }: { s: StoreView; patch: (b: Record<string, unknown>) => void }) {
+function Delivery({
+  s,
+  patch,
+  run,
+}: {
+  s: StoreView;
+  patch: (b: Record<string, unknown>) => void;
+  run: (b: Record<string, unknown>) => Promise<unknown>;
+}) {
   const qc = useQueryClient();
   const [edit, setEdit] = useState<Zone | 'new' | null>(null);
   const [locating, setLocating] = useState(false);
@@ -346,24 +355,24 @@ function Delivery({ s, patch }: { s: StoreView; patch: (b: Record<string, unknow
         />
         <div className="grid gap-5 border-t border-line pt-4 sm:grid-cols-2">
           <Field label="Tempo de preparo de sempre" helper="Vem marcado ao aceitar um pedido.">
-            <Stepper
+            <SavedStepper
               label="tempo de preparo"
               value={o.prepTimeMinutes}
               min={5}
               max={240}
               step={5}
               suffix=" min"
-              onChange={(v) => patch({ operations: { prepTimeMinutes: v } })}
+              onSave={(v) => run({ operations: { prepTimeMinutes: v } }).catch(() => undefined)}
             />
           </Field>
           <Field label="Aceitar pedidos em até" helper="Depois disso o pedido fica em destaque.">
-            <Stepper
+            <SavedStepper
               label="tempo para aceitar"
               value={o.acceptTargetMinutes}
               min={1}
               max={60}
               suffix=" min"
-              onChange={(v) => patch({ operations: { acceptTargetMinutes: v } })}
+              onSave={(v) => run({ operations: { acceptTargetMinutes: v } }).catch(() => undefined)}
             />
           </Field>
           <Field label="Pedido mínimo" htmlFor="minorder" helper="Deixe vazio para não ter mínimo.">

@@ -25,6 +25,7 @@ import {
   Field,
   MoneyField,
   SaveMark,
+  SavedStepper,
   Stepper,
   TextInput,
   Toggle,
@@ -443,15 +444,13 @@ function Loyalty({ data }: { data: M }) {
         {on ? (
           <>
             <Field label="Selos para ganhar">
-              <Stepper
+              <SavedStepper
                 label="selos"
                 value={stamps}
                 min={2}
                 max={50}
-                onChange={(v) => {
-                  setStamps(v);
-                  save({ on, stamps: v, kind, value });
-                }}
+                onDraft={setStamps}
+                onSave={async (v) => save({ on, stamps: v, kind, value })}
               />
             </Field>
             <Chips
@@ -481,17 +480,15 @@ function Loyalty({ data }: { data: M }) {
               </Field>
             ) : kind === 'percent' ? (
               <Field label="Desconto do prêmio">
-                <Stepper
+                <SavedStepper
                   label="porcentagem do prêmio"
                   value={Math.min(100, value)}
                   min={5}
                   max={100}
                   step={5}
                   suffix="%"
-                  onChange={(v) => {
-                    setValue(v);
-                    save({ on, stamps, kind, value: v });
-                  }}
+                  onDraft={setValue}
+                  onSave={async (v) => save({ on, stamps, kind, value: v })}
                 />
               </Field>
             ) : null}

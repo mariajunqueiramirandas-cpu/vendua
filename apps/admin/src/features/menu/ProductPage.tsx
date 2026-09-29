@@ -31,6 +31,7 @@ import {
   MoneyField,
   SaveMark,
   Select,
+  SavedStepper,
   Stepper,
   TextInput,
   Toggle,
@@ -311,22 +312,22 @@ function Editor({
             {tracked ? (
               <div className="mt-4 space-y-4">
                 <Field label="Quantidade agora">
-                  <Stepper
+                  <SavedStepper
                     label="quantidade em estoque"
                     value={p.stockQuantity ?? 0}
                     max={100000}
-                    onChange={(v) => void patch({ stockQuantity: v })}
+                    onSave={(v) => patch({ stockQuantity: v })}
                   />
                 </Field>
                 <Field
                   label="Me avise quando tiver só"
                   helper="Aparece em “Precisa de você” no Início."
                 >
-                  <Stepper
+                  <SavedStepper
                     label="alerta de estoque baixo"
                     value={p.lowStockThreshold ?? 0}
                     max={1000}
-                    onChange={(v) => void patch({ lowStockThreshold: v || null })}
+                    onSave={(v) => patch({ lowStockThreshold: v || null })}
                   />
                 </Field>
               </div>
@@ -354,12 +355,12 @@ function Editor({
             />
             {p.requiresPreorder ? (
               <Field label="Antecedência mínima" className="mt-4">
-                <Stepper
+                <SavedStepper
                   label="dias de antecedência"
                   value={p.preorderLeadDays}
                   max={60}
                   suffix=" dias"
-                  onChange={(v) => void patch({ preorderLeadDays: v })}
+                  onSave={(v) => patch({ preorderLeadDays: v })}
                 />
               </Field>
             ) : null}
