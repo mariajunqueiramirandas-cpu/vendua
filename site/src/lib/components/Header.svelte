@@ -47,7 +47,7 @@
   }
   /* floats over the first section so the dawn sky runs to the top edge */
   .overlay {
-    margin-bottom: calc(-68px - env(safe-area-inset-top, 0px));
+    margin-bottom: calc(-1 * var(--header-h) - env(safe-area-inset-top, 0px));
   }
   .scrolled {
     background: var(--glass);
@@ -71,7 +71,7 @@
     align-items: center;
     justify-content: space-between;
     gap: 16px;
-    min-height: 68px;
+    min-height: var(--header-h);
   }
   .home {
     text-decoration: none;

@@ -1,18 +1,22 @@
 <script lang="ts">
+  import type { Snippet } from 'svelte';
   import { site } from '$lib/content';
 
   // The one call to action until sign-up opens. It looks like the primary button but isn't one:
-  // there's nothing to click yet, so it's a status, not a link.
+  // there's nothing to click yet, so it's a status, not a link. `children` replaces `note` when the
+  // note needs markup (the Instagram link).
   let {
     size = 'lg',
     tone = 'day',
     note,
-  }: { size?: 'sm' | 'lg'; tone?: 'day' | 'after'; note?: string } = $props();
+    children,
+  }: { size?: 'sm' | 'lg'; tone?: 'day' | 'after'; note?: string; children?: Snippet } = $props();
 </script>
 
 <p class="soon {size} {tone}">
   <span class="pill"><i aria-hidden="true"></i>{site.soon}</span>
-  {#if note}<span class="note">{note}</span>{/if}
+  {#if children}<span class="note">{@render children()}</span>
+  {:else if note}<span class="note">{note}</span>{/if}
 </p>
 
 <style>
@@ -70,6 +74,23 @@
   }
   .after .note {
     color: var(--after-muted);
+  }
+  .note :global(a) {
+    display: inline-flex;
+    align-items: center;
+    min-height: 44px;
+    padding-inline: 2px;
+    color: var(--ink);
+    font-weight: 600;
+    text-decoration-color: color-mix(in srgb, var(--spark) 70%, transparent);
+    text-decoration-thickness: 2px;
+    text-underline-offset: 4px;
+  }
+  .after .note :global(a) {
+    color: var(--after-ink);
+  }
+  .note :global(a:hover) {
+    text-decoration-color: var(--spark);
   }
   @keyframes beat {
     0%,

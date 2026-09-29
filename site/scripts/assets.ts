@@ -251,6 +251,27 @@ async function facts() {
   };
 }
 
+/** the "Resumo do dia" the seuDia screen shows, formatted the way the admin's Home prints it */
+async function dusk() {
+  const home = await api('GET', '/home');
+  const t = home.today;
+  const short = (c: number) =>
+    Math.round(c / 100)
+      .toLocaleString('pt-BR', { style: 'currency', currency: 'BRL', maximumFractionDigits: 0 })
+      .replace(/\s/g, ' ');
+  // the site's copy quotes every one of these; a quiet day would leave "Seu dia" with nothing to say
+  if (!home.best?.[0] || !home.busiest || !t.lastWeekSalesCents || !t.orders)
+    throw new Error(
+      'the day has no recap to quote (best seller, busiest hour, last week): rerun demo orders',
+    );
+  return {
+    bestSeller: { name: home.best[0].name as string, qty: home.best[0].qty as number },
+    busiestHour: `${home.busiest.hour}h`,
+    vsLastWeek: Math.round(((t.salesCents - t.lastWeekSalesCents) / t.lastWeekSalesCents) * 100),
+    avgTicket: short(t.avgTicketCents),
+  };
+}
+
 async function shoot(
   browser: Browser,
   key: ScreenKey,
@@ -366,14 +387,18 @@ async function screens(browser: Browser) {
       await save('seuDia', theme, await shoot(browser, 'seuDia', theme, today.at('19:07'), '/'));
       console.log(`screens: seuDia ${theme}`);
     }
+    const seuDia = await dusk();
     await api('PATCH', '/store', { hours: NENA_HOURS });
 
     const { id: _a, ...newOrder } = f.newOrder;
     const { id: _b, ...earlierOrder } = f.earlierOrder;
     const factsFile = join(ROOT, 'src/lib/screens.facts.json');
     mkdirSync(dirname(factsFile), { recursive: true });
-    writeFileSync(factsFile, JSON.stringify({ ...f, newOrder, earlierOrder }, null, 2) + '\n');
-    console.log('facts:', JSON.stringify({ ...f, newOrder, earlierOrder }));
+    writeFileSync(
+      factsFile,
+      JSON.stringify({ ...f, newOrder, earlierOrder, seuDia }, null, 2) + '\n',
+    );
+    console.log('facts:', JSON.stringify({ ...f, newOrder, earlierOrder, seuDia }));
   } finally {
     await sql.end();
   }
@@ -383,9 +408,23 @@ async function screens(browser: Browser) {
 async function og(browser: Browser) {
   const page = await browser.newPage({ viewport: { width: 1200, height: 630 } });
   const b64 = (p: string) => readFileSync(join(ROOT, 'static', p)).toString('base64');
+  // a setContent page can't load file:// fonts, so the woff2 files go in as data URIs
+  const font = (p: string) => readFileSync(join(ROOT, 'node_modules', p)).toString('base64');
   const html = readFileSync(join(ROOT, 'scripts/og.html'), 'utf8')
     .replace('{{SCREEN}}', `data:image/webp;base64,${b64('screens/inicio-creme-750.webp')}`)
-    .replace('{{DUA}}', `data:image/webp;base64,${b64('dua/avatar-ola.webp')}`);
+    .replace('{{DUA}}', `data:image/webp;base64,${b64('dua/avatar-ola.webp')}`)
+    .replace(
+      '@@FIGTREE@@',
+      font('@fontsource-variable/figtree/files/figtree-latin-wght-normal.woff2'),
+    )
+    .replace(
+      '@@GROTESK@@',
+      font('@fontsource-variable/space-grotesk/files/space-grotesk-latin-wght-normal.woff2'),
+    )
+    .replace(
+      '@@SERIF@@',
+      font('@fontsource/instrument-serif/files/instrument-serif-latin-400-italic.woff2'),
+    );
   await page.setContent(html, { waitUntil: 'networkidle' });
   await page.waitForTimeout(300);
   await page.screenshot({ path: join(ROOT, 'static/og.png') });

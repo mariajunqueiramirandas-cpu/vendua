@@ -33,6 +33,7 @@
     'quem voltou a pedir',
     'planilha pra baixar',
   ];
+  const day = store.dayRecap;
 </script>
 
 <Section id="seu-dia" hour="18h" tone="after" sky="var(--sunset)" labelledby="seu-dia-t">
@@ -68,7 +69,8 @@
         <Phone time="18:07" style="--w: var(--phone-w)">
           <Screen
             key="seuDia"
-            alt="O início do app às 18h, com a loja fechada: Boa noite, Nena. Seu dia: {store.salesToday}, bem acima do mesmo dia da semana passada; {store.ordersToday} pedidos e o ticket médio. No resumo do dia, o campeão foi a fatia de cenoura com brigadeiro e a hora mais movimentada, 18h."
+            alt="O início do app no fim do dia, com a loja fechada: Boa noite, {store.owner}. Seu dia: {store.salesToday}, {day.vsLastWeek}% acima do mesmo dia da semana passada; {store.ordersToday} pedidos, ticket médio de {day.avgTicket}. No resumo do dia, o campeão foi {day.bestSeller.name.toLowerCase()} ({day
+              .bestSeller.qty}) e a hora mais movimentada, {day.busiestHour}."
             sizes="(max-width: 560px) 68vw, 300px"
           />
         </Phone>
@@ -102,12 +104,6 @@
 </Section>
 
 <style>
-  /* Section's chip is drawn for dark sky; up here it sits on gold, so give it a dusk pill */
-  :global(#seu-dia > .inner > .hour) {
-    background: rgb(28 42 51 / 0.72);
-    color: var(--after-ink);
-  }
-
   /* ── sky decoration (drawn in section coordinates: .inner starts at the section top) ── */
   .sky {
     position: absolute;

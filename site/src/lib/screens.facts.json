@@ -13,5 +13,14 @@
     "customer": "Mariana",
     "total": "R$ 85,00",
     "mode": "entrega"
+  },
+  "seuDia": {
+    "bestSeller": {
+      "name": "Fatia de cenoura com brigadeiro",
+      "qty": 5
+    },
+    "busiestHour": "18h",
+    "vsLastWeek": 151,
+    "avgTicket": "R$ 120"
   }
 }

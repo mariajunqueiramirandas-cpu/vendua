@@ -85,6 +85,7 @@
 
   --gutter: 16px;
   --wrap: 1180px;
+  --header-h: 68px; /* the sticky header's row; sections under it add it plus the safe area */
 
   color-scheme: light;
 }

@@ -19,7 +19,7 @@
   id="inicio"
   hour="6h"
   tone="day"
-  class="hero"
+  overlay
   sky="linear-gradient(180deg, var(--sky-0), var(--sky-1))"
   labelledby="inicio-t"
 >
@@ -98,14 +98,6 @@
 </Section>
 
 <style>
-  /* the sticky header (68 px + safe area) floats over this section; the hour chip moves below it */
-  :global(.section.hero > .inner) {
-    padding-top: calc(clamp(56px, 7vw, 96px) + 68px + env(safe-area-inset-top, 0px));
-  }
-  :global(.section.hero .hour) {
-    top: calc(68px + env(safe-area-inset-top, 0px) + 4px);
-  }
-
   .grid {
     display: grid;
     gap: clamp(40px, 6vw, 72px);

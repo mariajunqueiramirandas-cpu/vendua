@@ -3,7 +3,8 @@
 
   // One stop of the store's day. `sky` is the section's background (run it from one --sky-N stop to the
   // next so sections join without a seam); `tone="after"` is for dusk and night, where text stays light
-  // in both themes. `hour` prints the small clock chip ("6h") that names the moment.
+  // in both themes. `hour` prints the small clock chip ("6h") that names the moment. `overlay` is for
+  // the first section, which runs up under the sticky header: its content and chip start below it.
   let {
     id,
     sky,
@@ -11,6 +12,7 @@
     hour,
     label,
     labelledby,
+    overlay = false,
     class: cls = '',
     children,
   }: {
@@ -20,6 +22,7 @@
     hour?: string;
     label?: string;
     labelledby?: string;
+    overlay?: boolean;
     class?: string;
     children: Snippet;
   } = $props();
@@ -28,6 +31,7 @@
 <section
   {id}
   class="section {tone} {cls}"
+  class:overlay
   style="background: {sky}"
   aria-label={label}
   aria-labelledby={labelledby}
@@ -48,6 +52,12 @@
   .inner {
     position: relative;
     padding-block: clamp(64px, 9vw, 128px);
+  }
+  .overlay {
+    --under-header: calc(var(--header-h) + env(safe-area-inset-top, 0px));
+  }
+  .overlay > .inner {
+    padding-top: calc(clamp(56px, 7vw, 96px) + var(--under-header));
   }
   .after {
     --ink: var(--after-ink);
@@ -70,8 +80,13 @@
     font: 600 13px/1 var(--font-display);
     color: var(--ink-muted);
   }
+  .overlay .hour {
+    top: calc(var(--under-header) + 4px);
+  }
+  /* a dusk pill, so the chip reads where an after section still starts on a light sky (the sunset's gold) */
   .after .hour {
-    background: rgb(247 244 234 / 0.08);
+    background: color-mix(in srgb, var(--sky-5) 85%, transparent);
+    color: var(--after-ink);
   }
   .hour::before {
     content: '';

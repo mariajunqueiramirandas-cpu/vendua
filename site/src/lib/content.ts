@@ -27,6 +27,8 @@ export const store = {
   /** the order that "arrives" in the hero and on the lock screen */
   newOrder: facts.newOrder,
   earlierOrder: facts.earlierOrder,
+  /** the day's recap on the "Seu dia" screen (18h): best seller, busiest hour, % vs the same weekday last week, average ticket */
+  dayRecap: facts.seuDia,
 };
 
 /** Core's real push payload (packages/core/src/admin/workers.ts): title, body and the one action */
