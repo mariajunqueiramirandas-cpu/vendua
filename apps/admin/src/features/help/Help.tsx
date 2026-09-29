@@ -1,5 +1,5 @@
 import { CaretDown, PaperPlaneTilt, WhatsappLogo } from '@phosphor-icons/react';
-import { useMutation } from '@tanstack/react-query';
+import { useMutation } from '../../lib/query.ts';
 import { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { api } from '../../lib/api.ts';

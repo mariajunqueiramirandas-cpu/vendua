@@ -370,7 +370,11 @@ export function mountAdmin(o: MountAdminOpts) {
       await stream.writeSSE({ event: 'hello', data: JSON.stringify({ at: new Date() }) });
       void sendPresence();
       const carts = setInterval(() => void sendPresence(), PRESENCE_POLL_MS);
-      const beat = setInterval(() => void stream.write(':ka\n\n'), STREAM_HEARTBEAT_MS);
+      // a named event, not a comment: the admin's watchdog sees it and reconnects a silent stream
+      const beat = setInterval(
+        () => void stream.writeSSE({ event: 'ping', data: '' }).catch(() => finish()),
+        STREAM_HEARTBEAT_MS,
+      );
       const lifetime = setTimeout(finish, STREAM_MAX_MS);
       await done;
       unsubscribe();

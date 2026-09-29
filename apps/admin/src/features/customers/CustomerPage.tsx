@@ -1,10 +1,10 @@
 import { DownloadSimple, Gift, ShieldCheck, WhatsappLogo } from '@phosphor-icons/react';
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { api } from '../../lib/api.ts';
 import { dateShort, money, phone, plural, whatsappLink } from '../../lib/format.ts';
-import { qk } from '../../lib/query.ts';
+import { qk, useMutation } from '../../lib/query.ts';
 import { useCan, useSession } from '../../lib/session.ts';
 import { Button } from '../../ui/Button.tsx';
 import { Card, Section } from '../../ui/Card.tsx';

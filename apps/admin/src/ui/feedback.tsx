@@ -69,6 +69,7 @@ export function Loading({
 /** Errors say what happened, in words, and how to fix it. */
 export function messageOf(err: unknown): string {
   if (err instanceof ApiError) {
+    if (err.code === 'TIMEOUT') return 'A conexão está lenta. Confira a internet e tente de novo.';
     if (err.status === 0) return 'Sem conexão. Confira a internet e tente de novo.';
     if (err.status === 403)
       return 'Seu acesso não permite fazer isso. Peça para quem é dono da loja.';
@@ -84,6 +85,7 @@ const FRIENDLY: Record<string, string> = {
   INVALID_CODE: 'Código errado ou vencido. Confira ou peça outro.',
   INVALID_PHONE: 'Digite o celular com DDD, como (22) 99999-0000.',
   REASON_REQUIRED: 'Escolha um motivo para avisar o cliente.',
+  IDEMPOTENCY_IN_PROGRESS: 'Ainda estamos salvando isso. Espere um instante.',
   INVALID_ORDER_TRANSITION: 'Esse pedido já mudou. A tela foi atualizada.',
   CATEGORY_NOT_EMPTY: 'Essa categoria ainda tem produtos. Mova ou esconda eles antes.',
   COUPON_EXISTS: 'Já existe um cupom com esse código.',

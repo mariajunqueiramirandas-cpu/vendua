@@ -23,12 +23,23 @@ export function useScrollMemory() {
     if (type !== 'POP') return void scrollTo(0, 0);
     const y = saved.current.get(loc.key) ?? 0;
     // the screen may still be filling in: retry for a few frames until it's tall enough
+    // (and stop the moment the merchant scrolls, or leaves before it's done)
     let n = 0;
+    let frame = 0;
+    const stop = () => cancelAnimationFrame(frame);
     const go = () => {
       scrollTo(0, y);
-      if (Math.abs(scrollY - y) > 2 && ++n < 20) requestAnimationFrame(go);
+      if (Math.abs(scrollY - y) > 2 && ++n < 20) frame = requestAnimationFrame(go);
     };
     go();
+    const opts = { passive: true, once: true } as const;
+    addEventListener('touchstart', stop, opts);
+    addEventListener('wheel', stop, opts);
+    return () => {
+      stop();
+      removeEventListener('touchstart', stop);
+      removeEventListener('wheel', stop);
+    };
   }, [loc.key, type]);
 }
 

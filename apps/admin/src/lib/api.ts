@@ -15,43 +15,100 @@ export class ApiError extends Error {
   }
 }
 
-type Init = RequestInit & { idem?: string; raw?: boolean };
+type Init = RequestInit & { idem?: string; raw?: boolean; timeoutMs?: number };
+
+// A dropped connection or a timeout leaves a write's outcome unknown: Core may have applied it.
+// Inside one mutation (lib/query.ts `useMutation`), its retries resend the same request with the
+// same key, so Core replays the first result instead of applying it twice. A new tap is a new
+// mutation and a new key: it must not be answered with a stale replay.
+let scope: object | null = null;
+const scopedKeys = new WeakMap<object, Map<string, string>>();
+export function withRetryScope<T>(owner: object, run: () => T): T {
+  const prev = scope;
+  scope = owner;
+  try {
+    return run();
+  } finally {
+    scope = prev;
+  }
+}
+
+// a phone on a weak signal can hang a request for minutes; fail it so retry/offline UI takes over
+const timeoutFor = (mutating: boolean, raw: boolean) => (raw ? 60_000 : mutating ? 30_000 : 20_000);
 
 async function req<T>(path: string, init: Init = {}): Promise<T> {
-  const { idem, raw, ...rest } = init;
-  const mutating = rest.method && rest.method !== 'GET';
-  let res: Response;
+  const { idem, raw, timeoutMs, ...rest } = init;
+  const method = rest.method ?? 'GET';
+  const mutating = method !== 'GET';
+  // read before the first await: the scope is only set while the mutationFn starts
+  let key = idem;
+  if (mutating && !key) {
+    let keys = scope ? scopedKeys.get(scope) : undefined;
+    if (scope && !keys) scopedKeys.set(scope, (keys = new Map()));
+    const print = `${method} ${path} ${typeof rest.body === 'string' ? rest.body : ''}`;
+    key = keys?.get(print) ?? crypto.randomUUID();
+    keys?.set(print, key);
+  }
+
+  const ctl = new AbortController();
+  let timedOut = false;
+  const timer = setTimeout(
+    () => {
+      timedOut = true;
+      ctl.abort();
+    },
+    timeoutMs ?? timeoutFor(mutating, !!raw),
+  );
+  const caller = rest.signal;
+  caller?.addEventListener('abort', () => ctl.abort(), { once: true });
+  const lost = () => {
+    if (caller?.aborted && !timedOut) return caller.reason as Error;
+    return timedOut
+      ? new ApiError(0, 'TIMEOUT', 'a conexão está lenta')
+      : new ApiError(0, 'NETWORK_ERROR', 'sem conexão');
+  };
   try {
-    res = await fetch(`/admin/v1${path}`, {
-      credentials: 'same-origin',
-      ...rest,
-      headers: {
-        ...(raw ? {} : { 'content-type': 'application/json' }),
-        'x-vendua-admin': '1',
-        ...(mutating ? { 'idempotency-key': idem ?? crypto.randomUUID() } : {}),
-        ...rest.headers,
-      },
-    });
-  } catch {
-    throw new ApiError(0, 'NETWORK_ERROR', 'sem conexão');
+    let res: Response;
+    try {
+      res = await fetch(`/admin/v1${path}`, {
+        credentials: 'same-origin',
+        ...rest,
+        signal: ctl.signal,
+        headers: {
+          ...(raw ? {} : { 'content-type': 'application/json' }),
+          'x-vendua-admin': '1',
+          ...(key ? { 'idempotency-key': key } : {}),
+          ...rest.headers,
+        },
+      });
+    } catch {
+      throw lost();
+    }
+    if (!res.ok) {
+      const data = (await res.json().catch(() => ({}))) as {
+        error?: { code?: string; message?: string; details?: Record<string, unknown> };
+      };
+      const err = new ApiError(
+        res.status,
+        data.error?.code ?? 'ERROR',
+        data.error?.message ?? res.statusText,
+        data.error?.details,
+      );
+      // not for /session itself: App re-checks the session on this event, so a 401 there would loop
+      if (res.status === 401 && path !== '/session')
+        window.dispatchEvent(new CustomEvent('vendua:unauthenticated'));
+      throw err;
+    }
+    const ct = res.headers.get('content-type') ?? '';
+    try {
+      return (await (ct.includes('json') ? res.json() : res.text())) as T;
+    } catch {
+      // the connection died mid-body: Core answered, but we can't know what
+      throw lost();
+    }
+  } finally {
+    clearTimeout(timer);
   }
-  if (!res.ok) {
-    const data = (await res.json().catch(() => ({}))) as {
-      error?: { code?: string; message?: string; details?: Record<string, unknown> };
-    };
-    const err = new ApiError(
-      res.status,
-      data.error?.code ?? 'ERROR',
-      data.error?.message ?? res.statusText,
-      data.error?.details,
-    );
-    // not for /session itself: App re-checks the session on this event, so a 401 there would loop
-    if (res.status === 401 && path !== '/session')
-      window.dispatchEvent(new CustomEvent('vendua:unauthenticated'));
-    throw err;
-  }
-  const ct = res.headers.get('content-type') ?? '';
-  return (ct.includes('json') ? res.json() : res.text()) as Promise<T>;
 }
 
 const get = <T>(p: string) => req<T>(p);

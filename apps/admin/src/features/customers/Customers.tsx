@@ -1,11 +1,12 @@
 import { MagnifyingGlass } from '@phosphor-icons/react';
-import { useInfiniteQuery } from '@tanstack/react-query';
+import { keepPreviousData, useInfiniteQuery } from '@tanstack/react-query';
 import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { api } from '../../lib/api.ts';
 import { ago, money, num, phone } from '../../lib/format.ts';
 import { Button } from '../../ui/Button.tsx';
 import { Card } from '../../ui/Card.tsx';
+import { cn } from '../../ui/cn.ts';
 import { EmptyState, ErrorState, Loading } from '../../ui/feedback.tsx';
 import { Chips, TextInput } from '../../ui/fields.tsx';
 import { Mascote } from '../../ui/Mascote.tsx';
@@ -26,6 +27,8 @@ export default function Customers() {
     queryFn: ({ pageParam }) => api.customers({ q: debounced, sort, offset: pageParam }),
     initialPageParam: 0,
     getNextPageParam: (p) => p.next ?? undefined,
+    // a new search or filter keeps the old rows up (dimmed) instead of flashing to a spinner
+    placeholderData: keepPreviousData,
   });
   const stats = list.data?.pages[0]?.stats;
   const rows = list.data?.pages.flatMap((p) => p.customers) ?? [];
@@ -76,7 +79,13 @@ export default function Customers() {
         <Loading />
       ) : rows.length ? (
         <>
-          <Card className="divide-y divide-line overflow-hidden">
+          <Card
+            aria-busy={list.isPlaceholderData}
+            className={cn(
+              'divide-y divide-line overflow-hidden transition-opacity',
+              list.isPlaceholderData && 'opacity-60',
+            )}
+          >
             {rows.map((c) => (
               <Link
                 key={c.phone}

@@ -1,9 +1,9 @@
 import { Clock, Pause, Play, Storefront } from '@phosphor-icons/react';
-import { useMutation, useQueryClient } from '@tanstack/react-query';
+import { useQueryClient } from '@tanstack/react-query';
 import { useState } from 'react';
 import { api, type SpecialDay, type StoreView } from '../../lib/api.ts';
 import { clock, hhmm, isoDate, WEEKDAYS_LONG } from '../../lib/format.ts';
-import { qk } from '../../lib/query.ts';
+import { qk, useMutation } from '../../lib/query.ts';
 import { Button } from '../../ui/Button.tsx';
 import { messageOf } from '../../ui/feedback.tsx';
 import { Chips, Field, TextArea, TimeInput } from '../../ui/fields.tsx';

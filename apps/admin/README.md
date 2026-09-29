@@ -82,11 +82,16 @@ dev it isn't registered.
   `/_ui` is the living reference; add new components there.
 - **Data:** keys come from `qk` in `src/lib/query.ts`. The cache stores the raw
   API response and screens unwrap it with `select`. `src/lib/live.ts` maps SSE
-  topics to invalidations. Mutations pause while offline.
+  topics to invalidations, batched per burst; a reconnect refetches what's on
+  screen, and a stream silent past Core's 20 s `ping` is reopened. Mutations
+  pause while offline.
 - **Money** is integer cents from Core. The client formats (`lib/format.ts`) and
   never totals.
 - **Mutations** go through `lib/api.ts`, which adds the `x-vendua-admin` header
-  and an `Idempotency-Key`.
+  and an `Idempotency-Key`. Use `useMutation` from `lib/query.ts`, not TanStack's:
+  a mutation's retries (dropped connection, timeout, `IDEMPOTENCY_IN_PROGRESS`)
+  resend its key, so Core replays instead of applying it twice. Requests time out
+  (reads 20 s, writes 30 s, uploads 60 s) rather than hang on a weak signal.
 - **Phones first.** Every screen works at 375px with thumb-reachable actions.
   Check 375 in the shots before anything else.
 - Keep the shell small: sheets and rarely used screens are `lazy()`.

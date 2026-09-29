@@ -3,6 +3,7 @@ import { queryClient, qk } from './query.ts';
 import { chimeNewOrder, chimePaid } from './sound.ts';
 import { haptic } from './haptics.ts';
 import { ordersSeen } from './pwa.ts';
+import type { Board, Order } from './api.ts';
 
 // One EventSource per signed-in tab (Core: GET /admin/v1/events). Each change
 // invalidates what shows it; a new order also rings: chime + double vibration +
@@ -102,17 +103,93 @@ async function onPlaced(orderId: string) {
   }
 }
 
+// A burst of events (a drag across lanes, a bulk edit) becomes one refetch per key, not one each.
+const INVALIDATE_MS = 150;
+let dirty = new Map<string, readonly unknown[]>();
+let everything = false;
+let paidWatch = new Set<string>();
+let flushTimer: ReturnType<typeof setTimeout> | null = null;
+
+function queueInvalidate(keys: readonly (readonly unknown[])[] | 'all') {
+  if (keys === 'all') everything = true;
+  else for (const k of keys) dirty.set(JSON.stringify(k), k);
+  flushTimer ??= setTimeout(() => void flush(), INVALIDATE_MS);
+}
+
+async function flush() {
+  flushTimer = null;
+  const keys = [...dirty.values()];
+  const all = everything;
+  const watch = paidWatch;
+  dirty = new Map();
+  everything = false;
+  paidWatch = new Set();
+  await Promise.all(
+    all
+      ? [queryClient.invalidateQueries()]
+      : keys.map((queryKey) => queryClient.invalidateQueries({ queryKey })),
+  ).catch(() => undefined);
+  for (const id of watch) void chimeIfPaid(id);
+}
+
+const isPaid = (id: string) =>
+  queryClient.getQueryData<{ order: Order }>(qk.order(id))?.order.payment.status === 'paid' ||
+  queryClient.getQueryData<Board>(qk.board)?.orders.find((o) => o.id === id)?.payment.status ===
+    'paid';
+const knows = (id: string) =>
+  !!queryClient.getQueryData(qk.order(id)) ||
+  !!queryClient.getQueryData<Board>(qk.board)?.orders.some((o) => o.id === id);
+
+/** An order this device knew as unpaid changed: ring if it's paid now (Pix landed). */
+async function chimeIfPaid(id: string) {
+  try {
+    // a fresh copy from the flush's own refetch counts; only an inactive one goes to the network
+    const after = await queryClient.fetchQuery({
+      queryKey: qk.order(id),
+      queryFn: async () => (await import('./api.ts')).api.order(id),
+      staleTime: 5_000,
+    });
+    if (after.order.payment.status === 'paid' && soundOn) chimePaid();
+  } catch {
+    /* the board still shows it */
+  }
+}
+
+// Core pings every 20 s; a phone that hopped networks can hold a dead socket for minutes
+// without the browser noticing, so silence past this means reconnect.
+const SILENT_MS = 50_000;
+
 export function useLiveStream(enabled: boolean) {
   useEffect(() => {
     if (!enabled) return;
     let es: EventSource | null = null;
     let closed = false;
     let retry: ReturnType<typeof setTimeout>;
+    let hellos = 0;
+    let lastSeen = Date.now();
+    // armed by the first ping, so a Core without pings never trips it
+    let pinged = false;
+    const seen = () => void (lastSeen = Date.now());
     const open = () => {
       if (closed) return;
-      es = new EventSource('/admin/v1/events');
-      es.addEventListener('hello', () => set({ streaming: true }));
-      es.addEventListener('presence', (ev) => {
+      clearTimeout(retry);
+      es?.close();
+      pinged = false;
+      seen();
+      const src = new EventSource('/admin/v1/events');
+      es = src;
+      src.addEventListener('hello', () => {
+        seen();
+        // events sent while we were away (a reconnect, Core's stream lifetime) are gone: catch up
+        if (hellos++ > 0) queueInvalidate('all');
+        set({ streaming: true });
+      });
+      src.addEventListener('ping', () => {
+        seen();
+        pinged = true;
+      });
+      src.addEventListener('presence', (ev) => {
+        seen();
         try {
           const p = JSON.parse((ev as MessageEvent).data) as { viewers: number; carts: number };
           if (Number.isFinite(p.viewers) && Number.isFinite(p.carts)) set({ presence: p });
@@ -120,64 +197,55 @@ export function useLiveStream(enabled: boolean) {
           /* ignored: the next one replaces it */
         }
       });
-      es.addEventListener('change', (ev) => {
-        const e = JSON.parse((ev as MessageEvent).data) as { topic: Topic; id: string };
-        if (e.id === 'resync') {
-          void queryClient.invalidateQueries();
-          return;
+      src.addEventListener('change', (ev) => {
+        seen();
+        let e: { topic: Topic; id: string };
+        try {
+          e = JSON.parse((ev as MessageEvent).data) as { topic: Topic; id: string };
+        } catch {
+          return queueInvalidate('all');
         }
-        for (const key of TOPIC_KEYS[e.topic] ?? [])
-          void queryClient.invalidateQueries({ queryKey: key });
-        if (e.topic === 'order.changed' && e.id) {
-          const before = queryClient.getQueryData<{ order: { payment: { status: string } } }>(
-            qk.order(e.id),
-          );
-          void queryClient.invalidateQueries({ queryKey: qk.order(e.id) });
-          void queryClient
-            .fetchQuery({
-              queryKey: qk.order(e.id),
-              queryFn: async () => (await import('./api.ts')).api.order(e.id),
-            })
-            .then((after) => {
-              if (
-                before &&
-                before.order.payment.status !== 'paid' &&
-                after.order.payment.status === 'paid' &&
-                soundOn
-              )
-                chimePaid();
-            })
-            .catch(() => undefined);
-        }
+        if (e.id === 'resync') return queueInvalidate('all');
+        queueInvalidate(TOPIC_KEYS[e.topic] ?? []);
+        if (e.topic === 'order.changed' && e.id && knows(e.id) && !isPaid(e.id))
+          paidWatch.add(e.id);
         if (e.topic === 'order.placed' && e.id) void onPlaced(e.id);
       });
-      es.onerror = () => {
+      src.onerror = () => {
+        if (es !== src) return;
         set({ streaming: false, presence: null });
         // the browser retries by itself; a hard close (401, proxy) needs us to
-        if (es?.readyState === EventSource.CLOSED) {
-          es.close();
-          retry = setTimeout(open, 5000);
-        }
+        if (src.readyState === EventSource.CLOSED) retry = setTimeout(open, 5000);
       };
     };
     open();
+    const check = () => {
+      if (!closed && pinged && navigator.onLine && Date.now() - lastSeen > SILENT_MS) {
+        set({ streaming: false, presence: null });
+        open();
+      }
+    };
+    const watchdog = setInterval(check, 15_000);
     const up = () => {
       set({ online: true });
       void queryClient.invalidateQueries();
       void queryClient.resumePausedMutations();
+      check();
     };
     const down = () => set({ online: false, streaming: false, presence: null });
     window.addEventListener('online', up);
     window.addEventListener('offline', down);
     // a closed laptop lid or a backgrounded phone misses events: catch up on return
     const vis = () => {
-      if (document.visibilityState === 'visible')
-        void queryClient.invalidateQueries({ queryKey: ['orders'] });
+      if (document.visibilityState !== 'visible') return;
+      void queryClient.invalidateQueries({ queryKey: ['orders'] });
+      check();
     };
     document.addEventListener('visibilitychange', vis);
     return () => {
       closed = true;
       clearTimeout(retry);
+      clearInterval(watchdog);
       es?.close();
       window.removeEventListener('online', up);
       window.removeEventListener('offline', down);

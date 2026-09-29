@@ -1,6 +1,6 @@
 import { DownloadSimple, Info } from '@phosphor-icons/react';
 import { useQuery } from '@tanstack/react-query';
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { api, type Kpis, type Reports as R } from '../../lib/api.ts';
 import { dateShort, isoDate, money, moneyCompact, num, plural } from '../../lib/format.ts';
 import { qk } from '../../lib/query.ts';
@@ -32,11 +32,18 @@ export default function Reports() {
     from: isoDate(new Date(Date.now() - 13 * 86_400_000)),
     to: isoDate(new Date()),
   }));
-  const { from, to } = rangeOf(period, custom);
+  // typing a date walks through half-dates (year 0002…): ask once the field settles on a real range
+  const [settled, setSettled] = useState(custom);
+  useEffect(() => {
+    const t = setTimeout(() => setSettled(custom), 400);
+    return () => clearTimeout(t);
+  }, [custom]);
+  const { from, to } = rangeOf(period, settled);
   const { data, error, refetch, isFetching } = useQuery({
     queryKey: qk.reports(from, to),
     queryFn: () => api.reports(from, to),
     placeholderData: (p) => p,
+    enabled: from >= '2000' && from <= to,
   });
   return (
     <PageBody wide>

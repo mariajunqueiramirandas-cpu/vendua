@@ -11,13 +11,13 @@ import {
   TrendUp,
   UsersThree,
 } from '@phosphor-icons/react';
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { useEffect, useState } from 'react';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { useEffect, useRef, useState } from 'react';
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { api, type KitSlot, type OptionGroup, type ProductDetail } from '../../lib/api.ts';
 import { useAutosave } from '../../lib/autosave.ts';
 import { money, plural } from '../../lib/format.ts';
-import { qk } from '../../lib/query.ts';
+import { qk, useMutation } from '../../lib/query.ts';
 import { takeSharedPhoto } from '../../lib/share.ts';
 import { Button, IconButton } from '../../ui/Button.tsx';
 import { Card } from '../../ui/Card.tsx';
@@ -100,11 +100,15 @@ function Editor({
     qc.setQueryData(qk.product(p.id), { product: next });
     void qc.invalidateQueries({ queryKey: qk.catalog });
   };
-  const patch = (body: Record<string, unknown>) =>
-    field
+  // fields save independently: only the newest reply may paint, an older one asks for the truth
+  const seq = useRef(0);
+  const patch = (body: Record<string, unknown>) => {
+    const mine = ++seq.current;
+    return field
       .track(api.updateProduct(p.id, body))
       .then((r) => {
-        put(r.product);
+        if (mine === seq.current) put(r.product);
+        else void qc.invalidateQueries({ queryKey: qk.product(p.id) });
         if (r.waitlistWoken)
           toast(
             `${r.waitlistWoken} pessoas esperavam por ${r.product.name}. Avise elas em Marketing.`,
@@ -112,6 +116,7 @@ function Editor({
         return r;
       })
       .catch((e) => toast.error(messageOf(e)));
+  };
   const media = useMutation({
     mutationFn: (m: ProductDetail['gallery']) => api.setMedia(p.id, m),
     onSuccess: (r) => put(r.product),
@@ -124,6 +129,7 @@ function Editor({
       toast('Cópia criada (escondida até você revisar)');
       nav(`/cardapio/produto/${r.product.id}`);
     },
+    onError: (e) => toast.error(messageOf(e)),
   });
   const a = availability(p);
   const tracked = p.stockQuantity !== null;

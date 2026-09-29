@@ -11,13 +11,13 @@ import {
   Trash,
   X,
 } from '@phosphor-icons/react';
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { api, type Category, type Product } from '../../lib/api.ts';
 import { money } from '../../lib/format.ts';
 import { haptic } from '../../lib/haptics.ts';
-import { optimistic, qk } from '../../lib/query.ts';
+import { optimistic, qk, useMutation } from '../../lib/query.ts';
 import { Button, IconButton } from '../../ui/Button.tsx';
 import { Card } from '../../ui/Card.tsx';
 import { cn } from '../../ui/cn.ts';
@@ -510,12 +510,20 @@ function ReorderGrid({
   const timer = useRef<ReturnType<typeof setTimeout>>();
   const origin = useRef<{ x: number; y: number } | null>(null);
   const dragged = useRef(false);
-  useEffect(() => setOrder(cat.products.map((p) => p.id)), [cat.products]);
+  // a refetch mid-drag (focus, a live event) must not yank the tile out from under the finger
+  const holding = useRef(false);
+  holding.current = !!lifted;
+  useEffect(() => {
+    if (!holding.current) setOrder(cat.products.map((p) => p.id));
+  }, [cat.products]);
   const byId = useMemo(() => new Map(cat.products.map((p) => [p.id, p])), [cat.products]);
   const save = useMutation({
     mutationFn: (ids: string[]) => api.orderProducts(cat.id, ids),
     onSuccess: () => void qc.invalidateQueries({ queryKey: qk.catalog }),
-    onError: (e) => toast.error(messageOf(e)),
+    onError: (e) => {
+      setOrder(cat.products.map((p) => p.id));
+      toast.error(messageOf(e));
+    },
   });
 
   const down = (id: string, e: React.PointerEvent) => {
@@ -902,13 +910,18 @@ function ImportSheet({
   useEffect(() => setCat((c) => c || cats[0]?.id || ''), [cats]);
   useEffect(() => {
     if (!text.trim()) return setItems([]);
+    // a slow preview for older text must not replace the newer one
+    let stale = false;
     const t = setTimeout(() => {
       api.importPreview(text).then(
-        (r) => setItems(r.items),
-        () => setItems([]),
+        (r) => !stale && setItems(r.items),
+        () => !stale && setItems([]),
       );
     }, 300);
-    return () => clearTimeout(t);
+    return () => {
+      stale = true;
+      clearTimeout(t);
+    };
   }, [text]);
   const run = useMutation({
     mutationFn: () => api.importProducts(text, cat),

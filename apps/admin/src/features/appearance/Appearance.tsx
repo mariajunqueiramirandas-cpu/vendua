@@ -12,18 +12,17 @@ import {
   RocketLaunch,
   Trash,
 } from '@phosphor-icons/react';
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   api,
-  ApiError,
   type Appearance as AppearanceData,
   type PageTemplate,
   type StoreTokens,
   type TemplateSection,
 } from '../../lib/api.ts';
 import { when } from '../../lib/format.ts';
-import { qk } from '../../lib/query.ts';
+import { qk, useMutation } from '../../lib/query.ts';
 import { useSession } from '../../lib/session.ts';
 import { Button, IconButton } from '../../ui/Button.tsx';
 import { Card } from '../../ui/Card.tsx';
@@ -296,8 +295,8 @@ function Editor({ data }: { data: AppearanceData }) {
     },
     onError: async (e) => {
       setPhase('idle');
-      if (e instanceof ApiError && e.code === 'TEMPLATE_VERSION_CONFLICT')
-        await qc.invalidateQueries({ queryKey: qk.appearance });
+      // pages saved before the failure have new versions: a retry needs them as its base
+      await qc.invalidateQueries({ queryKey: qk.appearance });
       toast.error(messageOf(e));
     },
   });

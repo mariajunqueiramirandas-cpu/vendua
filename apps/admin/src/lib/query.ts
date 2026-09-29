@@ -1,5 +1,11 @@
-import { QueryClient, type QueryKey } from '@tanstack/react-query';
-import { ApiError } from './api.ts';
+import {
+  QueryClient,
+  useMutation as useQueryMutation,
+  type DefaultError,
+  type QueryKey,
+  type UseMutationOptions,
+} from '@tanstack/react-query';
+import { ApiError, withRetryScope } from './api.ts';
 
 // One key registry — screens share keys, SSE invalidation (live.ts) targets them.
 export const qk = {
@@ -25,6 +31,10 @@ export const qk = {
   sessions: ['me', 'sessions'] as const,
 };
 
+// 408 and 429 pass with time; other 4xx won't change by asking again
+const permanent = (status: number) =>
+  status >= 400 && status < 500 && status !== 408 && status !== 429;
+
 export const queryClient = new QueryClient({
   defaultOptions: {
     queries: {
@@ -32,17 +42,38 @@ export const queryClient = new QueryClient({
       gcTime: 24 * 60 * 60_000,
       // offline is a state, not an error (§2.2.10): keep showing the last data
       networkMode: 'offlineFirst',
-      retry: (n, err) =>
-        !(err instanceof ApiError && err.status >= 400 && err.status < 500) && n < 3,
+      retry: (n, err) => n < 3 && !(err instanceof ApiError && permanent(err.status)),
       refetchOnWindowFocus: true,
     },
     mutations: {
       // queued while offline, replayed on reconnect with the same Idempotency-Key
       networkMode: 'online',
-      retry: (n, err) => err instanceof ApiError && err.status === 0 && n < 3,
+      // only when the outcome is unknown; api.ts resends the same Idempotency-Key, so Core replays
+      retry: (n, err) =>
+        n < 3 &&
+        err instanceof ApiError &&
+        (err.status === 0 || err.code === 'IDEMPOTENCY_IN_PROGRESS'),
     },
   },
 });
+
+/**
+ * useMutation with retry-safe Idempotency-Keys: TanStack hands every attempt of one mutation
+ * the same context object, and api.ts keys its requests by it, so a retry after a dropped
+ * connection is replayed by Core, never applied twice. Screens import this one.
+ */
+export function useMutation<
+  TData = unknown,
+  TError = DefaultError,
+  TVariables = void,
+  TContext = unknown,
+>(options: UseMutationOptions<TData, TError, TVariables, TContext>) {
+  const fn = options.mutationFn;
+  return useQueryMutation<TData, TError, TVariables, TContext>({
+    ...options,
+    ...(fn ? { mutationFn: (v, ctx) => withRetryScope(ctx, () => fn(v, ctx)) } : {}),
+  });
+}
 
 /**
  * Optimistic write: show `patch(old)` now, hand back the way to undo it. Call `restore()` in
