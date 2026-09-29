@@ -53,13 +53,15 @@
 
   <figure class="stage">
     <div class="board">
-      <Tablet>
-        <Screen
-          key="quadro"
-          alt="O quadro de pedidos da Bolos da Nena: novos, em preparo, prontos e concluídos, cada pedido com o seu botão."
-          sizes="(max-width: 999px) 92vw, (max-width: 1280px) 76vw, 1000px"
-        />
-      </Tablet>
+      <div class="board-in">
+        <Tablet>
+          <Screen
+            key="quadro"
+            alt="O quadro de pedidos da Bolos da Nena: novos, em preparo, prontos e concluídos, cada pedido com o seu botão."
+            sizes="(max-width: 639px) 280vw, (max-width: 999px) 92vw, (max-width: 1280px) 76vw, 1000px"
+          />
+        </Tablet>
+      </div>
     </div>
     <div class="lock">
       <Phone status={false} label={lockLabel} style="--w: var(--lock-w)">
@@ -143,6 +145,41 @@
   .board {
     width: 100%;
   }
+
+  /* below the desktop layout the lock screen's empty lower half is cut away, so the story stays on the notifications */
+  @media (max-width: 999px) {
+    .lock {
+      height: calc(var(--lock-w) * 1.4);
+      overflow: hidden;
+      -webkit-mask-image: linear-gradient(#000 72%, transparent);
+      mask-image: linear-gradient(#000 72%, transparent);
+    }
+    .stage {
+      gap: 20px;
+    }
+  }
+
+  /* on phones the whole board is unreadable: a close-up of the first columns, still framed as the tablet */
+  @media (max-width: 639px) {
+    .board {
+      padding: 7px 7px 0;
+      border-radius: 22px 22px 0 0;
+      background: var(--bezel);
+      -webkit-mask-image: linear-gradient(#000 84%, transparent);
+      mask-image: linear-gradient(#000 84%, transparent);
+    }
+    .board-in {
+      /* zoom 2.9: the crop starts at the Novos column and ends a little past #28's aceitar button */
+      aspect-ratio: 1 / 1.05;
+      overflow: hidden;
+      border-radius: 15px 15px 0 0;
+    }
+    .board-in :global(.tablet) {
+      width: 290%;
+      margin: -5.2% 0 0 -56.5%;
+    }
+  }
+
   .caption {
     justify-self: start;
     display: flex;
@@ -249,7 +286,18 @@
     max-width: 30rem;
   }
   .kicker {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
     color: var(--ink-muted);
+  }
+  /* same eyebrow dash as the parts of Sua loja */
+  .kicker::before {
+    content: '';
+    width: 18px;
+    height: 2px;
+    border-radius: 2px;
+    background: currentColor;
   }
   .pause-lede {
     font-size: 1.0625rem;
@@ -349,8 +397,7 @@
       display: block;
     }
     .pause {
-      grid-template-columns: minmax(0, 30rem) minmax(0, 440px);
-      justify-content: center;
+      grid-template-columns: minmax(0, 5fr) minmax(0, 6fr);
       gap: clamp(40px, 8vw, 120px);
     }
     .pause-art :global(.dua) {

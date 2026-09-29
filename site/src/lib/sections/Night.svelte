@@ -18,7 +18,7 @@
     {
       pose: 'sucesso',
       title: 'Chega o primeiro pedido',
-      text: 'O celular apita, você aceita direto da notificação e vai pro forno. Daí em diante a loja anda com você.',
+      text: 'O celular apita, você aceita direto da notificação e começa a preparar. Daí em diante a loja anda com você.',
     },
   ];
 
@@ -29,7 +29,7 @@
     },
     {
       q: 'Quanto custa?',
-      a: 'O preço sai junto com as primeiras lojas, e vai estar escrito aqui nesta página.',
+      a: 'O preço sai junto com a abertura do cadastro. Você vê quanto custa antes de começar, sem surpresa.',
     },
     {
       q: 'Preciso entender de tecnologia?',
@@ -123,7 +123,9 @@
       <Soon tone="after" />
       <p class="follow">
         Acompanhe no Instagram:
-        <a href={site.instagram.url} rel="noopener" target="_blank">{site.instagram.handle}</a>
+        <a href={site.instagram.url} rel="noopener" target="_blank"
+          >{site.instagram.handle}<span class="sr-only"> (abre em nova aba)</span></a
+        >
       </p>
     </div>
   </div>
@@ -178,7 +180,11 @@
       radial-gradient(2px 2px at 88% 4%, var(--after-ink), transparent),
       radial-gradient(2px 2px at 41% 58%, var(--after-ink), transparent);
     background-size: 100% 900px;
-    animation: twinkle 5s ease-in-out infinite;
+  }
+  @media (prefers-reduced-motion: no-preference) {
+    .stars i:nth-child(3) {
+      animation: twinkle 5s ease-in-out infinite;
+    }
   }
   @keyframes twinkle {
     0%,
@@ -289,6 +295,21 @@
   .step-copy p {
     color: var(--ink-muted);
     max-width: 36ch;
+  }
+
+  @media (max-width: 399px) {
+    .steps {
+      --lamp: 84px;
+    }
+    .step {
+      column-gap: 16px;
+    }
+    .num {
+      left: calc(var(--lamp) - 24px);
+      width: 28px;
+      height: 28px;
+      font-size: 14px;
+    }
   }
 
   @media (min-width: 900px) {
@@ -462,7 +483,7 @@
   }
   .moment {
     margin-top: 22px;
-    font-size: clamp(2.25rem, 1.4rem + 3.6vw, 4.25rem);
+    font-size: clamp(2rem, 1.3rem + 3.6vw, 4.25rem);
     line-height: 1.06;
     color: var(--after-ink);
     text-wrap: balance;

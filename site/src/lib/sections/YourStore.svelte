@@ -32,7 +32,7 @@
   const receipt = [
     'Loja com a sua cara',
     'App de pedidos no celular',
-    'Pix direto na sua conta do Mercado Pago',
+    'Pix na sua conta do Mercado Pago',
     'Cardápio, estoque e encomendas',
     'Entrega e retirada',
     'Cupons, fidelidade e lista de espera',
@@ -157,7 +157,7 @@
     <div class="copy">
       <p class="eyebrow t-label">Quanto custa</p>
       <h3 id="preco-t" class="t-display price-t">Tudo isso numa loja só.</h3>
-      <p class="body">Estamos preparando as primeiras lojas, e o preço sai junto com elas.</p>
+      <p class="body">Da primeira pergunta do Duá ao último pedido da noite, vem tudo junto.</p>
       <Soon size="lg" note="O preço sai com as primeiras lojas." />
     </div>
 
@@ -178,7 +178,7 @@
             {/each}
           </ul>
           <p class="total">
-            <span>Total por mês</span>
+            <span>Preço</span>
             <i aria-hidden="true"></i>
             <strong>em breve</strong>
           </p>
@@ -301,6 +301,9 @@
     .open {
       grid-template-columns: minmax(0, 5fr) minmax(0, 7fr);
     }
+  }
+  /* only bleed past the column where the gutter has room for it */
+  @media (min-width: 1280px) {
     .big {
       width: 108%;
       margin-right: -8%;
@@ -336,7 +339,8 @@
     margin: 28px 0 0;
     padding: 0;
   }
-  @media (min-width: 640px) {
+  /* two columns only when the copy has the width: not while it shares the row with the phones at 1024 */
+  @media (min-width: 640px) and (max-width: 1023px), (min-width: 1280px) {
     .points {
       grid-template-columns: 1fr 1fr;
     }

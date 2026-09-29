@@ -71,7 +71,7 @@
             key="seuDia"
             alt="O início do app no fim do dia, com a loja fechada: Boa noite, {store.owner}. Seu dia: {store.salesToday}, {day.vsLastWeek}% acima do mesmo dia da semana passada; {store.ordersToday} pedidos, ticket médio de {day.avgTicket}. No resumo do dia, o campeão foi {day.bestSeller.name.toLowerCase()} ({day
               .bestSeller.qty}) e a hora mais movimentada, {day.busiestHour}."
-            sizes="(max-width: 560px) 68vw, 300px"
+            sizes="(max-width: 1199px) 60vw, 300px"
           />
         </Phone>
       </div>
@@ -96,7 +96,7 @@
         <Screen
           key="relatorios"
           alt="Relatórios da Bolos da Nena nos últimos 7 dias: vendas, pedidos, ticket médio, clientes novos e quem voltou a pedir; um gráfico de vendas por dia, o funil do olhar ao pedido, os mais vendidos e os horários de pico."
-          sizes="(max-width: 959px) 92vw, 680px"
+          sizes="(max-width: 599px) 170vw, (max-width: 959px) 92vw, 680px"
         />
       </Tablet>
     </div>
@@ -152,12 +152,13 @@
       linear-gradient(rgb(251 214 160 / 0.28), rgb(251 214 160 / 0.28)) 50% 10px / 46% 2px no-repeat,
       linear-gradient(rgb(251 214 160 / 0.18), rgb(251 214 160 / 0.18)) 50% 20px / 26% 2px no-repeat;
   }
+  /* stars stay in the right half, clear of the copy; below 1200px only beside the title */
   .stars {
     position: absolute;
     top: 250px;
     left: 50%;
     width: 100vw;
-    height: min(900px, calc(100% - 250px));
+    height: 170px;
     transform: translateX(-50%);
     background-repeat: no-repeat;
   }
@@ -170,11 +171,11 @@
       radial-gradient(circle, rgb(247 244 234 / 0.8) 0 1.4px, transparent 2px);
     background-size: 8px 8px;
     background-position:
-      8% 6%,
-      31% 2%,
-      56% 9%,
-      88% 4%,
-      72% 22%;
+      64% 8%,
+      74% 70%,
+      81% 30%,
+      90% 6%,
+      97% 52%;
   }
   .s2 {
     background-image:
@@ -186,12 +187,12 @@
       radial-gradient(circle, rgb(247 244 234 / 0.5) 0 1px, transparent 1.6px);
     background-size: 6px 6px;
     background-position:
-      18% 14%,
-      44% 18%,
-      64% 3%,
-      95% 15%,
-      4% 30%,
-      50% 40%;
+      68% 40%,
+      77% 12%,
+      86% 84%,
+      94% 28%,
+      99% 90%,
+      60% 96%;
   }
 
   /* ── the moment: copy + phone, Duá against the moon ──────────────── */
@@ -253,7 +254,9 @@
   }
 
   .art {
-    --phone-w: min(290px, 68vw);
+    --phone-w: min(290px, 60vw);
+    /* Duá's column: whatever the phone leaves, tucking 12px behind its bezel */
+    --side: min(190px, 100vw - 2 * var(--gutter) - var(--phone-w) + 12px);
     margin: 0;
     display: grid;
     justify-items: center;
@@ -262,7 +265,7 @@
   .phone {
     position: relative;
     width: var(--phone-w);
-    margin-left: clamp(56px, 22vw, 120px);
+    margin-left: calc(var(--side) - 12px);
   }
   .phone > :global(.phone) {
     position: relative;
@@ -270,13 +273,14 @@
   }
   /* a full moon behind Duá, pale enough that the dark green fur reads against it */
   .moon {
-    --d: min(250px, 66vw);
+    --d: calc(var(--side) * 1.3);
     position: absolute;
     z-index: 0;
     width: var(--d);
     aspect-ratio: 1;
-    right: calc(100% - 64px);
-    bottom: 56px;
+    /* left edge lines up with Duá's, so it never crosses the gutter */
+    right: calc(100% - var(--d) + var(--side) - 12px);
+    bottom: calc(var(--side) * 0.45);
     border-radius: 50%;
     background:
       radial-gradient(circle at 30% 34%, rgb(0 0 0 / 0.05) 0 9%, transparent 9.5%),
@@ -291,8 +295,8 @@
   .phone :global(.dua) {
     position: absolute;
     z-index: 2;
-    width: min(160px, 42vw);
-    right: calc(100% - 64px);
+    width: var(--side);
+    right: calc(100% - 12px);
     bottom: -6px;
   }
 
@@ -334,7 +338,10 @@
     color: var(--ink);
   }
 
-  @media (min-width: 960px) {
+  @media (min-width: 1200px) {
+    .stars {
+      height: min(900px, calc(100% - 250px));
+    }
     .sun {
       right: auto;
       left: 18%;
@@ -351,6 +358,9 @@
     }
     .copy {
       padding-top: calc(272px - clamp(64px, 9vw, 128px));
+    }
+    .copy .t-lede {
+      max-width: 30rem;
     }
     .art {
       --phone-w: 300px;
@@ -371,6 +381,14 @@
       right: calc(100% - 14px);
       bottom: -4px;
     }
+  }
+  /* phones: the tablet runs off the right edge (the section clips it), so the report is big enough to read */
+  @media (max-width: 599px) {
+    .reports-art {
+      width: 170%;
+    }
+  }
+  @media (min-width: 960px) {
     .reports {
       grid-template-columns: minmax(0, 5fr) minmax(0, 7fr);
       align-items: center;
