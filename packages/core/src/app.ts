@@ -2607,6 +2607,7 @@ export function createApp({
     hub: liveHub,
     presence,
     trustProxy,
+    proxyHops: Number.isInteger(proxyHops) && proxyHops >= 0 ? proxyHops : 0,
     otpSender: otpSender ?? whatsappOtpSender(sql),
     idempotency,
     storeDomain: publicStoreDomain,

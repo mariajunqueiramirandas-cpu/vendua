@@ -5,7 +5,7 @@ import { sendWhatsApp } from '../agent/channels/whatsapp.ts';
 import { getIntegration } from '../modules/integrations.ts';
 import { normalizePhone } from '../modules/customer.ts';
 import { withTenant, type Sql } from '../platform/db.ts';
-import { HttpError, UUID_RE } from '../platform/http.ts';
+import { HttpError, UUID_RE, windowCounter } from '../platform/http.ts';
 import { log } from '../platform/log.ts';
 import type { AdminVars, Merchant, Role } from './context.ts';
 
@@ -205,6 +205,10 @@ function parseCookie(v: string | undefined) {
 }
 
 /** Resolves the cookie to (tenant, merchant) or 401. Also the CSRF line for mutations. */
+// per-session backstop against a runaway client (each write takes row locks, an audit row and an SSE event);
+// the UI debounces well below this, so real use never reaches it
+const allowMutation = windowCounter({ windowMs: 60_000, max: 240 });
+
 export function adminGate(
   sql: Sql,
   opts: { trustProxy: boolean },
@@ -216,6 +220,8 @@ export function adminGate(
       // cookie-authed mutations: custom header (no simple cross-site form can set it) + same-host Origin
       if (c.req.header('x-vendua-admin') !== '1')
         throw new HttpError(403, 'CSRF', 'missing x-vendua-admin header');
+      if (!allowMutation(parsed.sessionId))
+        throw new HttpError(429, 'RATE_LIMITED', 'too many changes at once — wait a moment');
       const origin = c.req.header('origin');
       const reqHost =
         (opts.trustProxy ? c.req.header('x-forwarded-host') : undefined) ?? c.req.header('host');

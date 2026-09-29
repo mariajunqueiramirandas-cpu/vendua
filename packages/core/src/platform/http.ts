@@ -206,6 +206,38 @@ export function idempotency(
   };
 }
 
+/** Fixed-window counter keyed by string, in-memory. Returns false once `key` exceeds `max` in the window. */
+export function windowCounter(opts: { windowMs: number; max: number }) {
+  const hits = new Map<string, { count: number; resetAt: number }>();
+  let nextSweep = 0;
+  return (key: string): boolean => {
+    const now = Date.now();
+    if (now >= nextSweep) {
+      nextSweep = now + opts.windowMs;
+      for (const [k, b] of hits) if (b.resetAt <= now) hits.delete(k);
+    }
+    const b = hits.get(key);
+    if (!b || b.resetAt <= now) {
+      hits.set(key, { count: 1, resetAt: now + opts.windowMs });
+      return true;
+    }
+    return ++b.count <= opts.max;
+  };
+}
+
+/** Client IP from a trusted edge's X-Forwarded-For, skipping `proxyHops` of our own proxies from the right. */
+export function clientIp(
+  c: { req: { header(n: string): string | undefined } },
+  flags: { trustForwardedFor?: boolean; proxyHops?: number } = {},
+): string {
+  if (!flags.trustForwardedFor) return 'local';
+  const xff = c.req
+    .header('x-forwarded-for')
+    ?.split(',')
+    .map((s) => s.trim());
+  return xff?.at(-1 - (flags.proxyHops ?? 0)) ?? 'unknown';
+}
+
 /** Fixed-window per-(tenant, ip) limit, in-memory (single node) — the distributed limiter lives at the edge in prod. */
 export function rateLimit(
   opts: { windowMs: number; max: number },
