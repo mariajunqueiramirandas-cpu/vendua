@@ -1,5 +1,5 @@
 import { Lightbulb, X } from '@phosphor-icons/react';
-import { useEffect, useState, type ReactNode } from 'react';
+import { useEffect, useState, type CSSProperties, type ReactNode } from 'react';
 import { ApiError } from '../lib/api.ts';
 import { cn } from './cn.ts';
 import { Button } from './Button.tsx';
@@ -30,7 +30,15 @@ export function EmptyState({
 }
 
 /** Shaped like the content; shows only after 150 ms so fast loads don't flash (§11). */
-export function Skeleton({ className, delay = 150 }: { className?: string; delay?: number }) {
+export function Skeleton({
+  className,
+  delay = 150,
+  style,
+}: {
+  className?: string;
+  delay?: number;
+  style?: CSSProperties;
+}) {
   const [show, setShow] = useState(delay === 0);
   useEffect(() => {
     const t = setTimeout(() => setShow(true), delay);
@@ -39,7 +47,13 @@ export function Skeleton({ className, delay = 150 }: { className?: string; delay
   return (
     <div
       aria-hidden
-      className={cn('rounded-md', show ? 'skeleton' : 'bg-transparent', className)}
+      style={style}
+      className={cn(
+        // a caller's own radius (a round avatar) must win over the default
+        !/\brounded/.test(className ?? '') && 'rounded-md',
+        show ? 'skeleton' : 'bg-transparent',
+        className,
+      )}
     />
   );
 }

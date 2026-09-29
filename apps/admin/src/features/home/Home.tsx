@@ -27,6 +27,7 @@ import { Celebration, markMilestone, unseenMilestone } from '../../ui/Celebratio
 import { Sparkline } from '../../ui/charts.tsx';
 import { cn } from '../../ui/cn.ts';
 import { ErrorState, messageOf, Skeleton } from '../../ui/feedback.tsx';
+import { RowsSkeleton } from '../../ui/skeletons.tsx';
 import { HeroCard, type DayPhase } from '../../ui/HeroCard.tsx';
 import { Odometer } from '../../ui/Odometer.tsx';
 import { STATE_META } from '../../ui/StateChip.tsx';
@@ -36,6 +37,7 @@ import { statusWords, useStoreQuery } from '../store/StatusPill.tsx';
 import { StatusSheet } from '../store/StatusSheet.tsx';
 import { DeviceCard } from './DeviceCard.tsx';
 import { hasLeft } from '../onboarding/progress.ts';
+import { usePreload } from '../../app/routes.ts';
 
 export default function Home() {
   const s = useSession();
@@ -74,12 +76,12 @@ export default function Home() {
           {data ? <Hero data={data} /> : <Skeleton className="h-[340px] rounded-xl" delay={0} />}
           <Section title="Agora na loja" className="order-3 lg:order-none">
             <Presence />
-            {data ? <Feed data={data} /> : <Skeleton className="h-64" />}
+            {data ? <Feed data={data} /> : <RowsSkeleton rows={4} trailing={false} />}
           </Section>
         </div>
         <div className="contents space-y-5 lg:block lg:space-y-6">
           <Section title="Precisa de você" className="order-1 lg:order-none">
-            {data ? <Attention data={data} /> : <Skeleton className="h-40" />}
+            {data ? <Attention data={data} /> : <RowsSkeleton rows={2} />}
           </Section>
           <DeviceCard className="order-2 lg:order-none" />
           {data && data.checklist.some((c) => !c.done) ? (
@@ -88,7 +90,7 @@ export default function Home() {
             </div>
           ) : null}
           <Section title="Mais vendidos hoje" className="order-4 lg:order-none">
-            {data ? <Best data={data} /> : <Skeleton className="h-40" />}
+            {data ? <Best data={data} /> : <RowsSkeleton rows={3} avatar={false} />}
           </Section>
         </div>
       </div>
@@ -393,6 +395,7 @@ function Checklist({ items }: { items: HomeData['checklist'] }) {
 }
 
 function Feed({ data }: { data: HomeData }) {
+  const preload = usePreload();
   const [, tick] = useState(0);
   useEffect(() => {
     const i = setInterval(() => tick((n) => n + 1), 30_000);
@@ -424,6 +427,7 @@ function Feed({ data }: { data: HomeData }) {
               <li key={i}>
                 <Link
                   to={`/pedidos/${f.orderId}`}
+                  {...preload(`/pedidos/${f.orderId}`)}
                   className="flex min-h-16 items-center gap-3 px-4 py-2.5 hover:bg-hover"
                 >
                   <span

@@ -21,7 +21,7 @@ import { optimistic, qk, useMutation } from '../../lib/query.ts';
 import { Button, IconButton } from '../../ui/Button.tsx';
 import { Card } from '../../ui/Card.tsx';
 import { cn } from '../../ui/cn.ts';
-import { EmptyState, ErrorState, Hint, Loading, messageOf } from '../../ui/feedback.tsx';
+import { EmptyState, ErrorState, Hint, messageOf } from '../../ui/feedback.tsx';
 import {
   Chips,
   Field,
@@ -33,6 +33,8 @@ import {
 } from '../../ui/fields.tsx';
 import { Mascote } from '../../ui/Mascote.tsx';
 import { PageBody, PageHeader } from '../../ui/Page.tsx';
+import { usePreload } from '../../app/routes.ts';
+import { MenuSkeleton } from '../../ui/skeletons.tsx';
 import { availability, ProductTile } from '../../ui/ProductTile.tsx';
 import { Sheet } from '../../ui/Sheet.tsx';
 import { toast } from '../../ui/Toast.tsx';
@@ -277,7 +279,7 @@ export default function Menu() {
       {error && !data ? (
         <ErrorState error={error} retry={() => void refetch()} />
       ) : isPending ? (
-        <Loading />
+        <MenuSkeleton />
       ) : !cats.length ? (
         <EmptyState
           art={<Mascote pose="catalogo" />}
@@ -505,6 +507,7 @@ function ReorderGrid({
   onOpen: (p: Product) => void;
 }) {
   const qc = useQueryClient();
+  const preload = usePreload();
   const [order, setOrder] = useState<string[]>(() => cat.products.map((p) => p.id));
   const [lifted, setLifted] = useState<string | null>(null);
   const timer = useRef<ReturnType<typeof setTimeout>>();
@@ -600,6 +603,7 @@ function ReorderGrid({
               className="block w-full text-left"
               aria-label={selecting ? `selecionar ${p.name}` : `editar ${p.name}`}
               aria-pressed={selecting ? picked.has(id) : undefined}
+              {...(selecting ? {} : preload(`/cardapio/produto/${id}`))}
               onClick={(e) => {
                 if (dragged.current) {
                   e.preventDefault();
@@ -639,6 +643,7 @@ function ListRow({
   onSoldOutToday: () => void;
 }) {
   const a = availability(p);
+  const preload = usePreload();
   const [dx, setDx] = useState(0);
   const start = useRef<{ x: number; y: number; lock: 'x' | 'y' | null } | null>(null);
   return (
@@ -699,7 +704,11 @@ function ListRow({
             <img src={p.imageUrl} alt="" className="size-full object-cover" loading="lazy" />
           ) : null}
         </span>
-        <Link to={`/cardapio/produto/${p.id}`} className="min-w-0 flex-1">
+        <Link
+          to={`/cardapio/produto/${p.id}`}
+          {...preload(`/cardapio/produto/${p.id}`)}
+          className="min-w-0 flex-1"
+        >
           <span className="block truncate font-semibold">{p.name}</span>
           <span className="tnum t-body text-muted">
             {money(p.priceCents)}

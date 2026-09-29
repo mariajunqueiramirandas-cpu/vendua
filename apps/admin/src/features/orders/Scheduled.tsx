@@ -7,9 +7,10 @@ import { qk } from '../../lib/query.ts';
 import { IconButton } from '../../ui/Button.tsx';
 import { Card } from '../../ui/Card.tsx';
 import { cn } from '../../ui/cn.ts';
-import { EmptyState, ErrorState, Loading } from '../../ui/feedback.tsx';
+import { EmptyState, ErrorState } from '../../ui/feedback.tsx';
 import { Mascote } from '../../ui/Mascote.tsx';
 import { PageBody, PageHeader } from '../../ui/Page.tsx';
+import { RowsSkeleton } from '../../ui/skeletons.tsx';
 import { OrderRowView } from './OrderRowView.tsx';
 
 const WEEK = ['D', 'S', 'T', 'Q', 'Q', 'S', 'S'];
@@ -112,7 +113,7 @@ export default function Scheduled() {
           {error ? (
             <ErrorState error={error} retry={() => void refetch()} />
           ) : isPending ? (
-            <Loading lines={2} />
+            <RowsSkeleton rows={3} avatar={false} />
           ) : list.length ? (
             <Card className="overflow-hidden">
               <ul>

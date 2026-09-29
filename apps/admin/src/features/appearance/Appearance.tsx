@@ -27,9 +27,10 @@ import { useSession } from '../../lib/session.ts';
 import { Button, IconButton } from '../../ui/Button.tsx';
 import { Card } from '../../ui/Card.tsx';
 import { cn } from '../../ui/cn.ts';
-import { ErrorState, Hint, Loading, messageOf } from '../../ui/feedback.tsx';
+import { ErrorState, Hint, messageOf } from '../../ui/feedback.tsx';
 import { Segmented } from '../../ui/fields.tsx';
 import { PageBody, PageHeader } from '../../ui/Page.tsx';
+import { AppearanceSkeleton, EditorFrame, RowsSkeleton } from '../../ui/skeletons.tsx';
 import { Sheet } from '../../ui/Sheet.tsx';
 import { toast } from '../../ui/Toast.tsx';
 import { Colors, readable } from './Colors.tsx';
@@ -107,10 +108,10 @@ export default function Appearance() {
     );
   if (!data)
     return (
-      <PageBody>
+      <EditorFrame>
         <PageHeader title="Aparência" />
-        <Loading />
-      </PageBody>
+        <AppearanceSkeleton />
+      </EditorFrame>
     );
   return <Editor data={data} />;
 }
@@ -756,7 +757,7 @@ function HistorySheet({
       title={`Versões: ${PAGES.find((p) => p.id === page)?.label}`}
       description="Voltar a uma versão publica ela de novo. A atual continua no histórico."
     >
-      {!data ? <Loading lines={3} className="pt-1" /> : null}
+      {!data ? <RowsSkeleton rows={3} avatar={false} className="pt-1" /> : null}
       <ol className="divide-y divide-line pt-1">
         {rows.map((h, i) => (
           <li key={h.version} className="flex min-h-16 items-center gap-3 py-2">

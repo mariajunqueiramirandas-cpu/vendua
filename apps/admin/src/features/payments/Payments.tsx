@@ -10,9 +10,10 @@ import { useCan } from '../../lib/session.ts';
 import { Button } from '../../ui/Button.tsx';
 import { Card, Section } from '../../ui/Card.tsx';
 import { RankBars } from '../../ui/charts.tsx';
-import { ErrorState, Loading, messageOf } from '../../ui/feedback.tsx';
+import { ErrorState, messageOf } from '../../ui/feedback.tsx';
 import { Chips, Field, TextInput, Toggle } from '../../ui/fields.tsx';
 import { PageBody, PageHeader } from '../../ui/Page.tsx';
+import { SectionsSkeleton } from '../../ui/skeletons.tsx';
 import { toast } from '../../ui/Toast.tsx';
 import { useMarkPaid } from '../orders/actions.ts';
 
@@ -43,7 +44,7 @@ export default function Payments() {
     <PageBody wide>
       <PageHeader title="Pagamentos" subtitle="Como sua loja recebe." />
       {!data ? (
-        <Loading />
+        <SectionsSkeleton columns={2} />
       ) : (
         <div className="grid gap-8 lg:grid-cols-2 [&>*]:min-w-0">
           <div className="space-y-8">

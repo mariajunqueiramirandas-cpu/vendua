@@ -3,12 +3,15 @@ import { Link } from 'react-router-dom';
 import type { OrderRow } from '../../lib/api.ts';
 import { money, when } from '../../lib/format.ts';
 import { StateChip } from '../../ui/StateChip.tsx';
+import { usePreload } from '../../app/routes.ts';
 
 export function OrderRowView({ o }: { o: OrderRow }) {
+  const preload = usePreload();
   return (
     <li className="border-b border-line last:border-0">
       <Link
         to={`/pedidos/${o.id}`}
+        {...preload(`/pedidos/${o.id}`)}
         className="flex min-h-18 items-center gap-3 px-4 py-3 hover:bg-hover"
       >
         <span className="tnum w-12 shrink-0 font-display text-lg font-semibold">#{o.number}</span>

@@ -5,6 +5,7 @@ import { qk } from '../lib/query.ts';
 import { ROLE_LABEL, useSession } from '../lib/session.ts';
 import { Sheet } from '../ui/Sheet.tsx';
 import type { NAV } from './nav.ts';
+import { intent } from './routes.ts';
 import { UserMenu } from './Shell.tsx';
 import { resetClient } from '../lib/persist.ts';
 
@@ -36,6 +37,7 @@ function MoreSheet({
           <li key={n.to}>
             <NavLink
               to={n.to}
+              {...intent(qc, n.to)}
               className="flex min-h-28 flex-col justify-between rounded-lg bg-sunken p-4 transition-transform hover:bg-press active:scale-[0.98]"
             >
               <n.Icon weight="duotone" className="size-8" />

@@ -7,6 +7,13 @@ import { Card, Section } from '../../ui/Card.tsx';
 import { ColumnChart, Funnel, Heatmap, RankBars, Sparkline } from '../../ui/charts.tsx';
 import { EmptyState, Hint, Skeleton } from '../../ui/feedback.tsx';
 import {
+  FormSectionSkeleton,
+  OrderCardSkeleton,
+  RowsSkeleton,
+  StatTilesSkeleton,
+  TilesSkeleton,
+} from '../../ui/skeletons.tsx';
+import {
   Chips,
   Field,
   MoneyField,
@@ -430,6 +437,18 @@ export default function UiReference() {
               <A title={k} />
             </div>
           ))}
+        </div>
+      </Block>
+
+      <Block title="Carregando: esqueletos com a forma da tela">
+        <div className="grid gap-6 lg:grid-cols-2 [&>*]:min-w-0">
+          <OrderCardSkeleton />
+          <RowsSkeleton rows={3} />
+          <StatTilesSkeleton count={3} />
+          <FormSectionSkeleton fields={2} />
+        </div>
+        <div className="mt-6">
+          <TilesSkeleton count={6} />
         </div>
       </Block>
 

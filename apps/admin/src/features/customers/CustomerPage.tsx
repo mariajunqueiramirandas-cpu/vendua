@@ -9,10 +9,11 @@ import { useCan, useSession } from '../../lib/session.ts';
 import { Button } from '../../ui/Button.tsx';
 import { Card, Section } from '../../ui/Card.tsx';
 import { cn } from '../../ui/cn.ts';
-import { ErrorState, Loading, messageOf } from '../../ui/feedback.tsx';
+import { ErrorState, messageOf } from '../../ui/feedback.tsx';
 import { Field, TextInput } from '../../ui/fields.tsx';
 import { HoldButton } from '../../ui/HoldButton.tsx';
 import { PageBody, PageHeader } from '../../ui/Page.tsx';
+import { DetailSkeleton } from '../../ui/skeletons.tsx';
 import { Sheet } from '../../ui/Sheet.tsx';
 import { toast } from '../../ui/Toast.tsx';
 import { OrderRowView } from '../orders/OrderRowView.tsx';
@@ -37,7 +38,7 @@ export default function CustomerPage() {
     return (
       <PageBody>
         <PageHeader title="Cliente" back="/clientes" />
-        <Loading />
+        <DetailSkeleton />
       </PageBody>
     );
   const c = data.customer;

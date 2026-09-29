@@ -18,7 +18,7 @@ import { dateShort, hhmm, isoDate, money, phone, waDigits } from '../../lib/form
 import { qk, useMutation } from '../../lib/query.ts';
 import { Button, IconButton } from '../../ui/Button.tsx';
 import { Card, Section } from '../../ui/Card.tsx';
-import { ErrorState, Loading, messageOf } from '../../ui/feedback.tsx';
+import { ErrorState, messageOf } from '../../ui/feedback.tsx';
 import {
   Chips,
   CommitInput,
@@ -34,6 +34,7 @@ import {
   useSaveState,
 } from '../../ui/fields.tsx';
 import { PageBody, PageHeader } from '../../ui/Page.tsx';
+import { SectionsSkeleton } from '../../ui/skeletons.tsx';
 import { PhotoField } from '../../ui/PhotoField.tsx';
 import { Sheet } from '../../ui/Sheet.tsx';
 import { fromWeek, TimeRangeField, toWeek, type WeekModel } from '../../ui/TimeRangeField.tsx';
@@ -54,7 +55,7 @@ export default function Store() {
     return (
       <PageBody>
         <PageHeader title="Loja" />
-        <Loading />
+        <SectionsSkeleton columns={2} />
       </PageBody>
     );
   return <StoreEditor s={data} />;

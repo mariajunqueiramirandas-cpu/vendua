@@ -102,6 +102,14 @@ dev it isn't registered.
   (reads 20 s, writes 30 s, uploads 60 s) rather than hang on a weak signal.
 - **Phones first.** Every screen works at 375px with thumb-reachable actions.
   Check 375 in the shots before anything else.
-- Keep the shell small: sheets and rarely used screens are `lazy()`.
+- Keep the shell small: screens and sheets are lazy, through `app/routes.ts`. A screen
+  there has its chunk (`chunks`, wrapped by `screen()` so a chunk that's already here renders
+  without suspending), the query it opens with, and a skeleton in `app/routeSkeletons.tsx`.
+  After the first screen the shell fetches every allowed screen's code while idle (not on
+  data-saver or 2G), and `usePreload()` / `intent()` on a link start the chunk and the data
+  on hover, touch or focus. A new screen goes in all three places.
+- **Loading states have the screen's shape** (`ui/skeletons.tsx`: rows, tiles, board, form
+  sections, stats, detail). Lists keep their rows while a new search loads; a detail opens
+  with what a list already had (an order from the board) and fills in.
 - **Sign-out and store switches** call `resetClient(qc)`, never `qc.clear()` alone: the
   persisted cache must go with the session.

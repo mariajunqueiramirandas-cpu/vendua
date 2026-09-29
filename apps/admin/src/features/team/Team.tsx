@@ -7,10 +7,11 @@ import { optimistic, qk, useMutation } from '../../lib/query.ts';
 import { ROLE_LABEL, useCan, useSession } from '../../lib/session.ts';
 import { Button } from '../../ui/Button.tsx';
 import { Card, Section } from '../../ui/Card.tsx';
-import { ErrorState, Loading, messageOf } from '../../ui/feedback.tsx';
+import { ErrorState, messageOf } from '../../ui/feedback.tsx';
 import { Chips, Field, PhoneInput, TextInput } from '../../ui/fields.tsx';
 import { HoldButton } from '../../ui/HoldButton.tsx';
 import { PageBody, PageHeader } from '../../ui/Page.tsx';
+import { RowsSkeleton } from '../../ui/skeletons.tsx';
 import { Sheet } from '../../ui/Sheet.tsx';
 import { toast } from '../../ui/Toast.tsx';
 
@@ -44,7 +45,7 @@ export default function Team() {
           {error && !data ? (
             <ErrorState error={error} retry={() => void refetch()} />
           ) : !data ? (
-            <Loading lines={2} />
+            <RowsSkeleton rows={3} />
           ) : (
             <Card className="divide-y divide-line">
               {data.members.map((m) => (
@@ -259,7 +260,7 @@ function Activity() {
   return (
     <Section title="Quem mudou o quê" hint="Tudo o que a equipe fez no painel.">
       {list.isPending ? (
-        <Loading lines={3} />
+        <RowsSkeleton rows={5} avatar={false} />
       ) : rows.length ? (
         <Card className="overflow-hidden">
           <ol className="divide-y divide-line">

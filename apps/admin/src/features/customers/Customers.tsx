@@ -7,10 +7,12 @@ import { ago, money, num, phone } from '../../lib/format.ts';
 import { Button } from '../../ui/Button.tsx';
 import { Card } from '../../ui/Card.tsx';
 import { cn } from '../../ui/cn.ts';
-import { EmptyState, ErrorState, Loading } from '../../ui/feedback.tsx';
+import { EmptyState, ErrorState } from '../../ui/feedback.tsx';
 import { Chips, TextInput } from '../../ui/fields.tsx';
 import { Mascote } from '../../ui/Mascote.tsx';
 import { PageBody, PageHeader } from '../../ui/Page.tsx';
+import { RowsSkeleton } from '../../ui/skeletons.tsx';
+import { usePreload } from '../../app/routes.ts';
 
 type Sort = 'recent' | 'value' | 'orders';
 
@@ -18,6 +20,7 @@ export default function Customers() {
   const [q, setQ] = useState('');
   const [debounced, setDebounced] = useState('');
   const [sort, setSort] = useState<Sort>('recent');
+  const preload = usePreload();
   useEffect(() => {
     const t = setTimeout(() => setDebounced(q.trim()), 200);
     return () => clearTimeout(t);
@@ -76,7 +79,7 @@ export default function Customers() {
       {list.error ? (
         <ErrorState error={list.error} retry={() => void list.refetch()} />
       ) : list.isPending ? (
-        <Loading />
+        <RowsSkeleton rows={6} />
       ) : rows.length ? (
         <>
           <Card
@@ -90,6 +93,7 @@ export default function Customers() {
               <Link
                 key={c.phone}
                 to={`/clientes/${c.phone}`}
+                {...preload(`/clientes/${c.phone}`)}
                 className="flex min-h-18 items-center gap-3 px-4 py-3 hover:bg-hover"
               >
                 <span className="grid size-11 shrink-0 place-items-center rounded-full bg-sunken font-display font-semibold">

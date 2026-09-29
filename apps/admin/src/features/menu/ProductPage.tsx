@@ -23,7 +23,7 @@ import { Button, IconButton } from '../../ui/Button.tsx';
 import { Card } from '../../ui/Card.tsx';
 import { cn } from '../../ui/cn.ts';
 import { Disclosure } from '../../ui/Disclosure.tsx';
-import { ErrorState, Loading, messageOf } from '../../ui/feedback.tsx';
+import { ErrorState, messageOf } from '../../ui/feedback.tsx';
 import {
   Chips,
   CommitInput,
@@ -37,6 +37,7 @@ import {
   Toggle,
   useSaveState,
 } from '../../ui/fields.tsx';
+import { ProductSkeleton } from '../../ui/skeletons.tsx';
 import { PageBody, PageHeader } from '../../ui/Page.tsx';
 import { PhotoField } from '../../ui/PhotoField.tsx';
 import { availability } from '../../ui/ProductTile.tsx';
@@ -65,7 +66,7 @@ export default function ProductPage() {
     return (
       <PageBody>
         <PageHeader title="Produto" back="/cardapio" />
-        <Loading />
+        <ProductSkeleton />
       </PageBody>
     );
   return (

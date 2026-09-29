@@ -19,7 +19,7 @@ import { useSession } from '../../lib/session.ts';
 import { Button } from '../../ui/Button.tsx';
 import { Card, Section } from '../../ui/Card.tsx';
 import { cn } from '../../ui/cn.ts';
-import { EmptyState, ErrorState, Loading, messageOf } from '../../ui/feedback.tsx';
+import { EmptyState, ErrorState, messageOf } from '../../ui/feedback.tsx';
 import {
   Chips,
   Field,
@@ -34,6 +34,7 @@ import {
 import { Mascote } from '../../ui/Mascote.tsx';
 import { NoPhoto } from '../../ui/illustrations.tsx';
 import { PageBody, PageHeader } from '../../ui/Page.tsx';
+import { SectionsSkeleton } from '../../ui/skeletons.tsx';
 import { Sheet } from '../../ui/Sheet.tsx';
 import { toast } from '../../ui/Toast.tsx';
 import { shareCard } from './shareCard.ts';
@@ -50,7 +51,7 @@ export default function Marketing() {
     <PageBody wide>
       <PageHeader title="Marketing" subtitle="Traga gente nova e faça quem já comprou voltar." />
       {!data ? (
-        <Loading />
+        <SectionsSkeleton columns={2} />
       ) : (
         <div className="grid gap-8 lg:grid-cols-2 [&>*]:min-w-0">
           <div className="space-y-8">

@@ -6,10 +6,11 @@ import { isoDate } from '../../lib/format.ts';
 import { Button } from '../../ui/Button.tsx';
 import { Card } from '../../ui/Card.tsx';
 import { cn } from '../../ui/cn.ts';
-import { EmptyState, ErrorState, Loading } from '../../ui/feedback.tsx';
+import { EmptyState, ErrorState } from '../../ui/feedback.tsx';
 import { Chips, TextInput } from '../../ui/fields.tsx';
 import { Mascote } from '../../ui/Mascote.tsx';
 import { PageBody, PageHeader } from '../../ui/Page.tsx';
+import { RowsSkeleton } from '../../ui/skeletons.tsx';
 import { OrderRowView } from './OrderRowView.tsx';
 
 type Period = 'hoje' | '7d' | '30d' | 'tudo';
@@ -84,7 +85,7 @@ export default function History() {
       {list.error ? (
         <ErrorState error={list.error} retry={() => void list.refetch()} />
       ) : list.isPending ? (
-        <Loading />
+        <RowsSkeleton rows={7} avatar={false} />
       ) : rows.length ? (
         <>
           <Card

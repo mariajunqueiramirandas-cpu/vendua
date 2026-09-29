@@ -6,8 +6,9 @@ import { dateShort } from '../../lib/format.ts';
 import { qk } from '../../lib/query.ts';
 import { Button } from '../../ui/Button.tsx';
 import { Card, Section } from '../../ui/Card.tsx';
-import { ErrorState, Loading } from '../../ui/feedback.tsx';
+import { ErrorState } from '../../ui/feedback.tsx';
 import { PageBody, PageHeader } from '../../ui/Page.tsx';
+import { SectionsSkeleton } from '../../ui/skeletons.tsx';
 import { toast } from '../../ui/Toast.tsx';
 
 const PLAN: Record<string, string> = {
@@ -29,7 +30,7 @@ export default function Account() {
     <PageBody>
       <PageHeader title="Conta e plano" />
       {!data ? (
-        <Loading />
+        <SectionsSkeleton />
       ) : (
         <div className="space-y-8">
           <Section title="Seu plano">
