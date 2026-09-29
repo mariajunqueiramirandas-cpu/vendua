@@ -52,10 +52,18 @@ model, migrations, tokens, compat matrix), `packages/loader` (`v.js`), `packages
 
 ## Subagents
 
-Subagents run on Sonnet 5.5 at low effort (`.claude/settings.json`); only their final report
-enters your context. Agents: `test-runner` and `invariant-reviewer` (this repo), `Explore`
-(read-only search), `Plan`, `general-purpose` (can edit). Check these triggers mid-task too,
-not only at the start:
+Subagents run on Sonnet 5.5 at low effort (`.claude/settings.json`) unless their definition
+pins a model; only their final report enters your context. Agents: `test-runner`,
+`invariant-reviewer` and `frontend-designer` (Opus 5.5, medium effort) in this repo, `Explore`
+(read-only search), `Plan`, `general-purpose` (can edit).
+
+UI and frontend design work is always done by Opus 5.5: screens, components, layout, styling,
+responsive or dark-mode work and visual polish in `apps/control`, `apps/admin`,
+`storefronts/*`, `packages/ui-defaults` or `site/`. If this session runs on Opus 5.5 you may do
+it yourself; on any other model, hand it to `frontend-designer`. Never give design or UI edits
+to `general-purpose` or `Explore` (Sonnet); they can still research or do non-visual work.
+
+Check these triggers mid-task too, not only at the start:
 
 - About to run a suite, a multi-workspace `bun run check`, e2e or read a long log → `test-runner`.
 - About to open a third file just to answer "where/how is X done" → `Explore`.
@@ -66,6 +74,8 @@ not only at the start:
 Splitting a task that spans areas (e.g. Core route + admin screen + kernel export):
 
 - Research in parallel — one agent per area, all in one message — then decide the design yourself.
+- The UI part of a mixed task goes to `frontend-designer` (unless you're on Opus 5.5), with the
+  API shape it will consume settled first.
 - Edits: do them yourself, or give parallel `general-purpose` agents disjoint file sets
   (never two on one file); run the checks once all are back.
 - Don't split when each step needs the previous step's details, or the whole thing is a few edits.

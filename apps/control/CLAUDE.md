@@ -10,3 +10,5 @@
 - Every list gets a real phone layout (`DataList` `mobileRow`); check 375px for overflow.
 - Prod: Core's Docker image builds `apps/control` and serves `dist/` at `/control/`
   (Dokploy compose; `crm` nginx proxies `/control` to core).
+- Visual and UI design work here is done by Opus 5.5: yourself if this session runs on Opus
+  5.5, otherwise the `frontend-designer` agent — never a Sonnet subagent.
