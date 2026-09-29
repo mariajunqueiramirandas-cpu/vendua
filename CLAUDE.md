@@ -50,6 +50,20 @@ model, migrations, tokens, compat matrix), `packages/loader` (`v.js`), `packages
 - `.claude/settings.json` blocks reading `bun.lock` and build output (`dist/`, `qa-report/`)
   and runs prettier on every file Claude writes.
 
+## Subagents
+
+Subagents run on Sonnet 5.5 (`.claude/settings.json`); only their final report enters your
+context. Delegate when the work is noisy or wide and you need the conclusion, not the output:
+
+- Test runs — the `test-runner` agent runs a suite and returns only failures with causes.
+- Searches across many files or areas ("where is X handled across Core, kernel and the apps?"),
+  and reading the huge files above to answer one question — use `Explore`.
+- Independent investigations in parallel (several agents in one message).
+
+Do it yourself when you already know the file or symbol, for a single grep, and for edits
+that depend on this conversation. A subagent sees none of the conversation: give it paths,
+the goal and the answer format ("under 200 words, file:line refs"). Don't redo its search.
+
 ## PRs
 
 No automated reviewer runs on PRs — don't wait for review comments. Once CI is green the PR
