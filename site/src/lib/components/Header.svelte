@@ -71,7 +71,7 @@
     <details class="menu" bind:this={menu}>
       <summary aria-label="Seções da página"><span class="lines" aria-hidden="true"></span></summary
       >
-      <nav aria-label="Seções">
+      <nav aria-label="Seções (menu)">
         <ul class="sheet">
           {#each links as l (l.href)}
             <li><a href={href(l.href)} onclick={() => (menu.open = false)}>{l.label}</a></li>
