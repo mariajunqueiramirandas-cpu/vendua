@@ -11,17 +11,17 @@ import {
   Trash,
   X,
 } from '@phosphor-icons/react';
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { api, type Category, type Product } from '../../lib/api.ts';
 import { money } from '../../lib/format.ts';
 import { haptic } from '../../lib/haptics.ts';
-import { optimistic, qk } from '../../lib/query.ts';
+import { optimistic, qk, useMutation } from '../../lib/query.ts';
 import { Button, IconButton } from '../../ui/Button.tsx';
 import { Card } from '../../ui/Card.tsx';
 import { cn } from '../../ui/cn.ts';
-import { EmptyState, ErrorState, Hint, Loading, messageOf } from '../../ui/feedback.tsx';
+import { EmptyState, ErrorState, Hint, messageOf } from '../../ui/feedback.tsx';
 import {
   Chips,
   Field,
@@ -33,6 +33,8 @@ import {
 } from '../../ui/fields.tsx';
 import { Mascote } from '../../ui/Mascote.tsx';
 import { PageBody, PageHeader } from '../../ui/Page.tsx';
+import { usePreload } from '../../app/routes.ts';
+import { MenuSkeleton } from '../../ui/skeletons.tsx';
 import { availability, ProductTile } from '../../ui/ProductTile.tsx';
 import { Sheet } from '../../ui/Sheet.tsx';
 import { toast } from '../../ui/Toast.tsx';
@@ -277,7 +279,7 @@ export default function Menu() {
       {error && !data ? (
         <ErrorState error={error} retry={() => void refetch()} />
       ) : isPending ? (
-        <Loading />
+        <MenuSkeleton />
       ) : !cats.length ? (
         <EmptyState
           art={<Mascote pose="catalogo" />}
@@ -505,17 +507,26 @@ function ReorderGrid({
   onOpen: (p: Product) => void;
 }) {
   const qc = useQueryClient();
+  const preload = usePreload();
   const [order, setOrder] = useState<string[]>(() => cat.products.map((p) => p.id));
   const [lifted, setLifted] = useState<string | null>(null);
   const timer = useRef<ReturnType<typeof setTimeout>>();
   const origin = useRef<{ x: number; y: number } | null>(null);
   const dragged = useRef(false);
-  useEffect(() => setOrder(cat.products.map((p) => p.id)), [cat.products]);
+  // a refetch mid-drag (focus, a live event) must not yank the tile out from under the finger
+  const holding = useRef(false);
+  holding.current = !!lifted;
+  useEffect(() => {
+    if (!holding.current) setOrder(cat.products.map((p) => p.id));
+  }, [cat.products]);
   const byId = useMemo(() => new Map(cat.products.map((p) => [p.id, p])), [cat.products]);
   const save = useMutation({
     mutationFn: (ids: string[]) => api.orderProducts(cat.id, ids),
     onSuccess: () => void qc.invalidateQueries({ queryKey: qk.catalog }),
-    onError: (e) => toast.error(messageOf(e)),
+    onError: (e) => {
+      setOrder(cat.products.map((p) => p.id));
+      toast.error(messageOf(e));
+    },
   });
 
   const down = (id: string, e: React.PointerEvent) => {
@@ -592,6 +603,7 @@ function ReorderGrid({
               className="block w-full text-left"
               aria-label={selecting ? `selecionar ${p.name}` : `editar ${p.name}`}
               aria-pressed={selecting ? picked.has(id) : undefined}
+              {...(selecting ? {} : preload(`/cardapio/produto/${id}`))}
               onClick={(e) => {
                 if (dragged.current) {
                   e.preventDefault();
@@ -631,6 +643,7 @@ function ListRow({
   onSoldOutToday: () => void;
 }) {
   const a = availability(p);
+  const preload = usePreload();
   const [dx, setDx] = useState(0);
   const start = useRef<{ x: number; y: number; lock: 'x' | 'y' | null } | null>(null);
   return (
@@ -691,7 +704,11 @@ function ListRow({
             <img src={p.imageUrl} alt="" className="size-full object-cover" loading="lazy" />
           ) : null}
         </span>
-        <Link to={`/cardapio/produto/${p.id}`} className="min-w-0 flex-1">
+        <Link
+          to={`/cardapio/produto/${p.id}`}
+          {...preload(`/cardapio/produto/${p.id}`)}
+          className="min-w-0 flex-1"
+        >
           <span className="block truncate font-semibold">{p.name}</span>
           <span className="tnum t-body text-muted">
             {money(p.priceCents)}
@@ -902,13 +919,18 @@ function ImportSheet({
   useEffect(() => setCat((c) => c || cats[0]?.id || ''), [cats]);
   useEffect(() => {
     if (!text.trim()) return setItems([]);
+    // a slow preview for older text must not replace the newer one
+    let stale = false;
     const t = setTimeout(() => {
       api.importPreview(text).then(
-        (r) => setItems(r.items),
-        () => setItems([]),
+        (r) => !stale && setItems(r.items),
+        () => !stale && setItems([]),
       );
     }, 300);
-    return () => clearTimeout(t);
+    return () => {
+      stale = true;
+      clearTimeout(t);
+    };
   }, [text]);
   const run = useMutation({
     mutationFn: () => api.importProducts(text, cat),

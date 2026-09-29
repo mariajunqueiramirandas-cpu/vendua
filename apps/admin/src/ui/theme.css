@@ -604,6 +604,14 @@
 .animate-panel-in {
   animation: panel-in var(--duration-smooth) var(--ease-soft) both;
 }
+/* Duá on a dark ground sits on a cream disc (brand/mascote rules): the dusk hero, and Noite */
+.dua-disc {
+  border-radius: 9999px;
+}
+.dua-disc[data-dark],
+[data-theme='noite'] .dua-disc {
+  background: #f7f4ea;
+}
 .skeleton {
   background: linear-gradient(
     90deg,

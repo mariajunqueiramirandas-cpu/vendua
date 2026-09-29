@@ -45,12 +45,20 @@ The admin is meant to live on the merchant's home screen. What that takes, and w
   `vite.config.ts`). The build prepends `VERSION` (a hash of `dist/`) and `PRECACHE`
   (the shell, every route chunk, the pt-BR fonts, icons), so every screen opens offline
   and a deploy is one atomic version. A new version waits; the app shows "Tem uma versão
-  nova · atualizar" (`lib/pwa.ts`), and the old version keeps working meanwhile. Product
+  nova · atualizar" (`lib/pwa.ts`), and the old version keeps working meanwhile. It looks
+  for one on return, hourly, and whenever the live stream comes back after Core went away
+  (a deploy); the sign-in screen takes a new version by itself (nothing to lose there). Product
   photos (`/v1/media`) are cached stale-while-revalidate; `/admin/v1` is never cached by
   the worker.
 - **Last-known data** (`lib/persist.ts`): the query cache is saved to IndexedDB, so a cold
   start (even offline) opens straight to the board. Sign-out and store switches go
-  through `resetClient()`, which wipes it; a 401 wipes it too.
+  through `resetClient()`, which wipes it; a 401 wipes it too, along with the in-memory
+  cache and any write queued offline.
+- **Signed out from under the app** (sair on another device, encerrar sessão, removed from
+  the team, a redeploy with a fresh database): the live stream re-checks the session on
+  every 20 s beat and sends `signedout`, and a stream Core refuses makes the app re-check
+  `/session`; either way the open app drops to sign-in without a refresh. A failed re-check
+  that isn't a 401 (Core mid-deploy, offline) keeps the app on its last session.
 - **Manifest** (`public/manifest.webmanifest`): `id`, `launch_handler` (focus-existing;
   the open window routes the launch URL), shortcuts with icons (Pedidos, Cardápio, Novo
   produto → `/cardapio?novo=1`), store screenshots, a monochrome badge, and a
@@ -82,13 +90,26 @@ dev it isn't registered.
   `/_ui` is the living reference; add new components there.
 - **Data:** keys come from `qk` in `src/lib/query.ts`. The cache stores the raw
   API response and screens unwrap it with `select`. `src/lib/live.ts` maps SSE
-  topics to invalidations. Mutations pause while offline.
+  topics to invalidations, batched per burst; a reconnect refetches what's on
+  screen, and a stream silent past Core's 20 s `ping` is reopened. Mutations
+  pause while offline.
 - **Money** is integer cents from Core. The client formats (`lib/format.ts`) and
   never totals.
 - **Mutations** go through `lib/api.ts`, which adds the `x-vendua-admin` header
-  and an `Idempotency-Key`.
+  and an `Idempotency-Key`. Use `useMutation` from `lib/query.ts`, not TanStack's:
+  a mutation's retries (dropped connection, timeout, `IDEMPOTENCY_IN_PROGRESS`)
+  resend its key, so Core replays instead of applying it twice. Requests time out
+  (reads 20 s, writes 30 s, uploads 60 s) rather than hang on a weak signal.
 - **Phones first.** Every screen works at 375px with thumb-reachable actions.
   Check 375 in the shots before anything else.
-- Keep the shell small: sheets and rarely used screens are `lazy()`.
+- Keep the shell small: screens and sheets are lazy, through `app/routes.ts`. A screen
+  there has its chunk (`chunks`, wrapped by `screen()` so a chunk that's already here renders
+  without suspending), the query it opens with, and a skeleton in `app/routeSkeletons.tsx`.
+  After the first screen the shell fetches every allowed screen's code while idle (not on
+  data-saver or 2G), and `usePreload()` / `intent()` on a link start the chunk and the data
+  on hover, touch or focus. A new screen goes in all three places.
+- **Loading states have the screen's shape** (`ui/skeletons.tsx`: rows, tiles, board, form
+  sections, stats, detail). Lists keep their rows while a new search loads; a detail opens
+  with what a list already had (an order from the board) and fills in.
 - **Sign-out and store switches** call `resetClient(qc)`, never `qc.clear()` alone: the
   persisted cache must go with the session.

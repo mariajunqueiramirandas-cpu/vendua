@@ -1,18 +1,19 @@
-import { CheckCircle, Copy, CreditCard, Money, PixLogo, Sparkle } from '@phosphor-icons/react';
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { Copy, CreditCard, Money, PixLogo, Sparkle } from '@phosphor-icons/react';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import QRCode from 'qrcode';
 import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { api, type Payments as PaymentsData, type PayMethod } from '../../lib/api.ts';
 import { ago, money } from '../../lib/format.ts';
-import { optimistic, qk } from '../../lib/query.ts';
+import { optimistic, qk, useMutation } from '../../lib/query.ts';
 import { useCan } from '../../lib/session.ts';
 import { Button } from '../../ui/Button.tsx';
 import { Card, Section } from '../../ui/Card.tsx';
 import { RankBars } from '../../ui/charts.tsx';
-import { ErrorState, Loading, messageOf } from '../../ui/feedback.tsx';
+import { DuaNote, ErrorState, messageOf } from '../../ui/feedback.tsx';
 import { Chips, Field, TextInput, Toggle } from '../../ui/fields.tsx';
 import { PageBody, PageHeader } from '../../ui/Page.tsx';
+import { SectionsSkeleton } from '../../ui/skeletons.tsx';
 import { toast } from '../../ui/Toast.tsx';
 import { useMarkPaid } from '../orders/actions.ts';
 
@@ -43,7 +44,7 @@ export default function Payments() {
     <PageBody wide>
       <PageHeader title="Pagamentos" subtitle="Como sua loja recebe." />
       {!data ? (
-        <Loading />
+        <SectionsSkeleton columns={2} />
       ) : (
         <div className="grid gap-8 lg:grid-cols-2 [&>*]:min-w-0">
           <div className="space-y-8">
@@ -113,15 +114,9 @@ function Awaiting({ data }: { data: PaymentsData }) {
   const paid = useMarkPaid();
   if (!data.awaitingPix.length)
     return (
-      <Card className="flex items-center gap-4 p-5">
-        <CheckCircle weight="duotone" className="size-10 shrink-0 text-success" />
-        <div>
-          <p className="font-semibold">Nenhum Pix para conferir</p>
-          <p className="t-body text-muted">
-            Quando chegar um pedido pago com Pix, ele aparece aqui até você confirmar.
-          </p>
-        </div>
-      </Card>
+      <DuaNote pose="avatar-feliz" title="Nenhum Pix para conferir">
+        Quando chegar um pedido pago com Pix, ele aparece aqui até você confirmar.
+      </DuaNote>
     );
   return (
     <Section title="Pix para conferir" hint="Confira no app do seu banco e marque como pago.">
@@ -271,11 +266,9 @@ function PixCard({ data, canEdit }: { data: PaymentsData; canEdit: boolean }) {
     );
   if (!canEdit)
     return (
-      <Card className="p-5">
-        <p className="t-body text-muted">
-          Nenhuma chave cadastrada. Peça para quem é dono da loja cadastrar.
-        </p>
-      </Card>
+      <DuaNote pose="pagamento" title="Nenhuma chave Pix ainda">
+        Peça para quem é dono da loja cadastrar.
+      </DuaNote>
     );
   return (
     <Card className="space-y-5 p-5">

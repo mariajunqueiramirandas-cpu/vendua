@@ -1,9 +1,10 @@
 import { Lightbulb, X } from '@phosphor-icons/react';
-import { useEffect, useState, type ReactNode } from 'react';
+import { useEffect, useState, type CSSProperties, type ReactNode } from 'react';
 import { ApiError } from '../lib/api.ts';
 import { cn } from './cn.ts';
 import { Button } from './Button.tsx';
-import { Mascote } from './Mascote.tsx';
+import { Card } from './Card.tsx';
+import { Mascote, type Pose } from './Mascote.tsx';
 
 /** Illustration + one sentence + one action — never a bare "Nenhum item" (§2.2.2). */
 export function EmptyState({
@@ -29,8 +30,71 @@ export function EmptyState({
   );
 }
 
+/** Duá beside a short message: the calm states inside a screen (all done, nothing waiting). */
+export function DuaNote({
+  pose,
+  title,
+  children,
+  action,
+  className,
+}: {
+  pose: Pose;
+  title?: ReactNode;
+  children?: ReactNode;
+  action?: ReactNode;
+  className?: string;
+}) {
+  return (
+    <Card className={cn('flex items-center gap-4 p-4 pr-5', className)}>
+      <span className="dua-disc grid size-[76px] shrink-0 place-items-center">
+        <Mascote pose={pose} size={72} className="size-[72px]" />
+      </span>
+      <div className="min-w-0">
+        {title ? <p className="font-semibold">{title}</p> : null}
+        {children ? <div className="t-body text-muted">{children}</div> : null}
+        {action ? <div className="mt-3">{action}</div> : null}
+      </div>
+    </Card>
+  );
+}
+
+/** The app opening (the session check, the sign-in's code): Duá after a beat, so a fast
+ *  start never flashes it. */
+export function Splash({ text = 'Abrindo sua loja…' }: { text?: string }) {
+  const [show, setShow] = useState(false);
+  useEffect(() => {
+    const t = setTimeout(() => setShow(true), 300);
+    return () => clearTimeout(t);
+  }, []);
+  return (
+    <div
+      role="status"
+      aria-busy
+      className="grid min-h-dvh place-items-center px-6"
+      aria-label={text}
+    >
+      {show ? (
+        <div className="animate-fade-up flex flex-col items-center text-center">
+          <span className="dua-disc grid size-44 place-items-center">
+            <Mascote pose="carregando" size={160} className="w-40" />
+          </span>
+          <p className="t-body mt-3 text-muted">{text}</p>
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
 /** Shaped like the content; shows only after 150 ms so fast loads don't flash (§11). */
-export function Skeleton({ className, delay = 150 }: { className?: string; delay?: number }) {
+export function Skeleton({
+  className,
+  delay = 150,
+  style,
+}: {
+  className?: string;
+  delay?: number;
+  style?: CSSProperties;
+}) {
   const [show, setShow] = useState(delay === 0);
   useEffect(() => {
     const t = setTimeout(() => setShow(true), delay);
@@ -39,7 +103,13 @@ export function Skeleton({ className, delay = 150 }: { className?: string; delay
   return (
     <div
       aria-hidden
-      className={cn('rounded-md', show ? 'skeleton' : 'bg-transparent', className)}
+      style={style}
+      className={cn(
+        // a caller's own radius (a round avatar) must win over the default
+        !/\brounded/.test(className ?? '') && 'rounded-md',
+        show ? 'skeleton' : 'bg-transparent',
+        className,
+      )}
     />
   );
 }
@@ -69,6 +139,7 @@ export function Loading({
 /** Errors say what happened, in words, and how to fix it. */
 export function messageOf(err: unknown): string {
   if (err instanceof ApiError) {
+    if (err.code === 'TIMEOUT') return 'A conexão está lenta. Confira a internet e tente de novo.';
     if (err.status === 0) return 'Sem conexão. Confira a internet e tente de novo.';
     if (err.status === 403)
       return 'Seu acesso não permite fazer isso. Peça para quem é dono da loja.';
@@ -84,6 +155,7 @@ const FRIENDLY: Record<string, string> = {
   INVALID_CODE: 'Código errado ou vencido. Confira ou peça outro.',
   INVALID_PHONE: 'Digite o celular com DDD, como (22) 99999-0000.',
   REASON_REQUIRED: 'Escolha um motivo para avisar o cliente.',
+  IDEMPOTENCY_IN_PROGRESS: 'Ainda estamos salvando isso. Espere um instante.',
   INVALID_ORDER_TRANSITION: 'Esse pedido já mudou. A tela foi atualizada.',
   CATEGORY_NOT_EMPTY: 'Essa categoria ainda tem produtos. Mova ou esconda eles antes.',
   COUPON_EXISTS: 'Já existe um cupom com esse código.',

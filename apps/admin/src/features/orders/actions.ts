@@ -1,9 +1,9 @@
-import { useMutation, useQueryClient } from '@tanstack/react-query';
+import { useQueryClient } from '@tanstack/react-query';
 import { api, type Board, type Order, type OrderState } from '../../lib/api.ts';
 import { clock, money, phone, whatsappLink } from '../../lib/format.ts';
 import { haptic } from '../../lib/haptics.ts';
 import { markOrdersSeen } from '../../lib/live.ts';
-import { optimistic, qk } from '../../lib/query.ts';
+import { optimistic, qk, useMutation } from '../../lib/query.ts';
 import { messageOf } from '../../ui/feedback.tsx';
 import { toast } from '../../ui/Toast.tsx';
 
@@ -17,10 +17,22 @@ const DONE_TOAST: Partial<Record<OrderState, (o: Order) => string>> = {
   refunded: (o) => `#${o.number} marcado como estornado`,
 };
 
+const TRANSITION = ['orders', 'transition'] as const;
+type OrderData = { customer: unknown; order: Order };
+
 /** Advance an order with an optimistic board update; offline it queues (same key on replay). */
 export function useTransition() {
   const qc = useQueryClient();
+  // Several cards can be in flight at once (a busy kitchen taps fast): each touches only its own
+  // order, so one failing or landing never snaps another back to its old lane.
+  const put = (id: string, f: (o: Order) => Order) => {
+    qc.setQueryData<Board>(qk.board, (b) =>
+      b ? { ...b, orders: b.orders.map((o) => (o.id === id ? f(o) : o)) } : b,
+    );
+    qc.setQueryData<OrderData>(qk.order(id), (d) => (d ? { ...d, order: f(d.order) } : d));
+  };
   return useMutation({
+    mutationKey: TRANSITION,
     mutationFn: (v: {
       order: Order;
       to: OrderState;
@@ -40,28 +52,29 @@ export function useTransition() {
     onMutate: async (v) => {
       haptic.commit();
       markOrdersSeen();
-      await qc.cancelQueries({ queryKey: qk.board });
-      const prev = qc.getQueryData<Board>(qk.board);
-      if (prev)
-        qc.setQueryData<Board>(qk.board, {
-          ...prev,
-          orders: prev.orders.map((o) => (o.id === v.order.id ? { ...o, state: v.to } : o)),
-        });
-      return { prev };
+      await Promise.all([
+        qc.cancelQueries({ queryKey: qk.board }),
+        qc.cancelQueries({ queryKey: qk.order(v.order.id) }),
+      ]);
+      put(v.order.id, (o) => ({ ...o, state: v.to }));
     },
-    onError: (e, _v, ctx) => {
-      if (ctx?.prev) qc.setQueryData(qk.board, ctx.prev);
+    onError: (e, v) => {
+      // undo only our guess, and only if nothing newer replaced it
+      put(v.order.id, (o) => (o.state === v.to ? { ...o, state: v.order.state } : o));
       haptic.error();
       toast.error(messageOf(e));
     },
     onSuccess: ({ order }, v) => {
-      qc.setQueryData(qk.order(order.id), (old: { customer: unknown } | undefined) => ({
+      put(order.id, (o) => (o.version > order.version ? o : order));
+      qc.setQueryData<OrderData>(qk.order(order.id), (old) => ({
         customer: old?.customer ?? null,
-        order,
+        order: old && old.order.version > order.version ? old.order : order,
       }));
       toast(DONE_TOAST[v.to]?.(order) ?? 'Pedido atualizado');
     },
     onSettled: () => {
+      // a refetch while another move is in flight would briefly show that one's old lane
+      if (qc.isMutating({ mutationKey: TRANSITION }) > 1) return;
       void qc.invalidateQueries({ queryKey: qk.board });
       void qc.invalidateQueries({ queryKey: qk.home });
     },

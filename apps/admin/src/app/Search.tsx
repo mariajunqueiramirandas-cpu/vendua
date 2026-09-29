@@ -7,7 +7,8 @@ import { ago, money, phone } from '../lib/format.ts';
 import { Sheet } from '../ui/Sheet.tsx';
 import { StateChip } from '../ui/StateChip.tsx';
 import { TextInput } from '../ui/fields.tsx';
-import { EmptyState, Loading } from '../ui/feedback.tsx';
+import { EmptyState } from '../ui/feedback.tsx';
+import { RowsSkeleton } from '../ui/skeletons.tsx';
 import { Mascote } from '../ui/Mascote.tsx';
 
 /** One field, three kinds of answer, grouped, as they type (§3.2). */
@@ -54,10 +55,13 @@ export function SearchSheet({
         />
       </div>
       {!debounced ? (
-        <p className="t-body px-1 text-muted">
-          Digite o número do pedido (ex.: 128), o nome ou o telefone do cliente, ou o nome de um
-          produto.
-        </p>
+        <div className="flex flex-col items-center px-4 pb-4 pt-6 text-center">
+          <Mascote pose="avatar-pensando" size={96} className="mb-3 w-24" />
+          <p className="t-body max-w-sm text-muted">
+            Digite o número do pedido (ex.: 128), o nome ou o telefone do cliente, ou o nome de um
+            produto.
+          </p>
+        </div>
       ) : empty && !isFetching ? (
         <EmptyState
           art={<Mascote pose="sem-resultados" />}
@@ -65,7 +69,7 @@ export function SearchSheet({
           body="Confira a grafia ou tente só uma parte do nome."
         />
       ) : !data ? (
-        <Loading delay={0} />
+        <RowsSkeleton rows={4} />
       ) : (
         <div className="space-y-5">
           {data?.orders.length ? (

@@ -1,5 +1,5 @@
 import { ArrowLeft, ArrowRight, Camera, MagicWand, Plus, Star, Trash } from '@phosphor-icons/react';
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { api } from '../lib/api.ts';
 import { loadBitmap, prepareImage, type Crop } from '../lib/image.ts';
 import { Button, IconButton } from './Button.tsx';
@@ -24,7 +24,7 @@ type AspectKey = keyof typeof ASPECTS;
  * with crop and the storefront's aspect as the guide, a one-tap "clarear".
  */
 export function PhotoField({
-  photos,
+  photos: saved,
   onChange,
   max = 12,
   label,
@@ -43,6 +43,29 @@ export function PhotoField({
 }) {
   const input = useRef<HTMLInputElement>(null);
   const [file, setFile] = useState<File | null>(null);
+  // Quick taps (delete two, move twice) build on what's on screen and save one at a time,
+  // newest last, so a slow response can't bring back a photo that was just removed.
+  const [shown, setShown] = useState<Photo[] | null>(null);
+  const photos = shown ?? saved;
+  const queued = useRef<Photo[] | null>(null);
+  const saving = useRef(false);
+  const commit = async (next: Photo[]) => {
+    setShown(next);
+    queued.current = next;
+    if (saving.current) return;
+    saving.current = true;
+    try {
+      while (queued.current) {
+        const n = queued.current;
+        queued.current = null;
+        await Promise.resolve(onChange(n)).catch(() => undefined);
+      }
+    } finally {
+      saving.current = false;
+      setShown(null);
+    }
+  };
+  const closeCrop = useCallback(() => setFile(null), []);
   useEffect(() => {
     if (initialFile) setFile(initialFile);
   }, [initialFile]);
@@ -56,7 +79,7 @@ export function PhotoField({
     const n = [...photos];
     const [x] = n.splice(i, 1);
     n.splice(i + d, 0, x!);
-    void onChange(n);
+    void commit(n);
   };
   return (
     <div>
@@ -147,7 +170,7 @@ export function PhotoField({
                 <IconButton
                   label="apagar foto"
                   size="sm"
-                  onClick={() => void onChange(photos.filter((_, k) => k !== i))}
+                  onClick={() => void commit(photos.filter((_, k) => k !== i))}
                 >
                   <Trash />
                 </IconButton>
@@ -179,10 +202,10 @@ export function PhotoField({
       <CropSheet
         file={file}
         aspect={aspect}
-        onClose={() => setFile(null)}
+        onClose={closeCrop}
         onDone={async (photo) => {
           setFile(null);
-          await onChange([...photos, photo]);
+          await commit([...photos, photo]);
         }}
       />
     </div>
@@ -211,25 +234,36 @@ function CropSheet({
   const drag = useRef<{ x: number; y: number; px: number; py: number } | null>(null);
   const [fw, setFw] = useState(320);
 
+  const close = useRef(onClose);
+  close.current = onClose;
   useEffect(() => {
     if (!file) return;
     let cancelled = false;
+    let decoded: ImageBitmap | null = null;
+    setBmp(null);
     setZoom(1);
     setPan({ x: 0, y: 0 });
     const u = URL.createObjectURL(file);
     setUrl(u);
     loadBitmap(file).then(
-      (b) => !cancelled && setBmp(b),
+      (b) => {
+        if (cancelled) return b.close();
+        decoded = b;
+        setBmp(b);
+      },
       () => {
+        if (cancelled) return;
         toast.error('Não conseguimos abrir essa foto. Tente outra.');
-        onClose();
+        close.current();
       },
     );
     return () => {
       cancelled = true;
       URL.revokeObjectURL(u);
+      // a phone photo decodes to ~50 MB; iOS kills the tab after a few left open
+      decoded?.close();
     };
-  }, [file, onClose]);
+  }, [file]);
   useEffect(() => {
     const el = frame.current;
     if (!el) return;
@@ -239,8 +273,9 @@ function CropSheet({
   }, [bmp]);
 
   const fh = fw / ASPECTS[aspect];
-  const iw = bmp?.width ?? 1;
-  const ih = bmp?.height ?? 1;
+  // a closed bitmap (the sheet closing) reads 0 × 0
+  const iw = bmp?.width || 1;
+  const ih = bmp?.height || 1;
   const scale = Math.max(fw / iw, fh / ih) * zoom;
   const dw = iw * scale;
   const dh = ih * scale;

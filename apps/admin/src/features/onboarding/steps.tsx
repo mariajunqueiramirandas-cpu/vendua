@@ -6,12 +6,12 @@ import {
   Storefront,
   WhatsappLogo,
 } from '@phosphor-icons/react';
-import { useMutation, useQueryClient } from '@tanstack/react-query';
+import { useQueryClient } from '@tanstack/react-query';
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { Link } from 'react-router-dom';
 import { api, type StoreView } from '../../lib/api.ts';
 import { money, phone as fmtPhone, waDigits } from '../../lib/format.ts';
-import { qk } from '../../lib/query.ts';
+import { qk, useMutation } from '../../lib/query.ts';
 import { Button } from '../../ui/Button.tsx';
 import { Card } from '../../ui/Card.tsx';
 import { cn } from '../../ui/cn.ts';

@@ -9,17 +9,17 @@ import {
   UsersThree,
   WhatsappLogo,
 } from '@phosphor-icons/react';
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import QRCode from 'qrcode';
 import { useEffect, useState } from 'react';
 import { api, type Coupon, type LoyaltyProgram, type Marketing as M } from '../../lib/api.ts';
 import { dateShort, money, phone, whatsappLink } from '../../lib/format.ts';
-import { optimistic, qk } from '../../lib/query.ts';
+import { optimistic, qk, useMutation } from '../../lib/query.ts';
 import { useSession } from '../../lib/session.ts';
 import { Button } from '../../ui/Button.tsx';
 import { Card, Section } from '../../ui/Card.tsx';
 import { cn } from '../../ui/cn.ts';
-import { EmptyState, ErrorState, Loading, messageOf } from '../../ui/feedback.tsx';
+import { EmptyState, ErrorState, messageOf, DuaNote } from '../../ui/feedback.tsx';
 import {
   Chips,
   Field,
@@ -34,6 +34,7 @@ import {
 import { Mascote } from '../../ui/Mascote.tsx';
 import { NoPhoto } from '../../ui/illustrations.tsx';
 import { PageBody, PageHeader } from '../../ui/Page.tsx';
+import { SectionsSkeleton } from '../../ui/skeletons.tsx';
 import { Sheet } from '../../ui/Sheet.tsx';
 import { toast } from '../../ui/Toast.tsx';
 import { shareCard } from './shareCard.ts';
@@ -50,7 +51,7 @@ export default function Marketing() {
     <PageBody wide>
       <PageHeader title="Marketing" subtitle="Traga gente nova e faça quem já comprou voltar." />
       {!data ? (
-        <Loading />
+        <SectionsSkeleton columns={2} />
       ) : (
         <div className="grid gap-8 lg:grid-cols-2 [&>*]:min-w-0">
           <div className="space-y-8">
@@ -424,10 +425,17 @@ function Loyalty({ data }: { data: M }) {
           rewardValidDays: 60,
         }
       : null;
-    void saveState
+    return saveState
       .track(api.setLoyalty(program))
       .then(() => qc.invalidateQueries({ queryKey: qk.marketing }))
-      .catch((e) => toast.error(messageOf(e)));
+      .catch((e) => {
+        // back to what the store actually has, not a card that looks saved
+        setOn(!!cur);
+        setStamps(cur?.stampsRequired ?? 10);
+        setKind(cur?.reward.kind ?? 'fixed');
+        setValue(cur?.reward.value ?? 1500);
+        toast.error(messageOf(e));
+      });
   };
   return (
     <Section
@@ -440,7 +448,7 @@ function Loyalty({ data }: { data: M }) {
           checked={on}
           onChange={(v) => {
             setOn(v);
-            save({ on: v, stamps, kind, value });
+            void save({ on: v, stamps, kind, value });
           }}
           label={
             <span className="inline-flex items-center gap-2">
@@ -465,8 +473,11 @@ function Loyalty({ data }: { data: M }) {
               label="prêmio"
               value={kind}
               onChange={(k) => {
+                // cents and percent don't convert: R$ 15,00 is not 1500%
+                const v = k === kind ? value : k === 'percent' ? 10 : 1500;
                 setKind(k);
-                save({ on, stamps, kind: k, value });
+                setValue(v);
+                void save({ on, stamps, kind: k, value: v });
               }}
               options={[
                 { value: 'fixed', label: 'valor' },
@@ -482,7 +493,7 @@ function Loyalty({ data }: { data: M }) {
                   min={100}
                   onCommit={(v) => {
                     setValue(v ?? 0);
-                    save({ on, stamps, kind, value: v ?? 0 });
+                    void save({ on, stamps, kind, value: v ?? 0 });
                   }}
                 />
               </Field>
@@ -520,6 +531,7 @@ function Waitlist({ data }: { data: M }) {
       void qc.invalidateQueries({ queryKey: qk.home });
       toast(`${r.notified} pessoas marcadas como avisadas`);
     },
+    onError: (e) => toast.error(messageOf(e)),
   });
   return (
     <Section title="Lista de espera" hint="Quem pediu para ser avisado quando um produto voltar.">
@@ -577,12 +589,9 @@ function Waitlist({ data }: { data: M }) {
           })}
         </div>
       ) : (
-        <Card className="p-5">
-          <p className="t-body text-muted">
-            Ninguém esperando agora. Quando um produto esgota, a loja oferece “me avise quando
-            voltar”.
-          </p>
-        </Card>
+        <DuaNote pose="avatar-pensando" title="Ninguém esperando agora">
+          Quando um produto esgota, a loja oferece “me avise quando voltar”.
+        </DuaNote>
       )}
     </Section>
   );

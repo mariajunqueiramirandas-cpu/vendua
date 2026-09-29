@@ -5,17 +5,17 @@ import {
   SunDim,
   X,
 } from '@phosphor-icons/react';
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import { api, type Order, type OrderState } from '../../lib/api.ts';
-import { markOrdersSeen } from '../../lib/live.ts';
+import { api, type Board, type Order, type OrderState } from '../../lib/api.ts';
+import { markOrdersSeen, usePollWhenOffline } from '../../lib/live.ts';
 import { useWakeLock, wakeLockSupported } from '../../lib/wakeLock.ts';
 import { qk } from '../../lib/query.ts';
 import { useSession } from '../../lib/session.ts';
 import { Button, IconButton } from '../../ui/Button.tsx';
 import { cn } from '../../ui/cn.ts';
-import { EmptyState, ErrorState, Hint, Skeleton } from '../../ui/feedback.tsx';
+import { EmptyState, ErrorState, Hint } from '../../ui/feedback.tsx';
 import { Segmented } from '../../ui/fields.tsx';
 import { Mascote } from '../../ui/Mascote.tsx';
 import { OrderCard } from '../../ui/OrderCard.tsx';
@@ -24,6 +24,7 @@ import { nextStep } from '../../ui/StateChip.tsx';
 import { useStoreQuery } from '../store/StatusPill.tsx';
 import { printTicket, useTransition, whatsappUrl } from './actions.ts';
 import { CancelSheet, OrderDetail } from './OrderDetail.tsx';
+import { usePreload } from '../../app/routes.ts';
 
 type LaneId = 'novos' | 'preparo' | 'prontos' | 'concluidos';
 
@@ -64,15 +65,17 @@ function useNow(ms = 15_000) {
 }
 
 export default function Orders() {
+  const poll = usePollWhenOffline(30_000, 5 * 60_000);
   const { data, error, refetch, isPending } = useQuery({
     queryKey: qk.board,
     queryFn: api.board,
-    refetchInterval: 30_000,
+    refetchInterval: poll,
   });
   const store = useStoreQuery().data;
   const s = useSession();
   const nav = useNavigate();
   const now = useNow();
+  const preload = usePreload();
   const move = useTransition();
   const awake = useWakeLock();
   const [lane, setLane] = useState<LaneId>('novos');
@@ -226,6 +229,7 @@ export default function Orders() {
         ) : null}
         <Link
           to="/pedidos/agendados"
+          {...preload('/pedidos/agendados')}
           aria-label="Encomendas"
           className="t-label inline-flex min-h-11 items-center gap-2 rounded-md px-3 ring-1 ring-line hover:bg-hover"
         >
@@ -238,6 +242,7 @@ export default function Orders() {
         </Link>
         <Link
           to="/pedidos/historico"
+          {...preload('/pedidos/historico')}
           aria-label="Histórico"
           className="t-label inline-flex min-h-11 items-center gap-2 rounded-md px-3 ring-1 ring-line hover:bg-hover"
         >
@@ -276,10 +281,10 @@ export default function Orders() {
               }))}
             />
             {isPending ? (
-              <div className="space-y-3">
-                <Skeleton className="h-56" />
-                <Skeleton className="h-56" />
-              </div>
+              <SkeletonGroup className="grid gap-3 md:grid-cols-2">
+                <OrderCardSkeleton />
+                <OrderCardSkeleton />
+              </SkeletonGroup>
             ) : byLane[lane].length ? (
               <div className="grid gap-3 md:grid-cols-2">{byLane[lane].map((o) => card(o))}</div>
             ) : (
@@ -322,7 +327,7 @@ export default function Orders() {
                   </h2>
                   <div className="flex-1 space-y-3">
                     {isPending ? (
-                      <Skeleton className="h-48" />
+                      <OrderCardSkeleton />
                     ) : byLane[l.id].length ? (
                       byLane[l.id].map((o) => (
                         <div
@@ -410,9 +415,14 @@ function Panel({
   prepDefault: number;
   onClose: () => void;
 }) {
+  const qc = useQueryClient();
   const { data, error, refetch } = useQuery({
     queryKey: qk.order(id),
     queryFn: () => api.order(id),
+    placeholderData: () => {
+      const order = qc.getQueryData<Board>(qk.board)?.orders.find((o) => o.id === id);
+      return order ? { order, customer: null } : undefined;
+    },
   });
   return (
     <aside
@@ -435,9 +445,10 @@ function Panel({
         ) : error ? (
           <ErrorState error={error} retry={() => void refetch()} />
         ) : (
-          <Skeleton className="h-96" delay={0} />
+          <DetailSkeleton />
         )}
       </div>
     </aside>
   );
 }
+import { DetailSkeleton, OrderCardSkeleton, SkeletonGroup } from '../../ui/skeletons.tsx';

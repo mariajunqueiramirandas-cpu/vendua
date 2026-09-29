@@ -1,10 +1,16 @@
 import { CaretUpDown, DotsNine, MagnifyingGlass, SignOut, WifiSlash } from '@phosphor-icons/react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { lazy, Suspense, useEffect, useRef, useState, type ReactNode } from 'react';
+import { Suspense, useEffect, useRef, useState, type ReactNode } from 'react';
 import { NavLink, useLocation, useNavigate } from 'react-router-dom';
 import { StatusPill } from '../features/store/StatusPill.tsx';
 import { api } from '../lib/api.ts';
-import { setAnnouncer, useLiveState, useLiveStream, setSoundOn } from '../lib/live.ts';
+import {
+  setAnnouncer,
+  useLiveState,
+  useLiveStream,
+  setSoundOn,
+  usePollWhenOffline,
+} from '../lib/live.ts';
 import { applyUpdate, onUpdate, setBadge, updateReady } from '../lib/pwa.ts';
 import { qk } from '../lib/query.ts';
 import { can, ROLE_LABEL, useSession } from '../lib/session.ts';
@@ -14,14 +20,16 @@ import { cn } from '../ui/cn.ts';
 import { Loading } from '../ui/feedback.tsx';
 import { toast, Toaster } from '../ui/Toast.tsx';
 import { NAV } from './nav.ts';
+import { chunks, intent, screen, warmUp } from './routes.ts';
 import { useScrollMemory, useTabNav } from './nativeFeel.ts';
 import { PullToRefresh } from './PullToRefresh.tsx';
 
-const SearchSheet = lazy(() => import('./Search.tsx').then((m) => ({ default: m.SearchSheet })));
-const MoreSheet = lazy(() => import('./ShellSheets.tsx').then((m) => ({ default: m.MoreSheet })));
-const SwitchStoreSheet = lazy(() =>
-  import('./ShellSheets.tsx').then((m) => ({ default: m.SwitchStoreSheet })),
-);
+// screen-shaped skeletons: their own chunk, asked for as the shell loads (first paint stays light)
+const RouteSkeleton = screen(chunks.skeletons, (m) => m.default);
+void chunks.skeletons().catch(() => undefined);
+const SearchSheet = screen(chunks.search, (m) => m.SearchSheet);
+const MoreSheet = screen(chunks.sheets, (m) => m.MoreSheet);
+const SwitchStoreSheet = screen(chunks.sheets, (m) => m.SwitchStoreSheet);
 
 /** true once `open` has been true: keeps a lazy sheet mounted so it can animate closed */
 function useSeen(open: boolean) {
@@ -35,7 +43,9 @@ import { StoreAvatar } from './StoreAvatar.tsx';
 import { resetClient } from '../lib/persist.ts';
 
 function usePlacedCount() {
-  const { data } = useQuery({ queryKey: qk.board, queryFn: api.board, refetchInterval: 30_000 });
+  // orders are pushed over the stream; a slow safety net stays for the one screen that can't miss
+  const poll = usePollWhenOffline(30_000, 5 * 60_000);
+  const { data } = useQuery({ queryKey: qk.board, queryFn: api.board, refetchInterval: poll });
   return data?.orders.filter((o) => o.state === 'placed').length ?? 0;
 }
 
@@ -58,6 +68,9 @@ export function Shell({ children }: { children: ReactNode }) {
 
   useLiveStream(true);
   useScrollMemory();
+  const qc = useQueryClient();
+  const allowed = items.map((n) => n.to).join(' ');
+  useEffect(() => warmUp(allowed.split(' ')), [allowed]);
   const tab = useTabNav();
   useEffect(() => {
     setSoundOn(session.user.prefs.sound !== false);
@@ -140,6 +153,7 @@ export function Shell({ children }: { children: ReactNode }) {
                   to={n.to}
                   end={n.to === '/'}
                   onClick={tab(n.to)}
+                  {...intent(qc, n.to)}
                   className={({ isActive }) =>
                     cn(
                       'group relative flex min-h-12 flex-col items-center justify-center gap-0.5 rounded-md px-2 py-1.5 transition-colors lg:flex-row lg:justify-start lg:gap-3 lg:px-3',
@@ -190,6 +204,7 @@ export function Shell({ children }: { children: ReactNode }) {
             type="button"
             aria-label="buscar"
             onClick={() => setSearchOpen(true)}
+            onPointerDown={() => void chunks.search().catch(() => undefined)}
             className="grid size-12 place-items-center rounded-full hover:bg-hover"
           >
             <MagnifyingGlass className="size-6" />
@@ -210,9 +225,11 @@ export function Shell({ children }: { children: ReactNode }) {
           <Boundary resetKey={loc.pathname}>
             <Suspense
               fallback={
-                <div className="mx-auto max-w-[880px] p-4 md:p-8">
-                  <Loading delay={0} />
-                </div>
+                <Suspense
+                  fallback={<Loading delay={0} className="mx-auto max-w-[880px] p-4 md:p-8" />}
+                >
+                  <RouteSkeleton pathname={loc.pathname} />
+                </Suspense>
               }
             >
               {children}
@@ -233,6 +250,7 @@ export function Shell({ children }: { children: ReactNode }) {
                 to={n.to}
                 end={n.to === '/'}
                 onClick={tab(n.to)}
+                {...intent(qc, n.to)}
                 className={({ isActive }) =>
                   cn(
                     'relative flex h-[72px] flex-col items-center justify-center gap-1',
@@ -264,6 +282,7 @@ export function Shell({ children }: { children: ReactNode }) {
               <button
                 type="button"
                 onClick={() => setMoreOpen(true)}
+                onPointerDown={() => void chunks.sheets().catch(() => undefined)}
                 className={cn(
                   'flex h-[72px] w-full flex-col items-center justify-center gap-1',
                   moreOpen ? 'text-ink' : 'text-muted',

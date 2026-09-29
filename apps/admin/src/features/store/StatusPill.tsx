@@ -3,6 +3,7 @@ import { lazy, Suspense, useEffect, useState } from 'react';
 import { api, type StoreView } from '../../lib/api.ts';
 import { clock, dateShort, isoDate } from '../../lib/format.ts';
 import { qk } from '../../lib/query.ts';
+import { untilChange, usePollWhenOffline } from '../../lib/live.ts';
 import { cn } from '../../ui/cn.ts';
 
 // the sheet (vaul + radix) loads on first tap, not with every screen
@@ -33,8 +34,18 @@ export function statusWords(
 }
 
 export function useStoreQuery() {
-  return useQuery({ queryKey: qk.store, queryFn: api.store, refetchInterval: 60_000 });
+  const poll = usePollWhenOffline(60_000);
+  return useQuery({
+    queryKey: qk.store,
+    queryFn: api.store,
+    // changes arrive over the stream; the clock ones (opens, closes, a pause ends) are
+    // fetched the moment they happen
+    refetchInterval: (q) => soonest(untilChange(q.state.data?.status.changesAt), poll),
+  });
 }
+
+const soonest = (a: number | false, b: number | false) =>
+  a === false ? b : b === false ? a : Math.min(a, b);
 
 /** The live state, always present (§3.2). Tapping opens the status sheet. */
 export function StatusPill({

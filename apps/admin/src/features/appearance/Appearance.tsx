@@ -12,25 +12,27 @@ import {
   RocketLaunch,
   Trash,
 } from '@phosphor-icons/react';
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   api,
-  ApiError,
   type Appearance as AppearanceData,
   type PageTemplate,
   type StoreTokens,
   type TemplateSection,
 } from '../../lib/api.ts';
 import { when } from '../../lib/format.ts';
-import { qk } from '../../lib/query.ts';
+import { usePollWhenOffline } from '../../lib/live.ts';
+import { Mascote } from '../../ui/Mascote.tsx';
+import { qk, useMutation } from '../../lib/query.ts';
 import { useSession } from '../../lib/session.ts';
 import { Button, IconButton } from '../../ui/Button.tsx';
 import { Card } from '../../ui/Card.tsx';
 import { cn } from '../../ui/cn.ts';
-import { ErrorState, Hint, Loading, messageOf } from '../../ui/feedback.tsx';
+import { ErrorState, Hint, messageOf } from '../../ui/feedback.tsx';
 import { Segmented } from '../../ui/fields.tsx';
 import { PageBody, PageHeader } from '../../ui/Page.tsx';
+import { AppearanceSkeleton, EditorFrame, RowsSkeleton } from '../../ui/skeletons.tsx';
 import { Sheet } from '../../ui/Sheet.tsx';
 import { toast } from '../../ui/Toast.tsx';
 import { Colors, readable } from './Colors.tsx';
@@ -95,10 +97,12 @@ const BASE_TOKENS: StoreTokens = {
 const same = (a: unknown, b: unknown) => JSON.stringify(a) === JSON.stringify(b);
 
 export default function Appearance() {
+  const poll = usePollWhenOffline(10_000);
   const { data, error, refetch } = useQuery({
     queryKey: qk.appearance,
     queryFn: api.appearance,
-    refetchInterval: (q) => (q.state.data?.publish.state === 'publishing' ? 10_000 : false),
+    // "no ar" is pushed when the build lands; polling only covers a stream that's down
+    refetchInterval: (q) => (q.state.data?.publish.state === 'publishing' ? poll : false),
   });
   if (error && !data)
     return (
@@ -108,10 +112,10 @@ export default function Appearance() {
     );
   if (!data)
     return (
-      <PageBody>
+      <EditorFrame>
         <PageHeader title="Aparência" />
-        <Loading />
-      </PageBody>
+        <AppearanceSkeleton />
+      </EditorFrame>
     );
   return <Editor data={data} />;
 }
@@ -296,8 +300,8 @@ function Editor({ data }: { data: AppearanceData }) {
     },
     onError: async (e) => {
       setPhase('idle');
-      if (e instanceof ApiError && e.code === 'TEMPLATE_VERSION_CONFLICT')
-        await qc.invalidateQueries({ queryKey: qk.appearance });
+      // pages saved before the failure have new versions: a retry needs them as its base
+      await qc.invalidateQueries({ queryKey: qk.appearance });
       toast.error(messageOf(e));
     },
   });
@@ -333,6 +337,13 @@ function Editor({ data }: { data: AppearanceData }) {
   return (
     <div className="mx-auto w-full max-w-[1600px] px-4 pb-40 pt-4 md:px-8 md:pb-10 md:pt-8">
       <header className="mb-4 flex items-start gap-2 md:items-center md:gap-3">
+        {phase === 'live' ? (
+          <Mascote
+            pose="publicar"
+            size={72}
+            className="animate-pop size-16 shrink-0 md:size-[72px]"
+          />
+        ) : null}
         <div className="min-w-0 flex-1">
           <h1 className="t-title-1">Aparência</h1>
           <p className="t-body text-muted">
@@ -757,7 +768,7 @@ function HistorySheet({
       title={`Versões: ${PAGES.find((p) => p.id === page)?.label}`}
       description="Voltar a uma versão publica ela de novo. A atual continua no histórico."
     >
-      {!data ? <Loading lines={3} className="pt-1" /> : null}
+      {!data ? <RowsSkeleton rows={3} avatar={false} className="pt-1" /> : null}
       <ol className="divide-y divide-line pt-1">
         {rows.map((h, i) => (
           <li key={h.version} className="flex min-h-16 items-center gap-3 py-2">

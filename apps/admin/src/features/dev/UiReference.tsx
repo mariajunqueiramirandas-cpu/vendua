@@ -5,7 +5,14 @@ import { setTheme } from '../../lib/theme.ts';
 import { Button, IconButton } from '../../ui/Button.tsx';
 import { Card, Section } from '../../ui/Card.tsx';
 import { ColumnChart, Funnel, Heatmap, RankBars, Sparkline } from '../../ui/charts.tsx';
-import { EmptyState, Hint, Skeleton } from '../../ui/feedback.tsx';
+import { DuaNote, EmptyState, Hint, Skeleton } from '../../ui/feedback.tsx';
+import {
+  FormSectionSkeleton,
+  OrderCardSkeleton,
+  RowsSkeleton,
+  StatTilesSkeleton,
+  TilesSkeleton,
+} from '../../ui/skeletons.tsx';
 import {
   Chips,
   Field,
@@ -430,6 +437,29 @@ export default function UiReference() {
               <A title={k} />
             </div>
           ))}
+        </div>
+      </Block>
+
+      <Block title="Duá numa nota: estados calmos dentro da tela">
+        <div className="grid gap-3 lg:grid-cols-2">
+          <DuaNote pose="avatar-feliz" title="Tudo em dia">
+            Nada esperando por você agora.
+          </DuaNote>
+          <DuaNote pose="seguranca">
+            Só entra quem tem o código no WhatsApp. Não reconhece um aparelho? Toque em sair nele.
+          </DuaNote>
+        </div>
+      </Block>
+
+      <Block title="Carregando: esqueletos com a forma da tela">
+        <div className="grid gap-6 lg:grid-cols-2 [&>*]:min-w-0">
+          <OrderCardSkeleton />
+          <RowsSkeleton rows={3} />
+          <StatTilesSkeleton count={3} />
+          <FormSectionSkeleton fields={2} />
+        </div>
+        <div className="mt-6">
+          <TilesSkeleton count={6} />
         </div>
       </Block>
 

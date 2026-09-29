@@ -5,11 +5,12 @@ import {
   Storefront,
   WhatsappLogo,
 } from '@phosphor-icons/react';
-import { useMutation, useQueryClient } from '@tanstack/react-query';
+import { useQueryClient } from '@tanstack/react-query';
 import { useEffect, useRef, useState } from 'react';
 import { api, ApiError, type StoreRef } from '../../lib/api.ts';
 import { phone as fmtPhone } from '../../lib/format.ts';
-import { qk } from '../../lib/query.ts';
+import { applyUpdate, checkForUpdate, onUpdate, updateReady } from '../../lib/pwa.ts';
+import { qk, useMutation } from '../../lib/query.ts';
 import { ROLE_LABEL } from '../../lib/session.ts';
 import { Button } from '../../ui/Button.tsx';
 import { cn } from '../../ui/cn.ts';
@@ -52,6 +53,27 @@ const expiry = (iso: string) => Date.parse(iso) || Date.now() + 10 * 60_000;
 export function Login() {
   const [step, setStep] = useState<Step>(loadPending);
   const qc = useQueryClient();
+  // Signed out is the one moment a new version costs nothing: take it here, not with a banner.
+  // At once on arrival; later only while the merchant is away (reading the code in WhatsApp),
+  // since the code step survives a reload. Not while picking a store: that token lives in memory.
+  const picking = useRef(false);
+  picking.current = step.kind === 'pick';
+  useEffect(() => {
+    const take = () => {
+      if (updateReady() && !picking.current) applyUpdate();
+    };
+    take();
+    checkForUpdate();
+    const away = () => {
+      if (document.visibilityState === 'hidden') take();
+    };
+    const off = onUpdate(away);
+    document.addEventListener('visibilitychange', away);
+    return () => {
+      off();
+      document.removeEventListener('visibilitychange', away);
+    };
+  }, []);
   const enter = () => {
     savePending(null);
     void qc.invalidateQueries({ queryKey: qk.session });
@@ -244,9 +266,13 @@ function CodeStep({
       >
         <ArrowLeft className="size-5" /> trocar número
       </button>
-      <h1 className="t-title-1">Digite o código</h1>
+      <div className="flex items-center justify-between gap-3">
+        <h1 className="t-title-1">Digite o código</h1>
+        <Mascote pose="seguranca" size={72} className="size-16 shrink-0 sm:size-[72px]" />
+      </div>
       <p className="t-body-lg mt-2 text-muted">
-        Enviamos 6 números para o WhatsApp <strong className="text-ink">{fmtPhone(phone)}</strong>.
+        Enviamos 6 números para o WhatsApp{' '}
+        <strong className="whitespace-nowrap text-ink">{fmtPhone(phone)}</strong>.
       </p>
       {devCode ? (
         <p className="t-caption mt-3 rounded-sm bg-info-soft px-3 py-2 text-info">

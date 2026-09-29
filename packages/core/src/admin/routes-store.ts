@@ -111,6 +111,8 @@ export async function storeView(
     status: {
       status: st.status,
       resumesAt: st.resumesAt ?? null,
+      // when the derived status may flip by the clock: the admin refetches then, no polling
+      changesAt: st.resumesAt ?? st.closesAt ?? null,
       override: s.status_override,
       pauseMessage: s.pause_message ?? null,
       closedMessage: s.closed_message ?? null,

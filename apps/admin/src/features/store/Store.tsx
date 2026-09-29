@@ -10,15 +10,15 @@ import {
   Storefront,
   Trash,
 } from '@phosphor-icons/react';
-import { useMutation, useQueryClient } from '@tanstack/react-query';
+import { useQueryClient } from '@tanstack/react-query';
 import { lazy, Suspense, useEffect, useState } from 'react';
 import { api, type SpecialDay, type StoreView, type Zone } from '../../lib/api.ts';
 import { useAutosave } from '../../lib/autosave.ts';
 import { dateShort, hhmm, isoDate, money, phone, waDigits } from '../../lib/format.ts';
-import { qk } from '../../lib/query.ts';
+import { qk, useMutation } from '../../lib/query.ts';
 import { Button, IconButton } from '../../ui/Button.tsx';
 import { Card, Section } from '../../ui/Card.tsx';
-import { ErrorState, Loading, messageOf } from '../../ui/feedback.tsx';
+import { ErrorState, messageOf, DuaNote } from '../../ui/feedback.tsx';
 import {
   Chips,
   CommitInput,
@@ -34,6 +34,7 @@ import {
   useSaveState,
 } from '../../ui/fields.tsx';
 import { PageBody, PageHeader } from '../../ui/Page.tsx';
+import { SectionsSkeleton } from '../../ui/skeletons.tsx';
 import { PhotoField } from '../../ui/PhotoField.tsx';
 import { Sheet } from '../../ui/Sheet.tsx';
 import { fromWeek, TimeRangeField, toWeek, type WeekModel } from '../../ui/TimeRangeField.tsx';
@@ -54,20 +55,25 @@ export default function Store() {
     return (
       <PageBody>
         <PageHeader title="Loja" />
-        <Loading />
+        <SectionsSkeleton columns={2} />
       </PageBody>
     );
   return <StoreEditor s={data} />;
 }
 
+// every section saves on its own: only the newest reply may paint, an older one asks for the truth
+let storeSeq = 0;
+
 function useStorePatch() {
   const qc = useQueryClient();
   const save = useSaveState();
-  const run = (body: Record<string, unknown>) =>
-    save
+  const run = (body: Record<string, unknown>) => {
+    const mine = ++storeSeq;
+    return save
       .track(api.updateStore(body))
       .then((s) => {
-        qc.setQueryData(qk.store, s);
+        if (mine === storeSeq) qc.setQueryData(qk.store, s);
+        else void qc.invalidateQueries({ queryKey: qk.store });
         void qc.invalidateQueries({ queryKey: qk.home });
         void qc.invalidateQueries({ queryKey: qk.session });
         return s;
@@ -76,6 +82,7 @@ function useStorePatch() {
         toast.error(messageOf(e));
         throw e;
       });
+  };
   return { run, state: save.state };
 }
 
@@ -267,11 +274,9 @@ function SpecialDays({
           ))}
         </Card>
       ) : (
-        <Card className="p-5 text-muted">
-          <p className="t-body">
-            Nenhum dia especial marcado. Natal, Ano-Novo, uma folga: é só adicionar.
-          </p>
-        </Card>
+        <DuaNote pose="horarios" title="Nenhum dia especial marcado">
+          Natal, Ano-Novo, uma folga: é só adicionar.
+        </DuaNote>
       )}
       <Sheet
         open={open}

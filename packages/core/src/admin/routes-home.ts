@@ -218,7 +218,12 @@ export function mountHome(d: AdminDeps) {
       return {
         greetingName: m.name.split(' ')[0],
         timezone: tz,
-        status: { status: st.status, resumesAt: st.resumesAt ?? null, override: s.status_override },
+        status: {
+          status: st.status,
+          resumesAt: st.resumesAt ?? null,
+          changesAt: st.resumesAt ?? st.closesAt ?? null,
+          override: s.status_override,
+        },
         hours: s.hours,
         specialDays: s.special_days ?? [],
         today: {

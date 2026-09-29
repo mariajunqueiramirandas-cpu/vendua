@@ -84,6 +84,9 @@ export interface DerivedStatus {
   status: StoreStatus;
   /** ISO instant when the store next opens/resumes, if it isn't open now. */
   resumesAt?: string;
+  /** While open by its hours: when the current window ends (a hint — an adjoining window
+   *  may keep it open; asking again then gives the next one). */
+  closesAt?: string;
 }
 
 function hhmmToMinutes(t: string): number {
@@ -185,7 +188,7 @@ export function deriveStatus(
     return resumesAt ? { status: 'closed', resumesAt } : { status: 'closed' };
   }
   const tz = hours.timezone || 'America/Sao_Paulo';
-  const { day, minutes, date } = localParts(now, tz);
+  const { day, minutes, seconds, date } = localParts(now, tz);
   const today = windowsOn(hours, day, date, specialDays);
   // yesterday's overnight window still spills into a special day
   const yesterday = localParts(new Date(now.getTime() - 86_400_000), tz);
@@ -195,7 +198,25 @@ export function deriveStatus(
   const open =
     today.some((w) => openPart(minutes, w, day)) ||
     prev.some((w) => w.days.includes(yesterday.day) && minutes < hhmmToMinutes(w.close));
-  if (open) return { status: 'open' };
+  if (open) {
+    // the start of this local minute, then whole minutes to each window's end
+    const base = now.getTime() - seconds * 1000 - (now.getTime() % 1000);
+    const ends: number[] = [];
+    for (const w of today) {
+      if (!openPart(minutes, w, day)) continue;
+      const o = hhmmToMinutes(w.open);
+      const c = hhmmToMinutes(w.close);
+      ends.push(base + (c > o ? c - minutes : 1440 - minutes + c) * 60_000);
+    }
+    for (const w of prev) {
+      if (w.days.includes(yesterday.day) && minutes < hhmmToMinutes(w.close))
+        ends.push(base + (hhmmToMinutes(w.close) - minutes) * 60_000);
+    }
+    const end = Math.min(...ends);
+    return Number.isFinite(end)
+      ? { status: 'open', closesAt: new Date(end).toISOString() }
+      : { status: 'open' };
+  }
   const next = nextOpen({ ...hours, timezone: tz }, now, specialDays);
   return next ? { status: 'closed', resumesAt: next.toISOString() } : { status: 'closed' };
 }

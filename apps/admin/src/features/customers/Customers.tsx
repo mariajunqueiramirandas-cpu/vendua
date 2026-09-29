@@ -1,15 +1,18 @@
 import { MagnifyingGlass } from '@phosphor-icons/react';
-import { useInfiniteQuery } from '@tanstack/react-query';
+import { keepPreviousData, useInfiniteQuery } from '@tanstack/react-query';
 import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { api } from '../../lib/api.ts';
 import { ago, money, num, phone } from '../../lib/format.ts';
 import { Button } from '../../ui/Button.tsx';
 import { Card } from '../../ui/Card.tsx';
-import { EmptyState, ErrorState, Loading } from '../../ui/feedback.tsx';
+import { cn } from '../../ui/cn.ts';
+import { EmptyState, ErrorState } from '../../ui/feedback.tsx';
 import { Chips, TextInput } from '../../ui/fields.tsx';
 import { Mascote } from '../../ui/Mascote.tsx';
 import { PageBody, PageHeader } from '../../ui/Page.tsx';
+import { RowsSkeleton } from '../../ui/skeletons.tsx';
+import { usePreload } from '../../app/routes.ts';
 
 type Sort = 'recent' | 'value' | 'orders';
 
@@ -17,6 +20,7 @@ export default function Customers() {
   const [q, setQ] = useState('');
   const [debounced, setDebounced] = useState('');
   const [sort, setSort] = useState<Sort>('recent');
+  const preload = usePreload();
   useEffect(() => {
     const t = setTimeout(() => setDebounced(q.trim()), 200);
     return () => clearTimeout(t);
@@ -26,6 +30,8 @@ export default function Customers() {
     queryFn: ({ pageParam }) => api.customers({ q: debounced, sort, offset: pageParam }),
     initialPageParam: 0,
     getNextPageParam: (p) => p.next ?? undefined,
+    // a new search or filter keeps the old rows up (dimmed) instead of flashing to a spinner
+    placeholderData: keepPreviousData,
   });
   const stats = list.data?.pages[0]?.stats;
   const rows = list.data?.pages.flatMap((p) => p.customers) ?? [];
@@ -73,14 +79,21 @@ export default function Customers() {
       {list.error ? (
         <ErrorState error={list.error} retry={() => void list.refetch()} />
       ) : list.isPending ? (
-        <Loading />
+        <RowsSkeleton rows={6} />
       ) : rows.length ? (
         <>
-          <Card className="divide-y divide-line overflow-hidden">
+          <Card
+            aria-busy={list.isPlaceholderData}
+            className={cn(
+              'divide-y divide-line overflow-hidden transition-opacity',
+              list.isPlaceholderData && 'opacity-60',
+            )}
+          >
             {rows.map((c) => (
               <Link
                 key={c.phone}
                 to={`/clientes/${c.phone}`}
+                {...preload(`/clientes/${c.phone}`)}
                 className="flex min-h-18 items-center gap-3 px-4 py-3 hover:bg-hover"
               >
                 <span className="grid size-11 shrink-0 place-items-center rounded-full bg-sunken font-display font-semibold">

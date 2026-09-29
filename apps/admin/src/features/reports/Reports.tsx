@@ -1,30 +1,24 @@
 import { DownloadSimple, Info } from '@phosphor-icons/react';
 import { useQuery } from '@tanstack/react-query';
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { api, type Kpis, type Reports as R } from '../../lib/api.ts';
 import { dateShort, isoDate, money, moneyCompact, num, plural } from '../../lib/format.ts';
 import { qk } from '../../lib/query.ts';
 import { Card, Section } from '../../ui/Card.tsx';
 import { ColumnChart, Funnel, Heatmap, RankBars } from '../../ui/charts.tsx';
 import { cn } from '../../ui/cn.ts';
-import { EmptyState, ErrorState, Loading } from '../../ui/feedback.tsx';
+import { EmptyState, ErrorState } from '../../ui/feedback.tsx';
 import { Chips, TextInput } from '../../ui/fields.tsx';
 import { Mascote } from '../../ui/Mascote.tsx';
 import { PageBody, PageHeader } from '../../ui/Page.tsx';
+import { ReportsSkeleton } from '../../ui/skeletons.tsx';
+import { rangeOf, type Period } from './range.ts';
 
-type Period = 'hoje' | '7d' | '30d' | 'custom';
 const METHOD: Record<string, string> = {
   pix: 'Pix',
   card_on_delivery: 'Cartão na entrega',
   cash: 'Dinheiro',
 };
-
-function rangeOf(p: Period, custom: { from: string; to: string }) {
-  const today = isoDate(new Date());
-  if (p === 'custom') return custom;
-  const back = p === 'hoje' ? 0 : p === '7d' ? 6 : 29;
-  return { from: isoDate(new Date(Date.now() - back * 86_400_000)), to: today };
-}
 
 export default function Reports() {
   const [period, setPeriod] = useState<Period>('7d');
@@ -32,11 +26,18 @@ export default function Reports() {
     from: isoDate(new Date(Date.now() - 13 * 86_400_000)),
     to: isoDate(new Date()),
   }));
-  const { from, to } = rangeOf(period, custom);
+  // typing a date walks through half-dates (year 0002…): ask once the field settles on a real range
+  const [settled, setSettled] = useState(custom);
+  useEffect(() => {
+    const t = setTimeout(() => setSettled(custom), 400);
+    return () => clearTimeout(t);
+  }, [custom]);
+  const { from, to } = rangeOf(period, settled);
   const { data, error, refetch, isFetching } = useQuery({
     queryKey: qk.reports(from, to),
     queryFn: () => api.reports(from, to),
     placeholderData: (p) => p,
+    enabled: from >= '2000' && from <= to,
   });
   return (
     <PageBody wide>
@@ -89,7 +90,7 @@ export default function Reports() {
       {error && !data ? (
         <ErrorState error={error} retry={() => void refetch()} />
       ) : !data ? (
-        <Loading lines={4} />
+        <ReportsSkeleton chips={false} />
       ) : data.current.orders === 0 && data.funnel.visits === 0 ? (
         <EmptyState
           art={<Mascote pose="sem-pedidos" />}

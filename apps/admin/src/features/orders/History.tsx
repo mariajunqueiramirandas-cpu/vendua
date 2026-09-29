@@ -1,14 +1,16 @@
 import { MagnifyingGlass } from '@phosphor-icons/react';
-import { useInfiniteQuery } from '@tanstack/react-query';
+import { keepPreviousData, useInfiniteQuery } from '@tanstack/react-query';
 import { useEffect, useState } from 'react';
 import { api } from '../../lib/api.ts';
 import { isoDate } from '../../lib/format.ts';
 import { Button } from '../../ui/Button.tsx';
 import { Card } from '../../ui/Card.tsx';
-import { EmptyState, ErrorState, Loading } from '../../ui/feedback.tsx';
+import { cn } from '../../ui/cn.ts';
+import { EmptyState, ErrorState } from '../../ui/feedback.tsx';
 import { Chips, TextInput } from '../../ui/fields.tsx';
 import { Mascote } from '../../ui/Mascote.tsx';
 import { PageBody, PageHeader } from '../../ui/Page.tsx';
+import { RowsSkeleton } from '../../ui/skeletons.tsx';
 import { OrderRowView } from './OrderRowView.tsx';
 
 type Period = 'hoje' | '7d' | '30d' | 'tudo';
@@ -36,6 +38,8 @@ export default function History() {
       api.orders({ ...params, ...(pageParam ? { before: pageParam } : {}) }),
     initialPageParam: '' as string,
     getNextPageParam: (p) => p.next ?? undefined,
+    // a new search or filter keeps the old rows up (dimmed) instead of flashing to a spinner
+    placeholderData: keepPreviousData,
   });
   const rows = list.data?.pages.flatMap((p) => p.orders) ?? [];
   return (
@@ -81,10 +85,17 @@ export default function History() {
       {list.error ? (
         <ErrorState error={list.error} retry={() => void list.refetch()} />
       ) : list.isPending ? (
-        <Loading />
+        <RowsSkeleton rows={7} avatar={false} />
       ) : rows.length ? (
         <>
-          <Card as="section" className="overflow-hidden">
+          <Card
+            as="section"
+            aria-busy={list.isPlaceholderData}
+            className={cn(
+              'overflow-hidden transition-opacity',
+              list.isPlaceholderData && 'opacity-60',
+            )}
+          >
             <ul>
               {rows.map((o) => (
                 <OrderRowView key={o.id} o={o} />

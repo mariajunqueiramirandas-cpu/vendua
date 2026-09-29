@@ -58,6 +58,12 @@ export function onUpdate(fn: () => void) {
   updateSubs.add(fn);
   return () => void updateSubs.delete(fn);
 }
+let registration: ServiceWorkerRegistration | null = null;
+/** Ask the server for a new version now (a reconnect after a deploy, the sign-in screen). */
+export function checkForUpdate() {
+  void registration?.update().catch(() => undefined);
+}
+
 let reloading = false;
 export function applyUpdate() {
   if (!waiting) return location.reload();
@@ -134,13 +140,14 @@ export function startPwa() {
     sw
       .register('/admin/sw.js', { scope: '/admin/', updateViaCache: 'none' })
       .then((reg) => {
+        registration = reg;
         track(reg);
         // installed apps stay open for days: look for a new version on return and hourly
-        const check = () => void reg.update().catch(() => undefined);
+        // (live.ts also asks whenever the stream comes back after Core went away)
         document.addEventListener('visibilitychange', () => {
-          if (document.visibilityState === 'visible') check();
+          if (document.visibilityState === 'visible') checkForUpdate();
         });
-        setInterval(check, 60 * 60_000);
+        setInterval(checkForUpdate, 60 * 60_000);
       })
       .catch(() => undefined);
   if (document.readyState === 'complete') void register();

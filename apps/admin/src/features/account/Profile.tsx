@@ -1,17 +1,17 @@
 import { BellRinging, DeviceMobile, Moon, SignOut, SpeakerHigh, Sun } from '@phosphor-icons/react';
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useEffect, useState } from 'react';
 import { api } from '../../lib/api.ts';
 import { ago } from '../../lib/format.ts';
 import { setSoundOn } from '../../lib/live.ts';
 import { currentSubscription, disablePush, enablePush, pushSupported } from '../../lib/push.ts';
-import { qk } from '../../lib/query.ts';
+import { qk, useMutation } from '../../lib/query.ts';
 import { ROLE_LABEL, useSession } from '../../lib/session.ts';
 import { chimeNewOrder, setVolume } from '../../lib/sound.ts';
 import { readTheme, setTheme, type ThemePref } from '../../lib/theme.ts';
 import { Button } from '../../ui/Button.tsx';
 import { Card, Section } from '../../ui/Card.tsx';
-import { messageOf, Skeleton } from '../../ui/feedback.tsx';
+import { DuaNote, messageOf, Skeleton } from '../../ui/feedback.tsx';
 import {
   Chips,
   CommitInput,
@@ -175,7 +175,7 @@ export default function Profile() {
             </div>
           </Card>
         </Section>
-        <Section title="Aparência do painel">
+        <Section title="Aparência do painel" hint="Auto segue o claro ou escuro do celular.">
           <Card className="p-5">
             <Segmented
               label="tema"
@@ -202,12 +202,22 @@ export default function Profile() {
                     </span>
                   ),
                 },
-                { value: 'system', label: 'igual ao celular' },
+                {
+                  value: 'system',
+                  label: (
+                    <span className="inline-flex items-center gap-1.5">
+                      <DeviceMobile className="size-4" /> Auto
+                    </span>
+                  ),
+                },
               ]}
             />
           </Card>
         </Section>
         <Section title="Aparelhos conectados">
+          <DuaNote pose="seguranca" className="mb-3">
+            Só entra quem tem o código no WhatsApp. Não reconhece um aparelho? Toque em sair nele.
+          </DuaNote>
           <Card className="divide-y divide-line">
             {sessions.isPending ? <Skeleton className="h-16 rounded-none" delay={0} /> : null}
             {(sessions.data?.sessions ?? []).map((x) => (

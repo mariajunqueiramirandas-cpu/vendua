@@ -2,34 +2,36 @@ import { lazy, Suspense, useEffect, useRef } from 'react';
 import { Navigate, Route, Routes, useLocation } from 'react-router-dom';
 import { useQueryClient } from '@tanstack/react-query';
 import { ApiError } from '../lib/api.ts';
+import { clearPersisted } from '../lib/persist.ts';
 import { qk } from '../lib/query.ts';
 import { SessionCtx, useSessionQuery } from '../lib/session.ts';
 import { applyTheme, type ThemePref } from '../lib/theme.ts';
 import { ErrorBoundary } from '../ui/ErrorBoundary.tsx';
-import { ErrorState, Loading } from '../ui/feedback.tsx';
+import { ErrorState, Splash } from '../ui/feedback.tsx';
+import { chunks, screen } from './routes.ts';
 import { Shell } from './Shell.tsx';
 
-const Login = lazy(() => import('../features/auth/Login.tsx').then((m) => ({ default: m.Login })));
-const Home = lazy(() => import('../features/home/Home.tsx'));
-const Orders = lazy(() => import('../features/orders/Orders.tsx'));
-const OrderHistory = lazy(() => import('../features/orders/History.tsx'));
-const Scheduled = lazy(() => import('../features/orders/Scheduled.tsx'));
-const OrderPage = lazy(() => import('../features/orders/OrderPage.tsx'));
-const Menu = lazy(() => import('../features/menu/Menu.tsx'));
-const ProductPage = lazy(() => import('../features/menu/ProductPage.tsx'));
-const Store = lazy(() => import('../features/store/Store.tsx'));
-const Payments = lazy(() => import('../features/payments/Payments.tsx'));
-const Customers = lazy(() => import('../features/customers/Customers.tsx'));
-const CustomerPage = lazy(() => import('../features/customers/CustomerPage.tsx'));
-const Marketing = lazy(() => import('../features/marketing/Marketing.tsx'));
-const Appearance = lazy(() => import('../features/appearance/Appearance.tsx'));
-const Reports = lazy(() => import('../features/reports/Reports.tsx'));
-const Team = lazy(() => import('../features/team/Team.tsx'));
-const Account = lazy(() => import('../features/account/Account.tsx'));
-const Profile = lazy(() => import('../features/account/Profile.tsx'));
-const Help = lazy(() => import('../features/help/Help.tsx'));
-const Onboarding = lazy(() => import('../features/onboarding/Onboarding.tsx'));
-const NotFound = lazy(() => import('../features/notfound/NotFound.tsx'));
+const Login = screen(chunks.login, (m) => m.Login);
+const Home = screen(chunks.home, (m) => m.default);
+const Orders = screen(chunks.orders, (m) => m.default);
+const OrderHistory = screen(chunks.history, (m) => m.default);
+const Scheduled = screen(chunks.scheduled, (m) => m.default);
+const OrderPage = screen(chunks.order, (m) => m.default);
+const Menu = screen(chunks.menu, (m) => m.default);
+const ProductPage = screen(chunks.product, (m) => m.default);
+const Store = screen(chunks.store, (m) => m.default);
+const Payments = screen(chunks.payments, (m) => m.default);
+const Customers = screen(chunks.customers, (m) => m.default);
+const CustomerPage = screen(chunks.customer, (m) => m.default);
+const Marketing = screen(chunks.marketing, (m) => m.default);
+const Appearance = screen(chunks.appearance, (m) => m.default);
+const Reports = screen(chunks.reports, (m) => m.default);
+const Team = screen(chunks.team, (m) => m.default);
+const Account = screen(chunks.account, (m) => m.default);
+const Profile = screen(chunks.profile, (m) => m.default);
+const Help = screen(chunks.help, (m) => m.default);
+const Onboarding = screen(chunks.onboarding, (m) => m.default);
+const NotFound = screen(chunks.notFound, (m) => m.default);
 const UiReference = lazy(() => import('../features/dev/UiReference.tsx'));
 
 export default function App() {
@@ -48,6 +50,19 @@ export default function App() {
     if (t) applyTheme(t);
   }, [q.data?.user.prefs.theme]);
 
+  const unauth =
+    (q.error instanceof ApiError && q.error.status === 401) || (q.isPending && signedOut.current);
+  signedOut.current = unauth || (signedOut.current && !q.data);
+  // Signed out from under us (expired, revoked, a redeploy with a fresh database): nothing of
+  // that session may leak into the next sign-in — not its screens' data, not a write queued
+  // offline, which would otherwise replay into whichever store signs in next.
+  useEffect(() => {
+    if (!unauth) return;
+    qc.getMutationCache().clear();
+    qc.removeQueries({ predicate: (x) => x.queryKey[0] !== qk.session[0] });
+    void clearPersisted();
+  }, [unauth, qc]);
+
   // the style reference renders without a session (CI screenshots it)
   if (loc.pathname === '/_ui')
     return (
@@ -55,33 +70,21 @@ export default function App() {
         <UiReference />
       </Suspense>
     );
-  const unauth =
-    (q.error instanceof ApiError && q.error.status === 401) || (q.isPending && signedOut.current);
-  signedOut.current = unauth || (signedOut.current && !q.data);
-  if (q.isPending && !unauth)
-    return (
-      <div className="mx-auto max-w-lg p-6" aria-busy>
-        <Loading />
-      </div>
-    );
+  if (q.isPending && !unauth) return <Splash />;
   if (unauth || loc.pathname === '/entrar')
     return q.data && !unauth ? (
       <Navigate to="/" replace />
     ) : (
       // a Login chunk that fails or crawls on mobile data must not leave a bare background
       <ErrorBoundary>
-        <Suspense
-          fallback={
-            <div className="mx-auto max-w-lg p-6" aria-busy>
-              <Loading />
-            </div>
-          }
-        >
+        <Suspense fallback={<Splash text="Carregando…" />}>
           <Login />
         </Suspense>
       </ErrorBoundary>
     );
-  if (q.error || !q.data)
+  // a failed re-check (Core mid-deploy, a 502, offline) keeps the app on its last session;
+  // only a 401 signs out, and the error screen is for a first load with nothing to show
+  if (!q.data)
     return (
       <div className="mx-auto max-w-lg p-6">
         <ErrorState error={q.error} retry={() => void q.refetch()} />
@@ -95,13 +98,7 @@ export default function App() {
             path="/bem-vindo"
             element={
               <ErrorBoundary>
-                <Suspense
-                  fallback={
-                    <div className="mx-auto max-w-lg p-6" aria-busy>
-                      <Loading />
-                    </div>
-                  }
-                >
+                <Suspense fallback={<Splash text="Preparando seu passo a passo…" />}>
                   <Onboarding />
                 </Suspense>
               </ErrorBoundary>

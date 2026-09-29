@@ -1,16 +1,17 @@
 import { ClockCounterClockwise, Plus, UserCircle } from '@phosphor-icons/react';
-import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useInfiniteQuery, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useEffect, useState } from 'react';
 import { api, type Member, type Role } from '../../lib/api.ts';
 import { ago, phone, when } from '../../lib/format.ts';
-import { optimistic, qk } from '../../lib/query.ts';
+import { optimistic, qk, useMutation } from '../../lib/query.ts';
 import { ROLE_LABEL, useCan, useSession } from '../../lib/session.ts';
 import { Button } from '../../ui/Button.tsx';
 import { Card, Section } from '../../ui/Card.tsx';
-import { ErrorState, Loading, messageOf } from '../../ui/feedback.tsx';
+import { ErrorState, messageOf, DuaNote } from '../../ui/feedback.tsx';
 import { Chips, Field, PhoneInput, TextInput } from '../../ui/fields.tsx';
 import { HoldButton } from '../../ui/HoldButton.tsx';
 import { PageBody, PageHeader } from '../../ui/Page.tsx';
+import { RowsSkeleton } from '../../ui/skeletons.tsx';
 import { Sheet } from '../../ui/Sheet.tsx';
 import { toast } from '../../ui/Toast.tsx';
 
@@ -44,7 +45,7 @@ export default function Team() {
           {error && !data ? (
             <ErrorState error={error} retry={() => void refetch()} />
           ) : !data ? (
-            <Loading lines={2} />
+            <RowsSkeleton rows={3} />
           ) : (
             <Card className="divide-y divide-line">
               {data.members.map((m) => (
@@ -79,6 +80,12 @@ export default function Team() {
               ))}
             </Card>
           )}
+          {owner && data && data.members.filter((m) => m.status !== 'revoked').length === 1 ? (
+            <DuaNote pose="carinho" title="Tocando a loja sem ajuda?" className="mt-3">
+              Chame quem ajuda no balcão ou na cozinha. Cada pessoa entra com o próprio celular, e
+              você escolhe o que ela pode fazer.
+            </DuaNote>
+          ) : null}
           {owner ? (
             <Button
               variant="secondary"
@@ -259,7 +266,7 @@ function Activity() {
   return (
     <Section title="Quem mudou o quê" hint="Tudo o que a equipe fez no painel.">
       {list.isPending ? (
-        <Loading lines={3} />
+        <RowsSkeleton rows={5} avatar={false} />
       ) : rows.length ? (
         <Card className="overflow-hidden">
           <ol className="divide-y divide-line">
