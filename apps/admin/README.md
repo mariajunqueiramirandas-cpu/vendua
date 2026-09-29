@@ -47,7 +47,10 @@ The admin is meant to live on the merchant's home screen. What that takes, and w
   and a deploy is one atomic version. A new version waits; the app shows "Tem uma versão
   nova · atualizar" (`lib/pwa.ts`), and the old version keeps working meanwhile. It looks
   for one on return, hourly, and whenever the live stream comes back after Core went away
-  (a deploy); the sign-in screen takes a new version by itself (nothing to lose there). Product
+  (a deploy); the sign-in screen takes a new version by itself (nothing to lose there). Pages
+  load network-first, so a page opened after the deploy already runs the new version: it asks
+  the waiting worker (`HAS`) whether it precaches the page's own files and, if so, lets it take
+  over quietly instead of showing the banner. Product
   photos (`/v1/media`) are cached stale-while-revalidate; `/admin/v1` is never cached by
   the worker.
 - **Last-known data** (`lib/persist.ts`): the query cache is saved to IndexedDB, so a cold

@@ -41,6 +41,11 @@ self.addEventListener('activate', (e) => {
 self.addEventListener('message', (e) => {
   const d = e.data || {};
   if (d.type === 'SKIP_WAITING') void self.skipWaiting();
+  // the page asks whether it already runs this version (its hashed files are all ours)
+  if (d.type === 'HAS' && e.ports[0])
+    e.ports[0].postMessage(
+      Array.isArray(d.urls) && d.urls.length > 0 && d.urls.every((u) => PRECACHE.includes(u)),
+    );
   if (d.type === 'ORDERS_SEEN') e.waitUntil(clearOrderAlerts());
 });
 

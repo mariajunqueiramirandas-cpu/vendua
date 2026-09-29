@@ -66,9 +66,28 @@ export function checkForUpdate() {
 
 let reloading = false;
 export function applyUpdate() {
-  if (!waiting) return location.reload();
+  // another window may have let it take over already: then there is nothing to wait for
+  if (waiting?.state !== 'installed') return location.reload();
   reloading = true;
   waiting.postMessage({ type: 'SKIP_WAITING' });
+}
+
+/** Whether worker `w` precaches the hashed files this page was loaded with. */
+function sameBuild(w: ServiceWorker) {
+  const urls = [
+    ...document.querySelectorAll('script[src^="/admin/assets/"], link[href^="/admin/assets/"]'),
+  ].map((el) => el.getAttribute('src') ?? el.getAttribute('href'));
+  return new Promise<boolean>((done) => {
+    if (!urls.length) return done(false);
+    const ch = new MessageChannel();
+    // a worker from before this check never answers: treat it as a new version
+    const t = setTimeout(() => done(false), 3000);
+    ch.port1.onmessage = (e) => {
+      clearTimeout(t);
+      done(e.data === true);
+    };
+    w.postMessage({ type: 'HAS', urls }, [ch.port2]);
+  });
 }
 
 /** Shell routes these: `/admin/...` URLs from notifications, shortcuts and launches. */
@@ -125,16 +144,28 @@ export function startPwa() {
     const found = (w: ServiceWorker | null) => {
       // the first install has no update to announce
       if (!w || !sw.controller) return;
-      waiting = w;
-      updateSubs.forEach((f) => f());
+      void sameBuild(w).then((same) => {
+        if (w.state === 'redundant') return;
+        // Pages load network-first, so a page opened after a deploy already runs the new
+        // version while the worker still waits for the old one's windows to close: let it take
+        // over quietly (no reload) instead of offering an "update" that changes nothing.
+        if (same) return w.postMessage({ type: 'SKIP_WAITING' });
+        waiting = w;
+        updateSubs.forEach((f) => f());
+      });
     };
-    if (reg.waiting) found(reg.waiting);
-    reg.addEventListener('updatefound', () => {
-      const w = reg.installing;
-      w?.addEventListener('statechange', () => {
+    const watched = new WeakSet<ServiceWorker>();
+    const watch = (w: ServiceWorker | null) => {
+      if (!w || watched.has(w)) return;
+      watched.add(w);
+      w.addEventListener('statechange', () => {
         if (w.state === 'installed') found(w);
       });
-    });
+    };
+    if (reg.waiting) found(reg.waiting);
+    // one still installing when this page registered (its updatefound came before we listened)
+    watch(reg.installing);
+    reg.addEventListener('updatefound', () => watch(reg.installing));
   };
   const register = () =>
     sw
