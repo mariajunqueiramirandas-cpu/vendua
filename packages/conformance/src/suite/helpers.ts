@@ -271,17 +271,20 @@ export async function fillDeliveryStep(
     await page.waitForTimeout(300);
   }
   if (mode === 'delivery') {
-    const hoodOk = await fillFirst(
-      page,
-      [
-        'input[name="neighborhood"]',
-        'input#checkout-neighborhood',
-        'input[name="bairro"]',
-        'input[list]',
-        'input[placeholder*="bairro" i]',
-      ],
-      neighborhood ?? 'Centro',
-    );
+    const hood = [
+      'input[name="neighborhood"]',
+      'input#checkout-neighborhood',
+      'input[name="bairro"]',
+      'input[list]',
+      'input[placeholder*="bairro" i]',
+    ];
+    // the address fields render after the mode switch — on a slow runner, past the 300 ms above
+    await page
+      .locator(hood.join(', '))
+      .first()
+      .waitFor({ state: 'visible', timeout: 5000 })
+      .catch(() => undefined);
+    const hoodOk = await fillFirst(page, hood, neighborhood ?? 'Centro');
     await fillFirst(
       page,
       [
