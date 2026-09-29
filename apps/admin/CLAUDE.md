@@ -12,3 +12,5 @@
   `CHROMIUM=/opt/pw-browsers/chromium AXE=1 bun scripts/shots.ts` (375/820/1440 ×
   Creme/Noite; overflow, console and axe).
 - Style: `theme.css` tokens only, and `depth-*` for shadows (they compose with `ring-*`).
+- Visual and UI design work here is done by Opus 5.5: yourself if this session runs on Opus
+  5.5, otherwise the `frontend-designer` agent — never a Sonnet subagent.
