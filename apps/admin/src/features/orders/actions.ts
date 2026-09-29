@@ -3,7 +3,7 @@ import { api, type Board, type Order, type OrderState } from '../../lib/api.ts';
 import { clock, money, phone, whatsappLink } from '../../lib/format.ts';
 import { haptic } from '../../lib/haptics.ts';
 import { markOrdersSeen } from '../../lib/live.ts';
-import { qk } from '../../lib/query.ts';
+import { optimistic, qk } from '../../lib/query.ts';
 import { messageOf } from '../../ui/feedback.tsx';
 import { toast } from '../../ui/Toast.tsx';
 
@@ -72,6 +72,23 @@ export function useMarkPaid() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (v: { id: string; status: 'paid' | 'pending' }) => api.markPaid(v.id, v.status),
+    onMutate: async (v) => {
+      const flip = (o: Order): Order =>
+        o.id === v.id ? { ...o, payment: { ...o.payment, status: v.status } } : o;
+      const [board, one] = await Promise.all([
+        optimistic<Board>(qc, qk.board, (b) => ({ ...b, orders: b.orders.map(flip) })),
+        optimistic<{ customer: unknown; order: Order }>(qc, qk.order(v.id), (d) => ({
+          ...d,
+          order: flip(d.order),
+        })),
+      ]);
+      return {
+        restore: () => {
+          board.restore();
+          one.restore();
+        },
+      };
+    },
     onSuccess: ({ order }, v) => {
       qc.setQueryData(qk.order(order.id), (old: { customer: unknown } | undefined) => ({
         customer: old?.customer ?? null,
@@ -91,7 +108,10 @@ export function useMarkPaid() {
           : {}),
       });
     },
-    onError: (e) => toast.error(messageOf(e)),
+    onError: (e, _v, ctx) => {
+      ctx?.restore();
+      toast.error(messageOf(e));
+    },
   });
 }
 

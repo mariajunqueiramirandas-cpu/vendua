@@ -17,7 +17,7 @@ import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { api, type Category, type Product } from '../../lib/api.ts';
 import { money } from '../../lib/format.ts';
 import { haptic } from '../../lib/haptics.ts';
-import { qk } from '../../lib/query.ts';
+import { optimistic, qk } from '../../lib/query.ts';
 import { Button, IconButton } from '../../ui/Button.tsx';
 import { Card } from '../../ui/Card.tsx';
 import { cn } from '../../ui/cn.ts';
@@ -129,8 +129,31 @@ export default function Menu() {
     },
   });
   const bulk = useMutation({
-    mutationFn: (v: { action: string; extra?: Record<string, unknown> }) =>
-      api.bulk([...picked], v.action, v.extra),
+    mutationFn: (v: { ids: string[]; action: string; extra?: Record<string, unknown> }) =>
+      api.bulk(v.ids, v.action, v.extra),
+    onMutate: async (v) => {
+      const status =
+        v.action === 'available'
+          ? 'active'
+          : v.action === 'hidden'
+            ? 'archived'
+            : v.action === 'sold_out_today'
+              ? 'sold_out'
+              : null;
+      // price and category moves are the server's to compute — those wait for the answer
+      if (!status) return undefined;
+      const ids = new Set(v.ids);
+      setPicked(new Set());
+      setSelecting(false);
+      setSheet(null);
+      return optimistic<{ categories: Category[] }>(qc, qk.catalog, (d) => ({
+        ...d,
+        categories: d.categories.map((c) => ({
+          ...c,
+          products: c.products.map((p) => (ids.has(p.id) ? { ...p, status } : p)),
+        })),
+      }));
+    },
     onSuccess: (r) => {
       void qc.invalidateQueries({ queryKey: qk.catalog });
       toast(`${r.updated} produtos atualizados`);
@@ -138,7 +161,10 @@ export default function Menu() {
       setSelecting(false);
       setSheet(null);
     },
-    onError: (e) => toast.error(messageOf(e)),
+    onError: (e, _v, ctx) => {
+      ctx?.restore();
+      toast.error(messageOf(e));
+    },
   });
 
   const toggle = (id: string) =>
@@ -341,7 +367,7 @@ export default function Menu() {
               size="sm"
               variant="secondary"
               disabled={!picked.size}
-              onClick={() => bulk.mutate({ action: 'available' })}
+              onClick={() => bulk.mutate({ ids: [...picked], action: 'available' })}
             >
               disponível
             </Button>
@@ -349,7 +375,7 @@ export default function Menu() {
               size="sm"
               variant="secondary"
               disabled={!picked.size}
-              onClick={() => bulk.mutate({ action: 'sold_out_today' })}
+              onClick={() => bulk.mutate({ ids: [...picked], action: 'sold_out_today' })}
             >
               esgotado hoje
             </Button>
@@ -357,7 +383,7 @@ export default function Menu() {
               size="sm"
               variant="secondary"
               disabled={!picked.size}
-              onClick={() => bulk.mutate({ action: 'hidden' })}
+              onClick={() => bulk.mutate({ ids: [...picked], action: 'hidden' })}
             >
               esconder
             </Button>
@@ -409,7 +435,9 @@ export default function Menu() {
         onOpenChange={(v) => setSheet(v ? 'bulk-price' : null)}
         count={picked.size}
         loading={bulk.isPending}
-        onApply={(percent) => bulk.mutate({ action: 'price_percent', extra: { percent } })}
+        onApply={(percent) =>
+          bulk.mutate({ ids: [...picked], action: 'price_percent', extra: { percent } })
+        }
       />
       <Sheet
         open={sheet === 'bulk-category'}
@@ -423,7 +451,9 @@ export default function Menu() {
               variant="secondary"
               size="lg"
               block
-              onClick={() => bulk.mutate({ action: 'category', extra: { categoryId: c.id } })}
+              onClick={() =>
+                bulk.mutate({ ids: [...picked], action: 'category', extra: { categoryId: c.id } })
+              }
             >
               {c.name}
             </Button>
@@ -974,16 +1004,31 @@ function OrganizeSheet({
   const refresh = () => void qc.invalidateQueries({ queryKey: qk.catalog });
   const reorder = useMutation({
     mutationFn: api.orderCategories,
-    onSuccess: refresh,
-    onError: (e) => toast.error(messageOf(e)),
+    onMutate: (ids: string[]) =>
+      optimistic<{ categories: Category[] }>(qc, qk.catalog, (d) => ({
+        ...d,
+        categories: ids.flatMap((id) => d.categories.filter((c) => c.id === id)),
+      })),
+    onSettled: refresh,
+    onError: (e, _ids, ctx) => {
+      ctx?.restore();
+      toast.error(messageOf(e));
+    },
   });
   const rename = useMutation({
     mutationFn: (v: { id: string; name: string }) => api.renameCategory(v.id, v.name),
-    onSuccess: () => {
-      refresh();
+    onMutate: (v) => {
       setEditing(null);
+      return optimistic<{ categories: Category[] }>(qc, qk.catalog, (d) => ({
+        ...d,
+        categories: d.categories.map((c) => (c.id === v.id ? { ...c, name: v.name } : c)),
+      }));
     },
-    onError: (e) => toast.error(messageOf(e)),
+    onSettled: refresh,
+    onError: (e, _v, ctx) => {
+      ctx?.restore();
+      toast.error(messageOf(e));
+    },
   });
   const del = useMutation({
     mutationFn: api.deleteCategory,

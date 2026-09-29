@@ -5,7 +5,7 @@ import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { api, type Payments as PaymentsData, type PayMethod } from '../../lib/api.ts';
 import { ago, money } from '../../lib/format.ts';
-import { qk } from '../../lib/query.ts';
+import { optimistic, qk } from '../../lib/query.ts';
 import { useCan } from '../../lib/session.ts';
 import { Button } from '../../ui/Button.tsx';
 import { Card, Section } from '../../ui/Card.tsx';
@@ -156,8 +156,12 @@ function Methods({ data, canEdit }: { data: PaymentsData; canEdit: boolean }) {
   const qc = useQueryClient();
   const save = useMutation({
     mutationFn: (methods: PayMethod[]) => api.updatePayments({ methods }),
+    onMutate: (methods) => optimistic<PaymentsData>(qc, qk.payments, (d) => ({ ...d, methods })),
     onSuccess: (d) => qc.setQueryData(qk.payments, d),
-    onError: (e) => toast.error(messageOf(e)),
+    onError: (e, _m, ctx) => {
+      ctx?.restore();
+      toast.error(messageOf(e));
+    },
   });
   const on = (m: PayMethod) => data.methods.includes(m);
   return (

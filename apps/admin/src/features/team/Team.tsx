@@ -3,7 +3,7 @@ import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from '@tansta
 import { useEffect, useState } from 'react';
 import { api, type Member, type Role } from '../../lib/api.ts';
 import { ago, phone, when } from '../../lib/format.ts';
-import { qk } from '../../lib/query.ts';
+import { optimistic, qk } from '../../lib/query.ts';
 import { ROLE_LABEL, useCan, useSession } from '../../lib/session.ts';
 import { Button } from '../../ui/Button.tsx';
 import { Card, Section } from '../../ui/Card.tsx';
@@ -188,17 +188,35 @@ function EditSheet({ member, onClose }: { member: Member | null; onClose: () => 
     qc.setQueryData(qk.team, r);
     void qc.invalidateQueries({ queryKey: qk.activity });
     toast(msg);
-    onClose();
   };
+  // the sheet closes on tap, so what the mutation needs travels in its variables
   const upd = useMutation({
-    mutationFn: () => api.updateMember(member!.id, { role }),
+    mutationFn: (v: { id: string; role: Role }) => api.updateMember(v.id, { role: v.role }),
+    onMutate: (v) => {
+      onClose();
+      return optimistic<{ members: Member[] }>(qc, qk.team, (d) => ({
+        members: d.members.map((m) => (m.id === v.id ? { ...m, role: v.role } : m)),
+      }));
+    },
     onSuccess: (r) => done(r, 'Papel atualizado'),
-    onError: (e) => toast.error(messageOf(e)),
+    onError: (e, _v, ctx) => {
+      ctx?.restore();
+      toast.error(messageOf(e));
+    },
   });
   const rm = useMutation({
-    mutationFn: () => api.removeMember(member!.id),
-    onSuccess: (r) => done(r, `${member!.name} não tem mais acesso`),
-    onError: (e) => toast.error(messageOf(e)),
+    mutationFn: (v: { id: string; name: string }) => api.removeMember(v.id),
+    onMutate: (v) => {
+      onClose();
+      return optimistic<{ members: Member[] }>(qc, qk.team, (d) => ({
+        members: d.members.filter((m) => m.id !== v.id),
+      }));
+    },
+    onSuccess: (r, v) => done(r, `${v.name} não tem mais acesso`),
+    onError: (e, _v, ctx) => {
+      ctx?.restore();
+      toast.error(messageOf(e));
+    },
   });
   return (
     <Sheet
@@ -213,11 +231,11 @@ function EditSheet({ member, onClose }: { member: Member | null; onClose: () => 
             block
             loading={upd.isPending}
             disabled={role === member?.role}
-            onClick={() => upd.mutate()}
+            onClick={() => upd.mutate({ id: member!.id, role })}
           >
             salvar papel
           </Button>
-          <HoldButton onConfirm={() => rm.mutate()}>
+          <HoldButton onConfirm={() => rm.mutate({ id: member!.id, name: member!.name })}>
             {rm.isPending ? 'removendo…' : 'segure para tirar o acesso'}
           </HoldButton>
         </div>
