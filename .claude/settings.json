@@ -4,7 +4,7 @@
   },
   "modelSettings": {
     "claude-sonnet-5-5": {
-      "effortLevel": "high"
+      "effortLevel": "low"
     }
   },
   "permissions": {
