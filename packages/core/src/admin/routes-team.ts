@@ -1,7 +1,7 @@
 import type { Sql } from '../platform/db.ts';
 import { HttpError, bodyJson, uuidParam } from '../platform/http.ts';
 import { audit } from './audit.ts';
-import { validAdminPhone } from './auth.ts';
+import { forgetGate, validAdminPhone } from './auth.ts';
 import { ROLES, oneOf, text, type AdminDeps } from './context.ts';
 import { handlers } from './handlers.ts';
 import { emitAdminTx } from './live.ts';
@@ -92,6 +92,7 @@ export function mountTeam(d: AdminDeps) {
       if (cur.role === 'owner' && role !== 'owner' && (await owners(tx, t.id, id)) === 0)
         throw new HttpError(409, 'LAST_OWNER', 'the store needs at least one owner');
       await tx`update merchant_users set role = ${role}, name = ${name} where id = ${id}`;
+      forgetGate();
       await audit(tx, t.id, m, {
         action: 'team.update',
         entity: 'member',
@@ -119,6 +120,7 @@ export function mountTeam(d: AdminDeps) {
       if (cur.role === 'owner' && (await owners(tx, t.id, id)) === 0)
         throw new HttpError(409, 'LAST_OWNER', 'the store needs at least one owner');
       await tx`update merchant_users set status = 'revoked' where id = ${id}`;
+      forgetGate();
       // access ends now, on every device
       await tx`update merchant_sessions set revoked_at = now() where tenant_id = ${t.id} and user_id = ${id} and revoked_at is null`;
       await tx`delete from push_subscriptions where tenant_id = ${t.id} and user_id = ${id}`;

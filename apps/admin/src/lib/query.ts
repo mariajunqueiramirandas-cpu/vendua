@@ -1,4 +1,4 @@
-import { QueryClient } from '@tanstack/react-query';
+import { QueryClient, type QueryKey } from '@tanstack/react-query';
 import { ApiError } from './api.ts';
 
 // One key registry — screens share keys, SSE invalidation (live.ts) targets them.
@@ -43,3 +43,18 @@ export const queryClient = new QueryClient({
     },
   },
 });
+
+/**
+ * Optimistic write: show `patch(old)` now, hand back the way to undo it. Call `restore()` in
+ * onError; the settling refetch/response replaces the guess on success.
+ */
+export async function optimistic<T>(qc: QueryClient, key: QueryKey, patch: (old: T) => T) {
+  await qc.cancelQueries({ queryKey: key });
+  const prev = qc.getQueryData<T>(key);
+  if (prev !== undefined) qc.setQueryData<T>(key, patch(prev));
+  return {
+    restore: () => {
+      if (prev !== undefined) qc.setQueryData(key, prev);
+    },
+  };
+}

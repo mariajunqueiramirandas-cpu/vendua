@@ -14,7 +14,7 @@ import QRCode from 'qrcode';
 import { useEffect, useState } from 'react';
 import { api, type Coupon, type LoyaltyProgram, type Marketing as M } from '../../lib/api.ts';
 import { dateShort, money, phone, whatsappLink } from '../../lib/format.ts';
-import { qk } from '../../lib/query.ts';
+import { optimistic, qk } from '../../lib/query.ts';
 import { useSession } from '../../lib/session.ts';
 import { Button } from '../../ui/Button.tsx';
 import { Card, Section } from '../../ui/Card.tsx';
@@ -198,13 +198,21 @@ function Coupons({ coupons }: { coupons: Coupon[] }) {
   const [open, setOpen] = useState(false);
   const toggle = useMutation({
     mutationFn: (c: Coupon) => api.updateCoupon(c.id, { active: !c.active }),
+    onMutate: (c) =>
+      optimistic<M>(qc, qk.marketing, (m) => ({
+        ...m,
+        coupons: m.coupons.map((x) => (x.id === c.id ? { ...x, active: !c.active } : x)),
+      })),
     onSuccess: (r, c) => {
       qc.setQueryData(qk.marketing, (m: M | undefined) => (m ? { ...m, coupons: r.coupons } : m));
       toast(c.active ? `${c.code} desativado` : `${c.code} ativo de novo`, {
         undo: () => toggle.mutate({ ...c, active: !c.active }),
       });
     },
-    onError: (e) => toast.error(messageOf(e)),
+    onError: (e, _c, ctx) => {
+      ctx?.restore();
+      toast.error(messageOf(e));
+    },
   });
   return (
     <Section

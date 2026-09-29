@@ -113,7 +113,9 @@ export function idempotency(
             and idempotency_keys.created_at < now() - interval '30 seconds'
         returning key
       `;
-      await tx`delete from idempotency_keys where created_at < now() - interval '7 days'`;
+      // a sweep on ~1 in 50 claims still bounds the table, without a round trip on every write
+      if (Math.random() < 0.02)
+        await tx`delete from idempotency_keys where created_at < now() - interval '7 days'`;
       return rows;
     });
     if (!claimed[0]) {
