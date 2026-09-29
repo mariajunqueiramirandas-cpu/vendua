@@ -52,17 +52,27 @@ model, migrations, tokens, compat matrix), `packages/loader` (`v.js`), `packages
 
 ## Subagents
 
-Subagents run on Sonnet 5.5 (`.claude/settings.json`); only their final report enters your
-context. Delegate when the work is noisy or wide and you need the conclusion, not the output:
+Subagents run on Sonnet 5.5 at low effort (`.claude/settings.json`); only their final report
+enters your context. Agents: `test-runner` and `invariant-reviewer` (this repo), `Explore`
+(read-only search), `Plan`, `general-purpose` (can edit). Check these triggers mid-task too,
+not only at the start:
 
-- Test runs — the `test-runner` agent runs a suite and returns only failures with causes.
-- Searches across many files or areas ("where is X handled across Core, kernel and the apps?"),
-  and reading the huge files above to answer one question — use `Explore`.
-- Independent investigations in parallel (several agents in one message).
+- About to run a suite, a multi-workspace `bun run check`, e2e or read a long log → `test-runner`.
+- About to open a third file just to answer "where/how is X done" → `Explore`.
+- A change touches money, tenancy, idempotency, kernel exports or agent runs → after editing,
+  `invariant-reviewer` on the diff.
+- Stuck on a failure after two attempts → one agent to investigate it cold while you continue.
 
-Do it yourself when you already know the file or symbol, for a single grep, and for edits
-that depend on this conversation. A subagent sees none of the conversation: give it paths,
-the goal and the answer format ("under 200 words, file:line refs"). Don't redo its search.
+Splitting a task that spans areas (e.g. Core route + admin screen + kernel export):
+
+- Research in parallel — one agent per area, all in one message — then decide the design yourself.
+- Edits: do them yourself, or give parallel `general-purpose` agents disjoint file sets
+  (never two on one file); run the checks once all are back.
+- Don't split when each step needs the previous step's details, or the whole thing is a few edits.
+
+A subagent sees none of the conversation. Its brief needs the goal, exact paths, the
+constraints that apply (quote the invariant) and the answer format ("under 200 words,
+file:line refs"). Don't redo its search; verify a surprising claim with one targeted Read.
 
 ## PRs
 
