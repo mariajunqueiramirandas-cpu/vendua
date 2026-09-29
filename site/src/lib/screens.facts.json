@@ -1,0 +1,17 @@
+{
+  "owner": "Nena",
+  "salesToday": "R$ 718,00",
+  "ordersToday": 6,
+  "newOrder": {
+    "number": 29,
+    "customer": "Luiz",
+    "total": "R$ 219,00",
+    "mode": "entrega"
+  },
+  "earlierOrder": {
+    "number": 28,
+    "customer": "Mariana",
+    "total": "R$ 85,00",
+    "mode": "entrega"
+  }
+}

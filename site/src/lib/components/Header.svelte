@@ -1,77 +1,108 @@
 <script lang="ts">
-  import { onMount } from 'svelte';
-  import { page } from '$app/state';
+  import Logo from './Logo.svelte';
+  import Soon from './Soon.svelte';
 
-  let dark = $state(false);
+  // Sticky bar; transparent over the dawn sky, glass once the page scrolls (the admin's only glass
+  // surfaces are its bars — design spec §4.4). Links are in-page anchors on the home page.
+  let { home = true, overlay = false }: { home?: boolean; overlay?: boolean } = $props();
+  let scrolled = $state(false);
 
-  onMount(() => {
-    dark = document.documentElement.dataset.theme === 'dark';
+  $effect(() => {
+    const on = () => (scrolled = window.scrollY > 8);
+    on();
+    window.addEventListener('scroll', on, { passive: true });
+    return () => window.removeEventListener('scroll', on);
   });
 
-  const toggleTheme = () => {
-    dark = !dark;
-    const h = document.documentElement;
-    const freeze = document.createElement('style');
-    freeze.append(document.createTextNode('*,*::before,*::after{transition:none !important}'));
-    document.head.append(freeze);
-    if (dark) h.dataset.theme = 'dark';
-    else delete h.dataset.theme;
-    try {
-      localStorage.setItem('vnd-theme', dark ? 'dark' : 'light');
-    } catch {}
-    document
-      .querySelector('meta[name="theme-color"]')
-      ?.setAttribute('content', dark ? '#0a100d' : '#f7f4ea');
-    window.dispatchEvent(new Event('vnd:theme'));
-    void document.body.offsetHeight;
-    requestAnimationFrame(() => {
-      requestAnimationFrame(() => freeze.remove());
-    });
-  };
+  const links = [
+    { href: '#pedidos', label: 'Como funciona' },
+    { href: '#preco', label: 'Preço' },
+    { href: '#perguntas', label: 'Perguntas' },
+  ];
 </script>
 
-<a class="skip" href="#conteudo">Pular para o conteúdo</a>
-<div class="header-bar">
-  <header class="header container">
-    <a
-      class="brand"
-      href="/"
-      translate="no"
-      aria-label="Venduá · início"
-      aria-current={page.url.pathname === '/' ? 'page' : undefined}
-      ><img
-        class="mark mark-light"
-        src="/assets/brand/mark-green.svg"
-        width="36"
-        height="36"
-        alt=""
-      /><img
-        class="mark mark-dark"
-        src="/assets/brand/mark-lime.svg"
-        width="36"
-        height="36"
-        alt=""
-      />venduá<span class="brand-dot">.</span></a
-    >
-    <div class="header-side">
-      <span class="dev-status"
-        ><span class="signal-dot" aria-hidden="true"></span>Software house</span
-      >
-      <button
-        class="theme-toggle"
-        type="button"
-        onclick={toggleTheme}
-        aria-pressed={dark}
-        aria-label="Alternar entre tema claro e escuro"
-        ><span class="tt-label" aria-hidden="true"></span></button
-      >
-      <nav aria-label="Principal">
-        <a
-          class="button small"
-          href="/contato/"
-          aria-current={page.url.pathname.startsWith('/contato') ? 'page' : undefined}>Contato</a
-        >
-      </nav>
-    </div>
-  </header>
-</div>
+<header class="bar" class:scrolled class:overlay>
+  <div class="wrap row">
+    <a class="home" href="/" aria-label="Venduá, início"><Logo /></a>
+    <nav aria-label="Seções">
+      <ul>
+        {#each links as l (l.href)}
+          <li><a href={home ? l.href : `/${l.href}`}>{l.label}</a></li>
+        {/each}
+      </ul>
+    </nav>
+    <Soon size="sm" />
+  </div>
+</header>
+
+<style>
+  .bar {
+    position: sticky;
+    top: 0;
+    z-index: 50;
+    padding-top: env(safe-area-inset-top, 0px);
+    transition:
+      background var(--duration-smooth) var(--ease-soft),
+      box-shadow var(--duration-smooth) var(--ease-soft);
+  }
+  /* floats over the first section so the dawn sky runs to the top edge */
+  .overlay {
+    margin-bottom: calc(-68px - env(safe-area-inset-top, 0px));
+  }
+  .scrolled {
+    background: var(--glass);
+    box-shadow: 0 1px 0 var(--line);
+  }
+  @supports (backdrop-filter: blur(20px)) {
+    .scrolled {
+      background: color-mix(in srgb, var(--bg) 80%, transparent);
+      backdrop-filter: blur(20px) saturate(1.4);
+      -webkit-backdrop-filter: blur(20px) saturate(1.4);
+    }
+  }
+  @media (prefers-reduced-transparency: reduce) {
+    .scrolled {
+      background: var(--bg);
+      backdrop-filter: none;
+    }
+  }
+  .row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 16px;
+    min-height: 68px;
+  }
+  .home {
+    text-decoration: none;
+    border-radius: 8px;
+  }
+  nav {
+    margin-left: auto;
+  }
+  ul {
+    display: flex;
+    gap: 4px;
+    list-style: none;
+    margin: 0;
+    padding: 0;
+  }
+  nav a {
+    display: inline-flex;
+    align-items: center;
+    min-height: 44px;
+    padding: 0 14px;
+    border-radius: 999px;
+    font: 600 15px/1 var(--font-sans);
+    text-decoration: none;
+    color: var(--ink);
+  }
+  nav a:hover {
+    background: var(--hover);
+  }
+  @media (max-width: 860px) {
+    nav {
+      display: none;
+    }
+  }
+</style>

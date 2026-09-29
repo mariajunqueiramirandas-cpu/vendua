@@ -1,0 +1,149 @@
+/*
+ * Venduá brand tokens for the marketing site. The palette, shadows, radii and type are the merchant
+ * admin's (apps/admin/src/ui/theme.css, docs/merchant-admin-design.md §4): the admin is the source and
+ * `scripts/validate.ts` fails the build if a shared value drifts. The site follows the system theme:
+ * Creme by default, Noite under prefers-color-scheme: dark.
+ */
+:root {
+  --bg: #f7f4ea;
+  --surface: #fffdf8;
+  --surface-sunken: #efe9d8;
+  --surface-raised: #fffdf8;
+  --ink: #123c32;
+  --ink-muted: #4f6a5e;
+  --ink-faint: #6b8177; /* non-text only */
+  --line: rgb(18 60 50 / 0.12);
+  --line-strong: rgb(18 60 50 / 0.2);
+  --primary: #123c32;
+  --on-primary: #fffdf8;
+  --primary-hover: #0d2f27;
+  --spark: #d9f875;
+  --on-spark: #123c32;
+  --spark-soft: #f0fcc9;
+  --success: #1f7a4d;
+  --success-soft: #ddf3e6;
+  --warning: #9a5200;
+  --warning-soft: #fff0d6;
+  --danger: #b3261e;
+  --danger-soft: #fbe4e1;
+  --info: #2456b0;
+  --info-soft: #e3eeff;
+  --hover: rgb(18 60 50 / 0.05);
+  --press: rgb(18 60 50 / 0.09);
+  --glass: rgb(247 244 234 / 0.92);
+
+  --shadow-e1: 0 1px 2px rgb(18 60 50 / 0.06), 0 4px 16px rgb(18 60 50 / 0.05);
+  --shadow-e2: 0 2px 4px rgb(18 60 50 / 0.08), 0 12px 32px rgb(18 60 50 / 0.1);
+  --shadow-e3: 0 8px 16px rgb(18 60 50 / 0.1), 0 24px 64px rgb(18 60 50 / 0.16);
+  --highlight: 0 0 #0000;
+
+  /* the app's own background behind a screenshot: phone status bars match it */
+  --app-bg: #f7f4ea;
+
+  /* the store's day, top to bottom of the home page: each section runs from one stop to the next,
+     so the sky never jumps between sections */
+  --sky-0: #fff6ea; /* 6h, first light */
+  --sky-1: #fde7d4; /* dawn peach */
+  --sky-2: #f5f6e4; /* morning */
+  --sky-3: #fffdf8; /* noon */
+  --sky-4: #fbecd3; /* golden afternoon */
+  --sky-5: #1c2a33; /* dusk, always dark */
+  --sky-6: #0a100d; /* night, always dark */
+  /* the sunset band is a fixed 340 px at the top of the dusk section, whatever its height: text below
+     it always sits on dark sky */
+  --sunset: linear-gradient(
+    180deg,
+    var(--sky-4) 0px,
+    #efc6a4 70px,
+    #b58c8d 150px,
+    #5d5e76 240px,
+    #2b3a4f 340px,
+    var(--sky-5) 100%
+  );
+
+  /* sections after sunset keep light text in both themes */
+  --after-ink: #f7f4ea;
+  --after-muted: #b9c6bf;
+  --after-line: rgb(247 244 234 / 0.14);
+  --after-card: rgb(247 244 234 / 0.06);
+
+  --bezel: linear-gradient(150deg, #34413b 0%, #121a16 45%, #0b100d 100%);
+
+  --font-display: 'Space Grotesk Variable', system-ui, sans-serif;
+  --font-moment: 'Instrument Serif', Georgia, 'Times New Roman', serif;
+  --font-sans: 'Figtree Variable', system-ui, -apple-system, 'Segoe UI', sans-serif;
+
+  --radius-sm: 10px;
+  --radius-md: 16px;
+  --radius-lg: 24px;
+  --radius-xl: 32px;
+
+  --ease-soft: cubic-bezier(0.2, 0.8, 0.2, 1);
+  --duration-instant: 100ms;
+  --duration-quick: 180ms;
+  --duration-smooth: 280ms;
+
+  --gutter: 16px;
+  --wrap: 1180px;
+
+  color-scheme: light;
+}
+
+@media (min-width: 768px) {
+  :root {
+    --gutter: 32px;
+  }
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #0a100d;
+    --surface: #131d18;
+    --surface-sunken: #0c1410;
+    --surface-raised: #1a2620;
+    --ink: #f7f4ea;
+    --ink-muted: #9dafa4;
+    --ink-faint: #7f9388;
+    --line: rgb(247 244 234 / 0.1);
+    --line-strong: rgb(247 244 234 / 0.18);
+    --primary: #d9f875;
+    --on-primary: #0a100d;
+    --primary-hover: #e6fb9b;
+    --spark: #d9f875;
+    --on-spark: #0a100d;
+    --spark-soft: rgb(217 248 117 / 0.14);
+    --success: #6fd39c;
+    --success-soft: rgb(111 211 156 / 0.14);
+    --warning: #f2b45a;
+    --warning-soft: rgb(242 180 90 / 0.14);
+    --danger: #ff8a7f;
+    --danger-soft: rgb(255 138 127 / 0.14);
+    --info: #8eb4ff;
+    --info-soft: rgb(142 180 255 / 0.14);
+    --hover: rgb(247 244 234 / 0.05);
+    --press: rgb(247 244 234 / 0.09);
+    --glass: rgb(10 16 13 / 0.9);
+
+    --shadow-e1: 0 0 0 1px rgb(247 244 234 / 0.04);
+    --shadow-e2: 0 0 0 1px rgb(247 244 234 / 0.06), 0 12px 32px rgb(0 0 0 / 0.35);
+    --shadow-e3: 0 0 0 1px rgb(247 244 234 / 0.06), 0 24px 64px rgb(0 0 0 / 0.5);
+    --highlight: inset 0 1px 0 rgb(255 255 255 / 0.06);
+
+    --app-bg: #0a100d;
+
+    --sky-0: #1d1a14;
+    --sky-1: #2a2018;
+    --sky-2: #16211b;
+    --sky-3: #131d18;
+    --sky-4: #1f1c13;
+    --sunset: linear-gradient(
+      180deg,
+      var(--sky-4) 0px,
+      #2a2230 120px,
+      #22283a 260px,
+      var(--sky-5) 100%
+    );
+
+    color-scheme: dark;
+  }
+}

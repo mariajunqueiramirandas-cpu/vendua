@@ -1,48 +1,62 @@
 <script lang="ts">
-  import { page } from '$app/state';
-  import { site } from '$lib/content/site';
+  import { site } from '$lib/content';
+  import Logo from './Logo.svelte';
+
+  // Sits on the night sky at the bottom of every page, so it always uses the "after" tone.
 </script>
 
-<footer class="container footer">
-  <div>
-    <a
-      href="/"
-      class="brand"
-      translate="no"
-      aria-current={page.url.pathname === '/' ? 'page' : undefined}>venduá.</a
-    >
-    <p>{site.tagline}</p>
+<footer class="foot">
+  <div class="wrap row">
+    <a class="home" href="/" aria-label="Venduá, início"><Logo tone="after" size={20} /></a>
+    <ul>
+      <li>
+        <a href={site.instagram.url} rel="noopener" target="_blank"
+          >Instagram {site.instagram.handle}</a
+        >
+      </li>
+      <li><a href="/privacidade/">Privacidade</a></li>
+    </ul>
+    <p>Feito com carinho para quem faz.</p>
   </div>
-  <div class="footer-links">
-    <a href={site.instagramUrl} target="_blank" rel="noreferrer"
-      ><svg
-        width="15"
-        height="15"
-        viewBox="0 0 24 24"
-        fill="none"
-        stroke="currentColor"
-        stroke-width="1.5"
-        aria-hidden="true"
-        ><rect x="2.75" y="2.75" width="18.5" height="18.5" rx="5.5" /><circle
-          cx="12"
-          cy="12"
-          r="4.25"
-        /><circle cx="17.4" cy="6.6" r="1.3" fill="currentColor" stroke="none" /></svg
-      >Instagram · {site.instagramHandle} <span class="sr-only">(nova aba)</span><span
-        aria-hidden="true">↗</span
-      ></a
-    >
-    {#each site.emails as email}
-      <a href="mailto:{email}">{email}</a>
-    {/each}
-    <a href="/contato/" aria-current={page.url.pathname.startsWith('/contato') ? 'page' : undefined}
-      >Contato</a
-    >
-    <a
-      href="/privacidade/"
-      aria-current={page.url.pathname.startsWith('/privacidade') ? 'page' : undefined}
-      >Privacidade</a
-    >
-  </div>
-  <p class="fine">Venduá · software sob medida · plataforma em desenvolvimento.</p>
 </footer>
+
+<style>
+  .foot {
+    --ink: var(--after-ink);
+    background: var(--sky-6);
+    color: var(--after-muted);
+    border-top: 1px solid var(--after-line);
+    padding-bottom: env(safe-area-inset-bottom, 0px);
+  }
+  .row {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: 16px 32px;
+    padding-block: 28px;
+    font-size: 15px;
+  }
+  .home {
+    text-decoration: none;
+    border-radius: 8px;
+  }
+  ul {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px 24px;
+    list-style: none;
+    margin: 0;
+    padding: 0;
+  }
+  a {
+    color: var(--after-ink);
+    text-decoration-color: rgb(217 248 117 / 0.6);
+    text-underline-offset: 4px;
+  }
+  ul a {
+    display: inline-flex;
+    align-items: center;
+    min-height: 44px;
+  }
+</style>
