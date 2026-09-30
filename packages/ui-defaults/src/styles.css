@@ -2524,6 +2524,178 @@
     height: auto;
     border-radius: var(--v-radius-sm, 4px);
   }
+  /* online Pix — the code's clock and the "confirms by itself" line */
+  .v-pix-timer {
+    justify-self: start;
+    margin: 8px 0 0;
+    padding: 3px 10px;
+    border-radius: 999px;
+    font-size: 0.8125rem;
+    font-weight: 500;
+    line-height: 1.4;
+    background: color-mix(in srgb, var(--v-color-text, #1c1b1a) 6%, var(--v-color-surface, #fff));
+  }
+  .v-pix-timer[data-urgent] {
+    background: color-mix(
+      in srgb,
+      var(--v-color-danger, #a33b32) 12%,
+      var(--v-color-surface, #fff)
+    );
+  }
+  .v-pix-wait {
+    display: flex;
+    align-items: baseline;
+    gap: 10px;
+    margin: 8px 0 0;
+    padding: 10px 12px;
+    border-radius: var(--v-radius-sm, 4px);
+    font-size: 0.875rem;
+    line-height: 1.4;
+    background: color-mix(in srgb, var(--v-color-accent, #3f5e4e) 7%, var(--v-color-surface, #fff));
+  }
+  .v-pix-wait-dot {
+    flex: none;
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: var(--v-color-accent, #3f5e4e);
+    transform: translateY(-1px);
+    animation: v-breathe 1.6s ease-in-out infinite;
+  }
+
+  /* checkout.PaymentStatus — icon, then eyebrow/title/body; actions and the busy rail
+     span the row. Tone tints the icon and the panel edge. */
+  .v-paystat {
+    --v-paystat-tone: var(--v-color-accent, #3f5e4e);
+    position: relative;
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr);
+    column-gap: 16px;
+    align-items: start;
+    margin-bottom: 16px;
+    overflow: hidden;
+    border-color: color-mix(in srgb, var(--v-paystat-tone) 30%, transparent);
+  }
+  .v-paystat[data-tone='success'] {
+    --v-paystat-tone: var(--v-color-success, #3d7a4f);
+    background: color-mix(
+      in srgb,
+      var(--v-color-success, #3d7a4f) 6%,
+      var(--v-color-surface, #fff)
+    );
+  }
+  .v-paystat[data-tone='warning'] {
+    --v-paystat-tone: var(--v-color-danger, #a33b32);
+  }
+  .v-paystat[data-tone='neutral'] {
+    --v-paystat-tone: var(--v-color-muted, #6e6a64);
+  }
+  .v-paystat-icon {
+    position: relative;
+    display: grid;
+    place-items: center;
+    width: 44px;
+    height: 44px;
+    border-radius: 50%;
+    color: var(--v-paystat-tone);
+    background: color-mix(in srgb, var(--v-paystat-tone) 12%, var(--v-color-surface, #fff));
+  }
+  .v-paystat[data-tone='success'] .v-paystat-icon {
+    color: var(--v-color-surface, #fff);
+    background: var(--v-color-success, #3d7a4f);
+  }
+  .v-paystat-text {
+    min-width: 0;
+  }
+  .v-paystat-text .v-eyebrow {
+    margin-bottom: 4px;
+  }
+  .v-paystat-amount {
+    white-space: nowrap;
+  }
+  .v-paystat-text .v-panel-title {
+    margin: 0;
+  }
+  .v-paystat-body {
+    margin: 6px 0 0;
+    font-size: 0.9375rem;
+    line-height: 1.45;
+  }
+  .v-paystat-actions {
+    grid-column: 1 / -1;
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 8px 20px;
+    margin-top: 16px;
+  }
+  .v-paystat-actions .v-btn {
+    min-width: 200px;
+  }
+  @media (max-width: 479px) {
+    .v-paystat-actions {
+      flex-direction: column;
+      align-items: stretch;
+      text-align: center;
+    }
+    .v-paystat-actions .v-link-btn {
+      padding: 10px 0;
+    }
+  }
+  /* busy: an indeterminate rail along the panel's bottom edge */
+  .v-paystat-rail {
+    position: absolute;
+    inset: auto 0 0 0;
+    height: 3px;
+    background: linear-gradient(
+      90deg,
+      transparent 0 30%,
+      var(--v-paystat-tone) 45% 55%,
+      transparent 70% 100%
+    );
+    background-size: 250% 100%;
+    animation: v-flow 1.4s linear infinite;
+  }
+  /* paid while the page was open: the check lands and a ring spreads once */
+  .v-paystat[data-just-paid] .v-paystat-icon {
+    animation: v-pop 420ms var(--v-motion-easing, ease) both;
+  }
+  .v-paystat[data-just-paid] .v-paystat-icon::after {
+    content: '';
+    position: absolute;
+    inset: 0;
+    border-radius: 50%;
+    border: 2px solid var(--v-color-success, #3d7a4f);
+    opacity: 0;
+    animation: v-ring 900ms 200ms var(--v-motion-easing, ease-out) both;
+  }
+  @media (min-width: 720px) {
+    .v-paystat {
+      column-gap: 20px;
+    }
+    .v-paystat-icon {
+      width: 52px;
+      height: 52px;
+    }
+    .v-paystat-actions {
+      padding-left: 72px;
+    }
+  }
+
+  .v-option-note {
+    grid-column: 2;
+    margin-top: 6px;
+    font-size: 0.875rem;
+    line-height: 1.4;
+    color: var(--v-color-text, #1c1b1a);
+  }
+  .v-order-fact-note {
+    display: block;
+    margin-top: 2px;
+    font-size: 0.875rem;
+    line-height: 1.4;
+  }
+
   .v-pix-info {
     display: grid;
     gap: 6px;
@@ -2648,6 +2820,25 @@
       opacity: 1;
     }
   }
+  @keyframes v-ring {
+    from {
+      transform: scale(1);
+      opacity: 0.7;
+    }
+    to {
+      transform: scale(1.9);
+      opacity: 0;
+    }
+  }
+  @keyframes v-breathe {
+    0%,
+    100% {
+      opacity: 1;
+    }
+    50% {
+      opacity: 0.35;
+    }
+  }
   @keyframes v-flow {
     from {
       background-position: 100% 0;
@@ -2665,8 +2856,15 @@
     .v-bag-bar,
     .v-bag-bar-count,
     .v-success-icon,
-    .v-order-progress li::before {
+    .v-order-progress li::before,
+    .v-pix-wait-dot,
+    .v-paystat-rail,
+    .v-paystat[data-just-paid] .v-paystat-icon,
+    .v-paystat[data-just-paid] .v-paystat-icon::after {
       animation: none;
+    }
+    .v-paystat-rail {
+      background: color-mix(in srgb, var(--v-paystat-tone) 40%, transparent);
     }
     .v-btn[aria-busy='true']::after {
       animation-duration: 2s;

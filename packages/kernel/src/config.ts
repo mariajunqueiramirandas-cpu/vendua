@@ -41,6 +41,8 @@ export const SLOT_KEYS = [
   'order.Items',
   'customer.LoyaltyCard',
   'customer.PhoneVerify',
+  // Kernel 1.7 — online payments
+  'checkout.PaymentStatus',
 ] as const;
 export type SlotKey = (typeof SLOT_KEYS)[number];
 

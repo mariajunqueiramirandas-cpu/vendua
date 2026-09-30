@@ -1,9 +1,10 @@
-import { DownloadSimple, Info } from '@phosphor-icons/react';
+import { DownloadSimple, Info, MapPin } from '@phosphor-icons/react';
 import { useQuery } from '@tanstack/react-query';
 import { useEffect, useState } from 'react';
 import { api, type Kpis, type Reports as R } from '../../lib/api.ts';
 import { dateShort, isoDate, money, moneyCompact, num, plural } from '../../lib/format.ts';
 import { qk } from '../../lib/query.ts';
+import { ButtonLink } from '../../ui/Button.tsx';
 import { Card, Section } from '../../ui/Card.tsx';
 import { ColumnChart, Funnel, Heatmap, RankBars } from '../../ui/charts.tsx';
 import { cn } from '../../ui/cn.ts';
@@ -158,16 +159,49 @@ export default function Reports() {
             <Card className="p-5">
               <RankBars
                 title="Entrega por área"
-                summary={`${data.current.deliveryShare}% dos pedidos foram para entrega.`}
+                summary={zonesSummary(data)}
                 format={money}
                 rows={data.zones.map((z) => ({
                   key: z.name,
                   label: z.name,
                   value: z.revenueCents,
-                  detail: `${plural(z.orders, 'pedido', 'pedidos')} · ${money(z.feesCents)} em taxas`,
+                  detail: [
+                    plural(z.orders, 'pedido', 'pedidos'),
+                    z.quotes
+                      ? `${plural(z.quotes, 'consulta de frete', 'consultas de frete')}${z.conversion !== null ? `, ${pct(z.conversion)} virou pedido` : ''}`
+                      : 'ninguém consultou o frete',
+                    `${money(z.feesCents)} em taxas`,
+                  ].join(' · '),
                 }))}
               />
             </Card>
+            {data.outOfZone.length ? (
+              <Card className="p-5">
+                <RankBars
+                  title="Onde pediram e você não entrega"
+                  summary={outOfZoneSummary(data)}
+                  valueHead="consultas"
+                  format={(v) => plural(v, 'consulta', 'consultas')}
+                  rows={data.outOfZone.map((z) => ({
+                    key: z.neighborhood,
+                    label: z.neighborhood,
+                    value: z.quotes,
+                  }))}
+                />
+                <p className="t-caption mt-4 text-muted">
+                  Gente que quis entrega nesses lugares e não achou uma área sua.
+                </p>
+                <ButtonLink
+                  to="/loja#entrega"
+                  variant="secondary"
+                  size="sm"
+                  icon={<MapPin />}
+                  className="mt-3"
+                >
+                  ver áreas de entrega
+                </ButtonLink>
+              </Card>
+            ) : null}
             <Card className="p-5">
               <RankBars
                 title="Formas de pagamento"
@@ -208,6 +242,23 @@ export default function Reports() {
       )}
     </PageBody>
   );
+}
+
+/** 0.4 → "40%" (Core computes the ratio; this only formats it) */
+const pct = (r: number) => `${Math.round(r * 100)}%`;
+
+function zonesSummary(d: R) {
+  const base = `${d.current.deliveryShare}% dos pedidos foram para entrega.`;
+  const top = [...d.zones]
+    .filter((z) => z.conversion !== null && z.quotes >= 3)
+    .sort((a, b) => b.conversion! - a.conversion!)[0];
+  return top ? `${base} Onde mais vira pedido: ${top.name} (${pct(top.conversion!)}).` : base;
+}
+
+function outOfZoneSummary(d: R) {
+  const top = d.outOfZone[0];
+  if (!top) return '';
+  return `${top.neighborhood} lidera, com ${plural(top.quotes, 'consulta', 'consultas')} de frete sem área de entrega.`;
 }
 
 function best(d: R) {

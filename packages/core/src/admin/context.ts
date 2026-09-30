@@ -2,6 +2,7 @@ import type { Context, Hono } from 'hono';
 import type { Sql } from '../platform/db.ts';
 import { HttpError } from '../platform/http.ts';
 import type { Tenant } from '../platform/tenancy.ts';
+import type { PaymentProvider } from '../modules/payments/provider.ts';
 import type { AdminHub } from './live.ts';
 
 export type Role = 'owner' | 'manager' | 'attendant';
@@ -30,6 +31,16 @@ export interface AdminDeps {
   ) => (c: Context) => Promise<Response>;
   /** fallback `<slug>.<storeDomain>` for storeOrigin — never build a store URL from it directly */
   storeDomain: string;
+  provider: PaymentProvider;
+  notify: MerchantNotify;
+  /** `https://<admin host>` — OAuth redirects, webhook URLs and links in messages */
+  publicOrigin: (c: Context) => string;
+}
+
+/** Messages to store people (not shoppers) from the platform's own number and address. */
+export interface MerchantNotify {
+  whatsapp: (phone: string, text: string) => Promise<void>;
+  email: (to: string, subject: string, text: string, idemKey: string) => Promise<void>;
 }
 
 const RANK: Record<Role, number> = { attendant: 1, manager: 2, owner: 3 };

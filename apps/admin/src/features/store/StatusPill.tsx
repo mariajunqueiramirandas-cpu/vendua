@@ -15,6 +15,8 @@ export function statusWords(
   s: StoreView['status'],
   tz?: string,
 ): { label: string; tone: 'open' | 'paused' | 'closed' } {
+  // waits for the first plan payment: no clock or pause can open it until then
+  if (s.billingHold) return { label: 'Falta pagar o plano', tone: 'paused' };
   if (s.status === 'open') return { label: 'Aberta', tone: 'open' };
   if (s.status === 'paused')
     return {

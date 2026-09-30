@@ -158,6 +158,12 @@ import { AdminHub } from './admin/live.ts';
 import { PresenceTracker } from './modules/presence.ts';
 import { mountStorefrontEvents } from './modules/storefront-live.ts';
 import { mountAdmin } from './admin/routes.ts';
+import type { MerchantNotify } from './admin/context.ts';
+import { platformNotify } from './admin/notify.ts';
+import { createPaymentProvider, type PaymentProvider } from './modules/payments/index.ts';
+import { storePaymentsPublic } from './modules/payments/store-payments.ts';
+import { mountControlBilling } from './modules/control-billing.ts';
+import { mountIncidentsControl } from './modules/incidents.ts';
 
 const agentLog = log.child({ mod: 'agent' });
 const waLog = log.child({ mod: 'whatsapp' });
@@ -179,6 +185,10 @@ export interface AppDeps {
   storeDomain?: string | undefined;
   /** the admin's own domain (VENDUA_ADMIN_HOST); set, no other host serves /admin */
   adminHost?: string | undefined;
+  /** Mercado Pago (default: from env — see modules/payments/index.ts); tests pass a FakeProvider */
+  paymentProvider?: PaymentProvider | undefined;
+  /** WhatsApp/email to store people (default: the platform's integrations); tests capture */
+  notify?: MerchantNotify | undefined;
 }
 
 async function loadSettings(
@@ -326,7 +336,11 @@ export function createApp({
   adminHub,
   storeDomain,
   adminHost,
+  paymentProvider,
+  notify,
 }: AppDeps) {
+  const provider = paymentProvider ?? createPaymentProvider();
+  const merchantNotify = notify ?? platformNotify(sql);
   const orderHub = new OrderHub(sql);
   const liveHub = adminHub ?? new AdminHub(sql);
   const presence = new PresenceTracker(sql);
@@ -346,6 +360,15 @@ export function createApp({
     adminDomain ? [adminDomain] : [],
   );
   const app = new Hono<{ Variables: { tenant: Tenant } }>();
+  // where Mercado Pago sends shoppers/owners back and posts webhooks: the admin's own domain
+  // (it proxies /admin to Core); without one (dev, tests) the request's own origin
+  const adminOrigin = (c: Context) => {
+    if (adminDomain) return `https://${adminDomain}`;
+    const url = new URL(c.req.url);
+    const proto =
+      process.env.VENDUA_TRUST_PROXY === '1' ? c.req.header('x-forwarded-proto') : undefined;
+    return `${proto ?? url.protocol.replace(':', '')}://${c.req.header('host') ?? url.host}`;
+  };
 
   app.onError((err, c) => errorJson(err, c));
   app.use('*', requestLogger());
@@ -396,7 +419,16 @@ export function createApp({
 
   storefront.get('/store', async (c) => {
     const tenant = c.get('tenant');
-    const settings = await withTenant(sql, tenant.id, (tx) => loadSettings(tx, tenant.id));
+    const { settings, online } = await withTenant(sql, tenant.id, async (tx) => {
+      const settings = await loadSettings(tx, tenant.id);
+      const online = await storePaymentsPublic(
+        tx,
+        tenant.id,
+        provider,
+        settings?.payment_methods ?? ['pix', 'card_on_delivery', 'cash'],
+      );
+      return { settings, online };
+    });
     const status = currentStatus(settings);
     return c.json({
       slug: tenant.slug,
@@ -431,7 +463,11 @@ export function createApp({
         paymentMethods: settings?.preorder_payment_methods ?? ['pix'],
         maxDays: settings?.preorder_max_days ?? 30,
       },
-      paymentMethods: settings?.payment_methods ?? ['pix', 'card_on_delivery', 'cash'],
+      ...online,
+      pickup: {
+        address: settings?.pickup_address ?? null,
+        instructions: settings?.pickup_instructions ?? null,
+      },
       logoUrl: settings?.logo_url ?? null,
     });
   });
@@ -700,6 +736,18 @@ export function createApp({
       const zones = await loadZones(tx, tenant.id);
       const settings = await loadSettings(tx, tenant.id);
       const match = resolveZone(zones, { neighborhood, coords }, storeCoords(settings));
+      // Relatórios' zone conversion: who asked for delivery where (server-side, like order_placed);
+      // a quote without a cart session still answers, it just isn't counted
+      const cartId = await sessionCartId(c, sessionSecret).catch(() => null);
+      if (cartId)
+        await tx`
+          insert into analytics_events (tenant_id, name, at, session_id, props)
+          values (${tenant.id}, 'delivery_quoted', now(), ${cartId}, ${tx.json({
+            zone: match?.zone.name ?? null,
+            neighborhood: neighborhood.trim().slice(0, 80) || null,
+            eligible: !!match,
+          })})
+        `;
       if (!match) {
         return { status: 200, body: { eligible: false, reason: 'OUT_OF_ZONE' } };
       }
@@ -726,7 +774,7 @@ export function createApp({
       const cartId = await sessionCartId(c, sessionSecret);
       const body = await bodyJson(c);
       validateCheckoutShape(body);
-      const order = await placeOrderTx(tx, tenant.id, cartId, body);
+      const order = await placeOrderTx(tx, tenant.id, cartId, body, new Date(), provider);
       const view = await loadOrderView(tx, tenant.id, order, cartId);
       // the device that just placed an order for this phone may read the phone's history
       const customer = mintCustomerToken(
@@ -2485,7 +2533,13 @@ export function createApp({
     trustProxy,
     cepLookup: cepLookup ?? viaCep,
     orderHub,
+    provider,
+    publicOrigin: (c) => adminOrigin(c),
+    storeDomain: publicStoreDomain,
   });
+
+  mountControlBilling({ app, sql, controlGate, provider, storeDomain: publicStoreDomain });
+  mountIncidentsControl({ app, sql, controlGate });
 
   mountStorefrontPlatform({
     app,
@@ -2611,6 +2665,9 @@ export function createApp({
     otpSender: otpSender ?? whatsappOtpSender(sql),
     idempotency,
     storeDomain: publicStoreDomain,
+    provider,
+    notify: merchantNotify,
+    publicOrigin: adminOrigin,
   });
   app.route('/admin/v1', admin);
   app.get('/admin', (c) => c.redirect('/admin/'));

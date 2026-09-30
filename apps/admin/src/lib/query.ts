@@ -29,6 +29,10 @@ export const qk = {
   account: ['account'] as const,
   appearance: ['appearance'] as const,
   sessions: ['me', 'sessions'] as const,
+  statement: (month: string) => ['payments', 'statement', month] as const,
+  alerts: ['alerts'] as const,
+  helpStatus: ['help', 'status'] as const,
+  signupPlans: ['signup', 'plans'] as const,
 };
 
 // 408 and 429 pass with time; other 4xx won't change by asking again

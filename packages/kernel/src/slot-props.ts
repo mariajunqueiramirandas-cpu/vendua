@@ -43,13 +43,37 @@ export interface DeliveryOption {
   label: string;
   detail?: string;
   disabled?: boolean;
+  /** Kernel 1.7 — shown while the option is selected (e.g. the store's pickup instructions) */
+  note?: string;
 }
 
 export interface PaymentMethod {
-  id: 'pix' | 'card_on_delivery' | 'cash';
+  /** Kernel 1.7 adds 'card_online' — card through Mercado Pago's hosted checkout */
+  id: 'pix' | 'card_online' | 'card_on_delivery' | 'cash';
   label: string;
   detail?: string;
 }
+
+/** Kernel 1.7 — what `checkout.PaymentStatus` shows for an online payment:
+ *  redirecting — leaving for Mercado Pago's card checkout (`href` = the link to tap)
+ *  confirming — the Kernel is asking the provider (card return, a Pix being generated)
+ *  due — not paid yet; `action` starts it
+ *  paid — confirmed by the provider (`justPaid` = it happened while this page was open)
+ *  processing — the provider is still analysing a card payment
+ *  failed — not approved; `action` tries again
+ *  expired — the Pix ran out; `action` makes a new one
+ *  refunded — money returned (`refundedCents`, less than `amountCents` when partial)
+ *  unavailable — the provider didn't answer; `action` retries, `whatsappHref` offers the store */
+export type PaymentStatusKind =
+  | 'redirecting'
+  | 'confirming'
+  | 'due'
+  | 'paid'
+  | 'processing'
+  | 'failed'
+  | 'expired'
+  | 'refunded'
+  | 'unavailable';
 
 export type ModifierGroup = ProductDetail['modifierGroups'][number];
 
@@ -124,7 +148,13 @@ export interface SlotProps {
     onQty: (qty: number) => void;
     onRemove: () => void;
   };
-  'order.StatusPage': { order: Order; currency: string; timeline: ReactNode };
+  'order.StatusPage': {
+    order: Order;
+    currency: string;
+    timeline: ReactNode;
+    /** Kernel 1.7 — the store's pickup address/instructions, for pickup orders */
+    pickup?: { address: string | null; instructions: string | null };
+  };
   'order.Timeline': { events: Order['timeline'] };
   'store.HoursTable': { hours: StoreProfile['hours']; status?: StoreProfile['status'] };
   'catalog.ProductCard': {
@@ -177,6 +207,24 @@ export interface SlotProps {
     keyLabel?: string;
     amountCents?: number;
     currency: string;
+    /** Kernel 1.7 — an online Pix (Mercado Pago): confirms by itself, expires at `expiresAt` */
+    online?: boolean;
+    expiresAt?: string | null;
+  };
+  /** Kernel 1.7 — an online payment's state (card via Mercado Pago, online Pix) */
+  'checkout.PaymentStatus': {
+    status: PaymentStatusKind;
+    method: 'pix' | 'card_online';
+    amountCents: number;
+    currency: string;
+    refundedCents?: number;
+    justPaid?: boolean;
+    /** the Kernel's next step for the shopper (pay, try again, new Pix) */
+    action?: { label: string; onClick: () => void; pending?: boolean };
+    href?: string;
+    whatsappHref?: string;
+    /** one line of context, e.g. why the provider call failed */
+    detail?: string;
   };
   'order.Items': {
     items: OrderItem[];

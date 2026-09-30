@@ -29,6 +29,7 @@ import {
   PixPayment,
   SchedulePicker,
 } from './growth.tsx';
+import { PaymentStatus } from './payment.tsx';
 import {
   ConsentBanner,
   EmergencyOverlay,
@@ -78,6 +79,7 @@ export const SLOT_DEFAULTS: SlotDefaults = {
   'order.Items': OrderItems,
   'customer.LoyaltyCard': LoyaltyCard,
   'customer.PhoneVerify': PhoneVerify,
+  'checkout.PaymentStatus': PaymentStatus,
 };
 
 export { noticeSeverity, noticeLinks, NoticeCard } from './system.tsx';
@@ -90,6 +92,9 @@ export {
   ORDER_STATE_LABEL,
   PAYMENT_LABEL,
   COUPON_REASON,
+  MEDIA_WIDTHS,
+  mediaSrcSet,
+  countdown,
 } from './format.ts';
 export { PixQr } from './growth.tsx';
 export { Calendar, type CalendarProps } from './calendar.tsx';

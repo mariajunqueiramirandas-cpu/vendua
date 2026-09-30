@@ -4,6 +4,7 @@ import { LoadingRows } from '@/components/common.tsx';
 import { Page, type PageTab } from '@/components/Page.tsx';
 import { AGENT_TABS } from '@/features/agent/tabs.ts';
 import { PIPELINE_TABS } from '@/features/pipeline/tabs.ts';
+import { STORES_TABS } from '@/features/stores/tabs.ts';
 
 // Route chunks are content-hashed and a deploy replaces them — a tab opened before
 // the deploy would 404 on its next lazy import. Reload once to pick up the new build;
@@ -48,6 +49,9 @@ const ActivityPage = lazy(() => import('@/features/agent/activity/ActivityPage.t
 const PlansPage = lazy(() => import('@/features/agent/plans/PlansPage.tsx'));
 const DiscoveryPage = lazy(() => import('@/features/agent/discovery/DiscoveryPage.tsx'));
 const StudioPage = lazy(() => import('@/features/agent/studio/StudioPage.tsx'));
+const StoresPage = lazy(() => import('@/features/stores/StoresPage.tsx'));
+const BillingPlansPage = lazy(() => import('@/features/stores/PlansPage.tsx'));
+const IncidentsPage = lazy(() => import('@/features/stores/IncidentsPage.tsx'));
 const SettingsPage = lazy(() => import('@/features/settings/SettingsPage.tsx'));
 const NotFoundPage = lazy(() => import('@/features/notfound/NotFoundPage.tsx'));
 const UiPreview = lazy(() => import('@/features/dev/UiPreview.tsx'));
@@ -79,6 +83,7 @@ function chrome(path: string): { title: string; tabs?: PageTab[]; back?: string 
   if (path.startsWith('/inbox')) return { title: 'Inbox' };
   if (path.startsWith('/agenda')) return { title: 'Agenda' };
   if (path.startsWith('/agente')) return { title: 'Agente', tabs: AGENT_TABS };
+  if (path.startsWith('/lojas')) return { title: 'Lojas', tabs: STORES_TABS };
   if (path.startsWith('/config')) return { title: 'Config' };
   return { title: 'Hoje' };
 }
@@ -128,6 +133,9 @@ export function AppRoutes() {
         <Route path="/agente/planos" element={<PlansPage />} />
         <Route path="/agente/descoberta" element={<DiscoveryPage />} />
         <Route path="/agente/estudio" element={<StudioPage />} />
+        <Route path="/lojas" element={<StoresPage />} />
+        <Route path="/lojas/planos" element={<BillingPlansPage />} />
+        <Route path="/lojas/incidentes" element={<IncidentsPage />} />
         <Route path="/config" element={<SettingsPage />} />
         <Route path="/_ui" element={<UiPreview />} />
 

@@ -6,11 +6,28 @@ export const site = {
   name: 'Venduá',
   domain: 'https://vendua.com.br',
   description:
-    'Uma loja online com a sua cara e um app no celular para tocar o dia: pedidos, cardápio, horários e Pix. Para doceiras, marmitarias, hamburguerias e padarias. Em breve.',
+    'Uma loja online com a sua cara e um app no celular para tocar o dia: pedidos, cardápio, horários e Pix. Para doceiras, marmitarias, hamburguerias e padarias. A partir de R$ 39,90 por mês.',
   instagram: { url: 'https://www.instagram.com/vendua.digital/', handle: '@vendua.digital' },
   emails: ['vinicius.junquira@vendua.com.br', 'jorge.andre@vendua.com.br'],
-  /** every call to action reads this until sign-up opens */
-  soon: 'Em breve',
+};
+
+// The merchant admin, where sign-up lives. A build-time setting (PUBLIC_ADMIN_URL): vite.config.ts
+// bakes it into the bundle, and bun (postbuild, tests) reads it from the environment.
+const admin = new URL(import.meta.env.PUBLIC_ADMIN_URL || 'https://painel.vendua.com.br');
+if (admin.protocol !== 'https:' && admin.hostname !== '127.0.0.1' && admin.hostname !== 'localhost')
+  throw new Error('PUBLIC_ADMIN_URL must be https');
+
+/** the two plans exactly as decided; prices are display strings, the admin charges from Core */
+export const plans = {
+  basic: { id: 'basic', name: 'Venduá Basic', short: 'Basic', price: 'R$ 39,90' },
+  pro_plus: { id: 'pro_plus', name: 'Venduá PRO+', short: 'PRO+', price: 'R$ 99' },
+} as const;
+export type PlanId = keyof typeof plans;
+
+export const signup = (plano?: PlanId) => {
+  const url = new URL('/admin/comecar', admin);
+  if (plano) url.searchParams.set('plano', plano);
+  return url.href;
 };
 
 /**

@@ -1,6 +1,6 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import type { SlotProps } from '@vendua/kernel';
-import { COUPON_REASON, dayLabel, money } from './format.ts';
+import { COUPON_REASON, countdown, dayLabel, money } from './format.ts';
 import { qrMatrix, qrSvgPath } from './qr.ts';
 import { Calendar } from './calendar.tsx';
 
@@ -68,7 +68,12 @@ export function ComboPicker({
                           {money(Math.abs(item.priceDeltaCents), currency)}
                         </span>
                       ) : null}
-                      {soldOut ? <span className="v-muted"> · esgotado</span> : null}
+                      {soldOut ? (
+                        <span className="v-muted" data-part="availability">
+                          {' · '}
+                          {item.availabilityLabel ?? 'esgotado'}
+                        </span>
+                      ) : null}
                     </span>
                     <span className="v-qty" role="group" aria-label={`quantidade de ${item.name}`}>
                       <button
@@ -330,6 +335,17 @@ export function PixQr({ payload, label }: { payload: string; label: string }) {
   );
 }
 
+/** Re-renders every `ms` (0 = never) — the Pix countdown's clock. */
+function useNow(ms: number): number {
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    if (!ms) return;
+    const t = setInterval(() => setNow(Date.now()), ms);
+    return () => clearInterval(t);
+  }, [ms]);
+  return now;
+}
+
 /** On a phone the buyer can't scan their own screen, so copy comes first and the QR
  *  is the "another device" fallback; from 720px the QR leads (scan with the phone). */
 export function PixPayment({
@@ -338,8 +354,13 @@ export function PixPayment({
   keyLabel,
   amountCents,
   currency,
+  online,
+  expiresAt,
 }: SlotProps['checkout.PixPayment']) {
   const [copied, setCopied] = useState(false);
+  const deadline = expiresAt ? Date.parse(expiresAt) : NaN;
+  const now = useNow(Number.isFinite(deadline) ? 1000 : 0);
+  const left = Number.isFinite(deadline) ? deadline - now : null;
   const copy = async () => {
     try {
       await navigator.clipboard.writeText(copyPaste);
@@ -365,10 +386,28 @@ export function PixPayment({
             {money(amountCents, currency)}
           </p>
         ) : null}
-        <p className="v-muted v-pix-to" data-part="beneficiary">
-          Para <strong>{beneficiary}</strong>
-          {keyLabel ? ` · chave ${keyLabel}` : ''}
-        </p>
+        {beneficiary ? (
+          <p className="v-muted v-pix-to" data-part="beneficiary">
+            Para <strong>{beneficiary}</strong>
+            {keyLabel ? ` · chave ${keyLabel}` : ''}
+          </p>
+        ) : null}
+        {left !== null ? (
+          <p
+            className="v-pix-timer v-num"
+            data-part="expires"
+            data-urgent={left < 5 * 60_000 || undefined}
+          >
+            {left > 0 ? (
+              <>
+                Vale por mais{' '}
+                <time dateTime={expiresAt ?? undefined}>{countdown(deadline, now)}</time>
+              </>
+            ) : (
+              'Código expirado'
+            )}
+          </p>
+        ) : null}
       </header>
       <div className="v-pix-copy" data-part="copy-block">
         <button
@@ -406,6 +445,12 @@ export function PixPayment({
             <span>Cole, confira o valor e confirme</span>
           </li>
         </ol>
+        {online ? (
+          <p className="v-pix-wait" data-part="waiting">
+            <span className="v-pix-wait-dot" aria-hidden="true" />
+            Aguardando o pagamento — a confirmação aparece aqui na hora, sem mandar comprovante.
+          </p>
+        ) : null}
       </div>
       <div className="v-pix-qr" data-part="qr">
         <p className="v-pix-or">

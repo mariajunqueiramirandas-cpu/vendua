@@ -1,66 +1,55 @@
 import {
   ArrowLeft,
   ArrowRight,
-  ClipboardText,
+  EnvelopeSimple,
   Storefront,
   WhatsappLogo,
 } from '@phosphor-icons/react';
 import { useQueryClient } from '@tanstack/react-query';
 import { useEffect, useRef, useState } from 'react';
-import { api, ApiError, type StoreRef } from '../../lib/api.ts';
+import { Link } from 'react-router-dom';
+import { api, ApiError, type SignInResult, type StoreRef } from '../../lib/api.ts';
 import { phone as fmtPhone } from '../../lib/format.ts';
+import { resetClient } from '../../lib/persist.ts';
 import { applyUpdate, checkForUpdate, onUpdate, updateReady } from '../../lib/pwa.ts';
 import { qk, useMutation } from '../../lib/query.ts';
 import { ROLE_LABEL } from '../../lib/session.ts';
 import { Button } from '../../ui/Button.tsx';
-import { cn } from '../../ui/cn.ts';
+import { CodeInput, type CodeInputHandle } from '../../ui/CodeInput.tsx';
 import { messageOf } from '../../ui/feedback.tsx';
-import { Field, PhoneInput } from '../../ui/fields.tsx';
+import { Field, PhoneInput, TextInput } from '../../ui/fields.tsx';
 import { Mascote } from '../../ui/Mascote.tsx';
+import { Spinner } from '../../ui/Spinner.tsx';
+import { EMAIL_RE, expiry, loadPending, savePending } from './pending.ts';
 
 type Step =
   | { kind: 'phone' }
   | { kind: 'code'; phone: string; sentAt: number; devCode?: string }
-  | { kind: 'pick'; token: string; stores: StoreRef[] };
+  | { kind: 'pick'; token: string; stores: StoreRef[] }
+  | { kind: 'email' }
+  | { kind: 'emailSent'; email: string; sentAt: number; devLink?: string }
+  | { kind: 'link'; token: string };
 
-// The code arrives in WhatsApp, so the merchant leaves the app to read it, and the
-// phone may kill the app meanwhile (iOS does, often). The pending step is kept until
-// the code expires, so coming back lands on "Digite o código". Never the code itself.
-const PENDING = 'vendua-admin-signin';
-type Pending = { phone: string; sentAt: number; expiresAt: number };
-
-function loadPending(): Step {
-  try {
-    const p = JSON.parse(localStorage.getItem(PENDING) ?? 'null') as Pending | null;
-    if (p && typeof p.phone === 'string' && p.expiresAt > Date.now())
-      return { kind: 'code', phone: p.phone, sentAt: p.sentAt };
-  } catch {
-    /* private mode or a bad value: start over */
-  }
-  return { kind: 'phone' };
+function firstStep(): Step {
+  const link = new URLSearchParams(window.location.search).get('link');
+  if (link) return { kind: 'link', token: link.slice(0, 200) };
+  const p = loadPending();
+  return p ? { kind: 'code', phone: p.phone, sentAt: p.sentAt } : { kind: 'phone' };
 }
-function savePending(p: Pending | null) {
-  try {
-    if (p) localStorage.setItem(PENDING, JSON.stringify(p));
-    else localStorage.removeItem(PENDING);
-  } catch {
-    /* private mode: the step lives in memory only */
-  }
-}
-const expiry = (iso: string) => Date.parse(iso) || Date.now() + 10 * 60_000;
 
-/** Sign in with the phone: a 6-digit code on WhatsApp, no password (ADR 0020). */
+/** Sign in with the phone (a 6-digit code on WhatsApp) or an e-mail link; no password (ADR 0020). */
 export function Login() {
-  const [step, setStep] = useState<Step>(loadPending);
+  const [step, setStep] = useState<Step>(firstStep);
   const qc = useQueryClient();
   // Signed out is the one moment a new version costs nothing: take it here, not with a banner.
   // At once on arrival; later only while the merchant is away (reading the code in WhatsApp),
-  // since the code step survives a reload. Not while picking a store: that token lives in memory.
-  const picking = useRef(false);
-  picking.current = step.kind === 'pick';
+  // since the code step survives a reload. Not while picking a store or opening an e-mail link:
+  // those tokens live in memory (and a link works once).
+  const holding = useRef(false);
+  holding.current = step.kind === 'pick' || step.kind === 'link';
   useEffect(() => {
     const take = () => {
-      if (updateReady() && !picking.current) applyUpdate();
+      if (updateReady() && !holding.current) applyUpdate();
     };
     take();
     checkForUpdate();
@@ -74,11 +63,19 @@ export function Login() {
       document.removeEventListener('visibilitychange', away);
     };
   }, []);
-  const enter = () => {
+  const enter = async () => {
     savePending(null);
+    // an e-mail link opened while another store was signed in: nothing of it may carry over
+    if (qc.getQueryData(qk.session)) {
+      await resetClient(qc);
+      window.location.assign('/admin/');
+      return;
+    }
     void qc.invalidateQueries({ queryKey: qk.session });
     window.history.replaceState(null, '', '/admin/');
   };
+  const signedIn = (r: SignInResult) =>
+    r.signedIn ? void enter() : setStep({ kind: 'pick', token: r.pickerToken, stores: r.stores });
   return (
     <div className="grid min-h-dvh lg:grid-cols-[1.1fr_1fr]">
       <aside className="relative hidden overflow-hidden bg-primary text-on-primary lg:block">
@@ -115,6 +112,7 @@ export function Login() {
                 savePending({ phone, sentAt, expiresAt: expiry(expiresAt) });
                 setStep({ kind: 'code', phone, sentAt, ...(devCode ? { devCode } : {}) });
               }}
+              onEmail={() => setStep({ kind: 'email' })}
             />
           ) : step.kind === 'code' ? (
             <CodeStep
@@ -128,14 +126,37 @@ export function Login() {
               onResent={(expiresAt) =>
                 savePending({ phone: step.phone, sentAt: Date.now(), expiresAt: expiry(expiresAt) })
               }
-              onPick={(token, stores) => {
-                savePending(null);
-                setStep({ kind: 'pick', token, stores });
-              }}
-              onDone={enter}
+              onSignedIn={signedIn}
+            />
+          ) : step.kind === 'email' ? (
+            <EmailStep
+              onBack={() => setStep({ kind: 'phone' })}
+              onSent={(email, devLink) =>
+                setStep({
+                  kind: 'emailSent',
+                  email,
+                  sentAt: Date.now(),
+                  ...(devLink ? { devLink } : {}),
+                })
+              }
+            />
+          ) : step.kind === 'emailSent' ? (
+            <EmailSentStep
+              email={step.email}
+              sentAt={step.sentAt}
+              devLink={step.devLink}
+              onOther={() => setStep({ kind: 'email' })}
+              onWhatsapp={() => setStep({ kind: 'phone' })}
+            />
+          ) : step.kind === 'link' ? (
+            <LinkStep
+              token={step.token}
+              onSignedIn={signedIn}
+              onAgain={() => setStep({ kind: 'email' })}
+              onWhatsapp={() => setStep({ kind: 'phone' })}
             />
           ) : (
-            <PickStep token={step.token} stores={step.stores} onDone={enter} />
+            <PickStep token={step.token} stores={step.stores} onDone={() => void enter()} />
           )}
         </div>
       </main>
@@ -145,8 +166,10 @@ export function Login() {
 
 function PhoneStep({
   onSent,
+  onEmail,
 }: {
   onSent: (phone: string, expiresAt: string, devCode?: string) => void;
+  onEmail: () => void;
 }) {
   const [shown, setShown] = useState('');
   const [digits, setDigits] = useState<string | null>(null);
@@ -157,45 +180,85 @@ function PhoneStep({
     onError: (e) => setErr(messageOf(e)),
   });
   return (
-    <form
-      onSubmit={(e) => {
-        e.preventDefault();
-        if (!digits) return setErr('Digite o celular com DDD, como (22) 99999-0000.');
-        setErr(null);
-        start.mutate(digits);
-      }}
-      className="animate-fade-up"
-    >
-      <h1 className="t-moment">Que bom te ver.</h1>
-      <p className="t-body-lg mt-2 text-muted">
-        Entre com o celular da loja. Mandamos um código no seu WhatsApp.
-      </p>
-      <Field label="Seu celular" htmlFor="phone" error={err} className="mt-8">
-        <PhoneInput
-          id="phone"
-          autoFocus
-          value={shown}
-          onChange={(v, d) => {
-            setShown(v);
-            setDigits(d);
-          }}
-        />
-      </Field>
-      <Button
-        type="submit"
-        size="lg"
-        block
-        className="mt-6"
-        loading={start.isPending}
-        icon={<WhatsappLogo weight="fill" />}
+    <div className="animate-fade-up">
+      <form
+        onSubmit={(e) => {
+          e.preventDefault();
+          if (!digits) return setErr('Digite o celular com DDD, como (22) 99999-0000.');
+          setErr(null);
+          start.mutate(digits);
+        }}
       >
-        receber código
+        <h1 className="t-moment">Que bom te ver.</h1>
+        <p className="t-body-lg mt-2 text-muted">
+          Entre com o celular da loja. Mandamos um código no seu WhatsApp.
+        </p>
+        <Field label="Seu celular" htmlFor="phone" error={err} className="mt-8">
+          <PhoneInput
+            id="phone"
+            autoFocus
+            value={shown}
+            onChange={(v, d) => {
+              setShown(v);
+              setDigits(d);
+            }}
+          />
+        </Field>
+        <Button
+          type="submit"
+          size="lg"
+          block
+          className="mt-6"
+          loading={start.isPending}
+          icon={<WhatsappLogo weight="fill" />}
+        >
+          receber código
+        </Button>
+      </form>
+      <Button variant="ghost" block className="mt-2" icon={<EnvelopeSimple />} onClick={onEmail}>
+        entrar com e-mail
       </Button>
-    </form>
+      <div className="mt-10 flex items-center gap-4 rounded-lg bg-sunken p-4">
+        <Storefront weight="duotone" className="size-8 shrink-0 text-muted" aria-hidden />
+        <div className="min-w-0 flex-1">
+          <p className="font-semibold">Ainda não vende com a Venduá?</p>
+          <Link
+            to="/comecar"
+            className="t-label -ml-1 mt-0.5 inline-flex min-h-11 items-center gap-1 rounded-sm px-1 underline underline-offset-2 hover:bg-hover"
+          >
+            criar minha loja <ArrowRight className="size-4" />
+          </Link>
+        </div>
+      </div>
+    </div>
   );
 }
 
 const RESEND_AFTER = 30;
+
+function useCountdown(from: number) {
+  // counted from the send, not from this screen: a reload mustn't restart the wait
+  const [wait, setWait] = useState(() =>
+    Math.max(0, RESEND_AFTER - Math.floor((Date.now() - from) / 1000)),
+  );
+  useEffect(() => {
+    const t = setInterval(() => setWait((w) => Math.max(0, w - 1)), 1000);
+    return () => clearInterval(t);
+  }, []);
+  return [wait, () => setWait(RESEND_AFTER)] as const;
+}
+
+function BackLink({ onClick, children }: { onClick: () => void; children: string }) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className="t-label -ml-2 mb-6 inline-flex min-h-11 items-center gap-2 rounded-md px-2 text-muted hover:bg-hover"
+    >
+      <ArrowLeft className="size-5" /> {children}
+    </button>
+  );
+}
 
 function CodeStep({
   phone,
@@ -203,69 +266,38 @@ function CodeStep({
   devCode,
   onBack,
   onResent,
-  onPick,
-  onDone,
+  onSignedIn,
 }: {
   phone: string;
   sentAt: number;
   devCode?: string | undefined;
   onBack: () => void;
   onResent: (expiresAt: string) => void;
-  onPick: (token: string, stores: StoreRef[]) => void;
-  onDone: () => void;
+  onSignedIn: (r: SignInResult) => void;
 }) {
   const [code, setCode] = useState('');
   const [err, setErr] = useState<string | null>(null);
-  // counted from the send, not from this screen: a reload mustn't restart the wait
-  const [wait, setWait] = useState(() =>
-    Math.max(0, RESEND_AFTER - Math.floor((Date.now() - sentAt) / 1000)),
-  );
-  const canPaste = typeof navigator !== 'undefined' && !!navigator.clipboard?.readText;
-  const inputs = useRef<(HTMLInputElement | null)[]>([]);
-  useEffect(() => {
-    const t = setInterval(() => setWait((w) => Math.max(0, w - 1)), 1000);
-    return () => clearInterval(t);
-  }, []);
+  const [wait, restart] = useCountdown(sentAt);
+  const input = useRef<CodeInputHandle>(null);
   const verify = useMutation({
     mutationFn: (c: string) => api.auth.verify(phone, c),
-    onSuccess: (r) => (r.signedIn ? onDone() : onPick(r.pickerToken, r.stores)),
+    onSuccess: onSignedIn,
     onError: (e) => {
       setErr(messageOf(e));
       setCode('');
-      inputs.current[0]?.focus();
+      input.current?.focus();
     },
   });
   const resend = useMutation({
     mutationFn: () => api.auth.start(phone),
     onSuccess: (r) => {
-      setWait(RESEND_AFTER);
+      restart();
       onResent(r.expiresAt);
     },
   });
-  const setAt = (i: number, v: string) => {
-    const d = v.replace(/\D/g, '');
-    if (d.length > 1) {
-      // pasted or autofilled the whole code
-      const full = d.slice(0, 6);
-      setCode(full);
-      if (full.length === 6) verify.mutate(full);
-      else inputs.current[full.length]?.focus();
-      return;
-    }
-    const next = (code.slice(0, i) + d + code.slice(i + 1)).slice(0, 6);
-    setCode(next);
-    if (d && i < 5) inputs.current[i + 1]?.focus();
-    if (next.length === 6 && /^\d{6}$/.test(next)) verify.mutate(next);
-  };
   return (
     <div className="animate-fade-up">
-      <button
-        type="button"
-        onClick={onBack}
-        className="t-label -ml-2 mb-6 inline-flex min-h-11 items-center gap-2 rounded-md px-2 text-muted hover:bg-hover"
-      >
-        <ArrowLeft className="size-5" /> trocar número
-      </button>
+      <BackLink onClick={onBack}>trocar número</BackLink>
       <div className="flex items-center justify-between gap-3">
         <h1 className="t-title-1">Digite o código</h1>
         <Mascote pose="seguranca" size={72} className="size-16 shrink-0 sm:size-[72px]" />
@@ -279,48 +311,16 @@ function CodeStep({
           Ambiente de teste: o código é {devCode}
         </p>
       ) : null}
-      <fieldset className="mt-8">
-        <legend className="sr-only">código de 6 números</legend>
-        <div className="flex justify-between gap-2">
-          {Array.from({ length: 6 }, (_, i) => (
-            <input
-              key={i}
-              ref={(el) => (inputs.current[i] = el)}
-              aria-label={`número ${i + 1}`}
-              inputMode="numeric"
-              autoComplete={i === 0 ? 'one-time-code' : 'off'}
-              autoFocus={i === 0}
-              maxLength={i === 0 ? 6 : 1}
-              value={code[i] ?? ''}
-              onChange={(e) => setAt(i, e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === 'Backspace' && !code[i] && i > 0) inputs.current[i - 1]?.focus();
-              }}
-              aria-invalid={err ? true : undefined}
-              className={cn(
-                'tnum h-16 w-full min-w-0 rounded-md bg-sunken text-center font-display text-3xl font-semibold ring-1 ring-transparent',
-                'focus:bg-surface focus:ring-2 focus:ring-primary focus:outline-none aria-invalid:ring-danger',
-              )}
-            />
-          ))}
-        </div>
-      </fieldset>
-      {canPaste && code.length < 6 ? (
-        <Button
-          variant="secondary"
-          size="sm"
-          className="mt-3"
-          icon={<ClipboardText />}
-          onClick={async () => {
-            // WhatsApp's code message has a "copiar código" button
-            const d = (await navigator.clipboard.readText().catch(() => '')).replace(/\D/g, '');
-            if (d.length === 6) setAt(0, d);
-            else setErr('Não achamos um código de 6 números copiado. Digite o código.');
-          }}
-        >
-          colar código
-        </Button>
-      ) : null}
+      <div className="mt-8">
+        <CodeInput
+          ref={input}
+          value={code}
+          onChange={setCode}
+          onComplete={(c) => verify.mutate(c)}
+          invalid={!!err}
+          onPasteMiss={() => setErr('Não achamos um código de 6 números copiado. Digite o código.')}
+        />
+      </div>
       {err ? (
         <p className="t-body mt-3 text-danger" role="alert">
           {err}
@@ -346,6 +346,212 @@ function CodeStep({
         onClick={() => resend.mutate()}
       >
         {wait > 0 ? `reenviar código em ${wait}s` : 'reenviar código'}
+      </Button>
+    </div>
+  );
+}
+
+function EmailStep({
+  onBack,
+  onSent,
+}: {
+  onBack: () => void;
+  onSent: (email: string, devLink?: string) => void;
+}) {
+  const [email, setEmail] = useState('');
+  const [err, setErr] = useState<string | null>(null);
+  const start = useMutation({
+    mutationFn: (e: string) => api.auth.emailStart(e),
+    onSuccess: (r, e) => onSent(e, r.devLink),
+    onError: (e) => setErr(messageOf(e)),
+  });
+  return (
+    <form
+      className="animate-fade-up"
+      noValidate
+      onSubmit={(e) => {
+        e.preventDefault();
+        const v = email.trim();
+        if (!EMAIL_RE.test(v)) return setErr('Confira o e-mail, como maria@gmail.com.');
+        setErr(null);
+        start.mutate(v);
+      }}
+    >
+      <BackLink onClick={onBack}>entrar com WhatsApp</BackLink>
+      <h1 className="t-title-1">Entrar com e-mail</h1>
+      <p className="t-body-lg mt-2 text-muted">
+        Use o e-mail cadastrado na loja. Mandamos um link que entra direto, sem senha.
+      </p>
+      <Field label="Seu e-mail" htmlFor="email" error={err} className="mt-8">
+        <TextInput
+          id="email"
+          type="email"
+          inputMode="email"
+          autoComplete="email"
+          autoCapitalize="none"
+          autoFocus
+          maxLength={200}
+          placeholder="maria@gmail.com"
+          value={email}
+          aria-invalid={err ? true : undefined}
+          onChange={(e) => setEmail(e.target.value)}
+        />
+      </Field>
+      <Button
+        type="submit"
+        size="lg"
+        block
+        className="mt-6"
+        loading={start.isPending}
+        icon={<EnvelopeSimple />}
+      >
+        mandar link
+      </Button>
+    </form>
+  );
+}
+
+function EmailSentStep({
+  email,
+  sentAt,
+  devLink,
+  onOther,
+  onWhatsapp,
+}: {
+  email: string;
+  sentAt: number;
+  devLink?: string | undefined;
+  onOther: () => void;
+  onWhatsapp: () => void;
+}) {
+  const [wait, restart] = useCountdown(sentAt);
+  const [dev, setDev] = useState(devLink);
+  const resend = useMutation({
+    mutationFn: () => api.auth.emailStart(email),
+    onSuccess: (r) => {
+      restart();
+      setDev(r.devLink);
+    },
+  });
+  return (
+    <div className="animate-fade-up">
+      <BackLink onClick={onOther}>usar outro e-mail</BackLink>
+      <div className="flex items-center justify-between gap-3">
+        <h1 className="t-title-1">Olhe o seu e-mail</h1>
+        <Mascote pose="avatar-feliz" size={72} className="size-16 shrink-0 sm:size-[72px]" />
+      </div>
+      <p className="t-body-lg mt-2 text-muted" role="status">
+        Se <strong className="break-all text-ink">{email}</strong> estiver cadastrado em uma loja, o
+        link chega em instantes. Toque nele para entrar. Ele vale por 15 minutos.
+      </p>
+      {dev ? (
+        <a
+          href={dev}
+          className="t-caption mt-3 block rounded-sm bg-info-soft px-3 py-2 text-info underline underline-offset-2"
+        >
+          Ambiente de teste: abrir o link
+        </a>
+      ) : null}
+      <p className="t-body mt-6 text-muted">Não chegou? Confira a caixa de spam.</p>
+      <Button
+        variant="secondary"
+        block
+        className="mt-3"
+        disabled={wait > 0}
+        loading={resend.isPending}
+        onClick={() => resend.mutate()}
+      >
+        {wait > 0 ? `mandar de novo em ${wait}s` : 'mandar de novo'}
+      </Button>
+      {resend.error ? (
+        <p className="t-body mt-3 text-danger" role="alert">
+          {messageOf(resend.error)}
+        </p>
+      ) : null}
+      <Button
+        variant="ghost"
+        block
+        className="mt-2"
+        icon={<WhatsappLogo weight="fill" />}
+        onClick={onWhatsapp}
+      >
+        entrar com WhatsApp
+      </Button>
+    </div>
+  );
+}
+
+// A link works once: StrictMode's second effect (and a re-render) must reuse the first attempt.
+const attempts = new Map<string, Promise<SignInResult>>();
+
+function LinkStep({
+  token,
+  onSignedIn,
+  onAgain,
+  onWhatsapp,
+}: {
+  token: string;
+  onSignedIn: (r: SignInResult) => void;
+  onAgain: () => void;
+  onWhatsapp: () => void;
+}) {
+  const [err, setErr] = useState<unknown>(null);
+  const done = useRef(onSignedIn);
+  done.current = onSignedIn;
+  useEffect(() => {
+    let live = true;
+    let p = attempts.get(token);
+    if (!p) attempts.set(token, (p = api.auth.emailVerify(token)));
+    p.then(
+      (r) => live && done.current(r),
+      (e: unknown) => {
+        attempts.delete(token);
+        if (!live) return;
+        setErr(e);
+        // a refused link won't change; only a network failure is worth another tap on it
+        if (!(e instanceof ApiError && e.status === 0))
+          window.history.replaceState(null, '', '/admin/entrar');
+      },
+    );
+    return () => {
+      live = false;
+    };
+  }, [token]);
+  if (!err)
+    return (
+      <div className="animate-fade-up flex flex-col items-center py-10 text-center" role="status">
+        <span className="dua-disc grid size-36 place-items-center">
+          <Mascote pose="carregando" size={128} className="w-32" />
+        </span>
+        <p className="t-title-2 mt-4 inline-flex items-center gap-2">
+          <Spinner className="size-5" /> Entrando…
+        </p>
+        <p className="t-body mt-1 text-muted">Conferindo o link do seu e-mail.</p>
+      </div>
+    );
+  const offline = err instanceof ApiError && err.status === 0;
+  return (
+    <div className="animate-fade-up">
+      <Mascote pose={offline ? 'offline' : 'seguranca'} size={120} className="w-28" />
+      <h1 className="t-title-1 mt-4">
+        {offline ? 'Sem conexão agora' : 'Esse link não vale mais'}
+      </h1>
+      <p className="t-body-lg mt-2 text-muted" role="alert">
+        {offline
+          ? 'Confira a internet e toque no link do e-mail de novo.'
+          : 'Ele já foi usado ou passou dos 15 minutos. Peça outro, leva um instante.'}
+      </p>
+      <Button size="lg" block className="mt-8" icon={<EnvelopeSimple />} onClick={onAgain}>
+        mandar outro link
+      </Button>
+      <Button
+        variant="ghost"
+        block
+        className="mt-2"
+        icon={<WhatsappLogo weight="fill" />}
+        onClick={onWhatsapp}
+      >
+        entrar com WhatsApp
       </Button>
     </div>
   );
@@ -394,7 +600,7 @@ function PickStep({
       {pick.error ? (
         <p className="t-body mt-3 text-danger">
           {pick.error instanceof ApiError && pick.error.status === 401
-            ? 'O código venceu. Entre de novo.'
+            ? 'Passou tempo demais. Entre de novo.'
             : messageOf(pick.error)}
         </p>
       ) : null}

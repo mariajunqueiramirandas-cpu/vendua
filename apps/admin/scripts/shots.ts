@@ -32,6 +32,7 @@ const routes = process.argv.slice(2).length
       '/conta',
       '/perfil',
       '/ajuda',
+      '/comecar',
       '/_ui',
     ];
 const VIEWPORTS = [

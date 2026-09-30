@@ -37,6 +37,9 @@ export const qk = {
   memory: (params?: Record<string, string>) => ['memory', params ?? {}] as const,
   duplicates: () => ['duplicates'] as const,
   snapshots: () => ['snapshots'] as const,
+  billingStores: () => ['billing-stores'] as const,
+  controlPlans: () => ['control-plans'] as const,
+  incidents: () => ['incidents'] as const,
 };
 
 type AuthListener = () => void;

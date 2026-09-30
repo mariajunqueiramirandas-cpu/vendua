@@ -20,6 +20,7 @@ export type {
   DeliveryOption,
   ModifierGroup,
   PaymentMethod,
+  PaymentStatusKind,
   SlotProps,
 } from './slot-props.ts';
 
@@ -149,4 +150,6 @@ export type {
   OrderItem,
   OrderSummary,
   PixInfo,
+  // Kernel 1.7
+  PaymentNext,
 } from './api.ts';

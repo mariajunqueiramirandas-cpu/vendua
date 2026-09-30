@@ -1,6 +1,6 @@
-import { Bell, Moon, Plus, Sun } from '@phosphor-icons/react';
+import { Bell, EnvelopeSimple, Moon, Plus, Sun, WhatsappLogo } from '@phosphor-icons/react';
 import { useState, type ReactNode } from 'react';
-import type { Order, Product } from '../../lib/api.ts';
+import type { Order, Plan, Product } from '../../lib/api.ts';
 import { setTheme } from '../../lib/theme.ts';
 import { Button, IconButton } from '../../ui/Button.tsx';
 import { Card, Section } from '../../ui/Card.tsx';
@@ -34,6 +34,16 @@ import { ProductTile } from '../../ui/ProductTile.tsx';
 import { Sheet } from '../../ui/Sheet.tsx';
 import { STATE_META, StateChip } from '../../ui/StateChip.tsx';
 import { Toaster, toast } from '../../ui/Toast.tsx';
+import { Notice } from '../../ui/Notice.tsx';
+import { CodeInput } from '../../ui/CodeInput.tsx';
+import { CopyValue } from '../../ui/CopyValue.tsx';
+import { PaymentChip } from '../../ui/PaymentChip.tsx';
+import { PixCode } from '../../ui/PixCode.tsx';
+import { PlanCardSkeleton, PlanOption } from '../../ui/PlanCard.tsx';
+import { StepFrame } from '../../ui/StepFrame.tsx';
+import { OutcomeList, OutcomeRow } from '../../ui/Outcome.tsx';
+import { HelpButton } from '../../ui/Page.tsx';
+import { PlatformStatus } from '../help/status.tsx';
 
 // The living style reference (/admin/_ui, design spec §7): every component in its
 // states over realistic data. It needs no session, so CI screenshots it.
@@ -126,6 +136,8 @@ export default function UiReference() {
   const [sheet, setSheet] = useState(false);
   const [sales, setSales] = useState(34890);
   const [phase, setPhase] = useState<DayPhase>('open');
+  const [code, setCode] = useState('12');
+  const [plan, setPlan] = useState('basic');
   return (
     <div className="mx-auto max-w-6xl space-y-12 px-4 py-8 md:px-8">
       <header className="flex flex-wrap items-center gap-3">
@@ -492,6 +504,134 @@ export default function UiReference() {
           </Button>
         </div>
       </Block>
+      <Block title="Pagamento, Pix e cadastro">
+        <div className="flex flex-wrap gap-2">
+          <PaymentChip payment={{ method: 'pix', status: 'paid', online: true }} />
+          <PaymentChip payment={{ method: 'pix', status: 'pending', online: true }} />
+          <PaymentChip payment={{ method: 'pix', status: 'pending', online: false }} />
+          <PaymentChip payment={{ method: 'card_online', status: 'pending', online: true }} />
+          <PaymentChip payment={{ method: 'cash', status: 'pending' }} />
+          <PaymentChip payment={{ method: 'card_online', status: 'refunded', online: true }} />
+          <PaymentChip payment={{ method: 'pix', status: 'failed', online: true }} />
+        </div>
+        <div className="mt-4 grid gap-4 md:grid-cols-2">
+          <Card className="p-5">
+            <PixCode
+              copyPaste={SAMPLE_PIX}
+              amountCents={3990}
+              expiresAt={new Date(Date.now() + 25 * 60_000).toISOString()}
+            />
+          </Card>
+          <div className="space-y-4">
+            <CopyValue label="Link da loja" value="https://quero-pudim.vendua.com.br" />
+            <CopyValue label="Pix copia e cola" value={SAMPLE_PIX} lines={2} />
+            <Card className="p-5">
+              <p className="t-label mb-3">Código de 6 dígitos</p>
+              <CodeInput
+                value={code}
+                onChange={setCode}
+                onComplete={() => toast('Código completo')}
+              />
+            </Card>
+          </div>
+        </div>
+        <div className="mt-4 grid gap-3 md:grid-cols-2">
+          {SAMPLE_PLANS.map((p) => (
+            <PlanOption
+              key={p.id}
+              plan={p}
+              selected={plan === p.id}
+              onSelect={() => setPlan(p.id)}
+              address="sualoja.vendua.com.br"
+              badge={p.id === 'basic' ? 'para começar' : undefined}
+            />
+          ))}
+          <PlanCardSkeleton />
+        </div>
+        <Card className="mt-4 p-5 [&_.sticky]:static">
+          <StepFrame
+            title="Como se chama a sua loja?"
+            hint="Aparece no topo da loja e nas mensagens."
+            onSubmit={() => toast('Continuar')}
+            back={() => undefined}
+            focusTitle={false}
+          >
+            <TextInput aria-label="nome da loja" defaultValue="Quero Pudim" />
+          </StepFrame>
+        </Card>
+      </Block>
+
+      <Block title="Recados na tela e para onde foi">
+        <div className="grid gap-3 md:grid-cols-2">
+          <Notice tone="danger" title="Ninguém consegue pedir">
+            Com retirada e entrega desligadas, a loja não aceita pedidos.
+          </Notice>
+          <Notice
+            tone="warning"
+            title="Falta pagar o plano"
+            action={
+              <Button size="sm" onClick={() => undefined}>
+                ver o plano e pagar
+              </Button>
+            }
+          >
+            Sua loja abre para pedidos assim que o primeiro pagamento do plano for confirmado.
+          </Notice>
+          <Notice tone="success" title="Aviso enviado">
+            Chegou nos seus 2 aparelhos.
+          </Notice>
+          <Notice tone="info" title="Sem WhatsApp de reserva por enquanto">
+            Hoje os avisos chegam só pelo celular.
+          </Notice>
+        </div>
+        <div className="mt-4 grid gap-4 md:grid-cols-2">
+          <div className="self-start">
+            <OutcomeList label="para onde foi o convite">
+              <OutcomeRow
+                channel="WhatsApp"
+                icon={<WhatsappLogo weight="duotone" />}
+                detail={'(22)\u00a098179-5040'}
+                state="ok"
+                word="enviado"
+              />
+              <OutcomeRow
+                channel="E-mail"
+                icon={<EnvelopeSimple weight="duotone" />}
+                detail="ana@exemplo.com"
+                state="failed"
+                word="falhou"
+              />
+            </OutcomeList>
+          </div>
+          <div className="space-y-3">
+            <PlatformStatus incidents={[]} />
+            <PlatformStatus
+              incidents={[
+                {
+                  id: 'i1',
+                  title: 'Pagamentos com cartão lentos',
+                  body: 'O Mercado Pago está demorando para confirmar. Pix segue normal.',
+                  severity: 'degraded',
+                  startedAt: new Date(Date.now() - 40 * 60_000).toISOString(),
+                  resolvedAt: null,
+                },
+                {
+                  id: 'i2',
+                  title: 'Avisos de pedido atrasados',
+                  body: null,
+                  severity: 'outage',
+                  startedAt: new Date(Date.now() - 26 * 3600_000).toISOString(),
+                  resolvedAt: new Date(Date.now() - 25 * 3600_000).toISOString(),
+                },
+              ]}
+            />
+            <div className="flex items-center gap-2">
+              <HelpButton />
+              <span className="t-caption text-muted">no topo de cada tela; “?” no teclado</span>
+            </div>
+          </div>
+        </div>
+      </Block>
       <Sheet
         open={sheet}
         onOpenChange={setSheet}
@@ -504,6 +644,26 @@ export default function UiReference() {
     </div>
   );
 }
+
+const SAMPLE_PIX =
+  '00020126580014BR.GOV.BCB.PIX0136a1b2c3d4-e5f6-7890-abcd-ef1234567890520400005303986540539.905802BR5920QUERO PUDIM GOURMET6009SAO PAULO62070503***6304ABCD';
+
+const SAMPLE_PLANS: Plan[] = [
+  {
+    id: 'basic',
+    name: 'Venduá Basic',
+    priceCents: 3990,
+    feeBps: 0,
+    features: { customDomain: false, customSite: false },
+  },
+  {
+    id: 'pro_plus',
+    name: 'Venduá PRO+',
+    priceCents: 9900,
+    feeBps: 0,
+    features: { customDomain: true, customSite: true },
+  },
+];
 
 function Block({ title, children }: { title: string; children: ReactNode }) {
   return (

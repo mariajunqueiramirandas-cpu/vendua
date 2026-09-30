@@ -1,6 +1,14 @@
 import type { Sql } from '../platform/db.ts';
 import { HttpError } from '../platform/http.ts';
-import { liveStatus, type ModifierGroup, type ProductDetail } from './catalog.ts';
+import {
+  liveStatus,
+  scheduleOpen,
+  storeTimezone,
+  type AvailabilitySchedule,
+  type ModifierGroup,
+  type ScheduledComboSlotItem,
+  type ProductDetail,
+} from './catalog.ts';
 import { comboDelta, parseSelections, validateCombo, type ComboSelection } from './combos.ts';
 import { couponLabel, couponUsage, evaluateCoupon, loadCoupon } from './coupons.ts';
 import { effectiveFee, foldName, resolveZone, validCoords, type ZoneLike } from './geo.ts';
@@ -45,6 +53,7 @@ interface ItemRow {
   requires_preorder: boolean;
   preorder_lead_days: number;
   image_url: string | null;
+  availability_schedule: AvailabilitySchedule | null;
 }
 
 export interface ComboLine {
@@ -170,10 +179,16 @@ export function computeTotals(
 }
 
 export function validateItemModifiers(
-  product: Pick<ProductDetail, 'status' | 'modifierGroups'>,
+  product: Pick<ProductDetail, 'status' | 'modifierGroups' | 'availabilityLabel'>,
   modifierIds: string[],
 ): HttpError | null {
-  if (product.status !== 'active') return new HttpError(409, 'SOLD_OUT', 'product is sold out');
+  if (product.status !== 'active')
+    return product.availabilityLabel
+      ? new HttpError(409, 'SOLD_OUT', 'product is outside its availability schedule', {
+          reason: 'schedule',
+          availabilityLabel: product.availabilityLabel,
+        })
+      : new HttpError(409, 'SOLD_OUT', 'product is sold out');
 
   const byId = new Map(
     product.modifierGroups.flatMap((g: ModifierGroup) =>
@@ -211,7 +226,10 @@ export function validateItemModifiers(
 
 /** Modifiers + kit composition against the live product — shared by add and checkout. */
 export function validateLine(
-  product: Pick<ProductDetail, 'status' | 'modifierGroups' | 'kind' | 'comboSlots'>,
+  product: Pick<
+    ProductDetail,
+    'status' | 'modifierGroups' | 'kind' | 'comboSlots' | 'availabilityLabel'
+  >,
   modifierIds: string[],
   selections: ComboSelection[],
 ): HttpError | null {
@@ -222,6 +240,18 @@ export function validateLine(
       ? new HttpError(422, 'INVALID_COMBO', 'only kits take comboSelections')
       : null;
   }
+  for (const sel of selections) {
+    const item = product.comboSlots
+      .find((s) => s.id === sel.slotId)
+      ?.items.find((i) => i.productId === sel.productId) as ScheduledComboSlotItem | undefined;
+    if (item?.availabilityLabel)
+      return new HttpError(409, 'SOLD_OUT', `"${item.name}" is outside its availability schedule`, {
+        reason: 'schedule',
+        slotId: sel.slotId,
+        productId: item.productId,
+        availabilityLabel: item.availabilityLabel,
+      });
+  }
   return validateCombo(product.comboSlots, selections).error;
 }
 
@@ -230,7 +260,7 @@ async function loadPricedItems(tx: Sql, tenantId: string, cartId: string): Promi
     select ci.id, ci.product_id, ci.qty, ci.modifier_ids, ci.unit_price_cents,
            ci.modifier_snapshot, ci.combo_selections, ci.combo_snapshot,
            p.name, p.slug, p.status as product_status, p.stock_quantity,
-           p.requires_preorder, p.preorder_lead_days,
+           p.requires_preorder, p.preorder_lead_days, p.availability_schedule,
            (select m.url from product_media m where m.product_id = p.id order by m.sort, m.id limit 1) as image_url
     from cart_items ci join products p on p.id = ci.product_id
     where ci.tenant_id = ${tenantId} and ci.cart_id = ${cartId}
@@ -248,13 +278,37 @@ async function loadPricedItems(tx: Sql, tenantId: string, cartId: string): Promi
     : [];
   const pickIds = items.flatMap((i) => i.combo_snapshot.map((c) => c.productId));
   const picks = pickIds.length
-    ? await tx<{ id: string; status: string; stock_quantity: number | null }[]>`
-        select id, status, stock_quantity from products
+    ? await tx<
+        {
+          id: string;
+          status: string;
+          stock_quantity: number | null;
+          availability_schedule: AvailabilitySchedule | null;
+        }[]
+      >`
+        select id, status, stock_quantity, availability_schedule from products
         where tenant_id = ${tenantId} and id = any(${pickIds}::uuid[])
       `
     : [];
   const liveMod = new Map(mods.map((m) => [m.id, m.status]));
-  const livePick = new Map(picks.map((p) => [p.id, liveStatus(p.status, p.stock_quantity)]));
+  const now = new Date();
+  const tz =
+    items.some((i) => i.availability_schedule) || picks.some((p) => p.availability_schedule)
+      ? await storeTimezone(tx, tenantId)
+      : 'America/Sao_Paulo';
+  const status = (i: ItemRow) => {
+    const s = liveStatus(i.product_status, i.stock_quantity);
+    return s === 'active' && !scheduleOpen(i.availability_schedule, now, tz) ? 'sold_out' : s;
+  };
+  const livePick = new Map(
+    picks.map((p) => {
+      const st = liveStatus(p.status, p.stock_quantity);
+      return [
+        p.id,
+        st === 'active' && !scheduleOpen(p.availability_schedule, now, tz) ? 'sold_out' : st,
+      ];
+    }),
+  );
   return items.map((item) => ({
     id: item.id,
     productId: item.product_id,
@@ -262,7 +316,7 @@ async function loadPricedItems(tx: Sql, tenantId: string, cartId: string): Promi
     name: item.name,
     qty: item.qty,
     unitPriceCents: item.unit_price_cents,
-    productStatus: liveStatus(item.product_status, item.stock_quantity),
+    productStatus: status(item),
     modifierIds: item.modifier_ids,
     modifiers: item.modifier_snapshot.map((m) => ({
       id: m.id,

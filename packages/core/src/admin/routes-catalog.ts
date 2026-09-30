@@ -1,6 +1,12 @@
 import type { Sql } from '../platform/db.ts';
 import { HttpError, UUID_RE, bodyJson, uuidParam } from '../platform/http.ts';
-import { loadComboSlots } from '../modules/catalog.ts';
+import {
+  loadComboSlots,
+  parseAvailabilitySchedule,
+  scheduleOpen,
+  storeTimezone,
+  type AvailabilitySchedule,
+} from '../modules/catalog.ts';
 import { setStock } from '../modules/stock.ts';
 import { audit } from './audit.ts';
 import {
@@ -36,6 +42,9 @@ export interface AdminProductRow {
   preorderLeadDays: number;
   sort: number;
   soldOutUntil: string | null;
+  availabilitySchedule: AvailabilitySchedule | null;
+  /** false while outside its schedule */
+  availableNow: boolean;
   tags: string[];
   imageUrl: string | null;
   dominant: string | null;
@@ -48,7 +57,7 @@ const productCols = (tx: Sql) => tx`
   p.id, p.category_id as "categoryId", p.slug, p.name, p.description, p.base_price_cents as "priceCents",
   p.status, p.kind, p.stock_quantity as "stockQuantity", p.low_stock_threshold as "lowStockThreshold",
   p.requires_preorder as "requiresPreorder", p.preorder_lead_days as "preorderLeadDays", p.sort,
-  p.sold_out_until as "soldOutUntil", p.tags,
+  p.sold_out_until as "soldOutUntil", p.tags, p.availability_schedule as "availabilitySchedule",
   (select m.url from product_media m where m.product_id = p.id order by m.sort, m.id limit 1) as "imageUrl",
   (select mo.dominant from product_media m join media_objects mo
      on m.url like '/v1/media/%' and mo.id::text = split_part(split_part(m.url, '/', 5), '.', 1)
@@ -58,6 +67,16 @@ const productCols = (tx: Sql) => tx`
   (select count(*)::int from notify_requests n where n.product_id = p.id and n.notified_at is null) as waiting
 `;
 
+/** availableNow from the schedule, in the store's timezone */
+async function withNow(tx: Sql, tenantId: string, rows: AdminProductRow[]) {
+  const tz = rows.some((r) => r.availabilitySchedule)
+    ? await storeTimezone(tx, tenantId)
+    : 'America/Sao_Paulo';
+  const now = new Date();
+  for (const r of rows) r.availableNow = scheduleOpen(r.availabilitySchedule, now, tz);
+  return rows;
+}
+
 async function productRow(tx: Sql, tenantId: string, id: string): Promise<AdminProductRow> {
   const row = (
     await tx<AdminProductRow[]>`
@@ -65,7 +84,7 @@ async function productRow(tx: Sql, tenantId: string, id: string): Promise<AdminP
     `
   )[0];
   if (!row) throw new HttpError(404, 'PRODUCT_NOT_FOUND', 'product not found');
-  return row;
+  return (await withNow(tx, tenantId, [row]))[0]!;
 }
 
 async function productDetail(tx: Sql, tenantId: string, id: string) {
@@ -203,10 +222,14 @@ export function mountCatalog(d: AdminDeps) {
       const categories = await tx<{ id: string; slug: string; name: string; sort: number }[]>`
         select id, slug, name, sort from categories where tenant_id = ${t.id} order by sort, name
       `;
-      const products = await tx<AdminProductRow[]>`
-        select ${productCols(tx)} from products p where p.tenant_id = ${t.id}
-        order by p.sort, p.name
-      `;
+      const products = await withNow(
+        tx,
+        t.id,
+        await tx<AdminProductRow[]>`
+          select ${productCols(tx)} from products p where p.tenant_id = ${t.id}
+          order by p.sort, p.name
+        `,
+      );
       return {
         categories: categories.map((c) => ({
           ...c,
@@ -398,6 +421,11 @@ export function mountCatalog(d: AdminDeps) {
           throw new HttpError(422, 'BAD_REQUEST', 'tags: at most 12', { field: 'tags' });
         set.tags = tx.json(body.tags.map((x, i) => text(x, `tags[${i}]`, 30, 1)));
         changes.push('etiquetas');
+      }
+      if (body.availabilitySchedule !== undefined) {
+        const sched = parseAvailabilitySchedule(body.availabilitySchedule);
+        set.availability_schedule = sched ? tx.json(sched as never) : null;
+        changes.push('horário de venda');
       }
       if (Object.keys(set).length)
         await tx`update products set ${tx(set as never)} where tenant_id = ${t.id} and id = ${id}`;

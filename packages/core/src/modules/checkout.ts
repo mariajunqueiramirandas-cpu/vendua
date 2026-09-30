@@ -19,7 +19,8 @@ export interface CheckoutInput {
     lat?: number;
     lng?: number;
   };
-  payment: { method: 'pix' | 'card_on_delivery' | 'cash' };
+  /** card_online: Mercado Pago's hosted checkout — offered only while the store is connected */
+  payment: { method: 'pix' | 'card_online' | 'card_on_delivery' | 'cash' };
   /** "Alguma observação?" */
   notes?: string;
   /** encomenda date, YYYY-MM-DD in the store's timezone */
@@ -68,6 +69,8 @@ export function validateCheckout<Z extends ZoneLike>(
   zones: Z[],
   products?: Map<string, ProductDetail | null>,
   store: Coords | null = null,
+  /** the store's Mercado Pago connection can take a card right now */
+  online: { card: boolean } = { card: false },
 ): { zone: Z | null; distanceKm: number | null; feeCents: number } {
   if (status.status === 'paused') {
     throw new HttpError(423, 'STORE_PAUSED', 'store is paused', {
@@ -78,9 +81,13 @@ export function validateCheckout<Z extends ZoneLike>(
   if (input.delivery.mode === 'pickup' && !(settings?.pickup_enabled ?? true)) {
     throw new HttpError(422, 'PICKUP_UNAVAILABLE', 'pickup is not available');
   }
-  // the merchant turns methods off in the admin; absent setting = all three (pre-0052 rows)
+  // the merchant turns methods off in the admin; absent setting = the three offline ones (pre-0052 rows)
   const methods = settings?.payment_methods;
-  if (methods && !methods.includes(input.payment.method)) {
+  const offered =
+    input.payment.method === 'card_online'
+      ? online.card && !!methods?.includes('card_online')
+      : !methods || methods.includes(input.payment.method);
+  if (!offered) {
     throw new HttpError(422, 'PAYMENT_METHOD_UNAVAILABLE', 'this payment method is not accepted', {
       field: 'payment.method',
     });
@@ -201,11 +208,11 @@ export function validateCheckoutShape(input: unknown): asserts input is Checkout
       });
     }
   }
-  if (!['pix', 'card_on_delivery', 'cash'].includes(i.payment?.method)) {
+  if (!['pix', 'card_online', 'card_on_delivery', 'cash'].includes(i.payment?.method)) {
     throw new HttpError(
       422,
       'INVALID_PAYMENT',
-      'payment.method must be pix, card_on_delivery or cash',
+      'payment.method must be pix, card_online, card_on_delivery or cash',
       {
         field: 'payment.method',
       },

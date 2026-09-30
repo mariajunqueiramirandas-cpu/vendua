@@ -30,6 +30,8 @@ COPY packages/templates packages/templates
 COPY apps/admin/src/ui/theme.css apps/admin/src/ui/theme.css
 COPY site site
 COPY storefronts storefronts
+# the site's sign-up links point at the merchant admin (site/README.md); unset = its default
+ARG PUBLIC_ADMIN_URL
 RUN bun --filter @vendua/site build && bun --filter './storefronts/*' build
 RUN bun storefronts/place-bundles.ts storefronts /app/stores
 

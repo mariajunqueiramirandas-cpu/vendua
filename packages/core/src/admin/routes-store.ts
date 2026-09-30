@@ -1,6 +1,5 @@
 import type { Sql } from '../platform/db.ts';
 import { HttpError, bodyJson, uuidParam } from '../platform/http.ts';
-import { normalizePixKey, pixPayload, type PixKeyType } from '../modules/pix.ts';
 import {
   deriveStatus,
   type SpecialDay,
@@ -25,6 +24,7 @@ import { emitAdminTx } from './live.ts';
 import { nextLocalMidnight } from './routes-catalog.ts';
 import { storeOrigin } from '../platform/store-origin.ts';
 
+/** encomendas: the offline methods a preorder may be limited to */
 const METHODS = ['pix', 'card_on_delivery', 'cash'] as const;
 
 export async function loadSettings(tx: Sql, tenantId: string): Promise<StoreSettingsRow> {
@@ -40,6 +40,16 @@ export async function loadSettings(tx: Sql, tenantId: string): Promise<StoreSett
     )[0]!;
   }
   return row;
+}
+
+/** A self-serve store stays paused until its plan's first payment lands (CORE-BILL lifts it). */
+export function assertNoBillingHold(s: StoreSettingsRow) {
+  if (s.billing_hold)
+    throw new HttpError(
+      409,
+      'BILLING_HOLD',
+      'the store opens when the first plan payment is confirmed',
+    );
 }
 
 export function statusOf(s: StoreSettingsRow) {
@@ -116,6 +126,7 @@ export async function storeView(
       override: s.status_override,
       pauseMessage: s.pause_message ?? null,
       closedMessage: s.closed_message ?? null,
+      billingHold: !!s.billing_hold,
     },
     hours: s.hours ?? { timezone: 'America/Sao_Paulo', windows: [] },
     specialDays: s.special_days ?? [],
@@ -124,6 +135,8 @@ export async function storeView(
       acceptTargetMinutes: s.accept_target_minutes ?? 5,
       minOrderCents: s.min_order_cents,
       pickupEnabled: s.pickup_enabled,
+      pickupAddress: s.pickup_address ?? null,
+      pickupInstructions: s.pickup_instructions ?? null,
       deliveryEnabled: s.delivery_enabled,
       demand: s.demand_level ?? 'normal',
     },
@@ -341,6 +354,11 @@ export function mountStore(d: AdminDeps) {
           set.delivery_enabled = bool(o.deliveryEnabled, 'deliveryEnabled');
         if (o.demand !== undefined)
           set.demand_level = oneOf(o.demand, 'demand', ['normal', 'high'] as const);
+        if (o.pickupAddress !== undefined)
+          set.pickup_address = optText(o.pickupAddress, 'pickupAddress', 200) ?? null;
+        if (o.pickupInstructions !== undefined)
+          set.pickup_instructions =
+            optText(o.pickupInstructions, 'pickupInstructions', 300) ?? null;
         const pickup = (set.pickup_enabled as boolean | undefined) ?? s.pickup_enabled;
         const delivery = (set.delivery_enabled as boolean | undefined) ?? s.delivery_enabled;
         if (!pickup && !delivery)
@@ -417,7 +435,9 @@ export function mountStore(d: AdminDeps) {
     write('attendant', async (tx, t, m, c) => {
       const body = await bodyJson(c);
       const span = oneOf(body.for, 'for', ['15m', '1h', 'today', 'indefinite', 'minutes'] as const);
-      await loadSettings(tx, t.id);
+      const settings = await loadSettings(tx, t.id);
+      // a timed pause ends by opening the store — not while the plan is unpaid
+      if (span !== 'indefinite') assertNoBillingHold(settings);
       const until =
         span === '15m'
           ? new Date(Date.now() + 15 * 60_000)
@@ -449,7 +469,7 @@ export function mountStore(d: AdminDeps) {
   admin.post(
     '/store/resume',
     write('attendant', async (tx, t, m) => {
-      await loadSettings(tx, t.id);
+      assertNoBillingHold(await loadSettings(tx, t.id));
       await tx`update store_settings set status_override = null, resumes_at = null where tenant_id = ${t.id}`;
       await audit(tx, t.id, m, {
         action: 'store.resume',
@@ -527,111 +547,6 @@ export function mountStore(d: AdminDeps) {
       });
       await emitAdminTx(tx, t.id, 'store');
       return { status: 200, body: { zones: await zonesOf(tx, t.id) } };
-    }),
-  );
-
-  // ── pagamentos ───────────────────────────────────────────────────────────
-
-  const paymentsView = async (tx: Sql, tenantId: string) => {
-    const s = await loadSettings(tx, tenantId);
-    const by = await tx<{ method: string; status: string; orders: number; cents: number }[]>`
-      select payment ->> 'method' as method, payment ->> 'status' as status, count(*)::int as orders,
-             coalesce(sum(total_cents), 0)::int as cents
-      from orders where tenant_id = ${tenantId} and state not in ('cancelled', 'refunded')
-        and placed_at > now() - interval '30 days'
-      group by 1, 2
-    `;
-    const awaiting = await tx<
-      { id: string; number: number; name: string; totalCents: number; placedAt: string }[]
-    >`
-      select id, number, customer ->> 'name' as name, total_cents as "totalCents", placed_at as "placedAt"
-      from orders where tenant_id = ${tenantId} and payment ->> 'method' = 'pix'
-        and payment ->> 'status' = 'pending' and state not in ('cancelled', 'refunded')
-      order by placed_at desc limit 20
-    `;
-    const pix =
-      s.pix_key && s.pix_key_type
-        ? {
-            key: s.pix_key,
-            keyType: s.pix_key_type,
-            beneficiary: s.pix_beneficiary ?? '',
-            city: s.pix_city ?? '',
-            sample: pixPayload({
-              key: s.pix_key,
-              keyType: s.pix_key_type as PixKeyType,
-              beneficiary: s.pix_beneficiary ?? '',
-              city: s.pix_city ?? s.city ?? '',
-            }),
-          }
-        : null;
-    return {
-      methods: s.payment_methods ?? [...METHODS],
-      pix,
-      // Mercado Pago lands with Phase 3 (A3); the admin says so instead of faking it
-      mercadoPago: { status: 'not_available' as const },
-      last30: by,
-      awaitingPix: awaiting,
-    };
-  };
-
-  admin.get(
-    '/payments',
-    read('manager', async (tx, t) => paymentsView(tx, t.id)),
-  );
-
-  admin.patch(
-    '/payments',
-    write('owner', async (tx, t, m, c) => {
-      const body = await bodyJson(c);
-      await loadSettings(tx, t.id);
-      const changed: string[] = [];
-      if (body.methods !== undefined) {
-        const pm = body.methods;
-        if (
-          !Array.isArray(pm) ||
-          pm.length === 0 ||
-          !pm.every((x) => (METHODS as readonly unknown[]).includes(x))
-        )
-          throw new HttpError(422, 'BAD_REQUEST', 'keep at least one payment method', {
-            field: 'methods',
-          });
-        await tx`update store_settings set payment_methods = ${tx.json([...new Set(pm as string[])])} where tenant_id = ${t.id}`;
-        changed.push('formas de pagamento');
-      }
-      if (body.pix !== undefined) {
-        if (body.pix === null) {
-          await tx`update store_settings set pix_key = null, pix_key_type = null, pix_beneficiary = null, pix_city = null where tenant_id = ${t.id}`;
-        } else {
-          const p = isObj(body.pix) ? body.pix : {};
-          const type = oneOf(p.keyType, 'keyType', [
-            'cpf',
-            'cnpj',
-            'email',
-            'phone',
-            'random',
-          ] as const);
-          const key = normalizePixKey(text(p.key, 'key', 100, 1), type);
-          if (!key)
-            throw new HttpError(422, 'INVALID_PIX', 'this Pix key does not look right', {
-              field: 'key',
-            });
-          const beneficiary = text(p.beneficiary, 'beneficiary', 25, 2);
-          const city = optText(p.city, 'city', 15) ?? null;
-          await tx`
-            update store_settings set pix_key = ${key}, pix_key_type = ${type}, pix_beneficiary = ${beneficiary}, pix_city = ${city}
-            where tenant_id = ${t.id}
-          `;
-        }
-        changed.push('Pix');
-      }
-      if (!changed.length) throw new HttpError(422, 'BAD_REQUEST', 'nothing to change');
-      await audit(tx, t.id, m, {
-        action: 'payments.update',
-        entity: 'payments',
-        summary: `alterou ${changed.join(' e ')}`,
-      });
-      await emitAdminTx(tx, t.id, 'store');
-      return { status: 200, body: await paymentsView(tx, t.id) };
     }),
   );
 }

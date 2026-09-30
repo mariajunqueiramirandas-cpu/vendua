@@ -3,6 +3,32 @@
 Semver, per docs/architecture/11-backward-compatibility.md: minors and patches
 never need a storefront edit; a major only ships with a Contract major.
 
+## 1.7.0
+
+Online payments — additive; no storefront edit, no new runtime export.
+
+- Checkout offers "Cartão de crédito" (`card_online`, paid on Mercado Pago's hosted checkout)
+  when the store lists it; placing the order calls `POST /checkout/v1/orders/:id/pay` and hands
+  off to Mercado Pago behind a "Levando você ao Mercado Pago…" state. With online Pix the Pix
+  option says the QR comes on the next screen and confirms na hora.
+- `/pedido/:id`: an online Pix is generated when the order has none, shows its countdown and
+  turns into "Pagamento confirmado" when the live stream says so; an expired one offers "Gerar
+  novo Pix". A card return (`?pagamento=retorno`) syncs with Core and shows approved / em
+  análise / não aprovado ("Tentar de novo"). Refunds show the amount returned; a provider
+  outage offers a retry and the store's WhatsApp. Offline orders are unchanged.
+- The Mercado Pago hand-off only follows an `https:` URL (plain `http:` on `*.localhost` in
+  dev); anything else from Core is treated as `PAYMENT_UNAVAILABLE`.
+- New slot `checkout.PaymentStatus` (default in `@vendua/ui-defaults`); optional props
+  `checkout.PixPayment.online/expiresAt`, `order.StatusPage.pickup`, `DeliveryOption.note`.
+- Pickup: checkout and the order page show the store's pickup address and instructions.
+- Scheduled products: `availabilityLabel` replaces "Esgotado" on cards and the product page.
+- `Img` (and the default card/product images) get a `?w=` srcset for Core media when no CDN
+  is configured.
+- Types: `StoreProfile.pickup/onlinePayments`, `Order.payment.online/paidAt/refundedCents/
+redirectUrl/pix.expiresAt`, `CatalogProduct.availabilityLabel` (and on kit picks), `PaymentNext`,
+  `PaymentStatusKind`; `ERROR_CODES` adds `PAYMENT_NOT_REQUIRED`, `PAYMENT_UNAVAILABLE`,
+  `PAYMENT_ONLINE`.
+
 ## 1.6.1
 
 Navigation scroll — patch; no storefront edit, no new export.

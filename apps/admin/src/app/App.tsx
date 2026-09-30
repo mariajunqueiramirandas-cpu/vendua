@@ -1,6 +1,7 @@
 import { lazy, Suspense, useEffect, useRef } from 'react';
-import { Navigate, Route, Routes, useLocation } from 'react-router-dom';
+import { Navigate, Route, Routes, useLocation, useNavigate } from 'react-router-dom';
 import { useQueryClient } from '@tanstack/react-query';
+import { awaitingCardReturn } from '../features/signup/progress.ts';
 import { ApiError } from '../lib/api.ts';
 import { clearPersisted } from '../lib/persist.ts';
 import { qk } from '../lib/query.ts';
@@ -8,6 +9,7 @@ import { SessionCtx, useSessionQuery } from '../lib/session.ts';
 import { applyTheme, type ThemePref } from '../lib/theme.ts';
 import { ErrorBoundary } from '../ui/ErrorBoundary.tsx';
 import { ErrorState, Splash } from '../ui/feedback.tsx';
+import { toast } from '../ui/Toast.tsx';
 import { chunks, screen } from './routes.ts';
 import { Shell } from './Shell.tsx';
 
@@ -31,6 +33,7 @@ const Account = screen(chunks.account, (m) => m.default);
 const Profile = screen(chunks.profile, (m) => m.default);
 const Help = screen(chunks.help, (m) => m.default);
 const Onboarding = screen(chunks.onboarding, (m) => m.default);
+const Signup = screen(chunks.signup, (m) => m.default);
 const NotFound = screen(chunks.notFound, (m) => m.default);
 const UiReference = lazy(() => import('../features/dev/UiReference.tsx'));
 
@@ -38,6 +41,7 @@ export default function App() {
   const q = useSessionQuery();
   const qc = useQueryClient();
   const loc = useLocation();
+  const nav = useNavigate();
   // once signed out, a background re-check keeps the sign-in on screen (its step lives there)
   const signedOut = useRef(false);
   useEffect(() => {
@@ -49,6 +53,26 @@ export default function App() {
     const t = q.data?.user.prefs.theme as ThemePref | undefined;
     if (t) applyTheme(t);
   }, [q.data?.user.prefs.theme]);
+
+  // Mercado Pago sends the card authorization back to /admin/?assinatura=retorno
+  const retorno = new URLSearchParams(loc.search).get('assinatura') === 'retorno';
+  const toSignup = retorno && loc.pathname !== '/comecar' && awaitingCardReturn();
+  const hasSession = !!q.data;
+  useEffect(() => {
+    if (!retorno || toSignup || loc.pathname === '/comecar' || !hasSession) return;
+    for (const k of [qk.account, qk.store, qk.home]) void qc.invalidateQueries({ queryKey: k });
+    toast(
+      'De volta do Mercado Pago. Quando ele confirmar, a assinatura aparece em Conta e plano.',
+      {
+        tone: 'info',
+        ms: 8000,
+        action: { label: 'ver', run: () => nav('/conta') },
+      },
+    );
+    const u = new URL(window.location.href);
+    u.searchParams.delete('assinatura');
+    window.history.replaceState(window.history.state, '', u.pathname + u.search + u.hash);
+  }, [retorno, toSignup, hasSession, loc.pathname, qc, nav]);
 
   const unauth =
     (q.error instanceof ApiError && q.error.status === 401) || (q.isPending && signedOut.current);
@@ -70,9 +94,22 @@ export default function App() {
         <UiReference />
       </Suspense>
     );
+  // the card hand-off of a signup: its confirmation screen lives in the signup flow
+  if (toSignup) return <Navigate to="/comecar?assinatura=retorno" replace />;
+  // self-serve signup: before the session check, since it's mostly used signed out
+  if (loc.pathname === '/comecar')
+    return (
+      <ErrorBoundary>
+        <Suspense fallback={<Splash text="Preparando o seu cadastro…" />}>
+          <Signup signedIn={!!q.data && !unauth} />
+        </Suspense>
+      </ErrorBoundary>
+    );
+  // an e-mail link opened while signed in still signs in with it (it may be another store)
+  const emailLink = loc.pathname === '/entrar' && new URLSearchParams(loc.search).has('link');
   if (q.isPending && !unauth) return <Splash />;
   if (unauth || loc.pathname === '/entrar')
-    return q.data && !unauth ? (
+    return q.data && !unauth && !emailLink ? (
       <Navigate to="/" replace />
     ) : (
       // a Login chunk that fails or crawls on mobile data must not leave a bare background

@@ -4,16 +4,16 @@
 
 ## Where we are
 
-| Phase                         | State    | Notes                                                                                                                                                                                                                                                    |
-| ----------------------------- | -------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| 0 — Foundations               | ✅ Done  | Monorepo, Core skeleton, Kernel, 3 spike storefronts, Contract v1 drafted                                                                                                                                                                                |
-| 1 — Storefront factory        | ✅ Done  | Contract frozen, conformance, CLI, fleet isolation, Founder CRM — which has since grown well past its v0 scope (see below)                                                                                                                               |
-| 1b — Kernel v1 + updatability | ✅ Done  | Kernel 1.1.1 on Contract 2; every in-repo storefront received a Kernel minor, a template migration and a Contract-major rehearsal untouched ([fleet runs](fleet-runs/README.md))                                                                         |
-| 2 — Commerce completeness     | ✅ Done  | Order lifecycle, catalog depth, growth surfaces — Core migration 0051 + Kernel 1.2; the Quero Pudim golden runs with zero workarounds ([below](#phase-2--commerce-completeness-weeks-812-))                                                              |
-| A — Merchant admin            | 🟨 Focus | Built end to end and hardened: `apps/admin` + `/admin/v1` (migration 0052, [ADR 0020](adr/0020-merchant-identity.md)); open: sign-offs, usability sessions, the milestone exits and the Phase 3 money screens — [`merchant-admin.md`](merchant-admin.md) |
-| 3 — Payments + signup         | ⬜ Next  | Mercado Pago + the "buy a plan → provisioned store" self-serve path; runs alongside Track A (A3 and A6 are its admin screens)                                                                                                                            |
-| 4 — First tenant operated     | ⬜ Open  | Edge, Control Plane v0, provisioner — the other half of the 1-hour signup→store promise; interim: one `stores` container serves every store by Host                                                                                                      |
-| 5–8 — Fleet loop → scale      | ⬜ Open  | Blocked on 2–4 having a fleet to operate                                                                                                                                                                                                                 |
+| Phase                         | State    | Notes                                                                                                                                                                                                                                            |
+| ----------------------------- | -------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| 0 — Foundations               | ✅ Done  | Monorepo, Core skeleton, Kernel, 3 spike storefronts, Contract v1 drafted                                                                                                                                                                        |
+| 1 — Storefront factory        | ✅ Done  | Contract frozen, conformance, CLI, fleet isolation, Founder CRM — which has since grown well past its v0 scope (see below)                                                                                                                       |
+| 1b — Kernel v1 + updatability | ✅ Done  | Kernel 1.1.1 on Contract 2; every in-repo storefront received a Kernel minor, a template migration and a Contract-major rehearsal untouched ([fleet runs](fleet-runs/README.md))                                                                 |
+| 2 — Commerce completeness     | ✅ Done  | Order lifecycle, catalog depth, growth surfaces — Core migration 0051 + Kernel 1.2; the Quero Pudim golden runs with zero workarounds ([below](#phase-2--commerce-completeness-weeks-812-))                                                      |
+| A — Merchant admin            | 🟨 Focus | All software built (migrations 0052–0056, [ADR 0020](adr/0020-merchant-identity.md)): every area incl. Mercado Pago, the plan and signup; open: sign-offs, usability sessions and the milestone exits — [`merchant-admin.md`](merchant-admin.md) |
+| 3 — Payments + signup         | 🟨 Built | Mercado Pago payments + plan billing + self-serve signup ([ADR 0021](adr/0021-self-serve-signup-and-plan-billing.md)); exit waits on production MP credentials and a real paid order                                                             |
+| 4 — First tenant operated     | ⬜ Open  | Edge, Control Plane v0, provisioner — the other half of the 1-hour signup→store promise; interim: one `stores` container serves every store by Host                                                                                              |
+| 5–8 — Fleet loop → scale      | ⬜ Open  | Blocked on 2–4 having a fleet to operate                                                                                                                                                                                                         |
 
 **Ahead of the roadmap:** the Founder CRM (`apps/control`) grew into the agent
 ops surface, and the sales-side agent engine shipped on `packages/core` —
@@ -413,59 +413,39 @@ twelve areas, the platform work and exit criteria per milestone) lives in
 Exit: A1–A6 met. **Stage gate: First store** needs A1–A3; the rest lands
 before the Pilot cohort.
 
-**Status (2026-09-30):** everything built is verified working and in CI
-(screenshots, overflow, axe, bundle budgets). No milestone has closed: each
-waits on its human exit (sign-offs, commissioned art, usability sessions, a
-real day of orders), a short list of software gaps remains (missed-alert
-visibility, push beyond new orders, login fallbacks, invite delivery,
-server-side media, scheduled availability, Ajuda, Lighthouse — see
-[Not built yet](merchant-admin.md#not-built-yet)), and A3/A6 also wait on
-Phase 3 (Mercado Pago, billing).
+**Status (2026-09-30):** all the software is built, verified against the live
+stack (screenshots at phone and desktop, both themes) and in CI — including the
+money screens (A3), the plan and signup (A6), and every gap the audit found
+([What closed the gaps](merchant-admin.md#what-closed-the-gaps)). No milestone
+has closed: each waits on its human exit (sign-offs, commissioned art, usability
+sessions, a real day of orders, a real paid order).
 
 ## Phase 3 — Payments + self-serve signup (weeks 12–16)
 
 Goal: money moves through the platform: shoppers pay merchants, and merchants
 pay Venduá.
 
-**Status (2026-09-30): not started.** What exists today is offline only: the
-methods are `pix`, `card_on_delivery` and `cash`; Pix is a static copia e cola
-built from the merchant's key; the merchant marks it paid by hand ("recebi");
-`orders.payment` is written with `provider: 'sandbox'`; a refund is a state flip
-that moves no money. `tenants.plan` is a display label (no catalog, prices or
-gating), there are no subscription or invoice tables, no pre-auth signup
-endpoint, and the site's "começar" is an "em breve" pill. Tenants are created
-only by seed scripts (`platform/seed.ts`, fixtures, QA) and `vendua scaffold`.
+**Status (2026-09-30): built** (Core migrations 0054–0056, Kernel 1.7,
+[ADR 0021](adr/0021-self-serve-signup-and-plan-billing.md)). The software is in;
+the exit needs a real paid order on a live store, which waits for Venduá's
+Mercado Pago application credentials in production.
 
-What it has to build:
-
-- **MP connection** — a `payment_connections` table (encrypted tokens, MP user
-  id, status), OAuth connect + callback, token refresh, and connection status
-  feeding the admin notices.
-- **Payments + webhook** — a `payments` table (unique provider payment id,
-  `application_fee_cents`), a provider interface with the MP adapter, and a
-  verified, idempotent webhook driving the order/payment state machine in
-  place of `sandbox` and the manual "recebi".
-- **Checkout** — dynamic MP Pix and card (Bricks) inside the Kernel checkout,
-  as new method ids beside the offline ones (additive Kernel minor).
-- **Refunds** — through the MP API (partial included), confirmed by webhook,
-  with an order event and a customer notification.
-- **Billing + signup** — a plan catalog (constrain `tenants.plan`, prices, fee
-  per plan), subscriptions and invoices with recurring billing, a pre-auth
-  signup endpoint, a real CTA on the site, and the hand-off to the provisioner
-  (Phase 4) that creates the tenant, primary domain, settings, owner
-  `merchant_users` and storefront.
-
-- [ ] Mercado Pago OAuth + `application_fee` + PIX + webhook-driven order
-      state machine ([13](architecture/13-payments.md)).
-- [ ] **Self-serve signup + subscription billing** — the core product path
-      once 1b is done: a visitor goes from plan selection on the site to a paid
-      Venduá subscription and a provisioned store with zero staff
-      involvement. Pre-auth signup surface in Core, a plan catalog
-      (`tenants.plan` already exists), and Venduá-side recurring billing —
-      distinct from shopper→merchant payments (which settle into the
-      merchant's own MP account; this is the merchant paying Venduá).
-      Paid signup hands off to the provisioner (Phase 4); the invite path
-      stays for sales-assisted deals.
+- [x] Mercado Pago OAuth + PIX + card + webhook-driven order state machine
+      ([13](architecture/13-payments.md)): stores connect their own MP account
+      (tokens sealed), online Pix in the Kernel's order page, card through MP's
+      hosted checkout, webhooks as the truth plus a reconcile job, refunds
+      (partial, automatic when a paid order is cancelled), fee statement, and
+      degradation to the store's own Pix key when the connection breaks.
+      `application_fee` is wired from `plans.fee_bps`; it is 0 on every plan by
+      the user's decision.
+- [x] **Self-serve signup + subscription billing**: `plans` (Venduá Basic
+      R$ 39,90/mês, Venduá PRO+ R$ 99/mês), card (MP assinatura on Venduá's
+      account) or monthly Pix invoices, reminders and owner notices, upgrade /
+      downgrade / cancel; `/admin/comecar` goes from plan to a provisioned store
+      (`provision_store()`) paused until its first payment lands. The site's CTAs
+      link to it. PRO+ custom domains are verified by Core and activated by staff
+      after TLS; site requests go to staff (the generation pipeline takes them in
+      Phase 6).
 - The merchant admin moved to its own track,
   [Track A](#track-a--merchant-admin-the-current-focus); MP connect, refunds
   and billing screens are its A3 and A6.

@@ -174,11 +174,14 @@ the design bar. It is not done until both pass.
 **Status (2026-09-30):** `/admin/v1` (Core migration 0052,
 [ADR 0020](adr/0020-merchant-identity.md)) and `apps/admin` cover every area
 below, and the screenshot, overflow, axe and bundle-budget gates run in CI. A
-ticked box is built **and verified working** (checked 2026-09-30). Two kinds of
-work are still open: the part only people can do (sign-offs, commissioned art,
-usability sessions and the pilot exits), and the software gaps listed in
-[Not built yet](#not-built-yet). Phase 3 work (Mercado Pago, billing) and
-Phase 4 work (provisioning) is left open.
+ticked box is built **and verified working** (checked 2026-09-30). Since then
+the remaining software landed with Phase 3 (Core migrations 0054–0056, Kernel
+1.7): Mercado Pago in Pagamentos and orders, the plan and invoices in Conta,
+self-serve signup, and every gap the audit listed (see
+[What closed the gaps](#what-closed-the-gaps)). What is still open is the part
+only people can do — sign-offs, commissioned art, usability sessions and the
+pilot exits — plus object storage for media, which comes with the Edge
+(Phase 4).
 
 ### A0 — Foundations and the design system
 
@@ -195,15 +198,23 @@ Phase 4 work (provisioning) is left open.
       sessions, roles; `/admin/v1` with the audit log.
 - [x] CI (`admin-gate`): typecheck, build with bundle budgets, screenshots at
       375/820/1440 in both themes with overflow, console and axe checks.
-      _Lighthouse is not wired; the bundle budget stands in for it._
+      _A Lighthouse budget was dropped (the user's call, 2026-09-30); the bundle
+      budget stands in for it._
+- [x] Sign-in fallback: an email magic link beside the WhatsApp code (no SMS,
+      by decision).
 
 ### A1 — Run the day
 
 - [x] Pedidos: live board (SSE), new-order chime + web push with one-tap
       accept, accept with prep time/prepare/dispatch/deliver, cancel with
       reason, kitchen ticket print, WhatsApp the customer, history, encomendas.
+- [x] Alerts you can trust: every push/WhatsApp attempt is recorded, Perfil
+      shows each device's last result and a test, Início says when an alert
+      reached no device, a WhatsApp goes to owners/managers when a new order
+      waits past the accept target unseen, and online payments push too.
 - [x] Loja: open/pause (timed, with message), hours, holidays and special
-      days, delivery zones on a map, fees, minimum order, store profile.
+      days, delivery zones on a map, fees, minimum order, store profile,
+      pickup address and instructions (shown at checkout and on the order).
 - [x] Início v1: status, what needs you, today's sales vs last week, setup
       checklist, live activity.
 - [ ] Exit: a real day of Quero Pudim orders run from the phone.
@@ -214,8 +225,13 @@ Phase 4 work (provisioning) is left open.
       ("esgotado hoje" ends at midnight), stock, preorder rules, bulk edit,
       paste-a-list import.
 - [x] Media uploads with crop, aspect guide and "clarear"; gallery reorder.
-      _Resizing and WebP encoding run client-side; Core stores ≤2 MB images
-      in Postgres (`media_objects`). Object storage comes with the Edge._
+      Core decodes every upload (`Bun.Image`: orientation applied, 20 MP cap),
+      re-encodes to WebP so no metadata survives, and serves variants for the
+      Kernel's srcsets (`?w=`). _Images live in Postgres (`media_objects`,
+      `media_variants`); object storage comes with the Edge._
+- [x] Dias e horários: a product can be offered only on some days/hours
+      (unavailable with a label, or hidden, outside them) — catalog, kits, cart
+      and checkout honour it.
 - [ ] Exit: the timed 30-item usability session.
 
 ### A3 — Money
@@ -225,18 +241,22 @@ Lands with Phase 3's Mercado Pago work.
 - [x] Pagamentos: Pix key + QR, methods on/off (checkout honours them —
       Kernel 1.4), per-order payment status ("recebi"), refunds via the order,
       30-day split by method.
-- [ ] Mercado Pago connect, token health, fee statement and the
-      `expiring` / `disconnected` / `restricted` notices
-      ([13](architecture/13-payments.md)). _Shown as "em breve"._
+- [x] Mercado Pago connect (OAuth), token health with the `expiring` /
+      `disconnected` / `restricted` notices (Início, Pagamentos, WhatsApp), Pix
+      confirmed by webhook, cartão online, real refunds (partial, and automatic
+      on cancelling a paid order), the monthly extrato (gross, MP fee, net,
+      refunds) and a "precisa de você" list for money Core couldn't settle
+      ([13](architecture/13-payments.md)).
 
 ### A4 — Grow
 
 - [x] Clientes: list, profile, history, loyalty, LGPD export and delete.
 - [x] Marketing: coupons, loyalty setup, waitlist, share links and cards, QR,
       announcement.
-- [x] Relatórios: sales, products, peak hours, funnel, zones, payments,
-      coupons, repeat rate, CSV. _Computed at query time; rollups when a
-      store's volume needs them._
+- [x] Relatórios: sales, products, peak hours, funnel, zones with delivery
+      quotes and conversion, where people asked and you don't deliver,
+      payments, coupons, repeat rate, CSV. _Computed at query time; rollups
+      when a store's volume needs them._
 
 ### A5 — Appearance
 
@@ -248,60 +268,44 @@ Lands with Phase 3's Mercado Pago work.
 
 ### A6 — Team, account and plan
 
-- [x] Equipe: invites, roles, activity log.
+- [x] Equipe: invites sent by WhatsApp (and email), with their delivery
+      shown and a resend; roles, activity log.
 - [x] Conta: store address, plan, devices, notification and theme
-      preferences; Ajuda with "falar com a Venduá" (reaches staff).
-- [ ] Invoices and billing (Phase 3).
+      preferences; Ajuda with "falar com a Venduá" (reaches staff), help for
+      each screen (`?`) and platform status (incidents staff post in the CRM).
+- [x] The plan: Venduá Basic / PRO+ with upgrade and downgrade, card
+      (assinatura) or monthly Pix, invoices, cancel/resume, reminders; PRO+
+      custom domain (DNS checked by Core, activated by staff after TLS) and
+      the site request ([ADR 0021](adr/0021-self-serve-signup-and-plan-billing.md)).
+- [x] Self-serve signup at `/comecar`: plan → store → you → WhatsApp code →
+      payment; the store opens when the first payment lands.
 - [x] Onboarding: `/bem-vindo` takes a store to "ready to sell" (profile,
       hours, delivery, Pix, first products) as a one-question-per-screen
-      conversation with a live preview (§6.8).
-      _Provisioning a fresh store is Phase 4._
+      conversation with a live preview (§6.8). A signup lands here.
 
-## Not built yet
+## What closed the gaps
 
-What the plan above promises and the code does not do yet (audited
-2026-09-30). Human-only work (sign-offs, art, usability sessions) is not listed.
+The 2026-09-30 audit listed what the plan promised and the code didn't do.
+All of it is built now:
 
-**Track A (no Phase 3 dependency):**
+| Gap                         | What shipped                                                          |
+| --------------------------- | --------------------------------------------------------------------- |
+| Missed-alert visibility     | `push_attempts`; Perfil › Seus avisos; Início `alerts_failing`        |
+| Notifications beyond order  | push on received payments; WhatsApp fallback for an unseen new order  |
+| Login fallback              | email magic link (SMS dropped by decision)                            |
+| Invite delivery             | WhatsApp + email invite, delivery shown, resend                       |
+| Media on the server         | server decode, orientation, metadata stripped, WebP variants (`?w=`)  |
+| Scheduled availability      | `availability_schedule` (days + hours, unavailable or hidden)         |
+| Pickup details              | pickup address + instructions                                         |
+| Ajuda                       | per-screen help and `?`, platform incidents, the status banner        |
+| Conta                       | real domain status, PRO+ domains, notification preferences            |
+| Relatórios                  | zone quotes and conversion, out-of-zone demand                        |
+| Mercado Pago, refunds, fees | Pagamentos + orders, per [13](architecture/13-payments.md)            |
+| Invoices and plan           | Conta, per [ADR 0021](adr/0021-self-serve-signup-and-plan-billing.md) |
 
-- **Missed-alert visibility.** Push failures are recorded per device
-  (`last_ok_at` / `last_error`) but never shown, and `push_deliveries` is only
-  a dedupe table purged after two days. A merchant can't see that an alert
-  didn't reach them.
-- **Notifications beyond new orders.** Web push fires only on `order.placed`
-  (`admin/workers.ts`). Payment events don't push, and there is no WhatsApp
-  fallback for a missed new-order alert.
-- **Login fallbacks.** OTP goes out over WhatsApp only. There is no SMS channel
-  and no email magic link, although `merchant_users.email` exists.
-- **Invite delivery.** An invite adds the phone to `merchant_users` and sends
-  nothing: no message, link or email. The invitee has to be told by hand.
-- **Media on the server.** Images are stored as sent in Postgres
-  (`media_objects`, ≤2 MB). There is no server-side resizing or EXIF stripping
-  (only the client's canvas re-encode does it, so a direct API upload keeps its
-  EXIF), and no object storage or signed uploads (planned with the Edge).
-- **Scheduled availability.** Products can be available, sold out today, sold
-  out or hidden. There is no "show only on these days/hours".
-- **Pickup details.** Pickup is an on/off toggle, with no pickup address or
-  instructions.
-- **Ajuda.** The FAQ is static rather than per screen, the `?` shortcut the
-  shell advertises has no handler, and there is no platform-incident status.
-- **Conta.** Custom domains show a fixed "no ar" instead of real status (the
-  domain automation itself is Phase 7). Notification preferences are only
-  sound, volume, push and theme.
-- **Relatórios.** Zone "conversion" is orders and revenue per zone only, with
-  no view-to-order funnel per zone. Rollups are deferred by choice (query time
-  until volume needs them).
-- **CI.** No Lighthouse mobile budget anywhere; the bundle budget stands in.
-
-**Waiting on Phase 3 (A3 and A6):**
-
-- Mercado Pago connect, token health, fee statement and the `expiring` /
-  `disconnected` / `restricted` notices. Pagamentos shows "em breve", and
-  Início has no expiring-token item.
-- Real refunds. "Reembolsar" moves a delivered order to `refunded` and records
-  it, and the copy tells the merchant to return the money through their bank.
-- Invoices, payment method and upgrade/downgrade in Conta
-  (`billing: 'not_available'`).
+Still open on purpose: object storage and signed uploads (with the Edge, Phase
+4); rollups for Relatórios (when a store's volume needs them); a shopper WhatsApp
+on refunds (the platform doesn't message shoppers for a store yet).
 
 ## Done means
 

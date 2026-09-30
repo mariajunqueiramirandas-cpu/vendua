@@ -1,6 +1,6 @@
 import { CaretUpDown, DotsNine, MagnifyingGlass, SignOut, WifiSlash } from '@phosphor-icons/react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { Suspense, useEffect, useRef, useState, type ReactNode } from 'react';
+import { lazy, Suspense, useEffect, useRef, useState, type ReactNode } from 'react';
 import { NavLink, useLocation, useNavigate } from 'react-router-dom';
 import { StatusPill } from '../features/store/StatusPill.tsx';
 import { api } from '../lib/api.ts';
@@ -18,6 +18,7 @@ import { setVolume, unlockAudio } from '../lib/sound.ts';
 import { Boundary } from '../ui/Boundary.tsx';
 import { cn } from '../ui/cn.ts';
 import { Loading } from '../ui/feedback.tsx';
+import { onHelp } from '../ui/help.ts';
 import { toast, Toaster } from '../ui/Toast.tsx';
 import { NAV } from './nav.ts';
 import { chunks, intent, screen, warmUp } from './routes.ts';
@@ -30,6 +31,8 @@ void chunks.skeletons().catch(() => undefined);
 const SearchSheet = screen(chunks.search, (m) => m.SearchSheet);
 const MoreSheet = screen(chunks.sheets, (m) => m.MoreSheet);
 const SwitchStoreSheet = screen(chunks.sheets, (m) => m.SwitchStoreSheet);
+const HelpSheet = lazy(() => import('../features/help/HelpSheet.tsx'));
+const Banner = lazy(() => import('../features/help/Banner.tsx'));
 
 /** true once `open` has been true: keeps a lazy sheet mounted so it can animate closed */
 function useSeen(open: boolean) {
@@ -57,6 +60,9 @@ export function Shell({ children }: { children: ReactNode }) {
   const more = items.filter((n) => !n.primary);
   const [moreOpen, setMoreOpen] = useState(false);
   const [searchOpen, setSearchOpen] = useState(false);
+  const [helpOpen, setHelpOpen] = useState(false);
+  const helpSeen = useSeen(helpOpen);
+  useEffect(() => onHelp(() => setHelpOpen(true)), []);
   const moreSeen = useSeen(moreOpen);
   const searchSeen = useSeen(searchOpen);
   const placed = usePlacedCount();
@@ -90,9 +96,13 @@ export function Shell({ children }: { children: ReactNode }) {
     const onKey = (e: KeyboardEvent) => {
       const t = e.target as HTMLElement;
       if (t.closest('input, textarea, select, [contenteditable]')) return;
+      if (e.metaKey || e.ctrlKey || e.altKey) return;
       if (e.key === '/') {
         e.preventDefault();
         setSearchOpen(true);
+      } else if (e.key === '?') {
+        e.preventDefault();
+        setHelpOpen(true);
       }
     };
     window.addEventListener('keydown', onKey);
@@ -221,6 +231,8 @@ export function Shell({ children }: { children: ReactNode }) {
           </div>
         ) : null}
 
+        <IncidentBanner />
+
         <main id="conteudo" tabIndex={-1} className="outline-none">
           <Boundary resetKey={loc.pathname}>
             <Suspense
@@ -307,11 +319,33 @@ export function Shell({ children }: { children: ReactNode }) {
         {searchOpen || searchSeen ? (
           <SearchSheet open={searchOpen} onOpenChange={setSearchOpen} />
         ) : null}
+        {helpOpen || helpSeen ? <HelpSheet open={helpOpen} onOpenChange={setHelpOpen} /> : null}
       </Suspense>
       <PullToRefresh />
       <Toaster />
       <div ref={liveRegion} aria-live="assertive" className="sr-only" />
     </div>
+  );
+}
+
+/**
+ * A platform problem that stops orders or payments (set by Venduá staff) shows on every screen
+ * while it lasts. The query lives here; the banner's code loads only when there is one.
+ */
+function IncidentBanner() {
+  const { data } = useQuery({
+    queryKey: qk.helpStatus,
+    queryFn: api.helpStatus,
+    staleTime: 60_000,
+    refetchInterval: 3 * 60_000,
+  });
+  const loc = useLocation();
+  const live = data?.incidents.some((i) => !i.resolvedAt && i.severity !== 'info');
+  if (!live || loc.pathname === '/ajuda') return null;
+  return (
+    <Suspense fallback={null}>
+      <Banner incidents={data!.incidents} />
+    </Suspense>
   );
 }
 

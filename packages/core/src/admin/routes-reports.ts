@@ -119,7 +119,9 @@ export function mountReports(d: AdminDeps) {
             and (at at time zone ${tz})::date between ${r.from}::date and ${r.to}::date
         `
       )[0]!;
-      const zones = await tx`
+      const orderZones = await tx<
+        { name: string; orders: number; revenueCents: number; feesCents: number }[]
+      >`
         select case when delivery ->> 'mode' = 'pickup' then 'Retirada'
                     else coalesce(delivery ->> 'zoneName', delivery ->> 'neighborhood', 'Entrega') end as name,
                count(*)::int as orders, sum(total_cents)::int as "revenueCents",
@@ -128,6 +130,49 @@ export function mountReports(d: AdminDeps) {
         where tenant_id = ${t.id} and state <> all(${COUNTED})
           and (placed_at at time zone ${tz})::date between ${r.from}::date and ${r.to}::date
         group by 1 order by orders desc limit 20
+      `;
+      // zone conversion: carts that asked for delivery there (Core's delivery_quoted, one
+      // session = one cart) and how many of those carts became an order
+      const quoted = await tx<{ zone: string; quotes: number; converted: number }[]>`
+        with q as (
+          select distinct session_id, props ->> 'zone' as zone from analytics_events
+          where tenant_id = ${t.id} and name = 'delivery_quoted' and (props ->> 'eligible')::boolean
+            and props ->> 'zone' is not null
+            and (at at time zone ${tz})::date between ${r.from}::date and ${r.to}::date
+        )
+        select q.zone, count(*)::int as quotes,
+               count(o.id) filter (where o.state <> all(${COUNTED}))::int as converted
+        from q left join orders o on o.tenant_id = ${t.id} and o.cart_id::text = q.session_id
+        group by q.zone
+      `;
+      const byZone = new Map(quoted.map((q) => [q.zone, q]));
+      const zones = orderZones.map((z) => {
+        const q = byZone.get(z.name);
+        byZone.delete(z.name);
+        return {
+          ...z,
+          quotes: q?.quotes ?? 0,
+          conversion: q?.quotes ? Math.round((1000 * q.converted) / q.quotes) / 1000 : null,
+        };
+      });
+      for (const q of byZone.values())
+        zones.push({
+          name: q.zone,
+          orders: 0,
+          revenueCents: 0,
+          feesCents: 0,
+          quotes: q.quotes,
+          conversion: Math.round((1000 * q.converted) / q.quotes) / 1000,
+        });
+      const outOfZone = await tx<{ neighborhood: string; quotes: number }[]>`
+        select (array_agg(nb order by at desc))[1] as neighborhood, count(distinct session_id)::int as quotes
+        from (
+          select session_id, at, trim(props ->> 'neighborhood') as nb from analytics_events
+          where tenant_id = ${t.id} and name = 'delivery_quoted' and not (props ->> 'eligible')::boolean
+            and coalesce(trim(props ->> 'neighborhood'), '') <> ''
+            and (at at time zone ${tz})::date between ${r.from}::date and ${r.to}::date
+        ) x
+        group by lower(nb) order by quotes desc, neighborhood limit 10
       `;
       const payments = await tx`
         select payment ->> 'method' as method, count(*)::int as orders, sum(total_cents)::int as "revenueCents"
@@ -163,6 +208,7 @@ export function mountReports(d: AdminDeps) {
         products,
         funnel,
         zones,
+        outOfZone,
         payments,
         coupons,
         repeat,

@@ -2,6 +2,7 @@ import {
   ArrowDown,
   ArrowUp,
   ClipboardText,
+  Clock,
   FolderSimplePlus,
   GridFour,
   ListBullets,
@@ -36,6 +37,7 @@ import { PageBody, PageHeader } from '../../ui/Page.tsx';
 import { usePreload } from '../../app/routes.ts';
 import { MenuSkeleton } from '../../ui/skeletons.tsx';
 import { availability, ProductTile } from '../../ui/ProductTile.tsx';
+import { outsideNow } from './schedule.ts';
 import { Sheet } from '../../ui/Sheet.tsx';
 import { toast } from '../../ui/Toast.tsx';
 
@@ -714,6 +716,7 @@ function ListRow({
             {money(p.priceCents)}
             {p.stockQuantity != null ? ` · ${p.stockQuantity} un.` : ''}
           </span>
+          {outsideNow(p) ? <OffHoursBadge className="ml-2 align-middle" /> : null}
         </Link>
         <button
           type="button"
@@ -1194,5 +1197,20 @@ function BulkPriceSheet({
         </p>
       </div>
     </Sheet>
+  );
+}
+
+/** "fora do horário": the product has a schedule and this isn't one of its windows. */
+function OffHoursBadge({ className }: { className?: string }) {
+  return (
+    <span
+      className={cn(
+        't-caption inline-flex h-6 items-center gap-1 rounded-full bg-warning-soft px-2 font-semibold text-warning',
+        className,
+      )}
+    >
+      <Clock className="size-3.5" aria-hidden />
+      fora do horário
+    </span>
   );
 }

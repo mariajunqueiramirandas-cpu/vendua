@@ -18,6 +18,8 @@ function usePageProduct() {
 export function StockCounter({ settings }: BlockProps<typeof S.stockCounter>) {
   const product = usePageProduct();
   if (!product) return null;
+  // a scheduled product isn't out of stock — the purchase panel says when it's back
+  if (product.status === 'sold_out' && product.availabilityLabel) return null;
   if (product.status === 'sold_out')
     return (
       <p className="v-stock" data-part="root" data-tone="low" role="status">
@@ -42,8 +44,10 @@ export function NotifyMe({ settings }: BlockProps<typeof S.notifyMe>) {
   const { status } = useStore();
   const [phone, setPhone] = useState('');
   const [done, setDone] = useState(false);
-  const waitlist = useWaitlist(product?.status === 'sold_out' ? product.id : undefined);
-  const subject = product?.status === 'sold_out' ? 'product' : status === 'paused' ? 'store' : null;
+  // Kernel 1.7: outside its schedule (availabilityLabel) a product comes back by itself — no waitlist
+  const restock = product?.status === 'sold_out' && !product.availabilityLabel;
+  const waitlist = useWaitlist(restock ? product.id : undefined);
+  const subject = restock ? 'product' : status === 'paused' ? 'store' : null;
   if (!subject) return null;
   if (done || waitlist.joined)
     return (

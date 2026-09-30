@@ -604,7 +604,8 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('merchant admin (db)', () => {
       'content-type': 'image/png',
     });
     expect(res.status).toBe(201);
-    expect(res.body.url).toMatch(/^\/v1\/media\/.+\.png$/);
+    // uploads are re-encoded server-side (EXIF gone), so a PNG comes back as WebP
+    expect(res.body.url).toMatch(/^\/v1\/media\/.+\.webp$/);
     const lie = await owner('POST', '/media', png, { 'content-type': 'image/jpeg' });
     expect(lie.status).toBe(415);
     const got = await app.request(`http://core.localhost${res.body.url}`);

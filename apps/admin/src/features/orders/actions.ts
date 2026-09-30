@@ -1,10 +1,10 @@
 import { useQueryClient } from '@tanstack/react-query';
-import { api, type Board, type Order, type OrderState } from '../../lib/api.ts';
+import { api, type Board, type Order, type OrderPayment, type OrderState } from '../../lib/api.ts';
 import { clock, money, phone, whatsappLink } from '../../lib/format.ts';
 import { haptic } from '../../lib/haptics.ts';
 import { markOrdersSeen } from '../../lib/live.ts';
 import { optimistic, qk, useMutation } from '../../lib/query.ts';
-import { messageOf } from '../../ui/feedback.tsx';
+import { payError } from '../../ui/PaymentChip.tsx';
 import { toast } from '../../ui/Toast.tsx';
 
 const DONE_TOAST: Partial<Record<OrderState, (o: Order) => string>> = {
@@ -62,7 +62,7 @@ export function useTransition() {
       // undo only our guess, and only if nothing newer replaced it
       put(v.order.id, (o) => (o.state === v.to ? { ...o, state: v.order.state } : o));
       haptic.error();
-      toast.error(messageOf(e));
+      toast.error(payError(e));
     },
     onSuccess: ({ order }, v) => {
       put(order.id, (o) => (o.version > order.version ? o : order));
@@ -70,7 +70,14 @@ export function useTransition() {
         customer: old?.customer ?? null,
         order: old && old.order.version > order.version ? old.order : order,
       }));
-      toast(DONE_TOAST[v.to]?.(order) ?? 'Pedido atualizado');
+      const paidOnline =
+        !!v.order.payment.online &&
+        (v.order.payment.status === 'paid' || v.order.payment.status === 'partially_refunded');
+      toast(
+        v.to === 'cancelled' && paidOnline
+          ? `Pedido #${order.number} cancelado. O dinheiro volta para o cliente pelo Mercado Pago.`
+          : (DONE_TOAST[v.to]?.(order) ?? 'Pedido atualizado'),
+      );
     },
     onSettled: () => {
       // a refetch while another move is in flight would briefly show that one's old lane
@@ -123,10 +130,52 @@ export function useMarkPaid() {
     },
     onError: (e, _v, ctx) => {
       ctx?.restore();
-      toast.error(messageOf(e));
+      toast.error(payError(e));
     },
   });
 }
+
+/**
+ * Give money back. Online: Mercado Pago returns it to the shopper (full or part). Core answers
+ * with the order and its payments, which replace the cached detail.
+ */
+export function useRefund() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (v: { order: Order; amountCents: number | null; reason: string; shown: number }) =>
+      api.refund(v.order.id, { amountCents: v.amountCents, reason: v.reason }),
+    onSuccess: ({ order, payments }, v) => {
+      qc.setQueryData<OrderData & { payments?: OrderPayment[] }>(qk.order(order.id), (old) => ({
+        customer: old?.customer ?? null,
+        order,
+        payments,
+      }));
+      void qc.invalidateQueries({ queryKey: qk.board });
+      void qc.invalidateQueries({ queryKey: ['orders', 'list'] });
+      void qc.invalidateQueries({ queryKey: ['payments'] });
+      void qc.invalidateQueries({ queryKey: qk.home });
+      const last = payments
+        .flatMap((p) => p.refunds)
+        .sort((a, b) => b.createdAt.localeCompare(a.createdAt))[0];
+      if (last?.status === 'rejected')
+        toast.error('O Mercado Pago recusou a devolução. Veja o motivo no app do Mercado Pago.');
+      else if (last?.status === 'pending')
+        toast(`Devolução de ${money(v.shown)} pedida. O Mercado Pago está processando.`);
+      else toast(`${money(v.shown)} devolvido ao cliente ✓`);
+    },
+    onError: (e) => {
+      haptic.error();
+      toast.error(payError(e));
+    },
+  });
+}
+
+export const REFUND_REASONS = [
+  'Faltou item',
+  'Produto com problema',
+  'Pedido atrasou',
+  'Cliente desistiu',
+];
 
 export const CANCEL_REASONS = [
   'Acabou um item do pedido',

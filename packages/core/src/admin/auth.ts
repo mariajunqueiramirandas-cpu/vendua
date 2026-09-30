@@ -23,6 +23,9 @@ const CODE_MAX_ATTEMPTS = 5;
 /** per phone, per rolling hour — a phone can't be spammed with codes */
 const CODES_PER_HOUR = 5;
 const PICKER_TTL_MS = 10 * 60_000;
+const LINK_TTL_MIN = 15;
+/** per address, per rolling hour */
+const LINKS_PER_HOUR = 5;
 
 const sha256 = (s: string) => createHash('sha256').update(s).digest('hex');
 
@@ -34,6 +37,15 @@ function safeEq(a: string, b: string) {
   const x = Buffer.from(a);
   const y = Buffer.from(b);
   return x.length === y.length && timingSafeEqual(x, y);
+}
+
+/** Start a delivery without waiting for it; failures go to the log. */
+function detach(run: () => Promise<void>, msg: string) {
+  try {
+    run().catch((err) => authLog.warn({ err }, msg));
+  } catch (err) {
+    authLog.warn({ err }, msg);
+  }
 }
 
 export function validAdminPhone(v: unknown): string | null {
@@ -63,6 +75,23 @@ export async function membershipsFor(sql: Sql, phone: string): Promise<Membershi
   return sql<Membership[]>`select * from merchant_memberships_for_phone(${phone})`;
 }
 
+export async function membershipsForEmail(sql: Sql, email: string): Promise<Membership[]> {
+  return sql<Membership[]>`select * from merchant_memberships_for_email(${email})`;
+}
+
+/** Who just proved themselves: a phone (OTP) or an address (email link). */
+export type Verified = { kind: 'phone' | 'email'; subject: string };
+
+export function membershipsOf(sql: Sql, v: Verified): Promise<Membership[]> {
+  return v.kind === 'phone' ? membershipsFor(sql, v.subject) : membershipsForEmail(sql, v.subject);
+}
+
+export function validAdminEmail(v: unknown): string | null {
+  if (typeof v !== 'string' || v.length > 200) return null;
+  const e = v.trim().toLowerCase();
+  return /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(e) && e.length >= 3 ? e : null;
+}
+
 export type OtpSender = (phone: string, text: string) => Promise<void>;
 
 /** WhatsApp through the platform's active number; the log driver just prints it. */
@@ -89,6 +118,7 @@ export async function startOtp(
   const known = (await membershipsFor(sql, phone)).length > 0;
   const code = String(randomInt(0, 1_000_000)).padStart(6, '0');
   const limited = await authTx(sql, async (tx) => {
+    // login and signup codes share the cap: it protects the phone, whatever asked
     const recent = (
       await tx<{ n: number }[]>`
         select count(*)::int as n from merchant_login_codes
@@ -99,21 +129,20 @@ export async function startOtp(
     await tx`delete from merchant_login_codes where created_at < now() - interval '1 day'`;
     if (known)
       await tx`
-        insert into merchant_login_codes (phone, code_hash, expires_at)
-        values (${phone}, ${sha256(`${phone}|${code}`)}, ${expiresAt})
+        insert into merchant_login_codes (phone, code_hash, expires_at, purpose)
+        values (${phone}, ${sha256(`${phone}|${code}`)}, ${expiresAt}, 'login')
       `;
     return false;
   });
   if (limited)
     throw new HttpError(429, 'RATE_LIMITED', 'too many codes for this phone — try again later');
-  if (known) {
-    try {
-      await send(phone, `Seu código Venduá: ${code}\n\nVale por ${CODE_TTL_MIN} minutos.`);
-    } catch (err) {
-      authLog.warn({ err }, 'otp delivery failed');
-      throw new HttpError(503, 'OTP_UNAVAILABLE', 'could not deliver the code — try again');
-    }
-  }
+  // not awaited: a known phone must answer as fast as an unknown one (no enumeration by
+  // timing); a failed delivery only shows in the log — the person asks for a new code
+  if (known)
+    detach(
+      () => send(phone, `Seu código Venduá: ${code}\n\nVale por ${CODE_TTL_MIN} minutos.`),
+      'otp delivery failed',
+    );
   return {
     sent: true,
     expiresAt: expiresAt.toISOString(),
@@ -129,7 +158,7 @@ export async function verifyOtp(sql: Sql, phone: string, code: string): Promise<
     const row = (
       await tx<{ id: string; code_hash: string; attempts: number }[]>`
         select id, code_hash, attempts from merchant_login_codes
-        where phone = ${phone} and consumed_at is null and expires_at > now()
+        where phone = ${phone} and purpose = 'login' and consumed_at is null and expires_at > now()
         order by created_at desc limit 1 for update
       `
     )[0];
@@ -143,22 +172,89 @@ export async function verifyOtp(sql: Sql, phone: string, code: string): Promise<
   });
 }
 
-/** Short-lived proof that a phone just verified — lets a multi-store user pick one. */
-export function pickerToken(secret: string, phone: string): string {
+/** Short-lived proof that a phone or an address just verified — lets a multi-store user pick one. */
+export function pickerToken(secret: string, who: Verified): string {
   const exp = Date.now() + PICKER_TTL_MS;
-  const body = `${phone}.${exp}`;
+  // the subject is encoded: an address carries dots, and the kind is signed with it
+  const body = `${who.kind === 'phone' ? 'p' : 'e'}.${b64url(Buffer.from(who.subject))}.${exp}`;
   const sig = createHmac('sha256', secret).update(`vendua.admin.pick|${body}`).digest('base64url');
   return `${body}.${sig}`;
 }
 
-export function readPickerToken(secret: string, token: unknown): string | null {
-  if (typeof token !== 'string' || token.length > 200) return null;
-  const [phone, exp, sig] = token.split('.');
-  if (!phone || !exp || !sig || Number(exp) < Date.now()) return null;
+export function readPickerToken(secret: string, token: unknown): Verified | null {
+  if (typeof token !== 'string' || token.length > 500) return null;
+  const [kind, subject, exp, sig, extra] = token.split('.');
+  if (!kind || !subject || !exp || !sig || extra !== undefined) return null;
+  if ((kind !== 'p' && kind !== 'e') || !/^\d{10,16}$/.test(exp) || Number(exp) < Date.now())
+    return null;
   const want = createHmac('sha256', secret)
-    .update(`vendua.admin.pick|${phone}.${exp}`)
+    .update(`vendua.admin.pick|${kind}.${subject}.${exp}`)
     .digest('base64url');
-  return safeEq(want, sig) ? phone : null;
+  if (!safeEq(want, sig)) return null;
+  return {
+    kind: kind === 'p' ? 'phone' : 'email',
+    subject: Buffer.from(subject, 'base64url').toString('utf8'),
+  };
+}
+
+export type LinkSender = (email: string, link: string, linkId: string) => Promise<void>;
+
+/**
+ * Email sign-in link — the fallback when the WhatsApp code doesn't arrive. Unknown and
+ * over-the-cap addresses get the same answer and no mail, so the form can't enumerate
+ * who has a store. Only sha256(token) is stored; the link works once, for 15 minutes.
+ */
+export async function startEmailLink(
+  sql: Sql,
+  email: string,
+  linkFor: (token: string) => string,
+  send: LinkSender,
+): Promise<{ sent: true; devLink?: string }> {
+  const known = (await membershipsForEmail(sql, email)).length > 0;
+  const token = b64url(crypto.getRandomValues(new Uint8Array(32)));
+  // strangers take the same path (lookup, cap check) and the mail isn't awaited, so the
+  // answer's timing doesn't tell whether the address has a store
+  const id = await authTx(sql, async (tx) => {
+    const recent = (
+      await tx<{ n: number }[]>`
+        select count(*)::int as n from merchant_login_links
+        where email = ${email} and created_at > now() - interval '1 hour'
+      `
+    )[0]!.n;
+    if (!known || recent >= LINKS_PER_HOUR) return null;
+    await tx`delete from merchant_login_links where created_at < now() - interval '1 day'`;
+    return (
+      await tx<{ id: string }[]>`
+        insert into merchant_login_links (email, token_hash, expires_at)
+        values (${email}, ${sha256(token)}, now() + make_interval(mins => ${LINK_TTL_MIN}))
+        returning id
+      `
+    )[0]!.id;
+  });
+  if (!id) return { sent: true };
+  const link = linkFor(token);
+  detach(() => send(email, link, id), 'sign-in link delivery failed');
+  return {
+    sent: true,
+    ...(process.env.NODE_ENV !== 'production' && process.env.VENDUA_ADMIN_DEV_OTP === '1'
+      ? { devLink: link }
+      : {}),
+  };
+}
+
+/** The address the link was sent to, once; null when unknown, used or expired. */
+export async function verifyEmailLink(sql: Sql, token: unknown): Promise<string | null> {
+  if (typeof token !== 'string' || !/^[A-Za-z0-9_-]{43}$/.test(token)) return null;
+  return authTx(sql, async (tx) => {
+    const row = (
+      await tx<{ email: string }[]>`
+        update merchant_login_links set consumed_at = now()
+        where token_hash = ${sha256(token)} and consumed_at is null and expires_at > now()
+        returning email
+      `
+    )[0];
+    return row?.email ?? null;
+  });
 }
 
 export async function createSession(
