@@ -16,7 +16,6 @@
       </li>
       <li><a href="/privacidade/">Privacidade</a></li>
     </ul>
-    <p>Feito com carinho para quem faz.</p>
   </div>
 </footer>
 

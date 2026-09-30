@@ -1,40 +1,34 @@
 <script lang="ts">
-  import Dua from '$lib/components/Dua.svelte';
   import Section from '$lib/components/Section.svelte';
 
   type Kind = 'bolo' | 'marmita' | 'burger' | 'pao';
 
-  const kinds: { art: Kind; name: string; how: string; feature: string }[] = [
+  const kinds: { art: Kind; name: string; how: string }[] = [
     {
       art: 'bolo',
       name: 'Doces e bolos',
       how: 'Encomenda com data marcada. O cliente escolhe o dia da festa e o pedido já entra no seu calendário.',
-      feature: 'encomendas',
     },
     {
       art: 'marmita',
       name: 'Marmitas',
       how: 'O cardápio do dia muda com o horário. No almoço aparece o prato do dia, à noite entra a janta.',
-      feature: 'cardápio por horário',
     },
     {
       art: 'burger',
       name: 'Hambúrgueres',
       how: 'Adicionais e combos do seu jeito. Bacon extra, sem cebola, com batata: o pedido chega montado.',
-      feature: 'adicionais e combos',
     },
     {
       art: 'pao',
       name: 'Pães e fornadas',
       how: 'Acabou a fornada? O cliente entra na lista de espera e recebe o aviso quando o pão sai do forno.',
-      feature: 'lista de espera',
     },
   ];
 </script>
 
 <Section
   id="para-quem"
-  hour="9h"
   tone="day"
   sky="linear-gradient(180deg, var(--sky-1), var(--sky-2))"
   labelledby="para-quem-t"
@@ -47,26 +41,14 @@
   </header>
 
   <ul class="tiles" role="list">
-    {#each kinds as k, i (k.art)}
-      <li class="tile" style="--i: {i}">
-        <div class="plate">
-          {@render art(k.art)}
-        </div>
+    {#each kinds as k (k.art)}
+      <li class="tile">
+        {@render art(k.art)}
         <h3 class="t-title-2">{k.name}</h3>
         <p class="how">{k.how}</p>
-        <p class="feature">{k.feature}</p>
       </li>
     {/each}
   </ul>
-
-  <div class="made">
-    <Dua pose="catalogo" size={200} class="dua" />
-    <p>
-      <strong>Nenhuma loja sai igual à outra.</strong>
-      Duá faz 8 perguntinhas, uma de cada vez, e a sua loja vai se montando ao lado: o seu nome, as suas
-      cores, o seu cardápio, do jeito que você vende.
-    </p>
-  </div>
 </Section>
 
 <!-- Inked in the admin's illustration style (apps/admin/src/ui/illustrations.tsx): currentColor
@@ -135,202 +117,60 @@
   }
 
   .head,
-  .tiles,
-  .made {
-    /* body copy at 7:1 on the card and the morning sky; plain --ink-muted sits near 5.8:1 */
+  .tiles {
+    /* body copy at 7:1 on the morning sky; plain --ink-muted sits near 5.8:1 */
     --body: color-mix(in srgb, var(--ink) 50%, var(--ink-muted));
   }
   .lede {
     color: var(--body);
   }
+
   .tiles {
     list-style: none;
     margin: clamp(40px, 6vw, 72px) 0 0;
     padding: 0;
     display: grid;
-    gap: 20px;
+    gap: 32px;
   }
-
+  /* phones: the drawing sits beside the name; the text runs under both */
   .tile {
     display: grid;
-    grid-template-columns: 112px 1fr;
-    grid-template-rows: auto auto 1fr;
-    column-gap: 18px;
+    grid-template-columns: 88px 1fr;
+    align-items: center;
+    column-gap: 16px;
     row-gap: 6px;
-    align-items: start;
-    padding: 18px 20px 20px 18px;
-    border-radius: var(--radius-lg);
-    background: var(--surface);
-    box-shadow: var(--shadow-e1), var(--highlight);
-  }
-
-  .plate {
-    grid-row: 1 / -1;
-    display: grid;
-    place-items: center;
-    aspect-ratio: 1;
-    /* a plate with a rim: the food is served, not boxed */
-    background: radial-gradient(
-      circle closest-side,
-      var(--surface-sunken) 0 78%,
-      var(--line-strong) calc(78% + 0.5px) calc(80% + 0.5px),
-      var(--surface-sunken) calc(80% + 1px) 99%,
-      transparent 100%
-    );
     color: var(--ink);
   }
-  .plate svg {
+  .tile svg {
     width: 100%;
     height: auto;
   }
-
-  .tile h3 {
-    padding-top: 4px;
-  }
   .how {
+    grid-column: 1 / -1;
     color: var(--body);
     font-size: 1rem;
-    line-height: 1.5;
-  }
-  /* the feature that answers each business, marked like a note in the margin */
-  .feature {
-    --marker: color-mix(in srgb, var(--spark) 85%, transparent);
-    justify-self: start;
-    margin-top: 10px;
-    padding-inline: 0.2em 0.3em;
-    font: italic 400 1.375rem/1.2 var(--font-moment);
-    color: var(--ink);
-    background: linear-gradient(transparent 52%, var(--marker) 52% 90%, transparent 90%);
-  }
-  @media (prefers-color-scheme: dark) {
-    .feature {
-      --marker: color-mix(in srgb, var(--spark) 28%, transparent);
-    }
-  }
-
-  .made {
-    display: grid;
-    grid-template-columns: auto 1fr;
-    align-items: center;
-    gap: 8px 20px;
-    margin: clamp(48px, 7vw, 88px) auto 0;
-    max-width: 50rem;
-  }
-  .made :global(.dua) {
-    width: clamp(120px, 24vw, 208px);
-  }
-  .made p {
-    font-size: clamp(1.0625rem, 1rem + 0.35vw, 1.25rem);
     line-height: 1.55;
-    color: var(--body);
+    max-width: 36ch;
   }
-  .made strong {
-    display: block;
-    margin-bottom: 4px;
-    font: 600 1.375rem/1.3 var(--font-display);
-    letter-spacing: -0.015em;
-    color: var(--ink);
-  }
-
-  /* phones: the plate sits beside the name and the text gets the card's full width */
-  @media (max-width: 479px) {
-    .tile {
-      grid-template-columns: 84px 1fr;
-      grid-template-rows: auto;
-      column-gap: 14px;
-      row-gap: 8px;
-      padding: 14px 16px 18px;
-    }
-    .plate {
-      grid-row: auto;
-    }
-    .tile h3 {
-      align-self: center;
-      padding-top: 0;
-    }
-    .how,
-    .feature {
-      grid-column: 1 / -1;
-    }
-    .feature {
-      margin-top: 4px;
-    }
-    /* the drawing spills a little past its small plate so it still reads at thumbnail size */
-    .plate svg {
-      width: 132%;
-      max-width: none;
-      margin-inline: -16%;
-    }
-    .made {
-      grid-template-columns: 1fr;
-      justify-items: start;
-    }
-  }
-
-  @media (min-width: 720px) {
+  @media (min-width: 560px) {
     .tiles {
       grid-template-columns: repeat(2, 1fr);
-      gap: 24px;
+      gap: 48px 40px;
     }
     .tile {
       grid-template-columns: 1fr;
-      grid-template-rows: none;
-      row-gap: 8px;
-      padding: 16px 16px 24px;
+      align-items: start;
+      row-gap: 10px;
     }
-    .plate {
-      grid-row: auto;
-      aspect-ratio: 2 / 1;
-      margin-bottom: 8px;
-    }
-    .plate svg {
-      width: min(72%, 230px);
-    }
-    .tile h3,
-    .how,
-    .feature {
-      margin-inline: 8px;
-    }
-    /* a little hand-placed, like cards pinned to the kitchen wall */
-    .tile:nth-child(odd) {
-      rotate: -0.8deg;
-    }
-    .tile:nth-child(even) {
-      rotate: 0.7deg;
+    .tile svg {
+      width: 150px;
+      margin-bottom: 4px;
     }
   }
-
   @media (min-width: 1100px) {
     .tiles {
       grid-template-columns: repeat(4, 1fr);
-      align-items: start;
-    }
-    .plate {
-      aspect-ratio: 4 / 3;
-    }
-    .plate svg {
-      width: 100%;
-    }
-    .tile:nth-child(even) {
-      margin-top: 40px;
-    }
-  }
-
-  @media (prefers-reduced-motion: no-preference) {
-    @supports (animation-timeline: view()) {
-      .tile {
-        animation: rise linear both;
-        animation-timeline: view();
-        animation-range: entry 0% entry 70%;
-      }
-    }
-  }
-  @keyframes rise {
-    from {
-      translate: 0 calc(28px + var(--i) * 10px);
-    }
-    to {
-      translate: 0 0;
+      gap: 40px;
     }
   }
 </style>

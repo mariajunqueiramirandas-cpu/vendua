@@ -3,16 +3,17 @@
 The marketing site for vendua.com.br: SvelteKit 2 + Svelte 5, prerendered with adapter-static, copy
 in pt-BR. Sign-up isn't open yet.
 
-The home page is **"um dia na loja"**: one day of a small shop in six moments, dawn to night, with
-the sky flowing continuously between sections — 6h hero (`#inicio`), 9h who it's for
-(`#para-quem`), 12h an order arrives (`#pedidos`), 15h the store and its price (`#sua-loja`,
-`#preco`), 18h the day's recap (`#seu-dia`), 21h how to start + FAQ (`#comecar`, `#perguntas`).
+The home page is **"um dia na loja"**: one day of a small shop, dawn to night, told by the sky
+flowing continuously between sections (no hour labels): hero (`#inicio`), who it's for
+(`#para-quem`), an order arrives (`#pedidos`), the store and its price (`#sua-loja`, `#preco`), the
+day's recap (`#seu-dia`), how to start + FAQ (`#comecar`, `#perguntas`).
 Other pages: `/privacidade/` and the 404.
 
 ## Launch decisions the copy encodes
 
-- The only call to action is `<Soon/>` ("Em breve"). No sign-up or contact CTA; Instagram only in
-  the footer (and at most one line near the closing "Em breve").
+- The only call to action is `<Soon/>` ("Em breve"): in the header, the price block and the closing.
+  Not in the hero, where it would sit right under the header's. No sign-up or contact CTA; Instagram
+  only in the footer (and at most one line near the closing "Em breve").
 - Price is never a number: the price block's total reads "em breve".
 - Every planned feature (`docs/merchant-admin.md` scope) is presented as available at launch.
   Nothing beyond that list.
@@ -33,6 +34,10 @@ Other pages: `/privacidade/` and the 404.
 - Banned words (platform jargon, "sob medida", "sem taxa", "grátis", real store names) are checked
   on the rendered text of every page by `scripts/postbuild.ts`.
 - Works without JavaScript; motion is CSS-only and respects `prefers-reduced-motion`.
+- No generic template chrome: no eyebrow labels above headings, no all-caps labels, no `A · B`
+  meta strings, no numbers on lists that aren't steps, no sparkle bullets, no pulsing dots, no single
+  italic or highlighted word in a headline, no identical card grids. Instrument Serif appears only
+  inside the admin screens (the greeting), not in site copy. See `.claude/skills/frontend-design/`.
 
 ## Run
 

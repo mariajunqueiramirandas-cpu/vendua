@@ -60,7 +60,6 @@
 
 <Section
   id="comecar"
-  hour="21h"
   tone="after"
   sky="linear-gradient(180deg, var(--sky-5), var(--sky-6))"
   labelledby="comecar-t"
@@ -70,7 +69,6 @@
 
   <!-- 1 · how it starts -->
   <header class="head">
-    <p class="eyebrow t-label">Como começa</p>
     <h2 id="comecar-t" class="t-display">Três passos até o primeiro pedido.</h2>
     <p class="t-lede">
       Sem reunião e sem planilha. Você responde umas perguntas no celular e a loja fica pronta.
@@ -114,11 +112,7 @@
 
   <!-- 3 · good night -->
   <div class="close">
-    <span class="moon" aria-hidden="true"></span>
-    <p class="moment t-moment">
-      Amanhã a loja abre de novo.<br />
-      <span>A sua também vai abrir.</span>
-    </p>
+    <p class="moment t-display">Estamos preparando as primeiras lojas.</p>
     <div class="cta">
       <Soon tone="after" />
       <p class="follow">
@@ -202,19 +196,6 @@
     gap: 14px;
     max-width: 640px;
     margin-top: 24px;
-  }
-  .eyebrow {
-    display: inline-flex;
-    align-items: center;
-    gap: 8px;
-    color: var(--ink-muted);
-  }
-  .eyebrow::before {
-    content: '';
-    width: 18px;
-    height: 2px;
-    border-radius: 2px;
-    background: currentColor;
   }
   .head .t-lede {
     margin-top: 4px;
@@ -473,23 +454,10 @@
     margin-top: clamp(96px, 13vw, 176px);
     padding-bottom: clamp(8px, 2vw, 24px);
   }
-  .moon {
-    width: 44px;
-    height: 44px;
-    border-radius: 50%;
-    box-shadow: inset -11px 6px 0 0 var(--after-ink);
-    transform: rotate(-20deg);
-    filter: drop-shadow(0 0 18px color-mix(in srgb, var(--after-ink) 30%, transparent));
-  }
   .moment {
-    margin-top: 22px;
-    font-size: clamp(2rem, 1.3rem + 3.6vw, 4.25rem);
-    line-height: 1.06;
+    max-width: 16ch;
     color: var(--after-ink);
     text-wrap: balance;
-  }
-  .moment span {
-    color: var(--after-muted);
   }
   .cta {
     display: grid;

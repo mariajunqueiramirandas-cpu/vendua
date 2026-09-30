@@ -107,12 +107,6 @@ button {
   font-weight: 600;
   letter-spacing: -0.015em;
 }
-.t-moment {
-  font-family: var(--font-moment);
-  font-style: italic;
-  font-weight: 400;
-  letter-spacing: 0;
-}
 .t-body-lg {
   font-size: 1.0625rem;
   line-height: 1.625rem;

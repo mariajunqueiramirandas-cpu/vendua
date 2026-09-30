@@ -25,18 +25,10 @@
     },
   ];
 
-  const reports = [
-    'vendas por dia',
-    'os mais vendidos',
-    'horários de pico',
-    'quem visitou e quem pediu',
-    'quem voltou a pedir',
-    'planilha pra baixar',
-  ];
   const day = store.dayRecap;
 </script>
 
-<Section id="seu-dia" hour="18h" tone="after" sky="var(--sunset)" labelledby="seu-dia-t">
+<Section id="seu-dia" tone="after" sky="var(--sunset)" labelledby="seu-dia-t">
   <!-- the sky: the sun sets in the band, the moon and stars come out below it -->
   <div class="sky" aria-hidden="true">
     <span class="sun"></span>
@@ -47,7 +39,7 @@
 
   <div class="moment">
     <div class="copy">
-      <h2 id="seu-dia-t" class="title t-moment">A loja fecha e te conta como foi o dia.</h2>
+      <h2 id="seu-dia-t" class="t-display">A loja fecha e te conta como foi o dia.</h2>
       <p class="t-lede">
         Na hora de fechar, a conta já está feita. O resumo do dia aparece no início do app,
         esperando por você, sem caderno e sem calculadora.
@@ -81,15 +73,15 @@
 
   <div class="reports">
     <div class="reports-copy">
-      <p class="kicker t-label">Quando quiser olhar mais longe</p>
       <h3 class="t-title-1">Relatórios que se explicam.</h3>
       <p class="reports-lede">
         Cada gráfico vem com uma frase dizendo o que ele mostra. Escolha hoje, 7 dias, 30 dias ou as
         datas que quiser, no celular ou no computador.
       </p>
-      <ul class="tags" role="list">
-        {#each reports as t (t)}<li>{t}</li>{/each}
-      </ul>
+      <p class="reports-lede">
+        Tem vendas por dia, os mais vendidos, horários de pico, quem visitou e quem pediu, quem
+        voltou a pedir e planilha pra baixar.
+      </p>
     </div>
     <div class="reports-art">
       <Tablet>
@@ -207,12 +199,6 @@
     gap: 20px;
     align-content: start;
   }
-  .title {
-    font-size: clamp(2.5rem, 1.6rem + 3.6vw, 4.25rem);
-    line-height: 1.02;
-    max-width: 13ch;
-    color: var(--ink);
-  }
   .recap {
     margin: 12px 0 0;
     padding: 0;
@@ -224,24 +210,12 @@
   .recap li {
     display: grid;
     gap: 2px;
-    padding: 14px 0 14px 28px;
+    padding: 14px 0;
     position: relative;
     border-top: 1px solid var(--line);
   }
   .recap li:last-child {
     border-bottom: 1px solid var(--line);
-  }
-  /* a small star per line, the same light as the sky */
-  .recap li::before {
-    content: '';
-    position: absolute;
-    left: 4px;
-    top: 21px;
-    width: 10px;
-    height: 10px;
-    background: var(--ink);
-    clip-path: polygon(50% 0, 61% 39%, 100% 50%, 61% 61%, 50% 100%, 39% 61%, 0 50%, 39% 39%);
-    opacity: 0.85;
   }
   .recap-t {
     font: 600 1.0625rem/1.4 var(--font-display);
@@ -314,38 +288,9 @@
     align-content: center;
     max-width: 30rem;
   }
-  .kicker {
-    color: var(--ink-muted);
-  }
   .reports-lede {
     color: var(--ink-muted);
   }
-  .tags {
-    margin: 10px 0 0;
-    padding: 0;
-    list-style: none;
-    display: flex;
-    flex-wrap: wrap;
-    gap: 4px 20px;
-    font-size: 0.9688rem;
-    line-height: 1.6;
-    color: var(--ink);
-  }
-  .tags li {
-    display: inline-flex;
-    align-items: center;
-    gap: 9px;
-  }
-  /* the day's last sparks */
-  .tags li::before {
-    content: '';
-    flex: none;
-    width: 10px;
-    height: 10px;
-    background: var(--spark);
-    clip-path: polygon(50% 0, 61% 39%, 100% 50%, 61% 61%, 50% 100%, 39% 61%, 0 50%, 39% 39%);
-  }
-
   @media (min-width: 1200px) {
     .stars {
       height: min(900px, calc(100% - 250px));
