@@ -56,6 +56,7 @@ const FROZEN_V1 = [
   'useOrders',
   'usePageContext',
   'useProduct',
+  'useStockLeft',
   'useStore',
   'useWaitlist',
 ];

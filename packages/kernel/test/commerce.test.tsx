@@ -448,3 +448,177 @@ describe('stock already in the cart', () => {
     expect(c.calls.some((x) => x.path === '/checkout/v1/cart/items')).toBe(false);
   });
 });
+
+describe('stock already in the cart — kits, modifier lines, catalog', () => {
+  const line = (id: string, over: Record<string, unknown>) => ({
+    id,
+    productId: DETAIL.id,
+    slug: 'pudim',
+    name: 'Pudim',
+    qty: 1,
+    unitPriceCents: 1800,
+    productStatus: 'active',
+    modifiers: [],
+    lineTotalCents: 1800,
+    stockQuantity: 3,
+    ...over,
+  });
+  const bag = (items: unknown[]) => ({
+    id: 'cart',
+    status: 'open',
+    items,
+    totals: {
+      subtotalCents: 1800,
+      deliveryFeeCents: 0,
+      totalCents: 1800,
+      itemCount: items.length,
+      minOrderCents: 0,
+      remainingMinOrderCents: 0,
+      belowMinOrder: false,
+    },
+    delivery: null,
+  });
+  const KIT_ID = '66666666-6666-4666-8666-666666666666';
+  const kit = {
+    ...DETAIL,
+    id: KIT_ID,
+    modifierGroups: [],
+    slug: 'kit',
+    name: 'Kit festa',
+    kind: 'combo',
+    stockQuantity: null,
+    comboSlots: [
+      {
+        id: SLOT,
+        name: 'Sabores',
+        minSelect: 2,
+        maxSelect: 2,
+        qtyPerItem: 2,
+        items: [
+          {
+            productId: A,
+            slug: 'a',
+            name: 'Coco',
+            priceDeltaCents: 0,
+            status: 'active',
+            stockQuantity: 3,
+            imageUrl: null,
+          },
+          {
+            productId: B,
+            slug: 'b',
+            name: 'Maracujá',
+            priceDeltaCents: 0,
+            status: 'active',
+            stockQuantity: null,
+            imageUrl: null,
+          },
+        ],
+      },
+    ],
+  };
+  // a kit already in the cart took 2 of Coco's 3
+  const kitLine = line('k1', {
+    productId: KIT_ID,
+    slug: 'kit',
+    name: 'Kit festa',
+    stockQuantity: null,
+    combo: [
+      {
+        slotId: SLOT,
+        slotName: 'Sabores',
+        productId: A,
+        name: 'Coco',
+        qty: 2,
+        priceDeltaCents: 0,
+        status: 'active',
+        stockQuantity: 3,
+      },
+    ],
+    comboSelections: [{ slotId: SLOT, productId: A, qty: 2 }],
+  });
+
+  test("a kit's picks count what the cart's kits already took; the kit qty follows its picks", async () => {
+    core((url) => {
+      if (url.pathname === '/storefront/v1/products/kit') return json(200, { product: kit });
+      if (url.pathname === '/checkout/v1/cart') return json(200, { cart: bag([kitLine]) });
+      return null;
+    });
+    m = await mount({ path: '/produto/kit', session: 'tok' });
+    await flush();
+    const coco = $('[aria-label="mais Coco"]') as HTMLButtonElement;
+    expect(coco.disabled).toBe(false);
+    await act(async () => coco.click());
+    // 1 Coco left: a second one would be over
+    expect(coco.disabled).toBe(true);
+    await act(async () => ($('[aria-label="mais Maracujá"]') as HTMLButtonElement).click());
+    const add = $('[data-vendua="add-to-cart"]') as HTMLButtonElement;
+    expect(add.disabled).toBe(false);
+    // a second kit would need a second Coco
+    expect(($('[aria-label="Aumentar quantidade"]') as HTMLButtonElement).disabled).toBe(true);
+  });
+
+  test('cart lines of one product (other modifiers, a kit pick) share its stock', async () => {
+    const c = core((url) => {
+      if (url.pathname === '/checkout/v1/cart')
+        return json(200, {
+          cart: bag([
+            line('l1', { qty: 2 }),
+            line('l2', {
+              qty: 1,
+              modifiers: [{ id: 'm2', name: 'Grande', priceDeltaCents: 800, status: 'active' }],
+            }),
+            // Coco on its own: the kit's 2 + this 1 = all 3
+            line('l3', { productId: A, slug: 'a', name: 'Coco', qty: 1 }),
+            kitLine,
+          ]),
+        });
+      return null;
+    });
+    m = await mount({ path: '/sacola', session: 'tok' });
+    await flush();
+    const plus = $$('[data-vendua="cart-line"] [aria-label="aumentar"]') as HTMLButtonElement[];
+    expect(plus).toHaveLength(4);
+    expect(plus.every((b) => b.disabled)).toBe(true);
+    await act(async () => plus[0]!.click());
+    await flush();
+    expect(c.calls.some((x) => x.method === 'PATCH')).toBe(false);
+  });
+
+  test('catalog cards show the stock left after the cart and lock the quick add', async () => {
+    const product = { ...PRODUCT, stockQuantity: 3, lowStock: true, needsChoices: false };
+    core((url) => {
+      if (url.pathname === '/storefront/v1/catalog')
+        return json(200, {
+          categories: [{ id: 'c1', slug: 'doces', name: 'Doces', sort: 1, products: [product] }],
+        });
+      if (url.pathname === '/checkout/v1/cart')
+        return json(200, { cart: bag([line('l1', { qty: 1 })]) });
+      return null;
+    });
+    m = await mount({ path: '/', session: 'tok' });
+    await flush();
+    expect($('.v-card [data-part="badge"]')?.textContent).toBe('Últimas 2');
+  });
+
+  test('with every unit in the cart the card says so and the quick add is locked', async () => {
+    const product = { ...PRODUCT, stockQuantity: 3, lowStock: true, needsChoices: false };
+    const c = core((url) => {
+      if (url.pathname === '/storefront/v1/catalog')
+        return json(200, {
+          categories: [{ id: 'c1', slug: 'doces', name: 'Doces', sort: 1, products: [product] }],
+        });
+      if (url.pathname === '/checkout/v1/cart')
+        return json(200, { cart: bag([line('l1', { qty: 3 })]) });
+      return null;
+    });
+    m = await mount({ path: '/', session: 'tok' });
+    await flush();
+    expect($('.v-card [data-part="badge"]')?.textContent).toBe('Tudo na sacola');
+    const add = $('[data-vendua="add-to-cart"]') as HTMLButtonElement;
+    expect(add.getAttribute('data-state')).toBe('limit');
+    await act(async () => add.click());
+    await flush();
+    expect(c.calls.some((x) => x.path === '/checkout/v1/cart/items')).toBe(false);
+  });
+});

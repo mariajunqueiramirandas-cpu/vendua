@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { useDeliveryZones, useProduct, useStore, useWaitlist } from '../hooks.ts';
+import { useDeliveryZones, useProduct, useStockLeft, useStore, useWaitlist } from '../hooks.ts';
 import { money, PixQr } from '@vendua/ui-defaults';
 import { errorCopy } from '../errors.ts';
 import { NotifyMeButton } from '../primitives.tsx';
@@ -17,6 +17,7 @@ function usePageProduct() {
 
 export function StockCounter({ settings }: BlockProps<typeof S.stockCounter>) {
   const product = usePageProduct();
+  const left = useStockLeft(product);
   if (!product) return null;
   // a scheduled product isn't out of stock — the purchase panel says when it's back
   if (product.status === 'sold_out' && product.availabilityLabel) return null;
@@ -26,8 +27,9 @@ export function StockCounter({ settings }: BlockProps<typeof S.stockCounter>) {
         Esgotado hoje
       </p>
     );
-  const n = product.stockQuantity;
-  if (typeof n !== 'number') return null;
+  // what's left after the cart; at 0 the purchase panel says it's all in the sacola
+  const n = left;
+  if (n === null || n === 0) return null;
   const low = n > 0 && n <= settings.threshold;
   if (!low && !settings.showWhenPlenty) return null;
   return (

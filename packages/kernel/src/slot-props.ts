@@ -145,6 +145,8 @@ export interface SlotProps {
     item: CartItem;
     currency: string;
     pending: boolean;
+    /** Kernel 1.9 — the most this line can hold: stock left after the cart's other lines */
+    max?: number;
     onQty: (qty: number) => void;
     onRemove: () => void;
   };

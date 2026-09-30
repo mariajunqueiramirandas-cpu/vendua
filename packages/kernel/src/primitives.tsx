@@ -10,12 +10,12 @@ import {
 } from 'react';
 import { UNSAFE_NavigationContext } from 'react-router-dom';
 import { mediaSrcSet } from '@vendua/ui-defaults';
-import { useCart, useStockLeft, useStore } from './hooks.ts';
+import { lineDraw, productDraw, unitsLeft, useCart, useStore } from './hooks.ts';
 import { useKernel, prefetchQuery } from './provider.tsx';
 import { productHref, KERNEL_PATHS } from './config.ts';
 import { showError } from './errors.ts';
 import { emit } from './telemetry.ts';
-import type { CatalogProduct, ComboSelection } from './api.ts';
+import type { CatalogProduct, ComboSelection, ProductDetail } from './api.ts';
 
 /** Headless primitives (02-kernel.md): Kernel owns behavior, the storefront owns visuals via asChild — each stamps its data-vendua hook + ARIA regardless of the delegated child. */
 
@@ -112,7 +112,8 @@ export function ProductLink({
 
 export interface AddToCartProps {
   product: Pick<CatalogProduct, 'id' | 'status'> &
-    Partial<Pick<CatalogProduct, 'basePriceCents' | 'stockQuantity'>>;
+    Partial<Pick<CatalogProduct, 'basePriceCents' | 'stockQuantity'>> &
+    Partial<Pick<ProductDetail, 'comboSlots'>>;
   qty?: number;
   modifierIds?: string[];
   /** Kernel 1.2 — kit picks for a `kind: 'combo'` product */
@@ -135,12 +136,11 @@ export function AddToCart({
   onError,
 }: AddToCartProps) {
   const { status } = useStore();
-  const { mutations } = useCart();
+  const { cart, mutations } = useCart();
   const [pending, setPending] = useState(false);
-  const left = useStockLeft(product);
   const soldOut = product.status !== 'active';
-  // the cart already holds what's left: Core would answer OUT_OF_STOCK
-  const atLimit = !soldOut && left !== null && qty > left;
+  // the cart already holds what's left (of the product or a kit pick): Core would answer OUT_OF_STOCK
+  const atLimit = !soldOut && qty > unitsLeft(cart, productDraw(product, comboSelections));
   const disabled = pending || soldOut || atLimit || status === 'paused';
 
   const onClick = async () => {
@@ -184,9 +184,14 @@ export interface QuantityStepperProps {
   max?: number;
 }
 
-export function QuantityStepper({ itemId, qty, min = 0, max = 99 }: QuantityStepperProps) {
-  const { mutations } = useCart();
+export function QuantityStepper({ itemId, qty, min = 0, max: maxProp = 99 }: QuantityStepperProps) {
+  const { cart, mutations } = useCart();
   const [pending, setPending] = useState(false);
+  const line = cart?.items.find((i) => i.id === itemId);
+  // the stock the cart's other lines leave for this one
+  const max = line
+    ? Math.min(maxProp, Math.max(qty, unitsLeft(cart, lineDraw(line), itemId)))
+    : maxProp;
   const step = async (next: number) => {
     if (next < min || next > max || pending) return;
     setPending(true);

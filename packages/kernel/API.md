@@ -55,7 +55,9 @@ The `virtual:vendua/storefront` module is typed by the Kernel entry itself.
 hook), `useAnalytics` (`track('custom.<name>')`, consent-gated), `useConsent`,
 `useErrorSurface` (route a caught error to the default notice), `usePageContext`
 (page id + route params for sections/blocks), and since Kernel 1.2 `useOrders`,
-`useLoyalty`, `useCep`, `useWaitlist`. `@vendua/ui-defaults` also exports `Calendar`
+`useLoyalty`, `useCep`, `useWaitlist`, and since 1.9 `useStockLeft` (`useStockLeft(product)`: the product's
+stock minus what the cart holds, kit picks included; `null` when stock isn't tracked — show it
+instead of `stockQuantity` in store cards). `@vendua/ui-defaults` also exports `Calendar`
 (the month grid behind `checkout.SchedulePicker`) for store sections that need one.
 
 Hooks never compute prices or eligibility; every read exposes `refetch`. Since 1.6 the
@@ -78,16 +80,16 @@ themselves when Core's live stream says they changed (no API change).
 
 ## Primitives
 
-| Primitive          | Stamps                          | Behaviour owned by the Kernel                                                                                                                                                                            |
-| ------------------ | ------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `ProductLink`      | `data-vendua="product-link"`    | route resolution (`paths.product`), prefetch                                                                                                                                                             |
-| `AddToCart`        | `data-vendua="add-to-cart"`     | disabled on paused/sold-out, mutation, `add_to_cart` event; `comboSelections` (1.2); disabled with `data-state="limit"` when `qty` exceeds the product's `stockQuantity` minus what the cart holds (1.9) |
-| `QuantityStepper`  | `data-vendua="qty-stepper"`     | min/max, mutation                                                                                                                                                                                        |
-| `CartTrigger`      | `data-vendua="cart-trigger"`    | badge count, opens `/sacola`, `cart_open` event                                                                                                                                                          |
-| `CheckoutButton`   | `data-vendua="checkout-button"` | starts the session, disabled states, `checkout_start`                                                                                                                                                    |
-| `StoreStatusBadge` | `data-vendua="store-status"`    | live open/closed/paused                                                                                                                                                                                  |
-| `NotifyMeButton`   | `data-vendua="notify-me"`       | "avise-me" subscription, `notify_me` event                                                                                                                                                               |
-| `Img`              | —                               | CDN srcset (`images.cdn`; Core media `?w=` since 1.7), lazy/priority, blur-up                                                                                                                            |
+| Primitive          | Stamps                          | Behaviour owned by the Kernel                                                                                                                                                                                     |
+| ------------------ | ------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `ProductLink`      | `data-vendua="product-link"`    | route resolution (`paths.product`), prefetch                                                                                                                                                                      |
+| `AddToCart`        | `data-vendua="add-to-cart"`     | disabled on paused/sold-out, mutation, `add_to_cart` event; `comboSelections` (1.2); disabled with `data-state="limit"` when `qty` doesn't fit the stock the cart leaves (the product's and its kit picks') (1.9) |
+| `QuantityStepper`  | `data-vendua="qty-stepper"`     | min/max (capped at the stock the cart leaves, 1.9), mutation                                                                                                                                                      |
+| `CartTrigger`      | `data-vendua="cart-trigger"`    | badge count, opens `/sacola`, `cart_open` event                                                                                                                                                                   |
+| `CheckoutButton`   | `data-vendua="checkout-button"` | starts the session, disabled states, `checkout_start`                                                                                                                                                             |
+| `StoreStatusBadge` | `data-vendua="store-status"`    | live open/closed/paused                                                                                                                                                                                           |
+| `NotifyMeButton`   | `data-vendua="notify-me"`       | "avise-me" subscription, `notify_me` event                                                                                                                                                                        |
+| `Img`              | —                               | CDN srcset (`images.cdn`; Core media `?w=` since 1.7), lazy/priority, blur-up                                                                                                                                     |
 
 Every primitive accepts `asChild`. A primitive with no `onError` hands typed errors to
 the default error surface.

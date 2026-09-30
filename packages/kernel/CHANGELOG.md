@@ -5,14 +5,23 @@ never need a storefront edit; a major only ships with a Contract major.
 
 ## 1.9.0
 
-Stock the cart already holds — additive; no storefront edit, no new runtime export.
+Stock the cart already holds — additive; no storefront edit needed.
 
-- `AddToCart` counts the product's units already in the cart (direct lines and kit picks, as
-  Core's stock check does) against its `stockQuantity`: when `qty` is more than what's left it
-  is disabled with `data-state="limit"` instead of getting `OUT_OF_STOCK` from Core. The prop
-  type now accepts `stockQuantity`, so passing a catalog product is enough.
-- The product page's quantity stepper stops at what's left and says when the cart already has
-  every unit; the cart page clamps a line's quantity to the stock its other lines leave.
+- `AddToCart` counts what the cart already draws from the product and from each kit pick
+  (direct lines, other modifier sets and kits, as Core's stock check does). When `qty` doesn't
+  fit it is disabled with `data-state="limit"` instead of getting `OUT_OF_STOCK` from Core. The
+  prop type accepts `stockQuantity` and `comboSlots`, so passing the catalog product or the
+  product detail is enough.
+- Product page: the quantity stops at what fits (a kit's picks included) and says when the
+  sacola already has every unit; `catalog.ComboPicker` gets each item's `stockQuantity` as what
+  one kit can still take at the chosen qty, and the default picker says "sem mais unidades".
+- Cart: `QuantityStepper` and the `/sacola` lines cap a line at the stock the other lines leave;
+  `cart.LineItem` gets that as the new optional `max` prop.
+- `catalog.ProductCard` and the `sdk:stock-counter` block show the stock left after the cart;
+  the default card says "Tudo na sacola" when none is left.
+- New `useStockLeft(product)`: a product's stock minus what the cart holds (`null` = not
+  tracked), for store cards that show stock.
+- `CartItem.combo[].stockQuantity`: each kit pick's stock (Core serves it with this release).
 
 ## 1.8.0
 

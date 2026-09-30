@@ -200,6 +200,8 @@ export interface CartItem {
     qty: number;
     priceDeltaCents: number;
     status: string;
+    /** Kernel 1.9 — the picked item's tracked stock (null = not tracked) */
+    stockQuantity?: number | null;
   }[];
   comboSelections?: ComboSelection[];
   imageUrl?: string | null;

@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { cartDemand, useCart, useStore } from '../hooks.ts';
+import { lineDraw, unitsLeft, useCart, useStore } from '../hooks.ts';
 import { CheckoutButton, useNavigateTo } from '../primitives.tsx';
 import { Slot } from '../slot.tsx';
 import { errorCode, errorCopy, showError, showInfo } from '../errors.ts';
@@ -13,11 +13,8 @@ import type { Cart, CartItem } from '../api.ts';
 function Line({ item, currency }: { item: CartItem; currency: string }) {
   const { cart, mutations } = useCart();
   const [pending, setPending] = useState(false);
-  // other lines (another modifier set, a kit) draw on the same stock
-  const max =
-    typeof item.stockQuantity === 'number'
-      ? Math.max(item.qty, item.stockQuantity - cartDemand(cart, item.productId, item.id))
-      : 99;
+  // other lines (another modifier set, a kit with the same pick) draw on the same stock
+  const max = Math.min(99, Math.max(item.qty, unitsLeft(cart, lineDraw(item), item.id)));
   const run = async (fn: () => Promise<unknown>) => {
     setPending(true);
     try {
@@ -34,8 +31,9 @@ function Line({ item, currency }: { item: CartItem; currency: string }) {
       item={item}
       currency={currency}
       pending={pending}
+      max={max}
       onQty={(qty) => {
-        const next = Math.min(qty, max, 99);
+        const next = Math.min(qty, max);
         if (qty > 0 && next === item.qty) return;
         void run(() => (qty <= 0 ? mutations.remove(item.id) : mutations.updateQty(item.id, next)));
       }}

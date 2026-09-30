@@ -73,6 +73,11 @@ export function ComboPicker({
                           {' · '}
                           {item.availabilityLabel ?? 'esgotado'}
                         </span>
+                      ) : item.stockQuantity === 0 && q === 0 ? (
+                        // the Kernel passes stock left after the sacola: none for this kit
+                        <span className="v-muted" data-part="availability">
+                          {' · sem mais unidades'}
+                        </span>
                       ) : null}
                     </span>
                     <span className="v-qty" role="group" aria-label={`quantidade de ${item.name}`}>

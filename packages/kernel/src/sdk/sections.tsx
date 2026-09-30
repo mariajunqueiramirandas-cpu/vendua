@@ -1,7 +1,15 @@
 import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import { matchPath, Outlet, useLocation } from 'react-router-dom';
 import { dayLabel, mediaSrcSet, money } from '@vendua/ui-defaults';
-import { useCart, useCatalog, useProduct, useStockLeft, useStore } from '../hooks.ts';
+import {
+  cartDemand,
+  productDraw,
+  unitsLeft,
+  useCart,
+  useCatalog,
+  useProduct,
+  useStore,
+} from '../hooks.ts';
 import {
   AddToCart,
   CartTrigger,
@@ -261,8 +269,10 @@ export function PurchasePanel({ settings }: SectionProps<typeof S.purchasePanel>
   const currency = store?.currency ?? 'BRL';
   const catalogHref = resolvePaths(config).catalog;
   const customMedia = useAreaHas('media', 'media');
-  const left = useStockLeft(product);
-  const maxQty = Math.max(1, Math.min(99, left ?? 99));
+  const { cart } = useCart();
+  // units (kits) that still fit next to the cart, counting the kit's picks
+  const left = product ? unitsLeft(cart, productDraw(product, combo)) : Number.POSITIVE_INFINITY;
+  const maxQty = Math.max(1, Math.min(99, left));
 
   // the cart took stock since the stepper was set: never offer more than is left
   useEffect(() => setQty((q) => Math.min(q, maxQty)), [maxQty]);
@@ -279,6 +289,23 @@ export function PurchasePanel({ settings }: SectionProps<typeof S.purchasePanel>
     missing.map((g) => [g.id, cartError ? 'Escolha uma opção' : '']).filter(([, v]) => v),
   );
   const slots = useMemo(() => product?.comboSlots ?? [], [product]);
+  // the picker's per-item stock: what one kit can still take at this qty, after the cart
+  // and the same item picked in the kit's other slots
+  const pickerSlots = useMemo(
+    () =>
+      slots.map((sl) => ({
+        ...sl,
+        items: sl.items.map((i) => {
+          if (typeof i.stockQuantity !== 'number') return i;
+          const elsewhere = combo
+            .filter((c) => c.slotId !== sl.id && c.productId === i.productId)
+            .reduce((n, c) => n + c.qty, 0);
+          const free = Math.max(0, i.stockQuantity - cartDemand(cart, i.productId));
+          return { ...i, stockQuantity: Math.max(0, Math.floor(free / qty) - elsewhere) };
+        }),
+      })),
+    [slots, combo, cart, qty],
+  );
   const comboMissing = slots
     .map((sl) => ({
       slot: sl,
@@ -407,7 +434,7 @@ export function PurchasePanel({ settings }: SectionProps<typeof S.purchasePanel>
           {slots.length > 0 ? (
             <Slot
               name="catalog.ComboPicker"
-              slots={slots}
+              slots={pickerSlots}
               value={combo}
               currency={currency}
               errors={comboErrors}
@@ -542,13 +569,19 @@ function ProductGrid({
   currency: string;
 }) {
   const { config } = useKernel();
+  const { cart } = useCart();
+  // the card shows the stock left after the cart ("Últimas 2", "Tudo na sacola")
+  const shown = (p: CatalogProduct) =>
+    typeof p.stockQuantity === 'number'
+      ? { ...p, stockQuantity: Math.max(0, p.stockQuantity - cartDemand(cart, p.id)) }
+      : p;
   return (
     <ol className="v-grid" data-variant={variant} data-part="grid">
       {products.map((p) => (
         <li key={p.id} data-part="item">
           <Slot
             name="catalog.ProductCard"
-            product={p}
+            product={shown(p)}
             currency={currency}
             href={productHref(config, p.slug)}
             link={(children) => (
