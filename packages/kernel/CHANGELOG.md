@@ -13,12 +13,13 @@ Stock the cart already holds — additive; no storefront edit needed.
   prop type accepts `stockQuantity` and `comboSlots`, so passing the catalog product or the
   product detail is enough.
 - Product page: the quantity stops at what fits (a kit's picks included) and says when the
-  sacola already has every unit; `catalog.ComboPicker` gets each item's `stockQuantity` as what
-  one kit can still take at the chosen qty, and the default picker says "sem mais unidades".
+  sacola already has every unit; `catalog.ComboPicker` items get `stockLeft` (what one kit can
+  still take at the chosen qty) and the default picker says "sem mais unidades".
 - Cart: `QuantityStepper` and the `/sacola` lines cap a line at the stock the other lines leave;
   `cart.LineItem` gets that as the new optional `max` prop.
-- `catalog.ProductCard` and the `sdk:stock-counter` block show the stock left after the cart;
-  the default card says "Tudo na sacola" when none is left.
+- `catalog.ProductCard` gets the new optional `stockLeft` (stock minus the cart;
+  `product.stockQuantity` stays Core's number) and the `sdk:stock-counter` block shows it; the
+  default card says "Tudo na sacola" when none is left.
 - New `useStockLeft(product)`: a product's stock minus what the cart holds (`null` = not
   tracked), for store cards that show stock.
 - `CartItem.combo[].stockQuantity`: each kit pick's stock (Core serves it with this release).

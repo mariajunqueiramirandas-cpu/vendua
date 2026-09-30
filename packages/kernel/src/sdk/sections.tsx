@@ -301,7 +301,7 @@ export function PurchasePanel({ settings }: SectionProps<typeof S.purchasePanel>
             .filter((c) => c.slotId !== sl.id && c.productId === i.productId)
             .reduce((n, c) => n + c.qty, 0);
           const free = Math.max(0, i.stockQuantity - cartDemand(cart, i.productId));
-          return { ...i, stockQuantity: Math.max(0, Math.floor(free / qty) - elsewhere) };
+          return { ...i, stockLeft: Math.max(0, Math.floor(free / qty) - elsewhere) };
         }),
       })),
     [slots, combo, cart, qty],
@@ -570,18 +570,16 @@ function ProductGrid({
 }) {
   const { config } = useKernel();
   const { cart } = useCart();
-  // the card shows the stock left after the cart ("Últimas 2", "Tudo na sacola")
-  const shown = (p: CatalogProduct) =>
-    typeof p.stockQuantity === 'number'
-      ? { ...p, stockQuantity: Math.max(0, p.stockQuantity - cartDemand(cart, p.id)) }
-      : p;
   return (
     <ol className="v-grid" data-variant={variant} data-part="grid">
       {products.map((p) => (
         <li key={p.id} data-part="item">
           <Slot
             name="catalog.ProductCard"
-            product={shown(p)}
+            product={p}
+            {...(typeof p.stockQuantity === 'number'
+              ? { stockLeft: Math.max(0, p.stockQuantity - cartDemand(cart, p.id)) }
+              : {})}
             currency={currency}
             href={productHref(config, p.slug)}
             link={(children) => (

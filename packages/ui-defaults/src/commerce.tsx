@@ -402,10 +402,11 @@ export function ProductCard({
   currency,
   link,
   quickAdd,
+  stockLeft,
 }: SlotProps['catalog.ProductCard']) {
   const soldOut = product.status !== 'active';
   const [imgFailed, setImgFailed] = useState(false);
-  const left = product.stockQuantity;
+  const left = stockLeft ?? product.stockQuantity;
   const badge = soldOut
     ? null
     : product.requiresPreorder
