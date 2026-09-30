@@ -31,7 +31,8 @@ model, migrations, tokens, compat matrix), `packages/loader` (`v.js`), `packages
   check `bun --version` before `bun install`; CI installs with `--frozen-lockfile`.
 - Format: `bunx prettier --write <paths>` (CI auto-fixes, but keep diffs clean).
 - Typecheck per workspace: `bun run check`. Core tests: `cd packages/core && bun test`
-  (`TEST_DATABASE_URL` is exported by the session hook).
+  (`TEST_DATABASE_URL` is exported by the session hook and points at its own `vendua_test`
+  database: a Core running on the dev `vendua` database would claim the runs tests queue).
 - Comments are sparse — only non-obvious _why_.
 - Kernel tests run in happy-dom (`packages/kernel/bunfig.toml` preloads it).
 - Conformance e2e in a container: add `/etc/hosts` lines for `qa-*.localhost` (no

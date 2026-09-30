@@ -1,7 +1,8 @@
 #!/bin/bash
-# Cloud sessions: pinned bun, workspace deps, and a migrated+seeded local Postgres
-# (port 5433, same URLs as packages/core defaults) so Core, its tests and the
-# control apps run without extra setup.
+# Cloud sessions: pinned bun, workspace deps, and a local Postgres on port 5433 with two
+# databases: `vendua` (migrated + seeded, the packages/core defaults) for Core and the apps,
+# and `vendua_test` (migrated, unseeded, like CI) for TEST_DATABASE_URL. Tests get their own
+# database because a running Core's scheduler would claim the agent runs they queue.
 set -euo pipefail
 
 if [ "${CLAUDE_CODE_REMOTE:-}" != "true" ]; then
@@ -44,6 +45,11 @@ if [ -x "$PG_BIN/pg_ctl" ] && id postgres >/dev/null 2>&1; then
   if $fresh; then
     (cd packages/core && bun run seed >/dev/null)
   fi
-  [ -n "${CLAUDE_ENV_FILE:-}" ] &&
-    echo 'export TEST_DATABASE_URL=postgres://vendua:vendua@localhost:5433/vendua' >> "$CLAUDE_ENV_FILE"
+  TEST_DB_URL=postgres://vendua:vendua@localhost:5433/vendua_test
+  if ! psql -h localhost -p 5433 -U vendua -d postgres -Atc \
+    "select 1 from pg_database where datname = 'vendua_test'" | grep -q 1; then
+    psql -h localhost -p 5433 -U vendua -d postgres -qc 'create database vendua_test'
+  fi
+  (cd packages/core && MIGRATION_DATABASE_URL="$TEST_DB_URL" bun run migrate >/dev/null)
+  [ -n "${CLAUDE_ENV_FILE:-}" ] && echo "export TEST_DATABASE_URL=$TEST_DB_URL" >> "$CLAUDE_ENV_FILE"
 fi

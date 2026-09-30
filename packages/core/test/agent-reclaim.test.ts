@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, test } from 'bun:test';
+import { beforeAll, beforeEach, describe, expect, test } from 'bun:test';
 import { join } from 'node:path';
 import postgres from 'postgres';
 import {
@@ -516,6 +516,17 @@ dbDescribe('worker robustness (db)', () => {
   // earlier files' fire-and-forget drains (HTTP / inbound kicks) share this process and
   // DB — one still running can claim a run these tests make due and expect to claim
   beforeEach(() => drainsSettled());
+
+  // the send tests need an enabled whatsapp channel; on a fresh database (a new session's
+  // vendua_test, or this file run alone) nothing earlier left one behind
+  beforeAll(async () => {
+    await migrate(sql, MIGRATIONS);
+    await sql`
+      insert into control_integrations (kind, driver, enabled)
+      values ('whatsapp', 'log', true)
+      on conflict (kind, driver) do update set enabled = true
+    `;
+  });
 
   const mkCtx = (
     runId: string,
