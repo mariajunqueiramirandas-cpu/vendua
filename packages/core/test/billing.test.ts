@@ -12,6 +12,7 @@ import {
 } from '../src/modules/billing/subscriptions.ts';
 import { handleBillingWebhook } from '../src/modules/billing/webhook.ts';
 import { FakeProvider } from '../src/modules/payments/fake.ts';
+import { ProviderError } from '../src/modules/payments/provider.ts';
 import { migrate } from '../src/platform/db.ts';
 
 const DAY = 86_400_000;
@@ -154,7 +155,7 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('plan billing (db)', () => {
     billingStaff.notify = originalStaff;
     setDnsResolver(null);
     if (created.length) await sql`delete from tenants where id in ${sql(created)}`;
-    await sql`delete from plans where id = ${`bill_${nonce}`}`;
+    await sql`delete from plans where id like ${`bill_${nonce}%`}`;
     if (appSql !== sql) await appSql.end();
     await sql.end();
   });
@@ -687,6 +688,108 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('plan billing (db)', () => {
     expect((row.current_period_end as Date).getTime()).toBe(after.period_end.getTime());
   });
 
+  test('the renewal asks MP with no billing lock held; a reprice meanwhile drops that Pix', async () => {
+    const s = await paidStore('lockfree', 'basic');
+    const realPix = fake.platformPix.bind(fake);
+    const asked: { free: boolean; id: string; amountCents: number }[] = [];
+    let repriceOnce = true;
+    fake.platformPix = async (req) => {
+      const mine = await sql`
+        select 1 from invoices where id = ${req.externalReference} and tenant_id = ${s.id}
+      `;
+      if (!mine.length) return realPix(req);
+      // a merchant request needs this lock: it must be free while MP answers
+      const free = await sql.begin(
+        async (tx) =>
+          (
+            await tx<{ ok: boolean }[]>`
+              select pg_try_advisory_xact_lock(hashtextextended(${`billing:${s.id}`}, 0)) as ok
+            `
+          )[0]!.ok,
+      );
+      if (repriceOnce) {
+        repriceOnce = false;
+        await sql`update invoices set amount_cents = amount_cents + 100 where id = ${req.externalReference}`;
+      }
+      const p = await realPix(req);
+      asked.push({ free, id: p.id, amountCents: req.amountCents });
+      return p;
+    };
+    try {
+      const end = new Date(Date.now() + 2 * DAY);
+      await sql`update subscriptions set current_period_end = ${end} where tenant_id = ${s.id}`;
+      await tick();
+      expect(asked).toHaveLength(1);
+      expect(asked[0]!.free).toBe(true);
+      // asked for the old amount: never stored, cancelled at MP
+      let inv = (await invoices(s.id))[1]!;
+      expect(inv.provider_payment_id).toBeNull();
+      expect(fake.payments.get(asked[0]!.id)!.status).toBe('cancelled');
+
+      // the next tick retries the invoice that has no Pix, at the plan's price, with a new key
+      await tick();
+      expect(asked).toHaveLength(2);
+      expect(asked[1]!.free).toBe(true);
+      inv = (await invoices(s.id))[1]!;
+      expect(inv.amount_cents).toBe(3990);
+      expect(inv.provider_payment_id).toBe(asked[1]!.id);
+      expect(asked[1]!.amountCents).toBe(3990);
+      expect(inv.pix_attempt).toBe(2);
+
+      await tick();
+      expect(asked).toHaveLength(2);
+    } finally {
+      fake.platformPix = realPix;
+    }
+  });
+
+  test('two replicas remind at once: one message, and it points at a Pix that is stored', async () => {
+    const s = await paidStore('replicas', 'basic');
+    await sql`update merchant_users set prefs = '{"emailInvoices": false}' where tenant_id = ${s.id}`;
+    const due = () =>
+      wa.filter((m) => m.phone === s.phone && m.text.includes('vence hoje')).map((m) => m.text);
+    await sql`update subscriptions set current_period_end = ${new Date(Date.now() + 2 * DAY)} where tenant_id = ${s.id}`;
+    await tick();
+    const inv = (await invoices(s.id))[1]!;
+    // due today, its Pix expired: the reminder needs a fresh one
+    await sql`update invoices set due_at = now() - interval '1 hour', pix_expires_at = now() - interval '1 minute' where id = ${inv.id}`;
+
+    // replica 1 asks MP; replica 2 reserves and asks too; replica 1 claims while replica 2's
+    // answer is still on its way — the order in which both used to drop each other's Pix
+    const realPix = fake.platformPix.bind(fake);
+    let r2AtMp!: () => void;
+    const atMp = new Promise<void>((r) => (r2AtMp = r));
+    let releaseR2!: () => void;
+    const r1Done = new Promise<void>((r) => (releaseR2 = r));
+    let calls = 0;
+    let r2: Promise<void> | null = null;
+    fake.platformPix = async (req) => {
+      if (req.externalReference !== inv.id) return realPix(req);
+      calls++;
+      if (calls === 1) {
+        r2 = tick();
+        await atMp;
+      } else if (calls === 2) {
+        r2AtMp();
+        await r1Done;
+      }
+      return realPix(req);
+    };
+    try {
+      await tick();
+      releaseR2();
+      await r2;
+    } finally {
+      fake.platformPix = realPix;
+    }
+    expect(calls).toBe(2);
+    expect(due()).toHaveLength(1);
+    const row = (await invoices(s.id))[1]!;
+    expect(row.reminded).toContain('due');
+    expect(row.pix_expires_at.getTime()).toBeGreaterThan(Date.now());
+    expect(fake.payments.get(row.provider_payment_id)!.status).toBe('pending');
+  });
+
   test('PRO+ domain: add → DNS check → dns_ok (team told once) → CRM activates', async () => {
     const s = await paidStore('dom', 'pro_plus');
     const other = await paidStore('dom2', 'pro_plus');
@@ -881,6 +984,62 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('plan billing (db)', () => {
     expect(fake.subscriptions.get(ps.id)!.amountCents).toBe(6000);
     expect((await sub(a.id)).charge_cents).toBe(6000);
     expect((await invoices(b.id))[0]!.amount_cents).toBe(6000);
+  });
+
+  test('a reprice keeps the live Pix until MP hands over the new one', async () => {
+    const planId = `bill_${nonce}_live`;
+    await sql`
+      insert into plans (id, name, price_cents, features, public, sort)
+      values (${planId}, 'Plano vivo', 5000, '{}', false, 99)
+    `;
+    const s = await store('price-live', 'basic', 'bia@example.com');
+    await sql`insert into subscriptions (tenant_id, plan_id, method, status, provider) values (${s.id}, ${planId}, 'pix', 'pending', 'fake')`;
+    const inv = (
+      await sql`
+        insert into invoices (tenant_id, number, plan_id, amount_cents, period_start, period_end, method, provider, due_at)
+        values (${s.id}, 1, ${planId}, 5000, now(), now() + interval '1 month', 'pix', 'fake', now())
+        returning id
+      `
+    )[0]!;
+    const old = await fake.platformPix({
+      amountCents: 5000,
+      description: 'x',
+      payerEmail: 'bia@example.com',
+      externalReference: inv.id,
+      idempotencyKey: `live-${nonce}`,
+      notificationUrl: null,
+      applicationFeeCents: 0,
+      expiresAt: new Date(Date.now() + DAY),
+    });
+    await sql`
+      update invoices set provider_payment_id = ${old.id}, pix_copy_paste = ${old.pix!.copyPaste},
+        pix_expires_at = now() + interval '1 day'
+      where id = ${inv.id}
+    `;
+    await sql`update plans set price_cents = 6000 where id = ${planId}`;
+    const ctx = { sql: appSql, provider: fake, notify, origin: null };
+
+    const realPix = fake.platformPix.bind(fake);
+    fake.platformPix = async () => {
+      throw new ProviderError('unavailable', 'MP fora do ar');
+    };
+    try {
+      await syncPlanPrices(appSql, ctx, new Date());
+    } finally {
+      fake.platformPix = realPix;
+    }
+    let row = (await invoices(s.id))[0]!;
+    expect(row.amount_cents).toBe(5000);
+    expect(row.provider_payment_id).toBe(old.id);
+    expect(fake.payments.get(old.id)!.status).not.toBe('cancelled');
+
+    await syncPlanPrices(appSql, ctx, new Date());
+    row = (await invoices(s.id))[0]!;
+    expect(row.amount_cents).toBe(6000);
+    expect(row.provider_payment_id).not.toBe(old.id);
+    expect(fake.payments.get(row.provider_payment_id)!.amountCents).toBe(6000);
+    expect(row.pix_superseded).toContain(old.id);
+    expect(fake.payments.get(old.id)!.status).toBe('cancelled');
   });
 
   test('webhooks: unknown references and other stores’ ids are ignored', async () => {

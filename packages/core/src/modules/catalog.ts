@@ -332,6 +332,26 @@ export async function getProductById(
   return attachDetail(tx, tenantId, rows, opts);
 }
 
+/** Several products by id, each with its full detail — checkout loads its lines in one pass. */
+export async function getProductsById(
+  tx: Sql,
+  tenantId: string,
+  ids: readonly string[],
+  opts: { forUpdate?: boolean } = {},
+): Promise<Map<string, ProductDetail>> {
+  const unique = [...new Set(ids)];
+  if (unique.length === 0) return new Map();
+  // id order: two locking passes over the same products always take their rows in one order
+  const lock = opts.forUpdate ? tx`for update of p` : tx``;
+  const rows = await tx<ProductRow[]>`
+    select ${productColumns(tx)}
+    from products p
+    where p.tenant_id = ${tenantId} and p.id = any(${unique}::uuid[]) and p.status != 'archived'
+    order by p.id ${lock}
+  `;
+  return attachDetails(tx, tenantId, rows, opts);
+}
+
 async function attachDetail(
   tx: Sql,
   tenantId: string,
@@ -340,11 +360,24 @@ async function attachDetail(
 ): Promise<ProductDetail | null> {
   const product = rows[0];
   if (!product) return null;
+  return (await attachDetails(tx, tenantId, [product], opts)).get(product.id) ?? null;
+}
+
+async function attachDetails(
+  tx: Sql,
+  tenantId: string,
+  rows: ProductRow[],
+  opts: { forUpdate?: boolean; hideScheduled?: boolean } = {},
+): Promise<Map<string, ProductDetail>> {
+  const out = new Map<string, ProductDetail>();
+  if (rows.length === 0) return out;
+  const ids = rows.map((r) => r.id);
   const lock = opts.forUpdate ? tx`for update` : tx``;
   const [groups, modifiers, gallery, tz] = await Promise.all([
     tx<
       {
         id: string;
+        product_id: string;
         name: string;
         required: boolean;
         min_select: number;
@@ -352,8 +385,9 @@ async function attachDetail(
         sort: number;
       }[]
     >`
-      select id, name, required, min_select, max_select, sort from modifier_groups
-      where tenant_id = ${tenantId} and product_id = ${product.id} order by sort, name ${lock}
+      select id, product_id, name, required, min_select, max_select, sort from modifier_groups
+      where tenant_id = ${tenantId} and product_id = any(${ids}::uuid[])
+      order by product_id, sort, name ${lock}
     `,
     tx<
       {
@@ -367,52 +401,70 @@ async function attachDetail(
     >`
       select m.id, m.group_id, m.name, m.price_delta_cents, m.status, m.sort
       from modifiers m join modifier_groups g on g.id = m.group_id
-      where m.tenant_id = ${tenantId} and g.product_id = ${product.id}
-      order by m.sort, m.name ${lock}
+      where m.tenant_id = ${tenantId} and g.product_id = any(${ids}::uuid[])
+      order by g.product_id, m.sort, m.name ${lock}
     `,
-    tx<MediaItem[]>`
-      select url, alt, width, height from product_media
-      where tenant_id = ${tenantId} and product_id = ${product.id} order by sort, id
+    tx<(MediaItem & { product_id: string })[]>`
+      select product_id, url, alt, width, height from product_media
+      where tenant_id = ${tenantId} and product_id = any(${ids}::uuid[])
+      order by product_id, sort, id
     `,
     storeTimezone(tx, tenantId),
   ]);
   // a 'hidden' product still opens from a shared link: it reads sold out with its label
-  const summary = toSummary(product, new Date(), tz);
-  const [waitlistCount, comboSlots] = await Promise.all([
-    summary.status === 'sold_out'
-      ? tx<{ n: number }[]>`
-          select count(*)::int as n from notify_requests
-          where tenant_id = ${tenantId} and subject = 'product' and product_id = ${product.id}
+  const now = new Date();
+  const summaries = new Map(rows.map((r) => [r.id, toSummary(r, now, tz)]));
+  const soldOut = rows.filter((r) => summaries.get(r.id)!.status === 'sold_out').map((r) => r.id);
+  const [waiting, combos] = await Promise.all([
+    soldOut.length
+      ? tx<{ product_id: string; n: number }[]>`
+          select product_id, count(*)::int as n from notify_requests
+          where tenant_id = ${tenantId} and subject = 'product' and product_id = any(${soldOut}::uuid[])
             and notified_at is null
-        `.then((r) => r[0]!.n)
-      : 0,
-    product.kind === 'combo'
-      ? loadComboSlots(tx, tenantId, product.id, {
-          ...(opts.hideScheduled ? { hideScheduled: true } : {}),
-        })
+          group by product_id
+        `
       : [],
+    Promise.all(
+      rows
+        .filter((r) => r.kind === 'combo')
+        .map(async (r) => {
+          const slots = await loadComboSlots(tx, tenantId, r.id, {
+            ...(opts.hideScheduled ? { hideScheduled: true } : {}),
+          });
+          return [r.id, slots] as const;
+        }),
+    ),
   ]);
-  return {
-    ...summary,
-    modifierGroups: groups.map((g) => ({
-      id: g.id,
-      name: g.name,
-      required: g.required,
-      minSelect: g.min_select,
-      maxSelect: g.max_select,
-      modifiers: modifiers
-        .filter((m) => m.group_id === g.id)
-        .map((m) => ({
-          id: m.id,
-          name: m.name,
-          priceDeltaCents: m.price_delta_cents,
-          status: m.status,
+  const waitlist = new Map(waiting.map((w) => [w.product_id, w.n]));
+  const comboSlots = new Map(combos);
+  for (const product of rows) {
+    out.set(product.id, {
+      ...summaries.get(product.id)!,
+      modifierGroups: groups
+        .filter((g) => g.product_id === product.id)
+        .map((g) => ({
+          id: g.id,
+          name: g.name,
+          required: g.required,
+          minSelect: g.min_select,
+          maxSelect: g.max_select,
+          modifiers: modifiers
+            .filter((m) => m.group_id === g.id)
+            .map((m) => ({
+              id: m.id,
+              name: m.name,
+              priceDeltaCents: m.price_delta_cents,
+              status: m.status,
+            })),
         })),
-    })),
-    gallery: [...gallery],
-    comboSlots,
-    waitlistCount,
-  };
+      gallery: gallery
+        .filter((m) => m.product_id === product.id)
+        .map((m) => ({ url: m.url, alt: m.alt, width: m.width, height: m.height })),
+      comboSlots: comboSlots.get(product.id) ?? [],
+      waitlistCount: waitlist.get(product.id) ?? 0,
+    });
+  }
+  return out;
 }
 
 export async function loadComboSlots(

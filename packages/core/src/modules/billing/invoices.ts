@@ -1,7 +1,7 @@
 import type { Sql } from '../../platform/db.ts';
 import { HttpError } from '../../platform/http.ts';
 import { log } from '../../platform/log.ts';
-import { ProviderError, type PaymentProvider } from '../payments/provider.ts';
+import { ProviderError, type PaymentProvider, type ProviderPayment } from '../payments/provider.ts';
 
 export const billingLog = log.child({ mod: 'billing' });
 
@@ -151,9 +151,31 @@ export async function issuePix(
   inv: InvoiceRow,
   o: { payerEmail: string; planName: string; origin: string | null; now: Date; drop?: DropPix },
 ): Promise<InvoiceRow> {
-  const attempt = inv.pix_attempt + 1;
+  return storePix(
+    tx,
+    provider,
+    inv,
+    await requestPix(provider, inv, inv.pix_attempt + 1, o),
+    o.drop,
+  );
+}
+
+export interface PixCharge {
+  payment: ProviderPayment;
+  attempt: number;
+  expiresAt: Date;
+}
+
+/** The provider half of issuePix: no row is touched. The attempt keys the request — asking
+ *  again with the same attempt gets the same Pix back. */
+export async function requestPix(
+  provider: PaymentProvider,
+  inv: InvoiceRow,
+  attempt: number,
+  o: { payerEmail: string; planName: string; origin: string | null; now: Date },
+): Promise<PixCharge> {
   const expiresAt = new Date(o.now.getTime() + PIX_TTL_MS);
-  const p = await provider.platformPix({
+  const payment = await provider.platformPix({
     amountCents: inv.amount_cents,
     description: `${o.planName} — fatura ${inv.number}`,
     payerEmail: o.payerEmail,
@@ -164,16 +186,28 @@ export async function issuePix(
     applicationFeeCents: 0,
     expiresAt,
   });
+  return { payment, attempt, expiresAt };
+}
+
+/** Records a Pix from requestPix on its invoice; the one it replaces joins pix_superseded. */
+export async function storePix(
+  tx: Sql,
+  provider: PaymentProvider,
+  inv: InvoiceRow,
+  c: PixCharge,
+  drop?: DropPix,
+): Promise<InvoiceRow> {
+  const p = c.payment;
   if (inv.method === 'pix' && inv.provider_payment_id && inv.provider_payment_id !== p.id)
-    o.drop?.(inv.provider_payment_id);
+    drop?.(inv.provider_payment_id);
   return (
     await tx<InvoiceRow[]>`
       update invoices set
         ${p.id === inv.provider_payment_id ? tx`pix_superseded = pix_superseded` : supersedePix(tx)},
         provider = ${provider.name}, provider_payment_id = ${p.id},
         pix_copy_paste = ${p.pix?.copyPaste ?? null},
-        pix_expires_at = ${p.pix?.expiresAt ? new Date(p.pix.expiresAt) : expiresAt},
-        pix_attempt = ${attempt}
+        pix_expires_at = ${p.pix?.expiresAt ? new Date(p.pix.expiresAt) : c.expiresAt},
+        pix_attempt = ${c.attempt}
       where id = ${inv.id}
       returning *
     `
