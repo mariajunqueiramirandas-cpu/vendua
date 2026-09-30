@@ -331,7 +331,8 @@ jobs:
       - name: Playwright browser
         if: steps.scope.outputs.run == 'true'
         run: |
-          for i in $(seq 1 300); do [ -f /tmp/pw.exit ] && break; sleep 1; done
+          # the --with-deps apt download from the runner's mirror has taken over 5 minutes
+          for i in $(seq 1 900); do [ -f /tmp/pw.exit ] && break; sleep 1; done
           cat /tmp/pw.log
           [ "$(cat /tmp/pw.exit 2>/dev/null)" = 0 ]
       - name: Screenshots + overflow + axe
