@@ -49,7 +49,7 @@ export function ComboPicker({
                 const soldOut = item.status !== 'active';
                 const cap = Math.min(
                   slot.qtyPerItem,
-                  item.stockQuantity ?? Number.POSITIVE_INFINITY,
+                  item.stockLeft ?? item.stockQuantity ?? Number.POSITIVE_INFINITY,
                 );
                 return (
                   <li
@@ -72,6 +72,11 @@ export function ComboPicker({
                         <span className="v-muted" data-part="availability">
                           {' · '}
                           {item.availabilityLabel ?? 'esgotado'}
+                        </span>
+                      ) : item.stockLeft === 0 && q === 0 ? (
+                        // the Kernel's stock left after the sacola: none for this kit
+                        <span className="v-muted" data-part="availability">
+                          {' · sem mais unidades'}
                         </span>
                       ) : null}
                     </span>

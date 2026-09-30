@@ -1,6 +1,6 @@
 import { Check, Plus } from 'lucide-react';
 import { useEffect, useState, type CSSProperties } from 'react';
-import { AddToCart, ProductLink, type CatalogProduct } from '@vendua/kernel';
+import { AddToCart, ProductLink, useStockLeft, type CatalogProduct } from '@vendua/kernel';
 import { ProductFigure } from './ProductFigure.tsx';
 import { flavorOf, KIT_FLAVOR } from './flavor.ts';
 import { formatBRL } from './format.ts';
@@ -32,7 +32,7 @@ export function ProductCard({
   feature,
 }: ProductCardProps) {
   const soldOut = p.status === 'sold_out';
-  const stock = p.stockQuantity;
+  const stock = useStockLeft(p);
   const low = !soldOut && typeof stock === 'number' && stock > 0 && stock <= lowStockThreshold;
   const flavor = p.kind === 'combo' ? KIT_FLAVOR : flavorOf(p.name);
   const [imgFailed, setImgFailed] = useState(false);
@@ -42,8 +42,11 @@ export function ProductCard({
     const t = setTimeout(() => setAdded(false), 1600);
     return () => clearTimeout(t);
   }, [added]);
-  const quick = !soldOut && p.needsChoices === false && p.kind !== 'combo' && !p.requiresPreorder;
-  const tag = p.requiresPreorder ? 'Sob encomenda' : null;
+  // every unit left is already in the sacola: no quick add
+  const allInBag = !soldOut && stock === 0;
+  const quick =
+    !soldOut && !allInBag && p.needsChoices === false && p.kind !== 'combo' && !p.requiresPreorder;
+  const tag = allInBag ? 'Tudo na sacola' : p.requiresPreorder ? 'Sob encomenda' : null;
 
   return (
     <li

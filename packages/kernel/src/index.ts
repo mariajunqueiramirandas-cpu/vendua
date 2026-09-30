@@ -49,6 +49,7 @@ export {
   useLoyalty,
   useCep,
   useWaitlist,
+  useStockLeft,
 } from './hooks.ts';
 export type { CartMutations, CustomerProfile, QueryError } from './hooks.ts';
 export { useErrorSurface } from './errors.ts';

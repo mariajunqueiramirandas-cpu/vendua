@@ -145,6 +145,8 @@ export interface SlotProps {
     item: CartItem;
     currency: string;
     pending: boolean;
+    /** Kernel 1.9 — the most this line can hold: stock left after the cart's other lines */
+    max?: number;
     onQty: (qty: number) => void;
     onRemove: () => void;
   };
@@ -166,6 +168,9 @@ export interface SlotProps {
     /** Kernel 1.5 — wraps children in the Kernel's add-to-cart button (qty 1). Absent when
      *  the product can't be added from the grid (sold out, combo, options, encomenda). */
     quickAdd?: (children: ReactNode) => ReactNode;
+    /** Kernel 1.9 — tracked stock minus what the cart holds (absent = not tracked);
+     *  `product.stockQuantity` stays Core's number */
+    stockLeft?: number;
   };
   'catalog.ComboPicker': {
     slots: ComboSlot[];

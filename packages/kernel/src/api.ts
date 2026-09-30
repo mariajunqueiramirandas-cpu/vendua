@@ -106,6 +106,9 @@ export interface ComboSlot {
     imageUrl: string | null;
     /** Kernel 1.7 — why a scheduled pick is unavailable now ("Só sábados, 9h–13h") */
     availabilityLabel?: string | null;
+    /** Kernel 1.9 — set by the Kernel for `catalog.ComboPicker`: how many one kit can still
+     *  take at the chosen qty, after the cart (absent = stock not tracked) */
+    stockLeft?: number;
   }[];
 }
 
@@ -200,6 +203,8 @@ export interface CartItem {
     qty: number;
     priceDeltaCents: number;
     status: string;
+    /** Kernel 1.9 — the picked item's tracked stock (null = not tracked) */
+    stockQuantity?: number | null;
   }[];
   comboSelections?: ComboSelection[];
   imageUrl?: string | null;

@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore
 import { useKernel, useQuery, invalidateQuery } from './provider.tsx';
 import type {
   Cart,
+  CartItem,
   CatalogCategory,
   CepResult,
   CheckoutInput,
@@ -201,6 +202,85 @@ export function useCart(): {
     mutations,
     refetch: q.refetch,
   };
+}
+
+/** Units of a product the cart already holds: direct lines plus kit picks × kit qty,
+ *  counted the way Core's stock check (`stockDemand`) counts them. */
+export function cartDemand(cart: Cart | null, productId: string, excludeItemId?: string): number {
+  if (!cart || cart.status !== 'open') return 0;
+  let n = 0;
+  for (const line of cart.items) {
+    if (line.id === excludeItemId) continue;
+    if (line.productId === productId) n += line.qty;
+    for (const pick of line.comboSelections ?? line.combo ?? [])
+      if (pick.productId === productId) n += pick.qty * line.qty;
+  }
+  return n;
+}
+
+/** What one unit of a product (or kit) draws: productId → units, with its tracked stock. */
+export type StockDraw = { productId: string; perUnit: number; stock: number | null | undefined }[];
+
+/** Draw of one unit of `product` with `picks`; pick stock comes from the product's combo slots. */
+export function productDraw(
+  product: {
+    id: string;
+    stockQuantity?: number | null;
+    comboSlots?: { items: { productId: string; stockQuantity: number | null }[] }[];
+  },
+  picks: readonly { productId: string; qty: number }[] = [],
+): StockDraw {
+  const stock = new Map(
+    (product.comboSlots ?? []).flatMap((s) => s.items.map((i) => [i.productId, i.stockQuantity])),
+  );
+  return [
+    { productId: product.id, perUnit: 1, stock: product.stockQuantity },
+    ...picks.map((p) => ({
+      productId: p.productId,
+      perUnit: p.qty,
+      stock: stock.get(p.productId),
+    })),
+  ];
+}
+
+/** Draw of one unit of a cart line (its kit picks carry their stock since Core 1.9). */
+export function lineDraw(item: CartItem): StockDraw {
+  const stock = new Map((item.combo ?? []).map((c) => [c.productId, c.stockQuantity]));
+  return [
+    { productId: item.productId, perUnit: 1, stock: item.stockQuantity },
+    ...(item.comboSelections ?? item.combo ?? []).map((p) => ({
+      productId: p.productId,
+      perUnit: p.qty,
+      stock: stock.get(p.productId),
+    })),
+  ];
+}
+
+/** How many units of `draw` still fit next to the cart; Infinity when no stock is tracked. */
+export function unitsLeft(cart: Cart | null, draw: StockDraw, excludeItemId?: string): number {
+  const need = new Map<string, { perUnit: number; stock: number }>();
+  for (const d of draw) {
+    if (typeof d.stock !== 'number' || d.perUnit <= 0) continue;
+    const prev = need.get(d.productId);
+    need.set(d.productId, { perUnit: (prev?.perUnit ?? 0) + d.perUnit, stock: d.stock });
+  }
+  let max = Number.POSITIVE_INFINITY;
+  for (const [id, { perUnit, stock }] of need) {
+    const left = Math.max(0, stock - cartDemand(cart, id, excludeItemId));
+    max = Math.min(max, Math.floor(left / perUnit));
+  }
+  return max;
+}
+
+/** Kernel 1.9 — units of a product the shopper can still add (its stock minus what the
+ *  cart holds, kit picks included); null = stock not tracked. */
+export function useStockLeft(
+  product: { id: string; stockQuantity?: number | null } | null | undefined,
+): number | null {
+  const { cart } = useCart();
+  const stock = product?.stockQuantity;
+  if (!product || typeof stock !== 'number') return null;
+  return Math.max(0, stock - cartDemand(cart, product.id));
 }
 
 const TERMINAL_ORDER = new Set(['delivered', 'cancelled', 'refunded']);

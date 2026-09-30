@@ -64,6 +64,8 @@ export interface ComboLine {
   priceDeltaCents: number;
   /** live availability of the picked item */
   status: string;
+  /** the picked item's tracked stock (null = not tracked) — storefronts cap the kit's qty */
+  stockQuantity: number | null;
 }
 
 export interface PricedItem {
@@ -305,6 +307,7 @@ async function priceItems(
     const s = liveStatus(i.product_status, i.stock_quantity);
     return s === 'active' && !scheduleOpen(i.availability_schedule, now, tz) ? 'sold_out' : s;
   };
+  const pickStock = new Map(picks.map((p) => [p.id, p.stock_quantity]));
   const livePick = new Map(
     picks.map((p) => {
       const st = liveStatus(p.status, p.stock_quantity);
@@ -332,6 +335,7 @@ async function priceItems(
     combo: item.combo_snapshot.map((c) => ({
       ...c,
       status: livePick.get(c.productId) ?? 'archived',
+      stockQuantity: pickStock.get(c.productId) ?? null,
     })),
     comboSelections: item.combo_selections,
     lineTotalCents: item.unit_price_cents * item.qty,

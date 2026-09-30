@@ -115,6 +115,7 @@ export function CartLineItem({
   item,
   currency,
   pending,
+  max,
   onQty,
   onRemove,
 }: SlotProps['cart.LineItem']) {
@@ -166,7 +167,7 @@ export function CartLineItem({
         <div className="v-line-actions" data-part="actions">
           <QtyControl
             qty={item.qty}
-            max={Math.max(item.qty, Math.min(99, item.stockQuantity ?? 99))}
+            max={max ?? Math.max(item.qty, Math.min(99, item.stockQuantity ?? 99))}
             pending={pending}
             onChange={onQty}
             label={`quantidade de ${item.name}`}
@@ -401,17 +402,20 @@ export function ProductCard({
   currency,
   link,
   quickAdd,
+  stockLeft,
 }: SlotProps['catalog.ProductCard']) {
   const soldOut = product.status !== 'active';
   const [imgFailed, setImgFailed] = useState(false);
-  const left = product.stockQuantity;
+  const left = stockLeft ?? product.stockQuantity;
   const badge = soldOut
     ? null
     : product.requiresPreorder
       ? { tone: 'surface', text: 'Encomenda' }
-      : product.lowStock && typeof left === 'number' && left > 0
-        ? { tone: 'danger', text: left === 1 ? 'Última unidade' : `Últimas ${left}` }
-        : null;
+      : left === 0
+        ? { tone: 'surface', text: 'Tudo na sacola' }
+        : product.lowStock && typeof left === 'number' && left > 0
+          ? { tone: 'danger', text: left === 1 ? 'Última unidade' : `Últimas ${left}` }
+          : null;
   return (
     <article className="v-card" data-part="root" data-status={product.status}>
       {link(

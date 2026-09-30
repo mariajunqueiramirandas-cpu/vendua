@@ -288,6 +288,11 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('commerce completeness (db)', ()
     expect(kit.status).toBe(200);
     // 5000 + 2×200 (coco delta)
     expect(kit.body.cart.items[0].unitPriceCents).toBe(5400);
+    // each pick carries its stock so the storefront can cap the kit's qty
+    expect(kit.body.cart.items[0].combo.find((c: any) => c.productId === ids.pudim)).toMatchObject({
+      qty: 2,
+      stockQuantity: 5,
+    });
     // the kit drew 2 pudins from stock-to-be: 4 more pudins would exceed 5
     const capped = await call(
       'POST',

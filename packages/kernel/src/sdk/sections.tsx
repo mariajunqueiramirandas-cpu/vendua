@@ -1,7 +1,15 @@
 import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import { matchPath, Outlet, useLocation } from 'react-router-dom';
 import { dayLabel, mediaSrcSet, money } from '@vendua/ui-defaults';
-import { useCart, useCatalog, useProduct, useStore } from '../hooks.ts';
+import {
+  cartDemand,
+  productDraw,
+  unitsLeft,
+  useCart,
+  useCatalog,
+  useProduct,
+  useStore,
+} from '../hooks.ts';
 import {
   AddToCart,
   CartTrigger,
@@ -261,6 +269,13 @@ export function PurchasePanel({ settings }: SectionProps<typeof S.purchasePanel>
   const currency = store?.currency ?? 'BRL';
   const catalogHref = resolvePaths(config).catalog;
   const customMedia = useAreaHas('media', 'media');
+  const { cart } = useCart();
+  // units (kits) that still fit next to the cart, counting the kit's picks
+  const left = product ? unitsLeft(cart, productDraw(product, combo)) : Number.POSITIVE_INFINITY;
+  const maxQty = Math.max(1, Math.min(99, left));
+
+  // the cart took stock since the stepper was set: never offer more than is left
+  useEffect(() => setQty((q) => Math.min(q, maxQty)), [maxQty]);
 
   useEffect(() => {
     if (product && store && !settings.product) document.title = `${product.name} · ${store.name}`;
@@ -274,6 +289,23 @@ export function PurchasePanel({ settings }: SectionProps<typeof S.purchasePanel>
     missing.map((g) => [g.id, cartError ? 'Escolha uma opção' : '']).filter(([, v]) => v),
   );
   const slots = useMemo(() => product?.comboSlots ?? [], [product]);
+  // the picker's per-item stock: what one kit can still take at this qty, after the cart
+  // and the same item picked in the kit's other slots
+  const pickerSlots = useMemo(
+    () =>
+      slots.map((sl) => ({
+        ...sl,
+        items: sl.items.map((i) => {
+          if (typeof i.stockQuantity !== 'number') return i;
+          const elsewhere = combo
+            .filter((c) => c.slotId !== sl.id && c.productId === i.productId)
+            .reduce((n, c) => n + c.qty, 0);
+          const free = Math.max(0, i.stockQuantity - cartDemand(cart, i.productId));
+          return { ...i, stockLeft: Math.max(0, Math.floor(free / qty) - elsewhere) };
+        }),
+      })),
+    [slots, combo, cart, qty],
+  );
   const comboMissing = slots
     .map((sl) => ({
       slot: sl,
@@ -325,7 +357,6 @@ export function PurchasePanel({ settings }: SectionProps<typeof S.purchasePanel>
 
   const soldOut = product.status !== 'active';
   const Title = settings.product ? 'h2' : 'h1';
-  const maxQty = Math.max(1, Math.min(99, product.stockQuantity ?? 99));
   return (
     <section className="v-section" data-part="root">
       {!settings.product ? (
@@ -403,7 +434,7 @@ export function PurchasePanel({ settings }: SectionProps<typeof S.purchasePanel>
           {slots.length > 0 ? (
             <Slot
               name="catalog.ComboPicker"
-              slots={slots}
+              slots={pickerSlots}
               value={combo}
               currency={currency}
               errors={comboErrors}
@@ -493,6 +524,11 @@ export function PurchasePanel({ settings }: SectionProps<typeof S.purchasePanel>
               .
             </p>
           ) : null}
+          {left === 0 && !soldOut ? (
+            <p className="v-note" role="status" data-part="stock-limit">
+              Você já tem na sacola todas as unidades disponíveis.
+            </p>
+          ) : null}
           {added && settings.afterAdd === 'stay' ? (
             <p className="v-note" role="status">
               Adicionado à sacola.
@@ -533,6 +569,7 @@ function ProductGrid({
   currency: string;
 }) {
   const { config } = useKernel();
+  const { cart } = useCart();
   return (
     <ol className="v-grid" data-variant={variant} data-part="grid">
       {products.map((p) => (
@@ -540,6 +577,9 @@ function ProductGrid({
           <Slot
             name="catalog.ProductCard"
             product={p}
+            {...(typeof p.stockQuantity === 'number'
+              ? { stockLeft: Math.max(0, p.stockQuantity - cartDemand(cart, p.id)) }
+              : {})}
             currency={currency}
             href={productHref(config, p.slug)}
             link={(children) => (
