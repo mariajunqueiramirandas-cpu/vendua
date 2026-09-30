@@ -3,6 +3,8 @@ import { createRoot } from 'react-dom/client';
 import { BrowserRouter } from 'react-router-dom';
 import { StorefrontRoutes, SystemSurfaces, VenduaProvider } from '@vendua/kernel';
 import storefront from 'virtual:vendua/storefront';
+import '@fontsource-variable/figtree/wght.css';
+import '@fontsource-variable/space-grotesk/wght.css';
 import '@vendua/kernel/styles.css';
 import './styles/global.css';
 import config from './vendua.config.ts';

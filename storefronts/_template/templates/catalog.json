@@ -1,15 +1,5 @@
 {
   "version": 1,
   "page": "catalog",
-  "sections": [
-    {
-      "id": "catalog",
-      "type": "sdk:catalog-grid",
-      "settings": {
-        "title": "Cardápio",
-        "intro": "Tudo o que sai da nossa cozinha hoje.",
-        "showSearch": true
-      }
-    }
-  ]
+  "sections": [{ "id": "menu", "type": "store:menu", "settings": { "title": "Cardápio" } }]
 }

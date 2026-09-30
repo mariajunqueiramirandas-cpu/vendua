@@ -2,22 +2,43 @@
   "version": 1,
   "page": "layout",
   "sections": [
-    { "id": "announcement", "type": "sdk:announcement-bar", "settings": { "text": "" } },
+    {
+      "id": "announcement",
+      "type": "sdk:announcement-bar",
+      "settings": {
+        "text": ""
+      }
+    },
     {
       "id": "header",
       "type": "sdk:header",
       "settings": {
         "links": [
-          { "label": "Cardápio", "href": "/cardapio" },
-          { "label": "Meus pedidos", "href": "/pedidos" }
+          {
+            "label": "Pedidos",
+            "href": "/pedidos"
+          }
         ]
       }
     },
-    { "id": "content", "type": "sdk:page-content" },
+    {
+      "id": "content",
+      "type": "sdk:page-content"
+    },
+    {
+      "id": "bag",
+      "type": "sdk:bag-bar",
+      "settings": {
+        "label": "Ver sacola"
+      }
+    },
     {
       "id": "footer",
       "type": "sdk:footer",
-      "settings": { "note": "Pedidos para retirada ou entrega." }
+      "settings": {
+        "note": "Peça pelo cardápio, retire na loja ou receba em casa.",
+        "showHours": false
+      }
     }
   ]
 }

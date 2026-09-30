@@ -220,14 +220,13 @@ describe('runStatic', () => {
   }, 180_000);
 
   test('K13: tokens failing AA are caught before any build', async () => {
-    const r = await byId(
-      fixture({
-        'vendua.config.ts': BASE['vendua.config.ts']!.replace(
-          "muted: '#6E6A64'",
-          "muted: '#C8C4BE'",
-        ),
-      }),
+    // whatever muted the template ships, swap in one too pale for its bg
+    const failing = BASE['vendua.config.ts']!.replace(
+      /muted: '#[0-9A-Fa-f]{6}'/,
+      "muted: '#C8C4BE'",
     );
+    expect(failing).not.toBe(BASE['vendua.config.ts']);
+    const r = await byId(fixture({ 'vendua.config.ts': failing }));
     expect(r.K13?.status).toBe('fail');
     expect(r.K13?.detail).toContain('color.muted on color.bg');
   }, 180_000);
