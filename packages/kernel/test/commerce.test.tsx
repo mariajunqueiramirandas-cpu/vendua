@@ -385,3 +385,66 @@ describe('checkout carries the phone’s customer token', () => {
     expect(sent['/checkout/v1/checkout']).toBe('tok-ana');
   });
 });
+
+describe('stock already in the cart', () => {
+  const STOCKED = { ...DETAIL, modifierGroups: [], stockQuantity: 3 };
+  const cartWith = (qty: number) => ({
+    id: 'cart',
+    status: 'open',
+    items: [
+      {
+        id: 'line1',
+        productId: DETAIL.id,
+        slug: 'pudim',
+        name: 'Pudim',
+        qty,
+        unitPriceCents: 1800,
+        productStatus: 'active',
+        modifiers: [],
+        lineTotalCents: 1800 * qty,
+        stockQuantity: 3,
+      },
+    ],
+    totals: {
+      subtotalCents: 1800 * qty,
+      deliveryFeeCents: 0,
+      totalCents: 1800 * qty,
+      itemCount: qty,
+      minOrderCents: 0,
+      remainingMinOrderCents: 0,
+      belowMinOrder: false,
+    },
+    delivery: null,
+  });
+
+  const route = (inCart: number) =>
+    core((url) => {
+      if (url.pathname === '/storefront/v1/products/pudim') return json(200, { product: STOCKED });
+      if (url.pathname === '/checkout/v1/cart') return json(200, { cart: cartWith(inCart) });
+      return null;
+    });
+
+  test('the product page offers only what the cart has not taken', async () => {
+    route(2);
+    m = await mount({ path: '/produto/pudim', session: 'tok' });
+    await flush();
+    const add = $('[data-vendua="add-to-cart"]') as HTMLButtonElement;
+    expect(add.disabled).toBe(false);
+    expect(add.getAttribute('data-state')).toBe('idle');
+    expect(($('[aria-label="Aumentar quantidade"]') as HTMLButtonElement).disabled).toBe(true);
+    expect($('[data-part="stock-limit"]')).toBeNull();
+  });
+
+  test('with all the stock in the cart the add locks and never calls Core', async () => {
+    const c = route(3);
+    m = await mount({ path: '/produto/pudim', session: 'tok' });
+    await flush();
+    const add = $('[data-vendua="add-to-cart"]') as HTMLButtonElement;
+    expect(add.disabled).toBe(true);
+    expect(add.getAttribute('data-state')).toBe('limit');
+    expect($('[data-part="stock-limit"]')).not.toBeNull();
+    await act(async () => add.click());
+    await flush();
+    expect(c.calls.some((x) => x.path === '/checkout/v1/cart/items')).toBe(false);
+  });
+});

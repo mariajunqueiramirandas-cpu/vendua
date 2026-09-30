@@ -78,16 +78,16 @@ themselves when Core's live stream says they changed (no API change).
 
 ## Primitives
 
-| Primitive          | Stamps                          | Behaviour owned by the Kernel                                                       |
-| ------------------ | ------------------------------- | ----------------------------------------------------------------------------------- |
-| `ProductLink`      | `data-vendua="product-link"`    | route resolution (`paths.product`), prefetch                                        |
-| `AddToCart`        | `data-vendua="add-to-cart"`     | disabled on paused/sold-out, mutation, `add_to_cart` event; `comboSelections` (1.2) |
-| `QuantityStepper`  | `data-vendua="qty-stepper"`     | min/max, mutation                                                                   |
-| `CartTrigger`      | `data-vendua="cart-trigger"`    | badge count, opens `/sacola`, `cart_open` event                                     |
-| `CheckoutButton`   | `data-vendua="checkout-button"` | starts the session, disabled states, `checkout_start`                               |
-| `StoreStatusBadge` | `data-vendua="store-status"`    | live open/closed/paused                                                             |
-| `NotifyMeButton`   | `data-vendua="notify-me"`       | "avise-me" subscription, `notify_me` event                                          |
-| `Img`              | —                               | CDN srcset (`images.cdn`; Core media `?w=` since 1.7), lazy/priority, blur-up       |
+| Primitive          | Stamps                          | Behaviour owned by the Kernel                                                                                                                                                                            |
+| ------------------ | ------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `ProductLink`      | `data-vendua="product-link"`    | route resolution (`paths.product`), prefetch                                                                                                                                                             |
+| `AddToCart`        | `data-vendua="add-to-cart"`     | disabled on paused/sold-out, mutation, `add_to_cart` event; `comboSelections` (1.2); disabled with `data-state="limit"` when `qty` exceeds the product's `stockQuantity` minus what the cart holds (1.9) |
+| `QuantityStepper`  | `data-vendua="qty-stepper"`     | min/max, mutation                                                                                                                                                                                        |
+| `CartTrigger`      | `data-vendua="cart-trigger"`    | badge count, opens `/sacola`, `cart_open` event                                                                                                                                                          |
+| `CheckoutButton`   | `data-vendua="checkout-button"` | starts the session, disabled states, `checkout_start`                                                                                                                                                    |
+| `StoreStatusBadge` | `data-vendua="store-status"`    | live open/closed/paused                                                                                                                                                                                  |
+| `NotifyMeButton`   | `data-vendua="notify-me"`       | "avise-me" subscription, `notify_me` event                                                                                                                                                               |
+| `Img`              | —                               | CDN srcset (`images.cdn`; Core media `?w=` since 1.7), lazy/priority, blur-up                                                                                                                            |
 
 Every primitive accepts `asChild`. A primitive with no `onError` hands typed errors to
 the default error surface.

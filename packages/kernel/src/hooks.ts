@@ -203,6 +203,30 @@ export function useCart(): {
   };
 }
 
+/** Units of a product the cart already holds: direct lines plus kit picks × kit qty,
+ *  counted the way Core's stock check (`stockDemand`) counts them. */
+export function cartDemand(cart: Cart | null, productId: string, excludeItemId?: string): number {
+  if (!cart || cart.status !== 'open') return 0;
+  let n = 0;
+  for (const line of cart.items) {
+    if (line.id === excludeItemId) continue;
+    if (line.productId === productId) n += line.qty;
+    for (const pick of line.comboSelections ?? line.combo ?? [])
+      if (pick.productId === productId) n += pick.qty * line.qty;
+  }
+  return n;
+}
+
+/** Units the shopper can still add (stock minus what's in the cart); null = stock not tracked. */
+export function useStockLeft(
+  product: { id: string; stockQuantity?: number | null } | null | undefined,
+): number | null {
+  const { cart } = useCart();
+  const stock = product?.stockQuantity;
+  if (!product || typeof stock !== 'number') return null;
+  return Math.max(0, stock - cartDemand(cart, product.id));
+}
+
 const TERMINAL_ORDER = new Set(['delivered', 'cancelled', 'refunded']);
 const FIRST_WAIT_DELAY_MS = 1500;
 

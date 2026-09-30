@@ -3,6 +3,17 @@
 Semver, per docs/architecture/11-backward-compatibility.md: minors and patches
 never need a storefront edit; a major only ships with a Contract major.
 
+## 1.9.0
+
+Stock the cart already holds — additive; no storefront edit, no new runtime export.
+
+- `AddToCart` counts the product's units already in the cart (direct lines and kit picks, as
+  Core's stock check does) against its `stockQuantity`: when `qty` is more than what's left it
+  is disabled with `data-state="limit"` instead of getting `OUT_OF_STOCK` from Core. The prop
+  type now accepts `stockQuantity`, so passing a catalog product is enough.
+- The product page's quantity stepper stops at what's left and says when the cart already has
+  every unit; the cart page clamps a line's quantity to the stock its other lines leave.
+
 ## 1.8.0
 
 Security hardening — additive; no storefront edit, no new runtime export.

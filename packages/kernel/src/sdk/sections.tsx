@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import { matchPath, Outlet, useLocation } from 'react-router-dom';
 import { dayLabel, mediaSrcSet, money } from '@vendua/ui-defaults';
-import { useCart, useCatalog, useProduct, useStore } from '../hooks.ts';
+import { useCart, useCatalog, useProduct, useStockLeft, useStore } from '../hooks.ts';
 import {
   AddToCart,
   CartTrigger,
@@ -261,6 +261,11 @@ export function PurchasePanel({ settings }: SectionProps<typeof S.purchasePanel>
   const currency = store?.currency ?? 'BRL';
   const catalogHref = resolvePaths(config).catalog;
   const customMedia = useAreaHas('media', 'media');
+  const left = useStockLeft(product);
+  const maxQty = Math.max(1, Math.min(99, left ?? 99));
+
+  // the cart took stock since the stepper was set: never offer more than is left
+  useEffect(() => setQty((q) => Math.min(q, maxQty)), [maxQty]);
 
   useEffect(() => {
     if (product && store && !settings.product) document.title = `${product.name} · ${store.name}`;
@@ -325,7 +330,6 @@ export function PurchasePanel({ settings }: SectionProps<typeof S.purchasePanel>
 
   const soldOut = product.status !== 'active';
   const Title = settings.product ? 'h2' : 'h1';
-  const maxQty = Math.max(1, Math.min(99, product.stockQuantity ?? 99));
   return (
     <section className="v-section" data-part="root">
       {!settings.product ? (
@@ -491,6 +495,11 @@ export function PurchasePanel({ settings }: SectionProps<typeof S.purchasePanel>
                 ...comboMissing.map((m) => `${m.left} em ${m.slot.name}`),
               ].join(', ')}
               .
+            </p>
+          ) : null}
+          {left === 0 && !soldOut ? (
+            <p className="v-note" role="status" data-part="stock-limit">
+              Você já tem na sacola todas as unidades disponíveis.
             </p>
           ) : null}
           {added && settings.afterAdd === 'stay' ? (

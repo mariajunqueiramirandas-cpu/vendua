@@ -10,7 +10,7 @@ import {
 } from 'react';
 import { UNSAFE_NavigationContext } from 'react-router-dom';
 import { mediaSrcSet } from '@vendua/ui-defaults';
-import { useCart, useStore } from './hooks.ts';
+import { useCart, useStockLeft, useStore } from './hooks.ts';
 import { useKernel, prefetchQuery } from './provider.tsx';
 import { productHref, KERNEL_PATHS } from './config.ts';
 import { showError } from './errors.ts';
@@ -111,7 +111,8 @@ export function ProductLink({
 }
 
 export interface AddToCartProps {
-  product: Pick<CatalogProduct, 'id' | 'status'> & Partial<Pick<CatalogProduct, 'basePriceCents'>>;
+  product: Pick<CatalogProduct, 'id' | 'status'> &
+    Partial<Pick<CatalogProduct, 'basePriceCents' | 'stockQuantity'>>;
   qty?: number;
   modifierIds?: string[];
   /** Kernel 1.2 — kit picks for a `kind: 'combo'` product */
@@ -136,8 +137,11 @@ export function AddToCart({
   const { status } = useStore();
   const { mutations } = useCart();
   const [pending, setPending] = useState(false);
+  const left = useStockLeft(product);
   const soldOut = product.status !== 'active';
-  const disabled = pending || soldOut || status === 'paused';
+  // the cart already holds what's left: Core would answer OUT_OF_STOCK
+  const atLimit = !soldOut && left !== null && qty > left;
+  const disabled = pending || soldOut || atLimit || status === 'paused';
 
   const onClick = async () => {
     if (disabled) return;
@@ -163,7 +167,7 @@ export function AddToCart({
     asChild,
     {
       'data-vendua': 'add-to-cart',
-      'data-state': soldOut ? 'sold-out' : pending ? 'pending' : 'idle',
+      'data-state': soldOut ? 'sold-out' : atLimit ? 'limit' : pending ? 'pending' : 'idle',
       disabled,
       'aria-disabled': disabled,
       'aria-busy': pending || undefined,
