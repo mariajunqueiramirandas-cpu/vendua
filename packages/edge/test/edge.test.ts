@@ -2,6 +2,7 @@ import { afterEach, describe, expect, test } from 'bun:test';
 import { writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { artifactPath } from '../src/storefront.ts';
+import { peerAddress } from '../src/proxy.ts';
 import { harness, injected, publish, releaseRoute, SECRET, type Harness } from './helpers.ts';
 
 let h: Harness;
@@ -298,6 +299,14 @@ describe('API proxy', () => {
     const r2 = await h.get('/checkout/v1/echo', 'loja.test', { method: 'PUT', body: 'x' });
     expect(await r2.json()).toMatchObject({ method: 'PUT', xff: '127.0.0.1', xfp: 'http' });
     expect(h.core.calls.resolve).toEqual([]); // the API never resolves the host
+  });
+
+  test('an IPv4 peer on a dual-stack socket is appended as plain IPv4, like nginx', () => {
+    expect(peerAddress('::ffff:127.0.0.1')).toBe('127.0.0.1');
+    expect(peerAddress('::FFFF:10.0.0.7')).toBe('10.0.0.7');
+    expect(peerAddress('::1')).toBe('::1');
+    expect(peerAddress('2001:db8::1')).toBe('2001:db8::1');
+    expect(peerAddress(undefined)).toBeUndefined();
   });
 
   test('drops hop-by-hop headers, including those named by Connection', async () => {

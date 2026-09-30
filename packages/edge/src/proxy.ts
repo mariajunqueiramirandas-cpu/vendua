@@ -28,6 +28,12 @@ function stripHop(src: Headers, extra: string[] = []): Headers {
   return out;
 }
 
+/** The socket peer as nginx's $remote_addr writes it: a dual-stack listener reports an IPv4
+ *  client as `::ffff:a.b.c.d`, which would otherwise end up in X-Forwarded-For. */
+export function peerAddress(address: string | undefined): string | undefined {
+  return address?.replace(/^::ffff:(\d{1,3}(?:\.\d{1,3}){3})$/i, '$1');
+}
+
 export interface Lkg {
   body: Uint8Array;
   type: string;
@@ -114,7 +120,7 @@ export function createProxy(o: ProxyOptions) {
     host: string,
     server?: Server<unknown>,
   ): Promise<Response> {
-    const ip = server?.requestIP(req)?.address;
+    const ip = peerAddress(server?.requestIP(req)?.address);
     const headers = forwardHeaders(req, host, ip);
     const key = req.method === 'GET' ? lkgKey(host, url) : null;
     if (key) return lkgFetch(req, url, key, headers);
