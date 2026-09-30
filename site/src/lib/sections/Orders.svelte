@@ -39,6 +39,7 @@
 <Section
   id="pedidos"
   tone="day"
+  bleed
   sky="linear-gradient(180deg, var(--sky-2), var(--sky-3))"
   labelledby="pedidos-t"
 >

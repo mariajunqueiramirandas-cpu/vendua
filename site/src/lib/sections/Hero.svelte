@@ -18,6 +18,7 @@
 
 <Section
   id="inicio"
+  bleed
   tone="day"
   overlay
   sky="linear-gradient(180deg, var(--sky-0), var(--sky-1))"
