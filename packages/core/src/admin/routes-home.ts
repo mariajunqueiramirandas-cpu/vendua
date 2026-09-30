@@ -1,4 +1,5 @@
-import { roleAtLeast, type AdminDeps } from './context.ts';
+import type { Sql } from '../platform/db.ts';
+import { roleAtLeast, type AdminDeps, type Role } from './context.ts';
 import { handlers } from './handlers.ts';
 import { storeTz } from './routes-orders.ts';
 import { loadSettings, statusOf } from './routes-store.ts';
@@ -92,6 +93,7 @@ export function mountHome(d: AdminDeps) {
           title: `A loja está ${st.status === 'paused' ? 'pausada' : 'fechada'} com pedidos em andamento`,
           href: '/pedidos',
         });
+      attention.push(...(await platformAttention(tx, t.id, m.role, !!s.billing_hold)));
       if (roleAtLeast(m.role, 'manager')) {
         const pendingPix = (
           await tx<{ n: number }[]>`
@@ -243,4 +245,139 @@ export function mountHome(d: AdminDeps) {
       };
     }),
   );
+}
+
+type Attention = {
+  kind: string;
+  count: number;
+  title: string;
+  detail?: string;
+  href: string;
+};
+
+const brl = (cents: number) =>
+  (cents / 100).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
+
+/** The plan, Mercado Pago, missed alerts and platform incidents — above stock and waitlists. */
+async function platformAttention(
+  tx: Sql,
+  tenantId: string,
+  role: Role,
+  billingHold: boolean,
+): Promise<Attention[]> {
+  const out: Attention[] = [];
+  if (roleAtLeast(role, 'owner')) {
+    const sub = (
+      await tx<{ status: string }[]>`select status from subscriptions where tenant_id = ${tenantId}`
+    )[0];
+    if (billingHold && sub?.status === 'pending')
+      out.push({
+        kind: 'billing_pending',
+        count: 1,
+        title: 'Sua loja abre quando o primeiro pagamento do plano for confirmado',
+        detail: 'Pague a primeira fatura em Conta',
+        href: '/conta',
+      });
+    if (sub?.status === 'past_due')
+      out.push({
+        kind: 'billing_past_due',
+        count: 1,
+        title: 'O pagamento do plano está atrasado',
+        detail: 'Regularize em Conta para a loja continuar no ar',
+        href: '/conta',
+      });
+    const inv = (
+      await tx<{ n: number; due: Date | null; cents: number | null }[]>`
+        select count(*)::int as n, min(due_at) as due,
+               (array_agg(amount_cents order by due_at))[1] as cents
+        from invoices
+        where tenant_id = ${tenantId} and status = 'open' and due_at < now() + interval '5 days'
+      `
+    )[0]!;
+    if (inv.n > 0 && !out.some((a) => a.kind === 'billing_pending')) {
+      const days = Math.ceil((new Date(inv.due!).getTime() - Date.now()) / 86_400_000);
+      out.push({
+        kind: 'invoice_open',
+        count: inv.n,
+        title:
+          days < 0
+            ? 'A fatura do plano venceu'
+            : days === 0
+              ? 'A fatura do plano vence hoje'
+              : days === 1
+                ? 'A fatura do plano vence amanhã'
+                : `A fatura do plano vence em ${days} dias`,
+        ...(inv.cents != null ? { detail: `${brl(inv.cents)} · pague em Conta` } : {}),
+        href: '/conta',
+      });
+    }
+  }
+  if (roleAtLeast(role, 'manager')) {
+    const mp = (
+      await tx<{ status: string }[]>`
+        select status from payment_connections where tenant_id = ${tenantId}
+      `
+    )[0]?.status;
+    if (mp === 'expiring')
+      out.push({
+        kind: 'mp_expiring',
+        count: 1,
+        title: 'A conexão com o Mercado Pago vai expirar',
+        detail: 'Reconecte para continuar recebendo Pix e cartão online',
+        href: '/pagamentos',
+      });
+    else if (mp === 'disconnected')
+      out.push({
+        kind: 'mp_disconnected',
+        count: 1,
+        title: 'O Mercado Pago foi desconectado',
+        detail: 'Pix automático e cartão online ficam desligados até você reconectar',
+        href: '/pagamentos',
+      });
+    else if (mp === 'restricted')
+      out.push({
+        kind: 'mp_restricted',
+        count: 1,
+        title: 'O Mercado Pago restringiu sua conta',
+        detail: 'Veja no app do Mercado Pago o que falta resolver',
+        href: '/pagamentos',
+      });
+  }
+  const missed = (
+    await tx<{ n: number }[]>`
+      select count(*)::int as n from orders o
+      where o.tenant_id = ${tenantId} and o.placed_at > now() - interval '24 hours'
+        and exists (
+          select 1 from push_attempts a where a.tenant_id = o.tenant_id and a.channel = 'push'
+            and a.event = 'order.placed' and a.ref = o.id::text
+        )
+        and not exists (
+          select 1 from push_attempts a where a.tenant_id = o.tenant_id and a.channel = 'push'
+            and a.event = 'order.placed' and a.ref = o.id::text and a.result = 'ok'
+        )
+    `
+  )[0]!.n;
+  if (missed)
+    out.push({
+      kind: 'alerts_failing',
+      count: missed,
+      title:
+        missed === 1
+          ? 'O aviso de 1 pedido não chegou em nenhum aparelho'
+          : `Os avisos de ${missed} pedidos não chegaram em nenhum aparelho`,
+      detail: 'Confira as notificações no seu perfil',
+      href: '/perfil',
+    });
+  const incidents = await tx<{ title: string; body: string | null }[]>`
+    select title, body from platform_incidents where resolved_at is null order by started_at desc
+  `;
+  if (incidents.length)
+    out.push({
+      kind: 'incident',
+      count: incidents.length,
+      title: incidents[0]!.title,
+      detail: incidents[0]!.body ?? 'A equipe da Venduá já está resolvendo',
+      href: '/ajuda',
+    });
+  return out;
 }

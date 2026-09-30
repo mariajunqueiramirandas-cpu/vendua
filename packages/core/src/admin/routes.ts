@@ -14,15 +14,21 @@ import {
   createSession,
   forgetGate,
   membershipsFor,
+  membershipsOf,
   pickerToken,
   readPickerToken,
   revokeSession,
   sessionAlive,
   setAdminCookie,
+  startEmailLink,
   startOtp,
+  validAdminEmail,
   validAdminPhone,
+  verifyEmailLink,
   verifyOtp,
+  type Membership,
   type OtpSender,
+  type Verified,
 } from './auth.ts';
 import {
   type AdminApp,
@@ -52,7 +58,10 @@ import { mountPayments } from './routes-payments.ts';
 import { mountReports } from './routes-reports.ts';
 import { mountStore } from './routes-store.ts';
 import { mountTeam } from './routes-team.ts';
-import { vapidPublicKey } from './webpush.ts';
+import { processImage } from './media.ts';
+import { pushServiceLabel, sendPushResult, vapidPublicKey } from './webpush.ts';
+import { recordPushAttempt } from './workers.ts';
+import { getIntegration } from '../modules/integrations.ts';
 import { storeOrigin } from '../platform/store-origin.ts';
 
 const adminLog = log.child({ mod: 'admin' });
@@ -100,15 +109,8 @@ export function mountAdmin(o: MountAdminOpts) {
     return c.json(await startOtp(sql, phone, o.otpSender));
   });
 
-  admin.post('/auth/otp/verify', authLimit, async (c) => {
-    const body = await bodyJson(c);
-    const phone = validAdminPhone(body.phone);
-    const code = typeof body.code === 'string' ? body.code.replace(/\D/g, '') : '';
-    if (!phone || !(await verifyOtp(sql, phone, code)))
-      throw new HttpError(422, 'INVALID_CODE', 'wrong or expired code', { field: 'code' });
-    const stores = await membershipsFor(sql, phone);
-    if (stores.length === 0)
-      throw new HttpError(422, 'INVALID_CODE', 'wrong or expired code', { field: 'code' });
+  // one or several stores behind the verified phone/address: a session, or the picker
+  const signInAs = async (c: Context, who: Verified, stores: Membership[]) => {
     if (stores.length === 1) {
       setAdminCookie(
         c,
@@ -119,16 +121,67 @@ export function mountAdmin(o: MountAdminOpts) {
     }
     return c.json({
       signedIn: false,
-      pickerToken: pickerToken(sessionSecret, phone),
+      pickerToken: pickerToken(sessionSecret, who),
       stores: stores.map(publicStore),
     });
+  };
+
+  admin.post('/auth/otp/verify', authLimit, async (c) => {
+    const body = await bodyJson(c);
+    const phone = validAdminPhone(body.phone);
+    const code = typeof body.code === 'string' ? body.code.replace(/\D/g, '') : '';
+    if (!phone || !(await verifyOtp(sql, phone, code)))
+      throw new HttpError(422, 'INVALID_CODE', 'wrong or expired code', { field: 'code' });
+    const stores = await membershipsFor(sql, phone);
+    if (stores.length === 0)
+      throw new HttpError(422, 'INVALID_CODE', 'wrong or expired code', { field: 'code' });
+    return signInAs(c, { kind: 'phone', subject: phone }, stores);
+  });
+
+  // the fallback when the WhatsApp code doesn't arrive (no SMS): a one-time link by email
+  const allowLinkPerEmail = windowCounter({ windowMs: 3_600_000, max: 10 });
+  admin.post('/auth/email/start', authLimit, async (c) => {
+    const body = await bodyJson(c);
+    const email = validAdminEmail(body.email);
+    if (!email)
+      throw new HttpError(422, 'INVALID_EMAIL', 'type the email you use at the store', {
+        field: 'email',
+      });
+    // the DB cap only sees addresses that got a link; this one also bounds the lookups
+    if (!allowLinkPerEmail(email)) return c.json({ sent: true });
+    const origin = o.publicOrigin(c);
+    return c.json(
+      await startEmailLink(
+        sql,
+        email,
+        (token) => `${origin}/admin/entrar?link=${token}`,
+        (to, link, linkId) =>
+          o.notify.email(
+            to,
+            'Seu link para entrar na Venduá',
+            `Toque no link para entrar no painel da sua loja:\n\n${link}\n\nEle vale por 15 minutos e funciona uma vez. Se não foi você que pediu, ignore este email.`,
+            `admin-login-link:${linkId}`,
+          ),
+      ),
+    );
+  });
+
+  admin.post('/auth/email/verify', authLimit, async (c) => {
+    const body = await bodyJson(c);
+    const email = await verifyEmailLink(sql, body.token);
+    const stores = email ? await membershipsOf(sql, { kind: 'email', subject: email }) : [];
+    if (!email || stores.length === 0)
+      throw new HttpError(422, 'INVALID_LINK', 'this link is used or expired — ask for a new one', {
+        field: 'token',
+      });
+    return signInAs(c, { kind: 'email', subject: email }, stores);
   });
 
   admin.post('/auth/select', authLimit, async (c) => {
     const body = await bodyJson(c);
-    const phone = readPickerToken(sessionSecret, body.pickerToken);
-    if (!phone) throw new HttpError(401, 'UNAUTHENTICATED', 'sign in again');
-    const m = (await membershipsFor(sql, phone)).find((s) => s.tenant_id === body.storeId);
+    const who = readPickerToken(sessionSecret, body.pickerToken);
+    if (!who) throw new HttpError(401, 'UNAUTHENTICATED', 'sign in again');
+    const m = (await membershipsOf(sql, who)).find((s) => s.tenant_id === body.storeId);
     if (!m) throw new HttpError(404, 'STORE_NOT_FOUND', 'store not found');
     setAdminCookie(c, await createSession(sql, m, c.req.header('user-agent')), secure(c));
     return c.json({ signedIn: true, store: publicStore(m) });
@@ -184,6 +237,7 @@ export function mountAdmin(o: MountAdminOpts) {
         name: m.name,
         phone: m.phone,
         role: m.role,
+        email: settings?.email ?? null,
         prefs: settings?.prefs ?? {},
       },
       store: {
@@ -415,47 +469,193 @@ export function mountAdmin(o: MountAdminOpts) {
     return c.newResponse(res.body);
   });
 
-  // ── media: client-resized photos, served from /v1/media ───────────────────
+  // ── media: decoded, upright, metadata-free WebP + srcset widths, served from /v1/media ──
   admin.post('/media', async (c) => {
     const tenant = c.get('tenant');
     const m = need(c, 'manager');
     const mime = (c.req.header('content-type') ?? '').split(';')[0]!.trim();
     if (!['image/webp', 'image/jpeg', 'image/png'].includes(mime))
       throw new HttpError(415, 'UNSUPPORTED_MEDIA', 'send a webp, jpeg or png image');
+    const key = c.req.header('idempotency-key');
+    if (!key)
+      throw new HttpError(400, 'IDEMPOTENCY_KEY_REQUIRED', 'Idempotency-Key header is required');
+    if (key.length > 200) throw new HttpError(400, 'BAD_REQUEST', 'Idempotency-Key too long');
+    // a retry replays the stored answer before the body is read or decoded again
+    const done = await withTenant(
+      sql,
+      tenant.id,
+      (tx) => tx<{ response: unknown; status_code: number }[]>`
+        select response, status_code from idempotency_keys
+        where tenant_id = ${tenant.id} and key = ${key} and response is not null
+      `,
+    );
+    if (done[0])
+      return c.json(done[0].response, done[0].status_code as 201, {
+        'x-idempotent-replay': 'true',
+      });
     const declared = Number(c.req.header('content-length'));
     if (Number.isFinite(declared) && declared > MEDIA_MAX)
       throw new HttpError(413, 'PAYLOAD_TOO_LARGE', 'image is larger than 2 MB');
-    const width = Number(c.req.query('w'));
-    const height = Number(c.req.query('h'));
     const dominant = c.req.query('dominant');
-    return o.idempotency(sql, async (c, tx) => {
-      const bytes = new Uint8Array(await c.req.arrayBuffer());
-      if (bytes.byteLength === 0 || bytes.byteLength > MEDIA_MAX)
-        throw new HttpError(413, 'PAYLOAD_TOO_LARGE', 'image is empty or larger than 2 MB');
-      if (sniff(bytes) !== mime)
-        throw new HttpError(415, 'UNSUPPORTED_MEDIA', 'the file is not the image type it claims');
-      const w = Number.isInteger(width) && width > 0 && width <= 4096 ? width : null;
-      const h = Number.isInteger(height) && height > 0 && height <= 4096 ? height : null;
+    const bytes = await readCapped(c, MEDIA_MAX);
+    if (bytes.byteLength === 0)
+      throw new HttpError(413, 'PAYLOAD_TOO_LARGE', 'image is empty or larger than 2 MB');
+    if (sniff(bytes) !== mime)
+      throw new HttpError(415, 'UNSUPPORTED_MEDIA', 'the file is not the image type it claims');
+    // decode + encode outside the claim tx: it's CPU, not data
+    const img = await processImage(bytes);
+    return o.idempotency(sql, async (_c, tx) => {
       const dom = dominant && /^#[0-9a-f]{6}$/.test(dominant) ? dominant : null;
       const row = (
         await tx<{ id: string }[]>`
           insert into media_objects (tenant_id, mime, bytes, width, height, dominant, created_by)
-          values (${tenant.id}, ${mime}, ${bytes}, ${w}, ${h}, ${dom}, ${m.userId})
+          values (${tenant.id}, 'image/webp', ${img.bytes}, ${img.width}, ${img.height}, ${dom}, ${m.userId})
           returning id
         `
       )[0]!;
-      const ext = mime === 'image/webp' ? 'webp' : mime === 'image/png' ? 'png' : 'jpg';
+      for (const v of img.variants)
+        await tx`
+          insert into media_variants (tenant_id, media_id, width, mime, bytes)
+          values (${tenant.id}, ${row.id}, ${v.width}, 'image/webp', ${v.bytes})
+        `;
       return {
         status: 201,
         body: {
           id: row.id,
-          url: `/v1/media/${tenant.id}/${row.id}.${ext}`,
-          width: w,
-          height: h,
+          url: `/v1/media/${tenant.id}/${row.id}.webp`,
+          width: img.width,
+          height: img.height,
           dominant: dom,
+          variants: img.variants.map((v) => v.width),
         },
       };
     })(c);
+  });
+
+  // ── alerts: did the new-order ring reach a phone? ─────────────────────────
+  admin.get('/alerts', async (c) => {
+    need(c, 'manager');
+    const tenant = c.get('tenant');
+    const out = await withTenant(sql, tenant.id, async (tx) => ({
+      devices: await tx`
+        select s.id, s.user_id as "userId", u.name as "userName", s.endpoint, s.created_at as "createdAt",
+               s.last_ok_at as "lastOkAt", s.last_error as "lastError",
+               a.result as "lastResult", a.at as "lastAt"
+        from push_subscriptions s join merchant_users u on u.id = s.user_id
+          left join lateral (
+            select result, at from push_attempts
+            where tenant_id = ${tenant.id} and subscription_id = s.id order by at desc limit 1
+          ) a on true
+        where s.tenant_id = ${tenant.id} and u.status = 'active'
+        order by u.name, s.created_at
+      `,
+      recent: await tx`
+        select a.event, a.ref, a.channel, a.result, a.detail, a.at, u.name as "userName"
+        from push_attempts a left join merchant_users u on u.id = a.user_id
+        where a.tenant_id = ${tenant.id} order by a.at desc, a.id desc limit 30
+      `,
+    }));
+    const wa = await getIntegration(sql, 'whatsapp').catch(() => null);
+    c.header('cache-control', 'no-store');
+    return c.json({
+      devices: out.devices.map(({ endpoint, ...d }) => ({
+        ...d,
+        device: pushServiceLabel(String(endpoint)),
+      })),
+      recent: out.recent,
+      whatsappFallback: !!wa,
+    });
+  });
+
+  // "testar notificação": a push to the caller's own devices, recorded like a real alert
+  // The claim only picks the devices and a ref; pushes go out after it commits and each
+  // attempt is recorded under that ref, so a retry of the same key answers from the record.
+  admin.post('/alerts/test', async (c) => {
+    const tenant = c.get('tenant');
+    const m = c.get('merchant');
+    const res = await o.idempotency(sql, async (_c, tx) => {
+      const subs = await tx<{ id: string }[]>`
+        select id from push_subscriptions where tenant_id = ${tenant.id} and user_id = ${m.userId}
+      `;
+      return {
+        status: 200,
+        body: { job: { ref: `test:${crypto.randomUUID()}`, subs: subs.map((s) => s.id) } },
+      };
+    })(c);
+    if (res.status !== 200) return res;
+    const { job } = (await res.json()) as { job: { ref: string; subs: string[] } };
+    if (res.headers.get('x-idempotent-replay') === 'true') {
+      const ok = (
+        await withTenant(
+          sql,
+          tenant.id,
+          (tx) => tx<{ n: number }[]>`
+            select count(*)::int as n from push_attempts
+            where tenant_id = ${tenant.id} and event = 'test' and ref = ${job.ref} and result = 'ok'
+          `,
+        )
+      )[0]!.n;
+      c.header('x-idempotent-replay', 'true');
+      return c.json({ devices: job.subs.length, ok, failed: job.subs.length - ok });
+    }
+    const subs = job.subs.length
+      ? await withTenant(
+          sql,
+          tenant.id,
+          (tx) => tx<{ id: string; endpoint: string; p256dh: string; auth: string }[]>`
+            select id, endpoint, p256dh, auth from push_subscriptions
+            where tenant_id = ${tenant.id} and id = any(${job.subs}::uuid[])
+          `,
+        )
+      : [];
+    const results = await Promise.all(
+      subs.map((s) =>
+        sendPushResult(s, {
+          title: 'Notificações ligadas',
+          body: 'É assim que um pedido novo vai aparecer.',
+          tag: 'vendua-test',
+          url: '/admin/',
+        }),
+      ),
+    );
+    if (subs.length)
+      await withTenant(sql, tenant.id, async (tx) => {
+        for (const [i, s] of subs.entries()) {
+          const r = results[i]!;
+          await recordPushAttempt(tx, tenant.id, {
+            subscriptionId: r.result === 'gone' ? null : s.id,
+            userId: m.userId,
+            event: 'test',
+            ref: job.ref,
+            channel: 'push',
+            ...r,
+          });
+          if (r.result === 'gone') await tx`delete from push_subscriptions where id = ${s.id}`;
+          else
+            await tx`
+              update push_subscriptions set
+                last_ok_at = ${r.result === 'ok' ? tx`now()` : tx`last_ok_at`},
+                last_error = ${r.result === 'ok' ? null : (r.detail ?? 'delivery failed')}
+              where id = ${s.id}
+            `;
+        }
+        await emitAdminTx(tx, tenant.id, 'alerts');
+      });
+    const ok = results.filter((r) => r.result === 'ok').length;
+    // a device removed between the claim and now counts as not reached
+    return c.json({ devices: job.subs.length, ok, failed: job.subs.length - ok });
+  });
+
+  // Ajuda: "a Venduá está com instabilidade" — open incidents and the last week's
+  admin.get('/help/status', async (c) => {
+    const incidents = await sql`
+      select id, title, body, severity, started_at as "startedAt", resolved_at as "resolvedAt"
+      from platform_incidents
+      where resolved_at is null or resolved_at > now() - interval '7 days'
+      order by resolved_at is not null, started_at desc limit 20
+    `;
+    c.header('cache-control', 'no-store');
+    return c.json({ incidents });
   });
 
   // ── help: "falar com a Venduá" lands with the team ───────────────────────
@@ -496,22 +696,29 @@ export function mountAdmin(o: MountAdminOpts) {
   mountAccount(deps);
   mountAppearance(deps);
 
-  // public media read — storefront hosts proxy /v1 to Core, so the same URL works everywhere
+  // public media read — storefront hosts proxy /v1 to Core, so the same URL works everywhere.
+  // ?w= picks the smallest stored width that covers it (Kernel Img's srcset), else the original.
   o.app.get('/v1/media/:tenantId/:file', async (c) => {
     const tenantId = c.req.param('tenantId');
     const m = /^([0-9a-f-]{36})\.(webp|jpg|png)$/.exec(c.req.param('file'));
     if (!UUID_RE.test(tenantId) || !m || !UUID_RE.test(m[1]!))
       throw new HttpError(404, 'NOT_FOUND', 'not found');
-    const row = await withTenant(
-      sql,
-      tenantId,
-      async (tx) =>
-        (
-          await tx<{ mime: string; bytes: Uint8Array }[]>`
-            select mime, bytes from media_objects where tenant_id = ${tenantId} and id = ${m[1]!}
-          `
-        )[0],
-    );
+    const wq = c.req.query('w');
+    const want = wq !== undefined && /^\d{1,4}$/.test(wq) ? Number(wq) : null;
+    const row = await withTenant(sql, tenantId, async (tx) => {
+      if (want)
+        for (const v of await tx<{ mime: string; bytes: Uint8Array }[]>`
+          select mime, bytes from media_variants
+          where tenant_id = ${tenantId} and media_id = ${m[1]!} and width >= ${want}
+          order by width limit 1
+        `)
+          return v;
+      return (
+        await tx<{ mime: string; bytes: Uint8Array }[]>`
+          select mime, bytes from media_objects where tenant_id = ${tenantId} and id = ${m[1]!}
+        `
+      )[0];
+    });
     if (!row) throw new HttpError(404, 'NOT_FOUND', 'not found');
     c.header('content-type', row.mime);
     c.header('cache-control', 'public, max-age=31536000, immutable');
@@ -545,6 +752,9 @@ const PREF_KEYS: Record<string, 'boolean' | 'number' | 'string' | 'list'> = {
   sound: 'boolean',
   volume: 'number',
   push: 'boolean',
+  pushPayments: 'boolean',
+  whatsappAlerts: 'boolean',
+  emailInvoices: 'boolean',
   theme: 'string',
   dismissedHints: 'list',
 };
@@ -568,6 +778,32 @@ function pickPrefs(p: Record<string, unknown>) {
   if (typeof out.volume === 'number') out.volume = Math.max(0, Math.min(1, out.volume as number));
   if (out.theme !== undefined && !['creme', 'noite', 'system'].includes(out.theme as string))
     delete out.theme;
+  return out;
+}
+
+/** The body, refused past `max` bytes as it streams — no Content-Length needed. */
+async function readCapped(c: Context, max: number): Promise<Uint8Array> {
+  const body = c.req.raw.body;
+  if (!body) return new Uint8Array();
+  const reader = body.getReader();
+  const parts: Uint8Array[] = [];
+  let n = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    n += value.byteLength;
+    if (n > max) {
+      await reader.cancel().catch(() => undefined);
+      throw new HttpError(413, 'PAYLOAD_TOO_LARGE', 'image is larger than 2 MB');
+    }
+    parts.push(value);
+  }
+  const out = new Uint8Array(n);
+  let o = 0;
+  for (const p of parts) {
+    out.set(p, o);
+    o += p.byteLength;
+  }
   return out;
 }
 

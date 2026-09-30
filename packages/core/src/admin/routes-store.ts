@@ -42,6 +42,16 @@ export async function loadSettings(tx: Sql, tenantId: string): Promise<StoreSett
   return row;
 }
 
+/** A self-serve store stays paused until its plan's first payment lands (CORE-BILL lifts it). */
+export function assertNoBillingHold(s: StoreSettingsRow) {
+  if (s.billing_hold)
+    throw new HttpError(
+      409,
+      'BILLING_HOLD',
+      'the store opens when the first plan payment is confirmed',
+    );
+}
+
 export function statusOf(s: StoreSettingsRow) {
   return deriveStatus(
     s.hours ?? { timezone: 'America/Sao_Paulo', windows: [] },
@@ -116,6 +126,7 @@ export async function storeView(
       override: s.status_override,
       pauseMessage: s.pause_message ?? null,
       closedMessage: s.closed_message ?? null,
+      billingHold: !!s.billing_hold,
     },
     hours: s.hours ?? { timezone: 'America/Sao_Paulo', windows: [] },
     specialDays: s.special_days ?? [],
@@ -124,6 +135,8 @@ export async function storeView(
       acceptTargetMinutes: s.accept_target_minutes ?? 5,
       minOrderCents: s.min_order_cents,
       pickupEnabled: s.pickup_enabled,
+      pickupAddress: s.pickup_address ?? null,
+      pickupInstructions: s.pickup_instructions ?? null,
       deliveryEnabled: s.delivery_enabled,
       demand: s.demand_level ?? 'normal',
     },
@@ -341,6 +354,11 @@ export function mountStore(d: AdminDeps) {
           set.delivery_enabled = bool(o.deliveryEnabled, 'deliveryEnabled');
         if (o.demand !== undefined)
           set.demand_level = oneOf(o.demand, 'demand', ['normal', 'high'] as const);
+        if (o.pickupAddress !== undefined)
+          set.pickup_address = optText(o.pickupAddress, 'pickupAddress', 200) ?? null;
+        if (o.pickupInstructions !== undefined)
+          set.pickup_instructions =
+            optText(o.pickupInstructions, 'pickupInstructions', 300) ?? null;
         const pickup = (set.pickup_enabled as boolean | undefined) ?? s.pickup_enabled;
         const delivery = (set.delivery_enabled as boolean | undefined) ?? s.delivery_enabled;
         if (!pickup && !delivery)
@@ -417,7 +435,9 @@ export function mountStore(d: AdminDeps) {
     write('attendant', async (tx, t, m, c) => {
       const body = await bodyJson(c);
       const span = oneOf(body.for, 'for', ['15m', '1h', 'today', 'indefinite', 'minutes'] as const);
-      await loadSettings(tx, t.id);
+      const settings = await loadSettings(tx, t.id);
+      // a timed pause ends by opening the store — not while the plan is unpaid
+      if (span !== 'indefinite') assertNoBillingHold(settings);
       const until =
         span === '15m'
           ? new Date(Date.now() + 15 * 60_000)
@@ -449,7 +469,7 @@ export function mountStore(d: AdminDeps) {
   admin.post(
     '/store/resume',
     write('attendant', async (tx, t, m) => {
-      await loadSettings(tx, t.id);
+      assertNoBillingHold(await loadSettings(tx, t.id));
       await tx`update store_settings set status_override = null, resumes_at = null where tenant_id = ${t.id}`;
       await audit(tx, t.id, m, {
         action: 'store.resume',

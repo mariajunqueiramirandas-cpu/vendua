@@ -118,36 +118,66 @@ export interface PushTarget {
   auth: string;
 }
 
+export type PushResult = { result: 'ok' | 'gone' | 'error'; detail: string | null };
+
 /** 'gone' = the browser dropped the subscription; delete it. */
 export async function sendPush(
   target: PushTarget,
   message: object,
 ): Promise<'ok' | 'gone' | 'error'> {
+  return (await sendPushResult(target, message)).result;
+}
+
+/** Like sendPush, with a short reason the admin can show when it didn't arrive. */
+export async function sendPushResult(target: PushTarget, message: object): Promise<PushResult> {
   const pub = process.env.VAPID_PUBLIC_KEY;
   const priv = process.env.VAPID_PRIVATE_KEY;
-  if (!pub || !priv) return 'error';
-  const body = await encryptPayload(
-    enc.encode(JSON.stringify(message)),
-    target.p256dh,
-    target.auth,
-  );
-  const res = await fetch(target.endpoint, {
-    method: 'POST',
-    headers: {
-      authorization: await vapidAuth(
-        target.endpoint,
-        pub,
-        priv,
-        process.env.VAPID_SUBJECT ?? 'mailto:suporte@vendua.com.br',
-      ),
-      'content-encoding': 'aes128gcm',
-      'content-type': 'application/octet-stream',
-      ttl: '300',
-      urgency: 'high',
-    },
-    body,
-    signal: AbortSignal.timeout(10_000),
-  });
-  if (res.status === 404 || res.status === 410) return 'gone';
-  return res.ok ? 'ok' : 'error';
+  if (!pub || !priv) return { result: 'error', detail: 'push not configured' };
+  try {
+    const body = await encryptPayload(
+      enc.encode(JSON.stringify(message)),
+      target.p256dh,
+      target.auth,
+    );
+    const res = await fetch(target.endpoint, {
+      method: 'POST',
+      headers: {
+        authorization: await vapidAuth(
+          target.endpoint,
+          pub,
+          priv,
+          process.env.VAPID_SUBJECT ?? 'mailto:suporte@vendua.com.br',
+        ),
+        'content-encoding': 'aes128gcm',
+        'content-type': 'application/octet-stream',
+        ttl: '300',
+        urgency: 'high',
+      },
+      body,
+      signal: AbortSignal.timeout(10_000),
+    });
+    if (res.status === 404 || res.status === 410)
+      return { result: 'gone', detail: `push service ${res.status}` };
+    return res.ok
+      ? { result: 'ok', detail: null }
+      : { result: 'error', detail: `push service ${res.status}` };
+  } catch (err) {
+    const name = (err as { name?: string }).name;
+    return { result: 'error', detail: name === 'TimeoutError' ? 'timeout' : 'network error' };
+  }
+}
+
+/** Which browser family a subscription lives in — push_subscriptions keeps no user agent. */
+export function pushServiceLabel(endpoint: string): string {
+  let host = '';
+  try {
+    host = new URL(endpoint).host;
+  } catch {
+    return 'Navegador';
+  }
+  if (host.endsWith('push.apple.com')) return 'Safari (iPhone/Mac)';
+  if (host.endsWith('googleapis.com')) return 'Chrome/Android';
+  if (host.endsWith('mozilla.com')) return 'Firefox';
+  if (host.endsWith('notify.windows.com')) return 'Edge/Windows';
+  return 'Navegador';
 }

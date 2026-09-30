@@ -68,7 +68,7 @@ const stopBillingJobs = startBillingJobs(sql, { provider: paymentProvider, notif
 
 // merchant admin: new-order web push + the minute sweep ("esgotado hoje", timed pauses)
 void startPushNotifier(sql, adminHub);
-const stopAdminSweeper = startAdminSweeper(sql);
+const stopAdminSweeper = startAdminSweeper(sql, { notify, adminOrigin });
 
 // Booking links sign with the same staff key the app verifies — set before the worker starts.
 setBookingSecret(process.env.CONTROL_SECRET ?? sessionSecret);
