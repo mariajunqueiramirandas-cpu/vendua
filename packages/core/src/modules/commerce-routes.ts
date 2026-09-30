@@ -39,7 +39,10 @@ import {
   mintCustomerToken,
   ordersByPhone,
   parseLoyalty,
+  recordSessionFailure,
   requireCustomer,
+  resolveCustomer,
+  sessionFailuresExceeded,
   validPhone,
   verifyByOrder,
   verifyCustomerToken,
@@ -80,6 +83,8 @@ interface Deps {
     run: (c: Context, tx: Sql) => Promise<{ status: number; body: unknown }>,
   ) => (c: Context) => Promise<Response>;
   trustProxy: boolean;
+  /** trusted proxies after the client's own XFF entry (VENDUA_PROXY_HOPS) */
+  proxyHops?: number;
   cepLookup: CepLookup;
   orderHub: OrderHub;
   provider: PaymentProvider;
@@ -99,7 +104,10 @@ const STREAM_MAX_MS = 10 * 60_000;
 export function mountCommerce(d: Deps) {
   const { app, storefront, checkout, sql, sessionSecret, controlGate, requireIdemKey } = d;
   const limiter = (max: number) =>
-    rateLimit({ windowMs: 60_000, max }, { trustForwardedFor: d.trustProxy });
+    rateLimit(
+      { windowMs: 60_000, max },
+      { trustForwardedFor: d.trustProxy, proxyHops: d.proxyHops ?? 0 },
+    );
 
   // ── storefront (public reads) ──────────────────────────────────────────────
 
@@ -164,10 +172,14 @@ export function mountCommerce(d: Deps) {
     const token = header.startsWith('Bearer ') ? header.slice(7) : '';
     return token ? verifySessionToken(token, tenant.id, sessionSecret) : null;
   };
-  const customerPhone = (c: Context) => {
+  const customerOf = (c: Context, tx: Sql) => {
     const tenant = c.get('tenant') as Tenant;
     const t = c.req.header(CUSTOMER_HEADER);
-    return t ? verifyCustomerToken(sessionSecret, tenant.id, t) : null;
+    return resolveCustomer(
+      tx,
+      tenant.id,
+      t ? verifyCustomerToken(sessionSecret, tenant.id, t) : null,
+    );
   };
 
   checkout.post(
@@ -176,7 +188,8 @@ export function mountCommerce(d: Deps) {
       const tenant = c.get('tenant') as Tenant;
       const code = parseCode((await bodyJson(c)).code);
       const cartId = await optionalCart(c);
-      const phone = customerPhone(c);
+      const customer = await customerOf(c, tx);
+      const phone = customer?.phone ?? null;
       const row = await loadCoupon(tx, tenant.id, code);
       if (!row) return { status: 200, body: { valid: false, code, reason: 'COUPON_NOT_FOUND' } };
       const cart = cartId ? await loadCartView(tx, tenant.id, cartId) : null;
@@ -184,6 +197,7 @@ export function mountCommerce(d: Deps) {
         subtotalCents: cart?.totals.subtotalCents ?? 0,
         deliveryFeeCents: cart?.totals.deliveryFeeCents ?? 0,
         phone,
+        provenPhone: customer?.proven ? phone : null,
         usage: await couponUsage(tx, tenant.id, row.id, phone),
         now: new Date(),
       });
@@ -212,11 +226,14 @@ export function mountCommerce(d: Deps) {
       const row = await loadCoupon(tx, tenant.id, code);
       if (!row) throw new HttpError(422, 'COUPON_NOT_FOUND', 'coupon not found', { field: 'code' });
       const cart = await loadCartView(tx, tenant.id, cartId);
+      const customer = await customerOf(c, tx);
+      const phone = customer?.phone ?? null;
       const out = evaluateCoupon(row, {
         subtotalCents: cart.totals.subtotalCents,
         deliveryFeeCents: cart.totals.deliveryFeeCents,
-        phone: customerPhone(c),
-        usage: await couponUsage(tx, tenant.id, row.id, customerPhone(c)),
+        phone,
+        provenPhone: customer?.proven ? phone : null,
+        usage: await couponUsage(tx, tenant.id, row.id, phone),
         now: new Date(),
       });
       // "add R$ X more" is kept on the cart (it starts applying as the bag grows); the rest refuse
@@ -270,8 +287,8 @@ export function mountCommerce(d: Deps) {
     }),
   );
 
-  // "pedir de novo" — the order must be provably the caller's: its own session token,
-  // or a customer token for the order's phone
+  // "pedir de novo" — the order must be provably the caller's: its own session token, or a
+  // customer token for the order's phone (a not-yet-proven one reaches only its anchor order)
   checkout.post(
     '/cart/reorder',
     d.idempotency(sql, async (c, tx) => {
@@ -289,11 +306,13 @@ export function mountCommerce(d: Deps) {
         typeof body.orderToken === 'string' && body.orderToken.length < 200
           ? await verifySessionToken(body.orderToken, tenant.id, sessionSecret)
           : null;
-      const phone = customerPhone(c);
+      const customer = await customerOf(c, tx);
       const owns =
         order &&
         ((viaToken !== null && viaToken === order.cart_id) ||
-          (phone !== null && phone === order.customer_phone));
+          (customer !== null &&
+            customer.phone === order.customer_phone &&
+            (customer.proven || customer.anchorOrderId === orderId)));
       if (!owns) throw new HttpError(404, 'ORDER_NOT_FOUND', 'order not found');
       await assertCartOpen(tx, tenant.id, cartId);
       const report = await importLines(
@@ -433,44 +452,70 @@ export function mountCommerce(d: Deps) {
         throw new HttpError(422, 'INVALID_CUSTOMER', 'orderNumber must be a positive integer', {
           field: 'orderNumber',
         });
+      // order numbers are sequential: a phone gets a few guesses a day, then 429
+      if (await sessionFailuresExceeded(tx, tenant.id, phone))
+        throw new HttpError(429, 'RATE_LIMITED', 'too many requests — retry later');
+      const anchor = await verifyByOrder(tx, tenant.id, phone, number);
       // one answer for "no such order" and "not this phone" — no enumeration signal
-      if (!(await verifyByOrder(tx, tenant.id, phone, number)))
+      if (!anchor) {
+        // own tx: the throw below rolls this one back (the phone's advisory lock is still held)
+        await withTenant(sql, tenant.id, (t2) => recordSessionFailure(t2, tenant.id, phone));
         throw new HttpError(
           404,
           'CUSTOMER_NOT_VERIFIED',
           'no order with that number for this phone',
         );
-      const t = mintCustomerToken(sessionSecret, tenant.id, phone);
+      }
+      const t = mintCustomerToken(sessionSecret, tenant.id, phone, anchor);
       return { status: 201, body: { customerToken: t.token, expiresAt: t.expiresAt, phone } };
     }),
   );
 
   checkout.get('/customer/orders', async (c) => {
     const tenant = c.get('tenant');
-    const phone = requireCustomer(
-      sessionSecret,
-      tenant.id,
-      c.req.header(CUSTOMER_HEADER),
-      c.req.query('phone'),
-    );
-    const orders = await withTenant(sql, tenant.id, (tx) => ordersByPhone(tx, tenant.id, phone));
+    const { phone, orders } = await withTenant(sql, tenant.id, async (tx) => {
+      const who = await requireCustomer(
+        tx,
+        sessionSecret,
+        tenant.id,
+        c.req.header(CUSTOMER_HEADER),
+        c.req.query('phone'),
+      );
+      return {
+        phone: who.phone,
+        orders: await ordersByPhone(
+          tx,
+          tenant.id,
+          who.phone,
+          30,
+          who.proven ? undefined : who.anchorOrderId,
+        ),
+      };
+    });
     c.header('cache-control', 'no-store');
     return c.json({ phone, orders });
   });
 
   checkout.get('/customer/loyalty', async (c) => {
     const tenant = c.get('tenant');
-    const phone = requireCustomer(
-      sessionSecret,
-      tenant.id,
-      c.req.header(CUSTOMER_HEADER),
-      c.req.query('phone'),
-    );
-    const card = await withTenant(sql, tenant.id, async (tx) => {
+    const { phone, card } = await withTenant(sql, tenant.id, async (tx) => {
+      const who = await requireCustomer(
+        tx,
+        sessionSecret,
+        tenant.id,
+        c.req.header(CUSTOMER_HEADER),
+        c.req.query('phone'),
+      );
       const settings = (
         await tx<StoreSettingsRow[]>`select * from store_settings where tenant_id = ${tenant.id}`
       )[0];
-      return loyaltyCard(tx, tenant.id, phone, settings ?? null);
+      return {
+        phone: who.phone,
+        // reward codes are redeemable coupons: only once the phone is proven
+        card: await loyaltyCard(tx, tenant.id, who.phone, settings ?? null, new Date(), {
+          withRewards: who.proven,
+        }),
+      };
     });
     c.header('cache-control', 'no-store');
     return c.json({ phone, loyalty: card });

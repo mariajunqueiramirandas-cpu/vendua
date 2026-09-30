@@ -492,8 +492,9 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('commerce completeness (db)', ()
     expect((await call('GET', '/checkout/v1/customer/orders')).status).toBe(401);
     const mine = await call('GET', '/checkout/v1/customer/orders?phone=22999990001', undefined, h);
     expect(mine.status).toBe(200);
-    expect(mine.body.orders).toHaveLength(2);
-    expect(mine.body.orders[1].items[0]).toEqual({ name: 'kit', qty: 1 });
+    // not delivered yet: the checkout token only proves "this device placed order #1"
+    expect(mine.body.orders).toHaveLength(1);
+    expect(mine.body.orders[0].items[0]).toEqual({ name: 'kit', qty: 1 });
     expect(JSON.stringify(mine.body)).not.toContain('Rua A');
     expect(
       (await call('GET', '/checkout/v1/customer/orders?phone=21988887777', undefined, h)).status,
@@ -514,26 +515,34 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('commerce completeness (db)', ()
     const again = await call('GET', '/checkout/v1/customer/orders', undefined, {
       'x-vendua-customer': v.body.customerToken,
     });
-    expect(again.body.orders).toHaveLength(2);
+    expect(again.body.orders.map((o: any) => o.number)).toEqual([1]);
   });
 
   test('loyalty: delivered orders stamp the card and mint a personal reward coupon', async () => {
     const h = { 'x-vendua-customer': customerToken };
     const before = await call('GET', '/checkout/v1/customer/loyalty', undefined, h);
     expect(before.body.loyalty).toMatchObject({ enabled: true, stamps: 0, stampsRequired: 2 });
+    expect(before.body.loyalty.rewards).toEqual([]);
     const all = await ctl('GET', '/orders');
     for (const o of all.body.orders)
       for (const to of ['confirmed', 'preparing', 'ready', 'delivered'])
         if (o.state !== to) await ctl('POST', `/orders/${o.id}/transition`, { to });
+    // the anchor (order #1) is delivered now: the same token is proven and sees the codes
     const after = await call('GET', '/checkout/v1/customer/loyalty', undefined, h);
     expect(after.body.loyalty.stamps).toBe(0);
     expect(after.body.loyalty.rewards).toHaveLength(1);
     const code = after.body.loyalty.rewards[0].code as string;
     expect(code).toStartWith('FIEL-');
-    // the reward is personal: another phone's checkout refuses it
+    // the reward is personal: only a proven token for its phone applies it, and another
+    // phone's checkout refuses it
     const auth = await session();
     await call('POST', '/checkout/v1/cart/items', { productId: ids.coco, qty: 2 }, auth);
-    await call('POST', '/checkout/v1/cart/coupon', { code }, auth);
+    expect((await call('POST', '/checkout/v1/cart/coupon', { code }, auth)).body.error.code).toBe(
+      'COUPON_NOT_YOURS',
+    );
+    expect(
+      (await call('POST', '/checkout/v1/cart/coupon', { code }, { ...auth, ...h })).status,
+    ).toBe(200);
     const stranger = await call(
       'POST',
       '/checkout/v1/checkout',

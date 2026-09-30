@@ -27,8 +27,17 @@ import {
   uuidParam,
   UUID_RE,
   verifySessionToken,
+  clientIp,
+  constantTimeEqual,
+  knownOrigin,
 } from './platform/http.ts';
 import { TenantResolver, type Tenant } from './platform/tenancy.ts';
+import {
+  CONTROL_SESSION_DAYS,
+  createControlSession,
+  revokeControlSession,
+  touchControlSession,
+} from './modules/control-sessions.ts';
 import { getCatalog, getProduct, getProductById } from './modules/catalog.ts';
 import { deriveStatus, type StoreSettingsRow } from './modules/store.ts';
 import { notifyStaff } from './modules/staff.ts';
@@ -46,7 +55,13 @@ import { validateCheckoutShape } from './modules/checkout.ts';
 import { loadOrderView, orderVersion, TERMINAL_STATES } from './modules/orders.ts';
 import { placeOrderTx } from './modules/place-order.ts';
 import { parseSelections } from './modules/combos.ts';
-import { mintCustomerToken, normalizePhone, parseLoyalty } from './modules/customer.ts';
+import {
+  mintCustomerToken,
+  normalizePhone,
+  parseLoyalty,
+  resolveCustomer,
+  verifyCustomerToken,
+} from './modules/customer.ts';
 import { normalizeCep, resolveZone, validCoords, viaCep, type CepLookup } from './modules/geo.ts';
 import { OrderHub } from './modules/order-live.ts';
 import { pixPayload, type PixKeyType } from './modules/pix.ts';
@@ -361,14 +376,15 @@ export function createApp({
   );
   const app = new Hono<{ Variables: { tenant: Tenant } }>();
   // where Mercado Pago sends shoppers/owners back and posts webhooks: the admin's own domain
-  // (it proxies /admin to Core); without one (dev, tests) the request's own origin
-  const adminOrigin = (c: Context) => {
-    if (adminDomain) return `https://${adminDomain}`;
-    const url = new URL(c.req.url);
-    const proto =
-      process.env.VENDUA_TRUST_PROXY === '1' ? c.req.header('x-forwarded-proto') : undefined;
-    return `${proto ?? url.protocol.replace(':', '')}://${c.req.header('host') ?? url.host}`;
-  };
+  // (it proxies /admin to Core); without one (dev, tests) the request's own origin, but only
+  // for a host we know — a spoofed Host would otherwise poison MP back_urls and email links
+  const adminOrigin = (c: Context) =>
+    knownOrigin(c, {
+      adminDomain,
+      storeDomain: publicStoreDomain,
+      trustProxy: process.env.VENDUA_TRUST_PROXY === '1',
+      isStoreHost: (h) => resolver.peek(h) !== null,
+    });
 
   app.onError((err, c) => errorJson(err, c));
   app.use('*', requestLogger());
@@ -537,7 +553,10 @@ export function createApp({
     });
   });
 
-  mountStorefrontEvents(storefront, liveHub, presence);
+  mountStorefrontEvents(storefront, liveHub, presence, {
+    trustForwardedFor: trustProxy,
+    proxyHops: Number(process.env.VENDUA_PROXY_HOPS ?? '0') || 0,
+  });
 
   // Loader-facing snapshot per 05-system-surfaces; `?templates=1` (the Kernel's
   // read) adds the page composition so v.js's 30s poll stays small.
@@ -774,13 +793,35 @@ export function createApp({
       const cartId = await sessionCartId(c, sessionSecret);
       const body = await bodyJson(c);
       validateCheckoutShape(body);
-      const order = await placeOrderTx(tx, tenant.id, cartId, body, new Date(), provider);
+      const header = c.req.header('x-vendua-customer');
+      const known = await resolveCustomer(
+        tx,
+        tenant.id,
+        header ? verifyCustomerToken(sessionSecret, tenant.id, header) : null,
+      );
+      let order: string;
+      try {
+        order = await placeOrderTx(tx, tenant.id, cartId, body, new Date(), provider, {
+          provenPhone: known?.proven ? known.phone : null,
+        });
+      } catch (err) {
+        // the repriced lines must commit with the refusal (a thrown error rolls them back)
+        if (err instanceof HttpError && err.code === 'PRICES_CHANGED')
+          return {
+            status: err.status,
+            body: { error: { code: err.code, message: err.message, details: err.details } },
+          };
+        throw err;
+      }
       const view = await loadOrderView(tx, tenant.id, order, cartId);
-      // the device that just placed an order for this phone may read the phone's history
+      // Typing a phone proves nothing: the new token sees only this order until it is
+      // delivered. A proven token for the same phone keeps its (delivered) anchor.
+      const phone = normalizePhone(body.customer.phone);
       const customer = mintCustomerToken(
         sessionSecret,
         tenant.id,
-        normalizePhone(body.customer.phone),
+        phone,
+        known?.proven && known.phone === phone ? known.anchorOrderId : order,
       );
       return {
         status: 201,
@@ -831,15 +872,50 @@ export function createApp({
   // vendua_control cookie; 404 (not 401) keeps it invisible to scans.
   const CONTROL_COOKIE = 'vendua_control';
   const staffSecret = controlSecret ?? sessionSecret;
-  // Derived token, never the secret itself — rotating CONTROL_SECRET invalidates every cookie.
-  const controlToken = createHmac('sha256', staffSecret).update('vendua.control').digest('hex');
-  const controlAuthed = (c: Context) =>
-    c.req.header('x-vendua-control') === staffSecret ||
-    getCookie(c, CONTROL_COOKIE) === controlToken;
+  const controlIpFlags = {
+    trustForwardedFor: trustProxy,
+    proxyHops: Number.isInteger(proxyHops) && proxyHops >= 0 ? proxyHops : 0,
+  };
+  // Every staff-key guess (POST /login or a wrong x-vendua-control header) spends from one
+  // per-IP bucket: 10 misses/min. A blocked IP gets 429 before any compare, right key or not.
+  const staffMisses = new Map<string, { count: number; resetAt: number }>();
+  const staffGuessGate = (c: Context) => {
+    const ip = clientIp(c, controlIpFlags);
+    const now = Date.now();
+    // Evict expired buckets or rotating IPs grow the map forever.
+    for (const [k, v] of staffMisses) if (v.resetAt <= now) staffMisses.delete(k);
+    const bucket = staffMisses.get(ip);
+    if (bucket && bucket.count >= 10) {
+      throw new HttpError(429, 'RATE_LIMITED', 'too many attempts — retry in a minute');
+    }
+    return () => {
+      const b = staffMisses.get(ip);
+      if (b && b.resetAt > Date.now()) b.count++;
+      else staffMisses.set(ip, { count: 1, resetAt: Date.now() + 60_000 });
+    };
+  };
+  // Resolved once per request by the middleware below; controlGate stays synchronous.
+  const staffAuth = new WeakMap<Request, { viaHeader: boolean; sessionToken: string | null }>();
+  app.use('/control/v1/*', async (c, next) => {
+    const header = c.req.header('x-vendua-control');
+    let viaHeader = false;
+    if (header !== undefined) {
+      const miss = staffGuessGate(c);
+      viaHeader = constantTimeEqual(header, staffSecret);
+      if (!viaHeader) miss();
+    }
+    const cookie = viaHeader ? undefined : getCookie(c, CONTROL_COOKIE);
+    const sessionToken =
+      cookie && cookie.length <= 100 && (await touchControlSession(sql, cookie)) ? cookie : null;
+    staffAuth.set(c.req.raw, { viaHeader, sessionToken });
+    await next();
+  });
+  const controlAuth = (c: Context) =>
+    staffAuth.get(c.req.raw) ?? { viaHeader: false, sessionToken: null };
   const controlGate = (c: Context) => {
-    if (!controlAuthed(c)) throw new HttpError(404, 'NOT_FOUND', 'not found');
+    const { viaHeader, sessionToken } = controlAuth(c);
+    if (!viaHeader && !sessionToken) throw new HttpError(404, 'NOT_FOUND', 'not found');
     // CSRF: cookie-authed mutations need the custom x-vendua-staff marker + same-host Origin.
-    const viaHeader = c.req.header('x-vendua-control') === staffSecret;
     if (!viaHeader && c.req.method !== 'GET') {
       if (!c.req.header('x-vendua-staff')) throw new HttpError(404, 'NOT_FOUND', 'not found');
       const origin = c.req.header('origin');
@@ -856,17 +932,17 @@ export function createApp({
       }
     }
   };
-  // The CRM is an installed PWA: one sign-in per device. 400 days is Chrome's cap, and
-  // /session re-issues it on every app open, so only logout or a secret rotation ends it.
-  const setControlCookie = (c: Context) =>
-    setCookie(c, CONTROL_COOKIE, controlToken, {
+  // The CRM is an installed PWA: one random, DB-backed session per device. It slides 30 days
+  // on use (/session re-issues the cookie on every app open); logout revokes the row.
+  const setControlCookie = (c: Context, token: string) =>
+    setCookie(c, CONTROL_COOKIE, token, {
       httpOnly: true,
       sameSite: 'Lax',
       // TLS directly, or via trusted X-Forwarded-Proto.
       secure:
         c.req.url.startsWith('https://') ||
         (trustProxy && c.req.header('x-forwarded-proto') === 'https'),
-      maxAge: 60 * 60 * 24 * 400,
+      maxAge: 60 * 60 * 24 * CONTROL_SESSION_DAYS,
       path: '/control',
     });
   const requireIdemKey = (c: Context) => {
@@ -897,40 +973,29 @@ export function createApp({
   });
 
   // Platform data, no tenant context; all mutations take Idempotency-Key.
-  const loginHits = new Map<string, { count: number; resetAt: number }>();
   app.post('/control/v1/login', async (c) => {
-    // Cap guesses at 10/min/IP so the endpoint isn't a weak-secret oracle.
-    const ip = (() => {
-      if (!trustProxy) return 'local';
-      const xff = c.req
-        .header('x-forwarded-for')
-        ?.split(',')
-        .map((s) => s.trim());
-      return xff?.at(-1 - proxyHops) ?? 'unknown';
-    })();
-    const now = Date.now();
-    // Evict expired buckets or rotating IPs grow the map forever.
-    for (const [k, v] of loginHits) if (v.resetAt <= now) loginHits.delete(k);
-    const bucket = loginHits.get(ip);
-    if (!bucket || bucket.resetAt <= now) {
-      loginHits.set(ip, { count: 1, resetAt: now + 60_000 });
-    } else if (++bucket.count > 10) {
-      throw new HttpError(429, 'RATE_LIMITED', 'too many attempts — retry in a minute');
-    }
+    // Shares the staff-key bucket so the endpoint isn't a weak-secret oracle.
+    const miss = staffGuessGate(c);
     const body = (await bodyJson(c).catch(() => ({}))) as { key?: unknown };
-    if (body.key !== staffSecret) throw new HttpError(404, 'NOT_FOUND', 'not found');
-    setControlCookie(c);
+    if (typeof body.key !== 'string' || !constantTimeEqual(body.key, staffSecret)) {
+      miss();
+      throw new HttpError(404, 'NOT_FOUND', 'not found');
+    }
+    setControlCookie(c, await createControlSession(sql, c.req.header('user-agent')));
     return c.json({ ok: true });
   });
 
-  app.post('/control/v1/logout', (c) => {
+  app.post('/control/v1/logout', async (c) => {
+    const cookie = getCookie(c, CONTROL_COOKIE);
+    if (cookie && cookie.length <= 100) await revokeControlSession(sql, cookie);
     deleteCookie(c, CONTROL_COOKIE, { path: '/control' });
     return c.json({ ok: true });
   });
 
   app.get('/control/v1/session', (c) => {
     controlGate(c);
-    if (getCookie(c, CONTROL_COOKIE) === controlToken) setControlCookie(c);
+    const { sessionToken } = controlAuth(c);
+    if (sessionToken) setControlCookie(c, sessionToken);
     return c.json({ ok: true });
   });
 
@@ -2400,14 +2465,7 @@ export function createApp({
   // Unauthenticated — the token IS the credential; uniform 404, rate-limited per IP.
   const bookHits = new Map<string, { count: number; resetAt: number }>();
   const bookRate = (c: Context) => {
-    const ip = (() => {
-      if (!trustProxy) return 'local';
-      const xff = c.req
-        .header('x-forwarded-for')
-        ?.split(',')
-        .map((s) => s.trim());
-      return xff?.at(-1 - proxyHops) ?? 'unknown';
-    })();
+    const ip = clientIp(c, controlIpFlags);
     const now = Date.now();
     for (const [k, v] of bookHits) if (v.resetAt <= now) bookHits.delete(k);
     const bucket = bookHits.get(ip);
@@ -2531,6 +2589,7 @@ export function createApp({
     requireIdemKey,
     idempotency,
     trustProxy,
+    proxyHops: Number.isInteger(proxyHops) && proxyHops >= 0 ? proxyHops : 0,
     cepLookup: cepLookup ?? viaCep,
     orderHub,
     provider,
@@ -2550,6 +2609,7 @@ export function createApp({
     requireIdemKey,
     idempotency,
     trustProxy,
+    proxyHops: Number.isInteger(proxyHops) && proxyHops >= 0 ? proxyHops : 0,
   });
 
   // Staff hand a store to its owner: the first merchant user (then Equipe in the admin takes over).

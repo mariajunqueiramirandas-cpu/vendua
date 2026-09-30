@@ -13,6 +13,8 @@ import {
 // Messages: parent → { type: 'vendua:preview', templates?, tokens?, selected? };
 //           frame  → { type: 'vendua:preview-ready', tokens, paths } | { type: 'vendua:preview-select', id }.
 // `tokens` in ready are the ones in force, so the editor starts from the real look.
+// Any page can frame a store with the query, so drafts are taken only from the merchant
+// admin's origin, which Core reports (setPreviewOrigin); until then the frame stays inert.
 
 const active =
   typeof window !== 'undefined' &&
@@ -23,6 +25,7 @@ let drafts: TemplateSet | null = null;
 let draftTokens: StorefrontTokens | null = null;
 let current: StorefrontTokens | null = null;
 let paths: Record<string, string> | null = null;
+let adminOrigin: string | null = null;
 const listeners = new Set<() => void>();
 let started = false;
 
@@ -43,6 +46,7 @@ function start() {
       selected?: unknown;
     } | null;
     if (!d || d.type !== 'vendua:preview' || e.source !== window.parent) return;
+    if (!adminOrigin || e.origin !== adminOrigin) return;
     if (d.templates && typeof d.templates === 'object') {
       const next: TemplateSet = {};
       for (const [page, t] of Object.entries(d.templates as Record<string, unknown>)) {
@@ -74,12 +78,12 @@ function start() {
     'click',
     (e) => {
       const el = (e.target as Element | null)?.closest?.('[data-section-id]');
-      if (!el) return;
+      if (!el || !adminOrigin) return;
       e.preventDefault();
       e.stopPropagation();
       window.parent.postMessage(
         { type: 'vendua:preview-select', id: el.getAttribute('data-section-id') },
-        '*',
+        adminOrigin,
       );
     },
     true,
@@ -88,7 +92,22 @@ function start() {
 }
 
 function announce() {
-  window.parent.postMessage({ type: 'vendua:preview-ready', tokens: current, paths }, '*');
+  if (!adminOrigin) return;
+  window.parent.postMessage({ type: 'vendua:preview-ready', tokens: current, paths }, adminOrigin);
+}
+
+/** The merchant admin's origin, from Core — the only parent the preview listens to. */
+export function setPreviewOrigin(origin: string | null | undefined) {
+  let next: string | null = null;
+  try {
+    next = origin ? new URL(origin).origin : null;
+  } catch {
+    next = null;
+  }
+  if (next === 'null') next = null;
+  if (next === adminOrigin) return;
+  adminOrigin = next;
+  if (started) announce();
 }
 
 /** The provider reports the tokens in force and the store's routes; the editor starts from them. */

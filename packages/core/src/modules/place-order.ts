@@ -1,7 +1,7 @@
 import { emitAdminTx } from '../admin/live.ts';
 import type { Sql } from '../platform/db.ts';
 import { HttpError } from '../platform/http.ts';
-import { loadCartView, loadZoneRows, storeCoords } from './cart.ts';
+import { loadCartView, loadZoneRows, repriceLines, storeCoords } from './cart.ts';
 import { getProductById } from './catalog.ts';
 import { addressParts, composeAddress, validateCheckout, type CheckoutInput } from './checkout.ts';
 import { couponUsage, evaluateCoupon, loadCoupon } from './coupons.ts';
@@ -26,6 +26,8 @@ export async function placeOrderTx(
   now = new Date(),
   /** the install's driver; without it the stored connection alone decides (older callers) */
   provider?: PaymentProvider,
+  /** the phone a proven customer token vouches for — personal coupons need it */
+  opts: { provenPhone?: string | null } = {},
 ): Promise<string> {
   // Lock the cart row first — concurrent checkouts would both see 'open' and mint duplicates.
   await tx`select id from carts where tenant_id = ${tenantId} and id = ${cartId} for update`;
@@ -76,6 +78,13 @@ export async function placeOrderTx(
     body.scheduledFor ?? undefined,
     body.payment.method,
   );
+  // Throws after writing: the caller commits the repriced lines and answers this 409, so the
+  // shopper's next cart read shows the new total.
+  const repriced = await repriceLines(tx, tenantId, cart.items, products);
+  if (repriced > 0)
+    throw new HttpError(409, 'PRICES_CHANGED', 'some prices changed — review the cart', {
+      changedLines: repriced,
+    });
 
   const subtotal = cart.totals.subtotalCents;
   const deliveryFee =
@@ -98,6 +107,7 @@ export async function placeOrderTx(
       subtotalCents: subtotal,
       deliveryFeeCents: deliveryFee,
       phone,
+      provenPhone: opts.provenPhone ?? null,
       usage: await couponUsage(tx, tenantId, row.id, phone),
       now,
     });

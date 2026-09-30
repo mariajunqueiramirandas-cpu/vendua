@@ -785,7 +785,12 @@ export function createApi(baseUrl = '') {
         customerTokenExpiresAt?: string;
       }>(co('/checkout'), {
         method: 'POST',
-        headers: { ...auth(), 'idempotency-key': idemKey() },
+        // a verified token for this phone lets Core honour its personal (loyalty) coupons
+        headers: {
+          ...auth(),
+          ...customerHeader(input.customer.phone),
+          'idempotency-key': idemKey(),
+        },
         body: JSON.stringify(input),
       });
       // this device placed an order for the phone — it may read the phone's history
@@ -936,6 +941,8 @@ export const ERROR_CODES = [
   'INVALID_ORDER_TRANSITION',
   'IDEMPOTENCY_KEY_REQUIRED',
   'IDEMPOTENCY_IN_PROGRESS',
+  // an Idempotency-Key replayed with a different request
+  'IDEMPOTENCY_KEY_REUSED',
   'RATE_LIMITED',
   'NETWORK_ERROR',
   // Kernel-side: Core (or a proxy) served no event stream — live orders fall back to the long poll
@@ -974,6 +981,8 @@ export const ERROR_CODES = [
   'COUPON_NOT_YOURS',
   'COUPON_ALREADY_USED',
   'COUPON_FIRST_ORDER_ONLY',
+  // checkout refreshed stale line prices to the live catalog — re-read the cart
+  'PRICES_CHANGED',
   'COUPON_EXISTS',
   'INVALID_IMPORT',
   'SHARE_NOT_FOUND',

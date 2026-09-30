@@ -3,13 +3,16 @@ import type { Sql } from '../platform/db.ts';
 import { HttpError } from '../platform/http.ts';
 import type { LoyaltyProgram, StoreSettingsRow } from './store.ts';
 
-// "Sem senha, sem cadastro" (roadmap 2a/2c). A customer token binds (tenant, phone)
-// and is minted two ways: to the device that just placed an order with that phone,
-// or to anyone who can name one of that phone's order numbers. It unlocks the
-// phone's order *summaries* and loyalty card — never addresses or other customers'
-// data; a full order view still needs that order's own session token.
+// "Sem senha, sem cadastro" (roadmap 2a/2c). Anyone can type any phone at checkout, so a
+// phone alone proves nothing. A customer token binds (tenant, phone, anchor order): the
+// order this device just placed, or the one whose number it named. Only a *delivered*
+// anchor (the merchant handed the goods over) proves the phone: then the token reads the
+// phone's order summaries, loyalty rewards and redeems its personal coupons. Until then it
+// sees the anchor order alone. Never addresses or other customers' data.
 
 const TOKEN_DAYS = 90;
+const TOKEN_PREFIX = 'vcu2';
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 
 export const normalizePhone = (p: string) => {
   const d = p.replace(/\D/g, '');
@@ -27,60 +30,133 @@ function sign(secret: string, msg: string) {
   return createHmac('sha256', secret).update(msg).digest('base64url');
 }
 
+const signed = (tenantId: string, phone: string, anchor: string, exp: number) =>
+  `customer2|${tenantId}|${phone}|${anchor}|${exp}`;
+
 export function mintCustomerToken(
   secret: string,
   tenantId: string,
   phone: string,
+  anchorOrderId: string,
   now = Date.now(),
 ): { token: string; expiresAt: string } {
   const exp = Math.floor(now / 1000) + TOKEN_DAYS * 86_400;
+  const sig = sign(secret, signed(tenantId, phone, anchorOrderId, exp));
   return {
-    token: `vcu.${phone}.${exp}.${sign(secret, `customer|${tenantId}|${phone}|${exp}`)}`,
+    token: `${TOKEN_PREFIX}.${phone}.${anchorOrderId}.${exp}.${sig}`,
     expiresAt: new Date(exp * 1000).toISOString(),
   };
 }
 
+export interface CustomerClaim {
+  phone: string;
+  anchorOrderId: string;
+}
+
+/** Signature and expiry only — `resolveCustomer` decides what the claim is worth today. */
 export function verifyCustomerToken(
   secret: string,
   tenantId: string,
   token: string,
   now = Date.now(),
-): string | null {
+): CustomerClaim | null {
+  if (token.length > 300) return null;
   const parts = token.split('.');
-  if (parts.length !== 4 || parts[0] !== 'vcu') return null;
-  const [, phone, expRaw, sig] = parts as [string, string, string, string];
+  if (parts.length !== 5 || parts[0] !== TOKEN_PREFIX) return null;
+  const [, phone, anchor, expRaw, sig] = parts as [string, string, string, string, string];
   const exp = Number(expRaw);
-  if (!/^\d{10,11}$/.test(phone) || !Number.isInteger(exp) || exp * 1000 < now) return null;
-  const expected = Buffer.from(sign(secret, `customer|${tenantId}|${phone}|${exp}`));
+  if (!/^\d{10,11}$/.test(phone) || !UUID_RE.test(anchor)) return null;
+  if (!Number.isInteger(exp) || exp * 1000 < now) return null;
+  const expected = Buffer.from(sign(secret, signed(tenantId, phone, anchor, exp)));
   const got = Buffer.from(sig);
-  return expected.length === got.length && timingSafeEqual(expected, got) ? phone : null;
+  return expected.length === got.length && timingSafeEqual(expected, got)
+    ? { phone, anchorOrderId: anchor }
+    : null;
 }
 
-/** The phone the request proves, or 401 CUSTOMER_REQUIRED; a `phone` query must match it. */
-export function requireCustomer(
+export interface Customer extends CustomerClaim {
+  /** the anchor order was delivered — the phone is the bearer's */
+  proven: boolean;
+}
+
+/** A claim whose anchor is still this phone's live order; a cancelled/refunded anchor is void. */
+export async function resolveCustomer(
+  tx: Sql,
+  tenantId: string,
+  claim: CustomerClaim | null,
+): Promise<Customer | null> {
+  if (!claim) return null;
+  const row = (
+    await tx<{ state: string }[]>`
+      select state from orders
+      where tenant_id = ${tenantId} and id = ${claim.anchorOrderId}
+        and customer_phone = ${claim.phone}
+    `
+  )[0];
+  if (!row || row.state === 'cancelled' || row.state === 'refunded') return null;
+  return { ...claim, proven: row.state === 'delivered' };
+}
+
+/** The customer the request proves, or 401 CUSTOMER_REQUIRED; a `phone` query must match it. */
+export async function requireCustomer(
+  tx: Sql,
   secret: string,
   tenantId: string,
   header: string | undefined,
   askedPhone?: string,
-): string {
-  const phone = header ? verifyCustomerToken(secret, tenantId, header) : null;
-  if (!phone) throw new HttpError(401, 'CUSTOMER_REQUIRED', 'verify this phone to see its orders');
-  if (askedPhone !== undefined && validPhone(askedPhone) !== phone)
+): Promise<Customer> {
+  const customer = await resolveCustomer(
+    tx,
+    tenantId,
+    header ? verifyCustomerToken(secret, tenantId, header) : null,
+  );
+  if (!customer)
+    throw new HttpError(401, 'CUSTOMER_REQUIRED', 'verify this phone to see its orders');
+  if (askedPhone !== undefined && validPhone(askedPhone) !== customer.phone)
     throw new HttpError(403, 'CUSTOMER_MISMATCH', 'token was issued for another phone');
-  return phone;
+  return customer;
 }
 
+/** The id of that phone's order with that number (the new token's anchor), if any. */
 export async function verifyByOrder(
   tx: Sql,
   tenantId: string,
   phone: string,
   orderNumber: number,
-): Promise<boolean> {
-  const rows = await tx`
-    select 1 from orders
+): Promise<string | null> {
+  const rows = await tx<{ id: string }[]>`
+    select id from orders
     where tenant_id = ${tenantId} and customer_phone = ${phone} and number = ${orderNumber}
+      and state not in ('cancelled', 'refunded')
   `;
-  return rows.length > 0;
+  return rows[0]?.id ?? null;
+}
+
+const SESSION_FAILURE_CAP = 5;
+
+/** Wrong phone+number guesses per (tenant, phone) in 24h — order numbers are sequential. */
+export async function sessionFailuresExceeded(
+  tx: Sql,
+  tenantId: string,
+  phone: string,
+): Promise<boolean> {
+  // serialize guesses for one phone so parallel requests can't overrun the cap
+  await tx`select pg_advisory_xact_lock(hashtextextended(${`custsession|${tenantId}|${phone}`}, 0))`;
+  const n = (
+    await tx<{ n: number }[]>`
+      select count(*)::int as n from customer_session_failures
+      where tenant_id = ${tenantId} and phone = ${phone}
+        and created_at > now() - interval '24 hours'
+    `
+  )[0]!.n;
+  return n >= SESSION_FAILURE_CAP;
+}
+
+export async function recordSessionFailure(tx: Sql, tenantId: string, phone: string) {
+  await tx`insert into customer_session_failures (tenant_id, phone) values (${tenantId}, ${phone})`;
+  // bounded table: rows older than the window are dead weight
+  if (Math.random() < 0.05)
+    await tx`delete from customer_session_failures where created_at < now() - interval '2 days'`;
 }
 
 export interface OrderSummary {
@@ -99,6 +175,8 @@ export async function ordersByPhone(
   tenantId: string,
   phone: string,
   limit = 30,
+  /** a pending (unproven) customer sees only its anchor order */
+  onlyOrderId?: string,
 ): Promise<OrderSummary[]> {
   const rows = await tx<
     {
@@ -118,6 +196,7 @@ export async function ordersByPhone(
               from order_items i where i.order_id = o.id) as items
     from orders o
     where o.tenant_id = ${tenantId} and o.customer_phone = ${phone}
+      and (${onlyOrderId ?? null}::uuid is null or o.id = ${onlyOrderId ?? null}::uuid)
     order by o.placed_at desc
     limit ${limit}
   `;
@@ -187,6 +266,8 @@ export async function loyaltyCard(
   phone: string,
   settings: Pick<StoreSettingsRow, 'loyalty'> | null,
   now = new Date(),
+  /** reward codes are bearer coupons — only for a proven customer (or the merchant) */
+  opts: { withRewards?: boolean } = {},
 ): Promise<LoyaltyCard> {
   const program = parseLoyalty(settings?.loyalty);
   if (!program)
@@ -199,7 +280,10 @@ export async function loyaltyCard(
       rewards: [],
     };
   const { earned, minted } = await stampCounts(tx, tenantId, phone, program);
-  const rewards = await tx<{ code: string; label: string | null; ends_at: Date | null }[]>`
+  const rewards =
+    opts.withRewards === false
+      ? []
+      : await tx<{ code: string; label: string | null; ends_at: Date | null }[]>`
     select c.code, c.label, c.ends_at from coupons c
     where c.tenant_id = ${tenantId} and c.source = 'loyalty' and c.phone = ${phone} and c.active
       and (c.ends_at is null or c.ends_at > ${now})
