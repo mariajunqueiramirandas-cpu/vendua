@@ -30,6 +30,32 @@ CHROMIUM=/opt/pw-browsers/chromium bun scripts/shots.ts /pipeline /inbox   # 375
   in the response), then `cd apps/admin && (nohup bun run dev > /tmp/admin.log 2>&1 &)`
   (:5196). Sign in as the seed owner, phone 22999990001.
 
+## Storefronts through the edge (Phase 4)
+
+Core with the Control Plane's probes pointed at a local edge, a real release, the edge serving it:
+
+```sh
+cd packages/core && (CONTROL_SECRET=dev SESSION_SECRET=devsecret VENDUA_EDGE_SECRET=devedge \
+  VENDUA_PROBES=1 VENDUA_PROBE_ORIGIN=http://localhost:8080 nohup bun src/index.ts > /tmp/core.log 2>&1 &)
+cd storefronts/_template && bun run build
+VENDUA_ARTIFACTS=file:///tmp/artifacts CONTROL_SECRET=dev bunx vendua release publish _template --no-build
+cd packages/edge && (PORT=8080 VENDUA_ARTIFACTS=file:///tmp/artifacts VENDUA_EDGE_SECRET=devedge \
+  VENDUA_CORE_URL=http://localhost:8787 VENDUA_EDGE_CACHE_DIR=/tmp/edgecache nohup bun src/main.ts > /tmp/edge.log 2>&1 &)
+curl -H 'host: quero-pudim.vendua.com.br' localhost:8080/    # or Chromium with
+#   --host-resolver-rules="MAP *.vendua.com.br 127.0.0.1:8080"
+CONTROL_SECRET=dev bunx vendua fleet status
+```
+
+- `bun packages/edge/scripts/smoke.ts` runs the whole loop (invite → publish → edge → probe →
+  new release → rollback) against a Core started as above — the CI `edge-smoke` job.
+- `cd packages/core && bun run seed:fleet` fills the CRM's Lojas → frota with releases, stores,
+  a pinned store, a failing probe and incidents (run apps/control's `scripts/dev-seed.ts` first).
+- `(cd dir && nohup bun … &)` backgrounds a subshell, so `$!` is that subshell, not bun: find
+  the listener with `ps aux | grep "src/main.ts"` and kill its pid (never `pkill -f`).
+- The fleet tests (`packages/core/test/fleet.test.ts`) confine the probe loop to their own
+  stores, but a Core running with `VENDUA_PROBES=1` on the same database probes everything:
+  stop it before running the Core suite (its agent worker also races the agent-run tests).
+
 ## Fleet commands
 
 Need Core + `CONTROL_SECRET`: `bunx vendua train [--core --record]`,

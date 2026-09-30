@@ -1,7 +1,16 @@
 # 12 — Domains and TLS
 
-> Status: Proposed · Last reviewed: 2026-09-11
-> Decision: [ADR 0010](../adr/0010-automated-domains-tls.md)
+> Status: Accepted — default hostnames implemented (Phase 4), custom-domain automation Phase 7 · Last reviewed: 2026-09-30
+> Decisions: [ADR 0010](../adr/0010-automated-domains-tls.md), [ADR 0021](../adr/0021-self-serve-signup-and-plan-billing.md), [ADR 0022](../adr/0022-control-plane-v0-and-edge.md)
+
+**Where it stands (2026-09-30).** The default hostname path is live and fully automated: one
+wildcard DNS record `*.vendua.com.br` → the VPS, one wildcard certificate on Dokploy's Traefik
+(DNS-01), and `provision_store()` registers `<slug>.<store domain>` as the store's primary
+`domains` row — no per-store DNS or certificate step. The provisioner's `verify` step probes
+`https://<host>` through all of it. Custom domains are verified by Core (CNAME + TXT, every
+15 min, ADR 0021) and activated by staff after they attach the host to the `edge` service in
+Dokploy, which issues its certificate; on-demand TLS with the `ask` gate below (and Caddy in
+front) is Phase 7's custom-domain automation.
 
 Every tenant gets a working hostname at provisioning and a custom domain when
 they want one. Both paths are fully automated — DNS, cert issuance, attachment,

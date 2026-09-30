@@ -1,6 +1,6 @@
 # 16 — Operations and Incidents
 
-> Status: Proposed · Last reviewed: 2026-09-11
+> Status: Accepted — health model and kill switch implemented; SLOs, status page and runbooks open · Last reviewed: 2026-09-30
 
 Centralization trades _many small failures_ for _fewer, bigger, shared
 failures_. A Saturday-dinner-rush Core outage is 1000 stores down at once — the
@@ -43,29 +43,34 @@ Two levels, both deliberate:
 
 ## Health model
 
-Synthetic probes per live hostname every 60 s (Control Plane):
+Synthetic probes per live hostname every 60 s (Control Plane, `fleet/probe.ts`, Phase 4):
 
-- catalog page returns 200 and contains `vendua-state`
-- `__VENDUA_LOADER__` ping answers
-- checkout smoke test against the tenant's sandbox flag (creates a session,
-  no order)
+- the page returns 200, contains `vendua-state` and names its release (`x-vendua-release`)
+- `/v1/v.js` answers and exposes the `__VENDUA_LOADER__` ping (checked in its source — the
+  probe is HTTP, not a browser)
+- `/storefront/v1/state` answers with a store status
+- checkout smoke test: a session that re-attaches the probe's one cart (no order, no new
+  cart per probe)
 
-Alerts: probe failures → incident → auto-rollback evaluation → WhatsApp/email
-to on-call. Platform-level: Core/edge/DB golden signals; MP webhook lag;
+Alerts: three failures in a row → `probe_failing` incident (critical after 10 min) →
+WhatsApp/email to staff (the `fleet` staff event); a pending deployment that fails its
+probes or isn't verified in 5 min is rolled back automatically and pins the store. Half the
+fleet failing at once is one `fleet_degraded` incident, and per-store alerts and rollbacks wait
+for it. Platform-level (not built yet): Core/edge/DB golden signals; MP webhook lag;
 cert-issuance failure rate; train gate rejections.
 
 ## Runbook index
 
-| Incident                | Detect                                      | First actions                                                                                                       |
-| ----------------------- | ------------------------------------------- | ------------------------------------------------------------------------------------------------------------------- |
-| Core outage             | API SLO burn, probe failures                | Verify edge serves static shells + loader overlays; failover/rollback Core deploy; global `service_incident` notice |
-| Edge outage             | External probe failure                      | Failover node; CDN-cached artifacts keep serving for warm hostnames                                                 |
-| Bad Kernel train        | Gate rejection, checkout-rate drop          | Halt train; roll back affected rings; bisect release                                                                |
-| MP webhooks lagging     | Webhook age metric, payment-state staleness | Replay endpoint; MP status check; comms template to affected merchants                                              |
-| Cert issuance failures  | `cert_state=failed` rate                    | Rate-limit check; `ask` endpoint health; subdomain path unaffected                                                  |
-| Storefront artifact bad | Per-tenant probe fail                       | Re-promote previous release (automatic when policy allows)                                                          |
-| Agent runaway           | `agent_tasks` cost/time alerts              | Kill task; quarantine storefront PR; review task contract                                                           |
-| DB failover             | DB health                                   | Promote replica / restore; verify RLS + outbox integrity before traffic                                             |
+| Incident                | Detect                                      | First actions                                                                                                           |
+| ----------------------- | ------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------- |
+| Core outage             | API SLO burn, probe failures                | Verify edge serves static shells + loader overlays; failover/rollback Core deploy; global `service_incident` notice     |
+| Edge outage             | External probe failure                      | Failover node; CDN-cached artifacts keep serving for warm hostnames                                                     |
+| Bad Kernel train        | Gate rejection, checkout-rate drop          | Halt train; roll back affected rings; bisect release                                                                    |
+| MP webhooks lagging     | Webhook age metric, payment-state staleness | Replay endpoint; MP status check; comms template to affected merchants                                                  |
+| Cert issuance failures  | `cert_state=failed` rate                    | Rate-limit check; `ask` endpoint health; subdomain path unaffected                                                      |
+| Storefront artifact bad | Per-tenant probe fail                       | Automatic while the deployment is pending; later `vendua fleet rollback <store>` or "voltar para a anterior" in the CRM |
+| Agent runaway           | `agent_tasks` cost/time alerts              | Kill task; quarantine storefront PR; review task contract                                                               |
+| DB failover             | DB health                                   | Promote replica / restore; verify RLS + outbox integrity before traffic                                                 |
 
 ## Capacity notes
 

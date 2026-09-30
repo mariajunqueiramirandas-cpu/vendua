@@ -87,6 +87,8 @@ Significant decisions are recorded as ADRs in [`adr/`](adr/). Current index:
 | [0018](adr/0018-page-composition.md)                   | Pages are composed from SDK and store sections              |
 | [0019](adr/0019-customer-identity-without-accounts.md) | Customer identity without accounts (phone + order number)   |
 | [0020](adr/0020-merchant-identity.md)                  | Merchant identity: phone OTP, tenant-scoped sessions, roles |
+| [0021](adr/0021-self-serve-signup-and-plan-billing.md) | Self-serve signup and plan billing                          |
+| [0022](adr/0022-control-plane-v0-and-edge.md)          | Control Plane v0 in Core, a Bun edge, pointer-flip releases |
 
 ## Conventions
 
