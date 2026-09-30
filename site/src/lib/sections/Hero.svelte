@@ -190,19 +190,19 @@
     }
   }
 
-  /* the box Duá stands in: its bottom edge is the top of the lowercase, so nothing of him shows
-     through the letters' counters */
+  /* the box Duá stands in: only its bottom edge clips, at the top of the lowercase, so nothing of
+     him shows through the letters' counters; the other sides leave room for his hello */
   .peek {
     position: absolute;
     z-index: -1;
-    left: 1.42em;
+    left: 1.17em;
     bottom: 0.56em;
-    width: 1.25em;
-    height: 1.02em;
+    width: 1.75em;
+    height: 1.32em;
     overflow: clip;
     /* his lower body fades into shadow before it reaches the letters' tops, so he stands behind
        the name instead of looking sliced off at the cut */
-    mask-image: linear-gradient(to bottom, #000 58%, rgb(0 0 0 / 0.4) 84%, transparent 98%);
+    mask-image: linear-gradient(to top, transparent 0.02em, rgb(0 0 0 / 0.4) 0.16em, #000 0.43em);
   }
   .duck {
     position: absolute;
@@ -210,9 +210,9 @@
   }
   .peek :global(.dua) {
     position: absolute;
-    left: 0;
-    top: 0;
-    width: 100%;
+    left: 0.25em;
+    bottom: -0.23em;
+    width: 1.25em;
     max-width: none;
     transform-origin: 50% 100%;
   }
@@ -306,7 +306,7 @@
     .peek :global(.dua) {
       animation:
         climb 1s var(--spring) 1.05s both,
-        wave 1.1s ease-in-out 1.9s 2;
+        hello 0.6s linear 2.05s;
     }
     .tag {
       animation: show 0.7s var(--ease-soft) 0.55s both;
@@ -379,12 +379,23 @@
       translate: 0 100%;
     }
   }
-  @keyframes wave {
-    25% {
-      rotate: -5deg;
+  /* two little hops, leaning toward the name: "oi!" */
+  @keyframes hello {
+    0%,
+    48% {
+      translate: 0 0;
+      rotate: 0deg;
+      animation-timing-function: cubic-bezier(0.2, 0.7, 0.4, 1);
     }
-    60% {
-      rotate: 4deg;
+    22% {
+      translate: 0 -5%;
+      rotate: 2.5deg;
+      animation-timing-function: cubic-bezier(0.6, 0, 0.8, 0.4);
+    }
+    72% {
+      translate: 0 -3%;
+      rotate: 1.5deg;
+      animation-timing-function: cubic-bezier(0.6, 0, 0.8, 0.4);
     }
   }
   @keyframes word {
