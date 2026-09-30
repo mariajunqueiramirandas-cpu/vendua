@@ -193,20 +193,26 @@
   /* the box Duá stands in: its bottom edge is the top of the lowercase, so nothing of him shows
      through the letters' counters */
   .peek {
+    --room: 0.3em; /* for his shadow: the box only cuts at the bottom */
     position: absolute;
     z-index: -1;
-    left: 1.42em;
+    left: calc(1.42em - var(--room));
     bottom: 0.56em;
-    width: 1.25em;
-    height: 1.02em;
+    width: calc(1.25em + 2 * var(--room));
+    height: calc(1.02em + var(--room));
     overflow: clip;
     /* his lower body fades into shadow before it reaches the letters' tops, so he stands behind
        the name instead of looking sliced off at the cut */
-    mask-image: linear-gradient(to bottom, #000 58%, rgb(0 0 0 / 0.4) 84%, transparent 98%);
+    mask-image: linear-gradient(
+      to bottom,
+      #000 calc(100% - 0.43em),
+      rgb(0 0 0 / 0.4) calc(100% - 0.16em),
+      transparent calc(100% - 0.02em)
+    );
   }
   .duck {
     position: absolute;
-    inset: 0;
+    inset: var(--room) var(--room) 0;
   }
   .peek :global(.dua) {
     position: absolute;
@@ -215,6 +221,14 @@
     width: 100%;
     max-width: none;
     transform-origin: 50% 100%;
+    filter: drop-shadow(0 0.06em 0.09em rgb(18 60 50 / 0.38));
+  }
+  /* on the dark sky his dark fur needs a lift: a faint lime glow under the shadow */
+  @media (prefers-color-scheme: dark) {
+    .peek :global(.dua) {
+      filter: drop-shadow(0 0 0.09em color-mix(in srgb, var(--spark) 24%, transparent))
+        drop-shadow(0 0.05em 0.07em rgb(0 0 0 / 0.55));
+    }
   }
 
   .tag {
