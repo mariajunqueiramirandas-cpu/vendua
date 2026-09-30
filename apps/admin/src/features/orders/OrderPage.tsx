@@ -25,9 +25,12 @@ export default function OrderPage() {
     <PageBody>
       <PageHeader title="Pedido" back="/pedidos" />
       {data ? (
-        <OrderDetail order={data.order} customer={data.customer}
+        <OrderDetail
+          order={data.order}
+          customer={data.customer}
           payments={data.payments}
-          prepDefault={prep} />
+          prepDefault={prep}
+        />
       ) : error ? (
         <ErrorState error={error} retry={() => void refetch()} />
       ) : (

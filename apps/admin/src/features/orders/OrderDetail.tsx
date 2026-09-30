@@ -337,12 +337,7 @@ export function OrderDetail({
 
       <CancelSheet order={order} open={cancelOpen} onOpenChange={setCancelOpen} />
       {online ? (
-        <RefundSheet
-          order={order}
-          payment={main}
-          open={refundOpen}
-          onOpenChange={setRefundOpen}
-        />
+        <RefundSheet order={order} payment={main} open={refundOpen} onOpenChange={setRefundOpen} />
       ) : null}
     </div>
   );
@@ -381,7 +376,7 @@ export function CancelSheet({
             ? 'Esse pedido foi pago pelo Mercado Pago. Ao cancelar, o que o cliente pagou volta para ele sozinho, pelo mesmo meio.'
             : paid
               ? 'Esse pedido já foi pago. Depois de cancelar, devolva o valor ao cliente pelo seu banco.'
-            : 'O cliente vê o motivo na página do pedido. Não dá para desfazer.'
+              : 'O cliente vê o motivo na página do pedido. Não dá para desfazer.'
       }
       footer={
         paid || refund ? (
