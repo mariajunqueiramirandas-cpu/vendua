@@ -19,6 +19,7 @@ import { planRow } from './plans.ts';
 import {
   applyHold,
   applyPendingPlan,
+  cancelPendingUpgrade,
   chargePlanId,
   downgradeDue,
   dropPix,
@@ -96,6 +97,7 @@ export async function runBillingTick(sql: Sql, o: BillingJobOpts, now: Date) {
   const steps: [string, Step][] = [
     ['reconcile', reconcilePix],
     ['end', endCancelled],
+    ['upgrades', expireUpgrades],
     ['downgrades', applyDowngrades],
     ['past_due', markPastDue],
     ['renewals', issueRenewals],
@@ -178,7 +180,8 @@ const endCancelled: Step = async (sql, base, now) => {
         if (!sub.current_period_end || sub.current_period_end > now) return null;
         await tx`
         update subscriptions set status = 'cancelled', cancel_at_period_end = false,
-          pending_plan_id = null, checkout_url = null, updated_at = now(), status_changed_at = now()
+          pending_plan_id = null, upgrade_plan_id = null, upgrade_invoice_id = null,
+          checkout_url = null, updated_at = now(), status_changed_at = now()
         where tenant_id = ${tenant_id}
       `;
         await tx`update invoices set status = 'void' where tenant_id = ${tenant_id} and status in ('open', 'failed')`;
@@ -197,8 +200,41 @@ const endCancelled: Step = async (sql, base, now) => {
   });
 };
 
+/** an upgrade not paid by the end of its period never applies: its invoice is void */
+const expireUpgrades: Step = async (sql, base, now) => {
+  const rows = await controlTx(
+    sql,
+    (tx) => tx<{ tenant_id: string }[]>`
+      select s.tenant_id from subscriptions s
+        left join invoices i on i.id = s.upgrade_invoice_id
+      where (s.upgrade_plan_id is not null or s.upgrade_invoice_id is not null)
+        and (i.id is null or i.status <> 'open' or i.period_end <= ${now}
+             or s.status not in ('active', 'past_due'))
+      limit ${BATCH}
+    `,
+  );
+  await each(rows, 'upgrades', async ({ tenant_id }) => {
+    await withEffects(base, (ctx) =>
+      withTenant(sql, tenant_id, async (tx) => {
+        const sub = await lockSub(tx, tenant_id);
+        if (!sub?.upgrade_plan_id && !sub?.upgrade_invoice_id) return;
+        const inv = (
+          await tx<InvoiceRow[]>`select * from invoices where id = ${sub.upgrade_invoice_id}`
+        )[0];
+        const live =
+          inv?.status === 'open' &&
+          inv.period_end > now &&
+          (sub.status === 'active' || sub.status === 'past_due');
+        if (live) return;
+        await cancelPendingUpgrade(ctx, tx, sub);
+        await emitAdminTx(tx, tenant_id, 'billing');
+      }),
+    );
+  });
+};
+
 /** a downgrade paid for (the new period has begun) takes the store to the new plan */
-const applyDowngrades: Step = async (sql, _base, now) => {
+const applyDowngrades: Step = async (sql, base, now) => {
   const rows = await controlTx(
     sql,
     (tx) => tx<{ tenant_id: string }[]>`
@@ -209,12 +245,14 @@ const applyDowngrades: Step = async (sql, _base, now) => {
     `,
   );
   await each(rows, 'downgrades', async ({ tenant_id }) => {
-    await withTenant(sql, tenant_id, async (tx) => {
-      const sub = await lockSub(tx, tenant_id);
-      if (!sub || !downgradeDue(sub, sub.current_period_start, now)) return;
-      await applyPendingPlan(tx, tenant_id, sub.pending_plan_id!);
-      await emitAdminTx(tx, tenant_id, 'billing');
-    });
+    await withEffects(base, (ctx) =>
+      withTenant(sql, tenant_id, async (tx) => {
+        const sub = await lockSub(tx, tenant_id);
+        if (!sub || !downgradeDue(sub, sub.current_period_start, now)) return;
+        await applyPendingPlan(ctx, tx, tenant_id, sub.pending_plan_id!);
+        await emitAdminTx(tx, tenant_id, 'billing');
+      }),
+    );
   });
 };
 
@@ -303,8 +341,8 @@ const sendReminders: Step = async (sql, base, now) => {
       select i.*, p.name as plan_name from invoices i
         join subscriptions s on s.tenant_id = i.tenant_id
         join plans p on p.id = i.plan_id
-      where i.status = 'open' and i.method = 'pix' and s.status in ('active', 'past_due')
-        and s.method = 'pix' and i.due_at <= ${new Date(now.getTime() + 3 * DAY_MS)}
+      where i.status = 'open' and i.method = 'pix' and i.kind = 'period'
+        and s.status in ('active', 'past_due') and s.method = 'pix' and i.due_at <= ${new Date(now.getTime() + 3 * DAY_MS)}
         and not ('overdue' = any(i.reminded))
       order by i.due_at limit ${BATCH}
     `,
@@ -385,8 +423,8 @@ export async function syncPlanPrices(sql: Sql, base: Omit<BillingCtx, 'later'>, 
       select i.id, i.tenant_id from invoices i
         join plans p on p.id = i.plan_id
         join subscriptions s on s.tenant_id = i.tenant_id
-      where i.status = 'open' and i.method = 'pix' and i.provider = ${base.provider.name}
-        and i.amount_cents <> p.price_cents and (s.status = 'pending' or i.period_start > ${now})
+      where i.status = 'open' and i.method = 'pix' and i.kind = 'period'
+        and i.provider = ${base.provider.name} and i.amount_cents <> p.price_cents and (s.status = 'pending' or i.period_start > ${now})
       limit ${BATCH}
     `,
   );

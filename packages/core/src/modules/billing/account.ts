@@ -5,7 +5,7 @@ import type { PaymentProvider } from '../payments/provider.ts';
 import { cnameTarget, txtName, txtValue, type CustomDomainRow } from './domains.ts';
 import { invoiceView, type InvoiceRow } from './invoices.ts';
 import { publicPlans, tenantPlan } from './plans.ts';
-import type { SubRow } from './subscriptions.ts';
+import { upgradeLive, type SubRow } from './subscriptions.ts';
 
 /** GET /account — the store's plan, subscription, invoices, domains and PRO+ site request. */
 export async function accountView(
@@ -29,6 +29,14 @@ export async function accountView(
     where i.tenant_id = ${t.id}
     order by i.number desc limit 12
   `;
+  const upInv = sub?.upgrade_invoice_id
+    ? (
+        await tx<(InvoiceRow & { plan_name: string })[]>`
+          select i.*, p.name as plan_name from invoices i join plans p on p.id = i.plan_id
+          where i.tenant_id = ${t.id} and i.id = ${sub.upgrade_invoice_id}
+        `
+      )[0]
+    : undefined;
   const hosts = await tx<{ host: string; is_primary: boolean }[]>`
     select host, is_primary from domains where tenant_id = ${t.id}
     order by is_primary desc, length(host), host
@@ -82,6 +90,17 @@ export async function accountView(
           pendingPlan: sub.pending_plan_id
             ? { id: sub.pending_plan_id, name: sub.pending_name ?? sub.pending_plan_id }
             : null,
+          // pay this invoice (its Pix, or POST /account/invoices/:id/pix) and the plan changes
+          pendingUpgrade:
+            upInv && upgradeLive(sub, upInv, now)
+              ? {
+                  planId: upInv.plan_id,
+                  planName: upInv.plan_name,
+                  amountCents: upInv.amount_cents,
+                  until: upInv.period_end,
+                  invoice: invoiceView(upInv, now),
+                }
+              : null,
           checkoutUrl:
             sub.method === 'card' && sub.status !== 'cancelled' ? sub.checkout_url : null,
           payerEmail: sub.payer_email,

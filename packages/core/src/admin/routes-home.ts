@@ -291,7 +291,8 @@ async function platformAttention(
         select count(*)::int as n, min(due_at) as due,
                (array_agg(amount_cents order by due_at))[1] as cents
         from invoices
-        where tenant_id = ${tenantId} and status = 'open' and due_at < now() + interval '5 days'
+        where tenant_id = ${tenantId} and status = 'open' and kind = 'period'
+          and due_at < now() + interval '5 days'
       `
     )[0]!;
     if (inv.n > 0 && !out.some((a) => a.kind === 'billing_pending')) {

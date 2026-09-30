@@ -99,9 +99,11 @@ export function mountAccount(d: AdminDeps) {
       });
       const parts = [
         plan &&
-          (after.pending_plan_id === plan.id
-            ? `trocou para ${plan.name} no fim do período`
-            : `trocou para ${plan.name}`),
+          (after.upgrade_plan_id === plan.id
+            ? `pediu ${plan.name} (muda quando a diferença for paga)`
+            : after.pending_plan_id === plan.id
+              ? `trocou para ${plan.name} no fim do período`
+              : `trocou para ${plan.name}`),
         method && `pagamento por ${method === 'card' ? 'cartão' : 'Pix'}`,
         payerEmail && 'email de cobrança',
       ].filter(Boolean);
@@ -118,6 +120,7 @@ export function mountAccount(d: AdminDeps) {
         after: {
           planId: after.plan_id,
           pendingPlanId: after.pending_plan_id,
+          upgradePlanId: after.upgrade_plan_id,
           method: after.method,
         },
       });

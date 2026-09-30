@@ -258,9 +258,9 @@ export function mountReports(d: AdminDeps) {
     const money = (cents: number) => (cents / 100).toFixed(2).replace('.', ',');
     const cell = (v: unknown) => {
       const s = v === null || v === undefined ? '' : String(v);
-      // formula injection guard for spreadsheet apps
-      const safe = /^[=+\-@\t\r]/.test(s) ? `'${s}` : s;
-      return /[";\n]/.test(safe) ? `"${safe.replaceAll('"', '""')}"` : safe;
+      // formula injection guard for spreadsheet apps, which skip leading blanks/controls
+      const safe = /^[\s\x00-\x1f\x7f]*[=+\-@]/.test(s) ? `'${s}` : s;
+      return /[";,\n\r]/.test(safe) ? `"${safe.replaceAll('"', '""')}"` : safe;
     };
     const head = [
       'pedido',

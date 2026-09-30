@@ -41,6 +41,20 @@ export const OPENING_MESSAGE = 'A loja abre em breve.';
 export const CLOSED_MESSAGE = 'A loja está fechada no momento.';
 /** the pix renewal goes out this long before the period ends */
 export const RENEW_AHEAD_MS = 5 * DAY_MS;
+/** below this, a mid-period upgrade isn't charged apart: it waits for the period end instead */
+export const UPGRADE_MIN_CENTS = 100;
+
+/**
+ * What an upgrade costs for the rest of the paid period: the price difference × time left /
+ * period length, in integer cents rounded half-up.
+ */
+export function proratedCents(diffCents: number, start: Date, end: Date, now: Date): number {
+  if (diffCents <= 0) return 0;
+  const period = Math.max(1, end.getTime() - start.getTime());
+  const left = Math.min(period, Math.max(0, end.getTime() - now.getTime()));
+  const p = BigInt(period);
+  return Number((2n * BigInt(diffCents) * BigInt(left) + p) / (2n * p));
+}
 
 export interface SubRow {
   tenant_id: string;
@@ -57,6 +71,9 @@ export interface SubRow {
   current_period_start: Date | null;
   current_period_end: Date | null;
   cancel_at_period_end: boolean;
+  /** an upgrade waiting for its pro-rata invoice (plan_id stays the paid plan until then) */
+  upgrade_plan_id: string | null;
+  upgrade_invoice_id: string | null;
   created_at: Date;
 }
 
@@ -144,8 +161,8 @@ export async function startSubscription(
         plan_id = excluded.plan_id, pending_plan_id = null, method = excluded.method,
         status = 'pending', provider = excluded.provider, provider_subscription_id = null,
         checkout_url = null, payer_email = excluded.payer_email, current_period_start = null,
-        current_period_end = null, cancel_at_period_end = false, updated_at = now(),
-        status_changed_at = now()
+        current_period_end = null, cancel_at_period_end = false, upgrade_plan_id = null,
+        upgrade_invoice_id = null, updated_at = now(), status_changed_at = now()
       returning *
     `
   )[0]!;
@@ -179,6 +196,7 @@ export async function beginPayment(
     const reuse = (
       await tx<InvoiceRow[]>`
         select * from invoices where tenant_id = ${sub.tenant_id} and status in ('open', 'failed')
+          and kind = 'period'
         order by number desc limit 1
       `
     )[0];
@@ -342,7 +360,11 @@ export async function reissuePix(
     >`select * from invoices where tenant_id = ${tenantId} and id = ${invoiceId}`
   )[0];
   if (!inv) throw new HttpError(404, 'INVOICE_NOT_FOUND', 'invoice not found');
-  if (inv.status !== 'open' || inv.method !== 'pix')
+  if (
+    inv.status !== 'open' ||
+    inv.method !== 'pix' ||
+    (inv.kind === 'upgrade' && (!sub || !upgradeLive(sub, inv, now)))
+  )
     throw new HttpError(409, 'INVOICE_NOT_OPEN', 'only an open Pix invoice gets a new Pix');
   if (pixIsLive(inv, now)) return inv;
   const payerEmail = await payerEmailFor(tx, tenantId, sub?.payer_email);
@@ -370,6 +392,7 @@ export async function reissuePix(
 async function unpaidAhead(tx: Sql, sub: SubRow) {
   return tx<InvoiceRow[]>`
     select * from invoices where tenant_id = ${sub.tenant_id} and status in ('open', 'failed')
+      and kind = 'period'
       ${sub.status === 'pending' || !sub.current_period_end ? tx`` : tx`and period_start >= ${sub.current_period_end}`}
     order by number
   `;
@@ -407,6 +430,125 @@ async function repriceAhead(ctx: BillingCtx, tx: Sql, sub: SubRow, plan: PlanRow
   }
 }
 
+// ── a mid-period upgrade ────────────────────────────────────────────────────
+
+/** the pending upgrade's invoice is still payable: open, current, and its period not over */
+export function upgradeLive(sub: SubRow, inv: InvoiceRow, at: Date) {
+  return (
+    sub.upgrade_invoice_id === inv.id &&
+    !!sub.upgrade_plan_id &&
+    (sub.status === 'active' || sub.status === 'past_due') &&
+    inv.status === 'open' &&
+    inv.period_end.getTime() > at.getTime()
+  );
+}
+
+async function upgradeInvoice(tx: Sql, sub: SubRow): Promise<InvoiceRow | null> {
+  if (!sub.upgrade_invoice_id) return null;
+  return (
+    (
+      await tx<InvoiceRow[]>`
+        select * from invoices where tenant_id = ${sub.tenant_id} and id = ${sub.upgrade_invoice_id}
+      `
+    )[0] ?? null
+  );
+}
+
+/** Another plan change, a cancel or the period's end: the unpaid upgrade never applies. */
+export async function cancelPendingUpgrade(ctx: BillingCtx, tx: Sql, sub: SubRow) {
+  if (!sub.upgrade_plan_id && !sub.upgrade_invoice_id) return;
+  const inv = await upgradeInvoice(tx, sub);
+  if (inv && inv.status === 'open') {
+    // its Pix ids stay on the row: a late payment still finds it (and goes to the team)
+    await tx`update invoices set status = 'void' where id = ${inv.id}`;
+    if (inv.provider_payment_id) dropPix(ctx)(inv.provider_payment_id);
+  }
+  await tx`
+    update subscriptions set upgrade_plan_id = null, upgrade_invoice_id = null, updated_at = now()
+    where tenant_id = ${sub.tenant_id}
+  `;
+}
+
+async function upgradePix(ctx: BillingCtx, tx: Sql, sub: SubRow, inv: InvoiceRow, now: Date) {
+  const payerEmail = await payerEmailFor(tx, sub.tenant_id, sub.payer_email);
+  if (!payerEmail)
+    throw new HttpError(422, 'PAYER_EMAIL_REQUIRED', 'type the email the charge goes to', {
+      field: 'payerEmail',
+    });
+  const plan = await planOrThrow(tx, inv.plan_id);
+  return viaProvider(() =>
+    issuePix(tx, ctx.provider, inv, {
+      payerEmail,
+      planName: plan.name,
+      origin: ctx.origin,
+      now,
+      drop: dropPix(ctx),
+    }),
+  );
+}
+
+/**
+ * The difference for the rest of the paid period, as a one-off Pix invoice (card stores too:
+ * the assinatura only charges whole months). The plan changes when it is paid.
+ */
+async function startUpgrade(
+  ctx: BillingCtx,
+  tx: Sql,
+  sub: SubRow,
+  current: PlanRow,
+  target: PlanRow,
+  amountCents: number,
+  now: Date,
+) {
+  const inv = (
+    await tx<InvoiceRow[]>`
+      insert into invoices (tenant_id, number, plan_id, amount_cents, period_start, period_end,
+                            method, status, provider, due_at, kind)
+      values (${sub.tenant_id},
+              (select coalesce(max(number), 0) + 1 from invoices where tenant_id = ${sub.tenant_id}),
+              ${target.id}, ${amountCents}, ${now}, ${sub.current_period_end}, 'pix', 'open',
+              ${ctx.provider.name}, ${now}, 'upgrade')
+      returning *
+    `
+  )[0]!;
+  await tx`
+    update subscriptions set upgrade_plan_id = ${target.id}, upgrade_invoice_id = ${inv.id},
+      pending_plan_id = null, pending_plan_at = null, updated_at = now()
+    where tenant_id = ${sub.tenant_id}
+  `;
+  // a downgrade that was waiting is dropped: the next charge is the current plan again
+  if (sub.pending_plan_id) {
+    await setChargeAmount(ctx, tx, sub, current.price_cents);
+    await repriceAhead(ctx, tx, { ...sub, pending_plan_id: null }, current, now);
+  }
+  await upgradePix(ctx, tx, sub, inv, now);
+}
+
+/** The upgrade invoice was paid: the plan moves now, and so do the charges ahead. */
+async function applyUpgrade(ctx: BillingCtx, tx: Sql, sub: SubRow, inv: InvoiceRow, now: Date) {
+  const current = await planOrThrow(tx, sub.plan_id);
+  const target = await planOrThrow(tx, sub.upgrade_plan_id!);
+  await tx`
+    update subscriptions set plan_id = ${target.id}, pending_plan_id = null, pending_plan_at = null,
+      upgrade_plan_id = null, upgrade_invoice_id = null, updated_at = now()
+    where tenant_id = ${sub.tenant_id}
+  `;
+  await setTenantPlan(tx, sub.tenant_id, target.id);
+  const after = (
+    await tx<SubRow[]>`select * from subscriptions where tenant_id = ${sub.tenant_id}`
+  )[0]!;
+  try {
+    // the money is in: a provider hiccup here is caught up by the jobs (syncPlanPrices)
+    await setChargeAmount(ctx, tx, after, target.price_cents);
+    await repriceAhead(ctx, tx, after, target, now);
+  } catch (err) {
+    if (!(err instanceof ProviderError || err instanceof HttpError)) throw err;
+    billingLog.warn({ err, invoice: inv.id }, 'upgrade paid; next charge not repriced yet');
+  }
+  if (target.features?.customSite && !current.features?.customSite)
+    await openSiteRequest(ctx, tx, sub.tenant_id);
+}
+
 export async function changeSubscription(
   ctx: BillingCtx,
   tx: Sql,
@@ -430,21 +572,38 @@ export async function changeSubscription(
     await reload();
   }
 
-  if (o.plan && o.plan.id !== chargePlanId(sub)) {
+  let upgradeWaits = false;
+  if (o.plan && (sub.upgrade_plan_id || sub.upgrade_invoice_id)) {
+    const inv = await upgradeInvoice(tx, sub);
+    if (o.plan.id === sub.upgrade_plan_id && inv && upgradeLive(sub, inv, o.now)) {
+      upgradeWaits = true;
+      if (!pixIsLive(inv, o.now)) await upgradePix(ctx, tx, sub, inv, o.now);
+    } else {
+      await cancelPendingUpgrade(ctx, tx, sub);
+      await reload();
+    }
+  }
+
+  if (o.plan && !upgradeWaits && o.plan.id !== chargePlanId(sub)) {
     const target = o.plan;
     const current = await planOrThrow(tx, sub.plan_id);
     const card = sub.method === 'card' && sub.provider_subscription_id;
+    const upgradeCents =
+      sub.status !== 'pending' && sub.current_period_end && target.price_cents > current.price_cents
+        ? proratedCents(
+            target.price_cents - current.price_cents,
+            sub.current_period_start ?? new Date(sub.current_period_end.getTime() - 30 * DAY_MS),
+            sub.current_period_end,
+            o.now,
+          )
+        : 0;
     if (target.id === sub.plan_id) {
       // back to the current plan: the waiting downgrade is dropped
       await tx`update subscriptions set pending_plan_id = null, updated_at = now() where tenant_id = ${tenantId}`;
       if (card) await setChargeAmount(ctx, tx, sub, current.price_cents);
       await repriceAhead(ctx, tx, await reload(), current, o.now);
-    } else if (
-      sub.status === 'pending' ||
-      !sub.current_period_end ||
-      target.price_cents >= current.price_cents
-    ) {
-      // an upgrade (or nothing paid yet) applies now; the current paid period isn't re-charged
+    } else if (sub.status === 'pending' || !sub.current_period_end) {
+      // nothing paid yet: the plan applies now and the first charge is at its price
       await tx`
         update subscriptions set plan_id = ${target.id}, pending_plan_id = null, updated_at = now()
         where tenant_id = ${tenantId}
@@ -453,10 +612,11 @@ export async function changeSubscription(
         await setTenantPlan(tx, tenantId, target.id);
       if (card) await setChargeAmount(ctx, tx, sub, target.price_cents);
       await repriceAhead(ctx, tx, await reload(), target, o.now);
-      if (sub.status !== 'pending' && target.features?.customSite && !current.features?.customSite)
-        await openSiteRequest(ctx, tx, tenantId);
+    } else if (upgradeCents >= UPGRADE_MIN_CENTS) {
+      await startUpgrade(ctx, tx, sub, current, target, upgradeCents, o.now);
     } else {
-      // a downgrade waits for the period end; the next charge already uses its price
+      // a downgrade (or an upgrade too small to charge apart) waits for the period end; the
+      // next charge already uses its price
       await tx`
         update subscriptions set pending_plan_id = ${target.id},
           pending_plan_at = ${sub.current_period_end}, updated_at = now()
@@ -529,6 +689,7 @@ export async function cancelSubscription(ctx: BillingCtx, tx: Sql, tenantId: str
     `;
     for (const inv of await unpaidAhead(tx, sub))
       await tx`update invoices set status = 'void' where id = ${inv.id}`;
+    await cancelPendingUpgrade(ctx, tx, sub);
     // paused, not cancelled: "voltar atrás" before the period ends re-authorizes the same card
     if (sub.method === 'card')
       await viaProvider(() => stopPreapproval(ctx, sub.provider_subscription_id, 'paused'));
@@ -576,7 +737,24 @@ export async function markInvoicePaid(
     `
   )[0];
   if (!inv || !sub) return false;
-  if (sub.status === 'pending' || sub.status === 'cancelled') {
+  if (inv.kind === 'upgrade') {
+    if (upgradeLive(sub, { ...inv, status: 'open' }, paidAt))
+      await applyUpgrade(ctx, tx, sub, inv, now);
+    else {
+      const t = (
+        await tx<
+          { name: string; slug: string }[]
+        >`select name, slug from tenants where id = ${tenantId}`
+      )[0];
+      ctx.later(() =>
+        billingStaff.notify(ctx.sql, {
+          subject: `Upgrade pago fora do prazo: ${t?.name ?? tenantId}`,
+          body: `A fatura ${inv.number} (diferença de plano, ${formatBRL(inv.amount_cents)}) da loja ${t?.name} (${t?.slug}) foi paga depois de cancelada ou vencida. O plano não mudou: devolva pelo Mercado Pago.`,
+          idemKey: `invoice-upgrade-late:${inv.id}`,
+        }),
+      );
+    }
+  } else if (sub.status === 'pending' || sub.status === 'cancelled') {
     await activate(ctx, tx, sub, inv, paidAt);
   } else {
     const end = sub.current_period_end?.getTime() ?? 0;
@@ -588,7 +766,7 @@ export async function markInvoicePaid(
         where tenant_id = ${tenantId}
       `;
     if (downgradeDue(sub, inv.period_start, now))
-      await applyPendingPlan(tx, tenantId, sub.pending_plan_id!);
+      await applyPendingPlan(ctx, tx, tenantId, sub.pending_plan_id!);
   }
   await emitAdminTx(tx, tenantId, 'billing', inv.id);
   return true;
@@ -653,13 +831,18 @@ export function downgradeDue(sub: SubRow, periodStart: Date | null, now: Date) {
   );
 }
 
-export async function applyPendingPlan(tx: Sql, tenantId: string, planId: string) {
+export async function applyPendingPlan(ctx: BillingCtx, tx: Sql, tenantId: string, planId: string) {
+  const before = await currentTenantPlan(tx, tenantId);
   await tx`
     update subscriptions set plan_id = ${planId}, pending_plan_id = null, pending_plan_at = null,
       updated_at = now()
     where tenant_id = ${tenantId}
   `;
   await setTenantPlan(tx, tenantId, planId);
+  // an upgrade too small to charge apart lands here, after a period at its price was paid
+  const [from, to] = [await planRow(tx, before ?? ''), await planRow(tx, planId)];
+  if (to?.features?.customSite && !from?.features?.customSite)
+    await openSiteRequest(ctx, tx, tenantId);
 }
 
 /** PRO+ comes with a site made by our agent: one open request per store, and the team hears. */
@@ -720,6 +903,7 @@ export async function recordCardCharge(
       const reuse = (
         await tx<InvoiceRow[]>`
           select * from invoices where tenant_id = ${tenantId} and status in ('open', 'failed')
+            and kind = 'period'
           order by number desc limit 1
         `
       )[0];
@@ -837,8 +1021,8 @@ export async function noticeCancelled(ctx: BillingCtx, tx: Sql, sub: SubRow, clo
 /**
  * A Pix landed on Venduá's account for this invoice — the current Pix or any superseded one
  * (external_reference is the invoice id; the payment was read back with our own token). It
- * settles the invoice whatever it charged; an amount that isn't the invoice's, or a second
- * payment of a paid invoice, goes to the team (refund or difference by hand).
+ * settles the invoice when it covers the amount; a short one (a QR from before a price rise)
+ * leaves it open. Short, over and second payments go to the team (refund or difference by hand).
  */
 export async function settlePixPayment(
   ctx: BillingCtx,
@@ -871,10 +1055,22 @@ export async function settlePixPayment(
       );
     return false;
   }
-  if (pay.amountCents !== inv.amount_cents)
+  if (pay.amountCents < inv.amount_cents) {
+    // a QR for an older, lower price: the invoice stays open at its amount
+    if (!inv.short_payments.includes(pay.id))
+      await tx`update invoices set short_payments = array_append(short_payments, ${pay.id}) where id = ${inv.id}`;
+    flag(
+      `Pix com valor menor: ${t?.name ?? tenantId}`,
+      `A fatura ${inv.number} da loja ${t?.name} (${t?.slug}) é de ${formatBRL(inv.amount_cents)} e recebeu ${formatBRL(pay.amountCents)} (Pix ${pay.id}, emitido antes de uma mudança de preço). A fatura continua em aberto: devolva esse Pix pelo Mercado Pago ou acerte a diferença.`,
+      `invoice-amount:${pay.id}`,
+    );
+    await emitAdminTx(tx, tenantId, 'billing', inv.id);
+    return false;
+  }
+  if (pay.amountCents > inv.amount_cents)
     flag(
       `Pix com valor diferente: ${t?.name ?? tenantId}`,
-      `A fatura ${inv.number} da loja ${t?.name} (${t?.slug}) era de ${formatBRL(inv.amount_cents)} e foi paga com ${formatBRL(pay.amountCents)} (Pix ${pay.id}, emitido antes de uma mudança de preço). A fatura foi dada como paga.`,
+      `A fatura ${inv.number} da loja ${t?.name} (${t?.slug}) era de ${formatBRL(inv.amount_cents)} e foi paga com ${formatBRL(pay.amountCents)} (Pix ${pay.id}). A fatura foi dada como paga; devolva a diferença pelo Mercado Pago.`,
       `invoice-amount:${pay.id}`,
     );
   // the attempt that wasn't used can't be paid a second time

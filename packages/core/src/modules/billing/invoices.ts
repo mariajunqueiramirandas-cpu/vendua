@@ -30,6 +30,9 @@ export interface InvoiceRow {
   reminded: string[];
   pix_attempt: number;
   pix_superseded: string[];
+  /** 'upgrade': the one-off difference for the rest of a paid period (0062) */
+  kind: 'period' | 'upgrade';
+  short_payments: string[];
   created_at: Date;
 }
 
@@ -200,6 +203,7 @@ export function invoiceView(inv: InvoiceRow & { plan_name: string }, now: Date) 
   return {
     id: inv.id,
     number: inv.number,
+    kind: inv.kind,
     planName: inv.plan_name,
     amountCents: inv.amount_cents,
     periodStart: inv.period_start,

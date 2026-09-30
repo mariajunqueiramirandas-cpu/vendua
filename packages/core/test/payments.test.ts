@@ -520,6 +520,91 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('store payments (db)', () => {
     expect((await owner('GET', '/payments/statement?month=2026-13')).status).toBe(400);
   });
 
+  test('cancelling an order paid online needs a manager, like a refund', async () => {
+    const phone = `228${String(Date.now()).slice(-8)}`;
+    await sql`insert into merchant_users (tenant_id, name, phone, role) values (${tenantId}, 'Ana Atende', ${phone}, 'attendant')`;
+    await call('POST', '/admin/v1/auth/otp/start', { phone });
+    const v = await call('POST', '/admin/v1/auth/otp/verify', { phone, code: codes.get(phone) });
+    const cookie = `vendua_admin=${/vendua_admin=([^;]+)/.exec(v.headers.get('set-cookie') ?? '')![1]}`;
+    const attendant = (m: string, p: string, b?: unknown) =>
+      call(m, `/admin/v1${p}`, b, { cookie });
+
+    const o = await place('pix');
+    await pay(o.body.order.id, o.auth);
+    const pid = (await attempts(o.body.order.id))[0]!.provider_payment_id!;
+    fake.settle(pid, 'approved');
+    await hook(pid);
+    const refundsBefore = fake.refunds.length;
+    const c = await attendant('POST', `/orders/${o.body.order.id}/transition`, {
+      to: 'cancelled',
+      reason: 'acabou o pudim',
+    });
+    expect(c.status).toBe(403);
+    expect(c.body.error).toMatchObject({ code: 'FORBIDDEN', details: { need: 'manager' } });
+    expect(fake.refunds.length).toBe(refundsBefore);
+    expect((await getOrder(o.body.order.id, o.auth)).state).toBe('placed');
+    // an attendant still moves it along, and the owner can cancel (and refund)
+    expect(
+      (await attendant('POST', `/orders/${o.body.order.id}/transition`, { to: 'confirmed' }))
+        .status,
+    ).toBe(200);
+    const ok = await owner('POST', `/orders/${o.body.order.id}/transition`, {
+      to: 'cancelled',
+      reason: 'acabou o pudim',
+    });
+    expect(ok.body.order.payment.status).toBe('refunded');
+
+    // an order not paid online is still cancelled by an attendant
+    const cash = await place('cash');
+    const cc = await attendant('POST', `/orders/${cash.body.order.id}/transition`, {
+      to: 'cancelled',
+      reason: 'cliente desistiu',
+    });
+    expect(cc.status).toBe(200);
+  });
+
+  test('orders CSV: a CR, quotes and leading blanks never start a row or a formula', async () => {
+    const o = await place('cash');
+    const evil = "Ana\r=cmd|' /C calc'!A0";
+    await sql`
+      update orders set customer = customer || ${sql.json({ name: evil })}
+      where tenant_id = ${tenantId} and id = ${o.body.order.id}
+    `;
+    const o2 = await place('cash');
+    await sql`
+      update orders set customer = customer || ${sql.json({ name: ' \t=HYPERLINK("x")' })}
+      where tenant_id = ${tenantId} and id = ${o2.body.order.id}
+    `;
+    const today = new Date().toISOString().slice(0, 10);
+    const csv = await owner('GET', `/reports/orders.csv?from=${today}&to=${today}`);
+    expect(csv.status).toBe(200);
+    const body = csv.body as string;
+    expect(body).toContain(`;"${evil}";`);
+    expect(body).toContain(`;"' \t=HYPERLINK(""x"")";`);
+    // parsed as a spreadsheet would: the CR stays inside its cell, and no cell is a formula
+    const rows: string[][] = [[]];
+    let cellText = '';
+    let quoted = false;
+    for (let i = 0; i < body.length; i++) {
+      const ch = body[i]!;
+      if (quoted) {
+        if (ch === '"' && body[i + 1] === '"') ((cellText += '"'), i++);
+        else if (ch === '"') quoted = false;
+        else cellText += ch;
+      } else if (ch === '"') quoted = true;
+      else if (ch === ';') (rows.at(-1)!.push(cellText), (cellText = ''));
+      else if (ch === '\n' || ch === '\r') {
+        (rows.at(-1)!.push(cellText), (cellText = ''));
+        if (ch === '\r' && body[i + 1] === '\n') i++;
+        rows.push([]);
+      } else cellText += ch;
+    }
+    const names = rows.map((r) => r[3]);
+    expect(names).toContain(evil);
+    expect(names).toContain(`' \t=HYPERLINK("x")`);
+    for (const r of rows) for (const v of r) expect(v).not.toMatch(/^[\s\x00-\x1f]*[=+@]/);
+  });
+
   test('expired Pix → a new attempt with a new QR; the job expires what nobody paid', async () => {
     const o = await place('pix');
     const first = await pay(o.body.order.id, o.auth);

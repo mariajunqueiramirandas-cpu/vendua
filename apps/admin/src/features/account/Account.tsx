@@ -263,7 +263,9 @@ function AccountView({ a }: { a: AccountData }) {
   const [sheet, setSheet] = useState<SheetState>(null);
   const s = a.subscription;
   const live = !!s && s.status !== 'cancelled';
-  const openInvoice = a.invoices.find((i) => i.status === 'open' || i.status === 'failed');
+  const openInvoice = a.invoices.find(
+    (i) => (i.status === 'open' || i.status === 'failed') && i.kind !== 'upgrade',
+  );
   const pro = a.plans.find(
     (p) => p.priceCents !== null && p.features.customDomain && p.features.customSite,
   );
@@ -348,6 +350,7 @@ function AccountView({ a }: { a: AccountData }) {
           a={a}
           onChange={() => choose()}
           onPay={openInvoice ? () => setSheet({ kind: 'invoice', id: openInvoice.id }) : undefined}
+          onInvoice={(id) => setSheet({ kind: 'invoice', id })}
         />
       </Section>
 
@@ -429,10 +432,12 @@ function PlanHero({
   a,
   onChange,
   onPay,
+  onInvoice,
 }: {
   a: AccountData;
   onChange: () => void;
   onPay: (() => void) | undefined;
+  onInvoice: (id: string) => void;
 }) {
   const s = a.subscription;
   const plan = a.plan;
@@ -491,6 +496,32 @@ function PlanHero({
             <p className="t-body text-muted">
               A assinatura foi encerrada. Para continuar com a Venduá, escolha um plano.
             </p>
+          ) : null}
+          {s.pendingUpgrade ? (
+            <div className="flex flex-col gap-3 rounded-md bg-info-soft p-3 sm:flex-row sm:items-center">
+              <p className="t-body min-w-0 flex-1">
+                Para mudar para o <strong>{s.pendingUpgrade.planName}</strong> agora, falta pagar{' '}
+                <strong className="tnum">{money(s.pendingUpgrade.amountCents)}</strong>, a diferença
+                até {dateShort(s.pendingUpgrade.until)}.
+              </p>
+              <div className="flex flex-wrap gap-2">
+                <Button
+                  size="sm"
+                  icon={<PixLogo />}
+                  onClick={() => onInvoice(s.pendingUpgrade!.invoice.id)}
+                >
+                  pagar {money(s.pendingUpgrade.amountCents)}
+                </Button>
+                <Button
+                  size="sm"
+                  variant="secondary"
+                  loading={keep.isPending}
+                  onClick={() => keep.mutate(undefined)}
+                >
+                  manter o {plan.name}
+                </Button>
+              </div>
+            </div>
           ) : null}
           {s.pendingPlan && !s.cancelAtPeriodEnd ? (
             <div className="flex flex-col gap-3 rounded-md bg-info-soft p-3 sm:flex-row sm:items-center">
@@ -632,6 +663,8 @@ function PlanSheet({
   const change = useAccountWrite(
     (planId: string) => api.updateSubscription({ planId }),
     (n, planId) => {
+      const up = n.subscription?.pendingUpgrade;
+      if (up) return onInvoice(up.invoice.id);
       onClose();
       const p = n.plans.find((x) => x.id === planId);
       toast(
@@ -659,13 +692,23 @@ function PlanSheet({
       (current.features.customSite && !plan.features.customSite));
   const same = plan?.id === current.id;
   const end = s?.currentPeriodEnd ? dateShort(s.currentPeriodEnd) : null;
+  // a paid period: the difference is charged first (Core says how much)
+  const midPeriod = (s?.status === 'active' || s?.status === 'past_due') && !!end;
 
   let explain: ReactNode = null;
   if (mode === 'change' && plan) {
-    if (same)
-      explain = s?.pendingPlan
-        ? `Você fica no ${current.name} e a mudança marcada para o ${s.pendingPlan.name} é desfeita.`
+    if (same) {
+      const undo = s?.pendingPlan?.name ?? s?.pendingUpgrade?.planName;
+      explain = undo
+        ? `Você fica no ${current.name} e a mudança para o ${undo} é desfeita.`
         : `Esse já é o seu plano.`;
+    } else if (upgrade && midPeriod)
+      explain = (
+        <>
+          Você paga com Pix só a diferença até {end}, e o {plan.name} fica liberado assim que o
+          pagamento entrar. Depois, a cobrança passa a ser {perMonth(plan)}.
+        </>
+      );
     else if (upgrade || current.priceCents === null)
       explain = (
         <>
@@ -692,11 +735,11 @@ function PlanSheet({
         size="lg"
         block
         loading={busy}
-        disabled={!plan || (same && !s?.pendingPlan)}
+        disabled={!plan || (same && !s?.pendingPlan && !s?.pendingUpgrade)}
         onClick={() => plan && change.mutate(plan.id)}
       >
         {same
-          ? s?.pendingPlan
+          ? s?.pendingPlan || s?.pendingUpgrade
             ? `manter o ${current.name}`
             : 'esse é o seu plano'
           : `mudar para o ${plan?.name ?? ''}`}
@@ -920,7 +963,7 @@ function Invoices({ a, onOpen }: { a: AccountData; onOpen: (id: string) => void 
               </span>
               <span className="min-w-0 flex-1">
                 <span className="block truncate font-semibold first-letter:uppercase">
-                  {monthOf(i.periodStart)}
+                  {i.kind === 'upgrade' ? `troca para o ${i.planName}` : monthOf(i.periodStart)}
                 </span>
                 <span className="t-caption block text-muted">
                   {i.planName} ·{' '}
@@ -944,7 +987,7 @@ function Invoices({ a, onOpen }: { a: AccountData; onOpen: (id: string) => void 
               type="button"
               onClick={() => onOpen(i.id)}
               className={cn(cls, 'hover:bg-hover active:bg-press')}
-              aria-label={`fatura de ${monthOf(i.periodStart)}, em aberto: pagar`}
+              aria-label={`fatura ${i.kind === 'upgrade' ? `da troca para o ${i.planName}` : `de ${monthOf(i.periodStart)}`}, em aberto: pagar`}
             >
               {row}
             </button>
@@ -986,8 +1029,20 @@ function InvoiceSheet({
     <Sheet
       open={!!inv}
       onOpenChange={(v) => !v && onClose()}
-      title={inv ? `Fatura de ${monthOf(inv.periodStart)}` : 'Fatura'}
-      description={inv ? `${inv.planName} · nº ${inv.number}` : undefined}
+      title={
+        !inv
+          ? 'Fatura'
+          : inv.kind === 'upgrade'
+            ? `Troca para o ${inv.planName}`
+            : `Fatura de ${monthOf(inv.periodStart)}`
+      }
+      description={
+        !inv
+          ? undefined
+          : inv.kind === 'upgrade'
+            ? `A diferença até ${dateShort(inv.periodEnd)} · nº ${inv.number}`
+            : `${inv.planName} · nº ${inv.number}`
+      }
     >
       {!inv ? null : inv.status === 'paid' ? (
         <div className="animate-fade-up flex flex-col items-center py-6 text-center" role="status">
