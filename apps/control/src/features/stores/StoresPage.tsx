@@ -40,15 +40,33 @@ const MATCH: Record<StoreFilter, (s: BillingStore) => boolean> = {
   sites: siteOpen,
 };
 
-function Subscription({ s }: { s: BillingStore }) {
+function Subscription({ s, table }: { s: BillingStore; table?: boolean }) {
   const sub = s.subscription;
   if (!sub) return <span className="text-xs text-muted-foreground/70">sem assinatura</span>;
   return (
     <span className="inline-flex items-center gap-1.5">
       <Tag map={SUB_STATUS} value={sub.status} />
-      <span className="text-xs text-muted-foreground">
+      <span className={cn('text-xs text-muted-foreground', table && 'max-lg:hidden')}>
         {METHOD_LABEL[sub.method] ?? sub.method}
       </span>
+    </span>
+  );
+}
+
+/** Period end; overdue (past_due) reads red — that's the charge that failed. */
+function NextCharge({ s, className }: { s: BillingStore; className?: string }) {
+  const sub = s.subscription;
+  if (!sub || sub.status === 'cancelled')
+    return <span className={cn('text-muted-foreground/70', className)}>—</span>;
+  return (
+    <span
+      className={cn(
+        'tnum',
+        className,
+        sub.status === 'past_due' && 'font-medium text-destructive-foreground',
+      )}
+    >
+      {fmtDay(sub.currentPeriodEnd)}
     </span>
   );
 }
@@ -57,11 +75,11 @@ const COLUMNS: Column<BillingStore>[] = [
   {
     key: 'store',
     header: 'loja',
-    className: 'max-w-[16rem]',
+    className: 'max-w-[11rem] lg:max-w-[16rem]',
     cell: (s) => (
       <div className="flex min-w-0 items-baseline gap-2">
         <span className="min-w-0 truncate font-medium">{s.name}</span>
-        <StoreLink store={s} className="shrink-[3]" />
+        <StoreLink store={s} className="max-w-[40%] shrink-0 max-lg:hidden" />
       </div>
     ),
   },
@@ -75,18 +93,13 @@ const COLUMNS: Column<BillingStore>[] = [
     key: 'sub',
     header: 'assinatura',
     className: 'whitespace-nowrap',
-    cell: (s) => <Subscription s={s} />,
+    cell: (s) => <Subscription s={s} table />,
   },
   {
     key: 'next',
     header: 'próx. cobrança',
-    className: 'whitespace-nowrap tnum',
-    cell: (s) =>
-      s.subscription?.status === 'cancelled' ? (
-        <span className="text-muted-foreground/70">—</span>
-      ) : (
-        fmtDay(s.subscription?.currentPeriodEnd)
-      ),
+    className: 'whitespace-nowrap tnum max-lg:hidden',
+    cell: (s) => <NextCharge s={s} />,
   },
   {
     key: 'mp',
@@ -143,9 +156,7 @@ function MobileRow({ s }: { s: BillingStore }) {
         <StoreLink store={s} className="max-w-[45%]" />
         <Subscription s={s} />
         {s.subscription && s.subscription.status !== 'cancelled' && (
-          <span className="text-xs text-muted-foreground tnum">
-            {fmtDay(s.subscription.currentPeriodEnd)}
-          </span>
+          <NextCharge s={s} className="text-xs text-muted-foreground" />
         )}
       </div>
       {flags.length > 0 && <div className="flex flex-wrap gap-1">{flags}</div>}

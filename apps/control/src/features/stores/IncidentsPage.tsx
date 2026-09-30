@@ -34,28 +34,32 @@ const COLUMNS: Column<Incident>[] = [
   {
     key: 'sev',
     header: 'gravidade',
-    className: 'w-28 whitespace-nowrap',
-    cell: (i) => <Tag map={SEVERITY} value={i.severity} />,
+    className: 'w-32 whitespace-nowrap',
+    cell: (i) => (
+      <span className="inline-block w-24">
+        <Tag map={SEVERITY} value={i.severity} />
+      </span>
+    ),
   },
   { key: 'title', header: 'incidente', className: 'max-w-0 w-full', cell: (i) => <Title i={i} /> },
   {
     key: 'started',
     header: 'início',
-    className: 'whitespace-nowrap text-muted-foreground tnum',
-    cell: (i) => fmtDateTime(i.startedAt),
+    className: 'w-44 whitespace-nowrap text-muted-foreground tnum',
+    cell: (i) => <span className="inline-block w-36">{fmtDateTime(i.startedAt)}</span>,
   },
   {
     key: 'state',
     header: 'status',
     align: 'end',
-    className: 'whitespace-nowrap',
+    className: 'w-40 whitespace-nowrap',
     cell: (i) =>
       i.resolvedAt ? (
-        <span className="inline-flex items-center gap-1 text-xs text-muted-foreground">
+        <span className="inline-flex w-32 items-center justify-end gap-1 text-xs text-muted-foreground">
           <CheckCircle2 className="size-3.5" /> resolvido · {rel(i.resolvedAt)}
         </span>
       ) : (
-        <span className="text-xs font-medium">{since(i.startedAt)}</span>
+        <span className="inline-block w-32 text-xs font-medium">{since(i.startedAt)}</span>
       ),
   },
 ];

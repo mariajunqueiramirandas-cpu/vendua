@@ -47,7 +47,8 @@ function useEditors(askPrice: (c: PriceChange) => void) {
         label={`preço do plano ${p.name}`}
         onSave={(cents) => {
           if (cents == null || cents < 0) return void toast.error('o preço não pode ficar vazio');
-          askPrice({ plan: p, cents });
+          // next tick: the price input unmounts first, or its focus loss dismisses the dialog
+          setTimeout(() => askPrice({ plan: p, cents }), 0);
         }}
       />
     ),
@@ -217,7 +218,7 @@ export default function PlansPage() {
         }
       >
         {change && (
-          <div className="flex items-center justify-center gap-3 rounded-lg bg-muted py-4 text-lg font-semibold tracking-[-0.02em] tnum">
+          <div className="flex items-center justify-center gap-3 rounded-lg border bg-secondary py-4 text-lg font-semibold tracking-[-0.02em] tnum">
             <span className="text-muted-foreground line-through decoration-1">
               {fmtMoney(change.plan.priceCents)}
             </span>

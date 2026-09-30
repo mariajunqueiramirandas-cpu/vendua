@@ -120,12 +120,13 @@ function Domain({ s }: { s: BillingStore }) {
 function SiteRequest({ s }: { s: BillingStore }) {
   const r = s.siteRequest;
   const [status, setStatus] = useState<SiteRequestStatus>(r?.status ?? 'requested');
-  const [note, setNote] = useState('');
+  const saved = r?.staffNote ?? '';
+  const [note, setNote] = useState(saved);
   const patch = usePatchSiteRequest();
   useEffect(() => {
     setStatus(r?.status ?? 'requested');
-    setNote('');
-  }, [r?.id, r?.status]);
+    setNote(r?.staffNote ?? '');
+  }, [r?.id, r?.status, r?.staffNote]);
 
   if (!r) {
     return (
@@ -134,11 +135,12 @@ function SiteRequest({ s }: { s: BillingStore }) {
       </SheetSection>
     );
   }
-  const dirty = status !== r.status || note.trim() !== '';
+  const noteChanged = note.trim() !== saved.trim() && note.trim() !== '';
+  const dirty = status !== r.status || noteChanged;
   return (
     <SheetSection title="site sob medida" aside={<Tag map={SITE_STATUS} value={r.status} />}>
       <Field label="o que o lojista pediu">
-        <div className="max-h-48 overflow-auto rounded-md bg-muted px-2.5 py-2 text-sm whitespace-pre-wrap">
+        <div className="max-h-48 overflow-auto rounded-md border bg-muted/60 px-2.5 py-2 text-sm whitespace-pre-wrap">
           {r.brief?.trim() || <span className="text-muted-foreground">sem descrição</span>}
         </div>
       </Field>
@@ -147,10 +149,7 @@ function SiteRequest({ s }: { s: BillingStore }) {
         onSubmit={(e) => {
           e.preventDefault();
           if (!dirty) return;
-          patch.mutate(
-            { id: r.id, status, staffNote: note.trim() },
-            { onSuccess: () => setNote('') },
-          );
+          patch.mutate({ id: r.id, status, ...(noteChanged ? { staffNote: note.trim() } : {}) });
         }}
       >
         <Field label="status" htmlFor="site-status">

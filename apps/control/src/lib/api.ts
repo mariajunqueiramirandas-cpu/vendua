@@ -737,7 +737,12 @@ export interface BillingStore {
   } | null;
   mercadoPago: MpStatus | null;
   customDomain: { id: string; host: string; status: CustomDomainStatus } | null;
-  siteRequest: { id: string; status: SiteRequestStatus; brief: string | null } | null;
+  siteRequest: {
+    id: string;
+    status: SiteRequestStatus;
+    brief: string | null;
+    staffNote?: string | null | undefined;
+  } | null;
 }
 export interface ControlPlan {
   id: string;
