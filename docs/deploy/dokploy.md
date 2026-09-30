@@ -35,8 +35,24 @@ Copy `.env.example` into the service's environment and fill it in:
 | `DAILY_API_KEY`                            | daily.co per-meeting video rooms (unset → static roomUrl)       |
 | `IG_SIDECAR_SECRET`                        | Instagram DMs — Core↔ig-sidecar shared secret (see below)       |
 | `IG_PROXY`                                 | static residential proxy for the ig-sidecar (recommended)       |
+| `MP_CLIENT_ID` / `MP_CLIENT_SECRET`        | Venduá's Mercado Pago application — stores connect by OAuth     |
+| `MP_WEBHOOK_SECRET`                        | the application's webhook signing secret (x-signature)          |
+| `MP_PLATFORM_ACCESS_TOKEN`                 | Venduá's own MP account — plan billing (assinatura + Pix)       |
+| `VENDUA_SECRETS_KEY`                       | seals stores' MP tokens at rest (falls back to SESSION_SECRET)  |
 
 Generate secrets with `openssl rand -hex 32`.
+
+Mercado Pago: create the application at developers.mercadopago.com.br (marketplace,
+OAuth), set its redirect URL to `https://<VENDUA_ADMIN_HOST>/admin/v1/payments/mercadopago/callback`
+and its webhook URL to `https://<VENDUA_ADMIN_HOST>/admin/v1/hooks/mercadopago?t=platform`
+(events: payments, subscriptions). Store payments carry their own notification URL. Without
+`MP_CLIENT_ID`/`MP_CLIENT_SECRET` stores keep the offline methods (static Pix, cash, card on
+delivery) and the admin says online payments aren't available; without
+`MP_PLATFORM_ACCESS_TOKEN` self-serve signup stays closed. Never set
+`VENDUA_PAYMENTS_DRIVER=fake` outside dev/CI (Core ignores it in production).
+
+Rotating `VENDUA_SECRETS_KEY` makes every stored MP token unreadable: the stores show as
+disconnected and their owners are asked to reconnect.
 
 ## 3. Attach domains
 
@@ -97,6 +113,20 @@ update domains set is_primary = (host = 'pudim.example.com')
 ```
 
 (Exec into the `db` container or use Dokploy's database console.)
+
+### PRO+ custom domains
+
+A PRO+ owner adds their domain in the admin (Conta → Endereços) and follows the DNS steps
+shown there: a CNAME to `<slug>.<VENDUA_STORE_DOMAIN>` and a TXT `_vendua.<host>` with their
+verification value. Core checks DNS every 15 minutes; when both match the domain turns
+`dns_ok` and staff get an email. Then, in this order:
+
+1. Dokploy → `stores` → Domains → add the host (port 80, HTTPS on, Let's Encrypt).
+2. Wait for the certificate (open `https://<host>` — the "loja não encontrada" page is fine).
+3. CRM → Lojas → the store → "Ativar domínio". Core adds it to `domains` as the primary host,
+   so every link the admin builds moves to it.
+
+Signup reserves the admin's label (`painel`) and the other platform names from store slugs.
 
 ## Inbound email (agent inbox)
 

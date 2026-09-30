@@ -46,6 +46,14 @@ services:
       VAPID_SUBJECT: ${VAPID_SUBJECT:-mailto:suporte@vendua.com.br}
       # Ajuda's "chamar no WhatsApp" number (digits); unset = in-app message only.
       VENDUA_SUPPORT_WHATSAPP: ${VENDUA_SUPPORT_WHATSAPP:-}
+      # Mercado Pago (docs/deploy/dokploy.md): stores connect by OAuth to this application;
+      # unset = stores keep the offline methods. The platform token bills plans (signup needs it).
+      MP_CLIENT_ID: ${MP_CLIENT_ID:-}
+      MP_CLIENT_SECRET: ${MP_CLIENT_SECRET:-}
+      MP_WEBHOOK_SECRET: ${MP_WEBHOOK_SECRET:-}
+      MP_PLATFORM_ACCESS_TOKEN: ${MP_PLATFORM_ACCESS_TOKEN:-}
+      # Seals stores' MP tokens at rest; unset = derived from SESSION_SECRET.
+      VENDUA_SECRETS_KEY: ${VENDUA_SECRETS_KEY:-}
       # 1 = seed the three demo tenants + catalog on first boot; 0 = empty.
       SEED_DEMO: ${SEED_DEMO:-1}
       # slug:public-host[,slug:host2] — registers each storefront's real domain at seed time.
