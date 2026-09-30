@@ -1,6 +1,14 @@
 import { useState } from 'react';
 import type { SlotProps } from '@vendua/kernel';
-import { dateTime, dayLabel, money, ORDER_STATE_LABEL, PAYMENT_LABEL, time } from './format.ts';
+import {
+  dateTime,
+  dayLabel,
+  mediaSrcSet,
+  money,
+  ORDER_STATE_LABEL,
+  PAYMENT_LABEL,
+  time,
+} from './format.ts';
 
 const TERMINAL = new Set(['delivered', 'cancelled', 'refunded']);
 
@@ -203,8 +211,25 @@ export function OrderTimeline({ events }: SlotProps['order.Timeline']) {
   );
 }
 
-export function OrderStatusPage({ order, currency, timeline }: SlotProps['order.StatusPage']) {
+const PAYMENT_STATUS: Record<string, string> = {
+  paid: 'pago',
+  pending: 'aguardando pagamento',
+  failed: 'não aprovado',
+  expired: 'expirado',
+  refunded: 'devolvido',
+  partially_refunded: 'devolvido em parte',
+  in_mediation: 'em análise',
+  charged_back: 'contestado',
+};
+
+export function OrderStatusPage({
+  order,
+  currency,
+  timeline,
+  pickup,
+}: SlotProps['order.StatusPage']) {
   const d = order.delivery;
+  const pay = order.payment;
   return (
     <section
       className="v-order"
@@ -245,12 +270,26 @@ export function OrderStatusPage({ order, currency, timeline }: SlotProps['order.
                 ? [typeof d.address === 'string' ? d.address : null, d.neighborhood]
                     .filter(Boolean)
                     .join(' — ') || 'Endereço informado'
-                : 'Na loja'}
+                : (pickup?.address ?? 'Na loja')}
+              {d.mode === 'pickup' && pickup?.instructions ? (
+                <span className="v-order-fact-note v-muted" data-part="pickup-instructions">
+                  {pickup.instructions}
+                </span>
+              ) : null}
             </dd>
           </div>
           <div>
             <dt>Pagamento</dt>
-            <dd>{PAYMENT_LABEL[order.payment.method] ?? order.payment.method}</dd>
+            <dd>
+              {PAYMENT_LABEL[pay.method] ?? pay.method}
+              {/* online payments move on their own — say where it stands */}
+              {pay.online && PAYMENT_STATUS[pay.status] ? (
+                <span className="v-muted" data-part="payment-status">
+                  {' '}
+                  · {PAYMENT_STATUS[pay.status]}
+                </span>
+              ) : null}
+            </dd>
           </div>
           <div>
             <dt>Total</dt>
@@ -355,6 +394,8 @@ export function HoursTable({ hours }: SlotProps['store.HoursTable']) {
   );
 }
 
+const CARD_WIDTHS = [320, 480, 640];
+
 export function ProductCard({
   product,
   currency,
@@ -384,6 +425,12 @@ export function ProductCard({
             {product.imageUrl && !imgFailed ? (
               <img
                 src={product.imageUrl}
+                {...(mediaSrcSet(product.imageUrl, CARD_WIDTHS)
+                  ? {
+                      srcSet: mediaSrcSet(product.imageUrl, CARD_WIDTHS),
+                      sizes: '(max-width: 599px) 50vw, 240px',
+                    }
+                  : {})}
                 alt=""
                 loading="lazy"
                 decoding="async"
@@ -404,7 +451,11 @@ export function ProductCard({
             </p>
           ) : null}
           <p className="v-card-price v-num" data-part="price">
-            {soldOut ? (
+            {soldOut && product.availabilityLabel ? (
+              <span className="v-flag" data-part="availability">
+                {product.availabilityLabel}
+              </span>
+            ) : soldOut ? (
               <span className="v-flag">Esgotado</span>
             ) : (
               <>

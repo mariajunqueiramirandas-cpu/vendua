@@ -31,9 +31,12 @@ const LABEL: Record<StepId, string> = {
 
 const METHODS: PaymentMethod[] = [
   { id: 'pix', label: 'Pix' },
+  { id: 'card_online', label: 'Cartão de crédito', detail: 'Pago pelo Mercado Pago' },
   { id: 'card_on_delivery', label: 'Cartão na entrega' },
   { id: 'cash', label: 'Dinheiro' },
 ];
+// what a Core without `paymentMethods` (pre-1.4) accepts — never the online card
+const LEGACY_METHODS = ['pix', 'card_on_delivery', 'cash'];
 
 const NOTES_MAX = 500;
 const COUPON_CODES = new Set([
@@ -47,6 +50,11 @@ const COUPON_CODES = new Set([
   'COUPON_ALREADY_USED',
   'COUPON_FIRST_ORDER_ONLY',
 ]);
+
+/** Full-page hand-off to the provider's hosted checkout (card data never touches us). */
+function leaveTo(url: string) {
+  globalThis.location.assign(url);
+}
 
 function validate(step: StepId, d: CustomerDraft, mode: 'pickup' | 'delivery', located = false) {
   const e: Partial<Record<keyof CustomerDraft, string>> = {};
@@ -72,7 +80,7 @@ export function CheckoutPage() {
   const quote = useDeliveryQuote();
   const { submit, pending, error, reset } = useCheckout();
   const { customer, remember, forget } = useCustomer();
-  const { config } = useKernel();
+  const { config, api } = useKernel();
   const go = useNavigateTo();
   const paths = resolvePaths(config);
   const currency = store?.currency ?? 'BRL';
@@ -109,6 +117,8 @@ export function CheckoutPage() {
   const [syncing, setSyncing] = useState(false);
   const submitting = useRef(false);
   const stepStarted = useRef(Date.now());
+  // card_online: the order exists and the shopper is on the way to Mercado Pago
+  const [leaving, setLeaving] = useState<{ totalCents: number; url?: string } | null>(null);
 
   useEffect(() => {
     emit('checkout_step', { step, duration_ms: Date.now() - stepStarted.current });
@@ -123,12 +133,28 @@ export function CheckoutPage() {
   const schedule = cart?.schedule;
   const encomenda = schedule?.required === true;
   const allowed = encomenda ? schedule!.paymentMethods.join(',') : '';
-  // the store's own list (Kernel 1.4); absent on an older Core = all three
+  // the store's own list (Kernel 1.4); absent on an older Core = the three offline ones
   const accepted = store?.paymentMethods?.join(',') ?? '';
-  const methods = useMemo(() => {
-    const byStore = accepted ? METHODS.filter((m) => accepted.split(',').includes(m.id)) : METHODS;
-    return allowed ? byStore.filter((m) => allowed.split(',').includes(m.id)) : byStore;
-  }, [allowed, accepted]);
+  const online = store?.onlinePayments;
+  const pixOnline = online?.pix === true;
+  const cardOnline = online?.card !== false;
+  const byStore = useMemo(
+    () =>
+      METHODS.filter((m) =>
+        (accepted ? accepted.split(',') : LEGACY_METHODS).includes(m.id),
+      )
+        .filter((m) => m.id !== 'card_online' || cardOnline)
+        .map((m) =>
+          m.id === 'pix' && pixOnline
+            ? { ...m, detail: 'QR Code na próxima tela · confirma na hora' }
+            : m,
+        ),
+    [accepted, cardOnline, pixOnline],
+  );
+  const methods = useMemo(
+    () => (allowed ? byStore.filter((m) => allowed.split(',').includes(m.id)) : byStore),
+    [allowed, byStore],
+  );
   // an encomenda narrows payment (Pix-only in the reference) — keep the choice valid
   useEffect(() => {
     if (methods.length && !methods.some((m) => m.id === pay)) setPay(methods[0]!.id);
@@ -143,8 +169,29 @@ export function CheckoutPage() {
         : {}),
       disabled: !deliveryOk,
     },
-    { mode: 'pickup', label: 'Retirada', detail: store?.address ?? 'na loja', disabled: !pickupOk },
+    {
+      mode: 'pickup',
+      label: 'Retirada',
+      detail: store?.pickup?.address ?? store?.address ?? 'na loja',
+      ...(store?.pickup?.instructions ? { note: store.pickup.instructions } : {}),
+      disabled: !pickupOk,
+    },
   ];
+
+  if (leaving)
+    return (
+      <main id="main" className="v-page" data-vendua-page="checkout">
+        <h1 className="v-page-title">Pagamento</h1>
+        <Slot
+          name="checkout.PaymentStatus"
+          status="redirecting"
+          method="card_online"
+          amountCents={leaving.totalCents}
+          currency={currency}
+          {...(leaving.url ? { href: leaving.url } : {})}
+        />
+      </main>
+    );
 
   if (loading && !cart)
     return (
@@ -310,7 +357,24 @@ export function CheckoutPage() {
           },
         });
       else forget();
-      go(`${paths.order.replace(':id', order.id)}?novo=1`);
+      const orderPath = `${paths.order.replace(':id', order.id)}?novo=1`;
+      if (pay === 'card_online') {
+        // the order is placed; the card is paid on Mercado Pago's page, which returns to
+        // the order page. No redirect (provider down) → the order page offers to retry.
+        setLeaving({ totalCents: order.totalCents });
+        try {
+          const r = await api.payOrder(order.id);
+          if (r.next.kind === 'redirect') {
+            setLeaving({ totalCents: order.totalCents, url: r.next.url });
+            leaveTo(r.next.url);
+            return;
+          }
+        } catch {
+          /* the order page shows why and how to retry */
+        }
+        setLeaving(null);
+      }
+      go(orderPath);
     } catch (err) {
       // useCheckout().error carries the typed failure; route the fixable ones to their field
       const code = errorCode(err);
@@ -406,7 +470,7 @@ export function CheckoutPage() {
                   selected={pay}
                   onSelect={setPay}
                 />
-                {encomenda && methods.length < METHODS.length ? (
+                {encomenda && methods.length < byStore.length ? (
                   <p className="v-muted" data-part="payment-note">
                     Encomendas aceitam: {methods.map((m) => m.label).join(', ')}.
                   </p>
@@ -459,7 +523,7 @@ export function CheckoutPage() {
                 >
                   {pending
                     ? 'Enviando…'
-                    : `Confirmar pedido · ${money(cart.totals.totalCents, currency)}`}
+                    : `${pay === 'card_online' ? 'Ir para o pagamento' : 'Confirmar pedido'} · ${money(cart.totals.totalCents, currency)}`}
                 </button>
               ) : (
                 <button type="submit" className="v-btn v-btn-accent" disabled={syncing}>

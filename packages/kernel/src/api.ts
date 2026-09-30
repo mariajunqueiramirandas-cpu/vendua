@@ -48,6 +48,10 @@ export interface StoreProfile {
   paymentMethods?: string[];
   /** Kernel 1.4 — the store's uploaded logo, when it has one. */
   logoUrl?: string | null;
+  /** Kernel 1.7 — where and how to pick an order up (null = not set) */
+  pickup?: { address: string | null; instructions: string | null };
+  /** Kernel 1.7 — which methods Mercado Pago takes online right now */
+  onlinePayments?: { pix: boolean; card: boolean };
 }
 
 export interface PixInfo {
@@ -80,6 +84,9 @@ export interface CatalogProduct {
   preorderLeadDays?: number;
   /** Kernel 1.5 — a combo or a product with modifier groups: only the product page can add it */
   needsChoices?: boolean;
+  /** Kernel 1.7 — a `sold_out` product outside its schedule says when it comes back
+   *  (Core's copy, e.g. "Só sábados, 9h–13h") */
+  availabilityLabel?: string | null;
 }
 
 export interface ComboSlot {
@@ -97,6 +104,8 @@ export interface ComboSlot {
     status: string;
     stockQuantity: number | null;
     imageUrl: string | null;
+    /** Kernel 1.7 — why a scheduled pick is unavailable now ("Só sábados, 9h–13h") */
+    availabilityLabel?: string | null;
   }[];
 }
 
@@ -269,7 +278,8 @@ export interface Cart {
 export interface CheckoutInput {
   customer: { name: string; phone: string };
   delivery: { mode: 'pickup' | 'delivery' } & DeliveryAddress;
-  payment: { method: 'pix' | 'card_on_delivery' | 'cash' };
+  /** Kernel 1.7 adds 'card_online' (Mercado Pago's hosted checkout) */
+  payment: { method: 'pix' | 'card_online' | 'card_on_delivery' | 'cash' };
   /** Kernel 1.2 — "Alguma observação?" (≤500) */
   notes?: string;
   /** Kernel 1.2 — encomenda date, YYYY-MM-DD */
@@ -388,11 +398,21 @@ export interface Order {
   };
   payment: {
     method: string;
+    /** pending | paid | failed | expired | refunded | partially_refunded | charged_back | in_mediation */
     status: string;
+    /** 'offline' | 'sandbox' (legacy offline) | 'mercadopago' | 'fake' */
     provider: string;
     instructions: string | null;
-    /** Kernel 1.2 — copia e cola with this order's amount */
-    pix?: (Omit<PixInfo, 'keyType'> & { keyType?: string }) | null;
+    /** Kernel 1.2 — copia e cola with this order's amount. Kernel 1.7: an online Pix
+     *  (Mercado Pago's dynamic QR) carries `expiresAt`; Core may leave key/beneficiary
+     *  empty for it, so read them defensively (typed as before — no retype in Contract 2). */
+    pix?: (Omit<PixInfo, 'keyType'> & { keyType?: string; expiresAt?: string | null }) | null;
+    /** Kernel 1.7 — paid through the provider (webhook-confirmed), not by hand */
+    online?: boolean;
+    paidAt?: string | null;
+    refundedCents?: number;
+    /** Kernel 1.7 — the hosted card checkout of the current attempt */
+    redirectUrl?: string | null;
   };
   subtotalCents: number;
   deliveryFeeCents: number;
@@ -409,6 +429,12 @@ export interface Order {
   /** bumps on every state change — the live wait's cursor */
   version?: number;
 }
+
+/** Kernel 1.7 — what `POST /orders/:id/pay` asks the shopper to do next. */
+export type PaymentNext =
+  | { kind: 'pix'; copyPaste: string; expiresAt: string | null }
+  | { kind: 'redirect'; url: string }
+  | { kind: 'none' };
 
 export interface OrderItem {
   productId: string | null;
@@ -788,6 +814,24 @@ export function createApi(baseUrl = '') {
         headers: bearer ? { authorization: `Bearer ${bearer}` } : {},
       }).then((r) => r.order);
     },
+    /** Kernel 1.7 — start/resume the order's online payment and sync it with the
+     *  provider (a card return lands here before the webhook). Same order credential
+     *  as `order()`; 409 PAYMENT_NOT_REQUIRED, 503 PAYMENT_UNAVAILABLE. */
+    payOrder: (id: string) => {
+      const bearer = orderTokenMem.get(id) ?? readOrderTokens()[id] ?? token;
+      return apiFetch<{ order: Order; next: PaymentNext }>(co(`/orders/${id}/pay`), {
+        method: 'POST',
+        headers: {
+          ...(bearer ? { authorization: `Bearer ${bearer}` } : {}),
+          'idempotency-key': idemKey(),
+        },
+      }).then((r) => {
+        // the page navigates to this URL and renders it as a link: https only, whatever Core sent
+        if (r.next.kind === 'redirect' && !isHttps(r.next.url))
+          throw new ApiError(503, 'PAYMENT_UNAVAILABLE', 'unsafe payment redirect');
+        return r;
+      });
+    },
     /** Kernel 1.3 — SSE over fetch (the session token rides as Bearer, which
      *  EventSource can't send). Calls `onOrder` per `order` event; resolves when
      *  Core closes the stream (terminal state or lifetime), throws
@@ -916,6 +960,10 @@ export const ERROR_CODES = [
   'PAYMENT_NOT_ALLOWED',
   // Kernel 1.4 — the store turned this method off in its admin
   'PAYMENT_METHOD_UNAVAILABLE',
+  // Kernel 1.7 — online payments (Mercado Pago)
+  'PAYMENT_NOT_REQUIRED',
+  'PAYMENT_UNAVAILABLE',
+  'PAYMENT_ONLINE',
   'INVALID_NOTES',
   'INVALID_COUPON',
   'COUPON_NOT_FOUND',
@@ -981,4 +1029,15 @@ export type VenduaApi = ReturnType<typeof createApi>;
 // The shared money formatter — pass the tenant currency from `useStore().store.currency`.
 export function formatCents(cents: number, currency = 'BRL', locale = 'pt-BR'): string {
   return new Intl.NumberFormat(locale, { style: 'currency', currency }).format(cents / 100);
+}
+
+function isHttps(url: string) {
+  try {
+    const u = new URL(url);
+    // dev stores run on http://<slug>.localhost, where the fake provider sends shoppers back
+    const local = /(^|\.)localhost$|^127\.0\.0\.1$/.test(u.hostname);
+    return u.protocol === 'https:' || (local && u.protocol === 'http:');
+  } catch {
+    return false;
+  }
 }

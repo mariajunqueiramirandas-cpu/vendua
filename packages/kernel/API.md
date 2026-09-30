@@ -19,7 +19,7 @@ retypes (those need a Contract major, a codemod and an alias window).
 | `KERNEL_PATHS`     | Same paths by name                                                                             |
 | `SurfaceRegion`    | Inline notices targeted at a region name                                                       |
 | `ErrorBoundary`    | Fallback-on-throw wrapper for storefront code                                                  |
-| `SLOT_KEYS`        | The slot registry (31 slots, each with a default in `@vendua/ui-defaults`)                     |
+| `SLOT_KEYS`        | The slot registry (32 slots, each with a default in `@vendua/ui-defaults`)                     |
 | `SLOT_ALIASES`     | Deprecated slot keys → their replacement and the codemod that rewrites them                    |
 
 ```tsx
@@ -87,7 +87,7 @@ themselves when Core's live stream says they changed (no API change).
 | `CheckoutButton`   | `data-vendua="checkout-button"` | starts the session, disabled states, `checkout_start`                               |
 | `StoreStatusBadge` | `data-vendua="store-status"`    | live open/closed/paused                                                             |
 | `NotifyMeButton`   | `data-vendua="notify-me"`       | "avise-me" subscription, `notify_me` event                                          |
-| `Img`              | —                               | CDN srcset (`images.cdn`), lazy/priority, blur-up                                   |
+| `Img`              | —                               | CDN srcset (`images.cdn`; Core media `?w=` since 1.7), lazy/priority, blur-up       |
 
 Every primitive accepts `asChild`. A primitive with no `onError` hands typed errors to
 the default error surface.
@@ -144,6 +144,30 @@ joins the restock waitlist and shows how many wait.
 `checkout.AddressForm` gains optional `onCep`/`cepStatus`, `onLocate`/`locateStatus` and
 `zoneHint`; `CustomerDraft` gains optional `cep` and `reference`.
 
+### Online payments (Kernel 1.7)
+
+Checkout and `/pedido/:id` take payments through the store's Mercado Pago (Contract 2,
+additive — no storefront edit). Card data only ever touches Mercado Pago's hosted page.
+
+- `StoreProfile` gains `onlinePayments { pix, card }` and `pickup { address, instructions }`;
+  `paymentMethods` / `PaymentMethod.id` / `CheckoutInput.payment.method` may be
+  `'card_online'` ("Cartão de crédito", offered only when the store lists it).
+- `Order.payment` gains optional `online`, `paidAt`, `refundedCents`, `redirectUrl` and
+  `pix.expiresAt`; `status` may be `pending | paid | failed | expired | refunded |
+partially_refunded | charged_back | in_mediation`. New type `PaymentNext` (what
+  `POST /checkout/v1/orders/:id/pay` asks for next: `pix`, `redirect` or `none`).
+- New slot `checkout.PaymentStatus` (`PaymentStatusKind`: redirecting, confirming, due, paid,
+  processing, failed, expired, refunded, unavailable) — the Kernel picks the state and the
+  next step (`action`), the slot only renders it. `checkout.PixPayment` gains optional
+  `online` and `expiresAt` (countdown); `order.StatusPage` gains optional `pickup`;
+  `DeliveryOption` gains optional `note`.
+- `CatalogProduct.availabilityLabel`: a `sold_out` product outside its schedule says when it's
+  back ("Só sábados, 9h–13h"); the product card and `sdk:purchase-panel` show it, and
+  `sdk:notify-me` / `sdk:stock-counter` stay out of the way.
+- `Img` with no `images.cdn`: a `/v1/media/…` src gets a srcset from Core's own resized
+  copies (`?w=`).
+- `ERROR_CODES` adds `PAYMENT_NOT_REQUIRED`, `PAYMENT_UNAVAILABLE`, `PAYMENT_ONLINE`.
+
 ### Editor preview (Kernel 1.4)
 
 Not an export: a storefront loaded inside a frame with `?vendua-preview=1` listens for
@@ -179,9 +203,9 @@ the last resort — each one is counted in the artifact manifest.
 `formatCents`, and the Core DTO types (`StoreProfile`, `CatalogProduct`, `Cart`,
 `Order`, `Notice`, `StateEnvelope`, …). Kernel 1.2 types: `ComboSlot`, `ComboSelection`,
 `CartCoupon`, `CartSchedule`, `CouponCheck`, `DeliveryAddress`, `CepResult`, `ImportLine`,
-`ImportReport`, `OrderItem`, `OrderSummary`, `LoyaltyCard`, `PixInfo`; every new DTO field
+`ImportReport`, `OrderItem`, `OrderSummary`, `LoyaltyCard`, `PixInfo` (Kernel 1.7: `PaymentNext`); every new DTO field
 is optional so a Kernel 1.2 storefront still runs against an older Core. Slot prop types: `SlotProps`, `CheckoutStep`,
-`CustomerDraft`, `DeliveryOption`, `PaymentMethod`, `ModifierGroup`.
+`CustomerDraft`, `DeliveryOption`, `PaymentMethod`, `ModifierGroup`, `PaymentStatusKind` (1.7).
 
 ## Build (`@vendua/kernel/vite`)
 

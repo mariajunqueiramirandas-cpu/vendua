@@ -9,6 +9,7 @@ import {
   type ImgHTMLAttributes,
 } from 'react';
 import { UNSAFE_NavigationContext } from 'react-router-dom';
+import { mediaSrcSet } from '@vendua/ui-defaults';
 import { useCart, useStore } from './hooks.ts';
 import { useKernel, prefetchQuery } from './provider.tsx';
 import { productHref, KERNEL_PATHS } from './config.ts';
@@ -398,15 +399,19 @@ export function Img({
   const [loaded, setLoaded] = useState(false);
   const cdn = config.images?.cdn;
   const local = src.startsWith('/') && !src.startsWith('//');
+  const widths = WIDTHS.filter((w) => w <= width * 2);
   const srcSet =
     cdn && local
-      ? WIDTHS.filter((w) => w <= width * 2)
+      ? widths
           .map(
             (w) =>
               `${cdn.replace('{src}', encodeURIComponent(src)).replace('{w}', String(w))} ${w}w`,
           )
           .join(', ')
-      : undefined;
+      : // Kernel 1.7 — no CDN: Core's own uploads resize themselves (`?w=`)
+        !cdn && widths.length
+        ? mediaSrcSet(src, widths)
+        : undefined;
   return (
     <img
       {...rest}

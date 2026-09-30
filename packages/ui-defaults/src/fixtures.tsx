@@ -339,4 +339,11 @@ export const SLOT_FIXTURES: { [K in SlotKey]: SlotProps[K] } = {
     currency: 'BRL',
   },
   'customer.PhoneVerify': { phone: '', pending: false, onSubmit: noop },
+  'checkout.PaymentStatus': {
+    status: 'failed',
+    method: 'card_online',
+    amountCents: 4700,
+    currency: 'BRL',
+    action: { label: 'Tentar de novo', onClick: noop },
+  },
 };

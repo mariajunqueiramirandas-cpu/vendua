@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import { matchPath, Outlet, useLocation } from 'react-router-dom';
-import { dayLabel, money } from '@vendua/ui-defaults';
+import { dayLabel, mediaSrcSet, money } from '@vendua/ui-defaults';
 import { useCart, useCatalog, useProduct, useStore } from '../hooks.ts';
 import {
   AddToCart,
@@ -347,6 +347,12 @@ export function PurchasePanel({ settings }: SectionProps<typeof S.purchasePanel>
           ) : product.imageUrl ? (
             <img
               src={product.imageUrl}
+              {...(mediaSrcSet(product.imageUrl)
+                ? {
+                    srcSet: mediaSrcSet(product.imageUrl),
+                    sizes: '(max-width: 719px) 100vw, 560px',
+                  }
+                : {})}
               alt={product.name}
               {...{ fetchpriority: 'high' }}
               decoding="async"
@@ -407,7 +413,11 @@ export function PurchasePanel({ settings }: SectionProps<typeof S.purchasePanel>
               }}
             />
           ) : null}
-          {soldOut ? (
+          {soldOut && product.availabilityLabel ? (
+            <p className="v-note" role="status" data-part="availability">
+              <strong>Indisponível agora</strong> · {product.availabilityLabel}
+            </p>
+          ) : soldOut ? (
             <p className="v-alert" role="status" data-part="sold-out">
               {settings.soldOutText}
             </p>

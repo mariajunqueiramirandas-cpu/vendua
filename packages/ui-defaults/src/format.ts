@@ -34,6 +34,7 @@ export const ORDER_STATE_LABEL: Record<string, string> = {
 
 export const PAYMENT_LABEL: Record<string, string> = {
   pix: 'Pix',
+  card_online: 'Cartão de crédito',
   card_on_delivery: 'Cartão na entrega',
   cash: 'Dinheiro',
 };
@@ -59,3 +60,22 @@ export const COUPON_REASON: Record<string, string> = {
   COUPON_ALREADY_USED: 'Você já usou este cupom.',
   COUPON_FIRST_ORDER_ONLY: 'Cupom válido só no primeiro pedido.',
 };
+
+/** Core's resized copies of an uploaded image (`/v1/media/…?w=`, smallest variant ≥ w). */
+export const MEDIA_WIDTHS = [320, 480, 640, 960, 1280];
+
+/** A srcset for a Core media path; undefined for any other src (external, data:, CDN). */
+export function mediaSrcSet(src: string, widths: readonly number[] = MEDIA_WIDTHS) {
+  if (!src.startsWith('/v1/media/')) return undefined;
+  const sep = src.includes('?') ? '&' : '?';
+  return widths.map((w) => `${src}${sep}w=${w} ${w}w`).join(', ');
+}
+
+/** "29:41" (or "1:02:05") until `to`; "0:00" once it passed. */
+export function countdown(to: number, now: number): string {
+  const s = Math.max(0, Math.floor((to - now) / 1000));
+  const h = Math.floor(s / 3600);
+  const m = Math.floor((s % 3600) / 60);
+  const ss = String(s % 60).padStart(2, '0');
+  return h ? `${h}:${String(m).padStart(2, '0')}:${ss}` : `${m}:${ss}`;
+}

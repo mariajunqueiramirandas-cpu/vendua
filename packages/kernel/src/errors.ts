@@ -38,6 +38,13 @@ const COPY: Record<string, { title: string; body?: string }> = {
   INVALID_COMBO: { title: 'Esse kit mudou', body: 'Monte de novo.' },
   SCHEDULE_REQUIRED: { title: 'Escolha a data da encomenda' },
   INVALID_SCHEDULE: { title: 'Essa data não está disponível', body: 'Escolha outra data.' },
+  // Kernel 1.7
+  PAYMENT_UNAVAILABLE: {
+    title: 'O pagamento online não respondeu',
+    body: 'Tente de novo em instantes. Seu pedido está guardado.',
+  },
+  PAYMENT_NOT_REQUIRED: { title: 'Esse pedido não precisa de pagamento online' },
+  PAYMENT_ONLINE: { title: 'Esse pagamento é confirmado pelo Mercado Pago' },
   PAYMENT_NOT_ALLOWED: { title: 'Encomendas aceitam outra forma de pagamento' },
   COUPON_NOT_FOUND: { title: 'Cupom não encontrado' },
   INVALID_COUPON: { title: 'Cupom inválido' },

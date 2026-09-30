@@ -167,9 +167,12 @@ export async function mount(opts: {
   snapshot?: TemplateSet;
   sections?: Record<string, unknown>;
   children?: ReactNode;
+  /** a checkout session token already in this tab (an open cart) */
+  session?: string;
 }): Promise<Mounted> {
   sessionStorage.clear();
   localStorage.clear();
+  if (opts.session) sessionStorage.setItem('vendua.session', opts.session);
   const config = defineStorefront({ contract: 2, tokens: TOKENS, ...opts.config });
   const el = document.createElement('div');
   document.body.appendChild(el);

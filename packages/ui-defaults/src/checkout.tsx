@@ -368,6 +368,11 @@ export function DeliveryOptions({
             />
             <span className="v-option-label">{o.label}</span>
             {o.detail ? <span className="v-option-detail v-muted">{o.detail}</span> : null}
+            {o.note && o.mode === selected ? (
+              <span className="v-option-note" data-part="option-note">
+                {o.note}
+              </span>
+            ) : null}
           </label>
         ))}
       </div>
@@ -409,8 +414,11 @@ export function PaymentMethods({
 
 export function SuccessPage({ order, currency }: SlotProps['checkout.SuccessPage']) {
   // the Pix card right below carries the how-to; here only what's left to do
+  const pay = order.payment;
   const pixDue =
-    order.payment.method === 'pix' && order.payment.status === 'pending' && !!order.payment.pix;
+    pay.method === 'pix' && pay.status === 'pending' && (!!pay.pix || pay.online === true);
+  const cardDue =
+    pay.method === 'card_online' && ['pending', 'failed', 'expired'].includes(pay.status);
   return (
     <section
       className="v-panel v-success"
@@ -451,7 +459,13 @@ export function SuccessPage({ order, currency }: SlotProps['checkout.SuccessPage
       </p>
       {pixDue ? (
         <p className="v-success-next" data-part="next">
-          Falta só o Pix — assim que o pagamento cair, o pedido vai para a loja.
+          {pay.online
+            ? 'Falta só o Pix — a confirmação aparece aqui assim que o pagamento cair.'
+            : 'Falta só o Pix — assim que o pagamento cair, o pedido vai para a loja.'}
+        </p>
+      ) : cardDue ? (
+        <p className="v-success-next" data-part="next">
+          Falta só o pagamento no cartão.
         </p>
       ) : order.payment.instructions ? (
         <p className="v-note" data-part="instructions">
