@@ -1,6 +1,6 @@
 # 16 — Operations and Incidents
 
-> Status: Accepted — health model and kill switch implemented; SLOs, status page and runbooks open · Last reviewed: 2026-09-30
+> Status: Accepted — health model, kill switch and status page implemented; SLOs and runbooks open · Last reviewed: 2026-09-30
 
 Centralization trades _many small failures_ for _fewer, bigger, shared
 failures_. A Saturday-dinner-rush Core outage is 1000 stores down at once — the
@@ -84,7 +84,9 @@ cert-issuance failure rate; train gate rejections.
 ## Status and comms
 
 - Public status page (`status.vendua.com.br`) on infrastructure that doesn't
-  share fate with the platform.
+  share fate with the platform: GitHub Pages, published every 5 minutes by a workflow that checks
+  the stores, orders, the admin and the site from a GitHub runner and shows the incidents staff
+  post in the CRM ([deploy/status-page.md](../deploy/status-page.md)).
 - Merchant-facing incident notices go through the same `notices` pipeline —
   the fleet's own mechanism is the comms channel.
 - Post-incident: `incidents` row completed with timeline; anything that paged a

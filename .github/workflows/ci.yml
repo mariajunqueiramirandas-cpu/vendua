@@ -151,9 +151,9 @@ jobs:
               if [ -f "$dir/vendua.config.ts" ]; then bunx vendua-conformance manifest "$dir"; fi
             fi
           done
-      - name: Unit tests (conformance + any workspace with a test script but core)
+      - name: Unit tests (conformance, the status page + any package with a test script but core)
         run: |
-          for dir in packages/* tools; do
+          for dir in packages/* apps/status tools; do
             [ "$dir" = packages/core ] && continue # core-tests job
             [ -d "$dir" ] || continue
             [ -f "$dir/package.json" ] || continue

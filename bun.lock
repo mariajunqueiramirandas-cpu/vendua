@@ -84,6 +84,14 @@
         "vite": "5.4.19",
       },
     },
+    "apps/status": {
+      "name": "@vendua/status",
+      "version": "0.0.0",
+      "devDependencies": {
+        "@types/bun": "1.4.2",
+        "typescript": "6.0.3",
+      },
+    },
     "packages/cli": {
       "name": "@vendua/cli",
       "version": "0.0.0",
@@ -792,6 +800,8 @@
     "@vendua/loader": ["@vendua/loader@workspace:packages/loader"],
 
     "@vendua/site": ["@vendua/site@workspace:site"],
+
+    "@vendua/status": ["@vendua/status@workspace:apps/status"],
 
     "@vendua/storefront-quero-pudim": ["@vendua/storefront-quero-pudim@workspace:storefronts/quero-pudim"],
 

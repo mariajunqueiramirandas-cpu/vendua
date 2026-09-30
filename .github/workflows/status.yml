@@ -1,0 +1,57 @@
+name: status
+
+# status.vendua.com.br (apps/status): checks production from a GitHub runner and publishes the
+# page to GitHub Pages, off the VPS (docs/architecture/16). Off until the repo variable
+# STATUS_PAGE is `on` — setup in docs/deploy/status-page.md.
+
+on:
+  schedule:
+    - cron: '*/5 * * * *'
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths: ['apps/status/**', '.github/workflows/status.yml']
+
+permissions:
+  contents: read
+
+# runs never overlap: each one reads the history the previous one published
+concurrency:
+  group: status-page
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    if: vars.STATUS_PAGE == 'on'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          sparse-checkout: apps/status
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version: '1.4.2'
+      - id: pages
+        uses: actions/configure-pages@45bfe0192ca1faeb007ade9deae92b16b8254a0d # v6.0.0
+      # no install: the checker is Bun and node: built-ins only
+      - run: bun apps/status/src/main.ts
+        env:
+          # the published copy (the custom domain once it's set, the github.io address before)
+          STATUS_HISTORY_URL: ${{ steps.pages.outputs.base_url }}/history.json
+          # optional overrides; empty = production defaults (apps/status/src/config.ts)
+          STATUS_STORE_HOST: ${{ vars.STATUS_STORE_HOST }}
+          STATUS_ADMIN_ORIGIN: ${{ vars.STATUS_ADMIN_ORIGIN }}
+          STATUS_SITE_ORIGIN: ${{ vars.STATUS_SITE_ORIGIN }}
+      - uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9 # v5.0.0
+        with:
+          path: apps/status/build
+      - id: deploy
+        uses: actions/deploy-pages@368f82528645a54fb793d4d04e342629a3f51346 # v5.0.1
