@@ -22,7 +22,7 @@ const REPO = join(ROOT, '..');
 const CORE = process.env.CORE ?? 'http://localhost:8787';
 const ADMIN = process.env.ADMIN ?? 'http://localhost:5196/admin/';
 const DB = process.env.DATABASE_URL ?? 'postgres://vendua:vendua@localhost:5433/vendua';
-const PHONE = process.env.PHONE ?? '22981795040';
+const PHONE = process.env.PHONE ?? '22999990001';
 const AUTH = process.env.AUTH_STATE ?? '/tmp/vendua-admin-auth.json';
 const CHROMIUM =
   process.env.CHROMIUM ??

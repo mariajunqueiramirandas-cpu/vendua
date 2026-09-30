@@ -20,7 +20,8 @@ Copy `.env.example` into the service's environment and fill it in:
 | `VENDUA_APP_DB_PASSWORD`                   | `vendua_app` app role — rotated on migrate                        |
 | `SESSION_SECRET`                           | signs `vst.*` session tokens — required, stable across restarts   |
 | `CONTROL_SECRET`                           | staff login key for the CRM at `/control/` — keep distinct        |
-| `SEED_DEMO`                                | `1` seeds the three demo tenants on boot; `0` = empty platform    |
+| `SEED_DEMO`                                | `1` creates the quero-pudim store if missing; `0` (default) = off |
+| `SEED_OWNER_NAME` / `_PHONE` / `_EMAIL`    | that store's admin owner when the seed creates it (fake if unset) |
 | `SEED_DOMAINS`                             | `slug:public-domain` per storefront — registers real domains      |
 | `VENDUA_PROXY_HOPS`                        | XFF trusted suffix length — `1` for the Traefik→nginx chain       |
 | `VENDUA_ADMIN_HOST`                        | the merchant admin's own domain, e.g. `painel.example.com`        |
@@ -53,7 +54,9 @@ delivery) and the admin says online payments aren't available; without
 `VENDUA_PAYMENTS_DRIVER=fake` outside dev/CI (Core ignores it in production).
 
 Rotating `VENDUA_SECRETS_KEY` makes every stored MP token unreadable: the stores show as
-disconnected and their owners are asked to reconnect.
+disconnected and their owners are asked to reconnect. Setting it for the first time is safe:
+tokens sealed under the SESSION_SECRET-derived key still open (and are resealed on refresh).
+Core warns at boot in production while it's unset.
 
 ## 3. Attach domains
 
@@ -103,7 +106,10 @@ guessed from the slug alone.
 Then set `SEED_DOMAINS` to match, e.g.
 `quero-pudim:pudim.example.com` — tenant routing is
 Host-header based, so each storefront's public domain must exist in the
-`domains` table. Seed runs on boot when `SEED_DEMO=1`; to add a domain later:
+`domains` table. Seed runs on boot when `SEED_DEMO=1` (off by default). In production it
+only adds: it creates the store (with `SEED_OWNER_*` as its owner) when the slug is free, and an
+existing store keeps its domains, settings, catalog and owners — it only gains `SEED_DOMAINS`
+hosts it lacks (never a second primary). To add a domain later:
 
 ```sql
 insert into domains (host, tenant_id)
@@ -168,7 +174,7 @@ there. The sidecar is AGPL-3.0 (its `LICENSE`); keep it a separate service.
 ## 4. Deploy
 
 Boot order is handled by healthchecks: `db` healthy → `core` migrates
-(+seeds) → storefronts start once `core` is healthy.
+(+seeds with `SEED_DEMO=1`) → storefronts start once `core` is healthy.
 
 ## Services
 

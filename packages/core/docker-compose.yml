@@ -6,7 +6,7 @@ services:
       POSTGRES_PASSWORD: vendua
       POSTGRES_DB: vendua
     ports:
-      - '5433:5432'
+      - '127.0.0.1:5433:5432'
     volumes:
       - vendua-core-pg:/var/lib/postgresql/data
     healthcheck:

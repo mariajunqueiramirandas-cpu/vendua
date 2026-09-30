@@ -54,12 +54,18 @@ services:
       MP_PLATFORM_ACCESS_TOKEN: ${MP_PLATFORM_ACCESS_TOKEN:-}
       # the payer email MP requires on Pix (shoppers don't give one); unset = pagador@<store domain>
       MP_PAYER_EMAIL: ${MP_PAYER_EMAIL:-}
-      # Seals stores' MP tokens at rest; unset = derived from SESSION_SECRET.
+      # Seals stores' MP tokens at rest (optional); unset = derived from SESSION_SECRET (warns at
+      # boot). Setting it later is safe: tokens sealed under the derived key still open.
       VENDUA_SECRETS_KEY: ${VENDUA_SECRETS_KEY:-}
-      # 1 = seed the three demo tenants + catalog on first boot; 0 = empty.
-      SEED_DEMO: ${SEED_DEMO:-1}
+      # 1 = on each boot, create the quero-pudim store (+ its owner, CRM record) if missing.
+      # Production only adds: an existing store keeps everything; it just gains new SEED_DOMAINS.
+      SEED_DEMO: ${SEED_DEMO:-0}
       # slug:public-host[,slug:host2] — registers each storefront's real domain at seed time.
       SEED_DOMAINS: ${SEED_DOMAINS:-}
+      # the seeded store's owner in the merchant admin (only used when the seed creates it)
+      SEED_OWNER_NAME: ${SEED_OWNER_NAME:-}
+      SEED_OWNER_PHONE: ${SEED_OWNER_PHONE:-}
+      SEED_OWNER_EMAIL: ${SEED_OWNER_EMAIL:-}
       # Driver reads the key its Config row's secret_ref names; unset = driver reports "ausente".
       OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
       GEMINI_API_KEY: ${GEMINI_API_KEY:-}

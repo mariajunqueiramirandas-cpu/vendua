@@ -23,8 +23,10 @@ import { startBillingJobs } from './modules/billing/jobs.ts';
 
 const databaseUrl =
   process.env.DATABASE_URL ?? 'postgres://vendua_app:vendua_app@localhost:5433/vendua';
+// the container entrypoint migrates and then drops the owner URL, so the server never holds it
 const migrationUrl =
-  process.env.MIGRATION_DATABASE_URL ?? 'postgres://vendua:vendua@localhost:5433/vendua';
+  process.env.MIGRATION_DATABASE_URL ??
+  (process.env.NODE_ENV === 'production' ? null : 'postgres://vendua:vendua@localhost:5433/vendua');
 const port = Number(process.env.PORT ?? 8787);
 // SESSION_SECRET signs cart session tokens and is the dev fallback for the control
 // gate — deployments must set it. CONTROL_SECRET is the staff key for /control/v1.
@@ -36,10 +38,12 @@ if (!process.env.SESSION_SECRET) {
 }
 
 // Migrate as the owner role, then serve as vendua_app (RLS on).
-const migrator = createSql(migrationUrl);
-const applied = await migrate(migrator, join(import.meta.dir, '../db/migrations'));
-if (applied.length) log.child({ mod: 'migrate' }).info({ applied }, 'migrations applied');
-await migrator.end();
+if (migrationUrl) {
+  const migrator = createSql(migrationUrl);
+  const applied = await migrate(migrator, join(import.meta.dir, '../db/migrations'));
+  if (applied.length) log.child({ mod: 'migrate' }).info({ applied }, 'migrations applied');
+  await migrator.end();
+}
 
 const sql = createSql(databaseUrl);
 const adminHub = new AdminHub(sql);

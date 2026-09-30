@@ -123,7 +123,7 @@ const TENANTS: SeedTenant[] = [
     name: 'Quero Pudim Gourmet',
     hosts: ['quero-pudim.localhost', 'localhost:5174', '127.0.0.1:5174'],
     storefront: 'storefronts/quero-pudim',
-    owner: { name: 'Vinícius', phone: '22981795040', email: 'viunuvi@gmail.com' },
+    owner: { name: 'Dono Dev', phone: '22999990001', email: 'dono@example.com' },
     ring: 'stable',
     settings: {
       tagline: 'Pudins sem furinhos e sacolés cremosos',
