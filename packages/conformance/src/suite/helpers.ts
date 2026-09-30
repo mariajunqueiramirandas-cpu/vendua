@@ -317,6 +317,11 @@ export async function fillDeliveryStep(
 export async function submitPaymentStep(
   page: Page,
 ): Promise<{ clicked: boolean; detail?: string }> {
+  const submit = page
+    .getByRole('button', { name: /confirmar|finalizar|fazer pedido|enviar pedido|pagar/i })
+    .first();
+  // the payment step renders after the delivery step's round trip — on a slow runner, late
+  await submit.waitFor({ state: 'visible', timeout: 5000 }).catch(() => undefined);
   const pix = page
     .getByRole('radio', { name: /pix/i })
     .or(page.getByRole('button', { name: /pix/i }))
@@ -328,9 +333,6 @@ export async function submitPaymentStep(
     });
     await page.waitForTimeout(200);
   }
-  const submit = page
-    .getByRole('button', { name: /confirmar|finalizar|fazer pedido|enviar pedido|pagar/i })
-    .first();
   if ((await submit.count()) === 0)
     return { clicked: false, detail: 'no submit button on payment step' };
   if (!(await submit.isEnabled().catch(() => false)))
