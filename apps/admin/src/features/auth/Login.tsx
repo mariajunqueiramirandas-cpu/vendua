@@ -6,7 +6,7 @@ import {
   WhatsappLogo,
 } from '@phosphor-icons/react';
 import { useQueryClient } from '@tanstack/react-query';
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { Link } from 'react-router-dom';
 import { api, ApiError, type SignInResult, type StoreRef } from '../../lib/api.ts';
 import { phone as fmtPhone } from '../../lib/format.ts';
@@ -20,6 +20,8 @@ import { messageOf } from '../../ui/feedback.tsx';
 import { Field, PhoneInput, TextInput } from '../../ui/fields.tsx';
 import { Mascote } from '../../ui/Mascote.tsx';
 import { Spinner } from '../../ui/Spinner.tsx';
+import { useKeyboardInset } from '../../ui/StepFrame.tsx';
+import { Guide } from '../onboarding/Guide.tsx';
 import { EMAIL_RE, expiry, loadPending, savePending } from './pending.ts';
 
 type Step =
@@ -41,6 +43,7 @@ function firstStep(): Step {
 export function Login() {
   const [step, setStep] = useState<Step>(firstStep);
   const qc = useQueryClient();
+  useKeyboardInset();
   // Signed out is the one moment a new version costs nothing: take it here, not with a banner.
   // At once on arrival; later only while the merchant is away (reading the code in WhatsApp),
   // since the code step survives a reload. Not while picking a store or opening an e-mail link:
@@ -78,17 +81,20 @@ export function Login() {
     r.signedIn ? void enter() : setStep({ kind: 'pick', token: r.pickerToken, stores: r.stores });
   return (
     <div className="grid min-h-dvh lg:grid-cols-[1.1fr_1fr]">
-      <aside className="relative hidden overflow-hidden bg-primary text-on-primary lg:block">
+      <aside className="relative hidden overflow-hidden bg-primary text-on-primary noite:bg-raised noite:text-ink lg:block">
         <div
           aria-hidden
-          className="animate-breathe absolute -left-24 top-1/3 size-[520px] rounded-full bg-spark blur-3xl"
+          className="animate-breathe absolute -left-24 top-1/3 size-[520px] rounded-full bg-spark opacity-10 blur-3xl"
         />
         <div className="relative flex h-full flex-col justify-between p-12">
           <p className="font-display text-2xl font-semibold tracking-tight">venduá</p>
           <div className="max-w-md">
-            <div className="mb-6 w-56 rounded-xl bg-[#f7f4ea] p-4">
-              <Mascote pose="avatar-ola" size={224} />
-            </div>
+            <span
+              data-dark=""
+              className="dua-disc animate-bob mb-8 grid size-60 place-items-center depth-3"
+            >
+              <Mascote pose="carinho" size={224} className="w-52" />
+            </span>
             <p className="t-moment text-[2.75rem] leading-[3rem]">A loja viva na palma da mão.</p>
             <p className="t-body-lg mt-4 opacity-80">
               Pedidos chegando na hora, cardápio com foto, horário e entrega do seu jeito, e o dia
@@ -100,11 +106,13 @@ export function Login() {
           </p>
         </div>
       </aside>
-      <main className="flex items-center justify-center px-5 py-10">
-        <div className="w-full max-w-sm">
-          <p className="mb-8 font-display text-2xl font-semibold tracking-tight lg:hidden">
-            venduá
-          </p>
+      <main className="flex min-w-0 flex-col lg:items-center lg:justify-center lg:px-5 lg:py-10">
+        <div className="mx-auto w-full max-w-sm px-5 pb-[calc(1.5rem+env(safe-area-inset-bottom)+var(--kb,0px))] lg:mx-0 lg:px-0 lg:pb-0">
+          {step.kind !== 'phone' ? (
+            <p className="flex min-h-16 items-center pt-[env(safe-area-inset-top)] font-display text-xl font-semibold tracking-tight md:mt-6 lg:hidden">
+              venduá
+            </p>
+          ) : null}
           {step.kind === 'phone' ? (
             <PhoneStep
               onSent={(phone, expiresAt, devCode) => {
@@ -181,6 +189,11 @@ function PhoneStep({
   });
   return (
     <div className="animate-fade-up">
+      <Hero />
+      <h1 className="t-moment hidden text-[2.5rem] leading-[2.75rem] lg:block">Que bom te ver.</h1>
+      <p className="t-body-lg mt-2 hidden text-muted lg:block">
+        Entre com o celular da loja. Mandamos um código no seu WhatsApp.
+      </p>
       <form
         onSubmit={(e) => {
           e.preventDefault();
@@ -189,10 +202,6 @@ function PhoneStep({
           start.mutate(digits);
         }}
       >
-        <h1 className="t-moment">Que bom te ver.</h1>
-        <p className="t-body-lg mt-2 text-muted">
-          Entre com o celular da loja. Mandamos um código no seu WhatsApp.
-        </p>
         <Field label="Seu celular" htmlFor="phone" error={err} className="mt-8">
           <PhoneInput
             id="phone"
@@ -204,22 +213,23 @@ function PhoneStep({
             }}
           />
         </Field>
-        <Button
-          type="submit"
-          size="lg"
-          block
-          className="mt-6"
-          loading={start.isPending}
-          icon={<WhatsappLogo weight="fill" />}
-        >
-          receber código
-        </Button>
+        <Dock>
+          <Button
+            type="submit"
+            size="lg"
+            block
+            loading={start.isPending}
+            icon={<WhatsappLogo weight="fill" />}
+          >
+            receber código
+          </Button>
+        </Dock>
       </form>
-      <Button variant="ghost" block className="mt-2" icon={<EnvelopeSimple />} onClick={onEmail}>
+      <Button variant="ghost" block className="mt-1" icon={<EnvelopeSimple />} onClick={onEmail}>
         entrar com e-mail
       </Button>
-      <div className="mt-10 flex items-center gap-4 rounded-lg bg-sunken p-4">
-        <Storefront weight="duotone" className="size-8 shrink-0 text-muted" aria-hidden />
+      <div className="mt-8 flex items-center gap-3 rounded-lg bg-sunken py-3 pl-2 pr-4">
+        <Mascote pose="loja" size={72} className="size-[72px] shrink-0" />
         <div className="min-w-0 flex-1">
           <p className="font-semibold">Ainda não vende com a Venduá?</p>
           <Link
@@ -231,6 +241,76 @@ function PhoneStep({
         </div>
       </div>
     </div>
+  );
+}
+
+/** Phones only: Duá greets on a forest band (the desktop has the side panel for it). */
+function Hero() {
+  return (
+    <header className="relative -mx-5 mb-2 text-on-primary noite:text-ink md:mx-0 md:mt-8 lg:hidden">
+      <div
+        aria-hidden
+        className="absolute inset-0 overflow-hidden rounded-b-xl bg-primary noite:bg-raised md:rounded-xl"
+      >
+        <div className="animate-breathe absolute -right-16 -top-10 size-72 rounded-full bg-spark opacity-10 blur-3xl" />
+      </div>
+      <div className="relative px-5 pb-7 pt-[calc(1rem+env(safe-area-inset-top))] md:px-7 md:pt-6">
+        <p className="font-display text-xl font-semibold tracking-tight">venduá</p>
+        <div className="mt-5 flex items-end justify-between gap-3">
+          <h1 className="t-moment text-[2.75rem] leading-[2.875rem]">Que bom te ver.</h1>
+          <span
+            data-dark=""
+            className="dua-disc animate-bob grid size-32 shrink-0 place-items-center depth-2"
+          >
+            <Mascote pose="carinho" size={120} className="w-[7.5rem]" />
+          </span>
+        </div>
+        <p className="t-body-lg mt-4 opacity-85">
+          Entre com o celular da loja. Mandamos um código no seu WhatsApp.
+        </p>
+      </div>
+    </header>
+  );
+}
+
+/**
+ * The step's main button. On phones it rides above the keyboard (sticky to --kb, or to the
+ * resized viewport where Chrome shrinks it), so the merchant never types blind to it.
+ */
+function Dock({ children }: { children: ReactNode }) {
+  const bar = useRef<HTMLDivElement>(null);
+  const end = useRef<HTMLDivElement>(null);
+  // the backdrop only while pinned: in the flow it would show as a flat band on the paper
+  const [stuck, setStuck] = useState(false);
+  useEffect(() => {
+    const check = () => {
+      if (bar.current && end.current)
+        setStuck(
+          end.current.getBoundingClientRect().top - bar.current.getBoundingClientRect().bottom > 1,
+        );
+    };
+    check();
+    const vv = window.visualViewport;
+    window.addEventListener('scroll', check, { passive: true });
+    window.addEventListener('resize', check);
+    vv?.addEventListener('resize', check);
+    return () => {
+      window.removeEventListener('scroll', check);
+      window.removeEventListener('resize', check);
+      vv?.removeEventListener('resize', check);
+    };
+  }, []);
+  return (
+    <>
+      <div
+        ref={bar}
+        data-stuck={stuck || undefined}
+        className="sticky bottom-[var(--kb,0px)] z-20 -mx-5 mt-3 px-5 py-3 data-stuck:bg-bg data-stuck:before:pointer-events-none data-stuck:before:absolute data-stuck:before:inset-x-0 data-stuck:before:-top-4 data-stuck:before:h-4 data-stuck:before:bg-linear-to-t data-stuck:before:from-bg lg:static lg:mx-0 lg:mt-6 lg:p-0"
+      >
+        {children}
+      </div>
+      <div ref={end} aria-hidden />
+    </>
   );
 }
 
@@ -298,20 +378,17 @@ function CodeStep({
   return (
     <div className="animate-fade-up">
       <BackLink onClick={onBack}>trocar número</BackLink>
-      <div className="flex items-center justify-between gap-3">
-        <h1 className="t-title-1">Digite o código</h1>
-        <Mascote pose="seguranca" size={72} className="size-16 shrink-0 sm:size-[72px]" />
-      </div>
-      <p className="t-body-lg mt-2 text-muted">
+      <h1 className="t-title-1 mb-4">Digite o código</h1>
+      <Guide turn="codigo" pose="seguranca">
         Enviamos 6 números para o WhatsApp{' '}
-        <strong className="whitespace-nowrap text-ink">{fmtPhone(phone)}</strong>.
-      </p>
+        <strong className="whitespace-nowrap">{fmtPhone(phone)}</strong>.
+      </Guide>
       {devCode ? (
         <p className="t-caption mt-3 rounded-sm bg-info-soft px-3 py-2 text-info">
           Ambiente de teste: o código é {devCode}
         </p>
       ) : null}
-      <div className="mt-8">
+      <div className="mt-6">
         <CodeInput
           ref={input}
           value={code}
@@ -326,21 +403,22 @@ function CodeStep({
           {err}
         </p>
       ) : null}
-      <Button
-        size="lg"
-        block
-        className="mt-6"
-        loading={verify.isPending}
-        disabled={code.length < 6}
-        onClick={() => verify.mutate(code)}
-        icon={<ArrowRight />}
-      >
-        entrar
-      </Button>
+      <Dock>
+        <Button
+          size="lg"
+          block
+          loading={verify.isPending}
+          disabled={code.length < 6}
+          onClick={() => verify.mutate(code)}
+          icon={<ArrowRight />}
+        >
+          entrar
+        </Button>
+      </Dock>
       <Button
         variant="ghost"
         block
-        className="mt-2"
+        className="mt-1"
         disabled={wait > 0}
         loading={resend.isPending}
         onClick={() => resend.mutate()}
@@ -378,11 +456,11 @@ function EmailStep({
       }}
     >
       <BackLink onClick={onBack}>entrar com WhatsApp</BackLink>
-      <h1 className="t-title-1">Entrar com e-mail</h1>
-      <p className="t-body-lg mt-2 text-muted">
+      <h1 className="t-title-1 mb-4">Entrar com e-mail</h1>
+      <Guide turn="email" pose="avatar-ajuda">
         Use o e-mail cadastrado na loja. Mandamos um link que entra direto, sem senha.
-      </p>
-      <Field label="Seu e-mail" htmlFor="email" error={err} className="mt-8">
+      </Guide>
+      <Field label="Seu e-mail" htmlFor="email" error={err} className="mt-6">
         <TextInput
           id="email"
           type="email"
@@ -397,16 +475,11 @@ function EmailStep({
           onChange={(e) => setEmail(e.target.value)}
         />
       </Field>
-      <Button
-        type="submit"
-        size="lg"
-        block
-        className="mt-6"
-        loading={start.isPending}
-        icon={<EnvelopeSimple />}
-      >
-        mandar link
-      </Button>
+      <Dock>
+        <Button type="submit" size="lg" block loading={start.isPending} icon={<EnvelopeSimple />}>
+          mandar link
+        </Button>
+      </Dock>
     </form>
   );
 }
@@ -436,14 +509,11 @@ function EmailSentStep({
   return (
     <div className="animate-fade-up">
       <BackLink onClick={onOther}>usar outro e-mail</BackLink>
-      <div className="flex items-center justify-between gap-3">
-        <h1 className="t-title-1">Olhe o seu e-mail</h1>
-        <Mascote pose="avatar-feliz" size={72} className="size-16 shrink-0 sm:size-[72px]" />
-      </div>
-      <p className="t-body-lg mt-2 text-muted" role="status">
-        Se <strong className="break-all text-ink">{email}</strong> estiver cadastrado em uma loja, o
-        link chega em instantes. Toque nele para entrar. Ele vale por 15 minutos.
-      </p>
+      <h1 className="t-title-1 mb-4">Olhe o seu e-mail</h1>
+      <Guide turn="email-enviado" pose="avatar-feliz">
+        Se <strong className="break-all">{email}</strong> estiver cadastrado em uma loja, o link
+        chega em instantes. Toque nele para entrar. Ele vale por 15 minutos.
+      </Guide>
       {dev ? (
         <a
           href={dev}
@@ -572,10 +642,10 @@ function PickStep({
   });
   return (
     <div className="animate-fade-up">
-      <h1 className="t-title-1">Qual loja agora?</h1>
-      <p className="t-body-lg mt-2 text-muted">
+      <h1 className="t-title-1 mb-4">Qual loja agora?</h1>
+      <Guide turn="lojas" pose="loja">
         Você faz parte de {stores.length} lojas. Dá para trocar depois.
-      </p>
+      </Guide>
       <ul className="mt-6 space-y-2">
         {stores.map((s) => (
           <li key={s.id}>
