@@ -5,39 +5,54 @@ import { Button } from './Button.tsx';
 /**
  * iOS Safari (and Android without resizes-content) overlays the keyboard instead of shrinking
  * the layout: expose the covered height as --kb and keep the focused field, plus the button
- * under it, in view. (Same approach as the onboarding wizard.)
+ * under it, in view.
  */
 export function useKeyboardInset() {
   useEffect(() => {
     const vv = window.visualViewport;
     if (!vv) return;
     const root = document.documentElement;
+    const typing = () => {
+      const el = document.activeElement;
+      return el instanceof HTMLElement && el.matches(TEXT_FIELD);
+    };
     const reveal = () => {
       const el = document.activeElement;
-      if (el instanceof HTMLElement && el.matches('input, textarea, select'))
-        el.scrollIntoView({ block: 'center' });
+      if (typing() && el instanceof HTMLElement) el.scrollIntoView({ block: 'center' });
     };
     const update = (e?: Event) => {
-      // pinch-zoom also shrinks the visual viewport; that is not a keyboard
-      const covered =
-        vv.scale > 1.01
-          ? 0
-          : Math.max(0, Math.round(window.innerHeight - vv.height - vv.offsetTop));
+      // pinch-zoom also shrinks the visual viewport; that is not a keyboard. Neither is Chrome's
+      // toolbar sliding back in on a fast scroll up: for a moment the visual viewport is shorter
+      // than innerHeight, which lifted the button off the bottom. Only a text field brings up a
+      // keyboard, and a keyboard is far taller than any toolbar.
+      const gap = Math.round(window.innerHeight - vv.height - vv.offsetTop);
+      const covered = vv.scale <= 1.01 && typing() && gap > MIN_KEYBOARD ? gap : 0;
       root.style.setProperty('--kb', `${covered}px`);
+      // scroll events fire continuously while reveal() scrolls: only a resize may trigger it
       if (covered > 0 && e?.type === 'resize') reveal();
+    };
+    const onFocus = () => {
+      update();
+      reveal();
     };
     vv.addEventListener('resize', update);
     vv.addEventListener('scroll', update);
-    document.addEventListener('focusin', reveal);
+    document.addEventListener('focusin', onFocus);
+    document.addEventListener('focusout', update);
     update();
     return () => {
       vv.removeEventListener('resize', update);
       vv.removeEventListener('scroll', update);
-      document.removeEventListener('focusin', reveal);
+      document.removeEventListener('focusin', onFocus);
+      document.removeEventListener('focusout', update);
       root.style.removeProperty('--kb');
     };
   }, []);
 }
+
+const TEXT_FIELD =
+  'textarea, [contenteditable=""], [contenteditable="true"], input:not([type=checkbox], [type=radio], [type=button], [type=submit], [type=reset], [type=range], [type=color], [type=file], [type=hidden])';
+const MIN_KEYBOARD = 150;
 
 /**
  * One question per screen: a big title, one plain sentence, the answer, and one obvious

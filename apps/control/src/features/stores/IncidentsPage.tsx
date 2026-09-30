@@ -1,6 +1,6 @@
 import { useMemo, type ReactNode } from 'react';
 import { useSearchParams } from 'react-router-dom';
-import { CheckCircle2, Plus, Siren } from 'lucide-react';
+import { CheckCircle2, Siren } from 'lucide-react';
 import type { Incident } from '@/lib/api.ts';
 import { cn } from '@/lib/cn.ts';
 import { fmtDateTime, rel } from '@/lib/format.ts';
@@ -16,6 +16,19 @@ import { STORES_TABS } from './tabs.ts';
 
 const RANK = { outage: 0, degraded: 1, info: 2 } as const;
 
+// a resolved outage is history, not an alarm: same label, no colour
+const PAST = Object.fromEntries(
+  Object.entries(SEVERITY).map(([k, t]) => [k, { ...t, variant: 'outline' }]),
+) as typeof SEVERITY;
+
+const Sev = ({ i }: { i: Incident }) => (
+  <Tag map={i.resolvedAt ? PAST : SEVERITY} value={i.severity} />
+);
+
+// phones: plain sections on the page (no card), so two stacked lists don't read as boxed bands
+const SECTION =
+  'max-md:-mx-3 max-md:rounded-none max-md:border-0 max-md:bg-transparent max-md:shadow-none';
+
 const since = (iso: string) => {
   const r = rel(iso);
   return r === 'agora' ? 'aberto agora' : `aberto há ${r}`;
@@ -24,7 +37,9 @@ const since = (iso: string) => {
 function Title({ i }: { i: Incident }) {
   return (
     <div className="flex min-w-0 flex-col">
-      <span className="truncate font-medium">{i.title}</span>
+      <span className={cn('truncate font-medium', i.resolvedAt && 'text-muted-foreground')}>
+        {i.title}
+      </span>
       {i.body && <span className="truncate text-xs text-muted-foreground">{i.body}</span>}
     </div>
   );
@@ -37,7 +52,7 @@ const COLUMNS: Column<Incident>[] = [
     className: 'w-32 whitespace-nowrap',
     cell: (i) => (
       <span className="inline-block w-24">
-        <Tag map={SEVERITY} value={i.severity} />
+        <Sev i={i} />
       </span>
     ),
   },
@@ -68,12 +83,18 @@ function MobileRow({ i }: { i: Incident }) {
   return (
     <div className="flex min-w-0 flex-col gap-1">
       <div className="flex min-w-0 items-center gap-2">
-        <Tag map={SEVERITY} value={i.severity} />
-        <span className="ml-auto shrink-0 text-xs text-muted-foreground tnum">
-          {i.resolvedAt ? `resolvido · ${rel(i.resolvedAt)}` : since(i.startedAt)}
-        </span>
+        <Sev i={i} />
+        {i.resolvedAt ? (
+          <span className="ml-auto inline-flex shrink-0 items-center gap-1 text-xs text-muted-foreground tnum">
+            <CheckCircle2 className="size-3.5" /> resolvido · {rel(i.resolvedAt)}
+          </span>
+        ) : (
+          <span className="ml-auto shrink-0 text-xs font-medium tnum">{since(i.startedAt)}</span>
+        )}
       </div>
-      <span className="truncate text-sm font-medium">{i.title}</span>
+      <span className={cn('truncate text-sm font-medium', i.resolvedAt && 'text-muted-foreground')}>
+        {i.title}
+      </span>
       {i.body && <span className="line-clamp-2 text-xs text-muted-foreground">{i.body}</span>}
     </div>
   );
@@ -130,13 +151,13 @@ export default function IncidentsPage() {
     body = <LoadingRows rows={4} />;
   } else {
     body = (
-      <div className="flex flex-col gap-4">
+      <div className="flex flex-col gap-4 max-md:gap-6">
         <Panel
           flush
           title="em aberto"
           aside={open.length ? 'visíveis agora na Ajuda dos lojistas' : undefined}
           className={cn(
-            '-mx-3 rounded-none border-x-0 md:mx-0 md:rounded-lg md:border-x',
+            SECTION,
             open.some((i) => i.severity === 'outage') && 'border-destructive/40',
           )}
         >
@@ -146,11 +167,7 @@ export default function IncidentsPage() {
               icon={CheckCircle2}
               title="nenhum incidente em aberto"
               hint="publique um quando algo da plataforma afetar as lojas"
-              action={
-                <Button size="sm" variant="outline" onClick={() => setParam('novo', '1')}>
-                  <Plus /> novo incidente
-                </Button>
-              }
+              className="py-8"
             />,
           )}
         </Panel>
@@ -158,7 +175,7 @@ export default function IncidentsPage() {
           flush
           title="resolvidos"
           aside={closed.length ? 'a Ajuda mostra os dos últimos 7 dias' : undefined}
-          className="-mx-3 rounded-none border-x-0 md:mx-0 md:rounded-lg md:border-x"
+          className={SECTION}
         >
           {list(
             closed,
@@ -174,8 +191,8 @@ export default function IncidentsPage() {
       title="Lojas"
       tabs={STORES_TABS}
       actions={
-        <Button size="sm" onClick={() => setParam('novo', '1')} aria-label="novo incidente">
-          <Siren /> <span className="max-md:sr-only">novo incidente</span>
+        <Button size="sm" onClick={() => setParam('novo', '1')}>
+          <Siren /> novo incidente
         </Button>
       }
     >

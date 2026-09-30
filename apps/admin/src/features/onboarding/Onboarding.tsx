@@ -1,11 +1,12 @@
 import { ArrowRight, Eye, EyeSlash, X } from '@phosphor-icons/react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { api, type StoreView } from '../../lib/api.ts';
 import { qk } from '../../lib/query.ts';
 import { can, useSession } from '../../lib/session.ts';
 import { Button, ButtonLink } from '../../ui/Button.tsx';
+import { useKeyboardInset } from '../../ui/StepFrame.tsx';
 import { cn } from '../../ui/cn.ts';
 import { ErrorState, Loading, messageOf } from '../../ui/feedback.tsx';
 import { Mascote } from '../../ui/Mascote.tsx';
@@ -101,42 +102,6 @@ export default function Onboarding() {
       hasPix={!!pay.data?.pix}
     />
   );
-}
-
-// iOS Safari (and Android without resizes-content) overlays the keyboard instead of
-// shrinking the layout: pad the page by the covered height and keep the focused field,
-// plus the button under it, in view.
-function useKeyboardInset() {
-  useEffect(() => {
-    const vv = window.visualViewport;
-    if (!vv) return;
-    const root = document.documentElement;
-    const reveal = () => {
-      const el = document.activeElement;
-      if (el instanceof HTMLElement && el.matches('input, textarea, select'))
-        el.scrollIntoView({ block: 'center' });
-    };
-    const update = (e?: Event) => {
-      // pinch-zoom also shrinks the visual viewport; that is not a keyboard
-      const covered =
-        vv.scale > 1.01
-          ? 0
-          : Math.max(0, Math.round(window.innerHeight - vv.height - vv.offsetTop));
-      root.style.setProperty('--kb', `${covered}px`);
-      // scroll events fire continuously while reveal() scrolls: only a resize may trigger it
-      if (covered > 0 && e?.type === 'resize') reveal();
-    };
-    vv.addEventListener('resize', update);
-    vv.addEventListener('scroll', update);
-    document.addEventListener('focusin', reveal);
-    update();
-    return () => {
-      vv.removeEventListener('resize', update);
-      vv.removeEventListener('scroll', update);
-      document.removeEventListener('focusin', reveal);
-      root.style.removeProperty('--kb');
-    };
-  }, []);
 }
 
 function Flow({
