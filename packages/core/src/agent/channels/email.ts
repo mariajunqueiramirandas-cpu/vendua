@@ -4,6 +4,8 @@ import { renderReplyEmail } from './email-template.ts';
 
 const mailLog = log.child({ mod: 'email' });
 
+const RESEND_TIMEOUT_MS = 15_000;
+
 // outbound drivers: 'resend' posts to the Resend API, 'log' fakes the send for credential-free dev
 export async function sendEmail(
   integration: IntegrationRow,
@@ -35,6 +37,7 @@ export async function sendEmail(
         text: msg.body,
         html: renderReplyEmail({ body: msg.body, subject: msg.subject, from }),
       }),
+      signal: AbortSignal.timeout(RESEND_TIMEOUT_MS),
     });
     if (!res.ok) throw new Error(`resend ${res.status}: ${(await res.text()).slice(0, 300)}`);
     const data = (await res.json()) as { id?: string };

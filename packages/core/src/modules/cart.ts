@@ -3,7 +3,6 @@ import { HttpError } from '../platform/http.ts';
 import {
   liveStatus,
   scheduleOpen,
-  storeTimezone,
   type AvailabilitySchedule,
   type ModifierGroup,
   type ScheduledComboSlotItem,
@@ -255,8 +254,8 @@ export function validateLine(
   return validateCombo(product.comboSlots, selections).error;
 }
 
-async function loadPricedItems(tx: Sql, tenantId: string, cartId: string): Promise<PricedItem[]> {
-  const items = await tx<ItemRow[]>`
+function loadItemRows(tx: Sql, tenantId: string, cartId: string) {
+  return tx<ItemRow[]>`
     select ci.id, ci.product_id, ci.qty, ci.modifier_ids, ci.unit_price_cents,
            ci.modifier_snapshot, ci.combo_selections, ci.combo_snapshot,
            p.name, p.slug, p.status as product_status, p.stock_quantity,
@@ -266,36 +265,42 @@ async function loadPricedItems(tx: Sql, tenantId: string, cartId: string): Promi
     where ci.tenant_id = ${tenantId} and ci.cart_id = ${cartId}
     order by ci.created_at
   `;
+}
+
+async function priceItems(
+  tx: Sql,
+  tenantId: string,
+  items: readonly ItemRow[],
+  tz: string,
+): Promise<PricedItem[]> {
   if (items.length === 0) return [];
   // live read is only for status — names/prices come from the add-time
   // snapshot; checkout reprices stale lines (repriceLines) before placing
   const modifierIds = items.flatMap((i) => i.modifier_ids);
-  const mods = modifierIds.length
-    ? await tx<{ id: string; status: string }[]>`
-        select id, status from modifiers
-        where tenant_id = ${tenantId} and id = any(${modifierIds}::uuid[])
-      `
-    : [];
   const pickIds = items.flatMap((i) => i.combo_snapshot.map((c) => c.productId));
-  const picks = pickIds.length
-    ? await tx<
-        {
-          id: string;
-          status: string;
-          stock_quantity: number | null;
-          availability_schedule: AvailabilitySchedule | null;
-        }[]
-      >`
-        select id, status, stock_quantity, availability_schedule from products
-        where tenant_id = ${tenantId} and id = any(${pickIds}::uuid[])
-      `
-    : [];
+  const [mods, picks] = await Promise.all([
+    modifierIds.length
+      ? tx<{ id: string; status: string }[]>`
+          select id, status from modifiers
+          where tenant_id = ${tenantId} and id = any(${modifierIds}::uuid[])
+        `
+      : [],
+    pickIds.length
+      ? tx<
+          {
+            id: string;
+            status: string;
+            stock_quantity: number | null;
+            availability_schedule: AvailabilitySchedule | null;
+          }[]
+        >`
+          select id, status, stock_quantity, availability_schedule from products
+          where tenant_id = ${tenantId} and id = any(${pickIds}::uuid[])
+        `
+      : [],
+  ]);
   const liveMod = new Map(mods.map((m) => [m.id, m.status]));
   const now = new Date();
-  const tz =
-    items.some((i) => i.availability_schedule) || picks.some((p) => p.availability_schedule)
-      ? await storeTimezone(tx, tenantId)
-      : 'America/Sao_Paulo';
   const status = (i: ItemRow) => {
     const s = liveStatus(i.product_status, i.stock_quantity);
     return s === 'active' && !scheduleOpen(i.availability_schedule, now, tz) ? 'sold_out' : s;
@@ -394,23 +399,29 @@ export async function loadCartView(
   cartId: string,
   now = new Date(),
 ): Promise<CartView> {
-  const carts = await tx<
-    {
-      id: string;
-      status: CartView['status'];
-      delivery: CartDelivery | null;
-      coupon_code: string | null;
-    }[]
-  >`
-    select id, status, delivery, coupon_code from carts where tenant_id = ${tenantId} and id = ${cartId}
-  `;
+  // independent reads go out together — postgres.js pipelines them on the tx's connection
+  const [carts, rows, settingsRows, zones] = await Promise.all([
+    tx<
+      {
+        id: string;
+        status: CartView['status'];
+        delivery: CartDelivery | null;
+        coupon_code: string | null;
+      }[]
+    >`
+      select id, status, delivery, coupon_code from carts where tenant_id = ${tenantId} and id = ${cartId}
+    `,
+    loadItemRows(tx, tenantId, cartId),
+    tx<StoreSettingsRow[]>`select * from store_settings where tenant_id = ${tenantId}`,
+    loadZoneRows(tx, tenantId),
+  ]);
   const cart = carts[0];
   if (!cart) throw new HttpError(404, 'CART_NOT_FOUND', 'cart not found');
-  const items = await loadPricedItems(tx, tenantId, cartId);
-  const settings = (
-    await tx<StoreSettingsRow[]>`select * from store_settings where tenant_id = ${tenantId}`
-  )[0];
-  const zones = await loadZoneRows(tx, tenantId);
+  const settings = settingsRows[0];
+  const [items, couponRow] = await Promise.all([
+    priceItems(tx, tenantId, rows, settings?.hours?.timezone || 'America/Sao_Paulo'),
+    cart.coupon_code ? loadCoupon(tx, tenantId, cart.coupon_code) : null,
+  ]);
   const subtotal = items.reduce((s, i) => s + i.lineTotalCents, 0);
 
   let deliveryFee = 0;
@@ -434,7 +445,7 @@ export async function loadCartView(
   let coupon: AppliedCoupon | null = null;
   let discount = 0;
   if (cart.coupon_code) {
-    const row = await loadCoupon(tx, tenantId, cart.coupon_code);
+    const row = couponRow;
     if (!row) {
       coupon = {
         code: cart.coupon_code,

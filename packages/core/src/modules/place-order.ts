@@ -46,8 +46,11 @@ export async function placeOrderTx(
         StoreSettingsRow[]
       >`select * from store_settings where tenant_id = ${tenantId} for update`
     )[0] ?? null;
-  const zones = await loadZoneRows(tx, tenantId, { forUpdate: true });
-  const offer = await onlineOffer(tx, tenantId, provider);
+  // zones lock after settings, as always; the payment connection is a plain read beside it
+  const [zones, offer] = await Promise.all([
+    loadZoneRows(tx, tenantId, { forUpdate: true }),
+    onlineOffer(tx, tenantId, provider),
+  ]);
   // Re-validate modifier ids / kit picks against current defs — nothing retired slips through underpriced.
   const products = new Map<string, Awaited<ReturnType<typeof getProductById>>>();
   for (const item of cart.items) {
@@ -186,45 +189,48 @@ export async function placeOrderTx(
             ${subtotal}, ${deliveryFee}, ${discount}, ${total}, ${coupon?.code ?? null},
             ${body.notes?.trim() || null}, ${scheduledFor})
   `;
-  for (const [sort, i] of cart.items.entries()) {
-    await tx`
-      insert into order_items (tenant_id, order_id, product_id, slug, name, qty, unit_price_cents,
-                               modifiers, combo, line_total_cents, sort)
-      values (${tenantId}, ${orderId}, ${i.productId}, ${i.slug}, ${i.name}, ${i.qty}, ${i.unitPriceCents},
-              ${tx.json(i.modifiers.map((m) => ({ id: m.id, name: m.name, priceDeltaCents: m.priceDeltaCents })))},
-              ${tx.json(
-                i.combo.map((c) => ({
-                  slotId: c.slotId,
-                  slotName: c.slotName,
-                  productId: c.productId,
-                  name: c.name,
-                  qty: c.qty,
-                })) as never,
-              )},
-              ${i.lineTotalCents}, ${sort})
-    `;
-  }
-  if (coupon)
-    await tx`
-      insert into coupon_redemptions (tenant_id, coupon_id, order_id, phone, discount_cents)
-      values (${tenantId}, ${coupon.id}, ${orderId}, ${phone}, ${discount})
-    `;
-  await tx`
-    insert into order_events (tenant_id, order_id, from_state, to_state, actor, meta)
-    values (${tenantId}, ${orderId}, null, 'placed', 'customer', ${tx.json({ via: 'checkout-sandbox' })})
-  `;
-  await tx`
-    insert into outbox (tenant_id, topic, payload)
-    values (${tenantId}, 'order.placed', ${tx.json({ orderId, number })})
-  `;
-  await tx`update carts set status = 'completed', updated_at = now() where id = ${cartId}`;
-  // authoritative funnel event (15-analytics) — the cart id is the session scope
-  await tx`
-    insert into analytics_events (tenant_id, name, at, session_id, props)
-    values (${tenantId}, 'order_placed', now(), ${cartId},
-      ${tx.json({ order_id: orderId, value: total, method: body.payment.method, ...(coupon ? { coupon: coupon.code } : {}) })})
-  `;
-  // the merchant admin's live board rings on commit
-  await emitAdminTx(tx, tenantId, 'order.placed', orderId);
+  // the rest only needs the order row; one pipelined batch instead of a round trip per statement
+  await Promise.all([
+    ...cart.items.map(
+      (i, sort) => tx`
+        insert into order_items (tenant_id, order_id, product_id, slug, name, qty, unit_price_cents,
+                                 modifiers, combo, line_total_cents, sort)
+        values (${tenantId}, ${orderId}, ${i.productId}, ${i.slug}, ${i.name}, ${i.qty}, ${i.unitPriceCents},
+                ${tx.json(i.modifiers.map((m) => ({ id: m.id, name: m.name, priceDeltaCents: m.priceDeltaCents })))},
+                ${tx.json(
+                  i.combo.map((c) => ({
+                    slotId: c.slotId,
+                    slotName: c.slotName,
+                    productId: c.productId,
+                    name: c.name,
+                    qty: c.qty,
+                  })) as never,
+                )},
+                ${i.lineTotalCents}, ${sort})
+      `,
+    ),
+    coupon &&
+      tx`
+        insert into coupon_redemptions (tenant_id, coupon_id, order_id, phone, discount_cents)
+        values (${tenantId}, ${coupon.id}, ${orderId}, ${phone}, ${discount})
+      `,
+    tx`
+      insert into order_events (tenant_id, order_id, from_state, to_state, actor, meta)
+      values (${tenantId}, ${orderId}, null, 'placed', 'customer', ${tx.json({ via: 'checkout-sandbox' })})
+    `,
+    tx`
+      insert into outbox (tenant_id, topic, payload)
+      values (${tenantId}, 'order.placed', ${tx.json({ orderId, number })})
+    `,
+    tx`update carts set status = 'completed', updated_at = now() where id = ${cartId}`,
+    // authoritative funnel event (15-analytics) — the cart id is the session scope
+    tx`
+      insert into analytics_events (tenant_id, name, at, session_id, props)
+      values (${tenantId}, 'order_placed', now(), ${cartId},
+        ${tx.json({ order_id: orderId, value: total, method: body.payment.method, ...(coupon ? { coupon: coupon.code } : {}) })})
+    `,
+    // the merchant admin's live board rings on commit
+    emitAdminTx(tx, tenantId, 'order.placed', orderId),
+  ]);
   return orderId;
 }

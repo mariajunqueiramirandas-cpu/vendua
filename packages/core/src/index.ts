@@ -82,7 +82,7 @@ const stopBillingJobs = startBillingJobs(sql, {
 });
 
 // merchant admin: new-order web push + the minute sweep ("esgotado hoje", timed pauses)
-void startPushNotifier(sql, adminHub);
+const stopPushNotifier = startPushNotifier(sql, adminHub);
 const stopAdminSweeper = startAdminSweeper(sql, { notify, adminOrigin });
 
 // Booking links sign with the same staff key the app verifies — set before the worker starts.
@@ -126,26 +126,34 @@ void getIntegration(sql, 'whatsapp')
   .then((i) => ensureSocket(sql, i))
   .catch((e) => log.child({ mod: 'whatsapp' }).error({ err: e }, 'socket start failed'));
 // Instagram's live session sits in the ig-sidecar; this re-pushes the stored one after a sidecar restart.
-startInstagramReconcile(sql);
+const stopInstagramReconcile = startInstagramReconcile(sql);
 
-// Deploys send SIGTERM: stop claiming, let the run in hand finish (bounded), then exit —
-// a run cut off anyway is recovered by its lease on the next boot.
+// idleTimeout must clear the SSE heartbeat (20s): Bun's default 10s kills a
+// quiet event stream before the first `:ka`, looping clients forever.
+const server = Bun.serve({ port, fetch: app.fetch, idleTimeout: 60 });
+log.info({ port }, 'listening');
+
+// Deploys send SIGTERM: stop taking requests and let those in flight finish, stop claiming,
+// let the run in hand finish (bounded), then exit — a run cut off anyway is recovered by
+// its lease on the next boot.
 let shuttingDown = false;
 for (const sig of ['SIGTERM', 'SIGINT'] as const) {
   process.on(sig, () => {
     if (shuttingDown) return;
     shuttingDown = true;
-    log.info({ sig }, 'shutting down — draining the scheduler');
+    log.info({ sig }, 'shutting down — draining requests and the scheduler');
     stopAdminSweeper();
     stopPaymentJobs();
     stopBillingJobs();
-    void stopScheduler()
+    stopInstagramReconcile();
+    void stopPushNotifier.then((stop) => stop()).catch(() => undefined);
+    // event streams never finish on their own: requests get a few seconds, then the rest close
+    const drained = Promise.race([
+      server.stop(),
+      new Promise((r) => setTimeout(r, 5_000)).then(() => server.stop(true)),
+    ]);
+    void Promise.all([drained, stopScheduler()])
       .then(() => sql.end({ timeout: 5 }))
       .finally(() => process.exit(0));
   });
 }
-
-log.info({ port }, 'listening');
-// idleTimeout must clear the SSE heartbeat (20s): Bun's default 10s kills a
-// quiet event stream before the first `:ka`, looping clients forever.
-export default { port, fetch: app.fetch, idleTimeout: 60 };

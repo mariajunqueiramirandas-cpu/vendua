@@ -338,16 +338,28 @@ function sidecarHttpErrorish(e: unknown): SidecarError {
 }
 
 let reconcileTimer: ReturnType<typeof setInterval> | null = null;
+let tickInFlight = false;
 
 /** Boot + every minute: a sidecar restart is noticed within a minute. */
-export function startInstagramReconcile(sql: Sql) {
-  const tick = () =>
+export function startInstagramReconcile(sql: Sql): () => void {
+  const tick = () => {
+    // a slow sidecar would otherwise queue a tick behind reconcileTail every minute
+    if (tickInFlight) return;
+    tickInFlight = true;
     void getIntegration(sql, 'instagram')
       .then((i) => reconcileInstagram(sql, i))
-      .catch((e) => igLog.error({ err: e }, 'instagram reconcile failed'));
+      .catch((e) => igLog.error({ err: e }, 'instagram reconcile failed'))
+      .finally(() => {
+        tickInFlight = false;
+      });
+  };
   tick();
   reconcileTimer ??= setInterval(tick, 60_000);
   reconcileTimer.unref?.();
+  return () => {
+    if (reconcileTimer) clearInterval(reconcileTimer);
+    reconcileTimer = null;
+  };
 }
 
 function stripSession(step: IgStep & { session?: unknown }): IgStep {

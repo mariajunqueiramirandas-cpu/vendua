@@ -898,6 +898,24 @@ function takeUnread(jid: string): WaKey[] {
 // "digitando…" long enough to register, short enough not to stall the dispatch
 const typingMs = (text: string) => Math.min(2_000, 400 + text.length * 15);
 
+// a stalled socket never settles its promises — bound every awaited socket call
+const SEND_TIMEOUT_MS = 30_000;
+const COSMETIC_TIMEOUT_MS = 5_000;
+
+async function withTimeout<T>(p: Promise<T>, ms: number, what: string): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      p,
+      new Promise<never>((_, reject) => {
+        timer = setTimeout(() => reject(new Error(`${what} timed out after ${ms}ms`)), ms);
+      }),
+    ]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 export async function sendWhatsApp(
   sql: Sql,
   integration: IntegrationRow,
@@ -916,15 +934,31 @@ export async function sendWhatsApp(
     // receipts and presence are cosmetic — never let them fail the send
     const keys = takeUnread(jid);
     if (keys.length && sock.readMessages) {
-      await sock.readMessages(keys).catch((e) => waLog.warn({ err: e }, 'read receipt failed'));
+      await withTimeout(
+        sock.readMessages(keys),
+        COSMETIC_TIMEOUT_MS,
+        'whatsapp read receipt',
+      ).catch((e) => waLog.warn({ err: e }, 'read receipt failed'));
     }
     if (sock.sendPresenceUpdate) {
-      await sock.sendPresenceUpdate('composing', jid).catch(() => undefined);
+      await withTimeout(
+        sock.sendPresenceUpdate('composing', jid),
+        COSMETIC_TIMEOUT_MS,
+        'whatsapp presence',
+      ).catch(() => undefined);
       await new Promise((r) => setTimeout(r, typingMs(text)));
     }
-    const res = await sock.sendMessage(jid, { text });
+    const res = await withTimeout(
+      sock.sendMessage(jid, { text }),
+      SEND_TIMEOUT_MS,
+      'whatsapp send',
+    );
     if (sock.sendPresenceUpdate)
-      await sock.sendPresenceUpdate('paused', jid).catch(() => undefined);
+      await withTimeout(
+        sock.sendPresenceUpdate('paused', jid),
+        COSMETIC_TIMEOUT_MS,
+        'whatsapp presence',
+      ).catch(() => undefined);
     waLog.info({ to: maskPhone(jid), id: res?.key?.id ?? null }, 'message sent');
     return res?.key?.id ?? null;
   }

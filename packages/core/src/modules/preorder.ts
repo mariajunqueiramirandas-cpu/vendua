@@ -1,4 +1,5 @@
 import { HttpError } from '../platform/http.ts';
+import { localParts } from '../platform/tz.ts';
 import type { StoreHours } from './store.ts';
 
 // Encomendas: products that must be ordered N days ahead. Core owns the calendar —
@@ -15,14 +16,8 @@ export interface ScheduleView {
 }
 
 function localDate(now: Date, tz: string): { y: number; m: number; d: number } {
-  const parts = new Intl.DateTimeFormat('en-CA', {
-    timeZone: tz,
-    year: 'numeric',
-    month: '2-digit',
-    day: '2-digit',
-  }).formatToParts(now);
-  const get = (t: string) => Number(parts.find((p) => p.type === t)?.value);
-  return { y: get('year'), m: get('month'), d: get('day') };
+  const p = localParts(now, tz);
+  return { y: p.year, m: p.month, d: p.day };
 }
 
 const iso = (dt: Date) => dt.toISOString().slice(0, 10);

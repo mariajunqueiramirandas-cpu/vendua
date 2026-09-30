@@ -264,35 +264,52 @@ async function whatsappFallback(sql: Sql, tenantId: string, opts: AlertOpts) {
 export async function sweepAdmin(sql: Sql, opts: AlertOpts = {}) {
   const tenants = await sql<{ id: string }[]>`select id from tenants where status = 'active'`;
   for (const t of tenants) {
-    await withTenant(sql, t.id, async (tx) => {
-      const due = await tx<{ id: string }[]>`
-        select id from products where tenant_id = ${t.id} and sold_out_until is not null and sold_out_until <= now()
-      `;
-      for (const p of due) {
-        await setStock(tx, t.id, p.id, { status: 'active' });
-        await tx`update products set sold_out_until = null where id = ${p.id}`;
-      }
-      // a store waiting for its first plan payment stays paused whatever the timer said
-      const resumed = await tx`
-        update store_settings set status_override = null, resumes_at = null
-        where tenant_id = ${t.id} and status_override is not null and resumes_at is not null
-          and resumes_at <= now() and not billing_hold
-        returning tenant_id
-      `;
-      if (due.length) await emitAdminTx(tx, t.id, 'catalog');
-      if (resumed.length) await emitAdminTx(tx, t.id, 'store');
-      await tx`delete from push_deliveries where tenant_id = ${t.id} and created_at < now() - interval '2 days'`;
-      await tx`delete from push_attempts where tenant_id = ${t.id} and at < now() - interval '30 days'`;
-    });
+    // one store's bad row must not stall the sweep for every store after it
+    try {
+      await sweepTenant(sql, t.id);
+    } catch (err) {
+      workLog.warn({ err, tenantId: t.id }, 'admin sweep failed for tenant');
+    }
     await whatsappFallback(sql, t.id, opts).catch((err) =>
-      workLog.warn({ err }, 'whatsapp alert fallback failed'),
+      workLog.warn({ err, tenantId: t.id }, 'whatsapp alert fallback failed'),
     );
   }
 }
 
+async function sweepTenant(sql: Sql, tenantId: string) {
+  await withTenant(sql, tenantId, async (tx) => {
+    const due = await tx<{ id: string }[]>`
+      select id from products where tenant_id = ${tenantId} and sold_out_until is not null and sold_out_until <= now()
+    `;
+    for (const p of due) {
+      await setStock(tx, tenantId, p.id, { status: 'active' });
+      await tx`update products set sold_out_until = null where id = ${p.id}`;
+    }
+    // a store waiting for its first plan payment stays paused whatever the timer said
+    const resumed = await tx`
+      update store_settings set status_override = null, resumes_at = null
+      where tenant_id = ${tenantId} and status_override is not null and resumes_at is not null
+        and resumes_at <= now() and not billing_hold
+      returning tenant_id
+    `;
+    if (due.length) await emitAdminTx(tx, tenantId, 'catalog');
+    if (resumed.length) await emitAdminTx(tx, tenantId, 'store');
+    await tx`delete from push_deliveries where tenant_id = ${tenantId} and created_at < now() - interval '2 days'`;
+    await tx`delete from push_attempts where tenant_id = ${tenantId} and at < now() - interval '30 days'`;
+  });
+}
+
 export function startAdminSweeper(sql: Sql, opts: AlertOpts = {}): () => void {
+  let running = false;
   const timer = setInterval(() => {
-    void sweepAdmin(sql, opts).catch((err) => workLog.warn({ err }, 'admin sweep failed'));
+    // a slow pass holds a pool connection — never stack a second one behind it
+    if (running) return;
+    running = true;
+    void sweepAdmin(sql, opts)
+      .catch((err) => workLog.warn({ err }, 'admin sweep failed'))
+      .finally(() => {
+        running = false;
+      });
   }, 60_000);
   return () => clearInterval(timer);
 }
