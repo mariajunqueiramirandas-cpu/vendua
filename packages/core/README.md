@@ -10,8 +10,8 @@ reference: `docs/architecture/01-core.md`.
 | ---------------- | ---------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | `/storefront/v1` | public, tenant resolved from `Host`                                    | `GET /store` · `GET /catalog` · `GET /products/:slug` · `GET /surfaces` · `GET /state` · `GET /events` (SSE hints)                                                 |
 | `/checkout/v1`   | anonymous session token (`vst.*`), `Idempotency-Key` on every mutation | `POST /session` · `GET /cart` · `POST /cart/items` · `PATCH/DELETE /cart/items/:id` · `POST /cart/delivery` · `POST /quote` · `POST /checkout` · `GET /orders/:id` |
-| `/control/v1`    | internal (dev-open)                                                    | `GET /state?tenant=<slug>` — the edge-injection payload                                                                                                            |
-| `/v1/v.js`       | the loader stub                                                        | in prod served from CDN; dev-only here                                                                                                                             |
+| `/control/v1`    | staff (`CONTROL_SECRET` / CRM session)                                 | `GET /state?tenant=<slug>` — a store's status + blocking notices                                                                                                   |
+| `/v1/v.js`       | the loader                                                             | proxied by the edge, which keeps the last good copy while Core is down                                                                                             |
 
 Modules under `src/modules/`: `store` (hours → open/closed/paused derivation),
 `catalog`, `cart` (server-side totals — the Kernel holds no pricing),
@@ -32,6 +32,21 @@ schedule recomputed under locks), `coupons`, `combos`, `stock`, `preorder`,
 `customer` (tokens, orders-by-phone, loyalty — ADR 0019), `cart-share`, `geo`
 (bairro + radius zones, ViaCEP with an LRU), `pix` (BR Code), `order-live`
 (LISTEN `vendua_order` → SSE pushes and long-poll wake-ups).
+
+## Control Plane (roadmap Phase 4, migration 0064, ADR 0022)
+
+`src/modules/fleet`: releases, pointer-flip deployments verified by synthetic probes, fleet
+incidents and the provisioner (docs/architecture/08-control-plane.md). A 15 s loop
+(`startFleetJobs`) reconciles drift, advances provisionings and probes live hosts.
+
+| Surface             | Endpoints                                                                                                                                                                                                                                                         |
+| ------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `/control/v1/fleet` | `GET status` · `GET storefronts[/:slug]` · `PATCH storefronts/:slug` · `POST storefronts/:slug/{promote,rollback,probe}` · `GET/POST releases` · `GET/POST provisionings` · `POST provisionings/:id/retry` · `GET slug` · `GET incidents` · `PATCH incidents/:id` |
+| `/edge/v1/resolve`  | the edge only (`x-vendua-edge: VENDUA_EDGE_SECRET`): Host → tenant + live release                                                                                                                                                                                 |
+| `/storefront/v1`    | `GET /surfaces?design=1` — the edge's injected state: surfaces + the live templates and tokens (Kernel 1.10)                                                                                                                                                      |
+
+Env: `VENDUA_EDGE_SECRET`; `VENDUA_PROBES` (`1`/`0`; default on in production, off in dev);
+`VENDUA_PROBE_ORIGIN` (probe through `http://edge:8080` instead of `https://<host>`).
 
 ## Dev loop
 

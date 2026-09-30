@@ -30,7 +30,7 @@ describe('normalizeStaff', () => {
       }),
     ).toEqual({
       members: [{ name: 'Ana', email: 'ana@vendua.app', whatsapp: '+5511999990000' }],
-      events: { handoff: true, meeting: true },
+      events: { handoff: true, meeting: true, fleet: true },
     });
   });
 
@@ -43,7 +43,7 @@ describe('normalizeStaff', () => {
       ['a@b.co', ''],
       ['', '+5511999990000'],
     ]);
-    expect(cfg.events).toEqual({ handoff: true, meeting: false });
+    expect(cfg.events).toEqual({ handoff: true, meeting: false, fleet: true });
   });
 
   test('rejects bad shapes', () => {

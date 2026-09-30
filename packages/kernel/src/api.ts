@@ -1,4 +1,4 @@
-import type { TemplateSet } from '@vendua/templates';
+import type { StorefrontTokens, TemplateSet } from '@vendua/templates';
 
 // The only supported path from a storefront to Core (no fetch/axios in storefront
 // code). Mutations send a fresh Idempotency-Key; the session token rides as Bearer.
@@ -170,6 +170,9 @@ export interface SurfacesEnvelope {
   version: 1;
   store: { status: 'open' | 'closed' | 'paused'; resumesAt?: string };
   notices: Notice[];
+  /** Kernel 1.10: only in the edge-injected `window.__VENDUA_STATE__` — the store's live design */
+  templates?: TemplateSet;
+  tokens?: StorefrontTokens | null;
 }
 
 /** `/storefront/v1/state` — the loader's snapshot; `templates` when asked for. */

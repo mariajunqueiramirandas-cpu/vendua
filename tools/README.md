@@ -39,15 +39,15 @@ bun tools/affected.mjs [--base <ref>]   # default base: origin/main
 
 Mapping:
 
-| Diff touches …                                                                                                | Result                                         |
-| ------------------------------------------------------------------------------------------------------------- | ---------------------------------------------- |
-| `packages/{kernel,cli,conformance,ui-defaults}/**`, root `package.json`, `bun.lock`, `tsconfig.base.json`     | `allStorefronts: true` + that workspace listed |
-| `storefronts/<slug>/**`                                                                                       | `storefronts/<slug>`                           |
-| `storefronts/_examples/<slug>/**`                                                                             | `storefronts/_examples/<slug>`                 |
-| other paths under `storefronts/` (Dockerfile, nginx.conf — shared infra that can't be attributed to one slug) | `allStorefronts: true`                         |
-| `packages/<other>/**`                                                                                         | `packages/<name>`                              |
-| `site/**`                                                                                                     | `site`                                         |
-| `docs/`, `tools/`, `.github/`, other root files                                                               | nothing                                        |
+| Diff touches …                                                                                            | Result                                         |
+| --------------------------------------------------------------------------------------------------------- | ---------------------------------------------- |
+| `packages/{kernel,cli,conformance,ui-defaults}/**`, root `package.json`, `bun.lock`, `tsconfig.base.json` | `allStorefronts: true` + that workspace listed |
+| `storefronts/<slug>/**`                                                                                   | `storefronts/<slug>`                           |
+| `storefronts/_examples/<slug>/**`                                                                         | `storefronts/_examples/<slug>`                 |
+| other paths under `storefronts/` (Dockerfile, README — shared infra that can't be attributed to one slug) | `allStorefronts: true`                         |
+| `packages/<other>/**`                                                                                     | `packages/<name>`                              |
+| `site/**`                                                                                                 | `site`                                         |
+| `docs/`, `tools/`, `.github/`, other root files                                                           | nothing                                        |
 
 `packages` lists workspace _directories_, not package names — consumers
 `cd` into them and run the script they need (`build`, `check`). When

@@ -32,6 +32,15 @@ const REFRESH: Record<Exclude<ControlEventType, 'sync'>, string[]> = {
   'draft.change': ['approvals', 'threads', 'thread', 'stats', 'leads'],
   'meeting.change': ['meetings', 'meetings-status'],
   'channel.health': ['channel-health', 'integrations'],
+  // 'lead' so a lead's loja card follows its provisioning
+  'fleet.change': [
+    'fleet-status',
+    'fleet-storefronts',
+    'fleet-storefront',
+    'fleet-provisionings',
+    'fleet-incidents',
+    'lead',
+  ],
 };
 
 /** Turns the payload-free SSE triggers into cache invalidations. */

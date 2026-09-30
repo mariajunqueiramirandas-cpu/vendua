@@ -6,12 +6,12 @@
     <meta name="robots" content="noindex" />
     <meta name="theme-color" content="#f7f4ea" media="(prefers-color-scheme: light)" />
     <meta name="theme-color" content="#0a100d" media="(prefers-color-scheme: dark)" />
-    <title>Loja não encontrada · Venduá</title>
+    <title>Loja em preparação · Venduá</title>
     <link
       rel="icon"
       href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 128 128'%3E%3Cpath d='M32 48 L61 88 L98 34' fill='none' stroke='%23123C32' stroke-width='17' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E"
     />
-    <!-- served by the stores nginx for hosts Core knows no store for; self-contained on purpose -->
+    <!-- served by the edge (503) while a known store has no release to serve yet; self-contained on purpose -->
     <style>
       :root {
         color-scheme: light dark;
@@ -160,18 +160,19 @@
           />
         </svg>
       </div>
-      <p class="eyebrow">Erro 404 · loja não encontrada</p>
-      <h1>Essa loja não existe (ainda)</h1>
+      <p class="eyebrow">Erro 503 · loja em preparação</p>
+      <h1>Loja em preparação</h1>
       <p>
-        Não tem nenhuma loja da Venduá em <span class="host" id="host">este endereço</span>. Confira
-        se o link foi digitado certinho — ou peça o endereço de novo a quem te enviou.
+        Esta loja ainda está sendo publicada em <span class="host" id="host">este endereço</span>.
+        Volte em alguns minutos.
       </p>
       <div class="actions">
-        <a class="btn primary" href="https://vendua.com.br">Conhecer a Venduá</a>
-        <a class="btn" href="https://vendua.com.br/contato/">Quero abrir minha loja</a>
+        <a class="btn primary" href="/">Tentar de novo</a>
+        <a class="btn" href="https://vendua.com.br">Conhecer a Venduá</a>
       </div>
       <p class="hint">
-        É o dono desta loja e ela sumiu? Entre no seu painel ou fale com a gente — a gente resolve.
+        É o dono desta loja? A publicação costuma levar poucos minutos — se demorar, fale com a
+        gente pelo seu painel.
       </p>
     </main>
     <script>

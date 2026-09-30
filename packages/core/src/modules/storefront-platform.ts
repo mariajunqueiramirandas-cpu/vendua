@@ -127,8 +127,16 @@ export async function currentTokensTx(
   return rows[0] ?? null;
 }
 
-/** A token edit is a design update: validated (incl. WCAG AA), versioned, and
- *  queued as a rebuild on the outbox — no storefront code changes. */
+/** Kernel 1.10+ reads the store's tokens from the edge-injected state at every page load. */
+export function appliesLiveTokens(kernelVersion: string | null): boolean {
+  if (!kernelVersion) return true; // nothing promoted yet: the edge serves the bundle's newest build
+  const [major = 0, minor = 0] = kernelVersion.split('.').map(Number);
+  return major > 1 || (major === 1 && minor >= 10);
+}
+
+/** A token edit is a design update: validated (incl. WCAG AA) and versioned — no storefront
+ *  code changes. Live at the next page load on Kernel 1.10+; an older live build queues a
+ *  rebuild on the outbox (`vendua train --pending`). */
 export async function saveTokensTx(tx: Sql, tenantId: string, input: unknown, source: string) {
   const valid = validateTokens(input);
   if (!valid.ok)
@@ -142,10 +150,16 @@ export async function saveTokensTx(tx: Sql, tenantId: string, input: unknown, so
     insert into storefront_tokens (tenant_id, version, tokens, source)
     values (${tenantId}, ${version}, ${tx.json(valid.tokens as never)}, ${source.slice(0, 120)})
   `;
-  await tx`
-    insert into outbox (tenant_id, topic, payload)
-    values (${tenantId}, 'storefront.rebuild_requested', ${tx.json({ reason: 'tokens', version })})
-  `;
+  const live = (
+    await tx<{ live_kernel_version: string | null }[]>`
+      select live_kernel_version from storefront_ops where tenant_id = ${tenantId}
+    `
+  )[0];
+  if (!appliesLiveTokens(live?.live_kernel_version ?? null))
+    await tx`
+      insert into outbox (tenant_id, topic, payload)
+      values (${tenantId}, 'storefront.rebuild_requested', ${tx.json({ reason: 'tokens', version })})
+    `;
   return { version, tokens: valid.tokens };
 }
 

@@ -5,6 +5,8 @@ export class ApiError extends Error {
     public status: number,
     public code: string,
     message: string,
+    /** Core's `error.details` (e.g. `{ field }` on a 422) */
+    public details?: Record<string, unknown> | undefined,
   ) {
     super(message);
   }
@@ -32,12 +34,13 @@ async function req<T>(path: string, init: RequestInit = {}): Promise<T> {
   }
   if (!res.ok) {
     const data = (await res.json().catch(() => ({}))) as {
-      error?: { code?: string; message?: string };
+      error?: { code?: string; message?: string; details?: Record<string, unknown> };
     };
     throw new ApiError(
       res.status,
       data.error?.code ?? 'ERROR',
       data.error?.message ?? res.statusText,
+      data.error?.details,
     );
   }
   const ct = res.headers.get('content-type') ?? '';
@@ -52,6 +55,8 @@ export interface AgentPlanStep {
 export interface Lead {
   id: string;
   name: string;
+  /** the store this lead became (Control Plane provisioning) */
+  tenantId: string | null;
   businessName: string | null;
   phone: string | null;
   whatsapp: string | null;
@@ -786,5 +791,237 @@ const fleet = {
   ) => req<unknown>(`/incidents/${id}`, { method: 'PATCH', body: JSON.stringify(patch) }),
 };
 
+// ── control plane (/fleet): releases on the pointer, probes, provisioner, ops incidents ──
+
+export type ReleasePolicy = 'auto' | 'pinned';
+export type ProbeStatus = 'unknown' | 'ok' | 'failing';
+export type DeploymentKind = 'promote' | 'rollback' | 'auto' | 'provision';
+export type DeploymentStatus = 'pending' | 'live' | 'failed' | 'rolled_back' | 'superseded';
+export type ProvisionState = 'release' | 'verify' | 'invite' | 'live';
+export type FleetSeverity = 'warning' | 'critical';
+
+export interface FleetStatus {
+  /** false = the prober is off in this environment */
+  probes: boolean;
+  stores: number;
+  live: number;
+  pinned: number;
+  maintenance: number;
+  pendingDeployments: number;
+  probedHosts: number;
+  failingHosts: number;
+  provisioning: number;
+  kernels: { version: string; stores: number }[];
+  bundles: {
+    bundle: string;
+    latestRelease: string | null;
+    kernelVersion: string | null;
+    publishedAt: string | null;
+    stores: number;
+    behind: number;
+  }[];
+  openIncidents: { warning: number; critical: number };
+}
+
+export interface FleetStorefront {
+  tenantId: string;
+  slug: string;
+  name: string;
+  status: string;
+  plan: string;
+  createdAt: string;
+  bundle: string;
+  bundleLocked: boolean;
+  ring: string;
+  policy: ReleasePolicy;
+  pinnedReason: string | null;
+  maintenance: boolean;
+  host: string | null;
+  hosts: string[];
+  live: { release: string; kernelVersion: string | null; since: string | null } | null;
+  latestRelease: string | null;
+  behind: boolean;
+  probe: {
+    status: ProbeStatus;
+    checkedAt: string | null;
+    error: string | null;
+    latencyMs: number | null;
+    release: string | null;
+  } | null;
+  deployment: {
+    id: string;
+    status: DeploymentStatus;
+    kind: DeploymentKind;
+    release: string;
+    startedAt: string;
+  } | null;
+  provisioning: { id: string; state: ProvisionState; lastError: string | null } | null;
+  openIncidents: number;
+}
+
+export interface FleetDeployment {
+  id: string;
+  tenantId: string;
+  release: string;
+  previousRelease: string | null;
+  kind: DeploymentKind;
+  status: DeploymentStatus;
+  actor: string;
+  reason: string | null;
+  detail: string | null;
+  startedAt: string;
+  finishedAt: string | null;
+  kernelVersion?: string | undefined;
+}
+
+export interface FleetRelease {
+  id: string;
+  bundle: string;
+  kernelVersion: string;
+  contract: string | null;
+  commit: string | null;
+  qaStatus: 'passed' | 'failed';
+  qa: { id: string; ok: boolean; detail?: string }[] | null;
+  budgets: Record<string, number> | null;
+  fileCount: number | null;
+  builtAt: string;
+  publishedAt: string;
+}
+
+export interface ProbeCheck {
+  id: 'page' | 'loader' | 'state' | 'checkout';
+  ok: boolean;
+  detail?: string | undefined;
+}
+
+export interface FleetIncident {
+  id: string;
+  tenantId: string | null;
+  /** store slug */
+  tenant: string | null;
+  kind: string;
+  severity: FleetSeverity;
+  subject: string;
+  summary: string;
+  openedAt: string;
+  ackedAt: string | null;
+  resolvedAt: string | null;
+}
+
+export interface Provisioning {
+  id: string;
+  tenantId: string;
+  /** store slug */
+  tenant: string | null;
+  /** the store's primary host */
+  host: string | null;
+  storeName: string | null;
+  source: 'signup' | 'invite';
+  leadId: string | null;
+  leadName: string | null;
+  state: ProvisionState;
+  attempts: number;
+  lastError: string | null;
+  nextAttemptAt: string | null;
+  log: { at: string; state: string; note: string }[];
+  createdBy: string | null;
+  createdAt: string;
+  liveAt: string | null;
+}
+
+export interface FleetStorefrontDetail extends FleetStorefront {
+  deployments: FleetDeployment[];
+  releases: FleetRelease[];
+  probes: {
+    host: string;
+    status: ProbeStatus;
+    failures: number;
+    failingSince: string | null;
+    checkedAt: string | null;
+    okAt: string | null;
+    error: string | null;
+    release: string | null;
+    latencyMs: number | null;
+  }[];
+  healthChecks: {
+    id: string;
+    host: string;
+    at: string;
+    ok: boolean;
+    latencyMs: number | null;
+    release: string | null;
+    checks: ProbeCheck[] | null;
+  }[];
+  incidents: FleetIncident[];
+  provisioningDetail: Provisioning | null;
+}
+
+export interface ProvisionInput {
+  leadId?: string | undefined;
+  slug: string;
+  storeName: string;
+  planId: string;
+  ownerName: string;
+  ownerPhone: string;
+  ownerEmail: string;
+}
+
+const enc = encodeURIComponent;
+const controlPlane = {
+  fleetStatus: () => req<FleetStatus>('/fleet/status'),
+  fleetStorefronts: () => req<{ storefronts: FleetStorefront[] }>('/fleet/storefronts'),
+  fleetStorefront: (slug: string) =>
+    req<{ storefront: FleetStorefrontDetail | null }>(`/fleet/storefronts/${enc(slug)}`),
+  patchStorefront: (
+    slug: string,
+    patch: { policy?: ReleasePolicy; bundle?: string; reason?: string },
+  ) =>
+    req<{ deployment: FleetDeployment | null }>(`/fleet/storefronts/${enc(slug)}`, {
+      method: 'PATCH',
+      body: JSON.stringify(patch),
+    }),
+  promote: (slug: string, b: { release: string; reason?: string }) =>
+    req<{ deployment: FleetDeployment | null; policy: ReleasePolicy }>(
+      `/fleet/storefronts/${enc(slug)}/promote`,
+      { method: 'POST', body: JSON.stringify(b) },
+    ),
+  rollback: (slug: string, b: { reason?: string }) =>
+    req<{ deployment: FleetDeployment }>(`/fleet/storefronts/${enc(slug)}/rollback`, {
+      method: 'POST',
+      body: JSON.stringify(b),
+    }),
+  probe: (slug: string) =>
+    req<{
+      results: {
+        host: string;
+        result: { ok: boolean; latencyMs: number; release: string | null; checks: ProbeCheck[] };
+      }[];
+    }>(`/fleet/storefronts/${enc(slug)}/probe`, { method: 'POST' }),
+  provisionings: (leadId?: string) =>
+    req<{ provisionings: Provisioning[] }>(
+      `/fleet/provisionings${leadId ? `?leadId=${enc(leadId)}` : ''}`,
+    ),
+  createProvisioning: (b: ProvisionInput) =>
+    req<{ provisioning: Provisioning }>('/fleet/provisionings', {
+      method: 'POST',
+      body: JSON.stringify(b),
+    }),
+  retryProvisioning: (id: string) =>
+    req<{ provisioning: Provisioning }>(`/fleet/provisionings/${id}/retry`, { method: 'POST' }),
+  slugStatus: (slug: string) =>
+    req<{
+      slug: string;
+      available: boolean;
+      reason?: 'taken' | 'reserved' | 'invalid';
+      suggestion?: string;
+    }>(`/fleet/slug?slug=${enc(slug)}`),
+  fleetIncidents: () => req<{ incidents: FleetIncident[] }>('/fleet/incidents'),
+  patchFleetIncident: (id: string, patch: { ack: true } | { resolved: true }) =>
+    req<{ incident: FleetIncident }>(`/fleet/incidents/${id}`, {
+      method: 'PATCH',
+      body: JSON.stringify(patch),
+    }),
+};
+
 // one client — the v2 section merges in so callers keep a single import
-export const api = Object.assign(apiBase, agentV2, fleet);
+export const api = Object.assign(apiBase, agentV2, fleet, controlPlane);

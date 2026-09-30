@@ -24,9 +24,8 @@ vendua/
                  # Not a storefront; does not consume the Kernel.
   apps/          # apps/control — staff console: CRM board, agent ops (threads,
                  # plan board, discovery, digest settings)
-  packages/      # platform packages: core, kernel, cli, conformance exist;
-                 # ui-defaults, codemods, loader, control-plane, admin, edge
-                 # are Phase 4+
+  packages/      # platform packages: core (+ the Control Plane), kernel, cli,
+                 # conformance, ui-defaults, codemods, loader, templates, edge
   storefronts/   # one package per storefront: _template, _examples, <slug>…
   tools/         # repo-level CI utilities, affected-graph scripts
   docs/          # normative architecture docs, ADRs, roadmap, summaries

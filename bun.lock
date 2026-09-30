@@ -92,6 +92,7 @@
       },
       "dependencies": {
         "@vendua/codemods": "workspace:*",
+        "@vendua/edge": "workspace:*",
         "@vendua/templates": "workspace:*",
         "postgres": "3.4.7",
       },
@@ -165,9 +166,17 @@
         "typescript": "6.0.3",
       },
     },
+    "packages/edge": {
+      "name": "@vendua/edge",
+      "version": "0.0.0",
+      "devDependencies": {
+        "@types/bun": "1.4.2",
+        "typescript": "6.0.3",
+      },
+    },
     "packages/kernel": {
       "name": "@vendua/kernel",
-      "version": "1.9.0",
+      "version": "1.10.0",
       "dependencies": {
         "@vendua/templates": "workspace:*",
         "@vendua/ui-defaults": "workspace:*",
@@ -771,6 +780,8 @@
     "@vendua/control": ["@vendua/control@workspace:apps/control"],
 
     "@vendua/core": ["@vendua/core@workspace:packages/core"],
+
+    "@vendua/edge": ["@vendua/edge@workspace:packages/edge"],
 
     "@vendua/example-quero-pudim": ["@vendua/example-quero-pudim@workspace:storefronts/_examples/quero-pudim"],
 

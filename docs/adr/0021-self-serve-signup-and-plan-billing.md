@@ -49,7 +49,8 @@ same-origin rule, and the site stays static with no forms. The site links to it.
 2. `POST /signup` calls `provision_store()`, a security-definer function (the app role can't
    insert tenants or domains under RLS): tenant, primary `<slug>.<store domain>` host,
    settings, the owner, storefront ops. The store renders at once from the `_template`
-   bundle the `stores` container serves for stores without their own.
+   bundle the `stores` container serves for stores without their own (since Phase 4, the edge
+   and the provisioner — ADR 0022).
 3. The store is paused behind `store_settings.billing_hold` until the first payment lands;
    then the hold and the provisioning pause lift and the owner lands in `/bem-vindo`.
 

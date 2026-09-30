@@ -1,6 +1,6 @@
 import { HttpError } from '../platform/http.ts';
 
-export const STAFF_EVENTS = ['handoff', 'meeting'] as const;
+export const STAFF_EVENTS = ['handoff', 'meeting', 'fleet'] as const;
 export type StaffEvent = (typeof STAFF_EVENTS)[number];
 
 export interface StaffMember {
@@ -16,7 +16,7 @@ export interface StaffConfig {
 
 export const DEFAULT_STAFF: StaffConfig = {
   members: [],
-  events: { handoff: true, meeting: true },
+  events: { handoff: true, meeting: true, fleet: true },
 };
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;

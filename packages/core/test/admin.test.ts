@@ -549,15 +549,6 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('merchant admin (db)', () => {
       headers: { host: `nope-${nonce}.vendua.test` },
     });
     expect(miss.status).toBe(404);
-    // storefront nginx picks the bundle from this; unknown hosts get no store (template)
-    const bundle = (h: string) =>
-      app.request(`http://${h}/storefront/v1/_bundle`, { headers: { host: h } });
-    const hit = await bundle(`${slug}.vendua.test`);
-    expect(hit.status).toBe(204);
-    expect(hit.headers.get('x-vendua-store')).toBe(slug);
-    const none = await bundle(`nope-${nonce}.vendua.test`);
-    expect(none.status).toBe(204);
-    expect(none.headers.get('x-vendua-store')).toBeNull();
   });
 
   test('Equipe: roles gate the API, the last owner stays, the log records it all', async () => {
@@ -621,7 +612,7 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('merchant admin (db)', () => {
     expect(withPhoto.body.product.dominant).toBe('#aabbcc');
   });
 
-  test('Aparência: tokens validate contrast and queue a rebuild', async () => {
+  test('Aparência: tokens validate contrast and go live without a rebuild on Kernel 1.10', async () => {
     const tokens = {
       color: {
         bg: '#ffffff',
@@ -644,7 +635,8 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('merchant admin (db)', () => {
     expect(bad.body.error.code).toBe('INVALID_TOKENS');
     expect((await owner('PUT', '/appearance/tokens', { tokens })).status).toBe(200);
     const a = await owner('GET', '/appearance');
-    expect(a.body.publish.state).toBe('publishing');
+    // nothing promoted yet: the edge serves the bundle's newest (1.10+) build, which reads them live
+    expect(a.body.publish.state).toBe('live');
     const page = await owner('PUT', '/appearance/pages/home', {
       template: {
         version: 1,

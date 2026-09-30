@@ -2,13 +2,14 @@ import { afterEach, describe, expect, test } from 'bun:test';
 import { act } from 'react';
 import type { TemplateSet } from '@vendua/templates';
 import { defineBlock, defineSection, text, BlockArea, useAnalytics } from '../src/index.ts';
-import { flush, mockCore, mount, reports, type Mounted } from './harness.tsx';
+import { TOKENS, flush, mockCore, mount, reports, type Mounted } from './harness.tsx';
 
 let m: Mounted | null = null;
 afterEach(() => {
   m?.unmount();
   m = null;
   reports().length = 0;
+  delete (globalThis as Record<string, unknown>).__VENDUA_STATE__;
 });
 
 const $ = (sel: string) => document.querySelector(sel);
@@ -45,6 +46,48 @@ describe('StorefrontRoutes (Contract 2)', () => {
     m = await mount({ path: '/', snapshot });
     expect(document.body.textContent).toContain('Do Core');
     expect(document.body.textContent).not.toContain('Do snapshot');
+  });
+
+  test('the edge-injected design is the first paint: its tokens and templates', async () => {
+    (globalThis as Record<string, unknown>).__VENDUA_STATE__ = {
+      version: 1,
+      store: { status: 'open' },
+      notices: [],
+      tokens: { ...TOKENS, color: { ...TOKENS.color, accent: '#123456' } },
+      templates: {
+        home: {
+          version: 1,
+          page: 'home',
+          sections: [{ id: 'rt', type: 'sdk:rich-text', settings: { title: 'Da borda' } }],
+        },
+      },
+    };
+    const snapshot: TemplateSet = {
+      home: {
+        version: 1,
+        page: 'home',
+        sections: [{ id: 'rt', type: 'sdk:rich-text', settings: { title: 'Do snapshot' } }],
+      },
+    };
+    mockCore();
+    m = await mount({ path: '/', snapshot });
+    expect(document.documentElement.style.getPropertyValue('--v-color-accent')).toBe('#123456');
+    expect(document.body.textContent).toContain('Da borda');
+    expect(document.body.textContent).not.toContain('Do snapshot');
+  });
+
+  test('injected tokens that fail validation are ignored', async () => {
+    (globalThis as Record<string, unknown>).__VENDUA_STATE__ = {
+      version: 1,
+      store: { status: 'open' },
+      notices: [],
+      tokens: { color: { accent: 'javascript:alert(1)' } },
+    };
+    mockCore();
+    m = await mount({ path: '/' });
+    expect(document.documentElement.style.getPropertyValue('--v-color-accent')).toBe(
+      TOKENS.color.accent,
+    );
   });
 
   test('unknown section types render nothing, are reported, and never break the page', async () => {

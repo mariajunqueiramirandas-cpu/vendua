@@ -1,4 +1,4 @@
-# all static web images from one shared build stage — build context is the repo root
+# the site image and the storefront publisher from one shared build stage — context is the repo root
 FROM oven/bun:1.4.2 AS build
 WORKDIR /app
 
@@ -9,6 +9,7 @@ COPY packages/codemods/package.json packages/codemods/package.json
 COPY packages/conformance/package.json packages/conformance/package.json
 COPY packages/conformance/fixtures/override-crash/package.json packages/conformance/fixtures/override-crash/package.json
 COPY packages/core/package.json packages/core/package.json
+COPY packages/edge/package.json packages/edge/package.json
 COPY packages/kernel/package.json packages/kernel/package.json
 COPY packages/loader/package.json packages/loader/package.json
 COPY packages/templates/package.json packages/templates/package.json
@@ -26,14 +27,18 @@ RUN --mount=type=cache,id=vendua-bun,target=/root/.bun/install/cache \
 COPY packages/kernel packages/kernel
 COPY packages/ui-defaults packages/ui-defaults
 COPY packages/templates packages/templates
+# `vendua release publish` (the publish target) and the artifact store it writes to
+COPY packages/cli packages/cli
+COPY packages/codemods packages/codemods
+COPY packages/edge packages/edge
 # site/scripts/validate.ts checks the site palette against the admin's tokens
 COPY apps/admin/src/ui/theme.css apps/admin/src/ui/theme.css
 COPY site site
 COPY storefronts storefronts
 # the site's sign-up links point at the merchant admin (site/README.md); unset = its default
 ARG PUBLIC_ADMIN_URL
-RUN bun --filter @vendua/site build && bun --filter './storefronts/*' build
-RUN bun storefronts/place-bundles.ts storefronts /app/stores
+RUN bun --filter @vendua/site build \
+    && bun --filter './storefronts/*' --filter './storefronts/_examples/*' build
 
 FROM nginx:1.28-alpine AS site
 ENV NGINX_ENTRYPOINT_QUIET_LOGS=1
@@ -41,18 +46,10 @@ COPY site/nginx.conf /etc/nginx/conf.d/default.conf
 COPY --from=build /app/site/build /usr/share/nginx/html
 EXPOSE 80
 
-# SPA fallback + proxies reserved API prefixes to `core` forwarding Host (tenant routing)
-FROM nginx:1.28-alpine AS storefront
-ENV NGINX_ENTRYPOINT_QUIET_LOGS=1
-ARG STOREFRONT
-COPY storefronts/nginx.conf /etc/nginx/conf.d/default.conf
-COPY --from=build /app/storefronts/${STOREFRONT}/dist /usr/share/nginx/html
-EXPOSE 80
-
-# every store in one image: Core maps Host → slug, nginx serves that store's bundle or the template
-FROM nginx:1.28-alpine AS stores
-ENV NGINX_ENTRYPOINT_QUIET_LOGS=1
-COPY storefronts/nginx-stores.conf /etc/nginx/conf.d/default.conf
-COPY --from=build /app/stores /usr/share/nginx/stores
-COPY storefronts/errors /usr/share/nginx/_errors
-EXPOSE 80
+# One-shot on every deploy: each storefront's dist/ becomes an immutable, content-addressed
+# release in the artifact store, registered with the Control Plane, which promotes it where
+# the fleet policy says. Unchanged storefronts hash to the release they already have (no-op).
+FROM build AS publish
+ARG GIT_COMMIT
+ENV GIT_COMMIT=${GIT_COMMIT}
+CMD ["bun", "packages/cli/src/main.ts", "release", "publish", "--all", "--no-build"]
