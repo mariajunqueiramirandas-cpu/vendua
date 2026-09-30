@@ -18,6 +18,7 @@ const STOREFRONT_MODULES = [
   'modules/customer.ts',
   'modules/geo.ts',
   'modules/orders.ts',
+  'modules/payments/store-payments.ts',
   'modules/place-order.ts',
   'modules/preorder.ts',
   'modules/stock.ts',

@@ -55,11 +55,24 @@ export interface OrderRow {
     promisedTo?: string | null;
   };
   payment: {
+    /** 'sandbox' (legacy) | 'offline' | 'mercadopago' | 'fake' */
     provider: string;
     method: string;
     status: string;
+    /** charged through the provider (webhook-confirmed); false = the store confirms by hand */
+    online?: boolean;
     instructions?: string;
-    pix?: { key: string; keyType: string; beneficiary: string; copyPaste: string } | null;
+    paidAt?: string | null;
+    confirmedBy?: string | null;
+    refundedCents?: number;
+    pix?: {
+      key?: string;
+      keyType?: string;
+      beneficiary?: string;
+      copyPaste: string;
+      expiresAt?: string | null;
+    } | null;
+    redirectUrl?: string | null;
   };
   subtotal_cents: number;
   delivery_fee_cents: number;
@@ -70,6 +83,8 @@ export interface OrderRow {
   scheduled_for: string | null;
   placed_at: string;
   updated_at: string;
+  /** bumps on payment changes (migration 0054) */
+  rev: number;
 }
 
 export interface OrderItemView {
@@ -100,7 +115,7 @@ export interface OrderView {
   totalCents: number;
   placedAt: string;
   updatedAt: string;
-  /** bumps on every transition — the live wait's cursor */
+  /** order_events + orders.rev: bumps on every transition and payment change — the live cursor */
   version: number;
   timeline: {
     at: string;
@@ -113,10 +128,14 @@ export interface OrderView {
 
 export async function orderVersion(tx: Sql, tenantId: string, orderId: string): Promise<number> {
   return (
-    await tx<{ n: number }[]>`
-      select count(*)::int as n from order_events where tenant_id = ${tenantId} and order_id = ${orderId}
+    (
+      await tx<{ n: number }[]>`
+      select (select count(*) from order_events e where e.tenant_id = ${tenantId} and e.order_id = o.id)::int
+             + o.rev as n
+      from orders o where o.tenant_id = ${tenantId} and o.id = ${orderId}
     `
-  )[0]!.n;
+    )[0]?.n ?? 0
+  );
 }
 
 export async function loadOrderView(
@@ -129,7 +148,7 @@ export async function loadOrderView(
   const rows = await tx<OrderRow[]>`
     select id, number, state, customer, delivery, payment, subtotal_cents, delivery_fee_cents,
            discount_cents, total_cents, coupon_code, notes, scheduled_for::text as scheduled_for,
-           placed_at, updated_at
+           placed_at, updated_at, rev
     from orders where tenant_id = ${tenantId} and id = ${orderId}
     ${cartId ? tx`and cart_id = ${cartId}` : tx``}
   `;
@@ -188,7 +207,7 @@ export async function loadOrderView(
     totalCents: order.total_cents,
     placedAt: order.placed_at,
     updatedAt: order.updated_at,
-    version: events.length,
+    version: events.length + order.rev,
     timeline: events.map((e) => ({
       at: e.at,
       from: e.from_state,

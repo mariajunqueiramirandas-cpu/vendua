@@ -49,6 +49,7 @@ import type { OrderHub } from './order-live.ts';
 import {
   ORDER_STATES,
   TERMINAL_STATES,
+  canTransition,
   loadOrderView,
   transitionOrder,
   type OrderState,
@@ -59,6 +60,8 @@ import { setStock } from './stock.ts';
 import { subscribeNotifyTx } from './storefront-platform.ts';
 import type { StoreSettingsRow } from './store.ts';
 import type { PaymentProvider } from './payments/provider.ts';
+import { refundLeftovers, refundOrderPayments } from '../admin/routes-orders.ts';
+import { cancelOpenAttempts, preparePayment } from './payments/store-payments.ts';
 
 type TenantApp = Hono<{ Variables: { tenant: Tenant } }>;
 
@@ -82,6 +85,8 @@ interface Deps {
   provider: PaymentProvider;
   /** `https://<admin host>` — Mercado Pago's notification_url base */
   publicOrigin: (c: Context) => string;
+  /** fallback `<slug>.<storeDomain>` for storeOrigin (card back_url); default VENDUA_STORE_DOMAIN */
+  storeDomain?: string;
 }
 
 const CUSTOMER_HEADER = 'x-vendua-customer';
@@ -364,6 +369,50 @@ export function mountCommerce(d: Deps) {
     c.header('cache-control', 'no-cache, no-transform');
     c.header('x-accel-buffering', 'no');
     return c.newResponse(res.body);
+  });
+
+  // ── online payment (Mercado Pago) ──────────────────────────────────────────
+
+  // The order page asks how to pay: the live Pix QR, the hosted card checkout, or nothing left
+  // to do. Also the card return's first stop — it syncs with the provider before the webhook.
+  // per IP: shoppers behind one NAT (a shared wifi) pay at the same time
+  checkout.use('/orders/:id/pay', limiter(60));
+  // Mercado Pago runs before the recorded tx (never inside one): preparePayment is safe to
+  // repeat (it reuses the live attempt or retries its reserved one), and a key that already has
+  // an answer skips straight to the replay.
+  checkout.post('/orders/:id/pay', async (c) => {
+    const tenant = c.get('tenant') as Tenant;
+    const cartId = await sessionCartId(c, sessionSecret);
+    const orderId = uuidParam(c, 'id');
+    const key = requireIdemKey(c);
+    const answered = await withTenant(
+      sql,
+      tenant.id,
+      (tx) => tx`
+        select 1 from idempotency_keys
+        where tenant_id = ${tenant.id} and key = ${key} and response is not null
+      `,
+    );
+    const next = answered.length
+      ? null
+      : await preparePayment(
+          { sql, provider: d.provider, sessionSecret },
+          tenant,
+          orderId,
+          cartId,
+          {
+            publicOrigin: d.publicOrigin(c),
+            storeDomain: d.storeDomain ?? process.env.VENDUA_STORE_DOMAIN ?? 'vendua.com.br',
+            ...(process.env.MP_PAYER_EMAIL ? { payerEmail: process.env.MP_PAYER_EMAIL } : {}),
+          },
+        );
+    return d.idempotency(sql, async (_c, tx) => ({
+      status: 200,
+      body: {
+        order: await loadOrderView(tx, tenant.id, orderId, cartId),
+        next: next ?? { kind: 'none' },
+      },
+    }))(c);
   });
 
   // ── customer (sem senha, sem cadastro) ─────────────────────────────────────
@@ -739,7 +788,9 @@ export function mountCommerce(d: Deps) {
         if (
           !Array.isArray(methods) ||
           methods.length === 0 ||
-          !methods.every((m) => ['pix', 'card_on_delivery', 'cash'].includes(m as string))
+          !methods.every((m) =>
+            ['pix', 'card_online', 'card_on_delivery', 'cash'].includes(m as string),
+          )
         )
           throw new HttpError(
             400,
@@ -882,10 +933,39 @@ export function mountCommerce(d: Deps) {
     if (!(ORDER_STATES as readonly string[]).includes(to))
       throw new HttpError(400, 'BAD_REQUEST', 'to must be an order state');
     const note = body.note === undefined ? undefined : str(body.note, 'note', 280);
+    // like the admin: refund (or stop unpaid attempts) before the recorded tx, outside any tx
+    const pre = await withTenant(
+      sql,
+      t.id,
+      async (tx) =>
+        (
+          await tx<{ state: OrderState; online: boolean | null; status: string | null }[]>`
+            select state, (payment ->> 'online')::boolean as online, payment ->> 'status' as status
+            from orders where tenant_id = ${t.id} and id = ${orderId}
+          `
+        )[0],
+    );
+    if (pre?.online && canTransition(pre.state, to)) {
+      const pay = { sql, provider: d.provider, sessionSecret };
+      if (
+        (to === 'cancelled' || to === 'refunded') &&
+        (pre.status === 'paid' || pre.status === 'partially_refunded')
+      )
+        await refundOrderPayments(pay, t.id, orderId, {
+          amountCents: null,
+          reason: note ?? `pedido ${to === 'cancelled' ? 'cancelado' : 'estornado'}`,
+          requestedBy: null,
+          key: `control:${requireIdemKey(c)}`,
+          requireApproved: true,
+        });
+      else if (to === 'cancelled') await cancelOpenAttempts(pay, t.id, orderId);
+    }
     const res = await claimTenant(c, t.id, async (tx) => {
       await transitionOrder(tx, t.id, orderId, to, 'staff', note ? { note } : {});
       return { status: 200, body: { order: await loadOrderView(tx, t.id, orderId) } };
     });
+    if (res.status === 200 && (to === 'cancelled' || to === 'refunded'))
+      await refundLeftovers({ sql, provider: d.provider, sessionSecret }, t.id, orderId);
     return reply(c, res);
   });
 

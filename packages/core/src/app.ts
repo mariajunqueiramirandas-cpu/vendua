@@ -774,7 +774,7 @@ export function createApp({
       const cartId = await sessionCartId(c, sessionSecret);
       const body = await bodyJson(c);
       validateCheckoutShape(body);
-      const order = await placeOrderTx(tx, tenant.id, cartId, body);
+      const order = await placeOrderTx(tx, tenant.id, cartId, body, new Date(), provider);
       const view = await loadOrderView(tx, tenant.id, order, cartId);
       // the device that just placed an order for this phone may read the phone's history
       const customer = mintCustomerToken(
@@ -2535,6 +2535,7 @@ export function createApp({
     orderHub,
     provider,
     publicOrigin: (c) => adminOrigin(c),
+    storeDomain: publicStoreDomain,
   });
 
   mountControlBilling({ app, sql, controlGate, provider, storeDomain: publicStoreDomain });

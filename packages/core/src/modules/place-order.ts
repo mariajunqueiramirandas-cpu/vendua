@@ -7,7 +7,8 @@ import { addressParts, composeAddress, validateCheckout, type CheckoutInput } fr
 import { couponUsage, evaluateCoupon, loadCoupon } from './coupons.ts';
 import { normalizePhone } from './customer.ts';
 import { effectiveFee } from './geo.ts';
-import { pixPayload, type PixKeyType } from './pix.ts';
+import { offlinePayment, onlineOffer, onlinePayment } from './payments/store-payments.ts';
+import type { PaymentProvider } from './payments/provider.ts';
 import { validateSchedule } from './preorder.ts';
 import { drawStock, stockDemand } from './stock.ts';
 import { deriveStatus, type StoreSettingsRow } from './store.ts';
@@ -23,6 +24,8 @@ export async function placeOrderTx(
   cartId: string,
   body: CheckoutInput,
   now = new Date(),
+  /** the install's driver; without it the stored connection alone decides (older callers) */
+  provider?: PaymentProvider,
 ): Promise<string> {
   // Lock the cart row first — concurrent checkouts would both see 'open' and mint duplicates.
   await tx`select id from carts where tenant_id = ${tenantId} and id = ${cartId} for update`;
@@ -42,6 +45,7 @@ export async function placeOrderTx(
       >`select * from store_settings where tenant_id = ${tenantId} for update`
     )[0] ?? null;
   const zones = await loadZoneRows(tx, tenantId, { forUpdate: true });
+  const offer = await onlineOffer(tx, tenantId, provider);
   // Re-validate modifier ids / kit picks against current defs — nothing retired slips through underpriced.
   const products = new Map<string, Awaited<ReturnType<typeof getProductById>>>();
   for (const item of cart.items) {
@@ -65,6 +69,7 @@ export async function placeOrderTx(
     zones,
     products,
     storeCoords(settings),
+    { card: offer.online },
   );
   const scheduledFor = validateSchedule(
     cart.schedule,
@@ -122,35 +127,13 @@ export async function placeOrderTx(
   const orderId = crypto.randomUUID();
   const total = subtotal + deliveryFee - discount;
 
-  const pixProfile =
-    body.payment.method === 'pix' && settings?.pix_key && settings.pix_key_type
-      ? {
-          key: settings.pix_key,
-          keyType: settings.pix_key_type as PixKeyType,
-          beneficiary: settings.pix_beneficiary ?? '',
-          city: settings.pix_city ?? settings.city ?? '',
-        }
-      : null;
-  const payment = {
-    // 'sandbox' = the contract's dev provider name (capture lands with Mercado Pago, Phase 3)
-    provider: 'sandbox',
-    method: body.payment.method,
-    status: 'pending',
-    instructions:
-      body.payment.method === 'pix'
-        ? pixProfile
-          ? `Pague ${(total / 100).toFixed(2).replace('.', ',')} no Pix copia e cola abaixo — o pedido #${number} aparece para a loja.`
-          : 'Pagamento PIX combinado na entrega/retirada.'
-        : 'Pagamento na entrega ou retirada.',
-    pix: pixProfile
-      ? {
-          key: pixProfile.key,
-          keyType: pixProfile.keyType,
-          beneficiary: pixProfile.beneficiary,
-          copyPaste: pixPayload(pixProfile, { amountCents: total, txid: `PEDIDO${number}` }),
-        }
-      : null,
-  };
+  // online: Mercado Pago charges it when the shopper's page asks (POST /orders/:id/pay);
+  // a store that isn't connected keeps today's static Pix from its own key
+  const method = body.payment.method;
+  const payment =
+    offer.online && offer.provider && (method === 'pix' || method === 'card_online')
+      ? onlinePayment(offer.provider, method, total)
+      : offlinePayment(settings, method, total, number);
 
   const prep = settings?.prep_time_minutes ?? 30;
   const at = (min: number) => new Date(now.getTime() + min * 60_000).toISOString();
