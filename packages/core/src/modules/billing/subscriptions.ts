@@ -432,14 +432,17 @@ async function repriceAhead(ctx: BillingCtx, tx: Sql, sub: SubRow, plan: PlanRow
 
 // ── a mid-period upgrade ────────────────────────────────────────────────────
 
-/** the pending upgrade's invoice is still payable: open, current, and its period not over */
+/** the pending upgrade's invoice is still payable: open, current, its period not over, and
+ *  priced for the period the store is in (a renewal paid first moves the period on, and the
+ *  difference was only ever computed for the old one) */
 export function upgradeLive(sub: SubRow, inv: InvoiceRow, at: Date) {
   return (
     sub.upgrade_invoice_id === inv.id &&
     !!sub.upgrade_plan_id &&
     (sub.status === 'active' || sub.status === 'past_due') &&
     inv.status === 'open' &&
-    inv.period_end.getTime() > at.getTime()
+    inv.period_end.getTime() > at.getTime() &&
+    inv.period_end.getTime() === sub.current_period_end?.getTime()
   );
 }
 

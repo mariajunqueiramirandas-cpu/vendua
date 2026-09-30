@@ -505,6 +505,30 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('plan billing (db)', () => {
     );
   });
 
+  test('an upgrade paid after the renewal was paid first does not apply', async () => {
+    const s = await paidStore('late-up', 'basic');
+    const soon = new Date(Date.now() + 4 * DAY);
+    await sql`update subscriptions set current_period_end = ${soon} where tenant_id = ${s.id}`;
+    const up = await s.owner('PATCH', '/account/subscription', { planId: 'pro_plus' });
+    const inv = up.body.subscription.pendingUpgrade.invoice;
+    const pix = (await sql`select provider_payment_id from invoices where id = ${inv.id}`)[0]!
+      .provider_payment_id;
+    await tick();
+    const renewal = (await invoices(s.id)).filter((r) => r.kind === 'period').at(-1)!;
+    expect(renewal).toMatchObject({ plan_id: 'basic', amount_cents: 3990 });
+    await payInvoice(renewal.id);
+    // the difference was priced for the old period: paying it now must not buy the new one
+    const staffBefore = staff.length;
+    fake.settle(pix, 'approved');
+    await hook(pix);
+    await Bun.sleep(30);
+    expect(await planOf(s.id)).toBe('basic');
+    expect(await siteRequests(s.id)).toHaveLength(0);
+    expect(staff.slice(staffBefore).some((n) => n.subject.startsWith('Upgrade pago fora'))).toBe(
+      true,
+    );
+  });
+
   test('the old exploit (Basic → PRO+ → Basic, repeated) never yields PRO+', async () => {
     const s = await paidStore('exploit', 'basic');
     for (let i = 0; i < 3; i++) {

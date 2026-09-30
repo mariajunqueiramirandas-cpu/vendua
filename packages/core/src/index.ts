@@ -37,6 +37,12 @@ if (!process.env.SESSION_SECRET) {
   );
 }
 
+if (process.env.NODE_ENV === 'production' && !process.env.VENDUA_ADMIN_HOST) {
+  log.warn(
+    "VENDUA_ADMIN_HOST unset — payment callbacks and the storefront editor preview fall back to the store's own origin; set it to the admin's domain.",
+  );
+}
+
 // Migrate as the owner role, then serve as vendua_app (RLS on).
 if (migrationUrl) {
   const migrator = createSql(migrationUrl);
