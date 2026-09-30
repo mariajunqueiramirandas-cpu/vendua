@@ -151,7 +151,11 @@ export default function IncidentsPage() {
         <Panel
           flush
           title="em aberto"
-          aside={open.length ? 'visíveis agora na Ajuda dos lojistas' : undefined}
+          aside={
+            open.length
+              ? 'visíveis agora na Ajuda dos lojistas e em status.vendua.com.br'
+              : undefined
+          }
           className={cn(
             'overflow-hidden',
             open.some((i) => i.severity === 'outage') && 'border-destructive/40',
@@ -170,7 +174,11 @@ export default function IncidentsPage() {
         <Panel
           flush
           title="resolvidos"
-          aside={closed.length ? 'a Ajuda mostra os dos últimos 7 dias' : undefined}
+          aside={
+            closed.length
+              ? 'a Ajuda mostra os dos últimos 7 dias; a página de status, os de 30'
+              : undefined
+          }
           className="overflow-hidden"
         >
           {list(

@@ -48,6 +48,7 @@ import { activeCarts, type PresenceTracker } from '../modules/presence.ts';
 import { mountPaymentsPublic } from '../modules/payments/routes-public.ts';
 import type { PaymentProvider } from '../modules/payments/provider.ts';
 import { mountSignup } from '../modules/billing/routes-signup.ts';
+import { publicIncidents } from '../modules/incidents.ts';
 import { mountAccount } from './routes-account.ts';
 import { mountAppearance } from './routes-appearance.ts';
 import { mountCatalog } from './routes-catalog.ts';
@@ -211,6 +212,16 @@ export function mountAdmin(o: MountAdminOpts) {
   };
   mountPaymentsPublic(admin, shared);
   mountSignup(admin, shared);
+
+  // status.vendua.com.br's checker (apps/status) reads this from outside, every few minutes
+  const statusLimit = rateLimitByIp(60, {
+    trustForwardedFor: o.trustProxy,
+    proxyHops: o.proxyHops,
+  });
+  admin.get('/status', statusLimit, async (c) => {
+    c.header('cache-control', 'no-store');
+    return c.json({ incidents: await publicIncidents(sql) });
+  });
 
   // ── everything below needs a session ─────────────────────────────────────
   admin.use('*', adminGate(sql, { trustProxy: o.trustProxy }));

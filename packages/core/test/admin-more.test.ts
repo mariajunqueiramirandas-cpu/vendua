@@ -1010,6 +1010,15 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('merchant admin, Track A (db)', 
     expect((await ctl('PATCH', '/incidents/nope', { resolved: true })).status).toBe(400);
     const after = await owner('GET', '/help/status');
     expect(after.body.incidents.find((i: any) => i.id === inc.id).resolvedAt).toBeTruthy();
+
+    // status.vendua.com.br: no session, the same public fields
+    const pub = await call('GET', '/admin/v1/status');
+    expect(pub.status).toBe(200);
+    const shown = pub.body.incidents.find((i: any) => i.id === inc.id);
+    expect(Object.keys(shown).sort()).toEqual(
+      ['body', 'id', 'resolvedAt', 'severity', 'startedAt', 'title'].sort(),
+    );
+    expect(shown.resolvedAt).toBeTruthy();
   });
 
   test('prefs keep the alert and invoice switches', async () => {

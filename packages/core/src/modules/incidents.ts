@@ -5,7 +5,8 @@ import type { Tenant } from '../platform/tenancy.ts';
 import { claimControl } from './control.ts';
 
 // Platform incidents: staff post "a Venduá está com instabilidade" from the CRM; every
-// store's Ajuda reads it (GET /admin/v1/help/status). Writes need vendua.control (RLS).
+// store's Ajuda reads it (GET /admin/v1/help/status), and so does status.vendua.com.br
+// (GET /admin/v1/status, public — apps/status). Writes need vendua.control (RLS).
 
 const SEVERITIES = ['info', 'degraded', 'outage'] as const;
 
@@ -27,6 +28,15 @@ function severity(v: unknown): (typeof SEVERITIES)[number] {
       field: 'severity',
     });
   return v as (typeof SEVERITIES)[number];
+}
+
+/** Public, no session: open incidents plus the last 30 days' resolved ones, for the status page. */
+export function publicIncidents(sql: Sql) {
+  return sql`
+    select ${cols(sql)} from platform_incidents
+    where resolved_at is null or resolved_at > now() - interval '30 days'
+    order by resolved_at is not null, started_at desc limit 50
+  `;
 }
 
 /** control keys share one table across endpoints: scope ours to method + target */

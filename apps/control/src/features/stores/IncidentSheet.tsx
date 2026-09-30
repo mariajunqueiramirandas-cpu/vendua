@@ -66,7 +66,7 @@ export function IncidentSheet({
       description={
         resolved
           ? `resolvido em ${fmtDateTime(incident?.resolvedAt)}`
-          : 'aparece na Ajuda do painel de todos os lojistas'
+          : 'aparece na Ajuda de todos os lojistas e em status.vendua.com.br'
       }
       footer={
         <>
