@@ -140,9 +140,7 @@ export function CheckoutPage() {
   const cardOnline = online?.card !== false;
   const byStore = useMemo(
     () =>
-      METHODS.filter((m) =>
-        (accepted ? accepted.split(',') : LEGACY_METHODS).includes(m.id),
-      )
+      METHODS.filter((m) => (accepted ? accepted.split(',') : LEGACY_METHODS).includes(m.id))
         .filter((m) => m.id !== 'card_online' || cardOnline)
         .map((m) =>
           m.id === 'pix' && pixOnline
