@@ -5,16 +5,37 @@
     {
       "id": "purchase",
       "type": "sdk:purchase-panel",
-      "settings": { "variant": "split" },
+      "settings": {
+        "variant": "split"
+      },
       "blocks": {
-        "after-price": [{ "id": "stock", "type": "sdk:stock-counter" }],
-        "after-cta": [{ "id": "notify", "type": "sdk:notify-me" }]
+        "media": [
+          {
+            "id": "media",
+            "type": "store:dish-media"
+          }
+        ],
+        "after-price": [
+          {
+            "id": "stock",
+            "type": "sdk:stock-counter"
+          }
+        ],
+        "after-cta": [
+          {
+            "id": "notify",
+            "type": "sdk:notify-me"
+          }
+        ]
       }
     },
     {
       "id": "more",
-      "type": "sdk:product-list",
-      "settings": { "title": "Você também pode gostar", "limit": 4 }
+      "type": "store:menu-rail",
+      "settings": {
+        "title": "Peça também",
+        "limit": 8
+      }
     }
   ]
 }

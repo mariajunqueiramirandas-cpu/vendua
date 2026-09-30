@@ -2,27 +2,12 @@
   "version": 1,
   "page": "home",
   "sections": [
-    {
-      "id": "intro",
-      "type": "store:intro",
-      "settings": {
-        "eyebrow": "Bem-vindo",
-        "title": "Feito na hora, do nosso jeito.",
-        "text": "Escolha no cardápio, retire na loja ou receba em casa.",
-        "ctaLabel": "Ver cardápio",
-        "ctaHref": "/cardapio"
-      }
-    },
+    { "id": "hero", "type": "store:menu-hero" },
     {
       "id": "featured",
-      "type": "sdk:product-list",
-      "settings": {
-        "title": "Destaques",
-        "limit": 4,
-        "ctaLabel": "Ver tudo",
-        "ctaHref": "/cardapio"
-      }
+      "type": "store:menu-rail",
+      "settings": { "title": "Destaques", "limit": 8 }
     },
-    { "id": "status", "type": "sdk:store-status" }
+    { "id": "menu", "type": "store:menu" }
   ]
 }
