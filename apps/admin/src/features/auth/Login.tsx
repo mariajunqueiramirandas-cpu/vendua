@@ -1,12 +1,13 @@
 import {
   ArrowLeft,
   ArrowRight,
+  CaretRight,
   EnvelopeSimple,
   Storefront,
   WhatsappLogo,
 } from '@phosphor-icons/react';
 import { useQueryClient } from '@tanstack/react-query';
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { Link } from 'react-router-dom';
 import { api, ApiError, type SignInResult, type StoreRef } from '../../lib/api.ts';
 import { phone as fmtPhone } from '../../lib/format.ts';
@@ -18,8 +19,9 @@ import { Button } from '../../ui/Button.tsx';
 import { CodeInput, type CodeInputHandle } from '../../ui/CodeInput.tsx';
 import { messageOf } from '../../ui/feedback.tsx';
 import { Field, PhoneInput, TextInput } from '../../ui/fields.tsx';
-import { Mascote } from '../../ui/Mascote.tsx';
+import { Mascote, type Pose } from '../../ui/Mascote.tsx';
 import { Spinner } from '../../ui/Spinner.tsx';
+import { useKeyboardInset } from '../../ui/StepFrame.tsx';
 import { EMAIL_RE, expiry, loadPending, savePending } from './pending.ts';
 
 type Step =
@@ -41,6 +43,7 @@ function firstStep(): Step {
 export function Login() {
   const [step, setStep] = useState<Step>(firstStep);
   const qc = useQueryClient();
+  useKeyboardInset();
   // Signed out is the one moment a new version costs nothing: take it here, not with a banner.
   // At once on arrival; later only while the merchant is away (reading the code in WhatsApp),
   // since the code step survives a reload. Not while picking a store or opening an e-mail link:
@@ -77,90 +80,164 @@ export function Login() {
   const signedIn = (r: SignInResult) =>
     r.signedIn ? void enter() : setStep({ kind: 'pick', token: r.pickerToken, stores: r.stores });
   return (
-    <div className="grid min-h-dvh lg:grid-cols-[1.1fr_1fr]">
-      <aside className="relative hidden overflow-hidden bg-primary text-on-primary lg:block">
+    <div className="flex min-h-dvh flex-col md:items-center md:justify-center md:py-10">
+      {step.kind === 'phone' ? (
+        <PhoneStep
+          onSent={(phone, expiresAt, devCode) => {
+            const sentAt = Date.now();
+            savePending({ phone, sentAt, expiresAt: expiry(expiresAt) });
+            setStep({ kind: 'code', phone, sentAt, ...(devCode ? { devCode } : {}) });
+          }}
+          onEmail={() => setStep({ kind: 'email' })}
+        />
+      ) : step.kind === 'code' ? (
+        <CodeStep
+          phone={step.phone}
+          sentAt={step.sentAt}
+          devCode={step.devCode}
+          onBack={() => {
+            savePending(null);
+            setStep({ kind: 'phone' });
+          }}
+          onResent={(expiresAt) =>
+            savePending({ phone: step.phone, sentAt: Date.now(), expiresAt: expiry(expiresAt) })
+          }
+          onSignedIn={signedIn}
+        />
+      ) : step.kind === 'email' ? (
+        <EmailStep
+          onBack={() => setStep({ kind: 'phone' })}
+          onSent={(email, devLink) =>
+            setStep({
+              kind: 'emailSent',
+              email,
+              sentAt: Date.now(),
+              ...(devLink ? { devLink } : {}),
+            })
+          }
+        />
+      ) : step.kind === 'emailSent' ? (
+        <EmailSentStep
+          email={step.email}
+          sentAt={step.sentAt}
+          devLink={step.devLink}
+          onOther={() => setStep({ kind: 'email' })}
+          onWhatsapp={() => setStep({ kind: 'phone' })}
+        />
+      ) : step.kind === 'link' ? (
+        <LinkStep
+          token={step.token}
+          onSignedIn={signedIn}
+          onAgain={() => setStep({ kind: 'email' })}
+          onWhatsapp={() => setStep({ kind: 'phone' })}
+        />
+      ) : (
+        <PickStep token={step.token} stores={step.stores} onDone={() => void enter()} />
+      )}
+    </div>
+  );
+}
+
+/**
+ * Every step is the same scene: Duá stands behind the counter (the sheet the form sits on,
+ * anchored to the bottom where the thumb is), in front of a lime sun rising behind it. Duá
+ * takes whatever height the phone has left, so the form never moves away from the hand.
+ */
+function Counter({
+  pose,
+  title,
+  lead,
+  back,
+  children,
+}: {
+  pose: Pose;
+  title: ReactNode;
+  lead?: ReactNode;
+  back?: ReactNode;
+  children: ReactNode;
+}) {
+  return (
+    <div className="animate-fade-up flex w-full flex-1 flex-col md:w-[440px] md:flex-none">
+      <div className="flex flex-1 flex-col px-5 pt-[calc(0.5rem+env(safe-area-inset-top))] md:px-2 md:pt-0">
+        <p className="flex min-h-12 items-center font-display text-xl font-semibold tracking-tight">
+          venduá
+        </p>
+        {/* spare height: mostly to Duá, the rest above the title once Duá is full size */}
+        <div className="min-h-2 grow basis-0 md:hidden" />
+        <div className="flex flex-col">
+          {back}
+          <h1 className="font-display text-[2.25rem] font-semibold leading-[2.5rem] tracking-[-0.025em]">
+            {title}
+          </h1>
+          {lead ? <p className="t-body-lg mt-2 max-w-[34ch] text-muted">{lead}</p> : null}
+        </div>
         <div
           aria-hidden
-          className="animate-breathe absolute -left-24 top-1/3 size-[520px] rounded-full bg-spark blur-3xl"
-        />
-        <div className="relative flex h-full flex-col justify-between p-12">
-          <p className="font-display text-2xl font-semibold tracking-tight">venduá</p>
-          <div className="max-w-md">
-            <div className="mb-6 w-56 rounded-xl bg-[#f7f4ea] p-4">
-              <Mascote pose="avatar-ola" size={224} />
-            </div>
-            <p className="t-moment text-[2.75rem] leading-[3rem]">A loja viva na palma da mão.</p>
-            <p className="t-body-lg mt-4 opacity-80">
-              Pedidos chegando na hora, cardápio com foto, horário e entrega do seu jeito, e o dia
-              de vendas crescendo na sua frente.
-            </p>
+          className="relative mt-3 max-h-64 min-h-32 grow-[4] basis-0 md:mt-6 md:h-60 md:flex-none"
+        >
+          <span className="absolute bottom-0 left-1/2 aspect-square w-[min(80%,300px)] -translate-x-1/2 translate-y-1/2 rounded-full bg-spark" />
+          <div className="absolute inset-x-0 -bottom-3 mx-auto aspect-square h-full max-h-64 max-w-full">
+            <Mascote pose={pose} size={240} className="animate-rise w-full" />
           </div>
-          <p className="t-caption opacity-60">
-            Precisa de ajuda para entrar? Fale com a Venduá no WhatsApp.
-          </p>
         </div>
-      </aside>
-      <main className="flex items-center justify-center px-5 py-10">
-        <div className="w-full max-w-sm">
-          <p className="mb-8 font-display text-2xl font-semibold tracking-tight lg:hidden">
-            venduá
-          </p>
-          {step.kind === 'phone' ? (
-            <PhoneStep
-              onSent={(phone, expiresAt, devCode) => {
-                const sentAt = Date.now();
-                savePending({ phone, sentAt, expiresAt: expiry(expiresAt) });
-                setStep({ kind: 'code', phone, sentAt, ...(devCode ? { devCode } : {}) });
-              }}
-              onEmail={() => setStep({ kind: 'email' })}
-            />
-          ) : step.kind === 'code' ? (
-            <CodeStep
-              phone={step.phone}
-              sentAt={step.sentAt}
-              devCode={step.devCode}
-              onBack={() => {
-                savePending(null);
-                setStep({ kind: 'phone' });
-              }}
-              onResent={(expiresAt) =>
-                savePending({ phone: step.phone, sentAt: Date.now(), expiresAt: expiry(expiresAt) })
-              }
-              onSignedIn={signedIn}
-            />
-          ) : step.kind === 'email' ? (
-            <EmailStep
-              onBack={() => setStep({ kind: 'phone' })}
-              onSent={(email, devLink) =>
-                setStep({
-                  kind: 'emailSent',
-                  email,
-                  sentAt: Date.now(),
-                  ...(devLink ? { devLink } : {}),
-                })
-              }
-            />
-          ) : step.kind === 'emailSent' ? (
-            <EmailSentStep
-              email={step.email}
-              sentAt={step.sentAt}
-              devLink={step.devLink}
-              onOther={() => setStep({ kind: 'email' })}
-              onWhatsapp={() => setStep({ kind: 'phone' })}
-            />
-          ) : step.kind === 'link' ? (
-            <LinkStep
-              token={step.token}
-              onSignedIn={signedIn}
-              onAgain={() => setStep({ kind: 'email' })}
-              onWhatsapp={() => setStep({ kind: 'phone' })}
-            />
-          ) : (
-            <PickStep token={step.token} stores={step.stores} onDone={() => void enter()} />
-          )}
-        </div>
-      </main>
+      </div>
+      <section className="relative z-10 rounded-t-[2rem] bg-surface px-5 pb-[calc(1.25rem+env(safe-area-inset-bottom)+var(--kb,0px))] pt-6 depth-3 md:rounded-[2rem] md:px-7 md:pb-[calc(1.75rem+var(--kb,0px))] md:pt-7">
+        {children}
+      </section>
     </div>
+  );
+}
+
+function BackLink({ onClick, children }: { onClick: () => void; children: string }) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className="t-label -ml-2 mb-3 inline-flex min-h-11 items-center gap-2 self-start rounded-md px-2 text-muted hover:bg-hover"
+    >
+      <ArrowLeft className="size-5" /> {children}
+    </button>
+  );
+}
+
+/**
+ * The step's main button. On phones it rides above the keyboard (sticky to --kb, or to the
+ * resized viewport where Chrome shrinks it), so the merchant never types blind to it.
+ */
+function Dock({ children }: { children: ReactNode }) {
+  const bar = useRef<HTMLDivElement>(null);
+  const end = useRef<HTMLDivElement>(null);
+  // the backdrop only while pinned, over the fields it covers
+  const [stuck, setStuck] = useState(false);
+  useEffect(() => {
+    const check = () => {
+      if (bar.current && end.current)
+        setStuck(
+          end.current.getBoundingClientRect().top - bar.current.getBoundingClientRect().bottom > 1,
+        );
+    };
+    check();
+    const vv = window.visualViewport;
+    window.addEventListener('scroll', check, { passive: true });
+    window.addEventListener('resize', check);
+    vv?.addEventListener('resize', check);
+    return () => {
+      window.removeEventListener('scroll', check);
+      window.removeEventListener('resize', check);
+      vv?.removeEventListener('resize', check);
+    };
+  }, []);
+  return (
+    <>
+      <div
+        ref={bar}
+        data-stuck={stuck || undefined}
+        className="sticky bottom-[var(--kb,0px)] z-20 -mx-5 mt-2 px-5 py-2 data-stuck:bg-surface data-stuck:pb-3 data-stuck:before:pointer-events-none data-stuck:before:absolute data-stuck:before:inset-x-0 data-stuck:before:-top-4 data-stuck:before:h-4 data-stuck:before:bg-linear-to-t data-stuck:before:from-surface md:-mx-7 md:px-7 lg:static lg:mx-0 lg:mt-4 lg:p-0"
+      >
+        {children}
+      </div>
+      <div ref={end} aria-hidden />
+    </>
   );
 }
 
@@ -180,7 +257,11 @@ function PhoneStep({
     onError: (e) => setErr(messageOf(e)),
   });
   return (
-    <div className="animate-fade-up">
+    <Counter
+      pose="avatar-ola"
+      title="Que bom te ver."
+      lead="Entre com o celular da loja. O código chega no WhatsApp."
+    >
       <form
         onSubmit={(e) => {
           e.preventDefault();
@@ -189,11 +270,7 @@ function PhoneStep({
           start.mutate(digits);
         }}
       >
-        <h1 className="t-moment">Que bom te ver.</h1>
-        <p className="t-body-lg mt-2 text-muted">
-          Entre com o celular da loja. Mandamos um código no seu WhatsApp.
-        </p>
-        <Field label="Seu celular" htmlFor="phone" error={err} className="mt-8">
+        <Field label="Seu celular" htmlFor="phone" error={err}>
           <PhoneInput
             id="phone"
             autoFocus
@@ -204,33 +281,34 @@ function PhoneStep({
             }}
           />
         </Field>
-        <Button
-          type="submit"
-          size="lg"
-          block
-          className="mt-6"
-          loading={start.isPending}
-          icon={<WhatsappLogo weight="fill" />}
-        >
-          receber código
-        </Button>
+        <Dock>
+          <Button
+            type="submit"
+            size="lg"
+            block
+            loading={start.isPending}
+            icon={<WhatsappLogo weight="fill" />}
+          >
+            receber código
+          </Button>
+        </Dock>
       </form>
-      <Button variant="ghost" block className="mt-2" icon={<EnvelopeSimple />} onClick={onEmail}>
+      <Button variant="ghost" block icon={<EnvelopeSimple />} onClick={onEmail}>
         entrar com e-mail
       </Button>
-      <div className="mt-10 flex items-center gap-4 rounded-lg bg-sunken p-4">
-        <Storefront weight="duotone" className="size-8 shrink-0 text-muted" aria-hidden />
-        <div className="min-w-0 flex-1">
-          <p className="font-semibold">Ainda não vende com a Venduá?</p>
-          <Link
-            to="/comecar"
-            className="t-label -ml-1 mt-0.5 inline-flex min-h-11 items-center gap-1 rounded-sm px-1 underline underline-offset-2 hover:bg-hover"
-          >
-            criar minha loja <ArrowRight className="size-4" />
-          </Link>
-        </div>
+      <div className="mt-3 border-t border-line pt-2">
+        <Link
+          to="/comecar"
+          className="-mx-2 flex min-h-14 items-center gap-3 rounded-md px-2 hover:bg-hover"
+        >
+          <span className="min-w-0 flex-1">
+            <span className="t-caption block text-muted">Ainda não vende com a Venduá?</span>
+            <span className="t-label block">Criar minha loja</span>
+          </span>
+          <CaretRight className="size-5 text-muted" aria-hidden />
+        </Link>
       </div>
-    </div>
+    </Counter>
   );
 }
 
@@ -246,18 +324,6 @@ function useCountdown(from: number) {
     return () => clearInterval(t);
   }, []);
   return [wait, () => setWait(RESEND_AFTER)] as const;
-}
-
-function BackLink({ onClick, children }: { onClick: () => void; children: string }) {
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      className="t-label -ml-2 mb-6 inline-flex min-h-11 items-center gap-2 rounded-md px-2 text-muted hover:bg-hover"
-    >
-      <ArrowLeft className="size-5" /> {children}
-    </button>
-  );
 }
 
 function CodeStep({
@@ -296,58 +362,57 @@ function CodeStep({
     },
   });
   return (
-    <div className="animate-fade-up">
-      <BackLink onClick={onBack}>trocar número</BackLink>
-      <div className="flex items-center justify-between gap-3">
-        <h1 className="t-title-1">Digite o código</h1>
-        <Mascote pose="seguranca" size={72} className="size-16 shrink-0 sm:size-[72px]" />
-      </div>
-      <p className="t-body-lg mt-2 text-muted">
-        Enviamos 6 números para o WhatsApp{' '}
-        <strong className="whitespace-nowrap text-ink">{fmtPhone(phone)}</strong>.
-      </p>
+    <Counter
+      pose="avatar-pensando"
+      back={<BackLink onClick={onBack}>trocar número</BackLink>}
+      title="Digite o código"
+      lead={
+        <>
+          Enviamos 6 números para o WhatsApp{' '}
+          <strong className="whitespace-nowrap text-ink">{fmtPhone(phone)}</strong>.
+        </>
+      }
+    >
       {devCode ? (
-        <p className="t-caption mt-3 rounded-sm bg-info-soft px-3 py-2 text-info">
+        <p className="t-caption mb-4 rounded-sm bg-info-soft px-3 py-2 text-info">
           Ambiente de teste: o código é {devCode}
         </p>
       ) : null}
-      <div className="mt-8">
-        <CodeInput
-          ref={input}
-          value={code}
-          onChange={setCode}
-          onComplete={(c) => verify.mutate(c)}
-          invalid={!!err}
-          onPasteMiss={() => setErr('Não achamos um código de 6 números copiado. Digite o código.')}
-        />
-      </div>
+      <CodeInput
+        ref={input}
+        value={code}
+        onChange={setCode}
+        onComplete={(c) => verify.mutate(c)}
+        invalid={!!err}
+        onPasteMiss={() => setErr('Não achamos um código de 6 números copiado. Digite o código.')}
+      />
       {err ? (
         <p className="t-body mt-3 text-danger" role="alert">
           {err}
         </p>
       ) : null}
-      <Button
-        size="lg"
-        block
-        className="mt-6"
-        loading={verify.isPending}
-        disabled={code.length < 6}
-        onClick={() => verify.mutate(code)}
-        icon={<ArrowRight />}
-      >
-        entrar
-      </Button>
+      <Dock>
+        <Button
+          size="lg"
+          block
+          loading={verify.isPending}
+          disabled={code.length < 6}
+          onClick={() => verify.mutate(code)}
+          icon={<ArrowRight />}
+        >
+          entrar
+        </Button>
+      </Dock>
       <Button
         variant="ghost"
         block
-        className="mt-2"
         disabled={wait > 0}
         loading={resend.isPending}
         onClick={() => resend.mutate()}
       >
         {wait > 0 ? `reenviar código em ${wait}s` : 'reenviar código'}
       </Button>
-    </div>
+    </Counter>
   );
 }
 
@@ -366,48 +431,44 @@ function EmailStep({
     onError: (e) => setErr(messageOf(e)),
   });
   return (
-    <form
-      className="animate-fade-up"
-      noValidate
-      onSubmit={(e) => {
-        e.preventDefault();
-        const v = email.trim();
-        if (!EMAIL_RE.test(v)) return setErr('Confira o e-mail, como maria@gmail.com.');
-        setErr(null);
-        start.mutate(v);
-      }}
+    <Counter
+      pose="avatar-ajuda"
+      back={<BackLink onClick={onBack}>entrar com WhatsApp</BackLink>}
+      title="Entrar com e-mail"
+      lead="Use o e-mail cadastrado na loja. Mandamos um link que entra direto, sem senha."
     >
-      <BackLink onClick={onBack}>entrar com WhatsApp</BackLink>
-      <h1 className="t-title-1">Entrar com e-mail</h1>
-      <p className="t-body-lg mt-2 text-muted">
-        Use o e-mail cadastrado na loja. Mandamos um link que entra direto, sem senha.
-      </p>
-      <Field label="Seu e-mail" htmlFor="email" error={err} className="mt-8">
-        <TextInput
-          id="email"
-          type="email"
-          inputMode="email"
-          autoComplete="email"
-          autoCapitalize="none"
-          autoFocus
-          maxLength={200}
-          placeholder="maria@gmail.com"
-          value={email}
-          aria-invalid={err ? true : undefined}
-          onChange={(e) => setEmail(e.target.value)}
-        />
-      </Field>
-      <Button
-        type="submit"
-        size="lg"
-        block
-        className="mt-6"
-        loading={start.isPending}
-        icon={<EnvelopeSimple />}
+      <form
+        noValidate
+        onSubmit={(e) => {
+          e.preventDefault();
+          const v = email.trim();
+          if (!EMAIL_RE.test(v)) return setErr('Confira o e-mail, como maria@gmail.com.');
+          setErr(null);
+          start.mutate(v);
+        }}
       >
-        mandar link
-      </Button>
-    </form>
+        <Field label="Seu e-mail" htmlFor="email" error={err}>
+          <TextInput
+            id="email"
+            type="email"
+            inputMode="email"
+            autoComplete="email"
+            autoCapitalize="none"
+            autoFocus
+            maxLength={200}
+            placeholder="maria@gmail.com"
+            value={email}
+            aria-invalid={err ? true : undefined}
+            onChange={(e) => setEmail(e.target.value)}
+          />
+        </Field>
+        <Dock>
+          <Button type="submit" size="lg" block loading={start.isPending} icon={<EnvelopeSimple />}>
+            mandar link
+          </Button>
+        </Dock>
+      </form>
+    </Counter>
   );
 }
 
@@ -434,15 +495,14 @@ function EmailSentStep({
     },
   });
   return (
-    <div className="animate-fade-up">
-      <BackLink onClick={onOther}>usar outro e-mail</BackLink>
-      <div className="flex items-center justify-between gap-3">
-        <h1 className="t-title-1">Olhe o seu e-mail</h1>
-        <Mascote pose="avatar-feliz" size={72} className="size-16 shrink-0 sm:size-[72px]" />
-      </div>
-      <p className="t-body-lg mt-2 text-muted" role="status">
-        Se <strong className="break-all text-ink">{email}</strong> estiver cadastrado em uma loja, o
-        link chega em instantes. Toque nele para entrar. Ele vale por 15 minutos.
+    <Counter
+      pose="avatar-feliz"
+      back={<BackLink onClick={onOther}>usar outro e-mail</BackLink>}
+      title="Olhe o seu e-mail"
+    >
+      <p className="t-body-lg" role="status">
+        Se <strong className="break-all">{email}</strong> estiver cadastrado em uma loja, o link
+        chega em instantes. Toque nele para entrar. Ele vale por 15 minutos.
       </p>
       {dev ? (
         <a
@@ -452,7 +512,7 @@ function EmailSentStep({
           Ambiente de teste: abrir o link
         </a>
       ) : null}
-      <p className="t-body mt-6 text-muted">Não chegou? Confira a caixa de spam.</p>
+      <p className="t-body mt-4 text-muted">Não chegou? Confira a caixa de spam.</p>
       <Button
         variant="secondary"
         block
@@ -477,7 +537,7 @@ function EmailSentStep({
       >
         entrar com WhatsApp
       </Button>
-    </div>
+    </Counter>
   );
 }
 
@@ -519,29 +579,21 @@ function LinkStep({
   }, [token]);
   if (!err)
     return (
-      <div className="animate-fade-up flex flex-col items-center py-10 text-center" role="status">
-        <span className="dua-disc grid size-36 place-items-center">
-          <Mascote pose="carregando" size={128} className="w-32" />
-        </span>
-        <p className="t-title-2 mt-4 inline-flex items-center gap-2">
-          <Spinner className="size-5" /> Entrando…
+      <Counter pose="avatar-feliz" title="Entrando…">
+        <p className="t-body-lg inline-flex items-center gap-3" role="status">
+          <Spinner className="size-5" /> Conferindo o link do seu e-mail.
         </p>
-        <p className="t-body mt-1 text-muted">Conferindo o link do seu e-mail.</p>
-      </div>
+      </Counter>
     );
   const offline = err instanceof ApiError && err.status === 0;
   return (
-    <div className="animate-fade-up">
-      <Mascote pose={offline ? 'offline' : 'seguranca'} size={120} className="w-28" />
-      <h1 className="t-title-1 mt-4">
-        {offline ? 'Sem conexão agora' : 'Esse link não vale mais'}
-      </h1>
-      <p className="t-body-lg mt-2 text-muted" role="alert">
+    <Counter pose="avatar-ajuda" title={offline ? 'Sem conexão agora' : 'Esse link não vale mais'}>
+      <p className="t-body-lg" role="alert">
         {offline
           ? 'Confira a internet e toque no link do e-mail de novo.'
           : 'Ele já foi usado ou passou dos 15 minutos. Peça outro, leva um instante.'}
       </p>
-      <Button size="lg" block className="mt-8" icon={<EnvelopeSimple />} onClick={onAgain}>
+      <Button size="lg" block className="mt-5" icon={<EnvelopeSimple />} onClick={onAgain}>
         mandar outro link
       </Button>
       <Button
@@ -553,7 +605,7 @@ function LinkStep({
       >
         entrar com WhatsApp
       </Button>
-    </div>
+    </Counter>
   );
 }
 
@@ -571,19 +623,19 @@ function PickStep({
     onSuccess: onDone,
   });
   return (
-    <div className="animate-fade-up">
-      <h1 className="t-title-1">Qual loja agora?</h1>
-      <p className="t-body-lg mt-2 text-muted">
-        Você faz parte de {stores.length} lojas. Dá para trocar depois.
-      </p>
-      <ul className="mt-6 space-y-2">
+    <Counter
+      pose="avatar-pensando"
+      title="Qual loja agora?"
+      lead={`Você faz parte de ${stores.length} lojas. Dá para trocar depois.`}
+    >
+      <ul className="-mx-2 space-y-1">
         {stores.map((s) => (
           <li key={s.id}>
             <button
               type="button"
               disabled={pick.isPending}
               onClick={() => pick.mutate(s.id)}
-              className="flex min-h-18 w-full items-center gap-4 rounded-lg bg-surface px-4 text-left depth-1 hover:bg-hover"
+              className="flex min-h-16 w-full items-center gap-4 rounded-lg px-2 text-left hover:bg-hover"
             >
               <span className="grid size-11 place-items-center rounded-full bg-sunken">
                 <Storefront weight="duotone" className="size-6" />
@@ -592,7 +644,7 @@ function PickStep({
                 <span className="block truncate font-semibold">{s.name}</span>
                 <span className="t-caption text-muted">{ROLE_LABEL[s.role]}</span>
               </span>
-              <ArrowRight className="size-5 text-muted" />
+              <CaretRight className="size-5 text-muted" />
             </button>
           </li>
         ))}
@@ -604,6 +656,6 @@ function PickStep({
             : messageOf(pick.error)}
         </p>
       ) : null}
-    </div>
+    </Counter>
   );
 }

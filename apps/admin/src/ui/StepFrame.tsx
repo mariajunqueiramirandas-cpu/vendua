@@ -35,12 +35,19 @@ export function useKeyboardInset() {
       update();
       reveal();
     };
+    // Chrome with resizes-content shrinks the page instead and scrolls the field only just into
+    // view, where a docked button covers it
+    const resized = () => {
+      if (typing()) reveal();
+    };
+    window.addEventListener('resize', resized);
     vv.addEventListener('resize', update);
     vv.addEventListener('scroll', update);
     document.addEventListener('focusin', onFocus);
     document.addEventListener('focusout', update);
     update();
     return () => {
+      window.removeEventListener('resize', resized);
       vv.removeEventListener('resize', update);
       vv.removeEventListener('scroll', update);
       document.removeEventListener('focusin', onFocus);

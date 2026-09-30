@@ -549,6 +549,18 @@
   }
 }
 
+/* Duá comes up from behind the sign-in counter */
+@keyframes rise {
+  0% {
+    transform: translateY(45%);
+  }
+  70% {
+    transform: translateY(-3%);
+  }
+  100% {
+    transform: none;
+  }
+}
 @keyframes bob {
   0%,
   100% {
@@ -573,6 +585,9 @@
 
 .animate-bob {
   animation: bob 3.2s ease-in-out infinite;
+}
+.animate-rise {
+  animation: rise 560ms var(--ease-soft) 120ms both;
 }
 .animate-dot {
   animation: dot-bounce 1s ease-in-out infinite;
@@ -640,6 +655,7 @@
   }
   .animate-breathe,
   .animate-bob,
+  .animate-rise,
   .animate-dot,
   .animate-pulse-dot,
   .animate-ring,
