@@ -9,7 +9,6 @@
   },
   "permissions": {
     "deny": [
-      "Read(./bun.lock)",
       "Read(./packages/conformance/stale/*/dist/**)",
       "Read(./apps/*/dist/**)",
       "Read(./storefronts/**/dist/**)",
