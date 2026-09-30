@@ -1,6 +1,6 @@
 # Merchant admin — the store owner's product
 
-> Status: In progress (planning) · Last reviewed: 2026-09-27
+> Status: In progress · Last reviewed: 2026-09-30
 > Roadmap track: [Track A](roadmap.md#track-a--merchant-admin-the-current-focus) — the current focus
 
 The merchant admin ("painel da loja") is where a store owner runs their
@@ -171,7 +171,7 @@ and it lives on its own domain (`VENDUA_ADMIN_HOST`, the `admin` proxy service i
 Each milestone ends with a usability session and a screenshot review against
 the design bar. It is not done until both pass.
 
-**Status (2026-09-27):** the whole admin is built. `/admin/v1` (Core migration
+**Status (2026-09-30):** the whole admin is built and has had a hardening pass since. `/admin/v1` (Core migration
 0052, [ADR 0020](adr/0020-merchant-identity.md)) and `apps/admin` cover every area
 below, and the screenshot, overflow, axe and bundle-budget gates run in CI. A box is
 ticked when the software is done. What is still open is the part only people can
