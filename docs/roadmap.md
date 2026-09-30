@@ -413,16 +413,47 @@ twelve areas, the platform work and exit criteria per milestone) lives in
 Exit: A1–A6 met. **Stage gate: First store** needs A1–A3; the rest lands
 before the Pilot cohort.
 
-**Status (2026-09-30):** the software for every milestone is built and in CI
+**Status (2026-09-30):** everything built is verified working and in CI
 (screenshots, overflow, axe, bundle budgets). No milestone has closed: each
 waits on its human exit (sign-offs, commissioned art, usability sessions, a
-real day of orders), and A3/A6 also wait on Phase 3 (Mercado Pago, billing).
-Per-item state is in [`merchant-admin.md`](merchant-admin.md#milestones).
+real day of orders), a short list of software gaps remains (missed-alert
+visibility, push beyond new orders, login fallbacks, invite delivery,
+server-side media, scheduled availability, Ajuda, Lighthouse — see
+[Not built yet](merchant-admin.md#not-built-yet)), and A3/A6 also wait on
+Phase 3 (Mercado Pago, billing).
 
 ## Phase 3 — Payments + self-serve signup (weeks 12–16)
 
 Goal: money moves through the platform: shoppers pay merchants, and merchants
 pay Venduá.
+
+**Status (2026-09-30): not started.** What exists today is offline only: the
+methods are `pix`, `card_on_delivery` and `cash`; Pix is a static copia e cola
+built from the merchant's key; the merchant marks it paid by hand ("recebi");
+`orders.payment` is written with `provider: 'sandbox'`; a refund is a state flip
+that moves no money. `tenants.plan` is a display label (no catalog, prices or
+gating), there are no subscription or invoice tables, no pre-auth signup
+endpoint, and the site's "começar" is an "em breve" pill. Tenants are created
+only by seed scripts (`platform/seed.ts`, fixtures, QA) and `vendua scaffold`.
+
+What it has to build:
+
+- **MP connection** — a `payment_connections` table (encrypted tokens, MP user
+  id, status), OAuth connect + callback, token refresh, and connection status
+  feeding the admin notices.
+- **Payments + webhook** — a `payments` table (unique provider payment id,
+  `application_fee_cents`), a provider interface with the MP adapter, and a
+  verified, idempotent webhook driving the order/payment state machine in
+  place of `sandbox` and the manual "recebi".
+- **Checkout** — dynamic MP Pix and card (Bricks) inside the Kernel checkout,
+  as new method ids beside the offline ones (additive Kernel minor).
+- **Refunds** — through the MP API (partial included), confirmed by webhook,
+  with an order event and a customer notification.
+- **Billing + signup** — a plan catalog (constrain `tenants.plan`, prices, fee
+  per plan), subscriptions and invoices with recurring billing, a pre-auth
+  signup endpoint, a real CTA on the site, and the hand-off to the provisioner
+  (Phase 4) that creates the tenant, primary domain, settings, owner
+  `merchant_users` and storefront.
 
 - [ ] Mercado Pago OAuth + `application_fee` + PIX + webhook-driven order
       state machine ([13](architecture/13-payments.md)).

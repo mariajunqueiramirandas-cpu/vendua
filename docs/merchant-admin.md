@@ -171,12 +171,14 @@ and it lives on its own domain (`VENDUA_ADMIN_HOST`, the `admin` proxy service i
 Each milestone ends with a usability session and a screenshot review against
 the design bar. It is not done until both pass.
 
-**Status (2026-09-30):** the whole admin is built and has had a hardening pass since. `/admin/v1` (Core migration
-0052, [ADR 0020](adr/0020-merchant-identity.md)) and `apps/admin` cover every area
-below, and the screenshot, overflow, axe and bundle-budget gates run in CI. A box is
-ticked when the software is done. What is still open is the part only people can
-do: sign-offs, commissioned art, usability sessions and the pilot exits. Phase 3
-work (Mercado Pago, billing) and Phase 4 work (provisioning) is left open.
+**Status (2026-09-30):** `/admin/v1` (Core migration 0052,
+[ADR 0020](adr/0020-merchant-identity.md)) and `apps/admin` cover every area
+below, and the screenshot, overflow, axe and bundle-budget gates run in CI. A
+ticked box is built **and verified working** (checked 2026-09-30). Two kinds of
+work are still open: the part only people can do (sign-offs, commissioned art,
+usability sessions and the pilot exits), and the software gaps listed in
+[Not built yet](#not-built-yet). Phase 3 work (Mercado Pago, billing) and
+Phase 4 work (provisioning) is left open.
 
 ### A0 — Foundations and the design system
 
@@ -254,6 +256,52 @@ Lands with Phase 3's Mercado Pago work.
       hours, delivery, Pix, first products) as a one-question-per-screen
       conversation with a live preview (§6.8).
       _Provisioning a fresh store is Phase 4._
+
+## Not built yet
+
+What the plan above promises and the code does not do yet (audited
+2026-09-30). Human-only work (sign-offs, art, usability sessions) is not listed.
+
+**Track A (no Phase 3 dependency):**
+
+- **Missed-alert visibility.** Push failures are recorded per device
+  (`last_ok_at` / `last_error`) but never shown, and `push_deliveries` is only
+  a dedupe table purged after two days. A merchant can't see that an alert
+  didn't reach them.
+- **Notifications beyond new orders.** Web push fires only on `order.placed`
+  (`admin/workers.ts`). Payment events don't push, and there is no WhatsApp
+  fallback for a missed new-order alert.
+- **Login fallbacks.** OTP goes out over WhatsApp only. There is no SMS channel
+  and no email magic link, although `merchant_users.email` exists.
+- **Invite delivery.** An invite adds the phone to `merchant_users` and sends
+  nothing: no message, link or email. The invitee has to be told by hand.
+- **Media on the server.** Images are stored as sent in Postgres
+  (`media_objects`, ≤2 MB). There is no server-side resizing or EXIF stripping
+  (only the client's canvas re-encode does it, so a direct API upload keeps its
+  EXIF), and no object storage or signed uploads (planned with the Edge).
+- **Scheduled availability.** Products can be available, sold out today, sold
+  out or hidden. There is no "show only on these days/hours".
+- **Pickup details.** Pickup is an on/off toggle, with no pickup address or
+  instructions.
+- **Ajuda.** The FAQ is static rather than per screen, the `?` shortcut the
+  shell advertises has no handler, and there is no platform-incident status.
+- **Conta.** Custom domains show a fixed "no ar" instead of real status (the
+  domain automation itself is Phase 7). Notification preferences are only
+  sound, volume, push and theme.
+- **Relatórios.** Zone "conversion" is orders and revenue per zone only, with
+  no view-to-order funnel per zone. Rollups are deferred by choice (query time
+  until volume needs them).
+- **CI.** No Lighthouse mobile budget anywhere; the bundle budget stands in.
+
+**Waiting on Phase 3 (A3 and A6):**
+
+- Mercado Pago connect, token health, fee statement and the `expiring` /
+  `disconnected` / `restricted` notices. Pagamentos shows "em breve", and
+  Início has no expiring-token item.
+- Real refunds. "Reembolsar" moves a delivered order to `refunded` and records
+  it, and the copy tells the merchant to return the money through their bank.
+- Invoices, payment method and upgrade/downgrade in Conta
+  (`billing: 'not_available'`).
 
 ## Done means
 
