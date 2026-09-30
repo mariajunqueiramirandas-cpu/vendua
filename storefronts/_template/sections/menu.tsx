@@ -25,6 +25,7 @@ export const schema = defineSection({
     lowStockLabel: text({ max: 30, default: 'restam' }),
     preorderLabel: text({ max: 30, default: 'sob encomenda' }),
     inBagLabel: text({ max: 30, default: 'na sacola' }),
+    allInBagLabel: text({ max: 30, default: 'tudo na sacola' }),
     resultsLabel: text({ max: 40, default: 'Resultados' }),
     emptyTitle: text({ max: 80, default: 'O cardápio está quase pronto' }),
     emptyText: text({ max: 200, default: 'Volte daqui a pouco para ver as novidades.' }),
@@ -51,6 +52,7 @@ export default function Menu({ settings: s }: SectionProps<typeof schema>) {
   const tabsRef = useRef<HTMLDivElement>(null);
   const searchRef = useRef<HTMLInputElement>(null);
   const hashDone = useRef(false);
+  const jumping = useRef(false);
 
   const labels: DishLabels = {
     add: s.addLabel,
@@ -58,6 +60,7 @@ export default function Menu({ settings: s }: SectionProps<typeof schema>) {
     lowStock: s.lowStockLabel,
     preorder: s.preorderLabel,
     inBag: s.inBagLabel,
+    allInBag: s.allInBagLabel,
   };
 
   // sold-out dishes sink to the end of their category
@@ -103,7 +106,8 @@ export default function Menu({ settings: s }: SectionProps<typeof schema>) {
       (entries) => {
         for (const e of entries) seen.set(e.target.id, e.isIntersecting);
         const first = els.find((el) => seen.get(el.id));
-        if (first) setActive(first.id.slice(4));
+        // a tapped tab owns the highlight until its scroll lands
+        if (first && !jumping.current) setActive(first.id.slice(4));
       },
       { rootMargin: '-140px 0px -55% 0px' },
     );
@@ -139,6 +143,14 @@ export default function Menu({ settings: s }: SectionProps<typeof schema>) {
   const goTo = (slug: string) => {
     setQuery('');
     setActive(slug);
+    jumping.current = true;
+    const release = () => {
+      jumping.current = false;
+      window.removeEventListener('scrollend', release);
+    };
+    window.addEventListener('scrollend', release);
+    // browsers without scrollend (and a jump that doesn't move) still hand the strip back
+    window.setTimeout(release, 1200);
     requestAnimationFrame(() =>
       document
         .getElementById(`cat-${slug}`)

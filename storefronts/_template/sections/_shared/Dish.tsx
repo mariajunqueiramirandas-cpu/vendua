@@ -8,6 +8,7 @@ import {
   type CatalogProduct,
 } from '@vendua/kernel';
 import { DishArt, dishOf } from './DishArt.tsx';
+import { Price } from './Price.tsx';
 import { useInBag } from './useInBag.ts';
 
 export interface DishLabels {
@@ -16,6 +17,7 @@ export interface DishLabels {
   lowStock: string;
   preorder: string;
   inBag: string;
+  allInBag: string;
 }
 
 interface DishProps {
@@ -30,13 +32,20 @@ function useDish(p: CatalogProduct) {
   const soldOut = p.status !== 'active';
   const stock = useStockLeft(p);
   const inBag = useInBag(p.id);
+  // counts adds, so every tap replays the "+1" even while the last one is still showing
+  const [adds, setAdds] = useState(0);
   const [added, setAdded] = useState(false);
   const [imgFailed, setImgFailed] = useState(false);
   useEffect(() => {
     if (!added) return;
     const t = setTimeout(() => setAdded(false), 1400);
     return () => clearTimeout(t);
-  }, [added]);
+  }, [added, adds]);
+  const onAdded = () => {
+    setAdds((n) => n + 1);
+    setAdded(true);
+    navigator.vibrate?.(8);
+  };
   const allInBag = !soldOut && stock === 0;
   // one tap only where there is nothing to choose; the rest open the product
   const quick =
@@ -46,108 +55,114 @@ function useDish(p: CatalogProduct) {
     !allInBag &&
     (p.lowStock === true ||
       (stock !== null && typeof p.lowStockThreshold === 'number' && stock <= p.lowStockThreshold));
-  return { soldOut, stock, inBag, added, setAdded, imgFailed, setImgFailed, quick, low };
+  return {
+    soldOut,
+    stock,
+    inBag,
+    adds,
+    added,
+    onAdded,
+    imgFailed,
+    setImgFailed,
+    quick,
+    low,
+    allInBag,
+  };
 }
+
+type DishState = ReturnType<typeof useDish>;
 
 function Media({
   p,
   category,
-  imgFailed,
-  onFail,
-  inBag,
+  d,
   labels,
-  soldOut,
 }: {
   p: CatalogProduct;
   category: string | undefined;
-  imgFailed: boolean;
-  onFail: () => void;
-  inBag: number;
+  d: DishState;
   labels: DishLabels;
-  soldOut: boolean;
 }) {
   return (
     <span className="dish-media">
-      {p.imageUrl && !imgFailed ? (
-        <img src={p.imageUrl} alt="" loading="lazy" decoding="async" onError={onFail} />
+      {p.imageUrl && !d.imgFailed ? (
+        <img
+          src={p.imageUrl}
+          alt=""
+          loading="lazy"
+          decoding="async"
+          onError={() => d.setImgFailed(true)}
+        />
       ) : (
         <DishArt dish={p.kind === 'combo' ? 'box' : dishOf(p.name, category)} />
       )}
-      {soldOut ? <span className="dish-stamp">{labels.soldOut}</span> : null}
-      {inBag > 0 ? (
-        <span key={inBag} className="dish-inbag" aria-label={`${inBag} ${labels.inBag}`}>
-          {inBag}
+      {d.soldOut ? <span className="dish-stamp">{labels.soldOut}</span> : null}
+      {d.inBag > 0 ? (
+        <span key={d.inBag} className="dish-inbag" aria-label={`${d.inBag} ${labels.inBag}`}>
+          {d.inBag}
         </span>
       ) : null}
     </span>
   );
 }
 
-function Tags({
-  p,
-  low,
-  stock,
-  labels,
-  soldOut,
-}: {
-  p: CatalogProduct;
-  low: boolean;
-  stock: number | null;
-  labels: DishLabels;
-  soldOut: boolean;
-}) {
-  if (soldOut)
+function Tags({ p, d, labels }: { p: CatalogProduct; d: DishState; labels: DishLabels }) {
+  if (d.soldOut)
     return p.availabilityLabel ? <span className="dish-tag">{p.availabilityLabel}</span> : null;
-  if (low)
+  if (d.allInBag) return <span className="dish-tag">{labels.allInBag}</span>;
+  if (d.low)
     return (
       <span className="dish-tag" data-tone="spark">
         {labels.lowStock}
-        {typeof stock === 'number' && stock > 0 ? ` ${stock}` : ''}
+        {typeof d.stock === 'number' && d.stock > 0 ? ` ${d.stock}` : ''}
       </span>
     );
   if (p.requiresPreorder) return <span className="dish-tag">{labels.preorder}</span>;
   return null;
 }
 
-function AddButton({
-  p,
-  quick,
-  soldOut,
-  added,
-  onAdded,
-  labels,
-}: {
-  p: CatalogProduct;
-  quick: boolean;
-  soldOut: boolean;
-  added: boolean;
-  onAdded: () => void;
-  labels: DishLabels;
-}) {
-  if (soldOut) return null;
-  if (!quick)
+function AddButton({ p, d, labels }: { p: CatalogProduct; d: DishState; labels: DishLabels }) {
+  if (d.soldOut) return null;
+  // everything left is already in the sacola: say so rather than offer a dead "+"
+  if (d.allInBag)
+    return (
+      <span className="dish-add" data-kind="full" aria-hidden="true">
+        <Check size={20} strokeWidth={2.6} />
+      </span>
+    );
+  if (!d.quick)
     return (
       <span className="dish-add" data-kind="choose" aria-hidden="true">
         <ChevronRight size={20} strokeWidth={2.4} />
       </span>
     );
   return (
-    <AddToCart product={p} asChild onAdded={onAdded}>
+    <AddToCart product={p} asChild onAdded={d.onAdded}>
       <button
         type="button"
         className="dish-add"
-        data-added={added || undefined}
+        data-added={d.added || undefined}
         aria-label={`${labels.add}: ${p.name}`}
       >
-        {added ? (
-          <Check size={20} strokeWidth={2.6} aria-hidden="true" />
-        ) : (
-          <Plus size={20} strokeWidth={2.6} aria-hidden="true" />
-        )}
+        <span className="dish-add-icon" key={d.added ? `ok${d.adds}` : 'plus'}>
+          {d.added ? (
+            <Check size={20} strokeWidth={2.6} aria-hidden="true" />
+          ) : (
+            <Plus size={20} strokeWidth={2.6} aria-hidden="true" />
+          )}
+        </span>
+        {d.added ? (
+          <span key={d.adds} className="dish-plus1" aria-hidden="true">
+            +1
+          </span>
+        ) : null}
       </button>
     </AddToCart>
   );
 }
+
+const linkLabel = (p: CatalogProduct, price: string, d: DishState, labels: DishLabels) =>
+  `${p.name}, ${price}${d.soldOut ? `, ${labels.soldOut}` : ''}${d.inBag ? `, ${d.inBag} ${labels.inBag}` : ''}`;
 
 /** A menu line: words on the left, the dish on the right, one-tap add on the photo's corner. */
 export function DishRow({ product: p, category, currency, labels, highlighted }: DishProps) {
@@ -161,37 +176,19 @@ export function DishRow({ product: p, category, currency, labels, highlighted }:
       data-hit={highlighted || undefined}
     >
       <ProductLink product={p} asChild>
-        <a
-          className="dish-link"
-          aria-label={`${p.name}, ${price}${d.soldOut ? `, ${labels.soldOut}` : ''}`}
-        >
+        <a className="dish-link" aria-label={linkLabel(p, price, d, labels)}>
           <span className="dish-text">
             <span className="dish-name">{p.name}</span>
             {p.description ? <span className="dish-desc">{p.description}</span> : null}
             <span className="dish-foot">
-              <span className="dish-price">{price}</span>
-              <Tags p={p} low={d.low} stock={d.stock} labels={labels} soldOut={d.soldOut} />
+              <Price text={price} className="dish-price" />
+              <Tags p={p} d={d} labels={labels} />
             </span>
           </span>
-          <Media
-            p={p}
-            category={category}
-            imgFailed={d.imgFailed}
-            onFail={() => d.setImgFailed(true)}
-            inBag={d.inBag}
-            labels={labels}
-            soldOut={d.soldOut}
-          />
+          <Media p={p} category={category} d={d} labels={labels} />
         </a>
       </ProductLink>
-      <AddButton
-        p={p}
-        quick={d.quick}
-        soldOut={d.soldOut}
-        added={d.added}
-        onAdded={() => d.setAdded(true)}
-        labels={labels}
-      />
+      <AddButton p={p} d={d} labels={labels} />
     </li>
   );
 }
@@ -203,34 +200,16 @@ export function DishCard({ product: p, category, currency, labels }: DishProps) 
   return (
     <li className="dish-card" data-soldout={d.soldOut || undefined}>
       <ProductLink product={p} asChild>
-        <a
-          className="dish-card-link"
-          aria-label={`${p.name}, ${price}${d.soldOut ? `, ${labels.soldOut}` : ''}`}
-        >
-          <Media
-            p={p}
-            category={category}
-            imgFailed={d.imgFailed}
-            onFail={() => d.setImgFailed(true)}
-            inBag={d.inBag}
-            labels={labels}
-            soldOut={d.soldOut}
-          />
+        <a className="dish-card-link" aria-label={linkLabel(p, price, d, labels)}>
+          <Media p={p} category={category} d={d} labels={labels} />
           <span className="dish-name">{p.name}</span>
           <span className="dish-foot">
-            <span className="dish-price">{price}</span>
-            <Tags p={p} low={d.low} stock={d.stock} labels={labels} soldOut={d.soldOut} />
+            <Price text={price} className="dish-price" />
+            <Tags p={p} d={d} labels={labels} />
           </span>
         </a>
       </ProductLink>
-      <AddButton
-        p={p}
-        quick={d.quick}
-        soldOut={d.soldOut}
-        added={d.added}
-        onAdded={() => d.setAdded(true)}
-        labels={labels}
-      />
+      <AddButton p={p} d={d} labels={labels} />
     </li>
   );
 }

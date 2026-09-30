@@ -23,6 +23,7 @@ export const schema = defineSection({
     lowStockLabel: text({ max: 30, default: 'restam' }),
     preorderLabel: text({ max: 30, default: 'sob encomenda' }),
     inBagLabel: text({ max: 30, default: 'na sacola' }),
+    allInBagLabel: text({ max: 30, default: 'tudo na sacola' }),
   },
 });
 
@@ -57,6 +58,7 @@ export default function MenuRail({ settings: s }: SectionProps<typeof schema>) {
     lowStock: s.lowStockLabel,
     preorder: s.preorderLabel,
     inBag: s.inBagLabel,
+    allInBag: s.allInBagLabel,
   };
 
   return (

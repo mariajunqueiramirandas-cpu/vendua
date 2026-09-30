@@ -7,7 +7,8 @@
   color-scheme: light;
 
   --spark: #d9f875;
-  --on-spark: #123c32;
+  /* ink on lime follows the store's text token — lime is always light */
+  --on-spark: var(--v-color-text, #123c32);
   --spark-soft: #f0fcc9;
   --tint-peach: #fde7d4;
   --tint-golden: #fbecd3;
@@ -28,6 +29,22 @@
   --spring: cubic-bezier(0.34, 1.56, 0.64, 1);
   --gutter: 16px;
 
+  /* type: Space Grotesk for names and numbers that lead, Figtree for everything read */
+  --fs-xs: 0.75rem;
+  --fs-sm: 0.9375rem;
+  --fs-body: 1.0625rem;
+  --fs-lg: 1.1875rem;
+  --fs-title: clamp(1.375rem, 1.2rem + 0.8vw, 1.625rem);
+  --fs-display: clamp(1.75rem, 1.3rem + 2.2vw, 2.75rem);
+  --lh-tight: 1.08;
+  --lh-snug: 1.28;
+  --lh-body: 1.5;
+  --track-display: -0.022em;
+  --track-label: 0.012em;
+  --w-body: 450;
+  --w-strong: 600;
+  --w-num: 650;
+
   /* Kernel component hooks (packages/kernel/API.md — styling API) */
   --v-header-height: 60px;
   --v-page-max: 1120px;
@@ -46,13 +63,29 @@
 body {
   margin: 0;
   font-family: var(--v-font-body, system-ui, sans-serif);
-  font-size: 1rem;
+  font-size: var(--fs-body);
   background: var(--v-color-bg, #f7f4ea);
   color: var(--v-color-text, #123c32);
-  line-height: 1.5;
+  line-height: var(--lh-body);
   -webkit-font-smoothing: antialiased;
   -webkit-tap-highlight-color: transparent;
   overflow-x: clip;
+  font-weight: var(--w-body);
+  font-kerning: normal;
+  font-optical-sizing: auto;
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
+}
+
+/* headings never leave one word alone on a line; running text breaks like a book page */
+:is(h1, h2, h3) {
+  text-wrap: balance;
+}
+
+p {
+  text-wrap: pretty;
 }
 
 img {
@@ -109,9 +142,9 @@ img {
 
 [data-section='sdk:header'] [data-part='brand'] {
   font-family: var(--v-font-display, system-ui);
-  font-weight: 700;
-  font-size: 1.1875rem;
-  letter-spacing: -0.02em;
+  font-weight: var(--w-strong);
+  font-size: var(--fs-lg);
+  letter-spacing: var(--track-display);
 }
 
 /* one row on phones too: the menu is the home page, the nav is just "Pedidos" */
@@ -223,7 +256,7 @@ img {
   box-shadow: var(--shadow-1);
   font-family: var(--v-font-display, system-ui);
   font-size: 2rem;
-  font-weight: 700;
+  font-weight: var(--w-strong);
   line-height: 1;
 }
 
@@ -242,18 +275,20 @@ img {
 .hero-name {
   margin: 0;
   font-family: var(--v-font-display, system-ui);
-  font-size: clamp(1.5rem, 5.4vw, 2.25rem);
-  font-weight: 700;
-  line-height: 1.08;
-  letter-spacing: -0.025em;
+  font-size: var(--fs-display);
+  font-weight: var(--w-strong);
+  line-height: var(--lh-tight);
+  letter-spacing: var(--track-display);
   overflow-wrap: anywhere;
+  text-wrap: balance;
 }
 
 .hero-tagline {
   margin: 2px 0 0;
   color: var(--v-color-muted, #4f6a5e);
-  font-size: 0.9375rem;
-  line-height: 1.35;
+  font-size: var(--fs-sm);
+  line-height: var(--lh-snug);
+  max-width: 44ch;
 }
 
 .hero-status {
@@ -261,11 +296,13 @@ img {
   align-items: center;
   gap: 6px;
   margin: 8px 0 0;
-  padding: 5px 12px 5px 10px;
+  padding: 7px 12px 7px 10px;
   border-radius: 999px;
-  font-size: 0.875rem;
+  font-size: var(--fs-xs);
   background: var(--tint-sunken);
   color: var(--v-color-muted, #4f6a5e);
+  letter-spacing: var(--track-label);
+  text-box: trim-both cap alphabetic;
 }
 
 .hero-status[data-status='open'] {
@@ -275,11 +312,11 @@ img {
 
 .hero-status[data-status='paused'] {
   background: #fff0d6;
-  color: #7a4300;
+  color: var(--v-color-text, #123c32);
 }
 
 .hero-status strong {
-  font-weight: 700;
+  font-weight: var(--w-num);
 }
 
 .hero-dot {
@@ -296,7 +333,8 @@ img {
   display: flex;
   flex-wrap: wrap;
   gap: 8px 18px;
-  font-size: 0.9375rem;
+  font-size: var(--fs-sm);
+  font-variant-numeric: tabular-nums;
 }
 
 .hero-facts li {
@@ -326,8 +364,8 @@ img {
   justify-content: space-between;
   min-height: 44px;
   padding-top: 4px;
-  font-weight: 600;
-  font-size: 0.9375rem;
+  font-weight: var(--w-strong);
+  font-size: var(--fs-sm);
   cursor: pointer;
   list-style: none;
 }
@@ -389,7 +427,8 @@ img {
 
 .hero-hours dd {
   margin: 0;
-  font-weight: 600;
+  font-weight: var(--w-strong);
+  font-variant-numeric: tabular-nums;
 }
 
 .hero-contacts {
@@ -412,14 +451,10 @@ img {
   border-radius: 999px;
   border: 1px solid var(--line-strong);
   color: inherit;
-  font-weight: 600;
-  font-size: 0.875rem;
+  font-weight: var(--w-strong);
+  font-size: var(--fs-sm);
   text-decoration: none;
-  transition: background var(--v-motion-duration, 180ms) var(--ease);
-}
-
-.hero-contacts a:hover {
-  background: var(--hover);
+  text-box: trim-both cap alphabetic;
 }
 
 @media (min-width: 768px) {
@@ -460,14 +495,14 @@ img {
 .menu-cat-title {
   margin: 0;
   font-family: var(--v-font-display, system-ui);
-  font-weight: 700;
-  letter-spacing: -0.02em;
-  line-height: 1.15;
+  font-weight: var(--w-strong);
+  letter-spacing: var(--track-display);
+  line-height: var(--lh-tight);
 }
 
 .rail-title,
 .menu-cat-title {
-  font-size: 1.375rem;
+  font-size: var(--fs-title);
 }
 
 .rail-list {
@@ -510,8 +545,9 @@ img {
 }
 
 .menu-title {
-  font-size: clamp(1.75rem, 6vw, 2.5rem);
+  font-size: var(--fs-display);
   margin-bottom: 12px;
+  line-height: var(--lh-tight);
 }
 
 /* search and tabs are siblings of the categories, so the tab strip sticks for the whole menu */
@@ -535,10 +571,7 @@ img {
   background: var(--v-color-surface, #fffdf8);
   color: inherit;
   font: inherit;
-  font-size: 1rem;
-  transition:
-    border-color var(--v-motion-duration, 180ms) var(--ease),
-    box-shadow var(--v-motion-duration, 180ms) var(--ease);
+  font-size: var(--fs-body);
 }
 
 .menu-search input::placeholder {
@@ -616,18 +649,12 @@ img {
   border-radius: 999px;
   border: 1px solid var(--line-strong);
   color: var(--v-color-text, #123c32);
-  font-weight: 600;
-  font-size: 0.9375rem;
+  font-weight: var(--w-strong);
+  font-size: var(--fs-sm);
   text-decoration: none;
   white-space: nowrap;
-  transition:
-    background var(--v-motion-duration, 180ms) var(--ease),
-    color var(--v-motion-duration, 180ms) var(--ease),
-    border-color var(--v-motion-duration, 180ms) var(--ease);
-}
-
-.menu-tab:hover {
-  background: var(--hover);
+  text-box: trim-both cap alphabetic;
+  touch-action: manipulation;
 }
 
 .menu-tab[aria-current='true'] {
@@ -659,14 +686,16 @@ img {
 }
 
 .menu-count {
-  padding: 2px 9px;
+  padding: 6px 9px;
   border-radius: 999px;
   background: var(--tint-sunken);
   color: var(--v-color-muted, #4f6a5e);
   font-family: var(--v-font-body, system-ui);
-  font-size: 0.8125rem;
-  font-weight: 600;
-  letter-spacing: 0;
+  font-size: var(--fs-xs);
+  font-weight: var(--w-strong);
+  letter-spacing: var(--track-label);
+  font-variant-numeric: tabular-nums;
+  text-box: trim-both cap alphabetic;
 }
 
 .menu-list {
@@ -704,8 +733,10 @@ img {
 .menu-empty .menu-empty-title {
   color: var(--v-color-text, #123c32);
   font-family: var(--v-font-display, system-ui);
-  font-size: 1.125rem;
-  font-weight: 700;
+  font-size: var(--fs-lg);
+  font-weight: var(--w-strong);
+  letter-spacing: var(--track-display);
+  text-wrap: balance;
 }
 
 .menu-pill {
@@ -717,8 +748,10 @@ img {
   background: var(--v-color-accent, #123c32);
   color: var(--v-color-on-accent, #fffdf8);
   font: inherit;
-  font-weight: 600;
+  font-weight: var(--w-strong);
   cursor: pointer;
+  text-box: trim-both cap alphabetic;
+  touch-action: manipulation;
 }
 
 /* ── dishes (rows in the menu, cards in rails) ───────────────────────────── */
@@ -731,17 +764,6 @@ img {
   background: var(--v-color-surface, #fffdf8);
   border: 1px solid var(--line);
   box-shadow: var(--shadow-1);
-  transition:
-    box-shadow var(--v-motion-duration, 180ms) var(--ease),
-    transform var(--v-motion-duration, 180ms) var(--ease);
-}
-
-.dish:hover {
-  box-shadow: var(--shadow-2);
-}
-
-.dish:active {
-  transform: scale(0.99);
 }
 
 .dish[data-hit] {
@@ -769,9 +791,11 @@ img {
 }
 
 .dish-name {
-  font-weight: 650;
-  font-size: 1rem;
-  line-height: 1.3;
+  font-weight: var(--w-strong);
+  font-size: var(--fs-body);
+  line-height: var(--lh-snug);
+  letter-spacing: -0.006em;
+  text-wrap: balance;
 }
 
 .dish-desc {
@@ -780,8 +804,11 @@ img {
   -webkit-box-orient: vertical;
   overflow: hidden;
   color: var(--v-color-muted, #4f6a5e);
-  font-size: 0.875rem;
-  line-height: 1.4;
+  font-size: var(--fs-sm);
+  line-height: 1.45;
+  text-wrap: pretty;
+  hyphens: auto;
+  overflow-wrap: break-word;
 }
 
 .dish-foot {
@@ -794,18 +821,23 @@ img {
 }
 
 .dish-price {
-  font-weight: 700;
+  font-weight: var(--w-num);
   font-variant-numeric: tabular-nums;
+  font-size: var(--fs-body);
+  letter-spacing: -0.01em;
+  white-space: nowrap;
 }
 
 .dish-tag {
-  padding: 2px 9px;
+  padding: 6px 9px;
   border-radius: 999px;
   background: var(--tint-sunken);
   color: var(--v-color-muted, #4f6a5e);
-  font-size: 0.75rem;
-  font-weight: 600;
-  line-height: 1.5;
+  font-size: var(--fs-xs);
+  font-weight: var(--w-strong);
+  line-height: 1;
+  letter-spacing: var(--track-label);
+  text-box: trim-both cap alphabetic;
 }
 
 .dish-tag[data-tone='spark'] {
@@ -878,9 +910,9 @@ img {
   border-radius: 6px;
   background: color-mix(in srgb, var(--v-color-surface, #fffdf8) 88%, transparent);
   color: var(--v-color-text, #123c32);
-  font-size: 0.8125rem;
-  font-weight: 800;
-  letter-spacing: 0.02em;
+  font-size: var(--fs-xs);
+  font-weight: 750;
+  letter-spacing: 0.04em;
 }
 
 .dish[data-soldout] :is(.dish-media img, .dish-art),
@@ -906,8 +938,8 @@ img {
   border-radius: 999px;
   background: var(--v-color-accent, #123c32);
   color: var(--v-color-on-accent, #fffdf8);
-  font-size: 0.8125rem;
-  font-weight: 700;
+  font-size: var(--fs-xs);
+  font-weight: var(--w-num);
   font-variant-numeric: tabular-nums;
   box-shadow: 0 0 0 2px var(--v-color-surface, #fffdf8);
   animation: pop 360ms var(--spring);
@@ -928,39 +960,10 @@ img {
   color: var(--v-color-text, #123c32);
   box-shadow: var(--shadow-2);
   cursor: pointer;
-  transition:
-    background var(--v-motion-duration, 180ms) var(--ease),
-    transform var(--v-motion-duration, 180ms) var(--ease);
 }
 
 .dish-add[data-kind='choose'] {
   pointer-events: none;
-}
-
-button.dish-add:hover {
-  background: var(--spark);
-  color: var(--on-spark);
-}
-
-button.dish-add:active {
-  transform: scale(0.92);
-}
-
-.dish-add[data-added] {
-  background: var(--spark);
-  color: var(--on-spark);
-  border-color: transparent;
-  animation: pop 360ms var(--spring);
-}
-
-.dish-add[aria-busy='true'] {
-  opacity: 0.7;
-}
-
-.dish-add:disabled {
-  opacity: 0.4;
-  cursor: default;
-  box-shadow: none;
 }
 
 @media (min-width: 880px) {
@@ -995,7 +998,7 @@ button.dish-add:active {
   -webkit-box-orient: vertical;
   overflow: hidden;
   margin-top: 4px;
-  font-size: 0.9375rem;
+  font-size: var(--fs-sm);
 }
 
 .dish-card .dish-foot {
@@ -1006,6 +1009,15 @@ button.dish-add:active {
 .dish-card .dish-add {
   top: calc(var(--w) - 50px);
   right: 8px;
+}
+
+/* prices: the sign small and quiet, the figure carries the weight */
+.price-cur {
+  margin-right: 0.18em;
+  font-size: 0.8em;
+  font-weight: 500;
+  letter-spacing: 0;
+  opacity: 0.78;
 }
 
 /* ── store:dish-media (the product page's picture) ────────────────────────── */
@@ -1037,6 +1049,223 @@ button.dish-add:active {
   height: 100%;
   object-fit: cover;
   scroll-snap-align: center;
+}
+
+/* ── buttons and touch ───────────────────────────────────────────────────
+ * One behaviour for every tap target: presses in fast, springs back on release.
+ * Hover only where there is a real pointer, so nothing stays lit after a tap. */
+
+:is(
+  .menu-tab,
+  .menu-pill,
+  .menu-search-clear,
+  .hero-contacts a,
+  button.dish-add,
+  [data-section='sdk:header'] [data-part='cart'],
+  [data-section='sdk:bag-bar'] [data-part='trigger'],
+  [data-section='sdk:purchase-panel'] [data-part='buy'] button
+) {
+  touch-action: manipulation;
+  transition:
+    transform 320ms var(--spring),
+    opacity var(--v-motion-duration, 180ms) var(--ease);
+}
+
+:is(
+    .menu-tab,
+    .menu-pill,
+    .menu-search-clear,
+    .hero-contacts a,
+    button.dish-add,
+    [data-section='sdk:header'] [data-part='cart'],
+    [data-section='sdk:purchase-panel'] [data-part='buy'] button
+  ):active:not(:disabled) {
+  transform: scale(0.94);
+  transition-duration: 90ms;
+  transition-timing-function: var(--ease);
+}
+
+[data-section='sdk:bag-bar'] [data-part='trigger']:active {
+  transform: scale(0.98);
+  transition-duration: 90ms;
+  transition-timing-function: var(--ease);
+}
+
+/* pressing the card (not its "+") sinks it a touch */
+.dish {
+  transition: transform 320ms var(--spring);
+}
+
+.dish:has(> .dish-link:active) {
+  transform: scale(0.985);
+  transition-duration: 90ms;
+}
+
+.dish-card .dish-media {
+  transition: transform 320ms var(--spring);
+}
+
+.dish-card:has(> .dish-card-link:active) .dish-media {
+  transform: scale(0.96);
+  transition-duration: 90ms;
+}
+
+.dish-link:focus-visible,
+.dish-card-link:focus-visible {
+  outline-offset: 3px;
+}
+
+.hero-more summary:active {
+  opacity: 0.7;
+}
+
+/* the kernel lifts its header pill on :hover, which sticks after a tap */
+@media (hover: none) {
+  [data-section='sdk:header'] [data-part='cart']:hover {
+    transform: none;
+  }
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .dish:hover {
+    box-shadow: var(--shadow-2);
+  }
+  .menu-tab:not([aria-current='true']):hover,
+  .hero-contacts a:hover {
+    background: var(--hover);
+  }
+  .menu-search-clear:hover {
+    background: var(--line-strong);
+  }
+  .menu-pill:hover {
+    background: color-mix(in srgb, var(--v-color-accent, #123c32) 88%, #000);
+  }
+  button.dish-add:not(:disabled, [data-added]):hover {
+    background: var(--spark);
+    color: var(--on-spark);
+    border-color: transparent;
+  }
+  .hero-more summary:hover {
+    text-decoration: underline;
+    text-underline-offset: 4px;
+    text-decoration-thickness: 1.5px;
+  }
+}
+
+/* "+" states: busy while Core adds it, a lime check and a "+1" when it lands */
+.dish-add-icon {
+  display: grid;
+  place-items: center;
+}
+
+.dish-add[aria-busy='true'] .dish-add-icon {
+  opacity: 0;
+}
+
+.dish-add[aria-busy='true']::after {
+  content: '';
+  position: absolute;
+  inset: 11px;
+  border-radius: 50%;
+  border: 2.5px solid var(--line-strong);
+  border-top-color: var(--v-color-text, #123c32);
+  animation: spin 640ms linear infinite;
+}
+
+.dish-add[data-added] {
+  background: var(--spark);
+  color: var(--on-spark);
+  border-color: transparent;
+}
+
+.dish-add[data-added] .dish-add-icon {
+  animation: pop 380ms var(--spring);
+}
+
+.dish-plus1 {
+  position: absolute;
+  bottom: calc(100% + 2px);
+  left: 50%;
+  padding: 5px 8px;
+  border-radius: 999px;
+  background: var(--v-color-accent, #123c32);
+  color: var(--v-color-on-accent, #fffdf8);
+  font-size: var(--fs-xs);
+  font-weight: var(--w-num);
+  font-variant-numeric: tabular-nums;
+  line-height: 1;
+  white-space: nowrap;
+  pointer-events: none;
+  animation: float-up 900ms var(--ease) forwards;
+}
+
+/* limit reached (stock the sacola already holds) or store paused */
+.dish-add:disabled {
+  opacity: 0.4;
+  box-shadow: none;
+  cursor: not-allowed;
+}
+
+/* "tudo na sacola": a settled check, not a button */
+.dish-add[data-kind='full'] {
+  pointer-events: none;
+  background: var(--spark-soft);
+  color: var(--on-spark);
+  border-color: transparent;
+  box-shadow: none;
+}
+
+@keyframes spin {
+  to {
+    rotate: 360deg;
+  }
+}
+
+@keyframes float-up {
+  0% {
+    opacity: 0;
+    transform: translate(-50%, 6px) scale(0.8);
+  }
+  20% {
+    opacity: 1;
+    transform: translate(-50%, 0) scale(1);
+  }
+  100% {
+    opacity: 0;
+    transform: translate(-50%, -22px);
+  }
+}
+
+/* ── the product page (sdk:purchase-panel parts) ───────────────────────── */
+
+[data-section='sdk:purchase-panel'] [data-part='name'] {
+  font-family: var(--v-font-display, system-ui);
+  font-size: var(--fs-display);
+  font-weight: var(--w-strong);
+  line-height: var(--lh-tight);
+  letter-spacing: var(--track-display);
+  text-wrap: balance;
+}
+
+[data-section='sdk:purchase-panel'] [data-part='price'] {
+  font-size: var(--fs-lg);
+  font-weight: var(--w-num);
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.01em;
+}
+
+[data-section='sdk:purchase-panel'] [data-part='description'] {
+  max-width: 60ch;
+  font-size: var(--fs-body);
+  line-height: 1.55;
+  text-wrap: pretty;
+  hyphens: auto;
+}
+
+[data-section='sdk:purchase-panel'] [data-part='add'] {
+  min-height: 52px;
+  font-weight: var(--w-strong);
+  font-variant-numeric: tabular-nums;
 }
 
 /* ── loading ─────────────────────────────────────────────────────────────── */
@@ -1103,8 +1332,8 @@ button.dish-add:active {
   margin: 0;
   font-family: var(--v-font-display, system-ui);
   font-size: clamp(2rem, 6vw, 3.2rem);
-  font-weight: 700;
-  letter-spacing: -0.025em;
+  font-weight: var(--w-strong);
+  letter-spacing: var(--track-display);
   line-height: 1.08;
   max-width: 18ch;
 }
@@ -1139,11 +1368,24 @@ button.dish-add:active {
 @media (prefers-reduced-motion: reduce) {
   .dish,
   .dish-add,
+  .dish-add-icon,
   .dish-inbag,
+  .dish-card .dish-media,
   .hero-more-body,
   .menu-tab,
+  .menu-pill,
+  .hero-contacts a,
   .skel {
     animation: none;
     transition: none;
+  }
+  /* no motion: the "+1" and spinner become a still badge and a dimmed button */
+  .dish-plus1 {
+    animation: none;
+    opacity: 0;
+  }
+  .dish-add[aria-busy='true']::after {
+    animation: none;
+    border-top-color: var(--line-strong);
   }
 }
