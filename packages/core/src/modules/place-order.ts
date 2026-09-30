@@ -2,7 +2,7 @@ import { emitAdminTx } from '../admin/live.ts';
 import type { Sql } from '../platform/db.ts';
 import { HttpError } from '../platform/http.ts';
 import { loadCartView, loadZoneRows, repriceLines, storeCoords } from './cart.ts';
-import { getProductById } from './catalog.ts';
+import { getProductsById, type ProductDetail } from './catalog.ts';
 import { addressParts, composeAddress, validateCheckout, type CheckoutInput } from './checkout.ts';
 import { couponUsage, evaluateCoupon, loadCoupon } from './coupons.ts';
 import { normalizePhone } from './customer.ts';
@@ -52,13 +52,15 @@ export async function placeOrderTx(
     onlineOffer(tx, tenantId, provider),
   ]);
   // Re-validate modifier ids / kit picks against current defs — nothing retired slips through underpriced.
-  const products = new Map<string, Awaited<ReturnType<typeof getProductById>>>();
-  for (const item of cart.items) {
-    products.set(
-      item.productId,
-      await getProductById(tx, tenantId, item.productId, { forUpdate: true }),
-    );
-  }
+  const found = await getProductsById(
+    tx,
+    tenantId,
+    cart.items.map((i) => i.productId),
+    { forUpdate: true },
+  );
+  const products = new Map<string, ProductDetail | null>(
+    cart.items.map((i) => [i.productId, found.get(i.productId) ?? null]),
+  );
   const status = deriveStatus(
     settings?.hours ?? { timezone: 'America/Sao_Paulo', windows: [] },
     settings?.status_override ?? null,

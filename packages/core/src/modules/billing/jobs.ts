@@ -8,11 +8,13 @@ import {
   billingLog,
   DAY_MS,
   pixIsLive,
-  issuePix,
   payerEmailFor,
   PIX_TTL_MS,
+  requestPix,
+  storePix,
   upsertInvoice,
   type InvoiceRow,
+  type PixCharge,
 } from './invoices.ts';
 import { messageOwners, pastDueMessage, queueOwners, reminderMessage } from './notices.ts';
 import { planRow } from './plans.ts';
@@ -27,7 +29,6 @@ import {
   lockSub,
   noticeCancelled,
   RENEW_AHEAD_MS,
-  setChargeAmount,
   settlePixPayment,
   stopPreapproval,
   withEffects,
@@ -121,6 +122,88 @@ async function each<T>(rows: T[], label: string, fn: (row: T) => Promise<void>) 
       billingLog.warn({ err, step: label }, 'billing item failed');
     }
   }
+}
+
+// Mercado Pago is never called under a store's billing lock from here: a step decides under the
+// lock and reserves what it needs, the provider call runs with no tx open, and a second short tx
+// stores the result only if nothing moved meanwhile. A slow MP holds no connection and no
+// merchant request waits behind it.
+
+interface PixNeed {
+  tenantId: string;
+  /** as reserved: its pix_attempt keys this Pix */
+  invoice: InvoiceRow;
+  payerEmail: string;
+  planName: string;
+}
+
+/** Takes the next attempt number under the lock. A price change while MP answers keeps the
+ *  attempt, so without the reservation it would ask with our key and get our (old-amount) Pix. */
+async function reservePix(
+  tx: Sql,
+  tenantId: string,
+  inv: InvoiceRow,
+  payerEmail: string,
+  planName: string,
+): Promise<PixNeed> {
+  const invoice = (
+    await tx<InvoiceRow[]>`
+      update invoices set pix_attempt = pix_attempt + 1 where id = ${inv.id} returning *
+    `
+  )[0]!;
+  return { tenantId, invoice, payerEmail, planName };
+}
+
+const askPix = (base: Omit<BillingCtx, 'later'>, need: PixNeed, now: Date) =>
+  requestPix(base.provider, need.invoice, need.invoice.pix_attempt, {
+    payerEmail: need.payerEmail,
+    planName: need.planName,
+    origin: base.origin,
+    now,
+  });
+
+/** Stores the Pix on `cur` (read under the lock) if it is still the invoice it was asked for —
+ *  open, same amount, our attempt. Otherwise it was paid, repriced or re-issued meanwhile, and
+ *  this Pix is cancelled. */
+async function storeReserved(
+  tx: Sql,
+  ctx: BillingCtx,
+  cur: InvoiceRow | undefined,
+  need: PixNeed,
+  charge: PixCharge,
+): Promise<InvoiceRow | null> {
+  const still =
+    cur?.status === 'open' &&
+    cur.method === 'pix' &&
+    cur.pix_attempt === need.invoice.pix_attempt &&
+    cur.amount_cents === need.invoice.amount_cents;
+  if (!still) {
+    if (charge.payment.id !== cur?.provider_payment_id) dropPix(ctx)(charge.payment.id);
+    return null;
+  }
+  return storePix(tx, ctx.provider, cur, charge, dropPix(ctx));
+}
+
+async function issueReserved(
+  sql: Sql,
+  base: Omit<BillingCtx, 'later'>,
+  need: PixNeed,
+  now: Date,
+): Promise<InvoiceRow | null> {
+  const charge = await askPix(base, need, now);
+  return withEffects(base, (ctx) =>
+    withTenant(sql, need.tenantId, async (tx) => {
+      await lockSub(tx, need.tenantId);
+      const cur = (
+        await tx<InvoiceRow[]>`
+          select * from invoices where tenant_id = ${need.tenantId} and id = ${need.invoice.id}
+        `
+      )[0];
+      const row = await storeReserved(tx, ctx, cur, need, charge);
+      if (row) await emitAdminTx(tx, need.tenantId, 'billing', row.id);
+      return row;
+    }),
+  );
 }
 
 /** a missed webhook must not leave a paid Pix open: ask MP about every live attempt */
@@ -294,7 +377,8 @@ const markPastDue: Step = async (sql, base, now) => {
   });
 };
 
-/** the next month's Pix goes out RENEW_AHEAD_MS before the period ends */
+/** the next month's Pix goes out RENEW_AHEAD_MS before the period ends — and again on a later
+ *  tick if MP failed or its Pix was dropped (the invoice is committed before MP is asked) */
 const issueRenewals: Step = async (sql, base, now) => {
   const horizon = new Date(now.getTime() + RENEW_AHEAD_MS);
   const rows = await controlTx(
@@ -304,19 +388,26 @@ const issueRenewals: Step = async (sql, base, now) => {
       where s.status in ('active', 'past_due') and s.method = 'pix' and not s.cancel_at_period_end
         and s.current_period_end <= ${horizon}
         and not exists (select 1 from invoices i where i.tenant_id = s.tenant_id
-                          and i.period_start = s.current_period_end and i.status <> 'void')
+                          and i.period_start = s.current_period_end and i.status <> 'void'
+                          and (i.status <> 'open' or i.pix_copy_paste is not null))
       limit ${BATCH}
     `,
   );
   await each(rows, 'renewals', async ({ tenant_id }) => {
-    await withEffects(base, (ctx) =>
+    const need = await withEffects(base, (ctx) =>
       withTenant(sql, tenant_id, async (tx) => {
         const sub = await lockSub(tx, tenant_id);
-        if (!sub) return;
-        const inv = await ensureRenewal(ctx, tx, sub, now);
-        if (inv) await emitAdminTx(tx, tenant_id, 'billing', inv.id);
+        if (!sub) return null;
+        const inv = await ensureRenewal(ctx, tx, sub, now, { issue: false });
+        if (!inv) return null;
+        await emitAdminTx(tx, tenant_id, 'billing', inv.id);
+        if (inv.status !== 'open' || pixIsLive(inv, now)) return null;
+        const payerEmail = await payerEmailFor(tx, tenant_id, sub.payer_email);
+        const plan = payerEmail ? await planRow(tx, inv.plan_id) : null;
+        return payerEmail && plan ? reservePix(tx, tenant_id, inv, payerEmail, plan.name) : null;
       }),
     );
+    if (need) await issueReserved(sql, base, need, now);
   });
 };
 
@@ -351,10 +442,25 @@ const sendReminders: Step = async (sql, base, now) => {
     const stage = stageFor(inv, now);
     if (!stage || inv.reminded.includes(stage)) return;
     const upto = ORDER.slice(0, ORDER.indexOf(stage) + 1);
+    // the Pix in the message must still be payable: asked for before the claim, so an MP failure
+    // leaves the reminder unclaimed for the next tick
+    let pix: { need: PixNeed; charge: PixCharge } | null = null;
+    if (stage !== 'due_soon' && !pixIsLive(inv, now)) {
+      const need = await withTenant(sql, inv.tenant_id, async (tx) => {
+        const sub = await lockSub(tx, inv.tenant_id);
+        const cur = (
+          await tx<InvoiceRow[]>`select * from invoices where id = ${inv.id} and status = 'open'`
+        )[0];
+        if (!cur || cur.reminded.includes(stage) || pixIsLive(cur, now)) return null;
+        const payerEmail = await payerEmailFor(tx, inv.tenant_id, sub?.payer_email);
+        return payerEmail ? reservePix(tx, inv.tenant_id, cur, payerEmail, inv.plan_name) : null;
+      });
+      if (need) pix = { need, charge: await askPix(base, need, now) };
+    }
     // claim first: a failed send is logged, never repeated into a second message
     const claimed = await withEffects(base, (ctx) =>
       withTenant(sql, inv.tenant_id, async (tx) => {
-        const sub = await lockSub(tx, inv.tenant_id);
+        await lockSub(tx, inv.tenant_id);
         const row = (
           await tx<InvoiceRow[]>`
             update invoices set reminded = array(select distinct unnest(reminded || ${upto}::text[]))
@@ -362,21 +468,13 @@ const sendReminders: Step = async (sql, base, now) => {
             returning *
           `
         )[0];
-        if (!row) return null;
-        // the Pix in the message must still be payable
-        if (stage !== 'due_soon' && !pixIsLive(row, now)) {
-          const payerEmail = await payerEmailFor(tx, inv.tenant_id, sub?.payer_email);
-          if (payerEmail)
-            await issuePix(tx, ctx.provider, row, {
-              payerEmail,
-              planName: inv.plan_name,
-              origin: ctx.origin,
-              now,
-              drop: dropPix(ctx),
-            });
+        if (!row) {
+          if (pix) await storeReserved(tx, ctx, undefined, pix.need, pix.charge);
+          return null;
         }
+        const out = pix ? ((await storeReserved(tx, ctx, row, pix.need, pix.charge)) ?? row) : row;
         await emitAdminTx(tx, inv.tenant_id, 'billing', inv.id);
-        return row;
+        return out;
       }),
     );
     if (!claimed) return;
@@ -407,15 +505,25 @@ export async function syncPlanPrices(sql: Sql, base: Omit<BillingCtx, 'later'>, 
     `,
   );
   await each(cards, 'prices', async ({ tenant_id }) => {
-    await withEffects(base, (ctx) =>
-      withTenant(sql, tenant_id, async (tx) => {
-        const sub = await lockSub(tx, tenant_id);
-        if (!sub || sub.status === 'cancelled') return;
-        const plan = await planRow(tx, chargePlanId(sub));
-        if (!plan || sub.charge_cents === plan.price_cents) return;
-        await setChargeAmount(ctx, tx, sub, plan.price_cents);
-      }),
-    );
+    const want = await withTenant(sql, tenant_id, async (tx) => {
+      const sub = await lockSub(tx, tenant_id);
+      if (!sub || sub.status === 'cancelled' || sub.method !== 'card') return null;
+      if (!sub.provider_subscription_id) return null;
+      const plan = await planRow(tx, chargePlanId(sub));
+      if (!plan || sub.charge_cents === plan.price_cents) return null;
+      return { id: sub.provider_subscription_id, cents: plan.price_cents, was: sub.charge_cents };
+    });
+    if (!want) return;
+    await base.provider.updateSubscription(want.id, { amountCents: want.cents });
+    await withTenant(sql, tenant_id, async (tx) => {
+      const sub = await lockSub(tx, tenant_id);
+      if (!sub || sub.provider_subscription_id !== want.id) return;
+      // someone set another amount while MP answered: ours may have landed after theirs, so the
+      // next tick re-syncs from the plan instead of trusting either
+      const agreed = sub.charge_cents === want.was || sub.charge_cents === want.cents;
+      const cents = agreed ? want.cents : null;
+      await tx`update subscriptions set charge_cents = ${cents} where tenant_id = ${tenant_id}`;
+    });
   });
   const invs = await controlTx(
     sql,
@@ -429,38 +537,71 @@ export async function syncPlanPrices(sql: Sql, base: Omit<BillingCtx, 'later'>, 
     `,
   );
   await each(invs, 'prices', async ({ id, tenant_id }) => {
+    const load = async (tx: Sql) => {
+      const sub = await lockSub(tx, tenant_id);
+      const inv = (
+        await tx<InvoiceRow[]>`select * from invoices where tenant_id = ${tenant_id} and id = ${id}`
+      )[0];
+      if (!sub || !inv || inv.status !== 'open' || inv.method !== 'pix') return null;
+      const plan = await planRow(tx, inv.plan_id);
+      if (!plan || plan.price_cents === inv.amount_cents) return null;
+      return { sub, inv, plan };
+    };
+    const reprice = (ctx: BillingCtx, tx: Sql, inv: InvoiceRow, cents: number) =>
+      upsertInvoice(tx, {
+        tenantId: tenant_id,
+        provider: ctx.provider.name,
+        drop: dropPix(ctx),
+        start: inv.period_start,
+        planId: inv.plan_id,
+        amountCents: cents,
+        method: 'pix',
+        dueAt: inv.due_at,
+        reuse: inv,
+      });
+    // an invoice with a live Pix keeps it until the new one exists: the new Pix is asked for at
+    // the new price first, and the reprice and the swap commit together (an MP failure changes
+    // nothing — the next tick tries again)
+    const need = await withEffects(base, (ctx) =>
+      withTenant(sql, tenant_id, async (tx) => {
+        const got = await load(tx);
+        if (!got) return null;
+        const payerEmail = got.inv.pix_copy_paste
+          ? await payerEmailFor(tx, tenant_id, got.sub.payer_email)
+          : null;
+        if (!payerEmail) {
+          const next = await reprice(ctx, tx, got.inv, got.plan.price_cents);
+          await emitAdminTx(tx, tenant_id, 'billing', next.id);
+          return null;
+        }
+        const r = await reservePix(tx, tenant_id, got.inv, payerEmail, got.plan.name);
+        return { ...r, from: r.invoice.amount_cents, to: got.plan.price_cents };
+      }),
+    );
+    if (!need) return;
+    const charge = await askPix(
+      base,
+      { ...need, invoice: { ...need.invoice, amount_cents: need.to } },
+      now,
+    );
     await withEffects(base, (ctx) =>
       withTenant(sql, tenant_id, async (tx) => {
-        const sub = await lockSub(tx, tenant_id);
-        const inv = (
-          await tx<
-            InvoiceRow[]
-          >`select * from invoices where tenant_id = ${tenant_id} and id = ${id}`
-        )[0];
-        if (!sub || !inv || inv.status !== 'open' || inv.method !== 'pix') return;
-        const plan = await planRow(tx, inv.plan_id);
-        if (!plan || plan.price_cents === inv.amount_cents) return;
-        const hadPix = !!inv.pix_copy_paste;
-        let next = await upsertInvoice(tx, {
-          tenantId: tenant_id,
-          provider: ctx.provider.name,
-          drop: dropPix(ctx),
-          start: inv.period_start,
-          planId: plan.id,
-          amountCents: plan.price_cents,
-          method: 'pix',
-          dueAt: inv.due_at,
-          reuse: inv,
-        });
-        const payerEmail = hadPix ? await payerEmailFor(tx, tenant_id, sub.payer_email) : null;
-        if (payerEmail)
-          next = await issuePix(tx, ctx.provider, next, {
-            payerEmail,
-            planName: plan.name,
-            origin: ctx.origin,
-            now,
-            drop: dropPix(ctx),
-          });
+        const got = await load(tx);
+        const still =
+          got?.inv.pix_attempt === need.invoice.pix_attempt &&
+          got.inv.amount_cents === need.from &&
+          got.plan.price_cents === need.to;
+        if (!still) {
+          if (charge.payment.id !== got?.inv.provider_payment_id) dropPix(ctx)(charge.payment.id);
+          return;
+        }
+        const next = await storePix(
+          tx,
+          ctx.provider,
+          await reprice(ctx, tx, got.inv, need.to),
+          charge,
+          dropPix(ctx),
+        );
         await emitAdminTx(tx, tenant_id, 'billing', next.id);
       }),
     );

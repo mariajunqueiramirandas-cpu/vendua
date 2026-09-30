@@ -310,12 +310,14 @@ async function stopPreapproval(ctx: BillingCtx, id: string | null, status: 'canc
 /**
  * The next period's Pix invoice, once the period is within RENEW_AHEAD_MS of its end (or
  * past it). Null when it isn't time, the plan is ending, or the store pays by card.
+ * `issue: false` leaves the Pix to the caller (the jobs issue it outside the lock).
  */
 export async function ensureRenewal(
   ctx: BillingCtx,
   tx: Sql,
   sub: SubRow,
   now: Date,
+  o: { issue?: boolean } = {},
 ): Promise<InvoiceRow | null> {
   if (sub.method !== 'pix' || sub.cancel_at_period_end || !sub.current_period_end) return null;
   if (sub.status !== 'active' && sub.status !== 'past_due') return null;
@@ -331,7 +333,7 @@ export async function ensureRenewal(
     method: 'pix',
     dueAt: sub.current_period_end,
   });
-  if (inv.status === 'open' && !pixIsLive(inv, now)) {
+  if (o.issue !== false && inv.status === 'open' && !pixIsLive(inv, now)) {
     const payerEmail = await payerEmailFor(tx, sub.tenant_id, sub.payer_email);
     if (payerEmail)
       inv = await issuePix(tx, ctx.provider, inv, {
