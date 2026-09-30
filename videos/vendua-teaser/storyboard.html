@@ -1,0 +1,633 @@
+<!doctype html>
+<html lang="pt-BR">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Venduá teaser — storyboard v1</title>
+    <style>
+      @font-face {
+        font-family: 'Space Grotesk';
+        src: url('assets/fonts/space-grotesk.woff2') format('woff2');
+        font-weight: 300 700;
+      }
+      @font-face {
+        font-family: 'Figtree';
+        src: url('assets/fonts/figtree.woff2') format('woff2');
+        font-weight: 300 900;
+      }
+      :root {
+        --green: #123c32;
+        --lime: #d9f875;
+        --cream: #f7f4ea;
+        --surface: #fffdf8;
+        --muted: #4f6a5e;
+        --after-muted: #b9c6bf;
+        --sky: linear-gradient(180deg, #fff6ea, #fde7d4);
+        --bezel: linear-gradient(150deg, #34413b 0%, #121a16 45%, #0b100d 100%);
+        --display: 'Space Grotesk', system-ui, sans-serif;
+        --body: 'Figtree', system-ui, sans-serif;
+      }
+      * {
+        box-sizing: border-box;
+        margin: 0;
+      }
+      body {
+        background: #e9e4d6;
+        color: var(--green);
+        font-family: var(--body);
+        padding: 48px clamp(16px, 4vw, 56px) 80px;
+      }
+      header {
+        max-width: 1400px;
+        margin: 0 auto 36px;
+        display: flex;
+        flex-wrap: wrap;
+        gap: 12px 24px;
+        align-items: baseline;
+        justify-content: space-between;
+      }
+      h1 {
+        font: 700 40px/1.05 var(--display);
+        letter-spacing: -0.03em;
+      }
+      h1 small {
+        font-size: 0.5em;
+        color: var(--muted);
+        margin-left: 8px;
+        letter-spacing: 0;
+      }
+      .dek {
+        color: var(--muted);
+        font-size: 17px;
+        max-width: 60ch;
+        margin-top: 6px;
+      }
+      .tag {
+        font: 600 14px/1 var(--body);
+        background: var(--green);
+        color: var(--cream);
+        padding: 10px 14px;
+        border-radius: 999px;
+      }
+      .grid {
+        max-width: 1400px;
+        margin: 0 auto;
+        display: grid;
+        grid-template-columns: repeat(auto-fill, minmax(250px, 1fr));
+        gap: 28px 22px;
+      }
+      figure {
+        display: grid;
+        gap: 10px;
+        align-content: start;
+      }
+      /* a cell is the 1080×1920 frame: 1cqw = 10.8 px in the build */
+      .cell {
+        position: relative;
+        aspect-ratio: 9 / 16;
+        container-type: inline-size;
+        overflow: hidden;
+        border-radius: 14px;
+        box-shadow:
+          0 2px 4px rgb(18 60 50 / 0.08),
+          0 12px 32px rgb(18 60 50 / 0.1);
+      }
+      .green {
+        background: var(--green);
+        color: var(--cream);
+      }
+      .sky {
+        background: var(--sky);
+        color: var(--green);
+      }
+      /* stories UI keep-out bands (top 250 px, bottom 340 px) */
+      .cell::after {
+        content: '';
+        position: absolute;
+        inset: 0;
+        pointer-events: none;
+        background:
+          linear-gradient(rgb(255 0 80 / 0.1), rgb(255 0 80 / 0.1)) 0 0 / 100% 23.1cqw no-repeat,
+          linear-gradient(rgb(255 0 80 / 0.1), rgb(255 0 80 / 0.1)) 0 100% / 100% 31.5cqw no-repeat;
+      }
+      .label {
+        display: flex;
+        justify-content: space-between;
+        font: 700 14px/1 var(--display);
+        letter-spacing: -0.01em;
+      }
+      .label span:last-child {
+        font: 500 13px/1 var(--body);
+        color: var(--muted);
+      }
+      .note {
+        font-size: 14px;
+        line-height: 1.45;
+        color: #34463f;
+      }
+      .note b {
+        color: var(--green);
+      }
+      .chip {
+        justify-self: start;
+        font: 600 12px/1 var(--body);
+        border: 1.5px solid rgb(18 60 50 / 0.25);
+        padding: 6px 10px;
+        border-radius: 999px;
+      }
+
+      /* ── shared pieces ─────────────────────────────── */
+      .v {
+        position: absolute;
+        left: 50%;
+        translate: -50% -50%;
+      }
+      .v svg {
+        display: block;
+        width: 100%;
+        height: auto;
+      }
+      .word {
+        position: relative;
+        isolation: isolate;
+        display: inline-block;
+        font: 700 var(--fs) / 0.8 var(--display);
+        letter-spacing: -0.06em;
+        white-space: nowrap;
+        padding-top: 1.2em;
+      }
+      .word .l {
+        position: relative;
+        display: inline-block;
+      }
+      .acute {
+        position: absolute;
+        left: 0.24em;
+        top: 0.01em;
+        width: 0.1em;
+        height: 0.2em;
+        border-radius: 0.05em;
+        background: currentColor;
+        rotate: 38deg;
+      }
+      .peek {
+        position: absolute;
+        z-index: -1;
+        left: 1.02em;
+        bottom: 0.56em;
+        width: 2.1em;
+        height: 1.7em;
+        overflow: clip;
+        mask-image: linear-gradient(
+          to top,
+          transparent 0.02em,
+          rgb(0 0 0 / 0.4) 0.16em,
+          #000 0.43em
+        );
+      }
+      .peek img {
+        position: absolute;
+        left: 0.28em;
+        bottom: -0.3em;
+        width: 1.6em;
+      }
+
+      /* ── 01 Faísca ─────────────────────────────── */
+      #frame-01 .glow {
+        position: absolute;
+        left: 50%;
+        top: 50%;
+        width: 120cqw;
+        aspect-ratio: 1;
+        translate: -50% -50%;
+        background: radial-gradient(closest-side, rgb(217 248 117 / 0.22), transparent 70%);
+      }
+      #frame-01 .ring {
+        position: absolute;
+        left: 50%;
+        top: 50%;
+        width: 74cqw;
+        aspect-ratio: 1;
+        translate: -50% -50%;
+        border-radius: 50%;
+        border: 0.5cqw solid rgb(217 248 117 / 0.45);
+      }
+      #frame-01 .v {
+        top: 50%;
+        width: 40cqw;
+      }
+
+      /* ── 02 O dia ─────────────────────────────── */
+      #frame-02 .stack {
+        position: absolute;
+        left: 8.3cqw;
+        top: 57cqw;
+        font: 700 13.9cqw/1.02 var(--display);
+        letter-spacing: -0.045em;
+      }
+      #frame-02 .stack div:last-child {
+        color: var(--lime);
+      }
+
+      /* ── 03 Na palma da mão ─────────────────────── */
+      #frame-03 h2 {
+        position: absolute;
+        left: 0;
+        right: 0;
+        top: 26cqw;
+        text-align: center;
+        font: 700 9.6cqw/1.02 var(--display);
+        letter-spacing: -0.035em;
+      }
+      .phone {
+        position: absolute;
+        container-type: inline-size;
+        left: 50%;
+        translate: -50% 0;
+        width: 56cqw;
+      }
+      .phone .body {
+        padding: 3.2cqw;
+        border-radius: 16cqw;
+        background: var(--bezel);
+        box-shadow:
+          inset 0 0 0 1.5px rgb(255 255 255 / 0.08),
+          0 8px 16px rgb(18 60 50 / 0.12),
+          0 30px 70px rgb(18 60 50 / 0.22);
+      }
+      .phone .screen {
+        position: relative;
+        overflow: hidden;
+        border-radius: 13cqw;
+        background: var(--cream);
+      }
+      .phone .island {
+        position: absolute;
+        z-index: 2;
+        top: 2.6cqw;
+        left: 50%;
+        width: 30%;
+        height: 7.4cqw;
+        translate: -50% 0;
+        border-radius: 999px;
+        background: #050807;
+      }
+      .phone .status {
+        height: 11cqw;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        padding: 1.4cqw 8% 0 11%;
+        font:
+          600 4.3cqw/1 system-ui,
+          sans-serif;
+        color: var(--green);
+      }
+      .phone .status i {
+        width: 15cqw;
+        height: 3.6cqw;
+        background:
+          linear-gradient(currentColor, currentColor) 0 100% / 1.2cqw 40% no-repeat,
+          linear-gradient(currentColor, currentColor) 1.9cqw 100% / 1.2cqw 65% no-repeat,
+          linear-gradient(currentColor, currentColor) 3.8cqw 100% / 1.2cqw 90% no-repeat,
+          linear-gradient(currentColor, currentColor) 100% 50% / 6.4cqw 100% no-repeat;
+        opacity: 0.9;
+      }
+      .phone img {
+        display: block;
+        width: 100%;
+      }
+      #frame-03 .phone {
+        top: 60cqw;
+      }
+
+      /* ── 04 venduá. ─────────────────────────────── */
+      #frame-04 .name {
+        position: absolute;
+        left: 0;
+        right: 0;
+        top: 40cqw;
+        text-align: center;
+        --fs: 23.1cqw;
+      }
+      #frame-04 .word {
+        translate: -1.5cqw 0;
+      }
+      #frame-04 p {
+        position: absolute;
+        left: 10cqw;
+        right: 10cqw;
+        top: 104cqw;
+        text-align: center;
+        font: 500 4.8cqw/1.28 var(--body);
+        color: var(--muted);
+        text-wrap: balance;
+      }
+
+      /* ── 05 Em breve ─────────────────────────────── */
+      #frame-05 .v {
+        top: 56cqw;
+        width: 20cqw;
+      }
+      #frame-05 .name {
+        position: absolute;
+        left: 0;
+        right: 0;
+        top: 58cqw;
+        text-align: center;
+        --fs: 16cqw;
+      }
+      #frame-05 .name .word {
+        padding-top: 0.3em;
+        translate: -1cqw 0;
+      }
+      .pill {
+        position: absolute;
+        left: 50%;
+        top: 98cqw;
+        translate: -50% 0;
+        display: inline-flex;
+        align-items: center;
+        gap: 0.4em;
+        padding: 0.42em 0.9em 0.46em 0.75em;
+        border-radius: 999px;
+        background: var(--lime);
+        color: var(--green);
+        font: 700 5.9cqw/1 var(--display);
+        letter-spacing: -0.02em;
+        white-space: nowrap;
+      }
+      .pill::before {
+        content: '';
+        width: 0.34em;
+        height: 0.34em;
+        border-radius: 50%;
+        background: var(--green);
+      }
+      #frame-05 .handle {
+        position: absolute;
+        left: 0;
+        right: 0;
+        top: 116cqw;
+        text-align: center;
+        font: 600 4.1cqw/1 var(--body);
+        color: var(--after-muted);
+      }
+
+      /* ── closing cells ─────────────────────────────── */
+      .info {
+        border-radius: 14px;
+        background: var(--surface);
+        padding: 20px;
+        display: grid;
+        gap: 14px;
+        align-content: start;
+        font-size: 14px;
+        line-height: 1.4;
+        box-shadow:
+          0 1px 2px rgb(18 60 50 / 0.06),
+          0 4px 16px rgb(18 60 50 / 0.05);
+      }
+      .info h3 {
+        font: 700 18px/1.1 var(--display);
+        letter-spacing: -0.02em;
+      }
+      .seams {
+        display: grid;
+        grid-template-columns: repeat(30, 1fr);
+        gap: 2px;
+      }
+      .seams span {
+        height: 26px;
+        border-radius: 3px;
+        background: rgb(18 60 50 / 0.1);
+      }
+      .seams span.bar {
+        background: rgb(18 60 50 / 0.22);
+      }
+      .seams span.cut {
+        background: var(--green);
+      }
+      .seams span.hit {
+        background: var(--lime);
+        outline: 1.5px solid var(--green);
+      }
+      .rows {
+        display: grid;
+        gap: 6px;
+      }
+      .rows div {
+        display: grid;
+        grid-template-columns: 52px 1fr;
+        gap: 8px;
+      }
+      .rows b {
+        font-variant-numeric: tabular-nums;
+      }
+      .sw {
+        display: flex;
+        gap: 8px;
+      }
+      .sw span {
+        flex: 1;
+        height: 44px;
+        border-radius: 8px;
+        border: 1px solid rgb(18 60 50 / 0.15);
+        display: grid;
+        place-items: end start;
+        padding: 4px 6px;
+        font-size: 11px;
+      }
+    </style>
+  </head>
+  <body>
+    <header>
+      <div>
+        <h1>Venduá — teaser <small>storyboard v1</small></h1>
+        <p class="dek">
+          A 15-second brand sting for Instagram stories: the V sparks, the day’s work lands word by
+          word, the store rises in a phone, the name springs up with Duá, and “Em breve”.
+        </p>
+      </div>
+      <span class="tag">1080×1920 · 15 s · 120 BPM · 30 beats</span>
+    </header>
+
+    <div class="grid">
+      <!-- 01 -->
+      <figure>
+        <div class="cell green" id="frame-01">
+          <div class="glow"></div>
+          <div class="ring"></div>
+          <div class="v">
+            <svg viewBox="0 0 128 128">
+              <path
+                d="M32 48 L61 88 L98 34"
+                fill="none"
+                stroke="#D9F875"
+                stroke-width="17"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+              />
+            </svg>
+          </div>
+        </div>
+        <div class="label"><span>01 · Faísca</span><span>0.0–2.0 s</span></div>
+        <p class="note">
+          <b>The stroke draws first,</b> bottom-left to top-right over a rising swell; on 1.0 s it
+          slams (1.15 → 1) and the ring bursts outward and fades. Key moment shown: 1.1 s.
+        </p>
+        <span class="chip">seam out: hard cut on 2.0</span>
+      </figure>
+
+      <!-- 02 -->
+      <figure>
+        <div class="cell green" id="frame-02">
+          <div class="stack">
+            <div>Pedidos.</div>
+            <div>Cardápio.</div>
+            <div>Horários.</div>
+            <div>Pix.</div>
+          </div>
+        </div>
+        <div class="label"><span>02 · O dia</span><span>2.0–5.0 s</span></div>
+        <p class="note">
+          <b>One word per beat</b> rises from below and lands lime, then settles to cream as the
+          next arrives (2.0 / 2.5 / 3.0 / 3.5). Holds on 4.0; at 4.5 the stack whips up and out.
+        </p>
+        <span class="chip">seam out: whip up → cream sky</span>
+      </figure>
+
+      <!-- 03 -->
+      <figure>
+        <div class="cell sky" id="frame-03">
+          <h2>Sua loja viva<br />na palma da mão.</h2>
+          <div class="phone">
+            <div class="body">
+              <div class="screen">
+                <span class="island"></span>
+                <div class="status"><span>9:41</span><i></i></div>
+                <img src="assets/inicio-creme-750.webp" alt="" />
+              </div>
+            </div>
+          </div>
+        </div>
+        <div class="label"><span>03 · Na palma da mão</span><span>5.0–8.0 s</span></div>
+        <p class="note">
+          <b>The headline lands in two halves</b> (5.0, 5.5); the phone rises and lands on 6.0 with
+          Nena’s real home screen. 7.0–8.0 the camera pushes into the phone under a riser.
+        </p>
+        <span class="chip">seam out: push-in, silence, cut on the drop</span>
+      </figure>
+
+      <!-- 04 -->
+      <figure>
+        <div class="cell sky" id="frame-04">
+          <div class="name">
+            <span class="word"
+              ><span class="peek"><img src="assets/dua-ola.webp" alt="" /></span
+              ><span class="l">v</span><span class="l">e</span><span class="l">n</span
+              ><span class="l">d</span><span class="l">u</span
+              ><span class="l">a<i class="acute"></i></span><span class="l">.</span></span
+            >
+          </div>
+          <p>Para doceiras, marmitarias, hamburguerias e padarias.</p>
+        </div>
+        <div class="label"><span>04 · venduá.</span><span>8.0–12.0 s</span></div>
+        <p class="note">
+          <b>Letters spring up one per eighth note</b> from below the baseline (8.0 → 9.25), the
+          accent drops in on 9.5, the dot on 10.0. Duá climbs out behind the name and waves; the
+          line arrives word by word.
+        </p>
+        <span class="chip">seam out: hard cut on 12.0 to green</span>
+      </figure>
+
+      <!-- 05 -->
+      <figure>
+        <div class="cell green" id="frame-05">
+          <div class="v">
+            <svg viewBox="0 0 128 128">
+              <path
+                d="M32 48 L61 88 L98 34"
+                fill="none"
+                stroke="#D9F875"
+                stroke-width="17"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+              />
+            </svg>
+          </div>
+          <div class="name">
+            <span class="word"
+              >vendu<span class="l">a<i class="acute"></i></span><span class="l">.</span></span
+            >
+          </div>
+          <span class="pill">Em breve</span>
+          <div class="handle">@vendua.digital</div>
+        </div>
+        <div class="label"><span>05 · Em breve</span><span>12.0–15.0 s</span></div>
+        <p class="note">
+          <b>The pill pops first</b> on 12.0 with a shimmer, the V and name settle around it, the
+          handle arrives on 12.5; the chord rings out and everything eases down by 15.0.
+        </p>
+        <span class="chip">end: fade to green</span>
+      </figure>
+
+      <!-- seam map -->
+      <div class="info">
+        <h3>Beat map</h3>
+        <div class="seams" aria-label="30 beats, 0.5 s each">
+          <span class="bar"></span><span class="hit"></span><span class="bar cut"></span
+          ><span class="hit"></span><span class="bar hit"></span><span class="hit"></span
+          ><span class="bar"></span><span class="hit"></span><span class="bar"></span
+          ><span class="cut"></span><span class="bar cut"></span><span class="hit"></span
+          ><span class="bar hit"></span><span></span><span class="bar hit"></span
+          ><span class="hit"></span><span class="bar cut hit"></span><span class="hit"></span
+          ><span class="bar hit"></span><span class="hit"></span><span class="bar hit"></span
+          ><span class="hit"></span><span class="bar"></span><span></span
+          ><span class="bar cut hit"></span><span class="hit"></span><span class="bar"></span
+          ><span></span><span class="bar"></span><span></span>
+        </div>
+        <div class="rows">
+          <div><b>0.0</b><span>swell + V stroke draws</span></div>
+          <div><b>1.0</b><span>boom + crash · V slams, ring</span></div>
+          <div><b>2.0</b><span>cut · groove starts · “Pedidos.”</span></div>
+          <div><b>2.5–3.5</b><span>blips up the scale · Cardápio / Horários / Pix</span></div>
+          <div><b>4.5</b><span>whoosh · whip up</span></div>
+          <div><b>5.0 / 5.5</b><span>headline halves</span></div>
+          <div><b>6.0</b><span>thump · phone lands</span></div>
+          <div><b>7.0–7.9</b><span>snare roll, riser, push-in, then silence</span></div>
+          <div><b>8.0</b><span>the drop · letters 8.0 → 9.25</span></div>
+          <div><b>9.5 / 10.0</b><span>ting: accent · impact: dot, Duá climbs out</span></div>
+          <div><b>12.0</b><span>cut · finale hit · “Em breve”</span></div>
+          <div><b>12.5</b><span>chime · @vendua.digital</span></div>
+          <div><b>15.0</b><span>chord tail ends</span></div>
+        </div>
+        <p class="note">Dark bars = bar lines (every 2 s), lime = a hit, green = a cut.</p>
+      </div>
+
+      <!-- tokens -->
+      <div class="info">
+        <h3>Tokens</h3>
+        <div class="sw">
+          <span style="background: #123c32; color: #f7f4ea">green</span>
+          <span style="background: #d9f875">lime</span>
+          <span style="background: #f7f4ea">cream</span>
+          <span style="background: linear-gradient(#fff6ea, #fde7d4)">sky</span>
+        </div>
+        <div class="rows">
+          <div><b>Name</b><span>Space Grotesk 700, −0.06em, lowercase</span></div>
+          <div><b>Display</b><span>Space Grotesk 700, −0.04em</span></div>
+          <div><b>Body</b><span>Figtree 500–600</span></div>
+        </div>
+        <p class="note">
+          <b>Bans:</b> prices, sign-up or contact CTAs, invented features, “grátis”, “sem taxa”,
+          “sob medida”, all-caps labels, a single italic word in a headline, a mirrored or recolored
+          Duá, Duá directly on green.
+        </p>
+        <p class="note">
+          Pink bands on each frame = Instagram UI keep-out (top 250 px, bottom 340 px).
+        </p>
+      </div>
+    </div>
+  </body>
+</html>
