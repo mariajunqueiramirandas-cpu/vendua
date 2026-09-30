@@ -2,7 +2,7 @@ import type { Hono } from 'hono';
 import { streamSSE } from 'hono/streaming';
 import type { AdminEvent, AdminHub } from '../admin/live.ts';
 import type { PresenceTracker } from './presence.ts';
-import { HttpError } from '../platform/http.ts';
+import { HttpError, clientIp } from '../platform/http.ts';
 import type { Tenant } from '../platform/tenancy.ts';
 
 // Public, payload-free hints behind `GET /storefront/v1/events`: "what you cached may be
@@ -37,7 +37,11 @@ export function storefrontTopics(e: AdminEvent): StorefrontTopic[] {
   }
 }
 
+// one visitor opening tabs is a handful; a script opening hundreds shouldn't take the process cap
+export const MAX_STREAMS_PER_IP = 20;
+
 let open = 0;
+const openByIp = new Map<string, number>();
 export function storefrontStreamCount() {
   return open;
 }
@@ -46,12 +50,18 @@ export function mountStorefrontEvents(
   storefront: Hono<{ Variables: { tenant: Tenant } }>,
   hub: AdminHub,
   presence: PresenceTracker,
+  ipFlags: { trustForwardedFor?: boolean; proxyHops?: number } = {},
 ) {
   storefront.get('/events', async (c) => {
     const tenant = c.get('tenant');
     if (open >= MAX_STOREFRONT_STREAMS)
       throw new HttpError(503, 'STREAM_UNAVAILABLE', 'too many live connections, poll instead');
+    const ip = clientIp(c, ipFlags);
+    const mine = openByIp.get(ip) ?? 0;
+    if (mine >= MAX_STREAMS_PER_IP)
+      throw new HttpError(429, 'RATE_LIMITED', 'too many live connections from this address');
     open++;
+    openByIp.set(ip, mine + 1);
     const res = streamSSE(c, async (stream) => {
       let finish!: () => void;
       const done = new Promise<void>((r) => (finish = r));
@@ -82,6 +92,9 @@ export function mountStorefrontEvents(
         await done;
       } finally {
         open--;
+        const left = (openByIp.get(ip) ?? 1) - 1;
+        if (left > 0) openByIp.set(ip, left);
+        else openByIp.delete(ip);
         leave();
         unsubscribe();
         clearInterval(beat);
