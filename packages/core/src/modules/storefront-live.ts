@@ -37,8 +37,9 @@ export function storefrontTopics(e: AdminEvent): StorefrontTopic[] {
   }
 }
 
-// one visitor opening tabs is a handful; a script opening hundreds shouldn't take the process cap
-export const MAX_STREAMS_PER_IP = 20;
+// a script opening hundreds shouldn't take the process cap, but mobile carriers put many
+// shoppers behind one address (CGNAT) — and a refused stream only falls back to polling
+export const MAX_STREAMS_PER_IP = 100;
 
 let open = 0;
 const openByIp = new Map<string, number>();
