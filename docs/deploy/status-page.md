@@ -5,8 +5,12 @@ reports ([16](../architecture/16-operations-and-incidents.md)).
 
 ## How it works
 
-`.github/workflows/status.yml` runs every 5 minutes (GitHub may start a scheduled run several
-minutes late when it's busy). Each run:
+`.github/workflows/status.yml` runs every 5 minutes as a chain: each run ends by queuing the next
+one (`gh workflow run`, allowed with the workflow's own token) about 5 minutes after it started.
+GitHub's own cron is best-effort (a `*/5` schedule went hours without firing), so the schedule
+(:07 and :37) only restarts the chain if a run dies without queuing the next. The concurrency
+group keeps it to one run plus one waiting, so a chain run and a cron run collapse into one.
+Each run:
 
 1. reads the published `history.json` (the page's memory: 90 days of results per part, and the
    last incidents);
@@ -56,5 +60,9 @@ Optional repository variables `STATUS_STORE_HOST`, `STATUS_ADMIN_ORIGIN` and
 - Posting, editing or resolving an incident in the CRM reaches the page on the next run.
 - A failed run leaves the last published page up. The history is never reset by an error: a run
   that can't read `history.json` (anything but a 404) fails instead of starting over.
-- GitHub disables scheduled workflows in a repository with no activity for 60 days. If the page
-  says it hasn't been updated, check **Actions → status**.
+- To stop it: set `STATUS_PAGE` to anything but `on` (the next run is skipped and queues
+  nothing), or disable the workflow in **Actions → status → ⋯ → Disable workflow**.
+- If the page says it hasn't been updated, check **Actions → status**: a run killed by its
+  timeout doesn't queue the next, and the chain restarts at the next :07 or :37 the cron fires.
+  GitHub also disables scheduled workflows in a repository with no activity for 60 days; the
+  chain keeps running, but it has no restarter then.

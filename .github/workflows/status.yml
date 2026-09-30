@@ -4,9 +4,12 @@ name: status
 # page to GitHub Pages, off the VPS (docs/architecture/16). Off until the repo variable
 # STATUS_PAGE is `on` — setup in docs/deploy/status-page.md.
 
+# GitHub's cron is best-effort (a */5 schedule can go hours without firing), so each run queues
+# the next one ~5 minutes after it started; the schedule only restarts that chain if it breaks.
+# Stop it all by setting STATUS_PAGE to anything but `on`.
 on:
   schedule:
-    - cron: '*/5 * * * *'
+    - cron: '7,37 * * * *'
   workflow_dispatch:
   push:
     branches: [main]
@@ -15,7 +18,8 @@ on:
 permissions:
   contents: read
 
-# runs never overlap: each one reads the history the previous one published
+# runs never overlap (each one reads the history the previous one published), and at most one
+# waits, so a chain run and a cron run collapse into one
 concurrency:
   group: status-page
   cancel-in-progress: false
@@ -24,15 +28,17 @@ jobs:
   publish:
     if: vars.STATUS_PAGE == 'on'
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 10
     permissions:
       contents: read
+      actions: write # queue the next run
       pages: write
       id-token: write
     environment:
       name: github-pages
       url: ${{ steps.deploy.outputs.page_url }}
     steps:
+      - run: echo "STARTED=$(date +%s)" >> "$GITHUB_ENV"
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           sparse-checkout: apps/status
@@ -55,3 +61,13 @@ jobs:
           path: apps/status/build
       - id: deploy
         uses: actions/deploy-pages@368f82528645a54fb793d4d04e342629a3f51346 # v5.0.1
+      # after a failed run too: one bad run must not stop the page (the last good one stays up)
+      - name: Queue the next run
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+        run: |
+          left=$(( STARTED + 290 - $(date +%s) ))
+          if [ "$left" -gt 0 ]; then sleep "$left"; fi
+          gh workflow run status.yml --repo "$REPO" --ref main
