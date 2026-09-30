@@ -1,5 +1,6 @@
 import type { Sql } from '../platform/db.ts';
 import { HttpError } from '../platform/http.ts';
+import { localParts, type LocalParts } from '../platform/tz.ts';
 import type { ComboSlot, ComboSlotItem } from './combos.ts';
 
 /** a kit pick outside its own schedule reads sold out and carries the label */
@@ -68,24 +69,16 @@ export function parseAvailabilitySchedule(v: unknown): AvailabilitySchedule | nu
   return { windows, outside };
 }
 
-const WEEKDAY: Record<string, number> = { Sun: 0, Mon: 1, Tue: 2, Wed: 3, Thu: 4, Fri: 5, Sat: 6 };
-
 /** local weekday + 'HH:MM' in the store's timezone */
 function localClock(now: Date, tz: string): { day: number; hhmm: string } {
-  let parts: Intl.DateTimeFormatPart[];
+  let p: LocalParts;
   try {
-    parts = new Intl.DateTimeFormat('en-US', {
-      timeZone: tz,
-      weekday: 'short',
-      hour: '2-digit',
-      minute: '2-digit',
-      hourCycle: 'h23',
-    }).formatToParts(now);
+    p = localParts(now, tz);
   } catch {
     return localClock(now, 'America/Sao_Paulo');
   }
-  const get = (t: string) => parts.find((p) => p.type === t)?.value ?? '';
-  return { day: WEEKDAY[get('weekday')] ?? 0, hhmm: `${get('hour')}:${get('minute')}` };
+  const pad = (n: number) => String(n).padStart(2, '0');
+  return { day: p.weekday, hhmm: `${pad(p.hour)}:${pad(p.minute)}` };
 }
 
 export function scheduleOpen(
@@ -287,17 +280,20 @@ export async function getCatalog(
   tenantId: string,
   now = new Date(),
 ): Promise<CategoryWithProducts[]> {
-  const categories = await tx<CategoryRow[]>`
-    select id, slug, name, sort from categories
-    where tenant_id = ${tenantId} order by sort, name
-  `;
-  const products = await tx<ProductRow[]>`
-    select ${productColumns(tx)}
-    from products p
-    where p.tenant_id = ${tenantId} and p.status != 'archived'
-    order by p.name
-  `;
-  const tz = await storeTimezone(tx, tenantId);
+  // independent reads go out together — postgres.js pipelines them on the tx's connection
+  const [categories, products, tz] = await Promise.all([
+    tx<CategoryRow[]>`
+      select id, slug, name, sort from categories
+      where tenant_id = ${tenantId} order by sort, name
+    `,
+    tx<ProductRow[]>`
+      select ${productColumns(tx)}
+      from products p
+      where p.tenant_id = ${tenantId} and p.status != 'archived'
+      order by p.name
+    `,
+    storeTimezone(tx, tenantId),
+  ]);
   const listed = products.filter((p) => !scheduled(p, now, tz)?.hidden);
   return categories.map((cat) => ({
     id: cat.id,
@@ -345,50 +341,57 @@ async function attachDetail(
   const product = rows[0];
   if (!product) return null;
   const lock = opts.forUpdate ? tx`for update` : tx``;
-  const groups = await tx<
-    {
-      id: string;
-      name: string;
-      required: boolean;
-      min_select: number;
-      max_select: number;
-      sort: number;
-    }[]
-  >`
-    select id, name, required, min_select, max_select, sort from modifier_groups
-    where tenant_id = ${tenantId} and product_id = ${product.id} order by sort, name ${lock}
-  `;
-  const modifiers = await tx<
-    {
-      id: string;
-      group_id: string;
-      name: string;
-      price_delta_cents: number;
-      status: 'active' | 'sold_out';
-      sort: number;
-    }[]
-  >`
-    select m.id, m.group_id, m.name, m.price_delta_cents, m.status, m.sort
-    from modifiers m join modifier_groups g on g.id = m.group_id
-    where m.tenant_id = ${tenantId} and g.product_id = ${product.id}
-    order by m.sort, m.name ${lock}
-  `;
-  const gallery = await tx<MediaItem[]>`
-    select url, alt, width, height from product_media
-    where tenant_id = ${tenantId} and product_id = ${product.id} order by sort, id
-  `;
+  const [groups, modifiers, gallery, tz] = await Promise.all([
+    tx<
+      {
+        id: string;
+        name: string;
+        required: boolean;
+        min_select: number;
+        max_select: number;
+        sort: number;
+      }[]
+    >`
+      select id, name, required, min_select, max_select, sort from modifier_groups
+      where tenant_id = ${tenantId} and product_id = ${product.id} order by sort, name ${lock}
+    `,
+    tx<
+      {
+        id: string;
+        group_id: string;
+        name: string;
+        price_delta_cents: number;
+        status: 'active' | 'sold_out';
+        sort: number;
+      }[]
+    >`
+      select m.id, m.group_id, m.name, m.price_delta_cents, m.status, m.sort
+      from modifiers m join modifier_groups g on g.id = m.group_id
+      where m.tenant_id = ${tenantId} and g.product_id = ${product.id}
+      order by m.sort, m.name ${lock}
+    `,
+    tx<MediaItem[]>`
+      select url, alt, width, height from product_media
+      where tenant_id = ${tenantId} and product_id = ${product.id} order by sort, id
+    `,
+    storeTimezone(tx, tenantId),
+  ]);
   // a 'hidden' product still opens from a shared link: it reads sold out with its label
-  const summary = toSummary(product, new Date(), await storeTimezone(tx, tenantId));
-  const waitlistCount =
+  const summary = toSummary(product, new Date(), tz);
+  const [waitlistCount, comboSlots] = await Promise.all([
     summary.status === 'sold_out'
-      ? (
-          await tx<{ n: number }[]>`
-            select count(*)::int as n from notify_requests
-            where tenant_id = ${tenantId} and subject = 'product' and product_id = ${product.id}
-              and notified_at is null
-          `
-        )[0]!.n
-      : 0;
+      ? tx<{ n: number }[]>`
+          select count(*)::int as n from notify_requests
+          where tenant_id = ${tenantId} and subject = 'product' and product_id = ${product.id}
+            and notified_at is null
+        `.then((r) => r[0]!.n)
+      : 0,
+    product.kind === 'combo'
+      ? loadComboSlots(tx, tenantId, product.id, {
+          ...(opts.hideScheduled ? { hideScheduled: true } : {}),
+        })
+      : [],
+  ]);
   return {
     ...summary,
     modifierGroups: groups.map((g) => ({
@@ -407,12 +410,7 @@ async function attachDetail(
         })),
     })),
     gallery: [...gallery],
-    comboSlots:
-      product.kind === 'combo'
-        ? await loadComboSlots(tx, tenantId, product.id, {
-            ...(opts.hideScheduled ? { hideScheduled: true } : {}),
-          })
-        : [],
+    comboSlots,
     waitlistCount,
   };
 }

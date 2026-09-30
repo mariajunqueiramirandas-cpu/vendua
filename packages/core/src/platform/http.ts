@@ -444,7 +444,7 @@ export async function boundedText(c: Context, max = MAX_BODY_BYTES): Promise<str
   }
   const raw = await c.req.text();
   // byte length, not string.length — multibyte input would slip the cap
-  if (new TextEncoder().encode(raw).byteLength > max) {
+  if (Buffer.byteLength(raw, 'utf8') > max) {
     throw new HttpError(413, 'PAYLOAD_TOO_LARGE', `body exceeds ${max} bytes`);
   }
   return raw;

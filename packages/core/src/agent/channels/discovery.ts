@@ -772,6 +772,10 @@ export async function assertFetchableResolved(url: string): Promise<URL> {
   return target;
 }
 
+const TINYFISH_SEARCH_TIMEOUT_MS = 20_000;
+// above per_url_timeout_ms so the sidecar's own per-page deadline fires first
+const TINYFISH_FETCH_TIMEOUT_MS = 60_000;
+
 function tinyfish(integration: IntegrationRow): DiscoveryProvider {
   const secretRef = integration.secret_ref;
   const apiKey = (secretRef && process.env[secretRef]) ?? process.env.TINYFISH_API_KEY;
@@ -785,7 +789,10 @@ function tinyfish(integration: IntegrationRow): DiscoveryProvider {
       u.searchParams.set('purpose', purpose);
       u.searchParams.set('language', 'pt-BR');
       u.searchParams.set('location', 'BR');
-      const res = await fetch(u, { headers: { 'x-api-key': apiKey } });
+      const res = await fetch(u, {
+        headers: { 'x-api-key': apiKey },
+        signal: AbortSignal.timeout(TINYFISH_SEARCH_TIMEOUT_MS),
+      });
       if (!res.ok)
         throw new Error(`tinyfish search ${res.status}: ${(await res.text()).slice(0, 200)}`);
       const data = (await res.json()) as {
@@ -825,6 +832,7 @@ function tinyfish(integration: IntegrationRow): DiscoveryProvider {
           ...(purpose.trim() ? { purpose: purpose.slice(0, 2000) } : {}),
           per_url_timeout_ms: 45_000,
         }),
+        signal: AbortSignal.timeout(TINYFISH_FETCH_TIMEOUT_MS),
       });
       if (!res.ok)
         throw new Error(`tinyfish fetch ${res.status}: ${(await res.text()).slice(0, 200)}`);

@@ -47,8 +47,9 @@ model, migrations, tokens, compat matrix), `packages/loader` (`v.js`), `packages
 - Some files are huge: `packages/core/src/agent/runner.ts`, `agent/tools.ts` and `src/app.ts`
   (~100 KB each), `test/agent-reclaim.test.ts` (~200 KB). Grep for the symbol and Read a
   line range — never the whole file.
-- `.claude/settings.json` blocks reading `bun.lock` and build output (`dist/`, `qa-report/`)
-  and runs prettier on every file Claude writes.
+- `.claude/settings.json` blocks reading build output (`dist/`, `qa-report/`) and runs
+  prettier on every file Claude writes. `bun.lock` is ~120 KB: inspect it with `git diff`
+  or a grep, never a whole-file Read.
 - `site/` is the marketing site: read `site/README.md` first. Its images are real admin
   screens captured by `site/scripts/assets.ts`, never hand-drawn UI, and the build fails on
   token drift from the admin or on banned copy.

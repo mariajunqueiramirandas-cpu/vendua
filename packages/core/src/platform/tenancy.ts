@@ -1,4 +1,5 @@
 import type { Sql } from './db.ts';
+import { log } from './log.ts';
 import { slugFromStoreHost } from './store-origin.ts';
 
 export interface Tenant {
@@ -15,6 +16,9 @@ export interface Tenant {
 const CACHE_MAX = 10_000;
 // a miss is cached briefly — enough to absorb a burst, short enough that random Hosts churn out
 const MISS_TTL_MS = 5_000;
+// a hit past its TTL is still served for this long while one lookup refreshes it behind the
+// request — no storefront request waits on the tenant query once a host has been seen
+const STALE_MAX_MS = 5 * 60_000;
 // RFC 1035 name (≤253) or a bracketed IPv6 literal, optional port
 const HOST_RE = /^(?:[a-z0-9_](?:[a-z0-9_.-]{0,252})|\[[0-9a-f:.]{2,45}\])(?::\d{1,5})?$/;
 
@@ -25,6 +29,8 @@ export function validHost(host: string): boolean {
 
 export class TenantResolver {
   private cache = new Map<string, { tenant: Tenant | null; at: number }>();
+  // one lookup per host at a time: a burst on a cold or expiring host shares it
+  private inflight = new Map<string, Promise<Tenant | null>>();
 
   constructor(
     private sql: Sql,
@@ -38,13 +44,31 @@ export class TenantResolver {
     const host = hostHeader.trim().toLowerCase();
     if (!validHost(host)) return null;
     const cached = this.cache.get(host);
-    if (
-      cached &&
-      Date.now() - cached.at < (cached.tenant ? this.ttlMs : Math.min(this.ttlMs, MISS_TTL_MS))
-    ) {
-      return cached.tenant;
+    if (cached) {
+      const age = Date.now() - cached.at;
+      if (age < (cached.tenant ? this.ttlMs : Math.min(this.ttlMs, MISS_TTL_MS))) {
+        return cached.tenant;
+      }
+      if (cached.tenant && age < STALE_MAX_MS) {
+        this.lookup(host).catch((err) =>
+          log.warn({ mod: 'tenancy', err, host }, 'tenant refresh failed'),
+        );
+        return cached.tenant;
+      }
     }
+    return this.lookup(host);
+  }
 
+  private lookup(host: string): Promise<Tenant | null> {
+    let pending = this.inflight.get(host);
+    if (!pending) {
+      pending = this.query(host).finally(() => this.inflight.delete(host));
+      this.inflight.set(host, pending);
+    }
+    return pending;
+  }
+
+  private async query(host: string): Promise<Tenant | null> {
     const hostname = host.split(':')[0] ?? host;
     const rows = await this.sql<Tenant[]>`
       select t.id, t.slug, t.name, t.status

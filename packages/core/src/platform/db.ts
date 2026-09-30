@@ -7,10 +7,15 @@ export type Sql = postgres.Sql;
 
 const dbLog = log.child({ mod: 'db' });
 
+const poolMax = Number(process.env.DB_POOL_MAX) || 10;
+
 export function createSql(url: string): Sql {
   // route NOTICEs through pino — the default onnotice breaks stdout's JSON-lines contract
   return postgres(url, {
-    max: 10,
+    max: poolMax,
+    // an unreachable DB fails the request in seconds instead of holding it for the 30s default
+    connect_timeout: 10,
+    connection: { application_name: 'vendua-core' },
     onnotice: (n) => dbLog.debug({ code: n.code, message: n.message }, 'notice'),
   });
 }

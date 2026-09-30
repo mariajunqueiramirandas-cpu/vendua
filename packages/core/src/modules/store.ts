@@ -1,3 +1,5 @@
+import { localParts as zonedParts } from '../platform/tz.ts';
+
 export interface WeeklyWindow {
   /** Days of week, 0=Sunday .. 6=Saturday. */
   days: number[];
@@ -103,33 +105,13 @@ function localParts(
   instant: Date,
   tz: string,
 ): { day: number; minutes: number; seconds: number; date: string } {
-  const parts = new Intl.DateTimeFormat('en-US', {
-    timeZone: tz,
-    year: 'numeric',
-    month: '2-digit',
-    day: '2-digit',
-    weekday: 'short',
-    hour: '2-digit',
-    minute: '2-digit',
-    second: '2-digit',
-    hourCycle: 'h23',
-  }).formatToParts(instant);
-  const get = (type: string) => parts.find((p) => p.type === type)?.value ?? '';
-  const dayMap: Record<string, number> = {
-    Sun: 0,
-    Mon: 1,
-    Tue: 2,
-    Wed: 3,
-    Thu: 4,
-    Fri: 5,
-    Sat: 6,
-  };
-  const day = dayMap[get('weekday')] ?? 0;
+  const p = zonedParts(instant, tz);
+  const pad = (n: number) => String(n).padStart(2, '0');
   return {
-    day,
-    minutes: Number(get('hour')) * 60 + Number(get('minute')),
-    seconds: Number(get('second')),
-    date: `${get('year')}-${get('month')}-${get('day')}`,
+    day: p.weekday,
+    minutes: p.minutes,
+    seconds: p.second,
+    date: `${p.year}-${pad(p.month)}-${pad(p.day)}`,
   };
 }
 

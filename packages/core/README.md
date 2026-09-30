@@ -64,4 +64,5 @@ curl -H 'Host: quero-pudim.localhost' localhost:8787/storefront/v1/surfaces
 - Order transitions exist (`modules/orders.ts`) but no admin surface consumes
   them yet — exercising them is a merchant-admin concern.
 - `SESSION_SECRET`, `DATABASE_URL`, `MIGRATION_DATABASE_URL`, `PORT` are env
-  vars; dev defaults are in `src/index.ts`.
+  vars; dev defaults are in `src/index.ts`. `DB_POOL_MAX` sizes the Postgres pool
+  per process (default 10).

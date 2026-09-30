@@ -26,6 +26,9 @@ export type AdminTopic =
 
 const liveLog = log.child({ mod: 'admin-live' });
 
+const LISTEN_RETRY_MIN_MS = 1_000;
+const LISTEN_RETRY_MAX_MS = 30_000;
+
 /** Delivered on commit — a rolled-back change never wakes a stream. */
 export async function emitAdminTx(tx: Sql, tenantId: string, topic: AdminTopic, id = '') {
   await tx`select pg_notify(${ADMIN_CHANNEL}, ${`${tenantId}|${topic}|${id}`})`;
@@ -40,6 +43,8 @@ export class AdminHub {
   private listeners = new Map<string, Set<(e: AdminEvent) => void>>();
   private global = new Set<(tenantId: string, e: AdminEvent) => void>();
   private started: Promise<void> | null = null;
+  private retryTimer: ReturnType<typeof setTimeout> | null = null;
+  private retryMs = LISTEN_RETRY_MIN_MS;
 
   constructor(private sql: Sql) {}
 
@@ -60,12 +65,29 @@ export class AdminHub {
             for (const fn of set) fn({ topic: 'store', id: 'resync' });
         },
       )
-      .then(() => undefined)
+      .then(() => {
+        this.retryMs = LISTEN_RETRY_MIN_MS;
+        if (this.retryTimer) clearTimeout(this.retryTimer);
+        this.retryTimer = null;
+      })
       .catch((err) => {
         liveLog.error({ err }, 'admin LISTEN failed — streams fall back to their recheck');
         this.started = null;
+        this.scheduleRetry();
       });
     return this.started;
+  }
+
+  // onAny listeners (push) have no later subscribe() to retry for them
+  private scheduleRetry() {
+    if (this.retryTimer) return;
+    const ms = this.retryMs;
+    this.retryMs = Math.min(ms * 2, LISTEN_RETRY_MAX_MS);
+    this.retryTimer = setTimeout(() => {
+      this.retryTimer = null;
+      void this.ensure();
+    }, ms);
+    this.retryTimer.unref?.();
   }
 
   /** Every tenant's events — background workers (push), never request handlers. */

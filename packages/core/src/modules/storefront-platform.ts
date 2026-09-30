@@ -458,10 +458,12 @@ export async function ingestEventsTx(tx: Sql, tenantId: string, body: unknown): 
     if (JSON.stringify(props).length > 2048) continue;
     rows.push({ name: ev.name, at: new Date(at), props: props as Record<string, unknown> });
   }
-  for (const r of rows)
+  // one statement for the whole beacon, not a round trip per event
+  if (rows.length)
     await tx`
       insert into analytics_events (tenant_id, name, at, session_id, props)
-      values (${tenantId}, ${r.name}, ${r.at}, ${sessionId}, ${tx.json(r.props as never)})
+      select ${tenantId}, r.name, r.at, ${sessionId}, r.props
+      from jsonb_to_recordset(${tx.json(rows as never)}) as r(name text, at timestamptz, props jsonb)
     `;
   return rows.length;
 }
