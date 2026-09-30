@@ -10,8 +10,8 @@
 | 1 — Storefront factory        | ✅ Done  | Contract frozen, conformance, CLI, fleet isolation, Founder CRM — which has since grown well past its v0 scope (see below)                                                                                                                                 |
 | 1b — Kernel v1 + updatability | ✅ Done  | Kernel 1.1.1 on Contract 2; every in-repo storefront received a Kernel minor, a template migration and a Contract-major rehearsal untouched ([fleet runs](fleet-runs/README.md))                                                                           |
 | 2 — Commerce completeness     | ✅ Done  | Order lifecycle, catalog depth, growth surfaces — Core migration 0051 + Kernel 1.2; the Quero Pudim golden runs with zero workarounds ([below](#phase-2--commerce-completeness-weeks-812-))                                                                |
-| A — Merchant admin            | 🟨 Focus | All software built (migrations 0052–0056, [ADR 0020](adr/0020-merchant-identity.md)): every area incl. Mercado Pago, the plan and signup; open: sign-offs, usability sessions and the milestone exits — [`merchant-admin.md`](merchant-admin.md)           |
-| 3 — Payments + signup         | 🟨 Built | Mercado Pago payments + plan billing + self-serve signup ([ADR 0021](adr/0021-self-serve-signup-and-plan-billing.md)); exit waits on production MP credentials and a real paid order                                                                       |
+| A — Merchant admin            | ✅ Done  | Every area incl. Mercado Pago, the plan and signup (migrations 0052–0056, [ADR 0020](adr/0020-merchant-identity.md)); milestones A0–A6 closed 2026-09-30 — [`merchant-admin.md`](merchant-admin.md)                                                        |
+| 3 — Payments + signup         | ✅ Done  | Mercado Pago payments + plan billing + self-serve signup ([ADR 0021](adr/0021-self-serve-signup-and-plan-billing.md)); exit met 2026-09-30                                                                                                                 |
 | 4 — First tenant operated     | 🟨 Built | Edge v1, Control Plane v0 (releases, pointer-flip deployments, probes, incidents), provisioner for signups and CRM leads — Core migration 0064, Kernel 1.10, [ADR 0022](adr/0022-control-plane-v0-and-edge.md); exit waits on a real merchant's paid order |
 | 5–8 — Fleet loop → scale      | ⬜ Open  | Blocked on 2–4 having a fleet to operate                                                                                                                                                                                                                   |
 
@@ -79,7 +79,7 @@ first store are a real paid order, a merchant running the store from the
 admin, and provision/promote/rollback through the Control Plane.
 
 **Priority call (2026-09-27): the merchant admin is its own track and the
-current focus** ([Track A](#track-a--merchant-admin-the-current-focus),
+current focus** ([Track A](#track-a--merchant-admin-),
 plan in [`merchant-admin.md`](merchant-admin.md)). It is the product a store
 owner touches every day, so it ships complete — not as an MVP — and is held
 to a higher design bar than the CRM: consumer-grade, phone-first, the
@@ -379,7 +379,7 @@ How each landed (Core migration `0051_commerce_completeness.sql`, Kernel 1.2):
   `2026-09-loyalty-teaser-on-product`; and a guard test that keeps Core's
   storefront error codes in the Kernel's `ERROR_CODES`.
 
-## Track A — Merchant admin (the current focus)
+## Track A — Merchant admin ✅
 
 Goal: a store owner runs their whole business from a phone, with no staff,
 in an app they'd show to another merchant. The full plan (design bar, the
@@ -412,22 +412,20 @@ twelve areas, the platform work and exit criteria per milestone) lives in
 Exit: A1–A6 met. **Stage gate: First store** needs A1–A3; the rest lands
 before the Pilot cohort.
 
-**Status (2026-09-30):** all the software is built, verified against the live
-stack (screenshots at phone and desktop, both themes) and in CI — including the
-money screens (A3), the plan and signup (A6), and every gap the audit found
-([What closed the gaps](merchant-admin.md#what-closed-the-gaps)). No milestone
-has closed: each waits on its human exit (sign-offs, commissioned art, usability
-sessions, a real day of orders, a real paid order).
+**Status (2026-09-30): done.** All the software is built, verified against the
+live stack (screenshots at phone and desktop, both themes) and in CI — including
+the money screens (A3), the plan and signup (A6), and every gap the audit found
+([What closed the gaps](merchant-admin.md#what-closed-the-gaps)) — and the team
+closed milestones A0–A6, human exits included, on 2026-09-30.
 
 ## Phase 3 — Payments + self-serve signup (weeks 12–16)
 
 Goal: money moves through the platform: shoppers pay merchants, and merchants
 pay Venduá.
 
-**Status (2026-09-30): built** (Core migrations 0054–0056, Kernel 1.7,
-[ADR 0021](adr/0021-self-serve-signup-and-plan-billing.md)). The software is in;
-the exit needs a real paid order on a live store, which waits for Venduá's
-Mercado Pago application credentials in production.
+**Status (2026-09-30): done** (Core migrations 0054–0056, Kernel 1.7,
+[ADR 0021](adr/0021-self-serve-signup-and-plan-billing.md)). The team closed the
+exit on 2026-09-30.
 
 - [x] Mercado Pago OAuth + PIX + card + webhook-driven order state machine
       ([13](architecture/13-payments.md)): stores connect their own MP account
@@ -446,7 +444,7 @@ Mercado Pago application credentials in production.
       after TLS; site requests go to staff (the generation pipeline takes them in
       Phase 6).
 - The merchant admin moved to its own track,
-  [Track A](#track-a--merchant-admin-the-current-focus); MP connect, refunds
+  [Track A](#track-a--merchant-admin-); MP connect, refunds
   and billing screens are its A3 and A6.
 - Server-driven notices end to end moved to
   [Phase 1b](#1b-ii--updatability-09-11).
@@ -461,8 +459,9 @@ it — deployment and operations are prerequisites for tenant #1.
 
 **Status (2026-09-30): built** (Core migration 0064, Kernel 1.10,
 [ADR 0022](adr/0022-control-plane-v0-and-edge.md)). CI's `edge-smoke` job runs the loop end to
-end on every change that can break it. The exit needs a real merchant's paid order on a live
-store, which waits on Phase 3's production Mercado Pago credentials and a pilot merchant.
+end on every change that can break it. The exit needs a real merchant's paid order on a
+store that was provisioned, promoted and probed through the Control Plane — Phases A and 3 are
+done, so this is the last step to the **First store** gate.
 
 - [x] **Edge v1** ([07](architecture/07-deployment-and-hosting.md), `packages/edge`): one Bun
       process serves every store host from immutable, content-addressed releases (a Docker
