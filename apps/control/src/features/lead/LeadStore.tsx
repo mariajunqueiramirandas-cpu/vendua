@@ -37,9 +37,7 @@ export function LeadStore({ lead }: { lead: Lead }) {
     >
       <div className="flex flex-col gap-2">
         <div className="flex min-w-0 flex-col">
-          <span className="truncate text-sm font-medium">
-            {p.storeName ?? p.tenant}
-          </span>
+          <span className="truncate text-sm font-medium">{p.storeName ?? p.tenant}</span>
           <HostLink host={host} className="max-w-full" />
         </div>
         <ProvisionProgress state={p.state} error={!!p.lastError} />
