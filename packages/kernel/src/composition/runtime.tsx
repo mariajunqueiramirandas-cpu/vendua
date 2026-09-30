@@ -9,7 +9,7 @@ import {
 } from '@vendua/templates';
 import { ErrorBoundary } from '../error-boundary.tsx';
 import { useKernel, useQuery } from '../provider.tsx';
-import { usePreviewTemplates } from '../preview.ts';
+import { isPreview, setPreviewOrigin, usePreviewTemplates } from '../preview.ts';
 import { reportFailure } from '../telemetry.ts';
 import { DEFAULT_TEMPLATES } from '../sdk/defaults.ts';
 import { buildRegistry, type RegisteredComponent } from './registry.ts';
@@ -79,6 +79,9 @@ export function useTemplateSet(): TemplateSet {
   const { api, storefront } = useKernel();
   const q = useQuery('state:templates', () => api.state(true));
   const drafts = usePreviewTemplates();
+  useEffect(() => {
+    if (isPreview() && q.data) setPreviewOrigin(q.data.adminOrigin);
+  }, [q.data]);
   return useMemo(
     () => ({
       ...DEFAULT_TEMPLATES,

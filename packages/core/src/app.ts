@@ -386,6 +386,14 @@ export function createApp({
       isStoreHost: (h) => resolver.peek(h) !== null,
     });
 
+  // the only parent the storefront's editor preview listens to (Kernel preview.ts)
+  const previewParent = (c: Context) =>
+    adminDomain
+      ? `https://${adminDomain}`
+      : process.env.NODE_ENV === 'production'
+        ? adminOrigin(c)
+        : (process.env.VENDUA_ADMIN_DEV_ORIGIN ?? 'http://localhost:5196');
+
   app.onError((err, c) => errorJson(err, c));
   app.use('*', requestLogger());
   // Only trust X-Forwarded-* behind the Venduá edge (tenant spoofing otherwise).
@@ -578,7 +586,7 @@ export function createApp({
       },
       notices: notices.filter((n) => n.severity === 'blocking' || n.kind === 'emergency'),
       loader: ops.loader,
-      ...(templates ? { templates } : {}),
+      ...(templates ? { templates, adminOrigin: previewParent(c) } : {}),
     });
   });
 

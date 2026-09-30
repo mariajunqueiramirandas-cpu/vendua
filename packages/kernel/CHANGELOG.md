@@ -11,6 +11,8 @@ Security hardening — additive; no storefront edit, no new runtime export.
   reads only that order and no loyalty reward codes until the order is delivered. Older tokens
   get `CUSTOMER_REQUIRED` once and re-verify through the usual flow.
 - `checkout()` sends the phone's customer token, so loyalty rewards redeem only for a proven phone.
+- The editor preview listens only to the merchant admin's origin, which Core now reports as
+  `StateEnvelope.adminOrigin` (with `templates`); it stays inert until then and posts only there.
 - New `ERROR_CODES`: `PRICES_CHANGED` (checkout moved cart lines to the live price; the cart
   refetches and the error copy asks to confirm again) and `IDEMPOTENCY_KEY_REUSED`.
 

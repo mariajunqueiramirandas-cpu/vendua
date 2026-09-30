@@ -176,6 +176,8 @@ export interface StateEnvelope {
   notices: Notice[];
   loader: { state: 'normal' | 'maintenance'; title?: string; message?: string; href?: string };
   templates?: TemplateSet;
+  /** Kernel 1.8: the merchant admin's origin, with `templates` — the editor preview's only parent */
+  adminOrigin?: string | null;
 }
 
 export interface CartItem {
