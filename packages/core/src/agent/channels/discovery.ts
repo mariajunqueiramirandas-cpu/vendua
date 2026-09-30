@@ -1,3 +1,4 @@
+import { lookup } from 'node:dns/promises';
 import type { Sql } from '../../platform/db.ts';
 import { getIntegration, type IntegrationRow } from '../../modules/integrations.ts';
 
@@ -146,19 +147,36 @@ const PROFILE_HOSTS = new Set(['instagram.com', 'facebook.com']);
 /** g.co/kgs + maps urls — the business's profile page (phone, address, hours),
  *  the cheapest reliable phone source when a hub hides wa.me behind JS */
 function isBizMapUrl(u: URL): boolean {
-  const h = u.hostname.toLowerCase().replace(/^www\./, '');
+  const h = u.hostname.toLowerCase().replace(/\.$/, '');
   const p = u.pathname;
   return (
-    (h === 'g.co' && /^\/kgs\//i.test(p)) ||
-    h === 'maps.app.goo.gl' ||
-    /^maps\.google\.[a-z.]+$/.test(h) ||
-    (/^google\.[a-z.]+$/.test(h) && /^\/maps/i.test(p))
+    (SHORT_MAP_HOSTS.has(h) && (h !== 'g.co' || /^\/kgs\//i.test(p))) ||
+    MAPS_HOSTS.has(h) ||
+    (GOOGLE_WEB_HOSTS.has(h) && /^\/maps/i.test(p))
   );
 }
 
-/** google.tld under any web subdomain — the family a pointer's redirect or
- *  name carrier can live on */
-const GOOGLE_HOST = /^((www|maps|m)\.)?google\.[a-z]{2,}(\.[a-z]{2})?$/i;
+// Exact sets, never a pattern: these URLs are fetched in-process, and a regex like
+// /^maps\.google\.[a-z.]+$/ also matches maps.google.evil.com.
+const SHORT_MAP_HOSTS = new Set(['g.co', 'maps.app.goo.gl']);
+const MAPS_HOSTS = new Set([
+  'maps.google.com',
+  'maps.google.com.br',
+  'www.maps.google.com',
+  'www.maps.google.com.br',
+]);
+const GOOGLE_WEB_HOSTS = new Set([
+  'google.com',
+  'google.com.br',
+  'www.google.com',
+  'www.google.com.br',
+]);
+
+/** the google hosts a pointer's redirect or name carrier can live on */
+function isGoogleHost(host: string): boolean {
+  const h = host.toLowerCase().replace(/\.$/, '');
+  return GOOGLE_WEB_HOSTS.has(h) || MAPS_HOSTS.has(h);
+}
 // instagram paths that aren't profiles — posts, help, auth.
 const PROFILE_STOP = new Set([
   'p',
@@ -671,10 +689,45 @@ function isPrivateV4(ip: number): boolean {
     top(12) === 0xac1 || // 172.16/12
     top(16) === 0xa9fe || // 169.254/16 link-local (incl. 169.254.169.254)
     top(16) === 0xc0a8 || // 192.168/16
-    top(10) === 0x19 || // 100.64/10 CGNAT
-    top(15) === 0x6122 || // 198.18/15 benchmarking
+    top(10) === 0x191 || // 100.64/10 CGNAT
+    top(15) === 0x6309 || // 198.18/15 benchmarking
     top(4) >= 0xe // 224/4 multicast + 240/4 reserved
   );
+}
+
+/** a hostname or IP literal (v4 in any inet_aton notation, v6 bracket-free) that names
+ *  a loopback/private/link-local/CGNAT/ULA/mapped/reserved target */
+function isPrivateHost(rawHost: string): boolean {
+  const host = rawHost
+    .toLowerCase()
+    .replace(/^\[|\]$/g, '')
+    .replace(/\.$/, '');
+  if (
+    host === 'localhost' ||
+    host.endsWith('.local') ||
+    host.endsWith('.internal') ||
+    host.endsWith('.localhost')
+  ) {
+    return true;
+  }
+  if (host.includes(':')) {
+    // IPv6 literal: ::/::1 (unspecified/loopback), fc00::/7 unique-local,
+    // fe80::/10 link-local, ff00::/8 multicast, and any ::ffff:-mapped or
+    // dotted-quad tail whose v4 part is private.
+    const head = parseInt(host.split(':')[0] || '0', 16);
+    const v4Tail = /([0-9]+\.[0-9]+\.[0-9]+\.[0-9]+)$/.exec(host)?.[1];
+    return (
+      host === '::' ||
+      host === '::1' ||
+      host.startsWith('::ffff:') ||
+      (head & 0xfe00) === 0xfc00 ||
+      (head & 0xffc0) === 0xfe80 ||
+      (head & 0xff00) === 0xff00 ||
+      (v4Tail !== undefined && isPrivateV4(ipv4ToU32(v4Tail) ?? 0))
+    );
+  }
+  const ip = ipv4ToU32(host);
+  return ip !== null && isPrivateV4(ip);
 }
 
 /** the provider fetches, not us — but an agent-controlled URL must still
@@ -685,32 +738,37 @@ export function assertFetchable(url: string): URL {
     throw new Error(`unsupported url scheme ${target.protocol}`);
   }
   const host = target.hostname.toLowerCase().replace(/^\[|\]$/g, '');
-  let privateHost =
-    host === 'localhost' ||
-    host.endsWith('.local') ||
-    host.endsWith('.internal') ||
-    host.endsWith('.localhost');
-  if (!privateHost && host.includes(':')) {
-    // IPv6 literal: ::/::1 (unspecified/loopback), fc00::/7 unique-local,
-    // fe80::/10 link-local, and any ::ffff:-mapped or dotted-quad tail whose
-    // v4 part is private.
-    const head = parseInt(host.split(':')[0] || '0', 16);
-    const v4Tail = /([0-9]+\.[0-9]+\.[0-9]+\.[0-9]+)$/.exec(host)?.[1];
-    privateHost =
-      host === '::' ||
-      host === '::1' ||
-      host.startsWith('::ffff:') ||
-      (head & 0xfe00) === 0xfc00 ||
-      (head & 0xffc0) === 0xfe80 ||
-      (v4Tail !== undefined && isPrivateV4(ipv4ToU32(v4Tail) ?? 0));
-  }
-  if (!privateHost) {
-    const ip = ipv4ToU32(host);
-    if (ip !== null) privateHost = isPrivateV4(ip);
-  }
-  if (privateHost) {
+  if (isPrivateHost(host)) {
     throw new Error(`private/internal target not allowed: ${host}`);
   }
+  return target;
+}
+
+type DnsLookup = (host: string) => Promise<string[]>;
+const systemLookup: DnsLookup = async (host) =>
+  (await lookup(host, { all: true, verbatim: true })).map((a) => a.address);
+let dnsLookup: DnsLookup = systemLookup;
+/** tests only — swap the resolver; null restores the system one */
+export function setDnsLookupForTest(fn: DnsLookup | null): void {
+  dnsLookup = fn ?? systemLookup;
+}
+
+/** assertFetchable plus the name's resolved addresses — a public-looking host can point
+ *  at 127.0.0.1 or the metadata IP. Run before every hop we fetch ourselves. (A rebinding
+ *  resolver can still answer differently at connect time; this closes the static case.) */
+export async function assertFetchableResolved(url: string): Promise<URL> {
+  const target = assertFetchable(url);
+  const host = target.hostname.toLowerCase().replace(/^\[|\]$/g, '');
+  if (host.includes(':') || ipv4ToU32(host) !== null) return target;
+  let addrs: string[];
+  try {
+    addrs = await dnsLookup(host);
+  } catch {
+    throw new Error(`dns lookup failed: ${host}`);
+  }
+  if (!addrs.length) throw new Error(`dns lookup failed: ${host}`);
+  const bad = addrs.find(isPrivateHost);
+  if (bad) throw new Error(`private/internal target not allowed: ${host} → ${bad}`);
   return target;
 }
 
@@ -748,7 +806,7 @@ function tinyfish(integration: IntegrationRow): DiscoveryProvider {
       const good: string[] = [];
       for (const url of urls.slice(0, 10)) {
         try {
-          assertFetchable(url);
+          await assertFetchableResolved(url);
           good.push(url);
         } catch (e) {
           errors.push({ url, error: e instanceof Error ? e.message : String(e) });
@@ -937,7 +995,7 @@ function unwrapContinue(raw: string, max = 8): string {
       break;
     }
     if (t.protocol !== 'http:' && t.protocol !== 'https:') break;
-    if (!isBizMapUrl(t) && !GOOGLE_HOST.test(t.hostname)) break;
+    if (!isBizMapUrl(t) && !isGoogleHost(t.hostname)) break;
     // get() already decodes once — decode again only when the result is
     // itself a complete url; a duplicated continue= follows its first
     // nonempty value (an empty slot isn't a wrapper)
@@ -955,7 +1013,7 @@ function unwrapContinue(raw: string, max = 8): string {
       // continue= marks it) and never becomes a chase hop
       if (
         (cand.protocol !== 'http:' && cand.protocol !== 'https:') ||
-        (!isBizMapUrl(cand) && !GOOGLE_HOST.test(cand.hostname))
+        (!isBizMapUrl(cand) && !isGoogleHost(cand.hostname))
       ) {
         break;
       }
@@ -975,7 +1033,7 @@ function mapPointerCarrier(raw: string): { carrier: URL; name: string | null } |
     // only the map-pointer/google family can carry a business name, and the
     // carrier must be fetchable (ftp://maps.google.com is not a pointer)
     if (t.protocol !== 'http:' && t.protocol !== 'https:') return null;
-    if (!isBizMapUrl(t) && !GOOGLE_HOST.test(t.hostname)) return null;
+    if (!isBizMapUrl(t) && !isGoogleHost(t.hostname)) return null;
     // a leftover nonempty continue= means the peel hit its bound mid-chain —
     // the wrapper's ?q=/place fields describe the wrapper, not the destination
     if (t.searchParams.getAll('continue').some((v) => v)) return { carrier: t, name: null };
@@ -1021,7 +1079,7 @@ export async function resolveMapPointer(
     // every hop runs the same guard read_pages applies — a shortlink can
     // 302 to a private/non-http target its host check would never name
     try {
-      assertFetchable(next);
+      await assertFetchableResolved(next);
     } catch {
       break;
     }
@@ -1065,7 +1123,7 @@ export async function resolveMapPointer(
       }
       break;
     }
-    if (GOOGLE_HOST.test(t.hostname)) {
+    if (isGoogleHost(t.hostname)) {
       // a peeled target that still wraps a continue= is another captcha
       // carrier — never the resolved location, but its redirect can advance
       // the chain

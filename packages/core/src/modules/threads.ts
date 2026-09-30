@@ -267,6 +267,8 @@ export interface InboundResult {
   alreadySeen: boolean;
 }
 
+export const UNVERIFIED_EMAIL_SOURCE = 'inbound:email-unverified';
+
 // Lead lookup → thread → message → activity; unknown contacts create a lead.
 // Idempotent on provider_message_id.
 export async function addInboundMessage(
@@ -297,6 +299,9 @@ export async function addInboundMessage(
     createLead?: boolean;
     /** agent mode for a lead minted here — defaults to agent.newLeadMode.inbound */
     newLeadAgentMode?: 'off' | 'draft' | 'auto';
+    /** email From failed DKIM/DMARC: it may be forged, so it never joins an existing lead's
+     *  history — it lands on a quarantine lead (agent off) for staff review */
+    unverifiedSender?: boolean;
   },
 ): Promise<InboundResult | null> {
   const body = str(input.body, 'body', 8000).trim();
@@ -326,6 +331,7 @@ export async function addInboundMessage(
     // digits on phone/whatsapp for whatsapp.
     let leadId: string | null = null;
     const from = str(input.from, 'from', 300).trim();
+    const unverified = input.channel === 'email' && input.unverifiedSender === true;
     const igHandle = input.channel === 'instagram' ? instagramHandle(from) : null;
     if (input.channel === 'instagram') {
       let byAccount = false;
@@ -359,10 +365,17 @@ export async function addInboundMessage(
         `;
       }
     } else if (input.channel === 'email') {
-      const rows = await tx`
-        select id from leads where archived_at is null
-          and lower(trim(email)) = lower(${from}) order by created_at desc limit 1
-      `;
+      const rows = unverified
+        ? await tx`
+            select id from leads where archived_at is null and source = ${UNVERIFIED_EMAIL_SOURCE}
+              and lower(trim(email)) = lower(${from}) order by created_at desc limit 1
+          `
+        : await tx`
+            select id from leads where archived_at is null
+              and lower(trim(email)) = lower(${from})
+            order by source is not distinct from ${UNVERIFIED_EMAIL_SOURCE}, created_at desc
+            limit 1
+          `;
       leadId = rows[0]?.id ?? null;
     } else {
       const digits = from.replace(/\D/g, '');
@@ -416,8 +429,14 @@ export async function addInboundMessage(
           input.newLeadAgentMode ??
           newLeadModesOf(await getSettingTx<unknown>(tx, 'agent', null)).inbound,
       };
-      if (input.channel === 'email') fields.email = from;
-      else if (input.channel === 'instagram') {
+      if (input.channel === 'email') {
+        fields.email = from;
+        if (unverified) {
+          fields.source = UNVERIFIED_EMAIL_SOURCE;
+          fields.agent_mode = 'off';
+          fields.tags = ['remetente-nao-verificado'];
+        }
+      } else if (input.channel === 'instagram') {
         if (igHandle) fields.instagram = `@${igHandle}`;
       } else {
         // An inbound whatsapp number is self-evidencing.
@@ -435,6 +454,14 @@ export async function addInboundMessage(
         insert into lead_state_history (lead_id, from_state, to_state, actor, value_cents)
         values (${leadId}, null, 'lead', 'system', ${lead.deal_value_cents})
       `;
+      if (unverified) {
+        await tx`
+          insert into lead_activities (lead_id, kind, body, created_by)
+          values (${leadId}, 'system',
+                  ${'Email sem DKIM/DMARC válido: o remetente pode ser falso. Separado de qualquer lead existente com este endereço e com o agente desligado; revise antes de responder ou mesclar.'},
+                  'system')
+        `;
+      }
     }
 
     const thread = await ensureThread(tx, leadId, input.channel, {

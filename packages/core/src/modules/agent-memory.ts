@@ -263,6 +263,15 @@ export async function memoryForRunTx(
   tx: Sql,
   opts: { segment?: string | null; limit?: number } = {},
 ): Promise<string[]> {
+  return (await memoryFeedForRunTx(tx, opts)).map((r) => r.content);
+}
+
+/** The run feed with provenance: `agentWritten` = the agent (or its debrief) wrote it and
+ *  staff never pinned it — prompts render those as data, never as rules. */
+export async function memoryFeedForRunTx(
+  tx: Sql,
+  opts: { segment?: string | null; limit?: number } = {},
+): Promise<{ content: string; agentWritten: boolean }[]> {
   const seg =
     typeof opts.segment === 'string' && opts.segment.trim()
       ? opts.segment.trim().toLowerCase()
@@ -270,9 +279,10 @@ export async function memoryForRunTx(
   const limit = Math.max(1, Math.min(Math.floor(opts.limit ?? 60), 260));
   // buckets: pinned(0) → segment learnings(1) → workspace(2) → debriefs(3,
   // capped at DEBRIEF_FEED, segment-matched first); rn ranks inside each bucket
-  const rows = await tx<{ id: string; content: string; learning: boolean }[]>`
+  const rows = await tx<{ id: string; content: string; learning: boolean; agent: boolean }[]>`
     with feed as (
       select id, content, scope, segment, updated_at, uses, created_at,
+             (source <> 'staff' and not pinned) as agent,
              case when pinned then 0
                   when scope = 'segment' and segment = ${seg} then 1
                   when scope = 'workspace' then 2
@@ -295,7 +305,7 @@ export async function memoryForRunTx(
                       order by (segment is not null and segment = ${seg}) desc, created_at desc),
         w_learning as (partition by (grp < 3) order by updated_at desc, uses desc)
     )
-    select id, content, scope <> 'debrief' as learning from picked
+    select id, content, scope <> 'debrief' as learning, agent from picked
     where grp < 3 or rn <= ${DEBRIEF_FEED}
     order by grp, rn
     limit ${limit}
@@ -304,7 +314,7 @@ export async function memoryForRunTx(
   if (learningIds.length) {
     await tx`update agent_memory_items set uses = uses + 1 where id = any(${learningIds}::uuid[])`;
   }
-  return rows.map((r) => r.content);
+  return rows.map((r) => ({ content: r.content, agentWritten: r.agent }));
 }
 
 // 'key' for the staff listing; 'recent' for the bounded prompt read so a

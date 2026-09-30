@@ -18,7 +18,7 @@ import {
   appendDebriefTx,
   hasMemoryTablesTx,
   leadFactsTx,
-  memoryForRunTx,
+  memoryFeedForRunTx,
 } from '../modules/agent-memory.ts';
 import { segmentStats, type AgentGoal } from '../modules/leads.ts';
 import {
@@ -30,7 +30,7 @@ import {
   type LlmResult,
   type ToolCall,
 } from './llm.ts';
-import { buildSystemPrompt, ladderTags } from './prompts.ts';
+import { buildSystemPrompt, ladderTags, type PromptMemory } from './prompts.ts';
 import {
   leadCard,
   nameIsContact,
@@ -1345,6 +1345,11 @@ export async function reconcileInterrupted(
 
 // Memory feed: pinned + segment + workspace learnings + debriefs; legacy flat list only for pre-0035 schemas.
 export async function memoryForPrompt(sql: Sql, run: RunRow): Promise<string[]> {
+  const m = await promptMemory(sql, run);
+  return [...m.facts, ...(m.agentNotes ?? [])];
+}
+
+export async function promptMemory(sql: Sql, run: RunRow): Promise<PromptMemory> {
   return controlTx(sql, async (tx) => {
     if (await hasMemoryTablesTx(tx)) {
       const segment =
@@ -1357,13 +1362,18 @@ export async function memoryForPrompt(sql: Sql, run: RunRow): Promise<string[]> 
                 `
               )[0]?.segment ?? null)
             : null;
-      return memoryForRunTx(tx, { segment });
+      const feed = await memoryFeedForRunTx(tx, { segment });
+      return {
+        facts: feed.filter((r) => !r.agentWritten).map((r) => r.content),
+        agentNotes: feed.filter((r) => r.agentWritten).map((r) => r.content),
+      };
     }
     const rows = await tx<{ value: { facts?: unknown } }[]>`
       select value from control_settings where key = 'agent_memory'
     `;
     const cur = rows[0]?.value?.facts;
-    return Array.isArray(cur) ? (cur as string[]) : [];
+    // the legacy flat list has no provenance — treat it all as agent-written
+    return { facts: [], agentNotes: Array.isArray(cur) ? (cur as string[]) : [] };
   });
 }
 
@@ -1925,6 +1935,7 @@ async function buildAttemptContext(att: Attempt): Promise<void> {
   att.gate = await toolGate(sql, {
     simulated: !integration || integration.driver === 'mock',
   });
+  if (run.lead_id) att.gate.disabled.set('search_leads', 'run ligada a um lead');
   att.liveGate = att.gate;
   // a resumed attempt already told the model the contact state — don't repeat it
   for (const e of att.priorSteps) {
@@ -1934,7 +1945,7 @@ async function buildAttemptContext(att: Attempt): Promise<void> {
   att.tools = toolsFor(run.kind, att.gate);
   const offered = new Set(att.tools.map((t) => t.name));
   const { text: context, goal, bookingUrl } = await contextFor(sql, run, (n) => offered.has(n));
-  const memory = { facts: await memoryForPrompt(sql, run) };
+  const memory = await promptMemory(sql, run);
   const g = await getSetting<Partial<Guardrails>>(sql, 'guardrails', {});
   // The prompt only promises autocontact under the same conditions create_lead's gate checks.
   const waDriverOn = run.kind === 'discovery' && (await whatsappReadyTx(sql));

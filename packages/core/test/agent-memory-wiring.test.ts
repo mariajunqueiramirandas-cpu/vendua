@@ -93,9 +93,9 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('agent memory v2 wiring (db)', (
 
   test('remember writes agent_memory_items with agent source, dedupes', async () => {
     await setup();
-    const leadId = await mkLead('rem');
-    const run = await mkRun('reply', leadId);
-    const ctx = mkCtx('reply', leadId, run.id);
+    // remember is strategist-only: lead-driven jobs read untrusted text (M3)
+    const run = await mkRun('strategist');
+    const ctx = mkCtx('strategist', null, run.id);
     const out = (await executeTool(ctx, 's1', 'remember', {
       fact: nm('docerias respondem melhor à noite'),
     })) as { remembered: string };

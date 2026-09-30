@@ -297,9 +297,10 @@ export function leadPatch(
   if ('name' in set && !set.name?.toString().trim()) {
     throw new HttpError(422, 'INVALID_LEAD', 'name cannot be empty', { field: 'name' });
   }
-  // explicit whatsapp write = real evidence → flag it; clearing clears it
+  // a staff whatsapp write = real evidence → flag it; clearing clears it. An agent write is
+  // whatever a message told it — only inbound proof (threads.ts) verifies that.
   // (Discovery's mobile-derived fill bypasses this path)
-  if ('whatsapp' in set) set.whatsapp_verified = Boolean(set.whatsapp);
+  if ('whatsapp' in set) set.whatsapp_verified = actor === 'staff' && Boolean(set.whatsapp);
   if ('state' in body) set.state = leadState(body.state);
   if ('agentMode' in body) set.agent_mode = agentMode(body.agentMode);
   if ('agentGoal' in body) set.agent_goal = agentGoal(body.agentGoal);
@@ -703,6 +704,39 @@ export async function insertLeadTx(
   return { status: 201, body: { lead: leadJson(rows[0]!) } };
 }
 
+const CONTACT_COLS = ['whatsapp', 'phone', 'email', 'instagram'] as const;
+
+const contactKey = (col: (typeof CONTACT_COLS)[number], v: unknown): string => {
+  const t = typeof v === 'string' ? v.trim().toLowerCase() : '';
+  if (col === 'whatsapp' || col === 'phone') return t.replace(/\D/g, '');
+  return col === 'instagram' ? t.replace(/^@/, '') : t;
+};
+
+/** The agent writes what a conversation told it, and the sender may not be the lead: it
+ *  may fill a blank contact, never re-point a stored one (send paths deliver to it), and
+ *  never marks anything verified. A no-op rewrite of the stored value is dropped. */
+function agentContactGuard(cur: LeadRow, set: Record<string, unknown>): void {
+  for (const col of CONTACT_COLS) {
+    if (!(col in set)) continue;
+    const stored = contactKey(col, cur[col]);
+    if (!stored) continue;
+    if (contactKey(col, set[col]) === stored) {
+      delete set[col];
+      if (col === 'whatsapp') delete set.whatsapp_verified;
+      continue;
+    }
+    throw new HttpError(
+      409,
+      'CONTACT_LOCKED',
+      `CONTACT_LOCKED — ${col} já está preenchido neste lead; o agente não troca contato existente, só a equipe.`,
+      { field: col },
+    );
+  }
+  for (const k of Object.keys(set)) {
+    if (k.endsWith('_verified') && set[k] === true) set[k] = false;
+  }
+}
+
 export async function updateLead(
   sql: Sql,
   id: string,
@@ -717,6 +751,7 @@ export async function updateLead(
     await guard?.(tx);
     const cur = (await tx<LeadRow[]>`select * from leads where id = ${id}`)[0];
     if (!cur) throw new HttpError(404, 'LEAD_NOT_FOUND', 'lead not found');
+    if (actor === 'agent') agentContactGuard(cur, set);
     // the bounce marker describes the stored address — a different email
     // must clear it
     const normEmail = (v: unknown) => (typeof v === 'string' ? v.trim().toLowerCase() : null);
