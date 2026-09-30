@@ -216,6 +216,14 @@
     width: 1.25em;
     max-width: none;
     transform-origin: 50% 100%;
+    filter: drop-shadow(0 0.06em 0.09em rgb(18 60 50 / 0.38));
+  }
+  /* on the dark sky his dark fur needs a lift: a faint lime glow under the shadow */
+  @media (prefers-color-scheme: dark) {
+    .peek :global(.dua) {
+      filter: drop-shadow(0 0 0.09em color-mix(in srgb, var(--spark) 24%, transparent))
+        drop-shadow(0 0.05em 0.07em rgb(0 0 0 / 0.55));
+    }
   }
 
   .tag {
