@@ -7,6 +7,11 @@ The home page is **"um dia na loja"**: one day of a small shop, dawn to night, t
 flowing continuously between sections (no hour labels): hero (`#inicio`), who it's for
 (`#para-quem`), an order arrives (`#pedidos`), the store and its price (`#sua-loja`, `#preco`), the
 day's recap (`#seu-dia`), how to start + FAQ (`#comecar`, `#perguntas`).
+
+The hero is the name: "venduá." poster-size, with Duá standing behind the letters. On load the letters
+spring up, the accent and the dot land, Duá climbs out and waves, then the order push drops; scrolling
+plays it back (Duá ducks, the letters sink) while the header's logo takes over. All CSS (`linear()`
+springs, scroll-driven animations); without support or with reduced motion it's the finished poster.
 Other pages: `/privacidade/` and the 404.
 
 ## Launch decisions the copy encodes

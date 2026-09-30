@@ -228,4 +228,26 @@
       display: block;
     }
   }
+  /* on the home page the hero spells the name out large; the bar's logo takes over as it scrolls
+     away (keyboard focus always shows it) */
+  @media (prefers-reduced-motion: no-preference) {
+    @supports (animation-timeline: scroll()) {
+      .overlay .home:not(:focus-visible) {
+        animation: brand-in linear both;
+        animation-timeline: scroll(root);
+        animation-range: 120px 240px;
+      }
+      @media (min-width: 1024px) {
+        .overlay .home:not(:focus-visible) {
+          animation-range: 300px 440px;
+        }
+      }
+    }
+  }
+  @keyframes brand-in {
+    from {
+      opacity: 0;
+      translate: 0 10px;
+    }
+  }
 </style>
