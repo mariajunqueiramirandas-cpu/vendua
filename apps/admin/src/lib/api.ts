@@ -266,6 +266,8 @@ export interface OrderPayment {
     | 'in_mediation';
   amountCents: number;
   refundedCents: number;
+  /** Core's figure: amount − refunded − refunds still pending (the refund sheet's cap) */
+  refundableCents?: number;
   providerFeeCents: number | null;
   netCents: number | null;
   approvedAt: string | null;
