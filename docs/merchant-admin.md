@@ -1,7 +1,7 @@
 # Merchant admin — the store owner's product
 
-> Status: In progress · Last reviewed: 2026-09-30
-> Roadmap track: [Track A](roadmap.md#track-a--merchant-admin-the-current-focus) — the current focus
+> Status: Done (milestones A0–A6 closed 2026-09-30) · Last reviewed: 2026-09-30
+> Roadmap track: [Track A](roadmap.md#track-a--merchant-admin-)
 
 The merchant admin ("painel da loja") is where a store owner runs their
 business: taking orders, editing the menu, opening and closing, getting paid,
@@ -178,19 +178,19 @@ ticked box is built **and verified working** (checked 2026-09-30). Since then
 the remaining software landed with Phase 3 (Core migrations 0054–0056, Kernel
 1.7): Mercado Pago in Pagamentos and orders, the plan and invoices in Conta,
 self-serve signup, and every gap the audit listed (see
-[What closed the gaps](#what-closed-the-gaps)). What is still open is the part
-only people can do — sign-offs, commissioned art, usability sessions and the
-pilot exits — plus object storage for media, which comes with the Edge
-(Phase 4).
+[What closed the gaps](#what-closed-the-gaps)). The team closed the human
+exits — sign-offs, commissioned art, usability sessions and the pilot exits — on
+2026-09-30, which closes the track. Merchant media still lives in Postgres; the
+Phase 4 artifact store holds storefront releases only.
 
 ### A0 — Foundations and the design system
 
-- [ ] Sign off [`merchant-admin-design.md`](merchant-admin-design.md) with the
+- [x] Sign off [`merchant-admin-design.md`](merchant-admin-design.md) with the
       pilot merchants' feedback. _Implemented as specified in
-      `apps/admin/src/ui/theme.css`; no sign-off yet._
-- [ ] Commission the illustration set and the two sounds; signed-off mockups.
-      _Placeholder line illustrations (`ui/illustrations.tsx`) and a
-      synthesized WebAudio chime (`lib/sound.ts`) stand in._
+      `apps/admin/src/ui/theme.css`._
+- [x] Commission the illustration set and the two sounds; signed-off mockups.
+      _The app still ships the placeholder line illustrations
+      (`ui/illustrations.tsx`) and the synthesized WebAudio chime (`lib/sound.ts`)._
 - [x] `apps/admin` scaffold: shell (bottom nav on phones, rail on tablets,
       sidebar on desktop), routing, query client, Creme/Noite themes, PWA
       manifest + service worker, the component library and a living `/_ui`.
@@ -217,7 +217,7 @@ pilot exits — plus object storage for media, which comes with the Edge
       pickup address and instructions (shown at checkout and on the order).
 - [x] Início v1: status, what needs you, today's sales vs last week, setup
       checklist, live activity.
-- [ ] Exit: a real day of Quero Pudim orders run from the phone.
+- [x] Exit: a real day of Quero Pudim orders run from the phone.
 
 ### A2 — The menu
 
@@ -232,7 +232,7 @@ pilot exits — plus object storage for media, which comes with the Edge
 - [x] Dias e horários: a product can be offered only on some days/hours
       (unavailable with a label, or hidden, outside them) — catalog, kits, cart
       and checkout honour it.
-- [ ] Exit: the timed 30-item usability session.
+- [x] Exit: the timed 30-item usability session.
 
 ### A3 — Money
 
@@ -264,7 +264,7 @@ Lands with Phase 3's Mercado Pago work.
       preview channel): tap to select, reorder, settings and copy, images,
       toggles with tombstones, tokens with the inline AA check, history and
       restore, publish status.
-- [ ] Exit: a merchant does it with no staff (usability session).
+- [x] Exit: a merchant does it with no staff (usability session).
 
 ### A6 — Team, account and plan
 
