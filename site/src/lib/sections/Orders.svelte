@@ -38,7 +38,6 @@
 
 <Section
   id="pedidos"
-  hour="12h"
   tone="day"
   sky="linear-gradient(180deg, var(--sky-2), var(--sky-3))"
   labelledby="pedidos-t"
@@ -72,9 +71,8 @@
       </Phone>
     </div>
     <figcaption class="caption t-caption">
-      <span class="dot" aria-hidden="true"></span>
-      No tablet da cozinha, o quadro anda com você: novo, em preparo, pronto, entregue. A tela fica ligada
-      enquanto a loja está aberta.
+      No tablet da cozinha, o quadro anda com você: novo, em preparo, pronto, entregue. A tela fica
+      ligada enquanto a loja está aberta.
     </figcaption>
   </figure>
 
@@ -90,11 +88,10 @@
   <div class="pause">
     <div class="pause-copy">
       <Dua pose="horarios" size={112} class="dua-sm" />
-      <p class="kicker t-label">Acabou a massa?</p>
       <h3 class="t-title-1">Pausa em dois toques.</h3>
       <p class="pause-lede">
-        A loja para de receber pedidos na hora, e quem entra lê o seu recado. O que já está na
-        cozinha segue normalmente.
+        Acabou a massa? A loja para de receber pedidos na hora, e quem entra lê o seu recado. O que
+        já está na cozinha segue normalmente.
       </p>
       <ol class="taps" role="list">
         <li>
@@ -182,20 +179,8 @@
 
   .caption {
     justify-self: start;
-    display: flex;
-    gap: 10px;
-    align-items: baseline;
     max-width: 44ch;
     color: var(--ink-muted);
-  }
-  .dot {
-    flex: none;
-    width: 8px;
-    height: 8px;
-    border-radius: 50%;
-    background: var(--spark);
-    box-shadow: 0 0 0 3px color-mix(in srgb, var(--spark) 35%, transparent);
-    transform: translateY(-1px);
   }
 
   @media (min-width: 1000px) {
@@ -284,20 +269,6 @@
     display: grid;
     gap: 14px;
     max-width: 30rem;
-  }
-  .kicker {
-    display: inline-flex;
-    align-items: center;
-    gap: 8px;
-    color: var(--ink-muted);
-  }
-  /* same eyebrow dash as the parts of Sua loja */
-  .kicker::before {
-    content: '';
-    width: 18px;
-    height: 2px;
-    border-radius: 2px;
-    background: currentColor;
   }
   .pause-lede {
     font-size: 1.0625rem;

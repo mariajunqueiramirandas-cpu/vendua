@@ -40,12 +40,10 @@
     'Equipe',
     'Endereço próprio',
   ];
-  const pad = (n: number) => String(n).padStart(2, '0');
 </script>
 
 <Section
   id="sua-loja"
-  hour="15h"
   tone="day"
   sky="linear-gradient(180deg, var(--sky-3), var(--sky-4))"
   labelledby="sua-loja-t"
@@ -61,32 +59,11 @@
   <!-- 1 · the store assembles while Duá asks -->
   <div class="part open">
     <div class="copy">
-      <p class="eyebrow t-label">Pra abrir</p>
       <h3 class="t-title-1">8 perguntinhas, uma de cada vez.</h3>
       <p class="body">
         O Duá pergunta, você responde no seu tempo. A cada resposta, a sua loja vai aparecendo ao
         lado, do jeito que o cliente vai ver. Cansou? Pode sair: ele guarda tudo.
       </p>
-      <div class="road">
-        <ol class="steps" aria-label="8 perguntas">
-          {#each Array(8) as _, i (i)}
-            <li class:done={i < 3} class:now={i === 3}><span class="sr-only">{i + 1}</span></li>
-          {/each}
-        </ol>
-        <i class="lead" aria-hidden="true"></i>
-        <svg class="shop" viewBox="0 0 48 42" aria-hidden="true">
-          <ellipse class="dab" cx="24" cy="37" rx="17" ry="5" />
-          <path d="M11 22.5V38h26V22.5M20 38v-7.5a4 4 0 0 1 8 0V38" />
-          <path
-            d="M8 14h32v4.5a4 4 0 0 1-8 0 4 4 0 0 1-8 0 4 4 0 0 1-8 0 4 4 0 0 1-8 0zM16 14v4.5M24 14v4.5M32 14v4.5"
-          />
-          <path
-            class="joy"
-            d="M42.5 10.5 45 8M43.5 16h3M38.5 8.5l1-3M5.5 10.5 3 8M4.5 16h-3M9.5 8.5l-1-3"
-          />
-        </svg>
-      </div>
-      <p class="live t-moment">Loja no ar em cerca de uma hora</p>
     </div>
 
     <div class="device">
@@ -135,7 +112,6 @@
     </div>
 
     <div class="copy">
-      <p class="eyebrow t-label">No dia a dia</p>
       <h3 class="t-title-1">Seu cardápio e seus horários, no celular.</h3>
       <ul class="points" role="list">
         {#each points as p (p.title)}
@@ -164,7 +140,6 @@
   <!-- 3 · price -->
   <div class="part price" id="preco" role="region" aria-labelledby="preco-t">
     <div class="copy">
-      <p class="eyebrow t-label">Quanto custa</p>
       <h3 id="preco-t" class="t-display price-t">Tudo isso numa loja só.</h3>
       <p class="body">Da primeira pergunta do Duá ao último pedido da noite, vem tudo junto.</p>
       <Soon size="lg" note="O preço sai com as primeiras lojas." />
@@ -177,9 +152,8 @@
           <p class="brand">venduá</p>
           <h4 class="rt">O que vem na sua loja</h4>
           <ul role="list">
-            {#each receipt as item, i (item)}
+            {#each receipt as item (item)}
               <li>
-                <span class="n tnum" aria-hidden="true">{pad(i + 1)}</span>
                 <span class="item">{item}</span>
                 <i aria-hidden="true"></i>
                 <em>incluso</em>
@@ -191,7 +165,6 @@
             <i aria-hidden="true"></i>
             <strong>em breve</strong>
           </p>
-          <p class="foot tnum">{pad(receipt.length)} itens · todos inclusos</p>
         </div>
       </div>
     </div>
@@ -218,21 +191,7 @@
     align-content: start;
     min-width: 0;
   }
-  .eyebrow {
-    display: inline-flex;
-    align-items: center;
-    gap: 8px;
-    color: var(--ink-muted);
-  }
-  .eyebrow::before {
-    content: '';
-    width: 18px;
-    height: 2px;
-    border-radius: 2px;
-    background: currentColor;
-  }
   h3 {
-    margin-top: 10px;
     max-width: 18ch;
   }
   .body {
@@ -242,64 +201,6 @@
   }
 
   /* ── 1 · open ─────────────────────────────────────────────────────── */
-  /* the 8 questions are the road to the shop's door */
-  .road {
-    display: flex;
-    align-items: flex-end;
-    gap: 8px;
-    margin-top: 26px;
-  }
-  .steps {
-    list-style: none;
-    display: flex;
-    gap: min(8px, 2vw);
-    margin: 0 0 2px;
-    padding: 0;
-  }
-  .steps li {
-    width: min(26px, 5.4vw);
-    height: 8px;
-    border-radius: 999px;
-    background: var(--line-strong);
-  }
-  .steps li.done {
-    background: var(--primary);
-  }
-  .steps li.now {
-    background: var(--spark);
-    box-shadow: 0 0 0 1px color-mix(in srgb, var(--primary) 30%, transparent);
-  }
-  .lead {
-    flex: none;
-    width: 24px;
-    height: 8px;
-    margin-bottom: 2px;
-    background: radial-gradient(circle, var(--ink-muted) 1.4px, transparent 1.9px) 0 50% / 7px 8px
-      repeat-x;
-  }
-  .shop {
-    flex: none;
-    width: 56px;
-    fill: none;
-    stroke: currentColor;
-    stroke-width: 2.2;
-    stroke-linecap: round;
-    stroke-linejoin: round;
-  }
-  .shop .dab {
-    fill: var(--spark);
-    stroke: none;
-    opacity: 0.85;
-  }
-  .shop .joy {
-    stroke-width: 2;
-  }
-  .live {
-    margin-top: 14px;
-    font-size: 1.5rem;
-    line-height: 1.2;
-  }
-
   .device {
     display: grid;
     justify-items: center;
@@ -561,8 +462,6 @@
     text-align: center;
     font: 500 0.8125rem/1.3 var(--font-sans);
     color: var(--ink-muted);
-    letter-spacing: 0.04em;
-    text-transform: uppercase;
     padding-bottom: 16px;
     border-bottom: 2px dashed var(--line-strong);
   }
@@ -578,13 +477,6 @@
     display: flex;
     align-items: last baseline;
     gap: 8px;
-  }
-  .n {
-    align-self: first baseline;
-    flex: none;
-    width: 2ch;
-    font: 600 0.75rem/1 var(--font-display);
-    color: var(--ink-muted);
   }
   .item {
     min-width: 0;
@@ -614,19 +506,8 @@
     color: var(--on-spark);
     font-weight: 700;
   }
-  .foot {
-    margin-top: 16px;
-    text-align: center;
-    font: 500 0.75rem/1.2 var(--font-display);
-    letter-spacing: 0.06em;
-    text-transform: uppercase;
-    color: var(--ink-muted);
-  }
 
   @media (prefers-color-scheme: dark) {
-    .shop .dab {
-      opacity: 0.3;
-    }
     .receipt {
       background: var(--surface-raised);
     }
