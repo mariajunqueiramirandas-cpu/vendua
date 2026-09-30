@@ -26,6 +26,8 @@ RUN --mount=type=cache,id=vendua-bun,target=/root/.bun/install/cache \
 COPY packages/kernel packages/kernel
 COPY packages/ui-defaults packages/ui-defaults
 COPY packages/templates packages/templates
+# site/scripts/validate.ts checks the site palette against the admin's tokens
+COPY apps/admin/src/ui/theme.css apps/admin/src/ui/theme.css
 COPY site site
 COPY storefronts storefronts
 RUN bun --filter @vendua/site build && bun --filter './storefronts/*' build
