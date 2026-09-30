@@ -1,3 +1,4 @@
+import { injectedTokens } from './injected.ts';
 import { reportPreview, usePreviewTokens } from './preview.ts';
 import {
   createContext,
@@ -26,7 +27,8 @@ import type { StorefrontBundle } from './composition/registry.ts';
 interface KernelCtx {
   api: VenduaApi;
   config: StorefrontConfig;
-  /** tokens actually in force: Core's (pulled at build) over the config's */
+  /** tokens in force: the store's live tokens (edge-injected, 1.10) over the build's snapshot
+   *  of Core's over the config's */
   tokens: StorefrontTokens;
   /** sections + template snapshot the build bundled (virtual:vendua/storefront) */
   storefront: StorefrontBundle;
@@ -85,7 +87,10 @@ export function VenduaProvider({
   baseUrl?: string;
   children: ReactNode;
 }) {
-  const tokens = storefront.snapshot.tokens ?? config.tokens;
+  const tokens = useMemo(
+    () => injectedTokens() ?? storefront.snapshot.tokens ?? config.tokens,
+    [storefront, config],
+  );
   const apiRef = useRef<{ api: VenduaApi; baseUrl: string }>();
   if (!apiRef.current || apiRef.current.baseUrl !== baseUrl) {
     // baseUrl change: the old client's cache/session belong to the previous

@@ -8,6 +8,7 @@ import {
   type TemplateSet,
 } from '@vendua/templates';
 import { ErrorBoundary } from '../error-boundary.tsx';
+import { injectedTemplates } from '../injected.ts';
 import { useKernel, useQuery } from '../provider.tsx';
 import { isPreview, setPreviewOrigin, usePreviewTemplates } from '../preview.ts';
 import { reportFailure } from '../telemetry.ts';
@@ -73,8 +74,9 @@ function reportOnce(kind: 'section_unknown' | 'block_unknown', target: string, m
   reportFailure({ kind, target, message });
 }
 
-/** Live templates from Core (`/state?templates=1`) win per page; the build's
- *  snapshot is last-known-good; Kernel defaults cover a store with neither. */
+/** Live templates from Core (`/state?templates=1`) win per page; until they arrive, the ones
+ *  the edge injected (1.10); the build's snapshot is last-known-good; Kernel defaults cover a
+ *  store with none. */
 export function useTemplateSet(): TemplateSet {
   const { api, storefront } = useKernel();
   const q = useQuery('state:templates', () => api.state(true));
@@ -86,6 +88,7 @@ export function useTemplateSet(): TemplateSet {
     () => ({
       ...DEFAULT_TEMPLATES,
       ...storefront.snapshot.templates,
+      ...injectedTemplates(),
       ...(q.data?.templates ?? {}),
       // the admin editor's unpublished edits, only inside its preview frame
       ...(drafts ?? {}),

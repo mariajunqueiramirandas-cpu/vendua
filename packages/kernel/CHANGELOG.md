@@ -3,6 +3,19 @@
 Semver, per docs/architecture/11-backward-compatibility.md: minors and patches
 never need a storefront edit; a major only ships with a Contract major.
 
+## 1.10.0
+
+The store's live design at first paint (Phase 4 edge) — additive; no storefront edit, no new
+runtime export.
+
+- `SurfacesEnvelope` gains optional `templates` and `tokens`, present only in the
+  edge-injected `window.__VENDUA_STATE__` (Core `GET /storefront/v1/surfaces?design=1`).
+- Tokens in force: the injected ones (validated) over the build's snapshot over
+  `config.tokens` — a merchant's token edit shows at the next page load without a rebuild, so a
+  store served from the shared `_template` build gets its own look.
+- Templates: the injected ones sit between the build's snapshot and the live
+  `/state?templates=1` answer, so the first render is already the store's current page.
+
 ## 1.9.0
 
 Stock the cart already holds — additive; no storefront edit needed.

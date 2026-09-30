@@ -182,6 +182,18 @@ Additive — no storefront edit, no new runtime export.
 - `ERROR_CODES` adds `PRICES_CHANGED` (checkout moved cart lines to the live price; the cart
   refetches) and `IDEMPOTENCY_KEY_REUSED`.
 
+### Live design at first paint (Kernel 1.10)
+
+Additive — no storefront edit, no new runtime export.
+
+- `SurfacesEnvelope` gains optional `templates` and `tokens`. The edge inlines Core's
+  `GET /storefront/v1/surfaces?design=1` as `window.__VENDUA_STATE__` before `</head>`
+  (docs/architecture/07-deployment-and-hosting.md); the Kernel's own `api.surfaces()` never
+  asks for them.
+- Tokens in force are the injected ones (validated like Core does) over the build's snapshot
+  over `config.tokens`: a merchant's token edit is live at the next page load, with no rebuild.
+  Templates: live `/state?templates=1` over the injected ones over the build's snapshot.
+
 ### Editor preview (Kernel 1.4)
 
 Not an export: a storefront loaded inside a frame with `?vendua-preview=1` listens for
@@ -199,7 +211,8 @@ Aparência editor is the only caller.
 Three layers, in order of preference (17 — styling API):
 
 1. **Tokens** — `--v-color-*`, `--v-font-*`, `--v-radius-*`, `--v-space-*`,
-   `--v-motion-*` from `tokens` (store data in Core; an edit triggers a rebuild).
+   `--v-motion-*` from `tokens` (store data in Core; since 1.10 live at the next page load
+   through the edge-injected state, with no rebuild).
 2. **Variants** — the `variant` setting on each SDK section.
 3. **Parts** — `[data-part="…"]` inside `[data-section="sdk:…"]`, `[data-block="sdk:…"]`
    or a `[data-vendua="…"]` root, plus these custom properties:
