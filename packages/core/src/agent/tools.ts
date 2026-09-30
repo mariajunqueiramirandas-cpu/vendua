@@ -209,7 +209,8 @@ const REGISTRY: { def: AgentTool }[] = [
   {
     def: {
       name: 'update_lead',
-      description: 'Patch lead fields (contact info, tags, deal value, next action, goal).',
+      description:
+        'Patch lead fields (contact info, tags, deal value, next action, goal). A contact field (whatsapp/phone/email/instagram) can only be filled while empty; changing a stored one is refused (staff confirms contact changes).',
       parameters: {
         type: 'object',
         properties: {
@@ -789,7 +790,11 @@ export async function executeTool(
   const off = ctx.disabledTools?.get(name);
   if (off) return { error: `TOOL_DISABLED — ${name} está desativada (${off}); não chame de novo` };
 
-  // lead-bound runs may only mutate their own lead — reads stay unscoped (triage inspects other leads for dupes).
+  // lead-bound runs may only touch their own lead: an inbound message can ask the model to read
+  // other leads, and send_message would then deliver what it read to the sender.
+  if (ctx.leadId && name === 'search_leads') {
+    return { error: `tool ${name} not available in a run bound to a lead` };
+  }
   const boundArg = leadBoundArg(name);
   if (ctx.leadId && boundArg) {
     const target = String(args[boundArg] ?? '');
@@ -856,8 +861,27 @@ export async function executeTool(
           : 'nenhuma correspondência — prospect provavelmente novo, vale a investigação paga',
       };
     }
-    case 'get_lead':
-      return getLeadDetail(sql, String(args.id ?? ''));
+    case 'get_lead': {
+      const lead = await getLeadDetail(sql, String(args.id ?? ''));
+      if (!lead || ctx.runKind !== 'triage' || !ctx.leadId) return lead;
+      // triage lost search_leads with the lead binding — the dupe check runs here on the
+      // card's own name, and hands back identity fields only (no contacts).
+      const q = (lead.businessName || lead.name || '').trim().slice(0, 100);
+      const { leads } = q ? await listLeads(sql, { q, limit: 6 }) : { leads: [] };
+      return {
+        ...lead,
+        possibleDuplicates: leads
+          .filter((l) => l.id !== lead.id)
+          .slice(0, 5)
+          .map((l) => ({
+            id: l.id,
+            name: l.name,
+            business: l.businessName,
+            city: l.city,
+            state: l.state,
+          })),
+      };
+    }
     case 'create_lead': {
       const payload = { ...args };
       const findings = typeof args.findings === 'string' ? args.findings.trim() : '';
@@ -950,8 +974,10 @@ export async function executeTool(
         payload.tags = tags;
       }
       const input = leadInsert(payload);
-      // explicit whatsapp is verified; the mobile-derived fill stays unverified.
-      input.whatsapp_verified = Boolean(input.whatsapp) && !whatsappDerived;
+      // explicit whatsapp is verified; the mobile-derived fill stays unverified. Only
+      // discovery's printed-source rule counts — triage's text came from the lead's own messages.
+      const mayVerify = ctx.runKind === 'discovery';
+      input.whatsapp_verified = mayVerify && Boolean(input.whatsapp) && !whatsappDerived;
       // derived-but-promotable: probe the live socket for registration —
       // registered clears `derived`. Runs before the claim tx (network never
       // inside a DB tx); null = can't tell, stays unverified.
@@ -1141,10 +1167,11 @@ export async function executeTool(
               }
             }
             // a merged whatsapp is verified only when it wasn't auto-derived.
-            if ('whatsapp' in set) set.whatsapp_verified = !whatsappDerived;
+            if ('whatsapp' in set) set.whatsapp_verified = mayVerify && !whatsappDerived;
             // an explicit whatsapp digit-matching a stored UNVERIFIED value
             // confirms it — the fill loop alone can't flip the flag.
             if (
+              mayVerify &&
               !whatsappDerived &&
               input.whatsapp &&
               dup.whatsapp &&
@@ -1278,15 +1305,26 @@ export async function executeTool(
             'agentMode, agentPaused and unarchiving are staff-managed; nothing else to update',
         };
       }
-      const res = await updateLead(
-        sql,
-        String(id),
-        leadPatch(rest, 'agent', nextActionRequested),
-        key,
-        'agent',
-        guard,
-      );
-      return res.body;
+      try {
+        const res = await updateLead(
+          sql,
+          String(id),
+          leadPatch(rest, 'agent', nextActionRequested),
+          key,
+          'agent',
+          guard,
+        );
+        return res.body;
+      } catch (e) {
+        if (e instanceof HttpError && e.code === 'CONTACT_LOCKED') {
+          return {
+            error: offered('request_human')
+              ? `${e.message} Se o lead pediu a troca, use request_human pra equipe confirmar.`
+              : e.message,
+          };
+        }
+        throw e;
+      }
     }
     case 'set_state': {
       const res = await updateLead(

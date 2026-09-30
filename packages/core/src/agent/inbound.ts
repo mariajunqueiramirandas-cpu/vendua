@@ -50,6 +50,8 @@ export async function ingestInbound(
     sentAt?: Date;
     /** history import: record for context only — never queues a reply run. */
     historical?: boolean;
+    /** email whose From failed DKIM/DMARC — never matched to an existing lead */
+    unverifiedSender?: boolean;
   },
 ): Promise<IngestResult> {
   const { inboundReplyDelayMin } = await getGuardrails(sql);
@@ -89,6 +91,7 @@ export async function ingestInbound(
     ...(input.direction ? { direction: input.direction } : {}),
     ...(input.sentAt ? { sentAt: input.sentAt } : {}),
     ...(input.historical ? { historical: input.historical } : {}),
+    ...(input.unverifiedSender ? { unverifiedSender: true } : {}),
     ...(history
       ? {
           createLead: history.mode === 'leads',

@@ -166,7 +166,14 @@ export function mountSignup(admin: AdminApp, d: Omit<AdminDeps, 'admin'>) {
     }
 
     const next = await ensureFirstCharge(d, c, owned, { plan, method, email, ownerName });
-    setAdminCookie(c, await createSession(sql, owned, c.req.header('user-agent')), secure(c));
+    setAdminCookie(
+      c,
+      await createSession(sql, owned, c.req.header('user-agent'), {
+        kind: 'phone',
+        subject: phone,
+      }),
+      secure(c),
+    );
     return c.json({ signedIn: true, store: storeRef(owned), next }, 201);
   });
 

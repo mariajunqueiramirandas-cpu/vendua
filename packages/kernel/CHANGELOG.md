@@ -3,6 +3,19 @@
 Semver, per docs/architecture/11-backward-compatibility.md: minors and patches
 never need a storefront edit; a major only ships with a Contract major.
 
+## 1.8.0
+
+Security hardening — additive; no storefront edit, no new runtime export.
+
+- Customer tokens are anchored to an order (`vcu2.`): a token from a checkout or an order number
+  reads only that order and no loyalty reward codes until the order is delivered. Older tokens
+  get `CUSTOMER_REQUIRED` once and re-verify through the usual flow.
+- `checkout()` sends the phone's customer token, so loyalty rewards redeem only for a proven phone.
+- The editor preview listens only to the merchant admin's origin, which Core now reports as
+  `StateEnvelope.adminOrigin` (with `templates`); it stays inert until then and posts only there.
+- New `ERROR_CODES`: `PRICES_CHANGED` (checkout moved cart lines to the live price; the cart
+  refetches and the error copy asks to confirm again) and `IDEMPOTENCY_KEY_REUSED`.
+
 ## 1.7.0
 
 Online payments — additive; no storefront edit, no new runtime export.

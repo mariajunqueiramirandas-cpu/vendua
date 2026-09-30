@@ -19,6 +19,7 @@ import {
   readPickerToken,
   revokeSession,
   sessionAlive,
+  sessionStores,
   setAdminCookie,
   startEmailLink,
   startOtp,
@@ -59,7 +60,7 @@ import { mountReports } from './routes-reports.ts';
 import { mountStore } from './routes-store.ts';
 import { mountTeam } from './routes-team.ts';
 import { processImage } from './media.ts';
-import { pushServiceLabel, sendPushResult, vapidPublicKey } from './webpush.ts';
+import { isPushEndpoint, pushServiceLabel, sendPushResult, vapidPublicKey } from './webpush.ts';
 import { recordPushAttempt } from './workers.ts';
 import { getIntegration } from '../modules/integrations.ts';
 import { storeOrigin } from '../platform/store-origin.ts';
@@ -89,6 +90,7 @@ const STREAM_MAX_MS = 30 * 60_000;
 /** carts have no change signal — one cheap count per open admin stream */
 const PRESENCE_POLL_MS = 20_000;
 const MEDIA_MAX = 2 * 1024 * 1024;
+const PUSH_SUBS_PER_USER = 10;
 
 /** The merchant admin API (docs/merchant-admin.md). Mounted at /admin/v1. */
 export function mountAdmin(o: MountAdminOpts) {
@@ -114,7 +116,7 @@ export function mountAdmin(o: MountAdminOpts) {
     if (stores.length === 1) {
       setAdminCookie(
         c,
-        await createSession(sql, stores[0]!, c.req.header('user-agent')),
+        await createSession(sql, stores[0]!, c.req.header('user-agent'), who),
         secure(c),
       );
       return c.json({ signedIn: true, store: publicStore(stores[0]!) });
@@ -183,7 +185,7 @@ export function mountAdmin(o: MountAdminOpts) {
     if (!who) throw new HttpError(401, 'UNAUTHENTICATED', 'sign in again');
     const m = (await membershipsOf(sql, who)).find((s) => s.tenant_id === body.storeId);
     if (!m) throw new HttpError(404, 'STORE_NOT_FOUND', 'store not found');
-    setAdminCookie(c, await createSession(sql, m, c.req.header('user-agent')), secure(c));
+    setAdminCookie(c, await createSession(sql, m, c.req.header('user-agent'), who), secure(c));
     return c.json({ signedIn: true, store: publicStore(m) });
   });
 
@@ -218,8 +220,8 @@ export function mountAdmin(o: MountAdminOpts) {
   admin.get('/session', async (c) => {
     const tenant = c.get('tenant');
     const m = c.get('merchant');
-    const { stores, settings, url } = await withTenant(sql, tenant.id, async (tx) => ({
-      stores: await membershipsFor(sql, m.phone),
+    const { stores } = await sessionStores(sql, tenant.id, m.sessionId, currentMembership(c));
+    const { settings, url } = await withTenant(sql, tenant.id, async (tx) => ({
       url: await storeOrigin(tx, tenant, o.storeDomain),
       settings: (
         await tx<
@@ -254,13 +256,23 @@ export function mountAdmin(o: MountAdminOpts) {
     });
   });
 
-  // switch store without re-entering a code: the verified phone is in the session
+  // switch store without re-entering a code: only to stores behind what this session proved
   admin.post('/session/switch', async (c) => {
     const m = c.get('merchant');
     const body = await bodyJson(c);
-    const target = (await membershipsFor(sql, m.phone)).find((s) => s.tenant_id === body.storeId);
+    const { proof, stores } = await sessionStores(
+      sql,
+      c.get('tenant').id,
+      m.sessionId,
+      currentMembership(c),
+    );
+    const target = stores.find((s) => s.tenant_id === body.storeId);
     if (!target) throw new HttpError(404, 'STORE_NOT_FOUND', 'store not found');
-    setAdminCookie(c, await createSession(sql, target, c.req.header('user-agent')), secure(c));
+    setAdminCookie(
+      c,
+      await createSession(sql, target, c.req.header('user-agent'), proof),
+      secure(c),
+    );
     return c.json({ signedIn: true, store: publicStore(target) });
   });
 
@@ -339,8 +351,10 @@ export function mountAdmin(o: MountAdminOpts) {
     return o.idempotency(sql, async (c, tx) => {
       const body = await bodyJson(c);
       const endpoint = text(body.endpoint, 'endpoint', 1000, 10);
-      if (!endpoint.startsWith('https://'))
-        throw new HttpError(422, 'BAD_REQUEST', 'endpoint must be https');
+      if (!isPushEndpoint(endpoint))
+        throw new HttpError(422, 'BAD_REQUEST', 'endpoint is not a browser push service', {
+          field: 'endpoint',
+        });
       const keys = isObj(body.keys) ? body.keys : {};
       const p256dh = text(keys.p256dh, 'keys.p256dh', 200, 20);
       const auth = text(keys.auth, 'keys.auth', 100, 8);
@@ -349,6 +363,14 @@ export function mountAdmin(o: MountAdminOpts) {
         values (${tenant.id}, ${m.userId}, ${endpoint}, ${p256dh}, ${auth})
         on conflict (tenant_id, endpoint) do update set user_id = excluded.user_id,
           p256dh = excluded.p256dh, auth = excluded.auth, last_error = null
+      `;
+      // a browser re-subscribes with a fresh endpoint now and then: keep the newest few
+      await tx`
+        delete from push_subscriptions where id in (
+          select id from push_subscriptions
+          where tenant_id = ${tenant.id} and user_id = ${m.userId}
+          order by created_at desc, id offset ${PUSH_SUBS_PER_USER}
+        )
       `;
       return { status: 201, body: { subscribed: true } };
     })(c);
@@ -727,6 +749,12 @@ export function mountAdmin(o: MountAdminOpts) {
   });
 
   admin.notFound((c) => c.json({ error: { code: 'NOT_FOUND', message: 'not found' } }, 404));
+}
+
+function currentMembership(c: AdminCtx): Membership {
+  const t = c.get('tenant');
+  const m = c.get('merchant');
+  return { tenant_id: t.id, slug: t.slug, name: t.name, user_id: m.userId, role: m.role };
 }
 
 function publicStore(s: { tenant_id: string; slug: string; name: string; role: Role }) {

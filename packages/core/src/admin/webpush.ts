@@ -118,6 +118,25 @@ export interface PushTarget {
   auth: string;
 }
 
+// The hosts browsers hand out as PushSubscription.endpoint: Chromium browsers (Chrome,
+// Android, Samsung, Opera) → FCM; Firefox → Mozilla autopush; Safari → web.push.apple.com;
+// Edge on Windows → WNS (wns2-*.notify.windows.com). Anything else would make Core POST
+// to an address a merchant chose.
+const PUSH_HOSTS = ['fcm.googleapis.com', 'updates.push.services.mozilla.com'];
+const PUSH_HOST_SUFFIXES = ['.push.apple.com', '.push.services.mozilla.com', '.notify.windows.com'];
+
+export function isPushEndpoint(endpoint: string): boolean {
+  let u: URL;
+  try {
+    u = new URL(endpoint);
+  } catch {
+    return false;
+  }
+  if (u.protocol !== 'https:' || u.username || u.password || u.port !== '') return false;
+  const host = u.hostname.toLowerCase();
+  return PUSH_HOSTS.includes(host) || PUSH_HOST_SUFFIXES.some((s) => host.endsWith(s));
+}
+
 export type PushResult = { result: 'ok' | 'gone' | 'error'; detail: string | null };
 
 /** 'gone' = the browser dropped the subscription; delete it. */
@@ -133,6 +152,8 @@ export async function sendPushResult(target: PushTarget, message: object): Promi
   const pub = process.env.VAPID_PUBLIC_KEY;
   const priv = process.env.VAPID_PRIVATE_KEY;
   if (!pub || !priv) return { result: 'error', detail: 'push not configured' };
+  // rows saved before the allowlist: never sent to, and dropped like an unsubscribed device
+  if (!isPushEndpoint(target.endpoint)) return { result: 'gone', detail: 'endpoint not allowed' };
   try {
     const body = await encryptPayload(
       enc.encode(JSON.stringify(message)),
@@ -154,8 +175,10 @@ export async function sendPushResult(target: PushTarget, message: object): Promi
         urgency: 'high',
       },
       body,
+      redirect: 'manual',
       signal: AbortSignal.timeout(10_000),
     });
+    if (res.status >= 300 && res.status < 400) return { result: 'error', detail: 'redirect' };
     if (res.status === 404 || res.status === 410)
       return { result: 'gone', detail: `push service ${res.status}` };
     return res.ok

@@ -33,7 +33,7 @@ interface ItemRow {
   product_id: string;
   qty: number;
   modifier_ids: string[];
-  /** Price accepted at add time — never repriced from live catalog rows. */
+  /** Price accepted at add time — checkout refreshes it to the live price (repriceLines). */
   unit_price_cents: number;
   /** [{id, name, priceDeltaCents}] frozen at add time; status stays live. */
   modifier_snapshot: { id: string; name: string; priceDeltaCents: number }[];
@@ -268,7 +268,7 @@ async function loadPricedItems(tx: Sql, tenantId: string, cartId: string): Promi
   `;
   if (items.length === 0) return [];
   // live read is only for status — names/prices come from the add-time
-  // snapshot, never repriced
+  // snapshot; checkout reprices stale lines (repriceLines) before placing
   const modifierIds = items.flatMap((i) => i.modifier_ids);
   const mods = modifierIds.length
     ? await tx<{ id: string; status: string }[]>`
@@ -542,8 +542,8 @@ export async function insertLine(
     ]),
   );
 
-  // freeze the accepted price — later catalog edits never reprice a line
-  // or checkout total
+  // freeze the accepted price for the cart view; checkout re-checks it
+  // against the live catalog (repriceLines)
   const allModifiers = product.modifierGroups.flatMap((g) => g.modifiers);
   const chosen = modifierIds.map((id) => allModifiers.find((m) => m.id === id)!);
   const snapshot = chosen.map((m) => ({
@@ -574,6 +574,43 @@ export async function insertLine(
     throw err;
   }
   await tx`update carts set updated_at = now() where id = ${cartId}`;
+}
+
+/**
+ * Checkout's price check: a line keeps its add-time price while the shopper browses, but an
+ * order is never placed at a stale one (a typo fixed since, a promo that ended). Lines whose
+ * live price differs are rewritten to it; returns how many changed. Lines already validated
+ * against `products` (validateCheckout) — a product missing here is left to that check.
+ */
+export async function repriceLines(
+  tx: Sql,
+  tenantId: string,
+  items: PricedItem[],
+  products: Map<string, ProductDetail | null>,
+): Promise<number> {
+  let changed = 0;
+  for (const item of items) {
+    const product = products.get(item.productId);
+    if (!product) continue;
+    const all = product.modifierGroups.flatMap((g) => g.modifiers);
+    const chosen = item.modifierIds.flatMap((id) => all.filter((m) => m.id === id));
+    const picks =
+      product.kind === 'combo' ? validateCombo(product.comboSlots, item.comboSelections).picks : [];
+    const unit =
+      unitPriceCents(
+        product.basePriceCents,
+        chosen.map((m) => m.priceDeltaCents),
+      ) + comboDelta(picks);
+    if (unit === item.unitPriceCents) continue;
+    changed++;
+    await tx`
+      update cart_items set unit_price_cents = ${unit},
+        modifier_snapshot = ${tx.json(chosen.map((m) => ({ id: m.id, name: m.name, priceDeltaCents: m.priceDeltaCents })))},
+        combo_snapshot = ${tx.json(picks as never)}
+      where tenant_id = ${tenantId} and id = ${item.id}
+    `;
+  }
+  return changed;
 }
 
 /** Stock check for a qty change on one line (PATCH). */

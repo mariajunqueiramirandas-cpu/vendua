@@ -738,6 +738,8 @@ export type DomainStatus = 'active' | 'pending_dns' | 'dns_ok' | 'failed';
 export interface Invoice {
   id: string;
   number: number;
+  /** 'upgrade': the difference to change plan mid-period; the plan changes once it's paid */
+  kind: 'period' | 'upgrade';
   planName: string;
   amountCents: number;
   periodStart: string;
@@ -759,6 +761,14 @@ export interface Account {
     currentPeriodEnd: string | null;
     cancelAtPeriodEnd: boolean;
     pendingPlan: { id: string; name: string } | null;
+    /** an upgrade waiting for its invoice (amount from Core) */
+    pendingUpgrade: {
+      planId: string;
+      planName: string;
+      amountCents: number;
+      until: string;
+      invoice: Invoice;
+    } | null;
     /** card: where the owner authorizes the recurring charge (while pending) */
     checkoutUrl: string | null;
     payerEmail: string | null;

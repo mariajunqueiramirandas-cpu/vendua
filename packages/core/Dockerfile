@@ -46,6 +46,9 @@ COPY packages/core packages/core
 ENV NODE_ENV=production
 WORKDIR /app/packages/core
 EXPOSE 8787
+# The image's non-root user. /app stays root-owned and read-only to it: Core writes nothing
+# to disk (Baileys auth, media and sessions live in Postgres) and the core service mounts no volume.
+USER bun
 
 # Boot runs migrations then serves; seeding is opt-in via SEED_DEMO=1.
 ENTRYPOINT ["sh", "docker-entrypoint.sh"]

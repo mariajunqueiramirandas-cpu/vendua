@@ -168,14 +168,28 @@ partially_refunded | charged_back | in_mediation`. New type `PaymentNext` (what
   copies (`?w=`).
 - `ERROR_CODES` adds `PAYMENT_NOT_REQUIRED`, `PAYMENT_UNAVAILABLE`, `PAYMENT_ONLINE`.
 
+### Security hardening (Kernel 1.8)
+
+Additive — no storefront edit, no new runtime export.
+
+- `StateEnvelope` gains optional `adminOrigin` (sent with `templates`): the merchant admin's
+  origin, the only parent the editor preview listens to.
+- Customer tokens are anchored to an order: until that order is delivered, `customer.orders()`
+  holds only it and the loyalty card carries no reward codes. `checkout()` sends the phone's
+  customer token, which phone-bound coupons (loyalty rewards) require.
+- `ERROR_CODES` adds `PRICES_CHANGED` (checkout moved cart lines to the live price; the cart
+  refetches) and `IDEMPOTENCY_KEY_REUSED`.
+
 ### Editor preview (Kernel 1.4)
 
 Not an export: a storefront loaded inside a frame with `?vendua-preview=1` listens for
-`{ type: 'vendua:preview', templates?, tokens?, selected? }` from its parent, renders those
+`{ type: 'vendua:preview', templates?, tokens?, selected? }` from its parent — since Kernel 1.8
+only when the parent's origin is `StateEnvelope.adminOrigin`, and it stays inert until Core
+reports one — renders those
 draft templates and tokens over the live ones (each validated like Core does), outlines
 `selected`'s section and posts `{ type: 'vendua:preview-select', id }` when a section is
 tapped. It announces itself with `{ type: 'vendua:preview-ready', tokens, paths }` (the tokens in
-force and the store's routes) and sends no analytics. The merchant admin's
+force and the store's routes, posted only to that origin) and sends no analytics. The merchant admin's
 Aparência editor is the only caller.
 
 ## Styling API (Contract surface)

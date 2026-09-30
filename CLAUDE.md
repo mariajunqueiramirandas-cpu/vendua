@@ -11,7 +11,7 @@ model, migrations, tokens, compat matrix), `packages/loader` (`v.js`), `packages
 ## Invariants (bugs if broken)
 
 - Tenant isolation: every table has `tenant_id` + an RLS policy; every request-scoped query
-  runs under `SET LOCAL app.tenant_id` (`platform/db.ts`).
+  runs under `SET LOCAL vendua.tenant_id` (`platform/db.ts`).
 - Money is integer cents, computed only in Core — clients never recompute totals.
 - Every mutating endpoint takes an `Idempotency-Key` through the claim pattern in
   `platform/http.ts`; checkout creates at most one order per cart.

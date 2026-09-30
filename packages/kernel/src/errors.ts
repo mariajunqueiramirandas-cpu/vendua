@@ -29,6 +29,7 @@ const COPY: Record<string, { title: string; body?: string }> = {
   RATE_LIMITED: { title: 'Muitas tentativas seguidas', body: 'Espere alguns segundos.' },
   // Kernel 1.2
   OUT_OF_STOCK: { title: 'Não temos tudo isso em estoque', body: 'Diminua a quantidade.' },
+  PRICES_CHANGED: { title: 'Alguns preços mudaram', body: 'Confira a sacola e confirme de novo.' },
   COMBO_SLOT_COUNT: {
     title: 'Complete a montagem do kit',
     body: 'Confira quantos itens cada parte pede.',

@@ -372,6 +372,11 @@ export function useCheckout(): {
             : { code: 'INTERNAL', message: err instanceof Error ? err.message : 'checkout failed' };
         setError(e);
         emit('order_failed', { code: e.code });
+        // Core already moved the lines to the live price: show the new total
+        if (e.code === 'PRICES_CHANGED') {
+          invalidateQuery('cart');
+          invalidate('cart');
+        }
         throw err;
       } finally {
         setPending(false);

@@ -187,7 +187,7 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('merchant admin, Track A (db)', 
       'deriveBits',
     ])) as CryptoKeyPair;
     return {
-      endpoint: `https://push.ta.test/${kind}/${crypto.randomUUID()}`,
+      endpoint: `https://fcm.googleapis.com/ta/${kind}/${crypto.randomUUID()}`,
       keys: {
         p256dh: Buffer.from(await crypto.subtle.exportKey('raw', ua.publicKey)).toString(
           'base64url',
@@ -267,9 +267,9 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('merchant admin, Track A (db)', 
     process.env.VAPID_PRIVATE_KEY = (await crypto.subtle.exportKey('jwk', vapid.privateKey)).d!;
     globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
       const url = String(input instanceof Request ? input.url : input);
-      if (!url.startsWith('https://push.ta.test/')) return realFetch(input as never, init);
+      if (!url.startsWith('https://fcm.googleapis.com/ta/')) return realFetch(input as never, init);
       pushHits.push(url);
-      const kind = new URL(url).pathname.split('/')[1];
+      const kind = new URL(url).pathname.split('/')[2];
       return new Response(null, { status: kind === 'ok' ? 201 : kind === 'gone' ? 410 : 500 });
     }) as typeof fetch;
   });

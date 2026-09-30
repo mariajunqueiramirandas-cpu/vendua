@@ -22,6 +22,8 @@ const CODE_TTL_MIN = 10;
 const CODE_MAX_ATTEMPTS = 5;
 /** per phone, per rolling hour — a phone can't be spammed with codes */
 const CODES_PER_HOUR = 5;
+/** per phone, per rolling day: wrong codes across all of its codes */
+const FAILED_CODES_PER_DAY = 10;
 const PICKER_TTL_MS = 10 * 60_000;
 const LINK_TTL_MIN = 15;
 /** per address, per rolling hour */
@@ -155,6 +157,15 @@ export async function startOtp(
 export async function verifyOtp(sql: Sql, phone: string, code: string): Promise<boolean> {
   if (!/^\d{6}$/.test(code)) return false;
   return authTx(sql, async (tx) => {
+    // serializes verifies per phone, so parallel guesses can't all read the count under the cap
+    await tx`select pg_advisory_xact_lock(hashtextextended(${`admin-otp:${phone}`}, 0))`;
+    const failed = (
+      await tx<{ n: number }[]>`
+        select coalesce(sum(attempts), 0)::int as n from merchant_login_codes
+        where phone = ${phone} and purpose = 'login' and created_at > now() - interval '1 day'
+      `
+    )[0]!.n;
+    if (failed >= FAILED_CODES_PER_DAY) return false;
     const row = (
       await tx<{ id: string; code_hash: string; attempts: number }[]>`
         select id, code_hash, attempts from merchant_login_codes
@@ -257,18 +268,25 @@ export async function verifyEmailLink(sql: Sql, token: unknown): Promise<string 
   });
 }
 
+/**
+ * `proof` is what the person verified to get here; switching stores later only reaches
+ * stores behind that same proof. Without one the session stays in its own store.
+ */
 export async function createSession(
   sql: Sql,
   m: Membership,
   userAgent: string | undefined,
+  proof?: Verified | null,
 ): Promise<string> {
   const secret = b64url(crypto.getRandomValues(new Uint8Array(32)));
   const id = await withTenant(sql, m.tenant_id, async (tx) => {
     const row = (
       await tx<{ id: string }[]>`
-        insert into merchant_sessions (tenant_id, user_id, secret_hash, user_agent, expires_at)
+        insert into merchant_sessions (tenant_id, user_id, secret_hash, user_agent, expires_at,
+                                       proof_kind, proof_subject)
         values (${m.tenant_id}, ${m.user_id}, ${sha256(secret)}, ${(userAgent ?? '').slice(0, 300)},
-                now() + make_interval(days => ${SESSION_DAYS}))
+                now() + make_interval(days => ${SESSION_DAYS}),
+                ${proof?.kind ?? null}, ${proof?.subject ?? null})
         returning id
       `
     )[0]!;
@@ -276,6 +294,46 @@ export async function createSession(
     return row.id;
   });
   return `${m.tenant_id}.${id}.${secret}`;
+}
+
+/** What this session was proven with; null for sessions from before proofs were kept. */
+export async function sessionProof(
+  sql: Sql,
+  tenantId: string,
+  sessionId: string,
+): Promise<Verified | null> {
+  const row = (
+    await withTenant(
+      sql,
+      tenantId,
+      (tx) => tx<{ proof_kind: Verified['kind'] | null; proof_subject: string | null }[]>`
+        select proof_kind, proof_subject from merchant_sessions
+        where tenant_id = ${tenantId} and id = ${sessionId}
+      `,
+    )
+  )[0];
+  return row?.proof_kind && row.proof_subject
+    ? { kind: row.proof_kind, subject: row.proof_subject }
+    : null;
+}
+
+/**
+ * The stores this session may switch to: those behind its proof. The member row's own
+ * phone/email is not evidence — an owner types those when inviting. A session with no
+ * proof sees only its own store.
+ */
+export async function sessionStores(
+  sql: Sql,
+  tenantId: string,
+  sessionId: string,
+  current: Membership,
+): Promise<{ proof: Verified | null; stores: Membership[] }> {
+  const proof = await sessionProof(sql, tenantId, sessionId);
+  if (!proof) return { proof, stores: [current] };
+  const stores = await membershipsOf(sql, proof);
+  // e.g. an email session whose member changed their address since: still lists its own store
+  if (!stores.some((s) => s.tenant_id === current.tenant_id)) stores.unshift(current);
+  return { proof, stores };
 }
 
 export function setAdminCookie(c: Context, value: string, secure: boolean) {

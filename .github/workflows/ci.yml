@@ -29,10 +29,10 @@ jobs:
       (github.event.pull_request.head.repo.fork == false &&
         !contains(fromJSON('["labeled","unlabeled"]'), github.event.action))
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           ref: ${{ github.head_ref || github.ref }}
-      - uses: oven-sh/setup-bun@v2
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
         with:
           bun-version: '1.4.2'
       - run: bun install --frozen-lockfile
@@ -53,18 +53,21 @@ jobs:
         if: steps.autofix.outputs.pushed == 'true'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # refs reach the shell as env, never spliced into the script (branch names are attacker-chosen)
+          HEAD_REF: ${{ github.head_ref || github.ref_name }}
+          BASE_REF: ${{ github.base_ref }}
         # workflow_dispatch runs on the branch ref, so checks attach to the autofix commit and surface on the PR
-        run: gh workflow run ci.yml --ref "${{ github.head_ref || github.ref_name }}" -f base_ref="${{ github.base_ref }}"
+        run: gh workflow run ci.yml --ref "$HEAD_REF" -f base_ref="$BASE_REF"
 
   # a `storefront:<slug>` PR may only touch storefronts/<slug>/** (unlabeled = no-op pass) — the only job label events must rerun
   storefront-isolation:
     runs-on: ubuntu-latest
     if: github.event_name == 'pull_request'
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           fetch-depth: 0 # the check diffs origin/<base>...HEAD
-      - uses: oven-sh/setup-bun@v2
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
         with:
           bun-version: '1.4.2'
       - run: bun tools/check-storefront-paths.mjs
@@ -79,8 +82,8 @@ jobs:
       run:
         working-directory: services/ig-sidecar
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
         with:
           go-version-file: services/ig-sidecar/go.mod
           cache-dependency-path: services/ig-sidecar/go.sum
@@ -97,10 +100,10 @@ jobs:
       github.event_name == 'push' ||
       !contains(fromJSON('["labeled","unlabeled"]'), github.event.action)
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           fetch-depth: 0 # tools/affected.mjs diffs origin/<base>...HEAD on PRs
-      - uses: oven-sh/setup-bun@v2
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
         with:
           bun-version: '1.4.2'
       - run: bun install --frozen-lockfile
@@ -118,13 +121,17 @@ jobs:
       - name: Isolation tools tests
         run: bun test tools/
       - name: Builds
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          BASE_REF: ${{ github.base_ref }}
+          INPUT_BASE_REF: ${{ github.event.inputs.base_ref }}
         run: |
           # PRs build the affected graph (tools/affected.mjs) against the base; a main push builds every storefront
-          if [ "${{ github.event_name }}" = "pull_request" ]; then
-            affected="$(bun tools/affected.mjs --base "origin/${{ github.base_ref }}")"
-          elif [ "${{ github.event_name }}" = "workflow_dispatch" ] && [ -n "${{ github.event.inputs.base_ref }}" ]; then
+          if [ "$EVENT_NAME" = "pull_request" ]; then
+            affected="$(bun tools/affected.mjs --base "origin/$BASE_REF")"
+          elif [ "$EVENT_NAME" = "workflow_dispatch" ] && [ -n "$INPUT_BASE_REF" ]; then
             # autofix retrigger: base arrives via the input, not github.base_ref — same affected scoping as the PR run
-            affected="$(bun tools/affected.mjs --base "origin/${{ github.event.inputs.base_ref }}")"
+            affected="$(bun tools/affected.mjs --base "origin/$INPUT_BASE_REF")"
           else
             affected='{"packages":["site"],"allStorefronts":true}'
           fi
@@ -163,17 +170,19 @@ jobs:
       github.event_name == 'push' ||
       !contains(fromJSON('["labeled","unlabeled"]'), github.event.action)
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           fetch-depth: 0 # Scope diffs origin/<base>...HEAD
-      - uses: oven-sh/setup-bun@v2
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
         with:
           bun-version: '1.4.2'
       # PR / autofix-retrigger runs skip this job when the diff can't affect it (tools/affected.mjs); main pushes run it all
       - name: Scope
         id: scope
+        env:
+          BASE_REF: ${{ github.base_ref || github.event.inputs.base_ref }}
         run: |
-          base="${{ github.base_ref || github.event.inputs.base_ref }}"
+          base="$BASE_REF"
           if [ -z "$base" ]; then
             echo "run=true" >> "$GITHUB_OUTPUT"
           else
@@ -205,17 +214,19 @@ jobs:
       github.event_name == 'push' ||
       !contains(fromJSON('["labeled","unlabeled"]'), github.event.action)
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           fetch-depth: 0 # Scope diffs origin/<base>...HEAD
-      - uses: oven-sh/setup-bun@v2
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
         with:
           bun-version: '1.4.2'
       # PR / autofix-retrigger runs skip this job when the diff can't affect it (tools/affected.mjs); main pushes run it all
       - name: Scope
         id: scope
+        env:
+          BASE_REF: ${{ github.base_ref || github.event.inputs.base_ref }}
         run: |
-          base="${{ github.base_ref || github.event.inputs.base_ref }}"
+          base="$BASE_REF"
           if [ -z "$base" ]; then
             echo "run=true" >> "$GITHUB_OUTPUT"
           else
@@ -270,16 +281,18 @@ jobs:
       github.event_name == 'push' ||
       !contains(fromJSON('["labeled","unlabeled"]'), github.event.action)
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           fetch-depth: 0 # Scope diffs origin/<base>...HEAD
-      - uses: oven-sh/setup-bun@v2
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
         with:
           bun-version: '1.4.2'
       - name: Scope
         id: scope
+        env:
+          BASE_REF: ${{ github.base_ref || github.event.inputs.base_ref }}
         run: |
-          base="${{ github.base_ref || github.event.inputs.base_ref }}"
+          base="$BASE_REF"
           if [ -z "$base" ]; then
             echo "run=true" >> "$GITHUB_OUTPUT"
           else
@@ -326,7 +339,7 @@ jobs:
         run: cd apps/admin && BASE=http://localhost:8787/admin/ AXE=1 bun scripts/shots.ts
       - name: Upload screenshots
         if: always() && steps.scope.outputs.run == 'true'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: admin-screenshots
           path: apps/admin/shots
@@ -343,17 +356,19 @@ jobs:
       github.event_name == 'push' ||
       !contains(fromJSON('["labeled","unlabeled"]'), github.event.action)
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           fetch-depth: 0 # Scope diffs origin/<base>...HEAD
-      - uses: oven-sh/setup-bun@v2
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
         with:
           bun-version: '1.4.2'
       # same scoping as conformance: PRs that can't affect Core/Kernel/storefronts skip it
       - name: Scope
         id: scope
+        env:
+          BASE_REF: ${{ github.base_ref || github.event.inputs.base_ref }}
         run: |
-          base="${{ github.base_ref || github.event.inputs.base_ref }}"
+          base="$BASE_REF"
           if [ -z "$base" ]; then
             echo "run=true" >> "$GITHUB_OUTPUT"
           else
@@ -398,17 +413,19 @@ jobs:
     env:
       CONTROL_SECRET: ci-control
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           fetch-depth: 0 # Scope diffs origin/<base>...HEAD
-      - uses: oven-sh/setup-bun@v2
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
         with:
           bun-version: '1.4.2'
       # same scoping as conformance: PRs that can't affect Core/Kernel/storefronts skip it
       - name: Scope
         id: scope
+        env:
+          BASE_REF: ${{ github.base_ref || github.event.inputs.base_ref }}
         run: |
-          base="${{ github.base_ref || github.event.inputs.base_ref }}"
+          base="$BASE_REF"
           if [ -z "$base" ]; then
             echo "run=true" >> "$GITHUB_OUTPUT"
           else

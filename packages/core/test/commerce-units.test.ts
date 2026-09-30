@@ -308,20 +308,24 @@ describe('customer + address', () => {
     expect(normalizePhone('+55 (22) 99999-0001')).toBe('22999990001');
     expect(normalizePhone('22999990001')).toBe('22999990001');
   });
-  test('customer tokens bind tenant + phone and expire', () => {
-    const { token } = mintCustomerToken('s', 't1', '22999990001', Date.UTC(2026, 8, 1));
-    expect(verifyCustomerToken('s', 't1', token, Date.UTC(2026, 8, 2))).toBe('22999990001');
+  test('customer tokens bind tenant + phone + anchor order and expire', () => {
+    const anchor = '0b9c1d4e-1111-4222-8333-444455556666';
+    const { token } = mintCustomerToken('s', 't1', '22999990001', anchor, Date.UTC(2026, 8, 1));
+    expect(verifyCustomerToken('s', 't1', token, Date.UTC(2026, 8, 2))).toEqual({
+      phone: '22999990001',
+      anchorOrderId: anchor,
+    });
     expect(verifyCustomerToken('s', 't2', token, Date.UTC(2026, 8, 2))).toBeNull();
     expect(verifyCustomerToken('other', 't1', token, Date.UTC(2026, 8, 2))).toBeNull();
     expect(verifyCustomerToken('s', 't1', token, Date.UTC(2027, 1, 1))).toBeNull();
-    expect(
-      verifyCustomerToken(
-        's',
-        't1',
-        token.replace('22999990001', '22999990002'),
-        Date.UTC(2026, 8, 2),
-      ),
-    ).toBeNull();
+    for (const forged of [
+      token.replace('22999990001', '22999990002'),
+      token.replace(anchor, '0b9c1d4e-1111-4222-8333-444455556667'),
+    ])
+      expect(verifyCustomerToken('s', 't1', forged, Date.UTC(2026, 8, 2))).toBeNull();
+  });
+  test('old-format (phone-only) customer tokens are rejected', () => {
+    expect(verifyCustomerToken('s', 't1', 'vcu.22999990001.1999999999.abc')).toBeNull();
   });
   test('loyalty program parsing rejects nonsense', () => {
     expect(parseLoyalty({ stampsRequired: 1, reward: { kind: 'fixed', value: 1 } })).toBeNull();

@@ -463,6 +463,8 @@ footer {
         btn.disabled = false;
         fail(r.body.error && r.body.error.message ? r.body.error.message : 'esse horário acabou de sair — escolhe outro');
         refresh();
+      } else if (r.status === 429 && r.body.error && r.body.error.code === 'BOOKING_LIMIT') {
+        fail(r.body.error.message);
       } else {
         btn.disabled = false;
         fail('não consegui marcar — tenta de novo?');

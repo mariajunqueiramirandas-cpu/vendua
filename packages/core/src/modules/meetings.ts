@@ -243,6 +243,8 @@ export async function availableSlots(
 
 const TOKEN_PREFIX = 'vbt';
 const TOKEN_TTL_S = 30 * 24 * 3600; // 30d
+/** self-service bookings per lead per rolling day; staff and agent bookings are uncapped */
+export const LINK_BOOKINGS_PER_DAY = 3;
 
 // set once at boot with staffSecret; unset → agent links fall back to meeting.bookingUrl
 let runnerBookingSecret: string | null = null;
@@ -498,6 +500,20 @@ export async function bookMeetingTx(
         `
       )[0];
       if (other) return { meeting: other, created: false as const, cfg, lead };
+      // book → cancel → book would otherwise loop forever, each one pinging staff and the calendar
+      const recent = (
+        await tx<{ n: number }[]>`
+          select count(*)::int as n from meetings
+          where lead_id = ${leadId} and source = 'link' and created_at > now() - interval '1 day'
+        `
+      )[0]!.n;
+      if (recent >= LINK_BOOKINGS_PER_DAY) {
+        throw new HttpError(
+          429,
+          'BOOKING_LIMIT',
+          'você já marcou várias vezes hoje — tenta de novo amanhã',
+        );
+      }
     }
     const durationMin =
       input.durationMin && Number.isInteger(input.durationMin) && input.durationMin >= 5

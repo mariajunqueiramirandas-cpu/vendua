@@ -340,3 +340,48 @@ describe('links + cross-device history', () => {
     expect($('[data-vendua="phone-verify"]')).toBeNull();
   });
 });
+
+describe('checkout carries the phone’s customer token', () => {
+  test('a stored token for the checkout phone is sent so personal coupons can apply', async () => {
+    const { createApi } = await import('../src/api.ts');
+    localStorage.setItem(
+      'vendua.customerTokens',
+      JSON.stringify({
+        last: '21900000000',
+        byPhone: {
+          '22999990001': { token: 'tok-ana', expiresAt: '2099-01-01T00:00:00Z' },
+          '21900000000': { token: 'tok-other', expiresAt: '2099-01-01T00:00:00Z' },
+        },
+      }),
+    );
+    const sent: Record<string, string | null> = {};
+    const real = globalThis.fetch;
+    globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+      const path = new URL(String(input)).pathname;
+      sent[path] = new Headers(init?.headers).get('x-vendua-customer');
+      const body =
+        path === '/checkout/v1/checkout'
+          ? {
+              order: { id: 'o1' },
+              customerToken: 'tok-new',
+              customerTokenExpiresAt: '2099-01-01T00:00:00Z',
+            }
+          : { sessionToken: 'st', cart: { status: 'open' } };
+      return new Response(JSON.stringify(body), {
+        status: 201,
+        headers: { 'content-type': 'application/json' },
+      });
+    }) as typeof fetch;
+    try {
+      await createApi('http://shop.test').checkout({
+        customer: { name: 'Ana', phone: '(22) 99999-0001' },
+        delivery: { mode: 'pickup' },
+        payment: { method: 'cash' },
+      } as never);
+    } finally {
+      globalThis.fetch = real;
+      localStorage.removeItem('vendua.customerTokens');
+    }
+    expect(sent['/checkout/v1/checkout']).toBe('tok-ana');
+  });
+});

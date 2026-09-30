@@ -56,6 +56,9 @@ export function evaluateCoupon(
     subtotalCents: number;
     deliveryFeeCents: number;
     phone?: string | null;
+    /** checkout only: the phone a *proven* customer token vouches for (null = none). A
+     *  personal coupon is a bearer secret for its phone — the typed phone can't claim it. */
+    provenPhone?: string | null;
     usage: CouponUsage;
     now: Date;
   },
@@ -79,6 +82,8 @@ export function evaluateCoupon(
       minSubtotalCents: c.min_subtotal_cents,
       remainingCents: c.min_subtotal_cents - ctx.subtotalCents,
     });
+  if (c.phone && ctx.provenPhone !== undefined && c.phone !== ctx.provenPhone)
+    return fail('COUPON_NOT_YOURS');
   if (ctx.phone != null) {
     if (c.phone && c.phone !== ctx.phone) return fail('COUPON_NOT_YOURS');
     if (c.per_phone_limit != null && (ctx.usage.byPhone ?? 0) >= c.per_phone_limit)

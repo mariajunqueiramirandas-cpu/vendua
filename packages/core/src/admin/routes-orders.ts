@@ -591,6 +591,13 @@ export function mountOrders(d: AdminDeps) {
         )[0],
     );
     if (!pre) throw new HttpError(404, 'ORDER_NOT_FOUND', 'order not found');
+    // cancelling money captured online refunds it: the same role as an explicit refund
+    if (
+      to === 'cancelled' &&
+      pre.payment.online &&
+      PAID_ONLINE.includes(String(pre.payment.status))
+    )
+      need(c, 'manager');
     let refunded = 0;
     if (canTransition(pre.state, to) && pre.payment.online) {
       if (

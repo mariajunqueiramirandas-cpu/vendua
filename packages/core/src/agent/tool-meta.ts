@@ -19,7 +19,7 @@ export type ToolEffect = 'read' | 'write' | 'mint' | 'send';
 export interface ToolMeta {
   effect: ToolEffect;
   jobs: readonly JobKind[];
-  /** arg carrying the lead id a lead-bound run may only mutate */
+  /** arg carrying the lead id a lead-bound run may only touch (read or mutate) */
   leadBound?: string;
   /** a landed call counts as the run's visible, lead-facing outcome */
   action?: boolean;
@@ -33,8 +33,9 @@ const LEAD_KINDS = ['triage', 'reply', 'outreach'] as const;
 const ALL_BUT_STRATEGIST = ['triage', 'reply', 'outreach', 'discovery'] as const;
 
 export const TOOL_META: Record<string, ToolMeta> = {
-  search_leads: { effect: 'read', jobs: ALL_BUT_STRATEGIST, mutableRead: true },
-  get_lead: { effect: 'read', jobs: ALL_BUT_STRATEGIST, mutableRead: true },
+  // cross-lead reads: never in runs driven by a lead's own (untrusted) messages
+  search_leads: { effect: 'read', jobs: ['triage', 'discovery'], mutableRead: true },
+  get_lead: { effect: 'read', jobs: ALL_BUT_STRATEGIST, leadBound: 'id', mutableRead: true },
   create_lead: { effect: 'mint', jobs: ['triage', 'discovery'] },
   update_lead: { effect: 'write', jobs: ALL_BUT_STRATEGIST, leadBound: 'id', action: true },
   set_state: { effect: 'write', jobs: LEAD_KINDS, leadBound: 'leadId', action: true },
@@ -48,10 +49,8 @@ export const TOOL_META: Record<string, ToolMeta> = {
     leadBound: 'leadId',
     action: true,
   },
-  remember: {
-    effect: 'write',
-    jobs: ['triage', 'reply', 'outreach', 'discovery', 'strategist'],
-  },
+  // stored text reaches every later prompt — only staff-driven jobs may write it
+  remember: { effect: 'write', jobs: ['strategist'] },
   propose_brief: { effect: 'mint', jobs: ['strategist'] },
   request_human: {
     effect: 'mint',

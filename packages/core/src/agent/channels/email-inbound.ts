@@ -57,6 +57,22 @@ interface ReceivedEmail {
   html?: string;
   message_id?: string;
   headers?: { from?: string };
+  /** computed by Resend's receiving MX, not read from headers — null on older mail */
+  authentication?: {
+    spf?: EmailAuthResult;
+    dkim?: EmailAuthResult;
+    dmarc?: EmailAuthResult;
+  } | null;
+}
+
+type EmailAuthResult = 'pass' | 'fail' | 'gray' | 'processing_failed' | 'unknown';
+
+/** The svix signature proves Resend sent the event, not who wrote the mail. Resend's
+ *  dkim 'pass' already requires the signing domain to match From ('gray' otherwise);
+ *  dmarc 'pass' is aligned by definition. SPF alone covers only the envelope sender. */
+export function senderAuthenticated(mail: Pick<ReceivedEmail, 'authentication'>): boolean {
+  const a = mail.authentication;
+  return a?.dmarc === 'pass' || a?.dkim === 'pass';
 }
 
 function splitFrom(raw: string | undefined, fallback: string): { from: string; fromName?: string } {
@@ -169,6 +185,7 @@ export async function ingestResendEvent(
     ...(mail.subject ? { subject: str(mail.subject.slice(0, 300), 'subject', 300) } : {}),
     body,
     providerMessageId: mail.message_id ?? event.data?.message_id ?? emailId,
+    ...(senderAuthenticated(mail) ? {} : { unverifiedSender: true }),
   });
 }
 

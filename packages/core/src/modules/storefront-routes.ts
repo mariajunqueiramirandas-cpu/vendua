@@ -39,6 +39,8 @@ interface Deps {
     run: (c: Context, tx: Sql) => Promise<{ status: number; body: unknown }>,
   ) => (c: Context) => Promise<Response>;
   trustProxy: boolean;
+  /** trusted proxies after the client's own XFF entry (VENDUA_PROXY_HOPS) */
+  proxyHops?: number;
 }
 
 const TEMPLATE_BODY_MAX = 160 * 1024;
@@ -62,7 +64,10 @@ export function mountStorefrontPlatform(d: Deps) {
   // sendBeacon can't set headers — the batch id in the body is the idempotency key
   storefront.use(
     '/events',
-    rateLimit({ windowMs: 60_000, max: 120 }, { trustForwardedFor: d.trustProxy }),
+    rateLimit(
+      { windowMs: 60_000, max: 120 },
+      { trustForwardedFor: d.trustProxy, proxyHops: d.proxyHops ?? 0 },
+    ),
   );
   storefront.post('/events', async (c) => {
     const tenant = c.get('tenant');

@@ -28,7 +28,7 @@ CHROMIUM=/opt/pw-browsers/chromium bun scripts/shots.ts /pipeline /inbox   # 375
   mind the session's disk allowance and `docker system prune` afterwards.
 - Merchant admin: start Core with `VENDUA_ADMIN_DEV_OTP=1` added (the sign-in code comes back
   in the response), then `cd apps/admin && (nohup bun run dev > /tmp/admin.log 2>&1 &)`
-  (:5196). Sign in as the seed owner, phone 22981795040.
+  (:5196). Sign in as the seed owner, phone 22999990001.
 
 ## Fleet commands
 
