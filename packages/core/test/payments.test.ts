@@ -204,7 +204,7 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('store payments (db)', () => {
     expect(store.body.onlinePayments).toEqual({ pix: false, card: false });
     const o = await place('pix');
     expect(o.status).toBe(201);
-    expect(o.body.order.payment).toMatchObject({ provider: 'offline', online: false });
+    expect(o.body.order.payment).toMatchObject({ provider: 'sandbox', online: false });
     expect(o.body.order.payment.pix.copyPaste).toContain('br.gov.bcb.pix');
     expect((await pay(o.body.order.id, o.auth)).body.error.code).toBe('PAYMENT_NOT_REQUIRED');
   });
@@ -907,14 +907,14 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('store payments (db)', () => {
     expect(card.status).toBe(422);
     expect(card.body.error.code).toBe('PAYMENT_METHOD_UNAVAILABLE');
     const o = await place('pix');
-    expect(o.body.order.payment).toMatchObject({ provider: 'offline', online: false });
+    expect(o.body.order.payment).toMatchObject({ provider: 'sandbox', online: false });
     expect(o.body.order.payment.pix.copyPaste).toContain('br.gov.bcb.pix');
 
     const fell = await pay(pending.body.order.id, pending.auth);
     expect(fell.status).toBe(200);
     expect(fell.body.next.kind).toBe('pix');
     expect(fell.body.next.copyPaste).toContain('br.gov.bcb.pix');
-    expect(fell.body.order.payment).toMatchObject({ provider: 'offline', online: false });
+    expect(fell.body.order.payment).toMatchObject({ provider: 'sandbox', online: false });
     // and the store confirms it by hand again
     const m = await owner('POST', `/orders/${pending.body.order.id}/payment`, { status: 'paid' });
     expect(m.status).toBe(200);

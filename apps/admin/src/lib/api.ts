@@ -203,7 +203,7 @@ export interface Order {
     lng?: number;
   };
   payment: {
-    /** 'sandbox' | 'offline' (offline methods) · 'mercadopago' | 'fake' (online) */
+    /** 'sandbox' (offline methods) · 'mercadopago' | 'fake' (online) — branch on `online` */
     provider: string;
     method: PayMethod;
     status: PaymentStatus;

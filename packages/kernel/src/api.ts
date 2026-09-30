@@ -400,7 +400,7 @@ export interface Order {
     method: string;
     /** pending | paid | failed | expired | refunded | partially_refunded | charged_back | in_mediation */
     status: string;
-    /** 'offline' | 'sandbox' (legacy offline) | 'mercadopago' | 'fake' */
+    /** 'sandbox' (offline methods) | 'mercadopago' | 'fake' — branch on `online`, not on this */
     provider: string;
     instructions: string | null;
     /** Kernel 1.2 — copia e cola with this order's amount. Kernel 1.7: an online Pix

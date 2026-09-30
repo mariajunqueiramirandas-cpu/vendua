@@ -55,7 +55,7 @@ export interface OrderRow {
     promisedTo?: string | null;
   };
   payment: {
-    /** 'sandbox' (legacy) | 'offline' | 'mercadopago' | 'fake' */
+    /** 'sandbox' (offline methods — no provider) | 'mercadopago' | 'fake'; branch on `online` */
     provider: string;
     method: string;
     status: string;

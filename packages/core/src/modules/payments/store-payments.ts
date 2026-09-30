@@ -118,7 +118,9 @@ export function offlinePayment(
         }
       : null;
   return {
-    provider: 'offline',
+    // the contract's name for "no payment provider" (10-qa-pipeline C05) — kept so storefronts
+    // and conformance read offline orders exactly as before Phase 3; `online` is what code branches on
+    provider: 'sandbox',
     method,
     status: 'pending',
     online: false,

@@ -411,7 +411,7 @@ describe('order page — online payments', () => {
             order: order(1, {
               method: 'cash',
               status: 'pending',
-              provider: 'offline',
+              provider: 'sandbox',
               online: false,
             }),
           })
