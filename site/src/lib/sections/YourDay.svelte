@@ -321,21 +321,29 @@
     color: var(--ink-muted);
   }
   .tags {
-    margin: 8px 0 0;
+    margin: 10px 0 0;
     padding: 0;
     list-style: none;
     display: flex;
     flex-wrap: wrap;
-    gap: 8px;
+    gap: 4px 20px;
+    font-size: 0.9688rem;
+    line-height: 1.6;
+    color: var(--ink);
   }
   .tags li {
-    padding: 6px 12px;
-    border-radius: 999px;
-    background: var(--surface);
-    box-shadow: inset 0 0 0 1px var(--line);
-    font-size: 0.875rem;
-    line-height: 1.25rem;
-    color: var(--ink);
+    display: inline-flex;
+    align-items: center;
+    gap: 9px;
+  }
+  /* the day's last sparks */
+  .tags li::before {
+    content: '';
+    flex: none;
+    width: 10px;
+    height: 10px;
+    background: var(--spark);
+    clip-path: polygon(50% 0, 61% 39%, 100% 50%, 61% 61%, 50% 100%, 39% 61%, 0 50%, 39% 39%);
   }
 
   @media (min-width: 1200px) {

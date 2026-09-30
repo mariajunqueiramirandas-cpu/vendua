@@ -67,17 +67,26 @@
         O Duá pergunta, você responde no seu tempo. A cada resposta, a sua loja vai aparecendo ao
         lado, do jeito que o cliente vai ver. Cansou? Pode sair: ele guarda tudo.
       </p>
-      <ol class="steps" aria-label="8 perguntas">
-        {#each Array(8) as _, i (i)}
-          <li class:done={i < 3} class:now={i === 3}><span class="sr-only">{i + 1}</span></li>
-        {/each}
-      </ol>
-      <p class="live t-label">
-        <svg viewBox="0 0 24 24" aria-hidden="true"
-          ><circle cx="12" cy="13" r="8" /><path d="M12 9v4l2.5 2M9.5 3h5" /></svg
-        >
-        Loja no ar em cerca de 1 hora
-      </p>
+      <div class="road">
+        <ol class="steps" aria-label="8 perguntas">
+          {#each Array(8) as _, i (i)}
+            <li class:done={i < 3} class:now={i === 3}><span class="sr-only">{i + 1}</span></li>
+          {/each}
+        </ol>
+        <i class="lead" aria-hidden="true"></i>
+        <svg class="shop" viewBox="0 0 48 42" aria-hidden="true">
+          <ellipse class="dab" cx="24" cy="37" rx="17" ry="5" />
+          <path d="M11 22.5V38h26V22.5M20 38v-7.5a4 4 0 0 1 8 0V38" />
+          <path
+            d="M8 14h32v4.5a4 4 0 0 1-8 0 4 4 0 0 1-8 0 4 4 0 0 1-8 0 4 4 0 0 1-8 0zM16 14v4.5M24 14v4.5M32 14v4.5"
+          />
+          <path
+            class="joy"
+            d="M42.5 10.5 45 8M43.5 16h3M38.5 8.5l1-3M5.5 10.5 3 8M4.5 16h-3M9.5 8.5l-1-3"
+          />
+        </svg>
+      </div>
+      <p class="live t-moment">Loja no ar em cerca de uma hora</p>
     </div>
 
     <div class="device">
@@ -233,15 +242,22 @@
   }
 
   /* ── 1 · open ─────────────────────────────────────────────────────── */
+  /* the 8 questions are the road to the shop's door */
+  .road {
+    display: flex;
+    align-items: flex-end;
+    gap: 8px;
+    margin-top: 26px;
+  }
   .steps {
     list-style: none;
     display: flex;
-    gap: 8px;
-    margin: 26px 0 0;
+    gap: min(8px, 2vw);
+    margin: 0 0 2px;
     padding: 0;
   }
   .steps li {
-    width: 26px;
+    width: min(26px, 5.4vw);
     height: 8px;
     border-radius: 999px;
     background: var(--line-strong);
@@ -253,26 +269,35 @@
     background: var(--spark);
     box-shadow: 0 0 0 1px color-mix(in srgb, var(--primary) 30%, transparent);
   }
-  .live {
-    display: inline-flex;
-    align-items: center;
-    gap: 10px;
-    margin-top: 22px;
-    padding: 8px 14px 8px 10px;
-    border-radius: 999px;
-    background: var(--surface);
-    box-shadow:
-      var(--shadow-e1),
-      0 0 0 1px var(--line);
+  .lead {
+    flex: none;
+    width: 24px;
+    height: 8px;
+    margin-bottom: 2px;
+    background: radial-gradient(circle, var(--ink-muted) 1.4px, transparent 1.9px) 0 50% / 7px 8px
+      repeat-x;
   }
-  .live svg {
-    width: 20px;
-    height: 20px;
+  .shop {
+    flex: none;
+    width: 56px;
     fill: none;
     stroke: currentColor;
     stroke-width: 2.2;
     stroke-linecap: round;
     stroke-linejoin: round;
+  }
+  .shop .dab {
+    fill: var(--spark);
+    stroke: none;
+    opacity: 0.85;
+  }
+  .shop .joy {
+    stroke-width: 2;
+  }
+  .live {
+    margin-top: 14px;
+    font-size: 1.5rem;
+    line-height: 1.2;
   }
 
   .device {
@@ -599,6 +624,9 @@
   }
 
   @media (prefers-color-scheme: dark) {
+    .shop .dab {
+      opacity: 0.3;
+    }
     .receipt {
       background: var(--surface-raised);
     }
