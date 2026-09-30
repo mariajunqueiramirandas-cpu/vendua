@@ -1,17 +1,33 @@
-import { BellRinging, DeviceMobile, Moon, SignOut, SpeakerHigh, Sun } from '@phosphor-icons/react';
+import {
+  BellRinging,
+  CheckCircle,
+  CurrencyCircleDollar,
+  DeviceMobile,
+  EnvelopeSimple,
+  Moon,
+  SignOut,
+  PaperPlaneTilt,
+  SpeakerHigh,
+  Sun,
+  WhatsappLogo,
+  XCircle,
+} from '@phosphor-icons/react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useEffect, useState } from 'react';
-import { api } from '../../lib/api.ts';
-import { ago } from '../../lib/format.ts';
+import { api, type Alerts, type Session } from '../../lib/api.ts';
+import { ago, when } from '../../lib/format.ts';
 import { setSoundOn } from '../../lib/live.ts';
 import { currentSubscription, disablePush, enablePush, pushSupported } from '../../lib/push.ts';
-import { qk, useMutation } from '../../lib/query.ts';
-import { ROLE_LABEL, useSession } from '../../lib/session.ts';
+import { optimistic, qk, useMutation } from '../../lib/query.ts';
+import { can, ROLE_LABEL, useSession } from '../../lib/session.ts';
 import { chimeNewOrder, setVolume } from '../../lib/sound.ts';
 import { readTheme, setTheme, type ThemePref } from '../../lib/theme.ts';
 import { Button } from '../../ui/Button.tsx';
 import { Card, Section } from '../../ui/Card.tsx';
-import { DuaNote, messageOf, Skeleton } from '../../ui/feedback.tsx';
+import { cn } from '../../ui/cn.ts';
+import { DuaNote, ErrorState, messageOf, Skeleton } from '../../ui/feedback.tsx';
+import { Notice } from '../../ui/Notice.tsx';
+import { RowsSkeleton } from '../../ui/skeletons.tsx';
 import {
   Chips,
   CommitInput,
@@ -45,6 +61,21 @@ export default function Profile() {
       .track(api.updateMe(body))
       .then(() => qc.invalidateQueries({ queryKey: qk.session }))
       .catch((e) => toast.error(messageOf(e)));
+  // toggles flip at once; a failed save puts them back
+  const setPref = async (p: Partial<Session['user']['prefs']>) => {
+    const o = await optimistic<Session>(qc, qk.session, (d) => ({
+      ...d,
+      user: { ...d.user, prefs: { ...d.user.prefs, ...p } },
+    }));
+    try {
+      await save.track(api.updateMe({ prefs: p }));
+    } catch (e) {
+      o.restore();
+      toast.error(messageOf(e));
+    }
+  };
+  const manager = can(s.user.role, 'manager');
+  const owner = s.user.role === 'owner';
   const sessions = useQuery({ queryKey: qk.sessions, queryFn: api.sessions });
   const end = useMutation({
     mutationFn: api.endSession,
@@ -94,7 +125,7 @@ export default function Profile() {
               checked={prefs.sound !== false}
               onChange={(v) => {
                 setSoundOn(v);
-                patch({ prefs: { sound: v } });
+                void setPref({ sound: v });
               }}
               label={
                 <span className="inline-flex items-center gap-2">
@@ -150,7 +181,7 @@ export default function Profile() {
                       await disablePush();
                       setPush('off');
                     }
-                    patch({ prefs: { push: v } });
+                    void setPref({ push: v });
                   } catch (e) {
                     toast.error(messageOf(e));
                   }
@@ -175,6 +206,50 @@ export default function Profile() {
             </div>
           </Card>
         </Section>
+        <Section title="Outros avisos" hint="O que mais pode te chamar, além do pedido novo.">
+          <Card className="divide-y divide-line px-5 py-1">
+            <Toggle
+              checked={prefs.pushPayments !== false}
+              onChange={(v) => void setPref({ pushPayments: v })}
+              label={
+                <span className="inline-flex items-center gap-2">
+                  <CurrencyCircleDollar className="size-5" /> Pagamento recebido
+                </span>
+              }
+              description="Um aviso no celular quando um pagamento online é aprovado."
+            />
+            {manager ? (
+              <Toggle
+                checked={prefs.whatsappAlerts !== false}
+                onChange={(v) => void setPref({ whatsappAlerts: v })}
+                label={
+                  <span className="inline-flex items-center gap-2">
+                    <WhatsappLogo className="size-5" /> WhatsApp se o aviso falhar
+                  </span>
+                }
+                description="Se um pedido novo passar do tempo de aceite e nenhum aviso tiver chegado, mandamos uma mensagem no seu WhatsApp."
+              />
+            ) : null}
+            {owner ? (
+              <Toggle
+                checked={prefs.emailInvoices !== false}
+                onChange={(v) => void setPref({ emailInvoices: v })}
+                disabled={!s.user.email}
+                label={
+                  <span className="inline-flex items-center gap-2">
+                    <EnvelopeSimple className="size-5" /> Faturas por e-mail
+                  </span>
+                }
+                description={
+                  s.user.email
+                    ? `A fatura do plano chega em ${s.user.email}.`
+                    : 'Cadastre seu e-mail acima para receber as faturas do plano.'
+                }
+              />
+            ) : null}
+          </Card>
+        </Section>
+        <AlertsSection manager={manager} />
         <Section title="Aparência do painel" hint="Auto segue o claro ou escuro do celular.">
           <Card className="p-5">
             <Segmented
@@ -183,7 +258,7 @@ export default function Profile() {
               onChange={(t) => {
                 setThemeState(t);
                 setTheme(t);
-                patch({ prefs: { theme: t } });
+                void setPref({ theme: t });
               }}
               options={[
                 {
@@ -263,5 +338,236 @@ function deviceName(ua: string) {
   if (/Windows/.test(ua)) return 'Computador Windows';
   if (/CrOS/.test(ua)) return 'Chromebook';
   if (/Linux/.test(ua)) return 'Computador Linux';
-  return 'Navegador';
+  return ua.trim() && ua.length <= 40 ? ua : 'Navegador';
+}
+
+const EVENT: Record<string, string> = {
+  'order.placed': 'Pedido novo',
+  'order.whatsapp': 'Pedido esperando',
+  'payment.received': 'Pagamento recebido',
+  test: 'Aviso de teste',
+};
+
+type TestResult = { devices: number; ok: number; failed: number };
+
+/** "Seus avisos": did the last alerts reach anyone, and a test the merchant can run now. */
+function AlertsSection({ manager }: { manager: boolean }) {
+  const qc = useQueryClient();
+  const me = useSession().user.id;
+  const alerts = useQuery({ queryKey: qk.alerts, queryFn: api.alerts, enabled: manager });
+  const [result, setResult] = useState<TestResult | null>(null);
+  const test = useMutation({
+    mutationFn: api.testAlert,
+    onSuccess: (r) => {
+      setResult(r);
+      void qc.invalidateQueries({ queryKey: qk.alerts });
+    },
+    onError: (e) => toast.error(messageOf(e)),
+  });
+  const data = alerts.data;
+  const devices = [...(data?.devices ?? [])].sort(
+    (a, b) => Number(b.userId === me) - Number(a.userId === me),
+  );
+  const recent = (data?.recent ?? []).slice(0, 8);
+  useEffect(() => {
+    // "ver avisos" from a toast or the help sheet lands here
+    if (location.hash === '#avisos')
+      document.getElementById('avisos')?.scrollIntoView({ block: 'start' });
+  }, []);
+  return (
+    <Section
+      id="avisos"
+      title="Seus avisos"
+      hint="Confira se os avisos de pedido estão chegando nos celulares."
+    >
+      <div className="space-y-3">
+        <Card className="p-5">
+          <div className="flex flex-wrap items-center gap-3">
+            <p className="t-body min-w-0 flex-1 text-muted">
+              Mandamos um aviso de teste para os seus aparelhos com avisos ligados.
+            </p>
+            <Button
+              variant="secondary"
+              icon={<PaperPlaneTilt />}
+              loading={test.isPending}
+              onClick={() => test.mutate()}
+            >
+              testar aviso
+            </Button>
+          </div>
+          {result ? <TestOutcome r={result} /> : null}
+        </Card>
+        {manager ? (
+          alerts.error && !data ? (
+            <Card>
+              <ErrorState error={alerts.error} retry={() => void alerts.refetch()} />
+            </Card>
+          ) : !data ? (
+            <RowsSkeleton rows={2} />
+          ) : (
+            <>
+              <Card as="section" aria-label="aparelhos que recebem avisos">
+                <p className="t-label px-4 pb-1 pt-4">Aparelhos que recebem avisos</p>
+                {devices.length ? (
+                  <ul className="divide-y divide-line">
+                    {devices.map((d) => (
+                      <DeviceAlertRow key={d.id} d={d} mine={d.userId === me} />
+                    ))}
+                  </ul>
+                ) : (
+                  <p className="t-body px-4 pb-4 text-muted">
+                    Nenhum aparelho recebe avisos ainda. Ligue os avisos no celular que fica na
+                    cozinha ou no balcão.
+                  </p>
+                )}
+              </Card>
+              <Notice
+                tone={data.whatsappFallback ? 'success' : 'info'}
+                icon={<WhatsappLogo weight="fill" />}
+                title={
+                  data.whatsappFallback
+                    ? 'WhatsApp de reserva ligado'
+                    : 'Sem WhatsApp de reserva por enquanto'
+                }
+              >
+                {data.whatsappFallback
+                  ? 'Se um pedido novo esperar e nenhum aviso tiver chegado, donos e gerentes recebem uma mensagem no WhatsApp.'
+                  : 'Hoje os avisos chegam só pelo celular. Deixe os avisos ligados e o painel aberto no balcão.'}
+              </Notice>
+              {recent.length ? (
+                <Card as="section" aria-label="últimos avisos">
+                  <p className="t-label px-4 pb-1 pt-4">Últimos avisos</p>
+                  <ul className="divide-y divide-line">
+                    {recent.map((a, i) => {
+                      const bad = a.result !== 'ok';
+                      return (
+                        <li
+                          key={`${a.at}-${i}`}
+                          className={cn(
+                            'flex min-h-14 items-center gap-3 px-4 py-2.5',
+                            bad && 'bg-danger-soft',
+                          )}
+                        >
+                          <span className="grid size-9 shrink-0 place-items-center rounded-full bg-sunken [&_svg]:size-4.5">
+                            {a.channel === 'whatsapp' ? (
+                              <WhatsappLogo weight="duotone" aria-label="WhatsApp" />
+                            ) : (
+                              <BellRinging weight="duotone" aria-label="aviso no celular" />
+                            )}
+                          </span>
+                          <span className="min-w-0 flex-1">
+                            <span className="block truncate font-semibold">
+                              {EVENT[a.event] ?? 'Aviso'}
+                              {a.userName ? (
+                                <span className="font-normal text-muted"> · {a.userName}</span>
+                              ) : null}
+                            </span>
+                            <span className="t-caption block text-muted">
+                              {when(a.at)}
+                              {bad && a.detail ? ` · ${friendlyDetail(a.detail)}` : ''}
+                            </span>
+                          </span>
+                          <ResultWord r={a.result} />
+                        </li>
+                      );
+                    })}
+                  </ul>
+                </Card>
+              ) : null}
+            </>
+          )
+        ) : null}
+      </div>
+    </Section>
+  );
+}
+
+function TestOutcome({ r }: { r: TestResult }) {
+  if (!r.devices)
+    return (
+      <Notice
+        tone="warning"
+        title="Nenhum aparelho seu recebe avisos"
+        className="mt-4"
+        role="status"
+      >
+        Ligue “Avisos no celular” acima, neste aparelho ou no celular do balcão, e teste de novo.
+      </Notice>
+    );
+  if (!r.failed)
+    return (
+      <Notice tone="success" title="Aviso enviado" className="mt-4" role="status">
+        {r.ok === 1
+          ? 'Chegou no seu aparelho. Se não tocou, confira o volume e o modo silencioso.'
+          : `Chegou nos seus ${r.ok} aparelhos. Se algum não tocou, confira o volume e o modo silencioso.`}
+      </Notice>
+    );
+  return (
+    <Notice tone="danger" title="Nem todo aviso chegou" className="mt-4" role="status">
+      {r.ok
+        ? `Chegou em ${r.ok} de ${r.devices} aparelhos. `
+        : r.devices === 1
+          ? 'Não chegou no seu aparelho. '
+          : `Não chegou em nenhum dos seus ${r.devices} aparelhos. `}
+      Abra o painel no aparelho que falhou e ligue os avisos de novo.
+    </Notice>
+  );
+}
+
+function ResultWord({ r }: { r: 'ok' | 'error' | 'gone' | null }) {
+  if (!r) return <span className="t-caption shrink-0 text-muted">sem avisos</span>;
+  const ok = r === 'ok';
+  return (
+    <span
+      className={cn(
+        't-label inline-flex shrink-0 items-center gap-1',
+        ok ? 'text-success' : 'text-danger',
+      )}
+    >
+      {ok ? (
+        <CheckCircle weight="fill" className="size-4.5" aria-hidden />
+      ) : (
+        <XCircle weight="fill" className="size-4.5" aria-hidden />
+      )}
+      {ok ? 'chegou' : r === 'gone' ? 'desligado' : 'falhou'}
+    </span>
+  );
+}
+
+function DeviceAlertRow({ d, mine }: { d: Alerts['devices'][number]; mine: boolean }) {
+  const line =
+    d.lastResult === 'gone'
+      ? 'Os avisos foram desligados neste aparelho. Abra o painel nele e ligue de novo.'
+      : d.lastResult === 'error' && d.lastAt
+        ? `O último aviso falhou ${ago(d.lastAt)}`
+        : d.lastResult === 'ok' && d.lastAt
+          ? `Último aviso chegou ${ago(d.lastAt)}`
+          : `Ligado ${ago(d.createdAt)} · nenhum aviso ainda`;
+  return (
+    <li className="flex min-h-16 items-center gap-3 px-4 py-2.5">
+      <DeviceMobile className="size-6 shrink-0 text-muted" aria-hidden />
+      <span className="min-w-0 flex-1">
+        <span className="block truncate font-semibold">
+          {deviceName(d.device)}
+          <span className="font-normal text-muted"> · {mine ? 'você' : d.userName}</span>
+        </span>
+        <span
+          className={cn(
+            't-caption block',
+            d.lastResult && d.lastResult !== 'ok' ? 'text-danger' : 'text-muted',
+          )}
+        >
+          {line}
+        </span>
+      </span>
+      <ResultWord r={d.lastResult} />
+    </li>
+  );
+}
+
+// provider errors arrive as raw text; the merchant only needs to know what to do
+function friendlyDetail(d: string) {
+  if (/410|gone|expired|unsubscribed/i.test(d)) return 'o aparelho desligou os avisos';
+  if (/timeout|network|ECONN/i.test(d)) return 'sem conexão na hora';
+  return 'não chegou';
 }

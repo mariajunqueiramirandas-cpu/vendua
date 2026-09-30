@@ -1,8 +1,26 @@
-import { ArrowLeft } from '@phosphor-icons/react';
+import { ArrowLeft, Question } from '@phosphor-icons/react';
 import type { ReactNode } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { cn } from './cn.ts';
-import { IconButton } from './Button.tsx';
+import { Button, IconButton } from './Button.tsx';
+import { openHelp } from './help.ts';
+
+/** Opens the help for the screen you're on (the Shell's sheet; "?" on a keyboard does the same). */
+export function HelpButton({ className }: { className?: string }) {
+  return (
+    <Button
+      variant="ghost"
+      size="sm"
+      icon={<Question weight="bold" />}
+      onClick={openHelp}
+      title="ajuda desta tela (?)"
+      aria-haspopup="dialog"
+      className={cn('min-h-12 text-muted hover:text-ink', className)}
+    >
+      ajuda
+    </Button>
+  );
+}
 
 /** Page title block: back (phones), title, subtitle, primary action top-right on desktop. */
 export function PageHeader({
@@ -11,12 +29,15 @@ export function PageHeader({
   back,
   actions,
   className,
+  help = true,
 }: {
   title: ReactNode;
   subtitle?: ReactNode;
   back?: string | true;
   actions?: ReactNode;
   className?: string;
+  /** the "ajuda" button for this screen's help; off on Ajuda itself */
+  help?: boolean;
 }) {
   const nav = useNavigate();
   return (
@@ -35,6 +56,7 @@ export function PageHeader({
         {subtitle ? <p className="t-body mt-1 text-muted">{subtitle}</p> : null}
       </div>
       {actions ? <div className="hidden shrink-0 items-center gap-2 md:flex">{actions}</div> : null}
+      {help ? <HelpButton className="-mr-2 shrink-0 md:mr-0" /> : null}
     </header>
   );
 }

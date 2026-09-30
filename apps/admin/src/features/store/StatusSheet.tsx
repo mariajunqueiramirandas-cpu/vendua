@@ -9,6 +9,7 @@ import { messageOf } from '../../ui/feedback.tsx';
 import { Chips, Field, TextArea, TimeInput } from '../../ui/fields.tsx';
 import { Sheet } from '../../ui/Sheet.tsx';
 import { toast } from '../../ui/Toast.tsx';
+import { BILLING_HOLD_TEXT, BillingHoldNotice, isBillingHold } from './BillingHold.tsx';
 
 type Span = '15m' | '1h' | 'today' | 'indefinite';
 
@@ -54,8 +55,14 @@ export function StatusSheet({
           : 'Pausa encerrada. A loja segue o horário normal.',
       );
     },
-    onError: (e) => toast.error(messageOf(e)),
+    onError: (e) => {
+      if (isBillingHold(e)) {
+        void qc.invalidateQueries({ queryKey: qk.store });
+        toast(BILLING_HOLD_TEXT, { tone: 'error', ms: 8000 });
+      } else toast.error(messageOf(e));
+    },
   });
+  const hold = store.status.billingHold;
   const paused = store.status.status === 'paused';
   const preview =
     message.trim() ||
@@ -67,16 +74,18 @@ export function StatusSheet({
     <Sheet
       open={open}
       onOpenChange={onOpenChange}
-      title={paused ? 'Sua loja está pausada' : 'Pausar a loja'}
+      title={hold ? 'Sua loja ainda não abriu' : paused ? 'Sua loja está pausada' : 'Pausar a loja'}
       description={
-        paused
-          ? store.status.resumesAt
-            ? `Volta sozinha às ${clock(store.status.resumesAt, tz)}.`
-            : 'Fica pausada até você voltar.'
-          : 'Ninguém consegue fazer pedido enquanto estiver pausada. Os pedidos em andamento continuam.'
+        hold
+          ? 'Tudo pronto do seu lado. Falta só o plano.'
+          : paused
+            ? store.status.resumesAt
+              ? `Volta sozinha às ${clock(store.status.resumesAt, tz)}.`
+              : 'Fica pausada até você voltar.'
+            : 'Ninguém consegue fazer pedido enquanto estiver pausada. Os pedidos em andamento continuam.'
       }
       footer={
-        paused ? (
+        hold ? null : paused ? (
           <Button
             size="lg"
             block
@@ -99,7 +108,12 @@ export function StatusSheet({
         )
       }
     >
-      {editHours ? (
+      {hold && !editHours ? (
+        <div className="space-y-6 pt-2">
+          <BillingHoldNotice onNavigate={() => onOpenChange(false)} />
+          <HoursButton store={store} onClick={() => setEditHours(true)} />
+        </div>
+      ) : editHours ? (
         <TodayHours store={store} onDone={() => setEditHours(false)} onSaved={done} />
       ) : (
         <div className="space-y-6 pt-2">
@@ -144,20 +158,26 @@ export function StatusSheet({
               </div>
             </>
           ) : null}
-          <button
-            type="button"
-            onClick={() => setEditHours(true)}
-            className="flex min-h-14 w-full items-center gap-3 rounded-md px-3 text-left ring-1 ring-line hover:bg-hover"
-          >
-            <Clock className="size-6 shrink-0 text-muted" aria-hidden />
-            <span className="min-w-0 flex-1">
-              <span className="block font-semibold">Mudar o horário de hoje</span>
-              <span className="t-caption block text-muted">{todayLabel(store)}</span>
-            </span>
-          </button>
+          <HoursButton store={store} onClick={() => setEditHours(true)} />
         </div>
       )}
     </Sheet>
+  );
+}
+
+function HoursButton({ store, onClick }: { store: StoreView; onClick: () => void }) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className="flex min-h-14 w-full items-center gap-3 rounded-md px-3 text-left ring-1 ring-line hover:bg-hover"
+    >
+      <Clock className="size-6 shrink-0 text-muted" aria-hidden />
+      <span className="min-w-0 flex-1">
+        <span className="block font-semibold">Mudar o horário de hoje</span>
+        <span className="t-caption block text-muted">{todayLabel(store)}</span>
+      </span>
+    </button>
   );
 }
 

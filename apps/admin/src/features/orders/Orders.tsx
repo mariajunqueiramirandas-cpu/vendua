@@ -19,6 +19,7 @@ import { EmptyState, ErrorState, Hint } from '../../ui/feedback.tsx';
 import { Segmented } from '../../ui/fields.tsx';
 import { Mascote } from '../../ui/Mascote.tsx';
 import { OrderCard } from '../../ui/OrderCard.tsx';
+import { HelpButton } from '../../ui/Page.tsx';
 import { Sheet } from '../../ui/Sheet.tsx';
 import { nextStep } from '../../ui/StateChip.tsx';
 import { useStoreQuery } from '../store/StatusPill.tsx';
@@ -249,6 +250,7 @@ export default function Orders() {
           <ClockCounterClockwise className="size-5" />{' '}
           <span className="hidden sm:inline">Histórico</span>
         </Link>
+        <HelpButton className="-mr-2 md:mr-0" />
       </header>
 
       <Hint id="orders-swipe" className="mb-4 md:hidden">
@@ -387,7 +389,7 @@ export default function Orders() {
                 variant="ghost"
                 size="lg"
                 block
-                className="text-danger"
+                className="text-danger!"
                 onClick={() => {
                   setCancel(more);
                   setMore(null);
@@ -439,6 +441,7 @@ function Panel({
           <OrderDetail
             order={data.order}
             customer={data.customer}
+            payments={data.payments}
             prepDefault={prepDefault}
             inPanel
           />

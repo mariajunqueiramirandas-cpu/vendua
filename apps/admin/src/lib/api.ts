@@ -268,6 +268,8 @@ export interface OrderPayment {
   refundedCents: number;
   /** Core's figure: amount − refunded − refunds still pending (the refund sheet's cap) */
   refundableCents?: number;
+  /** set when a person has to look at this payment */
+  review?: PaymentReview | null;
   providerFeeCents: number | null;
   netCents: number | null;
   approvedAt: string | null;
@@ -645,7 +647,26 @@ export interface Payments {
   last30: { method: PayMethod; status: string; orders: number; cents: number }[];
   awaitingPix: { id: string; number: number; name: string; totalCents: number; placedAt: string }[];
   month: StatementTotals & { month: string };
+  /** money Core couldn't verify or settle by itself — a person looks at each (newest 50) */
+  review: {
+    paymentId: string;
+    orderId: string;
+    orderNumber: number;
+    reason: PaymentReview;
+    status: OrderPayment['status'];
+    amountCents: number;
+    at: string;
+  }[];
 }
+
+/** unverified (no usable token to confirm it) · amount_mismatch (paid ≠ order) ·
+ *  refund_duplicate / refund_amount_mismatch / refund_failed (a refund MP didn't settle as asked) */
+export type PaymentReview =
+  | 'unverified'
+  | 'amount_mismatch'
+  | 'refund_duplicate'
+  | 'refund_amount_mismatch'
+  | 'refund_failed';
 
 export interface StatementTotals {
   grossCents: number;
@@ -658,6 +679,8 @@ export interface StatementTotals {
 
 export interface Statement {
   month: string;
+  /** netCents is what MP reports before any refund; refunds are their own line */
+  netBasis?: 'before_refunds';
   totals: StatementTotals;
   payments: {
     id: string;

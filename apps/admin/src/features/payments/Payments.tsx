@@ -1,7 +1,6 @@
-import { Copy, CreditCard, Money, PixLogo, Sparkle } from '@phosphor-icons/react';
+import { ArrowRight, Copy, CreditCard, Money, PixLogo, WarningCircle } from '@phosphor-icons/react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import QRCode from 'qrcode';
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { api, type Payments as PaymentsData, type PayMethod } from '../../lib/api.ts';
 import { ago, money } from '../../lib/format.ts';
@@ -11,17 +10,28 @@ import { Button } from '../../ui/Button.tsx';
 import { Card, Section } from '../../ui/Card.tsx';
 import { RankBars } from '../../ui/charts.tsx';
 import { DuaNote, ErrorState, messageOf } from '../../ui/feedback.tsx';
+import { cn } from '../../ui/cn.ts';
 import { Chips, Field, TextInput, Toggle } from '../../ui/fields.tsx';
 import { PageBody, PageHeader } from '../../ui/Page.tsx';
+import { payError, REVIEW } from '../../ui/PaymentChip.tsx';
+import { PixQr } from '../../ui/PixCode.tsx';
 import { SectionsSkeleton } from '../../ui/skeletons.tsx';
 import { toast } from '../../ui/Toast.tsx';
 import { useMarkPaid } from '../orders/actions.ts';
+import { MercadoPagoCard, mpLive, useMpArrival } from './MercadoPago.tsx';
+import { MonthCard, monthName } from './Statement.tsx';
 
+// the order the shopper sees them in
 const METHOD: Record<PayMethod, { label: string; Icon: typeof PixLogo; hint: string }> = {
   pix: {
     label: 'Pix',
     Icon: PixLogo,
     hint: 'O cliente paga pela chave da loja e você confere no banco.',
+  },
+  card_online: {
+    label: 'Cartão pelo Mercado Pago',
+    Icon: CreditCard,
+    hint: 'O cliente paga com cartão no site, na tela do Mercado Pago.',
   },
   card_on_delivery: {
     label: 'Cartão na entrega',
@@ -29,22 +39,20 @@ const METHOD: Record<PayMethod, { label: string; Icon: typeof PixLogo; hint: str
     hint: 'Na maquininha, na entrega ou retirada.',
   },
   cash: { label: 'Dinheiro', Icon: Money, hint: 'Na entrega ou retirada.' },
-  card_online: {
-    label: 'Cartão pelo Mercado Pago',
-    Icon: CreditCard,
-    hint: 'O cliente paga no site com cartão, pelo Mercado Pago.',
-  },
 };
 
 export default function Payments() {
   const { data, error, refetch } = useQuery({ queryKey: qk.payments, queryFn: api.payments });
   const owner = useCan('owner');
+  useMpArrival();
   if (error && !data)
     return (
       <PageBody>
         <ErrorState error={error} retry={() => void refetch()} />
       </PageBody>
     );
+  // the month only tells something once money can arrive through Mercado Pago
+  const showMonth = data && (data.mercadoPago.status !== 'not_connected' || data.month.count > 0);
   return (
     <PageBody wide>
       <PageHeader title="Pagamentos" subtitle="Como sua loja recebe." />
@@ -53,12 +61,34 @@ export default function Payments() {
       ) : (
         <div className="grid gap-8 lg:grid-cols-2 [&>*]:min-w-0">
           <div className="space-y-8">
+            <Review data={data} />
             <Awaiting data={data} />
+            <MercadoPagoCard data={data} owner={owner} />
             <Section
               title="Formas de pagamento"
               hint={owner ? undefined : 'Só quem é dono da loja muda isto.'}
             >
               <Methods data={data} canEdit={owner} />
+            </Section>
+          </div>
+          <div className="space-y-8">
+            {showMonth ? (
+              <Section
+                title="Este mês"
+                hint={`O que chegou pelo Mercado Pago em ${monthName(data.month.month)}.`}
+              >
+                <MonthCard data={data} />
+              </Section>
+            ) : null}
+            <Section
+              title="Sua chave Pix"
+              hint={
+                mpLive(data.mercadoPago)
+                  ? 'Fica de reserva: se o Mercado Pago sair do ar para a sua loja, o Pix volta para esta chave.'
+                  : 'O Pix que aparece na sua loja, com o valor do pedido já preenchido.'
+              }
+            >
+              <PixCard data={data} canEdit={owner} />
             </Section>
             <Section title="Últimos 30 dias">
               <Card className="p-5">
@@ -80,28 +110,6 @@ export default function Payments() {
               </Card>
             </Section>
           </div>
-          <div className="space-y-8">
-            <Section
-              title="Sua chave Pix"
-              hint="O Pix que aparece na sua loja, com o valor do pedido já preenchido."
-            >
-              <PixCard data={data} canEdit={owner} />
-            </Section>
-            <Card className="relative overflow-hidden p-5">
-              <div
-                aria-hidden
-                className="absolute -right-10 -top-10 size-40 rounded-full bg-spark opacity-20 blur-2xl"
-              />
-              <p className="t-caption inline-flex items-center gap-1.5 rounded-full bg-spark-soft px-2.5 py-1 font-semibold">
-                <Sparkle weight="fill" className="size-4" /> em breve
-              </p>
-              <p className="t-title-2 mt-3">Pagamento online pelo Mercado Pago</p>
-              <p className="t-body mt-2 text-muted">
-                Cartão de crédito e Pix confirmado sozinho, com o dinheiro direto na sua conta
-                Mercado Pago. Estamos preparando e avisamos aqui quando você puder conectar.
-              </p>
-            </Card>
-          </div>
         </div>
       )}
     </PageBody>
@@ -113,6 +121,57 @@ function summary30(d: PaymentsData) {
   return total
     ? `${money(total)} em ${d.last30.reduce((a, r) => a + r.orders, 0)} pedidos`
     : 'Sem vendas nos últimos 30 dias.';
+}
+
+/** Money Core couldn't settle by itself: grouped by why, each order one tap away. */
+function Review({ data }: { data: PaymentsData }) {
+  const items = data.review ?? [];
+  if (!items.length) return null;
+  const groups = [...new Set(items.map((r) => r.reason))].map((reason) => ({
+    reason,
+    rows: items.filter((r) => r.reason === reason),
+  }));
+  return (
+    <Section
+      title="Precisa de você"
+      hint={
+        items.length === 1
+          ? 'Um pagamento precisa de uma conferida.'
+          : `${items.length} pagamentos precisam de uma conferida.`
+      }
+    >
+      <Card className="divide-y divide-line overflow-hidden">
+        {groups.map(({ reason, rows }) => {
+          const c = REVIEW[reason];
+          return (
+            <div key={reason} className="flex items-start gap-3 p-4">
+              <span className="grid size-11 shrink-0 place-items-center rounded-full bg-warning-soft text-warning">
+                <WarningCircle weight="bold" className="size-5" />
+              </span>
+              <div className="min-w-0 flex-1">
+                <p className="font-semibold">{c?.title ?? 'Pagamento para conferir'}</p>
+                {c ? <p className="t-body mt-0.5 text-muted">{c.body}</p> : null}
+                <ul className="mt-3 flex flex-wrap gap-2">
+                  {rows.map((r) => (
+                    <li key={r.paymentId}>
+                      <Link
+                        to={`/pedidos/${r.orderId}`}
+                        className="t-label inline-flex min-h-11 items-center gap-1.5 rounded-full bg-sunken px-3.5 hover:bg-press"
+                      >
+                        #{r.orderNumber}
+                        <span className="tnum font-medium text-muted">{money(r.amountCents)}</span>
+                        <ArrowRight className="size-4 text-muted" aria-hidden />
+                      </Link>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            </div>
+          );
+        })}
+      </Card>
+    </Section>
+  );
 }
 
 function Awaiting({ data }: { data: PaymentsData }) {
@@ -160,28 +219,41 @@ function Methods({ data, canEdit }: { data: PaymentsData; canEdit: boolean }) {
     onSuccess: (d) => qc.setQueryData(qk.payments, d),
     onError: (e, _m, ctx) => {
       ctx?.restore();
-      toast.error(messageOf(e));
+      toast.error(payError(e));
     },
   });
-  const on = (m: PayMethod) => data.methods.includes(m);
+  const live = mpLive(data.mercadoPago);
+  const on = (m: PayMethod) => data.methods.includes(m) && (m !== 'card_online' || live);
+  const hint = (m: PayMethod) => {
+    if (m === 'pix') {
+      if (live) return 'Pelo Mercado Pago: o pedido chega pago, sem conferir no banco.';
+      return data.pix ? METHOD.pix.hint : 'Cadastre a chave Pix para receber.';
+    }
+    if (m === 'card_online' && !live) {
+      if (!data.mercadoPago.available) return 'Ainda não disponível na sua loja.';
+      return data.mercadoPago.status === 'not_connected'
+        ? 'Conecte o Mercado Pago para oferecer.'
+        : 'Fora da loja até o Mercado Pago ser conectado de novo.';
+    }
+    return METHOD[m].hint;
+  };
   return (
     <Card className="divide-y divide-line px-4">
       {(Object.keys(METHOD) as PayMethod[]).map((m) => {
         const M = METHOD[m];
+        const locked = m === 'card_online' && !live;
         return (
           <div key={m} className="flex items-center gap-3 py-2">
-            <M.Icon weight="duotone" className="size-7 shrink-0" />
+            <M.Icon weight="duotone" className={cn('size-7 shrink-0', locked && 'text-faint')} />
             <div className="min-w-0 flex-1">
               <Toggle
                 checked={on(m)}
-                disabled={!canEdit || (on(m) && data.methods.length === 1)}
+                disabled={!canEdit || locked || (on(m) && data.methods.length === 1)}
                 onChange={(v) =>
                   save.mutate(v ? [...data.methods, m] : data.methods.filter((x) => x !== m))
                 }
                 label={M.label}
-                description={
-                  m === 'pix' && !data.pix ? 'Cadastre a chave ao lado para receber.' : M.hint
-                }
+                description={hint(m)}
               />
             </div>
           </div>
@@ -206,16 +278,7 @@ function PixCard({ data, canEdit }: { data: PaymentsData; canEdit: boolean }) {
   const [key, setKey] = useState(data.pix?.key ?? '');
   const [name, setName] = useState(data.pix?.beneficiary ?? '');
   const [city, setCity] = useState(data.pix?.city ?? '');
-  const [qr, setQr] = useState<string | null>(null);
   const [err, setErr] = useState<string | null>(null);
-  useEffect(() => {
-    if (!data.pix) return setQr(null);
-    void QRCode.toDataURL(data.pix.sample, {
-      margin: 1,
-      width: 360,
-      color: { dark: '#123c32', light: '#fffdf8' },
-    }).then(setQr);
-  }, [data.pix]);
   const save = useMutation({
     mutationFn: () =>
       api.updatePayments({ pix: { keyType: type, key, beneficiary: name, city: city || null } }),
@@ -231,13 +294,11 @@ function PixCard({ data, canEdit }: { data: PaymentsData; canEdit: boolean }) {
   if (!editing && data.pix)
     return (
       <Card className="flex flex-col gap-5 p-5 sm:flex-row">
-        {qr ? (
-          <img
-            src={qr}
-            alt="QR code Pix de exemplo (sem valor)"
-            className="size-40 shrink-0 self-center rounded-md"
-          />
-        ) : null}
+        <PixQr
+          code={data.pix.sample}
+          alt="QR code Pix de exemplo (sem valor)"
+          className="size-40 shrink-0 self-center"
+        />
         <div className="min-w-0 flex-1 space-y-2">
           <p className="t-caption text-muted">
             {KEY_TYPES.find((k) => k.value === data.pix!.keyType)?.label}

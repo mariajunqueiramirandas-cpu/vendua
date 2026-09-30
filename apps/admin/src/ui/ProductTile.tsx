@@ -1,4 +1,4 @@
-import { Camera, CheckSquare, EyeSlash, Square, Stack } from '@phosphor-icons/react';
+import { Camera, CheckSquare, Clock, EyeSlash, Square, Stack } from '@phosphor-icons/react';
 import type { Product } from '../lib/api.ts';
 import { money } from '../lib/format.ts';
 import { cn } from './cn.ts';
@@ -27,6 +27,8 @@ export function ProductTile({
   lifted?: boolean | undefined;
 }) {
   const a = availability(p);
+  // it has a schedule and this isn't one of its windows (Core decides; the tile only shows it)
+  const offHours = !!p.availabilitySchedule && p.availableNow === false && a === 'available';
   const low =
     p.stockQuantity != null &&
     p.stockQuantity > 0 &&
@@ -85,6 +87,11 @@ export function ProductTile({
             </Badge>
           ) : null}
           {p.requiresPreorder ? <Badge>encomenda</Badge> : null}
+          {offHours ? (
+            <Badge tone="warn">
+              <Clock className="size-3.5" /> fora do horário
+            </Badge>
+          ) : null}
           {low ? <Badge tone="warn">só {p.stockQuantity}</Badge> : null}
         </div>
         {selecting ? (
@@ -107,7 +114,13 @@ export function ProductTile({
         </p>
       </div>
       <span className="sr-only">
-        {a === 'sold_out' ? 'esgotado' : a === 'hidden' ? 'escondido da loja' : 'disponível'}
+        {a === 'sold_out'
+          ? 'esgotado'
+          : a === 'hidden'
+            ? 'escondido da loja'
+            : offHours
+              ? 'disponível, fora do horário agora'
+              : 'disponível'}
       </span>
     </div>
   );

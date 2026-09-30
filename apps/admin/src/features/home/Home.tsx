@@ -1,16 +1,24 @@
 import {
   ArrowRight,
   Bell,
+  BellSlash,
   CheckCircle,
   Circle,
+  ClockCountdown,
+  CloudWarning,
   Eye,
   Package,
   Pause,
   Play,
+  CreditCard,
+  Plugs,
+  Receipt,
+  ShieldWarning,
   ShoppingBag,
   Timer,
   UsersThree,
   Wallet,
+  WarningCircle,
 } from '@phosphor-icons/react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useEffect, useState } from 'react';
@@ -19,8 +27,9 @@ import { api, type Home as HomeData } from '../../lib/api.ts';
 import { ago, clock, greeting, money, moneyShort, num, plural } from '../../lib/format.ts';
 import { NoPhoto } from '../../ui/illustrations.tsx';
 import { qk, useMutation } from '../../lib/query.ts';
-import { can, useSession } from '../../lib/session.ts';
+import { can, useCan, useSession } from '../../lib/session.ts';
 import { ButtonLink } from '../../ui/Button.tsx';
+import { HelpButton } from '../../ui/Page.tsx';
 import { Card, Section } from '../../ui/Card.tsx';
 import { Celebration, markMilestone, unseenMilestone } from '../../ui/Celebration.tsx';
 import { Sparkline } from '../../ui/charts.tsx';
@@ -34,6 +43,7 @@ import { STATE_META } from '../../ui/StateChip.tsx';
 import { toast } from '../../ui/Toast.tsx';
 import { untilChange, useLiveState, usePollWhenOffline } from '../../lib/live.ts';
 import { statusWords, useStoreQuery } from '../store/StatusPill.tsx';
+import { BILLING_HOLD_TEXT, isBillingHold } from '../store/BillingHold.tsx';
 import { StatusSheet } from '../store/StatusSheet.tsx';
 import { DeviceCard } from './DeviceCard.tsx';
 import { hasLeft } from '../onboarding/progress.ts';
@@ -75,6 +85,10 @@ export default function Home() {
 
   return (
     <div className="mx-auto w-full max-w-[1320px] px-4 pb-32 pt-3 md:px-8 md:pb-12 md:pt-8">
+      <h1 className="sr-only">Início</h1>
+      <div className="-mt-1 mb-1 flex justify-end md:-mt-4">
+        <HelpButton className="-mr-2" />
+      </div>
       <div className="grid gap-5 lg:grid-cols-[2fr_1fr] lg:items-start lg:gap-6">
         <div className="contents space-y-5 lg:block lg:space-y-6">
           {data ? <Hero data={data} /> : <Skeleton className="h-[340px] rounded-xl" delay={0} />}
@@ -133,6 +147,9 @@ const HERO_POSE: Record<DayPhase, Pose> = {
 
 function Hero({ data }: { data: HomeData }) {
   const store = useStoreQuery().data;
+  // held for the first plan payment: "voltar agora" can't work, so say what can
+  const hold = !!store?.status.billingHold;
+  const owner = useCan('owner');
   const [sheet, setSheet] = useState(false);
   const qc = useQueryClient();
   const phase = phaseOf(data);
@@ -149,7 +166,12 @@ function Hero({ data }: { data: HomeData }) {
       void qc.invalidateQueries({ queryKey: qk.home });
       toast('Loja aberta de novo ✓');
     },
-    onError: (e) => toast.error(messageOf(e)),
+    onError: (e) => {
+      if (isBillingHold(e)) {
+        void qc.invalidateQueries({ queryKey: qk.store });
+        toast(BILLING_HOLD_TEXT, { tone: 'error', ms: 8000 });
+      } else toast.error(messageOf(e));
+    },
   });
   const muted = light ? 'text-[#c9d3cd]' : 'text-muted';
   const [countdown, setCountdown] = useState('');
@@ -203,7 +225,20 @@ function Hero({ data }: { data: HomeData }) {
         {phase === 'dawn' && countdown ? (
           <span className={cn('t-body', muted)}>{countdown}</span>
         ) : null}
-        {phase === 'paused' ? (
+        {hold ? (
+          owner ? (
+            <Link
+              to="/conta"
+              className="t-label inline-flex min-h-10 items-center gap-1.5 rounded-full bg-warning-soft px-3.5 text-warning"
+            >
+              <CreditCard weight="bold" className="size-4" /> pagar o plano para abrir
+            </Link>
+          ) : (
+            <span className="t-label inline-flex min-h-10 items-center gap-1.5 rounded-full bg-warning-soft px-3.5 text-warning">
+              <CreditCard weight="bold" className="size-4" /> aguardando o pagamento do plano
+            </span>
+          )
+        ) : phase === 'paused' ? (
           <button
             type="button"
             onClick={() => resume.mutate()}
@@ -289,12 +324,28 @@ function Hero({ data }: { data: HomeData }) {
   );
 }
 
-const ATTENTION_ICON: Record<string, typeof Bell> = {
-  orders_waiting: Bell,
-  closed_with_orders: Timer,
-  pix_to_confirm: Wallet,
-  low_stock: Package,
-  waitlist: UsersThree,
+type Tone = 'live' | 'warning' | 'danger' | 'info';
+const ATTENTION: Record<string, { Icon: typeof Bell; tone: Tone; cta: string }> = {
+  orders_waiting: { Icon: Bell, tone: 'live', cta: 'ver' },
+  closed_with_orders: { Icon: Timer, tone: 'warning', cta: 'resolver' },
+  pix_to_confirm: { Icon: Wallet, tone: 'warning', cta: 'conferir' },
+  low_stock: { Icon: Package, tone: 'warning', cta: 'resolver' },
+  waitlist: { Icon: UsersThree, tone: 'warning', cta: 'ver' },
+  alerts_failing: { Icon: BellSlash, tone: 'warning', cta: 'resolver' },
+  mp_expiring: { Icon: ClockCountdown, tone: 'warning', cta: 'reconectar' },
+  mp_disconnected: { Icon: Plugs, tone: 'danger', cta: 'reconectar' },
+  mp_restricted: { Icon: ShieldWarning, tone: 'danger', cta: 'resolver' },
+  billing_pending: { Icon: Receipt, tone: 'warning', cta: 'pagar' },
+  billing_past_due: { Icon: WarningCircle, tone: 'danger', cta: 'pagar' },
+  invoice_open: { Icon: Receipt, tone: 'warning', cta: 'pagar' },
+  // our problem, not theirs: informative, never alarming
+  incident: { Icon: CloudWarning, tone: 'info', cta: 'ver' },
+};
+const TONE_DISC: Record<Tone, string> = {
+  live: 'bg-spark text-on-spark',
+  warning: 'bg-warning-soft text-warning',
+  danger: 'bg-danger-soft text-danger',
+  info: 'bg-info-soft text-info',
 };
 
 function Attention({ data }: { data: HomeData }) {
@@ -308,8 +359,12 @@ function Attention({ data }: { data: HomeData }) {
   return (
     <Card as="section" className="divide-y divide-line overflow-hidden">
       {items.map((a, i) => {
-        const Icon = ATTENTION_ICON[a.kind] ?? Bell;
-        const urgent = a.kind === 'orders_waiting';
+        const { Icon, tone, cta } = ATTENTION[a.kind] ?? {
+          Icon: Bell,
+          tone: 'warning',
+          cta: 'resolver',
+        };
+        const urgent = tone === 'live';
         return (
           <Link
             key={i}
@@ -319,7 +374,7 @@ function Attention({ data }: { data: HomeData }) {
             <span
               className={cn(
                 'grid size-11 shrink-0 place-items-center rounded-full',
-                urgent ? 'bg-spark text-on-spark' : 'bg-warning-soft text-warning',
+                TONE_DISC[tone],
               )}
             >
               <Icon weight="bold" className={cn('size-5', urgent && 'animate-ring')} />
@@ -329,7 +384,7 @@ function Attention({ data }: { data: HomeData }) {
               {a.detail ? <span className="t-caption block text-muted">{a.detail}</span> : null}
             </span>
             <span className="t-label inline-flex items-center gap-1 text-muted">
-              {urgent ? 'ver' : 'resolver'} <ArrowRight className="size-4" />
+              {cta} <ArrowRight className="size-4" />
             </span>
           </Link>
         );

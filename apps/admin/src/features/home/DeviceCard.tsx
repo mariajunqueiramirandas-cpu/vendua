@@ -1,6 +1,7 @@
 import { BellRinging, DeviceMobile, Export, PlusSquare, X } from '@phosphor-icons/react';
 import { useQueryClient } from '@tanstack/react-query';
 import { useEffect, useState, useSyncExternalStore } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { api } from '../../lib/api.ts';
 import { currentSubscription, enablePush, pushSupported } from '../../lib/push.ts';
 import { installMode, onInstallChange, promptInstall, standalone } from '../../lib/pwa.ts';
@@ -39,6 +40,7 @@ export function DeviceCard({ className }: { className?: string }) {
   const qc = useQueryClient();
   const mode = useSyncExternalStore(onInstallChange, installMode);
   const pushOff = usePushOff();
+  const nav = useNavigate();
   const [hidden, setHidden] = useState<string[]>([]);
   const [howto, setHowto] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -101,8 +103,17 @@ export function DeviceCard({ className }: { className?: string }) {
                 if (r === 'on') {
                   await api.updateMe({ prefs: { push: true } });
                   void qc.invalidateQueries({ queryKey: qk.session });
-                  toast('Avisos ligados neste aparelho.');
                   setHidden((h) => [...h, 'push']);
+                  // prove it end to end: the merchant hears it ring now, not on the first order
+                  const t = await api.testAlert().catch(() => null);
+                  void qc.invalidateQueries({ queryKey: qk.alerts });
+                  if (!t || t.failed)
+                    toast('Os avisos ligaram, mas o de teste não chegou.', {
+                      tone: 'error',
+                      ms: 8000,
+                      action: { label: 'ver avisos', run: () => nav('/perfil#avisos') },
+                    });
+                  else toast('Avisos ligados. Mandamos um de teste: ele deve tocar agora.');
                 } else if (r === 'denied')
                   toast.error('Os avisos foram bloqueados. Libere nas configurações do aparelho.');
               } catch (e) {

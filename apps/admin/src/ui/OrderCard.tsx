@@ -4,6 +4,7 @@ import type { Order } from '../lib/api.ts';
 import { dateShort, minutesSince, money } from '../lib/format.ts';
 import { haptic } from '../lib/haptics.ts';
 import { cn } from './cn.ts';
+import { PaymentChip } from './PaymentChip.tsx';
 import { nextStep, STATE_META, StateChip } from './StateChip.tsx';
 
 const COMMIT = 0.4;
@@ -182,6 +183,7 @@ export function OrderCard({
           ) : null}
           <div className="t-body mt-3 flex flex-wrap items-center gap-x-3 gap-y-1 text-muted">
             <span className="tnum font-semibold text-ink">{money(order.totalCents)}</span>
+            <PaymentChip payment={order.payment} quiet className="h-6 px-2" />
             <span className="inline-flex items-center gap-1">
               {order.delivery.mode === 'delivery' ? (
                 <Moped className="size-4" />

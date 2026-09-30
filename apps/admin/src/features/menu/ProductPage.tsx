@@ -1,5 +1,6 @@
 import {
   CalendarBlank,
+  Clock,
   Copy,
   Eye,
   EyeSlash,
@@ -42,6 +43,8 @@ import { PageBody, PageHeader } from '../../ui/Page.tsx';
 import { PhotoField } from '../../ui/PhotoField.tsx';
 import { availability } from '../../ui/ProductTile.tsx';
 import { toast } from '../../ui/Toast.tsx';
+import { outsideNow, scheduleShort } from './schedule.ts';
+import { ScheduleEditor } from './ScheduleEditor.tsx';
 
 export default function ProductPage() {
   const { id = '' } = useParams();
@@ -169,7 +172,7 @@ function Editor({
         }
       />
 
-      <div className="grid gap-6 lg:grid-cols-[1.1fr_1fr]">
+      <div className="grid gap-6 lg:grid-cols-[1.1fr_1fr] [&>*]:min-w-0">
         <div className="space-y-5">
           <PhotoField
             label="foto do produto"
@@ -246,6 +249,16 @@ function Editor({
                   <p className="t-caption line-clamp-2 text-muted">{p.description}</p>
                 ) : null}
                 <p className="tnum mt-1 font-semibold">{money(p.priceCents)}</p>
+                {p.availabilitySchedule ? (
+                  <p className="t-caption mt-1 inline-flex items-center gap-1 text-muted">
+                    <Clock className="size-3.5 shrink-0" aria-hidden />
+                    {outsideNow(p)
+                      ? p.availabilitySchedule.outside === 'hidden'
+                        ? 'fora do cardápio agora'
+                        : 'indisponível agora'
+                      : scheduleShort(p.availabilitySchedule)}
+                  </p>
+                ) : null}
               </div>
             </Card>
           </div>
@@ -271,7 +284,9 @@ function Editor({
             defaultOpen
             summary={
               a === 'available'
-                ? 'Disponível na loja'
+                ? outsideNow(p)
+                  ? 'Disponível, mas fora do horário agora'
+                  : 'Disponível na loja'
                 : a === 'hidden'
                   ? 'Escondido da loja'
                   : p.soldOutUntil
@@ -294,6 +309,18 @@ function Editor({
               “Esgotado hoje” volta sozinho à meia-noite. Quem pedir para ser avisado entra na lista
               de espera.
             </p>
+          </Disclosure>
+
+          <Disclosure
+            title="Dias e horários"
+            icon={<Clock />}
+            summary={
+              p.availabilitySchedule
+                ? `${scheduleShort(p.availabilitySchedule)}${outsideNow(p) ? ' · fora do horário agora' : ''}`
+                : 'Todos os dias em que a loja abre'
+            }
+          >
+            <ScheduleEditor p={p} onSaved={put} />
           </Disclosure>
 
           <Disclosure

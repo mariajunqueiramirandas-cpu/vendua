@@ -43,6 +43,7 @@ export const chunks = {
   profile: once(() => import('../features/account/Profile.tsx')),
   help: once(() => import('../features/help/Help.tsx')),
   onboarding: once(() => import('../features/onboarding/Onboarding.tsx')),
+  signup: once(() => import('../features/signup/Signup.tsx')),
   notFound: once(() => import('../features/notfound/NotFound.tsx')),
   sheets: once(() => import('./ShellSheets.tsx')),
   search: once(() => import('./Search.tsx')),

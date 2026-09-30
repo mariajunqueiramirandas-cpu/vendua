@@ -39,7 +39,9 @@ import { PhotoField } from '../../ui/PhotoField.tsx';
 import { Sheet } from '../../ui/Sheet.tsx';
 import { fromWeek, TimeRangeField, toWeek, type WeekModel } from '../../ui/TimeRangeField.tsx';
 import { toast } from '../../ui/Toast.tsx';
+import { BillingHoldNotice } from './BillingHold.tsx';
 import { StatusPill, useStoreQuery } from './StatusPill.tsx';
+import { Notice } from '../../ui/Notice.tsx';
 
 const ZoneMap = lazy(() => import('../../ui/ZoneMap.tsx').then((m) => ({ default: m.ZoneMap })));
 
@@ -88,6 +90,11 @@ function useStorePatch() {
 
 function StoreEditor({ s }: { s: StoreView }) {
   const { run, state } = useStorePatch();
+  useEffect(() => {
+    // deep links from elsewhere (Relatórios → /loja#entrega) land on their section
+    const id = location.hash.slice(1);
+    if (id) document.getElementById(id)?.scrollIntoView({ block: 'start' });
+  }, []);
   const patch = (b: Record<string, unknown>) => void run(b).catch(() => undefined);
   return (
     <PageBody wide>
@@ -108,6 +115,7 @@ function StoreEditor({ s }: { s: StoreView }) {
         }
         actions={<StatusPill />}
       />
+      {s.status.billingHold ? <BillingHoldNotice className="mb-6" /> : null}
       <nav aria-label="seções" className="scroll-row -mx-4 mb-6 px-4 md:-mx-8 md:px-8">
         <ul className="flex w-max gap-2">
           {[
@@ -350,14 +358,67 @@ function Delivery({
           checked={o.pickupEnabled}
           onChange={(v) => patch({ operations: { pickupEnabled: v } })}
           label="Retirada na loja"
-          description={s.profile.address ?? 'O cliente busca o pedido.'}
+          description={
+            o.pickupEnabled
+              ? 'O cliente busca o pedido no endereço abaixo.'
+              : 'Deixe o cliente buscar o pedido.'
+          }
         />
+        {o.pickupEnabled ? (
+          <div className="animate-fade-up space-y-4 rounded-md p-4 ring-1 ring-line">
+            <Field
+              label="Onde retirar"
+              htmlFor="pk-addr"
+              helper="Aparece para quem escolhe retirar, na loja e no pedido."
+            >
+              <CommitInput
+                id="pk-addr"
+                maxLength={200}
+                autoComplete="street-address"
+                value={o.pickupAddress ?? ''}
+                placeholder={s.profile.address ?? 'Ex.: Rua das Flores, 120 — Centro'}
+                onCommit={(v) => patch({ operations: { pickupAddress: v || null } })}
+              />
+            </Field>
+            {!o.pickupAddress && s.profile.address ? (
+              <Button
+                size="sm"
+                variant="secondary"
+                className="-mt-2"
+                onClick={() => patch({ operations: { pickupAddress: s.profile.address } })}
+              >
+                usar o endereço da loja
+              </Button>
+            ) : null}
+            <Field
+              label="Como retirar"
+              optional
+              htmlFor="pk-how"
+              helper="Um recado curto: onde parar, a quem chamar, que horas."
+            >
+              <CommitInput
+                id="pk-how"
+                multiline
+                maxLength={400}
+                value={o.pickupInstructions ?? ''}
+                placeholder="Ex.: Toque o interfone da casa 2. Retiradas até as 18h."
+                onCommit={(v) => patch({ operations: { pickupInstructions: v || null } })}
+              />
+            </Field>
+          </div>
+        ) : null}
         <Toggle
           checked={o.deliveryEnabled}
           onChange={(v) => patch({ operations: { deliveryEnabled: v } })}
           label="Entrega"
           description="Nos bairros ou raio abaixo."
         />
+        {!o.pickupEnabled && !o.deliveryEnabled ? (
+          <Notice tone="danger" title="Ninguém consegue pedir" role="alert">
+            Com retirada e entrega desligadas, a loja não aceita pedidos. Ligue pelo menos uma das
+            duas.
+          </Notice>
+        ) : null}
         <div className="grid gap-5 border-t border-line pt-4 sm:grid-cols-2">
           <Field label="Tempo de preparo de sempre" helper="Vem marcado ao aceitar um pedido.">
             <SavedStepper
@@ -775,7 +836,7 @@ function Profile({
             />
           </Field>
         </div>
-        <Field label="Endereço para retirada" optional htmlFor="pf-addr">
+        <Field label="Endereço da loja" optional htmlFor="pf-addr">
           <CommitInput
             id="pf-addr"
             maxLength={300}

@@ -2,11 +2,18 @@ import { Bag, Moped } from '@phosphor-icons/react';
 import { Link } from 'react-router-dom';
 import type { OrderRow } from '../../lib/api.ts';
 import { money, when } from '../../lib/format.ts';
+import { cn } from '../../ui/cn.ts';
+import { paymentMeta } from '../../ui/PaymentChip.tsx';
 import { StateChip } from '../../ui/StateChip.tsx';
 import { usePreload } from '../../app/routes.ts';
 
 export function OrderRowView({ o }: { o: OrderRow }) {
   const preload = usePreload();
+  // paid is the norm in a list; only a payment that needs a look gets a word
+  const pay =
+    o.paymentStatus === 'paid'
+      ? null
+      : paymentMeta({ method: o.paymentMethod, status: o.paymentStatus }, true);
   return (
     <li className="border-b border-line last:border-0">
       <Link
@@ -26,6 +33,22 @@ export function OrderRowView({ o }: { o: OrderRow }) {
             <span className="truncate">
               {when(o.placedAt)} · {o.itemCount} {o.itemCount === 1 ? 'item' : 'itens'}
             </span>
+            {pay ? (
+              <span
+                className={cn(
+                  'shrink-0 font-semibold',
+                  pay.tone === 'danger'
+                    ? 'text-danger'
+                    : pay.tone === 'warning'
+                      ? 'text-warning'
+                      : pay.tone === 'info'
+                        ? 'text-info'
+                        : 'text-muted',
+                )}
+              >
+                · {pay.label}
+              </span>
+            ) : null}
           </span>
         </span>
         <span className="flex shrink-0 flex-col items-end gap-1">

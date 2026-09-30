@@ -1,6 +1,6 @@
 import { useQueryClient } from '@tanstack/react-query';
 import { NavLink } from 'react-router-dom';
-import { api } from '../lib/api.ts';
+import { api, type Incident } from '../lib/api.ts';
 import { qk } from '../lib/query.ts';
 import { ROLE_LABEL, useSession } from '../lib/session.ts';
 import { Sheet } from '../ui/Sheet.tsx';
@@ -28,6 +28,9 @@ function MoreSheet({
       return n ? `${n} ${n === 1 ? 'cupom ativo' : 'cupons ativos'}` : 'crie um cupom';
     }
     if (to === '/pagamentos' && pay) return pay.pix ? 'Pix configurado' : 'configure seu Pix';
+    const status = qc.getQueryData<{ incidents: Incident[] }>(qk.helpStatus);
+    if (to === '/ajuda' && status?.incidents.some((i) => !i.resolvedAt && i.severity !== 'info'))
+      return 'um problema na Venduá agora';
     return HINTS[to] ?? null;
   };
   return (

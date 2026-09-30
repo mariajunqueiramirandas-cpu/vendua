@@ -2,8 +2,6 @@ import {
   ArrowSquareOut,
   Bag,
   CalendarBlank,
-  CheckCircle,
-  CurrencyCircleDollar,
   MapPin,
   Moped,
   NotePencil,
@@ -13,7 +11,7 @@ import {
 } from '@phosphor-icons/react';
 import { useState } from 'react';
 import { Link } from 'react-router-dom';
-import type { Order } from '../../lib/api.ts';
+import type { Order, OrderPayment } from '../../lib/api.ts';
 import { clock, dateShort, money, phone, when } from '../../lib/format.ts';
 import { can, useSession } from '../../lib/session.ts';
 import { Button } from '../../ui/Button.tsx';
@@ -23,29 +21,33 @@ import { Chips, Field, TextArea } from '../../ui/fields.tsx';
 import { HoldButton } from '../../ui/HoldButton.tsx';
 import { Sheet } from '../../ui/Sheet.tsx';
 import { nextStep, STATE_META, StateChip } from '../../ui/StateChip.tsx';
-import { CANCEL_REASONS, printTicket, useMarkPaid, useTransition, whatsappUrl } from './actions.ts';
-
-const METHOD: Record<string, string> = {
-  pix: 'Pix',
-  card_on_delivery: 'Cartão na entrega',
-  cash: 'Dinheiro',
-};
+import { PaymentChip } from '../../ui/PaymentChip.tsx';
+import { CANCEL_REASONS, printTicket, useTransition, whatsappUrl } from './actions.ts';
+import { PaymentSection, primaryPayment, refundable } from './PaymentSection.tsx';
+import { RefundSheet } from './RefundSheet.tsx';
 
 export function OrderDetail({
   order,
   customer,
+  payments,
   prepDefault,
   inPanel,
 }: {
   order: Order;
   customer: { phone: string; orders: number; spentCents: number } | null;
+  /** Mercado Pago attempts; undefined while the detail is still the board's copy */
+  payments?: OrderPayment[] | undefined;
   prepDefault: number;
   inPanel?: boolean;
 }) {
   const s = useSession();
   const move = useTransition();
-  const paid = useMarkPaid();
   const [cancelOpen, setCancelOpen] = useState(false);
+  const [refundOpen, setRefundOpen] = useState(false);
+  const manager = can(s.user.role, 'manager');
+  const online = !!order.payment.online;
+  const main = primaryPayment(payments);
+  const canRefund = online && manager && refundable(main) > 0;
   const next = nextStep(order.state, order.delivery.mode);
   const nm = next ? STATE_META[next.to] : null;
   const advance = () =>
@@ -73,7 +75,10 @@ export function OrderDetail({
           <p className="t-caption text-muted">{when(order.placedAt)}</p>
           <h2 className="t-display tnum">#{order.number}</h2>
         </div>
-        <StateChip state={order.state} mode={d.mode} className="mt-6" />
+        <div className="mt-6 flex flex-col items-end gap-1.5">
+          <StateChip state={order.state} mode={d.mode} />
+          <PaymentChip payment={order.payment} quiet />
+        </div>
       </div>
 
       {order.scheduledFor ? (
@@ -219,36 +224,14 @@ export function OrderDetail({
             src={`https://www.openstreetmap.org/export/embed.html?bbox=${coords.lng - 0.006},${coords.lat - 0.004},${coords.lng + 0.006},${coords.lat + 0.004}&layer=mapnik&marker=${coords.lat},${coords.lng}`}
           />
         ) : null}
-        <div className="flex items-center gap-3 p-4">
-          <CurrencyCircleDollar className="size-6 shrink-0" />
-          <div className="min-w-0 flex-1">
-            <p className="font-semibold">{METHOD[order.payment.method] ?? order.payment.method}</p>
-            <p
-              className={cn(
-                't-body',
-                order.payment.status === 'paid' ? 'text-success' : 'text-muted',
-              )}
-            >
-              {order.payment.status === 'paid'
-                ? `Pago${order.payment.confirmedBy ? `, confirmado por ${order.payment.confirmedBy}` : ''}`
-                : order.payment.method === 'pix'
-                  ? 'Aguardando o Pix — confira no seu banco'
-                  : 'Recebe na entrega ou retirada'}
-            </p>
-          </div>
-          {order.payment.status !== 'paid' && order.state !== 'cancelled' ? (
-            <Button
-              variant="secondary"
-              size="sm"
-              loading={paid.isPending}
-              onClick={() => paid.mutate({ id: order.id, status: 'paid' })}
-              icon={<CheckCircle />}
-            >
-              marcar pago
-            </Button>
-          ) : null}
-        </div>
       </Card>
+
+      <PaymentSection
+        order={order}
+        payments={payments}
+        canRefund={canRefund}
+        onRefund={() => setRefundOpen(true)}
+      />
 
       <section aria-label="histórico do pedido">
         <h3 className="t-label mb-2 px-1">Linha do tempo</h3>
@@ -303,15 +286,15 @@ export function OrderDetail({
         {cancellable ? (
           <Button
             variant="ghost"
-            className="text-danger"
+            className="text-danger!"
             icon={<XCircle />}
             onClick={() => setCancelOpen(true)}
           >
             cancelar pedido
           </Button>
         ) : null}
-        {order.state === 'delivered' && can(s.user.role, 'manager') ? (
-          <Button variant="ghost" className="text-muted" onClick={() => setCancelOpen(true)}>
+        {order.state === 'delivered' && manager && !online ? (
+          <Button variant="ghost" className="text-muted!" onClick={() => setCancelOpen(true)}>
             marcar estorno
           </Button>
         ) : null}
@@ -353,6 +336,14 @@ export function OrderDetail({
       ) : null}
 
       <CancelSheet order={order} open={cancelOpen} onOpenChange={setCancelOpen} />
+      {online ? (
+        <RefundSheet
+          order={order}
+          payment={main}
+          open={refundOpen}
+          onOpenChange={setRefundOpen}
+        />
+      ) : null}
     </div>
   );
 }
@@ -371,7 +362,8 @@ export function CancelSheet({
   const [other, setOther] = useState('');
   const refund = order.state === 'delivered';
   const text = reason === 'outro' ? other.trim() : reason;
-  const paid = order.payment.status === 'paid';
+  const paid = order.payment.status === 'paid' || order.payment.status === 'partially_refunded';
+  const paidOnline = paid && !!order.payment.online;
   const go = () =>
     move.mutate(
       { order, to: refund ? 'refunded' : 'cancelled', reason: text, idem: `cancel-${order.id}` },
@@ -385,8 +377,10 @@ export function CancelSheet({
       description={
         refund
           ? 'Registra que o dinheiro foi devolvido. Faça a devolução pelo seu banco antes.'
-          : paid
-            ? 'Esse pedido já foi pago. Depois de cancelar, devolva o valor ao cliente pelo seu banco.'
+          : paidOnline
+            ? 'Esse pedido foi pago pelo Mercado Pago. Ao cancelar, o que o cliente pagou volta para ele sozinho, pelo mesmo meio.'
+            : paid
+              ? 'Esse pedido já foi pago. Depois de cancelar, devolva o valor ao cliente pelo seu banco.'
             : 'O cliente vê o motivo na página do pedido. Não dá para desfazer.'
       }
       footer={
@@ -396,7 +390,9 @@ export function CancelSheet({
               ? 'cancelando…'
               : refund
                 ? 'segure para estornar'
-                : 'segure para cancelar'}
+                : paidOnline
+                  ? 'segure para cancelar e devolver'
+                  : 'segure para cancelar'}
           </HoldButton>
         ) : (
           <Button

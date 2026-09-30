@@ -1,5 +1,6 @@
 import type { ReactNode } from 'react';
 import { cn } from '../ui/cn.ts';
+import { PlanCardSkeleton } from '../ui/PlanCard.tsx';
 import {
   AppearanceSkeleton,
   CalendarSkeleton,
@@ -108,7 +109,7 @@ const SKELETONS: Record<RouteId, () => ReactNode> = {
       </div>,
       { wide: true },
     ),
-  account: () => page('Conta e plano', <SectionsSkeleton />, { subtitle: false }),
+  account: () => page('Conta e plano', <PlanCardSkeleton />, { subtitle: false }),
   profile: () => page('Meu perfil', <SectionsSkeleton />, { subtitle: false }),
   help: () => page('Ajuda', <RowsSkeleton rows={5} avatar={false} trailing={false} />),
 };

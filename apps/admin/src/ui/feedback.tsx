@@ -160,7 +160,9 @@ const FRIENDLY: Record<string, string> = {
   CATEGORY_NOT_EMPTY: 'Essa categoria ainda tem produtos. Mova ou esconda eles antes.',
   COUPON_EXISTS: 'Já existe um cupom com esse código.',
   LAST_OWNER: 'A loja precisa ter pelo menos um dono.',
-  MEMBER_EXISTS: 'Esse celular já faz parte da equipe.',
+  MEMBER_EXISTS: 'Esse celular já faz parte da equipe. Toque na pessoa para mudar o papel.',
+  BILLING_HOLD:
+    'A loja abre para pedidos assim que o primeiro pagamento do plano for confirmado. Veja em Conta e plano.',
   INVALID_PIX: 'Essa chave Pix não parece certa. Confira o tipo e a chave.',
   INVALID_TOKENS: 'Essas cores ficam difíceis de ler. Ajuste o contraste.',
   TEMPLATE_VERSION_CONFLICT: 'Alguém mudou essa página agora há pouco. Recarregamos a versão nova.',
