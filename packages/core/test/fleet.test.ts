@@ -209,6 +209,22 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('control plane (db)', () => {
     const again = await publish(manifest(r1));
     expect(again.status).toBe(200);
     expect(((await again.json()) as { created: boolean; promoted: [] }).promoted).toEqual([]);
+    // the same build published to another artifact store (volume → R2) moves there
+    const moved = await ctl('POST', '/control/v1/fleet/releases', {
+      manifest: manifest(r1),
+      artifactUri: `s3://vendua-artifacts/storefronts/${bundle}/${r1}`,
+    });
+    expect(moved.status).toBe(200);
+    expect(((await moved.json()) as { release: { artifactUri: string } }).release.artifactUri).toBe(
+      `s3://vendua-artifacts/storefronts/${bundle}/${r1}`,
+    );
+    // …but the same id can't claim another bundle
+    const clash = await ctl('POST', '/control/v1/fleet/releases', {
+      manifest: manifest(r1, { b: ownBundle }),
+      artifactUri: `file:///srv/artifacts/storefronts/${ownBundle}/${r1}`,
+    });
+    expect(clash.status).toBe(409);
+    await publish(manifest(r1));
 
     expect((await publish({ ...manifest(r1), release: 'zz' })).status).toBe(422);
     expect(

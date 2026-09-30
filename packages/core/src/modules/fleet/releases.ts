@@ -117,8 +117,10 @@ export function parseRelease(body: Record<string, unknown>): ParsedRelease {
   };
 }
 
-/** Registers (or re-publishes) a release. Same id twice is the same build: only
- *  published_at moves, so auto stores follow the newest publish of their bundle. */
+/** Registers (or re-publishes) a release. The id hashes the bundle and every file, so the same
+ *  id on the same bundle is the same build: published_at moves (auto stores follow the newest
+ *  publish of their bundle) and so does artifact_uri — a publish to a new artifact store (the
+ *  volume → R2) points at where the files are now. */
 export async function registerReleaseTx(
   tx: Sql,
   r: ParsedRelease,
@@ -135,11 +137,13 @@ export async function registerReleaseTx(
   if (inserted[0]) return { row: inserted[0], created: true };
   const existing = (
     await tx<ReleaseRow[]>`
-      update releases set published_at = now() where id = ${r.id} returning *
+      update releases set published_at = now(), artifact_uri = ${r.artifactUri}
+      where id = ${r.id} and bundle = ${r.bundle}
+      returning *
     `
-  )[0]!;
-  if (existing.bundle !== r.bundle || existing.artifact_uri !== r.artifactUri)
-    throw new HttpError(409, 'RELEASE_CONFLICT', 'this release id belongs to another artifact');
+  )[0];
+  if (!existing)
+    throw new HttpError(409, 'RELEASE_CONFLICT', 'this release id belongs to another bundle');
   return { row: existing, created: false };
 }
 
