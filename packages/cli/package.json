@@ -11,6 +11,7 @@
   },
   "dependencies": {
     "@vendua/codemods": "workspace:*",
+    "@vendua/edge": "workspace:*",
     "@vendua/templates": "workspace:*",
     "postgres": "3.4.7"
   },
