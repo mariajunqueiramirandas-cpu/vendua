@@ -186,6 +186,9 @@ services:
       context: .
       dockerfile: storefronts/Dockerfile
       target: site
+      args:
+        # where "Criar minha loja" goes: the admin's own domain (VENDUA_ADMIN_HOST), https
+        PUBLIC_ADMIN_URL: ${PUBLIC_ADMIN_URL:-https://painel.vendua.com.br}
     restart: unless-stopped
     logging:
       driver: json-file

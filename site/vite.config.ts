@@ -43,4 +43,8 @@ const themeSwitch: PostcssPlugin = {
 export default defineConfig({
   plugins: [sveltekit()],
   css: { postcss: { plugins: [themeSwitch] } },
+  // the sign-up link target (src/lib/content.ts); set PUBLIC_ADMIN_URL at build time to change it
+  define: {
+    'import.meta.env.PUBLIC_ADMIN_URL': JSON.stringify(process.env.PUBLIC_ADMIN_URL ?? ''),
+  },
 });

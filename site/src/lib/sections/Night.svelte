@@ -1,8 +1,8 @@
 <script lang="ts">
   import Dua, { type Pose } from '$lib/components/Dua.svelte';
   import Section from '$lib/components/Section.svelte';
-  import Soon from '$lib/components/Soon.svelte';
-  import { site } from '$lib/content';
+  import Start from '$lib/components/Start.svelte';
+  import { plans, site } from '$lib/content';
 
   const steps: { pose: Pose; title: string; text: string }[] = [
     {
@@ -24,12 +24,16 @@
 
   const faq: { q: string; a: string }[] = [
     {
-      q: 'Quando abre?',
-      a: 'Em breve. Estamos preparando as primeiras lojas agora, com calma. O cadastro abre assim que elas estiverem no ar.',
+      q: 'Já posso criar a minha loja?',
+      a: 'Pode, o cadastro está aberto. Você escolhe o plano, dá o nome da loja, confirma o seu WhatsApp e paga o primeiro mês.',
     },
     {
       q: 'Quanto custa?',
-      a: 'O preço sai junto com a abertura do cadastro. Você vê quanto custa antes de começar, sem surpresa.',
+      a: `Depende do plano. O ${plans.basic.name} custa ${plans.basic.price} por mês: a loja fica em seunome.vendua.com.br, com o visual padrão da Venduá. O ${plans.pro_plus.name} custa ${plans.pro_plus.price} por mês e traz domínio próprio e um site feito pelo nosso agente de IA. A Venduá não cobra nada por pedido; o Mercado Pago fica com a tarifa dele em cada pagamento.`,
+    },
+    {
+      q: 'Como eu pago o plano?',
+      a: 'Por Pix, todo mês, ou no cartão, com a cobrança renovando sozinha a cada mês. Os dois pelo Mercado Pago.',
     },
     {
       q: 'Preciso entender de tecnologia?',
@@ -112,9 +116,13 @@
 
   <!-- 3 · good night -->
   <div class="close">
-    <p class="moment t-display">Estamos preparando as primeiras lojas.</p>
+    <p class="moment t-display">A próxima loja no ar pode ser a sua.</p>
     <div class="cta">
-      <Soon tone="after" />
+      <Start tone="after" />
+      <p class="plans tnum">
+        {plans.basic.short} por {plans.basic.price}/mês ou {plans.pro_plus.short} por {plans
+          .pro_plus.price}/mês.
+      </p>
       <p class="follow">
         Acompanhe no Instagram:
         <a href={site.instagram.url} rel="noopener" target="_blank"
@@ -464,6 +472,10 @@
     justify-items: center;
     gap: 14px;
     margin-top: 36px;
+  }
+  .plans {
+    font-size: 15px;
+    color: var(--after-ink);
   }
   .follow {
     font-size: 15px;

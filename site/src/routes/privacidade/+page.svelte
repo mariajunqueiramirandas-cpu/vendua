@@ -113,11 +113,11 @@
       </section>
 
       <section aria-labelledby="lojas">
-        <h2 id="lojas" class="t-title-2">Quando as lojas abrirem</h2>
+        <h2 id="lojas" class="t-title-2">Quando você cria uma loja</h2>
         <p>
-          A loja online e o app ainda não recebem cadastros. Quando as inscrições abrirem, vamos
-          publicar uma política completa para as lojas e para o app, explicando como cuidamos dos
-          dados de quem vende e de quem compra.
+          O cadastro da loja acontece no painel da Venduá, fora deste site: lá você informa o seu
+          nome, o seu e-mail e o seu WhatsApp. Esta página fala só do site. Dúvidas sobre os dados
+          da sua loja chegam pelos endereços abaixo.
         </p>
       </section>
 

@@ -1,6 +1,6 @@
 <script lang="ts">
   import Logo from './Logo.svelte';
-  import Soon from './Soon.svelte';
+  import Start from './Start.svelte';
   import ThemeToggle from './ThemeToggle.svelte';
 
   // Sticky bar; transparent over the dawn sky, glass once the page scrolls (the admin's only glass
@@ -73,7 +73,7 @@
       </ul>
     </nav>
     <ThemeToggle />
-    <Soon size="sm" tone={after ? 'after' : 'day'} />
+    <Start size="sm" short tone={after ? 'after' : 'day'} />
     <details class="menu" bind:this={menu}>
       <summary aria-label="Seções da página"><span class="lines" aria-hidden="true"></span></summary
       >
@@ -233,13 +233,20 @@
       display: block;
     }
   }
-  /* the smallest phones: four things share 288 px */
+  /* the smallest phones: four things share 288 px, and the logo must not be squeezed */
+  .home {
+    flex: none;
+  }
   @media (max-width: 374px) {
     .row {
-      gap: 4px;
+      gap: 2px;
+    }
+    .home :global(.logo) {
+      --size: 21px !important;
     }
     .row :global(.sm .pill) {
-      padding-inline: 12px;
+      padding-inline: 11px;
+      font-size: 13.5px;
     }
   }
   /* on the home page the hero spells the name out large; the bar's logo takes over as it scrolls

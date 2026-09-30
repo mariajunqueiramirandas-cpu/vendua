@@ -10,6 +10,9 @@ const MISSING = '/nao-existe/';
 const PAGES = [HOME, PRIVACY, MISSING];
 const DOMAIN = 'https://vendua.com.br';
 const INSTAGRAM = 'https://www.instagram.com/vendua.digital/';
+// sign-up lives in the merchant admin (src/lib/content.ts); the build bakes PUBLIC_ADMIN_URL in
+const ADMIN = new URL(process.env.PUBLIC_ADMIN_URL || 'https://painel.vendua.com.br');
+const SIGNUP = new URL('/admin/comecar', ADMIN).href;
 const THEMES = ['light', 'dark'] as const;
 
 // Lazy images load only near the viewport: walk the page one screen at a time, waiting a frame
@@ -172,7 +175,7 @@ test.describe('conteúdo', () => {
       'H1',
       ...Array(tags.length - 1).fill('H2'),
     ]);
-    await expect(page.getByText('Em breve', { exact: true }).first()).toBeVisible();
+    await expect(page.locator(`header a[href="${SIGNUP}"]`)).toBeVisible();
     for (const id of ['pedidos', 'preco', 'perguntas'])
       await expect(page.locator(`#${id}`)).toBeAttached();
 
@@ -229,14 +232,17 @@ test.describe('conteúdo', () => {
     await ctx.close();
   });
 
-  test('a única chamada é "Em breve": sem formulário, cadastro nem contato', async ({ page }) => {
+  test('a chamada leva ao cadastro no painel: sem formulário nem contato no site', async ({
+    page,
+  }) => {
     const CTA =
-      /cadastr|inscrev|assin[ae]|criar (a |sua )?loja|come[cç]ar agora|comece|teste|experimente|fale|contato|whats|agend|quero/i;
+      /cadastr|inscrev|assin[ae]|criar|come[cç]ar agora|comece|teste|experimente|fale|contato|whats|agend|quero/i;
     for (const path of PAGES) {
       await page.goto(path);
       await expect(page.locator('form, input, textarea, select'), path).toHaveCount(0);
       await expect(page.locator('button[type="submit"], [role="button"]'), path).toHaveCount(0);
-      await expect(page.getByText('Em breve', { exact: true }).first()).toBeAttached();
+      // the header's call to action, on every page
+      await expect(page.locator(`header a[href="${SIGNUP}"]`), path).toHaveCount(1);
 
       const links = await page.locator('a[href]').evaluateAll((els) =>
         els.map((a) => ({
@@ -255,8 +261,13 @@ test.describe('conteúdo', () => {
           /wa\.me|whatsapp|ig\.me|forms?\.|typeform/i,
         );
         const url = new URL(l.href);
-        // Instagram is the only other site linked (the profile, and its privacy policy on /privacidade/)
-        if (url.origin !== new URL(page.url()).origin)
+        if (url.origin === ADMIN.origin) {
+          // the admin only at its sign-up, with no plan or one of the two
+          expect(url.pathname, `${path}: ${l.text}`).toBe('/admin/comecar');
+          expect([...url.searchParams.keys()].filter((k) => k !== 'plano')).toEqual([]);
+          expect([null, 'basic', 'pro_plus']).toContain(url.searchParams.get('plano'));
+        } else if (url.origin !== new URL(page.url()).origin)
+          // besides sign-up, Instagram is the only site linked (the profile, and its privacy policy on /privacidade/)
           expect(url.hostname, `${path}: link externo "${l.text}"`).toMatch(
             /(^|\.)instagram\.com$/,
           );
@@ -267,11 +278,29 @@ test.describe('conteúdo', () => {
         instagram.filter((l) => l.footer),
         `${path}: Instagram no rodapé`,
       ).toHaveLength(1);
-      // at most one "acompanhe no Instagram" line near the final Em breve
+      // at most one "acompanhe no Instagram" line near the closing call to action
       expect(instagram.filter((l) => !l.footer).length, path).toBeLessThanOrEqual(1);
       for (const b of await page.locator('button').allTextContents())
         expect(b, `${path}: botão`).not.toMatch(CTA);
     }
+  });
+
+  test('#preco mostra os dois planos como decididos, cada um com o seu cadastro', async ({
+    page,
+  }) => {
+    await page.goto(HOME);
+    const preco = page.locator('#preco');
+    const text = (await preco.innerText()).replace(/\s+/g, ' ');
+    expect(text).toContain('Venduá Basic R$ 39,90/mês');
+    expect(text).toContain('Venduá PRO+ R$ 99/mês');
+    expect(text).toContain('seunome.vendua.com.br');
+    expect(text).toContain('Domínio próprio e um site feito pelo nosso agente de IA.');
+    expect(text).toContain('Taxa da Venduá por pedido nenhuma');
+    for (const plano of ['basic', 'pro_plus'])
+      await expect(preco.locator(`a[href="${SIGNUP}?plano=${plano}"]`)).toHaveCount(1);
+    // no other price anywhere on the page
+    const prices = (await page.locator('main').innerText()).match(/R\$\s?\d+(,\d{2})?\/mês/g) ?? [];
+    expect([...new Set(prices)].sort()).toEqual(['R$ 39,90/mês', 'R$ 99/mês']);
   });
 
   for (const width of [375, 1280])

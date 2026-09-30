@@ -3,9 +3,8 @@
   import Phone from '$lib/components/Phone.svelte';
   import Screen from '$lib/components/Screen.svelte';
   import Section from '$lib/components/Section.svelte';
-  import Soon from '$lib/components/Soon.svelte';
   import Tablet from '$lib/components/Tablet.svelte';
-  import { store } from '$lib/content';
+  import { plans, signup, store } from '$lib/content';
 
   // the address the `loja` screenshot shows
   const address = 'bolosdanena.vendua.com.br';
@@ -30,7 +29,7 @@
   ];
 
   const receipt = [
-    'Loja com a sua cara',
+    'Loja online com o seu nome',
     'App de pedidos no celular',
     'Pix na sua conta do Mercado Pago',
     'Cardápio, estoque e encomendas',
@@ -38,7 +37,18 @@
     'Cupons, fidelidade e lista de espera',
     'Relatórios',
     'Equipe',
-    'Endereço próprio',
+  ];
+
+  // what each plan adds, in the user's words (never more)
+  const tiers = [
+    {
+      plan: plans.basic,
+      text: 'Loja em seunome.vendua.com.br, com o visual padrão da Venduá. Sem domínio próprio e sem site personalizado.',
+    },
+    {
+      plan: plans.pro_plus,
+      text: 'Domínio próprio e um site feito pelo nosso agente de IA.',
+    },
   ];
 </script>
 
@@ -131,7 +141,7 @@
             tem endereço próprio:
           </p>
           <p class="addr tnum"><span aria-hidden="true" class="lock"></span>{address}</p>
-          <p class="aside">ou o seu próprio domínio, se você já tiver um.</p>
+          <p class="aside">ou o seu próprio domínio, no plano PRO+.</p>
         </div>
       </div>
     </div>
@@ -141,8 +151,11 @@
   <div class="part price" id="preco" role="region" aria-labelledby="preco-t">
     <div class="copy">
       <h3 id="preco-t" class="t-display price-t">Tudo isso numa loja só.</h3>
-      <p class="body">Da primeira pergunta do Duá ao último pedido da noite, vem tudo junto.</p>
-      <Soon size="lg" note="O preço sai com as primeiras lojas." />
+      <p class="body">
+        Da primeira pergunta do Duá ao último pedido da noite, vem tudo junto. Você paga só o plano:
+        a Venduá não cobra nada por pedido.
+      </p>
+      <p class="pay">Pix todo mês ou cartão, pelo Mercado Pago.</p>
     </div>
 
     <div class="stand">
@@ -160,11 +173,30 @@
               </li>
             {/each}
           </ul>
-          <p class="total">
-            <span>Preço</span>
+
+          <h4 class="choose">Escolha o plano</h4>
+          <ul class="tiers" role="list">
+            {#each tiers as t (t.plan.id)}
+              <li class="tier">
+                <p class="total">
+                  <span>{t.plan.name}</span>
+                  <i aria-hidden="true"></i>
+                  <strong class="tnum">{t.plan.price}<small>/mês</small></strong>
+                </p>
+                <p class="what">{t.text}</p>
+                <a class="take" href={signup(t.plan.id)}
+                  >Criar loja no {t.plan.short}<i class="go" aria-hidden="true"></i></a
+                >
+              </li>
+            {/each}
+          </ul>
+
+          <p class="fee">
+            <span>Taxa da Venduá por pedido</span>
             <i aria-hidden="true"></i>
-            <strong>em breve</strong>
+            <em>nenhuma</em>
           </p>
+          <p class="fine">O Mercado Pago fica com a tarifa dele em cada pagamento.</p>
         </div>
       </div>
     </div>
@@ -372,8 +404,11 @@
   .price-t {
     max-width: 12ch;
   }
-  .price .body {
-    margin-bottom: 28px;
+  .pay {
+    margin-top: 14px;
+    max-width: 44ch;
+    color: var(--ink-muted);
+    font-size: 0.9688rem;
   }
   @media (min-width: 1100px) {
     .price {
@@ -473,7 +508,8 @@
     padding: 0;
   }
   .receipt li,
-  .total {
+  .total,
+  .fee {
     display: flex;
     align-items: last baseline;
     gap: 8px;
@@ -481,21 +517,39 @@
   .item {
     min-width: 0;
   }
-  .receipt i {
+  .receipt i:not(.go) {
     flex: 1 0 14px;
     border-bottom: 2px dotted var(--line-strong);
     transform: translateY(-4px);
   }
-  .receipt em {
+  .receipt em,
+  .fee em {
     flex: none;
     font: 600 0.8125rem/1 var(--font-display);
     font-style: normal;
     color: var(--success);
   }
-  .total {
+  .choose {
     margin-top: 18px;
-    padding-top: 14px;
+    padding-top: 16px;
     border-top: 2px dashed var(--line-strong);
+    text-align: center;
+    font: 500 0.8125rem/1.3 var(--font-sans);
+    color: var(--ink-muted);
+  }
+  .receipt .tiers {
+    gap: 0;
+    margin-top: 4px;
+  }
+  .receipt .tier {
+    display: grid;
+    gap: 6px;
+    padding-block: 14px 12px;
+  }
+  .tier + .tier {
+    border-top: 1px dotted var(--line-strong);
+  }
+  .total {
     font: 700 1.0625rem/1.2 var(--font-display);
   }
   .total strong {
@@ -505,6 +559,72 @@
     background: var(--spark);
     color: var(--on-spark);
     font-weight: 700;
+  }
+  .total small {
+    font-size: 0.8125rem;
+    font-weight: 600;
+  }
+  .what {
+    max-width: 38ch;
+    color: var(--ink-muted);
+    font-size: 0.875rem;
+    line-height: 1.45;
+  }
+  .take {
+    justify-self: start;
+    display: inline-flex;
+    align-items: center;
+    gap: 10px;
+    min-height: 44px;
+    margin-top: 2px;
+    padding: 0 14px;
+    border-radius: var(--radius-md);
+    box-shadow: inset 0 0 0 1.5px var(--ink);
+    color: var(--ink);
+    font: 600 0.9375rem/1 var(--font-sans);
+    text-decoration: none;
+    transition: background var(--duration-quick) var(--ease-soft);
+  }
+  .take:hover {
+    background: var(--spark-soft);
+  }
+  .go {
+    position: relative;
+    flex: none;
+    width: 12px;
+    height: 2px;
+    border-radius: 2px;
+    background: currentColor;
+    transition: translate var(--duration-quick) var(--ease-soft);
+  }
+  .go::after {
+    content: '';
+    position: absolute;
+    right: -1px;
+    top: -3px;
+    width: 7px;
+    height: 7px;
+    border: solid currentColor;
+    border-width: 2px 2px 0 0;
+    border-radius: 1px;
+    rotate: 45deg;
+  }
+  .take:hover .go {
+    translate: 3px 0;
+  }
+  .fee {
+    margin-top: 6px;
+    padding-top: 14px;
+    border-top: 2px dashed var(--line-strong);
+  }
+  .fee span {
+    min-width: 0;
+  }
+  .fine {
+    margin-top: 8px;
+    color: var(--ink-muted);
+    font-size: 0.8125rem;
+    line-height: 1.4;
   }
 
   @media (prefers-color-scheme: dark) {
