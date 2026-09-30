@@ -9,6 +9,11 @@
   const order = store.newOrder;
   // the accent is drawn on its own so it can land last
   const letters = ['v', 'e', 'n', 'd', 'u', 'a'];
+  // word by word, so the paragraph can arrive as a wave after the name
+  const lede = (
+    'Uma loja online com a sua cara e um app no celular para tocar o dia: pedidos, cardápio, ' +
+    'horários e Pix. Para doceiras, marmitarias, hamburguerias e padarias.'
+  ).split(' ');
 </script>
 
 <Section
@@ -33,8 +38,7 @@
 
   <div class="grid">
     <p class="t-lede lede">
-      Uma loja online com a sua cara e um app no celular para tocar o dia: pedidos, cardápio,
-      horários e Pix. Para doceiras, marmitarias, hamburguerias e padarias.
+      {#each lede as w, i (i)}<span class="w" style="--i: {i}">{w}</span>{' '}{/each}
     </p>
 
     <div class="stage">
@@ -196,6 +200,9 @@
     width: 1.25em;
     height: 1.02em;
     overflow: clip;
+    /* his lower body fades into shadow before it reaches the letters' tops, so he stands behind
+       the name instead of looking sliced off at the cut */
+    mask-image: linear-gradient(to bottom, #000 58%, rgb(0 0 0 / 0.4) 84%, transparent 98%);
   }
   .duck {
     position: absolute;
@@ -256,19 +263,21 @@
     position: absolute;
   }
   .back {
+    --tilt: -7deg;
     width: 40%;
     left: 5%;
     top: 15cqw;
-    rotate: -7deg;
+    rotate: var(--tilt);
   }
   .back :global(.phone) {
     filter: saturate(0.85);
   }
   .front {
+    --tilt: 3deg;
     width: 49%;
     right: 12%;
     top: 10cqw;
-    rotate: 3deg;
+    rotate: var(--tilt);
   }
   /* drops in over the status bar and the store's name, never over "Bom dia, Nena" */
   .push {
@@ -302,12 +311,20 @@
     .tag {
       animation: show 0.7s var(--ease-soft) 0.55s both;
     }
-    .lede,
-    .stage {
-      animation: show 0.8s var(--ease-soft) 0.8s both;
+    /* then the paragraph, word by word, and the phones come up one after the other; the order
+       lands on the front one last */
+    .w {
+      display: inline-block;
+      animation: word 0.8s var(--spring) calc(0.8s + var(--i) * 0.026s) both;
+    }
+    .back {
+      animation: phone 1.1s var(--spring) 1.3s both;
+    }
+    .front {
+      animation: phone 1.1s var(--spring) 1.6s both;
     }
     .push :global(.hero-note) {
-      animation-delay: 2.1s;
+      animation-delay: 2.35s;
     }
 
     /* scrolling away plays it backwards: Duá ducks behind the name, then the letters sink into the
@@ -368,6 +385,22 @@
     }
     60% {
       rotate: 4deg;
+    }
+  }
+  @keyframes word {
+    from {
+      opacity: 0;
+      translate: 0 0.7em;
+    }
+  }
+  @keyframes phone {
+    from {
+      opacity: 0;
+      translate: 0 38%;
+      rotate: calc(var(--tilt) * 3);
+    }
+    35% {
+      opacity: 1;
     }
   }
   @keyframes show {

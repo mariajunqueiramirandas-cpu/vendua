@@ -192,6 +192,40 @@ test.describe('conteúdo', () => {
     }
     await faq.first().locator('summary').click();
     await expect(faq.first()).toHaveAttribute('open', '');
+    // the theme switch needs a script, so it isn't offered
+    await expect(page.locator('[data-theme-toggle]')).toBeHidden();
+    await ctx.close();
+  });
+
+  test('o tema escolhido no topo vence o do sistema, vale para as telas e fica salvo', async ({
+    browser,
+  }) => {
+    const ctx = await browser.newContext({ colorScheme: 'light', reducedMotion: 'reduce' });
+    const page = await ctx.newPage();
+    await page.goto(HOME);
+    const state = () =>
+      page.evaluate(() => ({
+        theme: document.documentElement.dataset.theme ?? null,
+        bg: getComputedStyle(document.body).backgroundColor,
+        screen: (document.querySelector('main picture img') as HTMLImageElement).currentSrc,
+      }));
+    const light = await state();
+    expect(light.theme).toBeNull();
+    expect(light.screen).toContain('-creme-');
+
+    await page.getByRole('button', { name: 'Usar tema escuro' }).click();
+    await expect.poll(async () => (await state()).screen).toContain('-noite-');
+    const dark = await state();
+    expect(dark.theme).toBe('dark');
+    expect(dark.bg).not.toBe(light.bg);
+
+    await page.reload();
+    expect((await state()).theme, 'a escolha sobrevive ao recarregar').toBe('dark');
+
+    // back to what the system says: the choice is dropped and the system decides again
+    await page.getByRole('button', { name: 'Usar tema claro' }).click();
+    expect((await state()).theme).toBeNull();
+    expect(await page.evaluate(() => localStorage.getItem('vendua-theme'))).toBeNull();
     await ctx.close();
   });
 

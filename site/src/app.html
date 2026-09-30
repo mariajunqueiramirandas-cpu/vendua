@@ -6,6 +6,18 @@
     <meta name="theme-color" content="#fff6ea" media="(prefers-color-scheme: light)" />
     <meta name="theme-color" content="#1d1a14" media="(prefers-color-scheme: dark)" />
     <meta name="color-scheme" content="light dark" />
+    <script>
+      // a theme picked with the header switch (ThemeToggle.svelte), applied before first paint
+      try {
+        var t = localStorage.getItem('vendua-theme');
+        if (t === 'light' || t === 'dark') {
+          document.documentElement.dataset.theme = t;
+          document.querySelectorAll('meta[name="theme-color"]').forEach(function (m) {
+            m.content = t === 'dark' ? '#1d1a14' : '#fff6ea';
+          });
+        }
+      } catch (e) {}
+    </script>
     <link rel="icon" href="/assets/brand/favicon.svg" type="image/svg+xml" />
     <link rel="icon" href="/assets/brand/favicon.ico" sizes="any" />
     <link rel="apple-touch-icon" href="/assets/brand/apple-touch-icon.png" />

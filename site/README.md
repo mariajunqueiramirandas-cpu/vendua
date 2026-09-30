@@ -9,7 +9,8 @@ flowing continuously between sections (no hour labels): hero (`#inicio`), who it
 day's recap (`#seu-dia`), how to start + FAQ (`#comecar`, `#perguntas`).
 
 The hero is the name: "venduá." poster-size, with Duá standing behind the letters. On load the letters
-spring up, the accent and the dot land, Duá climbs out and waves, then the order push drops; scrolling
+spring up, the accent and the dot land, Duá climbs out and waves, the paragraph arrives word by word,
+the two phones come up one after the other and the order push drops onto the front one; scrolling
 plays it back (Duá ducks, the letters sink) while the header's logo takes over. All CSS (`linear()`
 springs, scroll-driven animations); without support or with reduced motion it's the finished poster.
 Other pages: `/privacidade/` and the 404.
@@ -34,7 +35,10 @@ Other pages: `/privacidade/` and the 404.
 - The only character is Duá (`static/dua/`, never mirrored or recolored), plus line drawings in the
   admin's illustration style. No photos, people, AI images, stock, or fake testimonials/numbers.
 - Colors come from `src/lib/styles/theme.css`, copied from `apps/admin/src/ui/theme.css` (Creme,
-  and Noite under `prefers-color-scheme: dark`). The admin is the source: `scripts/validate.ts`
+  and Noite under `prefers-color-scheme: dark`). The header's switch (`ThemeToggle`) can override
+  the system: it sets `<html data-theme>` (applied before paint by `app.html`), and a PostCSS step in
+  `vite.config.ts` makes every `@media (prefers-color-scheme: dark)` block obey it, so keep writing
+  dark styles that way. Screens follow it through `Screen`. The admin is the source: `scripts/validate.ts`
   fails the build if a shared token drifts.
 - Banned words (platform jargon, "sob medida", "sem taxa", "grátis", real store names) are checked
   on the rendered text of every page by `scripts/postbuild.ts`.
