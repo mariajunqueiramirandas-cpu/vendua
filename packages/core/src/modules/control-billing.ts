@@ -1,12 +1,236 @@
 import type { Context, Hono } from 'hono';
+import { emitAdminTx } from '../admin/live.ts';
 import type { Sql } from '../platform/db.ts';
+import { HttpError, bodyJson, uuidParam } from '../platform/http.ts';
+import { storeOrigin } from '../platform/store-origin.ts';
 import type { Tenant } from '../platform/tenancy.ts';
+import { billingLog } from './billing/invoices.ts';
+import { syncPlanPrices } from './billing/jobs.ts';
+import { planView, type PlanRow } from './billing/plans.ts';
+import { claimControl, controlTx } from './control.ts';
 import type { PaymentProvider } from './payments/provider.ts';
 
-// STUB (CORE-BILL replaces): /control/v1 billing, plans, custom domains, site requests.
-export function mountControlBilling(_o: {
+const SITE_STATUSES = ['requested', 'in_progress', 'delivered', 'cancelled'] as const;
+
+// /control/v1 (CRM "Lojas"): every store's plan and billing health, the plan catalog, custom
+// domains the team turns on, and PRO+ site requests. Cross-store reads run under controlTx.
+export function mountControlBilling(o: {
   app: Hono<{ Variables: { tenant: Tenant } }>;
   sql: Sql;
   controlGate: (c: Context) => void;
   provider: PaymentProvider;
-}) {}
+  /** `<slug>.<storeDomain>` fallback for a store's address (default VENDUA_STORE_DOMAIN) */
+  storeDomain?: string;
+}) {
+  const { app, sql, controlGate } = o;
+  const storeDomain = o.storeDomain ?? process.env.VENDUA_STORE_DOMAIN ?? 'vendua.com.br';
+  const adminHost = process.env.VENDUA_ADMIN_HOST?.trim().toLowerCase();
+  const syncPrices = () =>
+    syncPlanPrices(
+      sql,
+      {
+        sql,
+        provider: o.provider,
+        notify: { whatsapp: async () => {}, email: async () => {} },
+        origin: adminHost ? `https://${adminHost}` : null,
+      },
+      new Date(),
+    ).catch((err) => billingLog.warn({ err }, 'plan price sync failed'));
+  const idemKey = (c: Context) => {
+    const key = c.req.header('idempotency-key');
+    if (!key)
+      throw new HttpError(400, 'IDEMPOTENCY_KEY_REQUIRED', 'Idempotency-Key header is required');
+    if (key.length > 200) throw new HttpError(400, 'BAD_REQUEST', 'Idempotency-Key too long');
+    return key;
+  };
+
+  app.get('/control/v1/billing/stores', async (c) => {
+    controlGate(c);
+    const stores = await controlTx(sql, async (tx) => {
+      const rows = await tx<
+        {
+          id: string;
+          slug: string;
+          name: string;
+          created_at: Date;
+          plan: string;
+          plan_name: string | null;
+          sub_status: string | null;
+          sub_method: string | null;
+          sub_period_end: Date | null;
+          mp: string | null;
+          cd_id: string | null;
+          cd_host: string | null;
+          cd_status: string | null;
+          sr_id: string | null;
+          sr_status: string | null;
+          sr_brief: string | null;
+          sr_note: string | null;
+        }[]
+      >`
+        select t.id, t.slug, t.name, t.created_at, t.plan, p.name as plan_name,
+               s.status as sub_status, s.method as sub_method, s.current_period_end as sub_period_end,
+               pc.status as mp,
+               cd.id as cd_id, cd.host as cd_host, cd.status as cd_status,
+               sr.id as sr_id, sr.status as sr_status, sr.brief as sr_brief, sr.staff_note as sr_note
+        from tenants t
+          left join plans p on p.id = t.plan
+          left join subscriptions s on s.tenant_id = t.id
+          left join payment_connections pc on pc.tenant_id = t.id
+          left join lateral (
+            select id, host, status from custom_domains where tenant_id = t.id
+            order by created_at desc limit 1
+          ) cd on true
+          left join lateral (
+            select id, status, brief, staff_note from site_requests where tenant_id = t.id
+            order by (status in ('requested', 'in_progress')) desc, created_at desc limit 1
+          ) sr on true
+        order by t.created_at desc
+        limit 500
+      `;
+      const out = [];
+      for (const r of rows)
+        out.push({
+          tenantId: r.id,
+          slug: r.slug,
+          name: r.name,
+          url: await storeOrigin(tx, r, storeDomain),
+          createdAt: r.created_at,
+          plan: { id: r.plan, name: r.plan_name ?? 'Plano piloto' },
+          subscription: r.sub_status
+            ? { status: r.sub_status, method: r.sub_method, currentPeriodEnd: r.sub_period_end }
+            : null,
+          mercadoPago: r.mp,
+          customDomain: r.cd_id ? { id: r.cd_id, host: r.cd_host, status: r.cd_status } : null,
+          siteRequest: r.sr_id
+            ? { id: r.sr_id, status: r.sr_status, brief: r.sr_brief, staffNote: r.sr_note }
+            : null,
+        });
+      return out;
+    });
+    c.header('cache-control', 'no-store');
+    return c.json({ stores });
+  });
+
+  const controlPlan = (r: PlanRow) => ({ ...planView(r), public: r.public, sort: r.sort });
+
+  app.get('/control/v1/plans', async (c) => {
+    controlGate(c);
+    const rows = await controlTx(
+      sql,
+      (tx) => tx<PlanRow[]>`select * from plans order by sort, price_cents`,
+    );
+    return c.json({ plans: rows.map(controlPlan) });
+  });
+
+  app.patch('/control/v1/plans/:id', async (c) => {
+    controlGate(c);
+    const id = c.req.param('id');
+    if (!/^[a-z0-9_]{2,30}$/.test(id)) throw new HttpError(404, 'NOT_FOUND', 'plan not found');
+    const body = await bodyJson(c);
+    const name = body.name === undefined ? undefined : body.name;
+    if (
+      name !== undefined &&
+      (typeof name !== 'string' || name.trim().length < 2 || name.trim().length > 40)
+    )
+      throw new HttpError(422, 'BAD_REQUEST', 'name must have 2–40 characters', { field: 'name' });
+    const price = body.priceCents;
+    // a plan charges through Pix/assinatura, which need a positive amount
+    if (
+      price !== undefined &&
+      (typeof price !== 'number' || !Number.isInteger(price) || price < 100 || price > 10_000_000)
+    )
+      throw new HttpError(422, 'BAD_REQUEST', 'priceCents must be an integer 100–10000000', {
+        field: 'priceCents',
+      });
+    if (body.public !== undefined && typeof body.public !== 'boolean')
+      throw new HttpError(422, 'BAD_REQUEST', 'public must be true or false', { field: 'public' });
+    const res = await claimControl(sql, idemKey(c), async (tx) => {
+      const row = (
+        await tx<PlanRow[]>`
+          update plans set
+            name = ${typeof name === 'string' ? name.trim() : tx`name`},
+            price_cents = ${typeof price === 'number' ? price : tx`price_cents`},
+            public = ${typeof body.public === 'boolean' ? body.public : tx`public`},
+            updated_at = now()
+          where id = ${id}
+          returning *
+        `
+      )[0];
+      if (!row) throw new HttpError(404, 'NOT_FOUND', 'plan not found');
+      return { status: 200, body: { plan: controlPlan(row) } };
+    });
+    // a new price applies to future charges; the billing job repeats this every tick
+    if (typeof price === 'number' && !res.replayed) setTimeout(() => void syncPrices(), 0);
+    return c.json(res.body, res.status as 200);
+  });
+
+  app.post('/control/v1/custom-domains/:id/activate', async (c) => {
+    controlGate(c);
+    const id = uuidParam(c, 'id');
+    const res = await claimControl(sql, idemKey(c), async (tx) => {
+      const row = (
+        await tx<{ tenant_id: string; host: string; status: string }[]>`
+          select tenant_id, host, status from custom_domains where id = ${id} for update
+        `
+      )[0];
+      if (!row) throw new HttpError(404, 'NOT_FOUND', 'custom domain not found');
+      if (row.status !== 'dns_ok' && row.status !== 'active')
+        throw new HttpError(409, 'DOMAIN_NOT_VERIFIED', 'the domain DNS is not verified yet', {
+          status: row.status,
+        });
+      const owner = (
+        await tx<{ tenant_id: string }[]>`select tenant_id from domains where host = ${row.host}`
+      )[0];
+      if (owner && owner.tenant_id !== row.tenant_id)
+        throw new HttpError(409, 'DOMAIN_TAKEN', 'another store already serves this host');
+      await tx`select activate_custom_domain(${row.tenant_id}, ${row.host})`;
+      await emitAdminTx(tx, row.tenant_id, 'billing');
+      await emitAdminTx(tx, row.tenant_id, 'store');
+      return { status: 200, body: { ok: true } };
+    });
+    return c.json(res.body, res.status as 200);
+  });
+
+  app.patch('/control/v1/site-requests/:id', async (c) => {
+    controlGate(c);
+    const id = uuidParam(c, 'id');
+    const body = await bodyJson(c);
+    if (typeof body.status !== 'string' || !SITE_STATUSES.includes(body.status as never))
+      throw new HttpError(422, 'BAD_REQUEST', `status must be one of ${SITE_STATUSES.join(', ')}`, {
+        field: 'status',
+      });
+    const status = body.status;
+    const note = body.staffNote;
+    if (note !== undefined && note !== null && (typeof note !== 'string' || note.length > 500))
+      throw new HttpError(422, 'BAD_REQUEST', 'staffNote must be text up to 500 characters', {
+        field: 'staffNote',
+      });
+    const res = await claimControl(sql, idemKey(c), async (tx) => {
+      let row: { tenant_id: string } | undefined;
+      try {
+        row = (
+          await tx<{ tenant_id: string }[]>`
+            update site_requests set status = ${status},
+              staff_note = ${note === undefined ? tx`staff_note` : note === null ? null : note.trim() || null},
+              updated_at = now()
+            where id = ${id}
+            returning tenant_id
+          `
+        )[0];
+      } catch (err) {
+        if ((err as { code?: string }).code === '23505')
+          throw new HttpError(
+            409,
+            'SITE_REQUEST_OPEN',
+            'the store already has an open site request',
+          );
+        throw err;
+      }
+      if (!row) throw new HttpError(404, 'NOT_FOUND', 'site request not found');
+      await emitAdminTx(tx, row.tenant_id, 'billing');
+      return { status: 200, body: { ok: true } };
+    });
+    return c.json(res.body, res.status as 200);
+  });
+}

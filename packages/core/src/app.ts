@@ -2537,7 +2537,7 @@ export function createApp({
     publicOrigin: (c) => adminOrigin(c),
   });
 
-  mountControlBilling({ app, sql, controlGate, provider });
+  mountControlBilling({ app, sql, controlGate, provider, storeDomain: publicStoreDomain });
   mountIncidentsControl({ app, sql, controlGate });
 
   mountStorefrontPlatform({

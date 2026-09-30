@@ -42,8 +42,11 @@ export class FakeProvider implements PaymentProvider {
   readonly restricted = new Set<string>();
   private byIdem = new Map<string, string>();
 
+  // provider ids are unique forever at MP; a per-boot prefix keeps a restarted dev Core from
+  // reusing ids the database already holds
+  private boot = Date.now().toString(36);
   private id(prefix: string) {
-    return `${prefix}${1000 + ++this.seq}`;
+    return `${prefix}${this.boot}${1000 + ++this.seq}`;
   }
 
   private guard(token: string) {
@@ -254,6 +257,26 @@ export class FakeProvider implements PaymentProvider {
 
   async platformPix(req: PixRequest) {
     return strip(this.pay('platform', req, 'pix'));
+  }
+
+  private cancel(id: string, platform: boolean) {
+    const p = this.payments.get(id);
+    if (!p || (p.token === 'platform') !== platform)
+      throw new ProviderError('not_found', 'no such payment', 404);
+    if (p.status !== 'pending')
+      throw new ProviderError('invalid', 'only pending payments cancel', 400);
+    p.status = 'cancelled';
+    p.statusDetail = 'by_collector';
+    return strip(p);
+  }
+
+  async cancelPayment(token: string, id: string) {
+    this.guard(token);
+    return this.cancel(id, false);
+  }
+
+  async platformCancelPayment(id: string) {
+    return this.cancel(id, true);
   }
 
   async platformGetPayment(id: string) {

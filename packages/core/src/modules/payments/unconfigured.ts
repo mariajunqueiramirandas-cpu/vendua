@@ -16,11 +16,13 @@ export class UnconfiguredProvider implements PaymentProvider {
   getPayment = off;
   findPayment = off;
   refund = off;
+  cancelPayment = off;
   verifyWebhook() {
     return null;
   }
   platformPix = off;
   platformGetPayment = off;
+  platformCancelPayment = off;
   createSubscription = off;
   getSubscription = off;
   updateSubscription = off;

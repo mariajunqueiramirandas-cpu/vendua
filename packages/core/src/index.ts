@@ -64,7 +64,12 @@ const stopPaymentJobs = startPaymentJobs(sql, {
   notify,
   adminOrigin,
 });
-const stopBillingJobs = startBillingJobs(sql, { provider: paymentProvider, notify, adminOrigin });
+const stopBillingJobs = startBillingJobs(sql, {
+  provider: paymentProvider,
+  notify,
+  adminOrigin,
+  storeDomain: process.env.VENDUA_STORE_DOMAIN ?? 'vendua.com.br',
+});
 
 // merchant admin: new-order web push + the minute sweep ("esgotado hoje", timed pauses)
 void startPushNotifier(sql, adminHub);

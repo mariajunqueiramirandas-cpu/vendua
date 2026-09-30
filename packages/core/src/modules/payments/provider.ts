@@ -107,6 +107,8 @@ export interface SubscriptionRequest {
   backUrl: string;
   notificationUrl: string | null;
   idempotencyKey: string;
+  /** first charge date (MP auto_recurring.start_date); absent = charge on authorization */
+  startDate?: Date | null;
 }
 
 export interface ProviderSubscription {
@@ -168,6 +170,8 @@ export interface PaymentProvider {
     amountCents: number | null,
     idempotencyKey: string,
   ): Promise<ProviderRefund>;
+  /** cancel a still-pending payment (a Pix nobody paid yet); a paid one throws `invalid` */
+  cancelPayment(token: string, id: string): Promise<ProviderPayment>;
 
   /** null = signature doesn't verify; never act on an unverified body */
   verifyWebhook(headers: Headers, rawBody: string, url: URL): WebhookEvent | null;
@@ -175,6 +179,7 @@ export interface PaymentProvider {
   // the plan, on Venduá's account
   platformPix(req: PixRequest): Promise<ProviderPayment>;
   platformGetPayment(id: string): Promise<ProviderPayment>;
+  platformCancelPayment(id: string): Promise<ProviderPayment>;
   createSubscription(req: SubscriptionRequest): Promise<ProviderSubscription>;
   getSubscription(id: string): Promise<ProviderSubscription>;
   updateSubscription(

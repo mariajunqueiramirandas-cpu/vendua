@@ -9,6 +9,12 @@ export function isPublicHost(host: string) {
   return !/(^|\.)localhost(:|$)/.test(host) && !/^127\./.test(host) && !host.includes(':');
 }
 
+/** A store's platform host, `<slug>.<storeDomain>`: its first domains row at signup and the
+ *  CNAME target a custom domain points at. Links still come from storeOrigin. */
+export function platformHost(slug: string, storeDomain: string) {
+  return `${slug}.${storeDomain}`.toLowerCase();
+}
+
 export async function storeOrigin(
   tx: Sql,
   tenant: { id: string; slug: string },
@@ -18,7 +24,7 @@ export async function storeOrigin(
     select host from domains where tenant_id = ${tenant.id}
     order by is_primary desc, length(host), host
   `;
-  const host = rows.map((r) => r.host).find(isPublicHost) ?? `${tenant.slug}.${storeDomain}`;
+  const host = rows.map((r) => r.host).find(isPublicHost) ?? platformHost(tenant.slug, storeDomain);
   return `https://${host}`;
 }
 
