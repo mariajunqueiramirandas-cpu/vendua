@@ -80,10 +80,14 @@ export default function App() {
   // Signed out from under us (expired, revoked, a redeploy with a fresh database): nothing of
   // that session may leak into the next sign-in — not its screens' data, not a write queued
   // offline, which would otherwise replay into whichever store signs in next.
+  // A query still watched here belongs to a screen shown signed out (the signup's plans and slug
+  // check): removing it mid-fetch strands its observer on a skeleton forever, so it stays.
   useEffect(() => {
     if (!unauth) return;
     qc.getMutationCache().clear();
-    qc.removeQueries({ predicate: (x) => x.queryKey[0] !== qk.session[0] });
+    qc.removeQueries({
+      predicate: (x) => x.queryKey[0] !== qk.session[0] && x.getObserversCount() === 0,
+    });
     void clearPersisted();
   }, [unauth, qc]);
 
