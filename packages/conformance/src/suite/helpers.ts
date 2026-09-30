@@ -220,6 +220,12 @@ export async function openCheckout(page: Page): Promise<string | null> {
 }
 
 export async function fillCustomerStep(page: Page): Promise<{ ok: boolean; detail?: string }> {
+  // the form can still be rendering when openCheckout returns — C04 once found phone but not name
+  await page
+    .locator('input[name="name"], input#checkout-name, input[autocomplete="name"]')
+    .first()
+    .waitFor({ state: 'visible', timeout: 5000 })
+    .catch(() => undefined);
   const nameOk = await fillFirst(
     page,
     [

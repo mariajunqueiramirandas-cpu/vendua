@@ -279,10 +279,9 @@ test('[C04] checkout entry starts a session; customer → delivery → payment s
   expect(cust.ok, cust.detail).toBeTruthy();
   const del = await fillDeliveryStep(page, 'pickup');
   expect(del.ok, del.detail).toBeTruthy();
-  expect(
-    (await page.locator('text=/pix|pagamento|payment|revisão|revisao/i').count()) > 0,
-    'payment step not reached',
-  ).toBeTruthy();
+  const paymentStep = page.locator('text=/pix|pagamento|payment|revisão|revisao/i').first();
+  await paymentStep.waitFor({ state: 'visible', timeout: 5000 }).catch(() => undefined);
+  expect((await paymentStep.count()) > 0, 'payment step not reached').toBeTruthy();
 });
 
 test('[C05] order placement reaches sandbox payment; success surface renders order state', async ({
@@ -402,6 +401,7 @@ test('[C07] idempotent retry: double-submit of checkout produces exactly one ord
   const submit = page
     .getByRole('button', { name: /confirmar|finalizar|fazer pedido|enviar|pagar/i })
     .first();
+  await submit.waitFor({ state: 'visible', timeout: 5000 }).catch(() => undefined);
   expect(await submit.count(), 'no submit button to double').toBeGreaterThan(0);
   await submit.click({ clickCount: 2 }).catch(() => {});
   await page.waitForTimeout(2500);
