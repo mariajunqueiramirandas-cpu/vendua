@@ -54,7 +54,7 @@
         </div>
         <h3 class="t-title-2">{k.name}</h3>
         <p class="how">{k.how}</p>
-        <p class="feature t-caption">{k.feature}</p>
+        <p class="feature">{k.feature}</p>
       </li>
     {/each}
   </ul>
@@ -192,13 +192,20 @@
     font-size: 1rem;
     line-height: 1.5;
   }
+  /* the feature that answers each business, marked like a note in the margin */
   .feature {
+    --marker: color-mix(in srgb, var(--spark) 85%, transparent);
     justify-self: start;
-    margin-top: 8px;
-    padding: 5px 10px;
-    border-radius: 999px;
-    box-shadow: inset 0 0 0 1px var(--line-strong);
+    margin-top: 10px;
+    padding-inline: 0.2em 0.3em;
+    font: italic 400 1.375rem/1.2 var(--font-moment);
     color: var(--ink);
+    background: linear-gradient(transparent 52%, var(--marker) 52% 90%, transparent 90%);
+  }
+  @media (prefers-color-scheme: dark) {
+    .feature {
+      --marker: color-mix(in srgb, var(--spark) 28%, transparent);
+    }
   }
 
   .made {
