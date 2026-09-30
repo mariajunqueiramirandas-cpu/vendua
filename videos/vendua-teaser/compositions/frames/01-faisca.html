@@ -1,0 +1,184 @@
+<template>
+  <style>
+    #root {
+      position: absolute;
+      inset: 0;
+      overflow: hidden;
+    }
+    #f01-bg {
+      position: absolute;
+      inset: 0;
+      background: #123c32;
+    }
+    #f01-stage {
+      position: absolute;
+      inset: 0;
+    }
+    #f01-glow {
+      position: absolute;
+      left: 540px;
+      top: 960px;
+      width: 1400px;
+      height: 1400px;
+      margin: -700px 0 0 -700px;
+      border-radius: 50%;
+      background: radial-gradient(closest-side, rgb(217 248 117 / 0.34), rgb(217 248 117 / 0) 72%);
+    }
+    .f01-ring {
+      position: absolute;
+      left: 540px;
+      top: 960px;
+      width: 820px;
+      height: 820px;
+      margin: -410px 0 0 -410px;
+      border-radius: 50%;
+      border: 7px solid #d9f875;
+      opacity: 0;
+    }
+    #f01-ring-b {
+      border-width: 3px;
+    }
+    .f01-spoke {
+      position: absolute;
+      left: 540px;
+      top: 960px;
+      width: 0;
+      height: 0;
+    }
+    .f01-spark {
+      position: absolute;
+      left: -9px;
+      top: -300px;
+      width: 18px;
+      height: 64px;
+      border-radius: 9px;
+      background: #d9f875;
+      opacity: 0;
+    }
+    #f01-v {
+      position: absolute;
+      left: 320px;
+      top: 740px;
+      width: 440px;
+      height: 440px;
+    }
+    #f01-v svg {
+      display: block;
+      width: 100%;
+      height: 100%;
+      overflow: visible;
+    }
+  </style>
+
+  <div id="root" data-composition-id="f01-faisca" data-width="1080" data-height="1920">
+    <div id="f01-bg" class="clip" data-start="0" data-duration="2" data-track-index="0"></div>
+    <div id="f01-stage" class="clip" data-start="0" data-duration="2" data-track-index="1">
+      <div id="f01-glow"></div>
+      <div class="f01-ring" id="f01-ring-a"></div>
+      <div class="f01-ring" id="f01-ring-b"></div>
+      <div class="f01-spoke" style="rotate: 0deg"><div class="f01-spark"></div></div>
+      <div class="f01-spoke" style="rotate: 30deg"><div class="f01-spark"></div></div>
+      <div class="f01-spoke" style="rotate: 60deg"><div class="f01-spark"></div></div>
+      <div class="f01-spoke" style="rotate: 90deg"><div class="f01-spark"></div></div>
+      <div class="f01-spoke" style="rotate: 120deg"><div class="f01-spark"></div></div>
+      <div class="f01-spoke" style="rotate: 150deg"><div class="f01-spark"></div></div>
+      <div class="f01-spoke" style="rotate: 180deg"><div class="f01-spark"></div></div>
+      <div class="f01-spoke" style="rotate: 210deg"><div class="f01-spark"></div></div>
+      <div class="f01-spoke" style="rotate: 240deg"><div class="f01-spark"></div></div>
+      <div class="f01-spoke" style="rotate: 270deg"><div class="f01-spark"></div></div>
+      <div class="f01-spoke" style="rotate: 300deg"><div class="f01-spark"></div></div>
+      <div class="f01-spoke" style="rotate: 330deg"><div class="f01-spark"></div></div>
+      <div id="f01-v">
+        <svg viewBox="0 0 128 128">
+          <path
+            id="f01-path"
+            d="M32 48 L61 88 L98 34"
+            fill="none"
+            stroke="#D9F875"
+            stroke-width="17"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+            stroke-dasharray="118"
+            stroke-dashoffset="118"
+          />
+        </svg>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    (() => {
+      // cues (scene-local seconds): the stroke draws 0→1.0, slams on 1.0 (the boom), cut at 2.0
+      const SLAM = 1;
+      const tl = gsap.timeline({ paused: true });
+
+      tl.fromTo(
+        '#f01-path',
+        { strokeDashoffset: 118 },
+        { strokeDashoffset: 0, duration: 0.92, ease: 'power2.in' },
+        0.04,
+      );
+      tl.fromTo('#f01-v', { scale: 0.78 }, { scale: 0.9, duration: SLAM, ease: 'none' }, 0);
+      tl.fromTo(
+        '#f01-glow',
+        { opacity: 0.12, scale: 0.6 },
+        { opacity: 0.45, scale: 0.8, duration: SLAM, ease: 'power2.in' },
+        0,
+      );
+
+      // the slam
+      tl.fromTo(
+        '#f01-v',
+        { scale: 1.24 },
+        { scale: 1, duration: 0.7, ease: 'elastic.out(1, 0.42)', immediateRender: false },
+        SLAM,
+      );
+      tl.fromTo(
+        '#f01-glow',
+        { opacity: 1, scale: 1.05 },
+        { opacity: 0.5, scale: 1, duration: 0.8, ease: 'power2.out', immediateRender: false },
+        SLAM,
+      );
+      tl.fromTo(
+        '#f01-ring-a',
+        { scale: 0.3, opacity: 1 },
+        { scale: 1.55, opacity: 0, duration: 0.85, ease: 'power3.out', immediateRender: false },
+        SLAM,
+      );
+      tl.fromTo(
+        '#f01-ring-b',
+        { scale: 0.3, opacity: 0.8 },
+        { scale: 1.95, opacity: 0, duration: 0.95, ease: 'power2.out', immediateRender: false },
+        SLAM + 0.07,
+      );
+      tl.fromTo(
+        '.f01-spark',
+        { y: 150, opacity: 1, scaleY: 1.4 },
+        {
+          y: -170,
+          opacity: 0,
+          scaleY: 0.4,
+          duration: 0.6,
+          ease: 'power3.out',
+          immediateRender: false,
+        },
+        SLAM,
+      );
+      tl.to(
+        '#f01-stage',
+        {
+          keyframes: { x: [0, -16, 13, -9, 5, -2, 0], y: [0, 10, -8, 5, -3, 1, 0] },
+          duration: 0.3,
+          ease: 'none',
+        },
+        SLAM,
+      );
+
+      // it breathes in toward the cut
+      tl.to('#f01-v', { scale: 1.06, duration: 0.3, ease: 'power2.in' }, 1.7);
+      tl.to('#f01-glow', { opacity: 0.75, duration: 0.2, ease: 'power2.in' }, 1.8);
+
+      window.__timelines['f01-faisca'] = tl;
+    })();
+  </script>
+</template>

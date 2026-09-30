@@ -1,2 +1,7 @@
 # frozen build artifacts — byte-for-byte what an old Kernel produced
 packages/conformance/stale/
+
+# third-party agent skills installed by `npx skills add` (kept byte-for-byte as upstream ships them)
+.agents/
+# vendored minified libraries in video projects
+videos/*/assets/vendor/
