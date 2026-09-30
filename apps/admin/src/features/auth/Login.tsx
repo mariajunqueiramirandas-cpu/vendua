@@ -176,9 +176,12 @@ function Counter({
           className="relative mt-3 max-h-64 min-h-32 grow-[4] basis-0 md:mt-6 md:h-60 md:flex-none"
         >
           <span className="absolute bottom-0 left-1/2 aspect-square w-[min(80%,300px)] -translate-x-1/2 translate-y-1/2 rounded-full bg-spark" />
-          <div className="absolute inset-x-0 -bottom-3 mx-auto aspect-square h-full max-h-64 max-w-full">
+          {/* the art's bust ends in a rounded edge: sink it behind the counter, never above it */}
+          <div className="absolute inset-x-0 bottom-0 mx-auto aspect-square h-full max-h-64 max-w-full translate-y-[16%]">
             <Mascote pose={pose} size={240} className="animate-rise w-full" />
           </div>
+          {/* the counter's shadow on Duá: standing behind it, not cut off by it */}
+          <span className="absolute -bottom-1 left-1/2 h-14 w-[min(96%,360px)] -translate-x-1/2 bg-[radial-gradient(ellipse_at_bottom,var(--counter-shade),transparent_72%)]" />
         </div>
       </div>
       <section className="relative z-10 rounded-t-[2rem] bg-surface px-5 pb-[calc(1.25rem+env(safe-area-inset-bottom)+var(--kb,0px))] pt-6 depth-3 md:rounded-[2rem] md:px-7 md:pb-[calc(1.75rem+var(--kb,0px))] md:pt-7">
@@ -273,7 +276,7 @@ function PhoneStep({
         <Field label="Seu celular" htmlFor="phone" error={err}>
           <PhoneInput
             id="phone"
-            autoFocus
+            autoFocus={finePointer()}
             value={shown}
             onChange={(v, d) => {
               setShown(v);
@@ -311,6 +314,10 @@ function PhoneStep({
     </Counter>
   );
 }
+
+// A touch keyboard opened on arrival covers Duá and half the screen (after a tap from /comecar
+// it would): focus the phone field only where there's a mouse or trackpad.
+const finePointer = () => window.matchMedia('(pointer: fine)').matches;
 
 const RESEND_AFTER = 30;
 

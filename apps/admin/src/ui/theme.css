@@ -61,6 +61,8 @@
   --shadow-e2: 0 2px 4px rgb(18 60 50 / 0.08), 0 12px 32px rgb(18 60 50 / 0.1);
   --shadow-e3: 0 8px 16px rgb(18 60 50 / 0.1), 0 24px 64px rgb(18 60 50 / 0.16);
   --highlight: 0 0 #0000;
+  /* the sign-in counter's edge, cast back on Duá */
+  --counter-shade: rgb(18 60 50 / 0.34);
 
   /* the store's own accent — set at runtime from its tokens (hero glow, avatar ring) */
   --store-accent: #d9f875;
@@ -119,6 +121,7 @@
   --shadow-e2: 0 0 0 1px rgb(247 244 234 / 0.06), 0 12px 32px rgb(0 0 0 / 0.35);
   --shadow-e3: 0 0 0 1px rgb(247 244 234 / 0.06), 0 24px 64px rgb(0 0 0 / 0.5);
   --highlight: inset 0 1px 0 rgb(255 255 255 / 0.06);
+  --counter-shade: rgb(0 0 0 / 0.55);
 
   color-scheme: dark;
 }
