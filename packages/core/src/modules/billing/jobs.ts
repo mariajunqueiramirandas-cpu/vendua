@@ -390,6 +390,10 @@ const issueRenewals: Step = async (sql, base, now) => {
         and not exists (select 1 from invoices i where i.tenant_id = s.tenant_id
                           and i.period_start = s.current_period_end and i.status <> 'void'
                           and (i.status <> 'open' or i.pix_copy_paste is not null))
+      -- a renewal not yet issued goes before a retry of one MP refused, so retries can't crowd it out
+      order by exists (select 1 from invoices i where i.tenant_id = s.tenant_id
+                         and i.period_start = s.current_period_end and i.status <> 'void'),
+        s.current_period_end
       limit ${BATCH}
     `,
   );
@@ -461,6 +465,21 @@ const sendReminders: Step = async (sql, base, now) => {
     const claimed = await withEffects(base, (ctx) =>
       withTenant(sql, inv.tenant_id, async (tx) => {
         await lockSub(tx, inv.tenant_id);
+        const cur = (
+          await tx<InvoiceRow[]>`select * from invoices where id = ${inv.id} and status = 'open'`
+        )[0];
+        if (!cur || cur.reminded.includes(stage)) {
+          if (pix) await storeReserved(tx, ctx, undefined, pix.need, pix.charge);
+          return null;
+        }
+        // another replica re-issued it meanwhile (ours is dropped) and none is live yet: the
+        // message would point at no Pix — leave it unclaimed for the next tick
+        if (
+          pix &&
+          !(await storeReserved(tx, ctx, cur, pix.need, pix.charge)) &&
+          !pixIsLive(cur, now)
+        )
+          return null;
         const row = (
           await tx<InvoiceRow[]>`
             update invoices set reminded = array(select distinct unnest(reminded || ${upto}::text[]))
@@ -468,13 +487,8 @@ const sendReminders: Step = async (sql, base, now) => {
             returning *
           `
         )[0];
-        if (!row) {
-          if (pix) await storeReserved(tx, ctx, undefined, pix.need, pix.charge);
-          return null;
-        }
-        const out = pix ? ((await storeReserved(tx, ctx, row, pix.need, pix.charge)) ?? row) : row;
-        await emitAdminTx(tx, inv.tenant_id, 'billing', inv.id);
-        return out;
+        if (row) await emitAdminTx(tx, inv.tenant_id, 'billing', inv.id);
+        return row ?? null;
       }),
     );
     if (!claimed) return;

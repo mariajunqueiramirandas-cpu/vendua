@@ -743,6 +743,53 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('plan billing (db)', () => {
     }
   });
 
+  test('two replicas remind at once: one message, and it points at a Pix that is stored', async () => {
+    const s = await paidStore('replicas', 'basic');
+    await sql`update merchant_users set prefs = '{"emailInvoices": false}' where tenant_id = ${s.id}`;
+    const due = () =>
+      wa.filter((m) => m.phone === s.phone && m.text.includes('vence hoje')).map((m) => m.text);
+    await sql`update subscriptions set current_period_end = ${new Date(Date.now() + 2 * DAY)} where tenant_id = ${s.id}`;
+    await tick();
+    const inv = (await invoices(s.id))[1]!;
+    // due today, its Pix expired: the reminder needs a fresh one
+    await sql`update invoices set due_at = now() - interval '1 hour', pix_expires_at = now() - interval '1 minute' where id = ${inv.id}`;
+
+    // replica 1 asks MP; replica 2 reserves and asks too; replica 1 claims while replica 2's
+    // answer is still on its way — the order in which both used to drop each other's Pix
+    const realPix = fake.platformPix.bind(fake);
+    let r2AtMp!: () => void;
+    const atMp = new Promise<void>((r) => (r2AtMp = r));
+    let releaseR2!: () => void;
+    const r1Done = new Promise<void>((r) => (releaseR2 = r));
+    let calls = 0;
+    let r2: Promise<void> | null = null;
+    fake.platformPix = async (req) => {
+      if (req.externalReference !== inv.id) return realPix(req);
+      calls++;
+      if (calls === 1) {
+        r2 = tick();
+        await atMp;
+      } else if (calls === 2) {
+        r2AtMp();
+        await r1Done;
+      }
+      return realPix(req);
+    };
+    try {
+      await tick();
+      releaseR2();
+      await r2;
+    } finally {
+      fake.platformPix = realPix;
+    }
+    expect(calls).toBe(2);
+    expect(due()).toHaveLength(1);
+    const row = (await invoices(s.id))[1]!;
+    expect(row.reminded).toContain('due');
+    expect(row.pix_expires_at.getTime()).toBeGreaterThan(Date.now());
+    expect(fake.payments.get(row.provider_payment_id)!.status).toBe('pending');
+  });
+
   test('PRO+ domain: add → DNS check → dns_ok (team told once) → CRM activates', async () => {
     const s = await paidStore('dom', 'pro_plus');
     const other = await paidStore('dom2', 'pro_plus');
