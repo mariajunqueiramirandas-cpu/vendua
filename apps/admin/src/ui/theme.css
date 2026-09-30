@@ -573,27 +573,12 @@
     transform: translateY(-5px) rotate(2deg);
   }
 }
-@keyframes dot-bounce {
-  0%,
-  60%,
-  100% {
-    transform: translateY(0);
-    opacity: 0.4;
-  }
-  30% {
-    transform: translateY(-4px);
-    opacity: 1;
-  }
-}
 
 .animate-bob {
   animation: bob 3.2s ease-in-out infinite;
 }
 .animate-rise {
   animation: rise 560ms var(--ease-soft) 120ms both;
-}
-.animate-dot {
-  animation: dot-bounce 1s ease-in-out infinite;
 }
 .animate-drop-in {
   animation:
@@ -641,6 +626,14 @@
   animation: shimmer 1.6s linear infinite;
 }
 
+/* Guide "typing": the text is laid out but transparent, so each line fragment becomes a bar */
+.typing-lines {
+  color: transparent;
+  border-radius: 6px;
+  -webkit-box-decoration-break: clone;
+  box-decoration-break: clone;
+}
+
 /* reduced motion: transforms become a short fade, nothing loops (§5.1) */
 @media (prefers-reduced-motion: reduce) {
   *,
@@ -659,7 +652,6 @@
   .animate-breathe,
   .animate-bob,
   .animate-rise,
-  .animate-dot,
   .animate-pulse-dot,
   .animate-ring,
   .skeleton {

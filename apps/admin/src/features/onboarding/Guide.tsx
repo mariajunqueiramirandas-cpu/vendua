@@ -2,7 +2,9 @@ import { useEffect, useState, type ReactNode } from 'react';
 import { Mascote, type Pose } from '../../ui/Mascote.tsx';
 
 // The friendly voice of the wizard: the mascot that bobs beside a speech bubble. It "types"
-// for a beat whenever the question changes, so each step feels like someone talking.
+// for a beat whenever the question changes, so each step feels like someone talking. While
+// typing, the reply's own lines show as blank bars, so the bubble already has its final size
+// and the page below doesn't jump when the words land.
 const still = () =>
   navigator.webdriver || window.matchMedia('(prefers-reduced-motion: reduce)').matches;
 
@@ -48,14 +50,8 @@ export function Guide({
         className="t-body-lg min-h-12 min-w-0 rounded-lg rounded-bl-sm bg-surface px-4 py-3 depth-1"
       >
         {typing ? (
-          <span className="flex h-6 items-center gap-1.5" aria-label="digitando">
-            {[0, 1, 2].map((i) => (
-              <span
-                key={i}
-                className="animate-dot size-2 rounded-full bg-faint"
-                style={{ animationDelay: `${i * 150}ms` }}
-              />
-            ))}
+          <span aria-hidden className="typing-lines skeleton">
+            {children}
           </span>
         ) : (
           <span className="animate-fade-up block">{children}</span>
