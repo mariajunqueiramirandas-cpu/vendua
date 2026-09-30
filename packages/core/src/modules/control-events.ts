@@ -14,6 +14,8 @@ export const CONTROL_EVENT_TYPES = [
   'draft.change',
   /** channel health/pairing state changed materially (wa connect, send counters, alert flips) */
   'channel.health',
+  /** a release, deployment, probe result, incident or provisioning changed (Control Plane) */
+  'fleet.change',
 ] as const;
 
 export type ControlEventType = (typeof CONTROL_EVENT_TYPES)[number];

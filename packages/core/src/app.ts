@@ -164,7 +164,7 @@ import { capLockTx, drain, flagCappedLeads, releaseInboxTx } from './agent/runne
 import { ingestInbound } from './agent/inbound.ts';
 import { ingestResendEvent, svixHeaders, svixVerified } from './agent/channels/email-inbound.ts';
 import { LOADER_JS } from '@vendua/loader';
-import { currentTemplatesTx, opsTx } from './modules/storefront-platform.ts';
+import { currentTemplatesTx, currentTokensTx, opsTx } from './modules/storefront-platform.ts';
 import { mountStorefrontPlatform } from './modules/storefront-routes.ts';
 import { log } from './platform/log.ts';
 import { validAdminPhone, whatsappOtpSender, type OtpSender } from './admin/auth.ts';
@@ -175,6 +175,8 @@ import { mountStorefrontEvents } from './modules/storefront-live.ts';
 import { mountAdmin } from './admin/routes.ts';
 import type { MerchantNotify } from './admin/context.ts';
 import { platformNotify } from './admin/notify.ts';
+import { fleetDeps, type FleetDeps } from './modules/fleet/deps.ts';
+import { mountFleet } from './modules/fleet/routes.ts';
 import { createPaymentProvider, type PaymentProvider } from './modules/payments/index.ts';
 import { storePaymentsPublic } from './modules/payments/store-payments.ts';
 import { mountControlBilling } from './modules/control-billing.ts';
@@ -204,6 +206,10 @@ export interface AppDeps {
   paymentProvider?: PaymentProvider | undefined;
   /** WhatsApp/email to store people (default: the platform's integrations); tests capture */
   notify?: MerchantNotify | undefined;
+  /** the Control Plane's network, clock and probe switch (default: from env); tests swap them */
+  fleet?: FleetDeps | undefined;
+  /** the edge's key for /edge/v1 (default VENDUA_EDGE_SECRET) */
+  edgeSecret?: string | undefined;
 }
 
 async function loadSettings(
@@ -353,6 +359,8 @@ export function createApp({
   adminHost,
   paymentProvider,
   notify,
+  fleet,
+  edgeSecret,
 }: AppDeps) {
   const provider = paymentProvider ?? createPaymentProvider();
   const merchantNotify = notify ?? platformNotify(sql);
@@ -426,16 +434,6 @@ export function createApp({
     c.header('content-type', 'application/javascript');
     c.header('cache-control', 'no-store');
     return c.body(LOADER_JS);
-  });
-
-  // storefront nginx (auth_request) asks which store a host is, to serve that store's bundle.
-  // Always 204 — an unknown host gets no header and nginx falls back to the template bundle.
-  app.get('/storefront/v1/_bundle', async (c) => {
-    const forwarded = trustProxy ? c.req.header('x-forwarded-host') : undefined;
-    const tenant = await resolver.resolve(forwarded ?? c.req.header('host') ?? '');
-    if (tenant) c.header('x-vendua-store', tenant.slug);
-    c.header('cache-control', 'no-store');
-    return c.body(null, 204);
   });
 
   const storefront = new Hono<{ Variables: { tenant: Tenant } }>();
@@ -524,7 +522,14 @@ export function createApp({
     const tenant = c.get('tenant');
     const zoneMatched =
       c.req.query('zoneMatched') === undefined ? undefined : c.req.query('zoneMatched') === 'true';
-    const settings = await withTenant(sql, tenant.id, (tx) => loadSettings(tx, tenant.id));
+    // ?design=1 is the edge's read (Kernel 1.10): the page's live templates and tokens ride
+    // along in the injected state, so first paint is the store's current look
+    const design = c.req.query('design') === '1';
+    const { settings, templates, tokens } = await withTenant(sql, tenant.id, async (tx) => ({
+      settings: await loadSettings(tx, tenant.id),
+      templates: design ? await currentTemplatesTx(tx, tenant.id) : undefined,
+      tokens: design ? ((await currentTokensTx(tx, tenant.id))?.tokens ?? null) : undefined,
+    }));
     const status = currentStatus(settings);
     const notices = composeNotices(tenant.slug, settings, status, {
       ...(zoneMatched !== undefined ? { zoneMatched } : {}),
@@ -536,6 +541,7 @@ export function createApp({
         ...(status.resumesAt ? { resumesAt: status.resumesAt } : {}),
       },
       notices,
+      ...(design ? { templates: templates ?? {}, tokens: tokens ?? null } : {}),
     };
     return c.json(envelope);
   });
@@ -2607,6 +2613,19 @@ export function createApp({
 
   mountControlBilling({ app, sql, controlGate, provider, storeDomain: publicStoreDomain });
   mountIncidentsControl({ app, sql, controlGate });
+  mountFleet({
+    app,
+    sql,
+    controlGate,
+    deps:
+      fleet ??
+      fleetDeps(sql, {
+        storeDomain: publicStoreDomain,
+        adminHost: adminDomain ?? null,
+        notify: merchantNotify,
+      }),
+    edgeSecret,
+  });
 
   mountStorefrontPlatform({
     app,

@@ -20,6 +20,8 @@ import { platformNotify } from './admin/notify.ts';
 import { createPaymentProvider } from './modules/payments/index.ts';
 import { startPaymentJobs } from './modules/payments/jobs.ts';
 import { startBillingJobs } from './modules/billing/jobs.ts';
+import { fleetDeps } from './modules/fleet/deps.ts';
+import { startFleetJobs } from './modules/fleet/jobs.ts';
 
 const databaseUrl =
   process.env.DATABASE_URL ?? 'postgres://vendua_app:vendua_app@localhost:5433/vendua';
@@ -80,6 +82,9 @@ const stopBillingJobs = startBillingJobs(sql, {
   adminOrigin,
   storeDomain: process.env.VENDUA_STORE_DOMAIN ?? 'vendua.com.br',
 });
+
+// Control Plane (Phase 4): provisioner, synthetic probes, deployment verification, drift
+const stopFleetJobs = startFleetJobs(fleetDeps(sql, { notify }));
 
 // merchant admin: new-order web push + the minute sweep ("esgotado hoje", timed pauses)
 const stopPushNotifier = startPushNotifier(sql, adminHub);
@@ -145,6 +150,7 @@ for (const sig of ['SIGTERM', 'SIGINT'] as const) {
     stopAdminSweeper();
     stopPaymentJobs();
     stopBillingJobs();
+    stopFleetJobs();
     stopInstagramReconcile();
     void stopPushNotifier.then((stop) => stop()).catch(() => undefined);
     // event streams never finish on their own: requests get a few seconds, then the rest close

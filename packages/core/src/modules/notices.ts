@@ -1,3 +1,4 @@
+import type { StorefrontTokens, TemplateSet } from '@vendua/templates';
 import type { DerivedStatus, StoreSettingsRow } from './store.ts';
 
 /** Core-side producer of the notices[] SDUI payload — new kinds must render through the Kernel's generic path (05-system-surfaces.md). */
@@ -28,6 +29,9 @@ export interface SurfacesEnvelope {
   version: 1;
   store: { status: 'open' | 'closed' | 'paused'; resumesAt?: string };
   notices: Notice[];
+  /** `?design=1` (the edge's injection, Kernel 1.10): the live templates and tokens */
+  templates?: TemplateSet;
+  tokens?: StorefrontTokens | null;
 }
 
 function formatResume(iso: string | undefined, timeZone: string): string {

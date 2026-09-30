@@ -114,6 +114,7 @@ describe('leadJson', () => {
   const row: LeadRow = {
     id: 'l1',
     name: 'Ana',
+    tenant_id: null,
     business_name: 'Doces da Ana',
     phone: '2299',
     whatsapp: '85999990000',

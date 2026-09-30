@@ -181,6 +181,11 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('storefront platform (db)', () =
     );
     expect(low.status).toBe(422);
 
+    // a store whose live build predates Kernel 1.10 bakes tokens in: the edit queues a rebuild
+    await sql`
+      insert into storefront_ops (tenant_id, live_kernel_version) values (${tenantId}, '1.9.0')
+      on conflict (tenant_id) do update set live_kernel_version = excluded.live_kernel_version
+    `;
     const ok = await ctl('PUT', `/control/v1/storefronts/${slug}/tokens`, { tokens }, 'tok-ok');
     expect(ok.status).toBe(200);
     const outbox = await withTenant(
@@ -218,6 +223,28 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('storefront platform (db)', () =
       tokens: { color: { accent: string } };
     };
     expect(design.tokens.color.accent).toBe('#224466');
+
+    // Kernel 1.10+ reads tokens from the edge-injected state: no rebuild, live at the next load
+    await sql`update storefront_ops set live_kernel_version = '1.10.0' where tenant_id = ${tenantId}`;
+    const green = { ...tokens, color: { ...tokens.color, accent: '#1F5130' } };
+    expect(
+      (await ctl('PUT', `/control/v1/storefronts/${slug}/tokens`, { tokens: green }, 'tok-110'))
+        .status,
+    ).toBe(200);
+    const queued = (await (
+      await ctl('GET', '/control/v1/storefronts/rebuild-requests')
+    ).json()) as {
+      requests: Req[];
+    };
+    expect(queued.requests.filter((r) => r.tenant === slug)).toEqual([]);
+    const injected = (await (await pub('GET', '/storefront/v1/surfaces?design=1')).json()) as {
+      tokens: { color: { accent: string } };
+      templates: Record<string, unknown>;
+    };
+    expect(injected.tokens.color.accent).toBe('#1F5130');
+    expect(typeof injected.templates).toBe('object');
+    const plain = (await (await pub('GET', '/storefront/v1/surfaces')).json()) as object;
+    expect('tokens' in plain || 'templates' in plain).toBe(false);
   });
 
   test('ops: kill switch reaches /state; high_demand notice is emitted', async () => {

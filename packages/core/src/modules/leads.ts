@@ -32,6 +32,8 @@ export interface AgentPlanStep {
 export interface LeadRow {
   id: string;
   name: string;
+  /** the store this lead became (Control Plane provisioning, migration 0064) */
+  tenant_id: string | null;
   business_name: string | null;
   phone: string | null;
   whatsapp: string | null;
@@ -68,6 +70,7 @@ export interface LeadRow {
 export interface Lead {
   id: string;
   name: string;
+  tenantId: string | null;
   businessName: string | null;
   phone: string | null;
   whatsapp: string | null;
@@ -121,6 +124,7 @@ export function leadJson(row: LeadRow): Lead {
     website: row.website,
     city: row.city,
     segment: row.segment,
+    tenantId: row.tenant_id ?? null,
     source: row.source,
     owner: row.owner,
     tags: row.tags ?? [],
