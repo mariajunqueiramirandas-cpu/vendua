@@ -25,10 +25,6 @@ const Sev = ({ i }: { i: Incident }) => (
   <Tag map={i.resolvedAt ? PAST : SEVERITY} value={i.severity} />
 );
 
-// phones: plain sections on the page (no card), so two stacked lists don't read as boxed bands
-const SECTION =
-  'max-md:-mx-3 max-md:rounded-none max-md:border-0 max-md:bg-transparent max-md:shadow-none';
-
 const since = (iso: string) => {
   const r = rel(iso);
   return r === 'agora' ? 'aberto agora' : `aberto há ${r}`;
@@ -151,13 +147,13 @@ export default function IncidentsPage() {
     body = <LoadingRows rows={4} />;
   } else {
     body = (
-      <div className="flex flex-col gap-4 max-md:gap-6">
+      <div className="flex flex-col gap-4">
         <Panel
           flush
           title="em aberto"
           aside={open.length ? 'visíveis agora na Ajuda dos lojistas' : undefined}
           className={cn(
-            SECTION,
+            'overflow-hidden',
             open.some((i) => i.severity === 'outage') && 'border-destructive/40',
           )}
         >
@@ -175,7 +171,7 @@ export default function IncidentsPage() {
           flush
           title="resolvidos"
           aside={closed.length ? 'a Ajuda mostra os dos últimos 7 dias' : undefined}
-          className={SECTION}
+          className="overflow-hidden"
         >
           {list(
             closed,
