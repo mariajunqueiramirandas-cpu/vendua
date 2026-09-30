@@ -1,5 +1,5 @@
-# Dokploy compose (docs: deploy/dokploy.md). `core` is internal-only — storefront
-# nginx proxies /storefront/v1, /checkout/v1, /v1 to it, forwarding Host for tenant routing.
+# Dokploy compose (docs: deploy/dokploy.md). `core` is internal-only — the storefront edge
+# proxies /storefront/v1, /checkout/v1, /v1 to it, forwarding Host for tenant routing.
 
 services:
   db:
@@ -34,8 +34,14 @@ services:
       CONTROL_SECRET: ${CONTROL_SECRET:?set CONTROL_SECRET in .env}
       # Traefik fronts everything — X-Forwarded-* carries routing truth.
       VENDUA_TRUST_PROXY: '1'
-      # Chain is client → Traefik → nginx → core; trust nginx's append (1 hop from the right).
+      # Chain is client → Traefik → edge/nginx → core; trust that proxy's append (1 hop from the right).
       VENDUA_PROXY_HOPS: ${VENDUA_PROXY_HOPS:-1}
+      # Control Plane (docs/architecture/08): the edge's key for /edge/v1/resolve — same value below.
+      VENDUA_EDGE_SECRET: ${VENDUA_EDGE_SECRET:?set VENDUA_EDGE_SECRET in .env}
+      # Synthetic probes verify deployments and watch every live host (default on in production).
+      VENDUA_PROBES: ${VENDUA_PROBES:-1}
+      # unset = probe https://<host> (DNS + TLS + edge); http://edge:8080 = through the edge only
+      VENDUA_PROBE_ORIGIN: ${VENDUA_PROBE_ORIGIN:-}
       # Merchant admin: stores live at <slug>.<VENDUA_STORE_DOMAIN>.
       VENDUA_STORE_DOMAIN: ${VENDUA_STORE_DOMAIN:-vendua.com.br}
       # The admin's own domain (the `admin` service's); set, no other host serves /admin.
@@ -107,36 +113,84 @@ services:
       driver: json-file
       options: { max-size: '10m', max-file: '3' }
 
-  # Every store, one service: Core maps Host → store (domains rows, then <slug>.<VENDUA_STORE_DOMAIN>)
-  # and nginx serves that store's bundle, or the `_template` bundle for stores without one.
-  # Attach the wildcard domain here once; new stores and bundles need no compose or Dokploy change.
-  stores:
+  # Every store, one service (docs/architecture/07): the edge maps Host → store → release through
+  # Core, serves that release's immutable files from the artifact store and injects vendua-state.
+  # New stores and releases need no compose change; only a PRO+ store's own domain is added in
+  # Dokploy's Domains UI (service edge, port 8080) — see docs/deploy/dokploy.md.
+  edge:
     build:
       context: .
-      dockerfile: storefronts/Dockerfile
-      target: stores
-    depends_on:
-      core:
-        condition: service_healthy
+      dockerfile: packages/edge/Dockerfile
+    environment:
+      VENDUA_CORE_URL: http://core:8787
+      VENDUA_EDGE_SECRET: ${VENDUA_EDGE_SECRET}
+      # file:///… = the `artifacts` volume `publish` writes; s3://bucket/prefix = R2/MinIO (S3_* below)
+      VENDUA_ARTIFACTS: ${VENDUA_ARTIFACTS:-file:///var/lib/vendua/artifacts}
+      S3_ACCESS_KEY_ID: ${S3_ACCESS_KEY_ID:-}
+      S3_SECRET_ACCESS_KEY: ${S3_SECRET_ACCESS_KEY:-}
+      S3_ENDPOINT: ${S3_ENDPOINT:-}
+      S3_REGION: ${S3_REGION:-auto}
+    volumes:
+      - artifacts:/var/lib/vendua/artifacts:ro
+      # route/state snapshot + verified files: a restart during a Core outage keeps serving
+      - edgecache:/var/cache/vendua-edge
+    healthcheck:
+      test:
+        [
+          'CMD-SHELL',
+          'bun -e "fetch(''http://127.0.0.1:8080/_edge/healthz'').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"',
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 5s
     # Dokploy's Domains form rejects wildcards, so the route lives here. Priority 1 = last:
     # exact hosts set in the Domains UI (admin, crm, site) always win over the wildcard.
     networks: [default, dokploy-network]
     labels:
       - traefik.enable=true
       - traefik.docker.network=dokploy-network
-      - traefik.http.services.vendua-stores.loadbalancer.server.port=80
-      - traefik.http.routers.vendua-stores-http.rule=HostRegexp(`^[a-z0-9-]+\.vendua\.com\.br$$`)
-      - traefik.http.routers.vendua-stores-http.entrypoints=web
-      - traefik.http.routers.vendua-stores-http.priority=1
-      - traefik.http.routers.vendua-stores-http.middlewares=vendua-stores-https
-      - traefik.http.middlewares.vendua-stores-https.redirectscheme.scheme=https
-      - traefik.http.routers.vendua-stores.rule=HostRegexp(`^[a-z0-9-]+\.vendua\.com\.br$$`)
-      - traefik.http.routers.vendua-stores.entrypoints=websecure
-      - traefik.http.routers.vendua-stores.priority=1
-      - traefik.http.routers.vendua-stores.tls=true
-      - traefik.http.routers.vendua-stores.service=vendua-stores
-      - traefik.http.routers.vendua-stores-http.service=vendua-stores
+      - traefik.http.services.vendua-edge.loadbalancer.server.port=8080
+      - traefik.http.routers.vendua-edge-http.rule=HostRegexp(`^[a-z0-9-]+\.vendua\.com\.br$$`)
+      - traefik.http.routers.vendua-edge-http.entrypoints=web
+      - traefik.http.routers.vendua-edge-http.priority=1
+      - traefik.http.routers.vendua-edge-http.middlewares=vendua-edge-https
+      - traefik.http.middlewares.vendua-edge-https.redirectscheme.scheme=https
+      - traefik.http.routers.vendua-edge.rule=HostRegexp(`^[a-z0-9-]+\.vendua\.com\.br$$`)
+      - traefik.http.routers.vendua-edge.entrypoints=websecure
+      - traefik.http.routers.vendua-edge.priority=1
+      - traefik.http.routers.vendua-edge.tls=true
+      - traefik.http.routers.vendua-edge.service=vendua-edge
+      - traefik.http.routers.vendua-edge-http.service=vendua-edge
     restart: unless-stopped
+    logging:
+      driver: json-file
+      options: { max-size: '10m', max-file: '3' }
+
+  # One-shot per deploy: every storefront's build becomes a release in the artifact store and is
+  # registered with the Control Plane, which promotes it where each store's policy says.
+  # Unchanged storefronts hash to the release they already have, so a redeploy changes nothing.
+  publish:
+    build:
+      context: .
+      dockerfile: storefronts/Dockerfile
+      target: publish
+      args:
+        GIT_COMMIT: ${GIT_COMMIT:-}
+    environment:
+      VENDUA_CORE_ORIGIN: http://core:8787
+      CONTROL_SECRET: ${CONTROL_SECRET}
+      VENDUA_ARTIFACTS: ${VENDUA_ARTIFACTS:-file:///var/lib/vendua/artifacts}
+      S3_ACCESS_KEY_ID: ${S3_ACCESS_KEY_ID:-}
+      S3_SECRET_ACCESS_KEY: ${S3_SECRET_ACCESS_KEY:-}
+      S3_ENDPOINT: ${S3_ENDPOINT:-}
+      S3_REGION: ${S3_REGION:-auto}
+    volumes:
+      - artifacts:/var/lib/vendua/artifacts
+    depends_on:
+      core:
+        condition: service_healthy
+    restart: 'no'
     logging:
       driver: json-file
       options: { max-size: '10m', max-file: '3' }
@@ -203,9 +257,12 @@ services:
       options: { max-size: '10m', max-file: '3' }
 
 networks:
-  # Dokploy's Traefik network — the `stores` wildcard route is reached through it
+  # Dokploy's Traefik network — the edge's wildcard route is reached through it
   dokploy-network:
     external: true
 
 volumes:
   pgdata:
+  # immutable storefront releases (publish writes, edge reads); unused with an s3:// store
+  artifacts:
+  edgecache:

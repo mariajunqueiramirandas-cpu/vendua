@@ -71,6 +71,19 @@ describe('mapFiles', () => {
     expect(mapFiles(['storefronts/acme/routes/index.tsx']).adminGate).toBe(false);
   });
 
+  test('the edge smoke runs for Core, the edge, the CLI, the template and CI changes', () => {
+    for (const f of [
+      'packages/edge/src/server.ts',
+      'packages/core/src/modules/fleet/deploy.ts',
+      'packages/cli/src/release.ts',
+      'storefronts/_template/sections/Hero.tsx',
+      '.github/workflows/ci.yml',
+    ])
+      expect(mapFiles([f]).edgeSmoke).toBe(true);
+    expect(mapFiles(['apps/control/src/App.tsx', 'docs/roadmap.md']).edgeSmoke).toBe(false);
+    expect(mapFiles(['storefronts/acme/routes/index.tsx']).edgeSmoke).toBe(false);
+  });
+
   test('CRM/site/docs-only diffs skip core tests and conformance', () => {
     const r = mapFiles(['apps/control/src/App.tsx', 'site/src/app.css', 'docs/roadmap.md']);
     expect(r.coreTests).toBe(false);

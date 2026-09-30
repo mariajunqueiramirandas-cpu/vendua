@@ -1,11 +1,12 @@
 #!/usr/bin/env bun
 // Maps a git diff to the workspaces it affects (affected graph from
 // docs/architecture/06-monorepo.md). Prints
-// `{"packages": [<workspace dirs>], "allStorefronts": <bool>, "coreTests": <bool>, "conformance": <bool>, "adminGate": <bool>}`
+// `{"packages": [<workspace dirs>], "allStorefronts": <bool>, "coreTests": <bool>, "conformance": <bool>, "adminGate": <bool>, "edgeSmoke": <bool>}`
 // — `packages` lists directories consumers `cd` into; `allStorefronts: true` expands
 // to every `storefronts/*/` and `storefronts/_examples/*/` dir; `coreTests` /
 // `conformance` gate the CI jobs of the same name; `adminGate` gates the merchant admin's
-// screenshot/axe job (it runs against Core + the Kernel's section catalog).
+// screenshot/axe job (it runs against Core + the Kernel's section catalog); `edgeSmoke` gates
+// the Control Plane smoke (Core + the edge + `vendua release` serving the `_template` build).
 //   bun tools/affected.mjs [--base <ref>]     (default base: origin/main)
 // Consumed by the `check` job's Builds step in .github/workflows/ci.yml.
 
@@ -35,6 +36,18 @@ const CONFORMANCE_INPUTS = new Set([
   'packages/ui-defaults',
   'packages/templates',
   'packages/loader',
+  'storefronts/_template',
+]);
+
+// the smoke publishes the template's build and serves it through the edge from Core's routes
+const EDGE_INPUTS = new Set([
+  'packages/core',
+  'packages/edge',
+  'packages/cli',
+  'packages/kernel',
+  'packages/loader',
+  'packages/templates',
+  'packages/ui-defaults',
   'storefronts/_template',
 ]);
 
@@ -80,6 +93,7 @@ export function mapFiles(files) {
     coreTests: ciChanged || rootChanged || touches('packages/core'),
     conformance: ciChanged || allStorefronts || [...CONFORMANCE_INPUTS].some(touches),
     adminGate: ciChanged || rootChanged || [...ADMIN_INPUTS].some(touches),
+    edgeSmoke: ciChanged || rootChanged || [...EDGE_INPUTS].some(touches),
   };
 }
 
