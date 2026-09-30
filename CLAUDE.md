@@ -29,6 +29,9 @@ model, migrations, tokens, compat matrix), `packages/loader` (`v.js`), `packages
 
 - bun is pinned (`packageManager`, currently 1.4.2). Another version rewrites `bun.lock` —
   check `bun --version` before `bun install`; CI installs with `--frozen-lockfile`.
+- Bumping any workspace's `version` (a Kernel release, say): run `bun install` and commit
+  `bun.lock` with the bump. The lock records each workspace's version, and
+  `--frozen-lockfile` doesn't notice a stale one, so CI stays green while the lock drifts.
 - Format: `bunx prettier --write <paths>` (CI auto-fixes, but keep diffs clean).
 - Typecheck per workspace: `bun run check`. Core tests: `cd packages/core && bun test`
   (`TEST_DATABASE_URL` is exported by the session hook).
