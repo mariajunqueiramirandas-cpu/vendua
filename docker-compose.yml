@@ -52,6 +52,8 @@ services:
       MP_CLIENT_SECRET: ${MP_CLIENT_SECRET:-}
       MP_WEBHOOK_SECRET: ${MP_WEBHOOK_SECRET:-}
       MP_PLATFORM_ACCESS_TOKEN: ${MP_PLATFORM_ACCESS_TOKEN:-}
+      # the payer email MP requires on Pix (shoppers don't give one); unset = pagador@<store domain>
+      MP_PAYER_EMAIL: ${MP_PAYER_EMAIL:-}
       # Seals stores' MP tokens at rest; unset = derived from SESSION_SECRET.
       VENDUA_SECRETS_KEY: ${VENDUA_SECRETS_KEY:-}
       # 1 = seed the three demo tenants + catalog on first boot; 0 = empty.

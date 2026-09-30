@@ -14,31 +14,32 @@ Dokploy → **Compose** → point at this repo → compose file path
 
 Copy `.env.example` into the service's environment and fill it in:
 
-| Variable                                   | Purpose                                                         |
-| ------------------------------------------ | --------------------------------------------------------------- |
-| `POSTGRES_PASSWORD`                        | Postgres superuser (migrations run as it)                       |
-| `VENDUA_APP_DB_PASSWORD`                   | `vendua_app` app role — rotated on migrate                      |
-| `SESSION_SECRET`                           | signs `vst.*` session tokens — required, stable across restarts |
-| `CONTROL_SECRET`                           | staff login key for the CRM at `/control/` — keep distinct      |
-| `SEED_DEMO`                                | `1` seeds the three demo tenants on boot; `0` = empty platform  |
-| `SEED_DOMAINS`                             | `slug:public-domain` per storefront — registers real domains    |
-| `VENDUA_PROXY_HOPS`                        | XFF trusted suffix length — `1` for the Traefik→nginx chain     |
-| `VENDUA_ADMIN_HOST`                        | the merchant admin's own domain, e.g. `painel.example.com`      |
-| `VENDUA_STORE_DOMAIN`                      | stores live at `<slug>.<domain>` — the admin's store links      |
-| `VAPID_PUBLIC_KEY` / `VAPID_PRIVATE_KEY`   | web push for new orders (`npx web-push generate-vapid-keys`)    |
-| `VENDUA_SUPPORT_WHATSAPP`                  | Ajuda's "chamar no WhatsApp" number (digits; optional)          |
-| `RESEND_API_KEY`                           | email driver — sending + fetching received bodies               |
-| `RESEND_WEBHOOK_SECRET`                    | svix signing secret of the inbound webhook (see below)          |
-| `MONID_API_KEY`                            | monid.ai enrichment tools (unset → hidden from the agent)       |
-| `GOOGLE_CALENDAR_SERVICE_ACCOUNT_JSON_B64` | service-account key, base64'd — meeting → gcal sync (optional)  |
-| `GOOGLE_CALENDAR_ID`                       | target calendar id for the gcal sync                            |
-| `DAILY_API_KEY`                            | daily.co per-meeting video rooms (unset → static roomUrl)       |
-| `IG_SIDECAR_SECRET`                        | Instagram DMs — Core↔ig-sidecar shared secret (see below)       |
-| `IG_PROXY`                                 | static residential proxy for the ig-sidecar (recommended)       |
-| `MP_CLIENT_ID` / `MP_CLIENT_SECRET`        | Venduá's Mercado Pago application — stores connect by OAuth     |
-| `MP_WEBHOOK_SECRET`                        | the application's webhook signing secret (x-signature)          |
-| `MP_PLATFORM_ACCESS_TOKEN`                 | Venduá's own MP account — plan billing (assinatura + Pix)       |
-| `VENDUA_SECRETS_KEY`                       | seals stores' MP tokens at rest (falls back to SESSION_SECRET)  |
+| Variable                                   | Purpose                                                           |
+| ------------------------------------------ | ----------------------------------------------------------------- |
+| `POSTGRES_PASSWORD`                        | Postgres superuser (migrations run as it)                         |
+| `VENDUA_APP_DB_PASSWORD`                   | `vendua_app` app role — rotated on migrate                        |
+| `SESSION_SECRET`                           | signs `vst.*` session tokens — required, stable across restarts   |
+| `CONTROL_SECRET`                           | staff login key for the CRM at `/control/` — keep distinct        |
+| `SEED_DEMO`                                | `1` seeds the three demo tenants on boot; `0` = empty platform    |
+| `SEED_DOMAINS`                             | `slug:public-domain` per storefront — registers real domains      |
+| `VENDUA_PROXY_HOPS`                        | XFF trusted suffix length — `1` for the Traefik→nginx chain       |
+| `VENDUA_ADMIN_HOST`                        | the merchant admin's own domain, e.g. `painel.example.com`        |
+| `VENDUA_STORE_DOMAIN`                      | stores live at `<slug>.<domain>` — the admin's store links        |
+| `VAPID_PUBLIC_KEY` / `VAPID_PRIVATE_KEY`   | web push for new orders (`npx web-push generate-vapid-keys`)      |
+| `VENDUA_SUPPORT_WHATSAPP`                  | Ajuda's "chamar no WhatsApp" number (digits; optional)            |
+| `RESEND_API_KEY`                           | email driver — sending + fetching received bodies                 |
+| `RESEND_WEBHOOK_SECRET`                    | svix signing secret of the inbound webhook (see below)            |
+| `MONID_API_KEY`                            | monid.ai enrichment tools (unset → hidden from the agent)         |
+| `GOOGLE_CALENDAR_SERVICE_ACCOUNT_JSON_B64` | service-account key, base64'd — meeting → gcal sync (optional)    |
+| `GOOGLE_CALENDAR_ID`                       | target calendar id for the gcal sync                              |
+| `DAILY_API_KEY`                            | daily.co per-meeting video rooms (unset → static roomUrl)         |
+| `IG_SIDECAR_SECRET`                        | Instagram DMs — Core↔ig-sidecar shared secret (see below)         |
+| `IG_PROXY`                                 | static residential proxy for the ig-sidecar (recommended)         |
+| `MP_CLIENT_ID` / `MP_CLIENT_SECRET`        | Venduá's Mercado Pago application — stores connect by OAuth       |
+| `MP_WEBHOOK_SECRET`                        | the application's webhook signing secret (x-signature)            |
+| `MP_PLATFORM_ACCESS_TOKEN`                 | Venduá's own MP account — plan billing (assinatura + Pix)         |
+| `VENDUA_SECRETS_KEY`                       | seals stores' MP tokens at rest (falls back to SESSION_SECRET)    |
+| `MP_PAYER_EMAIL`                           | payer email MP requires on Pix (default `pagador@<store domain>`) |
 
 Generate secrets with `openssl rand -hex 32`.
 
