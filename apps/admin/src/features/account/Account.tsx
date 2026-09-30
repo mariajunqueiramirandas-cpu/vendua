@@ -76,9 +76,9 @@ export default function Account() {
                 </Button>
               </div>
               {data.domains.map((d) => (
-                <div key={d} className="flex items-center gap-3 p-4">
+                <div key={d.host} className="flex items-center gap-3 p-4">
                   <Globe className="size-6 shrink-0 text-muted" />
-                  <span className="min-w-0 flex-1 truncate">{d}</span>
+                  <span className="min-w-0 flex-1 truncate">{d.host}</span>
                   <span className="t-caption rounded-full bg-success-soft px-2 py-0.5 font-semibold text-success">
                     no ar
                   </span>

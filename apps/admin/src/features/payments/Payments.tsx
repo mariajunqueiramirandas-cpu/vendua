@@ -29,6 +29,11 @@ const METHOD: Record<PayMethod, { label: string; Icon: typeof PixLogo; hint: str
     hint: 'Na maquininha, na entrega ou retirada.',
   },
   cash: { label: 'Dinheiro', Icon: Money, hint: 'Na entrega ou retirada.' },
+  card_online: {
+    label: 'Cartão pelo Mercado Pago',
+    Icon: CreditCard,
+    hint: 'O cliente paga no site com cartão, pelo Mercado Pago.',
+  },
 };
 
 export default function Payments() {

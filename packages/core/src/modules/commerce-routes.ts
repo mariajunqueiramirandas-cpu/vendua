@@ -58,6 +58,7 @@ import { normalizePixKey, type PixKeyType } from './pix.ts';
 import { setStock } from './stock.ts';
 import { subscribeNotifyTx } from './storefront-platform.ts';
 import type { StoreSettingsRow } from './store.ts';
+import type { PaymentProvider } from './payments/provider.ts';
 
 type TenantApp = Hono<{ Variables: { tenant: Tenant } }>;
 
@@ -78,6 +79,9 @@ interface Deps {
   trustProxy: boolean;
   cepLookup: CepLookup;
   orderHub: OrderHub;
+  provider: PaymentProvider;
+  /** `https://<admin host>` — Mercado Pago's notification_url base */
+  publicOrigin: (c: Context) => string;
 }
 
 const CUSTOMER_HEADER = 'x-vendua-customer';

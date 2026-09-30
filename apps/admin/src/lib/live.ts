@@ -17,7 +17,10 @@ type Topic =
   | 'marketing'
   | 'team'
   | 'appearance'
-  | 'surfaces';
+  | 'surfaces'
+  | 'payment.received'
+  | 'billing'
+  | 'alerts';
 
 const TOPIC_KEYS: Record<Topic, readonly (readonly unknown[])[]> = {
   'order.placed': [['orders'], qk.home, ['customers'], ['catalog'], qk.activity],
@@ -29,6 +32,9 @@ const TOPIC_KEYS: Record<Topic, readonly (readonly unknown[])[]> = {
   appearance: [qk.appearance, qk.activity],
   // storefront operations changed elsewhere (prep time, demand) show in Loja too
   surfaces: [qk.store],
+  'payment.received': [['orders'], qk.home, ['payments'], ['reports'], qk.activity],
+  billing: [qk.account, qk.payments, qk.home, qk.store],
+  alerts: [qk.alerts, qk.home],
 };
 
 // ── connection + alert state (a tiny external store) ───────────────────────

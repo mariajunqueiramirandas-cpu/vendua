@@ -128,7 +128,26 @@ export type OrderState =
   | 'cancelled'
   | 'refunded';
 export type StoreStatus = 'open' | 'closed' | 'paused';
-export type PayMethod = 'pix' | 'card_on_delivery' | 'cash';
+export type PayMethod = 'pix' | 'card_online' | 'card_on_delivery' | 'cash';
+export type PaymentStatus =
+  | 'pending'
+  | 'paid'
+  | 'failed'
+  | 'expired'
+  | 'refunded'
+  | 'partially_refunded'
+  | 'charged_back'
+  | 'in_mediation';
+export type MpStatus = 'not_connected' | 'connected' | 'expiring' | 'disconnected' | 'restricted';
+
+export interface Plan {
+  id: string;
+  name: string;
+  /** null for a legacy/pilot plan with no catalog price */
+  priceCents: number | null;
+  feeBps: number;
+  features: { customDomain: boolean; customSite: boolean };
+}
 
 export interface StoreRef {
   id: string;
@@ -148,6 +167,11 @@ export interface Session {
       sound?: boolean;
       volume?: number;
       push?: boolean;
+      /** push when an online payment lands (default on) */
+      pushPayments?: boolean;
+      /** WhatsApp when an order waits past the accept target and no alert reached a device */
+      whatsappAlerts?: boolean;
+      emailInvoices?: boolean;
       theme?: string;
       dismissedHints?: string[];
     };
@@ -179,11 +203,23 @@ export interface Order {
     lng?: number;
   };
   payment: {
+    /** 'sandbox' | 'offline' (offline methods) · 'mercadopago' | 'fake' (online) */
     provider: string;
     method: PayMethod;
-    status: string;
+    status: PaymentStatus;
+    /** Mercado Pago handles it (webhook-confirmed); false = the merchant confirms by hand */
+    online?: boolean;
     paidAt?: string | null;
     confirmedBy?: string | null;
+    refundedCents?: number;
+    pix?: {
+      key?: string;
+      keyType?: string;
+      beneficiary?: string;
+      copyPaste: string;
+      expiresAt?: string | null;
+    } | null;
+    redirectUrl?: string | null;
   };
   items: {
     productId: string | null;
@@ -211,6 +247,34 @@ export interface Order {
     to: OrderState;
     actor: string;
     meta: Record<string, unknown>;
+  }[];
+}
+
+export interface OrderPayment {
+  id: string;
+  kind: 'pix' | 'card';
+  status:
+    | 'creating'
+    | 'pending'
+    | 'approved'
+    | 'rejected'
+    | 'cancelled'
+    | 'expired'
+    | 'refunded'
+    | 'partially_refunded'
+    | 'charged_back'
+    | 'in_mediation';
+  amountCents: number;
+  refundedCents: number;
+  providerFeeCents: number | null;
+  netCents: number | null;
+  approvedAt: string | null;
+  createdAt: string;
+  refunds: {
+    amountCents: number;
+    status: 'pending' | 'approved' | 'rejected';
+    reason: string | null;
+    createdAt: string;
   }[];
 }
 
@@ -252,12 +316,22 @@ export interface Product {
   preorderLeadDays: number;
   sort: number;
   soldOutUntil: string | null;
+  availabilitySchedule?: AvailabilitySchedule | null;
+  /** false while outside its schedule */
+  availableNow?: boolean;
   tags: string[];
   imageUrl: string | null;
   dominant: string | null;
   mediaCount: number;
   groupCount: number;
   waiting: number;
+}
+
+export interface AvailabilitySchedule {
+  /** days: 0 = domingo … 6 = sábado; no from/to = the whole day */
+  windows: { days: number[]; from?: string; to?: string }[];
+  /** outside the windows: listed as unavailable, or not listed at all */
+  outside: 'unavailable' | 'hidden';
 }
 
 export interface OptionGroup {
@@ -341,6 +415,8 @@ export interface StoreView {
     override: 'paused' | 'closed' | null;
     pauseMessage: string | null;
     closedMessage: string | null;
+    /** a self-serve store waits for its first plan payment; it can't be opened until then */
+    billingHold: boolean;
   };
   hours: { timezone: string; windows: Window_[] };
   specialDays: SpecialDay[];
@@ -349,6 +425,8 @@ export interface StoreView {
     acceptTargetMinutes: number;
     minOrderCents: number;
     pickupEnabled: boolean;
+    pickupAddress: string | null;
+    pickupInstructions: string | null;
     deliveryEnabled: boolean;
     demand: 'normal' | 'high';
   };
@@ -380,6 +458,9 @@ export interface Home {
   waiting: { n: number; late: number; oldest: string | null };
   inProgress: number;
   attention: {
+    /** orders_waiting | closed_with_orders | pix_to_confirm | low_stock | waitlist |
+     *  alerts_failing | mp_expiring | mp_disconnected | mp_restricted | billing_pending |
+     *  billing_past_due | invoice_open | incident */
     kind: string;
     count: number;
     title: string;
@@ -500,7 +581,18 @@ export interface Reports {
     checkouts: number;
     orders: number;
   };
-  zones: { name: string; orders: number; revenueCents: number; feesCents: number }[];
+  zones: {
+    name: string;
+    orders: number;
+    revenueCents: number;
+    feesCents: number;
+    /** distinct carts that asked for delivery here */
+    quotes: number;
+    /** orders ÷ quotes; null when nobody asked */
+    conversion: number | null;
+  }[];
+  /** places people asked for that no zone covers (top 10) */
+  outOfZone: { neighborhood: string; quotes: number }[];
   payments: { method: PayMethod; orders: number; revenueCents: number }[];
   coupons: { code: string; orders: number; discountCents: number; revenueCents: number }[];
   repeat: { customers: number; returning: number };
@@ -515,7 +607,15 @@ export interface Member {
   status: 'active' | 'revoked';
   createdAt: string;
   lastSeenAt: string | null;
+  inviteSentAt: string | null;
+  inviteChannels: string[];
+  inviteError: string | null;
 }
+
+export type InviteResult = {
+  whatsapp: 'sent' | 'failed' | 'skipped';
+  email: 'sent' | 'failed' | 'skipped';
+};
 
 export interface ActivityEntry {
   id: number;
@@ -530,10 +630,142 @@ export interface ActivityEntry {
 export interface Payments {
   methods: PayMethod[];
   pix: { key: string; keyType: string; beneficiary: string; city: string; sample: string } | null;
-  mercadoPago: { status: 'not_available' | 'connected' };
+  mercadoPago: {
+    /** the install has Mercado Pago credentials */
+    available: boolean;
+    status: MpStatus;
+    accountId: string | null;
+    liveMode: boolean | null;
+    connectedAt: string | null;
+    expiresAt: string | null;
+    lastError: string | null;
+  };
   last30: { method: PayMethod; status: string; orders: number; cents: number }[];
   awaitingPix: { id: string; number: number; name: string; totalCents: number; placedAt: string }[];
+  month: StatementTotals & { month: string };
 }
+
+export interface StatementTotals {
+  grossCents: number;
+  providerFeeCents: number;
+  applicationFeeCents: number;
+  netCents: number;
+  refundedCents: number;
+  count: number;
+}
+
+export interface Statement {
+  month: string;
+  totals: StatementTotals;
+  payments: {
+    id: string;
+    orderId: string;
+    orderNumber: number;
+    kind: 'pix' | 'card';
+    status: OrderPayment['status'];
+    amountCents: number;
+    providerFeeCents: number | null;
+    netCents: number | null;
+    refundedCents: number;
+    approvedAt: string | null;
+    createdAt: string;
+  }[];
+}
+
+export interface Alerts {
+  devices: {
+    id: string;
+    userId: string;
+    userName: string;
+    device: string;
+    createdAt: string;
+    lastOkAt: string | null;
+    lastError: string | null;
+    lastResult: 'ok' | 'error' | 'gone' | null;
+    lastAt: string | null;
+  }[];
+  recent: {
+    event: string;
+    ref: string | null;
+    channel: 'push' | 'whatsapp';
+    result: 'ok' | 'error' | 'gone';
+    detail: string | null;
+    at: string;
+    userName: string | null;
+  }[];
+  /** the platform's WhatsApp is set up, so missed alerts fall back to it */
+  whatsappFallback: boolean;
+}
+
+export interface Incident {
+  id: string;
+  title: string;
+  body: string | null;
+  severity: 'info' | 'degraded' | 'outage';
+  startedAt: string;
+  resolvedAt: string | null;
+}
+
+export type SubscriptionStatus = 'pending' | 'active' | 'past_due' | 'cancelled';
+export type InvoiceStatus = 'open' | 'paid' | 'failed' | 'void';
+export type DomainStatus = 'active' | 'pending_dns' | 'dns_ok' | 'failed';
+
+export interface Invoice {
+  id: string;
+  number: number;
+  planName: string;
+  amountCents: number;
+  periodStart: string;
+  periodEnd: string;
+  method: 'card' | 'pix';
+  status: InvoiceStatus;
+  dueAt: string;
+  paidAt: string | null;
+  pix: { copyPaste: string; expiresAt: string | null } | null;
+}
+
+export interface Account {
+  plan: Plan & { since: string };
+  plans: Plan[];
+  subscription: {
+    status: SubscriptionStatus;
+    method: 'card' | 'pix';
+    planId: string;
+    currentPeriodEnd: string | null;
+    cancelAtPeriodEnd: boolean;
+    pendingPlan: { id: string; name: string } | null;
+    /** card: where the owner authorizes the recurring charge (while pending) */
+    checkoutUrl: string | null;
+    payerEmail: string | null;
+  } | null;
+  billing: { available: boolean };
+  invoices: Invoice[];
+  address: string;
+  domains: { host: string; kind: 'store' | 'custom'; status: DomainStatus; primary: boolean }[];
+  customDomain: {
+    id: string;
+    host: string;
+    status: 'pending_dns' | 'dns_ok' | 'active' | 'failed';
+    cnameTarget: string;
+    txtName: string;
+    txtValue: string;
+    lastCheckedAt: string | null;
+    lastError: string | null;
+  } | null;
+  siteRequest: {
+    id: string;
+    status: 'requested' | 'in_progress' | 'delivered' | 'cancelled';
+    brief: string | null;
+    createdAt: string;
+    updatedAt: string;
+  } | null;
+}
+
+export type SignInResult =
+  | { signedIn: true; store: StoreRef }
+  | { signedIn: false; pickerToken: string; stores: StoreRef[] };
+
+export type PayNext = { kind: 'card'; url: string } | { kind: 'pix'; invoiceId: string };
 
 export interface TemplateSection {
   id: string;
@@ -609,6 +841,38 @@ export const api = {
     select: (pickerToken: string, storeId: string) =>
       send<{ signedIn: true; store: StoreRef }>('POST', '/auth/select', { pickerToken, storeId }),
     logout: () => send<{ ok: true }>('POST', '/auth/logout'),
+    emailStart: (email: string) =>
+      send<{ sent: true; devLink?: string }>('POST', '/auth/email/start', { email }),
+    emailVerify: (token: string) => send<SignInResult>('POST', '/auth/email/verify', { token }),
+  },
+  signup: {
+    plans: () =>
+      get<{ plans: Plan[]; billing: { available: boolean }; storeDomain: string }>('/signup/plans'),
+    slug: (slug: string) =>
+      get<{
+        slug: string;
+        available: boolean;
+        reason?: 'taken' | 'reserved' | 'invalid';
+        suggestion?: string;
+      }>(`/signup/slug?slug=${encodeURIComponent(slug)}`),
+    otpStart: (phone: string) =>
+      send<{ sent: boolean; devCode?: string; expiresAt: string }>('POST', '/signup/otp/start', {
+        phone,
+      }),
+    otpVerify: (phone: string, code: string) =>
+      send<{ signupToken: string; existingStores: StoreRef[] }>('POST', '/signup/otp/verify', {
+        phone,
+        code,
+      }),
+    create: (p: {
+      signupToken: string;
+      planId: string;
+      method: 'card' | 'pix';
+      storeName: string;
+      slug: string;
+      ownerName: string;
+      email: string;
+    }) => send<{ signedIn: true; store: StoreRef; next: PayNext }>('POST', '/signup', p),
   },
   session: () => get<Session>('/session'),
   switchStore: (storeId: string) =>
@@ -653,6 +917,8 @@ export const api = {
     get<{
       order: Order;
       customer: { phone: string; orders: number; firstAt: string; spentCents: number } | null;
+      /** absent in placeholder data seeded from the board */
+      payments?: OrderPayment[];
     }>(`/orders/${id}`),
   transition: (
     id: string,
@@ -667,6 +933,8 @@ export const api = {
     }),
   markPaid: (id: string, status: 'paid' | 'pending') =>
     send<{ order: Order }>('POST', `/orders/${id}/payment`, { status }),
+  refund: (id: string, p: { amountCents?: number | null; reason?: string }) =>
+    send<{ order: Order; payments: OrderPayment[] }>('POST', `/orders/${id}/refund`, p),
 
   catalog: () => get<{ categories: Category[] }>('/catalog'),
   product: (id: string) => get<{ product: ProductDetail }>(`/products/${id}`),
@@ -709,10 +977,19 @@ export const api = {
   ) => {
     const q = new URLSearchParams({ w: String(meta.width), h: String(meta.height) });
     if (meta.dominant) q.set('dominant', meta.dominant);
-    return req<{ id: string; url: string; width: number; height: number; dominant: string | null }>(
-      `/media?${q}`,
-      { method: 'POST', body: blob, raw: true, headers: { 'content-type': blob.type } },
-    );
+    return req<{
+      id: string;
+      url: string;
+      width: number;
+      height: number;
+      dominant: string | null;
+      variants: number[];
+    }>(`/media?${q}`, {
+      method: 'POST',
+      body: blob,
+      raw: true,
+      headers: { 'content-type': blob.type },
+    });
   },
 
   store: () => get<StoreView>('/store'),
@@ -730,6 +1007,13 @@ export const api = {
   payments: () => get<Payments>('/payments'),
   updatePayments: (p: { methods?: PayMethod[]; pix?: Record<string, unknown> | null }) =>
     send<Payments>('PATCH', '/payments', p),
+  mpConnect: () => send<{ url: string }>('POST', '/payments/mercadopago/connect'),
+  mpDisconnect: () => send<Payments>('POST', '/payments/mercadopago/disconnect'),
+  statement: (month: string) => get<Statement>(`/payments/statement?month=${month}`),
+
+  alerts: () => get<Alerts>('/alerts'),
+  testAlert: () => send<{ devices: number; ok: number; failed: number }>('POST', '/alerts/test'),
+  helpStatus: () => get<{ incidents: Incident[] }>('/help/status'),
 
   customers: (p: { q?: string; sort?: string; offset?: number }) => {
     const s = new URLSearchParams();
@@ -773,8 +1057,10 @@ export const api = {
   reports: (from: string, to: string) => get<Reports>(`/reports?from=${from}&to=${to}`),
 
   team: () => get<{ members: Member[] }>('/team'),
-  addMember: (m: { name: string; phone: string; role: Role }) =>
-    send<{ members: Member[] }>('POST', '/team', m),
+  addMember: (m: { name: string; phone: string; role: Role; email?: string | null }) =>
+    send<{ members: Member[]; invite: InviteResult; signInUrl: string }>('POST', '/team', m),
+  resendInvite: (id: string) =>
+    send<{ members: Member[]; invite: InviteResult }>('POST', `/team/${id}/invite`),
   updateMember: (id: string, m: { role?: Role; name?: string }) =>
     send<{ members: Member[] }>('PATCH', `/team/${id}`, m),
   removeMember: (id: string) => send<{ members: Member[] }>('DELETE', `/team/${id}`),
@@ -782,13 +1068,19 @@ export const api = {
     get<{ entries: ActivityEntry[]; next: number | null }>(
       `/activity${before ? `?before=${before}` : ''}`,
     ),
-  account: () =>
-    get<{
-      plan: { id: string; since: string };
-      billing: { status: string };
-      address: string;
-      domains: string[];
-    }>('/account'),
+  account: () => get<Account>('/account'),
+  startSubscription: (p: { planId: string; method: 'card' | 'pix'; payerEmail: string }) =>
+    send<Account>('POST', '/account/subscription', p),
+  updateSubscription: (p: { planId?: string; method?: 'card' | 'pix'; payerEmail?: string }) =>
+    send<Account>('PATCH', '/account/subscription', p),
+  cancelSubscription: () => send<Account>('POST', '/account/subscription/cancel'),
+  resumeSubscription: () => send<Account>('POST', '/account/subscription/resume'),
+  invoicePix: (id: string) => send<Account>('POST', `/account/invoices/${id}/pix`),
+  addDomain: (host: string) => send<Account>('POST', '/account/domains', { host }),
+  checkDomain: (id: string) => send<Account>('POST', `/account/domains/${id}/check`),
+  removeDomain: (id: string) => send<Account>('DELETE', `/account/domains/${id}`),
+  requestSite: (brief: string) => send<Account>('POST', '/account/site-request', { brief }),
+  updateSiteRequest: (brief: string) => send<Account>('PATCH', '/account/site-request', { brief }),
 
   appearance: () => get<Appearance>('/appearance'),
   pageHistory: (page: string) =>

@@ -16,7 +16,13 @@ export type AdminTopic =
   | 'team'
   | 'appearance'
   // loader/maintenance state — storefront-facing only
-  | 'surfaces';
+  | 'surfaces'
+  // an online payment landed on an order (id = order id)
+  | 'payment.received'
+  // Mercado Pago connection, plan, invoices, domains
+  | 'billing'
+  // an alert attempt was recorded (devices, missed alerts)
+  | 'alerts';
 
 const liveLog = log.child({ mod: 'admin-live' });
 

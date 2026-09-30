@@ -16,6 +16,10 @@ import { adoptLidMappings } from './modules/threads.ts';
 import { startInstagramReconcile } from './agent/channels/instagram.ts';
 import { getIntegration } from './modules/integrations.ts';
 import { setBookingSecret } from './modules/meetings.ts';
+import { platformNotify } from './admin/notify.ts';
+import { createPaymentProvider } from './modules/payments/index.ts';
+import { startPaymentJobs } from './modules/payments/jobs.ts';
+import { startBillingJobs } from './modules/billing/jobs.ts';
 
 const databaseUrl =
   process.env.DATABASE_URL ?? 'postgres://vendua_app:vendua_app@localhost:5433/vendua';
@@ -39,7 +43,28 @@ await migrator.end();
 
 const sql = createSql(databaseUrl);
 const adminHub = new AdminHub(sql);
-const app = createApp({ sql, sessionSecret, controlSecret: process.env.CONTROL_SECRET, adminHub });
+// one provider for the API and the jobs: the fake driver keeps its state in memory
+const paymentProvider = createPaymentProvider();
+const notify = platformNotify(sql);
+const app = createApp({
+  sql,
+  sessionSecret,
+  controlSecret: process.env.CONTROL_SECRET,
+  adminHub,
+  paymentProvider,
+  notify,
+});
+const adminHost = process.env.VENDUA_ADMIN_HOST?.trim().toLowerCase();
+const adminOrigin = adminHost ? `https://${adminHost}` : null;
+// Mercado Pago: token refresh + connection health, pending-payment reconciliation;
+// the plan: invoices, renewals, reminders, custom-domain DNS checks
+const stopPaymentJobs = startPaymentJobs(sql, {
+  provider: paymentProvider,
+  sessionSecret,
+  notify,
+  adminOrigin,
+});
+const stopBillingJobs = startBillingJobs(sql, { provider: paymentProvider, notify, adminOrigin });
 
 // merchant admin: new-order web push + the minute sweep ("esgotado hoje", timed pauses)
 void startPushNotifier(sql, adminHub);
@@ -97,6 +122,8 @@ for (const sig of ['SIGTERM', 'SIGINT'] as const) {
     shuttingDown = true;
     log.info({ sig }, 'shutting down — draining the scheduler');
     stopAdminSweeper();
+    stopPaymentJobs();
+    stopBillingJobs();
     void stopScheduler()
       .then(() => sql.end({ timeout: 5 }))
       .finally(() => process.exit(0));

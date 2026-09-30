@@ -29,6 +29,7 @@ import {
   type AdminCtx,
   type AdminDeps,
   type Merchant,
+  type MerchantNotify,
   type Role,
   isObj,
   need,
@@ -37,12 +38,17 @@ import {
 } from './context.ts';
 import { emitAdminTx, type AdminHub } from './live.ts';
 import { activeCarts, type PresenceTracker } from '../modules/presence.ts';
+import { mountPaymentsPublic } from '../modules/payments/routes-public.ts';
+import type { PaymentProvider } from '../modules/payments/provider.ts';
+import { mountSignup } from '../modules/billing/routes-signup.ts';
+import { mountAccount } from './routes-account.ts';
 import { mountAppearance } from './routes-appearance.ts';
 import { mountCatalog } from './routes-catalog.ts';
 import { mountCustomers } from './routes-customers.ts';
 import { mountHome } from './routes-home.ts';
 import { mountMarketing } from './routes-marketing.ts';
 import { mountOrders } from './routes-orders.ts';
+import { mountPayments } from './routes-payments.ts';
 import { mountReports } from './routes-reports.ts';
 import { mountStore } from './routes-store.ts';
 import { mountTeam } from './routes-team.ts';
@@ -64,6 +70,9 @@ export interface MountAdminOpts {
   otpSender: OtpSender;
   idempotency: AdminDeps['idempotency'];
   storeDomain: string;
+  provider: PaymentProvider;
+  notify: MerchantNotify;
+  publicOrigin: (c: Context) => string;
 }
 
 const STREAM_HEARTBEAT_MS = 20_000;
@@ -134,17 +143,24 @@ export function mountAdmin(o: MountAdminOpts) {
     return c.json({ ok: true });
   });
 
-  // ── everything below needs a session ─────────────────────────────────────
-  admin.use('*', adminGate(sql, { trustProxy: o.trustProxy }));
-
-  const deps: AdminDeps = {
-    admin,
+  // ── public, pre-session: Mercado Pago webhooks, self-serve signup ─────────
+  const shared: Omit<AdminDeps, 'admin'> = {
     sql,
     sessionSecret,
     hub,
     idempotency: o.idempotency,
     storeDomain: o.storeDomain,
+    provider: o.provider,
+    notify: o.notify,
+    publicOrigin: o.publicOrigin,
   };
+  mountPaymentsPublic(admin, shared);
+  mountSignup(admin, shared);
+
+  // ── everything below needs a session ─────────────────────────────────────
+  admin.use('*', adminGate(sql, { trustProxy: o.trustProxy }));
+
+  const deps: AdminDeps = { admin, ...shared };
 
   admin.get('/session', async (c) => {
     const tenant = c.get('tenant');
@@ -472,10 +488,12 @@ export function mountAdmin(o: MountAdminOpts) {
   mountOrders(deps);
   mountCatalog(deps);
   mountStore(deps);
+  mountPayments(deps);
   mountCustomers(deps);
   mountMarketing(deps);
   mountReports(deps);
   mountTeam(deps);
+  mountAccount(deps);
   mountAppearance(deps);
 
   // public media read — storefront hosts proxy /v1 to Core, so the same URL works everywhere
