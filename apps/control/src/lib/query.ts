@@ -40,6 +40,12 @@ export const qk = {
   billingStores: () => ['billing-stores'] as const,
   controlPlans: () => ['control-plans'] as const,
   incidents: () => ['incidents'] as const,
+  fleetStatus: () => ['fleet-status'] as const,
+  fleetStorefronts: () => ['fleet-storefronts'] as const,
+  fleetStorefront: (slug: string) => ['fleet-storefront', slug] as const,
+  fleetProvisionings: (leadId?: string) => ['fleet-provisionings', leadId ?? ''] as const,
+  fleetIncidents: () => ['fleet-incidents'] as const,
+  fleetSlug: (slug: string) => ['fleet-slug', slug] as const,
 };
 
 type AuthListener = () => void;

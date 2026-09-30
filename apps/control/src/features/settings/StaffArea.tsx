@@ -13,7 +13,7 @@ import { ErrorHint, SaveBar, SectionHead } from './bits.tsx';
 import { str } from './queries.ts';
 
 type Member = { name: string; email: string; whatsapp: string };
-type Events = { handoff: boolean; meeting: boolean };
+type Events = { handoff: boolean; meeting: boolean; fleet: boolean };
 type Save = (v: Record<string, unknown>) => void;
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
@@ -77,6 +77,11 @@ const EVENTS: { key: keyof Events; label: string; hint: string }[] = [
     label: 'call marcada',
     hint: 'lead marcou pelo link ou o agente agendou',
   },
+  {
+    key: 'fleet',
+    label: 'alertas da frota',
+    hint: 'sonda falhando, implantação que falhou, loja nova no ar',
+  },
 ];
 
 export function StaffArea({
@@ -91,7 +96,11 @@ export function StaffArea({
   const ev = (value.events ?? {}) as Record<string, unknown>;
   const cur = {
     members: readMembers(value.members),
-    events: { handoff: ev.handoff !== false, meeting: ev.meeting !== false } as Events,
+    events: {
+      handoff: ev.handoff !== false,
+      meeting: ev.meeting !== false,
+      fleet: ev.fleet !== false,
+    } as Events,
   };
   const curKey = JSON.stringify(cur);
   const [edit, setEdit] = useState(cur);

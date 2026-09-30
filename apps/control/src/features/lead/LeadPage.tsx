@@ -12,6 +12,7 @@ import { isMissing } from './agent/shared.tsx';
 import { LeadActions } from './LeadActions.tsx';
 import { LeadConversations } from './LeadConversations.tsx';
 import { LeadFacts } from './LeadFacts.tsx';
+import { LeadStore } from './LeadStore.tsx';
 import { LeadActionBar, LeadSummaryBar } from './LeadMobile.tsx';
 import { LeadTasks } from './LeadTasks.tsx';
 import { LeadTimeline } from './LeadTimeline.tsx';
@@ -83,6 +84,7 @@ export default function LeadPage() {
               </p>
             )}
             <LeadFacts lead={lead} patch={patch} />
+            <LeadStore lead={lead} />
           </aside>
           <LeadTabs lead={lead} layout={layout} patch={patch} />
           {layout === 'wide' && (
@@ -161,7 +163,12 @@ function LeadTabs({
           className={cn('min-h-0 flex-1 overflow-y-auto outline-none', flat(t) && 'bg-card')}
         >
           <div className={cn('mx-auto w-full', flat(t) ? 'max-w-2xl' : 'max-w-3xl p-3 md:p-4')}>
-            {t === 'resumo' && <LeadFacts lead={lead} patch={patch} />}
+            {t === 'resumo' && (
+              <>
+                <LeadFacts lead={lead} patch={patch} />
+                <LeadStore lead={lead} />
+              </>
+            )}
             {t === 'atividade' && <LeadTimeline leadId={lead.id} />}
             {t === 'tarefas' && <LeadTasks leadId={lead.id} />}
             {t === 'conversas' && <LeadConversations leadId={lead.id} />}

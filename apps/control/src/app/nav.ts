@@ -51,6 +51,8 @@ export const DESTINATIONS: { to: string; label: string; group: string }[] = [
   { to: '/lojas?f=sites', label: 'Pedidos de site', group: 'Lojas' },
   { to: '/lojas/planos', label: 'Planos de assinatura', group: 'Lojas' },
   { to: '/lojas/incidentes', label: 'Incidentes', group: 'Lojas' },
+  { to: '/lojas/frota', label: 'Frota (versões, sondas, alertas)', group: 'Lojas' },
+  { to: '/lojas/frota?f=falhando', label: 'Lojas com sonda falhando', group: 'Lojas' },
   { to: '/config', label: 'Config', group: 'Config' },
 ];
 
