@@ -1,7 +1,9 @@
 <script lang="ts">
   import { KINDS, SCREENS, screenSrc, type ScreenKey } from '$lib/screens';
+  import { theme } from '$lib/theme.svelte';
 
-  // A real admin screenshot: Creme by default, Noite when the visitor's system is dark.
+  // A real admin screenshot: Creme by default, Noite when the visitor's system is dark or they picked
+  // the dark theme in the header.
   let {
     key,
     alt = SCREENS[key].what,
@@ -17,14 +19,17 @@
       ? '(max-width: 560px) 70vw, 280px'
       : '(max-width: 900px) 92vw, 1100px',
   );
+  const dark = $derived(
+    theme.chosen === 'dark'
+      ? 'all'
+      : theme.chosen === 'light'
+        ? 'not all'
+        : '(prefers-color-scheme: dark)',
+  );
 </script>
 
 <picture>
-  <source
-    media="(prefers-color-scheme: dark)"
-    srcset={set('noite')}
-    sizes={sizes ?? fallbackSizes}
-  />
+  <source media={dark} srcset={set('noite')} sizes={sizes ?? fallbackSizes} />
   <img
     src={screenSrc(key, 'creme', kind.widths[kind.widths.length - 1])}
     srcset={set('creme')}

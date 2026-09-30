@@ -1,6 +1,7 @@
 <script lang="ts">
   import Logo from './Logo.svelte';
   import Soon from './Soon.svelte';
+  import ThemeToggle from './ThemeToggle.svelte';
 
   // Sticky bar; transparent over the dawn sky, glass once the page scrolls (the admin's only glass
   // surfaces are its bars — design spec §4.4). The glass takes the tone of whatever passes under it:
@@ -54,8 +55,11 @@
 </script>
 
 <svelte:head>
-  <!-- without JS the bar never learns it scrolled: keep it glass so it never floats bare over text -->
-  <noscript>{@html '<style>[data-header]{background:var(--glass)}</style>'}</noscript>
+  <!-- without JS the bar never learns it scrolled: keep it glass so it never floats bare over text;
+       the theme switch needs JS, so it isn't offered -->
+  <noscript
+    >{@html '<style>[data-header]{background:var(--glass)}[data-theme-toggle]{display:none!important}</style>'}</noscript
+  >
 </svelte:head>
 
 <header class="bar" class:scrolled class:after class:overlay data-header bind:this={bar}>
@@ -68,6 +72,8 @@
         {/each}
       </ul>
     </nav>
+    <ThemeToggle />
+    <Soon size="sm" tone={after ? 'after' : 'day'} />
     <details class="menu" bind:this={menu}>
       <summary aria-label="Seções da página"><span class="lines" aria-hidden="true"></span></summary
       >
@@ -79,7 +85,6 @@
         </ul>
       </nav>
     </details>
-    <Soon size="sm" tone={after ? 'after' : 'day'} />
   </div>
 </header>
 
@@ -226,6 +231,37 @@
     }
     .menu {
       display: block;
+    }
+  }
+  /* the smallest phones: four things share 288 px */
+  @media (max-width: 374px) {
+    .row {
+      gap: 4px;
+    }
+    .row :global(.sm .pill) {
+      padding-inline: 12px;
+    }
+  }
+  /* on the home page the hero spells the name out large; the bar's logo takes over as it scrolls
+     away (keyboard focus always shows it) */
+  @media (prefers-reduced-motion: no-preference) {
+    @supports (animation-timeline: scroll()) {
+      .overlay .home:not(:focus-visible) {
+        animation: brand-in linear both;
+        animation-timeline: scroll(root);
+        animation-range: 120px 240px;
+      }
+      @media (min-width: 1024px) {
+        .overlay .home:not(:focus-visible) {
+          animation-range: 300px 440px;
+        }
+      }
+    }
+  }
+  @keyframes brand-in {
+    from {
+      opacity: 0;
+      translate: 0 10px;
     }
   }
 </style>
