@@ -264,6 +264,9 @@ export async function fillDeliveryStep(
     .or(page.getByRole('button', { name: modeRe }))
     .or(page.locator('label').filter({ hasText: modeRe }).locator('input[type="radio"]'))
     .first();
+  // the step renders after the dados step's fixed 300 ms — on a slow runner a bare count() saw
+  // nothing, the mode stayed on its default and the address fields never appeared
+  await picked.waitFor({ state: 'attached', timeout: 5000 }).catch(() => undefined);
   if ((await picked.count()) > 0) {
     await picked.click({ force: true }).catch(async () => {
       await picked.evaluate((e) => (e as HTMLElement).click());
