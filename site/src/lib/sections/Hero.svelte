@@ -18,6 +18,7 @@
 
 <Section
   id="inicio"
+  class="hero"
   tone="day"
   overlay
   sky="linear-gradient(180deg, var(--sky-0), var(--sky-1))"
@@ -71,6 +72,13 @@
 </Section>
 
 <style>
+  /* the phones' shadows run past the section's bottom edge: clip only sideways, and paint over the
+     next section so they fade into its sky instead of stopping in a hard line */
+  :global(section.section.hero) {
+    overflow: clip visible;
+    z-index: 1;
+  }
+
   /* a damped spring (ζ 0.5) and a looser one (ζ 0.35), sampled for linear() */
   .mark,
   .grid {
