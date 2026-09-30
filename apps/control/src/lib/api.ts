@@ -714,5 +714,72 @@ const agentV2 = {
   deleteMemory: (id: string) => req<{ ok: true }>(`/agent/memory/${id}`, { method: 'DELETE' }),
 };
 
+// ── self-serve fleet: billing, plans, custom domains, site requests, incidents ──
+
+export type SubscriptionStatus = 'pending' | 'active' | 'past_due' | 'cancelled';
+export type MpStatus = 'connected' | 'expiring' | 'disconnected' | 'restricted';
+export type CustomDomainStatus = 'pending_dns' | 'dns_ok' | 'active' | 'failed';
+export type SiteRequestStatus = 'requested' | 'in_progress' | 'delivered' | 'cancelled';
+export type IncidentSeverity = 'info' | 'degraded' | 'outage';
+
+export interface BillingStore {
+  tenantId: string;
+  slug: string;
+  name: string;
+  createdAt: string;
+  /** the store's public origin, when Core sends it (preferred over building one) */
+  url?: string | null | undefined;
+  plan: { id: string; name: string };
+  subscription: {
+    status: SubscriptionStatus;
+    method: 'card' | 'pix';
+    currentPeriodEnd: string | null;
+  } | null;
+  mercadoPago: MpStatus | null;
+  customDomain: { id: string; host: string; status: CustomDomainStatus } | null;
+  siteRequest: { id: string; status: SiteRequestStatus; brief: string | null } | null;
+}
+export interface ControlPlan {
+  id: string;
+  name: string;
+  priceCents: number | null;
+  feeBps: number;
+  features: { customDomain: boolean; customSite: boolean };
+  public: boolean;
+  sort: number;
+}
+export interface Incident {
+  id: string;
+  title: string;
+  body: string | null;
+  severity: IncidentSeverity;
+  startedAt: string;
+  resolvedAt: string | null;
+}
+
+const fleet = {
+  billingStores: () => req<{ stores: BillingStore[] }>('/billing/stores'),
+  controlPlans: () => req<{ plans: ControlPlan[] }>('/plans'),
+  patchPlan: (id: string, patch: { name?: string; priceCents?: number; public?: boolean }) =>
+    req<unknown>(`/plans/${encodeURIComponent(id)}`, {
+      method: 'PATCH',
+      body: JSON.stringify(patch),
+    }),
+  activateDomain: (id: string) =>
+    req<{ ok: boolean }>(`/custom-domains/${id}/activate`, { method: 'POST' }),
+  patchSiteRequest: (id: string, patch: { status: SiteRequestStatus; staffNote?: string }) =>
+    req<{ ok: boolean }>(`/site-requests/${id}`, {
+      method: 'PATCH',
+      body: JSON.stringify(patch),
+    }),
+  incidents: () => req<{ incidents: Incident[] }>('/incidents'),
+  createIncident: (b: { title: string; body?: string; severity: IncidentSeverity }) =>
+    req<unknown>('/incidents', { method: 'POST', body: JSON.stringify(b) }),
+  patchIncident: (
+    id: string,
+    patch: { title?: string; body?: string; severity?: IncidentSeverity; resolved?: true },
+  ) => req<unknown>(`/incidents/${id}`, { method: 'PATCH', body: JSON.stringify(patch) }),
+};
+
 // one client — the v2 section merges in so callers keep a single import
-export const api = Object.assign(apiBase, agentV2);
+export const api = Object.assign(apiBase, agentV2, fleet);
