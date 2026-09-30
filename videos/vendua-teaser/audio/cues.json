@@ -1,0 +1,57 @@
+{
+  "bpm": 120,
+  "duration": 15,
+  "note": "Every sound and every visual landing uses these times (seconds, global). The compositions hard-code the same values scene-locally (global minus the frame's start).",
+  "frames": [
+    {
+      "id": "f01-faisca",
+      "start": 0,
+      "duration": 2
+    },
+    {
+      "id": "f02-o-dia",
+      "start": 2,
+      "duration": 3
+    },
+    {
+      "id": "f03-palma",
+      "start": 5,
+      "duration": 3
+    },
+    {
+      "id": "f04-nome",
+      "start": 8,
+      "duration": 4
+    },
+    {
+      "id": "f05-em-breve",
+      "start": 12,
+      "duration": 3
+    }
+  ],
+  "hits": {
+    "riser": [0, 1],
+    "vSlam": 1,
+    "reverseSwell": [1.25, 2],
+    "words": [2, 2.5, 3, 3.5],
+    "stackHold": 4,
+    "whipUp": 4.5,
+    "headline": [5, 5.5],
+    "phoneSwing": 5.26,
+    "phoneLand": 6,
+    "orderPush": 6.5,
+    "build": [7, 7.875],
+    "silence": [7.875, 8],
+    "drop": 8,
+    "letters": [8, 8.25, 8.5, 8.75, 9, 9.25],
+    "accent": 9.5,
+    "dot": 10,
+    "duaClimb": [10.05, 10.7],
+    "duaWave": [10.75, 11],
+    "finale": 12,
+    "instagram": 12.5,
+    "website": 12.75,
+    "instagramNudge": 13.5,
+    "fadeOut": [14.5, 15]
+  }
+}

@@ -1,0 +1,349 @@
+<template>
+  <style>
+    @font-face {
+      font-family: 'Space Grotesk';
+      src: url('assets/fonts/space-grotesk.woff2') format('woff2');
+      font-weight: 300 700;
+    }
+    @font-face {
+      font-family: 'Figtree';
+      src: url('assets/fonts/figtree.woff2') format('woff2');
+      font-weight: 300 900;
+    }
+    #root {
+      position: absolute;
+      inset: 0;
+      overflow: hidden;
+    }
+    #f05-bg {
+      position: absolute;
+      inset: 0;
+      background: #123c32;
+    }
+    #f05-stage {
+      position: absolute;
+      inset: 0;
+    }
+    #f05-group {
+      position: absolute;
+      inset: 0;
+      transform-origin: 540px 900px;
+    }
+    #f05-glow {
+      position: absolute;
+      left: 540px;
+      top: 1000px;
+      width: 1300px;
+      height: 1300px;
+      margin: -650px 0 0 -650px;
+      border-radius: 50%;
+      background: radial-gradient(closest-side, rgb(217 248 117 / 0.2), rgb(217 248 117 / 0) 70%);
+    }
+    #f05-v {
+      position: absolute;
+      left: 442px;
+      top: 404px;
+      width: 196px;
+      height: 196px;
+    }
+    #f05-v svg {
+      display: block;
+      width: 100%;
+      height: 100%;
+      overflow: visible;
+    }
+    #f05-name {
+      position: absolute;
+      left: 0;
+      top: 526px;
+      width: 1080px;
+      display: flex;
+      justify-content: center;
+    }
+    #f05-word {
+      position: relative;
+      margin-left: -22px;
+      padding-top: 0.3em;
+      font:
+        700 173px/0.8 'Space Grotesk',
+        sans-serif;
+      letter-spacing: -0.06em;
+      color: #f7f4ea;
+      white-space: nowrap;
+      clip-path: inset(-1em -1em 0 -1em);
+    }
+    .f05-l {
+      position: relative;
+      display: inline-block;
+    }
+    #f05-acute {
+      position: absolute;
+      left: 0.24em;
+      top: 0.01em;
+      width: 0.1em;
+      height: 0.2em;
+      border-radius: 0.05em;
+      background: #f7f4ea;
+      rotate: 38deg;
+    }
+    #f05-pill-wrap {
+      position: absolute;
+      left: 0;
+      top: 900px;
+      width: 1080px;
+      display: flex;
+      justify-content: center;
+    }
+    #f05-pill {
+      position: relative;
+      overflow: hidden;
+      display: inline-flex;
+      align-items: center;
+      gap: 0.4em;
+      padding: 0.42em 0.9em 0.46em 0.75em;
+      border-radius: 999px;
+      background: #d9f875;
+      color: #123c32;
+      font:
+        700 64px/1 'Space Grotesk',
+        sans-serif;
+      letter-spacing: -0.02em;
+      white-space: nowrap;
+    }
+    #f05-pill-dot {
+      width: 0.34em;
+      height: 0.34em;
+      border-radius: 50%;
+      background: #123c32;
+    }
+    #f05-shine {
+      position: absolute;
+      top: -20%;
+      left: 0;
+      width: 90px;
+      height: 140%;
+      background: linear-gradient(
+        90deg,
+        rgb(255 255 255 / 0),
+        rgb(255 255 255 / 0.75),
+        rgb(255 255 255 / 0)
+      );
+      rotate: 18deg;
+    }
+    /* where to find us: one row each, icon + address */
+    .f05-row-wrap {
+      position: absolute;
+      left: 0;
+      width: 1080px;
+      display: flex;
+      justify-content: center;
+    }
+    #f05-row-ig {
+      top: 1098px;
+    }
+    #f05-row-web {
+      top: 1252px;
+    }
+    .f05-row {
+      display: inline-flex;
+      align-items: center;
+      gap: 24px;
+      height: 128px;
+      padding: 0 52px 0 30px;
+      border-radius: 999px;
+      background: rgb(247 244 234 / 0.07);
+      box-shadow: inset 0 0 0 2.5px rgb(247 244 234 / 0.18);
+      color: #f7f4ea;
+      font:
+        600 62px/1 'Figtree',
+        sans-serif;
+      letter-spacing: -0.01em;
+      white-space: nowrap;
+    }
+    .f05-icon {
+      flex: none;
+      width: 84px;
+      height: 84px;
+      border-radius: 50%;
+      background: #d9f875;
+      display: grid;
+      place-items: center;
+    }
+    .f05-icon svg {
+      display: block;
+      width: 50px;
+      height: 50px;
+    }
+    .f05-spark {
+      position: absolute;
+      width: 14px;
+      height: 14px;
+      border-radius: 50%;
+      background: #d9f875;
+      opacity: 0;
+    }
+    #f05-flash {
+      position: absolute;
+      inset: 0;
+      background: #d9f875;
+    }
+  </style>
+
+  <div id="root" data-composition-id="f05-em-breve" data-width="1080" data-height="1920">
+    <div id="f05-bg" class="clip" data-start="0" data-duration="3" data-track-index="0"></div>
+    <div id="f05-stage" class="clip" data-start="0" data-duration="3" data-track-index="1">
+      <div id="f05-group">
+        <div id="f05-glow"></div>
+        <div id="f05-v">
+          <svg viewBox="0 0 128 128">
+            <path
+              id="f05-path"
+              d="M32 48 L61 88 L98 34"
+              fill="none"
+              stroke="#D9F875"
+              stroke-width="17"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              stroke-dasharray="118"
+              stroke-dashoffset="0"
+            />
+          </svg>
+        </div>
+        <div id="f05-name">
+          <span id="f05-word"
+            ><span class="f05-l">v</span><span class="f05-l">e</span><span class="f05-l">n</span
+            ><span class="f05-l">d</span><span class="f05-l">u</span
+            ><span class="f05-l">a<i id="f05-acute"></i></span><span class="f05-l">.</span></span
+          >
+        </div>
+        <div class="f05-spark" style="left: 300px; top: 940px"></div>
+        <div class="f05-spark" style="left: 380px; top: 990px"></div>
+        <div class="f05-spark" style="left: 470px; top: 930px"></div>
+        <div class="f05-spark" style="left: 560px; top: 1000px"></div>
+        <div class="f05-spark" style="left: 640px; top: 935px"></div>
+        <div class="f05-spark" style="left: 720px; top: 990px"></div>
+        <div class="f05-spark" style="left: 780px; top: 945px"></div>
+        <div class="f05-spark" style="left: 340px; top: 900px"></div>
+        <div class="f05-spark" style="left: 745px; top: 900px"></div>
+        <div id="f05-pill-wrap">
+          <span id="f05-pill"
+            ><span id="f05-pill-dot"></span>Em breve<span id="f05-shine"></span
+          ></span>
+        </div>
+
+        <div class="f05-row-wrap" id="f05-row-ig">
+          <span class="f05-row" id="f05-ig">
+            <span class="f05-icon" id="f05-ig-icon">
+              <!-- Instagram glyph -->
+              <svg viewBox="0 0 24 24" fill="none" stroke="#123C32" stroke-width="2.2">
+                <rect x="3" y="3" width="18" height="18" rx="5.2" />
+                <circle cx="12" cy="12" r="4.2" />
+                <circle cx="17.4" cy="6.6" r="1.1" fill="#123C32" stroke="none" />
+              </svg>
+            </span>
+            @vendua.digital
+          </span>
+        </div>
+        <div class="f05-row-wrap" id="f05-row-web">
+          <span class="f05-row" id="f05-web">
+            <span class="f05-icon" id="f05-web-icon">
+              <!-- globe -->
+              <svg
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="#123C32"
+                stroke-width="2"
+                stroke-linecap="round"
+              >
+                <circle cx="12" cy="12" r="9" />
+                <path
+                  d="M3 12h18M12 3c2.6 2.6 3.9 5.6 3.9 9s-1.3 6.4-3.9 9c-2.6-2.6-3.9-5.6-3.9-9S9.4 5.6 12 3z"
+                />
+              </svg>
+            </span>
+            vendua.com.br
+          </span>
+        </div>
+      </div>
+      <div id="f05-flash"></div>
+    </div>
+  </div>
+
+  <script>
+    (() => {
+      // cues (scene-local): the finale hit on 0 (flash, pill pops, sparkle); the Instagram row lands on
+      // the first chime at 0.5, the website row on the second at 0.75; everything holds to the end
+      const IG = 0.5;
+      const WEB = 0.75;
+      const tl = gsap.timeline({ paused: true });
+
+      tl.fromTo(
+        '#f05-flash',
+        { opacity: 0.95 },
+        { opacity: 0, duration: 0.32, ease: 'power2.out' },
+        0,
+      );
+      tl.fromTo(
+        '#f05-pill',
+        { scale: 0.2 },
+        { scale: 1, duration: 0.55, ease: 'back.out(2.4)' },
+        0,
+      );
+      tl.fromTo('#f05-shine', { x: -140 }, { x: 560, duration: 0.55, ease: 'power2.inOut' }, 0.18);
+      tl.fromTo(
+        '#f05-path',
+        { strokeDashoffset: 118 },
+        { strokeDashoffset: 0, duration: 0.3, ease: 'power2.out' },
+        0.02,
+      );
+      tl.fromTo('#f05-v', { scale: 0.6 }, { scale: 1, duration: 0.5, ease: 'back.out(2)' }, 0.02);
+      tl.fromTo(
+        '.f05-l',
+        { yPercent: 105 },
+        { yPercent: 0, duration: 0.6, ease: 'elastic.out(1, 0.55)', stagger: 0.035 },
+        0.04,
+      );
+      tl.fromTo(
+        '.f05-spark',
+        { y: 0, opacity: 1, scale: 1 },
+        { y: -260, opacity: 0, scale: 0.3, duration: 0.8, ease: 'power2.out', stagger: 0.05 },
+        0.03,
+      );
+
+      // the two rows land on their chimes, icon first
+      for (const [row, icon, t] of [
+        ['#f05-ig', '#f05-ig-icon', IG],
+        ['#f05-web', '#f05-web-icon', WEB],
+      ]) {
+        tl.fromTo(
+          row,
+          { y: 50, opacity: 0 },
+          { y: 0, opacity: 1, duration: 0.4, ease: 'power3.out' },
+          t - 0.06,
+        );
+        tl.fromTo(
+          icon,
+          { scale: 0.3, rotation: -25 },
+          { scale: 1, rotation: 0, duration: 0.55, ease: 'back.out(3)' },
+          t,
+        );
+      }
+      // a nudge on the Instagram icon once both are in, so the eye goes there last
+      tl.to(
+        '#f05-ig-icon',
+        { keyframes: { scale: [1, 1.14, 1] }, duration: 0.4, ease: 'sine.inOut' },
+        1.5,
+      );
+
+      // hold, drifting in; the music fades, the frame stays readable to the last frame
+      tl.fromTo(
+        '#f05-group',
+        { scale: 1 },
+        { scale: 1.03, duration: 2.7, ease: 'sine.inOut' },
+        0.3,
+      );
+
+      window.__timelines['f05-em-breve'] = tl;
+    })();
+  </script>
+</template>
