@@ -264,7 +264,7 @@ Parts added in Kernel 1.11: `compare-at` (the struck "de" price, in the product 
 `[data-vendua="modifier-picker"]` `pricing-rule`, `option-image`, `option-description` and
 `option-qty` (a `modifier` with units is `data-kind="qty"`); in the checkout
 `[data-part="adjustment"]` (a payment option's rule, `data-kind` discount | surcharge | mixed)
-and `payment-adjustment` (the summary line; also in `[data-vendua="order-items"]`).
+and `payment-adjustment` (the summary line; also in `[data-vendua="order-items"]`), and `pricing-note` (the "calculando o total" line under the confirm button while Core prices a method with a rule; confirm stays disabled until it answers).
 
 `vendua check` (`no-v-namespace`) allows exactly those; any other `.v-*` or
 `[data-vendua]` selector in store CSS fails. Slot overrides stay available but are

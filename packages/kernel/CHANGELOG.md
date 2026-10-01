@@ -30,7 +30,9 @@ shown is still Core's.
 - Delivery: `DeliveryZone.kind` `'polygon'` + `polygon`; the checkout asks for the shopper's
   location when any radius or polygon zone exists.
 - New parts: `compare-at`, `category-description`, `pricing-rule`, `option-image`,
-  `option-description`, `option-qty`, `adjustment`, `payment-adjustment`.
+  `option-description`, `option-qty`, `adjustment`, `payment-adjustment`, `pricing-note`.
+- Checkout: confirming is disabled while Core prices a payment method that has a discount or
+  surcharge, so the total shown always matches what Core charges.
 
 ## 1.10.0
 

@@ -415,7 +415,6 @@ export function PurchasePanel({ settings }: SectionProps<typeof S.purchasePanel>
             {product.name}
           </Title>
           <p className="v-pp-price v-num" data-part="price">
-            {slots.some((sl) => sl.items.some((i) => i.priceDeltaCents > 0)) ? 'a partir de ' : ''}
             {compareAt !== null ? (
               <>
                 <s className="v-compare-at" data-part="compare-at">
@@ -425,6 +424,7 @@ export function PurchasePanel({ settings }: SectionProps<typeof S.purchasePanel>
                 <span className="v-sr">por </span>
               </>
             ) : null}
+            {slots.some((sl) => sl.items.some((i) => i.priceDeltaCents > 0)) ? 'a partir de ' : ''}
             {money(product.basePriceCents, currency)}
           </p>
           {product.requiresPreorder ? (

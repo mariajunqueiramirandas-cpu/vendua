@@ -185,6 +185,8 @@ export function CheckoutPage() {
   // the cart's totals (`GET /cart?paymentMethod=`); the page never adds it up itself. The key
   // ties an answer to the cart it priced, so a coupon or a delivery change asks again.
   const [priced, setPriced] = useState<{ key: string; totals: CartTotals } | null>(null);
+  const [priceFailed, setPriceFailed] = useState('');
+  const [priceTry, setPriceTry] = useState(0);
   const t = cart?.status === 'open' ? cart.totals : null;
   const priceKey = t
     ? [pay, t.subtotalCents, t.deliveryFeeCents, t.discountCents ?? 0, t.totalCents].join('|')
@@ -198,16 +200,17 @@ export function CheckoutPage() {
         if (live && r.cart.status === 'open') setPriced({ key: priceKey, totals: r.cart.totals });
       },
       () => {
-        /* the base totals stand; checkout prices the order authoritatively */
+        if (live) setPriceFailed(priceKey);
       },
     );
     return () => {
       live = false;
     };
-  }, [pricesByMethod, priceKey, pay, api]);
+  }, [pricesByMethod, priceKey, pay, api, priceTry]);
   const pricedTotals = pricesByMethod && priced?.key === priceKey ? priced.totals : null;
   // a method with a rule shows no total until Core priced it
   const pricing = pricesByMethod && !pricedTotals && !!adjustments?.[pay];
+  const priceError = pricing && priceFailed === priceKey;
   const payLabel = methods.find((m) => m.id === pay)?.label;
   const minFee = zones.length ? Math.min(...zones.map((z) => z.feeCents)) : null;
   const options: DeliveryOption[] = [
@@ -305,7 +308,7 @@ export function CheckoutPage() {
           setCoords(c);
           setLocateStatus('located');
           setZoneHint(
-            `Entrega ${r.distanceKm != null ? `a ${r.distanceKm.toLocaleString('pt-BR')} km` : ''}: ${
+            `Entrega${r.distanceKm != null ? ` a ${r.distanceKm.toLocaleString('pt-BR')} km` : ''}: ${
               (r.feeCents ?? 0) > 0 ? money(r.feeCents!, currency) : 'grátis'
             }`,
           );
@@ -568,7 +571,7 @@ export function CheckoutPage() {
                 <button
                   type="submit"
                   className="v-btn v-btn-accent"
-                  disabled={pending}
+                  disabled={pending || pricing}
                   aria-busy={pending || undefined}
                 >
                   {pending
@@ -585,6 +588,27 @@ export function CheckoutPage() {
                 </button>
               )}
             </div>
+            {step === 'pagamento' && pricing ? (
+              <p className="v-note" role="status" data-part="pricing-note">
+                {priceError ? (
+                  <>
+                    Não deu para calcular o total com {payLabel ?? 'esta forma de pagamento'}.{' '}
+                    <button
+                      type="button"
+                      className="v-btn v-btn-ghost"
+                      onClick={() => {
+                        setPriceFailed('');
+                        setPriceTry((n) => n + 1);
+                      }}
+                    >
+                      Tentar de novo
+                    </button>
+                  </>
+                ) : (
+                  `Calculando o total com ${payLabel ?? 'esta forma de pagamento'}…`
+                )}
+              </p>
+            ) : null}
           </form>
         </Slot>
         <Slot
