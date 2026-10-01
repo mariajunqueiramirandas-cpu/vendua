@@ -123,7 +123,7 @@ export function NameStep({ s, draft, patch, save, next, back }: StepProps) {
         <TextInput
           id="ob-name"
           maxLength={80}
-          autoComplete="organization"
+          autoComplete="off"
           value={draft.name}
           onChange={(e) => patch({ name: e.target.value })}
           placeholder="Ex.: Doces da Maria"

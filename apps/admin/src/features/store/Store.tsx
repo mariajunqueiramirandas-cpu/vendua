@@ -377,7 +377,7 @@ function Delivery({
               <CommitInput
                 id="pk-addr"
                 maxLength={200}
-                autoComplete="street-address"
+                autoComplete="off"
                 value={o.pickupAddress ?? ''}
                 placeholder={s.profile.address ?? 'Ex.: Rua das Flores, 120 — Centro'}
                 onCommit={(v) => patch({ operations: { pickupAddress: v || null } })}

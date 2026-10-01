@@ -88,7 +88,8 @@ export const TextInput = forwardRef<
   HTMLInputElement,
   Omit<InputHTMLAttributes<HTMLInputElement>, 'prefix'> & { lead?: ReactNode; trail?: ReactNode }
 >(function TextInput({ className, lead, trail, ...rest }, ref) {
-  if (!lead && !trail) return <input ref={ref} className={cn(inputCls, className)} {...rest} />;
+  if (!lead && !trail)
+    return <input ref={ref} autoComplete="off" className={cn(inputCls, className)} {...rest} />;
   return (
     <div className="relative">
       {lead ? (
@@ -98,6 +99,7 @@ export const TextInput = forwardRef<
       ) : null}
       <input
         ref={ref}
+        autoComplete="off"
         className={cn(inputCls, lead ? 'pl-12' : '', trail ? 'pr-14' : '', className)}
         {...rest}
       />
@@ -117,6 +119,7 @@ export const TextArea = forwardRef<
   return (
     <textarea
       ref={ref}
+      autoComplete="off"
       className={cn(inputCls, 'h-auto min-h-28 resize-y py-3', className)}
       {...rest}
     />
@@ -253,7 +256,7 @@ export function PhoneInput({
       id={id}
       type="tel"
       inputMode="tel"
-      autoComplete="tel-national"
+      autoComplete="off"
       placeholder="(22) 99999-0000"
       value={value}
       autoFocus={autoFocus}
@@ -285,6 +288,7 @@ export function TimeInput({
     <input
       id={id}
       aria-label={label}
+      autoComplete="off"
       inputMode="numeric"
       value={draft}
       aria-invalid={bad || undefined}

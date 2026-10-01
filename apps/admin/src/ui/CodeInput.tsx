@@ -50,7 +50,7 @@ export const CodeInput = forwardRef<
               ref={(el) => (inputs.current[i] = el)}
               aria-label={`número ${i + 1}`}
               inputMode="numeric"
-              autoComplete={i === 0 ? 'one-time-code' : 'off'}
+              autoComplete="off"
               autoFocus={i === 0}
               maxLength={i === 0 ? 6 : 1}
               value={value[i] ?? ''}

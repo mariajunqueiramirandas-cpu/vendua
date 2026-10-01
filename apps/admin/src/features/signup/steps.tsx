@@ -161,7 +161,7 @@ export function StoreStep({ d, patch, go, plans, notice }: FlowProps) {
         <TextInput
           id="su-name"
           maxLength={60}
-          autoComplete="organization"
+          autoComplete="off"
           placeholder="Ex.: Doces da Maria"
           value={d.storeName}
           onChange={(e) => {

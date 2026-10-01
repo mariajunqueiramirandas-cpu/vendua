@@ -823,7 +823,7 @@ function PlanSheet({
                 id="payer-email"
                 type="email"
                 inputMode="email"
-                autoComplete="email"
+                autoComplete="off"
                 autoCapitalize="none"
                 maxLength={200}
                 value={email}
@@ -922,7 +922,7 @@ function MethodSection({ a, s }: { a: AccountData; s: Sub }) {
             id="payer"
             type="email"
             inputMode="email"
-            autoComplete="email"
+            autoComplete="off"
             autoCapitalize="none"
             maxLength={200}
             value={s.payerEmail ?? ''}
